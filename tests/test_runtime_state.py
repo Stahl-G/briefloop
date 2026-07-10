@@ -7311,6 +7311,7 @@ def test_supersede_stage_records_contaminated_owner_revision_and_requires_downst
     assert metadata["old_registered_sha256"] == old_sha
     assert metadata["current_bytes_sha256"] == current_sha
     assert metadata["reference_eligible"] is False
+    assert metadata["repair_start_transaction_id"] == metadata["transaction_id"]
 
     checked_once = check_runtime_state(workspace=ws, repo_workdir=ROOT)
     checked_twice = check_runtime_state(workspace=ws, repo_workdir=ROOT)
@@ -7879,6 +7880,16 @@ def test_repair_complete_refreezes_allowed_editor_artifact_and_invalidates_downs
     assert events[-1]["event_type"] == "repair_completed"
     assert events[-1]["metadata"]["owner_revision_schema_version"] == OWNER_REVISION_SCHEMA
     assert events[-1]["metadata"]["repair_owner"] == "editor"
+    started_event = next(
+        event for event in events if event["event_type"] == "repair_started"
+    )
+    assert events[-1]["metadata"]["repair_started_event_id"] == started_event[
+        "event_id"
+    ]
+    assert events[-1]["metadata"]["repair_start_transaction_id"] == started_event[
+        "metadata"
+    ]["transaction_id"]
+    assert events.index(started_event) < len(events) - 1
     stale_validated_events = [
         event
         for event in events

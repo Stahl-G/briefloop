@@ -100,6 +100,7 @@ def build_completion_projection(
     )
     finalize_report, finalize_report_status = _read_json(intermediate / "finalize_report.json")
     finalize_truth = _finalize_truth(finalize_report, finalize_report_status)
+    # Keep this local because recovery_state imports runtime-state modules.
     from multi_agent_brief.orchestrator.recovery_state import evaluate_recovery_state
 
     recovery_state = evaluate_recovery_state(workspace=ws, repo_workdir=repo)

@@ -96,6 +96,7 @@ QUALITY_GATE_ROUTE_SOURCES = {
 
 
 def _owner_revision_schema_version() -> str:
+    # Keep this local because recovery_state imports runtime-state modules.
     from multi_agent_brief.orchestrator.recovery_state import OWNER_REVISION_SCHEMA
 
     return OWNER_REVISION_SCHEMA

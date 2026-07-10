@@ -193,6 +193,7 @@ def deliver_workspace(
     _preflight_no_active_repair(ws, target=target, channel=channel)
     _refresh_runtime_state_before_delivery(ws, target=target, channel=channel)
     run_integrity = _delivery_run_integrity(ws)
+    # Keep this local because recovery_state imports runtime-state modules.
     from multi_agent_brief.orchestrator.recovery_state import evaluate_recovery_state
 
     recovery_state = evaluate_recovery_state(workspace=ws)

@@ -247,7 +247,9 @@ def _bind_contaminated_recovery(
             artifact_id="audited_brief",
             reason="Synthetic bound recovery.",
             metadata={
+                "owner_revision_schema_version": "briefloop.owner_revision.v1",
                 "transaction_id": "recovery-001",
+                "repair_start_transaction_id": "recovery-001",
                 "contamination_event_id": contamination_event_id,
                 "owner_stage": "editor",
                 "artifact_id": "audited_brief",

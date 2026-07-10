@@ -318,11 +318,12 @@ def test_status_command_is_read_only_for_existing_runtime_state(tmp_path, capsys
     ws = _minimal_workspace(tmp_path / "ws")
     initialize_runtime_state(workspace=ws, runtime="claude", actor="cli")
     paths = runtime_state_paths(ws)
+    manifest = json.loads(paths["runtime_manifest"].read_text(encoding="utf-8"))
     paths["artifact_registry"].write_text(
         json.dumps(
-            {
-                "schema_version": "multi-agent-brief-artifact-registry/v1",
-                "run_id": "run-test",
+                {
+                    "schema_version": "multi-agent-brief-artifact-registry/v1",
+                    "run_id": manifest["run_id"],
                 "artifacts": {
                     "candidate_claims": {
                         "artifact_id": "candidate_claims",

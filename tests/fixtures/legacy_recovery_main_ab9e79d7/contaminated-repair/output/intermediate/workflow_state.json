@@ -1,0 +1,156 @@
+{
+  "blocked": false,
+  "blocking_reason": "",
+  "created_at": "2026-07-10T13:17:24+00:00",
+  "current_stage": "auditor",
+  "last_completion_transaction": {
+    "created_at": "2026-07-10T13:17:24+00:00",
+    "decision": "continue",
+    "reason": "editor complete",
+    "stage_id": "editor",
+    "transaction_id": "legacy-contaminated-last-stage-transaction"
+  },
+  "last_decision": {
+    "created_at": "2026-07-10T13:17:24+00:00",
+    "decision": "repair_complete",
+    "reason": "legacy contaminated repair complete",
+    "stage_id": "editor"
+  },
+  "last_repair_transaction": {
+    "created_at": "2026-07-10T13:17:24+00:00",
+    "decision": "repair_complete",
+    "reason": "legacy contaminated repair complete",
+    "stage_id": "editor",
+    "transaction_id": "legacy-contaminated-repair-complete-transaction"
+  },
+  "next_allowed_decisions": [
+    "continue",
+    "retry_stage",
+    "delegate_repair",
+    "request_human_review",
+    "block_run"
+  ],
+  "run_id": "mabw-20260710T131724Z-1c20bb59",
+  "run_integrity": {
+    "clean_single_shot": false,
+    "reasons": [
+      {
+        "artifact_id": "audited_brief",
+        "created_at": "2026-07-10T13:17:24+00:00",
+        "event_type": "repair_started",
+        "message": "Frozen artifact changed after stage completion.",
+        "metadata": {
+          "recommended_action": "Use repair start/complete for local inspection, or start a fresh workspace for reference-grade evidence.",
+          "repair_owner": "editor",
+          "repair_transaction_id": "legacy-contaminated-repair-start-transaction",
+          "run_integrity_effect": {
+            "reason": "Frozen artifact changed after stage completion.",
+            "reference_eligible": false
+          },
+          "source": {
+            "artifact_id": "audited_brief",
+            "blocking": null,
+            "file": "output/intermediate/artifact_registry.json",
+            "finding_id": "TX_FROZEN_audited_brief",
+            "finding_type": "frozen_artifact_changed",
+            "kind": "transaction_integrity",
+            "severity": "high",
+            "stage_id": null,
+            "status": null
+          }
+        },
+        "reason_code": "frozen_artifact_changed",
+        "stage_id": "editor"
+      }
+    ],
+    "reference_eligible": false,
+    "status": "contaminated"
+  },
+  "schema_version": "multi-agent-brief-workflow-state/v1",
+  "stage_statuses": {
+    "analyst": {
+      "reason": "analyst complete",
+      "status": "complete",
+      "updated_at": "2026-07-10T13:17:24+00:00"
+    },
+    "auditor": {
+      "metadata": {
+        "repair_owner": "editor",
+        "repair_transaction_id": "legacy-contaminated-repair-complete-transaction",
+        "stale_after_repair": true,
+        "stale_artifact_baselines": {
+          "audit_report": {
+            "path": "output/intermediate/audit_report.json",
+            "sha256": null,
+            "status": "expected",
+            "validation_result": "not_checked"
+          }
+        }
+      },
+      "reason": "Ready after owner-stage repair completion.",
+      "status": "ready",
+      "updated_at": "2026-07-10T13:17:24+00:00"
+    },
+    "claim-ledger": {
+      "reason": "claim-ledger fixture complete",
+      "status": "complete",
+      "updated_at": "2026-07-10T13:17:24+00:00"
+    },
+    "doctor": {
+      "reason": "doctor fixture complete",
+      "status": "complete",
+      "updated_at": "2026-07-10T13:17:24+00:00"
+    },
+    "editor": {
+      "metadata": {
+        "allowed_artifacts": [
+          "output/intermediate/audited_brief.md"
+        ],
+        "repair_transaction_id": "legacy-contaminated-repair-complete-transaction",
+        "repaired": true
+      },
+      "reason": "legacy contaminated repair complete",
+      "status": "complete",
+      "updated_at": "2026-07-10T13:17:24+00:00"
+    },
+    "finalize": {
+      "metadata": {
+        "repair_owner": "editor",
+        "repair_transaction_id": "legacy-contaminated-repair-complete-transaction",
+        "stale_after_repair": true,
+        "stale_artifact_baselines": {
+          "reader_brief": {
+            "path": "output/brief.md",
+            "sha256": null,
+            "status": "expected",
+            "validation_result": "not_checked"
+          }
+        }
+      },
+      "reason": "Pending rerun after owner-stage repair completion.",
+      "status": "pending",
+      "updated_at": "2026-07-10T13:17:24+00:00"
+    },
+    "input-governance": {
+      "reason": "input-governance fixture complete",
+      "status": "complete",
+      "updated_at": "2026-07-10T13:17:24+00:00"
+    },
+    "scout": {
+      "reason": "scout fixture complete",
+      "status": "complete",
+      "updated_at": "2026-07-10T13:17:24+00:00"
+    },
+    "screener": {
+      "reason": "screener fixture complete",
+      "status": "complete",
+      "updated_at": "2026-07-10T13:17:24+00:00"
+    },
+    "source-discovery": {
+      "reason": "source-discovery fixture complete",
+      "status": "complete",
+      "updated_at": "2026-07-10T13:17:24+00:00"
+    }
+  },
+  "updated_at": "2026-07-10T13:17:24+00:00"
+}

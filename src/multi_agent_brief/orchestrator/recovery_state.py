@@ -78,6 +78,23 @@ class RecoveryContext:
     finalize_report: Mapping[str, Any] | None
 
 
+@dataclass(frozen=True)
+class _OwnerRevisionRecord:
+    status: str
+    schema_version: str
+    event_id: str
+    event_type: str
+    event_index: int
+    transaction_id: str
+    repair_start_transaction_id: str
+    repair_started_event_id: str
+    contamination_event_id: str
+    owner_stage: str
+    artifact_id: str
+    rerun_start_stage: str
+    stale_artifact_baselines: Mapping[str, Any]
+
+
 def evaluate_recovery_state(
     *,
     workspace: str | Path,
@@ -101,17 +118,13 @@ def evaluate_recovery_state(
 def interpret_recovery_state(context: RecoveryContext) -> dict[str, Any]:
     """Interpret validated records without reading or writing the workspace."""
 
+    control_reason_code, control_error = _control_record_run_id_error(context)
+    if control_error:
+        return _invalid(context, control_reason_code, control_error)
+
     event_error = _event_identity_error(context.event_records)
     if event_error:
         return _invalid(context, "event_identity_invalid", event_error)
-
-    workflow_run_id = _text(context.workflow.get("run_id"))
-    if workflow_run_id != context.run_id:
-        return _invalid(
-            context,
-            "workflow_run_id_mismatch",
-            "workflow_state.run_id does not match runtime_manifest.run_id.",
-        )
 
     integrity = project_for_read(
         interpret_run_integrity(
@@ -123,13 +136,17 @@ def interpret_recovery_state(context: RecoveryContext) -> dict[str, Any]:
         return _invalid(context, "run_integrity_invalid", "run_integrity is invalid.")
 
     current_events = [event for event in context.event_records if _text(event.get("run_id")) == context.run_id]
-    owner_revision, owner_revision_error = _latest_owner_revision(
+    owner_revisions, owner_revision_error = _normalize_owner_revisions(
         current_events,
+        run_id=context.run_id,
         stage_ids=context.stage_ids,
         workflow=context.workflow,
     )
     if owner_revision_error:
         return _invalid(context, "owner_revision_binding_invalid", owner_revision_error)
+    owner_revision = _owner_revision_projection(
+        owner_revisions[-1] if owner_revisions else None
+    )
     contaminations = [
         event for event in current_events if event.get("event_type") == "run_integrity_contaminated"
     ]
@@ -164,7 +181,7 @@ def interpret_recovery_state(context: RecoveryContext) -> dict[str, Any]:
 
     latest_contamination = contaminations[-1]
     contamination_event_id = _text(latest_contamination.get("event_id"))
-    contamination_index = context.event_records.index(latest_contamination)
+    contamination_index = current_events.index(latest_contamination)
     active_repair = context.workflow.get("active_repair")
     if isinstance(active_repair, Mapping):
         active_error = _active_repair_binding_error(
@@ -190,13 +207,12 @@ def interpret_recovery_state(context: RecoveryContext) -> dict[str, Any]:
             owner_revision=owner_revision,
         )
 
-    recovery_events = [
-        event
-        for event in context.event_records[contamination_index + 1 :]
-        if event.get("event_type") in {"repair_completed", "repair_stage_superseded"}
-        and _text(event.get("run_id")) == context.run_id
+    recovery_revisions = [
+        revision
+        for revision in owner_revisions
+        if revision.event_index > contamination_index
     ]
-    if not recovery_events:
+    if not recovery_revisions:
         finalized = context.workflow.get("current_stage") is None
         return _state(
             status=RECOVERY_AWAITING,
@@ -219,26 +235,24 @@ def interpret_recovery_state(context: RecoveryContext) -> dict[str, Any]:
             owner_revision=owner_revision,
         )
 
-    for event in recovery_events:
-        binding_error = _recovery_event_binding_error(
-            event,
-            contamination_event_id=contamination_event_id,
-            stage_ids=context.stage_ids,
-        )
-        if binding_error:
-            return _invalid(context, "recovery_event_binding_invalid", binding_error)
+    for revision in recovery_revisions:
+        if revision.contamination_event_id != contamination_event_id:
+            return _invalid(
+                context,
+                "recovery_event_binding_invalid",
+                "Recovery event is not bound to the latest contamination event.",
+            )
 
-    recovery_event = recovery_events[-1]
-    metadata = _metadata(recovery_event)
+    recovery_revision = recovery_revisions[-1]
     pointer_error = _repair_pointer_error(
         context.workflow.get("last_repair_transaction"),
-        event=recovery_event,
+        revision=recovery_revision,
         run_id=context.run_id,
     )
     if pointer_error:
         return _invalid(context, "repair_pointer_invalid", pointer_error)
 
-    rerun_start_stage = _text(metadata.get("rerun_start_stage"))
+    rerun_start_stage = recovery_revision.rerun_start_stage
     current_stage = _text(context.workflow.get("current_stage"))
     if current_stage:
         if current_stage not in context.stage_ids:
@@ -252,7 +266,7 @@ def interpret_recovery_state(context: RecoveryContext) -> dict[str, Any]:
         if current_stage != "finalize":
             return _bound_recovery_state(
                 context=context,
-                event=recovery_event,
+                revision=recovery_revision,
                 contamination_event_id=contamination_event_id,
                 status=RECOVERY_RERUN_PENDING,
                 reason_code="downstream_rerun_required",
@@ -264,14 +278,14 @@ def interpret_recovery_state(context: RecoveryContext) -> dict[str, Any]:
         report=context.finalize_report,
         run_id=context.run_id,
         contamination_event_id=contamination_event_id,
-        recovery_transaction_id=_text(metadata.get("transaction_id")),
+        recovery_transaction_id=recovery_revision.transaction_id,
         rerun_start_stage=rerun_start_stage,
     )
     if current_stage == "finalize":
         if report_state[0] != "current_pass":
             return _bound_recovery_state(
                 context=context,
-                event=recovery_event,
+                revision=recovery_revision,
                 contamination_event_id=contamination_event_id,
                 status=RECOVERY_FINALIZE_RENDER_REQUIRED,
                 reason_code=report_state[1],
@@ -280,7 +294,7 @@ def interpret_recovery_state(context: RecoveryContext) -> dict[str, Any]:
             )
         return _bound_recovery_state(
             context=context,
-            event=recovery_event,
+            revision=recovery_revision,
             contamination_event_id=contamination_event_id,
             status=RECOVERY_FINALIZE_COMPLETION_PENDING,
             reason_code="finalize_completion_required",
@@ -297,17 +311,17 @@ def interpret_recovery_state(context: RecoveryContext) -> dict[str, Any]:
     completion_error = _finalize_completion_binding_error(
         completion,
         event_records=context.event_records,
-        recovery_event_id=_text(recovery_event.get("event_id")),
+        recovery_event_id=recovery_revision.event_id,
         run_id=context.run_id,
         contamination_event_id=contamination_event_id,
-        recovery_transaction_id=_text(metadata.get("transaction_id")),
+        recovery_transaction_id=recovery_revision.transaction_id,
         render_transaction_id=_text((context.finalize_report or {}).get("finalize_transaction_id")),
     )
     if completion_error:
         return _invalid(context, "finalize_completion_binding_invalid", completion_error)
     return _bound_recovery_state(
         context=context,
-        event=recovery_event,
+        revision=recovery_revision,
         contamination_event_id=contamination_event_id,
         status=RECOVERY_COMPLETED_NON_REFERENCE,
         reason_code="recovery_completed_non_reference",
@@ -400,6 +414,26 @@ def _event_identity_error(records: Sequence[Mapping[str, Any]]) -> str:
     return ""
 
 
+def _control_record_run_id_error(context: RecoveryContext) -> tuple[str, str]:
+    records = (
+        ("workflow_state", context.workflow, "workflow_run_id_mismatch"),
+        (
+            "artifact_registry",
+            context.artifact_registry,
+            "artifact_registry_run_id_mismatch",
+        ),
+    )
+    for label, payload, reason_code in records:
+        if payload is None:
+            continue
+        if _text(payload.get("run_id")) != context.run_id:
+            return (
+                reason_code,
+                f"{label}.run_id does not match runtime_manifest.run_id.",
+            )
+    return "", ""
+
+
 def _active_repair_binding_error(
     *,
     active_repair: Mapping[str, Any],
@@ -414,64 +448,141 @@ def _active_repair_binding_error(
     for key, expected in required.items():
         if _text(active_repair.get(key)) != expected:
             return f"active_repair.{key} is not bound to the current recovery cycle."
-    start_transaction_id = _text(active_repair.get("repair_start_transaction_id"))
-    started_event_id = _text(active_repair.get("repair_started_event_id"))
-    if not start_transaction_id or not started_event_id:
-        return "active_repair start transaction/event identity is required."
-    event = next((item for item in event_records if _text(item.get("event_id")) == started_event_id), None)
-    if event is None or event.get("event_type") != "repair_started" or _text(event.get("run_id")) != run_id:
-        return "active_repair repair_started event is missing or invalid."
-    metadata = _metadata(event)
-    if _text(metadata.get("transaction_id")) != start_transaction_id:
-        return "active_repair transaction does not match repair_started event."
-    if _text(metadata.get("contamination_event_id")) != contamination_event_id:
-        return "repair_started event is not bound to the current contamination event."
-    if not _text(active_repair.get("repair_owner")):
+    owner_stage = _text(active_repair.get("repair_owner"))
+    if not owner_stage:
         return "active_repair repair_owner is required."
+    return _repair_start_lineage_error(
+        event_records=event_records,
+        run_id=run_id,
+        contamination_event_id=contamination_event_id,
+        owner_stage=owner_stage,
+        repair_start_transaction_id=_text(
+            active_repair.get("repair_start_transaction_id")
+        ),
+        repair_started_event_id=_text(active_repair.get("repair_started_event_id")),
+    )
+
+
+def _repair_start_lineage_error(
+    *,
+    event_records: Sequence[Mapping[str, Any]],
+    run_id: str,
+    contamination_event_id: str,
+    owner_stage: str,
+    repair_start_transaction_id: str,
+    repair_started_event_id: str,
+    completion_event_id: str = "",
+) -> str:
+    if not repair_start_transaction_id or not repair_started_event_id:
+        return "Repair start transaction/event identity is required."
+    started_index, started_event = next(
+        (
+            (index, item)
+            for index, item in enumerate(event_records)
+            if _text(item.get("event_id")) == repair_started_event_id
+        ),
+        (-1, None),
+    )
+    if (
+        started_event is None
+        or started_event.get("event_type") != "repair_started"
+        or _text(started_event.get("run_id")) != run_id
+    ):
+        return "Bound repair_started event is missing or belongs to another run."
+    started_metadata = _metadata(started_event)
+    if _text(started_metadata.get("transaction_id")) != repair_start_transaction_id:
+        return "Repair start transaction does not match repair_started event."
+    if _text(started_metadata.get("contamination_event_id")) != contamination_event_id:
+        return "repair_started event is not bound to the current contamination event."
+    if (
+        _text(started_event.get("stage_id")) != owner_stage
+        or _text(started_metadata.get("repair_owner")) != owner_stage
+    ):
+        return "repair_started event is not bound to the recovery owner stage."
+    if completion_event_id:
+        completion_index = next(
+            (
+                index
+                for index, item in enumerate(event_records)
+                if _text(item.get("event_id")) == completion_event_id
+            ),
+            -1,
+        )
+        if completion_index < 0 or started_index >= completion_index:
+            return "repair_started event must precede repair_completed."
     return ""
 
 
-def _recovery_event_binding_error(
+def _owner_revision_binding_error(
     event: Mapping[str, Any],
     *,
-    contamination_event_id: str,
+    event_records: Sequence[Mapping[str, Any]],
+    run_id: str,
     stage_ids: Sequence[str],
 ) -> str:
     metadata = _metadata(event)
-    if not _text(metadata.get("transaction_id")):
-        return "Recovery event transaction_id is required."
-    if _text(metadata.get("contamination_event_id")) != contamination_event_id:
-        return "Recovery event is not bound to the latest contamination event."
+    if _text(metadata.get("owner_revision_schema_version")) != OWNER_REVISION_SCHEMA:
+        return "Owner revision schema_version is required and must be current."
+    if _text(event.get("run_id")) != run_id:
+        return "Owner revision event belongs to another run."
+    transaction_id = _text(metadata.get("transaction_id"))
+    if not transaction_id:
+        return "Owner revision transaction_id is required."
     owner_stage = _text(metadata.get("owner_stage"))
     rerun_stage = _text(metadata.get("rerun_start_stage"))
     if owner_stage not in stage_ids:
-        return "Recovery event owner_stage is not canonical."
-    if rerun_stage not in stage_ids:
-        return "Recovery event rerun_start_stage is not canonical."
-    if stage_ids.index(rerun_stage) <= stage_ids.index(owner_stage):
-        return "Recovery rerun_start_stage must follow owner_stage."
-    baselines = metadata.get("stale_artifact_baselines")
-    if not isinstance(baselines, Mapping):
-        return "Recovery event stale_artifact_baselines must be an object."
-    return ""
+        return "Owner revision owner_stage is not canonical."
+    if rerun_stage not in stage_ids or stage_ids.index(rerun_stage) <= stage_ids.index(
+        owner_stage
+    ):
+        return "Owner revision rerun_start_stage is not canonical."
+    if not isinstance(metadata.get("stale_artifact_baselines"), Mapping):
+        return "Owner revision stale_artifact_baselines must be an object."
+    event_type = _text(event.get("event_type"))
+    if event_type == "repair_completed":
+        return _repair_start_lineage_error(
+            event_records=event_records,
+            run_id=run_id,
+            contamination_event_id=_text(metadata.get("contamination_event_id")),
+            owner_stage=owner_stage,
+            repair_start_transaction_id=_text(
+                metadata.get("repair_start_transaction_id")
+            ),
+            repair_started_event_id=_text(metadata.get("repair_started_event_id")),
+            completion_event_id=_text(event.get("event_id")),
+        )
+    if event_type == "repair_stage_superseded":
+        if _text(metadata.get("repair_start_transaction_id")) != transaction_id:
+            return (
+                "Supersede repair_start_transaction_id must equal its accepted "
+                "transaction_id."
+            )
+        return ""
+    return "Owner revision event_type is invalid."
 
 
 def _repair_pointer_error(
     pointer: Any,
     *,
-    event: Mapping[str, Any],
+    revision: _OwnerRevisionRecord,
     run_id: str,
 ) -> str:
     if not isinstance(pointer, Mapping):
         return "workflow.last_repair_transaction is required."
-    metadata = _metadata(event)
+    if revision.status == "legacy_migrated":
+        return _legacy_repair_pointer_error(
+            pointer,
+            event_type=revision.event_type,
+            transaction_id=revision.transaction_id,
+            owner_stage=revision.owner_stage,
+        )
     expected = {
-        "transaction_id": metadata.get("transaction_id"),
+        "transaction_id": revision.transaction_id,
         "run_id": run_id,
-        "contamination_event_id": metadata.get("contamination_event_id"),
-        "owner_stage": metadata.get("owner_stage"),
-        "artifact_id": metadata.get("artifact_id"),
-        "rerun_start_stage": metadata.get("rerun_start_stage"),
+        "contamination_event_id": revision.contamination_event_id,
+        "owner_stage": revision.owner_stage,
+        "artifact_id": revision.artifact_id,
+        "rerun_start_stage": revision.rerun_start_stage,
     }
     for key, value in expected.items():
         if _text(pointer.get(key)) != _text(value):
@@ -572,7 +683,7 @@ def _finalize_completion_binding_error(
 def _bound_recovery_state(
     *,
     context: RecoveryContext,
-    event: Mapping[str, Any],
+    revision: _OwnerRevisionRecord,
     contamination_event_id: str,
     status: str,
     reason_code: str,
@@ -581,25 +692,24 @@ def _bound_recovery_state(
     render_transaction_id: str = "",
     finalize_completion_transaction_id: str = "",
 ) -> dict[str, Any]:
-    metadata = _metadata(event)
     return _state(
         status=status,
         reason_code=reason_code,
         reason=reason,
         run_id=context.run_id,
         contamination_event_id=contamination_event_id,
-        recovery_transaction_id=_text(metadata.get("transaction_id")),
-        recovery_event_type=_text(event.get("event_type")),
-        repair_start_transaction_id=_text(metadata.get("repair_start_transaction_id")),
-        owner_stage=_text(metadata.get("owner_stage")),
-        artifact_id=_text(metadata.get("artifact_id")),
-        rerun_start_stage=_text(metadata.get("rerun_start_stage")),
+        recovery_transaction_id=revision.transaction_id,
+        recovery_event_type=revision.event_type,
+        repair_start_transaction_id=revision.repair_start_transaction_id,
+        owner_stage=revision.owner_stage,
+        artifact_id=revision.artifact_id,
+        rerun_start_stage=revision.rerun_start_stage,
         current_stage=_text(context.workflow.get("current_stage")),
         render_transaction_id=render_transaction_id,
         finalize_completion_transaction_id=finalize_completion_transaction_id,
         recommended_recovery_action=action,
-        stale_artifact_baselines=metadata.get("stale_artifact_baselines"),
-        owner_revision=_owner_revision_projection(event),
+        stale_artifact_baselines=revision.stale_artifact_baselines,
+        owner_revision=_owner_revision_projection(revision),
     )
 
 
@@ -682,62 +792,368 @@ def _metadata(event: Mapping[str, Any]) -> Mapping[str, Any]:
     return value if isinstance(value, Mapping) else {}
 
 
-def _latest_owner_revision(
+def _normalize_owner_revisions(
     events: Sequence[Mapping[str, Any]],
     *,
+    run_id: str,
     stage_ids: Sequence[str],
     workflow: Mapping[str, Any],
-) -> tuple[dict[str, Any], str]:
-    revisions: list[Mapping[str, Any]] = []
-    legacy_revisions: list[Mapping[str, Any]] = []
-    for event in events:
+) -> tuple[list[_OwnerRevisionRecord], str]:
+    revisions: list[_OwnerRevisionRecord] = []
+    for event_index, event in enumerate(events):
         if event.get("event_type") not in {"repair_completed", "repair_stage_superseded"}:
             continue
         schema_version = _text(_metadata(event).get("owner_revision_schema_version"))
         if not schema_version:
-            legacy_revisions.append(event)
+            legacy, legacy_error = _legacy_owner_revision_record(
+                event,
+                event_index=event_index,
+                is_latest_revision_event=not any(
+                    later.get("event_type")
+                    in {"repair_completed", "repair_stage_superseded"}
+                    for later in events[event_index + 1 :]
+                ),
+                events=events,
+                run_id=run_id,
+                stage_ids=stage_ids,
+                workflow=workflow,
+            )
+            if legacy_error:
+                return [], legacy_error
+            if legacy is not None:
+                revisions.append(legacy)
             continue
         if schema_version != OWNER_REVISION_SCHEMA:
-            return _empty_owner_revision(), "Owner revision schema_version is unsupported."
-        revisions.append(event)
-    if not revisions:
-        return _legacy_owner_revision(
-            legacy_revisions,
+            return [], "Owner revision schema_version is unsupported."
+        binding_error = _owner_revision_binding_error(
+            event,
+            event_records=events,
+            run_id=run_id,
             stage_ids=stage_ids,
-            workflow=workflow,
         )
-    event = revisions[-1]
-    metadata = _metadata(event)
-    transaction_id = _text(metadata.get("transaction_id"))
-    owner_stage = _text(metadata.get("owner_stage"))
-    rerun_stage = _text(metadata.get("rerun_start_stage"))
-    baselines = metadata.get("stale_artifact_baselines")
-    if not transaction_id:
-        return _empty_owner_revision(), "Owner revision transaction_id is required."
-    if owner_stage not in stage_ids:
-        return _empty_owner_revision(), "Owner revision owner_stage is not canonical."
-    if rerun_stage not in stage_ids or stage_ids.index(rerun_stage) <= stage_ids.index(owner_stage):
-        return _empty_owner_revision(), "Owner revision rerun_start_stage is not canonical."
-    if not isinstance(baselines, Mapping):
-        return _empty_owner_revision(), "Owner revision stale_artifact_baselines must be an object."
-    return _owner_revision_projection(event), ""
+        if binding_error:
+            return [], binding_error
+        metadata = _metadata(event)
+        revisions.append(
+            _OwnerRevisionRecord(
+                status="present",
+                schema_version=OWNER_REVISION_SCHEMA,
+                event_id=_text(event.get("event_id")),
+                event_type=_text(event.get("event_type")),
+                event_index=event_index,
+                transaction_id=_text(metadata.get("transaction_id")),
+                repair_start_transaction_id=_text(
+                    metadata.get("repair_start_transaction_id")
+                ),
+                repair_started_event_id=_text(
+                    metadata.get("repair_started_event_id")
+                ),
+                contamination_event_id=_text(
+                    metadata.get("contamination_event_id")
+                ),
+                owner_stage=_text(metadata.get("owner_stage")),
+                artifact_id=_text(metadata.get("artifact_id")),
+                rerun_start_stage=_text(metadata.get("rerun_start_stage")),
+                stale_artifact_baselines=dict(
+                    metadata.get("stale_artifact_baselines") or {}
+                ),
+            )
+        )
+    return revisions, ""
 
 
-def _legacy_owner_revision(
-    events: Sequence[Mapping[str, Any]],
+def _legacy_owner_revision_record(
+    event: Mapping[str, Any],
     *,
+    event_index: int,
+    is_latest_revision_event: bool,
+    events: Sequence[Mapping[str, Any]],
+    run_id: str,
     stage_ids: Sequence[str],
     workflow: Mapping[str, Any],
-) -> tuple[dict[str, Any], str]:
-    if not events:
-        return _empty_owner_revision(), ""
-    event = events[-1]
+) -> tuple[_OwnerRevisionRecord | None, str]:
     metadata = _metadata(event)
     transaction_id = _text(metadata.get("transaction_id"))
     if not transaction_id:
-        return _empty_owner_revision(), ""
+        return None, ""
+    event_type = _text(event.get("event_type"))
+    owner_stage = (
+        _text(metadata.get("repair_owner"))
+        or _text(metadata.get("stage_id"))
+        or _text(event.get("stage_id"))
+    )
+    rerun_stage = _text(metadata.get("must_rerun_from")) or _text(
+        metadata.get("next_stage")
+    )
+    artifact_id = _legacy_owner_revision_artifact_id(event)
+    artifact_path = _text(metadata.get("artifact_path"))
+    baselines, stale_matches, stale_error = _legacy_stale_evidence(
+        workflow=workflow,
+        event_type=event_type,
+        transaction_id=transaction_id,
+        owner_stage=owner_stage,
+        artifact_path=artifact_path,
+    )
+    if stale_error:
+        return None, stale_error
+    contaminations = [
+        (index, item)
+        for index, item in enumerate(events[:event_index])
+        if item.get("event_type") == "run_integrity_contaminated"
+        and _text(item.get("run_id")) == run_id
+    ]
+    if not contaminations and stale_matches == 0:
+        return None, ""
+    pointer = workflow.get("last_repair_transaction")
+    pointer_matches = (
+        isinstance(pointer, Mapping)
+        and _text(pointer.get("transaction_id")) == transaction_id
+    )
+    if not pointer_matches and stale_matches == 0 and not is_latest_revision_event:
+        return None, ""
+    if owner_stage not in stage_ids:
+        return None, "Legacy owner revision owner_stage is not canonical."
+    if rerun_stage not in stage_ids or stage_ids.index(rerun_stage) <= stage_ids.index(
+        owner_stage
+    ):
+        return None, "Legacy owner revision rerun_start_stage is not canonical."
+    if event_type == "repair_completed" and _text(event.get("decision")) != "repair_complete":
+        return None, "Legacy repair completion decision is invalid."
+    if event_type == "repair_stage_superseded" and (
+        not artifact_id
+        or not artifact_path
+        or not _text(metadata.get("old_registered_sha256"))
+        or not _text(metadata.get("current_bytes_sha256"))
+    ):
+        return None, "Legacy supersede artifact/hash identity is incomplete."
 
+    pointer_error = _legacy_repair_pointer_error(
+        pointer,
+        event_type=event_type,
+        transaction_id=transaction_id,
+        owner_stage=owner_stage,
+    )
+    if pointer_error:
+        return None, pointer_error
+
+    contamination_event_id = ""
+    repair_start_transaction_id = ""
+    repair_started_event_id = ""
+    if contaminations:
+        contamination_index, contamination = contaminations[-1]
+        contamination_event_id = _text(contamination.get("event_id"))
+        if not _legacy_revision_is_non_reference(event):
+            return None, "Legacy contaminated owner revision lacks non-reference posture."
+        if stale_matches == 0 and not _legacy_rerun_has_advanced(
+            workflow=workflow,
+            rerun_stage=rerun_stage,
+            stage_ids=stage_ids,
+        ):
+            return None, "Legacy contaminated owner revision has no rerun proof."
+        if event_type == "repair_completed":
+            (
+                repair_start_transaction_id,
+                repair_started_event_id,
+                start_error,
+            ) = _legacy_repair_start_lineage(
+                event=event,
+                event_index=event_index,
+                events=events,
+                run_id=run_id,
+                owner_stage=owner_stage,
+                rerun_stage=rerun_stage,
+                contamination=contamination,
+                contamination_index=contamination_index,
+            )
+            if start_error:
+                return None, start_error
+        elif event_type == "repair_stage_superseded":
+            count = metadata.get("contamination_event_count")
+            try:
+                recorded_count = int(count)
+            except (TypeError, ValueError):
+                return None, "Legacy supersede contamination_event_count is invalid."
+            if recorded_count != len(contaminations):
+                return None, "Legacy supersede contamination count does not bind."
+            repair_start_transaction_id = transaction_id
+        else:
+            return None, "Legacy owner revision event_type is invalid."
+    elif event_type == "repair_completed":
+        (
+            repair_start_transaction_id,
+            repair_started_event_id,
+            start_error,
+        ) = _legacy_repair_start_lineage(
+            event=event,
+            event_index=event_index,
+            events=events,
+            run_id=run_id,
+            owner_stage=owner_stage,
+            rerun_stage=rerun_stage,
+        )
+        if start_error:
+            return None, start_error
+    else:
+        return None, "Legacy supersede without contamination is invalid."
+
+    return (
+        _OwnerRevisionRecord(
+            status="legacy_migrated",
+            schema_version="legacy_unversioned",
+            event_id=_text(event.get("event_id")),
+            event_type=event_type,
+            event_index=event_index,
+            transaction_id=transaction_id,
+            repair_start_transaction_id=repair_start_transaction_id,
+            repair_started_event_id=repair_started_event_id,
+            contamination_event_id=contamination_event_id,
+            owner_stage=owner_stage,
+            artifact_id=artifact_id,
+            rerun_start_stage=rerun_stage,
+            stale_artifact_baselines=baselines,
+        ),
+        "",
+    )
+
+
+def _legacy_owner_revision_artifact_id(event: Mapping[str, Any]) -> str:
+    metadata = _metadata(event)
+    source = metadata.get("source")
+    return (
+        _text(metadata.get("artifact_id"))
+        or _text(event.get("artifact_id"))
+        or (
+            _text(source.get("artifact_id"))
+            if isinstance(source, Mapping)
+            else ""
+        )
+    )
+
+
+def _legacy_repair_pointer_error(
+    pointer: Any,
+    *,
+    event_type: str,
+    transaction_id: str,
+    owner_stage: str,
+) -> str:
+    if not isinstance(pointer, Mapping):
+        return "Legacy owner revision requires workflow.last_repair_transaction."
+    expected_decision = (
+        "repair_complete"
+        if event_type == "repair_completed"
+        else "supersede_stage"
+    )
+    if _text(pointer.get("transaction_id")) != transaction_id:
+        return "Legacy owner revision pointer transaction does not match event."
+    if _text(pointer.get("stage_id")) != owner_stage:
+        return "Legacy owner revision pointer owner does not match event."
+    if _text(pointer.get("decision")) != expected_decision:
+        return "Legacy owner revision pointer decision does not match event."
+    return ""
+
+
+def _legacy_revision_is_non_reference(event: Mapping[str, Any]) -> bool:
+    metadata = _metadata(event)
+    effect = metadata.get("run_integrity_effect")
+    return metadata.get("reference_eligible") is False or (
+        isinstance(effect, Mapping) and effect.get("reference_eligible") is False
+    )
+
+
+def _legacy_rerun_has_advanced(
+    *,
+    workflow: Mapping[str, Any],
+    rerun_stage: str,
+    stage_ids: Sequence[str],
+) -> bool:
+    current_stage = _text(workflow.get("current_stage"))
+    if current_stage and current_stage not in stage_ids:
+        return False
+    rerun_index = stage_ids.index(rerun_stage)
+    end_index = stage_ids.index(current_stage) if current_stage else len(stage_ids)
+    if end_index <= rerun_index:
+        return False
+    statuses = workflow.get("stage_statuses")
+    if not isinstance(statuses, Mapping):
+        return False
+    for stage_id in stage_ids[rerun_index:end_index]:
+        entry = statuses.get(stage_id)
+        if not isinstance(entry, Mapping) or entry.get("status") not in {
+            "complete",
+            "skipped",
+        }:
+            return False
+    return True
+
+
+def _legacy_repair_start_lineage(
+    *,
+    event: Mapping[str, Any],
+    event_index: int,
+    events: Sequence[Mapping[str, Any]],
+    run_id: str,
+    owner_stage: str,
+    rerun_stage: str,
+    contamination: Mapping[str, Any] | None = None,
+    contamination_index: int = -1,
+) -> tuple[str, str, str]:
+    completion_source = _metadata(event).get("source")
+    if not isinstance(completion_source, Mapping):
+        return "", "", "Legacy repair completion source identity is required."
+    contamination_start_id = ""
+    if contamination is not None:
+        details = _metadata(contamination).get("details")
+        if isinstance(details, Mapping):
+            contamination_start_id = _text(details.get("repair_transaction_id"))
+    candidates: list[Mapping[str, Any]] = []
+    for index, candidate in enumerate(events[:event_index]):
+        if (
+            candidate.get("event_type") != "repair_started"
+            or _text(candidate.get("run_id")) != run_id
+            or _text(candidate.get("stage_id")) != owner_stage
+        ):
+            continue
+        candidate_metadata = _metadata(candidate)
+        if (
+            _text(candidate_metadata.get("repair_owner")) != owner_stage
+            or _text(candidate_metadata.get("must_rerun_from")) != rerun_stage
+        ):
+            continue
+        candidate_source = candidate_metadata.get("source")
+        if not isinstance(candidate_source, Mapping) or dict(
+            completion_source
+        ) != dict(candidate_source):
+            continue
+        start_transaction_id = _text(candidate_metadata.get("transaction_id"))
+        if not start_transaction_id:
+            continue
+        if contamination is not None and index <= contamination_index:
+            if start_transaction_id != contamination_start_id:
+                continue
+        candidates.append(candidate)
+    if not candidates:
+        return "", "", "Legacy repair completion has no provable start event."
+    if len(candidates) != 1:
+        return "", "", "Legacy repair completion has ambiguous start events."
+    started = candidates[0]
+    return (
+        _text(_metadata(started).get("transaction_id")),
+        _text(started.get("event_id")),
+        "",
+    )
+
+
+def _legacy_stale_evidence(
+    *,
+    workflow: Mapping[str, Any],
+    event_type: str,
+    transaction_id: str,
+    owner_stage: str,
+    artifact_path: str,
+) -> tuple[dict[str, Any], int, str]:
     baselines: dict[str, Any] = {}
+    matches = 0
     statuses = workflow.get("stage_statuses")
     if isinstance(statuses, Mapping):
         for entry in statuses.values():
@@ -746,59 +1162,61 @@ def _legacy_owner_revision(
                 if isinstance(entry, Mapping) and isinstance(entry.get("metadata"), Mapping)
                 else {}
             )
-            if (
-                stage_metadata.get("stale_after_repair") is not True
-                or _text(stage_metadata.get("repair_transaction_id")) != transaction_id
-            ):
+            repair_match = (
+                event_type == "repair_completed"
+                and stage_metadata.get("stale_after_repair") is True
+                and _text(stage_metadata.get("repair_transaction_id")) == transaction_id
+            )
+            supersede_match = (
+                event_type == "repair_stage_superseded"
+                and stage_metadata.get("stale_after_supersede") is True
+                and _text(stage_metadata.get("supersede_transaction_id"))
+                == transaction_id
+            )
+            if not repair_match and not supersede_match:
                 continue
+            matches += 1
+            if repair_match and _text(stage_metadata.get("repair_owner")) != owner_stage:
+                return {}, 0, "Legacy repair stale owner conflicts with event."
+            if supersede_match and (
+                _text(stage_metadata.get("supersede_stage")) != owner_stage
+                or (
+                    artifact_path
+                    and _text(stage_metadata.get("supersede_artifact"))
+                    != artifact_path
+                )
+            ):
+                return {}, 0, "Legacy supersede stale metadata conflicts with event."
             stage_baselines = stage_metadata.get("stale_artifact_baselines")
+            if stage_baselines is None:
+                continue
             if not isinstance(stage_baselines, Mapping):
-                return _empty_owner_revision(), "Legacy owner revision stale baselines are invalid."
+                return {}, 0, "Legacy owner revision stale baselines are invalid."
             for artifact_id, baseline in stage_baselines.items():
                 key = _text(artifact_id)
                 if not key or not isinstance(baseline, Mapping):
-                    return _empty_owner_revision(), "Legacy owner revision stale baselines are invalid."
+                    return {}, 0, "Legacy owner revision stale baselines are invalid."
                 if key in baselines and baselines[key] != baseline:
-                    return _empty_owner_revision(), "Legacy owner revision stale baselines conflict."
+                    return {}, 0, "Legacy owner revision stale baselines conflict."
                 baselines[key] = dict(baseline)
-    if not baselines:
-        return _empty_owner_revision(), ""
+    return baselines, matches, ""
 
-    pointer = workflow.get("last_repair_transaction")
-    if not isinstance(pointer, Mapping) or _text(pointer.get("transaction_id")) != transaction_id:
-        return _empty_owner_revision(), "Legacy owner revision pointer does not match stale metadata."
-    owner_stage = _text(metadata.get("repair_owner")) or _text(event.get("stage_id"))
-    rerun_stage = _text(metadata.get("must_rerun_from")) or _text(metadata.get("next_stage"))
-    if owner_stage not in stage_ids:
-        return _empty_owner_revision(), "Legacy owner revision owner_stage is not canonical."
-    if rerun_stage not in stage_ids or stage_ids.index(rerun_stage) <= stage_ids.index(owner_stage):
-        return _empty_owner_revision(), "Legacy owner revision rerun_start_stage is not canonical."
+
+def _owner_revision_projection(
+    revision: _OwnerRevisionRecord | None,
+) -> dict[str, Any]:
+    if revision is None:
+        return _empty_owner_revision()
     return {
-        "status": "legacy_migrated",
-        "schema_version": "legacy_unversioned",
-        "event_id": _text(event.get("event_id")),
-        "event_type": _text(event.get("event_type")),
-        "transaction_id": transaction_id,
-        "owner_stage": owner_stage,
-        "artifact_id": "",
-        "rerun_start_stage": rerun_stage,
-        "stale_artifact_baselines": baselines,
-    }, ""
-
-
-def _owner_revision_projection(event: Mapping[str, Any]) -> dict[str, Any]:
-    metadata = _metadata(event)
-    baselines = metadata.get("stale_artifact_baselines")
-    return {
-        "status": "present",
-        "schema_version": _text(metadata.get("owner_revision_schema_version")),
-        "event_id": _text(event.get("event_id")),
-        "event_type": _text(event.get("event_type")),
-        "transaction_id": _text(metadata.get("transaction_id")),
-        "owner_stage": _text(metadata.get("owner_stage")),
-        "artifact_id": _text(metadata.get("artifact_id")),
-        "rerun_start_stage": _text(metadata.get("rerun_start_stage")),
-        "stale_artifact_baselines": dict(baselines) if isinstance(baselines, Mapping) else {},
+        "status": revision.status,
+        "schema_version": revision.schema_version,
+        "event_id": revision.event_id,
+        "event_type": revision.event_type,
+        "transaction_id": revision.transaction_id,
+        "owner_stage": revision.owner_stage,
+        "artifact_id": revision.artifact_id,
+        "rerun_start_stage": revision.rerun_start_stage,
+        "stale_artifact_baselines": dict(revision.stale_artifact_baselines),
     }
 
 
