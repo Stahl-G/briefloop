@@ -180,6 +180,8 @@ def workflow_with_persistable_run_integrity(workflow: dict[str, Any], *, path: s
 def workflow_with_sticky_contamination_events(
     workflow: dict[str, Any],
     event_records: list[dict[str, Any]],
+    *,
+    expected_run_id: str | None = None,
 ) -> dict[str, Any]:
     """Return workflow with run-integrity contamination replayed from events."""
 
@@ -187,7 +189,23 @@ def workflow_with_sticky_contamination_events(
         workflow,
         path="workflow_state.run_integrity",
     )
-    run_id = str(updated.get("run_id") or "").strip()
+    workflow_run_id = str(updated.get("run_id") or "").strip()
+    authority_run_id = str(expected_run_id or "").strip()
+    if authority_run_id and workflow_run_id and workflow_run_id != authority_run_id:
+        from multi_agent_brief.orchestrator.runtime_state.errors import (
+            E_TRANSACTION_INTEGRITY,
+            RuntimeStateError,
+        )
+
+        raise RuntimeStateError(
+            "workflow_state.run_id does not match the authoritative runtime manifest run_id.",
+            details={
+                "manifest_run_id": authority_run_id,
+                "workflow_run_id": workflow_run_id,
+            },
+            error_code=E_TRANSACTION_INTEGRITY,
+        )
+    run_id = authority_run_id or workflow_run_id
     contamination_events = [
         event
         for event in event_records

@@ -101,11 +101,17 @@ def build_completion_projection(
         "artifact_registry": registry_status,
         "event_log": event_log_status,
     }
+    manifest_run_id = (
+        _clean_text(manifest.get("run_id"))
+        if isinstance(manifest, Mapping)
+        else ""
+    )
     effective_workflow, effective_workflow_status = _workflow_with_event_integrity(
         workflow=workflow,
         workflow_status=workflow_status,
         event_records=event_records,
         event_log_status=event_log_status,
+        expected_run_id=manifest_run_id,
     )
     if workflow_status == "present" and effective_workflow_status != "present":
         control_file_status["workflow_state"] = effective_workflow_status
@@ -122,7 +128,6 @@ def build_completion_projection(
     stages = load_stage_specs(repo)
     artifacts = load_artifact_contracts(repo)
     stage_order = recovery_stage_order(stages)
-    manifest_run_id = _clean_text(manifest.get("run_id")) if isinstance(manifest, Mapping) else ""
     recovery_truth = evaluate_recovery_truth(
         workflow=effective_workflow,
         workflow_status=effective_workflow_status,
@@ -217,6 +222,7 @@ def _workflow_with_event_integrity(
     workflow_status: str,
     event_records: list[Mapping[str, Any]],
     event_log_status: str,
+    expected_run_id: str,
 ) -> tuple[Any, str]:
     if workflow_status != "present" or not isinstance(workflow, Mapping):
         return workflow, workflow_status
@@ -232,6 +238,7 @@ def _workflow_with_event_integrity(
         effective = workflow_with_sticky_contamination_events(
             dict(workflow),
             [dict(record) for record in event_records],
+            expected_run_id=expected_run_id,
         )
     except RuntimeStateError:
         return workflow, "invalid_run_integrity"
@@ -536,6 +543,8 @@ def _next_allowed_action(
     if artifact_truth.get("invalid_or_stale"):
         return "inspect_invalid_or_stale_artifacts"
     if finalize_truth.get("status") != "present":
+        if (recovery_truth or {}).get("status") == RECOVERY_READY_FOR_FINALIZE:
+            return "run_finalize_after_recovery"
         if _clean_text(current_stage) in {"finalize", "delivery", "delivered"}:
             return "run_finalize_when_allowed"
         return "continue_current_stage_or_handoff_workflow"
@@ -570,7 +579,7 @@ def _next_allowed_action_for_run_integrity(
                 return f"rerun_downstream_from_{stage}"
             return "rerun_downstream_stages"
         if recovery_status == RECOVERY_READY_FOR_FINALIZE:
-            return "run_finalize_after_recovery"
+            return None
         if recovery_status == RECOVERY_INVALID:
             return "stop_invalid_recovery_state"
         return "stop_human_review_or_supersede"

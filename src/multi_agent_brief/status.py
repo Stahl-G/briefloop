@@ -110,13 +110,33 @@ def build_workspace_status(workspace: str | Path) -> dict[str, Any]:
 
     event_log_path = ws / INTERMEDIATE_DIR / "event_log.jsonl"
     event_records = _event_records_best_effort(event_log_path)
+    manifest_payload = (
+        manifest.get("payload")
+        if manifest.get("status") == "present"
+        else None
+    )
     workflow_payload = workflow.get("payload") if workflow.get("status") == "present" else None
     if isinstance(workflow_payload, dict):
         workflow = dict(workflow)
         try:
-            workflow["payload"] = workflow_with_sticky_contamination_events(workflow_payload, event_records)
-        except RuntimeStateError:
-            workflow["payload"] = workflow_payload
+            workflow["payload"] = workflow_with_sticky_contamination_events(
+                workflow_payload,
+                event_records,
+                expected_run_id=(
+                    str(manifest_payload.get("run_id") or "")
+                    if isinstance(manifest_payload, dict)
+                    else None
+                ),
+            )
+        except RuntimeStateError as exc:
+            if {"manifest_run_id", "workflow_run_id"} <= set(exc.details):
+                workflow = {
+                    "status": "error",
+                    "payload": None,
+                    "error": str(exc),
+                }
+            else:
+                workflow["payload"] = workflow_payload
     workflow_payload = workflow.get("payload") if workflow.get("status") == "present" else None
 
     payload["runtime"] = _runtime_summary(manifest)
@@ -148,7 +168,6 @@ def build_workspace_status(workspace: str | Path) -> dict[str, Any]:
         else None,
         event_records=event_records,
     )
-    manifest_payload = manifest.get("payload") if manifest.get("status") == "present" else None
     payload["fact_layer_import"] = summarize_fact_layer_import(
         manifest_payload if isinstance(manifest_payload, dict) else None,
         workflow_payload if isinstance(workflow_payload, dict) else None,

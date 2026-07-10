@@ -261,6 +261,7 @@ def _load_manifest_and_workflow(workspace: str | Path) -> tuple[Path, dict[str, 
     workflow = _workflow_with_sticky_contamination_events(
         workflow,
         _read_event_log_records(paths["event_log"]),
+        expected_run_id=str(manifest["run_id"]),
     )
     if workflow.get("run_id") is not None:
         workflow["run_id"] = _validate_runtime_run_id(

@@ -560,6 +560,31 @@ def test_completion_projection_replays_sticky_current_run_contamination(
     assert payload["next_allowed_action"] == "stop_human_review_or_supersede"
 
 
+def test_completion_projection_rejects_manifest_workflow_run_id_mismatch(
+    tmp_path: Path,
+) -> None:
+    ws = _write_workspace(tmp_path)
+    state = _init_workspace(ws)
+    workflow = _load_json(_intermediate(ws) / "workflow_state.json")
+    workflow["run_id"] = "run-mismatched-workflow-001"
+    _write_json(_intermediate(ws) / "workflow_state.json", workflow)
+    append_event(
+        workspace=ws,
+        run_id=state["manifest"]["run_id"],
+        event_type="run_integrity_contaminated",
+        actor="orchestrator",
+        reason="Manifest-scoped contamination must not bind to another workflow run.",
+        metadata={"reason_code": "frozen_artifact_changed"},
+    )
+
+    payload = build_completion_projection(workspace=ws, repo_workdir=ROOT)
+
+    assert payload["control_files"]["workflow_state"] == "invalid_run_integrity"
+    assert payload["run_integrity"]["status"] == "unknown"
+    assert payload["recovery_truth"]["status"] == "invalid_recovery_state"
+    assert payload["next_allowed_action"] == "inspect_unreadable_or_missing_control_files"
+
+
 def test_completion_projection_rejects_recovery_without_current_run_contamination(
     tmp_path: Path,
 ) -> None:
@@ -742,6 +767,7 @@ def test_completion_projection_recovery_survives_downstream_progress(tmp_path: P
     from tests.test_runtime_state import (
         _contaminated_editor_artifact_workspace,
         _valid_audit_report_payload,
+        _write_finalize_report,
         _write_json_artifact,
         _write_quality_gate_report,
     )
@@ -773,6 +799,13 @@ def test_completion_projection_recovery_survives_downstream_progress(tmp_path: P
     assert recovery["rerun_start_stage"] == "auditor"
     assert recovery["finalize_allowed"] is True
     assert payload["next_allowed_action"] == "run_finalize_after_recovery"
+
+    _write_quality_gate_report(ws, stage_id="finalize")
+    _write_finalize_report(ws)
+    payload = build_completion_projection(workspace=ws, repo_workdir=ROOT)
+
+    assert payload["recovery_truth"]["status"] == "ready_for_finalize"
+    assert payload["next_allowed_action"] == "run_finalize_gate_or_finalize_complete"
 
 
 def test_completion_projection_source_discovery_supersede_advances_multiple_stages(tmp_path: Path) -> None:

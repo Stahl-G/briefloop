@@ -129,23 +129,26 @@ def _preflight_runtime_state_before_finalize(workspace: Path) -> None:
         raise_if_active_repair_open(workspace=workspace, workflow=workflow)
         if paths["runtime_manifest"].exists():
             try:
-                check_runtime_state(workspace=workspace, actor="cli")
+                checked_state = check_runtime_state(workspace=workspace, actor="cli")
             except RuntimeStateError:
                 raise
             except Exception as exc:
                 raise RuntimeStateError(f"Unable to verify runtime state integrity before finalize: {exc}") from exc
-            try:
-                workflow = json.loads(workflow_path.read_text(encoding="utf-8"))
-            except (OSError, json.JSONDecodeError) as exc:
-                raise RuntimeStateError(
-                    f"workflow_state.json is unreadable after runtime state refresh: {exc}",
-                ) from exc
+            workflow = checked_state.get("workflow_state")
             if not isinstance(workflow, dict):
-                raise RuntimeStateError("workflow_state.json must contain an object after runtime state refresh.")
+                raise RuntimeStateError(
+                    "Runtime state refresh did not return workflow_state before finalize."
+                )
+            manifest = checked_state.get("manifest")
+            if not isinstance(manifest, dict) or not str(manifest.get("run_id") or "").strip():
+                raise RuntimeStateError(
+                    "Runtime state refresh did not return an authoritative run_id before finalize."
+                )
             event_records = read_event_log_records_strict(paths["event_log"])
             _raise_if_run_integrity_blocks_finalize(
                 workflow,
                 event_records=event_records,
+                expected_run_id=str(manifest["run_id"]),
                 stage_order=recovery_stage_order(
                     load_stage_specs(
                         resolve_repo_workdir(None, workspace=workspace)
@@ -171,11 +174,13 @@ def _raise_if_run_integrity_blocks_finalize(
     workflow: dict[str, object],
     *,
     event_records: list[dict[str, object]],
+    expected_run_id: str,
     stage_order: list[str],
 ) -> None:
     effective_workflow = workflow_with_sticky_contamination_events(
         workflow,
         event_records,
+        expected_run_id=expected_run_id,
     )
     integrity = project_for_read(
         interpret_run_integrity(
@@ -193,7 +198,7 @@ def _raise_if_run_integrity_blocks_finalize(
         workflow_status="present",
         event_records=event_records,
         run_integrity=integrity,
-        run_id=str(effective_workflow.get("run_id") or ""),
+        run_id=expected_run_id,
         current_stage=str(effective_workflow.get("current_stage") or ""),
         stage_order=stage_order,
     )

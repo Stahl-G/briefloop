@@ -58,13 +58,22 @@ def evaluate_recovery_truth(
         "delivery_allowed": False,
     }
     integrity_status = _clean_text(run_integrity.get("status"))
+    if workflow_status != "present" or not isinstance(workflow, Mapping) or not _clean_text(run_id):
+        if integrity_status in {"", "clean", "pass", "ok"}:
+            return base
+        return {**base, "status": RECOVERY_INVALID, "reason_code": "recovery_control_context_invalid"}
     if integrity_status not in {
         RUN_INTEGRITY_CONTAMINATED,
         RUN_INTEGRITY_CONTAMINATED_REPAIRED,
     }:
         return base
-    if workflow_status != "present" or not isinstance(workflow, Mapping) or not _clean_text(run_id):
-        return {**base, "status": RECOVERY_INVALID, "reason_code": "recovery_control_context_invalid"}
+    workflow_run_id = _clean_text(workflow.get("run_id"))
+    if not workflow_run_id or workflow_run_id != _clean_text(run_id):
+        return {
+            **base,
+            "status": RECOVERY_INVALID,
+            "reason_code": "recovery_run_id_binding_invalid",
+        }
 
     current_run_records = [
         record

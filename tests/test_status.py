@@ -9,7 +9,15 @@ import yaml
 from multi_agent_brief.orchestrator.runtime_state.semantic_assessment_report import (
     build_semantic_assessment_checked_inputs,
 )
+from multi_agent_brief.orchestrator.runtime_state import (
+    initialize_runtime_state,
+    runtime_state_paths,
+)
 from multi_agent_brief.status import build_workspace_status, format_workspace_status
+from tests.helpers import write_minimal_workspace
+
+
+ROOT = Path(__file__).resolve().parents[1]
 
 
 def _span_hash(text: str) -> str:
@@ -1044,3 +1052,25 @@ def test_status_reports_invalid_semantic_assessment_report_without_writes(tmp_pa
     ) in formatted
     assert not (intermediate / "quality_gate_report.json").exists()
     assert not (intermediate / "event_log.jsonl").exists()
+
+
+def test_status_fails_closed_on_manifest_workflow_run_id_mismatch(
+    tmp_path: Path,
+) -> None:
+    ws = write_minimal_workspace(tmp_path / "ws")
+    initialize_runtime_state(workspace=ws, repo_workdir=ROOT)
+    paths = runtime_state_paths(ws)
+    workflow = json.loads(paths["workflow_state"].read_text(encoding="utf-8"))
+    workflow["run_id"] = "run-mismatched-workflow-001"
+    paths["workflow_state"].write_text(
+        json.dumps(workflow, ensure_ascii=False, indent=2) + "\n",
+        encoding="utf-8",
+    )
+
+    status = build_workspace_status(ws)
+
+    assert status["workflow"]["present"] is False
+    assert any(
+        item.startswith("workflow_state unreadable:")
+        for item in status["stale_or_unknown"]
+    )

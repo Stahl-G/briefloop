@@ -870,12 +870,14 @@ def _delivery_integrity_context(
             error_code=E_DELIVERY_EVENT_FAILED,
         )
     try:
+        run_id = _delivery_run_id(workspace)
         event_records = read_event_log_records_strict(paths["event_log"])
         workflow = workflow_with_sticky_contamination_events(
             workflow,
             event_records,
+            expected_run_id=run_id,
         )
-    except RuntimeStateError as exc:
+    except (RuntimeStateError, OSError, json.JSONDecodeError) as exc:
         raise DeliverCommandError(
             f"Delivery integrity context is invalid: {exc}",
             error_code=E_DELIVERY_RUN_INTEGRITY_BLOCKED,
@@ -900,7 +902,7 @@ def _delivery_integrity_context(
         workflow_status="present",
         event_records=event_records,
         run_integrity=run_integrity,
-        run_id=str(workflow.get("run_id") or ""),
+        run_id=run_id,
         current_stage=str(workflow.get("current_stage") or ""),
         stage_order=stage_order,
     )
