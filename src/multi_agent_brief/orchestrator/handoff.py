@@ -1453,7 +1453,7 @@ def _apply_fast_rerun_recipe(handoff: AgentHandoff, workspace: Path) -> None:
         "Do not synthesize or backfill upstream stage-complete, decision_recorded, "
         "or stage_status_changed events for imported stages.",
         "Do not add facts outside the imported Claim Ledger.",
-        "Continue through Analyst, Editor, Auditor, gates, finalize, finalize-complete, human delivery, and archive.",
+        "Continue through Analyst, Editor, Auditor, and gates. Finalize is transactional: run finalize-complete, human delivery, and archive only after finalize_report.json reports delivery_promotion \"promoted\" and workbuddy diagnose reports delivery_truth.valid=true.",
         "Timing comparability is downstream_only: upstream fact-layer stages were "
         "satisfied by import and must not be compared directly with full runs.",
         "If runtime_manifest.fact_layer_import is missing or invalid, stop and run "

@@ -23,6 +23,7 @@ Hermes-specific runtime path:
    `multi-agent-brief state stage-complete --workspace <workspace> --stage auditor --reason "Audit and quality gates passed."`
 12. Then run `multi-agent-brief finalize --config <workspace>/config.yaml`. Finalize is transactional: a failed reader-clean does not promote delivery and leaves any prior delivery unchanged.
 13. Only after `finalize_report.json` reports `delivery_promotion: "promoted"`, run:
+   `multi-agent-brief gates check --workspace <workspace> --stage finalize --brief <workspace>/output/brief.md`
    `multi-agent-brief state finalize-complete --workspace <workspace> --reason "Reader-facing artifacts passed finalize checks."`
    Then confirm `multi-agent-brief workbuddy diagnose --workspace <workspace> --json` reports `delivery_truth.valid=true` before claiming delivery; audit/gate status or artifact existence alone is not a delivery claim.
 14. `finalize` alone is not a quality-gate executor; do not skip gates/state completion checks when quality gates are required.

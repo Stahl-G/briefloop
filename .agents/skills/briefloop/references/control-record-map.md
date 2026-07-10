@@ -51,7 +51,8 @@ Owning commands for recent control-tool projections:
   Assessment Report proposal rows. It records adjudication only; it does not
   write Claim-Support Matrix rows, gate reports, workflow state, repair routes,
   delivery state, or release state.
-- `briefloop finalize` writes `finalize_report.json`, the single delivery-truth
+- `briefloop finalize` writes `finalize_report.json` (including
+  `delivery_promotion`), the single delivery-truth
   record: staged-candidate reader projection results, `delivery_artifacts`,
   their SHA-256 hashes, promotion status, reader-clean results, and the
   resolved citation profile (`executive`, `analyst`, or `audit`). `deliver`,

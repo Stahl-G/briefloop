@@ -216,6 +216,66 @@ def test_finalize_guidance_is_promotion_gated_everywhere() -> None:
     assert offenders == [], f"unconditional finalize guidance found in: {offenders}"
 
 
+def test_finalize_complete_guidance_carries_promotion_gate() -> None:
+    """Positive invariant, file-level: any prose guidance surface that teaches
+    `state finalize-complete` must also carry the `delivery_promotion` gate.
+
+    Blocklist scans catch known stale phrasings; this check catches novel
+    paraphrases and omitted gate steps. Implementation modules and tests are
+    enforced behaviorally and are out of scope here.
+    """
+    prose_roots = [
+        "configs",
+        ".agents",
+        ".claude",
+        ".codex",
+        ".opencode",
+        ".codebuddy",
+        "integrations",
+        "docs/agents",
+    ]
+    guidance_emitters = [
+        "src/multi_agent_brief/orchestrator/handoff.py",
+        "src/multi_agent_brief/hermes/adapter.py",
+        "integrations/hermes-plugin/mabw/__init__.py",
+        "scripts/generate_agent_configs.py",
+    ]
+    root_docs = [
+        "HERMES.md",
+        "AGENTS.md",
+        "CLAUDE.md",
+        "docs/claude-code-quickstart.md",
+        "docs/claude-code-workflow.md",
+        "docs/weekly-loop.md",
+        "docs/golden-path.md",
+    ]
+    suffixes = {".md", ".toml", ".yaml", ".yml"}
+    files: list[Path] = []
+    for root in prose_roots:
+        base = ROOT / root
+        if not base.exists():
+            continue
+        files.extend(
+            path
+            for path in base.rglob("*")
+            if path.is_file()
+            and path.suffix in suffixes
+            and "__pycache__" not in path.parts
+            and "tests" not in path.parts
+        )
+    files.extend(ROOT / rel for rel in guidance_emitters)
+    files.extend(ROOT / rel for rel in root_docs if (ROOT / rel).exists())
+
+    offenders: list[str] = []
+    for path in files:
+        text = path.read_text(encoding="utf-8", errors="ignore")
+        if "state finalize-complete" in text and "delivery_promotion" not in text:
+            offenders.append(str(path.relative_to(ROOT)))
+    assert offenders == [], (
+        f"finalize-complete taught without the delivery_promotion gate in: {offenders}"
+    )
+
+
 def test_stage_completion_protocol_ships_promotion_and_delivery_truth_gate() -> None:
     """Positive gate: the finalize guidance embedded in every handoff must carry
     the transactional promotion + delivery-truth contract, not just avoid stale

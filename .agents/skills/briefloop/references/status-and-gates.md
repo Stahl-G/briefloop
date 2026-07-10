@@ -167,8 +167,9 @@ Delivery truth is a single authoritative record: `finalize_report.json`.
   `output/brief.md` and `output/delivery/`. A failed reader-clean writes a
   failed finalize report and leaves any prior delivery bundle unchanged.
 - Successful promotion records `delivery_artifacts`, their SHA-256 hashes, and
-  the promotion status in `finalize_report.json`. `deliver` and
-  `state finalize-complete` verify those recorded artifacts.
+  `delivery_promotion: "promoted"` in `finalize_report.json`. `deliver` and
+  `state finalize-complete` verify those recorded artifacts; run them only
+  after promotion, never against unpromoted output.
 - The canonical completion projection owns finalize truth, delivery truth, and
   the next allowed action, and reports stale, missing, or malformed delivery
   findings. Read it through `briefloop workbuddy diagnose --workspace

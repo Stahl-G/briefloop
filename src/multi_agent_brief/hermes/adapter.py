@@ -475,7 +475,9 @@ Audit warnings, overstatement findings, support-calibration findings, and
 quality-gate findings do not authorize direct edits to frozen artifacts. For
 current quality-gate repair, use `briefloop gates show --workspace <workspace>
 --json` and follow its required_commands. Current-gate repair start must be
-scoped with `--gate-stage` and `--gate-artifact`; use `briefloop repair
+scoped with `--gate-stage` and `--gate-artifact`. For non-gate owner-stage
+routes, run `briefloop repair route --workspace <workspace> --json` and start
+with `--finding-id` / `--route-index`. Use `briefloop repair
 complete` after the owner edits, or choose `request_human_review` / `block_run`.
 
 Formatter/finalize reads `output/intermediate/audited_brief.md` as frozen input;
