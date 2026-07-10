@@ -57,9 +57,11 @@ This records the old registered hash, current bytes hash, and reason, preserves
 the original contamination event, keeps `reference_eligible=false`, and requires
 downstream stages to rerun.
 
-When `briefloop workbuddy diagnose` or `multi-agent-brief status --json` reports
+When `briefloop workbuddy diagnose --workspace <workspace> --json` reports
 `next_allowed_action=stop_human_review_or_supersede`, use this lane instead of
-hand-editing control files.
+hand-editing control files. Only WorkBuddy diagnose surfaces
+`next_allowed_action` (it formats the completion projection); `status --json`
+does not output that field.
 
 ## Boundaries
 

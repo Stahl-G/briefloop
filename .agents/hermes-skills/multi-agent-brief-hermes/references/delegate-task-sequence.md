@@ -29,7 +29,7 @@ Read workspace context -> read contract references -> identify the next stage ->
 9. Decide `retry_stage`, `request_human_review`, or `block_run` with `state decide`; for `delegate_repair`, use the deterministic repair route/start/complete transaction. Use completion transactions for success paths.
 10. Run quality gates, strict state check, and `state stage-complete` before finalize.
 11. Run `briefloop finalize --config <workspace>/config.yaml` after audit readiness and gate readiness. Finalize reads `output/intermediate/audited_brief.md` as frozen input and must not patch it.
-12. Run `state finalize-complete` after finalize writes reader-facing artifacts.
+12. Run `state finalize-complete` only when `finalize_report.json` reports `delivery_promotion: "promoted"`; if promotion was skipped or reader-clean failed, stop and route repair.
 13. Optionally run `briefloop provenance build/show/validate` for audit/debug projection after runtime state exists.
 
 ## Child Task Templates
@@ -157,12 +157,19 @@ Audit warnings, overstatement findings, support-calibration findings, and qualit
 
 After repair-complete, rerun downstream stages from must_rerun_from. For non-repair blocks, choose `request_human_review` or `block_run`; do not finalize. `finalize` is not a quality-gate executor. Formatter/finalize may write only reader-facing delivery artifacts and finalize control records; it must not edit `output/intermediate/audited_brief.md`, `output/intermediate/audit_report.json`, artifact registry, or workflow state. If reader-clean requires wording changes to the audited brief, stop and route repair to Editor before rerunning downstream stages.
 
-After finalize writes reader-facing artifacts, run:
+Finalize is transactional: a failed reader-clean does not promote
+`output/brief.md` and leaves prior delivery unchanged. Proceed only when
+`finalize_report.json` reports `delivery_promotion: "promoted"`; otherwise stop
+and route repair. After promotion, run:
 
 ```bash
 briefloop gates check --workspace <workspace> --stage finalize --brief <workspace>/output/brief.md
 briefloop state finalize-complete --workspace <workspace> --reason "Reader-facing artifacts passed finalize checks."
+briefloop workbuddy diagnose --workspace <workspace> --json
 ```
+
+Do not report delivery unless the diagnose output shows
+`delivery_truth.valid=true`.
 
 Repair best practice: repeated retry/repair budgets are enforced by `workflow_state.json.next_allowed_decisions` after `state check` or `state decide`; when trajectory regulation narrows decisions, use only `request_human_review` or `block_run`. If a repair would touch more than two sections, narrow the scope before delegating repair or request human review. Trajectory regulation narrows operator decisions only; it does not execute repair, run gates, approve delivery, or perform agent work.
 

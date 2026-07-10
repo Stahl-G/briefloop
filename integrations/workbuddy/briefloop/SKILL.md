@@ -5,6 +5,13 @@ description: Operate BriefLoop from WorkBuddy through CodeBuddy-compatible role 
 
 # BriefLoop WorkBuddy Skill
 
+> Legacy mirror only. This English mirror is retained for compatibility and is
+> not the operating source of truth. The canonical WorkBuddy Skill is
+> `.agents/skills/briefloop-workbuddy/` (Chinese), packaged by
+> `briefloop workbuddy pack-skill`. For delivery-truth semantics
+> (`finalize_report.json` `delivery_promotion`, `briefloop workbuddy diagnose`
+> `delivery_truth.valid`), follow the canonical skill.
+
 ## Scope
 
 Use this Skill when a WorkBuddy user wants to create, open, inspect, run, repair,

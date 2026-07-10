@@ -44,8 +44,15 @@ def test_claude_projection_is_thin_wrapper() -> None:
 
 def test_version_matrix_tracks_current_surface_without_planned_overclaim() -> None:
     text = _read(CANONICAL / "references" / "version-matrix.md")
-    assert "briefloop-operator-skill-v0.1.2" in text
+    assert "briefloop-operator-skill-v0.2.0" in text
     assert f"v{_read(ROOT / 'VERSION').strip()}" in text
+    assert "v1.0 RC Landed Surfaces" in text
+    assert "Pending Before v1.0" in text
+    assert "single delivery-truth record" in text
+    assert "briefloop workbuddy diagnose --workspace <workspace>" in text
+    assert "repair supersede-stage" in text
+    assert "not_satisfied" in text
+    assert "not yet landed" in text
     assert "Public CLI: `briefloop`" in text
     assert "Compatibility CLI: `multi-agent-brief`" in text
     assert "Claude writer command: `/briefloop`" in text
@@ -58,6 +65,9 @@ def test_version_matrix_tracks_current_surface_without_planned_overclaim() -> No
     assert "integrations/workbuddy/briefloop/" in text
     assert "legacy mirror" in text
     assert "source-clone-only" in text
+    assert "briefloop run --workspace <workspace> --runtime codebuddy" in text
+    assert "`--runtime operator` is an explicit user-approved fallback only" in text
+    assert "uses `--runtime operator`" not in text
     assert "workbuddy pack-skill" in text
     assert "not a WorkBuddy Marketplace publication" in text
     assert "CodeBuddy project Skill adapter" in text
@@ -139,6 +149,8 @@ def test_repair_reference_requires_transaction_path() -> None:
     assert "original contamination event" in text
     assert "allowed_artifacts" in text
     assert "does not make a contaminated run clean" in text
+    assert "downstream artifacts are marked stale" in text
+    assert "cannot be superseded without routing" in text
 
 
 def test_public_claims_and_red_lines_forbid_overclaims() -> None:
@@ -150,10 +162,138 @@ def test_public_claims_and_red_lines_forbid_overclaims() -> None:
         "BriefLoop eliminates hallucinations",
         "automatically ready to send",
         "Improvement Memory improves output quality",
+        "RC-Phase Wording",
+        "not_satisfied",
+        "BriefLoop v1.0 is ready.",
+        "BriefLoop can safely recover contaminated runs.",
     ]:
         assert phrase in public_claims
     assert "Do not edit frozen artifacts in place." in red_lines
     assert "Do not edit control files" in red_lines
+
+
+def test_finalize_guidance_is_promotion_gated_everywhere() -> None:
+    """No guidance surface may teach unconditional post-finalize completion.
+
+    The stale wording family told operators to run the finalize gate and
+    `state finalize-complete` after finalize "writes" artifacts, ignoring the
+    transactional promotion result, or to report success from audit status
+    alone. Every writer/adapter/skill surface must gate those steps on
+    `delivery_promotion: "promoted"` and delivery truth instead.
+    """
+    stale_patterns = [
+        re.compile(r"after (the )?finalize( tool)? writes", re.IGNORECASE),
+        re.compile(r"success when audit status " + "supports delivery", re.IGNORECASE),
+    ]
+    roots = [
+        "configs",
+        ".agents",
+        ".claude",
+        ".codex",
+        ".opencode",
+        ".codebuddy",
+        "integrations",
+        "src/multi_agent_brief",
+        "docs/agents",
+    ]
+    suffixes = {".md", ".py", ".toml", ".yaml", ".yml", ".json"}
+    scan_paths: list[Path] = []
+    for root in roots:
+        base = ROOT / root
+        if not base.exists():
+            continue
+        scan_paths.extend(base.rglob("*"))
+    # Repo-root guidance files (e.g. HERMES.md, AGENTS.md, README*.md) also ship
+    # finalize guidance and must not drift back to the ungated wording family.
+    scan_paths.extend(p for p in ROOT.glob("*") if p.is_file())
+    offenders: list[str] = []
+    for path in scan_paths:
+        if not path.is_file() or path.suffix not in suffixes:
+            continue
+        if "__pycache__" in path.parts:
+            continue
+        text = path.read_text(encoding="utf-8", errors="ignore")
+        for pattern in stale_patterns:
+            if pattern.search(text):
+                offenders.append(f"{path.relative_to(ROOT)}: {pattern.pattern}")
+    assert offenders == [], f"unconditional finalize guidance found in: {offenders}"
+
+
+def test_finalize_complete_guidance_carries_promotion_gate() -> None:
+    """Positive invariant, file-level: any prose guidance surface that teaches
+    `state finalize-complete` must also carry the `delivery_promotion` gate.
+
+    Blocklist scans catch known stale phrasings; this check catches novel
+    paraphrases and omitted gate steps. Implementation modules and tests are
+    enforced behaviorally and are out of scope here.
+    """
+    prose_roots = [
+        "configs",
+        ".agents",
+        ".claude",
+        ".codex",
+        ".opencode",
+        ".codebuddy",
+        "integrations",
+        "docs/agents",
+    ]
+    guidance_emitters = [
+        "src/multi_agent_brief/orchestrator/handoff.py",
+        "src/multi_agent_brief/hermes/adapter.py",
+        "integrations/hermes-plugin/mabw/__init__.py",
+        "scripts/generate_agent_configs.py",
+    ]
+    root_docs = [
+        "HERMES.md",
+        "AGENTS.md",
+        "CLAUDE.md",
+        "docs/claude-code-quickstart.md",
+        "docs/claude-code-workflow.md",
+        "docs/weekly-loop.md",
+        "docs/golden-path.md",
+    ]
+    suffixes = {".md", ".toml", ".yaml", ".yml"}
+    files: list[Path] = []
+    for root in prose_roots:
+        base = ROOT / root
+        if not base.exists():
+            continue
+        files.extend(
+            path
+            for path in base.rglob("*")
+            if path.is_file()
+            and path.suffix in suffixes
+            and "__pycache__" not in path.parts
+            and "tests" not in path.parts
+        )
+    files.extend(ROOT / rel for rel in guidance_emitters)
+    files.extend(ROOT / rel for rel in root_docs if (ROOT / rel).exists())
+
+    offenders: list[str] = []
+    for path in files:
+        text = path.read_text(encoding="utf-8", errors="ignore")
+        if "state finalize-complete" in text and "delivery_promotion" not in text:
+            offenders.append(str(path.relative_to(ROOT)))
+    assert offenders == [], (
+        f"finalize-complete taught without the delivery_promotion gate in: {offenders}"
+    )
+
+
+def test_stage_completion_protocol_ships_promotion_and_delivery_truth_gate() -> None:
+    """Positive gate: the finalize guidance embedded in every handoff must carry
+    the transactional promotion + delivery-truth contract, not just avoid stale
+    wording. This closes the coverage hole where a rule could drop the gate
+    without matching any stale pattern.
+    """
+    from multi_agent_brief.orchestrator.handoff import (
+        FINALIZE_GATE_NOTE,
+        STAGE_COMPLETION_PROTOCOL_RULES,
+    )
+
+    protocol_text = "\n".join(STAGE_COMPLETION_PROTOCOL_RULES)
+    assert 'delivery_promotion "promoted"' in protocol_text
+    assert "delivery_truth.valid=true" in protocol_text
+    assert 'delivery_promotion "promoted"' in FINALIZE_GATE_NOTE
 
 
 def test_runtime_status_and_control_references_track_quality_and_release_surfaces() -> None:
@@ -181,13 +321,26 @@ def test_runtime_status_and_control_references_track_quality_and_release_surface
     assert "Approval ledger records must be scoped to the current run" in status
     assert "branding_context" in status
     assert "SHA-256 binding" in status
+    assert "Completion And Delivery Truth" in status
+    assert "delivery_truth.valid=true" in status
+    assert "leaves any prior delivery bundle unchanged" in status
+    assert "delivery_truth.valid=true" in runtime
+    assert "Agent Artifact Intake" in runtime
+    assert "Python assigns" in runtime
     assert "Use the owning CLI transaction instead." in control
     assert "agent draft surfaces" in control
+    control_normalized = " ".join(control.split())
+    assert "single delivery-truth record" in control_normalized
+    assert "There is no separate delivery manifest" in control_normalized
 
 
 def test_repo_development_reference_includes_product_baseline_and_review_checklist() -> None:
     text = _read(CANONICAL / "references" / "repo-development.md")
 
+    assert "v1.0 RC Readiness Gate" in text
+    assert "docs/v1-pilot-evidence.md" in text
+    assert "check_v1_rc_readiness.py" in text
+    assert "--require-satisfied" in text
     assert "python3 scripts/check_product_baseline.py" in text
     assert "direct import smoke" in text
     assert "hand-edited artifact smoke" in text

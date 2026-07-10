@@ -120,14 +120,20 @@ briefloop gates check --workspace <workspace> --stage auditor
 briefloop state check --workspace <workspace> --strict
 briefloop state stage-complete --workspace <workspace> --stage auditor --reason "Audit and quality gates passed."
 briefloop finalize --config <workspace>/config.yaml
+# only when finalize_report.json reports delivery_promotion "promoted":
 briefloop gates check --workspace <workspace> --stage finalize --brief <workspace>/output/brief.md
 briefloop state finalize-complete --workspace <workspace> --reason "Reader-facing artifacts passed finalize checks."
+briefloop workbuddy diagnose --workspace <workspace> --json
 ```
 
 Audit warnings, overstatement findings, support-calibration findings, and
-quality-gate findings do not authorize direct edits to frozen artifacts. Use
-`briefloop repair route`, `briefloop repair start`, and `briefloop repair
-complete` or choose `request_human_review` / `block_run`.
+quality-gate findings do not authorize direct edits to frozen artifacts. For
+current-gate repair, run `briefloop gates show --workspace <workspace> --json`
+and follow its required_commands; current-gate repair start must be scoped
+with `--gate-stage` and `--gate-artifact`. For non-gate owner-stage routes,
+run `briefloop repair route --workspace <workspace> --json` and start with
+`--finding-id` / `--route-index`. Finish with `briefloop repair complete`, or
+choose `request_human_review` / `block_run`.
 
 Formatter/finalize reads `output/intermediate/audited_brief.md` as frozen input;
 route repair to Editor if wording changes are needed. `finalize` is not a quality-gate executor. Provenance projection is not semantic proof.

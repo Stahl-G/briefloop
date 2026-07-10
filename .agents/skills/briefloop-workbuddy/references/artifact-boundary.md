@@ -1,33 +1,32 @@
-# Artifact Boundary
+# 工件边界
 
-BriefLoop separates draft/content work from deterministic control records.
+BriefLoop 把草稿/内容工作和确定性控制记录分开。
 
-## WorkBuddy May Help With
+## WorkBuddy 可以协助
 
-- understanding `user.md`, `config.yaml`, and `sources.yaml`;
-- adding public-safe local sources when the user provides them;
-- preparing role-owned draft/content artifacts named by the handoff;
-- explaining status, gate findings, repair route output, and Quality Panel;
-- running BriefLoop CLI commands at the user's request.
+- 理解 `user.md`、`config.yaml`、`sources.yaml`；
+- 在用户提供时添加公开安全的本地信源；
+- 准备 handoff 点名的角色专属草稿/内容工件；
+- 解释 status、gate 发现、repair route 输出和 Quality Panel；
+- 在用户要求时运行 BriefLoop CLI 命令。
 
-## WorkBuddy Must Not Direct-Edit
+## WorkBuddy 不得直接编辑
 
 - `output/intermediate/workflow_state.json`
 - `output/intermediate/artifact_registry.json`
 - `output/intermediate/runtime_manifest.json`
 - `output/intermediate/event_log.jsonl`
-- gate reports
-- release readiness reports
-- human approval ledgers
-- frozen Claim Ledger revisions
-- delivery archives or bundle manifests to make them look valid
+- gate 报告（gate reports）
+- release 就绪报告（release reports）
+- 人工审批账本
+- 冻结的 Claim Ledger 修订
+- 交付归档或 bundle 清单——不得为了"看起来有效"而改
 
-Use the owning command or transaction instead. If a control file looks wrong,
-run `multi-agent-brief state check --workspace <workspace>` and report the
-failure.
+改动一律走对应的 owning 命令或事务。如果某个控制文件看起来不对，运行
+`multi-agent-brief state check --workspace <workspace>` 并报告失败结果。
 
-## Evidence Boundary
+## 证据边界
 
-Sources and citations provide traceability. They do not automatically prove that
-a claim is supported. Do not describe BriefLoop as a truth-proof system,
-hallucination eliminator, output-quality improver, or delivery approval engine.
+信源和引用提供可追溯性，不自动证明 claim 被支持。不要把 BriefLoop 描述成
+真值证明系统、幻觉消除器、输出质量提升器或交付批准引擎——它不是语义证明
+（semantic proof），也不是 gate、release 批准或交付批准。

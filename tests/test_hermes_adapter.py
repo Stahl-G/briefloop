@@ -533,3 +533,28 @@ def test_hermes_skill_contains_onboarding_workflow():
     assert "Orchestrator main agent" in content
     assert "configs/orchestrator_contract.yaml" in content
     assert "retry_stage" in content
+
+
+def test_hermes_skill_template_matches_checked_in_contract() -> None:
+    """`briefloop hermes install-skill` renders from the adapter template while
+    the checked-in Hermes skill is hand-maintained. Both must carry the same
+    RC contract phrases so the installed and checked-in skills cannot drift on
+    repair scoping or finalize/delivery truth."""
+    template = render_hermes_skill()
+    checked_in = (
+        ROOT / ".agents" / "hermes-skills" / "multi-agent-brief-hermes" / "SKILL.md"
+    ).read_text(encoding="utf-8")
+    for phrase in [
+        "briefloop gates show --workspace <workspace>",
+        "--gate-stage",
+        "--gate-artifact",
+        "briefloop repair route --workspace <workspace> --json",
+        "--finding-id",
+        "--route-index",
+        'delivery_promotion "promoted"',
+        "briefloop workbuddy diagnose --workspace <workspace> --json",
+        "briefloop repair",
+        "request_human_review",
+    ]:
+        assert phrase in template, f"hermes template missing contract phrase: {phrase}"
+        assert phrase in checked_in, f"checked-in hermes skill missing contract phrase: {phrase}"

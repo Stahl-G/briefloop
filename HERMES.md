@@ -21,9 +21,11 @@ Hermes-specific runtime path:
    `multi-agent-brief gates check --workspace <workspace>`
    `multi-agent-brief state check --workspace <workspace> --strict`
    `multi-agent-brief state stage-complete --workspace <workspace> --stage auditor --reason "Audit and quality gates passed."`
-12. Then run `multi-agent-brief finalize --config <workspace>/config.yaml`.
-13. After finalize writes reader-facing artifacts, run:
+12. Then run `multi-agent-brief finalize --config <workspace>/config.yaml`. Finalize is transactional: a failed reader-clean does not promote delivery and leaves any prior delivery unchanged.
+13. Only after `finalize_report.json` reports `delivery_promotion: "promoted"`, run:
+   `multi-agent-brief gates check --workspace <workspace> --stage finalize --brief <workspace>/output/brief.md`
    `multi-agent-brief state finalize-complete --workspace <workspace> --reason "Reader-facing artifacts passed finalize checks."`
+   Then confirm `multi-agent-brief workbuddy diagnose --workspace <workspace> --json` reports `delivery_truth.valid=true` before claiming delivery; audit/gate status or artifact existence alone is not a delivery claim.
 14. `finalize` alone is not a quality-gate executor; do not skip gates/state completion checks when quality gates are required.
 15. Optional audit/debug trace: run `multi-agent-brief provenance build --workspace <workspace>` and `multi-agent-brief provenance validate --workspace <workspace>` after runtime state exists. This projection is not semantic proof and is not required to finalize.
 16. Report `output/brief.md`, `brief.docx`, `claim_ledger.json`, `audit_report.json`, `quality_gate_report.json`, audience snapshot context, switchboard selections, and optional `provenance_graph.json` when created.

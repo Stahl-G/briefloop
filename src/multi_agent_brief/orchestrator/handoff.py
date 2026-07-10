@@ -145,11 +145,16 @@ FINALIZE_GATE_NOTE = (
     "request_human_review/block_run. Complete auditor with "
     "`briefloop state stage-complete --workspace <workspace> --stage auditor "
     "--reason \"Audit and quality gates passed.\"` only when audit readiness and "
-    "quality gates pass. After the finalize tool writes delivery artifacts under "
-    "`output/delivery/`, run `briefloop gates check --workspace <workspace> "
+    "quality gates pass. Finalize is transactional; a failed reader-clean does not promote "
+    "delivery and leaves prior delivery unchanged. Only when "
+    "`output/intermediate/finalize_report.json` reports delivery_promotion "
+    "\"promoted\", run `briefloop gates check --workspace <workspace> "
     "--stage finalize --brief <workspace>/output/brief.md`, then run "
     "`briefloop state finalize-complete --workspace <workspace> --reason "
-    "\"Reader artifacts finalized and clean.\"`. Finalize/formatter reads "
+    "\"Reader artifacts finalized and clean.\"`, and confirm "
+    "`briefloop workbuddy diagnose --workspace <workspace> --json` reports "
+    "delivery_truth.valid=true before reporting delivery; otherwise stop "
+    "and route repair. Finalize/formatter reads "
     "`output/intermediate/audited_brief.md` as frozen input and must not edit it; "
     "if reader-clean requires wording changes in the audited brief, stop, run "
     "`briefloop gates show --workspace <workspace> --json`, and follow its scoped "
@@ -196,7 +201,8 @@ STAGE_COMPLETION_PROTOCOL_RULES = [
     "Every stage handoff to a child agent must include complete context, required input artifact paths, required output artifact paths, and forbidden actions.",
     "Scout chunk outputs are scratch material only; if Scout work is split across chunks or child agents, join chunks deterministically before writing candidate_claims.json.",
     "Record successful stage transitions with briefloop state stage-complete only after artifact-level completion evidence is available.",
-    "Record finalize completion with briefloop state finalize-complete after delivery artifacts and finalize_report.json are clean.",
+    "Finalize is transactional: record finalize completion with briefloop state finalize-complete only after finalize_report.json reports delivery_promotion \"promoted\"; a failed reader-clean leaves delivery unpromoted, so never run finalize-complete on an unpromoted or failed finalize_report.json.",
+    "Do not claim delivery from artifact existence or audit/gate status alone; confirm briefloop workbuddy diagnose --json reports delivery_truth.valid=true before reporting a delivered brief.",
 ]
 DEFAULT_STAGE_FORBIDDEN_ACTIONS = [
     "Do not claim stage completion based on prose acknowledgement alone.",
@@ -587,7 +593,7 @@ def _codex_handoff(workspace: Path, repo: Path, venv: str) -> AgentHandoff:
             f"{ROLE_TOPOLOGY_HANDOFF_NOTE}\n\n"
             f"{role_mapping}\n"
             "Do not call the next specialist until `briefloop state stage-complete` succeeds for the current stage.\n"
-            "Finalize is a Python delivery/rendering tool. After finalize writes delivery artifacts, record completion with `briefloop state finalize-complete`.\n\n"
+            "Finalize is a Python delivery/rendering tool and is transactional: a failed reader-clean does not promote delivery and leaves prior delivery unchanged. Record completion with `briefloop state finalize-complete` only when finalize_report.json reports delivery_promotion \"promoted\", and confirm `briefloop workbuddy diagnose --json` reports delivery_truth.valid=true before reporting delivery.\n\n"
             f"{ORCHESTRATOR_CONTEXT_READING_NOTE}\n\n"
             f"{DECISION_RECORDING_NOTE}\n\n"
             f"{FINALIZE_GATE_NOTE}\n\n"
@@ -681,7 +687,7 @@ def _codebuddy_handoff(workspace: Path, repo: Path, venv: str) -> AgentHandoff:
             "11. Ask `briefloop-auditor` to draft the audit report.",
             "12. Run deterministic auditor gate and stage-complete commands in the main CodeBuddy session.",
             "13. Ask `briefloop-formatter` for finalize readiness only; it must not write files or run CLI commands.",
-            "14. Run finalize, finalize gate, finalize-complete, quality, and delivery commands from the main CodeBuddy session only when allowed.",
+            "14. From the main CodeBuddy session run finalize, then proceed to the finalize gate and finalize-complete only after finalize_report.json reports delivery_promotion \"promoted\", and confirm briefloop workbuddy diagnose --json reports delivery_truth.valid=true before any delivery claim (see the finalize gate note below).",
         ]
     )
     return AgentHandoff(
@@ -805,8 +811,9 @@ def _operator_handoff(
             f"13. briefloop state stage-complete --workspace {ws_path} --stage auditor --reason \"Audit and quality gates passed.\"\n"
             f"14. briefloop finalize --config {ws_path}/config.yaml "
             "(read audited_brief.md as frozen input; do not edit it during finalize)\n"
-            f"15. briefloop gates check --workspace {ws_path} --stage finalize --brief {ws_path}/output/brief.md\n"
-            f"16. briefloop state finalize-complete --workspace {ws_path} --reason \"Reader artifacts finalized and clean.\""
+            f"15. Only when output/intermediate/finalize_report.json reports delivery_promotion \"promoted\" (otherwise stop and route repair): briefloop gates check --workspace {ws_path} --stage finalize --brief {ws_path}/output/brief.md\n"
+            f"16. briefloop state finalize-complete --workspace {ws_path} --reason \"Reader artifacts finalized and clean.\"\n"
+            f"17. briefloop workbuddy diagnose --workspace {ws_path} --json  (do not report delivery unless delivery_truth.valid=true)"
         ),
         expected_artifacts=list(EXPECTED_WORKFLOW_ARTIFACTS),
         runtime_capabilities=_operator_runtime_capabilities(legacy_alias=legacy_alias),
@@ -1446,7 +1453,7 @@ def _apply_fast_rerun_recipe(handoff: AgentHandoff, workspace: Path) -> None:
         "Do not synthesize or backfill upstream stage-complete, decision_recorded, "
         "or stage_status_changed events for imported stages.",
         "Do not add facts outside the imported Claim Ledger.",
-        "Continue through Analyst, Editor, Auditor, gates, finalize, finalize-complete, human delivery, and archive.",
+        "Continue through Analyst, Editor, Auditor, and gates. Finalize is transactional: run finalize-complete, human delivery, and archive only after finalize_report.json reports delivery_promotion \"promoted\" and workbuddy diagnose reports delivery_truth.valid=true.",
         "Timing comparability is downstream_only: upstream fact-layer stages were "
         "satisfied by import and must not be compared directly with full runs.",
         "If runtime_manifest.fact_layer_import is missing or invalid, stop and run "
@@ -1521,7 +1528,8 @@ def _without_auditable_delivery_steps(text: str) -> str:
         "Continue through Analyst, Editor, Auditor, gates, finalize",
         "After all artifacts are ready",
         "Before finalize,",
-        "After the finalize tool writes",
+        "delivery_promotion",
+        "workbuddy diagnose",
         "The 'auditor' step and required gates check must run before finalize",
         "Record finalize completion",
         "Formatter/finalize may only write",
@@ -1546,14 +1554,20 @@ def _without_auditable_delivery_steps(text: str) -> str:
 
 
 def _is_auditable_delivery_step_note(note: str) -> bool:
+    normalized = note.lower()
     blocked_fragments = (
-        FINALIZE_GATE_NOTE,
         "finalize",
         "delivery bundle",
         "delivery artifacts",
+        "reader delivery",
+        "delivery_promotion",
+        "delivery_truth",
+        "delivered brief",
+        "reporting delivery",
+        "workbuddy diagnose",
         "formatter",
     )
-    return any(fragment in note for fragment in blocked_fragments)
+    return note == FINALIZE_GATE_NOTE or any(fragment in normalized for fragment in blocked_fragments)
 
 
 def _without_auditable_delivery_protocol(protocol: dict[str, Any]) -> dict[str, Any]:
@@ -1568,7 +1582,7 @@ def _without_auditable_delivery_protocol(protocol: dict[str, Any]) -> dict[str, 
     rewritten["rules"] = [
         rule
         for rule in rewritten.get("rules", [])
-        if "finalize" not in str(rule).lower() and "reader delivery" not in str(rule).lower()
+        if not _is_auditable_delivery_step_note(str(rule))
     ]
     return rewritten
 

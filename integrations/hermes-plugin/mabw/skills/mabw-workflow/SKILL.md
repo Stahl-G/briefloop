@@ -62,10 +62,13 @@ multi-agent-brief gates check --workspace <workspace>
 multi-agent-brief state check --workspace <workspace> --strict
 multi-agent-brief state stage-complete --workspace <workspace> --stage auditor --reason "Audit and quality gates passed."
 multi-agent-brief finalize --config <workspace>/config.yaml
+# proceed only when finalize_report.json reports delivery_promotion "promoted":
+multi-agent-brief gates check --workspace <workspace> --stage finalize --brief <workspace>/output/brief.md
 multi-agent-brief state finalize-complete --workspace <workspace> --reason "Reader-facing artifacts passed finalize checks."
+multi-agent-brief workbuddy diagnose --workspace <workspace> --json
 ```
 
-`finalize` only renders reader-facing outputs; it is not a quality-gate executor.
+`finalize` only renders reader-facing outputs; it is not a quality-gate executor. A failed reader-clean does not promote delivery and leaves any prior delivery unchanged; do not report delivery unless diagnose shows `delivery_truth.valid=true`.
 
 Selection is not execution. `controls select --selection enable` records Orchestrator intent only; explicitly run the selected CLI, subagent, or human action afterward.
 

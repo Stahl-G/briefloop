@@ -52,6 +52,14 @@ This records the old registered hash, current bytes hash, and reason, preserves
 the original contamination event, keeps `reference_eligible=false`, and requires
 downstream stages to rerun.
 
+After a supersede, downstream artifacts are marked stale against recorded
+baselines: an unchanged downstream artifact stays stale through `state check`
+recomputation and topology satisfaction, and downstream stages cannot complete
+against it until the artifact bytes are actually regenerated. Freeze-owned
+artifacts such as `claim_ledger.json` cannot be superseded without routing
+through their freeze transaction; the supersede is rejected instead of leaving
+the registry and the freeze record disagreeing.
+
 ## Boundaries
 
 - `repair route` is read-only.

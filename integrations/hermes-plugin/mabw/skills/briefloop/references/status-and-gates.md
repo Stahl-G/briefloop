@@ -158,11 +158,37 @@ For `assessment_target=auditable_brief`:
 - incomplete target blocks downstream reader-facing outputs
 - next path is experiment registration/scoring/assessment, not reader delivery
 
+## Completion And Delivery Truth
+
+Delivery truth is a single authoritative record: `finalize_report.json`.
+
+- Finalize is a transactional reader projection: it renders and checks a
+  staged candidate first, and only successful reader-clean promotes
+  `output/brief.md` and `output/delivery/`. A failed reader-clean writes a
+  failed finalize report and leaves any prior delivery bundle unchanged.
+- Successful promotion records `delivery_artifacts`, their SHA-256 hashes, and
+  `delivery_promotion: "promoted"` in `finalize_report.json`. `deliver` and
+  `state finalize-complete` verify those recorded artifacts; run them only
+  after promotion, never against unpromoted output.
+- The canonical completion projection owns finalize truth, delivery truth, and
+  the next allowed action, and reports stale, missing, or malformed delivery
+  findings. Read it through `briefloop workbuddy diagnose --workspace
+  <workspace> --json`; runtime adapters format it and must not reconstruct
+  delivery truth from `workflow_state.json`, `event_log.jsonl`, or file
+  existence.
+- Do not claim delivery unless the completion projection reports
+  `delivery_truth.valid=true`.
+- After a `repair supersede-stage` recovery, the completion projection keeps
+  reporting the contamination and the required downstream reruns; delivery may
+  become valid again after reruns, but the run stays
+  `reference_eligible=false`.
+
 ## Delivery Target
 
 For `assessment_target=delivery_brief` or normal workspaces:
 
-- finalize renders reader-facing files
+- finalize renders reader-facing files through the staged-candidate promotion
+  above
 - `state finalize-complete` writes the authoritative run archive
 - delivery remains human-triggered and gated
 - non-reference-eligible delivery may be useful locally, but it is not clean

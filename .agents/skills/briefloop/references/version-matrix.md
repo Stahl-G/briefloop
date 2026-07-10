@@ -1,9 +1,53 @@
 # BriefLoop Skill Version Matrix
 
-Skill contract version: `briefloop-operator-skill-v0.1.2`
+Skill contract version: `briefloop-operator-skill-v0.2.0`
+Written for: the v1.0 RC hardening line (post v0.11.12)
 Last verified against BriefLoop runtime: `v0.11.12`
 Public project name: BriefLoop
 Historical implementation name: MABW
+
+This skill describes the v1.0 RC operating contract. Landed RC surfaces are
+authoritative now; the "Pending Before v1.0" section lists target behavior
+that is planned but not yet landed — treat those entries as direction, not as
+currently available commands.
+
+## v1.0 RC Landed Surfaces
+
+- Delivery truth: `finalize_report.json` is the single delivery-truth record
+  (staged candidate promotion, `delivery_artifacts` + SHA-256, reader-clean
+  results); failed reader-clean does not promote or update current delivery.
+- Completion projection: canonical finalize/delivery/next-action truth,
+  formatted by `briefloop workbuddy diagnose --workspace <workspace> --json`;
+  adapters must not reconstruct delivery truth from file existence.
+- Current-gate scoped repair: `briefloop gates show --workspace <workspace>
+  --json` emits `required_commands`; current-gate `repair start` requires
+  `--gate-stage` and `--gate-artifact`; non-gate routes start from
+  `repair route` with `--finding-id` / `--route-index`.
+- Contaminated recovery: `briefloop repair supersede-stage` records a
+  contaminated owner-stage revision, preserves contamination events, keeps
+  `reference_eligible=false`, and marks downstream artifacts stale until their
+  bytes are regenerated.
+- Shared internal citation parser: only strict `[src:<claim_id>]` tokens
+  project to reader source labels; other internal-looking residue fails closed
+  in the reader gate.
+- WorkBuddy surface: `briefloop workbuddy pack-skill` (local Skill zip) and
+  `briefloop workbuddy diagnose` (read-only Run Card).
+- v1.0 release governor: `docs/v1-pilot-evidence.md` +
+  `scripts/check_v1_rc_readiness.py --require-satisfied` gate release wording
+  and release prep.
+
+## Pending Before v1.0
+
+- Agent artifact intake normalization (Scout / Screener / Claim Draft): pure
+  deterministic normalizer with raw + normalized hashes; recoverable shape
+  drift normalized with findings; evidence identity and agent-assigned claim
+  IDs fail closed. The fail-closed identity rules already apply at registry
+  and freeze validation; the dedicated normalizer view is not landed yet.
+- Pilot evidence gate satisfaction: `docs/v1-pilot-evidence.md` currently
+  reports `not_satisfied`; RC wording rules in `references/public-claims.md`
+  apply until it is satisfied.
+- WorkBuddy/CodeBuddy first-user status decision: first-user path or
+  explicitly beta/experimental everywhere; no mixed posture.
 
 ## Supported Current Surfaces
 
@@ -19,7 +63,14 @@ Historical implementation name: MABW
   - canonical path: `.agents/skills/briefloop-workbuddy/`
   - legacy mirror: `integrations/workbuddy/briefloop/`
   - status: experimental; source-clone-only
-  - uses `--runtime operator` and deterministic BriefLoop CLI transactions
+  - default full-workflow command:
+    `briefloop run --workspace <workspace> --runtime codebuddy`
+  - use the default only when the source checkout contains the CodeBuddy project
+    Skill and role-agent assets and role-subagent delegation is available
+  - `--runtime operator` is an explicit user-approved fallback only when those
+    role subagents cannot be delegated; it permits main-session drafting and
+    must not be represented as role-subagent execution
+  - deterministic BriefLoop CLI transactions remain in the WorkBuddy main session
   - `briefloop workbuddy pack-skill` /
     `briefloop workbuddy pack-skill` generates a deterministic local
     Skill zip and sidecar manifest from the canonical source-clone Skill files

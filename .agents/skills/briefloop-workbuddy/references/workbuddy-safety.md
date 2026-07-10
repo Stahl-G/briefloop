@@ -1,73 +1,69 @@
-# WorkBuddy Safety
+# WorkBuddy 安全边界
 
-WorkBuddy is a local operator shell around BriefLoop. It is not a new BriefLoop
-authority layer.
+WorkBuddy 是 BriefLoop 的本地操作外壳，不是新的 BriefLoop 权威层。
 
-## Do
+## 要做
 
-- classify missing workspace paths as existing workspace or first-time run,
-  then confirm the folder path before any creation;
-- report the active BriefLoop CLI path and version;
-- ask whether the user wants online search enabled before source discovery;
-- when online search is enabled, use Tavily first and verify `TAVILY_API_KEY`
-  without displaying the key value;
-- when online search is declined, explicitly disable web search before
-  continuing;
-- use `--runtime codebuddy` for full workflow handoff;
-- invoke the matching CodeBuddy-compatible role subagent for role-owned draft
-  work;
-- run deterministic BriefLoop CLI commands when the user approves;
-- print a machine-fact Run Card after key commands, role returns, repairs,
-  gates, finalize attempts, quality summaries, and bundle/export requests;
-- before each stage or role-owned artifact action, re-read the relevant
-  `agent_handoff.md` / `agent_handoff.json` step;
-- after each CLI command, report only deterministic progress visible in status,
-  workflow state, event log, or generated artifacts;
-- keep role delegation claims literal;
-- explain Quality Panel as an audit attachment.
+- 把缺少工作区路径的请求分类为"已有工作区"或"首次运行"，创建之前先确认
+  文件夹路径；
+- 报告生效的 BriefLoop CLI 路径和版本；
+- 信源发现之前询问用户是否开启在线搜索；
+- 开启在线搜索时优先使用 Tavily，并在不显示密钥值的前提下验证
+  `TAVILY_API_KEY`；
+- 用户拒绝在线搜索时，继续之前显式关闭 web 搜索；
+- 完整工作流 handoff 使用 `--runtime codebuddy`；
+- 角色专属草稿工作调用匹配的兼容 CodeBuddy 的角色子代理；
+- 用户同意后运行确定性 BriefLoop CLI 命令；
+- 在关键命令、角色返回、repair、gate、finalize 尝试、quality 摘要和
+  打包/导出请求之后打印机器事实 Run Card；
+- 在每个 stage 或角色工件动作之前，重读相应的
+  `agent_handoff.md` / `agent_handoff.json` 步骤；
+- 每条 CLI 命令之后，只报告可在 status、workflow state、event log 或生成
+  工件中看到的确定性进度；
+- 角色委派的说法保持字面准确；
+- 把 Quality Panel 解释为审计附件。
 
-## Do Not
+## 不要做
 
-- guess a workspace from the repository path;
-- continue live source discovery with Tavily enabled while `TAVILY_API_KEY` is
-  missing;
-- ask the user to choose among all search providers unless they request an
-  alternative to Tavily;
-- direct-edit control files or frozen artifacts;
-- say specialist subagents ran unless WorkBuddy actually delegated them;
-- silently fall back to `--runtime operator` for a full workflow;
-- hand-author BriefLoop workflow JSON artifacts when role subagents are
-  unavailable;
-- say `Analyst 已经分析完成` or `Auditor 已通过` unless the matching artifact,
-  event, transaction, or status output exists;
-- say `delivered`, `delivery complete`, or `交付完成` unless
-  `briefloop workbuddy diagnose --json` reports `delivery_truth.valid=true`;
-- run finalize or delivery when `run_integrity` is contaminated or not clean;
-- downgrade a `doctor` error in prose; show the full output and wait for user
-  confirmation;
-- zip or share the whole workspace; never include `.env`, tokens, or private
-  planning files in an attachment;
-- approve delivery, release, gates, or memory entries;
-- claim semantic proof, automatic truth checking, hallucination elimination, or
-  output-quality improvement;
-- expose private local paths, private planning files, tokens, or company
-  sensitive material in examples.
+- 从仓库路径猜测工作区；
+- 在 `TAVILY_API_KEY` 缺失时继续启用 Tavily 的在线信源发现；
+- 未经用户要求替代方案就让用户在所有搜索提供商之间做选择；
+- 直接编辑控制文件或冻结工件；
+- 在 WorkBuddy 没有真正委派时说专家子代理已运行；
+- 对完整工作流静默切换到 `--runtime operator`（silently fall back）；
+  切换 operator 运行时必须由用户明确决定，并重新生成 operator handoff；
+- 在 codebuddy handoff 下由主会话代写角色专属工件；
+- 建议修改角色子代理 frontmatter 的 tools 清单来绕过派发失败；
+- 在 Run Card 里自行宣布 `run_integrity=contaminated`——完整性由 Python
+  判定，只能引用 diagnose/status 输出；
+- 说 `Analyst 已经分析完成` 或 `Auditor 已通过`，除非对应的工件、事件、
+  事务或 status 输出存在；
+- 说 `delivered`、`delivery complete` 或 `交付完成`，除非
+  `briefloop workbuddy diagnose --json` 报告 `delivery_truth.valid=true`；
+- 在 `run_integrity` 处于 `contaminated`、`stale_or_invalid` 或 unknown
+  状态时运行 finalize、交付、导出或分享；
+- 对 `contaminated_repaired` run，不要再次运行 finalize；WorkBuddy 诊断未报告
+  `delivery_truth.valid=true` 时也不要交付。有效的终态恢复仍永久不具备
+  reference 资格；
+- 在叙述里降级 `doctor` 错误；要展示完整输出并等待用户确认；
+- 打包或分享整个工作区；附件里绝不包含 `.env`、token 或私有规划文件；
+- 批准交付、release、gate 或 memory 条目；
+- 声称语义证明（semantic proof）、自动真值检查、幻觉消除或输出质量提升；
+- 在示例中暴露私有本地路径、私有规划文件、token 或公司敏感材料。
 
-## If Unsure
+## 拿不准时
 
-If no workspace path is provided, first classify the request as an existing
-workspace or first-time run. Explain that a BriefLoop workspace is the local
-folder for this report project. Suggest a safe local folder only when creating a
-new workspace, then ask for explicit confirmation before creation. Do not fill
-gaps by hand-authoring BriefLoop control records.
+如果没有给出工作区路径，先把请求分类为已有工作区或首次运行。解释
+BriefLoop 工作区就是这份报告项目的本地文件夹。只在创建新工作区时建议一个
+安全的本地文件夹，然后在创建之前请求明确确认。不要靠手写 BriefLoop 控制
+记录来填补缺口。
 
-If the WorkBuddy conversation is in Chinese, explain the generated handoff in
-Chinese as needed, but follow the handoff literally. Preserve command names,
-artifact names, and handoff obligations exactly. Do not skip steps, hide
-blockers, or claim subagents ran because of translation.
+如果 WorkBuddy 会话在用中文，可按需要用中文解释生成的 handoff，但要严格
+按 handoff 执行。逐字保留命令名、工件名与 handoff 义务。不要因为翻译而
+跳过步骤、隐藏阻塞，或声称子代理已运行。
 
-If a user asks to share results, use only BriefLoop-generated delivery or audit
-bundles when WorkBuddy diagnosis reports `delivery_truth.valid=true`. If it
-does not, say there is only a draft when `output/intermediate/audited_brief.md`
-exists; otherwise say no draft or delivery exists yet. If any package candidate
-contains `.env`, stop and recommend key rotation before sharing anything.
+如果用户要求分享结果：只有当 WorkBuddy 诊断报告
+`delivery_truth.valid=true` 时才使用 BriefLoop 生成的 delivery 或 audit
+bundle。如果没有，仅当 `output/intermediate/audited_brief.md` 存在时说
+"只有草稿"；否则说目前既没有草稿也没有交付。任何打包候选里出现 `.env`，
+停止，并在分享任何东西之前建议轮换密钥。

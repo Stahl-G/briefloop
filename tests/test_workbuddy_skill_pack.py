@@ -31,6 +31,7 @@ WORKBUDDY_DOCS = (
 WORKBUDDY_SMOKE_CHECKLIST = ROOT / "docs" / "workbuddy-smoke-checklist.md"
 CODEBUDDY_AGENT_ROOT = ROOT / ".codebuddy" / "agents"
 CODEBUDDY_SKILL = ROOT / ".codebuddy" / "skills" / "briefloop" / "SKILL.md"
+VERSION_MATRIX = ROOT / ".agents" / "skills" / "briefloop" / "references" / "version-matrix.md"
 CODEBUDDY_ROLE_AGENTS = {
     "briefloop-scout.md": {
         "tools": "tools: Read, Write, Grep, Glob",
@@ -217,8 +218,8 @@ def test_workbuddy_skill_is_exposed_at_agent_skill_root() -> None:
     assert LEGACY_WORKBUDDY_SKILL.relative_to(ROOT).as_posix() == "integrations/workbuddy/briefloop"
     text = _read(WORKBUDDY_SKILL / "SKILL.md")
     assert "BriefLoop WorkBuddy Skill" in text
-    assert "WorkBuddy-facing adapter" in text
-    assert "## First Checks" in text
+    assert "面向 WorkBuddy 的适配层" in text
+    assert "## 首检" in text
 
 
 def test_repo_operator_skill_redirects_workbuddy_users() -> None:
@@ -250,19 +251,46 @@ def test_workbuddy_skill_has_natural_language_triggers() -> None:
 
 def test_workbuddy_skill_uses_codebuddy_role_agent_runtime_not_operator_default() -> None:
     text = _all_skill_text()
+    compact = _compact(text)
     assert "briefloop run --workspace <workspace> --runtime codebuddy" in text
-    assert "CodeBuddy-compatible role subagent" in text
-    assert "Use `--runtime codebuddy` only when the source checkout contains" in text
-    assert "The local WorkBuddy Skill zip alone does\nnot install those CodeBuddy project assets" in text
+    assert "兼容 CodeBuddy 的角色子代理" in compact
+    assert "只有当源码检出包含" in text
+    assert "仅有本地 WorkBuddy Skill zip 不会安装这些 CodeBuddy 项目资产" in compact
     assert "briefloop-scout" in text
     assert "briefloop-auditor" in text
-    assert "do not\nfall back to hand-authoring BriefLoop JSON artifacts" in text
-    assert "silently switch\nto `--runtime operator`" in text
-    assert "run --workspace <workspace> --runtime operator" not in text
+    assert "不要退回手写 BriefLoop JSON 工件" in compact
+    assert "静默切换到 `--runtime operator`" in compact
+    # operator runtime may appear only as the explicit user-decision escape
+    # lane, never as a default or silent fallback
+    assert "必须由用户明确决定" in compact
+    assert "briefloop run --workspace <workspace> --runtime operator" in text
+    assert "绝不声称 子代理运行过" in compact or "绝不声称子代理运行过" in compact
+    assert "frontmatter 的 tools 清单" in compact
     assert "Use `--runtime operator`" not in text
     assert "use `--runtime operator` for handoff" not in text
     assert "--runtime manual" not in text
     assert "legacy manual" not in text.lower()
+
+
+def test_workbuddy_default_runtime_matches_version_matrix() -> None:
+    matrix = _read(VERSION_MATRIX)
+    matrix_workbuddy = matrix.split("- WorkBuddy Skill source bundle:", 1)[1].split(
+        "- CodeBuddy project Skill adapter:", 1
+    )[0]
+    skill = _read(WORKBUDDY_SKILL / "SKILL.md")
+    skill_runtime = skill.split("## 运行模式", 1)[1].split("## Run Card 协议", 1)[0]
+    runtime_pattern = re.compile(
+        r"briefloop run --workspace <workspace> --runtime (?P<runtime>[a-z0-9-]+)"
+    )
+
+    matrix_default = runtime_pattern.search(matrix_workbuddy)
+    skill_default = runtime_pattern.search(skill_runtime)
+
+    assert matrix_default is not None
+    assert skill_default is not None
+    assert matrix_default.group("runtime") == skill_default.group("runtime") == "codebuddy"
+    assert "`--runtime operator` is an explicit user-approved fallback only" in matrix_workbuddy
+    assert "必须由用户明确决定" in _compact(skill_runtime)
 
 
 def test_workbuddy_skill_includes_required_cli_surface() -> None:
@@ -296,7 +324,7 @@ def test_workbuddy_skill_includes_required_cli_surface() -> None:
     ]:
         assert phrase in text
     assert "do not use unscoped repair start for current-gate blockers" in compact
-    assert "do not use bare repair start --workspace <workspace>" in normalized.lower()
+    assert "不要使用裸的 repair start --workspace <workspace>" in normalized
     assert _bare_repair_start_offenders(text) == []
 
 
@@ -316,6 +344,15 @@ def _bare_repair_start_offenders(text: str) -> list[str]:
         r"(?![^\n`]*(?:--gate-stage|--finding-id|--route-index))"
     )
     return [line for line in text.splitlines() if bare_start.search(line) and "Do not use bare" not in line]
+
+
+def test_legacy_workbuddy_mirror_declares_non_authoritative_status() -> None:
+    text = _read(LEGACY_WORKBUDDY_SKILL / "SKILL.md")
+    compact = _compact(text)
+    assert "Legacy mirror only" in text
+    assert ".agents/skills/briefloop-workbuddy/" in text
+    assert "not the operating source of truth" in compact
+    assert "delivery_truth.valid" in compact
 
 
 def test_legacy_workbuddy_mirror_uses_scoped_repair_contract() -> None:
@@ -343,38 +380,40 @@ def test_workbuddy_skill_preserves_control_boundaries() -> None:
         "event_log.jsonl",
     ]:
         assert control_file in text
+    compact = _compact(text)
     for phrase in [
-        "Do not directly edit",
-        "must not hand-edit control files",
-        "Before each stage or role-owned artifact action",
-        "re-read the relevant handoff step before continuing",
-        "Do not claim Scout, Screener, Claim Ledger, Analyst, Editor, Auditor, or\nFormatter subagents ran",
-        "follow the generated handoff literally",
-        "Role subagents draft only handoff-assigned artifacts",
-        "not semantic proof",
-        "not gates, release approval, or\ndelivery approval",
+        "不得直接编辑",
+        "不得手改控制文件",
+        "在每个 stage 或角色工件动作之前",
+        "先重读相应的 handoff 步骤再继续",
+        "或 Formatter 子代理已运行",
+        "严格按生成的 handoff 执行",
+        "角色子代理只起草 handoff 指派的工件",
+        "不是语义证明",
+        "不是 gate、release 批准或交付批准",
     ]:
-        assert phrase in text
+        assert phrase in compact
 
 
 def test_workbuddy_skill_hardens_first_use_routing_and_progress_feedback() -> None:
     text = _all_skill_text()
     compact = _compact(text)
     for phrase in [
-        'If no workspace path is provided, do not ask only "where is the workspace?"',
-        "existing workspace: ask for the folder path",
-        "first-time run: offer to create one",
+        "如果用户没有给出工作区路径，不要只问",
+        "工作区在哪里",
+        "已有工作区：请用户给出文件夹路径",
+        "首次运行：主动提出创建",
     ]:
         assert phrase in text
     for phrase in [
-        "a BriefLoop workspace is the local folder for this report project",
-        "ask for explicit confirmation of the target path",
-        "Suggest a safe local folder outside the BriefLoop source checkout",
+        "BriefLoop 工作区就是这份报告项目的本地文件夹",
+        "对目标路径做出明确确认",
+        "建议一个位于 BriefLoop 源码检出之外的安全本地文件夹",
         "`C:\\Users\\<User>\\Documents\\BriefLoop\\workspaces\\<topic-slug>`",
-        "Suggest only; do not create the folder or workspace silently",
-        "周报, 行业, or 竞品 -> `industry-weekly`",
-        "管理月报, or 月报 -> `management-monthly`",
-        "文件, PDF, or 审阅 -> `document-review`",
+        "只建议；不要静默创建文件夹或",
+        "周报、行业、竞品 -> `industry-weekly`",
+        "管理月报、月报 -> `management-monthly`",
+        "文件、PDF、审阅 -> `document-review`",
     ]:
         assert phrase in compact
 
@@ -383,9 +422,9 @@ def test_workbuddy_skill_requires_stage_handoff_reread_and_deterministic_progres
     text = _all_skill_text()
     compact = _compact(text)
     for phrase in [
-        "Before each stage or role-owned artifact action",
-        "`agent_handoff.md` / `agent_handoff.json` step",
-        "After each deterministic CLI transaction, summarize progress to the user",
+        "在每个 stage 或角色工件动作之前",
+        "`agent_handoff.md` / `agent_handoff.json` 步骤",
+        "每个确定性 CLI 事务之后，向用户总结进度",
         "已创建工作区。",
         "已生成 CodeBuddy handoff。",
         "当前状态：等待 source/scout artifact。",
@@ -393,9 +432,9 @@ def test_workbuddy_skill_requires_stage_handoff_reread_and_deterministic_progres
     ]:
         assert phrase in text
     for phrase in [
-        "visible in `status`, `workflow_state.json`, `event_log.jsonl`, or generated artifacts",
-        "Do not say `Analyst 已经分析完成` or `Auditor 已通过` unless the matching",
-        "Preserve command names, artifact names, and handoff obligations exactly",
+        "或生成工件中看到的完成状态",
+        "不要说 `Analyst 已经分析完成` 或 `Auditor 已通过`",
+        "逐字保留命令名、工件名与 handoff 义务",
     ]:
         assert phrase in compact
 
@@ -415,28 +454,31 @@ def test_workbuddy_skill_requires_run_card_and_hard_stop_rules() -> None:
     ]:
         assert field in text
     for phrase in [
-        "After every key CLI command, role return, repair action, gate check, finalize",
-        "`briefloop doctor` reports any error",
-        "Show the full doctor output",
-        "`run_integrity` is not clean",
-        "Do not run finalize or delivery",
-        "`delivery_truth.valid` is not",
-        "Say the run has a draft only when",
-        "Any export, share, package, zip, or attachment candidate contains",
+        "在每个关键 CLI 命令、角色返回、repair 动作、gate 检查、finalize",
+        "`briefloop doctor` 报告任何错误",
+        "展示完整 doctor 输出",
+        "`run_integrity` 处于",
+        "不要运行 finalize 或交付",
+        "`delivery_truth.valid` 不是",
+        "才说 run 里有草稿",
+        "任何导出、分享、打包、zip 或附件候选包含",
     ]:
         assert phrase in text
     for phrase in [
-        "Do not turn normal pre-finalize state into a workflow stop",
-        "stop finalize, delivery, export, and share actions",
-        "For early-stage draft work, report the Run Card and continue only with non-delivery workflow steps allowed by the handoff",
-        "otherwise say no draft or delivery exists yet",
-        "This is normal before finalize and must not block earlier handoff-assigned stages by itself",
-        "Do not say \"delivered\" unless `briefloop workbuddy diagnose --json` reports `delivery_truth.valid=true`",
-        "Do not zip or share the whole workspace. Use BriefLoop-generated delivery or audit bundles when present; never include `.env`",
-        "share only manually reviewed, non-secret excerpts from `briefloop status --json` or doctor output",
-        "Never share a whole workspace zip",
-        "Do not downgrade the error yourself",
-        "recommend rotating any exposed key",
+        "不要把 finalize 之前的正常状态当作流程停止",
+        "停止 finalize、交付、导出与分享动作",
+        "报告 Run Card",
+        "非交付工作流步骤",
+        "否则说目前既没有草稿也没有交付",
+        "本身不阻塞更早的 handoff 指派阶段",
+        "`briefloop workbuddy diagnose --json` 报告 `delivery_truth.valid=true`",
+        "不要打包或分享整个工作区",
+        "绝不包含 `.env`",
+        "只分享经人工确认的非敏感摘录",
+        "`briefloop status --json` 或 doctor 输出",
+        "整个工作区 zip",
+        "不要自行降级",
+        "建议轮换任何暴露的密钥",
     ]:
         assert phrase in compact
     for phrase in [
@@ -445,6 +487,24 @@ def test_workbuddy_skill_requires_run_card_and_hard_stop_rules() -> None:
         "support package",
     ]:
         assert phrase not in compact
+
+
+def test_workbuddy_recovery_hard_stops_use_mutually_exclusive_states() -> None:
+    paths = [
+        WORKBUDDY_SKILL / "SKILL.md",
+        WORKBUDDY_SKILL / "references" / "quickstart.md",
+        WORKBUDDY_SKILL / "references" / "workbuddy-safety.md",
+        WORKBUDDY_SKILL / "references" / "workspace-workflow.md",
+    ]
+    for path in paths:
+        compact = _compact(_read(path))
+        assert "contaminated_repaired" in compact, path
+        assert "delivery_truth.valid=true" in compact, path
+        assert "不要再次运行 finalize" in compact, path
+        assert not re.search(
+            r"contaminated_repaired.{0,180}可交付.{0,180}不要运行 finalize 或交付",
+            compact,
+        ), path
 
 
 def test_workbuddy_skill_has_no_private_paths_or_overclaim_language() -> None:
@@ -470,7 +530,7 @@ def test_workbuddy_skill_has_no_private_paths_or_overclaim_language() -> None:
 def test_workbuddy_skill_declares_source_clone_distribution_boundary() -> None:
     text = _all_skill_text()
     assert "source-clone-only" in text
-    assert "wheel/sdist package installs do not include" in text
+    assert "wheel/sdist 包安装不包含" in text
 
 
 def test_workbuddy_public_docs_declare_install_and_assistant_boundaries() -> None:
@@ -587,7 +647,9 @@ def test_workbuddy_skill_pack_contains_only_public_skill_files(tmp_path: Path) -
         assert sorted(archive.namelist()) == sorted(names)
         skill_text = archive.read("briefloop/SKILL.md").decode("utf-8")
     assert "--runtime codebuddy" in skill_text
-    assert "run --workspace <workspace> --runtime operator" not in skill_text
+    # operator runtime appears only inside the explicit user-decision escape lane
+    assert "必须由用户明确决定" in skill_text
+    assert "静默切换到 `--runtime operator`" in skill_text
     assert "BriefLoop WorkBuddy Skill" in skill_text
     assert "BriefLoop Operator Protocol" not in skill_text
     assert "semantic proof" in skill_text

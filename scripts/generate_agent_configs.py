@@ -933,9 +933,11 @@ def render_opencode_command_generate_brief(manifest: dict) -> str:
         "\n"
         "15. Finalize only after the gates/state completion path passes:\n"
         "    - Run: `briefloop finalize --config $ARGUMENTS/config.yaml`\n"
-        "    - After finalize writes delivery artifacts, run: `briefloop gates check --workspace $ARGUMENTS --stage finalize --brief $ARGUMENTS/output/brief.md`.\n"
+        "    - Finalize is a transactional reader projection: it stages a candidate, checks reader-clean, and only successful reader-clean promotes `output/brief.md` and `output/delivery/`; a failed reader-clean writes a failed `finalize_report.json` and leaves any prior delivery unchanged.\n"
+        "    - Proceed only when `output/intermediate/finalize_report.json` reports `delivery_promotion: \"promoted\"`; if promotion was skipped or reader-clean failed, stop and route repair instead of running the finalize gate or finalize-complete.\n"
+        "    - After finalize promotes delivery artifacts, run: `briefloop gates check --workspace $ARGUMENTS --stage finalize --brief $ARGUMENTS/output/brief.md`.\n"
         "    - Then run: `briefloop state finalize-complete --workspace $ARGUMENTS --reason \"Reader-facing artifacts passed finalize checks.\"`\n"
-        "    - Confirm `output/delivery/brief.md` strips [src:<claim_id>].\n"
+        "    - Verify delivery truth with `briefloop workbuddy diagnose --workspace $ARGUMENTS --json`; do not claim delivery unless it reports `delivery_truth.valid=true`, and do not infer delivery from file existence.\n"
         "    - Confirm `output/delivery/<named>.docx` exists if DOCX is configured.\n"
         "    - Confirm `output/source_appendix.md` remains an audit/control copy when configured and does not expose raw claim IDs, source IDs, evidence text, local paths, or file:// URLs.\n"
         "    - Do not present Claim Ledger, Audit Report, Audited Brief, named Markdown, or source appendix audit copy as user delivery files.\n"
@@ -953,7 +955,7 @@ def render_opencode_command_generate_brief(manifest: dict) -> str:
         "    - Report quality gate status.\n"
         "    - Report switchboard selections.\n"
         "    - Report optional provenance graph path when created.\n"
-        "    - Report success when audit status supports delivery.\n"
+        "    - Report success only when the completion projection (briefloop workbuddy diagnose --json) reports delivery_truth.valid=true; audit status alone is not a delivery claim.\n"
     )
 
 

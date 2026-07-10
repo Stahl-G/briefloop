@@ -261,20 +261,51 @@ completion:
 briefloop state stage-complete --workspace <workspace> --stage auditor --reason "Audit and quality gates passed."
 ```
 
-If state is blocked, stop. Use feedback/repair, human review, or `block_run`.
-Do not finalize.
+If state is blocked, stop. Inspect `briefloop gates show --workspace
+<workspace> --json` and follow its `required_commands` (current-gate repair
+start is scoped with `--gate-stage` / `--gate-artifact`); for non-gate
+findings inspect `briefloop repair route --workspace <workspace> --json`.
+Otherwise use human review or `block_run`. Do not finalize.
 
 Once the current stage is `finalize`, run:
 
 ```bash
 briefloop finalize --config <workspace>/config.yaml
+```
+
+Finalize is a transactional reader projection: it renders and checks a staged
+candidate first, and only successful reader-clean promotes `output/brief.md`
+and `output/delivery/`. A failed reader-clean writes a failed
+`finalize_report.json` and leaves any prior delivery bundle unchanged.
+
+Check the finalize result before continuing: proceed only when
+`output/intermediate/finalize_report.json` reports
+`delivery_promotion: "promoted"`. If promotion did not happen (reader-clean
+failed or promotion was skipped), stop — do not run the finalize gate check or
+`state finalize-complete` against unpromoted output. Route the reported
+findings through the repair path above instead.
+
+After promotion succeeds, run:
+
+```bash
 briefloop gates check --workspace <workspace> --stage finalize --brief <workspace>/output/brief.md
 briefloop state finalize-complete --workspace <workspace> --reason "Reader-facing artifacts passed finalize checks."
 ```
+
 Finalize reads `output/intermediate/audited_brief.md` as frozen input. Do not
 edit `audited_brief.md`, `audit_report.json`, artifact registry, or workflow
 state during finalize. If reader-clean requires wording changes to the audited
 brief, stop and route repair to Editor before rerunning downstream stages.
+
+Before claiming delivery readiness, verify delivery truth from the canonical
+completion projection:
+
+```bash
+briefloop workbuddy diagnose --workspace <workspace> --json
+```
+
+Only proceed when it reports `delivery_truth.valid=true`. Do not infer
+delivery from file existence.
 
 If no delivery target is specified, run:
 
@@ -305,6 +336,8 @@ Forbidden:
 - do not treat `finalize` as a quality-gate executor;
 - do not bypass quality gates;
 - do not deliver if reader final gate fails;
+- do not claim delivery unless the completion projection reports
+  `delivery_truth.valid=true`;
 - do not send audit/control records;
 - do not silently strip process residue and call the run clean;
 - do not use `state decide --decision finalize`.

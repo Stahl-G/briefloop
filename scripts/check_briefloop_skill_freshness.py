@@ -21,6 +21,11 @@ HERMES_PLUGIN_PROJECTION = ROOT / "integrations" / "hermes-plugin" / "mabw" / "s
 
 REQUIRED_REFERENCE_PHRASES: dict[str, list[str]] = {
     "references/version-matrix.md": [
+        "briefloop-operator-skill-v0.2.0",
+        "v1.0 RC Landed Surfaces",
+        "Pending Before v1.0",
+        "single delivery-truth record",
+        "repair supersede-stage",
         "coverage_omission",
         "quality summarize",
         "quality_panel.json",
@@ -91,6 +96,9 @@ REQUIRED_REFERENCE_PHRASES: dict[str, list[str]] = {
         "role_agents_run_cli_transactions",
     ],
     "references/status-and-gates.md": [
+        "Completion And Delivery Truth",
+        "delivery_truth.valid=true",
+        "leaves any prior delivery bundle unchanged",
         "Coverage/omission findings",
         "not full-world recall checks",
         "Trajectory Regulation is read-only",
@@ -120,12 +128,18 @@ REQUIRED_REFERENCE_PHRASES: dict[str, list[str]] = {
         "post-finalize closeout",
     ],
     "references/repo-development.md": [
+        "v1.0 RC Readiness Gate",
+        "check_v1_rc_readiness.py",
         ".codebuddy/agents/briefloop-*.md",
         "CodeBuddy project role agents",
         "source-clone-only",
         "check_product_baseline.py",
         "check_skill_contract.py",
         "check_briefloop_skill_freshness.py",
+    ],
+    "references/public-claims.md": [
+        "RC-Phase Wording",
+        "not_satisfied",
     ],
     "references/naming-and-compatibility.md": [
         "README.md` is the canonical English README",

@@ -51,10 +51,19 @@ Owning commands for recent control-tool projections:
   Assessment Report proposal rows. It records adjudication only; it does not
   write Claim-Support Matrix rows, gate reports, workflow state, repair routes,
   delivery state, or release state.
-- `briefloop finalize` writes `finalize_report.json` fields for the
-  resolved citation profile (`executive`, `analyst`, or `audit`). These fields
-  describe reader/audit citation surfaces only; do not patch them by hand and
-  do not treat them as support, gate, delivery, or release authority.
+- `briefloop finalize` writes `finalize_report.json` (including
+  `delivery_promotion`), the single delivery-truth
+  record: staged-candidate reader projection results, `delivery_artifacts`,
+  their SHA-256 hashes, promotion status, reader-clean results, and the
+  resolved citation profile (`executive`, `analyst`, or `audit`). `deliver`,
+  `state finalize-complete`, and the completion projection verify delivery
+  against this record. There is no separate delivery manifest; do not create a
+  second record carrying delivery artifacts or hashes, and do not patch this
+  one by hand.
+- `briefloop workbuddy diagnose --workspace <workspace> --json` formats the
+  canonical completion projection (finalize truth, delivery truth, next allowed
+  action). It is read-only; adapters must not substitute their own delivery
+  reconstruction for it.
 - `briefloop extract` / `briefloop extract` writes
   `evidence_extract_source_lock.json`, `evidence_extract_page_inventory.json`,
   and audit copies for `document-review` / `evidence_extract` workspaces. The

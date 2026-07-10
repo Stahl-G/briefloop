@@ -18,7 +18,7 @@ Run a Hermes-native delegated BriefLoop brief workflow.
 Workspace: `<workspace>`  
 Repository workdir: `<repo>`
 
-Use the `multi-agent-brief-hermes` skill. Read `output/intermediate/audience_profile_snapshot.md` at run start and pass a concise taste summary to delegated roles. Run doctor, then use Hermes `delegate_task` children for scout, screener, claim-ledger, analyst, editor, and auditor. After audit readiness, run gates/state controls, then finalize and report artifact paths. Run optional provenance projection only when an audit/debug graph is useful.
+Use the `multi-agent-brief-hermes` skill. Read `output/intermediate/audience_profile_snapshot.md` at run start and pass a concise taste summary to delegated roles. Run doctor, then use Hermes `delegate_task` children for scout, screener, claim-ledger, analyst, editor, and auditor. After audit readiness, run gates/state controls, then finalize; report delivery only when finalize_report.json reports delivery_promotion "promoted" and workbuddy diagnose reports delivery_truth.valid=true. Run optional provenance projection only when an audit/debug graph is useful.
 
 ## Runtime Notes
 
