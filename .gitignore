@@ -64,4 +64,3 @@ docs/mabw-architecture-reference-v0.1.md
 *.orig
 
 .claude/worktrees/
-.claude/launch.json

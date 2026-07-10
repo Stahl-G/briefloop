@@ -3,12 +3,15 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+import pytest
+
 from multi_agent_brief.orchestrator.runtime_state import (
     append_event,
     build_completion_projection,
     initialize_runtime_state,
 )
 from multi_agent_brief.orchestrator.runtime_state._io import _sha256_file
+from multi_agent_brief.orchestrator.runtime_state.errors import RuntimeStateError
 from tests.helpers import write_workspace_files_under
 
 
@@ -516,9 +519,9 @@ def test_completion_projection_contaminated_prefers_supersede_over_workflow_bloc
     assert payload["next_allowed_action"] == "stop_human_review_or_supersede"
 
 
-def test_completion_projection_contaminated_without_supersede_stops(tmp_path: Path) -> None:
+def test_completion_projection_contaminated_without_recovery_stops(tmp_path: Path) -> None:
     """Real contaminated state (frozen artifact edited after freeze) with no
-    supersede recorded must stop at human review / supersede, never rerun."""
+    recovery transaction must stop at human review / supersede."""
     from tests.test_runtime_state import _contaminated_editor_artifact_workspace
 
     ws, _old_sha, _current_sha = _contaminated_editor_artifact_workspace(tmp_path)
@@ -526,13 +529,13 @@ def test_completion_projection_contaminated_without_supersede_stops(tmp_path: Pa
     payload = build_completion_projection(workspace=ws, repo_workdir=ROOT)
 
     assert payload["run_integrity"]["status"] == "contaminated"
-    assert payload["recovery_truth"]["status"] == "none"
+    assert payload["recovery_truth"]["status"] == "awaiting_human_or_supersede"
     assert payload["next_allowed_action"] == "stop_human_review_or_supersede"
 
 
 def test_completion_projection_supersede_rerun_tracks_owner_downstream(tmp_path: Path) -> None:
     """After a real supersede transaction the run stays contaminated; the rerun
-    lane comes from the recorded supersede evidence plus the transaction's own
+    lane comes from the bound recovery timeline plus the transaction's own
     workflow.current_stage rewind (editor supersede rewinds to auditor)."""
     from multi_agent_brief.orchestrator.runtime_state import supersede_stage_artifact_transaction
     from tests.test_runtime_state import _contaminated_editor_artifact_workspace
@@ -550,12 +553,111 @@ def test_completion_projection_supersede_rerun_tracks_owner_downstream(tmp_path:
 
     assert payload["run_integrity"]["status"] == "contaminated"
     recovery = payload["recovery_truth"]
-    assert recovery["status"] == "superseded_awaiting_downstream_rerun"
+    assert recovery["status"] == "downstream_rerun_pending"
+    assert recovery["last_recovery_event_type"] == "repair_stage_superseded"
     assert recovery["superseded_stages"] == ["editor"]
     assert "auditor" in recovery["stale_stages"]
-    assert recovery["supersede_event_present"] is True
     assert payload["workflow"]["current_stage"] == "auditor"
     assert payload["next_allowed_action"] == "rerun_downstream_from_auditor"
+
+
+def test_completion_projection_recontamination_after_supersede_stops_again(tmp_path: Path) -> None:
+    """An old supersede cannot vouch for a new contamination: after a real
+    supersede, a second direct edit of the superseded artifact recontaminates
+    the run and the projection must stop again."""
+    from multi_agent_brief.orchestrator.runtime_state import (
+        check_runtime_state,
+        supersede_stage_artifact_transaction,
+    )
+    from tests.test_runtime_state import _contaminated_editor_artifact_workspace
+
+    ws, _old_sha, _current_sha = _contaminated_editor_artifact_workspace(tmp_path)
+    supersede_stage_artifact_transaction(
+        workspace=ws,
+        repo_workdir=ROOT,
+        stage_id="editor",
+        artifact="output/intermediate/audited_brief.md",
+        reason="human approved supersede after contaminated direct edit",
+    )
+    audited = ws / "output" / "intermediate" / "audited_brief.md"
+    audited.write_text("# Brief\n\nSecond direct post-supersede edit. [src:CL-001]\n", encoding="utf-8")
+    with pytest.raises(RuntimeStateError):
+        check_runtime_state(workspace=ws, repo_workdir=ROOT)
+
+    payload = build_completion_projection(workspace=ws, repo_workdir=ROOT)
+
+    assert payload["run_integrity"]["status"] == "contaminated"
+    assert payload["recovery_truth"]["status"] == "awaiting_human_or_supersede"
+    assert payload["next_allowed_action"] == "stop_human_review_or_supersede"
+
+
+def test_completion_projection_repair_complete_enables_downstream_rerun(tmp_path: Path) -> None:
+    """The legal owner-stage repair path (repair start -> owner edit -> repair
+    complete) is also a recovery transaction: after it, the operator reruns
+    downstream instead of being told to supersede again."""
+    from multi_agent_brief.orchestrator.runtime_state import (
+        complete_repair_transaction,
+        complete_stage_transaction,
+        initialize_runtime_state,
+        start_repair_transaction,
+    )
+    from tests.test_runtime_state import (
+        _set_current_stage,
+        _valid_claim_ledger_payload,
+        _write_json_artifact,
+    )
+
+    ws = _write_workspace(tmp_path)
+    initialize_runtime_state(workspace=ws, repo_workdir=ROOT)
+    _write_json_artifact(ws, "claim_ledger.json", _valid_claim_ledger_payload())
+    _set_current_stage(ws, "analyst")
+    audited = _intermediate(ws) / "audited_brief.md"
+    audited.write_text("# Brief\n\nAnalyst draft. [src:CL-001]\n", encoding="utf-8")
+    complete_stage_transaction(workspace=ws, repo_workdir=ROOT, stage_id="analyst", reason="analyst complete")
+    audited.write_text("# Brief\n\nEditor-polished draft. [src:CL-001]\n", encoding="utf-8")
+    complete_stage_transaction(workspace=ws, repo_workdir=ROOT, stage_id="editor", reason="editor complete")
+    audited.write_text("# Brief\n\nDirect post-freeze edit. [src:CL-001]\n", encoding="utf-8")
+    start_repair_transaction(workspace=ws, repo_workdir=ROOT)
+    audited.write_text("# Brief\n\nOwner repair edit. [src:CL-001]\n", encoding="utf-8")
+    complete_repair_transaction(
+        workspace=ws,
+        repo_workdir=ROOT,
+        reason="editor repaired audited brief from deterministic route",
+    )
+
+    payload = build_completion_projection(workspace=ws, repo_workdir=ROOT)
+
+    assert payload["run_integrity"]["status"] == "contaminated"
+    recovery = payload["recovery_truth"]
+    assert recovery["status"] == "downstream_rerun_pending"
+    assert recovery["last_recovery_event_type"] == "repair_completed"
+    current_stage = payload["workflow"]["current_stage"]
+    assert payload["next_allowed_action"] == f"rerun_downstream_from_{current_stage}"
+
+
+def test_completion_projection_recovery_binding_mismatch_fails_closed(tmp_path: Path) -> None:
+    """A recovery event that does not bind to workflow.last_repair_transaction
+    is not recovery authority; the projection fails closed."""
+    from multi_agent_brief.orchestrator.runtime_state import supersede_stage_artifact_transaction
+    from tests.test_runtime_state import _contaminated_editor_artifact_workspace
+
+    ws, _old_sha, _current_sha = _contaminated_editor_artifact_workspace(tmp_path)
+    supersede_stage_artifact_transaction(
+        workspace=ws,
+        repo_workdir=ROOT,
+        stage_id="editor",
+        artifact="output/intermediate/audited_brief.md",
+        reason="human approved supersede after contaminated direct edit",
+    )
+    workflow = _load_json(_intermediate(ws) / "workflow_state.json")
+    tampered = dict(workflow["last_repair_transaction"])
+    tampered["transaction_id"] = "tx-tampered-000"
+    _set_workflow(ws, last_repair_transaction=tampered)
+
+    payload = build_completion_projection(workspace=ws, repo_workdir=ROOT)
+
+    assert payload["recovery_truth"]["status"] == "invalid_recovery_state"
+    assert payload["next_allowed_action"] == "stop_invalid_recovery_state"
 
 
 def test_completion_projection_supersede_rerun_prefers_rerun_over_workflow_blocked(tmp_path: Path) -> None:
@@ -578,32 +680,54 @@ def test_completion_projection_supersede_rerun_prefers_rerun_over_workflow_block
 
 
 def test_completion_projection_contaminated_repaired_terminal_is_not_a_rerun_demand(tmp_path: Path) -> None:
-    """`contaminated_repaired` is the terminal status finalize-complete writes
-    for a contaminated run that finished anyway (run_integrity.finalize_run_integrity);
-    it is not a waiting-for-rerun state. A completed run with valid delivery
-    must fall through to the normal delivery flow instead of demanding rerun."""
+    """Drive a real complete_finalize_transaction on a contaminated run:
+    run_integrity becomes contaminated_repaired (terminal, never
+    reference-eligible) and the projection must fall through to the normal
+    delivery flow instead of demanding a rerun."""
+    from multi_agent_brief.orchestrator.runtime_state import (
+        append_event,
+        complete_finalize_transaction,
+        initialize_runtime_state,
+    )
+    from tests.test_runtime_state import (
+        _advance_to_finalize,
+        _write_quality_gate_report,
+    )
+    from tests.test_runtime_state import _write_finalize_report as _write_runtime_finalize_report
+
     ws = _write_workspace(tmp_path)
-    _init_workspace(ws)
-    _write_finalize_report(ws)
-    _write_gate_report(ws)
-    _append_finalize_event(ws)
-    _set_workflow(
-        ws,
-        current_stage="finalize",
-        run_integrity={
-            "status": "contaminated_repaired",
+    initialize_runtime_state(workspace=ws, repo_workdir=ROOT)
+    _advance_to_finalize(ws)
+    _write_quality_gate_report(ws, stage_id="finalize")
+    _write_runtime_finalize_report(ws)
+    manifest = _load_json(_intermediate(ws) / "runtime_manifest.json")
+    append_event(
+        workspace=ws,
+        run_id=manifest["run_id"],
+        event_type="run_integrity_contaminated",
+        actor="orchestrator",
+        stage_id="auditor",
+        reason="Prior repair contaminated this run.",
+        metadata={
+            "reason_code": "prior_repair",
+            "message": "Prior repair contaminated this run.",
             "reference_eligible": False,
             "clean_single_shot": False,
-            "reasons": [{"reason_code": "frozen_artifact_changed"}],
+            "stage_id": "auditor",
         },
+    )
+    complete_finalize_transaction(
+        workspace=ws,
+        repo_workdir=ROOT,
+        reason="reader artifacts finalized after repair",
     )
 
     payload = build_completion_projection(workspace=ws, repo_workdir=ROOT)
 
     assert payload["run_integrity"]["status"] == "contaminated_repaired"
-    assert payload["recovery_truth"]["status"] == "completed_after_contamination"
-    assert payload["delivery_truth"]["valid"] is True
-    assert payload["next_allowed_action"] == "inspect_status_before_delivery_or_quality"
+    assert payload["recovery_truth"]["status"] == "completed_non_reference"
+    assert not str(payload["next_allowed_action"]).startswith("rerun_downstream")
+    assert payload["next_allowed_action"] != "stop_human_review_or_supersede"
 
 
 def test_completion_projection_active_repair_prefers_repair_over_workflow_blocked(tmp_path: Path) -> None:
