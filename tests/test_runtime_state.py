@@ -7608,6 +7608,41 @@ def test_auditor_rerun_after_editor_supersede_records_supersede_in_audit_binding
     assert "audit binding relevant_repair_transaction_ids does not match event_log" not in projection["reasons"]
     assert "run_integrity is not clean" in projection["reasons"]
 
+    _write_quality_gate_report(ws, stage_id="finalize")
+    finalized = finalize_reader_outputs(
+        output_dir=ws / "output",
+        project_name="Recovered Runtime State Test",
+        output_formats=["markdown"],
+        output_named_outputs=False,
+        workspace_dir=ws,
+    )
+    binding = finalized.recovery_binding
+    assert binding["recovery_transaction_id"] == supersede_transaction_id
+    assert binding["contamination_event_id"]
+    assert binding["reference_eligible"] is False
+
+    completed = complete_finalize_transaction(
+        workspace=ws,
+        repo_workdir=ROOT,
+        reason="reader artifacts finalized after bound recovery",
+    )
+    completion = completed["workflow_state"]["last_completion_transaction"]
+    assert completion["render_transaction_id"] == finalized.finalize_transaction_id
+    assert completion["recovery_transaction_id"] == supersede_transaction_id
+    assert completion["contamination_event_id"] == binding["contamination_event_id"]
+    assert completed["workflow_state"]["run_integrity"]["status"] == "contaminated"
+    terminal = evaluate_recovery_state(workspace=ws, repo_workdir=ROOT)
+    assert terminal["status"] == "completed_non_reference"
+    assert terminal["reference_eligible"] is False
+    assert any(
+        event["event_type"] == "decision_recorded"
+        and (event.get("metadata") or {}).get("render_transaction_id")
+        == finalized.finalize_transaction_id
+        and (event.get("metadata") or {}).get("recovery_transaction_id")
+        == supersede_transaction_id
+        for event in _event_records(ws)
+    )
+
 
 def test_supersede_stage_rejects_clean_run_without_contamination(tmp_path):
     ws = _write_workspace(tmp_path)
@@ -8806,7 +8841,7 @@ def test_run_integrity_contamination_event_is_sticky_on_state_check(tmp_path):
     assert persisted == integrity
 
 
-def test_finalize_complete_keeps_contaminated_run_out_of_reference_pack(tmp_path):
+def test_finalize_complete_rejects_unbound_contaminated_run(tmp_path):
     ws = _write_workspace(tmp_path)
     initialize_runtime_state(workspace=ws, repo_workdir=ROOT)
     _advance_to_finalize(ws)
@@ -8828,23 +8863,21 @@ def test_finalize_complete_keeps_contaminated_run_out_of_reference_pack(tmp_path
             "stage_id": "auditor",
         },
     )
+    check_runtime_state(workspace=ws, repo_workdir=ROOT)
 
-    state = complete_finalize_transaction(
-        workspace=ws,
-        repo_workdir=ROOT,
-        reason="reader artifacts finalized after repair",
-    )
+    with pytest.raises(RuntimeStateError) as excinfo:
+        complete_finalize_transaction(
+            workspace=ws,
+            repo_workdir=ROOT,
+            reason="reader artifacts finalized without a bound recovery",
+        )
 
-    integrity = state["workflow_state"]["run_integrity"]
-    archive_manifest = json.loads(
-        (ws / "output" / "runs" / manifest["run_id"] / "manifest.json").read_text(encoding="utf-8")
-    )
-
-    assert integrity["status"] == "contaminated_repaired"
-    assert integrity["reference_eligible"] is False
-    assert integrity["clean_single_shot"] is False
-    assert archive_manifest["run_integrity"]["status"] == "contaminated_repaired"
-    assert archive_manifest["run_integrity"]["reference_eligible"] is False
+    assert excinfo.value.error_code == runtime_state.operations.E_TRANSACTION_INTEGRITY
+    assert "recovery is not ready" in str(excinfo.value)
+    workflow = json.loads(_state_file(ws, "workflow_state").read_text(encoding="utf-8"))
+    assert workflow["current_stage"] == "finalize"
+    assert workflow["run_integrity"]["status"] == "contaminated"
+    assert not (ws / "output" / "runs" / manifest["run_id"] / "manifest.json").exists()
 
 
 def test_finalize_complete_archives_delivery_intermediate_and_control_files(tmp_path):

@@ -333,6 +333,21 @@ def recovery_stale_artifact_baselines(state: Mapping[str, Any]) -> dict[str, dic
     }
 
 
+def finalize_recovery_binding(state: Mapping[str, Any]) -> dict[str, Any]:
+    """Return lineage for a finalize render in the current recovery cycle."""
+
+    if state.get("status") != RECOVERY_FINALIZE_RENDER_REQUIRED:
+        return {}
+    return {
+        "status": "bound_non_reference_recovery",
+        "run_id": _text(state.get("run_id")),
+        "contamination_event_id": _text(state.get("contamination_event_id")),
+        "recovery_transaction_id": _text(state.get("recovery_transaction_id")),
+        "rerun_start_stage": _text(state.get("rerun_start_stage")),
+        "reference_eligible": False,
+    }
+
+
 def _load_recovery_context(
     *,
     workspace: Path,
