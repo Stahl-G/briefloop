@@ -12,7 +12,12 @@ from pathlib import Path
 from typing import Any, Literal
 
 from multi_agent_brief.contracts.schemas.claim import VALID_CLAIM_TYPES, VALID_CONFIDENCE
-from multi_agent_brief.contracts.schemas.claim_draft import ClaimDraftContract
+from multi_agent_brief.contracts.schemas.claim_draft import (
+    CLAIM_DRAFT_ALLOWED_VALUES,
+    CLAIM_DRAFT_FORBIDDEN_FIELDS,
+    DRAFT_REQUIRED_FIELD_ORDER,
+    ClaimDraftContract,
+)
 from multi_agent_brief.contracts.source_metadata import (
     local_file_without_url_missing_identity,
     normalize_source_category,
@@ -936,13 +941,23 @@ def _finding_from_validation_result(
 ) -> dict[str, Any]:
     _prefix, separator, suffix = validation_result.partition(":")
     path = suffix if separator else "<root>"
-    return _finding(
+    finding = _finding(
         artifact_id,
         code="contract_invalid",
         path=path,
         message=validation_result,
         validation_result=validation_result,
     )
+    if artifact_id == "claim_drafts":
+        field_name = path.rsplit(".", 1)[-1]
+        if field_name in CLAIM_DRAFT_ALLOWED_VALUES:
+            finding["allowed_values"] = CLAIM_DRAFT_ALLOWED_VALUES[field_name]
+        if field_name == "claim_id":
+            finding["forbidden_fields"] = CLAIM_DRAFT_FORBIDDEN_FIELDS
+            finding["hint"] = "Remove claim_id; Python assigns CL-#### during freeze."
+        if field_name in DRAFT_REQUIRED_FIELD_ORDER or path == "drafts":
+            finding["required_fields"] = list(DRAFT_REQUIRED_FIELD_ORDER)
+    return finding
 
 
 def _finding(

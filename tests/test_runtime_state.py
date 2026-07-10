@@ -545,6 +545,27 @@ def _valid_claim_drafts_payload(*, duplicate: bool = False) -> str:
     return json.dumps({"schema_version": "mabw.claim_drafts.v1", "drafts": drafts}) + "\n"
 
 
+def _normalized_claim_drafts_payload() -> str:
+    return json.dumps(
+        {
+            "schema_version": "mabw.claim_drafts.v1",
+            "claim_drafts": [
+                {
+                    "claim_statement": "ExampleCo opened a demo facility.",
+                    "source_id": "SRC-001",
+                    "source_excerpt": "Example evidence.",
+                    "source_title": "ExampleCo Demo Facility",
+                    "source_category": "industry_news",
+                    "claim_type": "fact",
+                    "confidence": 0.91,
+                }
+            ],
+        },
+        ensure_ascii=False,
+        indent=2,
+    ) + "\n"
+
+
 def _valid_candidate_claims_payload() -> str:
     return json.dumps(
         [
@@ -4674,12 +4695,18 @@ def test_freeze_claim_ledger_transaction_writes_canonical_ledger(tmp_path):
     assert [claim["claim_id"] for claim in ledger] == ["CL-0001", "CL-0002"]
     assert [claim["source_id"] for claim in ledger] == ["SRC-001", "SRC-002"]
     freeze = state["manifest"]["claim_ledger_freeze"]
-    assert freeze["schema_version"] == "mabw.claim_ledger_freeze.v1"
+    assert freeze["schema_version"] == "mabw.claim_ledger_freeze.v2"
     assert freeze["status"] == "frozen"
     assert freeze["id_strategy"] == "sorted_sequential_v1"
     assert freeze["id_stability_scope"] == "per_freeze_input"
     assert "not a cross-incremental stability guarantee" in freeze["id_strategy_description"]
     assert freeze["source_path"] == "output/intermediate/claim_drafts.json"
+    assert freeze["run_id"] == state["manifest"]["run_id"]
+    assert freeze["source_raw_sha256"] == _sha256_file(
+        _intermediate(ws) / "claim_drafts.json"
+    )
+    assert freeze["source_normalized_sha256"]
+    assert freeze["normalization_policy"] == "briefloop.agent_artifact_intake.v1"
     assert freeze["claim_ledger_path"] == "output/intermediate/claim_ledger.json"
     assert freeze["claim_count"] == 2
     assert freeze["claim_ledger_sha256"] == _sha256_file(_intermediate(ws) / "claim_ledger.json")
@@ -4687,6 +4714,195 @@ def test_freeze_claim_ledger_transaction_writes_canonical_ledger(tmp_path):
     records = _event_records(ws)
     assert records[-1]["event_type"] == "claim_ledger_frozen"
     assert records[-1]["artifact_id"] == "claim_ledger"
+
+
+def test_freeze_binds_intake_projection(tmp_path: Path) -> None:
+    ws = _write_workspace(tmp_path)
+    initialize_runtime_state(workspace=ws, repo_workdir=ROOT)
+    _set_current_stage(ws, "claim-ledger")
+    _write_json_artifact(ws, "claim_drafts.json", _normalized_claim_drafts_payload())
+
+    state = freeze_claim_ledger_transaction(workspace=ws, repo_workdir=ROOT)
+
+    freeze = state["manifest"]["claim_ledger_freeze"]
+    record = state["artifact_registry"]["artifacts"]["claim_drafts"]
+    projection = record["intake_projection"]
+    ledger = json.loads((_intermediate(ws) / "claim_ledger.json").read_text(encoding="utf-8"))
+    assert ledger[0]["statement"] == "ExampleCo opened a demo facility."
+    assert ledger[0]["evidence_text"] == "Example evidence."
+    assert ledger[0]["confidence"] == "high"
+    assert ledger[0]["metadata"]["source_category"] == "news_media"
+    assert freeze["schema_version"] == "mabw.claim_ledger_freeze.v2"
+    assert freeze["run_id"] == state["manifest"]["run_id"]
+    assert freeze["source_raw_sha256"] == record["sha256"] == projection["raw_sha256"]
+    assert freeze["source_normalized_sha256"] == projection["normalized_sha256"]
+    assert freeze["normalization_policy"] == projection["transform_version"]
+    event = _event_records(ws)[-1]
+    assert event["event_type"] == "claim_ledger_frozen"
+    assert event["run_id"] == freeze["run_id"]
+    assert event["metadata"]["transaction_id"] == freeze["transaction_id"]
+    assert event["metadata"]["source_normalized_sha256"] == projection["normalized_sha256"]
+
+
+def test_freeze_rejects_projection_mismatch(tmp_path: Path) -> None:
+    ws = _write_workspace(tmp_path)
+    initialize_runtime_state(workspace=ws, repo_workdir=ROOT)
+    _set_current_stage(ws, "claim-ledger")
+    _write_json_artifact(ws, "claim_drafts.json", _normalized_claim_drafts_payload())
+    check_runtime_state(workspace=ws, repo_workdir=ROOT)
+    registry_path = _state_file(ws, "artifact_registry")
+    registry = json.loads(registry_path.read_text(encoding="utf-8"))
+    registry["artifacts"]["claim_drafts"]["intake_projection"]["normalized_sha256"] = (
+        "0" * 64
+    )
+    registry_path.write_text(
+        json.dumps(registry, ensure_ascii=False, indent=2, sort_keys=True) + "\n",
+        encoding="utf-8",
+    )
+    manifest_before = _state_file(ws, "runtime_manifest").read_bytes()
+    events_before = _state_file(ws, "event_log").read_bytes()
+
+    with pytest.raises(RuntimeStateError) as excinfo:
+        freeze_claim_ledger_transaction(workspace=ws, repo_workdir=ROOT)
+
+    assert excinfo.value.error_code == "E_TRANSACTION_INTEGRITY"
+    assert "projection does not match" in str(excinfo.value)
+    assert not (_intermediate(ws) / "claim_ledger.json").exists()
+    assert _state_file(ws, "runtime_manifest").read_bytes() == manifest_before
+    assert _state_file(ws, "event_log").read_bytes() == events_before
+
+
+def test_repeat_freeze_rejects_raw_drift(tmp_path: Path) -> None:
+    ws = _write_workspace(tmp_path)
+    initialize_runtime_state(workspace=ws, repo_workdir=ROOT)
+    _set_current_stage(ws, "claim-ledger")
+    path = _intermediate(ws) / "claim_drafts.json"
+    _write_json_artifact(ws, "claim_drafts.json", _normalized_claim_drafts_payload())
+    first = freeze_claim_ledger_transaction(workspace=ws, repo_workdir=ROOT)
+    normalized_payload = json.loads(path.read_text(encoding="utf-8"))
+    path.write_text(
+        json.dumps(normalized_payload, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+        + "\n",
+        encoding="utf-8",
+    )
+
+    with pytest.raises(RuntimeStateError) as excinfo:
+        freeze_claim_ledger_transaction(workspace=ws, repo_workdir=ROOT)
+
+    assert excinfo.value.error_code == "E_TRANSACTION_INTEGRITY"
+    assert "source hash does not match" in str(excinfo.value.details["freeze_reasons"])
+    assert (
+        json.loads(_state_file(ws, "runtime_manifest").read_text(encoding="utf-8"))[
+            "claim_ledger_freeze"
+        ]["source_normalized_sha256"]
+        == first["manifest"]["claim_ledger_freeze"]["source_normalized_sha256"]
+    )
+
+
+def test_repeat_freeze_rejects_policy_drift(tmp_path: Path) -> None:
+    ws = _write_workspace(tmp_path)
+    initialize_runtime_state(workspace=ws, repo_workdir=ROOT)
+    _set_current_stage(ws, "claim-ledger")
+    _write_json_artifact(ws, "claim_drafts.json", _normalized_claim_drafts_payload())
+    freeze_claim_ledger_transaction(workspace=ws, repo_workdir=ROOT)
+    manifest_path = _state_file(ws, "runtime_manifest")
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    manifest["claim_ledger_freeze"]["normalization_policy"] = (
+        "briefloop.agent_artifact_intake.v99"
+    )
+    manifest_path.write_text(
+        json.dumps(manifest, ensure_ascii=False, indent=2, sort_keys=True) + "\n",
+        encoding="utf-8",
+    )
+
+    with pytest.raises(RuntimeStateError) as excinfo:
+        freeze_claim_ledger_transaction(workspace=ws, repo_workdir=ROOT)
+
+    assert excinfo.value.error_code == "E_TRANSACTION_INTEGRITY"
+    assert "normalization policy" in str(excinfo.value.details["freeze_reasons"])
+
+
+def test_freeze_intake_binding_rolls_back_atomically(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    ws = _write_workspace(tmp_path)
+    initialize_runtime_state(workspace=ws, repo_workdir=ROOT)
+    _set_current_stage(ws, "claim-ledger")
+    _write_json_artifact(ws, "claim_drafts.json", _normalized_claim_drafts_payload())
+    manifest_before = _state_file(ws, "runtime_manifest").read_bytes()
+    events_before = _state_file(ws, "event_log").read_bytes()
+    _fail_appending_event_type(monkeypatch, "claim_ledger_frozen")
+
+    with pytest.raises(RuntimeStateError) as excinfo:
+        freeze_claim_ledger_transaction(workspace=ws, repo_workdir=ROOT)
+
+    assert "written files were restored" in str(excinfo.value)
+    assert not (_intermediate(ws) / "claim_ledger.json").exists()
+    assert not _state_file(ws, "artifact_registry").exists()
+    assert _state_file(ws, "runtime_manifest").read_bytes() == manifest_before
+    assert _state_file(ws, "event_log").read_bytes() == events_before
+
+
+def test_legacy_freeze_binding_behavior(tmp_path: Path) -> None:
+    ws = _write_workspace(tmp_path)
+    initialize_runtime_state(workspace=ws, repo_workdir=ROOT)
+    _set_current_stage(ws, "claim-ledger")
+    _write_json_artifact(ws, "claim_drafts.json", _valid_claim_drafts_payload())
+    frozen = freeze_claim_ledger_transaction(workspace=ws, repo_workdir=ROOT)
+    manifest_path = _state_file(ws, "runtime_manifest")
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    current = manifest["claim_ledger_freeze"]
+    manifest["claim_ledger_freeze"] = {
+        "schema_version": "mabw.claim_ledger_freeze.v1",
+        "status": "frozen",
+        "frozen_at": current["frozen_at"],
+        "transaction_id": current["transaction_id"],
+        "id_strategy": current["id_strategy"],
+        "source_artifact_id": "claim_drafts",
+        "source_path": current["source_path"],
+        "source_schema_version": current["source_schema_version"],
+        "source_sha256": current["source_raw_sha256"],
+        "claim_ledger_path": current["claim_ledger_path"],
+        "claim_ledger_sha256": current["claim_ledger_sha256"],
+        "claim_count": current["claim_count"],
+    }
+    manifest_path.write_text(
+        json.dumps(manifest, ensure_ascii=False, indent=2, sort_keys=True) + "\n",
+        encoding="utf-8",
+    )
+    manifest_before = manifest_path.read_bytes()
+
+    repeated = freeze_claim_ledger_transaction(workspace=ws, repo_workdir=ROOT)
+
+    assert repeated["transaction"]["decision"] == "freeze_claim_ledger_idempotent"
+    assert repeated["claim_ledger_freeze"]["schema_version"] == (
+        "mabw.claim_ledger_freeze.v1"
+    )
+    assert "source_normalized_sha256" not in repeated["claim_ledger_freeze"]
+    assert manifest_path.read_bytes() == manifest_before
+    assert frozen["manifest"]["claim_ledger_freeze"]["schema_version"].endswith(".v2")
+
+
+def test_unknown_freeze_binding_schema_fails_closed(tmp_path: Path) -> None:
+    ws = _write_workspace(tmp_path)
+    initialize_runtime_state(workspace=ws, repo_workdir=ROOT)
+    _set_current_stage(ws, "claim-ledger")
+    _write_json_artifact(ws, "claim_drafts.json", _valid_claim_drafts_payload())
+    freeze_claim_ledger_transaction(workspace=ws, repo_workdir=ROOT)
+    manifest_path = _state_file(ws, "runtime_manifest")
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    manifest["claim_ledger_freeze"]["schema_version"] = "mabw.claim_ledger_freeze.v99"
+    manifest_path.write_text(
+        json.dumps(manifest, ensure_ascii=False, indent=2, sort_keys=True) + "\n",
+        encoding="utf-8",
+    )
+
+    with pytest.raises(RuntimeStateError) as excinfo:
+        freeze_claim_ledger_transaction(workspace=ws, repo_workdir=ROOT)
+
+    assert excinfo.value.error_code == "E_TRANSACTION_INTEGRITY"
+    assert "unsupported schema" in str(excinfo.value.details["freeze_reasons"])
 
 
 def test_freeze_claim_ledger_preserves_draft_provenance_metadata(tmp_path):
