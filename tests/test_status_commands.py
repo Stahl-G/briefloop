@@ -353,6 +353,8 @@ def test_status_command_is_read_only_for_existing_runtime_state(tmp_path, capsys
     assert payload["workflow"]["current_stage"] == "doctor"
     assert payload["workflow"]["run_integrity"]["status"] == "clean"
     assert payload["workflow"]["run_integrity"]["reference_eligible"] is True
+    assert payload["recovery_state"]["status"] == "not_applicable"
+    assert payload["recovery_state"]["runtime_effect"] == "read_only_recovery_projection"
     assert payload["timing"]["schema_version"] == "mabw.control_timing.v1"
     assert payload["timing"]["source"] == "event_log"
     assert payload["timing"]["precision"] == "control_trace_bucket"
@@ -731,7 +733,7 @@ def test_status_command_requires_auditable_downstream_stage_completion_events(tm
     assert "experiments 080 register-run" not in payload["suggested_next_command"]
 
 
-def test_status_command_replays_sticky_contamination_before_auditable_target(tmp_path, capsys):
+def test_status_command_projects_recovery_without_replaying_run_integrity(tmp_path, capsys):
     ws = _minimal_workspace(tmp_path / "ws")
     initialize_runtime_state(workspace=ws, runtime="claude", actor="cli")
     _write_auditable_target_complete_state(ws)
@@ -766,19 +768,19 @@ def test_status_command_replays_sticky_contamination_before_auditable_target(tmp
 
     assert rc == 0
     payload = json.loads(capsys.readouterr().out)
-    assert payload["workflow"]["run_integrity"]["status"] == "contaminated"
-    assert payload["workflow"]["run_integrity"]["reference_eligible"] is False
-    assert payload["experiment_080"]["target_complete"] is False
-    assert "run_integrity is not clean" in payload["experiment_080"]["reasons"]
+    assert payload["workflow"]["run_integrity"]["status"] == "clean"
+    assert payload["workflow"]["run_integrity"]["reference_eligible"] is True
+    assert payload["recovery_state"]["status"] == "awaiting_recovery"
+    assert payload["recovery_state"]["recovery_blocks_delivery"] is True
     assert "experiments 080 register-run" not in payload["suggested_next_command"]
+    assert "workbuddy diagnose" in payload["suggested_next_command"]
 
     rc = main(["status", "--workspace", str(ws)])
 
     assert rc == 0
     out = capsys.readouterr().out
-    assert "[status] run_integrity: contaminated reference_eligible=False" in out
-    assert "[status] target_complete: auditable_brief" not in out
-    assert "[status] target_incomplete: auditable_brief" in out
+    assert "[status] run_integrity: clean reference_eligible=True" in out
+    assert "[status] recovery: awaiting_recovery action=request_recovery_decision" in out
 
 
 def test_status_command_rejects_auditable_target_with_unbound_repair_event(tmp_path, capsys):
@@ -816,7 +818,9 @@ def test_status_command_rejects_auditable_target_with_unbound_repair_event(tmp_p
     assert experiment["target_complete"] is False
     assert "audit binding relevant_repair_transaction_ids does not match event_log" in experiment["reasons"]
     assert "experiments 080 register-run" not in payload["suggested_next_command"]
-    assert payload["suggested_next_command"] == f"briefloop status --workspace {ws} --json"
+    assert payload["suggested_next_command"] == (
+        f"briefloop workbuddy diagnose --workspace {ws} --json"
+    )
     assert "/mabw deliver" not in payload["suggested_next_command"]
     assert "/generate-brief" not in payload["suggested_next_command"]
 

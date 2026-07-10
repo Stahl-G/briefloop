@@ -58,10 +58,13 @@ the original contamination event, keeps `reference_eligible=false`, and requires
 downstream stages to rerun.
 
 When `briefloop workbuddy diagnose --workspace <workspace> --json` reports
-`next_allowed_action=stop_human_review_or_supersede`, use this lane instead of
-hand-editing control files. Only WorkBuddy diagnose surfaces
-`next_allowed_action` (it formats the completion projection); `status --json`
-does not output that field.
+`recovery_state.status=awaiting_recovery` and
+`recovery_state.recommended_recovery_action=request_recovery_decision`, inspect
+the bound contamination and owner revision before the operator chooses a
+controlled repair, supersede, or new run. Do not infer recovery progress from
+`run_integrity`, and do not hand-edit control files. Only WorkBuddy diagnose
+surfaces `next_allowed_action` (it formats the completion projection);
+`status --json` does not output that field.
 
 ## Boundaries
 

@@ -335,7 +335,9 @@ def test_workbuddy_repair_reference_documents_supersede_lane() -> None:
         assert "old registered hash, current bytes hash, and reason" in compact
         assert "original contamination event" in compact
         assert "does not make the run clean or reference-eligible" in compact
-        assert "stop_human_review_or_supersede" in compact
+        assert "recovery_state.status=awaiting_recovery" in compact
+        assert "request_recovery_decision" in compact
+        assert "stop_human_review_or_supersede" not in compact
 
 
 def _bare_repair_start_offenders(text: str) -> list[str]:
@@ -446,6 +448,8 @@ def test_workbuddy_skill_requires_run_card_and_hard_stop_rules() -> None:
         "runtime:",
         "current_stage:",
         "run_integrity:",
+        "recovery_status:",
+        "recovery_action:",
         "blocked:",
         "latest_gate_status:",
         "finalize_report:",
@@ -457,8 +461,9 @@ def test_workbuddy_skill_requires_run_card_and_hard_stop_rules() -> None:
         "在每个关键 CLI 命令、角色返回、repair 动作、gate 检查、finalize",
         "`briefloop doctor` 报告任何错误",
         "展示完整 doctor 输出",
-        "`run_integrity` 处于",
-        "不要运行 finalize 或交付",
+        "`recovery_status` 为",
+        "`recovery_status=completed_non_reference`",
+        "`recovery_action` / `next_allowed_action`",
         "`delivery_truth.valid` 不是",
         "才说 run 里有草稿",
         "任何导出、分享、打包、zip 或附件候选包含",
@@ -466,7 +471,7 @@ def test_workbuddy_skill_requires_run_card_and_hard_stop_rules() -> None:
         assert phrase in text
     for phrase in [
         "不要把 finalize 之前的正常状态当作流程停止",
-        "停止 finalize、交付、导出与分享动作",
+        "只执行 `recovery_action` / `next_allowed_action` 指定的受控事务",
         "报告 Run Card",
         "非交付工作流步骤",
         "否则说目前既没有草稿也没有交付",
@@ -489,7 +494,7 @@ def test_workbuddy_skill_requires_run_card_and_hard_stop_rules() -> None:
         assert phrase not in compact
 
 
-def test_workbuddy_recovery_hard_stops_use_mutually_exclusive_states() -> None:
+def test_workbuddy_recovery_hard_stops_use_canonical_recovery_state() -> None:
     paths = [
         WORKBUDDY_SKILL / "SKILL.md",
         WORKBUDDY_SKILL / "references" / "quickstart.md",
@@ -498,13 +503,12 @@ def test_workbuddy_recovery_hard_stops_use_mutually_exclusive_states() -> None:
     ]
     for path in paths:
         compact = _compact(_read(path))
-        assert "contaminated_repaired" in compact, path
+        assert "contaminated_repaired" not in compact, path
+        assert "recovery_status" in compact, path
+        assert "completed_non_reference" in compact, path
         assert "delivery_truth.valid=true" in compact, path
         assert "不要再次运行 finalize" in compact, path
-        assert not re.search(
-            r"contaminated_repaired.{0,180}可交付.{0,180}不要运行 finalize 或交付",
-            compact,
-        ), path
+        assert "不要从 `run_integrity`" in compact, path
 
 
 def test_workbuddy_skill_has_no_private_paths_or_overclaim_language() -> None:

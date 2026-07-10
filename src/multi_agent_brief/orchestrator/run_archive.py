@@ -86,6 +86,9 @@ def archive_finalized_run(
         freshness_at_finalize=fast_rerun_freshness_at_finalize,
     )
     evidence_span_registry = archive_plan["evidence_span_registry"]
+    from multi_agent_brief.orchestrator.recovery_state import evaluate_recovery_state
+
+    recovery_state = evaluate_recovery_state(workspace=ws)
     archive_manifest = {
         "schema_version": RUN_ARCHIVE_SCHEMA,
         "run_id": run_id,
@@ -94,6 +97,7 @@ def archive_finalized_run(
         "runtime_manifest_run_id": manifest.get("run_id"),
         "workflow_current_stage": workflow.get("current_stage"),
         "run_integrity": _run_integrity_for_manifest(workflow),
+        "recovery_state": _archive_recovery_snapshot(recovery_state),
         "timing": _timing_for_manifest(ws, workflow),
         "fast_rerun": fast_rerun,
         "fact_layer": archive_plan["fact_layer"],
@@ -813,6 +817,30 @@ def _run_integrity_for_manifest(workflow: dict[str, Any]) -> dict[str, Any]:
             field_present="run_integrity" in workflow,
         )
     )
+
+
+def _archive_recovery_snapshot(state: dict[str, Any]) -> dict[str, Any]:
+    """Project recovery lineage into the archive without creating authority."""
+
+    fields = (
+        "schema_version",
+        "status",
+        "reason_code",
+        "run_id",
+        "contamination_event_id",
+        "recovery_transaction_id",
+        "recovery_event_type",
+        "owner_stage",
+        "artifact_id",
+        "rerun_start_stage",
+        "render_transaction_id",
+        "finalize_completion_transaction_id",
+        "reference_eligible",
+    )
+    return {
+        "runtime_effect": "derived_archive_snapshot_not_authority",
+        **{field: state.get(field) for field in fields},
+    }
 
 
 def _timing_for_manifest(workspace: Path, workflow: dict[str, Any]) -> dict[str, Any]:

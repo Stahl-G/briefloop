@@ -3,6 +3,8 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+import pytest
+
 from multi_agent_brief.orchestrator.runtime_state import (
     append_event,
     build_completion_projection,
@@ -205,6 +207,71 @@ def _append_finalize_event(ws: Path) -> None:
     )
 
 
+def _bind_contaminated_recovery(
+    ws: Path,
+    *,
+    recovered: bool,
+    blocked: bool = False,
+) -> None:
+    manifest = _load_json(_intermediate(ws) / "runtime_manifest.json")
+    contamination_event_id = "event-contamination-001"
+    append_event(
+        workspace=ws,
+        run_id=manifest["run_id"],
+        event_id=contamination_event_id,
+        event_type="run_integrity_contaminated",
+        actor="cli",
+        stage_id="editor",
+        artifact_id="audited_brief",
+        reason="Synthetic current-run contamination.",
+        metadata={"reason_code": "frozen_artifact_changed"},
+    )
+    updates: dict[str, object] = {
+        "blocked": blocked,
+        "blocking_reason": "Frozen artifact changed after stage-complete." if blocked else "",
+        "run_integrity": {
+            "status": "contaminated",
+            "reference_eligible": False,
+            "clean_single_shot": False,
+            "reasons": [{"reason_code": "frozen_artifact_changed"}],
+        },
+    }
+    if recovered:
+        append_event(
+            workspace=ws,
+            run_id=manifest["run_id"],
+            event_id="event-recovery-001",
+            event_type="repair_stage_superseded",
+            actor="cli",
+            stage_id="editor",
+            artifact_id="audited_brief",
+            reason="Synthetic bound recovery.",
+            metadata={
+                "transaction_id": "recovery-001",
+                "contamination_event_id": contamination_event_id,
+                "owner_stage": "editor",
+                "artifact_id": "audited_brief",
+                "rerun_start_stage": "auditor",
+                "stale_artifact_baselines": {},
+                "reference_eligible": False,
+            },
+        )
+        updates.update(
+            {
+                "current_stage": "auditor",
+                "last_repair_transaction": {
+                    "transaction_id": "recovery-001",
+                    "run_id": manifest["run_id"],
+                    "contamination_event_id": contamination_event_id,
+                    "owner_stage": "editor",
+                    "artifact_id": "audited_brief",
+                    "rerun_start_stage": "auditor",
+                },
+            }
+        )
+    _set_workflow(ws, **updates)
+
+
 def test_completion_projection_reads_recorded_finalize_delivery_truth(tmp_path: Path) -> None:
     ws = _write_workspace(tmp_path)
     _init_workspace(ws)
@@ -220,6 +287,64 @@ def test_completion_projection_reads_recorded_finalize_delivery_truth(tmp_path: 
     assert payload["delivery_truth"]["source"] == "finalize_report"
     assert payload["finalize_truth"]["delivery_promotion"] == "promoted"
     assert payload["next_allowed_action"] == "inspect_status_before_delivery_or_quality"
+
+
+def test_completion_projection_distinguishes_current_delivery_outcomes(tmp_path: Path) -> None:
+    ws = _write_workspace(tmp_path)
+    state = _init_workspace(ws)
+    _set_workflow(ws, current_stage="finalize")
+    _write_finalize_report(ws)
+    _write_gate_report(ws)
+    _append_finalize_event(ws)
+
+    append_event(
+        workspace=ws,
+        run_id=state["manifest"]["run_id"],
+        event_type="delivery_attempted",
+        actor="cli",
+        reason="Attempted only.",
+        metadata={"render_transaction_id": "tx-finalize-001"},
+    )
+    attempted = build_completion_projection(workspace=ws, repo_workdir=ROOT)
+    assert attempted["event_truth"]["delivery_attempt_present"] is True
+    assert attempted["event_truth"]["delivery_event_present"] is False
+    assert attempted["event_truth"]["delivery_outcome"] == "missing"
+
+    append_event(
+        workspace=ws,
+        run_id=state["manifest"]["run_id"],
+        event_type="delivery_bundle_prepared",
+        actor="cli",
+        reason="Local bundle prepared.",
+        metadata={"render_transaction_id": "tx-finalize-001"},
+    )
+    prepared = build_completion_projection(workspace=ws, repo_workdir=ROOT)
+    assert prepared["event_truth"]["delivery_bundle_prepared"] is True
+    assert prepared["event_truth"]["delivery_succeeded"] is False
+
+    append_event(
+        workspace=ws,
+        run_id=state["manifest"]["run_id"],
+        event_type="delivery_succeeded",
+        actor="cli",
+        reason="Stale render delivered.",
+        metadata={"render_transaction_id": "stale-render"},
+    )
+    stale = build_completion_projection(workspace=ws, repo_workdir=ROOT)
+    assert stale["event_truth"]["delivery_outcome"] == "delivery_bundle_prepared"
+    assert stale["event_truth"]["delivery_succeeded"] is False
+
+    append_event(
+        workspace=ws,
+        run_id=state["manifest"]["run_id"],
+        event_type="delivery_succeeded",
+        actor="cli",
+        reason="Current render delivered.",
+        metadata={"render_transaction_id": "tx-finalize-001"},
+    )
+    delivered = build_completion_projection(workspace=ws, repo_workdir=ROOT)
+    assert delivered["event_truth"]["delivery_outcome"] == "delivery_succeeded"
+    assert delivered["event_truth"]["delivery_succeeded"] is True
 
 
 def test_completion_projection_stops_on_missing_required_control_file(tmp_path: Path) -> None:
@@ -480,79 +605,95 @@ def test_completion_projection_stops_on_empty_active_repair_object(tmp_path: Pat
 def test_completion_projection_stops_on_contaminated_run_integrity(tmp_path: Path) -> None:
     ws = _write_workspace(tmp_path)
     _init_workspace(ws)
-    _set_workflow(
-        ws,
-        run_integrity={
-            "status": "contaminated",
-            "reference_eligible": False,
-            "clean_single_shot": False,
-            "reasons": [{"reason_code": "frozen_artifact_changed"}],
-        },
-    )
+    _bind_contaminated_recovery(ws, recovered=False)
 
     payload = build_completion_projection(workspace=ws, repo_workdir=ROOT)
 
     assert payload["run_integrity"]["status"] == "contaminated"
-    assert payload["next_allowed_action"] == "stop_human_review_or_supersede"
+    assert payload["recovery_state"]["status"] == "awaiting_recovery"
+    assert payload["next_allowed_action"] == "request_recovery_decision"
 
 
-def test_completion_projection_contaminated_prefers_supersede_over_workflow_blocked(tmp_path: Path) -> None:
+def test_completion_projection_current_blocker_precedes_awaiting_recovery(tmp_path: Path) -> None:
     ws = _write_workspace(tmp_path)
     _init_workspace(ws)
-    _set_workflow(
-        ws,
-        blocked=True,
-        blocking_reason="Frozen artifact changed after stage-complete.",
-        run_integrity={
-            "status": "contaminated",
-            "reference_eligible": False,
-            "clean_single_shot": False,
-            "reasons": [{"reason_code": "frozen_artifact_changed"}],
-        },
-    )
+    _bind_contaminated_recovery(ws, recovered=False, blocked=True)
 
     payload = build_completion_projection(workspace=ws, repo_workdir=ROOT)
 
-    assert payload["next_allowed_action"] == "stop_human_review_or_supersede"
+    assert payload["next_allowed_action"] == "stop_workflow_blocked_human_review_required"
 
 
-def test_completion_projection_contaminated_repaired_requires_downstream_rerun(tmp_path: Path) -> None:
+def test_completion_projection_bound_recovery_requires_recorded_downstream_rerun(tmp_path: Path) -> None:
     ws = _write_workspace(tmp_path)
     _init_workspace(ws)
-    _set_workflow(
-        ws,
-        run_integrity={
-            "status": "contaminated_repaired",
-            "reference_eligible": False,
-            "clean_single_shot": False,
-            "reasons": [{"reason_code": "frozen_artifact_changed"}],
-        },
-    )
+    _bind_contaminated_recovery(ws, recovered=True)
 
     payload = build_completion_projection(workspace=ws, repo_workdir=ROOT)
 
-    assert payload["run_integrity"]["status"] == "contaminated_repaired"
-    assert payload["next_allowed_action"] == "rerun_downstream_auditor_finalize"
+    assert payload["run_integrity"]["status"] == "contaminated"
+    assert payload["recovery_state"]["rerun_start_stage"] == "auditor"
+    assert payload["next_allowed_action"] == "rerun_from_stage"
 
 
-def test_completion_projection_contaminated_repaired_prefers_rerun_over_workflow_blocked(tmp_path: Path) -> None:
+def test_completion_projection_current_blocker_precedes_bound_recovery_rerun(tmp_path: Path) -> None:
     ws = _write_workspace(tmp_path)
     _init_workspace(ws)
-    _set_workflow(
-        ws,
-        blocked=True,
-        blocking_reason="Frozen artifact changed after stage-complete.",
-        run_integrity={
-            "status": "contaminated_repaired",
-            "reference_eligible": False,
-            "clean_single_shot": False,
-            "reasons": [{"reason_code": "frozen_artifact_changed"}],
-        },
-    )
+    _bind_contaminated_recovery(ws, recovered=True, blocked=True)
 
     payload = build_completion_projection(workspace=ws, repo_workdir=ROOT)
 
-    assert payload["next_allowed_action"] == "rerun_downstream_auditor_finalize"
+    assert payload["next_allowed_action"] == "stop_workflow_blocked_human_review_required"
+
+
+@pytest.mark.parametrize(
+    ("case_id", "expected_action"),
+    [
+        ("current-gate-missing", "run_finalize_gate_or_finalize_complete"),
+        ("current-gate-blocking", "stop_resolve_blocking_gate_report"),
+        ("stale-noncurrent-gate-ignored", "run_finalize_gate_or_finalize_complete"),
+    ],
+    ids=[
+        "current-gate-missing",
+        "current-gate-blocking",
+        "stale-noncurrent-gate-ignored",
+    ],
+)
+def test_recovery_gate_independence_matrix(
+    tmp_path: Path,
+    case_id: str,
+    expected_action: str,
+) -> None:
+    ws = _write_workspace(tmp_path)
+    state = _init_workspace(ws)
+    _bind_contaminated_recovery(ws, recovered=True)
+    _set_workflow(ws, current_stage="finalize")
+    report = _write_finalize_report(ws)
+    report["recovery_binding"] = {
+        "status": "bound_non_reference_recovery",
+        "run_id": state["manifest"]["run_id"],
+        "contamination_event_id": "event-contamination-001",
+        "recovery_transaction_id": "recovery-001",
+        "rerun_start_stage": "auditor",
+        "reference_eligible": False,
+    }
+    _write_json(_intermediate(ws) / "finalize_report.json", report)
+
+    if case_id == "current-gate-blocking":
+        _write_gate_report(ws, status="fail", blocking=True)
+    elif case_id == "stale-noncurrent-gate-ignored":
+        stale = _write_gate_report(ws, stage_id="auditor", status="fail", blocking=True)
+        _write_json(
+            _intermediate(ws) / "gates" / "auditor_quality_gate_report.json",
+            stale,
+        )
+        _write_gate_report(ws, stage_id="finalize", status="pass", blocking=False)
+
+    payload = build_completion_projection(workspace=ws, repo_workdir=ROOT)
+
+    assert payload["recovery_state"]["status"] == "finalize_completion_pending"
+    assert payload["recovery_state"]["recovery_transaction_id"] == "recovery-001"
+    assert payload["next_allowed_action"] == expected_action
 
 
 def test_completion_projection_active_repair_prefers_repair_over_workflow_blocked(tmp_path: Path) -> None:
@@ -571,7 +712,7 @@ def test_completion_projection_active_repair_prefers_repair_over_workflow_blocke
     assert payload["next_allowed_action"] == "stop_complete_or_inspect_active_repair"
 
 
-def test_completion_projection_unknown_integrity_prefers_integrity_over_workflow_blocked(tmp_path: Path) -> None:
+def test_completion_projection_unknown_integrity_is_invalid_recovery_state(tmp_path: Path) -> None:
     ws = _write_workspace(tmp_path)
     _init_workspace(ws)
     _set_workflow(
@@ -587,7 +728,8 @@ def test_completion_projection_unknown_integrity_prefers_integrity_over_workflow
 
     payload = build_completion_projection(workspace=ws, repo_workdir=ROOT)
 
-    assert payload["next_allowed_action"] == "stop_run_integrity_not_clean"
+    assert payload["recovery_state"]["status"] == "invalid_recovery_state"
+    assert payload["next_allowed_action"] == "inspect_invalid_recovery"
 
 
 def test_completion_projection_rejects_invalid_experiment_condition_before_finalize(tmp_path: Path) -> None:

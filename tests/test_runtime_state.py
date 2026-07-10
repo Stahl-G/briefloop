@@ -17,6 +17,7 @@ import multi_agent_brief.orchestrator.runtime_state.event_log as runtime_event_l
 import multi_agent_brief.orchestrator.runtime_state.stage_completion as runtime_stage_completion
 from multi_agent_brief.repair import router as repair_router
 from multi_agent_brief.cli.main import main
+from multi_agent_brief.cli.deliver_commands import deliver_workspace
 from multi_agent_brief.contracts.target_contract import project_assessment_target_status
 from multi_agent_brief.orchestrator.recovery_state import evaluate_recovery_state
 from multi_agent_brief.orchestrator.runtime_state._io import _sha256_file
@@ -7634,6 +7635,20 @@ def test_auditor_rerun_after_editor_supersede_records_supersede_in_audit_binding
     terminal = evaluate_recovery_state(workspace=ws, repo_workdir=ROOT)
     assert terminal["status"] == "completed_non_reference"
     assert terminal["reference_eligible"] is False
+    archive_manifest = json.loads(
+        (
+            ws
+            / "output"
+            / "runs"
+            / completed["manifest"]["run_id"]
+            / "manifest.json"
+        ).read_text(encoding="utf-8")
+    )
+    archived_recovery = archive_manifest["recovery_state"]
+    assert archived_recovery["runtime_effect"] == "derived_archive_snapshot_not_authority"
+    assert archived_recovery["status"] == "completed_non_reference"
+    assert archived_recovery["recovery_transaction_id"] == supersede_transaction_id
+    assert archived_recovery["reference_eligible"] is False
     assert any(
         event["event_type"] == "decision_recorded"
         and (event.get("metadata") or {}).get("render_transaction_id")
@@ -7642,6 +7657,24 @@ def test_auditor_rerun_after_editor_supersede_records_supersede_in_audit_binding
         == supersede_transaction_id
         for event in _event_records(ws)
     )
+
+    delivery = deliver_workspace(workspace=ws, target="local", channel="local")
+    assert delivery["ok"] is True
+    assert delivery["delivered"] is False
+    assert delivery["recovery_state"]["status"] == "completed_non_reference"
+    delivery_events = [
+        event
+        for event in _event_records(ws)
+        if event["event_type"].startswith("delivery_")
+    ]
+    assert [event["event_type"] for event in delivery_events] == [
+        "delivery_attempted",
+        "delivery_bundle_prepared",
+    ]
+    prepared = delivery_events[-1]["metadata"]
+    assert prepared["render_transaction_id"] == finalized.finalize_transaction_id
+    assert prepared["recovery_transaction_id"] == supersede_transaction_id
+    assert prepared["contamination_event_id"] == binding["contamination_event_id"]
 
 
 def test_supersede_stage_rejects_clean_run_without_contamination(tmp_path):
@@ -7822,6 +7855,14 @@ def test_repair_complete_refreezes_allowed_editor_artifact_and_invalidates_downs
     assert artifacts["auditor_quality_gate_report"]["status"] == "stale"
     assert artifacts["auditor_quality_gate_report"]["validation_result"] == "stale_after_repair"
     assert workflow["run_integrity"]["status"] == "clean"
+    owner_revision = evaluate_recovery_state(workspace=ws, repo_workdir=ROOT)
+    assert owner_revision["status"] == "not_applicable"
+    assert owner_revision["owner_revision"]["transaction_id"] == state["transaction"][
+        "transaction_id"
+    ]
+    assert owner_revision["owner_revision"]["stale_artifact_baselines"]["audit_report"][
+        "sha256"
+    ]
     events = _event_records(ws)
     assert events[-1]["event_type"] == "repair_completed"
     assert events[-1]["metadata"]["repair_owner"] == "editor"
@@ -7887,6 +7928,9 @@ def test_auditor_rerun_after_editor_repair_clears_stale_downstream_artifacts(tmp
     assert refreshed_audit_record["status"] == "valid"
     assert refreshed_audit_record["sha256"] == refreshed_audit_sha
     assert "stale_baseline_sha256" not in refreshed_audit_record
+    owner_revision = evaluate_recovery_state(workspace=ws, repo_workdir=ROOT)
+    assert owner_revision["status"] == "not_applicable"
+    assert owner_revision["owner_revision"]["transaction_id"] == repair_transaction_id
     _write_quality_gate_report(ws, stage_id="auditor")
     audited_state = complete_stage_transaction(
         workspace=ws,

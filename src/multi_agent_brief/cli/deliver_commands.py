@@ -25,13 +25,11 @@ from multi_agent_brief.orchestrator.runtime_state import (
     append_event,
     check_runtime_state,
     raise_if_active_repair_open,
-    read_event_log_records_strict,
     runtime_state_paths,
 )
 from multi_agent_brief.orchestrator.run_integrity import (
     interpret_run_integrity,
     project_for_read,
-    workflow_with_sticky_contamination_events,
 )
 from multi_agent_brief.outputs.reader_final_gate import (
     combine_reader_final_gate_results,
@@ -64,6 +62,7 @@ class DeliveryBundle:
     markdown: Path | None
     docx: Path | None
     artifact_sha256: dict[str, str]
+    render_transaction_id: str
 
     def relative_artifacts(self) -> list[str]:
         return [_workspace_relative(self.workspace, path) for path in self.artifacts]
@@ -194,10 +193,18 @@ def deliver_workspace(
     _preflight_no_active_repair(ws, target=target, channel=channel)
     _refresh_runtime_state_before_delivery(ws, target=target, channel=channel)
     run_integrity = _delivery_run_integrity(ws)
+    from multi_agent_brief.orchestrator.recovery_state import evaluate_recovery_state
+
+    recovery_state = evaluate_recovery_state(workspace=ws)
     _preflight_run_integrity_for_delivery(
         run_integrity,
+        recovery_state=recovery_state,
         target=target,
         channel=channel,
+    )
+    delivery_lineage = _delivery_lineage(
+        bundle=bundle,
+        recovery_state=recovery_state,
     )
 
     if target == "local":
@@ -209,14 +216,16 @@ def deliver_workspace(
             channel="local",
             artifact=artifact,
             recipient=recipient,
+            metadata=delivery_lineage,
         )
         _record_delivery_event(
             ws,
-            event_type="delivery_succeeded",
+            event_type="delivery_bundle_prepared",
             target="local",
             channel="local",
             artifact=artifact,
             recipient=recipient,
+            metadata=delivery_lineage,
         )
         return {
             "ok": True,
@@ -227,6 +236,7 @@ def deliver_workspace(
             "delivered": False,
             "message": "Delivery bundle ready",
             "run_integrity": run_integrity,
+            "recovery_state": recovery_state,
         }
 
     if target == "gmail":
@@ -238,6 +248,8 @@ def deliver_workspace(
             subject=subject,
             body=body,
             run_integrity=run_integrity,
+            delivery_lineage=delivery_lineage,
+            recovery_state=recovery_state,
         )
 
     if target != "feishu":
@@ -270,6 +282,7 @@ def deliver_workspace(
         channel=channel,
         artifact=artifact,
         recipient=recipient,
+        metadata=delivery_lineage,
     )
 
     result = FeishuDeliveryConnector().deliver(
@@ -288,6 +301,7 @@ def deliver_workspace(
             artifact=artifact,
             recipient=recipient,
             url=str(result.metadata.get("url") or ""),
+            metadata=delivery_lineage,
         )
     except DeliverCommandError as exc:
         event_recorded = False
@@ -313,6 +327,7 @@ def deliver_workspace(
         "event_recorded": event_recorded,
         "event_error": event_error,
         "run_integrity": run_integrity,
+        "recovery_state": recovery_state,
     }
 
 
@@ -325,6 +340,8 @@ def _deliver_gmail(
     subject: str,
     body: str,
     run_integrity: dict[str, Any],
+    delivery_lineage: dict[str, Any],
+    recovery_state: dict[str, Any],
 ) -> dict[str, Any]:
     if channel not in {"draft", "send"}:
         raise DeliverCommandError(
@@ -352,6 +369,7 @@ def _deliver_gmail(
         channel=channel,
         artifact=artifact,
         recipient=recipient,
+        metadata=delivery_lineage,
     )
     result = GwsGmailDeliveryConnector().deliver(
         DeliveryArtifact(path=str(artifact), title=artifact.stem),
@@ -377,7 +395,10 @@ def _deliver_gmail(
             channel=channel,
             artifact=artifact,
             recipient=recipient,
-            metadata=_gmail_event_metadata(channel, result),
+            metadata={
+                **delivery_lineage,
+                **_gmail_event_metadata(channel, result),
+            },
         )
     except DeliverCommandError as exc:
         event_recorded = False
@@ -399,6 +420,7 @@ def _deliver_gmail(
                 "event_recorded": event_recorded,
                 "event_error": event_error,
                 "run_integrity": run_integrity,
+                "recovery_state": recovery_state,
             },
         ) from exc
     if not result.delivered:
@@ -416,6 +438,7 @@ def _deliver_gmail(
                     "Gmail Drafts" if channel == "draft" else "Gmail Sent Mail"
                 ),
                 "run_integrity": run_integrity,
+                "recovery_state": recovery_state,
             }
         raise DeliverCommandError(
             _sanitize_delivery_message(result.message or fallback, recipient=recipient),
@@ -436,6 +459,7 @@ def _deliver_gmail(
         "event_recorded": event_recorded,
         "event_error": event_error,
         "run_integrity": run_integrity,
+        "recovery_state": recovery_state,
     }
 
 
@@ -489,6 +513,12 @@ def _load_delivery_bundle(workspace: Path) -> DeliveryBundle:
     if not isinstance(report, dict):
         raise DeliverCommandError(
             "finalize_report.json must be an object.",
+            error_code=E_DELIVERY_BUNDLE_MISSING,
+        )
+    render_transaction_id = report.get("finalize_transaction_id")
+    if not isinstance(render_transaction_id, str) or not render_transaction_id.strip():
+        raise DeliverCommandError(
+            "Delivery bundle is missing finalize_transaction_id. Run finalize again before delivery.",
             error_code=E_DELIVERY_BUNDLE_MISSING,
         )
 
@@ -580,6 +610,7 @@ def _load_delivery_bundle(workspace: Path) -> DeliveryBundle:
         markdown=markdown,
         docx=docx,
         artifact_sha256=artifact_hashes,
+        render_transaction_id=render_transaction_id.strip(),
     )
 
 
@@ -817,13 +848,6 @@ def _delivery_run_integrity(workspace: Path) -> dict[str, Any]:
             "workflow_state.json must contain an object; cannot verify run integrity.",
             error_code=E_DELIVERY_EVENT_FAILED,
         )
-    try:
-        workflow = workflow_with_sticky_contamination_events(
-            workflow,
-            read_event_log_records_strict(paths["event_log"]),
-        )
-    except RuntimeStateError:
-        pass
     return project_for_read(
         interpret_run_integrity(
             workflow.get("run_integrity"),
@@ -835,10 +859,23 @@ def _delivery_run_integrity(workspace: Path) -> dict[str, Any]:
 def _preflight_run_integrity_for_delivery(
     run_integrity: dict[str, Any],
     *,
+    recovery_state: dict[str, Any],
     target: str,
     channel: str,
 ) -> None:
-    if run_integrity.get("status") == "clean" and run_integrity.get("reference_eligible") is True:
+    from multi_agent_brief.orchestrator.recovery_state import (
+        RECOVERY_COMPLETED_NON_REFERENCE,
+        RECOVERY_NOT_APPLICABLE,
+    )
+
+    recovery_status = recovery_state.get("status")
+    if (
+        recovery_status == RECOVERY_NOT_APPLICABLE
+        and run_integrity.get("status") == "clean"
+        and run_integrity.get("reference_eligible") is True
+    ):
+        return
+    if recovery_status == RECOVERY_COMPLETED_NON_REFERENCE:
         return
     reasons = run_integrity.get("reasons") if isinstance(run_integrity.get("reasons"), list) else []
     first_reason = reasons[0] if reasons and isinstance(reasons[0], dict) else {}
@@ -849,8 +886,35 @@ def _preflight_run_integrity_for_delivery(
         error_code=E_DELIVERY_RUN_INTEGRITY_BLOCKED,
         target=target,
         channel=channel,
-        extra={"run_integrity": run_integrity},
+        extra={"run_integrity": run_integrity, "recovery_state": recovery_state},
     )
+
+
+def _delivery_lineage(
+    *,
+    bundle: DeliveryBundle,
+    recovery_state: dict[str, Any],
+) -> dict[str, Any]:
+    lineage = {"render_transaction_id": bundle.render_transaction_id}
+    if recovery_state.get("status") != "completed_non_reference":
+        return lineage
+    if recovery_state.get("render_transaction_id") != bundle.render_transaction_id:
+        raise DeliverCommandError(
+            "Delivery bundle render transaction does not match the completed recovery.",
+            error_code=E_DELIVERY_RUN_INTEGRITY_BLOCKED,
+            extra={"recovery_state": recovery_state},
+        )
+    lineage.update(
+        {
+            "recovery_transaction_id": str(
+                recovery_state.get("recovery_transaction_id") or ""
+            ),
+            "contamination_event_id": str(
+                recovery_state.get("contamination_event_id") or ""
+            ),
+        }
+    )
+    return lineage
 
 
 def _print_run_integrity_warning(payload: dict[str, Any]) -> None:
@@ -870,6 +934,7 @@ def _event_reason(event_type: str) -> str:
     return {
         "delivery_attempted": "Reader delivery attempted.",
         "delivery_draft_created": "Reader delivery draft created.",
+        "delivery_bundle_prepared": "Reader delivery bundle prepared locally.",
         "delivery_succeeded": "Reader delivery succeeded.",
         "delivery_failed": "Reader delivery failed.",
     }.get(event_type, "Reader delivery event.")

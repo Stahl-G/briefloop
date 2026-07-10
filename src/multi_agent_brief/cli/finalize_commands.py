@@ -131,15 +131,16 @@ def _preflight_runtime_state_before_finalize(workspace: Path) -> None:
                 ) from exc
             if not isinstance(workflow, dict):
                 raise RuntimeStateError("workflow_state.json must contain an object after runtime state refresh.")
-            _raise_if_recovery_not_ready_for_finalize(
-                workspace=workspace,
-                workflow=workflow,
-            )
         raise_if_auditable_target_complete_blocks_downstream(
             workspace=workspace,
             workflow=workflow,
             command="finalize",
         )
+        if paths["runtime_manifest"].exists():
+            _raise_if_recovery_not_ready_for_finalize(
+                workspace=workspace,
+                workflow=workflow,
+            )
     except RuntimeStateError as exc:
         if exc.error_code == E_ACTIVE_REPAIR_OPEN:
             raise

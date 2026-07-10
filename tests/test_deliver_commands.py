@@ -62,6 +62,7 @@ def _write_bundle(
     }
     report = {
         "status": "pass",
+        "finalize_transaction_id": "render-deliver-test-001",
         "reader_clean": {"status": reader_clean_status, "sample_findings": []},
         "delivery_artifacts": artifact_paths,
         "delivery_artifact_sha256": artifact_hashes,
@@ -131,8 +132,12 @@ def test_deliver_local_lists_only_delivery_bundle(tmp_path: Path, capsys) -> Non
     assert "claim_ledger.json" not in out
     assert "audit_report.json" not in out
     events = _delivery_events(ws)
-    assert [event["event_type"] for event in events] == ["delivery_attempted", "delivery_succeeded"]
+    assert [event["event_type"] for event in events] == [
+        "delivery_attempted",
+        "delivery_bundle_prepared",
+    ]
     assert events[0]["metadata"]["artifact"] == "output/delivery/brief.md"
+    assert events[1]["metadata"]["render_transaction_id"] == "render-deliver-test-001"
 
 
 def test_deliver_local_fails_without_events_when_active_repair_open(tmp_path: Path, capsys) -> None:

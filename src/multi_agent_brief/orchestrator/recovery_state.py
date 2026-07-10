@@ -295,6 +295,7 @@ def interpret_recovery_state(context: RecoveryContext) -> dict[str, Any]:
     completion_error = _finalize_completion_binding_error(
         completion,
         event_records=context.event_records,
+        recovery_event_id=_text(recovery_event.get("event_id")),
         run_id=context.run_id,
         contamination_event_id=contamination_event_id,
         recovery_transaction_id=_text(metadata.get("transaction_id")),
@@ -515,6 +516,7 @@ def _finalize_completion_binding_error(
     pointer: Any,
     *,
     event_records: Sequence[Mapping[str, Any]],
+    recovery_event_id: str,
     run_id: str,
     contamination_event_id: str,
     recovery_transaction_id: str,
@@ -536,18 +538,28 @@ def _finalize_completion_binding_error(
     for key, value in expected.items():
         if _text(pointer.get(key)) != value:
             return f"workflow.last_completion_transaction.{key} is not bound."
-    event = next(
+    recovery_index = next(
         (
-            item
-            for item in event_records
+            index
+            for index, item in enumerate(event_records)
+            if _text(item.get("event_id")) == recovery_event_id
+        ),
+        -1,
+    )
+    event_index, event = next(
+        (
+            (index, item)
+            for index, item in enumerate(event_records)
             if item.get("event_type") == "decision_recorded"
             and _text(item.get("run_id")) == run_id
             and _text(_metadata(item).get("transaction_id")) == completion_id
         ),
-        None,
+        (-1, None),
     )
     if event is None or _text(event.get("stage_id")) != "finalize" or _text(event.get("decision")) != "finalize":
         return "Bound finalize completion event is missing."
+    if recovery_index < 0 or event_index <= recovery_index:
+        return "Bound finalize completion event must follow the current recovery event."
     metadata = _metadata(event)
     for key in ("render_transaction_id", "recovery_transaction_id", "contamination_event_id"):
         if _text(metadata.get(key)) != expected[key]:

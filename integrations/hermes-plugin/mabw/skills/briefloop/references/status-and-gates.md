@@ -182,6 +182,10 @@ Delivery truth is a single authoritative record: `finalize_report.json`.
   reporting the contamination and the required downstream reruns; delivery may
   become valid again after reruns, but the run stays
   `reference_eligible=false`.
+- Recovery progress comes only from `recovery_state.status` and
+  `recovery_state.recommended_recovery_action`. Do not derive it from
+  `run_integrity`: a recovered run remains contaminated and non-reference even
+  after the recovery state reaches `completed_non_reference`.
 
 ## Delivery Target
 

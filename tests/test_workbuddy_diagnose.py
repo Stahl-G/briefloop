@@ -179,6 +179,12 @@ def test_workbuddy_diagnose_formats_completion_projection(tmp_path: Path, capsys
     assert payload["delivery_truth"]["valid"] is True
     assert payload["delivery"]["truth"] == projection["delivery_truth"]
     assert payload["finalize"]["truth"] == projection["finalize_truth"]
+    assert payload["recovery_state"] == projection["recovery_state"]
+    assert payload["run_card"]["recovery_status"] == projection["recovery_state"]["status"]
+    assert payload["run_card"]["recovery_action"] == projection["recovery_state"][
+        "recommended_recovery_action"
+    ]
+    assert payload["delivery"]["outcome"] == projection["event_truth"]["delivery_outcome"]
     assert payload["run_card"]["next_allowed_action"] == "inspect_status_before_delivery_or_quality"
 
 

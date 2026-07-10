@@ -18,9 +18,6 @@ from multi_agent_brief.contracts.target_contract import (
 )
 from multi_agent_brief.orchestrator.active_repair import active_repair_is_open
 from multi_agent_brief.orchestrator.run_integrity import (
-    RUN_INTEGRITY_CLEAN,
-    RUN_INTEGRITY_CONTAMINATED,
-    RUN_INTEGRITY_CONTAMINATED_REPAIRED,
     interpret_run_integrity,
     project_for_read,
 )
@@ -103,6 +100,9 @@ def build_completion_projection(
     )
     finalize_report, finalize_report_status = _read_json(intermediate / "finalize_report.json")
     finalize_truth = _finalize_truth(finalize_report, finalize_report_status)
+    from multi_agent_brief.orchestrator.recovery_state import evaluate_recovery_state
+
+    recovery_state = evaluate_recovery_state(workspace=ws, repo_workdir=repo)
     finalize_completion_reasons = _finalize_completion_blocking_reasons(
         workspace=ws,
         finalize_report_status=finalize_report_status,
@@ -110,7 +110,12 @@ def build_completion_projection(
         artifacts=artifacts,
         runtime_manifest=manifest if isinstance(manifest, dict) else None,
     )
-    event_truth = _event_truth(event_records=event_records, event_log_status=event_log_status)
+    event_truth = _event_truth(
+        event_records=event_records,
+        event_log_status=event_log_status,
+        finalize_truth=finalize_truth,
+        recovery_state=recovery_state,
+    )
     assessment_target = _assessment_target_projection(
         workspace=ws,
         workflow=workflow,
@@ -124,12 +129,13 @@ def build_completion_projection(
         gate_truth=gate_truth,
         event_truth=event_truth,
         artifact_truth=artifact_truth,
+        recovery_state=recovery_state,
     )
 
     next_allowed_action = _next_allowed_action(
         control_file_status=control_file_status,
         workflow_truth=workflow_truth,
-        run_integrity=run_integrity,
+        recovery_state=recovery_state,
         artifact_truth=artifact_truth,
         gate_truth=gate_truth,
         finalize_truth=finalize_truth,
@@ -152,6 +158,7 @@ def build_completion_projection(
             "run_id": _clean_text(manifest.get("run_id")) if isinstance(manifest, Mapping) else "",
         },
         "run_integrity": run_integrity,
+        "recovery_state": recovery_state,
         "artifacts": artifact_truth,
         "gate_truth": gate_truth,
         "finalize_truth": finalize_truth,
@@ -295,6 +302,7 @@ def _finalize_truth(payload: Any, status: str) -> dict[str, Any]:
         "delivery_artifact_count": 0,
         "delivery_artifact_hash_count": 0,
         "record_complete": False,
+        "render_transaction_id": "",
     }
     if status != "present" or not isinstance(payload, Mapping):
         return base
@@ -325,6 +333,7 @@ def _finalize_truth(payload: Any, status: str) -> dict[str, Any]:
         "delivery_artifact_count": artifact_count,
         "delivery_artifact_hash_count": hash_count,
         "record_complete": record_complete,
+        "render_transaction_id": _clean_text(payload.get("finalize_transaction_id")),
     }
 
 
@@ -335,6 +344,7 @@ def _delivery_truth(
     gate_truth: Mapping[str, Any],
     event_truth: Mapping[str, Any],
     artifact_truth: Mapping[str, Any],
+    recovery_state: Mapping[str, Any],
 ) -> dict[str, Any]:
     findings: list[str] = []
     findings.extend(f"finalize_completion_blocker:{reason}" for reason in finalize_completion_reasons)
@@ -342,6 +352,10 @@ def _delivery_truth(
         findings.append("finalize_event_missing")
     if artifact_truth.get("invalid_or_stale"):
         findings.append("artifact_registry_invalid_or_stale")
+    if recovery_state.get("recovery_blocks_delivery") is True:
+        findings.append(
+            f"recovery_blocks_delivery:{_clean_text(recovery_state.get('reason_code')) or 'unknown'}"
+        )
     return {
         "valid": not findings,
         "status": "valid" if not findings else "not_valid",
@@ -375,15 +389,60 @@ def _event_truth(
     *,
     event_records: list[Mapping[str, Any]],
     event_log_status: str,
+    finalize_truth: Mapping[str, Any],
+    recovery_state: Mapping[str, Any],
 ) -> dict[str, Any]:
+    outcome_types = {
+        "delivery_bundle_prepared",
+        "delivery_draft_created",
+        "delivery_succeeded",
+        "delivery_failed",
+    }
+    bound_outcomes = [
+        event
+        for event in event_records
+        if event.get("event_type") in outcome_types
+        and _delivery_event_is_current(
+            event,
+            finalize_truth=finalize_truth,
+            recovery_state=recovery_state,
+        )
+    ]
+    latest_outcome = _clean_text(bound_outcomes[-1].get("event_type")) if bound_outcomes else ""
     return {
         "status": event_log_status,
         "finalize_event_present": _has_finalize_event(event_records),
-        "delivery_event_present": _has_event(
-            event_records,
-            {"delivery_attempted", "delivery_draft_created", "delivery_succeeded"},
-        ),
+        "delivery_attempt_present": _has_event(event_records, {"delivery_attempted"}),
+        "delivery_event_present": bool(bound_outcomes),
+        "delivery_outcome": latest_outcome or "missing",
+        "delivery_bundle_prepared": latest_outcome == "delivery_bundle_prepared",
+        "delivery_draft_created": latest_outcome == "delivery_draft_created",
+        "delivery_succeeded": latest_outcome == "delivery_succeeded",
+        "delivery_failed": latest_outcome == "delivery_failed",
     }
+
+
+def _delivery_event_is_current(
+    event: Mapping[str, Any],
+    *,
+    finalize_truth: Mapping[str, Any],
+    recovery_state: Mapping[str, Any],
+) -> bool:
+    metadata = event.get("metadata") if isinstance(event.get("metadata"), Mapping) else {}
+    render_transaction_id = _clean_text(finalize_truth.get("render_transaction_id"))
+    if not render_transaction_id or _clean_text(metadata.get("render_transaction_id")) != render_transaction_id:
+        return False
+    recovery_status = recovery_state.get("status")
+    if recovery_status == "not_applicable":
+        return True
+    if recovery_status != "completed_non_reference":
+        return False
+    return (
+        _clean_text(metadata.get("recovery_transaction_id"))
+        == _clean_text(recovery_state.get("recovery_transaction_id"))
+        and _clean_text(metadata.get("contamination_event_id"))
+        == _clean_text(recovery_state.get("contamination_event_id"))
+    )
 
 
 def _assessment_target_projection(
@@ -430,7 +489,7 @@ def _next_allowed_action(
     *,
     control_file_status: Mapping[str, str],
     workflow_truth: Mapping[str, Any],
-    run_integrity: Mapping[str, Any],
+    recovery_state: Mapping[str, Any],
     artifact_truth: Mapping[str, Any],
     gate_truth: Mapping[str, Any],
     finalize_truth: Mapping[str, Any],
@@ -441,11 +500,10 @@ def _next_allowed_action(
 ) -> str:
     if any(status in _CONTROL_STOP_STATUSES for status in control_file_status.values()):
         return "inspect_unreadable_or_missing_control_files"
+    if recovery_state.get("status") == "invalid_recovery_state":
+        return "inspect_invalid_recovery"
     if workflow_truth.get("active_repair_present"):
         return "stop_complete_or_inspect_active_repair"
-    integrity_action = _next_allowed_action_for_run_integrity(run_integrity)
-    if integrity_action is not None:
-        return integrity_action
     if workflow_truth.get("blocked"):
         return "stop_workflow_blocked_human_review_required"
     if assessment_target.get("status") == "invalid_condition":
@@ -458,6 +516,8 @@ def _next_allowed_action(
         return "continue_current_stage_or_handoff_workflow"
     if gate_truth.get("blocking") is True or gate_truth.get("status") == "fail":
         return "stop_resolve_blocking_gate_report"
+    if recovery_state.get("status") not in {"not_applicable", "completed_non_reference"}:
+        return _clean_text(recovery_state.get("recommended_recovery_action")) or "inspect_invalid_recovery"
     if artifact_truth.get("invalid_or_stale"):
         return "inspect_invalid_or_stale_artifacts"
     if finalize_truth.get("status") != "present":
@@ -471,18 +531,6 @@ def _next_allowed_action(
     if delivery_truth.get("valid") is True:
         return "inspect_status_before_delivery_or_quality"
     return "inspect_invalid_or_incomplete_finalize_report_delivery_truth"
-
-
-def _next_allowed_action_for_run_integrity(run_integrity: Mapping[str, Any]) -> str | None:
-    status = _clean_text(run_integrity.get("status"))
-    if status in {RUN_INTEGRITY_CLEAN, "pass", "ok"}:
-        return None
-    if status == RUN_INTEGRITY_CONTAMINATED:
-        return "stop_human_review_or_supersede"
-    if status == RUN_INTEGRITY_CONTAMINATED_REPAIRED:
-        return "rerun_downstream_auditor_finalize"
-    return "stop_run_integrity_not_clean"
-
 
 def _run_integrity_projection(workflow: Any, workflow_status: str) -> dict[str, Any]:
     if workflow_status != "present" or not isinstance(workflow, Mapping):
