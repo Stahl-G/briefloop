@@ -116,6 +116,7 @@ def test_public_product_rename_scan_is_limited_to_requested_paths(tmp_path) -> N
 def test_public_product_rename_default_scan_reports_missing_target(tmp_path, monkeypatch) -> None:
     module = _load_module()
     monkeypatch.setattr(module, "TARGET_FILES", ["missing-first-user-doc.md"])
+    monkeypatch.setattr(module, "NAMING_AUTHORITY_FILES", [])
     monkeypatch.setattr(module, "CLI_HELP_COMMANDS", [])
 
     findings = module.scan(root=tmp_path)
@@ -128,6 +129,7 @@ def test_public_product_rename_default_scan_reports_missing_target(tmp_path, mon
 def test_public_product_rename_default_scan_reports_missing_cli_help(monkeypatch) -> None:
     module = _load_module()
     monkeypatch.setattr(module, "TARGET_FILES", [])
+    monkeypatch.setattr(module, "NAMING_AUTHORITY_FILES", [])
     monkeypatch.setattr(module, "CLI_HELP_COMMANDS", [("removed", "command")])
     monkeypatch.setattr(module, "_briefloop_help_text", lambda args: "")
 
@@ -136,6 +138,73 @@ def test_public_product_rename_default_scan_reports_missing_cli_help(monkeypatch
     assert len(findings) == 1
     assert findings[0].kind == "missing_cli_help"
     assert str(findings[0].path) == "<briefloop removed command --help>"
+
+
+def test_naming_authority_surface_is_complete() -> None:
+    module = _load_module()
+
+    assert module.NAMING_AUTHORITY_FILES == [
+        "docs/briefloop-naming.md",
+        "docs/architecture-status.md",
+        "docs/support-matrix.md",
+        "docs/README.md",
+    ]
+
+
+def test_naming_authority_rejects_implementation_lineage_alias(tmp_path) -> None:
+    module = _load_module()
+    target = tmp_path / "architecture-status.md"
+    target.write_text(
+        "BriefLoop is the only current project and product name.\n"
+        "The former project acronym is retired.\n"
+        "MABW remains the implementation\n"
+        "lineage and compatibility surface.\n",
+        encoding="utf-8",
+    )
+
+    findings = module.scan_naming_authority_file(target)
+
+    assert [finding.kind for finding in findings] == ["implementation_lineage_alias"]
+
+
+def test_naming_authority_requires_current_and_retired_name_rules(tmp_path) -> None:
+    module = _load_module()
+    target = tmp_path / "support-matrix.md"
+    target.write_text("BriefLoop support matrix.\n", encoding="utf-8")
+
+    findings = module.scan_naming_authority_file(target)
+
+    assert [finding.kind for finding in findings] == [
+        "missing_current_project_name_rule",
+        "missing_retired_name_rule",
+    ]
+
+
+def test_naming_authority_allows_classified_compatibility_literals(tmp_path) -> None:
+    module = _load_module()
+    target = tmp_path / "briefloop-naming.md"
+    target.write_text(
+        "BriefLoop is the only current project and product name.\n"
+        "The former project acronym is retired.\n"
+        "Literal compatibility identifiers include multi-agent-brief, /mabw, "
+        "multi_agent_brief, mabw.*, and MABW-080.\n",
+        encoding="utf-8",
+    )
+
+    assert module.scan_naming_authority_file(target) == []
+
+
+def test_default_scan_reports_missing_naming_authority(tmp_path, monkeypatch) -> None:
+    module = _load_module()
+    monkeypatch.setattr(module, "TARGET_FILES", [])
+    monkeypatch.setattr(module, "NAMING_AUTHORITY_FILES", ["docs/missing-authority.md"])
+    monkeypatch.setattr(module, "CLI_HELP_COMMANDS", [])
+
+    findings = module.scan(root=tmp_path)
+
+    assert len(findings) == 1
+    assert findings[0].kind == "missing_naming_authority"
+    assert findings[0].path == tmp_path / "docs/missing-authority.md"
 
 
 def test_public_product_rename_path_help_is_replacement_only() -> None:

@@ -1,17 +1,23 @@
 # BriefLoop Naming and Compatibility Policy
 
-## Public name
+## Project name
 
-The public project name is **BriefLoop**.
+BriefLoop is the only current project and product name.
 
-## Subtitle
+Use this subtitle when a short description is needed:
 
-Open-source loop engineering for auditable business briefings.
+> Open-source loop engineering for auditable business briefings.
 
-## Legacy implementation name
+## Retired-name rule
 
-MABW remains the implementation lineage and compatibility surface during the
-v1.0 public-product rename period.
+The former project acronym is retired. It is not an alternate brand, an
+implementation-lineage name, or a compatibility-period product name. Current
+documentation must not introduce BriefLoop with "formerly", join the two names
+with a slash, or use the retired name as shorthand for the repository,
+architecture, runtime, control plane, or method.
+
+Some literal identifiers cannot be changed without breaking reproducibility or
+existing users. They remain only as legacy identifiers, as classified below.
 
 ## Compatibility rule
 
@@ -31,7 +37,7 @@ The current compatibility surfaces remain:
 - historical `multi-agent-brief-workflow` distribution references in archived
   release notes and compatibility docs
 - existing artifact names and workspace formats
-- MABW experiment IDs such as `MABW-080`
+- frozen experiment IDs such as `MABW-080`
 
 GitHub redirects from the historical
 `https://github.com/Stahl-G/multi-agent-brief-workflow` URL are expected to
@@ -63,10 +69,10 @@ frozen archives or schema ids in place.
 
 ## Compatibility quarantine
 
-Remaining MABW and `multi-agent-brief` references are compatibility records,
-not the public product identity. Keep them in explicit compatibility,
-history, schema, packaging, or test surfaces. Do not use them as first-user
-instructions, launch claims, or recommended writer paths.
+Remaining retired-name literals and `multi-agent-brief` references are
+compatibility records, not the public product identity. Keep them in explicit
+compatibility, history, schema, packaging, or test surfaces. Do not use them as
+first-user instructions, launch claims, or recommended writer paths.
 
 | Compatibility surface | Status | Allowed placement | Not allowed |
 |---|---|---|---|
@@ -95,7 +101,6 @@ workspace operation.
 - brief-loop engineering: paradigm / methodology
 - BriefCI: reserved optional technical sub-layer for gates, regression checks,
   and release eligibility; not the public project name
-- MABW: historical implementation name and compatibility surface
 
 ## Entrypoint layers
 
@@ -121,12 +126,11 @@ and does not execute specialists or complete stages.
 
 ## Allowed language
 
-- BriefLoop, formerly MABW
-- BriefLoop / MABW compatibility period
 - BriefLoop is open-source loop engineering for auditable business briefings
 - BriefLoop turns briefing failures into findings, repairs, regression cases,
   and release decisions
-- MABW remains an implementation-lineage and compatibility surface
+- The literal identifier is retained for compatibility or historical
+  reproducibility.
 
 ## Forbidden language
 
