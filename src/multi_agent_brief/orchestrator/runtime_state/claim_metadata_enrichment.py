@@ -701,14 +701,7 @@ def enrich_claim_metadata_transaction(
         ws,
         artifacts_by_id,
         artifact_id="claim_ledger",
-        default_path=CLAIM_LEDGER_PATH,
     )
-    if contract_ledger_path is None:
-        raise RuntimeStateError(
-            "Claim Ledger artifact path is not configured.",
-            details={"artifact_id": "claim_ledger"},
-            error_code=E_TRANSACTION_INTEGRITY,
-        )
     freeze = manifest.get("claim_ledger_freeze")
     if isinstance(freeze, dict):
         ledger_path = workspace_artifact_path(

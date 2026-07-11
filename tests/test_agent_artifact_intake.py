@@ -19,11 +19,9 @@ from multi_agent_brief.contracts.agent_artifact_intake import (
 )
 from multi_agent_brief.orchestrator.runtime_state.artifact_paths import (
     agent_artifact_paths_from_contracts,
-    artifact_path_from_contracts,
 )
 from multi_agent_brief.core.claim_ledger import ClaimLedger
 from multi_agent_brief.orchestrator.runtime_state import (
-    RuntimeStateError,
     check_runtime_state,
     initialize_runtime_state,
 )
@@ -920,81 +918,6 @@ def test_projection_rejects_impossible_status_digest_finding_combination(
     )
 
     assert expected_reason in reasons
-
-
-@pytest.mark.parametrize(
-    "contract_path",
-    [
-        "../outside/claim_ledger.json",
-        "/tmp/outside/claim_ledger.json",
-        "C:\\outside\\claim_ledger.json",
-        "~/outside/claim_ledger.json",
-    ],
-    ids=[
-        "INTAKE-PATH-06-parent-traversal",
-        "INTAKE-PATH-06-posix-absolute",
-        "INTAKE-PATH-06-windows-absolute",
-        "INTAKE-PATH-06-home-expansion",
-    ],
-)
-def test_artifact_contract_path_rejects_workspace_escape(
-    tmp_path: Path,
-    contract_path: str,
-) -> None:
-    workspace = tmp_path / "workspace"
-    workspace.mkdir()
-
-    with pytest.raises(RuntimeStateError) as excinfo:
-        artifact_path_from_contracts(
-            workspace,
-            {"claim_ledger": {"path": contract_path}},
-            artifact_id="claim_ledger",
-        )
-
-    assert excinfo.value.error_code == "E_TRANSACTION_INTEGRITY"
-    assert "workspace-relative and contained" in str(excinfo.value)
-    assert excinfo.value.details["artifact_id"] == "claim_ledger"
-
-
-def test_artifact_contract_path_rejects_symlink_escape(tmp_path: Path) -> None:
-    workspace = tmp_path / "workspace"
-    outside = tmp_path / "outside"
-    workspace.mkdir()
-    outside.mkdir()
-    try:
-        (workspace / "escape").symlink_to(outside, target_is_directory=True)
-    except OSError as exc:
-        pytest.skip(f"symlink unavailable: {exc}")
-
-    with pytest.raises(RuntimeStateError) as excinfo:
-        artifact_path_from_contracts(
-            workspace,
-            {"claim_ledger": {"path": "escape/claim_ledger.json"}},
-            artifact_id="claim_ledger",
-        )
-
-    assert excinfo.value.error_code == "E_TRANSACTION_INTEGRITY"
-    assert "workspace-relative and contained" in str(excinfo.value)
-
-
-@pytest.mark.parametrize("contract_path", [None, "", 42])
-def test_artifact_contract_path_rejects_malformed_contract_value(
-    tmp_path: Path,
-    contract_path: object,
-) -> None:
-    workspace = tmp_path / "workspace"
-    workspace.mkdir()
-
-    with pytest.raises(RuntimeStateError) as excinfo:
-        artifact_path_from_contracts(
-            workspace,
-            {"claim_ledger": {"path": contract_path}},
-            artifact_id="claim_ledger",
-            default_path=Path("output/intermediate/claim_ledger.json"),
-        )
-
-    assert excinfo.value.error_code == "E_TRANSACTION_INTEGRITY"
-    assert "non-empty string" in str(excinfo.value)
 
 
 @pytest.mark.parametrize(

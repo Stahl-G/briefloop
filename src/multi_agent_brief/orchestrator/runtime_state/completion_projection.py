@@ -22,9 +22,6 @@ from multi_agent_brief.orchestrator.run_integrity import (
     project_for_read,
 )
 from multi_agent_brief.orchestrator.runtime_state.artifact_registry import ARTIFACT_REGISTRY_SCHEMA
-from multi_agent_brief.orchestrator.runtime_state.artifact_paths import (
-    artifact_path_from_contracts,
-)
 from multi_agent_brief.orchestrator.runtime_state.contracts_loader import (
     load_artifact_contracts,
     load_stage_specs,
@@ -95,24 +92,11 @@ def build_completion_projection(
     artifact_truth = _artifact_truth(registry, registry_status)
     stages = load_stage_specs(repo)
     artifacts = load_artifact_contracts(repo)
-    artifacts_by_id = {
-        str(artifact.get("artifact_id")): artifact
-        for artifact in artifacts
-        if artifact.get("artifact_id")
-    }
-    ledger_path = artifact_path_from_contracts(
-        ws,
-        artifacts_by_id,
-        artifact_id="claim_ledger",
-    )
-    if ledger_path is None:
-        raise RuntimeStateError("Claim Ledger artifact contract path is required.")
     gate_truth = _stage_gate_truth(
         workspace=ws,
         current_stage=current_stage,
         stages=stages,
         artifacts=artifacts,
-        expected_ledger=_workspace_relative(ws, ledger_path),
     )
     finalize_report, finalize_report_status = _read_json(intermediate / "finalize_report.json")
     finalize_truth = _finalize_truth(finalize_report, finalize_report_status)
@@ -242,7 +226,6 @@ def _stage_gate_truth(
     current_stage: str,
     stages: list[dict[str, Any]],
     artifacts: list[dict[str, Any]],
-    expected_ledger: str,
 ) -> dict[str, Any]:
     stage = "finalize" if current_stage in {"finalize", "delivery", "delivered", "unknown"} else current_stage
     artifact_id = quality_gate_report_key_for_stage(stage)
@@ -272,7 +255,7 @@ def _stage_gate_truth(
             "blocking_count": 1,
             "validation_errors": [f"gate report is {status}"],
         }
-    expected_brief = _expected_quality_gate_binding_brief(stage)
+    expected_brief, expected_ledger = _expected_quality_gate_binding_artifacts(stage)
     verdict = interpret_quality_gate_binding(
         workspace=workspace,
         stage_id=stage,
@@ -303,10 +286,10 @@ def _stage_gate_truth(
     }
 
 
-def _expected_quality_gate_binding_brief(stage: str) -> str:
+def _expected_quality_gate_binding_artifacts(stage: str) -> tuple[str, str]:
     if stage == "finalize":
-        return "output/brief.md"
-    return "output/intermediate/audited_brief.md"
+        return "output/brief.md", "output/intermediate/claim_ledger.json"
+    return "output/intermediate/audited_brief.md", "output/intermediate/claim_ledger.json"
 
 
 def _finalize_truth(payload: Any, status: str) -> dict[str, Any]:

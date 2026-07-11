@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import hashlib
 import re
+import shutil
 from functools import partial
 from pathlib import Path
 
@@ -19,6 +20,9 @@ from multi_agent_brief.orchestrator.runtime_state import (
     initialize_runtime_state,
 )
 from multi_agent_brief.orchestrator.runtime_state.artifact_registry import ARTIFACT_REGISTRY_SCHEMA
+from multi_agent_brief.orchestrator.runtime_state.claim_support_matrix import (
+    project_claim_support_matrix_from_workspace,
+)
 from multi_agent_brief.orchestrator.runtime_state.workflow import _allowed_decisions_for_stage
 from multi_agent_brief.quality_gates import state as quality_gate_state
 from multi_agent_brief.quality_gates.contract import (
@@ -2049,6 +2053,157 @@ def test_quality_gate_claim_support_matrix_blocking_row_blocks(tmp_path):
     assert csm_findings[0]["blocking_level"] == "blocking"
     assert csm_findings[0]["metadata"]["semantic_boundary"] == (
         "explicit_support_record_projection_only_not_support_assessment"
+    )
+
+
+@pytest.mark.parametrize(
+    ("support_label", "support_strength", "required_action", "evidence_span_id", "finding_type"),
+    [
+        ("unsupported", "none", "block_release", None, "claim_support_matrix_blocking_support"),
+        ("weak_support", "low", "downgrade_wording", "ESP-001-01", "claim_support_matrix_weak_support"),
+    ],
+    ids=["blocking-custom-csm", "weak-custom-csm"],
+)
+def test_quality_gate_uses_one_contract_path_context_for_csm_and_atomic_graph(
+    tmp_path: Path,
+    support_label: str,
+    support_strength: str,
+    required_action: str,
+    evidence_span_id: str | None,
+    finding_type: str,
+) -> None:
+    repo = tmp_path / "repo"
+    shutil.copytree(ROOT / "configs", repo / "configs")
+    (repo / "pyproject.toml").write_text("[project]\nname='path-authority-test'\n", encoding="utf-8")
+    (repo / "src" / "multi_agent_brief").mkdir(parents=True)
+    ws = _write_workspace(tmp_path)
+    _write_claim_support_matrix_fixture(
+        ws,
+        support_label=support_label,
+        support_strength=support_strength,
+        required_action=required_action,
+        evidence_span_id=evidence_span_id,
+    )
+    _write_audited_brief(
+        ws,
+        "## Executive Summary\nTargetCo opened a demo facility. [src:CL-0001]\n",
+    )
+    custom_paths = {
+        "claim_ledger": "custom/ledger/claims.json",
+        "atomic_claim_graph": "custom/graph/atoms.json",
+        "evidence_span_registry": "custom/evidence/spans.json",
+        "claim_support_matrix": "custom/matrix/support.json",
+    }
+    contracts_path = repo / "configs" / "artifact_contracts.yaml"
+    contracts = yaml.safe_load(contracts_path.read_text(encoding="utf-8"))
+    filenames = {
+        "claim_ledger": "claim_ledger.json",
+        "atomic_claim_graph": "atomic_claim_graph.json",
+        "evidence_span_registry": "evidence_span_registry.json",
+        "claim_support_matrix": "claim_support_matrix.json",
+    }
+    for artifact in contracts["artifacts"]:
+        artifact_id = str(artifact.get("artifact_id") or "")
+        if artifact_id not in custom_paths:
+            continue
+        artifact["path"] = custom_paths[artifact_id]
+        target = ws / custom_paths[artifact_id]
+        target.parent.mkdir(parents=True, exist_ok=True)
+        (_intermediate(ws) / filenames[artifact_id]).replace(target)
+    contracts_path.write_text(yaml.safe_dump(contracts, sort_keys=False), encoding="utf-8")
+    for filename in filenames.values():
+        (_intermediate(ws) / filename).write_text("{wrong-default-bytes\n", encoding="utf-8")
+
+    state = quality_gate_state.check_quality_gates(workspace=ws, repo_workdir=repo)
+
+    report = state["quality_gate_report"]
+    assert report["metadata"]["claim_support_matrix_projection"]["status"] == "valid"
+    assert report["metadata"]["atomic_reader_projection"]["graph_present"] is True
+    assert any(finding.get("finding_type") == finding_type for finding in report["findings"])
+
+
+def test_custom_auditor_brief_and_ledger_bind_quality_report_through_completion(
+    tmp_path: Path,
+) -> None:
+    repo = tmp_path / "repo"
+    shutil.copytree(ROOT / "configs", repo / "configs")
+    (repo / "pyproject.toml").write_text("[project]\nname='quality-path-authority-test'\n", encoding="utf-8")
+    (repo / "src" / "multi_agent_brief").mkdir(parents=True)
+    contracts_path = repo / "configs" / "artifact_contracts.yaml"
+    contracts = yaml.safe_load(contracts_path.read_text(encoding="utf-8"))
+    custom_paths = {
+        "audited_brief": "custom/brief/audited.md",
+        "claim_ledger": "custom/ledger/claims.json",
+    }
+    for artifact in contracts["artifacts"]:
+        artifact_id = str(artifact.get("artifact_id") or "")
+        if artifact_id in custom_paths:
+            artifact["path"] = custom_paths[artifact_id]
+    contracts_path.write_text(yaml.safe_dump(contracts, sort_keys=False), encoding="utf-8")
+
+    ws = _write_workspace(tmp_path)
+    initialize_runtime_state(workspace=ws, repo_workdir=repo)
+    _set_current_stage(ws, "auditor")
+    _write_json(ws, "candidate_claims.json")
+    _write_json(ws, "screened_candidates.json")
+    (_intermediate(ws) / "analyst_draft_snapshot.md").write_text("# Analyst snapshot\n", encoding="utf-8")
+    (_intermediate(ws) / "audit_report.json").write_text(_valid_audit_report_payload(), encoding="utf-8")
+
+    _write_supported_target_ledger(ws)
+    custom_ledger = ws / custom_paths["claim_ledger"]
+    custom_ledger.parent.mkdir(parents=True)
+    (_intermediate(ws) / "claim_ledger.json").replace(custom_ledger)
+    _write_audited_brief(
+        ws,
+        "## Executive Summary\nTargetCo opened a demo facility and reported 42 deployments. [src:CL-001]\n",
+    )
+    custom_brief = ws / custom_paths["audited_brief"]
+    custom_brief.parent.mkdir(parents=True)
+    (_intermediate(ws) / "audited_brief.md").replace(custom_brief)
+
+    (_intermediate(ws) / "claim_ledger.json").write_text("{poison-default-ledger\n", encoding="utf-8")
+    (_intermediate(ws) / "audited_brief.md").write_text("# Poison default brief\n", encoding="utf-8")
+
+    gate_state = quality_gate_state.check_quality_gates(
+        workspace=ws,
+        repo_workdir=repo,
+        report_date="2026-06-18",
+        stage_id="auditor",
+    )
+
+    report = gate_state["quality_gate_report"]
+    assert report["status"] in {"pass", "warning"}
+    assert not any(result.get("status") == "fail" for result in report["gate_results"])
+    assert not any(finding.get("blocking_level") == "blocking" for finding in report["findings"])
+    assert report["metadata"]["brief"] == custom_paths["audited_brief"]
+    assert report["metadata"]["ledger"] == custom_paths["claim_ledger"]
+
+    completed = runtime_state.complete_stage_transaction(
+        workspace=ws,
+        repo_workdir=repo,
+        stage_id="auditor",
+        reason="custom-path auditor and gates passed",
+    )
+
+    assert completed["workflow_state"]["current_stage"] == "finalize"
+
+
+def test_claim_support_matrix_rejects_incomplete_explicit_path_context(tmp_path: Path) -> None:
+    ws = _write_workspace(tmp_path)
+    _write_claim_support_matrix_fixture(
+        ws,
+        support_label="unsupported",
+        support_strength="none",
+        required_action="block_release",
+        evidence_span_id=None,
+    )
+
+    projection = project_claim_support_matrix_from_workspace(ws, artifact_paths={})
+
+    assert projection["status"] == "invalid_matrix"
+    assert projection["reason"] == (
+        "claim_support_matrix_validation_error:artifact_path_binding_missing:"
+        "claim_support_matrix,claim_ledger,atomic_claim_graph,evidence_span_registry"
     )
 
 

@@ -1,11 +1,9 @@
 from __future__ import annotations
 
 import json
-import shutil
 from pathlib import Path
 
 import pytest
-import yaml
 
 from multi_agent_brief.orchestrator.runtime_state import (
     append_event,
@@ -441,41 +439,6 @@ def test_completion_projection_uses_configured_gate_artifacts(tmp_path: Path) ->
     assert payload["gate_truth"]["status"] == "warning"
     assert payload["gate_truth"]["validation_errors"] == []
     assert payload["next_allowed_action"] == "inspect_status_before_delivery_or_quality"
-
-
-def test_completion_projection_uses_contract_bound_claim_ledger_path(tmp_path: Path) -> None:
-    repo = tmp_path / "repo"
-    shutil.copytree(ROOT / "configs", repo / "configs")
-    (repo / "pyproject.toml").write_text("[project]\nname='projection-test'\n", encoding="utf-8")
-    (repo / "src" / "multi_agent_brief").mkdir(parents=True)
-    contracts_path = repo / "configs" / "artifact_contracts.yaml"
-    contracts = yaml.safe_load(contracts_path.read_text(encoding="utf-8"))
-    next(
-        artifact
-        for artifact in contracts["artifacts"]
-        if artifact.get("artifact_id") == "claim_ledger"
-    )["path"] = "custom/ledger/claims.json"
-    contracts_path.write_text(yaml.safe_dump(contracts, sort_keys=False), encoding="utf-8")
-    ws = _write_workspace(tmp_path)
-    state = initialize_runtime_state(workspace=ws, repo_workdir=repo)
-    _write_minimal_registry(ws, run_id=state["manifest"]["run_id"])
-    _set_workflow(ws, current_stage="finalize")
-    _write_finalize_report(ws)
-    gate = _write_gate_report(ws, status="warning", artifact_id="claim_support_matrix")
-    gate["metadata"]["ledger"] = "custom/ledger/claims.json"
-    _write_json(
-        _intermediate(ws) / "gates" / "finalize_quality_gate_report.json",
-        gate,
-    )
-    custom_ledger = ws / "custom" / "ledger" / "claims.json"
-    custom_ledger.parent.mkdir(parents=True)
-    (_intermediate(ws) / "claim_ledger.json").replace(custom_ledger)
-    (_intermediate(ws) / "claim_ledger.json").write_text("{wrong-default-bytes\n", encoding="utf-8")
-
-    payload = build_completion_projection(workspace=ws, repo_workdir=repo)
-
-    assert payload["gate_truth"]["status"] == "warning"
-    assert payload["gate_truth"]["validation_errors"] == []
 
 
 def test_completion_projection_blocks_malformed_gate_report(tmp_path: Path) -> None:

@@ -790,22 +790,18 @@ def freeze_claim_ledger_transaction(
         ws,
         artifacts_by_id,
     )
-    draft_path = agent_artifact_paths.get(
-        "claim_drafts",
-        ws / CLAIM_DRAFTS_PATH,
-    )
+    draft_path = agent_artifact_paths.get("claim_drafts")
+    if draft_path is None:
+        raise RuntimeStateError(
+            "Claim draft artifact path is not configured.",
+            details={"artifact_id": "claim_drafts"},
+            error_code=E_TRANSACTION_INTEGRITY,
+        )
     ledger_path = artifact_path_from_contracts(
         ws,
         artifacts_by_id,
         artifact_id="claim_ledger",
-        default_path=CLAIM_LEDGER_PATH,
     )
-    if ledger_path is None:
-        raise RuntimeStateError(
-            "Claim Ledger artifact path is not configured.",
-            details={"artifact_id": "claim_ledger"},
-            error_code=E_TRANSACTION_INTEGRITY,
-        )
     run_id = str(manifest["run_id"])
     if not _current_run_start_event_exists(event_records, run_id):
         raise RuntimeStateError(

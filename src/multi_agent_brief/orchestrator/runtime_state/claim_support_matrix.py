@@ -21,10 +21,6 @@ from multi_agent_brief.orchestrator.runtime_state.evidence_span_registry import 
     EVIDENCE_SPAN_REGISTRY_VALIDATION_PREFIX,
     validate_evidence_span_registry_against_source_pack,
 )
-from multi_agent_brief.orchestrator.runtime_state.contracts_loader import (
-    load_resolved_artifact_paths,
-)
-from multi_agent_brief.orchestrator_contract import resolve_repo_workdir
 
 
 CLAIM_SUPPORT_MATRIX_POLICY_PROJECTION_SCHEMA_VERSION = "mabw.claim_support_matrix.policy_projection.v1"
@@ -99,7 +95,7 @@ def project_claim_support_matrix_policy(
 def project_claim_support_matrix_from_workspace(
     workspace: str | Path,
     *,
-    repo_workdir: str | Path | None = None,
+    artifact_paths: Mapping[str, Path] | None = None,
 ) -> dict[str, Any]:
     """Read and project a present, valid Claim-Support Matrix from a workspace.
 
@@ -110,9 +106,36 @@ def project_claim_support_matrix_from_workspace(
     """
 
     ws = Path(workspace).expanduser().resolve()
-    repo = resolve_repo_workdir(repo_workdir, workspace=ws)
-    artifact_paths = load_resolved_artifact_paths(repo, workspace=ws)
-    matrix_path = artifact_paths["claim_support_matrix"]
+    intermediate = ws / "output" / "intermediate"
+    if artifact_paths is None:
+        paths: Mapping[str, Path] = {
+            "claim_support_matrix": intermediate / "claim_support_matrix.json",
+            "claim_ledger": intermediate / "claim_ledger.json",
+            "atomic_claim_graph": intermediate / "atomic_claim_graph.json",
+            "evidence_span_registry": intermediate / "evidence_span_registry.json",
+        }
+    else:
+        paths = artifact_paths
+        required_bindings = (
+            "claim_support_matrix",
+            "claim_ledger",
+            "atomic_claim_graph",
+            "evidence_span_registry",
+        )
+        missing_bindings = [artifact_id for artifact_id in required_bindings if artifact_id not in paths]
+        if missing_bindings:
+            base = _workspace_projection_base(
+                workspace=ws,
+                matrix_path=ws / "<unbound-claim-support-matrix>",
+            )
+            return _invalid_workspace_projection(
+                base,
+                reason=(
+                    f"{CLAIM_SUPPORT_MATRIX_VALIDATION_PREFIX}:"
+                    f"artifact_path_binding_missing:{','.join(missing_bindings)}"
+                ),
+            )
+    matrix_path = paths["claim_support_matrix"]
     base = _workspace_projection_base(workspace=ws, matrix_path=matrix_path)
     if not matrix_path.exists():
         return {
@@ -135,17 +158,17 @@ def project_claim_support_matrix_from_workspace(
     if reason:
         return _invalid_workspace_projection(base, reason=reason)
 
-    ledger_claims, reason = _workspace_ledger_claims(artifact_paths["claim_ledger"])
+    ledger_claims, reason = _workspace_ledger_claims(paths["claim_ledger"])
     if reason:
         return _invalid_workspace_projection(base, reason=reason)
     graph_payload, reason = _workspace_atomic_graph_payload(
-        artifact_paths["atomic_claim_graph"],
+        paths["atomic_claim_graph"],
         ledger_claims=ledger_claims or [],
     )
     if reason:
         return _invalid_workspace_projection(base, reason=reason)
     evidence_payload, reason = _workspace_evidence_span_registry_payload(
-        artifact_paths["evidence_span_registry"],
+        paths["evidence_span_registry"],
         workspace=ws,
     )
     if reason:

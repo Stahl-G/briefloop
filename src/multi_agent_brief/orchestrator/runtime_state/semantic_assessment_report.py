@@ -24,11 +24,6 @@ from multi_agent_brief.orchestrator.runtime_state.claim_support_matrix import (
     _workspace_evidence_span_registry_payload,
     _workspace_ledger_claims,
 )
-from multi_agent_brief.orchestrator.runtime_state.contracts_loader import (
-    load_resolved_artifact_paths,
-)
-from multi_agent_brief.orchestrator.runtime_state.paths import _workspace_relative
-from multi_agent_brief.orchestrator_contract import resolve_repo_workdir
 
 
 SEMANTIC_ASSESSMENT_PROPOSAL_PROJECTION_SCHEMA_VERSION = (
@@ -39,14 +34,12 @@ SEMANTIC_ASSESSMENT_WORKSPACE_PROJECTION_SCHEMA_VERSION = (
 )
 SEMANTIC_ASSESSMENT_REPORT_VALIDATION_PREFIX = "semantic_assessment_report_validation_error"
 UNRESOLVED_SEMANTIC_ASSESSMENT_LEVELS = {"high", "unknown"}
-SEMANTIC_ASSESSMENT_CHECKED_INPUTS = frozenset(
-    {
-        "audited_brief",
-        "claim_ledger",
-        "atomic_claim_graph",
-        "evidence_span_registry",
-    }
-)
+SEMANTIC_ASSESSMENT_CHECKED_INPUTS = {
+    "audited_brief": "output/intermediate/audited_brief.md",
+    "claim_ledger": "output/intermediate/claim_ledger.json",
+    "atomic_claim_graph": "output/intermediate/atomic_claim_graph.json",
+    "evidence_span_registry": "output/intermediate/evidence_span_registry.json",
+}
 SEMANTIC_ASSESSMENT_CHECKED_INPUT_STATUSES = {
     "fresh",
     "stale",
@@ -55,11 +48,7 @@ SEMANTIC_ASSESSMENT_CHECKED_INPUT_STATUSES = {
 }
 
 
-def project_semantic_assessment_report_from_workspace(
-    workspace: str | Path,
-    *,
-    repo_workdir: str | Path | None = None,
-) -> dict[str, Any]:
+def project_semantic_assessment_report_from_workspace(workspace: str | Path) -> dict[str, Any]:
     """Read and project a present, valid Semantic Assessment Report.
 
     This is a read-only status surface. It validates machine-checkable sibling
@@ -69,9 +58,8 @@ def project_semantic_assessment_report_from_workspace(
     """
 
     ws = Path(workspace).expanduser().resolve()
-    repo = resolve_repo_workdir(repo_workdir, workspace=ws)
-    artifact_paths = load_resolved_artifact_paths(repo, workspace=ws)
-    report_path = artifact_paths["semantic_assessment_report"]
+    intermediate = ws / "output" / "intermediate"
+    report_path = intermediate / "semantic_assessment_report.json"
     base = _workspace_projection_base(workspace=ws, report_path=report_path)
     if not report_path.exists():
         return {
@@ -96,17 +84,17 @@ def project_semantic_assessment_report_from_workspace(
     if reason:
         return _invalid_workspace_projection(base, reason=reason)
 
-    ledger_claims, reason = _workspace_ledger_claims(artifact_paths["claim_ledger"])
+    ledger_claims, reason = _workspace_ledger_claims(intermediate / "claim_ledger.json")
     if reason:
         return _invalid_workspace_projection(base, reason=f"{SEMANTIC_ASSESSMENT_REPORT_VALIDATION_PREFIX}:{reason}")
     graph_payload, reason = _workspace_atomic_graph_payload(
-        artifact_paths["atomic_claim_graph"],
+        intermediate / "atomic_claim_graph.json",
         ledger_claims=ledger_claims or [],
     )
     if reason:
         return _invalid_workspace_projection(base, reason=f"{SEMANTIC_ASSESSMENT_REPORT_VALIDATION_PREFIX}:{reason}")
     evidence_payload, reason = _workspace_evidence_span_registry_payload(
-        artifact_paths["evidence_span_registry"],
+        intermediate / "evidence_span_registry.json",
         workspace=ws,
     )
     if reason:
@@ -128,7 +116,6 @@ def project_semantic_assessment_report_from_workspace(
     checked_projection = project_semantic_assessment_checked_inputs(
         report_payload=report_payload,
         workspace=ws,
-        artifact_paths=artifact_paths,
     )
     checked_status = checked_projection["status"]
     status = "valid" if checked_status in {"fresh", "missing_checked_inputs"} else checked_status
@@ -149,11 +136,7 @@ def project_semantic_assessment_report_from_workspace(
     }
 
 
-def build_semantic_assessment_checked_inputs(
-    workspace: str | Path,
-    *,
-    repo_workdir: str | Path | None = None,
-) -> dict[str, dict[str, Any]]:
+def build_semantic_assessment_checked_inputs(workspace: str | Path) -> dict[str, dict[str, Any]]:
     """Return current checked-input bindings for a workspace.
 
     This helper is deterministic metadata only. It does not create, validate, or
@@ -162,12 +145,9 @@ def build_semantic_assessment_checked_inputs(
     """
 
     ws = Path(workspace).expanduser().resolve()
-    repo = resolve_repo_workdir(repo_workdir, workspace=ws)
-    artifact_paths = load_resolved_artifact_paths(repo, workspace=ws)
     checked: dict[str, dict[str, Any]] = {}
-    for key in SEMANTIC_ASSESSMENT_CHECKED_INPUTS:
-        path = artifact_paths[key]
-        rel_path = _workspace_relative(ws, path)
+    for key, rel_path in SEMANTIC_ASSESSMENT_CHECKED_INPUTS.items():
+        path = ws / rel_path
         if not path.exists():
             raise FileNotFoundError(rel_path)
         checked[key] = {
@@ -190,8 +170,6 @@ def project_semantic_assessment_checked_inputs(
     *,
     report_payload: Mapping[str, Any],
     workspace: str | Path,
-    artifact_paths: Mapping[str, Path] | None = None,
-    repo_workdir: str | Path | None = None,
 ) -> dict[str, Any]:
     """Project whether a report's declared checked inputs match workspace files."""
 
@@ -220,9 +198,6 @@ def project_semantic_assessment_checked_inputs(
         }
 
     ws = Path(workspace).expanduser().resolve()
-    if artifact_paths is None:
-        repo = resolve_repo_workdir(repo_workdir, workspace=ws)
-        artifact_paths = load_resolved_artifact_paths(repo, workspace=ws)
     for key in SEMANTIC_ASSESSMENT_CHECKED_INPUTS:
         entry = normalized[key]
         rel_path = _text(entry.get("path"))
@@ -233,8 +208,7 @@ def project_semantic_assessment_checked_inputs(
                 "checked_inputs": normalized,
                 "checked_inputs_digest": semantic_assessment_checked_inputs_digest(normalized),
             }
-        expected_path = artifact_paths.get(key)
-        if expected_path is None or rel_path != _workspace_relative(ws, expected_path):
+        if rel_path != SEMANTIC_ASSESSMENT_CHECKED_INPUTS[key]:
             return {
                 "status": "missing_input",
                 "reason": f"checked_input_path_mismatch:{key}",
@@ -302,7 +276,6 @@ def validate_semantic_assessment_checked_inputs_for_workspace(
     *,
     report_payload: Mapping[str, Any],
     workspace: str | Path,
-    artifact_paths: Mapping[str, Path] | None = None,
 ) -> str | None:
     """Return checked-input validation reason for authoritative consumers.
 
@@ -310,11 +283,7 @@ def validate_semantic_assessment_checked_inputs_for_workspace(
     not invalidate the artifact registry. Declared checked inputs must match.
     """
 
-    projection = project_semantic_assessment_checked_inputs(
-        report_payload=report_payload,
-        workspace=workspace,
-        artifact_paths=artifact_paths,
-    )
+    projection = project_semantic_assessment_checked_inputs(report_payload=report_payload, workspace=workspace)
     status = projection["status"]
     reason = _text(projection.get("reason"))
     if status == "fresh" or (status == "missing_checked_inputs" and reason == "checked_inputs_missing"):

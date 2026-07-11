@@ -16,6 +16,7 @@ import yaml
 from multi_agent_brief.audit.deterministic import run_deterministic_audit
 from multi_agent_brief.audit.harness import QualityHarnessAuditAgent
 from multi_agent_brief.contracts.agent_artifact_intake import (
+    AGENT_ARTIFACT_IDS,
     AgentArtifactId,
     evaluate_workspace_agent_artifact_intakes,
     validate_workspace_intake_consumption_context,
@@ -36,8 +37,7 @@ from multi_agent_brief.orchestrator.runtime_state import (
     utc_now,
 )
 from multi_agent_brief.orchestrator.runtime_state.artifact_paths import (
-    agent_artifact_paths_from_contracts,
-    artifact_path_from_contracts,
+    artifact_paths_from_contracts,
 )
 from multi_agent_brief.orchestrator.runtime_state.claim_support_matrix import (
     project_claim_support_matrix_from_workspace,
@@ -1183,11 +1183,14 @@ def _coverage_omission_projection(
         base["not_interpreted_reason"] = "workspace_not_provided"
         return base
 
-    paths = dict(artifact_paths or {})
-    path = paths.get(
-        "screened_candidates",
-        workspace / "output" / "intermediate" / "screened_candidates.json",
-    )
+    paths = dict(artifact_paths) if artifact_paths is not None else {}
+    path = paths.get("screened_candidates")
+    if artifact_paths is not None and path is None:
+        base["status"] = "invalid"
+        base["not_interpreted_reason"] = "screened_candidates_binding_missing"
+        return base
+    if path is None:
+        path = workspace / "output" / "intermediate" / "screened_candidates.json"
     if not path.exists():
         base["status"] = "missing"
         base["not_interpreted_reason"] = "screened_candidates_missing"
@@ -2248,16 +2251,34 @@ def check_quality_gates(
         for artifact in artifacts
         if artifact.get("artifact_id")
     }
-    contract_artifact_paths = agent_artifact_paths_from_contracts(ws, artifacts_by_id)
+    resolved_artifact_paths = artifact_paths_from_contracts(ws, artifacts_by_id)
+    missing_intake_bindings = sorted(
+        AGENT_ARTIFACT_IDS.difference(resolved_artifact_paths)
+    )
+    if missing_intake_bindings:
+        raise RuntimeStateError(
+            "Quality gates require complete agent artifact path bindings.",
+            details={"missing_artifact_ids": missing_intake_bindings},
+            error_code=E_TRANSACTION_INTEGRITY,
+        )
+    intake_artifact_paths: dict[AgentArtifactId, Path] = {
+        artifact_id: resolved_artifact_paths[artifact_id]
+        for artifact_id in AGENT_ARTIFACT_IDS
+    }
     run_id, artifact_registry = _runtime_intake_context(
         workspace=ws,
         repo_workdir=repo_workdir,
-        artifact_paths=contract_artifact_paths,
+        artifact_paths=intake_artifact_paths,
     )
 
     requested_stage_id = stage_id or "auditor"
     default_brief = "output/brief.md" if requested_stage_id == "finalize" else "output/intermediate/audited_brief.md"
-    brief_path = _resolve_path(ws, brief, default_brief)
+    if brief is not None:
+        brief_path = _resolve_path(ws, brief, default_brief)
+    elif requested_stage_id == "auditor":
+        brief_path = resolved_artifact_paths["audited_brief"]
+    else:
+        brief_path = _resolve_path(ws, None, default_brief)
     reader_mode = _reader_facing_mode(ws, brief_path)
     gate_stage_id = stage_id or ("finalize" if reader_mode else "auditor")
     gate_artifact_id = quality_gate_report_key_for_stage(gate_stage_id)
@@ -2271,20 +2292,11 @@ def check_quality_gates(
             f"Unknown gate artifact: {gate_artifact_id}",
             details={"artifact_id": gate_artifact_id},
         )
-    if ledger is not None:
-        ledger_path = _resolve_path(ws, ledger, "")
-    else:
-        ledger_path = artifact_path_from_contracts(
-            ws,
-            artifacts_by_id,
-            artifact_id="claim_ledger",
-        )
-        if ledger_path is None:
-            raise RuntimeStateError(
-                "Claim Ledger artifact contract path is required for quality gates.",
-                details={"artifact_id": "claim_ledger"},
-                error_code=E_TRANSACTION_INTEGRITY,
-            )
+    ledger_path = (
+        _resolve_path(ws, ledger, "")
+        if ledger is not None
+        else resolved_artifact_paths["claim_ledger"]
+    )
     markdown = _read_text(brief_path, label="Brief")
     claim_ledger = _load_ledger(ledger_path, required=not reader_mode)
     config = _load_config(ws)
@@ -2309,14 +2321,7 @@ def check_quality_gates(
         markdown=markdown,
         ledger=claim_ledger,
         reader_facing_mode=reader_mode,
-        artifact_paths=agent_artifact_paths_from_contracts(
-            ws,
-            {
-                str(artifact.get("artifact_id") or ""): artifact
-                for artifact in artifacts
-                if artifact.get("artifact_id")
-            },
-        ),
+        artifact_paths=intake_artifact_paths,
         artifact_registry=artifact_registry,
         expected_run_id=run_id,
     )
@@ -2353,6 +2358,7 @@ def check_quality_gates(
         target_text=markdown,
         target_artifact=_workspace_relative(ws, brief_path),
         ledger_claims=claim_ledger.to_list(),
+        artifact_paths=resolved_artifact_paths,
     )
     gate_findings["material_fact"].extend(
         _atomic_reader_projection_findings(
@@ -2363,7 +2369,10 @@ def check_quality_gates(
             reader_facing_mode=reader_mode,
         )
     )
-    claim_support_projection = project_claim_support_matrix_from_workspace(ws)
+    claim_support_projection = project_claim_support_matrix_from_workspace(
+        ws,
+        artifact_paths=resolved_artifact_paths,
+    )
     gate_findings["material_fact"].extend(
         _claim_support_matrix_findings(
             projection=claim_support_projection,
