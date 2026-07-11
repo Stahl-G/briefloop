@@ -32,6 +32,9 @@ from multi_agent_brief.orchestrator.runtime_state.artifact_registry import (
     ARTIFACT_VALID,
     _validate_artifact,
 )
+from multi_agent_brief.orchestrator.runtime_state.artifact_paths import (
+    artifact_paths_from_contracts,
+)
 from multi_agent_brief.orchestrator.runtime_state.errors import RuntimeStateError
 from multi_agent_brief.orchestrator.runtime_state.identity import utc_now
 from multi_agent_brief.orchestrator.source_evidence import is_evidence_input_path
@@ -111,6 +114,7 @@ def _artifact_gate_reasons_for_ids(
     optional_prefix: str,
 ) -> list[str]:
     reasons: list[str] = []
+    artifact_paths = artifact_paths_from_contracts(workspace, artifacts_by_id)
     for artifact_id in artifact_ids:
         contract = artifacts_by_id.get(str(artifact_id))
         if not contract:
@@ -118,7 +122,13 @@ def _artifact_gate_reasons_for_ids(
             continue
         rel_path = str(contract.get("path") or "")
         fmt = str(contract.get("format") or "")
-        status, validation_result = _validate_artifact(workspace / rel_path, fmt, str(artifact_id))
+        status, validation_result = _validate_artifact(
+            artifact_paths[str(artifact_id)],
+            fmt,
+            str(artifact_id),
+            workspace=workspace,
+            artifact_paths=artifact_paths,
+        )
         required = bool(contract.get("required", False))
         if required and status != ARTIFACT_VALID:
             reasons.append(
@@ -324,11 +334,20 @@ def _quality_gate_pass_reasons(
     stages: list[dict[str, Any]],
     artifacts: list[dict[str, Any]],
 ) -> list[str]:
+    artifacts_by_id = {
+        str(artifact.get("artifact_id")): artifact
+        for artifact in artifacts
+        if artifact.get("artifact_id")
+    }
+    artifact_paths = artifact_paths_from_contracts(workspace, artifacts_by_id)
+    workspace_root = workspace.expanduser().resolve(strict=False)
+    expected_brief = artifact_paths["audited_brief"].relative_to(workspace_root).as_posix()
+    expected_ledger = artifact_paths["claim_ledger"].relative_to(workspace_root).as_posix()
     return _stage_quality_gate_pass_reasons(
         workspace=workspace,
         stage_id="auditor",
-        expected_brief="output/intermediate/audited_brief.md",
-        expected_ledger="output/intermediate/claim_ledger.json",
+        expected_brief=expected_brief,
+        expected_ledger=expected_ledger,
         stages=stages,
         artifacts=artifacts,
     )

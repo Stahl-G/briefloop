@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 import re
 from pathlib import Path
-from typing import Any
+from typing import Any, Mapping
 
 from multi_agent_brief.contracts.schemas.atomic_claim_graph import AtomicClaimGraphContract
 from multi_agent_brief.core.citations import extract_src_ref_ids
@@ -90,11 +90,16 @@ def project_atomic_reader_text_from_workspace(
     target_text: str,
     target_artifact: str,
     ledger_claims: list[dict[str, Any]] | None = None,
+    artifact_paths: Mapping[str, Path] | None = None,
 ) -> dict[str, Any]:
     """Load and validate workspace graph before projecting reader text."""
 
     ws = Path(workspace)
-    graph_path = ws / "output" / "intermediate" / "atomic_claim_graph.json"
+    graph_path = (
+        artifact_paths["atomic_claim_graph"]
+        if artifact_paths is not None
+        else ws / "output" / "intermediate" / "atomic_claim_graph.json"
+    )
     if not graph_path.exists():
         return _empty_projection(
             status="not_available",
@@ -128,7 +133,20 @@ def project_atomic_reader_text_from_workspace(
             reason=f"atomic_claim_graph_schema_error:{schema_errors[0].field}",
         )
 
-    claims = ledger_claims if ledger_claims is not None else _load_ledger_claims(ws)
+    if ledger_claims is not None:
+        claims = ledger_claims
+    elif artifact_paths is None:
+        claims = _load_ledger_claims(ws / "output" / "intermediate" / "claim_ledger.json")
+    else:
+        ledger_path = artifact_paths.get("claim_ledger")
+        if ledger_path is None:
+            return _empty_projection(
+                status="invalid_graph",
+                target_artifact=target_artifact,
+                graph_present=True,
+                reason=f"{ATOMIC_CLAIM_GRAPH_VALIDATION_PREFIX}:claim_ledger_path_binding_missing",
+            )
+        claims = _load_ledger_claims(ledger_path)
     if claims is None:
         return _empty_projection(
             status="invalid_graph",
@@ -263,8 +281,7 @@ def _atom_residue_findings(
     )
 
 
-def _load_ledger_claims(workspace: Path) -> list[dict[str, Any]] | None:
-    path = workspace / "output" / "intermediate" / "claim_ledger.json"
+def _load_ledger_claims(path: Path) -> list[dict[str, Any]] | None:
     if not path.exists():
         return None
     try:

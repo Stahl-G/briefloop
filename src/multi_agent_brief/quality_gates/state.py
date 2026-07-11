@@ -32,6 +32,9 @@ from multi_agent_brief.orchestrator.runtime_state import (
 from multi_agent_brief.orchestrator.runtime_state.claim_support_matrix import (
     project_claim_support_matrix_from_workspace,
 )
+from multi_agent_brief.orchestrator.runtime_state.artifact_paths import (
+    artifact_paths_from_contracts,
+)
 from multi_agent_brief.orchestrator.runtime_state.artifact_registry import (
     ARTIFACT_VALID,
     _validate_screened_candidates_payload,
@@ -2179,10 +2182,21 @@ def check_quality_gates(
     ws = _require_workspace(workspace)
     _raise_if_active_repair_open_for_gate_check(ws)
     _repo, stages, artifacts = _contracts(workspace=ws, repo_workdir=repo_workdir)
+    artifacts_by_id = {
+        str(artifact.get("artifact_id")): artifact
+        for artifact in artifacts
+        if artifact.get("artifact_id")
+    }
+    resolved_artifact_paths = artifact_paths_from_contracts(ws, artifacts_by_id)
 
     requested_stage_id = stage_id or "auditor"
     default_brief = "output/brief.md" if requested_stage_id == "finalize" else "output/intermediate/audited_brief.md"
-    brief_path = _resolve_path(ws, brief, default_brief)
+    if brief is not None:
+        brief_path = _resolve_path(ws, brief, default_brief)
+    elif requested_stage_id == "auditor":
+        brief_path = resolved_artifact_paths["audited_brief"]
+    else:
+        brief_path = _resolve_path(ws, None, default_brief)
     reader_mode = _reader_facing_mode(ws, brief_path)
     gate_stage_id = stage_id or ("finalize" if reader_mode else "auditor")
     gate_artifact_id = quality_gate_report_key_for_stage(gate_stage_id)
@@ -2196,7 +2210,11 @@ def check_quality_gates(
             f"Unknown gate artifact: {gate_artifact_id}",
             details={"artifact_id": gate_artifact_id},
         )
-    ledger_path = _resolve_path(ws, ledger, "output/intermediate/claim_ledger.json")
+    ledger_path = (
+        _resolve_path(ws, ledger, "")
+        if ledger is not None
+        else resolved_artifact_paths["claim_ledger"]
+    )
     markdown = _read_text(brief_path, label="Brief")
     claim_ledger = _load_ledger(ledger_path, required=not reader_mode)
     config = _load_config(ws)
@@ -2243,6 +2261,7 @@ def check_quality_gates(
         target_text=markdown,
         target_artifact=_workspace_relative(ws, brief_path),
         ledger_claims=claim_ledger.to_list(),
+        artifact_paths=resolved_artifact_paths,
     )
     gate_findings["material_fact"].extend(
         _atomic_reader_projection_findings(
@@ -2253,7 +2272,10 @@ def check_quality_gates(
             reader_facing_mode=reader_mode,
         )
     )
-    claim_support_projection = project_claim_support_matrix_from_workspace(ws)
+    claim_support_projection = project_claim_support_matrix_from_workspace(
+        ws,
+        artifact_paths=resolved_artifact_paths,
+    )
     gate_findings["material_fact"].extend(
         _claim_support_matrix_findings(
             projection=claim_support_projection,

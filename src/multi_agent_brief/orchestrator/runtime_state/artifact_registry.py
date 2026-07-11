@@ -28,6 +28,9 @@ from multi_agent_brief.core.claim_ledger import ClaimLedger
 from multi_agent_brief.core.schemas import Claim
 from multi_agent_brief.feedback.feedback_contract import optional_feedback_artifact_activated
 from multi_agent_brief.orchestrator.runtime_state._io import _sha256_file
+from multi_agent_brief.orchestrator.runtime_state.artifact_paths import (
+    artifact_paths_from_contracts,
+)
 from multi_agent_brief.orchestrator.runtime_state.atomic_claim_graph import (
     ATOMIC_CLAIM_GRAPH_VALIDATION_PREFIX,
     validate_atomic_claim_graph_against_ledger,
@@ -164,7 +167,14 @@ class FrozenArtifactIntegrityVerdict:
     contaminates_run: bool = False
 
 
-def _validate_artifact(path: Path, fmt: str, artifact_id: str = "") -> tuple[str, str]:
+def _validate_artifact(
+    path: Path,
+    fmt: str,
+    artifact_id: str = "",
+    *,
+    workspace: Path,
+    artifact_paths: Mapping[str, Path],
+) -> tuple[str, str]:
     if not path.exists():
         return ARTIFACT_EXPECTED, "not_checked"
     if not path.is_file():
@@ -186,13 +196,32 @@ def _validate_artifact(path: Path, fmt: str, artifact_id: str = "") -> tuple[str
             if artifact_id == "claim_drafts":
                 return _validate_claim_drafts_payload(payload)
             if artifact_id == "atomic_claim_graph":
-                return _validate_atomic_claim_graph_payload(payload, artifact_path=path)
+                return _validate_atomic_claim_graph_payload(
+                    payload,
+                    artifact_path=path,
+                    artifact_paths=artifact_paths,
+                )
             if artifact_id == "evidence_span_registry":
-                return _validate_evidence_span_registry_payload(payload, artifact_path=path)
+                return _validate_evidence_span_registry_payload(
+                    payload,
+                    artifact_path=path,
+                    artifact_paths=artifact_paths,
+                    workspace=workspace,
+                )
             if artifact_id == "claim_support_matrix":
-                return _validate_claim_support_matrix_payload(payload, artifact_path=path)
+                return _validate_claim_support_matrix_payload(
+                    payload,
+                    artifact_path=path,
+                    artifact_paths=artifact_paths,
+                    workspace=workspace,
+                )
             if artifact_id == "semantic_assessment_report":
-                return _validate_semantic_assessment_report_payload(payload, artifact_path=path)
+                return _validate_semantic_assessment_report_payload(
+                    payload,
+                    artifact_path=path,
+                    artifact_paths=artifact_paths,
+                    workspace=workspace,
+                )
             if artifact_id == "semantic_support_acceptance_ledger":
                 return _validate_semantic_support_acceptance_ledger_payload(payload, artifact_path=path)
             if artifact_id == "audit_report":
@@ -200,7 +229,10 @@ def _validate_artifact(path: Path, fmt: str, artifact_id: str = "") -> tuple[str
             if artifact_id == "candidate_claims":
                 return _validate_candidate_claims_payload(payload)
             if artifact_id == "screened_candidates":
-                return _validate_screened_candidates_payload(payload, artifact_path=path)
+                return _validate_screened_candidates_payload(
+                    payload,
+                    artifact_paths=artifact_paths,
+                )
             if artifact_id == "input_classification":
                 return _validate_input_classification_payload(payload, artifact_path=path)
             if artifact_id == "source_evidence_pack_manifest":
@@ -337,7 +369,7 @@ def _non_empty_scalar(value: Any) -> bool:
 def _validate_screened_candidates_payload(
     payload: Any,
     *,
-    artifact_path: Path | None = None,
+    artifact_paths: Mapping[str, Path] | None = None,
 ) -> tuple[str, str]:
     if isinstance(payload, list):
         return _validate_legacy_screened_candidates(payload)
@@ -345,9 +377,16 @@ def _validate_screened_candidates_payload(
         status, result = _validate_contract_screened_candidates(payload)
         if status != ARTIFACT_VALID:
             return status, result
+        candidate_path = (
+            artifact_paths.get("candidate_claims")
+            if artifact_paths is not None
+            else None
+        )
+        if artifact_paths is not None and candidate_path is None:
+            return ARTIFACT_INVALID, "screened_candidates_schema_error:candidate_claims_binding_missing"
         universe_error = _screened_candidates_candidate_universe_error(
             payload,
-            artifact_path=artifact_path,
+            candidate_path=candidate_path,
         )
         if universe_error:
             return ARTIFACT_INVALID, f"screened_candidates_schema_error:{universe_error}"
@@ -543,9 +582,9 @@ def _screened_candidates_discard_count(payload: dict[str, Any]) -> int:
 def _screened_candidates_candidate_universe_error(
     payload: dict[str, Any],
     *,
-    artifact_path: Path | None,
+    candidate_path: Path | None,
 ) -> str | None:
-    if artifact_path is None:
+    if candidate_path is None:
         return None
     screening_policy = payload.get("screening_policy")
     if not isinstance(screening_policy, dict):
@@ -554,7 +593,7 @@ def _screened_candidates_candidate_universe_error(
     if total_error:
         return None
 
-    candidate_payload = _read_json_payload(artifact_path.with_name("candidate_claims.json"))
+    candidate_payload = _read_json_payload(candidate_path)
     if not isinstance(candidate_payload, list):
         return None
     candidate_status, _ = _validate_candidate_claims_payload(candidate_payload)
@@ -1268,7 +1307,12 @@ def _validate_claim_drafts_payload(payload: Any) -> tuple[str, str]:
     return ARTIFACT_VALID, "valid_claim_drafts_schema"
 
 
-def _validate_atomic_claim_graph_payload(payload: Any, *, artifact_path: Path) -> tuple[str, str]:
+def _validate_atomic_claim_graph_payload(
+    payload: Any,
+    *,
+    artifact_path: Path,
+    artifact_paths: Mapping[str, Path] | None = None,
+) -> tuple[str, str]:
     if not isinstance(payload, dict):
         return ARTIFACT_INVALID, "atomic_claim_graph_schema_error:not_object"
     violations = AtomicClaimGraphContract.validate(payload)
@@ -1277,7 +1321,13 @@ def _validate_atomic_claim_graph_payload(payload: Any, *, artifact_path: Path) -
         first = errors[0]
         return ARTIFACT_INVALID, f"atomic_claim_graph_schema_error:{first.field}"
 
-    ledger_path = artifact_path.with_name("claim_ledger.json")
+    ledger_path = (
+        artifact_paths.get("claim_ledger")
+        if artifact_paths is not None
+        else artifact_path.with_name("claim_ledger.json")
+    )
+    if ledger_path is None:
+        return ARTIFACT_INVALID, f"{ATOMIC_CLAIM_GRAPH_VALIDATION_PREFIX}:claim_ledger_binding_missing"
     try:
         ledger_payload = json.loads(ledger_path.read_text(encoding="utf-8"))
         ledger_claims = ClaimLedger._claim_items_from_json(ledger_payload)
@@ -1296,7 +1346,13 @@ def _validate_atomic_claim_graph_payload(payload: Any, *, artifact_path: Path) -
     return ARTIFACT_VALID, "experimental_atomic_claim_graph_schema"
 
 
-def _validate_evidence_span_registry_payload(payload: Any, *, artifact_path: Path) -> tuple[str, str]:
+def _validate_evidence_span_registry_payload(
+    payload: Any,
+    *,
+    artifact_path: Path,
+    artifact_paths: Mapping[str, Path] | None = None,
+    workspace: Path | None = None,
+) -> tuple[str, str]:
     if not isinstance(payload, dict):
         return ARTIFACT_INVALID, "evidence_span_registry_schema_error:not_object"
     violations = EvidenceSpanRegistryContract.validate(payload)
@@ -1305,9 +1361,19 @@ def _validate_evidence_span_registry_payload(payload: Any, *, artifact_path: Pat
         first = errors[0]
         return ARTIFACT_INVALID, f"evidence_span_registry_schema_error:{first.field}"
 
-    workspace = artifact_path.parents[2]
+    workspace = workspace or artifact_path.parents[2]
+    if artifact_paths is not None:
+        page_inventory_path = artifact_paths.get("evidence_extract_page_inventory")
+        if page_inventory_path is None:
+            return (
+                ARTIFACT_INVALID,
+                f"{EVIDENCE_SPAN_REGISTRY_VALIDATION_PREFIX}:"
+                "evidence_extract_page_inventory_binding_missing",
+            )
+    else:
+        page_inventory_path = artifact_path.with_name("evidence_extract_page_inventory.json")
     page_inventory_payload = _valid_evidence_extract_page_inventory_payload_for_span_registry(
-        artifact_path.with_name("evidence_extract_page_inventory.json")
+        page_inventory_path
     )
     reason = validate_evidence_span_registry_against_source_pack(
         registry_payload=payload,
@@ -1333,7 +1399,13 @@ def _valid_evidence_extract_page_inventory_payload_for_span_registry(path: Path)
     return payload if isinstance(payload, dict) else None
 
 
-def _validate_claim_support_matrix_payload(payload: Any, *, artifact_path: Path) -> tuple[str, str]:
+def _validate_claim_support_matrix_payload(
+    payload: Any,
+    *,
+    artifact_path: Path,
+    artifact_paths: Mapping[str, Path] | None = None,
+    workspace: Path | None = None,
+) -> tuple[str, str]:
     if not isinstance(payload, dict):
         return ARTIFACT_INVALID, "claim_support_matrix_schema_error:not_object"
     violations = ClaimSupportMatrixContract.validate(payload)
@@ -1342,14 +1414,47 @@ def _validate_claim_support_matrix_payload(payload: Any, *, artifact_path: Path)
         first = errors[0]
         return ARTIFACT_INVALID, f"claim_support_matrix_schema_error:{first.field}"
 
-    ledger_claims, reason = _claim_support_matrix_ledger_claims(artifact_path.with_name("claim_ledger.json"))
+    if artifact_paths is not None:
+        dependency_paths = {
+            artifact_id: artifact_paths.get(artifact_id)
+            for artifact_id in (
+                "claim_ledger",
+                "atomic_claim_graph",
+                "evidence_span_registry",
+            )
+        }
+        missing_binding = next(
+            (artifact_id for artifact_id, path in dependency_paths.items() if path is None),
+            None,
+        )
+        if missing_binding is not None:
+            return (
+                ARTIFACT_INVALID,
+                f"{CLAIM_SUPPORT_MATRIX_VALIDATION_PREFIX}:{missing_binding}_binding_missing",
+            )
+        ledger_path = dependency_paths["claim_ledger"]
+        graph_path = dependency_paths["atomic_claim_graph"]
+        evidence_path = dependency_paths["evidence_span_registry"]
+    else:
+        ledger_path = artifact_path.with_name("claim_ledger.json")
+        graph_path = artifact_path.with_name("atomic_claim_graph.json")
+        evidence_path = artifact_path.with_name("evidence_span_registry.json")
+    assert ledger_path is not None
+    assert graph_path is not None
+    assert evidence_path is not None
+    ledger_claims, reason = _claim_support_matrix_ledger_claims(ledger_path)
     if reason:
         return ARTIFACT_INVALID, f"{CLAIM_SUPPORT_MATRIX_VALIDATION_PREFIX}:{reason}"
-    graph_payload, reason = _claim_support_matrix_atomic_graph_payload(artifact_path.with_name("atomic_claim_graph.json"))
+    graph_payload, reason = _claim_support_matrix_atomic_graph_payload(
+        graph_path,
+        artifact_paths=artifact_paths,
+    )
     if reason:
         return ARTIFACT_INVALID, f"{CLAIM_SUPPORT_MATRIX_VALIDATION_PREFIX}:{reason}"
     evidence_payload, reason = _claim_support_matrix_evidence_span_registry_payload(
-        artifact_path.with_name("evidence_span_registry.json")
+        evidence_path,
+        artifact_paths=artifact_paths,
+        workspace=workspace,
     )
     if reason:
         return ARTIFACT_INVALID, f"{CLAIM_SUPPORT_MATRIX_VALIDATION_PREFIX}:{reason}"
@@ -1365,7 +1470,13 @@ def _validate_claim_support_matrix_payload(payload: Any, *, artifact_path: Path)
     return ARTIFACT_VALID, "experimental_claim_support_matrix_schema"
 
 
-def _validate_semantic_assessment_report_payload(payload: Any, *, artifact_path: Path) -> tuple[str, str]:
+def _validate_semantic_assessment_report_payload(
+    payload: Any,
+    *,
+    artifact_path: Path,
+    artifact_paths: Mapping[str, Path] | None = None,
+    workspace: Path | None = None,
+) -> tuple[str, str]:
     if not isinstance(payload, dict):
         return ARTIFACT_INVALID, "semantic_assessment_report_schema_error:not_object"
     violations = SemanticAssessmentReportContract.validate(payload)
@@ -1374,14 +1485,48 @@ def _validate_semantic_assessment_report_payload(payload: Any, *, artifact_path:
         first = errors[0]
         return ARTIFACT_INVALID, f"semantic_assessment_report_schema_error:{first.field}"
 
-    ledger_claims, reason = _claim_support_matrix_ledger_claims(artifact_path.with_name("claim_ledger.json"))
+    if artifact_paths is not None:
+        dependency_paths = {
+            artifact_id: artifact_paths.get(artifact_id)
+            for artifact_id in (
+                "claim_ledger",
+                "atomic_claim_graph",
+                "evidence_span_registry",
+            )
+        }
+        missing_binding = next(
+            (artifact_id for artifact_id, path in dependency_paths.items() if path is None),
+            None,
+        )
+        if missing_binding is not None:
+            return (
+                ARTIFACT_INVALID,
+                f"{SEMANTIC_ASSESSMENT_REPORT_VALIDATION_PREFIX}:"
+                f"{missing_binding}_binding_missing",
+            )
+        ledger_path = dependency_paths["claim_ledger"]
+        graph_path = dependency_paths["atomic_claim_graph"]
+        evidence_path = dependency_paths["evidence_span_registry"]
+    else:
+        ledger_path = artifact_path.with_name("claim_ledger.json")
+        graph_path = artifact_path.with_name("atomic_claim_graph.json")
+        evidence_path = artifact_path.with_name("evidence_span_registry.json")
+    assert ledger_path is not None
+    assert graph_path is not None
+    assert evidence_path is not None
+    ledger_claims, reason = _claim_support_matrix_ledger_claims(ledger_path)
     if reason:
         return ARTIFACT_INVALID, f"{SEMANTIC_ASSESSMENT_REPORT_VALIDATION_PREFIX}:{reason}"
-    graph_payload, reason = _claim_support_matrix_atomic_graph_payload(artifact_path.with_name("atomic_claim_graph.json"))
+    graph_payload, reason = _claim_support_matrix_atomic_graph_payload(
+        graph_path,
+        artifact_paths=artifact_paths,
+    )
     if reason:
         return ARTIFACT_INVALID, f"{SEMANTIC_ASSESSMENT_REPORT_VALIDATION_PREFIX}:{reason}"
     evidence_payload, reason = _claim_support_matrix_evidence_span_registry_payload(
-        artifact_path.with_name("evidence_span_registry.json")
+        evidence_path,
+        artifact_paths=artifact_paths,
+        workspace=workspace,
     )
     if reason:
         return ARTIFACT_INVALID, f"{SEMANTIC_ASSESSMENT_REPORT_VALIDATION_PREFIX}:{reason}"
@@ -1394,7 +1539,11 @@ def _validate_semantic_assessment_report_payload(payload: Any, *, artifact_path:
     )
     if reason:
         return ARTIFACT_INVALID, f"{SEMANTIC_ASSESSMENT_REPORT_VALIDATION_PREFIX}:{reason}"
-    workspace = artifact_path.parent.parent.parent if artifact_path.parent.name == "intermediate" else artifact_path.parent
+    workspace = workspace or (
+        artifact_path.parent.parent.parent
+        if artifact_path.parent.name == "intermediate"
+        else artifact_path.parent
+    )
     reason = validate_semantic_assessment_checked_inputs_for_workspace(
         report_payload=payload,
         workspace=workspace,
@@ -1432,12 +1581,20 @@ def _claim_support_matrix_ledger_claims(path: Path) -> tuple[list[dict[str, Any]
     return claims, None
 
 
-def _claim_support_matrix_atomic_graph_payload(path: Path) -> tuple[dict[str, Any] | None, str | None]:
+def _claim_support_matrix_atomic_graph_payload(
+    path: Path,
+    *,
+    artifact_paths: Mapping[str, Path] | None = None,
+) -> tuple[dict[str, Any] | None, str | None]:
     payload, reason = _read_claim_support_matrix_json(path, missing_reason="atomic_claim_graph_missing")
     if reason:
         return None, reason
     assert payload is not None
-    status, validation_result = _validate_atomic_claim_graph_payload(payload, artifact_path=path)
+    status, validation_result = _validate_atomic_claim_graph_payload(
+        payload,
+        artifact_path=path,
+        artifact_paths=artifact_paths,
+    )
     if status != ARTIFACT_VALID:
         return None, _dependency_invalid_reason(
             "atomic_claim_graph",
@@ -1447,12 +1604,22 @@ def _claim_support_matrix_atomic_graph_payload(path: Path) -> tuple[dict[str, An
     return payload, None
 
 
-def _claim_support_matrix_evidence_span_registry_payload(path: Path) -> tuple[dict[str, Any] | None, str | None]:
+def _claim_support_matrix_evidence_span_registry_payload(
+    path: Path,
+    *,
+    artifact_paths: Mapping[str, Path] | None = None,
+    workspace: Path | None = None,
+) -> tuple[dict[str, Any] | None, str | None]:
     payload, reason = _read_claim_support_matrix_json(path, missing_reason="evidence_span_registry_missing")
     if reason:
         return None, reason
     assert payload is not None
-    status, validation_result = _validate_evidence_span_registry_payload(payload, artifact_path=path)
+    status, validation_result = _validate_evidence_span_registry_payload(
+        payload,
+        artifact_path=path,
+        artifact_paths=artifact_paths,
+        workspace=workspace,
+    )
     if status != ARTIFACT_VALID:
         return None, _dependency_invalid_reason(
             "evidence_span_registry",
@@ -1508,12 +1675,20 @@ def _artifact_record(
     artifact: dict[str, Any],
     workflow: dict[str, Any],
     recovery_state: Mapping[str, Any] | None = None,
+    artifact_paths: Mapping[str, Path],
 ) -> dict[str, Any]:
     artifact_id = str(artifact.get("artifact_id") or "")
     rel_path = str(artifact.get("path") or "")
     fmt = str(artifact.get("format") or "")
     producer_stage = str(artifact.get("producer_stage") or "")
-    status, validation_result = _validate_artifact(workspace / rel_path, fmt, artifact_id)
+    path = artifact_paths[artifact_id]
+    status, validation_result = _validate_artifact(
+        path,
+        fmt,
+        artifact_id,
+        workspace=workspace,
+        artifact_paths=artifact_paths,
+    )
 
     activated_optional = optional_feedback_artifact_activated(
         workspace=workspace,
@@ -1539,7 +1714,6 @@ def _artifact_record(
     elif status == ARTIFACT_INVALID:
         blocking_reason = f"Artifact '{rel_path}' failed minimum {fmt} validation."
 
-    path = workspace / rel_path
     size_bytes = path.stat().st_size if path.exists() and path.is_file() else None
     mtime = datetime.fromtimestamp(path.stat().st_mtime, timezone.utc).replace(microsecond=0).isoformat() if path.exists() else None
     sha256 = _sha256_file(path) if path.exists() and path.is_file() else None
@@ -1639,12 +1813,19 @@ def _build_artifact_registry(
         )
 
         recovery_state = evaluate_recovery_state(workspace=workspace)
+    artifacts_by_id = {
+        str(artifact.get("artifact_id")): artifact
+        for artifact in artifacts
+        if artifact.get("artifact_id")
+    }
+    artifact_paths = artifact_paths_from_contracts(workspace, artifacts_by_id)
     records = {
         str(artifact.get("artifact_id")): _artifact_record(
             workspace=workspace,
             artifact=artifact,
             workflow=workflow,
             recovery_state=recovery_state,
+            artifact_paths=artifact_paths,
         )
         for artifact in artifacts
         if artifact.get("artifact_id")

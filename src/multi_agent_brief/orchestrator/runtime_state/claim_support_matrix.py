@@ -92,7 +92,11 @@ def project_claim_support_matrix_policy(
     )
 
 
-def project_claim_support_matrix_from_workspace(workspace: str | Path) -> dict[str, Any]:
+def project_claim_support_matrix_from_workspace(
+    workspace: str | Path,
+    *,
+    artifact_paths: Mapping[str, Path] | None = None,
+) -> dict[str, Any]:
     """Read and project a present, valid Claim-Support Matrix from a workspace.
 
     This is a read-only projection surface. It validates machine-checkable
@@ -103,7 +107,35 @@ def project_claim_support_matrix_from_workspace(workspace: str | Path) -> dict[s
 
     ws = Path(workspace).expanduser().resolve()
     intermediate = ws / "output" / "intermediate"
-    matrix_path = intermediate / "claim_support_matrix.json"
+    if artifact_paths is None:
+        paths: Mapping[str, Path] = {
+            "claim_support_matrix": intermediate / "claim_support_matrix.json",
+            "claim_ledger": intermediate / "claim_ledger.json",
+            "atomic_claim_graph": intermediate / "atomic_claim_graph.json",
+            "evidence_span_registry": intermediate / "evidence_span_registry.json",
+        }
+    else:
+        paths = artifact_paths
+        required_bindings = (
+            "claim_support_matrix",
+            "claim_ledger",
+            "atomic_claim_graph",
+            "evidence_span_registry",
+        )
+        missing_bindings = [artifact_id for artifact_id in required_bindings if artifact_id not in paths]
+        if missing_bindings:
+            base = _workspace_projection_base(
+                workspace=ws,
+                matrix_path=ws / "<unbound-claim-support-matrix>",
+            )
+            return _invalid_workspace_projection(
+                base,
+                reason=(
+                    f"{CLAIM_SUPPORT_MATRIX_VALIDATION_PREFIX}:"
+                    f"artifact_path_binding_missing:{','.join(missing_bindings)}"
+                ),
+            )
+    matrix_path = paths["claim_support_matrix"]
     base = _workspace_projection_base(workspace=ws, matrix_path=matrix_path)
     if not matrix_path.exists():
         return {
@@ -126,17 +158,17 @@ def project_claim_support_matrix_from_workspace(workspace: str | Path) -> dict[s
     if reason:
         return _invalid_workspace_projection(base, reason=reason)
 
-    ledger_claims, reason = _workspace_ledger_claims(intermediate / "claim_ledger.json")
+    ledger_claims, reason = _workspace_ledger_claims(paths["claim_ledger"])
     if reason:
         return _invalid_workspace_projection(base, reason=reason)
     graph_payload, reason = _workspace_atomic_graph_payload(
-        intermediate / "atomic_claim_graph.json",
+        paths["atomic_claim_graph"],
         ledger_claims=ledger_claims or [],
     )
     if reason:
         return _invalid_workspace_projection(base, reason=reason)
     evidence_payload, reason = _workspace_evidence_span_registry_payload(
-        intermediate / "evidence_span_registry.json",
+        paths["evidence_span_registry"],
         workspace=ws,
     )
     if reason:

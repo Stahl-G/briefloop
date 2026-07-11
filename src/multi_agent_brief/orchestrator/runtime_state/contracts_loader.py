@@ -6,7 +6,14 @@ from pathlib import Path
 from typing import Any
 
 from multi_agent_brief.orchestrator.runtime_state._io import _load_yaml
-from multi_agent_brief.orchestrator.runtime_state.errors import RuntimeStateError
+from multi_agent_brief.orchestrator.runtime_state.artifact_paths import (
+    validate_workspace_relative_artifact_path,
+)
+from multi_agent_brief.orchestrator.runtime_state.errors import (
+    E_TRANSACTION_INTEGRITY,
+    RuntimeStateError,
+)
+from multi_agent_brief.orchestrator.runtime_state.paths import RUNTIME_STATE_FILES
 from multi_agent_brief.orchestrator_contract import CONTRACT_REFERENCES
 
 
@@ -35,7 +42,64 @@ def load_artifact_contracts(repo_workdir: str | Path) -> list[dict[str, Any]]:
     artifacts = data.get("artifacts") or []
     if not isinstance(artifacts, list):
         raise RuntimeStateError("artifact_contracts.yaml artifacts must be a list")
-    return [artifact for artifact in artifacts if isinstance(artifact, dict)]
+    records = [artifact for artifact in artifacts if isinstance(artifact, dict)]
+    owners: dict[str, tuple[str, str]] = {}
+    artifact_ids: set[str] = set()
+    reserved = {path.casefold(): path for path in RUNTIME_STATE_FILES.values()}
+    for artifact in records:
+        raw_artifact_id = artifact.get("artifact_id")
+        artifact_id = raw_artifact_id.strip() if isinstance(raw_artifact_id, str) else ""
+        if not artifact_id:
+            raise RuntimeStateError(
+                "Artifact contract artifact_id must be a non-empty string.",
+                details={"artifact_id": raw_artifact_id},
+                error_code=E_TRANSACTION_INTEGRITY,
+            )
+        if artifact_id in artifact_ids:
+            raise RuntimeStateError(
+                "Artifact contract artifact_id must be unique.",
+                details={"artifact_id": artifact_id},
+                error_code=E_TRANSACTION_INTEGRITY,
+            )
+        artifact_ids.add(artifact_id)
+        artifact["artifact_id"] = artifact_id
+        raw_path = artifact.get("path")
+        if not isinstance(raw_path, str) or not raw_path.strip():
+            raise RuntimeStateError(
+                "Artifact contract path must be a non-empty string.",
+                details={"artifact_id": artifact_id, "path": raw_path},
+                error_code=E_TRANSACTION_INTEGRITY,
+            )
+        path = validate_workspace_relative_artifact_path(
+            raw_path,
+            artifact_id=artifact_id,
+            binding_source="artifact_contract",
+        )
+        artifact["path"] = path
+        identity_key = path.casefold()
+        if identity_key in reserved:
+            raise RuntimeStateError(
+                "Workflow artifact path conflicts with a runtime control file.",
+                details={
+                    "artifact_id": artifact_id,
+                    "path": path,
+                    "reserved_path": reserved[identity_key],
+                },
+                error_code=E_TRANSACTION_INTEGRITY,
+            )
+        existing_owner = owners.get(identity_key)
+        if existing_owner is not None:
+            raise RuntimeStateError(
+                "Canonical workflow artifact path must have exactly one owner.",
+                details={
+                    "path": path,
+                    "existing_path": existing_owner[0],
+                    "artifact_ids": [existing_owner[1], artifact_id],
+                },
+                error_code=E_TRANSACTION_INTEGRITY,
+            )
+        owners[identity_key] = (path, artifact_id)
+    return records
 
 
 def load_default_policy_pack(repo_workdir: str | Path) -> dict[str, Any]:

@@ -26,6 +26,8 @@ from multi_agent_brief.orchestrator.recovery_state import (
 from multi_agent_brief.orchestrator.runtime_state._io import _sha256_file
 from multi_agent_brief.orchestrator.runtime_state.artifact_registry import (
     ARTIFACT_REGISTRY_SCHEMA,
+    ARTIFACT_INVALID,
+    _validate_artifact,
     interpret_frozen_artifact_integrity,
 )
 from multi_agent_brief.orchestrator.runtime_state.semantic_assessment_report import (
@@ -3997,6 +3999,126 @@ def test_default_topology_scout_completion_rejects_screened_candidate_universe_m
     assert "candidate_universe_count_mismatch" in str(excinfo.value)
     assert json.loads(_state_file(ws, "workflow_state").read_text(encoding="utf-8")) == before_workflow
     assert _event_records(ws) == before_events
+
+
+def _write_custom_screening_path_fixture(
+    *,
+    repo: Path,
+    workspace: Path,
+    screened_candidate_id: str,
+) -> None:
+    import yaml
+
+    contracts_path = repo / "configs" / "artifact_contracts.yaml"
+    contracts = yaml.safe_load(contracts_path.read_text(encoding="utf-8"))
+    custom_paths = {
+        "candidate_claims": "custom/candidates/candidate_claims.json",
+        "screened_candidates": "custom/screening/screened_candidates.json",
+    }
+    for artifact in contracts["artifacts"]:
+        artifact_id = artifact.get("artifact_id")
+        if artifact_id in custom_paths:
+            artifact["path"] = custom_paths[artifact_id]
+    contracts_path.write_text(yaml.safe_dump(contracts, sort_keys=False), encoding="utf-8")
+
+    candidate_path = workspace / custom_paths["candidate_claims"]
+    candidate_path.parent.mkdir(parents=True, exist_ok=True)
+    candidate_path.write_text(_valid_candidate_claims_payload(), encoding="utf-8")
+
+    screened_path = workspace / custom_paths["screened_candidates"]
+    screened_path.parent.mkdir(parents=True, exist_ok=True)
+    screened_path.write_text(
+        json.dumps(
+            {
+                "selected": [
+                    {
+                        "candidate_id": screened_candidate_id,
+                        "statement": "ExampleCo opened a demo facility.",
+                        "evidence_text": "ExampleCo opened a demo facility in June.",
+                        "source_id": "SRC-001",
+                        "published_at": "2026-06-01",
+                    }
+                ],
+                "excluded": [],
+                "screening_policy": {"total_candidates": 1, "max_items": 8},
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    poisoned_sibling = screened_path.with_name("candidate_claims.json")
+    poisoned_sibling.write_text(
+        json.dumps(
+            [
+                {
+                    "candidate_id": "CAND-POISON",
+                    "claim": "Poison sibling must never become the candidate universe.",
+                    "source_id": "SRC-POISON",
+                }
+            ]
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+
+def test_strict_screener_completion_uses_contract_candidate_universe(tmp_path: Path) -> None:
+    repo = _repo_with_role_topology(tmp_path, "strict")
+    ws = _write_workspace(tmp_path)
+    initialize_runtime_state(workspace=ws, repo_workdir=repo)
+    _set_current_stage(ws, "screener")
+    _write_custom_screening_path_fixture(
+        repo=repo,
+        workspace=ws,
+        screened_candidate_id="CAND-001",
+    )
+
+    state = complete_stage_transaction(
+        workspace=ws,
+        repo_workdir=repo,
+        stage_id="screener",
+        reason="strict screener complete",
+    )
+
+    assert state["workflow_state"]["current_stage"] == "claim-ledger"
+    registry = state["artifact_registry"]["artifacts"]
+    assert registry["candidate_claims"]["path"] == "custom/candidates/candidate_claims.json"
+    assert registry["screened_candidates"]["path"] == "custom/screening/screened_candidates.json"
+    assert registry["screened_candidates"]["status"] == "valid"
+
+
+def test_strict_screener_completion_rejects_unknown_contract_candidate_without_writes(
+    tmp_path: Path,
+) -> None:
+    repo = _repo_with_role_topology(tmp_path, "strict")
+    ws = _write_workspace(tmp_path)
+    initialize_runtime_state(workspace=ws, repo_workdir=repo)
+    _set_current_stage(ws, "screener")
+    _write_custom_screening_path_fixture(
+        repo=repo,
+        workspace=ws,
+        screened_candidate_id="CAND-POISON",
+    )
+    before = {
+        key: _state_file(ws, key).read_bytes() if _state_file(ws, key).exists() else None
+        for key in ("workflow_state", "artifact_registry", "event_log")
+    }
+
+    with pytest.raises(RuntimeStateError) as excinfo:
+        complete_stage_transaction(
+            workspace=ws,
+            repo_workdir=repo,
+            stage_id="screener",
+            reason="strict screener complete",
+        )
+
+    assert excinfo.value.error_code == "E_ARTIFACT_INVALID"
+    assert "unknown_candidate_id:CAND-POISON" in str(excinfo.value)
+    assert {
+        key: _state_file(ws, key).read_bytes() if _state_file(ws, key).exists() else None
+        for key in ("workflow_state", "artifact_registry", "event_log")
+    } == before
 
 
 def test_default_topology_scout_completion_satisfies_screener(tmp_path):
@@ -11037,3 +11159,269 @@ def test_show_runtime_state_reports_event_count(tmp_path):
     state = show_runtime_state(workspace=ws)
 
     assert state["event_count"] >= 1
+
+
+@pytest.mark.parametrize(
+    "reserved_path",
+    list(RUNTIME_STATE_FILES.values()),
+    ids=["runtime-manifest", "workflow-state", "artifact-registry", "event-log"],
+)
+def test_artifact_contract_rejects_runtime_control_paths_without_state_writes(
+    tmp_path: Path,
+    reserved_path: str,
+) -> None:
+    repo = _repo_with_role_topology(tmp_path, "default")
+    ws = _write_workspace(tmp_path)
+    initialize_runtime_state(workspace=ws, repo_workdir=repo)
+    contracts_path = repo / "configs" / "artifact_contracts.yaml"
+    import yaml
+
+    contracts = yaml.safe_load(contracts_path.read_text(encoding="utf-8"))
+    next(
+        artifact
+        for artifact in contracts["artifacts"]
+        if artifact.get("artifact_id") == "claim_ledger"
+    )["path"] = reserved_path
+    contracts_path.write_text(yaml.safe_dump(contracts, sort_keys=False), encoding="utf-8")
+    before = {
+        key: _state_file(ws, key).read_bytes() if _state_file(ws, key).exists() else None
+        for key in RUNTIME_STATE_FILES
+    }
+
+    with pytest.raises(RuntimeStateError) as excinfo:
+        check_runtime_state(workspace=ws, repo_workdir=repo)
+
+    assert excinfo.value.error_code == "E_TRANSACTION_INTEGRITY"
+    assert {
+        key: _state_file(ws, key).read_bytes() if _state_file(ws, key).exists() else None
+        for key in RUNTIME_STATE_FILES
+    } == before
+
+
+def test_artifact_contract_rejects_duplicate_canonical_owner_without_state_writes(
+    tmp_path: Path,
+) -> None:
+    repo = _repo_with_role_topology(tmp_path, "default")
+    ws = _write_workspace(tmp_path)
+    initialize_runtime_state(workspace=ws, repo_workdir=repo)
+    contracts_path = repo / "configs" / "artifact_contracts.yaml"
+    import yaml
+
+    contracts = yaml.safe_load(contracts_path.read_text(encoding="utf-8"))
+    for artifact in contracts["artifacts"]:
+        if artifact.get("artifact_id") in {"candidate_claims", "screened_candidates"}:
+            artifact["path"] = "custom/./shared.json"
+    contracts_path.write_text(yaml.safe_dump(contracts, sort_keys=False), encoding="utf-8")
+    before = {
+        key: _state_file(ws, key).read_bytes() if _state_file(ws, key).exists() else None
+        for key in RUNTIME_STATE_FILES
+    }
+
+    with pytest.raises(RuntimeStateError) as excinfo:
+        check_runtime_state(workspace=ws, repo_workdir=repo)
+
+    assert excinfo.value.error_code == "E_TRANSACTION_INTEGRITY"
+    assert excinfo.value.details["path"] == "custom/shared.json"
+    assert {
+        key: _state_file(ws, key).read_bytes() if _state_file(ws, key).exists() else None
+        for key in RUNTIME_STATE_FILES
+    } == before
+
+
+def test_artifact_contract_rejects_symlink_identity_drift_without_state_writes(
+    tmp_path: Path,
+) -> None:
+    repo = _repo_with_role_topology(tmp_path, "default")
+    ws = _write_workspace(tmp_path)
+    initialize_runtime_state(workspace=ws, repo_workdir=repo)
+    real_dir = ws / "real"
+    real_dir.mkdir()
+    (ws / "alias").symlink_to(real_dir, target_is_directory=True)
+    contracts_path = repo / "configs" / "artifact_contracts.yaml"
+    import yaml
+
+    contracts = yaml.safe_load(contracts_path.read_text(encoding="utf-8"))
+    next(
+        artifact
+        for artifact in contracts["artifacts"]
+        if artifact.get("artifact_id") == "claim_ledger"
+    )["path"] = "alias/claim_ledger.json"
+    contracts_path.write_text(yaml.safe_dump(contracts, sort_keys=False), encoding="utf-8")
+    before = {
+        key: _state_file(ws, key).read_bytes() if _state_file(ws, key).exists() else None
+        for key in RUNTIME_STATE_FILES
+    }
+
+    with pytest.raises(RuntimeStateError) as excinfo:
+        check_runtime_state(workspace=ws, repo_workdir=repo)
+
+    assert excinfo.value.error_code == "E_TRANSACTION_INTEGRITY"
+    assert "symlink resolution" in str(excinfo.value)
+    assert {
+        key: _state_file(ws, key).read_bytes() if _state_file(ws, key).exists() else None
+        for key in RUNTIME_STATE_FILES
+    } == before
+
+
+@pytest.mark.parametrize(
+    "collision_kind",
+    ["reserved-case-alias", "owner-case-alias"],
+)
+def test_artifact_contract_casefold_identity_collisions_leave_state_unchanged(
+    tmp_path: Path,
+    collision_kind: str,
+) -> None:
+    repo = _repo_with_role_topology(tmp_path, "default")
+    ws = _write_workspace(tmp_path)
+    initialize_runtime_state(workspace=ws, repo_workdir=repo)
+    contracts_path = repo / "configs" / "artifact_contracts.yaml"
+    import yaml
+
+    contracts = yaml.safe_load(contracts_path.read_text(encoding="utf-8"))
+    if collision_kind == "reserved-case-alias":
+        next(
+            artifact
+            for artifact in contracts["artifacts"]
+            if artifact.get("artifact_id") == "claim_ledger"
+        )["path"] = "output/intermediate/WORKFLOW_STATE.json"
+    else:
+        aliases = {
+            "candidate_claims": "custom/CaseAlias.json",
+            "screened_candidates": "custom/casealias.json",
+        }
+        for artifact in contracts["artifacts"]:
+            artifact_id = artifact.get("artifact_id")
+            if artifact_id in aliases:
+                artifact["path"] = aliases[artifact_id]
+    contracts_path.write_text(yaml.safe_dump(contracts, sort_keys=False), encoding="utf-8")
+    before = {
+        key: _state_file(ws, key).read_bytes() if _state_file(ws, key).exists() else None
+        for key in RUNTIME_STATE_FILES
+    }
+
+    with pytest.raises(RuntimeStateError) as excinfo:
+        check_runtime_state(workspace=ws, repo_workdir=repo)
+
+    assert excinfo.value.error_code == "E_TRANSACTION_INTEGRITY"
+    assert {
+        key: _state_file(ws, key).read_bytes() if _state_file(ws, key).exists() else None
+        for key in RUNTIME_STATE_FILES
+    } == before
+
+
+@pytest.mark.parametrize(
+    "artifact_id_state",
+    ["duplicate", "missing", "blank"],
+)
+def test_artifact_contract_rejects_non_unique_or_missing_ids_without_state_writes(
+    tmp_path: Path,
+    artifact_id_state: str,
+) -> None:
+    repo = _repo_with_role_topology(tmp_path, "default")
+    ws = _write_workspace(tmp_path)
+    initialize_runtime_state(workspace=ws, repo_workdir=repo)
+    contracts_path = repo / "configs" / "artifact_contracts.yaml"
+    import copy
+    import yaml
+
+    contracts = yaml.safe_load(contracts_path.read_text(encoding="utf-8"))
+    ledger = next(
+        artifact
+        for artifact in contracts["artifacts"]
+        if artifact.get("artifact_id") == "claim_ledger"
+    )
+    if artifact_id_state == "duplicate":
+        duplicate = copy.deepcopy(ledger)
+        duplicate["path"] = "custom/second-claim-ledger.json"
+        contracts["artifacts"].append(duplicate)
+    elif artifact_id_state == "missing":
+        ledger.pop("artifact_id")
+    else:
+        ledger["artifact_id"] = "   "
+    contracts_path.write_text(yaml.safe_dump(contracts, sort_keys=False), encoding="utf-8")
+    before = {
+        key: _state_file(ws, key).read_bytes() if _state_file(ws, key).exists() else None
+        for key in RUNTIME_STATE_FILES
+    }
+
+    with pytest.raises(RuntimeStateError) as excinfo:
+        check_runtime_state(workspace=ws, repo_workdir=repo)
+
+    assert excinfo.value.error_code == "E_TRANSACTION_INTEGRITY"
+    assert {
+        key: _state_file(ws, key).read_bytes() if _state_file(ws, key).exists() else None
+        for key in RUNTIME_STATE_FILES
+    } == before
+
+
+def test_artifact_contract_rejects_non_string_path_without_state_writes(tmp_path: Path) -> None:
+    repo = _repo_with_role_topology(tmp_path, "default")
+    ws = _write_workspace(tmp_path)
+    initialize_runtime_state(workspace=ws, repo_workdir=repo)
+    contracts_path = repo / "configs" / "artifact_contracts.yaml"
+    import yaml
+
+    contracts = yaml.safe_load(contracts_path.read_text(encoding="utf-8"))
+    next(
+        artifact
+        for artifact in contracts["artifacts"]
+        if artifact.get("artifact_id") == "claim_ledger"
+    )["path"] = ["output/intermediate/claim_ledger.json"]
+    contracts_path.write_text(yaml.safe_dump(contracts, sort_keys=False), encoding="utf-8")
+    before = {
+        key: _state_file(ws, key).read_bytes() if _state_file(ws, key).exists() else None
+        for key in RUNTIME_STATE_FILES
+    }
+
+    with pytest.raises(RuntimeStateError) as excinfo:
+        check_runtime_state(workspace=ws, repo_workdir=repo)
+
+    assert excinfo.value.error_code == "E_TRANSACTION_INTEGRITY"
+    assert "path must be a non-empty string" in str(excinfo.value)
+    assert {
+        key: _state_file(ws, key).read_bytes() if _state_file(ws, key).exists() else None
+        for key in RUNTIME_STATE_FILES
+    } == before
+
+
+@pytest.mark.parametrize(
+    ("artifact_id", "payload", "expected_binding_reason"),
+    [
+        (
+            "evidence_span_registry",
+            _valid_evidence_span_registry_payload(),
+            "evidence_extract_page_inventory_binding_missing",
+        ),
+        (
+            "claim_support_matrix",
+            _valid_claim_support_matrix_payload(),
+            "claim_ledger_binding_missing",
+        ),
+        (
+            "semantic_assessment_report",
+            _valid_semantic_assessment_report_payload(),
+            "claim_ledger_binding_missing",
+        ),
+    ],
+)
+def test_artifact_validation_rejects_incomplete_explicit_dependency_context(
+    tmp_path: Path,
+    artifact_id: str,
+    payload: str,
+    expected_binding_reason: str,
+) -> None:
+    ws = tmp_path / "workspace"
+    artifact_path = ws / "custom" / f"{artifact_id}.json"
+    artifact_path.parent.mkdir(parents=True)
+    artifact_path.write_text(payload, encoding="utf-8")
+
+    status, validation_result = _validate_artifact(
+        artifact_path,
+        "json",
+        artifact_id,
+        workspace=ws,
+        artifact_paths={artifact_id: artifact_path},
+    )
+
+    assert status == ARTIFACT_INVALID
+    assert validation_result.endswith(expected_binding_reason)
