@@ -37,6 +37,7 @@ from multi_agent_brief.orchestrator.runtime_state import (
 )
 from multi_agent_brief.orchestrator.runtime_state.artifact_paths import (
     agent_artifact_paths_from_contracts,
+    artifact_path_from_contracts,
 )
 from multi_agent_brief.orchestrator.runtime_state.claim_support_matrix import (
     project_claim_support_matrix_from_workspace,
@@ -2270,7 +2271,20 @@ def check_quality_gates(
             f"Unknown gate artifact: {gate_artifact_id}",
             details={"artifact_id": gate_artifact_id},
         )
-    ledger_path = _resolve_path(ws, ledger, "output/intermediate/claim_ledger.json")
+    if ledger is not None:
+        ledger_path = _resolve_path(ws, ledger, "")
+    else:
+        ledger_path = artifact_path_from_contracts(
+            ws,
+            artifacts_by_id,
+            artifact_id="claim_ledger",
+        )
+        if ledger_path is None:
+            raise RuntimeStateError(
+                "Claim Ledger artifact contract path is required for quality gates.",
+                details={"artifact_id": "claim_ledger"},
+                error_code=E_TRANSACTION_INTEGRITY,
+            )
     markdown = _read_text(brief_path, label="Brief")
     claim_ledger = _load_ledger(ledger_path, required=not reader_mode)
     config = _load_config(ws)

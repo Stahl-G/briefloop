@@ -35,6 +35,7 @@ from multi_agent_brief.orchestrator.runtime_state._io import (
 from multi_agent_brief.orchestrator.runtime_state.artifact_paths import (
     agent_artifact_paths_from_contracts,
     artifact_path_from_contracts,
+    artifact_paths_from_contracts,
 )
 from multi_agent_brief.orchestrator.runtime_state.artifact_registry import (
     ARTIFACT_INVALID,
@@ -120,6 +121,10 @@ def _artifact_gate_reasons_for_ids(
     optional_prefix: str,
 ) -> list[str]:
     reasons: list[str] = []
+    resolved_artifact_paths = artifact_paths_from_contracts(
+        workspace,
+        artifacts_by_id,
+    )
     intake_bundle = (
         evaluate_workspace_agent_artifact_intakes(
             workspace,
@@ -152,11 +157,13 @@ def _artifact_gate_reasons_for_ids(
             artifact_path,
             fmt,
             str(artifact_id),
+            workspace=workspace,
             intake_result=(
                 intake_bundle.get(artifact_id)
                 if intake_bundle is not None and artifact_id in AGENT_ARTIFACT_IDS
                 else None
             ),
+            artifact_paths=resolved_artifact_paths,
         )
         required = bool(contract.get("required", False))
         if required and status != ARTIFACT_VALID:
@@ -363,11 +370,12 @@ def _quality_gate_pass_reasons(
     stages: list[dict[str, Any]],
     artifacts: list[dict[str, Any]],
 ) -> list[str]:
+    expected_ledger = _contract_claim_ledger_path(workspace, artifacts)
     return _stage_quality_gate_pass_reasons(
         workspace=workspace,
         stage_id="auditor",
         expected_brief="output/intermediate/audited_brief.md",
-        expected_ledger="output/intermediate/claim_ledger.json",
+        expected_ledger=expected_ledger,
         stages=stages,
         artifacts=artifacts,
     )
@@ -379,14 +387,34 @@ def _finalize_quality_gate_pass_reasons(
     stages: list[dict[str, Any]],
     artifacts: list[dict[str, Any]],
 ) -> list[str]:
+    expected_ledger = _contract_claim_ledger_path(workspace, artifacts)
     return _stage_quality_gate_pass_reasons(
         workspace=workspace,
         stage_id="finalize",
         expected_brief="output/brief.md",
-        expected_ledger="output/intermediate/claim_ledger.json",
+        expected_ledger=expected_ledger,
         stages=stages,
         artifacts=artifacts,
     )
+
+
+def _contract_claim_ledger_path(
+    workspace: Path,
+    artifacts: list[dict[str, Any]],
+) -> str:
+    artifacts_by_id = {
+        str(artifact.get("artifact_id")): artifact
+        for artifact in artifacts
+        if artifact.get("artifact_id")
+    }
+    ledger_path = artifact_path_from_contracts(
+        workspace,
+        artifacts_by_id,
+        artifact_id="claim_ledger",
+    )
+    if ledger_path is None:
+        raise RuntimeStateError("Claim Ledger artifact contract path is required.")
+    return ledger_path.relative_to(workspace).as_posix()
 
 
 def _resolve_report_artifact_path(workspace: Path, value: Any) -> Path | None:

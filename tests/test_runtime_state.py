@@ -37,8 +37,12 @@ from multi_agent_brief.orchestrator.runtime_state.artifact_registry import (
 from multi_agent_brief.orchestrator.runtime_state.contracts_loader import (
     load_artifact_contracts,
 )
+from multi_agent_brief.orchestrator.runtime_state.claim_support_matrix import (
+    project_claim_support_matrix_from_workspace,
+)
 from multi_agent_brief.orchestrator.runtime_state.semantic_assessment_report import (
     build_semantic_assessment_checked_inputs,
+    project_semantic_assessment_report_from_workspace,
     validate_semantic_assessment_report_against_artifacts,
 )
 from multi_agent_brief.orchestrator.runtime_state import (
@@ -5380,6 +5384,131 @@ def test_freeze_rejects_contract_path_outside_workspace_without_writes(
     } == before
 
 
+@pytest.mark.parametrize(
+    "reserved_path",
+    list(RUNTIME_STATE_FILES.values()),
+    ids=[
+        "INTAKE-PATH-08-runtime-manifest",
+        "INTAKE-PATH-08-workflow-state",
+        "INTAKE-PATH-08-artifact-registry",
+        "INTAKE-PATH-08-event-log",
+    ],
+)
+def test_freeze_rejects_runtime_control_path_ownership_without_writes(
+    tmp_path: Path,
+    reserved_path: str,
+) -> None:
+    repo = _repo_with_role_topology(tmp_path, "default")
+    ws = _write_workspace(tmp_path)
+    initialize_runtime_state(workspace=ws, repo_workdir=repo)
+    _set_current_stage(ws, "claim-ledger")
+    _write_json_artifact(ws, "claim_drafts.json", _valid_claim_drafts_payload())
+    contracts_path = repo / "configs" / "artifact_contracts.yaml"
+    import yaml
+
+    contracts = yaml.safe_load(contracts_path.read_text(encoding="utf-8"))
+    next(
+        artifact
+        for artifact in contracts["artifacts"]
+        if artifact.get("artifact_id") == "claim_ledger"
+    )["path"] = reserved_path
+    contracts_path.write_text(yaml.safe_dump(contracts, sort_keys=False), encoding="utf-8")
+    before = {
+        key: _state_file(ws, key).read_bytes() if _state_file(ws, key).exists() else None
+        for key in RUNTIME_STATE_FILES
+    }
+
+    with pytest.raises(RuntimeStateError) as excinfo:
+        freeze_claim_ledger_transaction(workspace=ws, repo_workdir=repo)
+
+    assert excinfo.value.error_code == "E_TRANSACTION_INTEGRITY"
+    assert "runtime control file" in str(excinfo.value)
+    assert {
+        key: _state_file(ws, key).read_bytes() if _state_file(ws, key).exists() else None
+        for key in RUNTIME_STATE_FILES
+    } == before
+
+
+def test_stage_transaction_rejects_duplicate_canonical_artifact_owner_without_writes(
+    tmp_path: Path,
+) -> None:
+    repo = _repo_with_role_topology(tmp_path, "default")
+    ws = _write_workspace(tmp_path)
+    initialize_runtime_state(workspace=ws, repo_workdir=repo)
+    _set_current_stage(ws, "scout")
+    contracts_path = repo / "configs" / "artifact_contracts.yaml"
+    import yaml
+
+    contracts = yaml.safe_load(contracts_path.read_text(encoding="utf-8"))
+    shared_path = "custom/./shared_candidates.json"
+    for artifact in contracts["artifacts"]:
+        if artifact.get("artifact_id") in {"candidate_claims", "screened_candidates"}:
+            artifact["path"] = shared_path
+    contracts_path.write_text(yaml.safe_dump(contracts, sort_keys=False), encoding="utf-8")
+    before = {
+        key: _state_file(ws, key).read_bytes() if _state_file(ws, key).exists() else None
+        for key in RUNTIME_STATE_FILES
+    }
+
+    with pytest.raises(RuntimeStateError) as excinfo:
+        complete_stage_transaction(
+            workspace=ws,
+            repo_workdir=repo,
+            stage_id="scout",
+            reason="must reject duplicate artifact ownership before completion",
+        )
+
+    assert excinfo.value.error_code == "E_TRANSACTION_INTEGRITY"
+    assert "exactly one owner" in str(excinfo.value)
+    assert excinfo.value.details["path"] == "custom/shared_candidates.json"
+    assert {
+        key: _state_file(ws, key).read_bytes() if _state_file(ws, key).exists() else None
+        for key in RUNTIME_STATE_FILES
+    } == before
+
+
+def test_freeze_rejects_workspace_symlink_path_identity_drift_without_writes(
+    tmp_path: Path,
+) -> None:
+    repo = _repo_with_role_topology(tmp_path, "default")
+    ws = _write_workspace(tmp_path)
+    initialize_runtime_state(workspace=ws, repo_workdir=repo)
+    _set_current_stage(ws, "claim-ledger")
+    real_dir = ws / "real"
+    real_dir.mkdir()
+    (ws / "alias").symlink_to(real_dir, target_is_directory=True)
+    (real_dir / "claim_drafts.json").write_text(
+        _valid_claim_drafts_payload(),
+        encoding="utf-8",
+    )
+    contracts_path = repo / "configs" / "artifact_contracts.yaml"
+    import yaml
+
+    contracts = yaml.safe_load(contracts_path.read_text(encoding="utf-8"))
+    for artifact in contracts["artifacts"]:
+        artifact_id = artifact.get("artifact_id")
+        if artifact_id == "claim_drafts":
+            artifact["path"] = "alias/claim_drafts.json"
+        elif artifact_id == "claim_ledger":
+            artifact["path"] = "alias/claim_ledger.json"
+    contracts_path.write_text(yaml.safe_dump(contracts, sort_keys=False), encoding="utf-8")
+    before = {
+        key: _state_file(ws, key).read_bytes() if _state_file(ws, key).exists() else None
+        for key in RUNTIME_STATE_FILES
+    }
+
+    with pytest.raises(RuntimeStateError) as excinfo:
+        freeze_claim_ledger_transaction(workspace=ws, repo_workdir=repo)
+
+    assert excinfo.value.error_code == "E_TRANSACTION_INTEGRITY"
+    assert "symlink resolution" in str(excinfo.value)
+    assert not (real_dir / "claim_ledger.json").exists()
+    assert {
+        key: _state_file(ws, key).read_bytes() if _state_file(ws, key).exists() else None
+        for key in RUNTIME_STATE_FILES
+    } == before
+
+
 def test_metadata_enrichment_binds_claim_paths_from_artifact_contracts(
     tmp_path: Path,
 ) -> None:
@@ -5455,6 +5584,165 @@ def test_metadata_enrichment_binds_claim_paths_from_artifact_contracts(
     )
 
     assert completed["workflow_state"]["current_stage"] == "analyst"
+
+    (_intermediate(ws) / "audited_brief.md").write_text(
+        "## Executive Summary\nExampleCo opened a demo facility.\n",
+        encoding="utf-8",
+    )
+    auditor_gates = check_quality_gates(
+        workspace=ws,
+        repo_workdir=repo,
+        stage_id="auditor",
+    )
+    (ws / "output" / "brief.md").write_text(
+        "## Executive Summary\nExampleCo opened a demo facility.\n",
+        encoding="utf-8",
+    )
+    finalize_gates = check_quality_gates(
+        workspace=ws,
+        repo_workdir=repo,
+        stage_id="finalize",
+    )
+
+    assert auditor_gates["quality_gate_report"]["metadata"]["ledger"] == (
+        "custom/claim_ledger.json"
+    )
+    assert finalize_gates["quality_gate_report"]["metadata"]["ledger"] == (
+        "custom/claim_ledger.json"
+    )
+    assert default_ledger.read_bytes() == default_before
+
+
+@pytest.mark.parametrize(
+    "custom_ledger_state",
+    ["missing", "invalid"],
+    ids=["INTAKE-PATH-10-custom-ledger-missing", "INTAKE-PATH-10-custom-ledger-invalid"],
+)
+def test_quality_gates_fail_closed_on_contract_ledger_without_default_fallback(
+    tmp_path: Path,
+    custom_ledger_state: str,
+) -> None:
+    repo = _repo_with_role_topology(tmp_path, "default")
+    contracts_path = repo / "configs" / "artifact_contracts.yaml"
+    import yaml
+
+    contracts = yaml.safe_load(contracts_path.read_text(encoding="utf-8"))
+    next(
+        artifact
+        for artifact in contracts["artifacts"]
+        if artifact.get("artifact_id") == "claim_ledger"
+    )["path"] = "custom/claim_ledger.json"
+    contracts_path.write_text(yaml.safe_dump(contracts, sort_keys=False), encoding="utf-8")
+    ws = _write_workspace(tmp_path)
+    initialize_runtime_state(workspace=ws, repo_workdir=repo)
+    _write_json_artifact(ws, "claim_ledger.json", _valid_claim_ledger_payload())
+    (_intermediate(ws) / "audited_brief.md").write_text(
+        "## Executive Summary\nDefault ledger must not be consumed.\n",
+        encoding="utf-8",
+    )
+    custom_ledger = ws / "custom" / "claim_ledger.json"
+    if custom_ledger_state == "invalid":
+        custom_ledger.parent.mkdir()
+        custom_ledger.write_text("{not-json\n", encoding="utf-8")
+
+    with pytest.raises(RuntimeStateError) as excinfo:
+        check_quality_gates(
+            workspace=ws,
+            repo_workdir=repo,
+            stage_id="auditor",
+        )
+
+    assert "claim ledger" in str(excinfo.value).lower()
+    assert not (_intermediate(ws) / "quality_gate_report.json").exists()
+
+
+def test_auditor_completion_uses_contract_and_registry_bound_ledger_path(
+    tmp_path: Path,
+) -> None:
+    repo = _repo_with_role_topology(tmp_path, "default")
+    contracts_path = repo / "configs" / "artifact_contracts.yaml"
+    import yaml
+
+    contracts = yaml.safe_load(contracts_path.read_text(encoding="utf-8"))
+    next(
+        artifact
+        for artifact in contracts["artifacts"]
+        if artifact.get("artifact_id") == "claim_ledger"
+    )["path"] = "custom/ledger/claims.json"
+    contracts_path.write_text(yaml.safe_dump(contracts, sort_keys=False), encoding="utf-8")
+    ws = _write_workspace(tmp_path)
+    initialize_runtime_state(workspace=ws, repo_workdir=repo)
+    _advance_to_auditor(ws)
+    custom_ledger = ws / "custom" / "ledger" / "claims.json"
+    custom_ledger.parent.mkdir(parents=True)
+    (_intermediate(ws) / "claim_ledger.json").replace(custom_ledger)
+    (_intermediate(ws) / "claim_ledger.json").write_text(
+        "{wrong-default-bytes\n",
+        encoding="utf-8",
+    )
+    _write_quality_gate_report(ws, stage_id="auditor")
+    gate_path = _intermediate(ws) / "gates" / "auditor_quality_gate_report.json"
+    gate = json.loads(gate_path.read_text(encoding="utf-8"))
+    gate["metadata"]["ledger"] = "custom/ledger/claims.json"
+    gate_path.write_text(
+        json.dumps(gate, ensure_ascii=False, indent=2, sort_keys=True) + "\n",
+        encoding="utf-8",
+    )
+
+    completed = complete_stage_transaction(
+        workspace=ws,
+        repo_workdir=repo,
+        stage_id="auditor",
+        reason="auditor completion must bind custom Claim Ledger",
+    )
+
+    metadata = completed["workflow_state"]["stage_statuses"]["auditor"]["metadata"]
+    assert metadata["audit_binding"]["claim_ledger_sha256"] == _sha256_file(custom_ledger)
+    assert completed["artifact_registry"]["artifacts"]["claim_ledger"]["path"] == (
+        "custom/ledger/claims.json"
+    )
+
+
+def test_auditor_completion_rejects_missing_registry_ledger_path_binding(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    ws = _write_workspace(tmp_path)
+    initialize_runtime_state(workspace=ws, repo_workdir=ROOT)
+    _advance_to_auditor(ws)
+    _write_quality_gate_report(ws, stage_id="auditor")
+    check_runtime_state(workspace=ws, repo_workdir=ROOT)
+    original_build_registry = runtime_stage_completion._build_artifact_registry
+
+    def _registry_without_ledger_path(*args, **kwargs):
+        registry = original_build_registry(*args, **kwargs)
+        registry["artifacts"]["claim_ledger"].pop("path", None)
+        return registry
+
+    monkeypatch.setattr(
+        runtime_stage_completion,
+        "_build_artifact_registry",
+        _registry_without_ledger_path,
+    )
+    before = {
+        key: _state_file(ws, key).read_bytes() if _state_file(ws, key).exists() else None
+        for key in RUNTIME_STATE_FILES
+    }
+
+    with pytest.raises(RuntimeStateError) as excinfo:
+        complete_stage_transaction(
+            workspace=ws,
+            repo_workdir=ROOT,
+            stage_id="auditor",
+            reason="missing registry path must fail closed",
+        )
+
+    assert excinfo.value.error_code == "E_TRANSACTION_INTEGRITY"
+    assert "registry-bound Claim Ledger path" in str(excinfo.value)
+    assert {
+        key: _state_file(ws, key).read_bytes() if _state_file(ws, key).exists() else None
+        for key in RUNTIME_STATE_FILES
+    } == before
 
 
 def test_legacy_freeze_binding_behavior(tmp_path: Path) -> None:
@@ -7343,6 +7631,94 @@ def test_state_check_validates_present_semantic_assessment_report_schema(tmp_pat
     assert record["status"] == "valid"
     assert record["required"] is False
     assert record["validation_result"] == "experimental_semantic_assessment_report_schema"
+
+
+def test_registry_cross_artifact_validators_use_only_contract_paths(tmp_path: Path) -> None:
+    repo = _repo_with_role_topology(tmp_path, "default")
+    ws = _write_workspace(tmp_path)
+    initialize_runtime_state(workspace=ws, repo_workdir=repo)
+    _write_valid_claim_support_matrix_dependencies(ws)
+    _write_json_artifact(ws, "claim_support_matrix.json", _valid_claim_support_matrix_payload())
+    _write_json_artifact(
+        ws,
+        "semantic_assessment_report.json",
+        _valid_semantic_assessment_report_payload(),
+    )
+    custom_paths = {
+        "claim_ledger": "custom/ledger/claims.json",
+        "atomic_claim_graph": "custom/graph/atoms.json",
+        "evidence_span_registry": "custom/evidence/spans.json",
+        "claim_support_matrix": "custom/matrix/support.json",
+        "semantic_assessment_report": "custom/semantic/assessment.json",
+    }
+    contracts_path = repo / "configs" / "artifact_contracts.yaml"
+    import yaml
+
+    contracts = yaml.safe_load(contracts_path.read_text(encoding="utf-8"))
+    for artifact in contracts["artifacts"]:
+        artifact_id = str(artifact.get("artifact_id") or "")
+        if artifact_id in custom_paths:
+            artifact["path"] = custom_paths[artifact_id]
+            source = _intermediate(ws) / {
+                "claim_ledger": "claim_ledger.json",
+                "atomic_claim_graph": "atomic_claim_graph.json",
+                "evidence_span_registry": "evidence_span_registry.json",
+                "claim_support_matrix": "claim_support_matrix.json",
+                "semantic_assessment_report": "semantic_assessment_report.json",
+            }[artifact_id]
+            target = ws / custom_paths[artifact_id]
+            target.parent.mkdir(parents=True, exist_ok=True)
+            source.replace(target)
+    contracts_path.write_text(yaml.safe_dump(contracts, sort_keys=False), encoding="utf-8")
+    (_intermediate(ws) / "audited_brief.md").write_text(
+        "# Audited Brief\n",
+        encoding="utf-8",
+    )
+    semantic_path = ws / custom_paths["semantic_assessment_report"]
+    semantic_payload = json.loads(semantic_path.read_text(encoding="utf-8"))
+    semantic_payload["checked_inputs"] = build_semantic_assessment_checked_inputs(
+        ws,
+        repo_workdir=repo,
+    )
+    semantic_path.write_text(
+        json.dumps(semantic_payload, ensure_ascii=False, indent=2, sort_keys=True) + "\n",
+        encoding="utf-8",
+    )
+
+    for directory in ("graph", "matrix", "semantic"):
+        sibling_dir = ws / "custom" / directory
+        for filename in (
+            "claim_ledger.json",
+            "atomic_claim_graph.json",
+            "evidence_span_registry.json",
+        ):
+            (sibling_dir / filename).write_text("{wrong-bytes\n", encoding="utf-8")
+    for filename in (
+        "claim_ledger.json",
+        "atomic_claim_graph.json",
+        "evidence_span_registry.json",
+    ):
+        (_intermediate(ws) / filename).write_text("{wrong-default-bytes\n", encoding="utf-8")
+
+    state = check_runtime_state(workspace=ws, repo_workdir=repo)
+    records = state["artifact_registry"]["artifacts"]
+    csm_projection = project_claim_support_matrix_from_workspace(
+        ws,
+        repo_workdir=repo,
+    )
+    semantic_projection = project_semantic_assessment_report_from_workspace(
+        ws,
+        repo_workdir=repo,
+    )
+
+    assert records["atomic_claim_graph"]["status"] == "valid"
+    assert records["claim_support_matrix"]["status"] == "valid"
+    assert records["semantic_assessment_report"]["status"] == "valid"
+    assert csm_projection["status"] == "valid"
+    assert semantic_projection["status"] == "valid"
+    assert semantic_projection["checked_inputs_status"] == "fresh"
+    for artifact_id, expected_path in custom_paths.items():
+        assert records[artifact_id]["path"] == expected_path
 
 
 def test_state_check_marks_stale_checked_semantic_assessment_report_invalid(tmp_path):

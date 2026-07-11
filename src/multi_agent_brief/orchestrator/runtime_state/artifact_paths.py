@@ -31,7 +31,8 @@ def workspace_artifact_path(
     )
     raw = str(raw_path).strip()
     workspace_root = workspace.expanduser().resolve(strict=False)
-    candidate = (workspace_root / normalized).resolve(strict=False)
+    logical_candidate = workspace_root / normalized
+    candidate = logical_candidate.resolve(strict=False)
     try:
         candidate.relative_to(workspace_root)
     except ValueError:
@@ -41,7 +42,18 @@ def workspace_artifact_path(
             raw_path=raw,
             workspace=workspace_root,
         ) from None
-    return candidate
+    if candidate != logical_candidate:
+        raise RuntimeStateError(
+            "Artifact path must not change identity through symlink resolution.",
+            details={
+                "artifact_id": artifact_id,
+                "binding_source": binding_source,
+                "path": normalized,
+                "resolved_path": str(candidate),
+            },
+            error_code=E_TRANSACTION_INTEGRITY,
+        )
+    return logical_candidate
 
 
 def validate_workspace_relative_artifact_path(
@@ -143,8 +155,22 @@ def agent_artifact_paths_from_contracts(
 ) -> dict[AgentArtifactId, Path]:
     """Resolve the one contract-bound path map used by intake consumers."""
 
-    paths: dict[AgentArtifactId, Path] = {}
-    for artifact_id in AGENT_ARTIFACT_IDS:
+    all_paths = artifact_paths_from_contracts(workspace, artifacts_by_id)
+    return {
+        artifact_id: all_paths[artifact_id]
+        for artifact_id in AGENT_ARTIFACT_IDS
+        if artifact_id in all_paths
+    }
+
+
+def artifact_paths_from_contracts(
+    workspace: Path,
+    artifacts_by_id: Mapping[str, Mapping[str, Any]],
+) -> dict[str, Path]:
+    """Resolve the complete authoritative artifact path context once."""
+
+    paths: dict[str, Path] = {}
+    for artifact_id in artifacts_by_id:
         path = artifact_path_from_contracts(
             workspace,
             artifacts_by_id,

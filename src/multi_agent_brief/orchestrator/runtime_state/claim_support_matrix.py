@@ -21,6 +21,10 @@ from multi_agent_brief.orchestrator.runtime_state.evidence_span_registry import 
     EVIDENCE_SPAN_REGISTRY_VALIDATION_PREFIX,
     validate_evidence_span_registry_against_source_pack,
 )
+from multi_agent_brief.orchestrator.runtime_state.contracts_loader import (
+    load_resolved_artifact_paths,
+)
+from multi_agent_brief.orchestrator_contract import resolve_repo_workdir
 
 
 CLAIM_SUPPORT_MATRIX_POLICY_PROJECTION_SCHEMA_VERSION = "mabw.claim_support_matrix.policy_projection.v1"
@@ -92,7 +96,11 @@ def project_claim_support_matrix_policy(
     )
 
 
-def project_claim_support_matrix_from_workspace(workspace: str | Path) -> dict[str, Any]:
+def project_claim_support_matrix_from_workspace(
+    workspace: str | Path,
+    *,
+    repo_workdir: str | Path | None = None,
+) -> dict[str, Any]:
     """Read and project a present, valid Claim-Support Matrix from a workspace.
 
     This is a read-only projection surface. It validates machine-checkable
@@ -102,8 +110,9 @@ def project_claim_support_matrix_from_workspace(workspace: str | Path) -> dict[s
     """
 
     ws = Path(workspace).expanduser().resolve()
-    intermediate = ws / "output" / "intermediate"
-    matrix_path = intermediate / "claim_support_matrix.json"
+    repo = resolve_repo_workdir(repo_workdir, workspace=ws)
+    artifact_paths = load_resolved_artifact_paths(repo, workspace=ws)
+    matrix_path = artifact_paths["claim_support_matrix"]
     base = _workspace_projection_base(workspace=ws, matrix_path=matrix_path)
     if not matrix_path.exists():
         return {
@@ -126,17 +135,17 @@ def project_claim_support_matrix_from_workspace(workspace: str | Path) -> dict[s
     if reason:
         return _invalid_workspace_projection(base, reason=reason)
 
-    ledger_claims, reason = _workspace_ledger_claims(intermediate / "claim_ledger.json")
+    ledger_claims, reason = _workspace_ledger_claims(artifact_paths["claim_ledger"])
     if reason:
         return _invalid_workspace_projection(base, reason=reason)
     graph_payload, reason = _workspace_atomic_graph_payload(
-        intermediate / "atomic_claim_graph.json",
+        artifact_paths["atomic_claim_graph"],
         ledger_claims=ledger_claims or [],
     )
     if reason:
         return _invalid_workspace_projection(base, reason=reason)
     evidence_payload, reason = _workspace_evidence_span_registry_payload(
-        intermediate / "evidence_span_registry.json",
+        artifact_paths["evidence_span_registry"],
         workspace=ws,
     )
     if reason:

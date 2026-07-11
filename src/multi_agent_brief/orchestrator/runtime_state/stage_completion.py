@@ -243,15 +243,34 @@ def _auditor_completion_metadata(
     registry: dict[str, Any],
     event_records: list[dict[str, Any]],
     transaction_id: str,
+    artifacts_by_id: dict[str, dict[str, Any]],
 ) -> dict[str, Any]:
     ledger_sha = _artifact_registry_sha(registry, "claim_ledger")
     audited_brief_sha = _artifact_registry_sha(registry, "audited_brief")
     audit_sha = _artifact_registry_sha(registry, "audit_report")
-    ledger_path = workspace / _artifact_registry_path(
-        registry,
-        "claim_ledger",
-        "output/intermediate/claim_ledger.json",
+    ledger_path = artifact_path_from_contracts(
+        workspace,
+        artifacts_by_id,
+        artifact_id="claim_ledger",
     )
+    ledger_record = ((registry.get("artifacts") or {}).get("claim_ledger") or {})
+    registry_ledger_path = str(ledger_record.get("path") or "")
+    if ledger_path is None or not registry_ledger_path:
+        raise RuntimeStateError(
+            "Auditor completion requires a contract-resolved, registry-bound Claim Ledger path.",
+            details={"artifact_id": "claim_ledger"},
+            error_code=E_TRANSACTION_INTEGRITY,
+        )
+    if registry_ledger_path != _workspace_relative(workspace, ledger_path):
+        raise RuntimeStateError(
+            "Auditor completion Claim Ledger registry path does not match artifact contract.",
+            details={
+                "artifact_id": "claim_ledger",
+                "registry_path": registry_ledger_path,
+                "contract_path": _workspace_relative(workspace, ledger_path),
+            },
+            error_code=E_TRANSACTION_INTEGRITY,
+        )
     audited_brief_path = workspace / _artifact_registry_path(
         registry,
         "audited_brief",
@@ -1123,6 +1142,7 @@ def _complete_stage_transaction(
                     registry=registry,
                     event_records=event_records,
                     transaction_id=transaction_id,
+                    artifacts_by_id=artifacts_by_id,
                 )
             )
             auditor_status["metadata"] = auditor_metadata
