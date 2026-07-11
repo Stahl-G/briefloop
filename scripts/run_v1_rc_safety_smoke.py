@@ -255,22 +255,26 @@ def _initialize_and_advance_to_claim_ledger(
     repo_root: Path,
     normalized_intake: bool = False,
     use_cli: bool = False,
+    runtime_launched: bool = False,
 ) -> None:
     if use_cli:
-        _run_cli(
-            [
-                "state",
-                "init",
-                "--workspace",
-                str(workspace),
-                "--repo-workdir",
-                str(repo_root),
-            ]
-        )
+        if not runtime_launched:
+            _run_cli(
+                [
+                    "state",
+                    "init",
+                    "--workspace",
+                    str(workspace),
+                    "--repo-workdir",
+                    str(repo_root),
+                ]
+            )
         complete = lambda stage_id: _stage_complete_cli(
             workspace, stage_id, repo_root=repo_root
         )
     else:
+        if runtime_launched:
+            raise AssertionError("runtime_launched requires the CLI lifecycle path.")
         initialize_runtime_state(workspace=workspace, repo_workdir=repo_root)
 
         def complete(stage_id: str) -> None:
@@ -281,7 +285,8 @@ def _initialize_and_advance_to_claim_ledger(
                 reason=f"{stage_id} completed by RC safety scenario",
             )
 
-    complete("doctor")
+    if not runtime_launched:
+        complete("doctor")
     complete("source-discovery")
     _write_input_classification(workspace)
     complete("input-governance")
@@ -345,9 +350,13 @@ def _advance_to_auditor_complete(
     *,
     repo_root: Path,
     use_cli: bool = False,
+    runtime_launched: bool = False,
 ) -> dict[str, Any]:
     _initialize_and_advance_to_claim_ledger(
-        workspace, repo_root=repo_root, use_cli=use_cli
+        workspace,
+        repo_root=repo_root,
+        use_cli=use_cli,
+        runtime_launched=runtime_launched,
     )
     freeze = _freeze_claims(workspace, repo_root=repo_root, use_cli=use_cli)
     if use_cli:
@@ -477,12 +486,16 @@ def _scenario_01(parent: Path, repo_root: Path) -> dict[str, Any]:
             str(workspace),
             "--repo-workdir",
             str(repo_root),
-            "--skip-doctor",
         ]
     )
     handoff = workspace / _INTERMEDIATE / "agent_handoff.json"
     assert handoff.exists()
-    _advance_to_auditor_complete(workspace, repo_root=repo_root, use_cli=True)
+    _advance_to_auditor_complete(
+        workspace,
+        repo_root=repo_root,
+        use_cli=True,
+        runtime_launched=True,
+    )
     _finalize_workspace(workspace, repo_root=repo_root, use_cli=True)
     projection = build_completion_projection(workspace=workspace, repo_workdir=repo_root)
     report = _read_json(workspace / _INTERMEDIATE / "finalize_report.json")
