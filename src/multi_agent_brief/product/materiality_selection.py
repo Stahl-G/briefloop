@@ -16,6 +16,7 @@ import yaml
 
 from multi_agent_brief.contracts.agent_artifact_intake import (
     evaluate_workspace_agent_artifact_intakes,
+    validate_workspace_intake_consumption_context,
 )
 from multi_agent_brief.product.policy_projection import project_workspace_policy_profile
 
@@ -77,6 +78,7 @@ def project_workspace_materiality_selection(
     *,
     policy_profile: Mapping[str, Any] | None = None,
     artifact_registry: Mapping[str, Any] | None = None,
+    expected_run_id: str = "",
 ) -> dict[str, Any]:
     """Project materiality-aware screening diagnostics without side effects."""
 
@@ -119,10 +121,11 @@ def project_workspace_materiality_selection(
             "screened_candidates_present": False,
         }
 
-    intake = evaluate_workspace_agent_artifact_intakes(
+    bundle = evaluate_workspace_agent_artifact_intakes(
         ws,
         artifact_paths=artifact_paths,
-    ).screened_candidates
+    )
+    intake = bundle.screened_candidates
     if intake is None:
         return {
             **base,
@@ -137,6 +140,21 @@ def project_workspace_materiality_selection(
             "reason": intake.validation_result,
             "screened_candidates_present": True,
         }
+    if artifact_registry is not None and expected_run_id:
+        authority_reasons = validate_workspace_intake_consumption_context(
+            artifact_registry,
+            expected_run_id=expected_run_id,
+            bundle=bundle,
+            artifact_id="screened_candidates",
+        )
+        if authority_reasons:
+            return {
+                **base,
+                "status": "invalid_screened_candidates",
+                "reason": authority_reasons[0],
+                "intake_authority_reasons": authority_reasons,
+                "screened_candidates_present": True,
+            }
     screened = intake.normalized_payload
     if isinstance(screened, list):
         return {
@@ -407,30 +425,7 @@ def _matched_terms(text: str, terms: list[str]) -> list[str]:
 
 
 def _reason_code(candidate: Mapping[str, Any]) -> str:
-    for key in ("reason_code", "screening_reason_code", "excluded_reason_code", "deprioritized_reason_code", "reason"):
-        value = candidate.get(key)
-        normalized = _normalize_reason_code(value)
-        if normalized:
-            return normalized
-    return ""
-
-
-def _normalize_reason_code(value: Any) -> str:
-    raw = _text(value).lower()
-    if not raw:
-        return ""
-    normalized = re.sub(r"[^a-z0-9]+", "_", raw).strip("_")
-    aliases = {
-        "capacity": "capacity_capped",
-        "capacity_cap": "capacity_capped",
-        "cap": "capacity_capped",
-        "duplicate": "duplicate_source",
-        "off_topic": "off_focus",
-        "outside_focus": "off_focus",
-        "weak_relevance": "weak_relevance",
-        "low_relevance": "weak_relevance",
-    }
-    return aliases.get(normalized, normalized)
+    return _text(candidate.get("reason_code"))
 
 
 def _first_text(mapping: Mapping[str, Any], *keys: str) -> str:

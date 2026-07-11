@@ -40,7 +40,7 @@ def load_artifact_contracts(repo_workdir: str | Path) -> list[dict[str, Any]]:
         raise RuntimeStateError("artifact_contracts.yaml artifacts must be a list")
     records = [artifact for artifact in artifacts if isinstance(artifact, dict)]
     for artifact in records:
-        validate_workspace_relative_artifact_path(
+        artifact["path"] = validate_workspace_relative_artifact_path(
             artifact.get("path") or "",
             artifact_id=str(artifact.get("artifact_id") or "<missing>"),
             binding_source="artifact_contract",

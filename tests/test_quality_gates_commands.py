@@ -569,13 +569,13 @@ def _set_current_stage(ws: Path, stage_id: str) -> None:
 
 def _advance_to_auditor(ws: Path) -> None:
     initialize_runtime_state(workspace=ws, repo_workdir=ROOT)
-    _write_minimal_artifact_registry(ws)
     _write_json(ws, "candidate_claims.json")
     _write_json(ws, "screened_candidates.json")
     if not (_intermediate(ws) / "claim_ledger.json").exists():
         _write_ledger(ws, [])
     if not (_intermediate(ws) / "audited_brief.md").exists():
         _write_audited_brief(ws, "# Brief\n")
+    check_runtime_state(workspace=ws, repo_workdir=ROOT)
     _set_current_stage(ws, "auditor")
 
 
@@ -1986,6 +1986,7 @@ def test_coverage_gate_rejects_screened_candidate_universe_mismatch(tmp_path: Pa
         ws,
         "## Executive Summary\nTargetCo opened a demo facility. [src:CL-001]\n",
     )
+    check_runtime_state(workspace=ws, repo_workdir=ROOT)
     event_path = _intermediate(ws) / "event_log.jsonl"
     before_events = event_path.read_bytes()
 

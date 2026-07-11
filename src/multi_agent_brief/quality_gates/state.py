@@ -18,6 +18,7 @@ from multi_agent_brief.audit.harness import QualityHarnessAuditAgent
 from multi_agent_brief.contracts.agent_artifact_intake import (
     AgentArtifactId,
     evaluate_workspace_agent_artifact_intakes,
+    validate_workspace_intake_consumption_context,
 )
 from multi_agent_brief.core.citations import SRC_REF_PATTERN
 from multi_agent_brief.core.claim_ledger import ClaimLedger
@@ -25,6 +26,7 @@ from multi_agent_brief.core.schemas import AuditFinding
 from multi_agent_brief.orchestrator.runtime_state import (
     RuntimeStateError,
     append_event,
+    check_runtime_state,
     initialize_runtime_state,
     load_artifact_contracts,
     load_stage_specs,
@@ -422,22 +424,58 @@ def _contracts(
     return repo, load_stage_specs(repo), load_artifact_contracts(repo)
 
 
-def _runtime_run_id(
+def _runtime_intake_context(
     *,
     workspace: Path,
     repo_workdir: str | Path | None,
-    runtime: str = "hermes",
-) -> str:
+    artifact_paths: Mapping[AgentArtifactId, Path],
+) -> tuple[str, dict[str, Any]]:
+    """Load the current-run registry used to decide intake consumption."""
+
     try:
         state = show_runtime_state(workspace=workspace)
     except RuntimeStateError:
         state = initialize_runtime_state(
             workspace=workspace,
-            runtime=runtime,
             repo_workdir=repo_workdir,
             actor=GATE_EVENT_ACTOR,
         )
-    return str((state.get("manifest") or {}).get("run_id") or "")
+    manifest = state.get("manifest")
+    registry = state.get("artifact_registry")
+    artifacts = registry.get("artifacts") if isinstance(registry, dict) else None
+    candidate_path = artifact_paths["candidate_claims"]
+    registry_needs_refresh = not isinstance(registry, dict) or (
+        candidate_path.is_file()
+        and (
+            not isinstance(artifacts, dict)
+            or not isinstance(artifacts.get("candidate_claims"), dict)
+        )
+    )
+    if registry_needs_refresh:
+        # Use the authoritative registry recomputer only when a materialized
+        # dependency has no record. Existing current-run records, including
+        # stale overlays, remain read-only inputs to the gate decision.
+        state = check_runtime_state(
+            workspace=workspace,
+            repo_workdir=repo_workdir,
+            actor=GATE_EVENT_ACTOR,
+        )
+        manifest = state.get("manifest")
+        registry = state.get("artifact_registry")
+    run_id = str(manifest.get("run_id") or "") if isinstance(manifest, dict) else ""
+    registry_run_id = (
+        str(registry.get("run_id") or "") if isinstance(registry, dict) else ""
+    )
+    if not run_id or registry_run_id != run_id:
+        raise RuntimeStateError(
+            "Quality gates require one current-run artifact registry authority.",
+            details={
+                "manifest_run_id": run_id or None,
+                "artifact_registry_run_id": registry_run_id or None,
+            },
+            error_code=E_TRANSACTION_INTEGRITY,
+        )
+    return run_id, registry
 
 
 def _load_config(workspace: Path) -> dict[str, Any]:
@@ -1119,6 +1157,8 @@ def _coverage_omission_projection(
     ledger: ClaimLedger,
     reader_facing_mode: bool = False,
     artifact_paths: Mapping[AgentArtifactId, Path] | None = None,
+    artifact_registry: Mapping[str, Any] | None = None,
+    expected_run_id: str = "",
 ) -> dict[str, Any]:
     base: dict[str, Any] = {
         "status": "not_available",
@@ -1151,10 +1191,11 @@ def _coverage_omission_projection(
         base["status"] = "missing"
         base["not_interpreted_reason"] = "screened_candidates_missing"
         return base
-    intake = evaluate_workspace_agent_artifact_intakes(
+    bundle = evaluate_workspace_agent_artifact_intakes(
         workspace,
         artifact_paths=paths,
-    ).screened_candidates
+    )
+    intake = bundle.screened_candidates
     if intake is None:
         base["status"] = "invalid"
         base["not_interpreted_reason"] = "screened_candidates_intake_result_unavailable"
@@ -1164,6 +1205,18 @@ def _coverage_omission_projection(
         base["status"] = "invalid"
         base["not_interpreted_reason"] = intake.validation_result
         return base
+    if artifact_registry is not None and expected_run_id:
+        authority_reasons = validate_workspace_intake_consumption_context(
+            artifact_registry,
+            expected_run_id=expected_run_id,
+            bundle=bundle,
+            artifact_id="screened_candidates",
+        )
+        if authority_reasons:
+            base["status"] = "invalid"
+            base["not_interpreted_reason"] = authority_reasons[0]
+            base["intake_authority_reasons"] = authority_reasons
+            return base
     payload = intake.normalized_payload
     if not isinstance(payload, dict):
         base["status"] = "legacy_not_interpreted"
@@ -2189,6 +2242,17 @@ def check_quality_gates(
     ws = _require_workspace(workspace)
     _raise_if_active_repair_open_for_gate_check(ws)
     _repo, stages, artifacts = _contracts(workspace=ws, repo_workdir=repo_workdir)
+    artifacts_by_id = {
+        str(artifact.get("artifact_id")): artifact
+        for artifact in artifacts
+        if artifact.get("artifact_id")
+    }
+    contract_artifact_paths = agent_artifact_paths_from_contracts(ws, artifacts_by_id)
+    run_id, artifact_registry = _runtime_intake_context(
+        workspace=ws,
+        repo_workdir=repo_workdir,
+        artifact_paths=contract_artifact_paths,
+    )
 
     requested_stage_id = stage_id or "auditor"
     default_brief = "output/brief.md" if requested_stage_id == "finalize" else "output/intermediate/audited_brief.md"
@@ -2239,6 +2303,8 @@ def check_quality_gates(
                 if artifact.get("artifact_id")
             },
         ),
+        artifact_registry=artifact_registry,
+        expected_run_id=run_id,
     )
     if coverage_omission_projection.get("status") == "invalid":
         raise RuntimeStateError(
@@ -2370,7 +2436,6 @@ def check_quality_gates(
         wrote_report = True
         _write_json_atomic(legacy_report_path, payload)
         wrote_legacy_report = True
-        run_id = _runtime_run_id(workspace=ws, repo_workdir=repo_workdir)
         append_event(
             workspace=ws,
             run_id=run_id,

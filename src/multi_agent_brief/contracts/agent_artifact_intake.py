@@ -421,6 +421,14 @@ def normalize_screened_candidates(
                 normalizations=normalizations,
                 findings=findings,
             )
+            if bucket in {"excluded", "deprioritized"}:
+                _normalize_screening_reason_code(
+                    item,
+                    path=f"{bucket}[{index}]",
+                    artifact_id="screened_candidates",
+                    normalizations=normalizations,
+                    findings=findings,
+                )
     return NormalizationResult(value, tuple(normalizations), tuple(findings))
 
 
@@ -632,6 +640,81 @@ def validate_registry_intake_context(
     return reasons
 
 
+def validate_registry_intake_consumption_context(
+    registry: Any,
+    *,
+    expected_run_id: str,
+    artifact_id: AgentArtifactId,
+    result: IntakeResult | None = None,
+) -> list[str]:
+    """Require a bound intake projection to be eligible for consumption."""
+
+    reasons = validate_registry_intake_context(
+        registry,
+        expected_run_id=expected_run_id,
+        artifact_id=artifact_id,
+        result=result,
+    )
+    artifacts = registry.get("artifacts") if isinstance(registry, dict) else None
+    record = artifacts.get(artifact_id) if isinstance(artifacts, dict) else None
+    if isinstance(record, dict) and record.get("status") != "valid":
+        reasons.append(
+            f"{artifact_id} artifact record is not valid for deterministic consumption "
+            f"(status={record.get('status') or '<missing>'}, "
+            f"validation_result={record.get('validation_result') or '<missing>'})"
+        )
+    return list(dict.fromkeys(reasons))
+
+
+def validate_workspace_intake_consumption_context(
+    registry: Any,
+    *,
+    expected_run_id: str,
+    bundle: WorkspaceAgentArtifactIntakes | None,
+    artifact_id: AgentArtifactId,
+) -> list[str]:
+    """Bind one consumer to registry eligibility and intake dependencies."""
+
+    artifact_ids: list[AgentArtifactId] = [artifact_id]
+    if artifact_id == "screened_candidates":
+        artifacts = registry.get("artifacts") if isinstance(registry, dict) else None
+        candidate_record = (
+            artifacts.get("candidate_claims")
+            if isinstance(artifacts, dict)
+            else None
+        )
+        candidate_declared = (
+            bundle is not None and bundle.candidate_claims is not None
+        ) or (
+            isinstance(candidate_record, dict)
+            and candidate_record.get("status") not in {"expected", "missing"}
+        )
+        if candidate_declared:
+            artifact_ids.insert(0, "candidate_claims")
+    reasons: list[str] = []
+    for current_artifact_id in artifact_ids:
+        result = bundle.get(current_artifact_id) if bundle is not None else None
+        if bundle is not None and result is None:
+            reasons.append(
+                f"{current_artifact_id} intake result is unavailable for deterministic consumption"
+            )
+            continue
+        current_reasons = validate_registry_intake_consumption_context(
+            registry,
+            expected_run_id=expected_run_id,
+            artifact_id=current_artifact_id,
+            result=result,
+        )
+        prefix = (
+            "candidate_claims dependency: "
+            if artifact_id == "screened_candidates"
+            and current_artifact_id == "candidate_claims"
+            else ""
+        )
+        reasons.extend(f"{prefix}{reason}" for reason in current_reasons)
+    return list(dict.fromkeys(reasons))
+
+
 def _normalize_record_aliases(
     record: dict[str, Any],
     *,
@@ -724,6 +807,57 @@ def _apply_alias(
             message=f"Conflicting values were supplied for {canonical!r} and alias {alias!r}.",
         )
     )
+
+
+def _normalize_screening_reason_code(
+    record: dict[str, Any],
+    *,
+    path: str,
+    artifact_id: AgentArtifactId,
+    normalizations: list[dict[str, Any]],
+    findings: list[dict[str, Any]],
+) -> None:
+    """Normalize bounded machine reason-code aliases once at intake."""
+
+    fields = (
+        "reason_code",
+        "screening_reason_code",
+        "excluded_reason_code",
+        "deprioritized_reason_code",
+    )
+    supplied = [(field, record.get(field)) for field in fields if field in record]
+    if not supplied:
+        return
+    normalized = [
+        (field, value, _normalize_reason_code(value))
+        for field, value in supplied
+    ]
+    distinct = {value for _field, _source, value in normalized}
+    if len(distinct) > 1:
+        findings.append(
+            _finding(
+                artifact_id,
+                code="alias_conflict",
+                path=f"{path}.reason_code",
+                message="Conflicting machine reason-code fields were supplied.",
+            )
+        )
+        return
+    target = normalized[0][2]
+    original = record.get("reason_code")
+    for field, _value, _normalized in normalized:
+        if field != "reason_code":
+            record.pop(field, None)
+    record["reason_code"] = target
+    if len(supplied) > 1 or supplied[0][0] != "reason_code" or original != target:
+        normalizations.append(
+            _normalization(
+                "reason_code_alias",
+                f"{path}.reason_code",
+                {field: value for field, value in supplied},
+                target,
+            )
+        )
 
 
 def _equivalent_alias_values(left: Any, right: Any) -> bool:

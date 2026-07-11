@@ -15,6 +15,7 @@ from multi_agent_brief.contracts.agent_artifact_intake import (
     normalize_claim_drafts,
     validate_intake_projection,
     validate_registry_intake_context,
+    validate_workspace_intake_consumption_context,
 )
 from multi_agent_brief.orchestrator.runtime_state.artifact_paths import (
     agent_artifact_paths_from_contracts,
@@ -251,6 +252,114 @@ def test_screened_reason_not_reason_code(tmp_path: Path) -> None:
     assert result.status == "invalid"
     assert result.findings[0]["path"] == "excluded[0].reason_code"
     assert "reason_code" not in result.normalized_payload["excluded"][0]
+
+
+def test_screened_reason_code_alias_is_normalized_once_at_intake(
+    tmp_path: Path,
+) -> None:
+    candidate_path = tmp_path / "candidate_claims.json"
+    path = tmp_path / "screened_candidates.json"
+    _write_json(candidate_path, [_legacy_candidate("CAND-001")])
+    _write_json(
+        path,
+        {
+            "selected": [],
+            "excluded": [
+                {
+                    "candidate_id": "CAND-001",
+                    "statement": "Example item outside the requested scope.",
+                    "screening_reason_code": "capacity cap",
+                    "explanation": "The capacity limit excluded this item.",
+                }
+            ],
+            "screening_policy": {"total_candidates": 1},
+        },
+    )
+
+    candidate = evaluate_agent_artifact_intake(
+        candidate_path,
+        artifact_id="candidate_claims",
+    )
+    result = evaluate_agent_artifact_intake(
+        path,
+        artifact_id="screened_candidates",
+        candidate_universe=candidate,
+    )
+
+    assert result.status == "valid"
+    excluded = result.normalized_payload["excluded"][0]
+    assert excluded["reason_code"] == "capacity_capped"
+    assert "screening_reason_code" not in excluded
+    assert any(
+        item["operation"] == "reason_code_alias" for item in result.normalizations
+    )
+
+
+@pytest.mark.parametrize(
+    ("stale_artifact_id", "reason_prefix"),
+    [
+        ("candidate_claims", "candidate_claims dependency:"),
+        ("screened_candidates", "screened_candidates artifact record"),
+    ],
+    ids=["INTAKE-CONSUME-01-stale-universe", "INTAKE-CONSUME-02-stale-screening"],
+)
+def test_screened_intake_consumption_rejects_stale_registry_dependencies(
+    tmp_path: Path,
+    stale_artifact_id: str,
+    reason_prefix: str,
+) -> None:
+    candidate_path = tmp_path / "candidate_claims.json"
+    screened_path = tmp_path / "screened_candidates.json"
+    _write_json(candidate_path, [_legacy_candidate("CAND-001")])
+    _write_json(
+        screened_path,
+        {
+            "selected": [_selected_candidate("CAND-001")],
+            "excluded": [],
+            "screening_policy": {"total_candidates": 1},
+        },
+    )
+    bundle = evaluate_workspace_agent_artifact_intakes(
+        tmp_path,
+        artifact_paths={
+            "candidate_claims": candidate_path,
+            "screened_candidates": screened_path,
+        },
+    )
+    assert bundle.candidate_claims is not None
+    assert bundle.screened_candidates is not None
+    registry = {
+        "run_id": "run-current",
+        "artifacts": {
+            "candidate_claims": {
+                "status": "valid",
+                "validation_result": bundle.candidate_claims.validation_result,
+                "sha256": bundle.candidate_claims.raw_sha256,
+                "intake_projection": bundle.candidate_claims.projection(),
+            },
+            "screened_candidates": {
+                "status": "valid",
+                "validation_result": bundle.screened_candidates.validation_result,
+                "sha256": bundle.screened_candidates.raw_sha256,
+                "intake_projection": bundle.screened_candidates.projection(),
+            },
+        },
+    }
+    registry["artifacts"][stale_artifact_id].update(
+        {
+            "status": "stale",
+            "validation_result": "stale_after_supersede",
+        }
+    )
+
+    reasons = validate_workspace_intake_consumption_context(
+        registry,
+        expected_run_id="run-current",
+        bundle=bundle,
+        artifact_id="screened_candidates",
+    )
+
+    assert any(reason.startswith(reason_prefix) for reason in reasons)
 
 
 def test_screened_universe_uses_intake(tmp_path: Path) -> None:

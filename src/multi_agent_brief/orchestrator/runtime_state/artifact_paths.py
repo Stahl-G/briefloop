@@ -56,8 +56,10 @@ def validate_workspace_relative_artifact_path(
     normalized = raw.replace("\\", "/")
     posix_path = PurePosixPath(normalized)
     windows_path = PureWindowsPath(raw)
+    canonical = posix_path.as_posix()
     unsafe = (
         not raw
+        or canonical == "."
         or raw.startswith("~")
         or Path(raw).is_absolute()
         or posix_path.is_absolute()
@@ -72,7 +74,7 @@ def validate_workspace_relative_artifact_path(
             binding_source=binding_source,
             raw_path=raw,
         )
-    return normalized
+    return canonical
 
 
 def _unsafe_artifact_path_error(

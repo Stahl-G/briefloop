@@ -9,6 +9,7 @@ from typing import Any
 from multi_agent_brief.contracts.agent_artifact_intake import (
     AGENT_ARTIFACT_IDS,
     validate_registry_intake_context,
+    validate_workspace_intake_consumption_context,
 )
 from multi_agent_brief.contracts.target_contract import (
     load_experiment_080_condition_metadata,
@@ -168,6 +169,7 @@ def build_workspace_status(workspace: str | Path) -> dict[str, Any]:
             if registry.get("status") == "present"
             else None
         ),
+        expected_run_id=expected_run_id,
     )
     payload["support_wording"] = project_workspace_support_wording(
         ws,
@@ -284,7 +286,8 @@ def format_workspace_status(status: dict[str, Any]) -> str:
                 f"valid={artifacts.get('valid_count', 0)} "
                 f"invalid={artifacts.get('invalid_count', 0)} "
                 f"missing={artifacts.get('missing_count', 0)} "
-                f"expected={artifacts.get('expected_count', 0)}"
+                f"expected={artifacts.get('expected_count', 0)} "
+                f"stale={artifacts.get('stale_count', 0)}"
             ),
             _format_intake_projection_line(artifacts.get("intake")),
             f"[status] events: count={events.get('event_count', 0)} corrupt={events.get('corrupt_count', 0)}",
@@ -718,6 +721,8 @@ def _intake_projection_summary(
         "normalization_count": 0,
         "fatal_finding_count": 0,
         "invalid_projection_count": 0,
+        "stale_projection_count": 0,
+        "consumable": None,
         "artifacts": [],
         "reasons": [],
     }
@@ -743,6 +748,16 @@ def _intake_projection_summary(
             if expected_run_id
             else ["runtime_manifest run_id is unavailable for intake projection binding"]
         )
+        consumption_reasons = (
+            validate_workspace_intake_consumption_context(
+                registry,
+                expected_run_id=expected_run_id,
+                bundle=None,
+                artifact_id=artifact_id,
+            )
+            if expected_run_id
+            else ["runtime_manifest run_id is unavailable for intake consumption binding"]
+        )
         normalization_count = (
             projection.get("normalization_count") if isinstance(projection, dict) else 0
         )
@@ -756,6 +771,7 @@ def _intake_projection_summary(
             {
                 "artifact_id": artifact_id,
                 "projection_valid": not reasons,
+                "consumable": not consumption_reasons,
                 "artifact_status": record.get("status"),
                 "validation_result": record.get("validation_result"),
                 "transform_version": projection.get("transform_version")
@@ -765,6 +781,7 @@ def _intake_projection_summary(
                 "fatal_finding_count": fatal_finding_count,
                 "findings": findings if isinstance(findings, list) else [],
                 "reasons": reasons,
+                "consumption_reasons": consumption_reasons,
             }
         )
         summary["normalization_count"] += normalization_count
@@ -774,6 +791,8 @@ def _intake_projection_summary(
         if reasons:
             summary["invalid_projection_count"] += 1
             context_reasons.extend(reasons)
+        if record.get("status") == "stale":
+            summary["stale_projection_count"] += 1
 
     summary["artifacts"] = artifacts
     summary["projection_count"] = len(artifacts)
@@ -781,6 +800,9 @@ def _intake_projection_summary(
     if artifacts:
         summary["present"] = True
         summary["valid"] = not context_reasons
+        summary["consumable"] = all(
+            artifact.get("consumable") is True for artifact in artifacts
+        )
     return summary
 
 
@@ -790,7 +812,9 @@ def _format_intake_projection_line(value: Any) -> str:
         "not_available"
         if intake.get("present") is not True
         else "available"
-        if intake.get("valid") is True
+        if intake.get("valid") is True and intake.get("consumable") is True
+        else "stale"
+        if intake.get("valid") is True and intake.get("stale_projection_count", 0) > 0
         else "invalid"
     )
     return (
@@ -800,7 +824,8 @@ def _format_intake_projection_line(value: Any) -> str:
         f"normalized={intake.get('normalized_artifact_count', 0)} "
         f"normalizations={intake.get('normalization_count', 0)} "
         f"fatal={intake.get('fatal_finding_count', 0)} "
-        f"invalid_projections={intake.get('invalid_projection_count', 0)}"
+        f"invalid_projections={intake.get('invalid_projection_count', 0)} "
+        f"stale_projections={intake.get('stale_projection_count', 0)}"
     )
 
 

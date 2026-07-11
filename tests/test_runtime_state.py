@@ -23,6 +23,7 @@ from multi_agent_brief.contracts.agent_artifact_intake import (
     validate_registry_intake_context,
 )
 from multi_agent_brief.contracts.target_contract import project_assessment_target_status
+from multi_agent_brief.core.claim_ledger import ClaimLedger
 from multi_agent_brief.orchestrator.recovery_state import (
     OWNER_REVISION_SCHEMA,
     evaluate_recovery_state,
@@ -61,6 +62,14 @@ from multi_agent_brief.orchestrator.run_archive import archive_finalized_run
 from multi_agent_brief.orchestrator.timing import derive_control_timing_from_path
 from multi_agent_brief.outputs.finalize import finalize_reader_outputs
 from multi_agent_brief.outputs.source_appendix import build_source_appendix
+from multi_agent_brief.product.materiality_selection import (
+    project_workspace_materiality_selection,
+)
+from multi_agent_brief.quality_gates.state import (
+    _coverage_omission_projection,
+    check_quality_gates,
+)
+from multi_agent_brief.status import build_workspace_status, format_workspace_status
 from tests.helpers import write_workspace_files_under
 
 
@@ -4620,6 +4629,41 @@ def test_supersede_stale_precedes_intake_validity(tmp_path):
         recovery["stale_artifact_baselines"]["claim_ledger"]["sha256"]
         == claim_ledger_baseline_sha
     )
+    (ws / "output" / "intermediate" / "audited_brief.md").write_text(
+        "## Executive Summary\nExampleCo opened a demo facility.\n",
+        encoding="utf-8",
+    )
+    run_id = superseded["manifest"]["run_id"]
+    materiality = project_workspace_materiality_selection(
+        ws,
+        artifact_registry=superseded["artifact_registry"],
+        expected_run_id=run_id,
+    )
+    coverage = _coverage_omission_projection(
+        workspace=ws,
+        markdown="## Executive Summary\n",
+        ledger=ClaimLedger(),
+        artifact_registry=superseded["artifact_registry"],
+        expected_run_id=run_id,
+    )
+    status = build_workspace_status(ws)
+    before_quality_events = _state_file(ws, "event_log").read_bytes()
+
+    with pytest.raises(RuntimeStateError) as quality_excinfo:
+        check_quality_gates(workspace=ws, repo_workdir=repo)
+
+    assert quality_excinfo.value.error_code == "E_ARTIFACT_INVALID"
+    assert materiality["status"] == "invalid_screened_candidates"
+    assert coverage["status"] == "invalid"
+    assert "not valid for deterministic consumption" in materiality["reason"]
+    assert "not valid for deterministic consumption" in coverage["not_interpreted_reason"]
+    intake_status = status["artifacts"]["intake"]
+    assert intake_status["valid"] is True
+    assert intake_status["consumable"] is False
+    assert intake_status["stale_projection_count"] >= 1
+    assert "[status] intake: stale" in format_workspace_status(status)
+    assert not (ws / "output" / "intermediate" / "quality_gate_report.json").exists()
+    assert _state_file(ws, "event_log").read_bytes() == before_quality_events
 
     complete_stage_transaction(
         workspace=ws,
@@ -5175,13 +5219,24 @@ def test_freeze_intake_binding_rolls_back_atomically(
 
 
 @pytest.mark.parametrize(
-    "custom_drafts_valid",
-    [True, False],
-    ids=["INTAKE-PATH-04-valid-freeze", "INTAKE-PATH-05-invalid-freeze"],
+    ("custom_drafts_valid", "path_style"),
+    [
+        (True, "plain"),
+        (True, "dot"),
+        (True, "backslash"),
+        (False, "plain"),
+    ],
+    ids=[
+        "INTAKE-PATH-04-valid-freeze",
+        "INTAKE-PATH-07-canonical-dot",
+        "INTAKE-PATH-07-canonical-backslash",
+        "INTAKE-PATH-05-invalid-freeze",
+    ],
 )
 def test_freeze_binds_claim_paths_from_artifact_contracts(
     tmp_path: Path,
     custom_drafts_valid: bool,
+    path_style: str,
 ) -> None:
     repo = _repo_with_role_topology(tmp_path, "default")
     contracts_path = repo / "configs" / "artifact_contracts.yaml"
@@ -5189,9 +5244,19 @@ def test_freeze_binds_claim_paths_from_artifact_contracts(
 
     contracts = yaml.safe_load(contracts_path.read_text(encoding="utf-8"))
     custom_paths = {
-        "claim_drafts": "custom/claim_drafts.json",
-        "claim_ledger": "custom/claim_ledger.json",
-    }
+        "plain": {
+            "claim_drafts": "custom/claim_drafts.json",
+            "claim_ledger": "custom/claim_ledger.json",
+        },
+        "dot": {
+            "claim_drafts": "custom/./claim_drafts.json",
+            "claim_ledger": "custom/./claim_ledger.json",
+        },
+        "backslash": {
+            "claim_drafts": "custom\\claim_drafts.json",
+            "claim_ledger": "custom\\claim_ledger.json",
+        },
+    }[path_style]
     for artifact in contracts["artifacts"]:
         artifact_id = artifact.get("artifact_id")
         if artifact_id in custom_paths:
