@@ -64,6 +64,13 @@ REQUIRED_SCENARIO_IDS = (
 _INTERMEDIATE = Path("output/intermediate")
 
 
+def _require(condition: bool, message: str) -> None:
+    """Fail a safety scenario even when Python assertions are optimized out."""
+
+    if not condition:
+        raise AssertionError(message)
+
+
 def _sha256(path: Path) -> str:
     digest = hashlib.sha256()
     with path.open("rb") as stream:
@@ -489,7 +496,7 @@ def _scenario_01(parent: Path, repo_root: Path) -> dict[str, Any]:
         ]
     )
     handoff = workspace / _INTERMEDIATE / "agent_handoff.json"
-    assert handoff.exists()
+    _require(handoff.exists(), "Standard run launcher did not write agent_handoff.json.")
     _advance_to_auditor_complete(
         workspace,
         repo_root=repo_root,
@@ -508,13 +515,26 @@ def _scenario_01(parent: Path, repo_root: Path) -> dict[str, Any]:
         and event.get("stage_id") == "finalize"
         and event.get("decision") == "finalize"
     ]
-    assert report["status"] == "pass"
-    assert report["delivery_promotion"] == "promoted"
-    assert delivery.exists()
-    assert report["delivery_artifact_sha256"]["output/delivery/brief.md"] == _sha256(delivery)
-    assert projection["delivery_truth"]["valid"] is True
-    assert projection["event_truth"]["finalize_event_present"] is True
-    assert len(finalize_events) == 1
+    _require(report["status"] == "pass", "Clean finalize report did not pass.")
+    _require(
+        report["delivery_promotion"] == "promoted",
+        "Clean finalize did not promote delivery.",
+    )
+    _require(delivery.exists(), "Promoted delivery Markdown is missing.")
+    _require(
+        report["delivery_artifact_sha256"]["output/delivery/brief.md"]
+        == _sha256(delivery),
+        "Finalize report delivery hash does not bind promoted bytes.",
+    )
+    _require(
+        projection["delivery_truth"]["valid"] is True,
+        "Completion projection does not report valid delivery truth.",
+    )
+    _require(
+        projection["event_truth"]["finalize_event_present"] is True,
+        "Completion projection does not bind a finalize event.",
+    )
+    _require(len(finalize_events) == 1, "Expected exactly one finalize decision event.")
     return {
         "transaction_path": "cli",
         "handoff_sha256": _sha256(handoff),
@@ -556,10 +576,19 @@ def _scenario_02(parent: Path, _repo_root: Path) -> dict[str, Any]:
     else:
         raise AssertionError("Reader-clean failure unexpectedly finalized.")
     report = _read_json(workspace / _INTERMEDIATE / "finalize_report.json")
-    assert report["status"] == "fail"
-    assert report["delivery_promotion"] == "skipped_reader_clean_failed"
-    assert all(path.read_bytes() == data for path, data in before.items())
-    assert sorted(path.name for path in history.iterdir()) == history_before
+    _require(report["status"] == "fail", "Reader-clean failure report did not fail.")
+    _require(
+        report["delivery_promotion"] == "skipped_reader_clean_failed",
+        "Reader-clean failure was not recorded as a skipped promotion.",
+    )
+    _require(
+        all(path.read_bytes() == data for path, data in before.items()),
+        "Reader-clean failure changed an existing delivery artifact.",
+    )
+    _require(
+        sorted(path.name for path in history.iterdir()) == history_before,
+        "Reader-clean failure created a delivery snapshot.",
+    )
     return {
         "failure_status": report["status"],
         "delivery_promotion": report["delivery_promotion"],
@@ -584,11 +613,24 @@ def _scenario_03(parent: Path, repo_root: Path) -> dict[str, Any]:
     workflow = _read_json(workspace / RUNTIME_STATE_FILES["workflow_state"])
     integrity = workflow["run_integrity"]
     contaminations = [event for event in _event_records(workspace) if event.get("event_type") == "run_integrity_contaminated"]
-    assert integrity["status"] == "contaminated"
-    assert integrity["reference_eligible"] is False
-    assert integrity["clean_single_shot"] is False
-    assert len(contaminations) == 1
-    assert contaminations[0]["metadata"]["reason_code"] == "frozen_artifact_changed"
+    _require(
+        integrity["status"] == "contaminated",
+        "Direct frozen edit did not contaminate run integrity.",
+    )
+    _require(
+        integrity["reference_eligible"] is False,
+        "Contaminated run remained reference eligible.",
+    )
+    _require(
+        integrity["clean_single_shot"] is False,
+        "Contaminated run remained clean single shot.",
+    )
+    _require(len(contaminations) == 1, "Expected exactly one contamination event.")
+    _require(
+        contaminations[0]["metadata"]["reason_code"]
+        == "frozen_artifact_changed",
+        "Contamination event does not identify the frozen artifact edit.",
+    )
     return {
         "run_integrity": integrity["status"],
         "reference_eligible": integrity["reference_eligible"],
@@ -642,10 +684,23 @@ def _scenario_04(parent: Path, repo_root: Path) -> dict[str, Any]:
         and event.get("stage_id") == "finalize"
         and event.get("decision") == "finalize"
     ]
-    assert completed["workflow_state"]["run_integrity"]["reference_eligible"] is False
-    assert recovery["status"] == "completed_non_reference"
-    assert recovery["reference_eligible"] is False
-    assert len(finalize_events) == 1
+    _require(
+        completed["workflow_state"]["run_integrity"]["reference_eligible"]
+        is False,
+        "Recovered contaminated run became reference eligible.",
+    )
+    _require(
+        recovery["status"] == "completed_non_reference",
+        "Recovered run did not reach completed_non_reference.",
+    )
+    _require(
+        recovery["reference_eligible"] is False,
+        "Recovery projection made contaminated run reference eligible.",
+    )
+    _require(
+        len(finalize_events) == 1,
+        "Recovered run did not record exactly one finalize event.",
+    )
     return {
         "supersede_transaction_id": superseded["transaction"]["transaction_id"],
         "recovery_status": recovery["status"],
@@ -683,16 +738,36 @@ def _scenario_05(parent: Path, repo_root: Path) -> dict[str, Any]:
     frozen = freeze_claim_ledger_transaction(workspace=workspace, repo_workdir=repo_root)
     records = frozen["artifact_registry"]["artifacts"]
     for artifact_id in paths:
-        assert records[artifact_id]["status"] == "valid"
+        _require(
+            records[artifact_id]["status"] == "valid",
+            f"Normalized {artifact_id} is not registry-valid.",
+        )
         projection = records[artifact_id]["intake_projection"]
-        assert projection["artifact_id"] == artifact_id
-        assert projection["fatal_finding_count"] == 0
-        assert projection["normalization_count"] > 0
-        assert projection["raw_sha256"] == hashlib.sha256(
-            raw_before[artifact_id]
-        ).hexdigest()
-        assert paths[artifact_id].read_bytes() == raw_before[artifact_id]
-    assert (workspace / _INTERMEDIATE / "claim_ledger.json").exists()
+        _require(
+            projection["artifact_id"] == artifact_id,
+            f"Intake projection identity mismatch for {artifact_id}.",
+        )
+        _require(
+            projection["fatal_finding_count"] == 0,
+            f"Normalized {artifact_id} retained fatal findings.",
+        )
+        _require(
+            projection["normalization_count"] > 0,
+            f"Recoverable {artifact_id} drift was not normalized.",
+        )
+        _require(
+            projection["raw_sha256"]
+            == hashlib.sha256(raw_before[artifact_id]).hexdigest(),
+            f"Intake projection raw hash mismatch for {artifact_id}.",
+        )
+        _require(
+            paths[artifact_id].read_bytes() == raw_before[artifact_id],
+            f"Intake normalization rewrote raw {artifact_id} bytes.",
+        )
+    _require(
+        (workspace / _INTERMEDIATE / "claim_ledger.json").exists(),
+        "Recoverable intake did not produce a frozen Claim Ledger.",
+    )
     return {
         "normalized_artifact_ids": sorted(paths),
         "claim_count": frozen["claim_ledger_freeze"]["claim_count"],
@@ -722,19 +797,28 @@ def _fatal_freeze_case(
         if finding.get("severity") == "fatal"
     ]
     finding_paths = [str(finding.get("path") or "") for finding in fatal_findings]
-    assert any(expected_path_fragment in path for path in finding_paths), finding_paths
+    _require(
+        any(expected_path_fragment in path for path in finding_paths),
+        f"Fatal intake finding did not identify {expected_path_fragment}: {finding_paths}",
+    )
     before = _control_bytes(workspace)
     ledger_path = workspace / _INTERMEDIATE / "claim_ledger.json"
-    assert not ledger_path.exists()
+    _require(not ledger_path.exists(), "Claim Ledger existed before fatal freeze attempt.")
     try:
         freeze_claim_ledger_transaction(workspace=workspace, repo_workdir=repo_root)
     except RuntimeStateError as exc:
         error_code = exc.error_code
     else:
         raise AssertionError("Fatal claim draft unexpectedly froze.")
-    assert _control_bytes(workspace) == before
-    assert not ledger_path.exists()
-    assert error_code == "E_CLAIM_DRAFT_CONTRACT_INVALID"
+    _require(
+        _control_bytes(workspace) == before,
+        "Fatal freeze attempt changed runtime control bytes.",
+    )
+    _require(not ledger_path.exists(), "Fatal freeze attempt wrote a Claim Ledger.")
+    _require(
+        error_code == "E_CLAIM_DRAFT_CONTRACT_INVALID",
+        f"Fatal freeze returned imprecise error code: {error_code}",
+    )
     return {
         "findings": [
             {
@@ -778,11 +862,23 @@ def _scenario_06(parent: Path, repo_root: Path) -> dict[str, Any]:
 def _assert_workbuddy_parity(workspace: Path, *, repo_root: Path) -> dict[str, Any]:
     projection = build_completion_projection(workspace=workspace, repo_workdir=repo_root)
     diagnosis = build_workbuddy_diagnosis(workspace=workspace)
-    assert diagnosis["completion_projection"] == projection
+    _require(
+        diagnosis["completion_projection"] == projection,
+        "WorkBuddy diagnosis diverges from canonical completion projection.",
+    )
     run_card = diagnosis["run_card"]
-    assert run_card["current_stage"] == projection["workflow"]["current_stage"]
-    assert run_card["run_integrity"] == projection["run_integrity"]["status"]
-    assert run_card["delivery_valid"] is projection["delivery_truth"].get("valid")
+    _require(
+        run_card["current_stage"] == projection["workflow"]["current_stage"],
+        "WorkBuddy Run Card changed current-stage truth.",
+    )
+    _require(
+        run_card["run_integrity"] == projection["run_integrity"]["status"],
+        "WorkBuddy Run Card changed run-integrity truth.",
+    )
+    _require(
+        run_card["delivery_valid"] is projection["delivery_truth"].get("valid"),
+        "WorkBuddy Run Card changed delivery validity truth.",
+    )
     return {
         "current_stage": run_card["current_stage"],
         "delivery_valid": run_card["delivery_valid"],
@@ -798,15 +894,25 @@ def _scenario_07(parent: Path, repo_root: Path) -> dict[str, Any]:
     _advance_to_auditor_complete(complete, repo_root=repo_root)
     _finalize_workspace(complete, repo_root=repo_root)
     complete_parity = _assert_workbuddy_parity(complete, repo_root=repo_root)
-    assert fresh_parity["delivery_valid"] is False
-    assert complete_parity["delivery_valid"] is True
+    _require(
+        fresh_parity["delivery_valid"] is False,
+        "Fresh workspace incorrectly reports valid delivery.",
+    )
+    _require(
+        complete_parity["delivery_valid"] is True,
+        "Finalized workspace does not report valid delivery.",
+    )
     return {"fresh": fresh_parity, "complete": complete_parity}
 
 
 def _scenario_08(_parent: Path, repo_root: Path) -> dict[str, Any]:
     surfaces = {
         "README.md": ("experimental workbuddy / codebuddy", "experimental source-clone codebuddy"),
-        "README.zh-CN.md": ("实验性 workbuddy", "实验性的 source-clone workbuddy"),
+        "README.zh-CN.md": (
+            "实验性 workbuddy",
+            "实验性的 source-clone workbuddy",
+            "实验性的 source-clone codebuddy",
+        ),
         "docs/support-matrix.md": ("workbuddy skill source bundle", "experimental; source-clone-only"),
         "docs/workbuddy.md": ("experimental local skill adapter", "source-clone-only"),
         "docs/workbuddy.zh-CN.md": ("实验性的本地 skill adapter", "source-clone-only"),
@@ -815,7 +921,10 @@ def _scenario_08(_parent: Path, repo_root: Path) -> dict[str, Any]:
     for relative, required in surfaces.items():
         text = (repo_root / relative).read_text(encoding="utf-8").casefold()
         missing = [phrase for phrase in required if phrase.casefold() not in text]
-        assert not missing, f"{relative} missing product-posture wording: {missing}"
+        _require(
+            not missing,
+            f"{relative} missing product-posture wording: {missing}",
+        )
         checked.append(relative)
     return {
         "public_surfaces": checked,

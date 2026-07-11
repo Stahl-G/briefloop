@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
+import ast
 import importlib.util
 import json
+import subprocess
 import sys
 from pathlib import Path
 
@@ -157,3 +159,46 @@ def test_runner_cli_emits_machine_readable_execution_result(capsys) -> None:
     assert payload["executed_scenario_ids"] == ["RC-SMOKE-08"]
     assert payload["scenarios"][0]["ok"] is True
     assert payload["required_complete"] is False
+
+
+def test_production_runner_contains_no_optimizable_assert_statements() -> None:
+    tree = ast.parse(SCRIPT.read_text(encoding="utf-8"))
+
+    assert [node for node in ast.walk(tree) if isinstance(node, ast.Assert)] == []
+
+
+def test_optimized_python_still_fails_closed_on_broken_posture(
+    tmp_path: Path,
+) -> None:
+    for relative in (
+        "README.md",
+        "README.zh-CN.md",
+        "docs/support-matrix.md",
+        "docs/workbuddy.md",
+        "docs/workbuddy.zh-CN.md",
+    ):
+        path = tmp_path / relative
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text("posture wording intentionally absent\n", encoding="utf-8")
+    code = (
+        "import importlib.util,json,pathlib,sys;"
+        "spec=importlib.util.spec_from_file_location('optimized_rc_runner',sys.argv[1]);"
+        "module=importlib.util.module_from_spec(spec);"
+        "sys.modules[spec.name]=module;"
+        "spec.loader.exec_module(module);"
+        "print(json.dumps(module.run_v1_rc_safety_smoke("
+        "repo_root=pathlib.Path(sys.argv[2]),scenario_ids=['RC-SMOKE-08'])))"
+    )
+
+    result = subprocess.run(
+        [sys.executable, "-O", "-c", code, str(SCRIPT), str(tmp_path)],
+        cwd=ROOT,
+        text=True,
+        capture_output=True,
+        check=True,
+    )
+    payload = json.loads(result.stdout)
+
+    assert payload["ok"] is False
+    assert payload["scenarios"][0]["error_type"] == "AssertionError"
+    assert "missing product-posture wording" in payload["scenarios"][0]["error"]
