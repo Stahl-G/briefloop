@@ -15,7 +15,6 @@ from typing import Any, Mapping
 import yaml
 
 from multi_agent_brief.contracts.agent_artifact_intake import (
-    agent_artifact_paths_from_contracts,
     evaluate_workspace_agent_artifact_intakes,
 )
 from multi_agent_brief.product.policy_projection import project_workspace_policy_profile
@@ -80,6 +79,10 @@ def project_workspace_materiality_selection(
     artifact_registry: Mapping[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Project materiality-aware screening diagnostics without side effects."""
+
+    from multi_agent_brief.orchestrator.runtime_state.artifact_paths import (
+        agent_artifact_paths_from_contracts,
+    )
 
     ws = Path(workspace).expanduser().resolve()
     policy_projection = (

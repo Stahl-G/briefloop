@@ -17,7 +17,6 @@ from multi_agent_brief.audit.deterministic import run_deterministic_audit
 from multi_agent_brief.audit.harness import QualityHarnessAuditAgent
 from multi_agent_brief.contracts.agent_artifact_intake import (
     AgentArtifactId,
-    agent_artifact_paths_from_contracts,
     evaluate_workspace_agent_artifact_intakes,
 )
 from multi_agent_brief.core.citations import SRC_REF_PATTERN
@@ -33,6 +32,9 @@ from multi_agent_brief.orchestrator.runtime_state import (
     runtime_state_paths,
     show_runtime_state,
     utc_now,
+)
+from multi_agent_brief.orchestrator.runtime_state.artifact_paths import (
+    agent_artifact_paths_from_contracts,
 )
 from multi_agent_brief.orchestrator.runtime_state.claim_support_matrix import (
     project_claim_support_matrix_from_workspace,

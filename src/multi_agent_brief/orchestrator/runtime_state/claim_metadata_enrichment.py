@@ -39,6 +39,10 @@ from multi_agent_brief.orchestrator.runtime_state.artifact_registry import (
     ARTIFACT_VALID,
     _build_artifact_registry,
 )
+from multi_agent_brief.orchestrator.runtime_state.artifact_paths import (
+    artifact_path_from_contracts,
+    workspace_artifact_path,
+)
 from multi_agent_brief.orchestrator.runtime_state.claim_ledger_freeze import (
     CLAIM_DRAFT_PROVENANCE_METADATA_FIELDS,
     CLAIM_LEDGER_PATH,
@@ -109,7 +113,11 @@ CLAIM_METADATA_REPLACEABLE_DEFAULTS = {
 }
 
 
-def _imported_claim_ledger_record(manifest: dict[str, Any]) -> dict[str, Any] | None:
+def _imported_claim_ledger_record(
+    manifest: dict[str, Any],
+    *,
+    claim_ledger_path: str = CLAIM_LEDGER_PATH.as_posix(),
+) -> dict[str, Any] | None:
     import_record = manifest.get("fact_layer_import")
     if not isinstance(import_record, dict):
         return None
@@ -121,7 +129,7 @@ def _imported_claim_ledger_record(manifest: dict[str, Any]) -> dict[str, Any] | 
             continue
         if (
             record.get("artifact_id") == "claim_ledger"
-            and str(record.get("workspace_path") or "") == CLAIM_LEDGER_PATH.as_posix()
+            and str(record.get("workspace_path") or "") == claim_ledger_path
         ):
             return record
     return None
@@ -132,6 +140,7 @@ def _valid_imported_claim_ledger_derivation(
     manifest: dict[str, Any],
     import_record: dict[str, Any],
     current_sha256: str,
+    claim_ledger_path: str = CLAIM_LEDGER_PATH.as_posix(),
 ) -> bool:
     enrichment = manifest.get("claim_ledger_metadata_enrichment")
     if not isinstance(enrichment, dict):
@@ -144,7 +153,7 @@ def _valid_imported_claim_ledger_derivation(
     return (
         enrichment.get("schema_version") == CLAIM_LEDGER_METADATA_ENRICHMENT_SCHEMA
         and enrichment.get("status") == "applied"
-        and enrichment.get("claim_ledger_path") == CLAIM_LEDGER_PATH.as_posix()
+        and enrichment.get("claim_ledger_path") == claim_ledger_path
         and derives_from_imported_sha
         and enrichment.get("claim_ledger_sha256") == current_sha256
     )
@@ -179,7 +188,11 @@ def _claim_ledger_enrichment_authority(
             error_code=E_TRANSACTION_INTEGRITY,
         )
 
-    import_record = _imported_claim_ledger_record(manifest)
+    claim_ledger_path = _workspace_relative(workspace, ledger_path)
+    import_record = _imported_claim_ledger_record(
+        manifest,
+        claim_ledger_path=claim_ledger_path,
+    )
     if not isinstance(import_record, dict):
         raise RuntimeStateError(
             "Claim metadata enrichment requires a frozen Claim Ledger from local freeze or fact-layer import.",
@@ -207,6 +220,7 @@ def _claim_ledger_enrichment_authority(
         manifest=manifest,
         import_record=import_record,
         current_sha256=current_sha,
+        claim_ledger_path=claim_ledger_path,
     ):
         return {
             "kind": "fact_layer_import_derived",
@@ -678,7 +692,42 @@ def enrich_claim_metadata_transaction(
     artifacts = load_artifact_contracts(repo)
     _workflow_allows_claim_metadata_enrichment(workflow, stages)
 
-    ledger_path = ws / CLAIM_LEDGER_PATH
+    artifacts_by_id = {
+        str(artifact.get("artifact_id")): artifact
+        for artifact in artifacts
+        if artifact.get("artifact_id")
+    }
+    contract_ledger_path = artifact_path_from_contracts(
+        ws,
+        artifacts_by_id,
+        artifact_id="claim_ledger",
+        default_path=CLAIM_LEDGER_PATH,
+    )
+    if contract_ledger_path is None:
+        raise RuntimeStateError(
+            "Claim Ledger artifact path is not configured.",
+            details={"artifact_id": "claim_ledger"},
+            error_code=E_TRANSACTION_INTEGRITY,
+        )
+    freeze = manifest.get("claim_ledger_freeze")
+    if isinstance(freeze, dict):
+        ledger_path = workspace_artifact_path(
+            ws,
+            str(freeze.get("claim_ledger_path") or CLAIM_LEDGER_PATH),
+            artifact_id="claim_ledger",
+            binding_source="claim_ledger_freeze",
+        )
+        if ledger_path != contract_ledger_path:
+            raise RuntimeStateError(
+                "Claim Ledger freeze path does not match the current artifact contract.",
+                details={
+                    "freeze_path": _workspace_relative(ws, ledger_path),
+                    "contract_path": _workspace_relative(ws, contract_ledger_path),
+                },
+                error_code=E_TRANSACTION_INTEGRITY,
+            )
+    else:
+        ledger_path = contract_ledger_path
     ledger_authority = _claim_ledger_enrichment_authority(
         workspace=ws,
         manifest=manifest,

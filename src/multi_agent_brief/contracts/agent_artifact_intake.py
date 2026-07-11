@@ -129,6 +129,7 @@ class IntakeResult:
 
         return {
             "schema_version": INTAKE_PROJECTION_SCHEMA_VERSION,
+            "artifact_id": self.artifact_id,
             "transform_version": self.transform_version,
             "raw_sha256": self.raw_sha256,
             "normalized_sha256": self.normalized_sha256,
@@ -151,41 +152,6 @@ class WorkspaceAgentArtifactIntakes:
         """Return the intake result for one declared agent artifact."""
 
         return getattr(self, artifact_id)
-
-
-def agent_artifact_paths_from_contracts(
-    workspace: Path,
-    artifacts_by_id: Mapping[str, Mapping[str, Any]],
-) -> dict[AgentArtifactId, Path]:
-    """Resolve the one contract-bound path map used by intake consumers."""
-
-    paths: dict[AgentArtifactId, Path] = {}
-    for artifact_id in AGENT_ARTIFACT_IDS:
-        path = artifact_path_from_contracts(
-            workspace,
-            artifacts_by_id,
-            artifact_id=artifact_id,
-        )
-        if path is not None:
-            paths[artifact_id] = path
-    return paths
-
-
-def artifact_path_from_contracts(
-    workspace: Path,
-    artifacts_by_id: Mapping[str, Mapping[str, Any]],
-    *,
-    artifact_id: str,
-    default_path: Path | None = None,
-) -> Path | None:
-    """Resolve one artifact path from the authoritative contract map."""
-
-    artifact = artifacts_by_id.get(artifact_id)
-    if isinstance(artifact, Mapping) and _non_empty_string(artifact.get("path")):
-        return workspace / str(artifact["path"])
-    if default_path is not None:
-        return workspace / default_path
-    return None
 
 
 def evaluate_agent_artifact_intake(
@@ -494,6 +460,7 @@ def validate_intake_projection(
     projection: Any,
     *,
     result: IntakeResult | None = None,
+    artifact_id: AgentArtifactId | None = None,
 ) -> list[str]:
     """Validate a persisted projection and optionally bind it to an evaluator result."""
 
@@ -502,6 +469,11 @@ def validate_intake_projection(
     reasons: list[str] = []
     if projection.get("schema_version") != INTAKE_PROJECTION_SCHEMA_VERSION:
         reasons.append("intake_projection schema_version is unsupported")
+    projected_artifact_id = projection.get("artifact_id")
+    if projected_artifact_id not in AGENT_ARTIFACT_IDS:
+        reasons.append("intake_projection artifact_id is unsupported")
+    if artifact_id is not None and projected_artifact_id != artifact_id:
+        reasons.append("intake_projection artifact_id does not match artifact record")
     if projection.get("transform_version") != AGENT_ARTIFACT_INTAKE_TRANSFORM_VERSION:
         reasons.append("intake_projection transform_version is unsupported")
     for field in ("raw_sha256", "normalized_sha256"):
@@ -587,6 +559,7 @@ def validate_intake_projection(
         expected = result.projection()
         for field in (
             "schema_version",
+            "artifact_id",
             "transform_version",
             "raw_sha256",
             "normalized_sha256",
@@ -623,7 +596,13 @@ def validate_registry_intake_context(
         reasons.append(f"artifact_registry is missing {artifact_id}")
         return reasons
     projection = record.get("intake_projection")
-    reasons.extend(validate_intake_projection(projection, result=result))
+    reasons.extend(
+        validate_intake_projection(
+            projection,
+            result=result,
+            artifact_id=artifact_id,
+        )
+    )
     if isinstance(projection, dict) and record.get("sha256") != projection.get("raw_sha256"):
         reasons.append("artifact record sha256 does not match intake_projection raw_sha256")
     if isinstance(projection, dict) and isinstance(projection.get("findings"), list):
@@ -633,14 +612,20 @@ def validate_registry_intake_context(
                 break
     fatal_finding_count = projection.get("fatal_finding_count") if isinstance(projection, dict) else None
     record_status = record.get("status")
-    if record_status == "valid" and isinstance(projection, dict):
+    if record_status not in {"valid", "invalid", "stale"}:
+        reasons.append("artifact record status is unsupported for intake projection")
+    if record_status in {"valid", "stale"} and isinstance(projection, dict):
         normalized_sha256 = projection.get("normalized_sha256")
         if not isinstance(normalized_sha256, str) or not re.fullmatch(
             r"[0-9a-f]{64}", normalized_sha256
         ):
-            reasons.append("valid artifact record requires a normalized intake digest")
+            reasons.append(
+                f"{record_status} artifact record requires a normalized intake digest"
+            )
         if isinstance(fatal_finding_count, int) and fatal_finding_count > 0:
-            reasons.append("valid artifact record cannot contain fatal intake findings")
+            reasons.append(
+                f"{record_status} artifact record cannot contain fatal intake findings"
+            )
     elif record_status == "invalid" and isinstance(fatal_finding_count, int):
         if fatal_finding_count == 0:
             reasons.append("invalid artifact record requires a fatal intake finding")

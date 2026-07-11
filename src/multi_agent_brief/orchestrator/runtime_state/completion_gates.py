@@ -9,7 +9,6 @@ from typing import Any
 
 from multi_agent_brief.contracts.agent_artifact_intake import (
     AGENT_ARTIFACT_IDS,
-    agent_artifact_paths_from_contracts,
     evaluate_workspace_agent_artifact_intakes,
 )
 
@@ -32,6 +31,10 @@ from multi_agent_brief.orchestrator.runtime_state._io import (
     _load_workspace_yaml,
     _read_json,
     _sha256_file,
+)
+from multi_agent_brief.orchestrator.runtime_state.artifact_paths import (
+    agent_artifact_paths_from_contracts,
+    artifact_path_from_contracts,
 )
 from multi_agent_brief.orchestrator.runtime_state.artifact_registry import (
     ARTIFACT_INVALID,
@@ -135,8 +138,18 @@ def _artifact_gate_reasons_for_ids(
             continue
         rel_path = str(contract.get("path") or "")
         fmt = str(contract.get("format") or "")
+        artifact_path = artifact_path_from_contracts(
+            workspace,
+            artifacts_by_id,
+            artifact_id=str(artifact_id),
+        )
+        if artifact_path is None:
+            reasons.append(
+                f"{reason_prefix} '{artifact_id}' has no configured artifact path."
+            )
+            continue
         status, validation_result = _validate_artifact(
-            workspace / rel_path,
+            artifact_path,
             fmt,
             str(artifact_id),
             intake_result=(

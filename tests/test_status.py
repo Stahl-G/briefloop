@@ -1163,3 +1163,31 @@ def test_status_rejects_invalid_intake_projection(tmp_path: Path) -> None:
     assert impossible_intake["artifacts"][0]["reasons"] == [
         "valid artifact record requires a normalized intake digest"
     ]
+
+    persisted["normalized_sha256"] = "a" * 64
+    persisted["artifact_id"] = "screened_candidates"
+    registry_path.write_text(
+        json.dumps(registry, ensure_ascii=False, indent=2, sort_keys=True) + "\n",
+        encoding="utf-8",
+    )
+
+    transplanted = build_workspace_status(ws)["artifacts"]["intake"]
+
+    assert transplanted["valid"] is False
+    assert transplanted["artifacts"][0]["reasons"] == [
+        "intake_projection artifact_id does not match artifact record"
+    ]
+
+    persisted["artifact_id"] = "candidate_claims"
+    registry["artifacts"]["candidate_claims"]["status"] = "banana"
+    registry_path.write_text(
+        json.dumps(registry, ensure_ascii=False, indent=2, sort_keys=True) + "\n",
+        encoding="utf-8",
+    )
+
+    unknown_status = build_workspace_status(ws)["artifacts"]["intake"]
+
+    assert unknown_status["valid"] is False
+    assert unknown_status["artifacts"][0]["reasons"] == [
+        "artifact record status is unsupported for intake projection"
+    ]

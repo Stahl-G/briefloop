@@ -5256,6 +5256,142 @@ def test_freeze_binds_claim_paths_from_artifact_contracts(
     assert _state_file(ws, "event_log").read_bytes() == events_before
 
 
+@pytest.mark.parametrize(
+    "escape_kind",
+    ["parent", "absolute"],
+    ids=["INTAKE-PATH-06-parent", "INTAKE-PATH-06-absolute"],
+)
+def test_freeze_rejects_contract_path_outside_workspace_without_writes(
+    tmp_path: Path,
+    escape_kind: str,
+) -> None:
+    repo = _repo_with_role_topology(tmp_path, "default")
+    ws = _write_workspace(tmp_path)
+    initialize_runtime_state(workspace=ws, repo_workdir=repo)
+    _set_current_stage(ws, "claim-ledger")
+    _write_json_artifact(ws, "claim_drafts.json", _valid_claim_drafts_payload())
+    outside = tmp_path / "escaped" / "claim_ledger.json"
+    contract_path = (
+        "../escaped/claim_ledger.json"
+        if escape_kind == "parent"
+        else str(outside.resolve())
+    )
+    contracts_path = repo / "configs" / "artifact_contracts.yaml"
+    import yaml
+
+    contracts = yaml.safe_load(contracts_path.read_text(encoding="utf-8"))
+    next(
+        artifact
+        for artifact in contracts["artifacts"]
+        if artifact.get("artifact_id") == "claim_ledger"
+    )["path"] = contract_path
+    contracts_path.write_text(
+        yaml.safe_dump(contracts, sort_keys=False),
+        encoding="utf-8",
+    )
+    before = {
+        key: (
+            _state_file(ws, key).read_bytes()
+            if _state_file(ws, key).exists()
+            else None
+        )
+        for key in ("runtime_manifest", "workflow_state", "artifact_registry", "event_log")
+    }
+
+    with pytest.raises(RuntimeStateError) as excinfo:
+        freeze_claim_ledger_transaction(workspace=ws, repo_workdir=repo)
+
+    assert excinfo.value.error_code == runtime_state.operations.E_TRANSACTION_INTEGRITY
+    assert "workspace-relative and contained" in str(excinfo.value)
+    assert not outside.exists()
+    assert not (_intermediate(ws) / "claim_ledger.json").exists()
+    assert {
+        key: (
+            _state_file(ws, key).read_bytes()
+            if _state_file(ws, key).exists()
+            else None
+        )
+        for key in ("runtime_manifest", "workflow_state", "artifact_registry", "event_log")
+    } == before
+
+
+def test_metadata_enrichment_binds_claim_paths_from_artifact_contracts(
+    tmp_path: Path,
+) -> None:
+    repo = _repo_with_role_topology(tmp_path, "default")
+    contracts_path = repo / "configs" / "artifact_contracts.yaml"
+    import yaml
+
+    contracts = yaml.safe_load(contracts_path.read_text(encoding="utf-8"))
+    custom_paths = {
+        "claim_drafts": "custom/claim_drafts.json",
+        "claim_ledger": "custom/claim_ledger.json",
+    }
+    for artifact in contracts["artifacts"]:
+        artifact_id = artifact.get("artifact_id")
+        if artifact_id in custom_paths:
+            artifact["path"] = custom_paths[artifact_id]
+    contracts_path.write_text(
+        yaml.safe_dump(contracts, sort_keys=False),
+        encoding="utf-8",
+    )
+    ws = _write_workspace(tmp_path)
+    initialize_runtime_state(workspace=ws, repo_workdir=repo)
+    _set_current_stage(ws, "claim-ledger")
+    _add_imported_source_authority(ws, metadata={"published_at": "2026-06-01"})
+    _add_imported_source_authority(ws, source_id="SRC-002", filename="source-002.json")
+    custom_dir = ws / "custom"
+    custom_dir.mkdir()
+    (custom_dir / "claim_drafts.json").write_text(
+        _valid_claim_drafts_payload(),
+        encoding="utf-8",
+    )
+    default_ledger = _intermediate(ws) / "claim_ledger.json"
+    default_ledger.write_text("default ledger must remain untouched\n", encoding="utf-8")
+    default_before = default_ledger.read_bytes()
+    freeze_claim_ledger_transaction(workspace=ws, repo_workdir=repo)
+    custom_ledger = custom_dir / "claim_ledger.json"
+    frozen_sha = _sha256_file(custom_ledger)
+
+    enriched = enrich_claim_metadata_transaction(workspace=ws, repo_workdir=repo)
+
+    enriched_sha = _sha256_file(custom_ledger)
+    manifest = json.loads(_state_file(ws, "runtime_manifest").read_text(encoding="utf-8"))
+    registry = json.loads(_state_file(ws, "artifact_registry").read_text(encoding="utf-8"))
+    enrichment_event = next(
+        event
+        for event in _event_records(ws)
+        if event.get("event_type") == "claim_ledger_metadata_enriched"
+    )
+    assert enriched_sha != frozen_sha
+    assert default_ledger.read_bytes() == default_before
+    assert manifest["claim_ledger_freeze"]["claim_ledger_path"] == (
+        "custom/claim_ledger.json"
+    )
+    assert manifest["claim_ledger_freeze"]["claim_ledger_sha256"] == enriched_sha
+    assert enriched["claim_ledger_metadata_enrichment"]["claim_ledger_path"] == (
+        "custom/claim_ledger.json"
+    )
+    assert registry["artifacts"]["claim_ledger"]["path"] == (
+        "custom/claim_ledger.json"
+    )
+    assert registry["artifacts"]["claim_ledger"]["sha256"] == enriched_sha
+    assert enrichment_event["metadata"]["claim_ledger_path"] == (
+        "custom/claim_ledger.json"
+    )
+    assert enrichment_event["metadata"]["previous_claim_ledger_sha256"] == frozen_sha
+    assert enrichment_event["metadata"]["claim_ledger_sha256"] == enriched_sha
+
+    completed = complete_stage_transaction(
+        workspace=ws,
+        repo_workdir=repo,
+        stage_id="claim-ledger",
+        reason="complete custom-path enriched Claim Ledger",
+    )
+
+    assert completed["workflow_state"]["current_stage"] == "analyst"
+
+
 def test_legacy_freeze_binding_behavior(tmp_path: Path) -> None:
     ws = _write_workspace(tmp_path)
     initialize_runtime_state(workspace=ws, repo_workdir=ROOT)
@@ -5281,6 +5417,57 @@ def test_legacy_freeze_binding_behavior(tmp_path: Path) -> None:
     assert "source_normalized_sha256" not in repeated["claim_ledger_freeze"]
     assert manifest_path.read_bytes() == manifest_before
     assert frozen["manifest"]["claim_ledger_freeze"]["schema_version"].endswith(".v2")
+
+
+def test_current_freeze_hash_requires_metadata_enrichment_lineage(
+    tmp_path: Path,
+) -> None:
+    ws = _write_workspace(tmp_path)
+    initialize_runtime_state(workspace=ws, repo_workdir=ROOT)
+    _set_current_stage(ws, "claim-ledger")
+    _write_json_artifact(ws, "claim_drafts.json", _valid_claim_drafts_payload())
+    freeze_claim_ledger_transaction(workspace=ws, repo_workdir=ROOT)
+    ledger_path = _intermediate(ws) / "claim_ledger.json"
+    ledger = json.loads(ledger_path.read_text(encoding="utf-8"))
+    ledger[0]["metadata"]["published_at"] = "2026-06-01"
+    ledger_path.write_text(
+        json.dumps(ledger, ensure_ascii=False, indent=2, sort_keys=True) + "\n",
+        encoding="utf-8",
+    )
+    current_sha = _sha256_file(ledger_path)
+    manifest_path = _state_file(ws, "runtime_manifest")
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    manifest["claim_ledger_freeze"]["claim_ledger_sha256"] = current_sha
+    manifest_path.write_text(
+        json.dumps(manifest, ensure_ascii=False, indent=2, sort_keys=True) + "\n",
+        encoding="utf-8",
+    )
+    registry_path = _state_file(ws, "artifact_registry")
+    registry = json.loads(registry_path.read_text(encoding="utf-8"))
+    registry["artifacts"]["claim_ledger"]["sha256"] = current_sha
+    registry_path.write_text(
+        json.dumps(registry, ensure_ascii=False, indent=2, sort_keys=True) + "\n",
+        encoding="utf-8",
+    )
+    before = {
+        key: _state_file(ws, key).read_bytes()
+        for key in ("runtime_manifest", "workflow_state", "artifact_registry", "event_log")
+    }
+
+    with pytest.raises(RuntimeStateError) as excinfo:
+        complete_stage_transaction(
+            workspace=ws,
+            repo_workdir=ROOT,
+            stage_id="claim-ledger",
+            reason="reject unbound current freeze hash",
+        )
+
+    assert excinfo.value.error_code == runtime_state.operations.E_COMPLETION_TRANSACTION_REQUIRED
+    assert "without metadata enrichment lineage" in str(excinfo.value)
+    assert {
+        key: _state_file(ws, key).read_bytes()
+        for key in ("runtime_manifest", "workflow_state", "artifact_registry", "event_log")
+    } == before
 
 
 def test_legacy_freeze_remains_valid_after_metadata_enrichment(tmp_path: Path) -> None:
@@ -5314,6 +5501,9 @@ def test_legacy_freeze_remains_valid_after_metadata_enrichment(tmp_path: Path) -
     enrichment = enrich_claim_metadata_transaction(workspace=ws, repo_workdir=ROOT)
 
     manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    registry = json.loads(
+        _state_file(ws, "artifact_registry").read_text(encoding="utf-8")
+    )
     current_sha = _sha256_file(_intermediate(ws) / "claim_ledger.json")
     events = _event_records(ws)
     freeze_event_after = next(
@@ -5330,6 +5520,9 @@ def test_legacy_freeze_remains_valid_after_metadata_enrichment(tmp_path: Path) -
     )
     assert enrichment_event["metadata"]["previous_claim_ledger_sha256"] == frozen_sha
     assert enrichment_event["metadata"]["claim_ledger_sha256"] == current_sha
+    assert manifest["claim_ledger_freeze"]["claim_ledger_sha256"] == current_sha
+    assert registry["artifacts"]["claim_ledger"]["status"] == "valid"
+    assert registry["artifacts"]["claim_ledger"]["sha256"] == current_sha
     assert runtime_state.operations._claim_ledger_freeze_reasons(
         workspace=ws,
         manifest=manifest,
@@ -5356,16 +5549,44 @@ def test_legacy_freeze_remains_valid_after_metadata_enrichment(tmp_path: Path) -
             "differs from its frozen event without metadata enrichment lineage",
         ),
         ("broken_previous_hash", "previous hash does not continue frozen lineage"),
+        ("broken_source_hash", "source hash does not continue frozen lineage"),
+        ("malformed_record", "lineage record 0 is malformed"),
+        ("unknown_schema", "has an unsupported schema"),
+        ("wrong_status", "lineage record 0 is not applied"),
+        ("wrong_path", "claim_ledger_path does not match freeze binding"),
+        ("missing_transaction", "transaction_id is missing or duplicated"),
+        ("wrong_enriched_hash", "event claim_ledger_sha256 does not match lineage"),
+        (
+            "wrong_current_hash",
+            "Frozen Claim Ledger hash does not match current claim_ledger.json",
+        ),
+        ("wrong_registry_hash", "artifact registry hash does not match binding"),
         ("missing_event", "requires exactly one matching current-run event"),
         ("duplicate_event", "requires exactly one matching current-run event"),
+        ("cross_run_event", "requires exactly one matching current-run event"),
         ("wrong_event_hash", "event claim_ledger_sha256 does not match lineage"),
+        (
+            "wrong_pointer",
+            "freeze metadata enrichment transaction does not match lineage tip",
+        ),
     ],
     ids=[
         "INTAKE-LEGACY-ENRICH-02-missing-history",
         "INTAKE-LEGACY-ENRICH-03-broken-chain",
-        "INTAKE-LEGACY-ENRICH-04-missing-event",
-        "INTAKE-LEGACY-ENRICH-05-duplicate-event",
-        "INTAKE-LEGACY-ENRICH-06-wrong-event-hash",
+        "INTAKE-LEGACY-ENRICH-04-broken-source",
+        "INTAKE-LEGACY-ENRICH-05-malformed-record",
+        "INTAKE-LEGACY-ENRICH-06-unknown-schema",
+        "INTAKE-LEGACY-ENRICH-07-wrong-status",
+        "INTAKE-LEGACY-ENRICH-08-wrong-path",
+        "INTAKE-LEGACY-ENRICH-09-missing-transaction",
+        "INTAKE-LEGACY-ENRICH-10-wrong-enriched-hash",
+        "INTAKE-LEGACY-ENRICH-11-wrong-current-hash",
+        "INTAKE-LEGACY-ENRICH-12-wrong-registry-hash",
+        "INTAKE-LEGACY-ENRICH-13-missing-event",
+        "INTAKE-LEGACY-ENRICH-14-duplicate-event",
+        "INTAKE-LEGACY-ENRICH-15-cross-run-event",
+        "INTAKE-LEGACY-ENRICH-16-wrong-event-hash",
+        "INTAKE-LEGACY-ENRICH-17-wrong-pointer",
     ],
 )
 def test_legacy_freeze_rejects_invalid_metadata_enrichment_lineage(
@@ -5404,6 +5625,38 @@ def test_legacy_freeze_rejects_invalid_metadata_enrichment_lineage(
         manifest["claim_ledger_metadata_enrichments"][0][
             "previous_claim_ledger_sha256"
         ] = "0" * 64
+    elif mutation == "broken_source_hash":
+        manifest["claim_ledger_metadata_enrichments"][0][
+            "source_claim_ledger_sha256"
+        ] = "0" * 64
+    elif mutation == "malformed_record":
+        manifest["claim_ledger_metadata_enrichments"][0] = []
+    elif mutation == "unknown_schema":
+        manifest["claim_ledger_metadata_enrichments"][0]["schema_version"] = (
+            "mabw.claim_ledger_metadata_enrichment.v99"
+        )
+    elif mutation == "wrong_status":
+        manifest["claim_ledger_metadata_enrichments"][0]["status"] = "pending"
+    elif mutation == "wrong_path":
+        manifest["claim_ledger_metadata_enrichments"][0]["claim_ledger_path"] = (
+            "output/intermediate/other_ledger.json"
+        )
+    elif mutation == "missing_transaction":
+        manifest["claim_ledger_metadata_enrichments"][0]["transaction_id"] = ""
+    elif mutation == "wrong_enriched_hash":
+        manifest["claim_ledger_metadata_enrichments"][0][
+            "claim_ledger_sha256"
+        ] = "0" * 64
+    elif mutation == "wrong_current_hash":
+        manifest["claim_ledger_freeze"]["claim_ledger_sha256"] = "0" * 64
+    elif mutation == "wrong_registry_hash":
+        registry_path = _state_file(ws, "artifact_registry")
+        registry = json.loads(registry_path.read_text(encoding="utf-8"))
+        registry["artifacts"]["claim_ledger"]["sha256"] = "0" * 64
+        registry_path.write_text(
+            json.dumps(registry, ensure_ascii=False, indent=2, sort_keys=True) + "\n",
+            encoding="utf-8",
+        )
     elif mutation == "missing_event":
         events.remove(enrichment_event)
     elif mutation == "duplicate_event":
@@ -5418,6 +5671,12 @@ def test_legacy_freeze_rejects_invalid_metadata_enrichment_lineage(
             metadata=dict(enrichment_event["metadata"]),
         )
         events = _event_records(ws)
+    elif mutation == "cross_run_event":
+        enrichment_event["run_id"] = "mabw-other-run"
+    elif mutation == "wrong_pointer":
+        manifest["claim_ledger_freeze"]["metadata_enrichment_transaction_id"] = (
+            "other-transaction"
+        )
     else:
         enrichment_event["metadata"]["claim_ledger_sha256"] = "0" * 64
 
@@ -5946,33 +6205,10 @@ def test_enrich_claim_metadata_uses_imported_source_evidence(tmp_path):
     assert _event_records(ws)[-1]["event_type"] == "claim_ledger_metadata_enriched"
 
 
-def test_enrich_claim_metadata_rerun_mirrors_source_type_from_existing_metadata(tmp_path):
-    ws = _write_workspace(tmp_path)
-    initialize_runtime_state(workspace=ws, repo_workdir=ROOT)
-    _set_current_stage(ws, "claim-ledger")
-    _add_imported_source_authority(
-        ws,
-        metadata={
-            "published_at": "2026-06-01",
-            "retrieved_at": "2026-06-16T00:00:00Z",
-            "title": "ExampleCo Demo Facility",
-            "name": "Example Wire",
-            "publisher": "Example Publisher",
-            "source_url": "https://example.com/news",
-            "source_type": "web_search",
-            "source_category": "news_media",
-            "topic": "demo market",
-        },
-    )
-    _add_imported_source_authority(ws, source_id="SRC-002", filename="source-002.json")
-    _write_json_artifact(ws, "claim_drafts.json", _valid_claim_drafts_payload())
-    freeze_claim_ledger_transaction(workspace=ws, repo_workdir=ROOT)
-    ledger_path = _intermediate(ws) / "claim_ledger.json"
-    ledger = json.loads(ledger_path.read_text(encoding="utf-8"))
-    claim = ledger[0]
-    claim["source_type"] = "local_file"
-    claim["source_url"] = "https://example.com/news"
-    claim["metadata"].update({
+def test_claim_metadata_enrichment_mirrors_source_type_from_existing_metadata(
+    tmp_path: Path,
+) -> None:
+    metadata = {
         "published_at": "2026-06-01",
         "retrieved_at": "2026-06-16T00:00:00Z",
         "source_title": "ExampleCo Demo Facility",
@@ -5983,29 +6219,48 @@ def test_enrich_claim_metadata_rerun_mirrors_source_type_from_existing_metadata(
         "source_category": "news_media",
         "topic": "demo market",
         "source_path": "input/sources/source-001.json",
-    })
-    ledger_path.write_text(json.dumps(ledger, ensure_ascii=False, indent=2, sort_keys=True) + "\n", encoding="utf-8")
-    manifest_path = _state_file(ws, "runtime_manifest")
-    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
-    manifest["claim_ledger_freeze"]["claim_ledger_sha256"] = _sha256_file(ledger_path)
-    manifest_path.write_text(json.dumps(manifest, ensure_ascii=False, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    }
+    existing_metadata = dict(metadata)
+    runtime_state.operations._normalize_source_evidence_taxonomy(metadata)
+    claims, records = runtime_state.operations._claims_with_enriched_metadata(
+        claims=[
+            {
+                "claim_id": "CL-0001",
+                "statement": "ExampleCo opened a demo facility.",
+                "source_id": "SRC-001",
+                "source_url": "https://example.com/news",
+                "source_type": "local_file",
+                "evidence_text": "Example evidence.",
+                "metadata": existing_metadata,
+            }
+        ],
+        source_authority={
+            "SRC-001": {
+                "workspace_path": "input/sources/source-001.json",
+                "sha256": "a" * 64,
+                "metadata": metadata,
+            }
+        },
+    )
 
-    state = enrich_claim_metadata_transaction(workspace=ws, repo_workdir=ROOT)
-
-    enriched = json.loads(ledger_path.read_text(encoding="utf-8"))[0]
+    enriched = claims[0]
     assert enriched["metadata"]["source_type"] == "web_search"
     assert enriched["metadata"]["retrieval_source_type"] == "news_media"
     assert enriched["metadata"]["underlying_evidence_type"] == "media_report"
     assert enriched["metadata"]["raw_underlying_evidence_type"] == "news_media"
     assert enriched["source_type"] == "web_search"
-    enriched_records = state["claim_ledger_metadata_enrichment"]["enriched_claims"]
-    claim_record = next(record for record in enriched_records if record["claim_id"] == "CL-0001")
+    claim_record = records[0]
     assert claim_record["fields"] == [
         "raw_underlying_evidence_type",
         "retrieval_source_type",
         "source_type",
         "underlying_evidence_type",
     ]
+    ledger_path = tmp_path / "claim_ledger.json"
+    ledger_path.write_text(
+        json.dumps(claims, ensure_ascii=False, indent=2, sort_keys=True) + "\n",
+        encoding="utf-8",
+    )
     appendix = build_source_appendix(
         audited_markdown="ExampleCo opened a demo facility. [src:CL-0001]",
         ledger_path=ledger_path,

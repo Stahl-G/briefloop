@@ -47,6 +47,9 @@ from multi_agent_brief.orchestrator.runtime_state.artifact_registry import (
     interpret_frozen_artifact_integrity,
     require_frozen_artifact_integrity_pass,
 )
+from multi_agent_brief.orchestrator.runtime_state.artifact_paths import (
+    artifact_path_from_contracts,
+)
 from multi_agent_brief.orchestrator.runtime_state.claim_ledger_freeze import _claim_ledger_freeze_reasons
 from multi_agent_brief.orchestrator.runtime_state.completion_gates import (
     _completion_artifact_gate_reasons,
@@ -724,7 +727,13 @@ def _stale_expected_artifact_refresh_reasons(
         rel_path = str(contract.get("path") or record.get("path") or "")
         if not rel_path:
             continue
-        path = workspace / rel_path
+        path = artifact_path_from_contracts(
+            workspace,
+            artifacts_by_id,
+            artifact_id=artifact_id,
+        )
+        if path is None:
+            continue
         if not path.is_file():
             continue
         stale_sha = _stale_artifact_baseline_sha(

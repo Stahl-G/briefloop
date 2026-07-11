@@ -6,6 +6,9 @@ from pathlib import Path
 from typing import Any
 
 from multi_agent_brief.orchestrator.runtime_state._io import _load_yaml
+from multi_agent_brief.orchestrator.runtime_state.artifact_paths import (
+    validate_workspace_relative_artifact_path,
+)
 from multi_agent_brief.orchestrator.runtime_state.errors import RuntimeStateError
 from multi_agent_brief.orchestrator_contract import CONTRACT_REFERENCES
 
@@ -35,7 +38,14 @@ def load_artifact_contracts(repo_workdir: str | Path) -> list[dict[str, Any]]:
     artifacts = data.get("artifacts") or []
     if not isinstance(artifacts, list):
         raise RuntimeStateError("artifact_contracts.yaml artifacts must be a list")
-    return [artifact for artifact in artifacts if isinstance(artifact, dict)]
+    records = [artifact for artifact in artifacts if isinstance(artifact, dict)]
+    for artifact in records:
+        validate_workspace_relative_artifact_path(
+            artifact.get("path") or "",
+            artifact_id=str(artifact.get("artifact_id") or "<missing>"),
+            binding_source="artifact_contract",
+        )
+    return records
 
 
 def load_default_policy_pack(repo_workdir: str | Path) -> dict[str, Any]:

@@ -17,7 +17,6 @@ from multi_agent_brief.contracts.agent_artifact_intake import (
     AGENT_ARTIFACT_IDS,
     AgentArtifactId,
     IntakeResult,
-    agent_artifact_paths_from_contracts,
     evaluate_workspace_agent_artifact_intakes,
 )
 from multi_agent_brief.contracts.schemas.claim_support_matrix import ClaimSupportMatrixContract
@@ -28,6 +27,10 @@ from multi_agent_brief.core.claim_ledger import ClaimLedger
 from multi_agent_brief.core.schemas import Claim
 from multi_agent_brief.feedback.feedback_contract import optional_feedback_artifact_activated
 from multi_agent_brief.orchestrator.runtime_state._io import _sha256_file
+from multi_agent_brief.orchestrator.runtime_state.artifact_paths import (
+    agent_artifact_paths_from_contracts,
+    workspace_artifact_path,
+)
 from multi_agent_brief.orchestrator.runtime_state.atomic_claim_graph import (
     ATOMIC_CLAIM_GRAPH_VALIDATION_PREFIX,
     validate_atomic_claim_graph_against_ledger,
@@ -1114,8 +1117,14 @@ def _artifact_record(
     rel_path = str(artifact.get("path") or "")
     fmt = str(artifact.get("format") or "")
     producer_stage = str(artifact.get("producer_stage") or "")
+    path = workspace_artifact_path(
+        workspace,
+        rel_path,
+        artifact_id=artifact_id,
+        binding_source="artifact_contract",
+    )
     status, validation_result, intake_result = _validate_artifact_with_intake(
-        workspace / rel_path,
+        path,
         fmt,
         artifact_id,
         intake_result=intake_result,
@@ -1145,7 +1154,6 @@ def _artifact_record(
     elif status == ARTIFACT_INVALID:
         blocking_reason = f"Artifact '{rel_path}' failed minimum {fmt} validation."
 
-    path = workspace / rel_path
     size_bytes = path.stat().st_size if path.exists() and path.is_file() else None
     mtime = datetime.fromtimestamp(path.stat().st_mtime, timezone.utc).replace(microsecond=0).isoformat() if path.exists() else None
     sha256 = _sha256_file(path) if path.exists() and path.is_file() else None

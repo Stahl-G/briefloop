@@ -15,8 +15,6 @@ from typing import Any
 from multi_agent_brief.contracts.agent_artifact_intake import (
     AGENT_ARTIFACT_INTAKE_TRANSFORM_VERSION,
     IntakeResult,
-    agent_artifact_paths_from_contracts,
-    artifact_path_from_contracts,
     evaluate_agent_artifact_intake,
     validate_registry_intake_context,
 )
@@ -42,6 +40,11 @@ from multi_agent_brief.orchestrator.runtime_state.artifact_registry import (
     ARTIFACT_VALID,
     CLAIM_LEDGER_FROZEN_EDIT_GUIDANCE,
     _build_artifact_registry,
+)
+from multi_agent_brief.orchestrator.runtime_state.artifact_paths import (
+    agent_artifact_paths_from_contracts,
+    artifact_path_from_contracts,
+    workspace_artifact_path,
 )
 from multi_agent_brief.orchestrator.runtime_state.completion_gates import (
     _raise_completion_reasons,
@@ -334,8 +337,22 @@ def _claim_ledger_freeze_reasons(
         return reasons
     if freeze.get("status") != "frozen":
         reasons.append("Claim Ledger freeze metadata is not frozen.")
-    draft_path = workspace / str(freeze.get("source_path") or CLAIM_DRAFTS_PATH)
-    ledger_path = workspace / str(freeze.get("claim_ledger_path") or CLAIM_LEDGER_PATH)
+    try:
+        draft_path = workspace_artifact_path(
+            workspace,
+            str(freeze.get("source_path") or CLAIM_DRAFTS_PATH),
+            artifact_id="claim_drafts",
+            binding_source="claim_ledger_freeze",
+        )
+        ledger_path = workspace_artifact_path(
+            workspace,
+            str(freeze.get("claim_ledger_path") or CLAIM_LEDGER_PATH),
+            artifact_id="claim_ledger",
+            binding_source="claim_ledger_freeze",
+        )
+    except RuntimeStateError as exc:
+        reasons.append(f"Claim Ledger freeze artifact path binding is invalid: {exc}")
+        return reasons
     expected_raw_sha = str(
         freeze.get("source_raw_sha256")
         if schema_version == CLAIM_LEDGER_FREEZE_SCHEMA
@@ -366,6 +383,13 @@ def _claim_ledger_freeze_reasons(
         reasons.append(
             f"Frozen Claim Ledger hash does not match current claim_ledger.json. {CLAIM_LEDGER_FROZEN_EDIT_GUIDANCE}"
         )
+    else:
+        _append_current_claim_ledger_registry_binding_reasons(
+            reasons,
+            workspace=workspace,
+            manifest=manifest,
+            freeze=freeze,
+        )
     _append_freeze_event_binding_reasons(
         reasons,
         workspace=workspace,
@@ -373,6 +397,37 @@ def _claim_ledger_freeze_reasons(
         freeze=freeze,
     )
     return reasons
+
+
+def _append_current_claim_ledger_registry_binding_reasons(
+    reasons: list[str],
+    *,
+    workspace: Path,
+    manifest: dict[str, Any],
+    freeze: dict[str, Any],
+) -> None:
+    try:
+        registry = load_control_object(
+            runtime_state_paths(workspace)["artifact_registry"],
+            expected_schema=ARTIFACT_REGISTRY_SCHEMA,
+        )
+    except RuntimeStateError as exc:
+        reasons.append(f"Claim Ledger freeze artifact registry is invalid: {exc}")
+        return
+    run_id = str(manifest.get("run_id") or "")
+    if registry.get("run_id") != run_id:
+        reasons.append("Claim Ledger freeze artifact registry run_id is not current.")
+    artifacts = registry.get("artifacts")
+    record = artifacts.get("claim_ledger") if isinstance(artifacts, dict) else None
+    if not isinstance(record, dict):
+        reasons.append("Claim Ledger freeze artifact registry record is missing.")
+        return
+    if record.get("status") != ARTIFACT_VALID:
+        reasons.append("Claim Ledger freeze artifact registry record is not valid.")
+    if record.get("path") != freeze.get("claim_ledger_path"):
+        reasons.append("Claim Ledger freeze artifact registry path does not match binding.")
+    if record.get("sha256") != freeze.get("claim_ledger_sha256"):
+        reasons.append("Claim Ledger freeze artifact registry hash does not match binding.")
 
 
 def _append_current_intake_binding_reasons(
@@ -498,18 +553,17 @@ def _append_freeze_event_binding_reasons(
     for field, value in expected.items():
         if metadata.get(field) != value:
             reasons.append(f"Claim Ledger freeze event {field} does not match manifest binding.")
-    if freeze.get("schema_version") == CLAIM_LEDGER_FREEZE_LEGACY_SCHEMA:
-        _append_legacy_freeze_ledger_lineage_reasons(
-            reasons,
-            manifest=manifest,
-            freeze=freeze,
-            freeze_event=event,
-            event_records=records,
-            run_id=run_id,
-        )
+    _append_freeze_ledger_lineage_reasons(
+        reasons,
+        manifest=manifest,
+        freeze=freeze,
+        freeze_event=event,
+        event_records=records,
+        run_id=run_id,
+    )
 
 
-def _append_legacy_freeze_ledger_lineage_reasons(
+def _append_freeze_ledger_lineage_reasons(
     reasons: list[str],
     *,
     manifest: dict[str, Any],
@@ -518,7 +572,7 @@ def _append_legacy_freeze_ledger_lineage_reasons(
     event_records: list[dict[str, Any]],
     run_id: str,
 ) -> None:
-    """Bind a v1 freeze's original hash to the current enriched ledger."""
+    """Bind the immutable freeze-event hash to the current enriched ledger."""
 
     metadata = freeze_event.get("metadata")
     frozen_sha = str(
@@ -534,7 +588,7 @@ def _append_legacy_freeze_ledger_lineage_reasons(
     history = manifest.get("claim_ledger_metadata_enrichments")
     if not isinstance(history, list) or not history:
         reasons.append(
-            "Claim Ledger legacy freeze current hash differs from its frozen event without metadata enrichment lineage."
+            "Claim Ledger current hash differs from its frozen event without metadata enrichment lineage."
         )
         return
 
