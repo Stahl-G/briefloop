@@ -2191,7 +2191,12 @@ def check_quality_gates(
 
     requested_stage_id = stage_id or "auditor"
     default_brief = "output/brief.md" if requested_stage_id == "finalize" else "output/intermediate/audited_brief.md"
-    brief_path = _resolve_path(ws, brief, default_brief)
+    if brief is not None:
+        brief_path = _resolve_path(ws, brief, default_brief)
+    elif requested_stage_id == "auditor":
+        brief_path = resolved_artifact_paths["audited_brief"]
+    else:
+        brief_path = _resolve_path(ws, None, default_brief)
     reader_mode = _reader_facing_mode(ws, brief_path)
     gate_stage_id = stage_id or ("finalize" if reader_mode else "auditor")
     gate_artifact_id = quality_gate_report_key_for_stage(gate_stage_id)

@@ -2016,6 +2016,72 @@ def test_quality_gate_uses_one_contract_path_context_for_csm_and_atomic_graph(
     assert any(finding.get("finding_type") == finding_type for finding in report["findings"])
 
 
+def test_custom_auditor_brief_and_ledger_bind_quality_report_through_completion(
+    tmp_path: Path,
+) -> None:
+    repo = tmp_path / "repo"
+    shutil.copytree(ROOT / "configs", repo / "configs")
+    (repo / "pyproject.toml").write_text("[project]\nname='quality-path-authority-test'\n", encoding="utf-8")
+    (repo / "src" / "multi_agent_brief").mkdir(parents=True)
+    contracts_path = repo / "configs" / "artifact_contracts.yaml"
+    contracts = yaml.safe_load(contracts_path.read_text(encoding="utf-8"))
+    custom_paths = {
+        "audited_brief": "custom/brief/audited.md",
+        "claim_ledger": "custom/ledger/claims.json",
+    }
+    for artifact in contracts["artifacts"]:
+        artifact_id = str(artifact.get("artifact_id") or "")
+        if artifact_id in custom_paths:
+            artifact["path"] = custom_paths[artifact_id]
+    contracts_path.write_text(yaml.safe_dump(contracts, sort_keys=False), encoding="utf-8")
+
+    ws = _write_workspace(tmp_path)
+    initialize_runtime_state(workspace=ws, repo_workdir=repo)
+    _set_current_stage(ws, "auditor")
+    _write_json(ws, "candidate_claims.json")
+    _write_json(ws, "screened_candidates.json")
+    (_intermediate(ws) / "analyst_draft_snapshot.md").write_text("# Analyst snapshot\n", encoding="utf-8")
+    (_intermediate(ws) / "audit_report.json").write_text(_valid_audit_report_payload(), encoding="utf-8")
+
+    _write_supported_target_ledger(ws)
+    custom_ledger = ws / custom_paths["claim_ledger"]
+    custom_ledger.parent.mkdir(parents=True)
+    (_intermediate(ws) / "claim_ledger.json").replace(custom_ledger)
+    _write_audited_brief(
+        ws,
+        "## Executive Summary\nTargetCo opened a demo facility and reported 42 deployments. [src:CL-001]\n",
+    )
+    custom_brief = ws / custom_paths["audited_brief"]
+    custom_brief.parent.mkdir(parents=True)
+    (_intermediate(ws) / "audited_brief.md").replace(custom_brief)
+
+    (_intermediate(ws) / "claim_ledger.json").write_text("{poison-default-ledger\n", encoding="utf-8")
+    (_intermediate(ws) / "audited_brief.md").write_text("# Poison default brief\n", encoding="utf-8")
+
+    gate_state = quality_gate_state.check_quality_gates(
+        workspace=ws,
+        repo_workdir=repo,
+        report_date="2026-06-18",
+        stage_id="auditor",
+    )
+
+    report = gate_state["quality_gate_report"]
+    assert report["status"] in {"pass", "warning"}
+    assert not any(result.get("status") == "fail" for result in report["gate_results"])
+    assert not any(finding.get("blocking_level") == "blocking" for finding in report["findings"])
+    assert report["metadata"]["brief"] == custom_paths["audited_brief"]
+    assert report["metadata"]["ledger"] == custom_paths["claim_ledger"]
+
+    completed = runtime_state.complete_stage_transaction(
+        workspace=ws,
+        repo_workdir=repo,
+        stage_id="auditor",
+        reason="custom-path auditor and gates passed",
+    )
+
+    assert completed["workflow_state"]["current_stage"] == "finalize"
+
+
 def test_claim_support_matrix_rejects_incomplete_explicit_path_context(tmp_path: Path) -> None:
     ws = _write_workspace(tmp_path)
     _write_claim_support_matrix_fixture(
