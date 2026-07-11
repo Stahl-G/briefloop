@@ -7,7 +7,6 @@ from typing import Any
 
 from multi_agent_brief.orchestrator.runtime_state._io import _load_yaml
 from multi_agent_brief.orchestrator.runtime_state.artifact_paths import (
-    artifact_paths_from_contracts,
     validate_workspace_relative_artifact_path,
 )
 from multi_agent_brief.orchestrator.runtime_state.errors import (
@@ -101,24 +100,6 @@ def load_artifact_contracts(repo_workdir: str | Path) -> list[dict[str, Any]]:
             )
         owners[identity_key] = (path, artifact_id)
     return records
-
-
-def load_resolved_artifact_paths(
-    repo_workdir: str | Path,
-    *,
-    workspace: Path,
-) -> dict[str, Path]:
-    """Load contracts and resolve their complete workspace path context."""
-
-    records = load_artifact_contracts(repo_workdir)
-    return artifact_paths_from_contracts(
-        workspace,
-        {
-            str(record.get("artifact_id")): record
-            for record in records
-            if record.get("artifact_id")
-        },
-    )
 
 
 def load_default_policy_pack(repo_workdir: str | Path) -> dict[str, Any]:
