@@ -20,6 +20,9 @@ from multi_agent_brief.orchestrator.runtime_state import (
     initialize_runtime_state,
 )
 from multi_agent_brief.orchestrator.runtime_state.artifact_registry import ARTIFACT_REGISTRY_SCHEMA
+from multi_agent_brief.orchestrator.runtime_state.claim_support_matrix import (
+    project_claim_support_matrix_from_workspace,
+)
 from multi_agent_brief.orchestrator.runtime_state.workflow import _allowed_decisions_for_stage
 from multi_agent_brief.quality_gates import state as quality_gate_state
 from multi_agent_brief.quality_gates.contract import (
@@ -2011,6 +2014,25 @@ def test_quality_gate_uses_one_contract_path_context_for_csm_and_atomic_graph(
     assert report["metadata"]["claim_support_matrix_projection"]["status"] == "valid"
     assert report["metadata"]["atomic_reader_projection"]["graph_present"] is True
     assert any(finding.get("finding_type") == finding_type for finding in report["findings"])
+
+
+def test_claim_support_matrix_rejects_incomplete_explicit_path_context(tmp_path: Path) -> None:
+    ws = _write_workspace(tmp_path)
+    _write_claim_support_matrix_fixture(
+        ws,
+        support_label="unsupported",
+        support_strength="none",
+        required_action="block_release",
+        evidence_span_id=None,
+    )
+
+    projection = project_claim_support_matrix_from_workspace(ws, artifact_paths={})
+
+    assert projection["status"] == "invalid_matrix"
+    assert projection["reason"] == (
+        "claim_support_matrix_validation_error:artifact_path_binding_missing:"
+        "claim_support_matrix,claim_ledger,atomic_claim_graph,evidence_span_registry"
+    )
 
 
 def test_quality_gate_claim_support_matrix_weak_support_warns(tmp_path):

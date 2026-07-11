@@ -133,7 +133,20 @@ def project_atomic_reader_text_from_workspace(
             reason=f"atomic_claim_graph_schema_error:{schema_errors[0].field}",
         )
 
-    claims = ledger_claims if ledger_claims is not None else _load_ledger_claims(ws)
+    if ledger_claims is not None:
+        claims = ledger_claims
+    elif artifact_paths is None:
+        claims = _load_ledger_claims(ws / "output" / "intermediate" / "claim_ledger.json")
+    else:
+        ledger_path = artifact_paths.get("claim_ledger")
+        if ledger_path is None:
+            return _empty_projection(
+                status="invalid_graph",
+                target_artifact=target_artifact,
+                graph_present=True,
+                reason=f"{ATOMIC_CLAIM_GRAPH_VALIDATION_PREFIX}:claim_ledger_path_binding_missing",
+            )
+        claims = _load_ledger_claims(ledger_path)
     if claims is None:
         return _empty_projection(
             status="invalid_graph",
@@ -268,8 +281,7 @@ def _atom_residue_findings(
     )
 
 
-def _load_ledger_claims(workspace: Path) -> list[dict[str, Any]] | None:
-    path = workspace / "output" / "intermediate" / "claim_ledger.json"
+def _load_ledger_claims(path: Path) -> list[dict[str, Any]] | None:
     if not path.exists():
         return None
     try:

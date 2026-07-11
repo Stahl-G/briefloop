@@ -11139,3 +11139,124 @@ def test_artifact_contract_rejects_symlink_identity_drift_without_state_writes(
         key: _state_file(ws, key).read_bytes() if _state_file(ws, key).exists() else None
         for key in RUNTIME_STATE_FILES
     } == before
+
+
+@pytest.mark.parametrize(
+    "collision_kind",
+    ["reserved-case-alias", "owner-case-alias"],
+)
+def test_artifact_contract_casefold_identity_collisions_leave_state_unchanged(
+    tmp_path: Path,
+    collision_kind: str,
+) -> None:
+    repo = _repo_with_role_topology(tmp_path, "default")
+    ws = _write_workspace(tmp_path)
+    initialize_runtime_state(workspace=ws, repo_workdir=repo)
+    contracts_path = repo / "configs" / "artifact_contracts.yaml"
+    import yaml
+
+    contracts = yaml.safe_load(contracts_path.read_text(encoding="utf-8"))
+    if collision_kind == "reserved-case-alias":
+        next(
+            artifact
+            for artifact in contracts["artifacts"]
+            if artifact.get("artifact_id") == "claim_ledger"
+        )["path"] = "output/intermediate/WORKFLOW_STATE.json"
+    else:
+        aliases = {
+            "candidate_claims": "custom/CaseAlias.json",
+            "screened_candidates": "custom/casealias.json",
+        }
+        for artifact in contracts["artifacts"]:
+            artifact_id = artifact.get("artifact_id")
+            if artifact_id in aliases:
+                artifact["path"] = aliases[artifact_id]
+    contracts_path.write_text(yaml.safe_dump(contracts, sort_keys=False), encoding="utf-8")
+    before = {
+        key: _state_file(ws, key).read_bytes() if _state_file(ws, key).exists() else None
+        for key in RUNTIME_STATE_FILES
+    }
+
+    with pytest.raises(RuntimeStateError) as excinfo:
+        check_runtime_state(workspace=ws, repo_workdir=repo)
+
+    assert excinfo.value.error_code == "E_TRANSACTION_INTEGRITY"
+    assert {
+        key: _state_file(ws, key).read_bytes() if _state_file(ws, key).exists() else None
+        for key in RUNTIME_STATE_FILES
+    } == before
+
+
+@pytest.mark.parametrize(
+    "artifact_id_state",
+    ["duplicate", "missing", "blank"],
+)
+def test_artifact_contract_rejects_non_unique_or_missing_ids_without_state_writes(
+    tmp_path: Path,
+    artifact_id_state: str,
+) -> None:
+    repo = _repo_with_role_topology(tmp_path, "default")
+    ws = _write_workspace(tmp_path)
+    initialize_runtime_state(workspace=ws, repo_workdir=repo)
+    contracts_path = repo / "configs" / "artifact_contracts.yaml"
+    import copy
+    import yaml
+
+    contracts = yaml.safe_load(contracts_path.read_text(encoding="utf-8"))
+    ledger = next(
+        artifact
+        for artifact in contracts["artifacts"]
+        if artifact.get("artifact_id") == "claim_ledger"
+    )
+    if artifact_id_state == "duplicate":
+        duplicate = copy.deepcopy(ledger)
+        duplicate["path"] = "custom/second-claim-ledger.json"
+        contracts["artifacts"].append(duplicate)
+    elif artifact_id_state == "missing":
+        ledger.pop("artifact_id")
+    else:
+        ledger["artifact_id"] = "   "
+    contracts_path.write_text(yaml.safe_dump(contracts, sort_keys=False), encoding="utf-8")
+    before = {
+        key: _state_file(ws, key).read_bytes() if _state_file(ws, key).exists() else None
+        for key in RUNTIME_STATE_FILES
+    }
+
+    with pytest.raises(RuntimeStateError) as excinfo:
+        check_runtime_state(workspace=ws, repo_workdir=repo)
+
+    assert excinfo.value.error_code == "E_TRANSACTION_INTEGRITY"
+    assert {
+        key: _state_file(ws, key).read_bytes() if _state_file(ws, key).exists() else None
+        for key in RUNTIME_STATE_FILES
+    } == before
+
+
+def test_artifact_contract_rejects_non_string_path_without_state_writes(tmp_path: Path) -> None:
+    repo = _repo_with_role_topology(tmp_path, "default")
+    ws = _write_workspace(tmp_path)
+    initialize_runtime_state(workspace=ws, repo_workdir=repo)
+    contracts_path = repo / "configs" / "artifact_contracts.yaml"
+    import yaml
+
+    contracts = yaml.safe_load(contracts_path.read_text(encoding="utf-8"))
+    next(
+        artifact
+        for artifact in contracts["artifacts"]
+        if artifact.get("artifact_id") == "claim_ledger"
+    )["path"] = ["output/intermediate/claim_ledger.json"]
+    contracts_path.write_text(yaml.safe_dump(contracts, sort_keys=False), encoding="utf-8")
+    before = {
+        key: _state_file(ws, key).read_bytes() if _state_file(ws, key).exists() else None
+        for key in RUNTIME_STATE_FILES
+    }
+
+    with pytest.raises(RuntimeStateError) as excinfo:
+        check_runtime_state(workspace=ws, repo_workdir=repo)
+
+    assert excinfo.value.error_code == "E_TRANSACTION_INTEGRITY"
+    assert "path must be a non-empty string" in str(excinfo.value)
+    assert {
+        key: _state_file(ws, key).read_bytes() if _state_file(ws, key).exists() else None
+        for key in RUNTIME_STATE_FILES
+    } == before
