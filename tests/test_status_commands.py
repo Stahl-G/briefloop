@@ -5,8 +5,11 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+import pytest
+
 from multi_agent_brief.cli.main import main
 from multi_agent_brief.orchestrator.runtime_state import (
+    check_runtime_state,
     complete_stage_transaction,
     initialize_runtime_state,
     record_decision,
@@ -21,6 +24,59 @@ def _minimal_workspace(path: Path) -> Path:
         path,
         project_name="status-test",
         user_text="# Status test\n",
+    )
+
+
+def _corrupt_artifact_registry_context(paths: dict[str, Path], case_id: str) -> None:
+    registry_path = paths["artifact_registry"]
+    if case_id == "missing":
+        registry_path.unlink()
+        return
+    if case_id == "malformed_json":
+        registry_path.write_text("{bad json}\n", encoding="utf-8")
+        return
+
+    if case_id in {"manifest_wrong_schema", "manifest_missing_run_id"}:
+        manifest_path = paths["runtime_manifest"]
+        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+        if case_id == "manifest_wrong_schema":
+            manifest["schema_version"] = "multi-agent-brief-runtime-manifest/v999"
+        else:
+            manifest.pop("run_id", None)
+        manifest_path.write_text(
+            json.dumps(manifest, ensure_ascii=False, indent=2, sort_keys=True) + "\n",
+            encoding="utf-8",
+        )
+        return
+
+    registry = json.loads(registry_path.read_text(encoding="utf-8"))
+    if case_id == "wrong_schema":
+        registry["schema_version"] = "multi-agent-brief-artifact-registry/v999"
+    elif case_id == "missing_run_id":
+        registry.pop("run_id", None)
+    elif case_id == "cross_run":
+        registry["run_id"] = "run-from-another-workspace"
+    elif case_id == "artifacts_not_object":
+        registry["artifacts"] = []
+    elif case_id == "record_not_object":
+        artifact_id = next(iter(registry["artifacts"]))
+        registry["artifacts"][artifact_id] = "not-an-artifact-record"
+    elif case_id == "artifact_id_empty":
+        artifact_id = next(iter(registry["artifacts"]))
+        record = registry["artifacts"].pop(artifact_id)
+        record["artifact_id"] = ""
+        registry["artifacts"][""] = record
+    elif case_id == "record_identity_mismatch":
+        artifact_id = next(iter(registry["artifacts"]))
+        registry["artifacts"][artifact_id]["artifact_id"] = "different-artifact"
+    elif case_id == "unknown_record_status":
+        artifact_id = next(iter(registry["artifacts"]))
+        registry["artifacts"][artifact_id]["status"] = "banana"
+    else:  # pragma: no cover - test helper contract
+        raise AssertionError(f"unknown registry corruption case: {case_id}")
+    registry_path.write_text(
+        json.dumps(registry, ensure_ascii=False, indent=2, sort_keys=True) + "\n",
+        encoding="utf-8",
     )
 
 
@@ -360,6 +416,8 @@ def test_status_command_is_read_only_for_existing_runtime_state(tmp_path, capsys
     assert payload["timing"]["source"] == "event_log"
     assert payload["timing"]["precision"] == "control_trace_bucket"
     assert payload["timing"]["status"] == "unknown"
+    assert payload["artifacts"]["registry_status"] == "valid"
+    assert payload["artifacts"]["registry_reason_code"] is None
     assert payload["artifacts"]["expected_count"] == 1
     assert payload["events"]["event_count"] == before_event_count
     assert payload["progress"] == {
@@ -381,6 +439,102 @@ def test_status_command_is_read_only_for_existing_runtime_state(tmp_path, capsys
     assert len(paths["event_log"].read_text(encoding="utf-8").splitlines()) == before_event_count
 
 
+@pytest.mark.parametrize(
+    ("case_id", "expected_status", "expected_reason_code"),
+    [
+        ("malformed_json", "unreadable", "artifact_registry_unreadable"),
+        ("wrong_schema", "invalid_schema", "artifact_registry_schema_unsupported"),
+        (
+            "manifest_wrong_schema",
+            "invalid_identity",
+            "artifact_registry_manifest_context_invalid",
+        ),
+        (
+            "manifest_missing_run_id",
+            "invalid_identity",
+            "artifact_registry_manifest_run_id_missing",
+        ),
+        ("missing_run_id", "invalid_identity", "artifact_registry_run_id_missing"),
+        ("cross_run", "invalid_identity", "artifact_registry_run_id_mismatch"),
+        ("artifacts_not_object", "invalid_payload", "artifact_registry_artifacts_not_object"),
+        ("record_not_object", "invalid_payload", "artifact_registry_record_not_object"),
+        ("artifact_id_empty", "invalid_payload", "artifact_registry_artifact_id_invalid"),
+        (
+            "record_identity_mismatch",
+            "invalid_payload",
+            "artifact_registry_record_identity_mismatch",
+        ),
+        (
+            "unknown_record_status",
+            "invalid_payload",
+            "artifact_registry_record_status_unsupported",
+        ),
+    ],
+    ids=[
+        "STATUS-REG-02-malformed",
+        "STATUS-REG-03-wrong-schema",
+        "STATUS-REG-04-manifest-schema",
+        "STATUS-REG-04-manifest-run-id",
+        "STATUS-REG-04-missing-run-id",
+        "STATUS-REG-04-cross-run",
+        "STATUS-REG-05-artifacts-shape",
+        "STATUS-REG-05-record-shape",
+        "STATUS-REG-05-artifact-id",
+        "STATUS-REG-05-record-identity",
+        "STATUS-REG-06-record-status",
+    ],
+)
+def test_status_registry_context_degrades_without_consuming_or_writing(
+    tmp_path,
+    capsys,
+    case_id,
+    expected_status,
+    expected_reason_code,
+):
+    ws = _minimal_workspace(tmp_path / "ws")
+    initialize_runtime_state(workspace=ws, runtime="claude", actor="cli")
+    check_runtime_state(workspace=ws)
+    paths = runtime_state_paths(ws)
+    _corrupt_artifact_registry_context(paths, case_id)
+
+    watched = [path for path in paths.values() if path.exists()]
+    before_bytes = {path: path.read_bytes() for path in watched}
+    before_mtime = {path: path.stat().st_mtime_ns for path in watched}
+    registry_existed = paths["artifact_registry"].exists()
+
+    rc = main(["status", "--workspace", str(ws), "--json"])
+
+    assert rc == 0
+    payload = json.loads(capsys.readouterr().out)
+    artifacts = payload["artifacts"]
+    assert artifacts["registry_status"] == expected_status
+    assert artifacts["registry_reason_code"] == expected_reason_code
+    assert artifacts["present"] is False
+    assert artifacts["artifact_count"] == 0
+    assert artifacts["valid_count"] == 0
+    assert artifacts["intake"]["present"] is False
+    assert payload["suggested_next_command"] == (
+        f"briefloop state show --workspace {ws} --json"
+    )
+    assert payload["progress"]["status"] == "needs_operator_action"
+    assert payload["progress"]["current_work"] == "check run record"
+    assert any(
+        marker.startswith(f"artifact_registry {expected_status}: {expected_reason_code}")
+        for marker in payload["stale_or_unknown"]
+    )
+
+    rc = main(["status", "--workspace", str(ws)])
+    assert rc == 0
+    out = capsys.readouterr().out
+    assert f"registry_status={expected_status}" in out
+    assert f"registry_reason={expected_reason_code}" in out
+
+    assert paths["artifact_registry"].exists() is registry_existed
+    for path in watched:
+        assert path.read_bytes() == before_bytes[path]
+        assert path.stat().st_mtime_ns == before_mtime[path]
+
+
 def test_status_command_human_output_reports_user_progress_language(tmp_path, capsys):
     ws = _minimal_workspace(tmp_path / "ws")
     initialize_runtime_state(workspace=ws, runtime="claude", actor="cli")
@@ -390,6 +544,7 @@ def test_status_command_human_output_reports_user_progress_language(tmp_path, ca
     assert rc == 0
     out = capsys.readouterr().out
     assert '[status] progress: ready_for_operator current_work="prepare sources"' in out
+    assert "registry_status=missing" in out
     assert 'message="Continue the prepare sources step through the suggested command or handoff."' in out
 
 
