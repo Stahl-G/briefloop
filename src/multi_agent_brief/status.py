@@ -6,6 +6,11 @@ import json
 from pathlib import Path
 from typing import Any
 
+from multi_agent_brief.contracts.agent_artifact_intake import (
+    AGENT_ARTIFACT_IDS,
+    validate_registry_intake_context,
+    validate_workspace_intake_consumption_context,
+)
 from multi_agent_brief.contracts.target_contract import (
     load_experiment_080_condition_metadata,
     project_assessment_target_status,
@@ -111,9 +116,13 @@ def build_workspace_status(workspace: str | Path) -> dict[str, Any]:
     event_records = _event_records_best_effort(event_log_path)
     workflow_payload = workflow.get("payload") if workflow.get("status") == "present" else None
 
+    manifest_payload = manifest.get("payload") if manifest.get("status") == "present" else None
+    expected_run_id = (
+        str(manifest_payload.get("run_id") or "") if isinstance(manifest_payload, dict) else ""
+    )
     payload["runtime"] = _runtime_summary(manifest)
     payload["workflow"] = _workflow_summary(workflow)
-    payload["artifacts"] = _artifact_summary(registry)
+    payload["artifacts"] = _artifact_summary(registry, expected_run_id=expected_run_id)
     payload["events"] = _event_summary(event_log_path)
     payload["quality_gate"] = _quality_gate_summary(
         _select_quality_gate_result(
@@ -140,7 +149,6 @@ def build_workspace_status(workspace: str | Path) -> dict[str, Any]:
         else None,
         event_records=event_records,
     )
-    manifest_payload = manifest.get("payload") if manifest.get("status") == "present" else None
     payload["fact_layer_import"] = summarize_fact_layer_import(
         manifest_payload if isinstance(manifest_payload, dict) else None,
         workflow_payload if isinstance(workflow_payload, dict) else None,
@@ -156,6 +164,12 @@ def build_workspace_status(workspace: str | Path) -> dict[str, Any]:
     payload["materiality_selection"] = project_workspace_materiality_selection(
         ws,
         policy_profile=payload["policy_profile"],
+        artifact_registry=(
+            registry.get("payload")
+            if registry.get("status") == "present"
+            else None
+        ),
+        expected_run_id=expected_run_id,
     )
     payload["support_wording"] = project_workspace_support_wording(
         ws,
@@ -272,8 +286,10 @@ def format_workspace_status(status: dict[str, Any]) -> str:
                 f"valid={artifacts.get('valid_count', 0)} "
                 f"invalid={artifacts.get('invalid_count', 0)} "
                 f"missing={artifacts.get('missing_count', 0)} "
-                f"expected={artifacts.get('expected_count', 0)}"
+                f"expected={artifacts.get('expected_count', 0)} "
+                f"stale={artifacts.get('stale_count', 0)}"
             ),
+            _format_intake_projection_line(artifacts.get("intake")),
             f"[status] events: count={events.get('event_count', 0)} corrupt={events.get('corrupt_count', 0)}",
             _format_fact_layer_import_line(fact_layer_import),
             _format_timing_line(timing),
@@ -646,7 +662,11 @@ def _run_integrity_summary(workflow: dict[str, Any]) -> dict[str, Any]:
     )
 
 
-def _artifact_summary(result: dict[str, Any]) -> dict[str, Any]:
+def _artifact_summary(
+    result: dict[str, Any],
+    *,
+    expected_run_id: str,
+) -> dict[str, Any]:
     payload = result.get("payload") if result.get("status") == "present" else None
     records = (payload or {}).get("artifacts") if isinstance(payload, dict) else None
     if isinstance(records, dict):
@@ -664,6 +684,10 @@ def _artifact_summary(result: dict[str, Any]) -> dict[str, Any]:
         "expected_count": 0,
         "ready_count": 0,
         "stale_count": 0,
+        "intake": _intake_projection_summary(
+            payload if isinstance(payload, dict) else None,
+            expected_run_id=expected_run_id,
+        ),
     }
     for record in iterable:
         if not isinstance(record, dict):
@@ -682,6 +706,127 @@ def _artifact_summary(result: dict[str, Any]) -> dict[str, Any]:
         elif status in {"present", "ready"}:
             counts["ready_count"] += 1
     return counts
+
+
+def _intake_projection_summary(
+    registry: dict[str, Any] | None,
+    *,
+    expected_run_id: str,
+) -> dict[str, Any]:
+    summary: dict[str, Any] = {
+        "present": False,
+        "valid": None,
+        "projection_count": 0,
+        "normalized_artifact_count": 0,
+        "normalization_count": 0,
+        "fatal_finding_count": 0,
+        "invalid_projection_count": 0,
+        "stale_projection_count": 0,
+        "consumable": None,
+        "artifacts": [],
+        "reasons": [],
+    }
+    if not isinstance(registry, dict):
+        return summary
+    records = registry.get("artifacts")
+    if not isinstance(records, dict):
+        return summary
+
+    artifacts: list[dict[str, Any]] = []
+    context_reasons: list[str] = []
+    for artifact_id in sorted(AGENT_ARTIFACT_IDS):
+        record = records.get(artifact_id)
+        if not isinstance(record, dict) or "intake_projection" not in record:
+            continue
+        projection = record.get("intake_projection")
+        reasons = (
+            validate_registry_intake_context(
+                registry,
+                expected_run_id=expected_run_id,
+                artifact_id=artifact_id,
+            )
+            if expected_run_id
+            else ["runtime_manifest run_id is unavailable for intake projection binding"]
+        )
+        consumption_reasons = (
+            validate_workspace_intake_consumption_context(
+                registry,
+                expected_run_id=expected_run_id,
+                bundle=None,
+                artifact_id=artifact_id,
+            )
+            if expected_run_id
+            else ["runtime_manifest run_id is unavailable for intake consumption binding"]
+        )
+        normalization_count = (
+            projection.get("normalization_count") if isinstance(projection, dict) else 0
+        )
+        fatal_finding_count = (
+            projection.get("fatal_finding_count") if isinstance(projection, dict) else 0
+        )
+        normalization_count = normalization_count if isinstance(normalization_count, int) else 0
+        fatal_finding_count = fatal_finding_count if isinstance(fatal_finding_count, int) else 0
+        findings = projection.get("findings") if isinstance(projection, dict) else []
+        artifacts.append(
+            {
+                "artifact_id": artifact_id,
+                "projection_valid": not reasons,
+                "consumable": not consumption_reasons,
+                "artifact_status": record.get("status"),
+                "validation_result": record.get("validation_result"),
+                "transform_version": projection.get("transform_version")
+                if isinstance(projection, dict)
+                else None,
+                "normalization_count": normalization_count,
+                "fatal_finding_count": fatal_finding_count,
+                "findings": findings if isinstance(findings, list) else [],
+                "reasons": reasons,
+                "consumption_reasons": consumption_reasons,
+            }
+        )
+        summary["normalization_count"] += normalization_count
+        summary["fatal_finding_count"] += fatal_finding_count
+        if normalization_count > 0:
+            summary["normalized_artifact_count"] += 1
+        if reasons:
+            summary["invalid_projection_count"] += 1
+            context_reasons.extend(reasons)
+        if record.get("status") == "stale":
+            summary["stale_projection_count"] += 1
+
+    summary["artifacts"] = artifacts
+    summary["projection_count"] = len(artifacts)
+    summary["reasons"] = list(dict.fromkeys(context_reasons))
+    if artifacts:
+        summary["present"] = True
+        summary["valid"] = not context_reasons
+        summary["consumable"] = all(
+            artifact.get("consumable") is True for artifact in artifacts
+        )
+    return summary
+
+
+def _format_intake_projection_line(value: Any) -> str:
+    intake = value if isinstance(value, dict) else {}
+    state = (
+        "not_available"
+        if intake.get("present") is not True
+        else "available"
+        if intake.get("valid") is True and intake.get("consumable") is True
+        else "stale"
+        if intake.get("valid") is True and intake.get("stale_projection_count", 0) > 0
+        else "invalid"
+    )
+    return (
+        "[status] intake: "
+        f"{state} "
+        f"projections={intake.get('projection_count', 0)} "
+        f"normalized={intake.get('normalized_artifact_count', 0)} "
+        f"normalizations={intake.get('normalization_count', 0)} "
+        f"fatal={intake.get('fatal_finding_count', 0)} "
+        f"invalid_projections={intake.get('invalid_projection_count', 0)} "
+        f"stale_projections={intake.get('stale_projection_count', 0)}"
+    )
 
 
 def _event_summary(path: Path) -> dict[str, Any]:

@@ -191,6 +191,7 @@ def test_generated_scout_and_screener_are_topology_aware(manifest):
     assert "not completion order" in scout_rendered
     assert "Do not append to candidate_claims.json from chunk workers" in scout_rendered
     assert "read the already-joined candidate_claims.json" in scout_rendered
+    assert "stable candidate_id" in scout_rendered
     assert "source_url for HTTP(S) web sources or source_path for local/package sources" in scout_rendered
     assert "Never place a title, search query" in scout_rendered
     assert "Treat source_type as provider/storage type" in scout_rendered

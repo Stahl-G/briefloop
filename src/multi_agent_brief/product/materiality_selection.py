@@ -7,7 +7,6 @@ screening output, resurrect candidates, run gates, or approve delivery.
 
 from __future__ import annotations
 
-import json
 import re
 from collections import Counter
 from pathlib import Path
@@ -15,6 +14,10 @@ from typing import Any, Mapping
 
 import yaml
 
+from multi_agent_brief.contracts.agent_artifact_intake import (
+    evaluate_workspace_agent_artifact_intakes,
+    validate_workspace_intake_consumption_context,
+)
 from multi_agent_brief.product.policy_projection import project_workspace_policy_profile
 
 
@@ -74,8 +77,14 @@ def project_workspace_materiality_selection(
     workspace: str | Path,
     *,
     policy_profile: Mapping[str, Any] | None = None,
+    artifact_registry: Mapping[str, Any] | None = None,
+    expected_run_id: str = "",
 ) -> dict[str, Any]:
     """Project materiality-aware screening diagnostics without side effects."""
+
+    from multi_agent_brief.orchestrator.runtime_state.artifact_paths import (
+        agent_artifact_paths_from_contracts,
+    )
 
     ws = Path(workspace).expanduser().resolve()
     policy_projection = (
@@ -85,7 +94,19 @@ def project_workspace_materiality_selection(
     )
     materiality_terms = _policy_materiality_terms(policy_projection)
     must_watch_terms = _workspace_focus_terms(ws)
-    screened_path = ws / _INTERMEDIATE / "screened_candidates.json"
+    artifact_records = (
+        artifact_registry.get("artifacts")
+        if isinstance(artifact_registry, Mapping)
+        else None
+    )
+    artifact_paths = agent_artifact_paths_from_contracts(
+        ws,
+        artifact_records if isinstance(artifact_records, Mapping) else {},
+    )
+    screened_path = artifact_paths.get(
+        "screened_candidates",
+        ws / _INTERMEDIATE / "screened_candidates.json",
+    )
     base = _base_projection(
         policy_profile=policy_projection,
         materiality_terms=materiality_terms,
@@ -100,24 +121,41 @@ def project_workspace_materiality_selection(
             "screened_candidates_present": False,
         }
 
-    try:
-        screened = json.loads(screened_path.read_text(encoding="utf-8"))
-    except (OSError, UnicodeDecodeError, json.JSONDecodeError) as exc:
+    bundle = evaluate_workspace_agent_artifact_intakes(
+        ws,
+        artifact_paths=artifact_paths,
+    )
+    intake = bundle.screened_candidates
+    if intake is None:
         return {
             **base,
             "status": "invalid_screened_candidates",
-            "reason": f"screened_candidates_unreadable:{type(exc).__name__}",
+            "reason": "screened_candidates_intake_result_unavailable",
             "screened_candidates_present": True,
         }
-
-    validation_reason = _screened_candidates_validation_reason(screened)
-    if validation_reason:
+    if intake.status != "valid":
         return {
             **base,
             "status": "invalid_screened_candidates",
-            "reason": validation_reason,
+            "reason": intake.validation_result,
             "screened_candidates_present": True,
         }
+    if artifact_registry is not None and expected_run_id:
+        authority_reasons = validate_workspace_intake_consumption_context(
+            artifact_registry,
+            expected_run_id=expected_run_id,
+            bundle=bundle,
+            artifact_id="screened_candidates",
+        )
+        if authority_reasons:
+            return {
+                **base,
+                "status": "invalid_screened_candidates",
+                "reason": authority_reasons[0],
+                "intake_authority_reasons": authority_reasons,
+                "screened_candidates_present": True,
+            }
+    screened = intake.normalized_payload
     if isinstance(screened, list):
         return {
             **base,
@@ -266,18 +304,6 @@ def _workspace_focus_terms(workspace: Path) -> list[str]:
     return _string_list(focus.get("areas"))
 
 
-def _screened_candidates_validation_reason(payload: Any) -> str | None:
-    from multi_agent_brief.orchestrator.runtime_state.artifact_registry import (
-        ARTIFACT_VALID,
-        _validate_screened_candidates_payload,
-    )
-
-    status, validation_result = _validate_screened_candidates_payload(payload)
-    if status == ARTIFACT_VALID:
-        return None
-    return validation_result
-
-
 def _discarded_candidates(payload: Mapping[str, Any]) -> list[dict[str, Any]]:
     result: list[dict[str, Any]] = []
     for bucket in ("excluded", "deprioritized"):
@@ -399,30 +425,7 @@ def _matched_terms(text: str, terms: list[str]) -> list[str]:
 
 
 def _reason_code(candidate: Mapping[str, Any]) -> str:
-    for key in ("reason_code", "screening_reason_code", "excluded_reason_code", "deprioritized_reason_code", "reason"):
-        value = candidate.get(key)
-        normalized = _normalize_reason_code(value)
-        if normalized:
-            return normalized
-    return ""
-
-
-def _normalize_reason_code(value: Any) -> str:
-    raw = _text(value).lower()
-    if not raw:
-        return ""
-    normalized = re.sub(r"[^a-z0-9]+", "_", raw).strip("_")
-    aliases = {
-        "capacity": "capacity_capped",
-        "capacity_cap": "capacity_capped",
-        "cap": "capacity_capped",
-        "duplicate": "duplicate_source",
-        "off_topic": "off_focus",
-        "outside_focus": "off_focus",
-        "weak_relevance": "weak_relevance",
-        "low_relevance": "weak_relevance",
-    }
-    return aliases.get(normalized, normalized)
+    return _text(candidate.get("reason_code"))
 
 
 def _first_text(mapping: Mapping[str, Any], *keys: str) -> str:

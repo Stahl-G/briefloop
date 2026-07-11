@@ -1,0 +1,18 @@
+{
+  "claims": [
+    {
+      "candidate_id": "CAND-001",
+      "claim_statement": "ExampleCo opened a public demonstration facility.",
+      "source_excerpt": "ExampleCo opened a public demonstration facility in June.",
+      "source_url": "https://example.com/exampleco-facility",
+      "source_category": "industry_news",
+      "published_at": "2026-06-01",
+      "topic": "demonstration facility",
+      "claim_type": "fact",
+      "confidence": 0.91
+    }
+  ],
+  "metadata": {
+    "fixture": "public-safe-recoverable"
+  }
+}

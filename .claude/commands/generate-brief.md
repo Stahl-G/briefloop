@@ -102,7 +102,7 @@ your editorial judgment.
 
 6. Read `configs/policy_packs/default.yaml` and invoke the **scout** subagent with the active role topology:
    - Read approved workspace sources, evidence inputs, and cached packages.
-   - Extract candidate reportable items.
+   - Extract candidate reportable items with a stable `candidate_id` on every row.
    - With `role_topology=default`, Scout writes both `candidate_claims.json` and `screened_candidates.json` before `stage-complete --stage scout`.
    - Do not delegate Screener in default topology and do not call `state stage-complete --stage screener`. The Screener stage is satisfied by topology after `stage-complete --stage scout` succeeds with both artifacts present.
    - With `role_topology=strict`, Scout writes only `candidate_claims.json`; strict topology delegates Screener separately after Scout completion.

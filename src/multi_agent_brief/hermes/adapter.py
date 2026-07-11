@@ -650,6 +650,7 @@ As the Hermes Orchestrator main agent, execute:
    Goal: "Extract candidate reportable items for a BriefLoop brief; in default topology, screen them in the same Scout stage"
    Write: output/intermediate/candidate_claims.json
    Default topology also writes: output/intermediate/screened_candidates.json
+   Candidate identity: every candidate_claims.json row has a stable candidate_id; do not defer identity creation to Screener or Claim Ledger.
    Source identity: source_url is only for HTTP(S) URLs; use source_path for local/package sources. Preserve source_title/source_name, publisher, source_category, source_type, source dates, and evidence text.
    toolsets: ["file", "terminal", "web"]
 

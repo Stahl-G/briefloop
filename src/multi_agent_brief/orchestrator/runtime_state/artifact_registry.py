@@ -11,6 +11,12 @@ from typing import Any, Mapping
 
 import yaml
 
+from multi_agent_brief.contracts.agent_artifact_intake import (
+    AGENT_ARTIFACT_IDS,
+    AgentArtifactId,
+    IntakeResult,
+    evaluate_workspace_agent_artifact_intakes,
+)
 from multi_agent_brief.contracts.schemas.audit_report import AuditReportContract
 from multi_agent_brief.contracts.schemas.atomic_claim_graph import AtomicClaimGraphContract
 from multi_agent_brief.contracts.schemas.claim import ClaimContract
@@ -173,12 +179,18 @@ def _validate_artifact(
     artifact_id: str = "",
     *,
     workspace: Path,
+    intake_result: IntakeResult | None = None,
     artifact_paths: Mapping[str, Path],
 ) -> tuple[str, str]:
     if not path.exists():
         return ARTIFACT_EXPECTED, "not_checked"
     if not path.is_file():
         return ARTIFACT_INVALID, "not_a_file"
+    if fmt == "json" and artifact_id in AGENT_ARTIFACT_IDS:
+        if intake_result is None:
+            return ARTIFACT_INVALID, f"{artifact_id}_intake_result_unavailable"
+        status = ARTIFACT_VALID if intake_result.status == "valid" else ARTIFACT_INVALID
+        return status, intake_result.validation_result
     try:
         text = path.read_text(encoding="utf-8")
     except UnicodeDecodeError:
@@ -1675,6 +1687,7 @@ def _artifact_record(
     artifact: dict[str, Any],
     workflow: dict[str, Any],
     recovery_state: Mapping[str, Any] | None = None,
+    intake_result: IntakeResult | None = None,
     artifact_paths: Mapping[str, Path],
 ) -> dict[str, Any]:
     artifact_id = str(artifact.get("artifact_id") or "")
@@ -1687,6 +1700,7 @@ def _artifact_record(
         fmt,
         artifact_id,
         workspace=workspace,
+        intake_result=intake_result,
         artifact_paths=artifact_paths,
     )
 
@@ -1717,6 +1731,12 @@ def _artifact_record(
     size_bytes = path.stat().st_size if path.exists() and path.is_file() else None
     mtime = datetime.fromtimestamp(path.stat().st_mtime, timezone.utc).replace(microsecond=0).isoformat() if path.exists() else None
     sha256 = _sha256_file(path) if path.exists() and path.is_file() else None
+    if intake_result is not None and sha256 != intake_result.raw_sha256:
+        status = ARTIFACT_INVALID
+        validation_result = "intake_projection_raw_sha_mismatch"
+        blocking_reason = (
+            f"Artifact '{rel_path}' changed while deterministic intake was being evaluated."
+        )
     stale_metadata = _recovery_stale_metadata(
         recovery_state=recovery_state,
         artifact_id=artifact_id,
@@ -1733,6 +1753,7 @@ def _artifact_record(
         and sha256 == stale_baseline_sha256
         and path.exists()
         and path.is_file()
+        and status == ARTIFACT_VALID
     ):
         status = ARTIFACT_STALE
         stale_after_supersede = (
@@ -1772,6 +1793,8 @@ def _artifact_record(
     }
     if status == ARTIFACT_STALE and stale_baseline_sha256:
         record["stale_baseline_sha256"] = stale_baseline_sha256
+    if intake_result is not None:
+        record["intake_projection"] = intake_result.projection()
     return record
 
 
@@ -1819,12 +1842,17 @@ def _build_artifact_registry(
         if artifact.get("artifact_id")
     }
     artifact_paths = artifact_paths_from_contracts(workspace, artifacts_by_id)
+    intake_results = _agent_intake_results(
+        workspace=workspace,
+        artifact_paths=artifact_paths,
+    )
     records = {
         str(artifact.get("artifact_id")): _artifact_record(
             workspace=workspace,
             artifact=artifact,
             workflow=workflow,
             recovery_state=recovery_state,
+            intake_result=intake_results.get(str(artifact.get("artifact_id") or "")),
             artifact_paths=artifact_paths,
         )
         for artifact in artifacts
@@ -1835,6 +1863,31 @@ def _build_artifact_registry(
         "run_id": run_id,
         "updated_at": updated_at,
         "artifacts": records,
+    }
+
+
+def _agent_intake_results(
+    *,
+    workspace: Path,
+    artifact_paths: Mapping[str, Path],
+) -> dict[str, IntakeResult]:
+    artifact_ids: tuple[AgentArtifactId, ...] = (
+        "candidate_claims",
+        "screened_candidates",
+        "claim_drafts",
+    )
+    bundle = evaluate_workspace_agent_artifact_intakes(
+        workspace,
+        artifact_paths={
+            artifact_id: artifact_paths[artifact_id]
+            for artifact_id in artifact_ids
+            if artifact_id in artifact_paths
+        },
+    )
+    return {
+        artifact_id: result
+        for artifact_id in artifact_ids
+        if (result := bundle.get(artifact_id)) is not None
     }
 
 

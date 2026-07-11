@@ -5,6 +5,10 @@ from __future__ import annotations
 from pathlib import Path, PurePosixPath, PureWindowsPath
 from typing import Any, Mapping
 
+from multi_agent_brief.contracts.agent_artifact_intake import (
+    AGENT_ARTIFACT_IDS,
+    AgentArtifactId,
+)
 from multi_agent_brief.orchestrator.runtime_state.errors import (
     E_TRANSACTION_INTEGRITY,
     RuntimeStateError,
@@ -133,4 +137,18 @@ def artifact_paths_from_contracts(
             artifact_id=artifact_id,
         )
         for artifact_id in artifacts_by_id
+    }
+
+
+def agent_artifact_paths_from_contracts(
+    workspace: Path,
+    artifacts_by_id: Mapping[str, Mapping[str, Any]],
+) -> dict[AgentArtifactId, Path]:
+    """Select the contract-bound paths consumed by agent artifact intake."""
+
+    all_paths = artifact_paths_from_contracts(workspace, artifacts_by_id)
+    return {
+        artifact_id: all_paths[artifact_id]
+        for artifact_id in AGENT_ARTIFACT_IDS
+        if artifact_id in all_paths
     }

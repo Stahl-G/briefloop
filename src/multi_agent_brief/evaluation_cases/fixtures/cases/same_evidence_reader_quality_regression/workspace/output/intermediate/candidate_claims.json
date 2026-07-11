@@ -1,0 +1,17 @@
+[
+  {
+    "candidate_id": "CAND-001",
+    "claim": "ExampleCo will expand shipments this quarter.",
+    "source_id": "SYN_SRC_001"
+  },
+  {
+    "candidate_id": "CAND-002",
+    "claim": "ExampleCo capacity expansion is delayed by tariff uncertainty.",
+    "source_id": "SYN_SRC_002"
+  },
+  {
+    "candidate_id": "CAND-003",
+    "claim": "Inventory movement commentary was outside the tariff watch focus.",
+    "source_id": "SYN_SRC_003"
+  }
+]
