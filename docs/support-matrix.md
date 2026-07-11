@@ -1,10 +1,11 @@
 # Support Matrix
 
-BriefLoop is the public project name during the public-product compatibility period.
-MABW remains the implementation lineage and compatibility surface. This matrix
-continues to list supported CLI/runtime surfaces by their current compatible
-names such as `multi-agent-brief`, `briefloop`, `/briefloop`, `/mabw`, and
-MABW-080.
+BriefLoop is the only current project and product name. The former project
+acronym is retired. Literal compatibility and history identifiers such as
+`multi-agent-brief`, `/mabw`, `multi_agent_brief`, `mabw.*`, and `MABW-080`
+remain only where supported commands, schemas, workspaces, or archived
+experiments require them; they are not an implementation-lineage alias. This
+matrix continues to list those literal surfaces by their compatible names.
 
 Each capability has one of the following statuses:
 

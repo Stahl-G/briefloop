@@ -1,9 +1,10 @@
 # BriefLoop Public Documentation
 
-BriefLoop is the public project name. MABW remains the implementation lineage
-and compatibility surface for CLI commands, runtime commands, package/module
-paths, artifact names, workspace formats, and archived experiment IDs during
-the public-product compatibility period.
+BriefLoop is the only current project and product name. The former project
+acronym is retired. Literal compatibility and history identifiers such as
+`multi-agent-brief`, `/mabw`, `multi_agent_brief`, `mabw.*`, and `MABW-080`
+remain only where existing commands, schemas, workspaces, or archived
+experiments require them; they are not an implementation-lineage alias.
 
 This index separates the current English documentation path from Chinese
 operator notes and legacy/memo documents. It does not claim the whole `docs/`

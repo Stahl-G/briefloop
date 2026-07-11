@@ -2,12 +2,12 @@
 
 This page separates current implementation state from roadmap goals. Use it before planning roadmap-driven changes.
 
-Public naming note: BriefLoop is the public project name for the v0.9
-compatibility period. MABW remains the implementation lineage and compatibility
-surface for `multi-agent-brief`, the `briefloop` shell alias, `/briefloop`,
-`/mabw`, Python package/module paths, artifact names, workspace formats, and
-experiment IDs. This page describes implemented runtime capability, not a
-breaking rename.
+Naming authority: BriefLoop is the only current project and product name. The
+former project acronym is retired. Literal compatibility and history identifiers
+such as `multi-agent-brief`, `/mabw`, `multi_agent_brief`, `mabw.*`, and
+`MABW-080` remain only where existing commands, schemas, workspaces, or archived
+experiments require them; they are not an implementation-lineage alias. This
+page describes implemented runtime capability, not a breaking deep rename.
 
 ## Implemented Public Baseline
 

@@ -43,6 +43,13 @@ TARGET_FILES = [
     "examples/reference-workspaces/industry-weekly-demo/artifacts/source_appendix.md",
 ]
 
+NAMING_AUTHORITY_FILES = [
+    "docs/briefloop-naming.md",
+    "docs/architecture-status.md",
+    "docs/support-matrix.md",
+    "docs/README.md",
+]
+
 CLI_HELP_COMMANDS = [
     (),
     ("new",),
@@ -60,6 +67,44 @@ FORBIDDEN_PATTERNS = [
     ("slash_mabw", re.compile(r"(?<![\w.-])/mabw\b", re.IGNORECASE)),
     ("multi_agent_brief_cli", re.compile(r"(?<![\w.-])multi-agent-brief(?![\w-])")),
     ("mabw_name", re.compile(r"(?<![\w./-])mabw(?![\w-])", re.IGNORECASE)),
+]
+
+FORBIDDEN_NAMING_AUTHORITY_PATTERNS = [
+    (
+        "implementation_lineage_alias",
+        re.compile(
+            r"MABW\s+remains\s+(?:the\s+)?implementation(?:-|\s+)lineage",
+            re.IGNORECASE,
+        ),
+    ),
+    (
+        "historical_lineage_alias",
+        re.compile(
+            r"Historical\s+implementation(?:-|\s+)lineage:\s*MABW",
+            re.IGNORECASE,
+        ),
+    ),
+    (
+        "formerly_dual_brand",
+        re.compile(r"BriefLoop,\s*formerly\s+MABW", re.IGNORECASE),
+    ),
+    (
+        "slash_dual_brand",
+        re.compile(r"BriefLoop\s*/\s*MABW", re.IGNORECASE),
+    ),
+]
+
+REQUIRED_NAMING_AUTHORITY_STATEMENTS = [
+    (
+        "missing_current_project_name_rule",
+        "briefloop is the only current project",
+        "naming authority must state that BriefLoop is the only current project",
+    ),
+    (
+        "missing_retired_name_rule",
+        "former project acronym is retired",
+        "naming authority must state that the former project acronym is retired",
+    ),
 ]
 
 FORBIDDEN_SETUP_OUTPUT_PATTERNS = [
@@ -129,6 +174,40 @@ def scan_file(path: Path) -> list[Finding]:
     return findings
 
 
+def scan_naming_authority_file(path: Path) -> list[Finding]:
+    """Validate current naming truth without rejecting classified legacy ids."""
+    try:
+        text = path.read_text(encoding="utf-8")
+    except FileNotFoundError:
+        return [
+            Finding(
+                path=path,
+                line=1,
+                kind="missing_naming_authority",
+                sample="configured naming authority file is missing",
+            )
+        ]
+
+    findings: list[Finding] = []
+    for kind, pattern in FORBIDDEN_NAMING_AUTHORITY_PATTERNS:
+        for match in pattern.finditer(text):
+            line_no = text.count("\n", 0, match.start()) + 1
+            findings.append(
+                Finding(
+                    path=path,
+                    line=line_no,
+                    kind=kind,
+                    sample=" ".join(match.group(0).split()),
+                )
+            )
+
+    normalized = " ".join(text.lower().split())
+    for kind, required_text, sample in REQUIRED_NAMING_AUTHORITY_STATEMENTS:
+        if required_text not in normalized:
+            findings.append(Finding(path=path, line=1, kind=kind, sample=sample))
+    return findings
+
+
 def _briefloop_help_text(args: tuple[str, ...]) -> str:
     src_path = ROOT / "src"
     if str(src_path) not in sys.path:
@@ -173,6 +252,8 @@ def scan(paths: list[Path] | None = None, *, root: Path = ROOT) -> list[Finding]
     for path in target_paths:
         findings.extend(scan_file(path))
     if paths is None:
+        for rel_path in NAMING_AUTHORITY_FILES:
+            findings.extend(scan_naming_authority_file(root / rel_path))
         findings.extend(_briefloop_cli_help_findings())
     return findings
 
