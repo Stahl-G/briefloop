@@ -306,6 +306,24 @@ def test_executable_readiness_rejects_declared_success_with_missing_scenario(
     assert any("required_ids=" in evidence for evidence in item.evidence)
 
 
+def test_executable_readiness_rejects_mutated_declared_required_scenario_ids(
+    monkeypatch,
+) -> None:
+    guard = _load_guard()
+    payload = _runner_payload(guard)
+    payload["required_scenario_ids"] = payload["required_scenario_ids"][:-1]
+    monkeypatch.setattr(
+        guard,
+        "run_v1_rc_safety_smoke",
+        lambda **_kwargs: payload,
+    )
+
+    item = guard.check_executable_rc_safety(ROOT)
+
+    assert item.satisfied is False
+    assert any("declared_required_ids=" in evidence for evidence in item.evidence)
+
+
 def test_executable_readiness_reruns_runner_instead_of_reading_pass_file(
     tmp_path: Path,
     monkeypatch,

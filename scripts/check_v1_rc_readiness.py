@@ -299,6 +299,14 @@ def check_executable_rc_safety(repo_root: Path) -> ReadinessItem:
         else []
     )
     expected = list(REQUIRED_SCENARIO_IDS)
+    declared_required_raw = payload.get("required_scenario_ids")
+    declared_required = (
+        declared_required_raw
+        if isinstance(declared_required_raw, list)
+        and all(isinstance(scenario_id, str) for scenario_id in declared_required_raw)
+        else []
+    )
+    declared_required_matches = declared_required == expected
     exact_ids = executed == expected
     unique_ids = len(executed) == len(set(executed))
     result_ids = [
@@ -315,6 +323,7 @@ def check_executable_rc_safety(repo_root: Path) -> ReadinessItem:
     satisfied = bool(
         payload.get("ok") is True
         and payload.get("required_complete") is True
+        and declared_required_matches
         and exact_ids
         and unique_ids
         and result_ids_match
@@ -332,6 +341,10 @@ def check_executable_rc_safety(repo_root: Path) -> ReadinessItem:
         if status == "FAIL":
             suffix = f" {result.get('error_type', 'Error')}: {result.get('error', '')}"
         evidence.append(f"{scenario_id}={status}{suffix}")
+    if not declared_required_matches:
+        evidence.append(
+            f"required_ids={expected}; declared_required_ids={declared_required_raw}"
+        )
     if not exact_ids or not result_ids_match:
         evidence.append(
             f"required_ids={expected}; executed_ids={executed_raw}; result_ids={result_ids}"

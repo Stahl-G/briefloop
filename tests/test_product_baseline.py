@@ -662,6 +662,46 @@ def test_public_overclaim_detector_rejects_contradictory_readme_claims() -> None
     assert any("automatically_ready_to_send" in finding for finding in findings)
 
 
+def test_public_overclaim_detector_rejects_workbuddy_codebuddy_posture_upgrades() -> None:
+    module = _load_product_baseline_module()
+    cases = [
+        ("runtime_support_upgrade", "CodeBuddy is fully supported for all users."),
+        ("runtime_support_upgrade", "WorkBuddy is a fully supported production runtime."),
+        ("approve_delivery", "WorkBuddy may approve delivery."),
+        ("authorize_public_release", "CodeBuddy may authorize release."),
+        ("automatic_truth_checking", "WorkBuddy performs automatic truth checking."),
+        ("automatic_fact_checking", "CodeBuddy performs automatic fact checking."),
+        ("runtime_control_authority", "CodeBuddy provides release authority."),
+        ("zh_runtime_support_upgrade", "CodeBuddy 已面向所有用户正式支持。"),
+        ("zh_runtime_control_authority", "WorkBuddy 可以批准交付并授权发布。"),
+        ("zh_automatic_fact_checking", "CodeBuddy 执行自动事实检查。"),
+    ]
+
+    for expected_label, claim in cases:
+        findings = module.public_overclaim_findings("README.md", claim)
+        assert any(expected_label in finding for finding in findings), claim
+
+
+def test_public_overclaim_detector_allows_workbuddy_codebuddy_boundaries() -> None:
+    module = _load_product_baseline_module()
+
+    findings = module.public_overclaim_findings(
+        "docs/workbuddy.md",
+        "CodeBuddy is not a supported production runtime.\n"
+        "WorkBuddy does not approve delivery or authorize release.\n"
+        "CodeBuddy does not perform automatic truth or fact checking.\n"
+        "WorkBuddy / CodeBuddy remain experimental and source-clone-only.\n",
+    )
+    zh_findings = module.public_overclaim_findings(
+        "docs/workbuddy.zh-CN.md",
+        "CodeBuddy 不是正式支持的生产运行时。\n"
+        "WorkBuddy 不批准交付、不授权发布，也不执行自动事实检查。\n",
+    )
+
+    assert findings == []
+    assert zh_findings == []
+
+
 def test_public_overclaim_guard_fails_doc_boundary_check(tmp_path, monkeypatch) -> None:
     module = _load_product_baseline_module()
     for rel_path, phrases in module.REQUIRED_DOC_BOUNDARY_PHRASES.items():
