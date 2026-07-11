@@ -176,6 +176,10 @@ def test_runner_cli_emits_machine_readable_execution_result(capsys) -> None:
     assert payload["executed_scenario_ids"] == ["RC-SMOKE-08"]
     assert payload["scenarios"][0]["ok"] is True
     assert payload["required_complete"] is False
+    evidence = payload["scenarios"][0]["evidence"]
+    assert evidence["required_limitation_wording"] == "experimental_source_clone"
+    assert evidence["semantic_classification"] == "not_performed"
+    assert "posture" not in evidence
 
 
 def test_production_runner_contains_no_optimizable_assert_statements() -> None:

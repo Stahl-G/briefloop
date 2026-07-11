@@ -928,7 +928,8 @@ def _scenario_08(_parent: Path, repo_root: Path) -> dict[str, Any]:
         checked.append(relative)
     return {
         "public_surfaces": checked,
-        "posture": "experimental_source_clone",
+        "required_limitation_wording": "experimental_source_clone",
+        "semantic_classification": "not_performed",
     }
 
 
