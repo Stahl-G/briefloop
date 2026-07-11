@@ -306,8 +306,6 @@ operator runtime 和 semantic-support auditor hardening line，包括：
 - repeated retry / repair / blocker loop 的 trajectory-regulation decision
   narrowing
 - 实验性的 source-clone WorkBuddy Skill packaging 和 first-use routing
-- 实验性的 source-clone CodeBuddy project Skill 与 role-agent handoff，通过
-  `--runtime codebuddy` 使用
 - 用于 host-agnostic compact operation 的 `operator` runtime；`manual` 保留为
   legacy alias
 - proposal-only Semantic Support Auditor surface 和 human adjudication record；
