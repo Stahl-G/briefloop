@@ -117,6 +117,7 @@ def test_public_product_rename_default_scan_reports_missing_target(tmp_path, mon
     module = _load_module()
     monkeypatch.setattr(module, "TARGET_FILES", ["missing-first-user-doc.md"])
     monkeypatch.setattr(module, "NAMING_AUTHORITY_FILES", [])
+    monkeypatch.setattr(module, "NAMING_CONSUMER_FILES", [])
     monkeypatch.setattr(module, "CLI_HELP_COMMANDS", [])
 
     findings = module.scan(root=tmp_path)
@@ -130,6 +131,7 @@ def test_public_product_rename_default_scan_reports_missing_cli_help(monkeypatch
     module = _load_module()
     monkeypatch.setattr(module, "TARGET_FILES", [])
     monkeypatch.setattr(module, "NAMING_AUTHORITY_FILES", [])
+    monkeypatch.setattr(module, "NAMING_CONSUMER_FILES", [])
     monkeypatch.setattr(module, "CLI_HELP_COMMANDS", [("removed", "command")])
     monkeypatch.setattr(module, "_briefloop_help_text", lambda args: "")
 
@@ -149,6 +151,96 @@ def test_naming_authority_surface_is_complete() -> None:
         "docs/support-matrix.md",
         "docs/README.md",
     ]
+
+
+def test_operator_naming_consumer_surface_is_ratchet_locked() -> None:
+    module = _load_module()
+
+    assert module.NAMING_CONSUMER_FILES == [
+        ".agents/skills/briefloop/references/naming-and-compatibility.md",
+        ".agents/skills/briefloop/references/version-matrix.md",
+        "integrations/hermes-plugin/mabw/skills/briefloop/references/naming-and-compatibility.md",
+        "integrations/hermes-plugin/mabw/skills/briefloop/references/version-matrix.md",
+    ]
+
+
+def test_operator_naming_consumer_rejects_equivalent_aliases(tmp_path) -> None:
+    module = _load_module()
+    target = tmp_path / "naming-and-compatibility.md"
+    target.write_text(
+        "BriefLoop is the only current project and product name.\n"
+        "The former project acronym is retired.\n"
+        "MABW is BriefLoop's internal implementation name.\n"
+        "BriefLoop is powered by the MABW architecture.\n"
+        "MABW is the engineering codename behind BriefLoop.\n"
+        "Multi-Agent Brief Workflow is the current runtime.\n",
+        encoding="utf-8",
+    )
+
+    findings = module.scan_naming_consumer_file(target)
+
+    assert [(finding.line, finding.kind) for finding in findings] == [
+        (3, "retired_project_name_alias"),
+        (4, "retired_project_name_alias"),
+        (5, "retired_project_name_alias"),
+        (6, "retired_long_project_name_alias"),
+    ]
+
+    target.write_text(
+        "BriefLoop is the only current project and product name.\n"
+        "The former project acronym is retired.\n"
+        "Multi Agent Brief Workflow is the current runtime.\n",
+        encoding="utf-8",
+    )
+    assert [
+        finding.kind for finding in module.scan_naming_consumer_file(target)
+    ] == ["retired_long_project_name_alias"]
+
+
+def test_operator_naming_consumer_allows_classified_literals(tmp_path) -> None:
+    module = _load_module()
+    target = tmp_path / "naming-and-compatibility.md"
+    target.write_text(
+        "BriefLoop is the only current project and product name.\n"
+        "The former project acronym is retired.\n"
+        "Compatibility identifiers: `/mabw`, `MABW-080`, `mabw.*`, "
+        "`mabw.claim_drafts.v1`, `integrations/hermes-plugin/mabw`, "
+        "`.mabw-onboarding`, `MABW_BIN`, `mabw-workflow`, and `mabw`.\n",
+        encoding="utf-8",
+    )
+
+    assert module.scan_naming_consumer_file(target) == []
+
+
+def test_operator_naming_consumer_rejects_unclassified_hyphen_alias(tmp_path) -> None:
+    module = _load_module()
+    target = tmp_path / "naming-and-compatibility.md"
+    target.write_text(
+        "BriefLoop is the only current project and product name.\n"
+        "The former project acronym is retired.\n"
+        "MABW-architecture is the current implementation.\n",
+        encoding="utf-8",
+    )
+
+    findings = module.scan_naming_consumer_file(target)
+
+    assert [finding.kind for finding in findings] == ["retired_project_name_alias"]
+
+
+def test_operator_naming_consumer_mirrors_are_exact() -> None:
+    source_root = ROOT / ".agents" / "skills" / "briefloop" / "references"
+    hermes_root = (
+        ROOT
+        / "integrations"
+        / "hermes-plugin"
+        / "mabw"
+        / "skills"
+        / "briefloop"
+        / "references"
+    )
+
+    for filename in ["naming-and-compatibility.md", "version-matrix.md"]:
+        assert (source_root / filename).read_bytes() == (hermes_root / filename).read_bytes()
 
 
 def test_naming_authority_rejects_implementation_lineage_alias(tmp_path) -> None:
@@ -198,6 +290,7 @@ def test_default_scan_reports_missing_naming_authority(tmp_path, monkeypatch) ->
     module = _load_module()
     monkeypatch.setattr(module, "TARGET_FILES", [])
     monkeypatch.setattr(module, "NAMING_AUTHORITY_FILES", ["docs/missing-authority.md"])
+    monkeypatch.setattr(module, "NAMING_CONSUMER_FILES", [])
     monkeypatch.setattr(module, "CLI_HELP_COMMANDS", [])
 
     findings = module.scan(root=tmp_path)

@@ -50,6 +50,13 @@ NAMING_AUTHORITY_FILES = [
     "docs/README.md",
 ]
 
+NAMING_CONSUMER_FILES = [
+    ".agents/skills/briefloop/references/naming-and-compatibility.md",
+    ".agents/skills/briefloop/references/version-matrix.md",
+    "integrations/hermes-plugin/mabw/skills/briefloop/references/naming-and-compatibility.md",
+    "integrations/hermes-plugin/mabw/skills/briefloop/references/version-matrix.md",
+]
+
 CLI_HELP_COMMANDS = [
     (),
     ("new",),
@@ -91,6 +98,30 @@ FORBIDDEN_NAMING_AUTHORITY_PATTERNS = [
     (
         "slash_dual_brand",
         re.compile(r"BriefLoop\s*/\s*MABW", re.IGNORECASE),
+    ),
+]
+
+CLASSIFIED_RETIRED_NAME_LITERAL_PATTERNS = [
+    re.compile(r"(?<![\w-])MABW-080(?![\w-])", re.IGNORECASE),
+    re.compile(r"(?<![\w])/mabw(?![\w])", re.IGNORECASE),
+    re.compile(r"(?<![\w])mabw\.[\w.*-]+", re.IGNORECASE),
+    re.compile(r"(?<![\w])\.mabw[\w.-]*", re.IGNORECASE),
+    re.compile(r"\bMABW_[A-Z0-9_]+\b"),
+    re.compile(r"(?:[\w.~+-]+/)+mabw(?:/[\w.~+-]+)*", re.IGNORECASE),
+    re.compile(r"`mabw(?:-[\w-]+)?`"),
+]
+
+FORBIDDEN_NAMING_CONSUMER_TOKEN_PATTERNS = [
+    (
+        "retired_project_name_alias",
+        re.compile(r"(?<![\w./])mabw(?![\w.])", re.IGNORECASE),
+    ),
+    (
+        "retired_long_project_name_alias",
+        re.compile(
+            r"\bMulti(?:-|\s+)Agent\s+Brief\s+Workflow\b",
+            re.IGNORECASE,
+        ),
     ),
 ]
 
@@ -208,6 +239,51 @@ def scan_naming_authority_file(path: Path) -> list[Finding]:
     return findings
 
 
+def _mask_classified_retired_name_literals(line: str) -> str:
+    """Remove explicitly classified compatibility identifiers before scanning."""
+
+    masked = line
+    for pattern in CLASSIFIED_RETIRED_NAME_LITERAL_PATTERNS:
+        masked = pattern.sub(lambda match: " " * len(match.group(0)), masked)
+    return masked
+
+
+def scan_naming_consumer_file(path: Path) -> list[Finding]:
+    """Reject retired-name aliases while allowing classified literal identifiers."""
+
+    try:
+        text = path.read_text(encoding="utf-8")
+    except FileNotFoundError:
+        return [
+            Finding(
+                path=path,
+                line=1,
+                kind="missing_naming_consumer",
+                sample="configured Operator naming consumer file is missing",
+            )
+        ]
+
+    findings: list[Finding] = []
+    for line_no, line in enumerate(text.splitlines(), start=1):
+        classified = _mask_classified_retired_name_literals(line)
+        for kind, pattern in FORBIDDEN_NAMING_CONSUMER_TOKEN_PATTERNS:
+            if pattern.search(classified):
+                findings.append(
+                    Finding(
+                        path=path,
+                        line=line_no,
+                        kind=kind,
+                        sample=line.strip(),
+                    )
+                )
+
+    normalized = " ".join(text.lower().split())
+    for kind, required_text, sample in REQUIRED_NAMING_AUTHORITY_STATEMENTS:
+        if required_text not in normalized:
+            findings.append(Finding(path=path, line=1, kind=kind, sample=sample))
+    return findings
+
+
 def _briefloop_help_text(args: tuple[str, ...]) -> str:
     src_path = ROOT / "src"
     if str(src_path) not in sys.path:
@@ -254,6 +330,8 @@ def scan(paths: list[Path] | None = None, *, root: Path = ROOT) -> list[Finding]
     if paths is None:
         for rel_path in NAMING_AUTHORITY_FILES:
             findings.extend(scan_naming_authority_file(root / rel_path))
+        for rel_path in NAMING_CONSUMER_FILES:
+            findings.extend(scan_naming_consumer_file(root / rel_path))
         findings.extend(_briefloop_cli_help_findings())
     return findings
 
