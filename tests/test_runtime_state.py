@@ -11037,3 +11037,105 @@ def test_show_runtime_state_reports_event_count(tmp_path):
     state = show_runtime_state(workspace=ws)
 
     assert state["event_count"] >= 1
+
+
+@pytest.mark.parametrize(
+    "reserved_path",
+    list(RUNTIME_STATE_FILES.values()),
+    ids=["runtime-manifest", "workflow-state", "artifact-registry", "event-log"],
+)
+def test_artifact_contract_rejects_runtime_control_paths_without_state_writes(
+    tmp_path: Path,
+    reserved_path: str,
+) -> None:
+    repo = _repo_with_role_topology(tmp_path, "default")
+    ws = _write_workspace(tmp_path)
+    initialize_runtime_state(workspace=ws, repo_workdir=repo)
+    contracts_path = repo / "configs" / "artifact_contracts.yaml"
+    import yaml
+
+    contracts = yaml.safe_load(contracts_path.read_text(encoding="utf-8"))
+    next(
+        artifact
+        for artifact in contracts["artifacts"]
+        if artifact.get("artifact_id") == "claim_ledger"
+    )["path"] = reserved_path
+    contracts_path.write_text(yaml.safe_dump(contracts, sort_keys=False), encoding="utf-8")
+    before = {
+        key: _state_file(ws, key).read_bytes() if _state_file(ws, key).exists() else None
+        for key in RUNTIME_STATE_FILES
+    }
+
+    with pytest.raises(RuntimeStateError) as excinfo:
+        check_runtime_state(workspace=ws, repo_workdir=repo)
+
+    assert excinfo.value.error_code == "E_TRANSACTION_INTEGRITY"
+    assert {
+        key: _state_file(ws, key).read_bytes() if _state_file(ws, key).exists() else None
+        for key in RUNTIME_STATE_FILES
+    } == before
+
+
+def test_artifact_contract_rejects_duplicate_canonical_owner_without_state_writes(
+    tmp_path: Path,
+) -> None:
+    repo = _repo_with_role_topology(tmp_path, "default")
+    ws = _write_workspace(tmp_path)
+    initialize_runtime_state(workspace=ws, repo_workdir=repo)
+    contracts_path = repo / "configs" / "artifact_contracts.yaml"
+    import yaml
+
+    contracts = yaml.safe_load(contracts_path.read_text(encoding="utf-8"))
+    for artifact in contracts["artifacts"]:
+        if artifact.get("artifact_id") in {"candidate_claims", "screened_candidates"}:
+            artifact["path"] = "custom/./shared.json"
+    contracts_path.write_text(yaml.safe_dump(contracts, sort_keys=False), encoding="utf-8")
+    before = {
+        key: _state_file(ws, key).read_bytes() if _state_file(ws, key).exists() else None
+        for key in RUNTIME_STATE_FILES
+    }
+
+    with pytest.raises(RuntimeStateError) as excinfo:
+        check_runtime_state(workspace=ws, repo_workdir=repo)
+
+    assert excinfo.value.error_code == "E_TRANSACTION_INTEGRITY"
+    assert excinfo.value.details["path"] == "custom/shared.json"
+    assert {
+        key: _state_file(ws, key).read_bytes() if _state_file(ws, key).exists() else None
+        for key in RUNTIME_STATE_FILES
+    } == before
+
+
+def test_artifact_contract_rejects_symlink_identity_drift_without_state_writes(
+    tmp_path: Path,
+) -> None:
+    repo = _repo_with_role_topology(tmp_path, "default")
+    ws = _write_workspace(tmp_path)
+    initialize_runtime_state(workspace=ws, repo_workdir=repo)
+    real_dir = ws / "real"
+    real_dir.mkdir()
+    (ws / "alias").symlink_to(real_dir, target_is_directory=True)
+    contracts_path = repo / "configs" / "artifact_contracts.yaml"
+    import yaml
+
+    contracts = yaml.safe_load(contracts_path.read_text(encoding="utf-8"))
+    next(
+        artifact
+        for artifact in contracts["artifacts"]
+        if artifact.get("artifact_id") == "claim_ledger"
+    )["path"] = "alias/claim_ledger.json"
+    contracts_path.write_text(yaml.safe_dump(contracts, sort_keys=False), encoding="utf-8")
+    before = {
+        key: _state_file(ws, key).read_bytes() if _state_file(ws, key).exists() else None
+        for key in RUNTIME_STATE_FILES
+    }
+
+    with pytest.raises(RuntimeStateError) as excinfo:
+        check_runtime_state(workspace=ws, repo_workdir=repo)
+
+    assert excinfo.value.error_code == "E_TRANSACTION_INTEGRITY"
+    assert "symlink resolution" in str(excinfo.value)
+    assert {
+        key: _state_file(ws, key).read_bytes() if _state_file(ws, key).exists() else None
+        for key in RUNTIME_STATE_FILES
+    } == before

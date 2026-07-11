@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 import re
 from pathlib import Path
-from typing import Any
+from typing import Any, Mapping
 
 from multi_agent_brief.contracts.schemas.atomic_claim_graph import AtomicClaimGraphContract
 from multi_agent_brief.core.citations import extract_src_ref_ids
@@ -90,11 +90,16 @@ def project_atomic_reader_text_from_workspace(
     target_text: str,
     target_artifact: str,
     ledger_claims: list[dict[str, Any]] | None = None,
+    artifact_paths: Mapping[str, Path] | None = None,
 ) -> dict[str, Any]:
     """Load and validate workspace graph before projecting reader text."""
 
     ws = Path(workspace)
-    graph_path = ws / "output" / "intermediate" / "atomic_claim_graph.json"
+    graph_path = (
+        artifact_paths["atomic_claim_graph"]
+        if artifact_paths is not None
+        else ws / "output" / "intermediate" / "atomic_claim_graph.json"
+    )
     if not graph_path.exists():
         return _empty_projection(
             status="not_available",
