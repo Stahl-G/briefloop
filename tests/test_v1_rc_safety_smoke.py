@@ -47,6 +47,7 @@ def test_required_rc_safety_matrix_executes_real_lifecycles(tmp_path: Path) -> N
 
     clean = tmp_path / "rc-smoke-01"
     clean_report = _json(clean / "output/intermediate/finalize_report.json")
+    assert (clean / "output/intermediate/agent_handoff.json").exists()
     assert clean_report["delivery_promotion"] == "promoted"
     assert (clean / "output/delivery/brief.md").exists()
     assert any(

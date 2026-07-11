@@ -470,6 +470,18 @@ def _finalize_workspace(
 
 def _scenario_01(parent: Path, repo_root: Path) -> dict[str, Any]:
     workspace = _new_workspace(parent, "rc-smoke-01")
+    _run_cli(
+        [
+            "run",
+            "--workspace",
+            str(workspace),
+            "--repo-workdir",
+            str(repo_root),
+            "--skip-doctor",
+        ]
+    )
+    handoff = workspace / _INTERMEDIATE / "agent_handoff.json"
+    assert handoff.exists()
     _advance_to_auditor_complete(workspace, repo_root=repo_root, use_cli=True)
     _finalize_workspace(workspace, repo_root=repo_root, use_cli=True)
     projection = build_completion_projection(workspace=workspace, repo_workdir=repo_root)
@@ -492,6 +504,7 @@ def _scenario_01(parent: Path, repo_root: Path) -> dict[str, Any]:
     assert len(finalize_events) == 1
     return {
         "transaction_path": "cli",
+        "handoff_sha256": _sha256(handoff),
         "delivery_sha256": _sha256(delivery),
         "finalize_event_id": finalize_events[0]["event_id"],
     }
