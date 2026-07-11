@@ -1211,10 +1211,10 @@ def _suggested_next_command(workspace: Path, status: dict[str, Any]) -> str:
     fact_layer_import = status.get("fact_layer_import") or {}
     experiment_080 = status.get("experiment_080") or {}
     recovery_state = status.get("recovery_state") or {}
-    if not (status.get("runtime") or {}).get("present"):
-        return f"briefloop run --workspace {workspace} --runtime claude"
     if artifacts.get("registry_status") in _UNSAFE_REGISTRY_STATUSES:
         return f"briefloop state show --workspace {workspace} --json"
+    if not (status.get("runtime") or {}).get("present"):
+        return f"briefloop run --workspace {workspace} --runtime claude"
     if recovery_state.get("status") not in {"not_applicable", "completed_non_reference"}:
         return f"briefloop workbuddy diagnose --workspace {workspace} --json"
     if workflow.get("blocked"):
@@ -1279,13 +1279,6 @@ def _progress_summary(status: dict[str, Any]) -> dict[str, Any]:
             "current_work": "check run record",
             "message": "The event log has unreadable records; inspect JSON status or state before continuing.",
         }
-    if not runtime.get("present"):
-        return {
-            **base,
-            "status": "not_started",
-            "current_work": "create handoff",
-            "message": "Create or refresh the BriefLoop handoff before stage work.",
-        }
     if artifacts.get("registry_status") in _UNSAFE_REGISTRY_STATUSES:
         return {
             **base,
@@ -1295,6 +1288,13 @@ def _progress_summary(status: dict[str, Any]) -> dict[str, Any]:
                 "The artifact registry is unavailable or invalid; inspect runtime state "
                 "before continuing."
             ),
+        }
+    if not runtime.get("present"):
+        return {
+            **base,
+            "status": "not_started",
+            "current_work": "create handoff",
+            "message": "Create or refresh the BriefLoop handoff before stage work.",
         }
     narrowing = workflow.get("trajectory_regulation") if isinstance(workflow.get("trajectory_regulation"), dict) else {}
     if narrowing.get("status") == "decision_narrowed":

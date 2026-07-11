@@ -471,17 +471,17 @@ def test_status_command_is_read_only_for_existing_runtime_state(tmp_path, capsys
         ),
     ],
     ids=[
-        "STATUS-REG-02-malformed",
-        "STATUS-REG-03-wrong-schema",
-        "STATUS-REG-04-manifest-schema",
-        "STATUS-REG-04-manifest-run-id",
-        "STATUS-REG-04-missing-run-id",
-        "STATUS-REG-04-cross-run",
-        "STATUS-REG-05-artifacts-shape",
-        "STATUS-REG-05-record-shape",
-        "STATUS-REG-05-artifact-id",
-        "STATUS-REG-05-record-identity",
-        "STATUS-REG-06-record-status",
+        "STATUS-REG-03-malformed",
+        "STATUS-REG-04-wrong-schema",
+        "STATUS-REG-05-manifest-schema",
+        "STATUS-REG-05-manifest-run-id",
+        "STATUS-REG-05-missing-run-id",
+        "STATUS-REG-05-cross-run",
+        "STATUS-REG-06-artifacts-shape",
+        "STATUS-REG-06-record-shape",
+        "STATUS-REG-06-artifact-id",
+        "STATUS-REG-06-record-identity",
+        "STATUS-REG-07-record-status",
     ],
 )
 def test_status_registry_context_degrades_without_consuming_or_writing(
@@ -533,6 +533,77 @@ def test_status_registry_context_degrades_without_consuming_or_writing(
     for path in watched:
         assert path.read_bytes() == before_bytes[path]
         assert path.stat().st_mtime_ns == before_mtime[path]
+
+
+@pytest.mark.parametrize(
+    "manifest_state",
+    ["missing", "unreadable"],
+    ids=[
+        "STATUS-REG-09-missing-manifest",
+        "STATUS-REG-09-unreadable-manifest",
+    ],
+)
+def test_status_unsafe_present_registry_precedes_fresh_run_recommendation(
+    tmp_path,
+    capsys,
+    manifest_state,
+):
+    ws = _minimal_workspace(tmp_path / "ws")
+    initialize_runtime_state(workspace=ws, runtime="claude", actor="cli")
+    check_runtime_state(workspace=ws)
+    paths = runtime_state_paths(ws)
+    registry = json.loads(paths["artifact_registry"].read_text(encoding="utf-8"))
+    registry["untrusted_marker"] = "must-not-reach-downstream-projections"
+    paths["artifact_registry"].write_text(
+        json.dumps(registry, ensure_ascii=False, indent=2, sort_keys=True) + "\n",
+        encoding="utf-8",
+    )
+    if manifest_state == "missing":
+        paths["runtime_manifest"].unlink()
+    else:
+        paths["runtime_manifest"].write_text("{broken json}\n", encoding="utf-8")
+
+    before = {
+        name: {
+            "exists": path.exists(),
+            "bytes": path.read_bytes() if path.exists() else None,
+            "mtime": path.stat().st_mtime_ns if path.exists() else None,
+        }
+        for name, path in paths.items()
+    }
+
+    assert main(["status", "--workspace", str(ws), "--json"]) == 0
+    payload = json.loads(capsys.readouterr().out)
+    artifacts = payload["artifacts"]
+    assert payload["runtime"]["present"] is False
+    assert artifacts["registry_status"] == "invalid_identity"
+    assert artifacts["registry_reason_code"] == (
+        "artifact_registry_manifest_context_invalid"
+    )
+    assert artifacts["artifact_count"] == 0
+    assert artifacts["valid_count"] == 0
+    assert artifacts["intake"]["present"] is False
+    assert "must-not-reach-downstream-projections" not in json.dumps(payload)
+    assert payload["suggested_next_command"] == (
+        f"briefloop state show --workspace {ws} --json"
+    )
+    assert payload["progress"]["status"] == "needs_operator_action"
+    assert payload["progress"]["current_work"] == "check run record"
+    assert "briefloop run" not in payload["progress"]["next_command"]
+
+    assert main(["status", "--workspace", str(ws)]) == 0
+    human = capsys.readouterr().out
+    assert "registry_status=invalid_identity" in human
+    assert "registry_reason=artifact_registry_manifest_context_invalid" in human
+    assert f"suggested_next: briefloop state show --workspace {ws} --json" in human
+    assert "must-not-reach-downstream-projections" not in human
+
+    for name, path in paths.items():
+        snapshot = before[name]
+        assert path.exists() is snapshot["exists"]
+        if snapshot["exists"]:
+            assert path.read_bytes() == snapshot["bytes"]
+            assert path.stat().st_mtime_ns == snapshot["mtime"]
 
 
 def test_status_command_human_output_reports_user_progress_language(tmp_path, capsys):
