@@ -482,7 +482,6 @@ def _append_freeze_event_binding_reasons(
         expected.update(
             {
                 "source_sha256": freeze.get("source_sha256"),
-                "claim_ledger_sha256": freeze.get("claim_ledger_sha256"),
             }
         )
     else:
@@ -499,6 +498,134 @@ def _append_freeze_event_binding_reasons(
     for field, value in expected.items():
         if metadata.get(field) != value:
             reasons.append(f"Claim Ledger freeze event {field} does not match manifest binding.")
+    if freeze.get("schema_version") == CLAIM_LEDGER_FREEZE_LEGACY_SCHEMA:
+        _append_legacy_freeze_ledger_lineage_reasons(
+            reasons,
+            manifest=manifest,
+            freeze=freeze,
+            freeze_event=event,
+            event_records=records,
+            run_id=run_id,
+        )
+
+
+def _append_legacy_freeze_ledger_lineage_reasons(
+    reasons: list[str],
+    *,
+    manifest: dict[str, Any],
+    freeze: dict[str, Any],
+    freeze_event: dict[str, Any],
+    event_records: list[dict[str, Any]],
+    run_id: str,
+) -> None:
+    """Bind a v1 freeze's original hash to the current enriched ledger."""
+
+    metadata = freeze_event.get("metadata")
+    frozen_sha = str(
+        metadata.get("claim_ledger_sha256") if isinstance(metadata, dict) else ""
+    )
+    current_sha = str(freeze.get("claim_ledger_sha256") or "")
+    if not frozen_sha:
+        reasons.append("Claim Ledger freeze event claim_ledger_sha256 is missing.")
+        return
+    if frozen_sha == current_sha:
+        return
+
+    history = manifest.get("claim_ledger_metadata_enrichments")
+    if not isinstance(history, list) or not history:
+        reasons.append(
+            "Claim Ledger legacy freeze current hash differs from its frozen event without metadata enrichment lineage."
+        )
+        return
+
+    ledger_path = freeze.get("claim_ledger_path")
+    cursor = frozen_sha
+    previous_event_index = event_records.index(freeze_event)
+    seen_transactions: set[str] = set()
+    for index, record in enumerate(history):
+        prefix = f"Claim Ledger metadata enrichment lineage record {index}"
+        if not isinstance(record, dict):
+            reasons.append(f"{prefix} is malformed.")
+            return
+        if record.get("schema_version") != "mabw.claim_ledger_metadata_enrichment.v1":
+            reasons.append(f"{prefix} has an unsupported schema.")
+            return
+        if record.get("status") != "applied":
+            reasons.append(f"{prefix} is not applied.")
+            return
+        if record.get("claim_ledger_authority") != "claim_ledger_freeze":
+            reasons.append(f"{prefix} is not bound to Claim Ledger freeze authority.")
+            return
+        if record.get("claim_ledger_path") != ledger_path:
+            reasons.append(f"{prefix} claim_ledger_path does not match freeze binding.")
+            return
+        if record.get("previous_claim_ledger_sha256") != cursor:
+            reasons.append(f"{prefix} previous hash does not continue frozen lineage.")
+            return
+        if record.get("source_claim_ledger_sha256") != cursor:
+            reasons.append(f"{prefix} source hash does not continue frozen lineage.")
+            return
+        next_sha = str(record.get("claim_ledger_sha256") or "")
+        if not next_sha:
+            reasons.append(f"{prefix} current hash is missing.")
+            return
+        transaction_id = str(record.get("transaction_id") or "")
+        if not transaction_id or transaction_id in seen_transactions:
+            reasons.append(f"{prefix} transaction_id is missing or duplicated.")
+            return
+        seen_transactions.add(transaction_id)
+
+        matching_events = [
+            (event_index, candidate)
+            for event_index, candidate in enumerate(event_records)
+            if candidate.get("run_id") == run_id
+            and candidate.get("event_type") == "claim_ledger_metadata_enriched"
+            and isinstance(candidate.get("metadata"), dict)
+            and candidate["metadata"].get("transaction_id") == transaction_id
+        ]
+        if len(matching_events) != 1:
+            reasons.append(f"{prefix} requires exactly one matching current-run event.")
+            return
+        event_index, enrichment_event = matching_events[0]
+        if event_index <= previous_event_index:
+            reasons.append(f"{prefix} event does not follow its authority event.")
+            return
+        if enrichment_event.get("stage_id") != "claim-ledger":
+            reasons.append(f"{prefix} event stage_id is not claim-ledger.")
+            return
+        if enrichment_event.get("artifact_id") != "claim_ledger":
+            reasons.append(f"{prefix} event artifact_id is not claim_ledger.")
+            return
+        enrichment_metadata = enrichment_event["metadata"]
+        event_expected = {
+            "claim_ledger_path": ledger_path,
+            "previous_claim_ledger_sha256": cursor,
+            "claim_ledger_sha256": next_sha,
+        }
+        for field, value in event_expected.items():
+            if enrichment_metadata.get(field) != value:
+                reasons.append(f"{prefix} event {field} does not match lineage.")
+                return
+        cursor = next_sha
+        previous_event_index = event_index
+
+    latest = manifest.get("claim_ledger_metadata_enrichment")
+    if not isinstance(latest, dict) or latest != history[-1]:
+        reasons.append(
+            "Claim Ledger metadata enrichment latest record does not match lineage history."
+        )
+        return
+    if freeze.get("metadata_enrichment_transaction_id") != history[-1].get(
+        "transaction_id"
+    ):
+        reasons.append(
+            "Claim Ledger freeze metadata enrichment transaction does not match lineage tip."
+        )
+        return
+    if cursor != current_sha:
+        reasons.append(
+            "Claim Ledger metadata enrichment lineage does not reach the current manifest hash."
+        )
 
 
 def _registry_bound_to_current_intake(

@@ -645,6 +645,23 @@ def _freeze_claim_ledger_fixture(ws: Path, *, duplicate: bool = False) -> None:
     freeze_claim_ledger_transaction(workspace=ws, repo_workdir=ROOT)
 
 
+def _legacy_claim_ledger_freeze(current: dict[str, object]) -> dict[str, object]:
+    return {
+        "schema_version": "mabw.claim_ledger_freeze.v1",
+        "status": "frozen",
+        "frozen_at": current["frozen_at"],
+        "transaction_id": current["transaction_id"],
+        "id_strategy": current["id_strategy"],
+        "source_artifact_id": "claim_drafts",
+        "source_path": current["source_path"],
+        "source_schema_version": current["source_schema_version"],
+        "source_sha256": current["source_raw_sha256"],
+        "claim_ledger_path": current["claim_ledger_path"],
+        "claim_ledger_sha256": current["claim_ledger_sha256"],
+        "claim_count": current["claim_count"],
+    }
+
+
 def _add_imported_source_authority(
     ws: Path,
     *,
@@ -5248,20 +5265,7 @@ def test_legacy_freeze_binding_behavior(tmp_path: Path) -> None:
     manifest_path = _state_file(ws, "runtime_manifest")
     manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
     current = manifest["claim_ledger_freeze"]
-    manifest["claim_ledger_freeze"] = {
-        "schema_version": "mabw.claim_ledger_freeze.v1",
-        "status": "frozen",
-        "frozen_at": current["frozen_at"],
-        "transaction_id": current["transaction_id"],
-        "id_strategy": current["id_strategy"],
-        "source_artifact_id": "claim_drafts",
-        "source_path": current["source_path"],
-        "source_schema_version": current["source_schema_version"],
-        "source_sha256": current["source_raw_sha256"],
-        "claim_ledger_path": current["claim_ledger_path"],
-        "claim_ledger_sha256": current["claim_ledger_sha256"],
-        "claim_count": current["claim_count"],
-    }
+    manifest["claim_ledger_freeze"] = _legacy_claim_ledger_freeze(current)
     manifest_path.write_text(
         json.dumps(manifest, ensure_ascii=False, indent=2, sort_keys=True) + "\n",
         encoding="utf-8",
@@ -5279,6 +5283,182 @@ def test_legacy_freeze_binding_behavior(tmp_path: Path) -> None:
     assert frozen["manifest"]["claim_ledger_freeze"]["schema_version"].endswith(".v2")
 
 
+def test_legacy_freeze_remains_valid_after_metadata_enrichment(tmp_path: Path) -> None:
+    ws = _write_workspace(tmp_path)
+    initialize_runtime_state(workspace=ws, repo_workdir=ROOT)
+    _set_current_stage(ws, "claim-ledger")
+    _add_imported_source_authority(ws, metadata={"published_at": "2026-06-01"})
+    _add_imported_source_authority(ws, source_id="SRC-002", filename="source-002.json")
+    _write_json_artifact(ws, "claim_drafts.json", _valid_claim_drafts_payload())
+    freeze_claim_ledger_transaction(workspace=ws, repo_workdir=ROOT)
+
+    manifest_path = _state_file(ws, "runtime_manifest")
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    current = manifest["claim_ledger_freeze"]
+    manifest["claim_ledger_freeze"] = _legacy_claim_ledger_freeze(current)
+    manifest_path.write_text(
+        json.dumps(manifest, ensure_ascii=False, indent=2, sort_keys=True) + "\n",
+        encoding="utf-8",
+    )
+    freeze_event_before = next(
+        event
+        for event in _event_records(ws)
+        if event.get("event_type") == "claim_ledger_frozen"
+    )
+    frozen_sha = freeze_event_before["metadata"]["claim_ledger_sha256"]
+    assert runtime_state.operations._claim_ledger_freeze_reasons(
+        workspace=ws,
+        manifest=manifest,
+    ) == []
+
+    enrichment = enrich_claim_metadata_transaction(workspace=ws, repo_workdir=ROOT)
+
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    current_sha = _sha256_file(_intermediate(ws) / "claim_ledger.json")
+    events = _event_records(ws)
+    freeze_event_after = next(
+        event for event in events if event.get("event_type") == "claim_ledger_frozen"
+    )
+    enrichment_event = next(
+        event
+        for event in events
+        if event.get("event_type") == "claim_ledger_metadata_enriched"
+    )
+    assert freeze_event_after == freeze_event_before
+    assert enrichment_event["metadata"]["transaction_id"] == (
+        enrichment["transaction"]["transaction_id"]
+    )
+    assert enrichment_event["metadata"]["previous_claim_ledger_sha256"] == frozen_sha
+    assert enrichment_event["metadata"]["claim_ledger_sha256"] == current_sha
+    assert runtime_state.operations._claim_ledger_freeze_reasons(
+        workspace=ws,
+        manifest=manifest,
+    ) == []
+
+    completed = complete_stage_transaction(
+        workspace=ws,
+        repo_workdir=ROOT,
+        stage_id="claim-ledger",
+        reason="complete legacy enriched Claim Ledger",
+    )
+
+    assert completed["workflow_state"]["current_stage"] == "analyst"
+    assert completed["artifact_registry"]["artifacts"]["claim_ledger"]["status"] == (
+        "valid"
+    )
+
+
+@pytest.mark.parametrize(
+    ("mutation", "expected_reason"),
+    [
+        (
+            "missing_history",
+            "differs from its frozen event without metadata enrichment lineage",
+        ),
+        ("broken_previous_hash", "previous hash does not continue frozen lineage"),
+        ("missing_event", "requires exactly one matching current-run event"),
+        ("duplicate_event", "requires exactly one matching current-run event"),
+        ("wrong_event_hash", "event claim_ledger_sha256 does not match lineage"),
+    ],
+    ids=[
+        "INTAKE-LEGACY-ENRICH-02-missing-history",
+        "INTAKE-LEGACY-ENRICH-03-broken-chain",
+        "INTAKE-LEGACY-ENRICH-04-missing-event",
+        "INTAKE-LEGACY-ENRICH-05-duplicate-event",
+        "INTAKE-LEGACY-ENRICH-06-wrong-event-hash",
+    ],
+)
+def test_legacy_freeze_rejects_invalid_metadata_enrichment_lineage(
+    tmp_path: Path,
+    mutation: str,
+    expected_reason: str,
+) -> None:
+    ws = _write_workspace(tmp_path)
+    initialized = initialize_runtime_state(workspace=ws, repo_workdir=ROOT)
+    _set_current_stage(ws, "claim-ledger")
+    _add_imported_source_authority(ws, metadata={"published_at": "2026-06-01"})
+    _add_imported_source_authority(ws, source_id="SRC-002", filename="source-002.json")
+    _write_json_artifact(ws, "claim_drafts.json", _valid_claim_drafts_payload())
+    frozen = freeze_claim_ledger_transaction(workspace=ws, repo_workdir=ROOT)
+    current = frozen["manifest"]["claim_ledger_freeze"]
+    manifest_path = _state_file(ws, "runtime_manifest")
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    manifest["claim_ledger_freeze"] = _legacy_claim_ledger_freeze(current)
+    manifest_path.write_text(
+        json.dumps(manifest, ensure_ascii=False, indent=2, sort_keys=True) + "\n",
+        encoding="utf-8",
+    )
+    enrich_claim_metadata_transaction(workspace=ws, repo_workdir=ROOT)
+
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    event_path = _state_file(ws, "event_log")
+    events = _event_records(ws)
+    enrichment_event = next(
+        event
+        for event in events
+        if event.get("event_type") == "claim_ledger_metadata_enriched"
+    )
+    if mutation == "missing_history":
+        manifest.pop("claim_ledger_metadata_enrichments")
+    elif mutation == "broken_previous_hash":
+        manifest["claim_ledger_metadata_enrichments"][0][
+            "previous_claim_ledger_sha256"
+        ] = "0" * 64
+    elif mutation == "missing_event":
+        events.remove(enrichment_event)
+    elif mutation == "duplicate_event":
+        runtime_event_log.append_event(
+            workspace=ws,
+            run_id=initialized["manifest"]["run_id"],
+            event_type="claim_ledger_metadata_enriched",
+            actor="cli",
+            stage_id="claim-ledger",
+            artifact_id="claim_ledger",
+            reason="Duplicate enrichment event.",
+            metadata=dict(enrichment_event["metadata"]),
+        )
+        events = _event_records(ws)
+    else:
+        enrichment_event["metadata"]["claim_ledger_sha256"] = "0" * 64
+
+    manifest_path.write_text(
+        json.dumps(manifest, ensure_ascii=False, indent=2, sort_keys=True) + "\n",
+        encoding="utf-8",
+    )
+    if mutation != "duplicate_event":
+        event_path.write_text(
+            "".join(
+                json.dumps(event, ensure_ascii=False, sort_keys=True) + "\n"
+                for event in events
+            ),
+            encoding="utf-8",
+        )
+    reasons = runtime_state.operations._claim_ledger_freeze_reasons(
+        workspace=ws,
+        manifest=manifest,
+    )
+    before = {
+        key: _state_file(ws, key).read_bytes()
+        for key in ("runtime_manifest", "workflow_state", "artifact_registry", "event_log")
+    }
+
+    with pytest.raises(RuntimeStateError) as excinfo:
+        complete_stage_transaction(
+            workspace=ws,
+            repo_workdir=ROOT,
+            stage_id="claim-ledger",
+            reason="reject invalid legacy enrichment lineage",
+        )
+
+    assert expected_reason in str(reasons)
+    assert excinfo.value.error_code == runtime_state.operations.E_COMPLETION_TRANSACTION_REQUIRED
+    assert expected_reason in str(excinfo.value)
+    assert {
+        key: _state_file(ws, key).read_bytes()
+        for key in ("runtime_manifest", "workflow_state", "artifact_registry", "event_log")
+    } == before
+
+
 def test_legacy_freeze_rejects_cross_run_transplant(tmp_path: Path) -> None:
     ws_a = _write_workspace(tmp_path / "run-a")
     initialized_a = initialize_runtime_state(workspace=ws_a, repo_workdir=ROOT)
@@ -5286,20 +5466,7 @@ def test_legacy_freeze_rejects_cross_run_transplant(tmp_path: Path) -> None:
     _write_json_artifact(ws_a, "claim_drafts.json", _valid_claim_drafts_payload())
     frozen_a = freeze_claim_ledger_transaction(workspace=ws_a, repo_workdir=ROOT)
     current = frozen_a["manifest"]["claim_ledger_freeze"]
-    legacy_freeze = {
-        "schema_version": "mabw.claim_ledger_freeze.v1",
-        "status": "frozen",
-        "frozen_at": current["frozen_at"],
-        "transaction_id": current["transaction_id"],
-        "id_strategy": current["id_strategy"],
-        "source_artifact_id": "claim_drafts",
-        "source_path": current["source_path"],
-        "source_schema_version": current["source_schema_version"],
-        "source_sha256": current["source_raw_sha256"],
-        "claim_ledger_path": current["claim_ledger_path"],
-        "claim_ledger_sha256": current["claim_ledger_sha256"],
-        "claim_count": current["claim_count"],
-    }
+    legacy_freeze = _legacy_claim_ledger_freeze(current)
 
     ws_b = _write_workspace(tmp_path / "run-b")
     initialized_b = initialize_runtime_state(workspace=ws_b, repo_workdir=ROOT)
