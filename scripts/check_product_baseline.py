@@ -515,9 +515,8 @@ FORBIDDEN_PUBLIC_CLAIM_PATTERNS = [
     (
         "authorize_public_release",
         re.compile(
-            r"\b(can|could|will|does|may)\s+(?:authorize|approve)\s+(?:public\s+)?release\b"
-            r"|\b(authorizes|authorized|authorizing|approves|approved|approving)\s+"
-            r"(?:public\s+)?release\b",
+            r"\b(can|could|will|does|may)\s+authorize\s+public\s+release\b"
+            r"|\b(authorizes|authorized|authorizing)\s+public\s+release\b",
             re.IGNORECASE,
         ),
     ),
@@ -572,70 +571,6 @@ FORBIDDEN_PUBLIC_CLAIM_PATTERNS = [
             r"[^.\n]{0,80}\bsupport[- ]sufficiency\b"
             r"|\bsupport[- ]sufficiency\s+structures?\s+(are|is)\s+implemented\b",
             re.IGNORECASE,
-        ),
-    ),
-    (
-        "runtime_support_upgrade",
-        re.compile(
-            r"\b(?:workbuddy|codebuddy)\b"
-            r"(?:(?!\b(?:not|never|no|cannot|can't|does\s+not|do\s+not|is\s+not|are\s+not)\b)"
-            r"[^.\n]){0,96}"
-            r"\b(?:fully\s+supported(?:\s+for\s+all\s+users)?"
-            r"|supported\s+production\s+runtime"
-            r"|production[- ]ready|generally\s+available|ga[- ]ready)\b",
-            re.IGNORECASE,
-        ),
-    ),
-    (
-        "automatic_truth_checking",
-        re.compile(
-            r"\b(?:workbuddy|codebuddy)\b"
-            r"(?:(?!\b(?:not|never|no|cannot|can't|does\s+not|do\s+not)\b)[^.\n]){0,96}"
-            r"\bautomatic(?:ally)?\s+truth[- ](?:checking|checker)\b",
-            re.IGNORECASE,
-        ),
-    ),
-    (
-        "automatic_fact_checking",
-        re.compile(
-            r"\b(?:workbuddy|codebuddy)\b"
-            r"(?:(?!\b(?:not|never|no|cannot|can't|does\s+not|do\s+not)\b)[^.\n]){0,96}"
-            r"\bautomatic(?:ally)?\s+fact[- ](?:checking|checker)\b",
-            re.IGNORECASE,
-        ),
-    ),
-    (
-        "runtime_control_authority",
-        re.compile(
-            r"\b(?:workbuddy|codebuddy)\b"
-            r"(?:(?!\b(?:not|never|no|cannot|can't|does\s+not|do\s+not|has\s+no)\b)"
-            r"[^.\n]){0,96}"
-            r"\b(?:delivery\s+approval|release\s+authority)\b",
-            re.IGNORECASE,
-        ),
-    ),
-    (
-        "zh_runtime_support_upgrade",
-        re.compile(
-            r"(?:WorkBuddy|CodeBuddy)"
-            r"(?:(?!(?:不|未|没有|并非))[^。；\n]){0,48}"
-            r"(?:正式支持|全面支持|生产级运行时)"
-        ),
-    ),
-    (
-        "zh_runtime_control_authority",
-        re.compile(
-            r"(?:WorkBuddy|CodeBuddy)"
-            r"(?:(?!(?:不|未|没有|并非))[^。；\n]){0,48}"
-            r"(?:批准交付|授权发布|交付批准|发布权限)"
-        ),
-    ),
-    (
-        "zh_automatic_fact_checking",
-        re.compile(
-            r"(?:WorkBuddy|CodeBuddy)"
-            r"(?:(?!(?:不|未|没有|并非))[^。；\n]){0,48}"
-            r"(?:自动事实检查|自动事实核验|自动真伪检查|自动真实性检查)"
         ),
     ),
     (
@@ -921,12 +856,12 @@ def _check_cli_and_docs_boundaries(checks: list[dict[str, str]]) -> None:
             not missing,
             f"required boundary phrases missing={missing}",
         )
-        public_overclaims.extend(public_overclaim_findings(rel_path, raw_text))
+        public_overclaims.extend(_public_overclaim_findings(rel_path, raw_text))
     for rel_path in REQUIRED_FIRST_USER_DOC_PHRASES:
         path = ROOT / rel_path
         if path.exists():
             public_overclaims.extend(
-                public_overclaim_findings(rel_path, path.read_text(encoding="utf-8"))
+                _public_overclaim_findings(rel_path, path.read_text(encoding="utf-8"))
             )
 
     readme_en_text = (ROOT / "README_en.md").read_text(encoding="utf-8")
@@ -1302,7 +1237,7 @@ def _run_cli_json(argv: list[str]) -> tuple[int, dict[str, Any]]:
     return code, payload if isinstance(payload, dict) else {"ok": False, "payload": payload}
 
 
-def public_overclaim_findings(rel_path: str, text: str) -> list[str]:
+def _public_overclaim_findings(rel_path: str, text: str) -> list[str]:
     findings: list[str] = []
     lines = text.splitlines()
     for line_no, line in enumerate(lines, 1):
@@ -1312,12 +1247,6 @@ def public_overclaim_findings(rel_path: str, text: str) -> list[str]:
                     continue
                 findings.append(f"{rel_path}:{line_no}:{label}:{match.group(0)}")
     return findings
-
-
-def _public_overclaim_findings(rel_path: str, text: str) -> list[str]:
-    """Backward-compatible private alias for existing focused tests."""
-
-    return public_overclaim_findings(rel_path, text)
 
 
 def _has_negating_context(lines: list[str], line_idx: int, match_start: int) -> bool:

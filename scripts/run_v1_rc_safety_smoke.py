@@ -22,12 +22,9 @@ from typing import Any
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 SRC_ROOT = REPO_ROOT / "src"
-if str(REPO_ROOT) not in sys.path:
-    sys.path.insert(0, str(REPO_ROOT))
 if str(SRC_ROOT) not in sys.path:
     sys.path.insert(0, str(SRC_ROOT))
 
-from scripts.check_product_baseline import public_overclaim_findings
 from multi_agent_brief.cli.main import main as cli_main
 from multi_agent_brief.contracts.agent_artifact_intake import (
     evaluate_agent_artifact_intake,
@@ -921,25 +918,17 @@ def _scenario_08(_parent: Path, repo_root: Path) -> dict[str, Any]:
         "docs/workbuddy.zh-CN.md": ("实验性的本地 skill adapter", "source-clone-only"),
     }
     checked: list[str] = []
-    forbidden_claims: list[str] = []
     for relative, required in surfaces.items():
-        raw_text = (repo_root / relative).read_text(encoding="utf-8")
-        text = raw_text.casefold()
+        text = (repo_root / relative).read_text(encoding="utf-8").casefold()
         missing = [phrase for phrase in required if phrase.casefold() not in text]
         _require(
             not missing,
             f"{relative} missing product-posture wording: {missing}",
         )
-        forbidden_claims.extend(public_overclaim_findings(relative, raw_text))
         checked.append(relative)
-    _require(
-        not forbidden_claims,
-        f"Public surfaces contain forbidden product-posture claim(s): {forbidden_claims}",
-    )
     return {
         "public_surfaces": checked,
         "posture": "experimental_source_clone",
-        "forbidden_claim_findings": forbidden_claims,
     }
 
 

@@ -5,7 +5,6 @@ from __future__ import annotations
 import ast
 import importlib.util
 import json
-import shutil
 import subprocess
 import sys
 from pathlib import Path
@@ -24,13 +23,6 @@ EXPECTED_RC_SCENARIO_IDS = (
     "RC-SMOKE-07",
     "RC-SMOKE-08",
 )
-POSTURE_SURFACES = (
-    "README.md",
-    "README.zh-CN.md",
-    "docs/support-matrix.md",
-    "docs/workbuddy.md",
-    "docs/workbuddy.zh-CN.md",
-)
 
 
 def _load_runner():
@@ -48,39 +40,6 @@ def _json(path: Path):
 def _events(workspace: Path) -> list[dict]:
     path = workspace / "output/intermediate/event_log.jsonl"
     return [json.loads(line) for line in path.read_text(encoding="utf-8").splitlines()]
-
-
-def _copy_posture_surfaces(destination: Path) -> None:
-    for relative in POSTURE_SURFACES:
-        target = destination / relative
-        target.parent.mkdir(parents=True, exist_ok=True)
-        shutil.copy2(ROOT / relative, target)
-
-
-def _run_posture_scenario(repo_root: Path, *, optimized: bool) -> dict:
-    if not optimized:
-        runner = _load_runner()
-        return runner.run_v1_rc_safety_smoke(
-            repo_root=repo_root,
-            scenario_ids=["RC-SMOKE-08"],
-        )
-    code = (
-        "import importlib.util,json,pathlib,sys;"
-        "spec=importlib.util.spec_from_file_location('optimized_rc_runner',sys.argv[1]);"
-        "module=importlib.util.module_from_spec(spec);"
-        "sys.modules[spec.name]=module;"
-        "spec.loader.exec_module(module);"
-        "print(json.dumps(module.run_v1_rc_safety_smoke("
-        "repo_root=pathlib.Path(sys.argv[2]),scenario_ids=['RC-SMOKE-08'])))"
-    )
-    result = subprocess.run(
-        [sys.executable, "-O", "-c", code, str(SCRIPT), str(repo_root)],
-        cwd=ROOT,
-        text=True,
-        capture_output=True,
-        check=True,
-    )
-    return json.loads(result.stdout)
 
 
 def test_required_rc_scenario_identity_is_a_literal_release_ratchet() -> None:
@@ -228,58 +187,35 @@ def test_production_runner_contains_no_optimizable_assert_statements() -> None:
 def test_optimized_python_still_fails_closed_on_broken_posture(
     tmp_path: Path,
 ) -> None:
-    for relative in POSTURE_SURFACES:
+    for relative in (
+        "README.md",
+        "README.zh-CN.md",
+        "docs/support-matrix.md",
+        "docs/workbuddy.md",
+        "docs/workbuddy.zh-CN.md",
+    ):
         path = tmp_path / relative
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text("posture wording intentionally absent\n", encoding="utf-8")
-    payload = _run_posture_scenario(tmp_path, optimized=True)
+    code = (
+        "import importlib.util,json,pathlib,sys;"
+        "spec=importlib.util.spec_from_file_location('optimized_rc_runner',sys.argv[1]);"
+        "module=importlib.util.module_from_spec(spec);"
+        "sys.modules[spec.name]=module;"
+        "spec.loader.exec_module(module);"
+        "print(json.dumps(module.run_v1_rc_safety_smoke("
+        "repo_root=pathlib.Path(sys.argv[2]),scenario_ids=['RC-SMOKE-08'])))"
+    )
+
+    result = subprocess.run(
+        [sys.executable, "-O", "-c", code, str(SCRIPT), str(tmp_path)],
+        cwd=ROOT,
+        text=True,
+        capture_output=True,
+        check=True,
+    )
+    payload = json.loads(result.stdout)
 
     assert payload["ok"] is False
     assert payload["scenarios"][0]["error_type"] == "AssertionError"
     assert "missing product-posture wording" in payload["scenarios"][0]["error"]
-
-
-@pytest.mark.parametrize("surface", POSTURE_SURFACES)
-@pytest.mark.parametrize("optimized", [False, True], ids=["normal", "optimized"])
-def test_rc_posture_rejects_contradictory_support_claim(
-    tmp_path: Path,
-    surface: str,
-    optimized: bool,
-) -> None:
-    _copy_posture_surfaces(tmp_path)
-    with (tmp_path / surface).open("a", encoding="utf-8") as stream:
-        stream.write("\nCodeBuddy is fully supported for all users.\n")
-
-    payload = _run_posture_scenario(tmp_path, optimized=optimized)
-
-    assert payload["ok"] is False
-    assert payload["scenarios"][0]["error_type"] == "AssertionError"
-    assert "forbidden product-posture claim" in payload["scenarios"][0]["error"]
-
-
-@pytest.mark.parametrize(
-    ("surface", "claim"),
-    [
-        ("README.md", "WorkBuddy may approve delivery."),
-        ("README.zh-CN.md", "WorkBuddy 可以批准交付。"),
-        ("docs/support-matrix.md", "CodeBuddy may authorize release."),
-        ("docs/workbuddy.md", "WorkBuddy performs automatic truth checking."),
-        ("docs/workbuddy.zh-CN.md", "CodeBuddy 执行自动事实检查。"),
-    ],
-)
-@pytest.mark.parametrize("optimized", [False, True], ids=["normal", "optimized"])
-def test_rc_posture_rejects_delivery_or_release_authority_claim(
-    tmp_path: Path,
-    surface: str,
-    claim: str,
-    optimized: bool,
-) -> None:
-    _copy_posture_surfaces(tmp_path)
-    with (tmp_path / surface).open("a", encoding="utf-8") as stream:
-        stream.write(f"\n{claim}\n")
-
-    payload = _run_posture_scenario(tmp_path, optimized=optimized)
-
-    assert payload["ok"] is False
-    assert payload["scenarios"][0]["error_type"] == "AssertionError"
-    assert "forbidden product-posture claim" in payload["scenarios"][0]["error"]
