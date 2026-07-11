@@ -255,6 +255,147 @@ def test_recovery_state_current_contamination_awaits_recovery(tmp_path: Path) ->
     assert payload["recommended_recovery_action"] == "request_recovery_decision"
 
 
+def test_recontamination_does_not_reuse_previous_cycle_owner_revision(
+    tmp_path: Path,
+) -> None:
+    ws = _workspace(tmp_path, current_stage="auditor")
+    contamination = _mark_contaminated(ws)
+    recovery = _recovery_event()
+    second_contamination = _event(
+        "run_integrity_contaminated",
+        "event-contamination-002",
+        stage_id="auditor",
+    )
+    _write_events(
+        ws,
+        [
+            contamination,
+            _repair_started_for(recovery),
+            recovery,
+            second_contamination,
+        ],
+    )
+    _bind_recovery_pointer(ws)
+
+    payload = _evaluate(ws)
+
+    assert payload["status"] == RECOVERY_AWAITING
+    assert payload["contamination_event_id"] == "event-contamination-002"
+    assert payload["owner_revision"]["status"] == "none"
+    assert payload["stale_artifact_baselines"] == {}
+    assert recovery_stale_artifact_baselines(payload) == {}
+
+
+def test_recontamination_active_repair_does_not_reuse_previous_cycle_revision(
+    tmp_path: Path,
+) -> None:
+    ws = _workspace(tmp_path, current_stage="editor")
+    contamination = _mark_contaminated(ws)
+    recovery = _recovery_event()
+    second_contamination_id = "event-contamination-002"
+    second_repair_started_id = "event-repair-started-002"
+    second_repair_start_transaction_id = "repair-start-002"
+    second_contamination = _event(
+        "run_integrity_contaminated",
+        second_contamination_id,
+        stage_id="auditor",
+    )
+    second_repair_started = _event(
+        "repair_started",
+        second_repair_started_id,
+        stage_id="editor",
+        metadata={
+            "transaction_id": second_repair_start_transaction_id,
+            "contamination_event_id": second_contamination_id,
+            "repair_owner": "editor",
+        },
+    )
+    _write_events(
+        ws,
+        [
+            contamination,
+            _repair_started_for(recovery),
+            recovery,
+            second_contamination,
+            second_repair_started,
+        ],
+    )
+    _bind_recovery_pointer(ws)
+    workflow = _read_workflow(ws)
+    workflow["active_repair"] = {
+        "schema_version": "mabw.active_repair.v2",
+        "run_id": RUN_ID,
+        "repair_start_transaction_id": second_repair_start_transaction_id,
+        "repair_started_event_id": second_repair_started_id,
+        "contamination_event_id": second_contamination_id,
+        "repair_owner": "editor",
+        "must_rerun_from": "auditor",
+        "source": {"artifact_id": "audited_brief"},
+    }
+    _write_workflow(ws, workflow)
+
+    payload = _evaluate(ws)
+
+    assert payload["status"] == RECOVERY_IN_PROGRESS
+    assert payload["owner_revision"]["status"] == "none"
+    assert payload["stale_artifact_baselines"] == {}
+    assert recovery_stale_artifact_baselines(payload) == {}
+
+
+def test_active_repair_does_not_mask_revision_bound_to_previous_cycle(
+    tmp_path: Path,
+) -> None:
+    ws = _workspace(tmp_path, current_stage="editor")
+    first_contamination = _mark_contaminated(ws)
+    stale_recovery = _recovery_event()
+    second_contamination_id = "event-contamination-002"
+    second_repair_started_id = "event-repair-started-002"
+    second_repair_start_transaction_id = "repair-start-002"
+    second_contamination = _event(
+        "run_integrity_contaminated",
+        second_contamination_id,
+        stage_id="auditor",
+    )
+    second_repair_started = _event(
+        "repair_started",
+        second_repair_started_id,
+        stage_id="editor",
+        metadata={
+            "transaction_id": second_repair_start_transaction_id,
+            "contamination_event_id": second_contamination_id,
+            "repair_owner": "editor",
+        },
+    )
+    _write_events(
+        ws,
+        [
+            first_contamination,
+            _repair_started_for(stale_recovery),
+            second_contamination,
+            stale_recovery,
+            second_repair_started,
+        ],
+    )
+    _bind_recovery_pointer(ws)
+    workflow = _read_workflow(ws)
+    workflow["active_repair"] = {
+        "schema_version": "mabw.active_repair.v2",
+        "run_id": RUN_ID,
+        "repair_start_transaction_id": second_repair_start_transaction_id,
+        "repair_started_event_id": second_repair_started_id,
+        "contamination_event_id": second_contamination_id,
+        "repair_owner": "editor",
+        "must_rerun_from": "auditor",
+        "source": {"artifact_id": "audited_brief"},
+    }
+    _write_workflow(ws, workflow)
+
+    payload = _evaluate(ws)
+
+    assert payload["status"] == RECOVERY_INVALID
+    assert payload["reason_code"] == "recovery_event_binding_invalid"
+
+
 def test_recovery_state_requires_bound_active_repair(tmp_path: Path) -> None:
     ws = _workspace(tmp_path, current_stage="editor")
     contamination = _mark_contaminated(ws)

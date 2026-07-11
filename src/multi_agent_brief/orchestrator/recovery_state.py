@@ -144,7 +144,7 @@ def interpret_recovery_state(context: RecoveryContext) -> dict[str, Any]:
     )
     if owner_revision_error:
         return _invalid(context, "owner_revision_binding_invalid", owner_revision_error)
-    owner_revision = _owner_revision_projection(
+    latest_owner_revision = _owner_revision_projection(
         owner_revisions[-1] if owner_revisions else None
     )
     contaminations = [
@@ -159,7 +159,7 @@ def interpret_recovery_state(context: RecoveryContext) -> dict[str, Any]:
                 run_id=context.run_id,
                 current_stage=_text(context.workflow.get("current_stage")),
                 reference_eligible=True,
-                owner_revision=owner_revision,
+                owner_revision=latest_owner_revision,
             )
         reason_code = (
             "legacy_recovery_unbound"
@@ -182,6 +182,21 @@ def interpret_recovery_state(context: RecoveryContext) -> dict[str, Any]:
     latest_contamination = contaminations[-1]
     contamination_event_id = _text(latest_contamination.get("event_id"))
     contamination_index = current_events.index(latest_contamination)
+    recovery_revisions = [
+        revision
+        for revision in owner_revisions
+        if revision.event_index > contamination_index
+    ]
+    owner_revision = _owner_revision_projection(
+        recovery_revisions[-1] if recovery_revisions else None
+    )
+    for revision in recovery_revisions:
+        if revision.contamination_event_id != contamination_event_id:
+            return _invalid(
+                context,
+                "recovery_event_binding_invalid",
+                "Recovery event is not bound to the latest contamination event.",
+            )
     active_repair = context.workflow.get("active_repair")
     if isinstance(active_repair, Mapping):
         active_error = _active_repair_binding_error(
@@ -207,11 +222,6 @@ def interpret_recovery_state(context: RecoveryContext) -> dict[str, Any]:
             owner_revision=owner_revision,
         )
 
-    recovery_revisions = [
-        revision
-        for revision in owner_revisions
-        if revision.event_index > contamination_index
-    ]
     if not recovery_revisions:
         finalized = context.workflow.get("current_stage") is None
         return _state(
@@ -234,14 +244,6 @@ def interpret_recovery_state(context: RecoveryContext) -> dict[str, Any]:
             ),
             owner_revision=owner_revision,
         )
-
-    for revision in recovery_revisions:
-        if revision.contamination_event_id != contamination_event_id:
-            return _invalid(
-                context,
-                "recovery_event_binding_invalid",
-                "Recovery event is not bound to the latest contamination event.",
-            )
 
     recovery_revision = recovery_revisions[-1]
     pointer_error = _repair_pointer_error(
