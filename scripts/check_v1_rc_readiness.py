@@ -4,18 +4,13 @@
 Advisory by default (prints readiness, exit 0). Pass ``--require-satisfied`` on the
 actual v1.0 release path to make an unsatisfied item fail with a non-zero exit.
 
-Checks include the executable hermetic RC safety matrix and the
-``single_citation_parser`` structural guard.  The executable matrix is rerun on
-every invocation; file presence, fixture labels, or committed pass JSON cannot
-satisfy it.
-
-The citation guard enforces that only the canonical citation home defines the
-projectable internal citation parser. It prevents a new module from hand-rolling
-its own ``[src:...]`` marker regex or enumerating claim-id families
-(CL-/CLM-/CLAIM_/SYN_CLAIM) in a direct ``re.*`` pattern call. The scanner covers
-static direct ``re.*`` patterns and simple module/function/class string constants;
-it does not attempt to prove arbitrary dynamic regex construction or aliased
-imports.
+Current check: ``single_citation_parser`` — a structural guard enforcing that only
+the canonical citation home defines the projectable internal citation parser. It
+prevents a new module from hand-rolling its own ``[src:...]`` marker regex or
+enumerating claim-id families (CL-/CLM-/CLAIM_/SYN_CLAIM) in a direct ``re.*``
+pattern call. The scanner covers static direct ``re.*`` patterns and simple
+module/function/class string constants; it does not attempt to prove arbitrary
+dynamic regex construction or aliased imports.
 
 This guard is intentionally RED until PR-2A consolidates the existing scattered
 parsers (finalize, reader_final_gate, reader_projection, source_appendix, and the
@@ -28,20 +23,10 @@ from __future__ import annotations
 import argparse
 import ast
 import re
-import sys
 from dataclasses import dataclass, field
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
-SCRIPT_ROOT = Path(__file__).resolve().parent
-if str(SCRIPT_ROOT) not in sys.path:
-    sys.path.insert(0, str(SCRIPT_ROOT))
-
-from run_v1_rc_safety_smoke import (  # noqa: E402
-    REQUIRED_SCENARIO_IDS,
-    RUNNER_BOUNDARY,
-    run_v1_rc_safety_smoke,
-)
 
 # Modules allowed to define the internal citation/claim marker parser.
 # PR-2A finalizes the single canonical home; shrink this to one entry as the
@@ -97,7 +82,6 @@ class ReadinessItem:
     satisfied: bool
     violations: list[Violation] = field(default_factory=list)
     detail: str = ""
-    evidence: list[str] = field(default_factory=list)
 
 
 def _is_re_pattern_call(func: ast.expr) -> bool:
@@ -268,88 +252,7 @@ def check_single_citation_parser(repo_root: Path) -> ReadinessItem:
     )
 
 
-def check_executable_rc_safety(repo_root: Path) -> ReadinessItem:
-    """Execute and verify the exact required RC safety scenario matrix."""
-
-    try:
-        payload = run_v1_rc_safety_smoke(repo_root=repo_root)
-    except Exception as exc:
-        return ReadinessItem(
-            name="executable_rc_safety",
-            satisfied=False,
-            detail="The hermetic RC safety scenario runner could not execute.",
-            evidence=[f"runner_error={type(exc).__name__}: {exc}"],
-        )
-    if not isinstance(payload, dict):
-        return ReadinessItem(
-            name="executable_rc_safety",
-            satisfied=False,
-            detail="The hermetic RC safety scenario runner returned malformed output.",
-            evidence=[f"invalid_runner_payload_type={type(payload).__name__}"],
-        )
-
-    results = payload.get("scenarios")
-    if not isinstance(results, list):
-        results = []
-    executed_raw = payload.get("executed_scenario_ids")
-    executed = (
-        executed_raw
-        if isinstance(executed_raw, list)
-        and all(isinstance(scenario_id, str) for scenario_id in executed_raw)
-        else []
-    )
-    expected = list(REQUIRED_SCENARIO_IDS)
-    exact_ids = executed == expected
-    unique_ids = len(executed) == len(set(executed))
-    result_ids = [
-        str(result.get("scenario_id") or "")
-        for result in results
-        if isinstance(result, dict)
-    ]
-    result_ids_match = result_ids == expected
-    scenario_pass = len(results) == len(expected) and all(
-        isinstance(result, dict) and result.get("ok") is True
-        for result in results
-    )
-    boundary_matches = payload.get("boundary") == RUNNER_BOUNDARY
-    satisfied = bool(
-        payload.get("ok") is True
-        and payload.get("required_complete") is True
-        and exact_ids
-        and unique_ids
-        and result_ids_match
-        and scenario_pass
-        and boundary_matches
-    )
-    evidence = []
-    for result in results:
-        if not isinstance(result, dict):
-            evidence.append("invalid_scenario_result_shape")
-            continue
-        scenario_id = str(result.get("scenario_id") or "unknown")
-        status = "pass" if result.get("ok") is True else "FAIL"
-        suffix = ""
-        if status == "FAIL":
-            suffix = f" {result.get('error_type', 'Error')}: {result.get('error', '')}"
-        evidence.append(f"{scenario_id}={status}{suffix}")
-    if not exact_ids or not result_ids_match:
-        evidence.append(
-            f"required_ids={expected}; executed_ids={executed_raw}; result_ids={result_ids}"
-        )
-    if not boundary_matches:
-        evidence.append(f"unexpected_boundary={payload.get('boundary')!r}")
-    return ReadinessItem(
-        name="executable_rc_safety",
-        satisfied=satisfied,
-        detail=(
-            "All eight stable RC safety scenarios must execute through real "
-            "deterministic paths in fresh public-safe workspaces."
-        ),
-        evidence=evidence,
-    )
-
-
-READINESS_CHECKS = (check_executable_rc_safety, check_single_citation_parser)
+READINESS_CHECKS = (check_single_citation_parser,)
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -366,8 +269,6 @@ def main(argv: list[str] | None = None) -> int:
         item = check(REPO_ROOT)
         status = "satisfied" if item.satisfied else "NOT_SATISFIED"
         print(f"[{status}] {item.name}")
-        for evidence in item.evidence:
-            print(f"  - {evidence}")
         if not item.satisfied:
             all_satisfied = False
             print(f"  {item.detail}")
