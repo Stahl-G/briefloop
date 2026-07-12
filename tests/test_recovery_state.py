@@ -4,6 +4,7 @@ import json
 import shutil
 from dataclasses import replace
 from pathlib import Path
+from typing import Any, Callable
 
 import pytest
 
@@ -280,6 +281,94 @@ def _control_path_mapping(
     }
 
 
+class _ObservedRecoverySession:
+    """Test-only observer around Recovery's factory-owned control session."""
+
+    def __init__(
+        self,
+        session: Any,
+        *,
+        events: list[tuple[str, str, bool]],
+        before_first_read: Callable[[], None] | None = None,
+        forbid_reads: bool = False,
+    ) -> None:
+        self._session = session
+        self._events = events
+        self._before_first_read = before_first_read
+        self._forbid_reads = forbid_reads
+        self._read_started = False
+
+    def __enter__(self) -> "_ObservedRecoverySession":
+        self._session.__enter__()
+        return self
+
+    def __exit__(self, exc_type, exc, traceback) -> bool:
+        return self._session.__exit__(exc_type, exc, traceback)
+
+    def preflight(self, relative_path: str, *, required: bool = True) -> bool:
+        self._events.append(("preflight", relative_path, required))
+        return self._session.preflight(relative_path, required=required)
+
+    def load_object(
+        self,
+        relative_path: str,
+        *,
+        expected_schema: str | None = None,
+        required: bool = True,
+    ) -> dict | None:
+        self._start_read("load_object", relative_path, required)
+        return self._session.load_object(
+            relative_path,
+            expected_schema=expected_schema,
+            required=required,
+        )
+
+    def read_bytes(
+        self,
+        relative_path: str,
+        *,
+        required: bool = True,
+    ) -> bytes | None:
+        self._start_read("read_bytes", relative_path, required)
+        return self._session.read_bytes(relative_path, required=required)
+
+    def _start_read(self, operation: str, relative_path: str, required: bool) -> None:
+        if self._forbid_reads:
+            raise AssertionError("Recovery must finish full-inventory preflight before reads")
+        if not self._read_started:
+            self._read_started = True
+            if self._before_first_read is not None:
+                self._before_first_read()
+        self._events.append((operation, relative_path, required))
+
+
+def _observe_recovery_session_factory(
+    monkeypatch: pytest.MonkeyPatch,
+    *,
+    events: list[tuple[str, str, bool]],
+    factory_calls: list[Path] | None = None,
+    before_first_read: Callable[[], None] | None = None,
+    forbid_reads: bool = False,
+) -> None:
+    real_factory = recovery_state_module._open_workspace_control_read_session
+
+    def observed_factory(workspace: str | Path) -> _ObservedRecoverySession:
+        if factory_calls is not None:
+            factory_calls.append(Path(workspace))
+        return _ObservedRecoverySession(
+            real_factory(workspace),
+            events=events,
+            before_first_read=before_first_read,
+            forbid_reads=forbid_reads,
+        )
+
+    monkeypatch.setattr(
+        recovery_state_module,
+        "_open_workspace_control_read_session",
+        observed_factory,
+    )
+
+
 def test_recovery_control_input_inventory_is_exact_and_resolver_is_read_only(
     tmp_path: Path,
 ) -> None:
@@ -302,6 +391,44 @@ def test_recovery_control_input_inventory_is_exact_and_resolver_is_read_only(
     assert tuple(ws.rglob("*")) == before == ()
 
 
+def test_recovery_acquires_session_before_validating_inventory_token(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    ws = _workspace(tmp_path)
+    control_paths = resolve_recovery_control_paths(ws)
+    session_events: list[tuple[str, str, bool]] = []
+    factory_calls: list[Path] = []
+    _observe_recovery_session_factory(
+        monkeypatch,
+        events=session_events,
+        factory_calls=factory_calls,
+    )
+    real_validator = recovery_state_module._validate_recovery_control_paths
+
+    def validated_after_acquisition(
+        *,
+        workspace: Path,
+        control_paths: RecoveryControlPaths,
+    ) -> RecoveryControlPaths:
+        assert factory_calls == [workspace]
+        return real_validator(workspace=workspace, control_paths=control_paths)
+
+    monkeypatch.setattr(
+        recovery_state_module,
+        "_validate_recovery_control_paths",
+        validated_after_acquisition,
+    )
+
+    context = load_recovery_context(
+        workspace=ws,
+        repo_workdir=ROOT,
+        control_paths=control_paths,
+    )
+
+    assert context.runtime_manifest["run_id"] == RUN_ID
+
+
 @pytest.mark.parametrize(
     "control_input",
     [key for key, _relative_path in RECOVERY_CONTROL_INPUT_FILES],
@@ -322,19 +449,11 @@ def test_recovery_rejects_direct_control_input_symlink_before_read(
     path.unlink()
     path.symlink_to(external)
     before = _control_observations(control_paths, extra_paths=(external,))
-
-    def forbidden_loader(**_kwargs):
-        raise AssertionError("preexisting unsafe inventory must fail before reads")
-
-    monkeypatch.setattr(
-        recovery_state_module,
-        "load_workspace_control_object",
-        forbidden_loader,
-    )
-    monkeypatch.setattr(
-        recovery_state_module,
-        "read_workspace_control_bytes",
-        forbidden_loader,
+    session_events: list[tuple[str, str, bool]] = []
+    _observe_recovery_session_factory(
+        monkeypatch,
+        events=session_events,
+        forbid_reads=True,
     )
 
     payload = _evaluate(ws)
@@ -343,6 +462,8 @@ def test_recovery_rejects_direct_control_input_symlink_before_read(
     assert payload["reason_code"] == "control_context_invalid"
     assert payload["details"]["reason_code"] == "recovery_control_path_unsafe"
     assert payload["details"]["control_input"] == control_input
+    assert session_events
+    assert all(operation == "preflight" for operation, _path, _required in session_events)
     assert _control_observations(control_paths, extra_paths=(external,)) == before
 
 
@@ -358,25 +479,20 @@ def test_recovery_binds_workspace_alias_before_retargeting(
     alias_parent.symlink_to(trusted_parent, target_is_directory=True)
     supplied_workspace = alias_parent / trusted_workspace.name
     control_paths = resolve_recovery_control_paths(supplied_workspace)
-    object_loader = recovery_state_module.load_workspace_control_object
     swapped = False
+    session_events: list[tuple[str, str, bool]] = []
 
-    def retargeting_loader(*, workspace: str | Path, relative_path: str, **kwargs):
+    def retarget_alias_before_first_read() -> None:
         nonlocal swapped
-        if not swapped:
-            alias_parent.unlink()
-            alias_parent.symlink_to(foreign_parent, target_is_directory=True)
-            swapped = True
-        return object_loader(
-            workspace=workspace,
-            relative_path=relative_path,
-            **kwargs,
-        )
+        assert [event[0] for event in session_events] == ["preflight"] * 5
+        alias_parent.unlink()
+        alias_parent.symlink_to(foreign_parent, target_is_directory=True)
+        swapped = True
 
-    monkeypatch.setattr(
-        recovery_state_module,
-        "load_workspace_control_object",
-        retargeting_loader,
+    _observe_recovery_session_factory(
+        monkeypatch,
+        events=session_events,
+        before_first_read=retarget_alias_before_first_read,
     )
 
     context = load_recovery_context(
@@ -390,6 +506,55 @@ def test_recovery_binds_workspace_alias_before_retargeting(
     assert context.workflow["current_stage"] == "editor"
 
 
+def test_recovery_session_stays_bound_when_workspace_is_replaced_after_preflight(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    workspace = _workspace(tmp_path / "trusted", current_stage="editor")
+    replacement = _workspace(tmp_path / "replacement", current_stage="auditor")
+    control_paths = resolve_recovery_control_paths(workspace)
+    moved_workspace = tmp_path / "opened-workspace"
+    session_events: list[tuple[str, str, bool]] = []
+    replacement_result = "not_attempted"
+
+    def replace_workspace_before_first_read() -> None:
+        nonlocal replacement_result
+        assert [event[0] for event in session_events] == ["preflight"] * 5
+        try:
+            workspace.rename(moved_workspace)
+        except OSError:
+            # Native Windows keeps the opened directory handle non-deleteable.
+            replacement_result = "denied_by_open_handle"
+            return
+        try:
+            replacement.rename(workspace)
+        except OSError:
+            moved_workspace.rename(workspace)
+            replacement_result = "denied_after_move"
+            return
+        replacement_result = "replaced"
+
+    _observe_recovery_session_factory(
+        monkeypatch,
+        events=session_events,
+        before_first_read=replace_workspace_before_first_read,
+    )
+
+    context = load_recovery_context(
+        workspace=workspace,
+        repo_workdir=ROOT,
+        control_paths=control_paths,
+    )
+
+    assert context.workflow["current_stage"] == "editor"
+    assert replacement_result in {"replaced", "denied_by_open_handle", "denied_after_move"}
+    if replacement_result == "replaced":
+        assert _read_workflow(workspace)["current_stage"] == "auditor"
+        assert _read_workflow(moved_workspace)["current_stage"] == "editor"
+    else:
+        assert _read_workflow(workspace)["current_stage"] == "editor"
+
+
 @pytest.mark.parametrize(
     "ancestor",
     ["output", "output/intermediate"],
@@ -397,6 +562,7 @@ def test_recovery_binds_workspace_alias_before_retargeting(
 )
 def test_recovery_rejects_symlinked_control_ancestor_with_optional_report_absent(
     tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
     ancestor: str,
 ) -> None:
     ws = _workspace(tmp_path)
@@ -410,6 +576,12 @@ def test_recovery_rejects_symlinked_control_ancestor_with_optional_report_absent
         control_paths,
         extra_paths=tuple(path for path in external_output.rglob("*") if path.is_file()),
     )
+    session_events: list[tuple[str, str, bool]] = []
+    _observe_recovery_session_factory(
+        monkeypatch,
+        events=session_events,
+        forbid_reads=True,
+    )
 
     payload = _evaluate(ws)
 
@@ -417,6 +589,8 @@ def test_recovery_rejects_symlinked_control_ancestor_with_optional_report_absent
     assert payload["reason_code"] == "control_context_invalid"
     assert payload["details"]["reason_code"] == "recovery_control_path_unsafe"
     assert payload["details"]["control_input"] == "runtime_manifest"
+    assert session_events
+    assert all(operation == "preflight" for operation, _path, _required in session_events)
     assert _control_observations(
         control_paths,
         extra_paths=tuple(path for path in external_output.rglob("*") if path.is_file()),
@@ -456,6 +630,7 @@ def test_recovery_loader_rejects_path_set_from_another_workspace(
 )
 def test_recovery_loader_rejects_noncanonical_supplied_path_set(
     tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
     path_case: str,
 ) -> None:
     ws = _workspace(tmp_path)
@@ -472,6 +647,12 @@ def test_recovery_loader_rejects_noncanonical_supplied_path_set(
         event_log=forged_event_log,
     )
     before = _control_observations(control_paths)
+    session_events: list[tuple[str, str, bool]] = []
+    _observe_recovery_session_factory(
+        monkeypatch,
+        events=session_events,
+        forbid_reads=True,
+    )
 
     with pytest.raises(RuntimeStateError) as exc_info:
         load_recovery_context(
@@ -484,6 +665,7 @@ def test_recovery_loader_rejects_noncanonical_supplied_path_set(
         "recovery_control_path_binding_invalid"
     )
     assert getattr(exc_info.value, "details")["control_input"] == "event_log"
+    assert session_events == []
     assert _control_observations(control_paths) == before
 
 
@@ -556,25 +738,11 @@ def test_recovery_loader_rejects_polymorphic_path_field_before_read(
         "trusted": _control_observations(trusted_paths),
         "shadow": _control_observations(shadow_paths),
     }
-    loader_calls: list[tuple[str, Path]] = []
-
-    def forbidden_object_loader(*, workspace: str | Path, relative_path: str, **_kwargs):
-        loader_calls.append(("object", Path(workspace) / relative_path))
-        raise AssertionError("control object loader must not be called")
-
-    def forbidden_byte_reader(*, workspace: str | Path, relative_path: str, **_kwargs):
-        loader_calls.append(("event", Path(workspace) / relative_path))
-        raise AssertionError("control byte reader must not be called")
-
-    monkeypatch.setattr(
-        recovery_state_module,
-        "load_workspace_control_object",
-        forbidden_object_loader,
-    )
-    monkeypatch.setattr(
-        recovery_state_module,
-        "read_workspace_control_bytes",
-        forbidden_byte_reader,
+    session_events: list[tuple[str, str, bool]] = []
+    _observe_recovery_session_factory(
+        monkeypatch,
+        events=session_events,
+        forbid_reads=True,
     )
 
     with pytest.raises(RuntimeStateError) as exc_info:
@@ -588,7 +756,7 @@ def test_recovery_loader_rejects_polymorphic_path_field_before_read(
         "recovery_control_path_binding_invalid"
     )
     assert exc_info.value.details["control_input"] == "workflow_state"
-    assert loader_calls == []
+    assert session_events == []
     assert _control_observations(trusted_paths) == before["trusted"]
     assert _control_observations(shadow_paths) == before["shadow"]
 
@@ -635,35 +803,12 @@ def test_recovery_loader_reads_only_the_preflighted_inventory(
     ws = _workspace(tmp_path)
     _write_registry(ws)
     control_paths = resolve_recovery_control_paths(ws)
-    object_loader = recovery_state_module.load_workspace_control_object
-    byte_reader = recovery_state_module.read_workspace_control_bytes
-    read_bindings: list[tuple[Path, str]] = []
-
-    def tracked_object_loader(*, workspace: str | Path, relative_path: str, **kwargs):
-        read_bindings.append((Path(workspace), relative_path))
-        return object_loader(
-            workspace=workspace,
-            relative_path=relative_path,
-            **kwargs,
-        )
-
-    def tracked_byte_reader(*, workspace: str | Path, relative_path: str, **kwargs):
-        read_bindings.append((Path(workspace), relative_path))
-        return byte_reader(
-            workspace=workspace,
-            relative_path=relative_path,
-            **kwargs,
-        )
-
-    monkeypatch.setattr(
-        recovery_state_module,
-        "load_workspace_control_object",
-        tracked_object_loader,
-    )
-    monkeypatch.setattr(
-        recovery_state_module,
-        "read_workspace_control_bytes",
-        tracked_byte_reader,
+    session_events: list[tuple[str, str, bool]] = []
+    factory_calls: list[Path] = []
+    _observe_recovery_session_factory(
+        monkeypatch,
+        events=session_events,
+        factory_calls=factory_calls,
     )
 
     context = load_recovery_context(
@@ -673,15 +818,22 @@ def test_recovery_loader_reads_only_the_preflighted_inventory(
     )
 
     assert context.runtime_manifest["run_id"] == RUN_ID
-    assert read_bindings == [
-        (control_paths.workspace, "output/intermediate/runtime_manifest.json"),
-        (control_paths.workspace, "output/intermediate/workflow_state.json"),
-        (control_paths.workspace, "output/intermediate/artifact_registry.json"),
-        (control_paths.workspace, "output/intermediate/finalize_report.json"),
-        (control_paths.workspace, "output/intermediate/event_log.jsonl"),
+    assert factory_calls == [control_paths.workspace]
+    assert session_events == [
+        ("preflight", "output/intermediate/runtime_manifest.json", True),
+        ("preflight", "output/intermediate/workflow_state.json", True),
+        ("preflight", "output/intermediate/artifact_registry.json", False),
+        ("preflight", "output/intermediate/event_log.jsonl", True),
+        ("preflight", "output/intermediate/finalize_report.json", False),
+        ("load_object", "output/intermediate/runtime_manifest.json", True),
+        ("load_object", "output/intermediate/workflow_state.json", True),
+        ("load_object", "output/intermediate/artifact_registry.json", False),
+        ("load_object", "output/intermediate/finalize_report.json", False),
+        ("read_bytes", "output/intermediate/event_log.jsonl", True),
     ]
     assert {
-        workspace / relative_path for workspace, relative_path in read_bindings
+        control_paths.workspace / relative_path
+        for _operation, relative_path, _required in session_events
     } == set(_control_path_mapping(control_paths).values())
 
 
@@ -745,7 +897,8 @@ def test_recovery_workflow_target_swap_cannot_import_foreign_context(
         )
 
     assert swapped is True
-    assert exc_info.value.details["reason_code"] == "control_file_path_unsafe"
+    assert exc_info.value.details["reason_code"] == "recovery_control_path_unsafe"
+    assert exc_info.value.details["control_input"] == "workflow_state"
     assert target.is_symlink()
     assert _path_observation(foreign_target) == before_foreign
     assert {

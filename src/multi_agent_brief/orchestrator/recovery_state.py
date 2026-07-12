@@ -21,8 +21,8 @@ from multi_agent_brief.orchestrator.runtime_state.contracts_loader import (
     load_stage_specs,
 )
 from multi_agent_brief.orchestrator.runtime_state.control_context import (
-    load_workspace_control_object,
-    read_workspace_control_bytes,
+    _WorkspaceControlReadSession,
+    _open_workspace_control_read_session,
 )
 from multi_agent_brief.orchestrator.runtime_state.errors import (
     E_TRANSACTION_INTEGRITY,
@@ -84,7 +84,7 @@ RECOVERY_CONTROL_INPUT_FILES = (
 
 @dataclass(frozen=True)
 class RecoveryControlPaths:
-    """Preflighted workspace bindings for every recovery control input."""
+    """Canonical lexical bindings for every recovery control input."""
 
     workspace: Path
     runtime_manifest: Path
@@ -402,7 +402,7 @@ def finalize_recovery_binding(state: Mapping[str, Any]) -> dict[str, Any]:
 def resolve_recovery_control_paths(
     workspace: str | Path,
 ) -> RecoveryControlPaths:
-    """Return one canonical, preflighted path capability for recovery reads."""
+    """Return one canonical lexical inventory token for recovery reads."""
 
     ws = _recovery_workspace_path(workspace)
     paths = _expected_recovery_control_paths(ws)
@@ -423,41 +423,40 @@ def load_recovery_context(
         if control_paths is None
         else control_paths
     )
-    # A caller-supplied capability may be forged, belong to another workspace,
-    # or become stale after resolution. Rebind and preflight the complete
-    # inventory before reading, then let each descriptor-bound acquisition
-    # reject any later path replacement at its actual open.
-    canonical_paths = _validate_recovery_control_paths(
-        workspace=ws,
-        control_paths=paths,
-    )
-    path_map = _recovery_control_path_mapping(canonical_paths)
-    relative_path_map = _recovery_control_relative_path_mapping(canonical_paths)
-    manifest = load_workspace_control_object(
-        workspace=canonical_paths.workspace,
-        relative_path=relative_path_map["runtime_manifest"],
-        expected_schema=RUNTIME_MANIFEST_SCHEMA,
-    )
-    workflow = load_workspace_control_object(
-        workspace=canonical_paths.workspace,
-        relative_path=relative_path_map["workflow_state"],
-        expected_schema=WORKFLOW_STATE_SCHEMA,
-    )
-    registry = load_workspace_control_object(
-        workspace=canonical_paths.workspace,
-        relative_path=relative_path_map["artifact_registry"],
-        expected_schema=ARTIFACT_REGISTRY_SCHEMA,
-        required=False,
-    )
-    report = load_workspace_control_object(
-        workspace=canonical_paths.workspace,
-        relative_path=relative_path_map["finalize_report"],
-        required=False,
-    )
-    event_raw = read_workspace_control_bytes(
-        workspace=canonical_paths.workspace,
-        relative_path=relative_path_map["event_log"],
-    )
+    # A caller-supplied path set is only a lexical token. Recovery acquires its
+    # own workspace-root capability before validating or preflighting the
+    # inventory, then keeps that same capability for every load. Callers can
+    # neither inject a session nor cause a later absolute-path reopen.
+    with _open_workspace_control_read_session(ws) as session:
+        canonical_paths = _validate_recovery_control_paths(
+            workspace=ws,
+            control_paths=paths,
+        )
+        path_map = _recovery_control_path_mapping(canonical_paths)
+        relative_path_map = _recovery_control_relative_path_mapping(canonical_paths)
+        _preflight_recovery_control_inputs(
+            session=session,
+            control_paths=canonical_paths,
+            relative_path_map=relative_path_map,
+        )
+        manifest = session.load_object(
+            relative_path_map["runtime_manifest"],
+            expected_schema=RUNTIME_MANIFEST_SCHEMA,
+        )
+        workflow = session.load_object(
+            relative_path_map["workflow_state"],
+            expected_schema=WORKFLOW_STATE_SCHEMA,
+        )
+        registry = session.load_object(
+            relative_path_map["artifact_registry"],
+            expected_schema=ARTIFACT_REGISTRY_SCHEMA,
+            required=False,
+        )
+        report = session.load_object(
+            relative_path_map["finalize_report"],
+            required=False,
+        )
+        event_raw = session.read_bytes(relative_path_map["event_log"])
     if event_raw is None:
         raise RuntimeStateError(
             f"Required control file is missing: {path_map['event_log']}",
@@ -542,17 +541,6 @@ def _validate_recovery_control_paths(
                 control_input=key,
                 path=path if type(path) is type(expected_path) else None,
             )
-        # Preflight only the freshly reconstructed module-owned path. The
-        # supplied object is a token to validate, never a read selector.
-        if _recovery_control_path_is_unsafe(
-            workspace=workspace,
-            path=expected_path,
-        ):
-            raise _recovery_control_path_error(
-                reason_code="recovery_control_path_unsafe",
-                control_input=key,
-                path=expected_path,
-            )
     return expected
 
 
@@ -584,25 +572,26 @@ def _recovery_control_relative_path_mapping(
     )
 
 
-def _recovery_control_path_is_unsafe(*, workspace: Path, path: Path) -> bool:
-    try:
-        relative = path.relative_to(workspace)
-    except ValueError:
-        return True
-    current = workspace
-    try:
-        for part in relative.parts:
-            current = current / part
-            if current.is_symlink():
-                return True
-        resolved = path.resolve(strict=False)
-    except (OSError, RuntimeError):
-        return True
-    try:
-        resolved.relative_to(workspace)
-    except ValueError:
-        return True
-    return resolved != path
+def _preflight_recovery_control_inputs(
+    *,
+    session: _WorkspaceControlReadSession,
+    control_paths: RecoveryControlPaths,
+    relative_path_map: Mapping[str, str],
+) -> None:
+    """Preflight the complete inventory through the retained workspace root."""
+
+    for key, _relative_path in RECOVERY_CONTROL_INPUT_FILES:
+        required = key not in {"artifact_registry", "finalize_report"}
+        try:
+            session.preflight(relative_path_map[key], required=required)
+        except RuntimeStateError as exc:
+            if exc.details.get("reason_code") != "control_file_path_unsafe":
+                raise
+            raise _recovery_control_path_error(
+                reason_code="recovery_control_path_unsafe",
+                control_input=key,
+                path=getattr(control_paths, key),
+            ) from exc
 
 
 def _recovery_control_path_error(
