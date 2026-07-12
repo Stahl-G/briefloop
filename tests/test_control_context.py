@@ -1268,7 +1268,9 @@ def test_windows_descriptor_read_closes_every_native_handle(
 
     assert raw == expected
     assert len(closed) >= 5
-    assert len(closed) == len(set(closed))
+    # Windows may recycle a numeric handle value after an ancestor is closed.
+    # The synthetic lifecycle tests track open/close generations exactly; this
+    # native test proves that no live handle prevents the final rename.
     workspace.rename(tmp_path / "closed-workspace")
 
 
