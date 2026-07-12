@@ -96,10 +96,30 @@ def _read_event_log_records(path: Path) -> list[dict[str, Any]]:
             f"Failed to read event log: {path}",
             details={"path": str(path), "reason": str(exc)},
         ) from exc
+    return parse_event_log_records_strict(raw, path=path)
+
+
+def parse_event_log_records_strict(
+    raw: bytes,
+    *,
+    path: str | Path = "<event-log-snapshot>",
+) -> list[dict[str, Any]]:
+    """Validate Event Log records from an already acquired byte snapshot."""
+
+    display_path = Path(path)
+    if type(raw) is not bytes:
+        raise RuntimeStateError(
+            f"Event log snapshot must be bytes: {display_path}",
+            details={
+                "path": str(display_path),
+                "reason_code": "event_log_snapshot_invalid",
+            },
+            error_code=E_TRANSACTION_INTEGRITY,
+        )
     if raw and not raw.endswith(b"\n"):
         raise RuntimeStateError(
-            f"Event log is not newline-terminated: {path}",
-            details={"path": str(path)},
+            f"Event log is not newline-terminated: {display_path}",
+            details={"path": str(display_path)},
             error_code=E_TRANSACTION_INTEGRITY,
         )
 
@@ -107,8 +127,8 @@ def _read_event_log_records(path: Path) -> list[dict[str, Any]]:
         decoded = raw.decode("utf-8")
     except UnicodeDecodeError as exc:
         raise RuntimeStateError(
-            f"Event log is not valid UTF-8: {path}",
-            details={"path": str(path), "reason": str(exc)},
+            f"Event log is not valid UTF-8: {display_path}",
+            details={"path": str(display_path), "reason": str(exc)},
             error_code=E_TRANSACTION_INTEGRITY,
         ) from exc
 
@@ -121,48 +141,68 @@ def _read_event_log_records(path: Path) -> list[dict[str, Any]]:
             payload = json.loads(line)
         except json.JSONDecodeError as exc:
             raise RuntimeStateError(
-                f"Invalid JSON event log line {lineno}: {path}",
-                details={"path": str(path), "line": lineno, "reason": str(exc)},
+                f"Invalid JSON event log line {lineno}: {display_path}",
+                details={
+                    "path": str(display_path),
+                    "line": lineno,
+                    "reason": str(exc),
+                },
                 error_code=E_TRANSACTION_INTEGRITY,
             ) from exc
         if not isinstance(payload, dict):
             raise RuntimeStateError(
-                f"Event log line {lineno} must contain an object: {path}",
-                details={"path": str(path), "line": lineno},
+                f"Event log line {lineno} must contain an object: {display_path}",
+                details={"path": str(display_path), "line": lineno},
                 error_code=E_TRANSACTION_INTEGRITY,
             )
         schema_version = payload.get("schema_version")
         if schema_version != EVENT_LOG_SCHEMA:
             raise RuntimeStateError(
                 f"Unsupported event log schema on line {lineno}: {schema_version}",
-                details={"path": str(path), "line": lineno, "schema_version": schema_version},
+                details={
+                    "path": str(display_path),
+                    "line": lineno,
+                    "schema_version": schema_version,
+                },
                 error_code=E_TRANSACTION_INTEGRITY,
             )
         event_type = payload.get("event_type")
         if event_type not in EVENT_TYPES:
             raise RuntimeStateError(
                 f"Unknown event type on event log line {lineno}: {event_type}",
-                details={"path": str(path), "line": lineno, "event_type": event_type},
+                details={
+                    "path": str(display_path),
+                    "line": lineno,
+                    "event_type": event_type,
+                },
                 error_code=E_TRANSACTION_INTEGRITY,
             )
         actor = payload.get("actor")
         if actor not in ACTORS:
             raise RuntimeStateError(
                 f"Unknown event actor on event log line {lineno}: {actor}",
-                details={"path": str(path), "line": lineno, "actor": actor},
+                details={
+                    "path": str(display_path),
+                    "line": lineno,
+                    "actor": actor,
+                },
                 error_code=E_TRANSACTION_INTEGRITY,
             )
         event_id = payload.get("event_id")
         if not isinstance(event_id, str) or not event_id.strip():
             raise RuntimeStateError(
-                f"Event log line {lineno} is missing event_id: {path}",
-                details={"path": str(path), "line": lineno},
+                f"Event log line {lineno} is missing event_id: {display_path}",
+                details={"path": str(display_path), "line": lineno},
                 error_code=E_TRANSACTION_INTEGRITY,
             )
         if event_id in event_ids:
             raise RuntimeStateError(
                 f"Duplicate event_id on event log line {lineno}: {event_id}",
-                details={"path": str(path), "line": lineno, "event_id": event_id},
+                details={
+                    "path": str(display_path),
+                    "line": lineno,
+                    "event_id": event_id,
+                },
                 error_code=E_TRANSACTION_INTEGRITY,
             )
         event_ids.add(event_id)
