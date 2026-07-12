@@ -14,6 +14,7 @@ import pytest
 import multi_agent_brief.orchestrator.runtime_state as runtime_state
 import multi_agent_brief.orchestrator.runtime_state.claim_metadata_enrichment as claim_metadata_enrichment
 import multi_agent_brief.orchestrator.runtime_state.completion_gates as runtime_completion_gates
+import multi_agent_brief.orchestrator.runtime_state.control_context as runtime_control_context
 import multi_agent_brief.orchestrator.runtime_state.event_log as runtime_event_log
 import multi_agent_brief.orchestrator.runtime_state.stage_completion as runtime_stage_completion
 from multi_agent_brief.repair import router as repair_router
@@ -12919,6 +12920,52 @@ def test_state_check_rejects_malformed_event_log_line(tmp_path):
 
     assert excinfo.value.error_code == runtime_state.operations.E_TRANSACTION_INTEGRITY
     assert "Invalid JSON event log line" in str(excinfo.value)
+
+
+def test_event_log_snapshot_parser_matches_descriptor_acquisition_without_reopen(
+    tmp_path: Path,
+) -> None:
+    ws = _write_workspace(tmp_path)
+    initialize_runtime_state(workspace=ws, repo_workdir=ROOT)
+    event_log = _state_file(ws, "event_log")
+    expected = runtime_event_log.read_event_log_records_strict(event_log)
+
+    raw = runtime_control_context.read_workspace_control_bytes(
+        workspace=ws,
+        relative_path=RUNTIME_STATE_FILES["event_log"],
+    )
+    assert raw is not None
+    event_log.unlink()
+
+    parsed = runtime_event_log.parse_event_log_records_strict(
+        raw,
+        path=event_log,
+    )
+
+    assert parsed == expected
+
+
+@pytest.mark.parametrize(
+    ("raw", "message"),
+    [
+        (b"{}", "newline-terminated"),
+        (b"{bad json}\n", "Invalid JSON event log line"),
+        (b"\xff\n", "not valid UTF-8"),
+    ],
+    ids=["unterminated", "malformed-json", "invalid-utf8"],
+)
+def test_event_log_snapshot_parser_preserves_strict_failures(
+    raw: bytes,
+    message: str,
+) -> None:
+    with pytest.raises(RuntimeStateError) as exc_info:
+        runtime_event_log.parse_event_log_records_strict(
+            raw,
+            path="output/intermediate/event_log.jsonl",
+        )
+
+    assert exc_info.value.error_code == runtime_state.operations.E_TRANSACTION_INTEGRITY
+    assert message in str(exc_info.value)
 
 
 def test_state_check_only_writes_changed_events_once(tmp_path):
