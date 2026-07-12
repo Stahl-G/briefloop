@@ -700,18 +700,42 @@ def test_recovery_workflow_target_swap_cannot_import_foreign_context(
         for key, path in _control_path_mapping(control_paths).items()
         if key != "workflow_state"
     }
-    real_open = control_context_module.os.open
     swapped = False
 
-    def racing_open(path, flags, mode=0o777, *, dir_fd=None):
-        nonlocal swapped
-        if path == target.name and dir_fd is not None and not swapped:
-            target.unlink()
-            target.symlink_to(foreign_target)
-            swapped = True
-        return real_open(path, flags, mode, dir_fd=dir_fd)
+    if control_context_module.os.name == "nt":
+        real_open_relative = control_context_module._windows_open_relative_handle
 
-    monkeypatch.setattr(control_context_module.os, "open", racing_open)
+        def racing_open_relative(
+            *, parent_handle: int, component: str, directory: bool
+        ) -> int:
+            nonlocal swapped
+            if component == target.name and not directory and not swapped:
+                target.unlink()
+                target.symlink_to(foreign_target)
+                swapped = True
+            return real_open_relative(
+                parent_handle=parent_handle,
+                component=component,
+                directory=directory,
+            )
+
+        monkeypatch.setattr(
+            control_context_module,
+            "_windows_open_relative_handle",
+            racing_open_relative,
+        )
+    else:
+        real_open = control_context_module.os.open
+
+        def racing_open(path, flags, mode=0o777, *, dir_fd=None):
+            nonlocal swapped
+            if path == target.name and dir_fd is not None and not swapped:
+                target.unlink()
+                target.symlink_to(foreign_target)
+                swapped = True
+            return real_open(path, flags, mode, dir_fd=dir_fd)
+
+        monkeypatch.setattr(control_context_module.os, "open", racing_open)
 
     with pytest.raises(RuntimeStateError) as exc_info:
         load_recovery_context(
