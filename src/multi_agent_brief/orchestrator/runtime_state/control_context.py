@@ -49,6 +49,7 @@ _WINDOWS_ERROR_FILE_NOT_FOUND = 2
 _WINDOWS_ERROR_PATH_NOT_FOUND = 3
 _WINDOWS_INVALID_HANDLE_VALUE = ctypes.c_void_p(-1).value
 _WINDOWS_UNICODE_STRING_MAX_BYTES = (1 << 16) - 1
+_CONCRETE_PATH_TYPE = type(Path())
 
 
 class _WindowsUnicodeString(ctypes.Structure):
@@ -92,16 +93,18 @@ def read_workspace_control_bytes(
 ) -> bytes | None:
     """Acquire one regular control file through a workspace-rooted descriptor chain."""
 
-    display_root = Path(workspace).expanduser().absolute()
     parts = _workspace_control_relative_parts(relative_path)
-    display_path = display_root.joinpath(*parts)
     if _WINDOWS_DESCRIPTOR_READ_SUPPORTED:
+        display_root = _windows_workspace_selector(workspace)
+        display_path = display_root.joinpath(*parts)
         return _read_workspace_control_bytes_windows(
             display_root=display_root,
             parts=parts,
             display_path=display_path,
             required=required,
         )
+    display_root = Path(workspace).expanduser().absolute()
+    display_path = display_root.joinpath(*parts)
     if not _DESCRIPTOR_READ_SUPPORTED:
         raise _control_read_error(
             display_path,
@@ -449,6 +452,49 @@ def _windows_workspace_root_and_parts(display_root: Path) -> tuple[str, tuple[st
             reason="Workspace root must use a drive letter or UNC share.",
         )
     return root_path, workspace_parts
+
+
+def _windows_workspace_selector(workspace: str | Path) -> Path:
+    """Bind one already-canonical Windows selector without environment lookup."""
+
+    if type(workspace) is str:
+        raw_workspace = workspace
+    elif type(workspace) is _CONCRETE_PATH_TYPE:
+        raw_workspace = str(workspace)
+    else:
+        raise _control_read_error(
+            Path("<invalid-workspace>"),
+            reason_code="control_workspace_root_invalid",
+            reason="Workspace root must be an exact string or concrete Path.",
+        )
+    lexical_parts = raw_workspace.replace("/", "\\").split("\\")
+    if (
+        not raw_workspace
+        or raw_workspace.startswith("~")
+        or "\x00" in raw_workspace
+        or any(part in {".", ".."} for part in lexical_parts)
+    ):
+        raise _control_read_error(
+            Path(raw_workspace or "<invalid-workspace>"),
+            reason_code="control_workspace_root_invalid",
+            reason="Workspace root must be a canonical absolute Windows selector.",
+        )
+    pure_workspace = PureWindowsPath(raw_workspace)
+    if (
+        not pure_workspace.is_absolute()
+        or not pure_workspace.anchor
+        or not pure_workspace.drive
+        or pure_workspace.drive.startswith("\\\\?\\")
+        or pure_workspace.drive.startswith("\\\\.\\")
+    ):
+        raise _control_read_error(
+            Path(raw_workspace),
+            reason_code="control_workspace_root_invalid",
+            reason="Workspace root must be a canonical drive or UNC selector.",
+        )
+    display_root = Path(raw_workspace)
+    _windows_workspace_root_and_parts(display_root)
+    return display_root
 
 
 def _validate_windows_path_parts(

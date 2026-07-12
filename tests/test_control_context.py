@@ -479,6 +479,11 @@ def test_descriptor_read_dispatches_to_windows_handle_backend(
     )
     monkeypatch.setattr(
         control_context,
+        "_windows_workspace_selector",
+        lambda value: Path(value).absolute(),
+    )
+    monkeypatch.setattr(
+        control_context,
         "_read_workspace_control_bytes_windows",
         fake_windows_reader,
     )
@@ -543,6 +548,162 @@ def test_windows_workspace_root_rejects_relative_or_namespace_escape(
         control_context._windows_workspace_root_and_parts(Path(workspace))
 
     assert exc_info.value.details["reason_code"] == "control_workspace_root_invalid"
+
+
+@pytest.mark.parametrize(
+    "workspace",
+    [
+        r"C:workspace",
+        r"\workspace",
+        "workspace",
+        r"~\workspace",
+        r"C:\root\.\workspace",
+        r"C:\root\..\workspace",
+        r"\\?\C:\workspace",
+        r"\\.\C:\workspace",
+    ],
+    ids=[
+        "drive-relative",
+        "root-relative",
+        "plain-relative",
+        "home-relative",
+        "dot-component",
+        "parent-component",
+        "extended-namespace",
+        "device-namespace",
+    ],
+)
+def test_windows_public_reader_rejects_implicit_workspace_before_resolution(
+    workspace: str,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    environment_calls: list[str] = []
+    backend_calls: list[str] = []
+
+    def forbidden_environment_lookup(_path):
+        environment_calls.append("environment")
+        raise AssertionError("invalid Windows selector reached environment lookup")
+
+    def forbidden_backend(**_kwargs):
+        backend_calls.append("backend")
+        return b"wrong"
+
+    monkeypatch.setattr(
+        control_context,
+        "_WINDOWS_DESCRIPTOR_READ_SUPPORTED",
+        True,
+    )
+    monkeypatch.setattr(
+        control_context._CONCRETE_PATH_TYPE,
+        "absolute",
+        forbidden_environment_lookup,
+    )
+    monkeypatch.setattr(
+        control_context._CONCRETE_PATH_TYPE,
+        "expanduser",
+        forbidden_environment_lookup,
+    )
+    monkeypatch.setattr(
+        control_context,
+        "_read_workspace_control_bytes_windows",
+        forbidden_backend,
+    )
+
+    for _ in range(2):
+        with pytest.raises(RuntimeStateError) as exc_info:
+            read_workspace_control_bytes(
+                workspace=workspace,
+                relative_path=CONTROL_RELATIVE_PATH,
+            )
+        assert exc_info.value.details["reason_code"] == (
+            "control_workspace_root_invalid"
+        )
+
+    assert environment_calls == []
+    assert backend_calls == []
+
+
+@pytest.mark.parametrize(
+    "workspace",
+    [
+        r"C:\workspace",
+        r"\\server\share\workspace",
+        Path(r"C:\workspace"),
+    ],
+    ids=["drive-str", "unc-str", "concrete-path"],
+)
+def test_windows_public_reader_accepts_canonical_workspace_selector(
+    workspace: str | Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls: list[tuple[Path, tuple[str, ...], Path, bool]] = []
+
+    def fake_windows_reader(*, display_root, parts, display_path, required):
+        calls.append((display_root, parts, display_path, required))
+        return b"canonical-windows-bytes"
+
+    monkeypatch.setattr(
+        control_context,
+        "_WINDOWS_DESCRIPTOR_READ_SUPPORTED",
+        True,
+    )
+    monkeypatch.setattr(
+        control_context,
+        "_read_workspace_control_bytes_windows",
+        fake_windows_reader,
+    )
+
+    raw = read_workspace_control_bytes(
+        workspace=workspace,
+        relative_path=CONTROL_RELATIVE_PATH,
+    )
+
+    assert raw == b"canonical-windows-bytes"
+    assert len(calls) == 1
+    assert str(calls[0][0]) == str(workspace)
+    assert calls[0][1] == ("output", "intermediate", "control.json")
+    assert calls[0][3] is True
+
+
+def test_windows_public_reader_rejects_polymorphic_workspace_without_coercion(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    coercions: list[str] = []
+    backend_calls: list[str] = []
+
+    class HostileString(str):
+        def encode(self, *_args, **_kwargs):
+            coercions.append("encode")
+            return b"C:\\workspace"
+
+    class HostilePathLike:
+        def __fspath__(self):
+            coercions.append("fspath")
+            return r"C:\workspace"
+
+    monkeypatch.setattr(
+        control_context,
+        "_WINDOWS_DESCRIPTOR_READ_SUPPORTED",
+        True,
+    )
+    monkeypatch.setattr(
+        control_context,
+        "_read_workspace_control_bytes_windows",
+        lambda **_kwargs: backend_calls.append("backend") or b"wrong",
+    )
+
+    for workspace in (HostileString(r"C:\workspace"), HostilePathLike()):
+        with pytest.raises(RuntimeStateError) as exc_info:
+            read_workspace_control_bytes(
+                workspace=workspace,
+                relative_path=CONTROL_RELATIVE_PATH,
+            )
+        assert exc_info.value.details["reason_code"] == (
+            "control_workspace_root_invalid"
+        )
+
+    assert coercions == []
+    assert backend_calls == []
 
 
 @pytest.mark.parametrize(
