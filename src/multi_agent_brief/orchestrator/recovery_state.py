@@ -405,8 +405,7 @@ def resolve_recovery_control_paths(
 
     ws = Path(workspace).expanduser().resolve()
     paths = _expected_recovery_control_paths(ws)
-    _validate_recovery_control_paths(workspace=ws, control_paths=paths)
-    return paths
+    return _validate_recovery_control_paths(workspace=ws, control_paths=paths)
 
 
 def load_recovery_context(
@@ -418,12 +417,20 @@ def load_recovery_context(
     """Load recovery inputs only through the canonical five-path inventory."""
 
     ws = Path(workspace).expanduser().resolve()
-    paths = control_paths or resolve_recovery_control_paths(ws)
+    paths = (
+        resolve_recovery_control_paths(ws)
+        if control_paths is None
+        else control_paths
+    )
     # A caller-supplied capability may be forged, belong to another workspace,
     # or become stale after resolution. Rebind and preflight immediately before
-    # every read instead of trusting the dataclass instance.
-    _validate_recovery_control_paths(workspace=ws, control_paths=paths)
-    path_map = _recovery_control_path_mapping(paths)
+    # every read instead of trusting either the dataclass instance or its Path
+    # fields as executable I/O selectors.
+    canonical_paths = _validate_recovery_control_paths(
+        workspace=ws,
+        control_paths=paths,
+    )
+    path_map = _recovery_control_path_mapping(canonical_paths)
     manifest = load_control_object(
         path_map["runtime_manifest"], expected_schema=RUNTIME_MANIFEST_SCHEMA
     )
@@ -468,7 +475,7 @@ def _validate_recovery_control_paths(
     *,
     workspace: Path,
     control_paths: RecoveryControlPaths,
-) -> None:
+) -> RecoveryControlPaths:
     # The supplied binding is data, not a polymorphic loader capability. An
     # exact-type check prevents subclasses from overriding attribute/mapping
     # behavior after their inherited dataclass fields have been validated.
@@ -479,27 +486,44 @@ def _validate_recovery_control_paths(
             path=None,
         )
     expected = _expected_recovery_control_paths(workspace)
-    if control_paths.workspace != workspace:
+    supplied_workspace = control_paths.workspace
+    if (
+        type(supplied_workspace) is not type(expected.workspace)
+        or supplied_workspace != expected.workspace
+    ):
         raise _recovery_control_path_error(
             reason_code="recovery_control_workspace_mismatch",
             control_input="",
-            path=control_paths.workspace,
+            path=(
+                supplied_workspace
+                if type(supplied_workspace) is type(expected.workspace)
+                else None
+            ),
         )
     for key, _relative_path in RECOVERY_CONTROL_INPUT_FILES:
         path = getattr(control_paths, key, None)
         expected_path = getattr(expected, key)
-        if not isinstance(path, Path) or path != expected_path:
+        # Check concrete type before invoking equality or any path method. A
+        # Path subclass can otherwise impersonate the canonical identity while
+        # retaining foreign internal path state for the eventual I/O call.
+        if type(path) is not type(expected_path) or path != expected_path:
             raise _recovery_control_path_error(
                 reason_code="recovery_control_path_binding_invalid",
                 control_input=key,
-                path=path if isinstance(path, Path) else None,
+                path=path if type(path) is type(expected_path) else None,
             )
-        if _recovery_control_path_is_unsafe(workspace=workspace, path=path):
+        # Preflight only the freshly reconstructed module-owned path. The
+        # supplied object is a token to validate, never a read selector.
+        if _recovery_control_path_is_unsafe(
+            workspace=workspace,
+            path=expected_path,
+        ):
             raise _recovery_control_path_error(
                 reason_code="recovery_control_path_unsafe",
                 control_input=key,
-                path=path,
+                path=expected_path,
             )
+    return expected
 
 
 def _recovery_control_path_mapping(

@@ -460,6 +460,79 @@ def test_recovery_loader_rejects_polymorphic_shadow_path_map(
     assert _control_observations(shadow_paths) == before["shadow"]
 
 
+def test_recovery_loader_rejects_polymorphic_path_field_before_read(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    trusted_ws = _workspace(tmp_path / "trusted", current_stage="editor")
+    shadow_ws = _workspace(tmp_path / "shadow", current_stage="auditor")
+    trusted_paths = resolve_recovery_control_paths(trusted_ws)
+    shadow_paths = resolve_recovery_control_paths(shadow_ws)
+    concrete_path_type = type(trusted_paths.workflow_state)
+
+    class ShadowPath(concrete_path_type):
+        def __new__(cls, actual_path: Path, claimed_path: Path):
+            instance = super().__new__(cls, actual_path)
+            instance._claimed_path = claimed_path
+            return instance
+
+        def __eq__(self, other: object) -> bool:
+            return self._claimed_path == other
+
+        def relative_to(self, *other: object, **kwargs: object) -> Path:
+            return self._claimed_path.relative_to(*other, **kwargs)
+
+        def resolve(self, strict: bool = False) -> Path:
+            return self._claimed_path.resolve(strict=strict)
+
+    supplied = replace(
+        trusted_paths,
+        workflow_state=ShadowPath(
+            shadow_paths.workflow_state,
+            trusted_paths.workflow_state,
+        ),
+    )
+    before = {
+        "trusted": _control_observations(trusted_paths),
+        "shadow": _control_observations(shadow_paths),
+    }
+    loader_calls: list[tuple[str, Path]] = []
+
+    def forbidden_object_loader(path: str | Path, **_kwargs):
+        loader_calls.append(("object", Path(path)))
+        raise AssertionError("control object loader must not be called")
+
+    def forbidden_event_loader(path: str | Path):
+        loader_calls.append(("event", Path(path)))
+        raise AssertionError("event loader must not be called")
+
+    monkeypatch.setattr(
+        recovery_state_module,
+        "load_control_object",
+        forbidden_object_loader,
+    )
+    monkeypatch.setattr(
+        recovery_state_module,
+        "read_event_log_records_strict",
+        forbidden_event_loader,
+    )
+
+    with pytest.raises(RuntimeStateError) as exc_info:
+        load_recovery_context(
+            workspace=trusted_ws,
+            repo_workdir=ROOT,
+            control_paths=supplied,
+        )
+
+    assert exc_info.value.details["reason_code"] == (
+        "recovery_control_path_binding_invalid"
+    )
+    assert exc_info.value.details["control_input"] == "workflow_state"
+    assert loader_calls == []
+    assert _control_observations(trusted_paths) == before["trusted"]
+    assert _control_observations(shadow_paths) == before["shadow"]
+
+
 def test_recovery_loader_repreflights_resolved_paths_before_read(
     tmp_path: Path,
 ) -> None:
