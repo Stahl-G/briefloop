@@ -72,6 +72,12 @@ _SNAPSHOT_DERIVED_FIELDS = {
     "stale_baseline_sha256",
     "intake_projection",
 }
+_CONTROL_PATH_REASON_CODES = (
+    ("artifact_registry", "artifact_registry_control_path_unsafe"),
+    ("runtime_manifest", "artifact_registry_manifest_path_unsafe"),
+    ("workflow_state", "artifact_registry_workflow_path_unsafe"),
+    ("event_log", "artifact_registry_event_log_path_unsafe"),
+)
 
 
 @dataclass(frozen=True)
@@ -138,9 +144,13 @@ def interpret_artifact_registry(
 
     ws = Path(workspace).expanduser().resolve()
     state_paths = runtime_state_paths(ws)
+    control_path_reason = _control_path_chain_reason(
+        workspace=ws,
+        state_paths=state_paths,
+    )
+    if control_path_reason is not None:
+        return RegistryDegradation(control_path_reason)
     registry_path = state_paths["artifact_registry"]
-    if registry_path.is_symlink():
-        return RegistryDegradation("artifact_registry_control_path_unsafe")
     if not registry_path.exists():
         return RegistryNotMaterialized()
 
@@ -156,8 +166,6 @@ def interpret_artifact_registry(
         return registry
 
     manifest_path = state_paths["runtime_manifest"]
-    if manifest_path.is_symlink():
-        return RegistryDegradation("artifact_registry_manifest_path_unsafe")
     manifest = _load_control_record(
         manifest_path,
         schema=RUNTIME_MANIFEST_SCHEMA,
@@ -185,8 +193,6 @@ def interpret_artifact_registry(
         return RegistryDegradation("artifact_registry_run_id_mismatch")
 
     workflow_path = state_paths["workflow_state"]
-    if workflow_path.is_symlink():
-        return RegistryDegradation("artifact_registry_workflow_path_unsafe")
     workflow = _load_control_record(
         workflow_path,
         schema=WORKFLOW_STATE_SCHEMA,
@@ -338,6 +344,45 @@ def _load_control_record(
     if payload is None:  # pragma: no cover - required=True contract
         return RegistryDegradation(missing_reason)
     return payload
+
+
+def _control_path_chain_reason(
+    *,
+    workspace: Path,
+    state_paths: Mapping[str, Path],
+) -> str | None:
+    """Reject every symlink or identity change in the consumed control path chain."""
+
+    for key, reason_code in _CONTROL_PATH_REASON_CODES:
+        path = state_paths.get(key)
+        if path is None or _control_path_chain_is_unsafe(
+            workspace=workspace,
+            path=path,
+        ):
+            return reason_code
+    return None
+
+
+def _control_path_chain_is_unsafe(*, workspace: Path, path: Path) -> bool:
+    try:
+        relative = path.relative_to(workspace)
+    except ValueError:
+        return True
+
+    current = workspace
+    try:
+        for part in relative.parts:
+            current = current / part
+            if current.is_symlink():
+                return True
+        resolved = path.resolve(strict=False)
+    except (OSError, RuntimeError):
+        return True
+    try:
+        resolved.relative_to(workspace)
+    except ValueError:
+        return True
+    return resolved != path
 
 
 def _validated_run_id(value: Any) -> str | None:

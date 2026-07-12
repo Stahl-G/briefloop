@@ -161,6 +161,24 @@ def _custom_repo(tmp_path: Path, *, artifact_path: str) -> Path:
     return repo
 
 
+def _custom_repo_with_artifacts_outside_output(tmp_path: Path) -> Path:
+    repo = _custom_repo(
+        tmp_path,
+        artifact_path="custom-artifacts/audited_brief.md",
+    )
+    contracts_path = repo / "configs" / "artifact_contracts.yaml"
+    contracts = yaml.safe_load(contracts_path.read_text(encoding="utf-8"))
+    for artifact in contracts["artifacts"]:
+        original = Path(str(artifact["path"]))
+        suffix = "".join(original.suffixes) or ".json"
+        artifact["path"] = f"custom-artifacts/{artifact['artifact_id']}{suffix}"
+    contracts_path.write_text(
+        yaml.safe_dump(contracts, sort_keys=False),
+        encoding="utf-8",
+    )
+    return repo
+
+
 def _install_bound_recovery_registry(
     workspace: Path,
     *,
@@ -879,3 +897,97 @@ def test_reg_read_15_current_recovery_stale_baseline_replays_exactly(
         "artifacts"
     ]["candidate_claims"]
     _assert_read_only(ws, before)
+
+
+@pytest.mark.parametrize(
+    ("path_key", "reason_code"),
+    [
+        ("artifact_registry", "artifact_registry_control_path_unsafe"),
+        ("runtime_manifest", "artifact_registry_manifest_path_unsafe"),
+        ("workflow_state", "artifact_registry_workflow_path_unsafe"),
+        ("event_log", "artifact_registry_event_log_path_unsafe"),
+    ],
+    ids=["registry", "manifest", "workflow", "event-log"],
+)
+def test_reg_read_16_control_path_preflight_rejects_direct_symlinks(
+    tmp_path: Path,
+    path_key: str,
+    reason_code: str,
+) -> None:
+    ws = _workspace(tmp_path)
+    control_path = runtime_state_paths(ws)[path_key]
+    external_control = tmp_path / f"external-{control_path.name}"
+    control_path.replace(external_control)
+    control_path.symlink_to(external_control)
+    before = _workspace_snapshot(ws)
+    external_before = (
+        external_control.read_bytes(),
+        external_control.stat().st_mtime_ns,
+    )
+
+    verdict = interpret_artifact_registry(workspace=ws, repo_workdir=ROOT)
+
+    _assert_negative(
+        verdict,
+        verdict_type=RegistryDegradation,
+        reason_code=reason_code,
+    )
+    _assert_read_only(ws, before)
+    assert external_before == (
+        external_control.read_bytes(),
+        external_control.stat().st_mtime_ns,
+    )
+
+
+@pytest.mark.parametrize(
+    "parent_name",
+    ["output", "output/intermediate"],
+    ids=["output-parent", "intermediate-parent"],
+)
+def test_reg_read_17_control_path_preflight_rejects_symlinked_ancestors(
+    tmp_path: Path,
+    parent_name: str,
+) -> None:
+    repo = _custom_repo_with_artifacts_outside_output(tmp_path)
+    ws = _workspace(tmp_path, repo_workdir=repo)
+    control_parent = ws / parent_name
+    external_parent = tmp_path / f"external-{parent_name.replace('/', '-')}"
+    control_parent.replace(external_parent)
+    control_parent.symlink_to(external_parent, target_is_directory=True)
+    before = _workspace_snapshot(ws)
+    external_before = _workspace_snapshot(external_parent)
+
+    verdict = interpret_artifact_registry(workspace=ws, repo_workdir=repo)
+
+    _assert_negative(
+        verdict,
+        verdict_type=RegistryDegradation,
+        reason_code="artifact_registry_control_path_unsafe",
+    )
+    _assert_read_only(ws, before)
+    assert _workspace_snapshot(external_parent) == external_before
+
+
+def test_reg_read_18_unsafe_missing_registry_path_does_not_become_not_materialized(
+    tmp_path: Path,
+) -> None:
+    repo = _custom_repo_with_artifacts_outside_output(tmp_path)
+    ws = _workspace(tmp_path, repo_workdir=repo, materialize=False)
+    registry_path = runtime_state_paths(ws)["artifact_registry"]
+    assert not registry_path.exists()
+    control_parent = registry_path.parent
+    external_parent = tmp_path / "external-missing-registry-parent"
+    control_parent.replace(external_parent)
+    control_parent.symlink_to(external_parent, target_is_directory=True)
+    before = _workspace_snapshot(ws)
+    external_before = _workspace_snapshot(external_parent)
+
+    verdict = interpret_artifact_registry(workspace=ws, repo_workdir=repo)
+
+    _assert_negative(
+        verdict,
+        verdict_type=RegistryDegradation,
+        reason_code="artifact_registry_control_path_unsafe",
+    )
+    _assert_read_only(ws, before)
+    assert _workspace_snapshot(external_parent) == external_before
