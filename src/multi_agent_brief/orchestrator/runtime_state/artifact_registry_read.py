@@ -5,31 +5,24 @@ from __future__ import annotations
 from collections import Counter
 from collections.abc import Mapping
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import datetime
 from pathlib import Path
 from types import MappingProxyType
 from typing import Any, Literal, Union, cast
 
-from multi_agent_brief.contracts.agent_artifact_intake import (
-    AGENT_ARTIFACT_IDS,
-    AgentArtifactId,
-    IntakeResult,
-    evaluate_workspace_agent_artifact_intakes,
-    validate_registry_intake_context,
-)
-from multi_agent_brief.orchestrator.runtime_state._io import _sha256_file
 from multi_agent_brief.orchestrator.runtime_state.artifact_paths import (
     artifact_paths_from_contracts,
     validate_workspace_relative_artifact_path,
 )
 from multi_agent_brief.orchestrator.runtime_state.artifact_registry import (
     ARTIFACT_EXPECTED,
-    ARTIFACT_INVALID,
     ARTIFACT_MISSING,
-    ARTIFACT_PRESENT,
     ARTIFACT_REGISTRY_SCHEMA,
-    ARTIFACT_STALE,
-    ARTIFACT_VALID,
+    _build_artifact_registry,
+)
+from multi_agent_brief.orchestrator.recovery_state import (
+    RECOVERY_INVALID,
+    evaluate_recovery_state,
 )
 from multi_agent_brief.orchestrator.runtime_state.control_context import (
     load_control_object,
@@ -45,6 +38,9 @@ from multi_agent_brief.orchestrator.runtime_state.manifest import (
     RUNTIME_MANIFEST_SCHEMA,
 )
 from multi_agent_brief.orchestrator.runtime_state.paths import runtime_state_paths
+from multi_agent_brief.orchestrator.runtime_state.workflow import (
+    WORKFLOW_STATE_SCHEMA,
+)
 from multi_agent_brief.orchestrator_contract import resolve_repo_workdir
 
 
@@ -55,40 +51,8 @@ RegistryReadKind = Literal[
     "snapshot_drift",
 ]
 
-_PERSISTED_STATUSES = {
-    ARTIFACT_EXPECTED,
-    ARTIFACT_MISSING,
-    ARTIFACT_PRESENT,
-    ARTIFACT_VALID,
-    ARTIFACT_INVALID,
-    ARTIFACT_STALE,
-}
 _ABSENT_STATUSES = {ARTIFACT_EXPECTED, ARTIFACT_MISSING}
-_OBSERVED_STATUSES = {
-    ARTIFACT_PRESENT,
-    ARTIFACT_VALID,
-    ARTIFACT_INVALID,
-    ARTIFACT_STALE,
-}
 _TOP_LEVEL_FIELDS = {"schema_version", "run_id", "updated_at", "artifacts"}
-_REQUIRED_RECORD_FIELDS = {
-    "artifact_id",
-    "path",
-    "format",
-    "required",
-    "producer_stage",
-    "producer_role",
-    "consumer_stages",
-    "status",
-    "validation_result",
-    "blocking_reason",
-    "allowed_decisions",
-    "retry_or_human_review_decision",
-    "size_bytes",
-    "mtime",
-    "sha256",
-}
-_OPTIONAL_RECORD_FIELDS = {"stale_baseline_sha256", "intake_projection"}
 _CONTRACT_BOUND_RECORD_FIELDS = (
     "path",
     "format",
@@ -98,18 +62,16 @@ _CONTRACT_BOUND_RECORD_FIELDS = (
     "allowed_decisions",
     "retry_or_human_review_decision",
 )
-_INTAKE_PROJECTION_FIELDS = {
-    "schema_version",
-    "artifact_id",
-    "transform_version",
-    "raw_sha256",
-    "normalized_sha256",
-    "normalization_count",
-    "fatal_finding_count",
-    "normalizations",
-    "findings",
+_SNAPSHOT_DERIVED_FIELDS = {
+    "status",
+    "validation_result",
+    "blocking_reason",
+    "size_bytes",
+    "mtime",
+    "sha256",
+    "stale_baseline_sha256",
+    "intake_projection",
 }
-_STALE_VALIDATION_RESULTS = {"stale_after_repair", "stale_after_supersede"}
 
 
 @dataclass(frozen=True)
@@ -172,7 +134,7 @@ def interpret_artifact_registry(
     workspace: str | Path,
     repo_workdir: str | Path | None = None,
 ) -> RegistryReadVerdict:
-    """Interpret the current Registry without writing or recomputing its truth."""
+    """Verify the persisted Registry against its unique producer without writing."""
 
     ws = Path(workspace).expanduser().resolve()
     state_paths = runtime_state_paths(ws)
@@ -222,6 +184,25 @@ def interpret_artifact_registry(
     if registry_run_id != manifest_run_id:
         return RegistryDegradation("artifact_registry_run_id_mismatch")
 
+    workflow_path = state_paths["workflow_state"]
+    if workflow_path.is_symlink():
+        return RegistryDegradation("artifact_registry_workflow_path_unsafe")
+    workflow = _load_control_record(
+        workflow_path,
+        schema=WORKFLOW_STATE_SCHEMA,
+        unreadable_reason="artifact_registry_workflow_unreadable",
+        root_reason="artifact_registry_workflow_root_invalid",
+        schema_reason="artifact_registry_workflow_schema_unsupported",
+        missing_reason="artifact_registry_workflow_missing",
+    )
+    if isinstance(workflow, RegistryDegradation):
+        return workflow
+    workflow_run_id = _validated_run_id(workflow.get("run_id"))
+    if workflow_run_id is None:
+        return RegistryDegradation("artifact_registry_workflow_run_id_invalid")
+    if workflow_run_id != registry_run_id:
+        return RegistryDegradation("artifact_registry_workflow_run_id_mismatch")
+
     try:
         repo = resolve_repo_workdir(repo_workdir, workspace=ws)
         artifacts = load_artifact_contracts(repo)
@@ -254,17 +235,8 @@ def interpret_artifact_registry(
     contract_ids = set(artifacts_by_id)
     if set(records) != contract_ids:
         return RegistryDegradation("artifact_registry_artifact_universe_mismatch")
-    intake_bundle = evaluate_workspace_agent_artifact_intakes(
-        ws,
-        artifact_paths={
-            cast(AgentArtifactId, artifact_id): resolved_paths[artifact_id]
-            for artifact_id in AGENT_ARTIFACT_IDS
-            if artifact_id in resolved_paths
-        },
-    )
 
     seen_record_ids: set[str] = set()
-    canonical_records: dict[str, Mapping[str, Any]] = {}
     for artifact_id in sorted(contract_ids):
         record = records.get(artifact_id)
         if not isinstance(record, dict):
@@ -276,12 +248,6 @@ def interpret_artifact_registry(
             seen_record_ids.add(record_id)
         if record_id != artifact_id:
             return RegistryDegradation("artifact_registry_record_identity_mismatch")
-
-        actual_fields = set(record)
-        if not _REQUIRED_RECORD_FIELDS.issubset(actual_fields):
-            return RegistryDegradation("artifact_registry_record_fields_invalid")
-        if actual_fields - (_REQUIRED_RECORD_FIELDS | _OPTIONAL_RECORD_FIELDS):
-            return RegistryDegradation("artifact_registry_record_fields_invalid")
 
         contract = artifacts_by_id[artifact_id]
         raw_path = record.get("path")
@@ -303,41 +269,43 @@ def interpret_artifact_registry(
         if not isinstance(required, bool) or required != bool(contract.get("required", False)):
             return RegistryDegradation("artifact_registry_record_contract_mismatch")
 
-        status = record.get("status")
-        if status not in _PERSISTED_STATUSES:
-            return RegistryDegradation("artifact_registry_record_status_invalid")
-        validation_result = record.get("validation_result")
-        blocking_reason = record.get("blocking_reason")
-        if not _nonempty_text(validation_result) or not isinstance(blocking_reason, str):
-            return RegistryDegradation("artifact_registry_record_status_shape_invalid")
-        status_shape_reason = _status_shape_reason(record)
-        if status_shape_reason is not None:
-            return RegistryDegradation(status_shape_reason)
-
-        intake_reason = _intake_projection_reason(
-            registry=registry,
-            record=record,
-            artifact_id=artifact_id,
-            expected_run_id=registry_run_id,
-            result=(
-                intake_bundle.get(cast(AgentArtifactId, artifact_id))
-                if artifact_id in AGENT_ARTIFACT_IDS
-                else None
-            ),
+    try:
+        recovery_state = evaluate_recovery_state(
+            workspace=ws,
+            repo_workdir=repo,
         )
-        if intake_reason is not None:
-            return RegistryDegradation(intake_reason)
+    except Exception:  # fail closed at the trusted-read boundary
+        return RegistryDegradation("artifact_registry_recovery_context_invalid")
+    if (
+        recovery_state.get("status") == RECOVERY_INVALID
+        or _validated_run_id(recovery_state.get("run_id")) != registry_run_id
+    ):
+        return RegistryDegradation("artifact_registry_recovery_context_invalid")
 
-        snapshot_reason = _snapshot_drift_reason(
-            record=record,
-            path=resolved_paths[artifact_id],
+    try:
+        producer_replay = _build_artifact_registry(
+            workspace=ws,
+            run_id=registry_run_id,
+            artifacts=artifacts,
+            workflow=workflow,
+            updated_at=cast(str, updated_at),
+            recovery_state=recovery_state,
         )
-        if snapshot_reason is not None:
-            return RegistrySnapshotDrift(snapshot_reason)
-        canonical_records[artifact_id] = cast(
+    except Exception:  # producer failures never release persisted values
+        return RegistryDegradation("artifact_registry_producer_replay_failed")
+    if producer_replay != registry:
+        return _producer_replay_mismatch_verdict(
+            persisted=registry,
+            expected=producer_replay,
+        )
+
+    canonical_records = {
+        artifact_id: cast(
             Mapping[str, Any],
-            _freeze_json(record),
+            _freeze_json(cast(dict[str, Any], records[artifact_id])),
         )
+        for artifact_id in sorted(contract_ids)
+    }
 
     return CanonicalRegistryView(
         run_id=registry_run_id,
@@ -379,115 +347,90 @@ def _validated_run_id(value: Any) -> str | None:
         return None
 
 
-def _status_shape_reason(record: Mapping[str, Any]) -> str | None:
-    status = record["status"]
-    validation_result = record["validation_result"]
-    blocking_reason = record["blocking_reason"]
-    if status == ARTIFACT_EXPECTED:
-        if validation_result != "not_checked" or blocking_reason:
-            return "artifact_registry_record_status_shape_invalid"
-    elif status == ARTIFACT_MISSING:
-        if validation_result != "missing" or not blocking_reason:
-            return "artifact_registry_record_status_shape_invalid"
-    elif status in {ARTIFACT_PRESENT, ARTIFACT_VALID}:
-        if blocking_reason:
-            return "artifact_registry_record_status_shape_invalid"
-    elif status == ARTIFACT_INVALID:
-        if not blocking_reason:
-            return "artifact_registry_record_status_shape_invalid"
-    elif status == ARTIFACT_STALE:
-        stale_sha = record.get("stale_baseline_sha256")
-        if (
-            validation_result not in _STALE_VALIDATION_RESULTS
-            or not blocking_reason
-            or not _valid_sha256(stale_sha)
-            or stale_sha != record.get("sha256")
-        ):
-            return "artifact_registry_record_status_shape_invalid"
-    if status != ARTIFACT_STALE and "stale_baseline_sha256" in record:
-        return "artifact_registry_record_fields_invalid"
-    return None
-
-
-def _intake_projection_reason(
+def _producer_replay_mismatch_verdict(
     *,
-    registry: Mapping[str, Any],
-    record: Mapping[str, Any],
-    artifact_id: str,
-    expected_run_id: str,
-    result: IntakeResult | None,
+    persisted: Mapping[str, Any],
+    expected: Mapping[str, Any],
+) -> RegistryDegradation | RegistrySnapshotDrift:
+    """Classify producer-derived snapshot drift without exposing either payload."""
+
+    if any(
+        persisted.get(field) != expected.get(field)
+        for field in _TOP_LEVEL_FIELDS - {"artifacts"}
+    ):
+        return RegistryDegradation("artifact_registry_producer_replay_mismatch")
+    persisted_records = persisted.get("artifacts")
+    expected_records = expected.get("artifacts")
+    if not isinstance(persisted_records, Mapping) or not isinstance(
+        expected_records, Mapping
+    ):
+        return RegistryDegradation("artifact_registry_producer_replay_mismatch")
+    if set(persisted_records) != set(expected_records):
+        return RegistryDegradation("artifact_registry_producer_replay_mismatch")
+
+    drift_reasons: list[str] = []
+    for artifact_id in sorted(persisted_records):
+        persisted_record = persisted_records[artifact_id]
+        expected_record = expected_records[artifact_id]
+        if persisted_record == expected_record:
+            continue
+        reason = _producer_snapshot_drift_reason(
+            persisted_record=persisted_record,
+            expected_record=expected_record,
+        )
+        if reason is None:
+            return RegistryDegradation("artifact_registry_producer_replay_mismatch")
+        drift_reasons.append(reason)
+    if drift_reasons:
+        return RegistrySnapshotDrift(drift_reasons[0])
+    return RegistryDegradation("artifact_registry_producer_replay_mismatch")
+
+
+def _producer_snapshot_drift_reason(
+    *,
+    persisted_record: Any,
+    expected_record: Any,
 ) -> str | None:
-    projection_present = "intake_projection" in record
-    if artifact_id not in AGENT_ARTIFACT_IDS:
-        return "artifact_registry_intake_projection_invalid" if projection_present else None
-    if record["status"] in _ABSENT_STATUSES:
-        return "artifact_registry_intake_projection_invalid" if projection_present else None
-    if record["status"] == ARTIFACT_PRESENT:
-        return "artifact_registry_record_status_shape_invalid"
-    projection = record.get("intake_projection")
-    if not isinstance(projection, dict) or set(projection) != _INTAKE_PROJECTION_FIELDS:
-        return "artifact_registry_intake_projection_invalid"
-    reasons = validate_registry_intake_context(
-        registry,
-        expected_run_id=expected_run_id,
-        artifact_id=cast(AgentArtifactId, artifact_id),
-        result=result,
+    if not isinstance(persisted_record, Mapping) or not isinstance(
+        expected_record, Mapping
+    ):
+        return None
+    changed_fields = {
+        field
+        for field in set(persisted_record) | set(expected_record)
+        if persisted_record.get(field) != expected_record.get(field)
+    }
+    if not changed_fields or not changed_fields.issubset(_SNAPSHOT_DERIVED_FIELDS):
+        return None
+    persisted_snapshot = tuple(
+        persisted_record.get(field) for field in ("size_bytes", "mtime", "sha256")
     )
-    return "artifact_registry_intake_projection_invalid" if reasons else None
-
-
-def _snapshot_drift_reason(
-    *,
-    record: Mapping[str, Any],
-    path: Path,
-) -> str | None:
-    status = record["status"]
-    try:
-        exists = path.exists()
-    except OSError:
-        return "artifact_registry_snapshot_unreadable"
-    if status in _ABSENT_STATUSES:
-        if exists:
-            return "artifact_registry_snapshot_presence_drift"
-        if any(record.get(field) is not None for field in ("size_bytes", "mtime", "sha256")):
-            return "artifact_registry_snapshot_metadata_drift"
+    expected_snapshot = tuple(
+        expected_record.get(field) for field in ("size_bytes", "mtime", "sha256")
+    )
+    if persisted_snapshot == expected_snapshot:
         return None
-    if status not in _OBSERVED_STATUSES:  # pragma: no cover - guarded above
-        return "artifact_registry_record_status_invalid"
-    if not exists:
+
+    persisted_absent = persisted_record.get("status") in _ABSENT_STATUSES
+    expected_absent = expected_record.get("status") in _ABSENT_STATUSES
+    if persisted_absent != expected_absent:
         return "artifact_registry_snapshot_presence_drift"
-
-    size_bytes = record.get("size_bytes")
-    mtime = record.get("mtime")
-    sha256 = record.get("sha256")
-    try:
-        before = path.stat()
-        is_file = path.is_file()
-    except OSError:
-        return "artifact_registry_snapshot_unreadable"
-    if not _valid_timestamp(mtime):
-        return "artifact_registry_snapshot_metadata_invalid"
-    observed_mtime = _mtime_string(before.st_mtime)
-    if mtime != observed_mtime:
+    persisted_size, persisted_mtime, persisted_sha = persisted_snapshot
+    expected_size, expected_mtime, expected_sha = expected_snapshot
+    if (
+        persisted_mtime is not None
+        and expected_mtime is not None
+        and ((persisted_size is None) != (expected_size is None))
+        and ((persisted_sha is None) != (expected_sha is None))
+    ):
+        return "artifact_registry_snapshot_file_type_drift"
+    if persisted_mtime != expected_mtime:
         return "artifact_registry_snapshot_mtime_drift"
-    if not is_file:
-        if status != ARTIFACT_INVALID or size_bytes is not None or sha256 is not None:
-            return "artifact_registry_snapshot_file_type_drift"
-        return None
-    if not _nonnegative_int(size_bytes) or size_bytes != before.st_size:
+    if persisted_size != expected_size:
         return "artifact_registry_snapshot_size_drift"
-    if not _valid_sha256(sha256):
-        return "artifact_registry_snapshot_metadata_invalid"
-    try:
-        observed_sha256 = _sha256_file(path)
-        after = path.stat()
-    except OSError:
-        return "artifact_registry_snapshot_unreadable"
-    if (before.st_size, before.st_mtime_ns) != (after.st_size, after.st_mtime_ns):
-        return "artifact_registry_snapshot_changed_during_read"
-    if sha256 != observed_sha256:
+    if persisted_sha != expected_sha:
         return "artifact_registry_snapshot_sha256_drift"
-    return None
+    return "artifact_registry_snapshot_metadata_drift"
 
 
 def _freeze_json(value: Any) -> Any:
@@ -498,14 +441,6 @@ def _freeze_json(value: Any) -> Any:
     return value
 
 
-def _mtime_string(value: float) -> str:
-    return (
-        datetime.fromtimestamp(value, timezone.utc)
-        .replace(microsecond=0)
-        .isoformat()
-    )
-
-
 def _valid_timestamp(value: Any) -> bool:
     if not isinstance(value, str) or not value.strip():
         return False
@@ -514,19 +449,3 @@ def _valid_timestamp(value: Any) -> bool:
     except ValueError:
         return False
     return parsed.tzinfo is not None
-
-
-def _nonempty_text(value: Any) -> bool:
-    return isinstance(value, str) and bool(value.strip())
-
-
-def _nonnegative_int(value: Any) -> bool:
-    return isinstance(value, int) and not isinstance(value, bool) and value >= 0
-
-
-def _valid_sha256(value: Any) -> bool:
-    return (
-        isinstance(value, str)
-        and len(value) == 64
-        and all(character in "0123456789abcdef" for character in value)
-    )

@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import os
 import shutil
+from collections.abc import Mapping
 from dataclasses import asdict
 from datetime import datetime
 from pathlib import Path
@@ -11,6 +12,13 @@ from typing import Any
 import pytest
 import yaml
 
+from multi_agent_brief.orchestrator.recovery_state import (
+    OWNER_REVISION_SCHEMA,
+    evaluate_recovery_state,
+)
+from multi_agent_brief.orchestrator.run_integrity import (
+    contaminate_run_integrity_with_event_flag,
+)
 from multi_agent_brief.orchestrator.runtime_state import (
     check_runtime_state,
     initialize_runtime_state,
@@ -24,6 +32,7 @@ from multi_agent_brief.orchestrator.runtime_state.artifact_registry_read import 
     RegistrySnapshotDrift,
     interpret_artifact_registry,
 )
+from multi_agent_brief.orchestrator.runtime_state.event_log import append_event
 from tests.helpers import write_minimal_workspace
 
 
@@ -68,6 +77,14 @@ def _write_json(path: Path, value: Any) -> None:
         json.dumps(value, ensure_ascii=False, indent=2, sort_keys=True) + "\n",
         encoding="utf-8",
     )
+
+
+def _thaw_json(value: Any) -> Any:
+    if isinstance(value, Mapping):
+        return {key: _thaw_json(item) for key, item in value.items()}
+    if isinstance(value, tuple):
+        return [_thaw_json(item) for item in value]
+    return value
 
 
 def _workspace_snapshot(workspace: Path) -> dict[str, tuple[Any, ...]]:
@@ -142,6 +159,133 @@ def _custom_repo(tmp_path: Path, *, artifact_path: str) -> Path:
         encoding="utf-8",
     )
     return repo
+
+
+def _install_bound_recovery_registry(
+    workspace: Path,
+    *,
+    event_type: str,
+) -> dict[str, Any]:
+    paths = runtime_state_paths(workspace)
+    registry = _read_json(paths["artifact_registry"])
+    workflow = _read_json(paths["workflow_state"])
+    run_id = str(registry["run_id"])
+    baseline = registry["artifacts"]["candidate_claims"]
+    assert baseline["status"] == "valid"
+    contamination_id = f"contamination-{event_type}"
+    transaction_id = f"transaction-{event_type}"
+    repair_start_transaction_id = (
+        transaction_id if event_type == "repair_stage_superseded" else "repair-start"
+    )
+    repair_started_event_id = f"repair-started-{event_type}"
+    now = "2026-07-12T00:00:00+00:00"
+    workflow, added = contaminate_run_integrity_with_event_flag(
+        workflow,
+        reason_code="registry_read_recovery_fixture",
+        message="Exercise current recovery-bound Registry replay.",
+        created_at=now,
+        event_type="run_integrity_contaminated",
+        stage_id="doctor",
+        artifact_id="config",
+    )
+    assert added is True
+    workflow["current_stage"] = "source-discovery"
+    statuses = workflow["stage_statuses"]
+    stage_ids = list(statuses)
+    current_index = stage_ids.index("source-discovery")
+    for index, stage_id in enumerate(stage_ids):
+        statuses[stage_id] = {
+            "status": (
+                "complete"
+                if index < current_index
+                else "ready"
+                if index == current_index
+                else "pending"
+            ),
+            "reason": "Registry trusted-read recovery fixture.",
+            "updated_at": now,
+        }
+    workflow["last_repair_transaction"] = {
+        "transaction_id": transaction_id,
+        "run_id": run_id,
+        "contamination_event_id": contamination_id,
+        "owner_stage": "doctor",
+        "artifact_id": "config",
+        "rerun_start_stage": "source-discovery",
+    }
+    _write_json(paths["workflow_state"], workflow)
+    append_event(
+        workspace=workspace,
+        run_id=run_id,
+        event_type="run_integrity_contaminated",
+        event_id=contamination_id,
+        actor="system",
+        stage_id="doctor",
+        artifact_id="config",
+        reason="Registry read recovery fixture contamination.",
+        metadata={"reason_code": "registry_read_recovery_fixture"},
+    )
+    if event_type == "repair_completed":
+        append_event(
+            workspace=workspace,
+            run_id=run_id,
+            event_type="repair_started",
+            event_id=repair_started_event_id,
+            actor="system",
+            stage_id="doctor",
+            reason="Registry read recovery fixture repair start.",
+            metadata={
+                "transaction_id": repair_start_transaction_id,
+                "contamination_event_id": contamination_id,
+                "repair_owner": "doctor",
+            },
+        )
+    append_event(
+        workspace=workspace,
+        run_id=run_id,
+        event_type=event_type,
+        event_id=f"owner-revision-{event_type}",
+        actor="system",
+        stage_id="doctor",
+        artifact_id="config",
+        decision=(
+            "repair_complete"
+            if event_type == "repair_completed"
+            else "supersede_stage_artifact"
+        ),
+        reason="Registry read recovery fixture owner revision.",
+        metadata={
+            "owner_revision_schema_version": OWNER_REVISION_SCHEMA,
+            "transaction_id": transaction_id,
+            "repair_start_transaction_id": repair_start_transaction_id,
+            "repair_started_event_id": repair_started_event_id,
+            "contamination_event_id": contamination_id,
+            "owner_stage": "doctor",
+            "artifact_id": "config",
+            "rerun_start_stage": "source-discovery",
+            "stale_artifact_baselines": {
+                "candidate_claims": {
+                    "path": baseline["path"],
+                    "sha256": baseline["sha256"],
+                }
+            },
+        },
+    )
+    recovery = evaluate_recovery_state(workspace=workspace, repo_workdir=ROOT)
+    assert recovery["status"] == "downstream_rerun_pending"
+    updated_registry = check_runtime_state(
+        workspace=workspace,
+        repo_workdir=ROOT,
+        actor="cli",
+    )["artifact_registry"]
+    stale = updated_registry["artifacts"]["candidate_claims"]
+    assert stale["status"] == "stale"
+    assert stale["validation_result"] == (
+        "stale_after_supersede"
+        if event_type == "repair_stage_superseded"
+        else "stale_after_repair"
+    )
+    return updated_registry
 
 
 def test_reg_read_01_no_runtime_state_is_not_materialized_and_zero_write(
@@ -279,11 +423,11 @@ def test_reg_read_03_malformed_or_unbound_registry_degrades_without_payload(
         ("record_not_object", "artifact_registry_record_not_object"),
         ("record_duplicate", "artifact_registry_record_identity_duplicate"),
         ("record_identity", "artifact_registry_record_identity_mismatch"),
-        ("record_fields", "artifact_registry_record_fields_invalid"),
+        ("record_fields", "artifact_registry_record_path_invalid"),
         ("record_path", "artifact_registry_record_path_invalid"),
         ("record_contract", "artifact_registry_record_contract_mismatch"),
-        ("record_status", "artifact_registry_record_status_invalid"),
-        ("record_status_shape", "artifact_registry_record_status_shape_invalid"),
+        ("record_status", "artifact_registry_producer_replay_mismatch"),
+        ("record_status_shape", "artifact_registry_producer_replay_mismatch"),
     ],
     ids=lambda value: str(value),
 )
@@ -370,7 +514,7 @@ def test_reg_read_05_forged_intake_projection_never_reaches_a_view(
     _assert_negative(
         verdict,
         verdict_type=RegistryDegradation,
-        reason_code="artifact_registry_intake_projection_invalid",
+        reason_code="artifact_registry_producer_replay_mismatch",
     )
     _assert_read_only(ws, before)
 
@@ -424,7 +568,7 @@ def test_reg_read_05_persisted_projection_must_match_current_evaluator(
     _assert_negative(
         verdict,
         verdict_type=RegistryDegradation,
-        reason_code="artifact_registry_intake_projection_invalid",
+        reason_code="artifact_registry_producer_replay_mismatch",
     )
     _assert_read_only(ws, before)
 
@@ -534,6 +678,9 @@ def test_reg_read_09_custom_contract_path_is_canonical_and_bound(
     artifact_path = ws / "custom" / "audited_brief.md"
     artifact_path.parent.mkdir(parents=True)
     artifact_path.write_text("# Custom brief\n", encoding="utf-8")
+    default_path = ws / "output" / "intermediate" / "audited_brief.md"
+    default_path.parent.mkdir(parents=True)
+    default_path.write_text("poison default bytes", encoding="utf-8")
     initialize_runtime_state(workspace=ws, repo_workdir=repo, actor="cli")
     check_runtime_state(workspace=ws, repo_workdir=repo, actor="cli")
 
@@ -561,4 +708,174 @@ def test_reg_read_10_symlink_identity_drift_degrades_before_exposure(
         verdict_type=RegistryDegradation,
         reason_code="artifact_registry_path_context_invalid",
     )
+    _assert_read_only(ws, before)
+
+
+def test_reg_read_11_forged_invalid_to_valid_status_fails_producer_replay(
+    tmp_path: Path,
+) -> None:
+    ws = write_minimal_workspace(tmp_path / "ws")
+    artifact_path = ws / "output" / "intermediate" / "audited_brief.md"
+    artifact_path.parent.mkdir(parents=True)
+    artifact_path.write_text("", encoding="utf-8")
+    initialize_runtime_state(workspace=ws, repo_workdir=ROOT, actor="cli")
+    check_runtime_state(workspace=ws, repo_workdir=ROOT, actor="cli")
+    registry_path = runtime_state_paths(ws)["artifact_registry"]
+    registry = _read_json(registry_path)
+    record = registry["artifacts"]["audited_brief"]
+    assert record["status"] == "invalid"
+    recorded_sha256 = record["sha256"]
+    record["status"] = "valid"
+    record["validation_result"] = "valid"
+    record["blocking_reason"] = ""
+    _write_json(registry_path, registry)
+    before = _workspace_snapshot(ws)
+
+    verdict = interpret_artifact_registry(workspace=ws, repo_workdir=ROOT)
+
+    _assert_negative(
+        verdict,
+        verdict_type=RegistryDegradation,
+        reason_code="artifact_registry_producer_replay_mismatch",
+    )
+    assert _read_json(registry_path)["artifacts"]["audited_brief"]["sha256"] == recorded_sha256
+    _assert_read_only(ws, before)
+
+
+def test_reg_read_12_writer_agent_read_error_remains_canonical(
+    tmp_path: Path,
+) -> None:
+    ws = write_minimal_workspace(tmp_path / "ws")
+    artifact_path = ws / "output" / "intermediate" / "candidate_claims.json"
+    artifact_path.mkdir(parents=True)
+    initialize_runtime_state(workspace=ws, repo_workdir=ROOT, actor="cli")
+    checked = check_runtime_state(workspace=ws, repo_workdir=ROOT, actor="cli")
+    writer_record = checked["artifact_registry"]["artifacts"]["candidate_claims"]
+    assert writer_record["status"] == "invalid"
+    assert writer_record["intake_projection"]["raw_sha256"] == ""
+    before = _workspace_snapshot(ws)
+
+    verdict = interpret_artifact_registry(workspace=ws, repo_workdir=ROOT)
+
+    assert isinstance(verdict, CanonicalRegistryView)
+    assert _thaw_json(verdict.records["candidate_claims"]) == writer_record
+    _assert_read_only(ws, before)
+
+
+@pytest.mark.parametrize(
+    ("case_id", "reason_code"),
+    [
+        ("missing", "artifact_registry_workflow_missing"),
+        ("json", "artifact_registry_workflow_unreadable"),
+        ("root", "artifact_registry_workflow_root_invalid"),
+        ("schema", "artifact_registry_workflow_schema_unsupported"),
+        ("symlink", "artifact_registry_workflow_path_unsafe"),
+        ("run_id", "artifact_registry_workflow_run_id_invalid"),
+        ("cross_run", "artifact_registry_workflow_run_id_mismatch"),
+    ],
+    ids=lambda value: str(value),
+)
+def test_reg_read_13_workflow_context_fails_closed(
+    tmp_path: Path,
+    case_id: str,
+    reason_code: str,
+) -> None:
+    ws = _workspace(tmp_path)
+    workflow_path = runtime_state_paths(ws)["workflow_state"]
+    workflow = _read_json(workflow_path)
+    external_control: Path | None = None
+    if case_id == "missing":
+        workflow_path.unlink()
+    elif case_id == "json":
+        workflow_path.write_text("{broken", encoding="utf-8")
+    elif case_id == "root":
+        _write_json(workflow_path, [])
+    elif case_id == "schema":
+        workflow["schema_version"] = "multi-agent-brief-workflow-state/v999"
+        _write_json(workflow_path, workflow)
+    elif case_id == "symlink":
+        external_control = tmp_path / "external-workflow-state.json"
+        workflow_path.replace(external_control)
+        workflow_path.symlink_to(external_control)
+    elif case_id == "run_id":
+        workflow["run_id"] = ""
+        _write_json(workflow_path, workflow)
+    elif case_id == "cross_run":
+        workflow["run_id"] = "run-from-another-workspace"
+        _write_json(workflow_path, workflow)
+    else:  # pragma: no cover - parameter contract
+        raise AssertionError(case_id)
+    before = _workspace_snapshot(ws)
+    external_before = (
+        (external_control.read_bytes(), external_control.stat().st_mtime_ns)
+        if external_control is not None
+        else None
+    )
+
+    verdict = interpret_artifact_registry(workspace=ws, repo_workdir=ROOT)
+
+    _assert_negative(
+        verdict,
+        verdict_type=RegistryDegradation,
+        reason_code=reason_code,
+    )
+    _assert_read_only(ws, before)
+    if external_control is not None:
+        assert external_before == (
+            external_control.read_bytes(),
+            external_control.stat().st_mtime_ns,
+        )
+
+
+def test_reg_read_14_invalid_recovery_context_fails_closed(
+    tmp_path: Path,
+) -> None:
+    ws = _workspace(tmp_path)
+    event_path = runtime_state_paths(ws)["event_log"]
+    event_path.write_text("{broken\n", encoding="utf-8")
+    before = _workspace_snapshot(ws)
+
+    verdict = interpret_artifact_registry(workspace=ws, repo_workdir=ROOT)
+
+    _assert_negative(
+        verdict,
+        verdict_type=RegistryDegradation,
+        reason_code="artifact_registry_recovery_context_invalid",
+    )
+    _assert_read_only(ws, before)
+
+
+@pytest.mark.parametrize(
+    "event_type",
+    ["repair_completed", "repair_stage_superseded"],
+    ids=["repair", "supersede"],
+)
+def test_reg_read_15_current_recovery_stale_baseline_replays_exactly(
+    tmp_path: Path,
+    event_type: str,
+) -> None:
+    ws = write_minimal_workspace(tmp_path / "ws")
+    candidate_path = ws / "output" / "intermediate" / "candidate_claims.json"
+    candidate_path.parent.mkdir(parents=True)
+    _write_json(
+        candidate_path,
+        [
+            {
+                "candidate_id": "CAND-001",
+                "claim": "A public-safe synthetic candidate.",
+                "source_id": "SRC-001",
+            }
+        ],
+    )
+    initialize_runtime_state(workspace=ws, repo_workdir=ROOT, actor="cli")
+    check_runtime_state(workspace=ws, repo_workdir=ROOT, actor="cli")
+    writer_registry = _install_bound_recovery_registry(ws, event_type=event_type)
+    before = _workspace_snapshot(ws)
+
+    verdict = interpret_artifact_registry(workspace=ws, repo_workdir=ROOT)
+
+    assert isinstance(verdict, CanonicalRegistryView)
+    assert _thaw_json(verdict.records["candidate_claims"]) == writer_registry[
+        "artifacts"
+    ]["candidate_claims"]
     _assert_read_only(ws, before)
