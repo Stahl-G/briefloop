@@ -28,9 +28,12 @@ from multi_agent_brief.orchestrator.recovery_state import (
     RECOVERY_INVALID,
     RECOVERY_NOT_APPLICABLE,
     RECOVERY_RERUN_PENDING,
+    RecoveryContext,
+    RecoveryContextNotMaterialized,
     RecoveryControlPaths,
     evaluate_recovery_state,
     load_recovery_context,
+    load_recovery_context_verdict,
     recovery_stale_artifact_baselines,
     resolve_recovery_control_paths,
 )
@@ -421,6 +424,146 @@ def test_recovery_control_input_inventory_is_exact_and_resolver_is_read_only(
         key for key, _relative_path in RECOVERY_CONTROL_INPUT_FILES
     )
     assert tuple(ws.rglob("*")) == before == ()
+
+
+@pytest.mark.parametrize(
+    "layout",
+    ["no-output-tree", "empty-output", "empty-intermediate"],
+)
+def test_recovery_context_absence_layouts_are_typed_and_value_free(
+    tmp_path: Path,
+    layout: str,
+) -> None:
+    ws = tmp_path / "workspace"
+    ws.mkdir()
+    if layout == "empty-output":
+        (ws / "output").mkdir()
+    elif layout == "empty-intermediate":
+        (ws / "output/intermediate").mkdir(parents=True)
+    control_paths = resolve_recovery_control_paths(ws)
+    before = _control_observations(control_paths)
+
+    verdict = load_recovery_context_verdict(
+        workspace=ws,
+        repo_workdir=ROOT,
+    )
+
+    assert isinstance(verdict, RecoveryContextNotMaterialized)
+    assert vars(verdict) == {
+        "kind": "not_materialized",
+        "reason_code": "recovery_context_not_materialized",
+    }
+    assert _control_observations(control_paths) == before
+
+
+_RECOVERY_CONTROL_KEYS = tuple(
+    key for key, _relative_path in RECOVERY_CONTROL_INPUT_FILES
+)
+_REQUIRED_RECOVERY_CONTROL_KEYS = {
+    "runtime_manifest",
+    "workflow_state",
+    "event_log",
+}
+
+
+@pytest.mark.parametrize(
+    "presence_mask",
+    range(1 << len(_RECOVERY_CONTROL_KEYS)),
+    ids=lambda mask: f"presence-{mask:05b}",
+)
+def test_recovery_context_presence_matrix_has_one_absence_interpretation(
+    tmp_path: Path,
+    presence_mask: int,
+) -> None:
+    template = _workspace(tmp_path / "template")
+    _write_registry(template)
+    _write_bound_finalize_report(template)
+    template_paths = _control_path_mapping(resolve_recovery_control_paths(template))
+    ws = tmp_path / "subject"
+    ws.mkdir()
+    present_keys = {
+        key
+        for index, key in enumerate(_RECOVERY_CONTROL_KEYS)
+        if presence_mask & (1 << index)
+    }
+    for key in present_keys:
+        source = template_paths[key]
+        target = ws / source.relative_to(template)
+        target.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(source, target)
+    control_paths = resolve_recovery_control_paths(ws)
+    before = _control_observations(control_paths)
+
+    if not present_keys:
+        verdict = load_recovery_context_verdict(
+            workspace=ws,
+            repo_workdir=ROOT,
+        )
+        assert isinstance(verdict, RecoveryContextNotMaterialized)
+        assert set(vars(verdict)) == {"kind", "reason_code"}
+    elif _REQUIRED_RECOVERY_CONTROL_KEYS.issubset(present_keys):
+        verdict = load_recovery_context_verdict(
+            workspace=ws,
+            repo_workdir=ROOT,
+        )
+        assert isinstance(verdict, RecoveryContext)
+        assert (verdict.artifact_registry is not None) == (
+            "artifact_registry" in present_keys
+        )
+        assert (verdict.finalize_report is not None) == (
+            "finalize_report" in present_keys
+        )
+    else:
+        first_missing_required = next(
+            key
+            for key in ("runtime_manifest", "workflow_state", "event_log")
+            if key not in present_keys
+        )
+        with pytest.raises(RuntimeStateError) as exc_info:
+            load_recovery_context_verdict(
+                workspace=ws,
+                repo_workdir=ROOT,
+            )
+        assert exc_info.value.details["reason_code"] == "control_file_missing"
+        assert exc_info.value.details["control_input"] == first_missing_required
+    assert _control_observations(control_paths) == before
+
+
+@pytest.mark.parametrize(
+    ("control_input", "target_kind"),
+    [
+        (control_input, target_kind)
+        for control_input in _RECOVERY_CONTROL_KEYS
+        for target_kind in ("existing", "dangling")
+    ],
+    ids=lambda value: str(value),
+)
+def test_recovery_context_absence_preflight_rejects_direct_symlinks(
+    tmp_path: Path,
+    control_input: str,
+    target_kind: str,
+) -> None:
+    ws = _workspace(tmp_path)
+    _write_registry(ws)
+    _write_bound_finalize_report(ws)
+    control_paths = resolve_recovery_control_paths(ws)
+    path = _control_path_mapping(control_paths)[control_input]
+    external = tmp_path / f"external-{control_input}"
+    if target_kind == "existing":
+        external.write_bytes(path.read_bytes())
+    path.unlink()
+    path.symlink_to(external)
+    before = _control_observations(control_paths, extra_paths=(external,))
+
+    with pytest.raises(RuntimeStateError) as exc_info:
+        load_recovery_context_verdict(
+            workspace=ws,
+            repo_workdir=ROOT,
+        )
+
+    assert exc_info.value.details["reason_code"] == "recovery_control_path_unsafe"
+    assert exc_info.value.details["control_input"] == control_input
+    assert _control_observations(control_paths, extra_paths=(external,)) == before
 
 
 def test_recovery_acquires_session_before_validating_inventory_token(
@@ -929,10 +1072,10 @@ def test_recovery_loader_reads_only_the_preflighted_inventory(
     assert context.runtime_manifest["run_id"] == RUN_ID
     assert factory_calls == [control_paths.workspace]
     assert session_events == [
-        ("preflight", "output/intermediate/runtime_manifest.json", True),
-        ("preflight", "output/intermediate/workflow_state.json", True),
+        ("preflight", "output/intermediate/runtime_manifest.json", False),
+        ("preflight", "output/intermediate/workflow_state.json", False),
         ("preflight", "output/intermediate/artifact_registry.json", False),
-        ("preflight", "output/intermediate/event_log.jsonl", True),
+        ("preflight", "output/intermediate/event_log.jsonl", False),
         ("preflight", "output/intermediate/finalize_report.json", False),
         ("load_object", "output/intermediate/runtime_manifest.json", True),
         ("load_object", "output/intermediate/workflow_state.json", True),
