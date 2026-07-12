@@ -13,6 +13,8 @@ from typing import Any, Literal, Union, cast
 from multi_agent_brief.contracts.agent_artifact_intake import (
     AGENT_ARTIFACT_IDS,
     AgentArtifactId,
+    IntakeResult,
+    evaluate_workspace_agent_artifact_intakes,
     validate_registry_intake_context,
 )
 from multi_agent_brief.orchestrator.runtime_state._io import _sha256_file
@@ -175,9 +177,9 @@ def interpret_artifact_registry(
     ws = Path(workspace).expanduser().resolve()
     state_paths = runtime_state_paths(ws)
     registry_path = state_paths["artifact_registry"]
+    if registry_path.is_symlink():
+        return RegistryDegradation("artifact_registry_control_path_unsafe")
     if not registry_path.exists():
-        if registry_path.is_symlink():
-            return RegistryDegradation("artifact_registry_unreadable")
         return RegistryNotMaterialized()
 
     registry = _load_control_record(
@@ -191,8 +193,11 @@ def interpret_artifact_registry(
     if isinstance(registry, RegistryDegradation):
         return registry
 
+    manifest_path = state_paths["runtime_manifest"]
+    if manifest_path.is_symlink():
+        return RegistryDegradation("artifact_registry_manifest_path_unsafe")
     manifest = _load_control_record(
-        state_paths["runtime_manifest"],
+        manifest_path,
         schema=RUNTIME_MANIFEST_SCHEMA,
         unreadable_reason="artifact_registry_manifest_unreadable",
         root_reason="artifact_registry_manifest_root_invalid",
@@ -249,6 +254,14 @@ def interpret_artifact_registry(
     contract_ids = set(artifacts_by_id)
     if set(records) != contract_ids:
         return RegistryDegradation("artifact_registry_artifact_universe_mismatch")
+    intake_bundle = evaluate_workspace_agent_artifact_intakes(
+        ws,
+        artifact_paths={
+            cast(AgentArtifactId, artifact_id): resolved_paths[artifact_id]
+            for artifact_id in AGENT_ARTIFACT_IDS
+            if artifact_id in resolved_paths
+        },
+    )
 
     seen_record_ids: set[str] = set()
     canonical_records: dict[str, Mapping[str, Any]] = {}
@@ -306,6 +319,11 @@ def interpret_artifact_registry(
             record=record,
             artifact_id=artifact_id,
             expected_run_id=registry_run_id,
+            result=(
+                intake_bundle.get(cast(AgentArtifactId, artifact_id))
+                if artifact_id in AGENT_ARTIFACT_IDS
+                else None
+            ),
         )
         if intake_reason is not None:
             return RegistryDegradation(intake_reason)
@@ -397,6 +415,7 @@ def _intake_projection_reason(
     record: Mapping[str, Any],
     artifact_id: str,
     expected_run_id: str,
+    result: IntakeResult | None,
 ) -> str | None:
     projection_present = "intake_projection" in record
     if artifact_id not in AGENT_ARTIFACT_IDS:
@@ -412,6 +431,7 @@ def _intake_projection_reason(
         registry,
         expected_run_id=expected_run_id,
         artifact_id=cast(AgentArtifactId, artifact_id),
+        result=result,
     )
     return "artifact_registry_intake_projection_invalid" if reasons else None
 

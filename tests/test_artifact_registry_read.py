@@ -188,10 +188,12 @@ def test_reg_read_02_initialized_runtime_missing_registry_stays_not_materialized
         ("registry_json", "artifact_registry_unreadable"),
         ("registry_root", "artifact_registry_root_invalid"),
         ("registry_schema", "artifact_registry_schema_unsupported"),
+        ("registry_symlink", "artifact_registry_control_path_unsafe"),
         ("manifest_missing", "artifact_registry_manifest_missing"),
         ("manifest_json", "artifact_registry_manifest_unreadable"),
         ("manifest_root", "artifact_registry_manifest_root_invalid"),
         ("manifest_schema", "artifact_registry_manifest_schema_unsupported"),
+        ("manifest_symlink", "artifact_registry_manifest_path_unsafe"),
         ("manifest_run_id", "artifact_registry_manifest_run_id_invalid"),
         ("registry_run_id", "artifact_registry_run_id_invalid"),
         ("cross_run", "artifact_registry_run_id_mismatch"),
@@ -207,6 +209,7 @@ def test_reg_read_03_malformed_or_unbound_registry_degrades_without_payload(
     paths = runtime_state_paths(ws)
     registry = _read_json(paths["artifact_registry"])
     manifest = _read_json(paths["runtime_manifest"])
+    external_control: Path | None = None
     if case_id == "registry_utf8":
         paths["artifact_registry"].write_bytes(b"\xff\xfe")
     elif case_id == "registry_json":
@@ -216,6 +219,10 @@ def test_reg_read_03_malformed_or_unbound_registry_degrades_without_payload(
     elif case_id == "registry_schema":
         registry["schema_version"] = "multi-agent-brief-artifact-registry/v999"
         _write_json(paths["artifact_registry"], registry)
+    elif case_id == "registry_symlink":
+        external_control = tmp_path / "external-artifact-registry.json"
+        paths["artifact_registry"].replace(external_control)
+        paths["artifact_registry"].symlink_to(external_control)
     elif case_id == "manifest_missing":
         paths["runtime_manifest"].unlink()
     elif case_id == "manifest_json":
@@ -225,6 +232,10 @@ def test_reg_read_03_malformed_or_unbound_registry_degrades_without_payload(
     elif case_id == "manifest_schema":
         manifest["schema_version"] = "multi-agent-brief-runtime-manifest/v999"
         _write_json(paths["runtime_manifest"], manifest)
+    elif case_id == "manifest_symlink":
+        external_control = tmp_path / "external-runtime-manifest.json"
+        paths["runtime_manifest"].replace(external_control)
+        paths["runtime_manifest"].symlink_to(external_control)
     elif case_id == "manifest_run_id":
         manifest["run_id"] = ""
         _write_json(paths["runtime_manifest"], manifest)
@@ -237,6 +248,11 @@ def test_reg_read_03_malformed_or_unbound_registry_degrades_without_payload(
     else:  # pragma: no cover - parameter contract
         raise AssertionError(case_id)
     before = _workspace_snapshot(ws)
+    external_before = (
+        (external_control.read_bytes(), external_control.stat().st_mtime_ns)
+        if external_control is not None
+        else None
+    )
 
     verdict = interpret_artifact_registry(workspace=ws, repo_workdir=ROOT)
 
@@ -246,6 +262,11 @@ def test_reg_read_03_malformed_or_unbound_registry_degrades_without_payload(
         reason_code=reason_code,
     )
     _assert_read_only(ws, before)
+    if external_control is not None:
+        assert external_before == (
+            external_control.read_bytes(),
+            external_control.stat().st_mtime_ns,
+        )
 
 
 @pytest.mark.parametrize(
@@ -354,6 +375,60 @@ def test_reg_read_05_forged_intake_projection_never_reaches_a_view(
     _assert_read_only(ws, before)
 
 
+@pytest.mark.parametrize(
+    "case_id",
+    ["normalized_sha256", "normalizations", "finding"],
+)
+def test_reg_read_05_persisted_projection_must_match_current_evaluator(
+    tmp_path: Path,
+    case_id: str,
+) -> None:
+    ws = write_minimal_workspace(tmp_path / "ws")
+    candidate_path = ws / "output" / "intermediate" / "candidate_claims.json"
+    candidate_path.parent.mkdir(parents=True)
+    candidate = {
+        "candidate_id": "CAND-001",
+        "claim": "A public-safe synthetic candidate.",
+        "source_id": "SRC-001",
+    }
+    if case_id == "finding":
+        candidate.pop("claim")
+    _write_json(candidate_path, [candidate])
+    initialize_runtime_state(workspace=ws, repo_workdir=ROOT, actor="cli")
+    check_runtime_state(workspace=ws, repo_workdir=ROOT, actor="cli")
+    registry_path = runtime_state_paths(ws)["artifact_registry"]
+    registry = _read_json(registry_path)
+    projection = registry["artifacts"]["candidate_claims"]["intake_projection"]
+    if case_id == "normalized_sha256":
+        projection["normalized_sha256"] = "a" * 64
+    elif case_id == "normalizations":
+        projection["normalizations"] = [
+            {
+                "operation": "forged_operation",
+                "path": "candidate_claims[0]",
+                "source": "forged-source",
+                "target": "forged-secret",
+            }
+        ]
+        projection["normalization_count"] = 1
+    elif case_id == "finding":
+        assert projection["findings"]
+        projection["findings"][0]["message"] = "forged-secret"
+    else:  # pragma: no cover - parameter contract
+        raise AssertionError(case_id)
+    _write_json(registry_path, registry)
+    before = _workspace_snapshot(ws)
+
+    verdict = interpret_artifact_registry(workspace=ws, repo_workdir=ROOT)
+
+    _assert_negative(
+        verdict,
+        verdict_type=RegistryDegradation,
+        reason_code="artifact_registry_intake_projection_invalid",
+    )
+    _assert_read_only(ws, before)
+
+
 def test_reg_read_06_real_writer_output_is_the_only_value_bearing_view(
     tmp_path: Path,
 ) -> None:
@@ -380,16 +455,21 @@ def test_reg_read_07_truthful_invalid_writer_record_remains_canonical(
     tmp_path: Path,
 ) -> None:
     ws = write_minimal_workspace(tmp_path / "ws")
-    artifact_path = ws / "output" / "intermediate" / "audited_brief.md"
+    artifact_path = ws / "output" / "intermediate" / "candidate_claims.json"
     artifact_path.parent.mkdir(parents=True)
-    artifact_path.write_text("", encoding="utf-8")
+    _write_json(
+        artifact_path,
+        [{"candidate_id": "CAND-001", "source_id": "SRC-001"}],
+    )
     initialize_runtime_state(workspace=ws, repo_workdir=ROOT, actor="cli")
     check_runtime_state(workspace=ws, repo_workdir=ROOT, actor="cli")
 
     verdict = interpret_artifact_registry(workspace=ws, repo_workdir=ROOT)
 
     assert isinstance(verdict, CanonicalRegistryView)
-    assert verdict.records["audited_brief"]["status"] == "invalid"
+    record = verdict.records["candidate_claims"]
+    assert record["status"] == "invalid"
+    assert record["intake_projection"]["fatal_finding_count"] >= 1
     assert verdict.status_counts["invalid"] >= 1
 
 
