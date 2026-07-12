@@ -124,6 +124,7 @@ def test_session_stays_bound_when_workspace_is_replaced_between_reads(
     assert raw != foreign_second
 
 
+@pytest.mark.skipif(os.name == "nt", reason="Windows blocks ancestor rename")
 def test_session_stays_bound_when_workspace_ancestor_is_replaced(
     tmp_path: Path,
 ) -> None:
@@ -143,6 +144,24 @@ def test_session_stays_bound_when_workspace_ancestor_is_replaced(
 
     assert raw == trusted
     assert raw != foreign
+
+
+@pytest.mark.skipif(not WINDOWS_NATIVE, reason="requires native Windows handles")
+def test_windows_session_blocks_workspace_ancestor_replacement(
+    tmp_path: Path,
+) -> None:
+    trusted_parent = tmp_path / "trusted-parent"
+    workspace = trusted_parent / "workspace"
+    trusted = _write_control(workspace, {"value": "trusted"})
+    moved_parent = tmp_path / "opened-parent"
+
+    with control_context._open_workspace_control_read_session(workspace) as session:
+        with pytest.raises(PermissionError):
+            trusted_parent.rename(moved_parent)
+
+        raw = session.read_bytes(CONTROL_RELATIVE_PATH)
+
+    assert raw == trusted
 
 
 def test_session_optional_absence_is_only_missing_final_component(
