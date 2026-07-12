@@ -568,6 +568,92 @@ def test_windows_control_parts_reject_aliasing_components(
     )
 
 
+def test_windows_control_read_rejects_oversized_final_component_before_open(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    oversized = "control.json" + ("A" * 32768)
+    native_calls: list[str] = []
+
+    monkeypatch.setattr(
+        control_context,
+        "_windows_open_root_handle",
+        lambda _path: native_calls.append("open") or 101,
+    )
+    monkeypatch.setattr(
+        control_context,
+        "_windows_read_handle",
+        lambda _handle, *, path: native_calls.append("read") or b"wrong",
+    )
+
+    with pytest.raises(RuntimeStateError) as exc_info:
+        control_context._read_workspace_control_bytes_windows(
+            display_root=Path(r"C:\workspace"),
+            parts=("output", "intermediate", oversized),
+            display_path=Path(r"C:\workspace\output\intermediate") / oversized,
+            required=True,
+        )
+
+    assert exc_info.value.details["reason_code"] == (
+        "control_file_relative_path_invalid"
+    )
+    assert native_calls == []
+
+
+def test_windows_control_read_rejects_oversized_workspace_component_before_open(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    oversized = "workspace" + ("A" * 32768)
+    native_calls: list[str] = []
+
+    monkeypatch.setattr(
+        control_context,
+        "_windows_open_root_handle",
+        lambda _path: native_calls.append("open") or 101,
+    )
+    monkeypatch.setattr(
+        control_context,
+        "_windows_read_handle",
+        lambda _handle, *, path: native_calls.append("read") or b"wrong",
+    )
+
+    with pytest.raises(RuntimeStateError) as exc_info:
+        control_context._read_workspace_control_bytes_windows(
+            display_root=Path("C:\\" + oversized),
+            parts=("output", "intermediate", "control.json"),
+            display_path=Path("C:\\" + oversized) / CONTROL_RELATIVE_PATH,
+            required=True,
+        )
+
+    assert exc_info.value.details["reason_code"] == "control_workspace_root_invalid"
+    assert native_calls == []
+
+
+def test_windows_relative_open_defensively_rejects_unicode_length_narrowing(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    oversized = "control.json" + ("A" * 32768)
+    native_calls: list[str] = []
+
+    class FakeApi:
+        def nt_create_file(self, *_args):
+            native_calls.append("nt_create_file")
+            return 0
+
+    monkeypatch.setattr(control_context, "_windows_native_api", FakeApi)
+
+    with pytest.raises(RuntimeStateError) as exc_info:
+        control_context._windows_open_relative_handle(
+            parent_handle=41,
+            component=oversized,
+            directory=False,
+        )
+
+    assert exc_info.value.details["reason_code"] == (
+        "control_file_relative_path_invalid"
+    )
+    assert native_calls == []
+
+
 def test_windows_relative_open_is_parent_handle_bound_and_no_follow(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

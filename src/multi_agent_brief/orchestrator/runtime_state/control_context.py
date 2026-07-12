@@ -48,6 +48,7 @@ _WINDOWS_FILE_ATTRIBUTE_TAG_INFO_CLASS = 9
 _WINDOWS_ERROR_FILE_NOT_FOUND = 2
 _WINDOWS_ERROR_PATH_NOT_FOUND = 3
 _WINDOWS_INVALID_HANDLE_VALUE = ctypes.c_void_p(-1).value
+_WINDOWS_UNICODE_STRING_MAX_BYTES = (1 << 16) - 1
 
 
 class _WindowsUnicodeString(ctypes.Structure):
@@ -456,21 +457,58 @@ def _validate_windows_path_parts(
     display_path: Path,
     reason_code: str,
 ) -> None:
-    if any(
-        not part
-        or part in {".", ".."}
-        or "\x00" in part
-        or ":" in part
-        or "\\" in part
-        or "/" in part
-        or part.endswith((" ", "."))
-        for part in parts
-    ):
+    for part in parts:
+        if (
+            not isinstance(part, str)
+            or not part
+            or part in {".", ".."}
+            or "\x00" in part
+            or ":" in part
+            or "\\" in part
+            or "/" in part
+            or part.endswith((" ", "."))
+        ):
+            raise _control_read_error(
+                display_path,
+                reason_code=reason_code,
+                reason="Windows path contains a noncanonical component.",
+            )
+        _windows_component_utf16_bytes(
+            part,
+            display_path=display_path,
+            reason_code=reason_code,
+        )
+
+
+def _windows_component_utf16_bytes(
+    component: str,
+    *,
+    display_path: Path,
+    reason_code: str,
+) -> bytes:
+    """Return one exact NT component encoding without USHORT narrowing."""
+
+    if not isinstance(component, str) or not component:
         raise _control_read_error(
             display_path,
             reason_code=reason_code,
             reason="Windows path contains a noncanonical component.",
         )
+    try:
+        encoded = component.encode("utf-16-le")
+    except UnicodeEncodeError as exc:
+        raise _control_read_error(
+            display_path,
+            reason_code=reason_code,
+            reason="Windows path component is not valid UTF-16.",
+        ) from exc
+    if len(encoded) + 2 > _WINDOWS_UNICODE_STRING_MAX_BYTES:
+        raise _control_read_error(
+            display_path,
+            reason_code=reason_code,
+            reason="Windows path component exceeds the native identity limit.",
+        )
+    return encoded
 
 
 @lru_cache(maxsize=1)
@@ -568,9 +606,14 @@ def _windows_open_relative_handle(
     component: str,
     directory: bool,
 ) -> int:
+    encoded_name = _windows_component_utf16_bytes(
+        component,
+        display_path=Path(component),
+        reason_code="control_file_relative_path_invalid",
+    )
+    name_length = len(encoded_name)
+    name_buffer = ctypes.create_unicode_buffer(component, (name_length // 2) + 1)
     api = _windows_native_api()
-    name_buffer = ctypes.create_unicode_buffer(component)
-    name_length = len(component.encode("utf-16-le"))
     unicode_name = _WindowsUnicodeString(
         Length=name_length,
         MaximumLength=name_length + 2,
