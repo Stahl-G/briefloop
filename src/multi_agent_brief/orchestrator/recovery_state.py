@@ -496,9 +496,9 @@ def _expected_recovery_control_paths(workspace: Path) -> RecoveryControlPaths:
 
 
 def _recovery_workspace_path(workspace: str | Path) -> Path:
-    """Return a lexical absolute workspace identity without following aliases."""
+    """Bind a caller workspace name to one physical recovery identity."""
 
-    return Path(workspace).expanduser().absolute()
+    return Path(workspace).expanduser().resolve()
 
 
 def _validate_recovery_control_paths(

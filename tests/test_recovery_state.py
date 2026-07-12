@@ -346,42 +346,48 @@ def test_recovery_rejects_direct_control_input_symlink_before_read(
     assert _control_observations(control_paths, extra_paths=(external,)) == before
 
 
-def test_recovery_rejects_workspace_ancestor_alias_before_read(
+def test_recovery_binds_workspace_alias_before_retargeting(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    real_parent = tmp_path / "real"
-    workspace = _workspace(real_parent)
+    trusted_parent = tmp_path / "trusted"
+    trusted_workspace = _workspace(trusted_parent, current_stage="editor")
+    foreign_parent = tmp_path / "foreign"
+    foreign_workspace = _workspace(foreign_parent, current_stage="auditor")
     alias_parent = tmp_path / "alias"
-    alias_parent.symlink_to(real_parent, target_is_directory=True)
-    supplied_workspace = alias_parent / workspace.name
-    control_paths = resolve_recovery_control_paths(workspace)
-    before = _control_observations(control_paths)
+    alias_parent.symlink_to(trusted_parent, target_is_directory=True)
+    supplied_workspace = alias_parent / trusted_workspace.name
+    control_paths = resolve_recovery_control_paths(supplied_workspace)
+    object_loader = recovery_state_module.load_workspace_control_object
+    swapped = False
 
-    def forbidden_loader(**_kwargs):
-        raise AssertionError("workspace aliases must fail before reads")
+    def retargeting_loader(*, workspace: str | Path, relative_path: str, **kwargs):
+        nonlocal swapped
+        if not swapped:
+            alias_parent.unlink()
+            alias_parent.symlink_to(foreign_parent, target_is_directory=True)
+            swapped = True
+        return object_loader(
+            workspace=workspace,
+            relative_path=relative_path,
+            **kwargs,
+        )
 
     monkeypatch.setattr(
         recovery_state_module,
         "load_workspace_control_object",
-        forbidden_loader,
-    )
-    monkeypatch.setattr(
-        recovery_state_module,
-        "read_workspace_control_bytes",
-        forbidden_loader,
+        retargeting_loader,
     )
 
-    payload = evaluate_recovery_state(
+    context = load_recovery_context(
         workspace=supplied_workspace,
         repo_workdir=ROOT,
     )
 
-    assert payload["status"] == RECOVERY_INVALID
-    assert payload["reason_code"] == "control_context_invalid"
-    assert payload["details"]["reason_code"] == "recovery_control_path_unsafe"
-    assert payload["details"]["control_input"] == "runtime_manifest"
-    assert _control_observations(control_paths) == before
+    assert control_paths.workspace == trusted_workspace.resolve()
+    assert swapped is True
+    assert supplied_workspace.resolve() == foreign_workspace.resolve()
+    assert context.workflow["current_stage"] == "editor"
 
 
 @pytest.mark.parametrize(
