@@ -92,16 +92,6 @@ class RecoveryControlPaths:
     event_log: Path
     finalize_report: Path
 
-    def as_mapping(self) -> Mapping[str, Path]:
-        """Return the fixed recovery input inventory without mutable aliases."""
-
-        return MappingProxyType(
-            {
-                key: getattr(self, key)
-                for key, _relative_path in RECOVERY_CONTROL_INPUT_FILES
-            }
-        )
-
 
 @dataclass(frozen=True)
 class RecoveryContext:
@@ -433,7 +423,7 @@ def load_recovery_context(
     # or become stale after resolution. Rebind and preflight immediately before
     # every read instead of trusting the dataclass instance.
     _validate_recovery_control_paths(workspace=ws, control_paths=paths)
-    path_map = paths.as_mapping()
+    path_map = _recovery_control_path_mapping(paths)
     manifest = load_control_object(
         path_map["runtime_manifest"], expected_schema=RUNTIME_MANIFEST_SCHEMA
     )
@@ -479,7 +469,10 @@ def _validate_recovery_control_paths(
     workspace: Path,
     control_paths: RecoveryControlPaths,
 ) -> None:
-    if not isinstance(control_paths, RecoveryControlPaths):
+    # The supplied binding is data, not a polymorphic loader capability. An
+    # exact-type check prevents subclasses from overriding attribute/mapping
+    # behavior after their inherited dataclass fields have been validated.
+    if type(control_paths) is not RecoveryControlPaths:
         raise _recovery_control_path_error(
             reason_code="recovery_control_paths_invalid",
             control_input="",
@@ -507,6 +500,19 @@ def _validate_recovery_control_paths(
                 control_input=key,
                 path=path,
             )
+
+
+def _recovery_control_path_mapping(
+    control_paths: RecoveryControlPaths,
+) -> Mapping[str, Path]:
+    """Derive all read paths from the exact validated dataclass fields."""
+
+    return MappingProxyType(
+        {
+            key: getattr(control_paths, key)
+            for key, _relative_path in RECOVERY_CONTROL_INPUT_FILES
+        }
+    )
 
 
 def _recovery_control_path_is_unsafe(*, workspace: Path, path: Path) -> bool:

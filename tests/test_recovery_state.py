@@ -259,7 +259,7 @@ def _control_observations(
 ) -> dict[str, tuple]:
     observed = {
         key: _path_observation(path)
-        for key, path in control_paths.as_mapping().items()
+        for key, path in _control_path_mapping(control_paths).items()
     }
     observed.update(
         {
@@ -268,6 +268,15 @@ def _control_observations(
         }
     )
     return observed
+
+
+def _control_path_mapping(
+    control_paths: RecoveryControlPaths,
+) -> dict[str, Path]:
+    return {
+        key: getattr(control_paths, key)
+        for key, _relative_path in RECOVERY_CONTROL_INPUT_FILES
+    }
 
 
 def test_recovery_control_input_inventory_is_exact_and_resolver_is_read_only(
@@ -286,7 +295,7 @@ def test_recovery_control_input_inventory_is_exact_and_resolver_is_read_only(
         ("event_log", "output/intermediate/event_log.jsonl"),
         ("finalize_report", "output/intermediate/finalize_report.json"),
     )
-    assert tuple(control_paths.as_mapping()) == tuple(
+    assert tuple(_control_path_mapping(control_paths)) == tuple(
         key for key, _relative_path in RECOVERY_CONTROL_INPUT_FILES
     )
     assert tuple(ws.rglob("*")) == before == ()
@@ -305,7 +314,7 @@ def test_recovery_rejects_direct_control_input_symlink_before_read(
     _write_registry(ws)
     _write_bound_finalize_report(ws)
     control_paths = resolve_recovery_control_paths(ws)
-    path = control_paths.as_mapping()[control_input]
+    path = _control_path_mapping(control_paths)[control_input]
     external = tmp_path / f"external-{path.name}"
     external.write_bytes(path.read_bytes())
     path.unlink()
@@ -321,16 +330,22 @@ def test_recovery_rejects_direct_control_input_symlink_before_read(
     assert _control_observations(control_paths, extra_paths=(external,)) == before
 
 
+@pytest.mark.parametrize(
+    "ancestor",
+    ["output", "output/intermediate"],
+    ids=lambda value: f"ancestor-{value.replace('/', '-')}",
+)
 def test_recovery_rejects_symlinked_control_ancestor_with_optional_report_absent(
     tmp_path: Path,
+    ancestor: str,
 ) -> None:
     ws = _workspace(tmp_path)
     _write_registry(ws)
     control_paths = resolve_recovery_control_paths(ws)
-    output = ws / "output"
-    external_output = tmp_path / "external-output"
-    output.rename(external_output)
-    output.symlink_to(external_output, target_is_directory=True)
+    ancestor_path = ws / ancestor
+    external_output = tmp_path / f"external-{ancestor.replace('/', '-')}"
+    ancestor_path.rename(external_output)
+    ancestor_path.symlink_to(external_output, target_is_directory=True)
     before = _control_observations(
         control_paths,
         extra_paths=tuple(path for path in external_output.rglob("*") if path.is_file()),
@@ -412,6 +427,39 @@ def test_recovery_loader_rejects_noncanonical_supplied_path_set(
     assert _control_observations(control_paths) == before
 
 
+def test_recovery_loader_rejects_polymorphic_shadow_path_map(
+    tmp_path: Path,
+) -> None:
+    ws = _workspace(tmp_path / "trusted")
+    shadow_ws = _workspace(tmp_path / "shadow")
+    trusted_paths = resolve_recovery_control_paths(ws)
+    shadow_paths = resolve_recovery_control_paths(shadow_ws)
+
+    class ShadowRecoveryControlPaths(RecoveryControlPaths):
+        def as_mapping(self) -> dict[str, Path]:
+            return _control_path_mapping(shadow_paths)
+
+    supplied = ShadowRecoveryControlPaths(
+        workspace=trusted_paths.workspace,
+        **_control_path_mapping(trusted_paths),
+    )
+    before = {
+        "trusted": _control_observations(trusted_paths),
+        "shadow": _control_observations(shadow_paths),
+    }
+
+    with pytest.raises(RuntimeStateError) as exc_info:
+        load_recovery_context(
+            workspace=ws,
+            repo_workdir=ROOT,
+            control_paths=supplied,
+        )
+
+    assert exc_info.value.details["reason_code"] == "recovery_control_paths_invalid"
+    assert _control_observations(trusted_paths) == before["trusted"]
+    assert _control_observations(shadow_paths) == before["shadow"]
+
+
 def test_recovery_loader_repreflights_resolved_paths_before_read(
     tmp_path: Path,
 ) -> None:
@@ -491,7 +539,7 @@ def test_recovery_loader_reads_only_the_preflighted_inventory(
         control_paths.finalize_report,
         control_paths.event_log,
     ]
-    assert set(read_paths) == set(control_paths.as_mapping().values())
+    assert set(read_paths) == set(_control_path_mapping(control_paths).values())
 
 
 def test_recovery_state_clean_run_is_not_applicable(tmp_path: Path) -> None:
