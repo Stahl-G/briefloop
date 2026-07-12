@@ -103,18 +103,21 @@ FORBIDDEN_NAMING_AUTHORITY_PATTERNS = [
 
 CLASSIFIED_RETIRED_NAME_LITERAL_PATTERNS = [
     re.compile(r"(?<![\w-])MABW-080(?![\w-])", re.IGNORECASE),
-    re.compile(r"(?<![\w])/mabw(?![\w])", re.IGNORECASE),
+    re.compile(r"(?<![\w./-])/mabw(?![\w./-])", re.IGNORECASE),
     re.compile(r"(?<![\w])mabw\.[\w.*-]+", re.IGNORECASE),
     re.compile(r"(?<![\w])\.mabw[\w.-]*", re.IGNORECASE),
     re.compile(r"\bMABW_[A-Z0-9_]+\b"),
-    re.compile(r"(?:[\w.~+-]+/)+mabw(?:/[\w.~+-]+)*", re.IGNORECASE),
-    re.compile(r"`mabw(?:-[\w-]+)?`"),
+    re.compile(
+        r"(?<![\w.~+-])(?:[\w.~+-]+/)+mabw(?:/[\w.~+-]+)*(?![\w.~+/-])",
+        re.IGNORECASE,
+    ),
+    re.compile(r"(?<![\w-])mabw-workflow(?![\w-])"),
 ]
 
 FORBIDDEN_NAMING_CONSUMER_TOKEN_PATTERNS = [
     (
         "retired_project_name_alias",
-        re.compile(r"(?<![\w./])mabw(?![\w.])", re.IGNORECASE),
+        re.compile(r"(?<![A-Za-z0-9.])mabw(?![A-Za-z0-9.])", re.IGNORECASE),
     ),
     (
         "retired_long_project_name_alias",
