@@ -1105,8 +1105,6 @@ def test_status_formats_intake_projection(tmp_path: Path) -> None:
         line for line in format_workspace_status(after).splitlines() if line.startswith("[status] intake:")
     )
 
-    assert before_intake == after_intake
-    assert before_line == after_line
     assert before_intake["present"] is True
     assert before_intake["valid"] is True
     assert before_intake["projection_count"] == 1
@@ -1115,6 +1113,22 @@ def test_status_formats_intake_projection(tmp_path: Path) -> None:
     assert before_intake["fatal_finding_count"] == 0
     assert before_intake["artifacts"][0]["artifact_id"] == "candidate_claims"
     assert before_intake["artifacts"][0]["projection_valid"] is True
+    assert after["artifacts"]["registry_status"] == "degradation"
+    assert after["artifacts"]["registry_reason_code"] == (
+        "artifact_registry_producer_replay_mismatch"
+    )
+    assert after["artifacts"]["artifact_count"] == 0
+    assert after_intake["present"] is False
+    assert after_intake["valid"] is None
+    assert after_intake["projection_count"] == 0
+    assert after_intake["normalization_count"] == 0
+    assert after_intake["fatal_finding_count"] == 0
+    assert after_intake["artifacts"] == []
+    assert after_line == (
+        "[status] intake: not_available projections=0 normalized=0 "
+        "normalizations=0 fatal=0 invalid_projections=0 stale_projections=0"
+    )
+    assert before_line != after_line
 
 
 def test_status_rejects_invalid_intake_projection(tmp_path: Path) -> None:
@@ -1137,16 +1151,19 @@ def test_status_rejects_invalid_intake_projection(tmp_path: Path) -> None:
     status = build_workspace_status(ws)
     intake = status["artifacts"]["intake"]
 
-    assert intake["present"] is True
-    assert intake["valid"] is False
-    assert intake["invalid_projection_count"] == 1
-    assert intake["normalization_count"] == persisted_normalization_count
+    assert status["artifacts"]["registry_status"] == "degradation"
+    assert status["artifacts"]["registry_reason_code"] == (
+        "artifact_registry_producer_replay_mismatch"
+    )
+    assert status["artifacts"]["artifact_count"] == 0
+    assert intake["present"] is False
+    assert intake["valid"] is None
+    assert intake["invalid_projection_count"] == 0
+    assert intake["normalization_count"] == 0
     assert intake["fatal_finding_count"] == 0
-    assert intake["artifacts"][0]["projection_valid"] is False
-    assert intake["artifacts"][0]["reasons"] == [
-        "intake_projection schema_version is unsupported"
-    ]
-    assert "[status] intake: invalid" in format_workspace_status(status)
+    assert intake["artifacts"] == []
+    assert persisted_normalization_count > 0
+    assert "[status] intake: not_available" in format_workspace_status(status)
 
     persisted["schema_version"] = "briefloop.intake_projection.v1"
     persisted["normalized_sha256"] = ""
@@ -1158,11 +1175,13 @@ def test_status_rejects_invalid_intake_projection(tmp_path: Path) -> None:
     impossible_status = build_workspace_status(ws)
     impossible_intake = impossible_status["artifacts"]["intake"]
 
-    assert impossible_intake["valid"] is False
-    assert impossible_intake["invalid_projection_count"] == 1
-    assert impossible_intake["artifacts"][0]["reasons"] == [
-        "valid artifact record requires a normalized intake digest"
-    ]
+    assert impossible_status["artifacts"]["registry_status"] == "degradation"
+    assert impossible_status["artifacts"]["registry_reason_code"] == (
+        "artifact_registry_producer_replay_mismatch"
+    )
+    assert impossible_intake["present"] is False
+    assert impossible_intake["valid"] is None
+    assert impossible_intake["artifacts"] == []
 
     persisted["normalized_sha256"] = "a" * 64
     persisted["artifact_id"] = "screened_candidates"
@@ -1171,12 +1190,16 @@ def test_status_rejects_invalid_intake_projection(tmp_path: Path) -> None:
         encoding="utf-8",
     )
 
-    transplanted = build_workspace_status(ws)["artifacts"]["intake"]
+    transplanted_status = build_workspace_status(ws)
+    transplanted = transplanted_status["artifacts"]["intake"]
 
-    assert transplanted["valid"] is False
-    assert transplanted["artifacts"][0]["reasons"] == [
-        "intake_projection artifact_id does not match artifact record"
-    ]
+    assert transplanted_status["artifacts"]["registry_status"] == "degradation"
+    assert transplanted_status["artifacts"]["registry_reason_code"] == (
+        "artifact_registry_producer_replay_mismatch"
+    )
+    assert transplanted["present"] is False
+    assert transplanted["valid"] is None
+    assert transplanted["artifacts"] == []
 
     persisted["artifact_id"] = "candidate_claims"
     registry["artifacts"]["candidate_claims"]["status"] = "banana"
@@ -1185,9 +1208,13 @@ def test_status_rejects_invalid_intake_projection(tmp_path: Path) -> None:
         encoding="utf-8",
     )
 
-    unknown_status = build_workspace_status(ws)["artifacts"]["intake"]
+    unknown_payload = build_workspace_status(ws)
+    unknown_status = unknown_payload["artifacts"]["intake"]
 
-    assert unknown_status["valid"] is False
-    assert unknown_status["artifacts"][0]["reasons"] == [
-        "artifact record status is unsupported for intake projection"
-    ]
+    assert unknown_payload["artifacts"]["registry_status"] == "degradation"
+    assert unknown_payload["artifacts"]["registry_reason_code"] == (
+        "artifact_registry_producer_replay_mismatch"
+    )
+    assert unknown_status["present"] is False
+    assert unknown_status["valid"] is None
+    assert unknown_status["artifacts"] == []

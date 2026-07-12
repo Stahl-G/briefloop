@@ -595,7 +595,15 @@ def test_quality_closeout_rejects_stale_or_hand_edited_quality_artifacts(tmp_pat
     assert closeout["status"] == "stale_or_invalid"
     assert closeout["reason"] == "quality_panel_html_stale_or_hand_edited"
     assert "quality_panel.html" in "\n".join(closeout["invalid_artifacts"])
-    assert status["suggested_next_command"].startswith("briefloop quality summarize --workspace ")
+    assert status["artifacts"]["registry_status"] == "degradation"
+    assert status["artifacts"]["registry_reason_code"] == (
+        "artifact_registry_producer_replay_mismatch"
+    )
+    assert status["artifacts"]["artifact_count"] == 0
+    assert status["artifacts"]["intake"]["present"] is False
+    assert status["suggested_next_command"] == (
+        f"briefloop state show --workspace {ws} --json"
+    )
 
 
 def test_quality_panel_handles_corrupt_finalize_report_utf8_without_crashing(tmp_path: Path) -> None:

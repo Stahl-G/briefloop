@@ -3,10 +3,12 @@
 from __future__ import annotations
 
 import json
+import os
 from pathlib import Path
 
 import pytest
 
+from multi_agent_brief import status as status_module
 from multi_agent_brief.cli.main import main
 from multi_agent_brief.orchestrator.runtime_state import (
     check_runtime_state,
@@ -14,6 +16,9 @@ from multi_agent_brief.orchestrator.runtime_state import (
     initialize_runtime_state,
     record_decision,
     runtime_state_paths,
+)
+from multi_agent_brief.orchestrator.runtime_state.artifact_registry_read import (
+    CanonicalRegistryView,
 )
 from tests.helpers import sha256_file as _sha256_file
 from tests.helpers import write_minimal_workspace
@@ -25,6 +30,14 @@ def _minimal_workspace(path: Path) -> Path:
         project_name="status-test",
         user_text="# Status test\n",
     )
+
+
+def _workspace_file_snapshot(root: Path) -> dict[str, tuple[bytes, int]]:
+    return {
+        path.relative_to(root).as_posix(): (path.read_bytes(), path.stat().st_mtime_ns)
+        for path in root.rglob("*")
+        if path.is_file()
+    }
 
 
 def _corrupt_artifact_registry_context(paths: dict[str, Path], case_id: str) -> None:
@@ -72,6 +85,14 @@ def _corrupt_artifact_registry_context(paths: dict[str, Path], case_id: str) -> 
     elif case_id == "unknown_record_status":
         artifact_id = next(iter(registry["artifacts"]))
         registry["artifacts"][artifact_id]["status"] = "banana"
+    elif case_id == "unknown_artifact_id":
+        artifact_id = next(iter(registry["artifacts"]))
+        record = dict(registry["artifacts"][artifact_id])
+        record["artifact_id"] = "unknown_artifact"
+        registry["artifacts"]["unknown_artifact"] = record
+    elif case_id == "unsafe_record_path":
+        artifact_id = next(iter(registry["artifacts"]))
+        registry["artifacts"][artifact_id]["path"] = "../outside.json"
     else:  # pragma: no cover - test helper contract
         raise AssertionError(f"unknown registry corruption case: {case_id}")
     registry_path.write_text(
@@ -174,6 +195,7 @@ def _mark_fact_layer_imported(ws: Path) -> None:
     workflow["stage_statuses"] = statuses
     paths["runtime_manifest"].write_text(json.dumps(manifest, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
     paths["workflow_state"].write_text(json.dumps(workflow, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    check_runtime_state(workspace=ws)
 
 
 def _event(event_id: str, event_type: str, created_at: str, *, run_id: str, **extra: object) -> dict[str, object]:
@@ -230,7 +252,7 @@ def _topology_satisfied(
     )
 
 
-def _write_auditable_target_complete_state(ws: Path) -> None:
+def _write_auditable_target_complete_state(ws: Path) -> CanonicalRegistryView:
     paths = runtime_state_paths(ws)
     condition_path = ws / "experiment" / "080" / "condition.json"
     condition_path.parent.mkdir(parents=True, exist_ok=True)
@@ -368,33 +390,34 @@ def _write_auditable_target_complete_state(ws: Path) -> None:
     with paths["event_log"].open("a", encoding="utf-8") as handle:
         for event in events:
             handle.write(json.dumps(event, sort_keys=True) + "\n")
+    registry = json.loads(paths["artifact_registry"].read_text(encoding="utf-8"))
+    records = registry["artifacts"]
+    return CanonicalRegistryView(
+        run_id=str(registry["run_id"]),
+        records=records,
+        resolved_paths={
+            artifact_id: ws / str(record["path"])
+            for artifact_id, record in records.items()
+        },
+    )
+
+
+def _bind_status_registry_view(
+    monkeypatch: pytest.MonkeyPatch,
+    view: CanonicalRegistryView,
+) -> None:
+    monkeypatch.setattr(
+        status_module,
+        "interpret_artifact_registry",
+        lambda **_kwargs: view,
+    )
 
 
 def test_status_command_is_read_only_for_existing_runtime_state(tmp_path, capsys):
     ws = _minimal_workspace(tmp_path / "ws")
     initialize_runtime_state(workspace=ws, runtime="claude", actor="cli")
+    check_runtime_state(workspace=ws)
     paths = runtime_state_paths(ws)
-    manifest = json.loads(paths["runtime_manifest"].read_text(encoding="utf-8"))
-    paths["artifact_registry"].write_text(
-        json.dumps(
-                {
-                    "schema_version": "multi-agent-brief-artifact-registry/v1",
-                    "run_id": manifest["run_id"],
-                "artifacts": {
-                    "candidate_claims": {
-                        "artifact_id": "candidate_claims",
-                        "path": "output/intermediate/candidate_claims.json",
-                        "status": "expected",
-                    }
-                },
-            },
-            ensure_ascii=False,
-            indent=2,
-            sort_keys=True,
-        )
-        + "\n",
-        encoding="utf-8",
-    )
 
     watched = [path for path in paths.values() if path.exists()]
     before_bytes = {path: path.read_bytes() for path in watched}
@@ -418,7 +441,8 @@ def test_status_command_is_read_only_for_existing_runtime_state(tmp_path, capsys
     assert payload["timing"]["status"] == "unknown"
     assert payload["artifacts"]["registry_status"] == "valid"
     assert payload["artifacts"]["registry_reason_code"] is None
-    assert payload["artifacts"]["expected_count"] == 1
+    assert payload["artifacts"]["artifact_count"] > 0
+    assert payload["artifacts"]["expected_count"] == payload["artifacts"]["artifact_count"]
     assert payload["events"]["event_count"] == before_event_count
     assert payload["progress"] == {
         "schema_version": "briefloop.status_progress.v1",
@@ -442,46 +466,78 @@ def test_status_command_is_read_only_for_existing_runtime_state(tmp_path, capsys
 @pytest.mark.parametrize(
     ("case_id", "expected_status", "expected_reason_code"),
     [
-        ("malformed_json", "unreadable", "artifact_registry_unreadable"),
-        ("wrong_schema", "invalid_schema", "artifact_registry_schema_unsupported"),
+        (
+            "malformed_json",
+            "degradation",
+            "artifact_registry_recovery_context_invalid",
+        ),
+        (
+            "wrong_schema",
+            "degradation",
+            "artifact_registry_recovery_context_invalid",
+        ),
         (
             "manifest_wrong_schema",
-            "invalid_identity",
-            "artifact_registry_manifest_context_invalid",
+            "degradation",
+            "artifact_registry_recovery_context_invalid",
         ),
         (
             "manifest_missing_run_id",
-            "invalid_identity",
-            "artifact_registry_manifest_run_id_missing",
+            "degradation",
+            "artifact_registry_recovery_context_invalid",
         ),
-        ("missing_run_id", "invalid_identity", "artifact_registry_run_id_missing"),
-        ("cross_run", "invalid_identity", "artifact_registry_run_id_mismatch"),
-        ("artifacts_not_object", "invalid_payload", "artifact_registry_artifacts_not_object"),
-        ("record_not_object", "invalid_payload", "artifact_registry_record_not_object"),
-        ("artifact_id_empty", "invalid_payload", "artifact_registry_artifact_id_invalid"),
+        (
+            "missing_run_id",
+            "degradation",
+            "artifact_registry_recovery_context_invalid",
+        ),
+        (
+            "cross_run",
+            "degradation",
+            "artifact_registry_recovery_context_invalid",
+        ),
+        ("artifacts_not_object", "degradation", "artifact_registry_artifacts_invalid"),
+        ("record_not_object", "degradation", "artifact_registry_record_not_object"),
+        (
+            "artifact_id_empty",
+            "degradation",
+            "artifact_registry_artifact_universe_mismatch",
+        ),
         (
             "record_identity_mismatch",
-            "invalid_payload",
+            "degradation",
             "artifact_registry_record_identity_mismatch",
         ),
         (
             "unknown_record_status",
-            "invalid_payload",
-            "artifact_registry_record_status_unsupported",
+            "degradation",
+            "artifact_registry_producer_replay_mismatch",
+        ),
+        (
+            "unknown_artifact_id",
+            "degradation",
+            "artifact_registry_artifact_universe_mismatch",
+        ),
+        (
+            "unsafe_record_path",
+            "degradation",
+            "artifact_registry_record_path_invalid",
         ),
     ],
     ids=[
-        "STATUS-REG-02-malformed",
-        "STATUS-REG-03-wrong-schema",
-        "STATUS-REG-04-manifest-schema",
-        "STATUS-REG-04-manifest-run-id",
-        "STATUS-REG-04-missing-run-id",
-        "STATUS-REG-04-cross-run",
-        "STATUS-REG-05-artifacts-shape",
-        "STATUS-REG-05-record-shape",
-        "STATUS-REG-05-artifact-id",
-        "STATUS-REG-05-record-identity",
-        "STATUS-REG-06-record-status",
+        "STATUS-TRUST-04-malformed",
+        "STATUS-TRUST-04-wrong-schema",
+        "STATUS-TRUST-05-manifest-schema",
+        "STATUS-TRUST-05-manifest-run-id",
+        "STATUS-TRUST-05-missing-run-id",
+        "STATUS-TRUST-05-cross-run",
+        "STATUS-TRUST-06-artifacts-shape",
+        "STATUS-TRUST-06-record-shape",
+        "STATUS-TRUST-06-artifact-id",
+        "STATUS-TRUST-06-record-identity",
+        "STATUS-TRUST-06-record-status",
+        "STATUS-TRUST-06-unknown-artifact",
+        "STATUS-TRUST-07-unsafe-path",
     ],
 )
 def test_status_registry_context_degrades_without_consuming_or_writing(
@@ -533,6 +589,221 @@ def test_status_registry_context_degrades_without_consuming_or_writing(
     for path in watched:
         assert path.read_bytes() == before_bytes[path]
         assert path.stat().st_mtime_ns == before_mtime[path]
+
+
+@pytest.mark.parametrize(
+    "manifest_state",
+    ["missing", "unreadable"],
+    ids=[
+        "STATUS-TRUST-05-missing-manifest",
+        "STATUS-TRUST-05-unreadable-manifest",
+    ],
+)
+def test_status_unsafe_registry_precedes_fresh_guidance_and_hides_nested_values(
+    tmp_path,
+    capsys,
+    manifest_state,
+):
+    ws = _minimal_workspace(tmp_path / "ws")
+    initialize_runtime_state(workspace=ws, runtime="claude", actor="cli")
+    candidate_path = ws / "output" / "intermediate" / "candidate_claims.json"
+    candidate_path.parent.mkdir(parents=True, exist_ok=True)
+    candidate_path.write_text("[]\n", encoding="utf-8")
+    check_runtime_state(workspace=ws)
+    paths = runtime_state_paths(ws)
+    registry = json.loads(paths["artifact_registry"].read_text(encoding="utf-8"))
+    projection = registry["artifacts"]["candidate_claims"]["intake_projection"]
+    projection["transform_version"] = "UNTRUSTED-SECRET"
+    projection["normalization_count"] = 9191
+    projection["fatal_finding_count"] = 8181
+    projection["findings"] = [
+        {
+            "artifact_id": "candidate_claims",
+            "severity": "fatal",
+            "reason_code": "UNTRUSTED-SECRET-FINDING",
+        }
+    ]
+    paths["artifact_registry"].write_text(
+        json.dumps(registry, ensure_ascii=False, indent=2, sort_keys=True) + "\n",
+        encoding="utf-8",
+    )
+    if manifest_state == "missing":
+        paths["runtime_manifest"].unlink()
+    else:
+        paths["runtime_manifest"].write_text("{broken json}\n", encoding="utf-8")
+
+    before = _workspace_file_snapshot(ws)
+
+    assert main(["status", "--workspace", str(ws), "--json"]) == 0
+    payload = json.loads(capsys.readouterr().out)
+    artifacts = payload["artifacts"]
+    assert payload["runtime"]["present"] is False
+    assert artifacts["registry_status"] == "degradation"
+    assert artifacts["registry_reason_code"] == (
+        "artifact_registry_recovery_context_invalid"
+    )
+    assert artifacts["artifact_count"] == 0
+    assert artifacts["valid_count"] == 0
+    assert artifacts["intake"]["present"] is False
+    serialized = json.dumps(payload, ensure_ascii=False)
+    assert "UNTRUSTED-SECRET" not in serialized
+    assert "UNTRUSTED-SECRET-FINDING" not in serialized
+    assert "9191" not in serialized
+    assert "8181" not in serialized
+    assert payload["suggested_next_command"] == (
+        f"briefloop state show --workspace {ws} --json"
+    )
+    assert payload["progress"]["status"] == "needs_operator_action"
+    assert payload["progress"]["current_work"] == "check run record"
+
+    assert main(["status", "--workspace", str(ws)]) == 0
+    human = capsys.readouterr().out
+    assert "registry_status=degradation" in human
+    assert "registry_reason=artifact_registry_recovery_context_invalid" in human
+    assert "UNTRUSTED-SECRET" not in human
+    assert "9191" not in human
+    assert "briefloop run" not in payload["progress"]["next_command"]
+    assert _workspace_file_snapshot(ws) == before
+
+
+def test_status_consumes_registry_verdict_once_and_bounds_downstream_arguments(
+    tmp_path,
+    monkeypatch,
+):
+    ws = _minimal_workspace(tmp_path / "ws")
+    initialize_runtime_state(workspace=ws, runtime="claude", actor="cli")
+    check_runtime_state(workspace=ws)
+
+    original_interpret = status_module.interpret_artifact_registry
+    original_quality = status_module.quality_panel_closeout_projection
+    original_assessment = status_module.project_assessment_target_status
+    original_materiality = status_module.project_workspace_materiality_selection
+    calls: list[Path] = []
+    captured: dict[str, list[dict[str, object] | None]] = {
+        "quality": [],
+        "assessment": [],
+        "materiality": [],
+    }
+
+    def interpret_once(**kwargs):
+        calls.append(Path(kwargs["workspace"]))
+        return original_interpret(**kwargs)
+
+    def quality_spy(*args, **kwargs):
+        captured["quality"].append(kwargs.get("artifact_registry"))
+        return original_quality(*args, **kwargs)
+
+    def assessment_spy(*args, **kwargs):
+        captured["assessment"].append(kwargs.get("artifact_registry"))
+        return original_assessment(*args, **kwargs)
+
+    def materiality_spy(*args, **kwargs):
+        captured["materiality"].append(kwargs.get("artifact_registry"))
+        return original_materiality(*args, **kwargs)
+
+    monkeypatch.setattr(status_module, "interpret_artifact_registry", interpret_once)
+    monkeypatch.setattr(status_module, "quality_panel_closeout_projection", quality_spy)
+    monkeypatch.setattr(status_module, "project_assessment_target_status", assessment_spy)
+    monkeypatch.setattr(
+        status_module,
+        "project_workspace_materiality_selection",
+        materiality_spy,
+    )
+
+    canonical = status_module.build_workspace_status(ws)
+    assert len(calls) == 1
+    assert canonical["artifacts"]["registry_status"] == "valid"
+    for values in captured.values():
+        projected = values[-1]
+        assert isinstance(projected, dict)
+        assert set(projected) == {"run_id", "artifacts"}
+        assert isinstance(projected["artifacts"], dict)
+        assert len(projected["artifacts"]) == canonical["artifacts"]["artifact_count"]
+        first_record = next(iter(projected["artifacts"].values()))
+        assert isinstance(first_record, dict)
+        assert isinstance(first_record["allowed_decisions"], list)
+
+    paths = runtime_state_paths(ws)
+    registry = json.loads(paths["artifact_registry"].read_text(encoding="utf-8"))
+    artifact_id = next(iter(registry["artifacts"]))
+    forged = dict(registry["artifacts"][artifact_id])
+    forged["artifact_id"] = "UNTRUSTED-UNKNOWN-ARTIFACT"
+    registry["artifacts"]["UNTRUSTED-UNKNOWN-ARTIFACT"] = forged
+    paths["artifact_registry"].write_text(
+        json.dumps(registry, ensure_ascii=False, indent=2, sort_keys=True) + "\n",
+        encoding="utf-8",
+    )
+
+    degraded = status_module.build_workspace_status(ws)
+    assert len(calls) == 2
+    assert degraded["artifacts"]["registry_status"] == "degradation"
+    assert degraded["artifacts"]["artifact_count"] == 0
+    assert "UNTRUSTED-UNKNOWN-ARTIFACT" not in json.dumps(degraded)
+    for values in captured.values():
+        assert values[-1] is None
+
+
+def test_status_snapshot_drift_is_value_free_and_blocks_continue_guidance(
+    tmp_path,
+):
+    ws = _minimal_workspace(tmp_path / "ws")
+    initialize_runtime_state(workspace=ws, runtime="claude", actor="cli")
+    candidate_path = ws / "output" / "intermediate" / "candidate_claims.json"
+    candidate_path.parent.mkdir(parents=True, exist_ok=True)
+    candidate_path.write_text("[]\n", encoding="utf-8")
+    check_runtime_state(workspace=ws)
+    artifact_stat = candidate_path.stat()
+    os.utime(
+        candidate_path,
+        ns=(artifact_stat.st_atime_ns, artifact_stat.st_mtime_ns + 5_000_000_000),
+    )
+    before = _workspace_file_snapshot(ws)
+
+    payload = status_module.build_workspace_status(ws)
+
+    artifacts = payload["artifacts"]
+    assert artifacts["registry_status"] == "snapshot_drift"
+    assert artifacts["registry_reason_code"] == "artifact_registry_snapshot_mtime_drift"
+    assert artifacts["artifact_count"] == 0
+    assert artifacts["intake"]["present"] is False
+    assert payload["suggested_next_command"] == (
+        f"briefloop state show --workspace {ws} --json"
+    )
+    assert payload["progress"]["status"] == "needs_operator_action"
+    assert _workspace_file_snapshot(ws) == before
+
+
+def test_status_preserves_only_typed_legal_registry_absence(tmp_path):
+    fresh_ws = _minimal_workspace(tmp_path / "fresh")
+    fresh_before = _workspace_file_snapshot(fresh_ws)
+
+    fresh = status_module.build_workspace_status(fresh_ws)
+
+    assert fresh["artifacts"]["registry_status"] == "missing"
+    assert fresh["artifacts"]["registry_reason_code"] == (
+        "artifact_registry_not_materialized"
+    )
+    assert fresh["artifacts"]["artifact_count"] == 0
+    assert fresh["runtime"]["present"] is False
+    assert fresh["suggested_next_command"] == (
+        f"briefloop run --workspace {fresh_ws} --runtime claude"
+    )
+    assert _workspace_file_snapshot(fresh_ws) == fresh_before
+
+    initialized_ws = _minimal_workspace(tmp_path / "initialized")
+    initialize_runtime_state(workspace=initialized_ws, runtime="claude", actor="cli")
+    initialized_before = _workspace_file_snapshot(initialized_ws)
+
+    initialized = status_module.build_workspace_status(initialized_ws)
+
+    assert initialized["artifacts"]["registry_status"] == "missing"
+    assert initialized["artifacts"]["registry_reason_code"] == (
+        "artifact_registry_not_materialized"
+    )
+    assert initialized["artifacts"]["artifact_count"] == 0
+    assert initialized["runtime"]["present"] is True
+    assert initialized["suggested_next_command"] == f"/briefloop run {initialized_ws}"
+    assert _workspace_file_snapshot(initialized_ws) == initialized_before
 
 
 def test_status_command_human_output_reports_user_progress_language(tmp_path, capsys):
@@ -625,7 +896,7 @@ def test_status_command_reports_fact_layer_import_summary(tmp_path, capsys):
     assert payload["suggested_next_command"] == f"briefloop run --workspace {ws} --recipe fast-rerun --skip-doctor"
 
 
-def test_status_command_recommends_quality_package_before_delivery(tmp_path, capsys):
+def test_status_unsafe_registry_precedes_quality_package_recommendation(tmp_path, capsys):
     ws = _minimal_workspace(tmp_path / "ws")
     initialize_runtime_state(workspace=ws, runtime="claude", actor="cli")
     paths = runtime_state_paths(ws)
@@ -652,15 +923,16 @@ def test_status_command_recommends_quality_package_before_delivery(tmp_path, cap
 
     assert rc == 0
     payload = json.loads(capsys.readouterr().out)
-    expected = f"briefloop quality summarize --workspace {ws}"
+    expected = f"briefloop state show --workspace {ws} --json"
     assert payload["quality_panel_closeout"]["status"] == "recommended"
     assert payload["workflow"]["blocked"] is False
     assert payload["quality_panel_closeout"]["gate_authority"] is False
     assert payload["quality_panel_closeout"]["delivery_authority"] is False
     assert payload["quality_panel_closeout"]["release_authority"] is False
     assert payload["suggested_next_command"] == expected
-    assert payload["progress"]["status"] == "needs_quality_package"
-    assert payload["progress"]["current_work"] == "build quality package"
+    assert payload["artifacts"]["registry_status"] == "degradation"
+    assert payload["progress"]["status"] == "needs_operator_action"
+    assert payload["progress"]["current_work"] == "check run record"
     assert payload["progress"]["next_command"] == expected
     assert "/briefloop deliver" not in payload["progress"]["next_command"]
 
@@ -756,10 +1028,13 @@ def test_status_command_human_output_reports_topology_satisfied_stage(tmp_path, 
     assert screener["required_artifacts"] == ["candidate_claims", "screened_candidates"]
 
 
-def test_status_command_reports_auditable_target_complete(tmp_path, capsys):
+def test_status_command_reports_auditable_target_complete(tmp_path, capsys, monkeypatch):
     ws = _minimal_workspace(tmp_path / "ws")
     initialize_runtime_state(workspace=ws, runtime="claude", actor="cli")
-    _write_auditable_target_complete_state(ws)
+    _bind_status_registry_view(
+        monkeypatch,
+        _write_auditable_target_complete_state(ws),
+    )
 
     rc = main(["status", "--workspace", str(ws), "--json"])
 
@@ -783,10 +1058,14 @@ def test_status_command_reports_auditable_target_complete(tmp_path, capsys):
 def test_status_command_treats_final_abstract_advisory_warning_as_auditable_target_complete(
     tmp_path,
     capsys,
+    monkeypatch,
 ):
     ws = _minimal_workspace(tmp_path / "ws")
     initialize_runtime_state(workspace=ws, runtime="claude", actor="cli")
-    _write_auditable_target_complete_state(ws)
+    _bind_status_registry_view(
+        monkeypatch,
+        _write_auditable_target_complete_state(ws),
+    )
     gate_path = ws / "output" / "intermediate" / "gates" / "auditor_quality_gate_report.json"
     report = json.loads(gate_path.read_text(encoding="utf-8"))
     finding = {
@@ -823,10 +1102,14 @@ def test_status_command_treats_final_abstract_advisory_warning_as_auditable_targ
 def test_status_command_rejects_unknown_final_abstract_warning_type_for_auditable_target(
     tmp_path,
     capsys,
+    monkeypatch,
 ):
     ws = _minimal_workspace(tmp_path / "ws")
     initialize_runtime_state(workspace=ws, runtime="claude", actor="cli")
-    _write_auditable_target_complete_state(ws)
+    _bind_status_registry_view(
+        monkeypatch,
+        _write_auditable_target_complete_state(ws),
+    )
     gate_path = ws / "output" / "intermediate" / "gates" / "auditor_quality_gate_report.json"
     report = json.loads(gate_path.read_text(encoding="utf-8"))
     finding = {
@@ -860,10 +1143,17 @@ def test_status_command_rejects_unknown_final_abstract_warning_type_for_auditabl
     assert "auditor quality gate report status is not pass" in experiment["reasons"]
 
 
-def test_status_command_requires_auditable_downstream_stage_completion_events(tmp_path, capsys):
+def test_status_command_requires_auditable_downstream_stage_completion_events(
+    tmp_path,
+    capsys,
+    monkeypatch,
+):
     ws = _minimal_workspace(tmp_path / "ws")
     initialize_runtime_state(workspace=ws, runtime="claude", actor="cli")
-    _write_auditable_target_complete_state(ws)
+    _bind_status_registry_view(
+        monkeypatch,
+        _write_auditable_target_complete_state(ws),
+    )
     paths = runtime_state_paths(ws)
     events = [
         json.loads(line)
@@ -889,10 +1179,17 @@ def test_status_command_requires_auditable_downstream_stage_completion_events(tm
     assert "experiments 080 register-run" not in payload["suggested_next_command"]
 
 
-def test_status_command_projects_recovery_without_replaying_run_integrity(tmp_path, capsys):
+def test_status_command_projects_recovery_without_replaying_run_integrity(
+    tmp_path,
+    capsys,
+    monkeypatch,
+):
     ws = _minimal_workspace(tmp_path / "ws")
     initialize_runtime_state(workspace=ws, runtime="claude", actor="cli")
-    _write_auditable_target_complete_state(ws)
+    _bind_status_registry_view(
+        monkeypatch,
+        _write_auditable_target_complete_state(ws),
+    )
     paths = runtime_state_paths(ws)
     workflow = json.loads(paths["workflow_state"].read_text(encoding="utf-8"))
     assert workflow["run_integrity"]["status"] == "clean"
@@ -942,10 +1239,14 @@ def test_status_command_projects_recovery_without_replaying_run_integrity(tmp_pa
 def test_status_command_keeps_legacy_repair_history_out_of_recovery_guidance(
     tmp_path,
     capsys,
+    monkeypatch,
 ):
     ws = _minimal_workspace(tmp_path / "ws")
     initialize_runtime_state(workspace=ws, runtime="claude", actor="cli")
-    _write_auditable_target_complete_state(ws)
+    _bind_status_registry_view(
+        monkeypatch,
+        _write_auditable_target_complete_state(ws),
+    )
     paths = runtime_state_paths(ws)
     workflow = json.loads(paths["workflow_state"].read_text(encoding="utf-8"))
     run_id = str(workflow.get("run_id") or "run-test")
@@ -993,10 +1294,14 @@ def test_status_command_keeps_legacy_repair_history_out_of_recovery_guidance(
 def test_status_command_rejects_auditable_target_with_fake_auditor_transaction(
     tmp_path,
     capsys,
+    monkeypatch,
 ):
     ws = _minimal_workspace(tmp_path / "ws")
     initialize_runtime_state(workspace=ws, runtime="claude", actor="cli")
-    _write_auditable_target_complete_state(ws)
+    _bind_status_registry_view(
+        monkeypatch,
+        _write_auditable_target_complete_state(ws),
+    )
     paths = runtime_state_paths(ws)
     workflow = json.loads(paths["workflow_state"].read_text(encoding="utf-8"))
     workflow["stage_statuses"]["auditor"]["metadata"]["audit_binding"][

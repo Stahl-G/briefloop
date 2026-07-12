@@ -4935,11 +4935,20 @@ def test_supersede_stale_precedes_intake_validity(tmp_path):
     assert coverage["status"] == "invalid"
     assert "not valid for deterministic consumption" in materiality["reason"]
     assert "not valid for deterministic consumption" in coverage["not_interpreted_reason"]
+    assert status["artifacts"]["registry_status"] == "degradation"
+    assert status["artifacts"]["registry_reason_code"] == (
+        "artifact_registry_producer_replay_mismatch"
+    )
+    assert status["artifacts"]["artifact_count"] == 0
     intake_status = status["artifacts"]["intake"]
-    assert intake_status["valid"] is True
-    assert intake_status["consumable"] is False
-    assert intake_status["stale_projection_count"] >= 1
-    assert "[status] intake: stale" in format_workspace_status(status)
+    assert intake_status["present"] is False
+    assert intake_status["valid"] is None
+    assert intake_status["projection_count"] == 0
+    assert intake_status["stale_projection_count"] == 0
+    assert "[status] intake: not_available" in format_workspace_status(status)
+    assert status["suggested_next_command"] == (
+        f"briefloop state show --workspace {ws} --json"
+    )
     assert not (ws / "output" / "intermediate" / "quality_gate_report.json").exists()
     assert _state_file(ws, "event_log").read_bytes() == before_quality_events
 
