@@ -92,15 +92,23 @@ def test_eval_cases_reader_clean_failed_no_delivery_promotion(capsys):
     case = result["results"][0]
     assert case["passed"] is True
     assert [item["action"] for item in case["actions"]] == [
+        "state.check",
         "completion.project",
         "workbuddy.diagnose",
     ]
-    projection_action = case["actions"][0]
+    assert case["actions"][0]["ok"] is True
+    projection_action = case["actions"][1]
+    assert projection_action["completion_projection"]["artifacts"] == {
+        "invalid_or_stale": [],
+        "reason_code": "",
+        "status": "present",
+        "trust_kind": "canonical",
+    }
     assert projection_action["delivery_truth"]["valid"] is False
     assert projection_action["finalize_truth"]["reader_clean_status"] == "fail"
     assert projection_action["finalize_truth"]["delivery_promotion"] == "skipped_reader_clean_failed"
     assert projection_action["next_allowed_action"] == "stop_finalize_failed_no_valid_delivery"
-    diagnose_action = case["actions"][1]
+    diagnose_action = case["actions"][2]
     assert diagnose_action["run_card"]["delivery_valid"] is False
     assert diagnose_action["run_card"]["delivery_truth"] == "not_valid"
     assert diagnose_action["run_card"]["next_allowed_action"] == "stop_finalize_failed_no_valid_delivery"

@@ -4,12 +4,20 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+from unittest.mock import patch
 
 import pytest
 
 from multi_agent_brief.cli.main import main
-from multi_agent_brief.orchestrator.runtime_state import append_event, initialize_runtime_state
+from multi_agent_brief.orchestrator.runtime_state import (
+    append_event,
+    check_runtime_state,
+    initialize_runtime_state,
+)
 from multi_agent_brief.orchestrator.runtime_state._io import _sha256_file
+from multi_agent_brief.orchestrator.runtime_state.artifact_registry_read import (
+    CanonicalRegistryView,
+)
 
 
 QUALITY_GATE_SCHEMA = "multi-agent-brief-quality-gates/v1"
@@ -61,21 +69,13 @@ def _init_runtime(
     blocked: bool = False,
 ) -> dict:
     state = initialize_runtime_state(workspace=ws, repo_workdir=ROOT)
+    check_runtime_state(workspace=ws, repo_workdir=ROOT)
     workflow_path = _intermediate(ws) / "workflow_state.json"
     workflow = _load_json(workflow_path)
     workflow["current_stage"] = current_stage
     workflow["blocked"] = blocked
     workflow["run_integrity"] = run_integrity or {"status": "clean"}
     _write_json(workflow_path, workflow)
-    _write_json(
-        _intermediate(ws) / "artifact_registry.json",
-        {
-            "schema_version": ARTIFACT_REGISTRY_SCHEMA,
-            "run_id": state["manifest"]["run_id"],
-            "updated_at": "2026-07-06T00:00:00+00:00",
-            "artifacts": {},
-        },
-    )
     return state
 
 
@@ -159,9 +159,23 @@ def _gate_report(status: str) -> dict[str, object]:
 
 
 def _diagnose_json(ws: Path, capsys) -> dict:
-    rc = main(["workbuddy", "diagnose", "--workspace", str(ws), "--json"])
+    with patch(
+        "multi_agent_brief.orchestrator.runtime_state.completion_projection."
+        "interpret_artifact_registry",
+        return_value=_canonical_registry_verdict(ws),
+    ):
+        rc = main(["workbuddy", "diagnose", "--workspace", str(ws), "--json"])
     assert rc == 0
     return json.loads(capsys.readouterr().out)
+
+
+def _canonical_registry_verdict(ws: Path) -> CanonicalRegistryView:
+    manifest = _load_json(_intermediate(ws) / "runtime_manifest.json")
+    return CanonicalRegistryView(
+        run_id=str(manifest["run_id"]),
+        records={},
+        resolved_paths={},
+    )
 
 
 def test_workbuddy_diagnose_formats_completion_projection(tmp_path: Path, capsys) -> None:
@@ -188,6 +202,38 @@ def test_workbuddy_diagnose_formats_completion_projection(tmp_path: Path, capsys
     ]
     assert payload["delivery"]["outcome"] == projection["event_truth"]["delivery_outcome"]
     assert payload["run_card"]["next_allowed_action"] == "inspect_status_before_delivery_or_quality"
+
+
+def test_workbuddy_diagnose_does_not_expose_forged_registry_values(
+    tmp_path: Path,
+    capsys,
+) -> None:
+    ws = _workspace(tmp_path)
+    _init_runtime(ws, current_stage="doctor")
+    registry_path = _intermediate(ws) / "artifact_registry.json"
+    registry = _load_json(registry_path)
+    registry["artifacts"]["FORGED-WORKBUDDY-SECRET"] = {
+        "artifact_id": "FORGED-WORKBUDDY-SECRET",
+        "path": "output/intermediate/forged.json",
+        "status": "valid",
+        "sha256": "b" * 64,
+    }
+    _write_json(registry_path, registry)
+
+    rc = main(["workbuddy", "diagnose", "--workspace", str(ws), "--json"])
+
+    assert rc == 0
+    raw = capsys.readouterr().out
+    assert "FORGED-WORKBUDDY-SECRET" not in raw
+    payload = json.loads(raw)
+    projection = payload["completion_projection"]
+    assert projection["artifacts"]["trust_kind"] == "degradation"
+    assert projection["artifacts"]["invalid_or_stale"] == []
+    assert projection["delivery_truth"]["valid"] is False
+    assert payload["run_card"]["delivery_valid"] is False
+    assert payload["run_card"]["next_allowed_action"] == (
+        "inspect_unreadable_or_missing_control_files"
+    )
 
 
 @pytest.mark.parametrize(
@@ -285,7 +331,12 @@ def test_workbuddy_diagnose_secret_risk_overlays_only_benign_completion_action(t
     _init_runtime(ws)
     _write_finalized_delivery(ws)
 
-    rc = main(["workbuddy", "diagnose", "--workspace", str(ws), "--json"])
+    with patch(
+        "multi_agent_brief.orchestrator.runtime_state.completion_projection."
+        "interpret_artifact_registry",
+        return_value=_canonical_registry_verdict(ws),
+    ):
+        rc = main(["workbuddy", "diagnose", "--workspace", str(ws), "--json"])
 
     assert rc == 0
     raw = capsys.readouterr().out

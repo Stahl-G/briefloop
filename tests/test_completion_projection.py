@@ -2,15 +2,23 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+from unittest.mock import patch
 
 import pytest
 
 from multi_agent_brief.orchestrator.runtime_state import (
     append_event,
     build_completion_projection,
+    check_runtime_state,
     initialize_runtime_state,
 )
 from multi_agent_brief.orchestrator.runtime_state._io import _sha256_file
+from multi_agent_brief.orchestrator.runtime_state.artifact_registry_read import (
+    CanonicalRegistryView,
+    RegistryDegradation,
+    RegistryReadVerdict,
+)
+from multi_agent_brief.orchestrator.runtime_state.paths import runtime_state_paths
 from tests.helpers import write_workspace_files_under
 
 
@@ -48,22 +56,40 @@ def _write_json(path: Path, payload: dict) -> None:
     path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
 
 
+def _control_snapshot(ws: Path) -> dict[str, tuple[bytes, int]]:
+    return {
+        key: (path.read_bytes(), path.stat().st_mtime_ns)
+        for key, path in runtime_state_paths(ws).items()
+        if path.exists()
+    }
+
+
 def _init_workspace(ws: Path) -> dict:
-    state = initialize_runtime_state(workspace=ws, repo_workdir=ROOT)
-    _write_minimal_registry(ws, run_id=state["manifest"]["run_id"])
-    return state
+    return initialize_runtime_state(workspace=ws, repo_workdir=ROOT)
 
 
-def _write_minimal_registry(ws: Path, *, run_id: str) -> None:
-    _write_json(
-        _intermediate(ws) / "artifact_registry.json",
-        {
-            "schema_version": "multi-agent-brief-artifact-registry/v1",
-            "run_id": run_id,
-            "updated_at": "2026-07-06T00:00:00+00:00",
-            "artifacts": {},
-        },
-    )
+def _project(
+    ws: Path,
+    *,
+    registry_verdict: RegistryReadVerdict | None = None,
+) -> dict:
+    verdict = registry_verdict
+    if verdict is None:
+        manifest_path = _intermediate(ws) / "runtime_manifest.json"
+        manifest = _load_json(manifest_path) if manifest_path.exists() else {}
+        verdict = CanonicalRegistryView(
+            run_id=str(manifest.get("run_id") or "test-run"),
+            records={},
+            resolved_paths={},
+        )
+    with patch(
+        "multi_agent_brief.orchestrator.runtime_state.completion_projection."
+        "interpret_artifact_registry",
+        return_value=verdict,
+    ) as interpreter:
+        projection = build_completion_projection(workspace=ws, repo_workdir=ROOT)
+    interpreter.assert_called_once_with(workspace=ws.resolve(), repo_workdir=ROOT.resolve())
+    return projection
 
 
 def _set_workflow(ws: Path, **updates: object) -> dict:
@@ -213,6 +239,7 @@ def _bind_contaminated_recovery(
     recovered: bool,
     blocked: bool = False,
 ) -> None:
+    check_runtime_state(workspace=ws, repo_workdir=ROOT)
     manifest = _load_json(_intermediate(ws) / "runtime_manifest.json")
     contamination_event_id = "event-contamination-001"
     append_event(
@@ -282,13 +309,62 @@ def test_completion_projection_reads_recorded_finalize_delivery_truth(tmp_path: 
     _write_gate_report(ws)
     _append_finalize_event(ws)
 
-    payload = build_completion_projection(workspace=ws, repo_workdir=ROOT)
+    payload = _project(ws)
 
     assert payload["schema_version"] == "briefloop.completion_projection.v1"
     assert payload["delivery_truth"]["valid"] is True
     assert payload["delivery_truth"]["source"] == "finalize_report"
     assert payload["finalize_truth"]["delivery_promotion"] == "promoted"
     assert payload["next_allowed_action"] == "inspect_status_before_delivery_or_quality"
+
+
+def test_completion_projection_consumes_real_writer_registry_without_writes(
+    tmp_path: Path,
+) -> None:
+    ws = _write_workspace(tmp_path)
+    _init_workspace(ws)
+    check_runtime_state(workspace=ws, repo_workdir=ROOT)
+    before = _control_snapshot(ws)
+
+    payload = build_completion_projection(workspace=ws, repo_workdir=ROOT)
+
+    assert payload["control_files"]["artifact_registry"] == "present"
+    assert payload["artifacts"]["trust_kind"] == "canonical"
+    assert payload["artifacts"]["reason_code"] == ""
+    assert _control_snapshot(ws) == before
+
+
+def test_completion_projection_degrades_forged_registry_without_value_leak_or_writes(
+    tmp_path: Path,
+) -> None:
+    ws = _write_workspace(tmp_path)
+    _init_workspace(ws)
+    check_runtime_state(workspace=ws, repo_workdir=ROOT)
+    registry_path = _intermediate(ws) / "artifact_registry.json"
+    registry = _load_json(registry_path)
+    registry["artifacts"]["FORGED-SECRET-ID"] = {
+        "artifact_id": "FORGED-SECRET-ID",
+        "path": "output/intermediate/forged-secret.json",
+        "status": "valid",
+        "sha256": "a" * 64,
+    }
+    _write_json(registry_path, registry)
+    before = _control_snapshot(ws)
+
+    payload = build_completion_projection(workspace=ws, repo_workdir=ROOT)
+
+    assert payload["control_files"]["artifact_registry"] == "degradation"
+    assert payload["artifacts"]["trust_kind"] == "degradation"
+    assert payload["artifacts"]["reason_code"] == (
+        "artifact_registry_artifact_universe_mismatch"
+    )
+    assert payload["artifacts"]["invalid_or_stale"] == []
+    assert payload["delivery_truth"]["valid"] is False
+    assert payload["next_allowed_action"] == (
+        "inspect_unreadable_or_missing_control_files"
+    )
+    assert "FORGED-SECRET-ID" not in json.dumps(payload, sort_keys=True)
+    assert _control_snapshot(ws) == before
 
 
 def test_completion_projection_distinguishes_current_delivery_outcomes(tmp_path: Path) -> None:
@@ -307,7 +383,7 @@ def test_completion_projection_distinguishes_current_delivery_outcomes(tmp_path:
         reason="Attempted only.",
         metadata={"render_transaction_id": "tx-finalize-001"},
     )
-    attempted = build_completion_projection(workspace=ws, repo_workdir=ROOT)
+    attempted = _project(ws)
     assert attempted["event_truth"]["delivery_attempt_present"] is True
     assert attempted["event_truth"]["delivery_event_present"] is False
     assert attempted["event_truth"]["delivery_outcome"] == "missing"
@@ -320,7 +396,7 @@ def test_completion_projection_distinguishes_current_delivery_outcomes(tmp_path:
         reason="Local bundle prepared.",
         metadata={"render_transaction_id": "tx-finalize-001"},
     )
-    prepared = build_completion_projection(workspace=ws, repo_workdir=ROOT)
+    prepared = _project(ws)
     assert prepared["event_truth"]["delivery_bundle_prepared"] is True
     assert prepared["event_truth"]["delivery_succeeded"] is False
 
@@ -332,7 +408,7 @@ def test_completion_projection_distinguishes_current_delivery_outcomes(tmp_path:
         reason="Old run reused the render transaction ID.",
         metadata={"render_transaction_id": "tx-finalize-001"},
     )
-    old_run = build_completion_projection(workspace=ws, repo_workdir=ROOT)
+    old_run = _project(ws)
     assert old_run["event_truth"]["delivery_outcome"] == "delivery_bundle_prepared"
     assert old_run["event_truth"]["delivery_succeeded"] is False
 
@@ -344,7 +420,7 @@ def test_completion_projection_distinguishes_current_delivery_outcomes(tmp_path:
         reason="Stale render delivered.",
         metadata={"render_transaction_id": "stale-render"},
     )
-    stale = build_completion_projection(workspace=ws, repo_workdir=ROOT)
+    stale = _project(ws)
     assert stale["event_truth"]["delivery_outcome"] == "delivery_bundle_prepared"
     assert stale["event_truth"]["delivery_succeeded"] is False
 
@@ -356,7 +432,7 @@ def test_completion_projection_distinguishes_current_delivery_outcomes(tmp_path:
         reason="Current render delivered.",
         metadata={"render_transaction_id": "tx-finalize-001"},
     )
-    delivered = build_completion_projection(workspace=ws, repo_workdir=ROOT)
+    delivered = _project(ws)
     assert delivered["event_truth"]["delivery_outcome"] == "delivery_succeeded"
     assert delivered["event_truth"]["delivery_succeeded"] is True
 
@@ -377,7 +453,7 @@ def test_completion_projection_ignores_old_run_finalize_event(tmp_path: Path) ->
         reason="Old run finalize completion.",
     )
 
-    payload = build_completion_projection(workspace=ws, repo_workdir=ROOT)
+    payload = _project(ws)
 
     assert payload["event_truth"]["finalize_event_present"] is False
     assert payload["delivery_truth"]["valid"] is False
@@ -389,7 +465,7 @@ def test_completion_projection_stops_on_missing_required_control_file(tmp_path: 
     _init_workspace(ws)
     (_intermediate(ws) / "runtime_manifest.json").unlink()
 
-    payload = build_completion_projection(workspace=ws, repo_workdir=ROOT)
+    payload = _project(ws)
 
     assert payload["control_files"]["runtime_manifest"] == "missing"
     assert payload["next_allowed_action"] == "inspect_unreadable_or_missing_control_files"
@@ -402,7 +478,7 @@ def test_completion_projection_requires_finalize_gate_before_delivery_guidance(t
     _write_finalize_report(ws)
     _append_finalize_event(ws)
 
-    payload = build_completion_projection(workspace=ws, repo_workdir=ROOT)
+    payload = _project(ws)
 
     assert payload["gate_truth"]["status"] == "missing"
     assert any(
@@ -420,7 +496,7 @@ def test_completion_projection_requires_finalize_event_before_delivery_guidance(
     _write_finalize_report(ws)
     _write_gate_report(ws)
 
-    payload = build_completion_projection(workspace=ws, repo_workdir=ROOT)
+    payload = _project(ws)
 
     assert payload["event_truth"]["finalize_event_present"] is False
     assert payload["next_allowed_action"] == "run_finalize_gate_or_finalize_complete"
@@ -434,7 +510,7 @@ def test_completion_projection_uses_configured_gate_artifacts(tmp_path: Path) ->
     _write_gate_report(ws, status="warning", artifact_id="claim_support_matrix")
     _append_finalize_event(ws)
 
-    payload = build_completion_projection(workspace=ws, repo_workdir=ROOT)
+    payload = _project(ws)
 
     assert payload["gate_truth"]["status"] == "warning"
     assert payload["gate_truth"]["validation_errors"] == []
@@ -452,7 +528,7 @@ def test_completion_projection_blocks_malformed_gate_report(tmp_path: Path) -> N
     )
     _append_finalize_event(ws)
 
-    payload = build_completion_projection(workspace=ws, repo_workdir=ROOT)
+    payload = _project(ws)
 
     assert payload["gate_truth"]["status"] == "invalid"
     assert payload["next_allowed_action"] == "stop_resolve_blocking_gate_report"
@@ -469,7 +545,7 @@ def test_completion_projection_rejects_gate_report_not_bound_to_finalize(tmp_pat
     _write_json(_intermediate(ws) / "gates" / "finalize_quality_gate_report.json", gate)
     _append_finalize_event(ws)
 
-    payload = build_completion_projection(workspace=ws, repo_workdir=ROOT)
+    payload = _project(ws)
 
     assert payload["gate_truth"]["blocking"] is True
     assert any("must be generated for finalize completion" in item for item in payload["gate_truth"]["validation_errors"])
@@ -485,7 +561,7 @@ def test_completion_projection_blocks_blocking_gate_report(tmp_path: Path) -> No
     _write_gate_report(ws, blocking=True)
     _append_finalize_event(ws)
 
-    payload = build_completion_projection(workspace=ws, repo_workdir=ROOT)
+    payload = _project(ws)
 
     assert payload["gate_truth"]["blocking"] is True
     assert payload["next_allowed_action"] == "stop_resolve_blocking_gate_report"
@@ -499,7 +575,7 @@ def test_completion_projection_blocks_failed_finalize_report(tmp_path: Path) -> 
     _write_gate_report(ws)
     _append_finalize_event(ws)
 
-    payload = build_completion_projection(workspace=ws, repo_workdir=ROOT)
+    payload = _project(ws)
 
     assert payload["finalize_truth"]["report_status"] == "fail"
     assert payload["delivery_truth"]["valid"] is False
@@ -514,7 +590,7 @@ def test_completion_projection_blocks_failed_reader_clean(tmp_path: Path) -> Non
     _write_gate_report(ws)
     _append_finalize_event(ws)
 
-    payload = build_completion_projection(workspace=ws, repo_workdir=ROOT)
+    payload = _project(ws)
 
     assert payload["finalize_truth"]["reader_clean_status"] == "fail"
     assert payload["next_allowed_action"] == "stop_finalize_failed_no_valid_delivery"
@@ -527,19 +603,21 @@ def test_completion_projection_blocks_stale_registry_artifact(tmp_path: Path) ->
     _write_finalize_report(ws)
     _write_gate_report(ws)
     _append_finalize_event(ws)
-    registry_path = _intermediate(ws) / "artifact_registry.json"
-    registry = _load_json(registry_path)
-    registry["artifacts"]["audited_brief"] = {
-        "status": "stale",
-        "validation_result": "sha_mismatch",
-    }
-    _write_json(registry_path, registry)
+    payload = _project(
+        ws,
+        registry_verdict=RegistryDegradation(
+            "artifact_registry_producer_replay_mismatch"
+        ),
+    )
 
-    payload = build_completion_projection(workspace=ws, repo_workdir=ROOT)
-
-    assert payload["artifacts"]["invalid_or_stale"][0]["artifact_id"] == "audited_brief"
+    assert payload["artifacts"]["trust_kind"] == "degradation"
+    assert (
+        payload["artifacts"]["reason_code"]
+        == "artifact_registry_producer_replay_mismatch"
+    )
+    assert payload["artifacts"]["invalid_or_stale"] == []
     assert payload["delivery_truth"]["valid"] is False
-    assert payload["next_allowed_action"] == "inspect_invalid_or_stale_artifacts"
+    assert payload["next_allowed_action"] == "inspect_unreadable_or_missing_control_files"
 
 
 def test_completion_projection_rechecks_missing_delivery_artifact(tmp_path: Path) -> None:
@@ -551,7 +629,7 @@ def test_completion_projection_rechecks_missing_delivery_artifact(tmp_path: Path
     _append_finalize_event(ws)
     (ws / "output" / "delivery" / "brief.md").unlink()
 
-    payload = build_completion_projection(workspace=ws, repo_workdir=ROOT)
+    payload = _project(ws)
 
     assert payload["delivery_truth"]["valid"] is False
     assert any(
@@ -574,7 +652,7 @@ def test_completion_projection_rechecks_dirty_delivery_artifact(tmp_path: Path) 
         encoding="utf-8",
     )
 
-    payload = build_completion_projection(workspace=ws, repo_workdir=ROOT)
+    payload = _project(ws)
 
     assert payload["delivery_truth"]["valid"] is False
     assert any(
@@ -597,7 +675,7 @@ def test_completion_projection_consumes_audit_binding_verdict(tmp_path: Path) ->
         encoding="utf-8",
     )
 
-    payload = build_completion_projection(workspace=ws, repo_workdir=ROOT)
+    payload = _project(ws)
 
     assert payload["delivery_truth"]["valid"] is False
     assert any(
@@ -613,7 +691,7 @@ def test_completion_projection_stops_on_blocked_workflow(tmp_path: Path) -> None
     _init_workspace(ws)
     _set_workflow(ws, blocked=True, blocking_reason="human review")
 
-    payload = build_completion_projection(workspace=ws, repo_workdir=ROOT)
+    payload = _project(ws)
 
     assert payload["next_allowed_action"] == "stop_workflow_blocked_human_review_required"
 
@@ -623,7 +701,7 @@ def test_completion_projection_stops_on_active_repair(tmp_path: Path) -> None:
     _init_workspace(ws)
     _set_workflow(ws, active_repair={"stage_id": "editor"})
 
-    payload = build_completion_projection(workspace=ws, repo_workdir=ROOT)
+    payload = _project(ws)
 
     assert payload["next_allowed_action"] == "stop_complete_or_inspect_active_repair"
 
@@ -633,7 +711,7 @@ def test_completion_projection_stops_on_empty_active_repair_object(tmp_path: Pat
     _init_workspace(ws)
     _set_workflow(ws, active_repair={})
 
-    payload = build_completion_projection(workspace=ws, repo_workdir=ROOT)
+    payload = _project(ws)
 
     assert payload["workflow"]["active_repair_present"] is True
     assert payload["next_allowed_action"] == "stop_complete_or_inspect_active_repair"
@@ -644,7 +722,7 @@ def test_completion_projection_stops_on_contaminated_run_integrity(tmp_path: Pat
     _init_workspace(ws)
     _bind_contaminated_recovery(ws, recovered=False)
 
-    payload = build_completion_projection(workspace=ws, repo_workdir=ROOT)
+    payload = _project(ws)
 
     assert payload["run_integrity"]["status"] == "contaminated"
     assert payload["recovery_state"]["status"] == "awaiting_recovery"
@@ -656,7 +734,7 @@ def test_completion_projection_current_blocker_precedes_awaiting_recovery(tmp_pa
     _init_workspace(ws)
     _bind_contaminated_recovery(ws, recovered=False, blocked=True)
 
-    payload = build_completion_projection(workspace=ws, repo_workdir=ROOT)
+    payload = _project(ws)
 
     assert payload["next_allowed_action"] == "stop_workflow_blocked_human_review_required"
 
@@ -666,7 +744,7 @@ def test_completion_projection_bound_recovery_requires_recorded_downstream_rerun
     _init_workspace(ws)
     _bind_contaminated_recovery(ws, recovered=True)
 
-    payload = build_completion_projection(workspace=ws, repo_workdir=ROOT)
+    payload = _project(ws)
 
     assert payload["run_integrity"]["status"] == "contaminated"
     assert payload["recovery_state"]["rerun_start_stage"] == "auditor"
@@ -678,7 +756,7 @@ def test_completion_projection_current_blocker_precedes_bound_recovery_rerun(tmp
     _init_workspace(ws)
     _bind_contaminated_recovery(ws, recovered=True, blocked=True)
 
-    payload = build_completion_projection(workspace=ws, repo_workdir=ROOT)
+    payload = _project(ws)
 
     assert payload["next_allowed_action"] == "stop_workflow_blocked_human_review_required"
 
@@ -726,7 +804,7 @@ def test_recovery_gate_independence_matrix(
         )
         _write_gate_report(ws, stage_id="finalize", status="pass", blocking=False)
 
-    payload = build_completion_projection(workspace=ws, repo_workdir=ROOT)
+    payload = _project(ws)
 
     assert payload["recovery_state"]["status"] == "finalize_completion_pending"
     assert payload["recovery_state"]["recovery_transaction_id"] == "recovery-001"
@@ -743,7 +821,7 @@ def test_completion_projection_active_repair_prefers_repair_over_workflow_blocke
         active_repair={"stage_id": "editor"},
     )
 
-    payload = build_completion_projection(workspace=ws, repo_workdir=ROOT)
+    payload = _project(ws)
 
     assert payload["workflow"]["active_repair_present"] is True
     assert payload["next_allowed_action"] == "stop_complete_or_inspect_active_repair"
@@ -763,7 +841,7 @@ def test_completion_projection_unknown_integrity_is_invalid_recovery_state(tmp_p
         },
     )
 
-    payload = build_completion_projection(workspace=ws, repo_workdir=ROOT)
+    payload = _project(ws)
 
     assert payload["recovery_state"]["status"] == "invalid_recovery_state"
     assert payload["next_allowed_action"] == "inspect_invalid_recovery"
@@ -779,7 +857,7 @@ def test_completion_projection_rejects_invalid_experiment_condition_before_final
     condition = ws / "experiment" / "080" / "condition.json"
     _write_json(condition, {"assessment_target": ["auditable_brief"]})
 
-    payload = build_completion_projection(workspace=ws, repo_workdir=ROOT)
+    payload = _project(ws)
 
     assert payload["assessment_target"]["status"] == "invalid_condition"
     assert payload["next_allowed_action"] == "inspect_invalid_experiment_condition"

@@ -318,6 +318,8 @@ cases:
     description: Failed reader-clean leaves only an inspectable candidate; stale delivery files are not current delivery.
     initial_stage: finalize
     commands:
+      - action: state.check
+        args: {}
       - action: completion.project
         args: {}
       - action: workbuddy.diagnose
@@ -325,6 +327,8 @@ cases:
     expected:
       exit_code: 0
       expected_actions:
+        - action: state.check
+          exit_code: 0
         - action: completion.project
           exit_code: 0
           result_contains:

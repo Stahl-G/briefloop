@@ -21,7 +21,11 @@ from multi_agent_brief.orchestrator.run_integrity import (
     interpret_run_integrity,
     project_for_read,
 )
-from multi_agent_brief.orchestrator.runtime_state.artifact_registry import ARTIFACT_REGISTRY_SCHEMA
+from multi_agent_brief.orchestrator.runtime_state.artifact_registry_read import (
+    CanonicalRegistryView,
+    RegistryReadVerdict,
+    interpret_artifact_registry,
+)
 from multi_agent_brief.orchestrator.runtime_state.contracts_loader import (
     load_artifact_contracts,
     load_stage_specs,
@@ -45,7 +49,10 @@ from multi_agent_brief.quality_gates.contract import (
 COMPLETION_PROJECTION_SCHEMA_VERSION = "briefloop.completion_projection.v1"
 
 _CONTROL_STOP_STATUSES = {
+    "degradation",
     "missing",
+    "not_materialized",
+    "snapshot_drift",
     "unreadable_utf8",
     "invalid_json",
     "invalid_json_shape",
@@ -73,10 +80,12 @@ def build_completion_projection(
         intermediate / "runtime_manifest.json",
         expected_schema=RUNTIME_MANIFEST_SCHEMA,
     )
-    registry, registry_status = _read_json_with_schema(
-        intermediate / "artifact_registry.json",
-        expected_schema=ARTIFACT_REGISTRY_SCHEMA,
+    registry_verdict = interpret_artifact_registry(
+        workspace=ws,
+        repo_workdir=repo,
     )
+    registry = _canonical_registry_payload(registry_verdict)
+    registry_status = _registry_control_status(registry_verdict)
     event_records, event_log_status = _read_event_log(runtime_state_paths(ws)["event_log"])
 
     control_file_status = {
@@ -89,7 +98,7 @@ def build_completion_projection(
     current_stage = current_stage or "unknown"
     run_integrity = _run_integrity_projection(workflow, workflow_status)
     workflow_truth = _workflow_truth(workflow, workflow_status)
-    artifact_truth = _artifact_truth(registry, registry_status)
+    artifact_truth = _artifact_truth(registry_verdict)
     stages = load_stage_specs(repo)
     artifacts = load_artifact_contracts(repo)
     gate_truth = _stage_gate_truth(
@@ -199,25 +208,55 @@ def _workflow_truth(workflow: Any, status: str) -> dict[str, Any]:
     }
 
 
-def _artifact_truth(registry: Any, status: str) -> dict[str, Any]:
+def _artifact_truth(verdict: RegistryReadVerdict) -> dict[str, Any]:
     invalid_or_stale: list[dict[str, str]] = []
-    if status == "present" and isinstance(registry, Mapping):
-        records = registry.get("artifacts")
-        if isinstance(records, Mapping):
-            for artifact_id, record in records.items():
-                if not isinstance(record, Mapping):
-                    continue
-                artifact_status = _clean_text(record.get("status"))
-                if artifact_status in {"invalid", "stale"}:
-                    invalid_or_stale.append({
-                        "artifact_id": str(artifact_id),
-                        "status": artifact_status,
-                        "validation_result": _clean_text(record.get("validation_result")) or "unknown",
-                    })
+    if isinstance(verdict, CanonicalRegistryView):
+        for artifact_id, record in verdict.records.items():
+            artifact_status = _clean_text(record.get("status"))
+            if artifact_status in {"invalid", "stale"}:
+                invalid_or_stale.append({
+                    "artifact_id": str(artifact_id),
+                    "status": artifact_status,
+                    "validation_result": _clean_text(record.get("validation_result")) or "unknown",
+                })
+        return {
+            "status": "present",
+            "trust_kind": verdict.kind,
+            "reason_code": "",
+            "invalid_or_stale": invalid_or_stale,
+        }
     return {
-        "status": status,
-        "invalid_or_stale": invalid_or_stale,
+        "status": verdict.kind,
+        "trust_kind": verdict.kind,
+        "reason_code": verdict.reason_code,
+        "invalid_or_stale": [],
     }
+
+
+def _canonical_registry_payload(
+    verdict: RegistryReadVerdict,
+) -> dict[str, Any] | None:
+    if not isinstance(verdict, CanonicalRegistryView):
+        return None
+    return {
+        "run_id": verdict.run_id,
+        "artifacts": _thaw_registry_value(verdict.records),
+    }
+
+
+def _thaw_registry_value(value: Any) -> Any:
+    if isinstance(value, Mapping):
+        return {
+            str(key): _thaw_registry_value(item)
+            for key, item in value.items()
+        }
+    if isinstance(value, tuple):
+        return [_thaw_registry_value(item) for item in value]
+    return value
+
+
+def _registry_control_status(verdict: RegistryReadVerdict) -> str:
+    return "present" if isinstance(verdict, CanonicalRegistryView) else verdict.kind
 
 
 def _stage_gate_truth(
@@ -351,7 +390,13 @@ def _delivery_truth(
     findings.extend(f"finalize_completion_blocker:{reason}" for reason in finalize_completion_reasons)
     if event_truth.get("finalize_event_present") is not True:
         findings.append("finalize_event_missing")
-    if artifact_truth.get("invalid_or_stale"):
+    if artifact_truth.get("status") != "present":
+        findings.append(
+            "artifact_registry_untrusted:"
+            f"{_clean_text(artifact_truth.get('trust_kind')) or 'unknown'}:"
+            f"{_clean_text(artifact_truth.get('reason_code')) or 'unknown'}"
+        )
+    elif artifact_truth.get("invalid_or_stale"):
         findings.append("artifact_registry_invalid_or_stale")
     if recovery_state.get("recovery_blocks_delivery") is True:
         findings.append(
