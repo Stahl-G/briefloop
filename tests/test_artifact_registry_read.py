@@ -153,6 +153,7 @@ def _assert_negative(
     assert set(payload) == {"kind", "reason_code"}
     assert all(not isinstance(value, (dict, list, tuple)) for value in payload.values())
     for attribute in (
+        "updated_at",
         "records",
         "resolved_paths",
         "artifact_count",
@@ -893,6 +894,7 @@ def test_reg_read_06_real_writer_output_is_the_only_value_bearing_view(
     assert isinstance(verdict, CanonicalRegistryView)
     assert verdict.kind == "canonical"
     assert verdict.run_id
+    assert not hasattr(verdict, "updated_at")
     assert verdict.artifact_count == len(verdict.records)
     assert verdict.artifact_count == len(verdict.resolved_paths)
     assert sum(verdict.status_counts.values()) == verdict.artifact_count
@@ -901,6 +903,60 @@ def test_reg_read_06_real_writer_output_is_the_only_value_bearing_view(
         verdict.records["candidate_claims"] = {}  # type: ignore[index]
     with pytest.raises(TypeError):
         verdict.records["candidate_claims"]["status"] = "valid"  # type: ignore[index]
+    _assert_read_only(ws, before)
+
+
+@pytest.mark.parametrize(
+    ("case_id", "updated_at", "expected_type"),
+    [
+        (
+            "writer-shaped-opaque",
+            "2099-01-01T00:00:00+00:00",
+            CanonicalRegistryView,
+        ),
+        (
+            "microsecond",
+            "2099-01-01T00:00:00.000001+00:00",
+            RegistryDegradation,
+        ),
+        (
+            "non-utc",
+            "2099-01-01T08:00:00+08:00",
+            RegistryDegradation,
+        ),
+        (
+            "non-writer-zulu",
+            "2099-01-01T00:00:00Z",
+            RegistryDegradation,
+        ),
+    ],
+    ids=lambda value: str(value),
+)
+def test_reg_read_updated_at_is_structural_only_and_never_exposed(
+    tmp_path: Path,
+    case_id: str,
+    updated_at: str,
+    expected_type: type[CanonicalRegistryView] | type[RegistryDegradation],
+) -> None:
+    del case_id
+    ws = _workspace(tmp_path)
+    registry_path = runtime_state_paths(ws)["artifact_registry"]
+    registry = _read_json(registry_path)
+    registry["updated_at"] = updated_at
+    _write_json(registry_path, registry)
+    before = _workspace_snapshot(ws)
+
+    verdict = interpret_artifact_registry(workspace=ws, repo_workdir=ROOT)
+
+    if expected_type is CanonicalRegistryView:
+        assert isinstance(verdict, CanonicalRegistryView)
+        assert not hasattr(verdict, "updated_at")
+    else:
+        _assert_negative(
+            verdict,
+            verdict_type=RegistryDegradation,
+            reason_code="artifact_registry_updated_at_invalid",
+        )
     _assert_read_only(ws, before)
 
 

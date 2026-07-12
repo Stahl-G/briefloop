@@ -79,7 +79,7 @@ class RegistryDegradation:
 
 @dataclass(frozen=True)
 class RegistrySnapshotDrift:
-    """A structurally bound Registry whose producer-observed snapshot drifted."""
+    """A value-free verdict for a pure physical snapshot-tuple mismatch."""
 
     reason_code: str
     kind: Literal["snapshot_drift"] = "snapshot_drift"
@@ -90,7 +90,6 @@ class CanonicalRegistryView:
     """The only read result allowed to expose Registry-derived values."""
 
     run_id: str
-    updated_at: str
     records: Mapping[str, Mapping[str, Any]]
     resolved_paths: Mapping[str, Path]
     kind: Literal["canonical"] = "canonical"
@@ -282,7 +281,7 @@ def _interpret_materialized_registry(
     if set(registry) != _TOP_LEVEL_FIELDS:
         return RegistryDegradation("artifact_registry_root_fields_invalid")
     updated_at = registry.get("updated_at")
-    if not _valid_timestamp(updated_at):
+    if not _valid_writer_timestamp(updated_at):
         return RegistryDegradation("artifact_registry_updated_at_invalid")
 
     registry_run_id = _validated_run_id(registry.get("run_id"))
@@ -371,7 +370,6 @@ def _interpret_materialized_registry(
     }
     return CanonicalRegistryView(
         run_id=registry_run_id,
-        updated_at=cast(str, updated_at),
         records=MappingProxyType(canonical_records),
         resolved_paths=MappingProxyType(dict(resolved_paths)),
     )
@@ -389,11 +387,15 @@ def _producer_replay_mismatch_verdict(
     persisted: Mapping[str, Any],
     expected: Mapping[str, Any],
 ) -> RegistryDegradation | RegistrySnapshotDrift:
-    """Classify producer-derived snapshot drift without exposing either payload."""
+    """Classify record-semantic replay mismatch without exposing either payload."""
 
+    # ``updated_at`` is historical writer metadata with no independent binding
+    # in the current persisted control context. It is validated for the exact
+    # writer timestamp shape before replay, but is neither replay-bound here nor
+    # exposed by CanonicalRegistryView.
     if any(
         not _json_values_equal(persisted.get(field), expected.get(field))
-        for field in _TOP_LEVEL_FIELDS - {"artifacts"}
+        for field in _TOP_LEVEL_FIELDS - {"artifacts", "updated_at"}
     ):
         return RegistryDegradation("artifact_registry_producer_replay_mismatch")
     persisted_records = persisted.get("artifacts")
@@ -471,7 +473,7 @@ def _valid_regular_file_snapshot(snapshot: tuple[Any, Any, Any]) -> bool:
     size_bytes, mtime, sha256 = snapshot
     if type(size_bytes) is not int or size_bytes < 0:
         return False
-    if not _valid_writer_file_mtime(mtime):
+    if not _valid_writer_timestamp(mtime):
         return False
     return (
         isinstance(sha256, str)
@@ -480,7 +482,7 @@ def _valid_regular_file_snapshot(snapshot: tuple[Any, Any, Any]) -> bool:
     )
 
 
-def _valid_writer_file_mtime(value: Any) -> bool:
+def _valid_writer_timestamp(value: Any) -> bool:
     if not isinstance(value, str) or not value:
         return False
     try:
@@ -521,13 +523,3 @@ def _freeze_json(value: Any) -> Any:
     if isinstance(value, list):
         return tuple(_freeze_json(item) for item in value)
     return value
-
-
-def _valid_timestamp(value: Any) -> bool:
-    if not isinstance(value, str) or not value.strip():
-        return False
-    try:
-        parsed = datetime.fromisoformat(value)
-    except ValueError:
-        return False
-    return parsed.tzinfo is not None
