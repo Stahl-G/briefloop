@@ -2,10 +2,13 @@
 
 from __future__ import annotations
 
+import ctypes
 import errno
 import json
 import os
 import stat
+from ctypes import wintypes
+from functools import lru_cache
 from pathlib import Path, PurePosixPath, PureWindowsPath
 from typing import Any
 
@@ -21,6 +24,63 @@ _DESCRIPTOR_READ_SUPPORTED = (
     and hasattr(os, "O_DIRECTORY")
     and os.open in os.supports_dir_fd
 )
+_WINDOWS_DESCRIPTOR_READ_SUPPORTED = os.name == "nt" and hasattr(ctypes, "WinDLL")
+
+_WINDOWS_FILE_ATTRIBUTE_DIRECTORY = 0x00000010
+_WINDOWS_FILE_ATTRIBUTE_REPARSE_POINT = 0x00000400
+_WINDOWS_FILE_READ_DATA = 0x00000001
+_WINDOWS_FILE_TRAVERSE = 0x00000020
+_WINDOWS_FILE_READ_ATTRIBUTES = 0x00000080
+_WINDOWS_SYNCHRONIZE = 0x00100000
+_WINDOWS_FILE_SHARE_READ = 0x00000001
+_WINDOWS_FILE_SHARE_WRITE = 0x00000002
+_WINDOWS_FILE_SHARE_DELETE = 0x00000004
+_WINDOWS_FILE_OPEN = 0x00000001
+_WINDOWS_FILE_DIRECTORY_FILE = 0x00000001
+_WINDOWS_FILE_SYNCHRONOUS_IO_NONALERT = 0x00000020
+_WINDOWS_FILE_OPEN_FOR_BACKUP_INTENT = 0x00004000
+_WINDOWS_FILE_OPEN_REPARSE_POINT = 0x00200000
+_WINDOWS_OBJ_CASE_INSENSITIVE = 0x00000040
+_WINDOWS_OPEN_EXISTING = 3
+_WINDOWS_FILE_FLAG_BACKUP_SEMANTICS = 0x02000000
+_WINDOWS_FILE_FLAG_OPEN_REPARSE_POINT = 0x00200000
+_WINDOWS_FILE_ATTRIBUTE_TAG_INFO_CLASS = 9
+_WINDOWS_ERROR_FILE_NOT_FOUND = 2
+_WINDOWS_ERROR_PATH_NOT_FOUND = 3
+_WINDOWS_INVALID_HANDLE_VALUE = ctypes.c_void_p(-1).value
+
+
+class _WindowsUnicodeString(ctypes.Structure):
+    _fields_ = (
+        ("Length", wintypes.USHORT),
+        ("MaximumLength", wintypes.USHORT),
+        ("Buffer", wintypes.LPWSTR),
+    )
+
+
+class _WindowsObjectAttributes(ctypes.Structure):
+    _fields_ = (
+        ("Length", wintypes.ULONG),
+        ("RootDirectory", wintypes.HANDLE),
+        ("ObjectName", ctypes.POINTER(_WindowsUnicodeString)),
+        ("Attributes", wintypes.ULONG),
+        ("SecurityDescriptor", wintypes.LPVOID),
+        ("SecurityQualityOfService", wintypes.LPVOID),
+    )
+
+
+class _WindowsIoStatusBlock(ctypes.Structure):
+    _fields_ = (
+        ("StatusOrPointer", wintypes.LPVOID),
+        ("Information", ctypes.c_size_t),
+    )
+
+
+class _WindowsFileAttributeTagInfo(ctypes.Structure):
+    _fields_ = (
+        ("FileAttributes", wintypes.DWORD),
+        ("ReparseTag", wintypes.DWORD),
+    )
 
 
 def read_workspace_control_bytes(
@@ -34,12 +94,35 @@ def read_workspace_control_bytes(
     display_root = Path(workspace).expanduser().absolute()
     parts = _workspace_control_relative_parts(relative_path)
     display_path = display_root.joinpath(*parts)
+    if _WINDOWS_DESCRIPTOR_READ_SUPPORTED:
+        return _read_workspace_control_bytes_windows(
+            display_root=display_root,
+            parts=parts,
+            display_path=display_path,
+            required=required,
+        )
     if not _DESCRIPTOR_READ_SUPPORTED:
         raise _control_read_error(
             display_path,
             reason_code="control_file_descriptor_read_unsupported",
             reason="Descriptor-bound no-follow control reads are unavailable.",
         )
+    return _read_workspace_control_bytes_posix(
+        display_root=display_root,
+        parts=parts,
+        display_path=display_path,
+        required=required,
+    )
+
+
+def _read_workspace_control_bytes_posix(
+    *,
+    display_root: Path,
+    parts: tuple[str, ...],
+    display_path: Path,
+    required: bool,
+) -> bytes | None:
+    """Acquire one control file through a POSIX descriptor chain."""
 
     directory_flags = (
         os.O_RDONLY
@@ -162,6 +245,461 @@ def read_workspace_control_bytes(
                 os.close(directory_fd)
             except OSError:
                 pass
+
+
+def _read_workspace_control_bytes_windows(
+    *,
+    display_root: Path,
+    parts: tuple[str, ...],
+    display_path: Path,
+    required: bool,
+) -> bytes | None:
+    """Acquire one control file through a Windows handle-relative chain."""
+
+    root_path, workspace_parts = _windows_workspace_root_and_parts(display_root)
+    _validate_windows_path_parts(
+        parts,
+        display_path=display_path,
+        reason_code="control_file_relative_path_invalid",
+    )
+    directory_handles: list[int] = []
+    file_handle: int | None = None
+    current_display = Path(display_root.anchor)
+    try:
+        try:
+            root_handle = _windows_open_root_handle(root_path)
+        except OSError as exc:
+            raise _windows_control_open_error(
+                display_path,
+                reason_code="control_workspace_root_unsafe",
+                exc=exc,
+            ) from exc
+        directory_handles.append(root_handle)
+        _require_windows_handle_kind(
+            root_handle,
+            path=Path(display_root.anchor),
+            directory=True,
+        )
+
+        current_handle = root_handle
+        for component in workspace_parts:
+            current_display = current_display / component
+            current_handle = _windows_open_safe_directory(
+                parent_handle=current_handle,
+                component=component,
+                path=current_display,
+                reason_code="control_workspace_root_unsafe",
+            )
+            directory_handles.append(current_handle)
+
+        current_display = display_root
+        for component in parts[:-1]:
+            current_display = current_display / component
+            current_handle = _windows_open_safe_directory(
+                parent_handle=current_handle,
+                component=component,
+                path=current_display,
+                reason_code="control_file_ancestor_unsafe",
+            )
+            directory_handles.append(current_handle)
+
+        try:
+            file_handle = _windows_open_relative_handle(
+                parent_handle=current_handle,
+                component=parts[-1],
+                directory=False,
+            )
+        except OSError as exc:
+            if _windows_error_code(exc) in {
+                _WINDOWS_ERROR_FILE_NOT_FOUND,
+                _WINDOWS_ERROR_PATH_NOT_FOUND,
+            }:
+                if not required:
+                    return None
+                raise RuntimeStateError(
+                    f"Required control file is missing: {display_path}",
+                    details={
+                        "path": str(display_path),
+                        "reason_code": "control_file_missing",
+                    },
+                    error_code=E_TRANSACTION_INTEGRITY,
+                ) from exc
+            raise _windows_control_open_error(
+                display_path,
+                reason_code="control_file_target_unsafe",
+                exc=exc,
+            ) from exc
+        _require_windows_handle_kind(
+            file_handle,
+            path=display_path,
+            directory=False,
+        )
+        return _windows_read_handle(file_handle, path=display_path)
+    finally:
+        if file_handle is not None:
+            _windows_close_handle(file_handle)
+        for directory_handle in reversed(directory_handles):
+            _windows_close_handle(directory_handle)
+
+
+def _windows_open_safe_directory(
+    *,
+    parent_handle: int,
+    component: str,
+    path: Path,
+    reason_code: str,
+) -> int:
+    try:
+        handle = _windows_open_relative_handle(
+            parent_handle=parent_handle,
+            component=component,
+            directory=True,
+        )
+    except OSError as exc:
+        raise _windows_control_open_error(
+            path,
+            reason_code=reason_code,
+            exc=exc,
+        ) from exc
+    try:
+        _require_windows_handle_kind(handle, path=path, directory=True)
+    except Exception:
+        _windows_close_handle(handle)
+        raise
+    return handle
+
+
+def _require_windows_handle_kind(
+    handle: int,
+    *,
+    path: Path,
+    directory: bool,
+) -> None:
+    try:
+        attributes = _windows_handle_attributes(handle)
+    except OSError as exc:
+        raise _windows_control_open_error(
+            path,
+            reason_code="control_file_identity_unavailable",
+            exc=exc,
+        ) from exc
+    if attributes & _WINDOWS_FILE_ATTRIBUTE_REPARSE_POINT:
+        raise _control_read_error(
+            path,
+            reason_code="control_file_path_unsafe",
+            reason="Control file path contains a Windows reparse point.",
+        )
+    is_directory = bool(attributes & _WINDOWS_FILE_ATTRIBUTE_DIRECTORY)
+    if directory and not is_directory:
+        raise _control_read_error(
+            path,
+            reason_code="control_file_path_unsafe",
+            reason="Control file ancestor must be a directory.",
+        )
+    if not directory and is_directory:
+        raise _control_read_error(
+            path,
+            reason_code="control_file_not_regular",
+            reason="Control file target must be a regular file.",
+        )
+
+
+def _windows_workspace_root_and_parts(display_root: Path) -> tuple[str, tuple[str, ...]]:
+    pure_root = PureWindowsPath(str(display_root))
+    if (
+        not pure_root.is_absolute()
+        or not pure_root.anchor
+        or not pure_root.drive
+        or pure_root.drive.startswith("\\\\?\\")
+        or pure_root.drive.startswith("\\\\.\\")
+    ):
+        raise _control_read_error(
+            display_root,
+            reason_code="control_workspace_root_invalid",
+            reason="Workspace root must be a canonical Windows drive or UNC path.",
+        )
+    workspace_parts = tuple(pure_root.parts[1:])
+    _validate_windows_path_parts(
+        workspace_parts,
+        display_path=display_root,
+        reason_code="control_workspace_root_invalid",
+    )
+    drive = pure_root.drive
+    if drive.startswith("\\\\"):
+        share_parts = tuple(part for part in drive[2:].split("\\") if part)
+        if len(share_parts) != 2:
+            raise _control_read_error(
+                display_root,
+                reason_code="control_workspace_root_invalid",
+                reason="Workspace UNC root must contain one server and share.",
+            )
+        _validate_windows_path_parts(
+            share_parts,
+            display_path=display_root,
+            reason_code="control_workspace_root_invalid",
+        )
+        root_path = "\\\\?\\UNC\\" + "\\".join(share_parts) + "\\"
+    elif len(drive) == 2 and drive[0].isalpha() and drive[1] == ":":
+        root_path = f"\\\\?\\{drive}\\"
+    else:
+        raise _control_read_error(
+            display_root,
+            reason_code="control_workspace_root_invalid",
+            reason="Workspace root must use a drive letter or UNC share.",
+        )
+    return root_path, workspace_parts
+
+
+def _validate_windows_path_parts(
+    parts: tuple[str, ...],
+    *,
+    display_path: Path,
+    reason_code: str,
+) -> None:
+    if any(
+        not part
+        or part in {".", ".."}
+        or "\x00" in part
+        or ":" in part
+        or "\\" in part
+        or "/" in part
+        or part.endswith((" ", "."))
+        for part in parts
+    ):
+        raise _control_read_error(
+            display_path,
+            reason_code=reason_code,
+            reason="Windows path contains a noncanonical component.",
+        )
+
+
+@lru_cache(maxsize=1)
+def _windows_native_api() -> "_WindowsNativeApi":
+    return _WindowsNativeApi()
+
+
+class _WindowsNativeApi:
+    def __init__(self) -> None:
+        win_dll = getattr(ctypes, "WinDLL", None)
+        if win_dll is None:
+            raise OSError(0, "Windows native APIs are unavailable.")
+        kernel32 = win_dll("kernel32", use_last_error=True)
+        ntdll = win_dll("ntdll", use_last_error=True)
+
+        self.create_file = kernel32.CreateFileW
+        self.create_file.argtypes = (
+            wintypes.LPCWSTR,
+            wintypes.DWORD,
+            wintypes.DWORD,
+            wintypes.LPVOID,
+            wintypes.DWORD,
+            wintypes.DWORD,
+            wintypes.HANDLE,
+        )
+        self.create_file.restype = wintypes.HANDLE
+
+        self.nt_create_file = ntdll.NtCreateFile
+        self.nt_create_file.argtypes = (
+            ctypes.POINTER(wintypes.HANDLE),
+            wintypes.DWORD,
+            ctypes.POINTER(_WindowsObjectAttributes),
+            ctypes.POINTER(_WindowsIoStatusBlock),
+            wintypes.LPVOID,
+            wintypes.DWORD,
+            wintypes.DWORD,
+            wintypes.DWORD,
+            wintypes.DWORD,
+            wintypes.LPVOID,
+            wintypes.DWORD,
+        )
+        self.nt_create_file.restype = ctypes.c_long
+
+        self.rtl_nt_status_to_dos_error = ntdll.RtlNtStatusToDosError
+        self.rtl_nt_status_to_dos_error.argtypes = (ctypes.c_long,)
+        self.rtl_nt_status_to_dos_error.restype = wintypes.ULONG
+
+        self.get_file_information = kernel32.GetFileInformationByHandleEx
+        self.get_file_information.argtypes = (
+            wintypes.HANDLE,
+            ctypes.c_int,
+            wintypes.LPVOID,
+            wintypes.DWORD,
+        )
+        self.get_file_information.restype = wintypes.BOOL
+
+        self.read_file = kernel32.ReadFile
+        self.read_file.argtypes = (
+            wintypes.HANDLE,
+            wintypes.LPVOID,
+            wintypes.DWORD,
+            ctypes.POINTER(wintypes.DWORD),
+            wintypes.LPVOID,
+        )
+        self.read_file.restype = wintypes.BOOL
+
+        self.close_handle = kernel32.CloseHandle
+        self.close_handle.argtypes = (wintypes.HANDLE,)
+        self.close_handle.restype = wintypes.BOOL
+
+
+def _windows_open_root_handle(root_path: str) -> int:
+    api = _windows_native_api()
+    handle = api.create_file(
+        root_path,
+        _WINDOWS_FILE_READ_ATTRIBUTES | _WINDOWS_FILE_TRAVERSE | _WINDOWS_SYNCHRONIZE,
+        _WINDOWS_FILE_SHARE_READ
+        | _WINDOWS_FILE_SHARE_WRITE
+        | _WINDOWS_FILE_SHARE_DELETE,
+        None,
+        _WINDOWS_OPEN_EXISTING,
+        _WINDOWS_FILE_FLAG_BACKUP_SEMANTICS
+        | _WINDOWS_FILE_FLAG_OPEN_REPARSE_POINT,
+        None,
+    )
+    value = _windows_handle_value(handle)
+    if value == _WINDOWS_INVALID_HANDLE_VALUE:
+        raise _windows_os_error(ctypes.get_last_error(), root_path)
+    return value
+
+
+def _windows_open_relative_handle(
+    *,
+    parent_handle: int,
+    component: str,
+    directory: bool,
+) -> int:
+    api = _windows_native_api()
+    name_buffer = ctypes.create_unicode_buffer(component)
+    name_length = len(component.encode("utf-16-le"))
+    unicode_name = _WindowsUnicodeString(
+        Length=name_length,
+        MaximumLength=name_length + 2,
+        Buffer=ctypes.cast(name_buffer, wintypes.LPWSTR),
+    )
+    object_attributes = _WindowsObjectAttributes(
+        Length=ctypes.sizeof(_WindowsObjectAttributes),
+        RootDirectory=wintypes.HANDLE(parent_handle),
+        ObjectName=ctypes.pointer(unicode_name),
+        Attributes=_WINDOWS_OBJ_CASE_INSENSITIVE,
+        SecurityDescriptor=None,
+        SecurityQualityOfService=None,
+    )
+    io_status = _WindowsIoStatusBlock()
+    output_handle = wintypes.HANDLE()
+    desired_access = _WINDOWS_FILE_READ_ATTRIBUTES | _WINDOWS_SYNCHRONIZE
+    create_options = (
+        _WINDOWS_FILE_SYNCHRONOUS_IO_NONALERT
+        | _WINDOWS_FILE_OPEN_REPARSE_POINT
+    )
+    if directory:
+        desired_access |= _WINDOWS_FILE_TRAVERSE
+        create_options |= (
+            _WINDOWS_FILE_DIRECTORY_FILE | _WINDOWS_FILE_OPEN_FOR_BACKUP_INTENT
+        )
+    else:
+        desired_access |= _WINDOWS_FILE_READ_DATA
+    status = int(
+        api.nt_create_file(
+            ctypes.byref(output_handle),
+            desired_access,
+            ctypes.byref(object_attributes),
+            ctypes.byref(io_status),
+            None,
+            0,
+            _WINDOWS_FILE_SHARE_READ
+            | _WINDOWS_FILE_SHARE_WRITE
+            | _WINDOWS_FILE_SHARE_DELETE,
+            _WINDOWS_FILE_OPEN,
+            create_options,
+            None,
+            0,
+        )
+    )
+    if status < 0:
+        error_code = int(api.rtl_nt_status_to_dos_error(status))
+        raise _windows_os_error(error_code, component)
+    value = _windows_handle_value(output_handle)
+    if value in {None, _WINDOWS_INVALID_HANDLE_VALUE}:
+        raise _windows_os_error(6, component)
+    return value
+
+
+def _windows_handle_attributes(handle: int) -> int:
+    api = _windows_native_api()
+    info = _WindowsFileAttributeTagInfo()
+    if not api.get_file_information(
+        wintypes.HANDLE(handle),
+        _WINDOWS_FILE_ATTRIBUTE_TAG_INFO_CLASS,
+        ctypes.byref(info),
+        ctypes.sizeof(info),
+    ):
+        raise _windows_os_error(ctypes.get_last_error(), "<control-handle>")
+    return int(info.FileAttributes)
+
+
+def _windows_read_handle(handle: int, *, path: Path) -> bytes:
+    api = _windows_native_api()
+    chunks: list[bytes] = []
+    while True:
+        buffer = ctypes.create_string_buffer(1024 * 1024)
+        count = wintypes.DWORD()
+        if not api.read_file(
+            wintypes.HANDLE(handle),
+            buffer,
+            len(buffer),
+            ctypes.byref(count),
+            None,
+        ):
+            exc = _windows_os_error(ctypes.get_last_error(), str(path))
+            raise _windows_control_open_error(
+                path,
+                reason_code="control_file_read_failed",
+                exc=exc,
+            ) from exc
+        if count.value == 0:
+            return b"".join(chunks)
+        chunks.append(buffer.raw[: count.value])
+
+
+def _windows_close_handle(handle: int) -> None:
+    try:
+        _windows_native_api().close_handle(wintypes.HANDLE(handle))
+    except Exception:
+        pass
+
+
+def _windows_handle_value(handle: object) -> int | None:
+    value = getattr(handle, "value", handle)
+    return None if value is None else int(value)
+
+
+def _windows_os_error(error_code: int, path: str) -> OSError:
+    format_error = getattr(ctypes, "FormatError", None)
+    message = (
+        format_error(error_code)
+        if error_code and format_error is not None
+        else f"Windows API failure ({error_code})"
+    )
+    exc = OSError(error_code, message, path)
+    exc.winerror = error_code
+    return exc
+
+
+def _windows_error_code(exc: OSError) -> int | None:
+    return getattr(exc, "winerror", None) or exc.errno
+
+
+def _windows_control_open_error(
+    path: Path,
+    *,
+    reason_code: str,
+    exc: OSError,
+) -> RuntimeStateError:
+    return _control_read_error(
+        path,
+        reason_code=reason_code,
+        reason=str(exc),
+    )
 
 
 def load_workspace_control_object(
