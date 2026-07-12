@@ -221,32 +221,6 @@ class _WorkspaceControlReadSession:
             expected_schema=expected_schema,
         )
 
-    def _read_parts(
-        self,
-        *,
-        parts: tuple[str, ...],
-        display_path: Path,
-        required: bool,
-    ) -> bytes | None:
-        """Compatibility bridge for the existing one-file backends."""
-
-        self.__require_open()
-        present, raw = self.__acquire(
-            parts=parts,
-            display_path=display_path,
-            required=required,
-            read_contents=True,
-        )
-        if not present:
-            return None
-        if raw is None:
-            raise _control_read_error(
-                display_path,
-                reason_code="control_file_read_failed",
-                reason="Control file bytes were not returned by the session backend.",
-            )
-        return raw
-
     def __relative_target(self, relative_path: str) -> tuple[tuple[str, ...], Path]:
         self.__require_open()
         parts = _workspace_control_relative_parts(relative_path)
@@ -358,12 +332,12 @@ def _read_workspace_control_bytes_posix(
 ) -> bytes | None:
     """Acquire one control file through a POSIX descriptor chain."""
 
+    relative_path = _workspace_control_relative_path_from_parts(
+        parts,
+        display_path=display_path,
+    )
     with _open_workspace_control_read_session_posix(display_root) as session:
-        return session._read_parts(
-            parts=parts,
-            display_path=display_path,
-            required=required,
-        )
+        return session.read_bytes(relative_path, required=required)
 
 
 def _read_workspace_control_bytes_windows(
@@ -375,17 +349,17 @@ def _read_workspace_control_bytes_windows(
 ) -> bytes | None:
     """Acquire one control file through a Windows handle-relative chain."""
 
+    relative_path = _workspace_control_relative_path_from_parts(
+        parts,
+        display_path=display_path,
+    )
     _validate_windows_path_parts(
         parts,
         display_path=display_path,
         reason_code="control_file_relative_path_invalid",
     )
     with _open_workspace_control_read_session_windows(display_root) as session:
-        return session._read_parts(
-            parts=parts,
-            display_path=display_path,
-            required=required,
-        )
+        return session.read_bytes(relative_path, required=required)
 
 
 def _open_workspace_control_read_session_posix(
@@ -1248,6 +1222,41 @@ def _workspace_control_relative_parts(relative_path: str) -> tuple[str, ...]:
             reason="Control file path must be canonical and workspace-relative.",
         )
     return parts
+
+
+def _workspace_control_relative_path_from_parts(
+    parts: tuple[str, ...],
+    *,
+    display_path: Path,
+) -> str:
+    """Re-enter the canonical string validator from a compatibility tuple."""
+
+    if (
+        type(parts) is not tuple
+        or not parts
+        or any(
+            type(part) is not str
+            or not part
+            or part in {".", ".."}
+            or "/" in part
+            or "\\" in part
+            or "\x00" in part
+            for part in parts
+        )
+    ):
+        raise _control_read_error(
+            display_path,
+            reason_code="control_file_relative_path_invalid",
+            reason="Control file path parts must be canonical relative components.",
+        )
+    relative_path = "/".join(parts)
+    if _workspace_control_relative_parts(relative_path) != parts:
+        raise _control_read_error(
+            display_path,
+            reason_code="control_file_relative_path_invalid",
+            reason="Control file path parts do not match the canonical relative path.",
+        )
+    return relative_path
 
 
 def _workspace_root_relative_parts(display_root: Path) -> tuple[str, ...]:

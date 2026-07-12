@@ -94,6 +94,76 @@ def test_session_stays_bound_after_preflight_when_workspace_is_replaced(
     assert raw != foreign_raw
 
 
+def test_session_load_object_uses_retained_root_after_workspace_replacement(
+    tmp_path: Path,
+) -> None:
+    workspace = _workspace(tmp_path)
+    trusted = {"schema_version": "control.v1", "value": "trusted"}
+    _write_control(workspace, trusted)
+    foreign = tmp_path / "foreign-workspace"
+    _write_control(
+        foreign,
+        {"schema_version": "control.v1", "value": "foreign"},
+    )
+    moved = tmp_path / "opened-workspace"
+
+    with control_context._open_workspace_control_read_session(workspace) as session:
+        assert session.preflight(CONTROL_RELATIVE_PATH) is True
+        workspace.rename(moved)
+        foreign.rename(workspace)
+
+        payload = session.load_object(
+            CONTROL_RELATIVE_PATH,
+            expected_schema="control.v1",
+        )
+
+    assert payload == trusted
+
+
+@pytest.mark.parametrize(
+    "parts_kind",
+    ["parent", "absolute", "empty", "embedded-separator"],
+)
+@pytest.mark.skipif(os.name == "nt", reason="POSIX compatibility backend")
+def test_compatibility_parts_reject_escape_before_external_read(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    parts_kind: str,
+) -> None:
+    workspace = _workspace(tmp_path)
+    outside = tmp_path / "outside.json"
+    outside.write_bytes(b"outside-secret")
+    before = _observation(outside)
+    parts_by_kind = {
+        "parent": ("..", "outside.json"),
+        "absolute": (outside.as_posix(),),
+        "empty": ("", "outside.json"),
+        "embedded-separator": ("nested/outside.json",),
+    }
+    read_calls: list[int] = []
+    real_read = os.read
+
+    def tracking_read(fd: int, size: int) -> bytes:
+        read_calls.append(fd)
+        return real_read(fd, size)
+
+    monkeypatch.setattr(control_context.os, "read", tracking_read)
+
+    with pytest.raises(RuntimeStateError) as exc_info:
+        control_context._read_workspace_control_bytes_posix(
+            display_root=workspace.absolute(),
+            parts=parts_by_kind[parts_kind],
+            display_path=outside,
+            required=True,
+        )
+
+    assert exc_info.value.details["reason_code"] == (
+        "control_file_relative_path_invalid"
+    )
+    assert read_calls == []
+    assert _observation(outside) == before
+
+
 def test_session_stays_bound_when_workspace_is_replaced_between_reads(
     tmp_path: Path,
 ) -> None:
