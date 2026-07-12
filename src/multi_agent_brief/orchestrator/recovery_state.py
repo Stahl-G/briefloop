@@ -5,7 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from pathlib import Path
 from types import MappingProxyType
-from typing import Any, Mapping, Sequence
+from typing import Any, Literal, Mapping, Sequence, Union
 
 from multi_agent_brief.orchestrator.run_integrity import (
     RUN_INTEGRITY_CLEAN,
@@ -81,6 +81,13 @@ RECOVERY_CONTROL_INPUT_FILES = (
     ("finalize_report", "output/intermediate/finalize_report.json"),
 )
 
+_REQUIRED_RECOVERY_CONTROL_INPUTS = (
+    "runtime_manifest",
+    "workflow_state",
+    "event_log",
+)
+_MISSING_WINDOWS_PATH_ERRORS = {2, 3}
+
 
 @dataclass(frozen=True)
 class RecoveryControlPaths:
@@ -103,6 +110,22 @@ class RecoveryContext:
     stage_ids: Sequence[str]
     artifact_registry: Mapping[str, Any] | None
     finalize_report: Mapping[str, Any] | None
+
+
+@dataclass(frozen=True)
+class RecoveryContextNotMaterialized:
+    """A safely absent five-input inventory carrying no control values."""
+
+    kind: Literal["not_materialized"] = "not_materialized"
+    reason_code: Literal["recovery_context_not_materialized"] = (
+        "recovery_context_not_materialized"
+    )
+
+
+RecoveryContextLoadVerdict = Union[
+    RecoveryContext,
+    RecoveryContextNotMaterialized,
+]
 
 
 @dataclass(frozen=True)
@@ -415,7 +438,29 @@ def load_recovery_context(
     repo_workdir: str | Path | None,
     control_paths: RecoveryControlPaths | None = None,
 ) -> RecoveryContext:
-    """Load recovery inputs only through the canonical five-path inventory."""
+    """Load a materialized Recovery context through the typed read boundary."""
+
+    verdict = load_recovery_context_verdict(
+        workspace=workspace,
+        repo_workdir=repo_workdir,
+        control_paths=control_paths,
+    )
+    if isinstance(verdict, RecoveryContextNotMaterialized):
+        raise RuntimeStateError(
+            "Recovery control context is not materialized.",
+            details={"reason_code": verdict.reason_code},
+            error_code=E_TRANSACTION_INTEGRITY,
+        )
+    return verdict
+
+
+def load_recovery_context_verdict(
+    *,
+    workspace: str | Path,
+    repo_workdir: str | Path | None,
+    control_paths: RecoveryControlPaths | None = None,
+) -> RecoveryContextLoadVerdict:
+    """Return one typed verdict from the canonical five-input inventory."""
 
     ws = _recovery_workspace_path(workspace)
     # Stage contracts are a separate semantic input, not a sixth workspace
@@ -441,11 +486,19 @@ def load_recovery_context(
         )
         path_map = _recovery_control_path_mapping(canonical_paths)
         relative_path_map = _recovery_control_relative_path_mapping(canonical_paths)
-        _preflight_recovery_control_inputs(
+        presence = _preflight_recovery_control_inputs(
             session=session,
             control_paths=canonical_paths,
             relative_path_map=relative_path_map,
         )
+        if not any(presence.values()):
+            return RecoveryContextNotMaterialized()
+        for key in _REQUIRED_RECOVERY_CONTROL_INPUTS:
+            if not presence[key]:
+                raise _required_recovery_control_missing_error(
+                    control_input=key,
+                    path=path_map[key],
+                )
         manifest = session.load_object(
             relative_path_map["runtime_manifest"],
             expected_schema=RUNTIME_MANIFEST_SCHEMA,
@@ -582,14 +635,20 @@ def _preflight_recovery_control_inputs(
     session: _WorkspaceControlReadSession,
     control_paths: RecoveryControlPaths,
     relative_path_map: Mapping[str, str],
-) -> None:
+) -> Mapping[str, bool]:
     """Preflight the complete inventory through the retained workspace root."""
 
+    presence: dict[str, bool] = {}
     for key, _relative_path in RECOVERY_CONTROL_INPUT_FILES:
-        required = key not in {"artifact_registry", "finalize_report"}
         try:
-            session.preflight(relative_path_map[key], required=required)
+            presence[key] = session.preflight(
+                relative_path_map[key],
+                required=False,
+            )
         except RuntimeStateError as exc:
+            if _control_input_is_safely_absent(exc):
+                presence[key] = False
+                continue
             if exc.details.get("reason_code") != "control_file_path_unsafe":
                 raise
             raise _recovery_control_path_error(
@@ -597,6 +656,36 @@ def _preflight_recovery_control_inputs(
                 control_input=key,
                 path=getattr(control_paths, key),
             ) from exc
+    return MappingProxyType(presence)
+
+
+def _control_input_is_safely_absent(exc: RuntimeStateError) -> bool:
+    """Distinguish a missing ancestor from an unsafe path-chain failure."""
+
+    if exc.details.get("reason_code") != "control_file_ancestor_unsafe":
+        return False
+    cause = exc.__cause__
+    return isinstance(cause, FileNotFoundError) or getattr(
+        cause,
+        "winerror",
+        None,
+    ) in _MISSING_WINDOWS_PATH_ERRORS
+
+
+def _required_recovery_control_missing_error(
+    *,
+    control_input: str,
+    path: Path,
+) -> RuntimeStateError:
+    return RuntimeStateError(
+        f"Required control file is missing: {path}",
+        details={
+            "path": str(path),
+            "reason_code": "control_file_missing",
+            "control_input": control_input,
+        },
+        error_code=E_TRANSACTION_INTEGRITY,
+    )
 
 
 def _recovery_control_path_error(
