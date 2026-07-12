@@ -1,12 +1,13 @@
 # Naming And Compatibility
 
-Read this when the task touches BriefLoop/MABW naming, public links, release
+Read this when the task touches BriefLoop naming, retired-name literals, public links, release
 notes, or compatibility claims.
 
 ## Current Names
 
-- Public project name: BriefLoop
-- Historical implementation lineage: MABW
+- BriefLoop is the only current project and product name
+- The former project acronym is retired and is not a current project,
+  architecture, runtime, control-plane, or implementation-lineage name
 - Public CLI: `briefloop`; compatibility CLI: `multi-agent-brief`
 - Claude command: `/briefloop`; deprecated compatibility command: `/mabw`
 - Python module: `multi_agent_brief`
@@ -28,9 +29,10 @@ notes, or compatibility claims.
 - Do not change workspace artifact names for public framing only.
 - Do not write product-facing aliases into control artifacts that require
   canonical ids unless the implementation explicitly supports that alias layer.
-- When public docs say BriefLoop, keep compatibility notes for
+- When public docs say BriefLoop, keep compatibility notes only where readers
+  must reproduce, migrate, or interpret literal identifiers such as
   `briefloop`, `multi-agent-brief`, `/briefloop`, `/mabw`, package/module
-  paths, and MABW experiment IDs.
+  paths, and frozen experiment IDs such as `MABW-080`.
 - Do not present `/generate-brief` as a recommended first-user writer path.
   It is the supported Claude delegated stage-workflow command when a generated
   `briefloop run --runtime claude` handoff or advanced Claude operation tells
