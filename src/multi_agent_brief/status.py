@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+from collections.abc import Mapping
 from pathlib import Path
 from typing import Any
 
@@ -20,14 +21,13 @@ from multi_agent_brief.orchestrator.run_integrity import (
     interpret_run_integrity,
     project_for_read,
 )
-from multi_agent_brief.orchestrator.runtime_state.artifact_registry import (
-    ARTIFACT_EXPECTED,
-    ARTIFACT_INVALID,
-    ARTIFACT_MISSING,
-    ARTIFACT_PRESENT,
-    ARTIFACT_REGISTRY_SCHEMA,
-    ARTIFACT_STALE,
-    ARTIFACT_VALID,
+from multi_agent_brief.orchestrator.runtime_state.artifact_registry_read import (
+    CanonicalRegistryView,
+    RegistryDegradation,
+    RegistryNotMaterialized,
+    RegistryReadVerdict,
+    RegistrySnapshotDrift,
+    interpret_artifact_registry,
 )
 from multi_agent_brief.orchestrator.runtime_state.claim_support_matrix import (
     project_claim_support_matrix_from_workspace,
@@ -64,19 +64,9 @@ _STAGE_PROGRESS_LABELS = {
     "finalize": "finalize delivery",
 }
 
-_PERSISTED_ARTIFACT_STATUSES = {
-    ARTIFACT_EXPECTED,
-    ARTIFACT_MISSING,
-    ARTIFACT_PRESENT,
-    ARTIFACT_VALID,
-    ARTIFACT_INVALID,
-    ARTIFACT_STALE,
-}
 _UNSAFE_REGISTRY_STATUSES = {
-    "unreadable",
-    "invalid_schema",
-    "invalid_identity",
-    "invalid_payload",
+    "degradation",
+    "snapshot_drift",
 }
 
 
@@ -129,11 +119,7 @@ def build_workspace_status(workspace: str | Path) -> dict[str, Any]:
 
     manifest = _read_json(ws / INTERMEDIATE_DIR / "runtime_manifest.json")
     workflow = _read_json(ws / INTERMEDIATE_DIR / "workflow_state.json")
-    raw_registry = _read_json(ws / INTERMEDIATE_DIR / "artifact_registry.json")
-    registry = _validated_status_registry_context(
-        manifest_result=manifest,
-        registry_result=raw_registry,
-    )
+    registry_verdict = interpret_artifact_registry(workspace=ws)
     quality_gate = _read_json(ws / INTERMEDIATE_DIR / "quality_gate_report.json")
     auditor_quality_gate = _read_json(ws / INTERMEDIATE_DIR / "gates" / "auditor_quality_gate_report.json")
     finalize_quality_gate = _read_json(ws / INTERMEDIATE_DIR / "gates" / "finalize_quality_gate_report.json")
@@ -154,10 +140,10 @@ def build_workspace_status(workspace: str | Path) -> dict[str, Any]:
     )
     payload["runtime"] = _runtime_summary(manifest)
     payload["workflow"] = _workflow_summary(workflow)
-    payload["artifacts"] = _artifact_summary(registry, expected_run_id=expected_run_id)
-    registry_payload = (
-        registry.get("payload") if registry.get("status") == "present" else None
-    )
+    payload["artifacts"] = _artifact_summary(registry_verdict)
+    registry_payload = _canonical_registry_payload(registry_verdict)
+    if isinstance(registry_verdict, CanonicalRegistryView):
+        expected_run_id = registry_verdict.run_id
     payload["events"] = _event_summary(event_log_path)
     payload["quality_gate"] = _quality_gate_summary(
         _select_quality_gate_result(
@@ -228,10 +214,15 @@ def build_workspace_status(workspace: str | Path) -> dict[str, Any]:
     )
 
     stale = payload["stale_or_unknown"]
+    artifact_summary = payload["artifacts"]
+    if artifact_summary.get("registry_status") != "valid":
+        stale.append(
+            f"artifact_registry {artifact_summary.get('registry_status') or 'unavailable'}: "
+            f"{artifact_summary.get('registry_reason_code') or 'invalid_control_context'}"
+        )
     for label, result in (
         ("runtime_manifest", manifest),
         ("workflow_state", workflow),
-        ("artifact_registry", registry),
         ("quality_gate_report", quality_gate),
         ("auditor_quality_gate_report", auditor_quality_gate),
         ("finalize_quality_gate_report", finalize_quality_gate),
@@ -239,12 +230,6 @@ def build_workspace_status(workspace: str | Path) -> dict[str, Any]:
         ("feedback_issues", feedback_issues),
         ("repair_plan", repair_plan),
     ):
-        if label == "artifact_registry" and result.get("registry_status") != "valid":
-            stale.append(
-                f"artifact_registry {result.get('registry_status') or 'unavailable'}: "
-                f"{result.get('registry_reason_code') or 'invalid_control_context'}"
-            )
-            continue
         if result["status"] == "missing":
             stale.append(f"{label} missing")
         elif result["status"] == "error":
@@ -606,151 +591,58 @@ def _read_json(path: Path) -> dict[str, Any]:
     return {"status": "present", "path": str(path), "payload": payload}
 
 
-def _validated_status_registry_context(
-    *,
-    manifest_result: dict[str, Any],
-    registry_result: dict[str, Any],
-) -> dict[str, Any]:
-    """Return a status-safe current-run registry context or typed degradation."""
+def _canonical_registry_payload(
+    verdict: RegistryReadVerdict,
+) -> dict[str, Any] | None:
+    """Project plain JSON values only from the trusted Registry view."""
 
-    source_status = registry_result.get("status")
-    if source_status == "missing":
+    if not isinstance(verdict, CanonicalRegistryView):
+        return None
+    return {
+        "run_id": verdict.run_id,
+        "artifacts": _thaw_canonical_registry_value(verdict.records),
+    }
+
+
+def _thaw_canonical_registry_value(value: Any) -> Any:
+    if isinstance(value, Mapping):
         return {
-            **registry_result,
-            "payload": None,
-            "registry_status": "missing",
-            "registry_reason_code": "artifact_registry_missing",
-            "registry_reason": "artifact_registry.json is missing.",
+            str(key): _thaw_canonical_registry_value(item)
+            for key, item in value.items()
         }
-    if source_status != "present":
-        return {
-            **registry_result,
-            "payload": None,
-            "registry_status": "unreadable",
-            "registry_reason_code": "artifact_registry_unreadable",
-            "registry_reason": str(registry_result.get("error") or "artifact_registry.json is unreadable."),
-        }
+    if isinstance(value, tuple):
+        return [_thaw_canonical_registry_value(item) for item in value]
+    return value
 
-    registry = registry_result.get("payload")
-    if not isinstance(registry, dict):
-        return _invalid_status_registry_context(
-            registry_result,
-            registry_status="invalid_payload",
-            reason_code="artifact_registry_not_object",
-            reason="artifact_registry.json must contain an object.",
-        )
-    if registry.get("schema_version") != ARTIFACT_REGISTRY_SCHEMA:
-        return _invalid_status_registry_context(
-            registry_result,
-            registry_status="invalid_schema",
-            reason_code="artifact_registry_schema_unsupported",
-            reason=(
-                "artifact_registry.json schema_version must be "
-                f"{ARTIFACT_REGISTRY_SCHEMA}."
-            ),
-        )
 
-    manifest = (
-        manifest_result.get("payload")
-        if manifest_result.get("status") == "present"
-        else None
+def _registry_status_projection(
+    verdict: RegistryReadVerdict,
+) -> tuple[str, str | None, str | None]:
+    if isinstance(verdict, CanonicalRegistryView):
+        return "valid", None, None
+    if isinstance(verdict, RegistryNotMaterialized):
+        return (
+            "missing",
+            verdict.reason_code,
+            "The artifact registry has not been materialized.",
+        )
+    if isinstance(verdict, RegistrySnapshotDrift):
+        return (
+            "snapshot_drift",
+            verdict.reason_code,
+            "The artifact registry snapshot no longer matches the workspace.",
+        )
+    if isinstance(verdict, RegistryDegradation):
+        return (
+            "degradation",
+            verdict.reason_code,
+            "The artifact registry control context is invalid.",
+        )
+    return (
+        "degradation",
+        "artifact_registry_interpretation_failed",
+        "The artifact registry control context is invalid.",
     )
-    if not isinstance(manifest, dict) or manifest.get("schema_version") != RUNTIME_MANIFEST_SCHEMA:
-        return _invalid_status_registry_context(
-            registry_result,
-            registry_status="invalid_identity",
-            reason_code="artifact_registry_manifest_context_invalid",
-            reason="A valid runtime_manifest.json is required to bind artifact_registry.json.",
-        )
-    expected_run_id = manifest.get("run_id")
-    if not isinstance(expected_run_id, str) or not expected_run_id.strip():
-        return _invalid_status_registry_context(
-            registry_result,
-            registry_status="invalid_identity",
-            reason_code="artifact_registry_manifest_run_id_missing",
-            reason="runtime_manifest.json run_id is required to bind artifact_registry.json.",
-        )
-    registry_run_id = registry.get("run_id")
-    if not isinstance(registry_run_id, str) or not registry_run_id.strip():
-        return _invalid_status_registry_context(
-            registry_result,
-            registry_status="invalid_identity",
-            reason_code="artifact_registry_run_id_missing",
-            reason="artifact_registry.json run_id is required.",
-        )
-    if registry_run_id != expected_run_id:
-        return _invalid_status_registry_context(
-            registry_result,
-            registry_status="invalid_identity",
-            reason_code="artifact_registry_run_id_mismatch",
-            reason="artifact_registry.json run_id does not match runtime_manifest.json.",
-        )
-
-    records = registry.get("artifacts")
-    if not isinstance(records, dict):
-        return _invalid_status_registry_context(
-            registry_result,
-            registry_status="invalid_payload",
-            reason_code="artifact_registry_artifacts_not_object",
-            reason="artifact_registry.json artifacts must be an object.",
-        )
-    for artifact_id, record in records.items():
-        if not isinstance(artifact_id, str) or not artifact_id.strip():
-            return _invalid_status_registry_context(
-                registry_result,
-                registry_status="invalid_payload",
-                reason_code="artifact_registry_artifact_id_invalid",
-                reason="artifact_registry.json contains an invalid artifact identity.",
-            )
-        if not isinstance(record, dict):
-            return _invalid_status_registry_context(
-                registry_result,
-                registry_status="invalid_payload",
-                reason_code="artifact_registry_record_not_object",
-                reason=f"artifact_registry.json record {artifact_id!r} must be an object.",
-            )
-        if record.get("artifact_id") != artifact_id:
-            return _invalid_status_registry_context(
-                registry_result,
-                registry_status="invalid_payload",
-                reason_code="artifact_registry_record_identity_mismatch",
-                reason=f"artifact_registry.json record {artifact_id!r} has mismatched identity.",
-            )
-        if record.get("status") not in _PERSISTED_ARTIFACT_STATUSES:
-            return _invalid_status_registry_context(
-                registry_result,
-                registry_status="invalid_payload",
-                reason_code="artifact_registry_record_status_unsupported",
-                reason=f"artifact_registry.json record {artifact_id!r} has unsupported status.",
-            )
-
-    return {
-        **registry_result,
-        "registry_status": "valid",
-        "registry_reason_code": None,
-        "registry_reason": None,
-    }
-
-
-def _invalid_status_registry_context(
-    registry_result: dict[str, Any],
-    *,
-    registry_status: str,
-    reason_code: str,
-    reason: str,
-) -> dict[str, Any]:
-    diagnostic_payload = registry_result.get("payload")
-    return {
-        **registry_result,
-        "status": "invalid",
-        "payload": None,
-        "diagnostic_payload": (
-            diagnostic_payload if isinstance(diagnostic_payload, dict) else None
-        ),
-        "registry_status": registry_status,
-        "registry_reason_code": reason_code,
-        "registry_reason": reason,
-    }
 
 
 def _read_optional_text(path: Path) -> str | None:
@@ -848,33 +740,19 @@ def _run_integrity_summary(workflow: dict[str, Any]) -> dict[str, Any]:
     )
 
 
-def _artifact_summary(
-    result: dict[str, Any],
-    *,
-    expected_run_id: str,
-) -> dict[str, Any]:
-    payload = result.get("payload") if result.get("status") == "present" else None
-    diagnostic_payload = result.get("diagnostic_payload")
-    registry_context_reason = (
-        None
-        if result.get("registry_status") in {"valid", "missing"}
-        else (
-            "artifact registry context is not valid for intake projection: "
-            f"{result.get('registry_reason_code') or 'invalid_control_context'}"
-        )
-    )
-    records = (payload or {}).get("artifacts") if isinstance(payload, dict) else None
+def _artifact_summary(verdict: RegistryReadVerdict) -> dict[str, Any]:
+    payload = _canonical_registry_payload(verdict)
+    registry_status, reason_code, reason = _registry_status_projection(verdict)
+    records = payload.get("artifacts") if isinstance(payload, dict) else None
     if isinstance(records, dict):
         iterable = list(records.values())
-    elif isinstance(records, list):
-        iterable = records
     else:
         iterable = []
     counts = {
-        "present": bool(isinstance(payload, dict)),
-        "registry_status": result.get("registry_status") or "unavailable",
-        "registry_reason_code": result.get("registry_reason_code"),
-        "registry_reason": result.get("registry_reason"),
+        "present": isinstance(verdict, CanonicalRegistryView),
+        "registry_status": registry_status,
+        "registry_reason_code": reason_code,
+        "registry_reason": reason,
         "artifact_count": len(iterable),
         "valid_count": 0,
         "invalid_count": 0,
@@ -883,13 +761,10 @@ def _artifact_summary(
         "ready_count": 0,
         "stale_count": 0,
         "intake": _intake_projection_summary(
-            (
-                payload
-                if isinstance(payload, dict)
-                else diagnostic_payload if isinstance(diagnostic_payload, dict) else None
+            payload,
+            expected_run_id=(
+                verdict.run_id if isinstance(verdict, CanonicalRegistryView) else ""
             ),
-            expected_run_id=expected_run_id,
-            registry_context_reason=registry_context_reason,
         ),
     }
     for record in iterable:
@@ -915,7 +790,6 @@ def _intake_projection_summary(
     registry: dict[str, Any] | None,
     *,
     expected_run_id: str,
-    registry_context_reason: str | None = None,
 ) -> dict[str, Any]:
     summary: dict[str, Any] = {
         "present": False,
@@ -962,10 +836,6 @@ def _intake_projection_summary(
             if expected_run_id
             else ["runtime_manifest run_id is unavailable for intake consumption binding"]
         )
-        if registry_context_reason and not reasons:
-            reasons.append(registry_context_reason)
-        if registry_context_reason and not consumption_reasons:
-            consumption_reasons.append(registry_context_reason)
         normalization_count = (
             projection.get("normalization_count") if isinstance(projection, dict) else 0
         )
@@ -1211,10 +1081,10 @@ def _suggested_next_command(workspace: Path, status: dict[str, Any]) -> str:
     fact_layer_import = status.get("fact_layer_import") or {}
     experiment_080 = status.get("experiment_080") or {}
     recovery_state = status.get("recovery_state") or {}
-    if not (status.get("runtime") or {}).get("present"):
-        return f"briefloop run --workspace {workspace} --runtime claude"
     if artifacts.get("registry_status") in _UNSAFE_REGISTRY_STATUSES:
         return f"briefloop state show --workspace {workspace} --json"
+    if not (status.get("runtime") or {}).get("present"):
+        return f"briefloop run --workspace {workspace} --runtime claude"
     if recovery_state.get("status") not in {"not_applicable", "completed_non_reference"}:
         return f"briefloop workbuddy diagnose --workspace {workspace} --json"
     if workflow.get("blocked"):
@@ -1279,13 +1149,6 @@ def _progress_summary(status: dict[str, Any]) -> dict[str, Any]:
             "current_work": "check run record",
             "message": "The event log has unreadable records; inspect JSON status or state before continuing.",
         }
-    if not runtime.get("present"):
-        return {
-            **base,
-            "status": "not_started",
-            "current_work": "create handoff",
-            "message": "Create or refresh the BriefLoop handoff before stage work.",
-        }
     if artifacts.get("registry_status") in _UNSAFE_REGISTRY_STATUSES:
         return {
             **base,
@@ -1295,6 +1158,13 @@ def _progress_summary(status: dict[str, Any]) -> dict[str, Any]:
                 "The artifact registry is unavailable or invalid; inspect runtime state "
                 "before continuing."
             ),
+        }
+    if not runtime.get("present"):
+        return {
+            **base,
+            "status": "not_started",
+            "current_work": "create handoff",
+            "message": "Create or refresh the BriefLoop handoff before stage work.",
         }
     narrowing = workflow.get("trajectory_regulation") if isinstance(workflow.get("trajectory_regulation"), dict) else {}
     if narrowing.get("status") == "decision_narrowed":
