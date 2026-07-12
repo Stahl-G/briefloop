@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
+from types import MappingProxyType
 from typing import Any, Mapping, Sequence
 
 from multi_agent_brief.orchestrator.run_integrity import (
@@ -22,14 +23,17 @@ from multi_agent_brief.orchestrator.runtime_state.contracts_loader import (
 from multi_agent_brief.orchestrator.runtime_state.control_context import (
     load_control_object,
 )
-from multi_agent_brief.orchestrator.runtime_state.errors import RuntimeStateError
+from multi_agent_brief.orchestrator.runtime_state.errors import (
+    E_TRANSACTION_INTEGRITY,
+    RuntimeStateError,
+)
 from multi_agent_brief.orchestrator.runtime_state.event_log import (
     read_event_log_records_strict,
 )
 from multi_agent_brief.orchestrator.runtime_state.manifest import (
     RUNTIME_MANIFEST_SCHEMA,
 )
-from multi_agent_brief.orchestrator.runtime_state.paths import runtime_state_paths
+from multi_agent_brief.orchestrator.runtime_state.paths import RUNTIME_STATE_FILES
 from multi_agent_brief.orchestrator.runtime_state.workflow import WORKFLOW_STATE_SCHEMA
 from multi_agent_brief.orchestrator_contract import resolve_repo_workdir
 
@@ -68,9 +72,41 @@ ACTION_START_NEW_RUN = "start_new_run"
 ACTION_INSPECT_DELIVERY = "inspect_delivery_truth"
 
 
+RECOVERY_CONTROL_INPUT_FILES = (
+    ("runtime_manifest", RUNTIME_STATE_FILES["runtime_manifest"]),
+    ("workflow_state", RUNTIME_STATE_FILES["workflow_state"]),
+    ("artifact_registry", RUNTIME_STATE_FILES["artifact_registry"]),
+    ("event_log", RUNTIME_STATE_FILES["event_log"]),
+    ("finalize_report", "output/intermediate/finalize_report.json"),
+)
+
+
+@dataclass(frozen=True)
+class RecoveryControlPaths:
+    """Preflighted workspace bindings for every recovery control input."""
+
+    workspace: Path
+    runtime_manifest: Path
+    workflow_state: Path
+    artifact_registry: Path
+    event_log: Path
+    finalize_report: Path
+
+    def as_mapping(self) -> Mapping[str, Path]:
+        """Return the fixed recovery input inventory without mutable aliases."""
+
+        return MappingProxyType(
+            {
+                key: getattr(self, key)
+                for key, _relative_path in RECOVERY_CONTROL_INPUT_FILES
+            }
+        )
+
+
 @dataclass(frozen=True)
 class RecoveryContext:
     run_id: str
+    runtime_manifest: Mapping[str, Any]
     workflow: Mapping[str, Any]
     event_records: Sequence[Mapping[str, Any]]
     stage_ids: Sequence[str]
@@ -104,7 +140,12 @@ def evaluate_recovery_state(
 
     ws = Path(workspace).expanduser().resolve()
     try:
-        context = _load_recovery_context(workspace=ws, repo_workdir=repo_workdir)
+        control_paths = resolve_recovery_control_paths(ws)
+        context = load_recovery_context(
+            workspace=ws,
+            repo_workdir=repo_workdir,
+            control_paths=control_paths,
+        )
         return interpret_recovery_state(context)
     except RuntimeStateError as exc:
         return _state(
@@ -367,40 +408,143 @@ def finalize_recovery_binding(state: Mapping[str, Any]) -> dict[str, Any]:
     }
 
 
-def _load_recovery_context(
+def resolve_recovery_control_paths(
+    workspace: str | Path,
+) -> RecoveryControlPaths:
+    """Return one canonical, preflighted path capability for recovery reads."""
+
+    ws = Path(workspace).expanduser().resolve()
+    paths = _expected_recovery_control_paths(ws)
+    _validate_recovery_control_paths(workspace=ws, control_paths=paths)
+    return paths
+
+
+def load_recovery_context(
     *,
-    workspace: Path,
+    workspace: str | Path,
     repo_workdir: str | Path | None,
+    control_paths: RecoveryControlPaths | None = None,
 ) -> RecoveryContext:
-    paths = runtime_state_paths(workspace)
+    """Load recovery inputs only through the canonical five-path inventory."""
+
+    ws = Path(workspace).expanduser().resolve()
+    paths = control_paths or resolve_recovery_control_paths(ws)
+    # A caller-supplied capability may be forged, belong to another workspace,
+    # or become stale after resolution. Rebind and preflight immediately before
+    # every read instead of trusting the dataclass instance.
+    _validate_recovery_control_paths(workspace=ws, control_paths=paths)
+    path_map = paths.as_mapping()
     manifest = load_control_object(
-        paths["runtime_manifest"], expected_schema=RUNTIME_MANIFEST_SCHEMA
+        path_map["runtime_manifest"], expected_schema=RUNTIME_MANIFEST_SCHEMA
     )
     workflow = load_control_object(
-        paths["workflow_state"], expected_schema=WORKFLOW_STATE_SCHEMA
+        path_map["workflow_state"], expected_schema=WORKFLOW_STATE_SCHEMA
     )
     registry = load_control_object(
-        paths["artifact_registry"],
+        path_map["artifact_registry"],
         expected_schema=ARTIFACT_REGISTRY_SCHEMA,
         required=False,
     )
     report = load_control_object(
-        paths["runtime_manifest"].parent / "finalize_report.json",
+        path_map["finalize_report"],
         required=False,
     )
-    event_records = read_event_log_records_strict(paths["event_log"])
-    repo = resolve_repo_workdir(repo_workdir, workspace=workspace)
+    event_records = read_event_log_records_strict(path_map["event_log"])
+    repo = resolve_repo_workdir(repo_workdir, workspace=ws)
     stages = load_stage_specs(repo)
     run_id = _text((manifest or {}).get("run_id"))
     if not run_id:
         raise RuntimeStateError("runtime_manifest.json run_id is required.")
     return RecoveryContext(
         run_id=run_id,
+        runtime_manifest=manifest or {},
         workflow=workflow or {},
         event_records=event_records,
         stage_ids=_stage_ids(stages),
         artifact_registry=registry,
         finalize_report=report,
+    )
+
+
+def _expected_recovery_control_paths(workspace: Path) -> RecoveryControlPaths:
+    values = {
+        key: workspace / relative_path
+        for key, relative_path in RECOVERY_CONTROL_INPUT_FILES
+    }
+    return RecoveryControlPaths(workspace=workspace, **values)
+
+
+def _validate_recovery_control_paths(
+    *,
+    workspace: Path,
+    control_paths: RecoveryControlPaths,
+) -> None:
+    if not isinstance(control_paths, RecoveryControlPaths):
+        raise _recovery_control_path_error(
+            reason_code="recovery_control_paths_invalid",
+            control_input="",
+            path=None,
+        )
+    expected = _expected_recovery_control_paths(workspace)
+    if control_paths.workspace != workspace:
+        raise _recovery_control_path_error(
+            reason_code="recovery_control_workspace_mismatch",
+            control_input="",
+            path=control_paths.workspace,
+        )
+    for key, _relative_path in RECOVERY_CONTROL_INPUT_FILES:
+        path = getattr(control_paths, key, None)
+        expected_path = getattr(expected, key)
+        if not isinstance(path, Path) or path != expected_path:
+            raise _recovery_control_path_error(
+                reason_code="recovery_control_path_binding_invalid",
+                control_input=key,
+                path=path if isinstance(path, Path) else None,
+            )
+        if _recovery_control_path_is_unsafe(workspace=workspace, path=path):
+            raise _recovery_control_path_error(
+                reason_code="recovery_control_path_unsafe",
+                control_input=key,
+                path=path,
+            )
+
+
+def _recovery_control_path_is_unsafe(*, workspace: Path, path: Path) -> bool:
+    try:
+        relative = path.relative_to(workspace)
+    except ValueError:
+        return True
+    current = workspace
+    try:
+        for part in relative.parts:
+            current = current / part
+            if current.is_symlink():
+                return True
+        resolved = path.resolve(strict=False)
+    except (OSError, RuntimeError):
+        return True
+    try:
+        resolved.relative_to(workspace)
+    except ValueError:
+        return True
+    return resolved != path
+
+
+def _recovery_control_path_error(
+    *,
+    reason_code: str,
+    control_input: str,
+    path: Path | None,
+) -> RuntimeStateError:
+    details: dict[str, Any] = {"reason_code": reason_code}
+    if control_input:
+        details["control_input"] = control_input
+    if path is not None:
+        details["path"] = str(path)
+    return RuntimeStateError(
+        "Recovery control path binding is invalid.",
+        details=details,
+        error_code=E_TRANSACTION_INTEGRITY,
     )
 
 

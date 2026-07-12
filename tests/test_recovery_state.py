@@ -2,9 +2,12 @@ from __future__ import annotations
 
 import json
 import shutil
+from dataclasses import replace
 from pathlib import Path
 
 import pytest
+
+import multi_agent_brief.orchestrator.recovery_state as recovery_state_module
 
 from multi_agent_brief.cli.deliver_commands import (
     DeliverCommandError,
@@ -14,6 +17,7 @@ from multi_agent_brief.cli.deliver_commands import (
 from multi_agent_brief.experiments.experiment_080 import _registered_run_integrity
 from multi_agent_brief.orchestrator.recovery_state import (
     OWNER_REVISION_SCHEMA,
+    RECOVERY_CONTROL_INPUT_FILES,
     RECOVERY_AWAITING,
     RECOVERY_COMPLETED_NON_REFERENCE,
     RECOVERY_FINALIZE_COMPLETION_PENDING,
@@ -22,14 +26,18 @@ from multi_agent_brief.orchestrator.recovery_state import (
     RECOVERY_INVALID,
     RECOVERY_NOT_APPLICABLE,
     RECOVERY_RERUN_PENDING,
+    RecoveryControlPaths,
     evaluate_recovery_state,
+    load_recovery_context,
     recovery_stale_artifact_baselines,
+    resolve_recovery_control_paths,
 )
 from multi_agent_brief.orchestrator.runtime_state import build_completion_projection
 from multi_agent_brief.orchestrator.runtime_state.artifact_registry import (
     ARTIFACT_REGISTRY_SCHEMA,
 )
 from multi_agent_brief.orchestrator.runtime_state.event_log import EVENT_LOG_SCHEMA
+from multi_agent_brief.orchestrator.runtime_state.errors import RuntimeStateError
 from multi_agent_brief.orchestrator.runtime_state.manifest import RUNTIME_MANIFEST_SCHEMA
 from multi_agent_brief.orchestrator.runtime_state.workflow import WORKFLOW_STATE_SCHEMA
 
@@ -234,8 +242,261 @@ def _evaluate(ws: Path) -> dict:
     return evaluate_recovery_state(workspace=ws, repo_workdir=ROOT)
 
 
+def _path_observation(path: Path) -> tuple:
+    if path.is_symlink():
+        stat = path.lstat()
+        return ("symlink", path.readlink().as_posix(), stat.st_mtime_ns)
+    if not path.exists():
+        return ("missing",)
+    stat = path.stat()
+    return ("file", path.read_bytes(), stat.st_mtime_ns)
+
+
+def _control_observations(
+    control_paths: RecoveryControlPaths,
+    *,
+    extra_paths: tuple[Path, ...] = (),
+) -> dict[str, tuple]:
+    observed = {
+        key: _path_observation(path)
+        for key, path in control_paths.as_mapping().items()
+    }
+    observed.update(
+        {
+            f"extra:{index}": _path_observation(path)
+            for index, path in enumerate(extra_paths)
+        }
+    )
+    return observed
+
+
+def test_recovery_control_input_inventory_is_exact_and_resolver_is_read_only(
+    tmp_path: Path,
+) -> None:
+    ws = tmp_path / "empty-workspace"
+    ws.mkdir()
+    before = tuple(ws.rglob("*"))
+
+    control_paths = resolve_recovery_control_paths(ws)
+
+    assert RECOVERY_CONTROL_INPUT_FILES == (
+        ("runtime_manifest", "output/intermediate/runtime_manifest.json"),
+        ("workflow_state", "output/intermediate/workflow_state.json"),
+        ("artifact_registry", "output/intermediate/artifact_registry.json"),
+        ("event_log", "output/intermediate/event_log.jsonl"),
+        ("finalize_report", "output/intermediate/finalize_report.json"),
+    )
+    assert tuple(control_paths.as_mapping()) == tuple(
+        key for key, _relative_path in RECOVERY_CONTROL_INPUT_FILES
+    )
+    assert tuple(ws.rglob("*")) == before == ()
+
+
+@pytest.mark.parametrize(
+    "control_input",
+    [key for key, _relative_path in RECOVERY_CONTROL_INPUT_FILES],
+    ids=lambda value: f"direct-symlink-{value}",
+)
+def test_recovery_rejects_direct_control_input_symlink_before_read(
+    tmp_path: Path,
+    control_input: str,
+) -> None:
+    ws = _workspace(tmp_path)
+    _write_registry(ws)
+    _write_bound_finalize_report(ws)
+    control_paths = resolve_recovery_control_paths(ws)
+    path = control_paths.as_mapping()[control_input]
+    external = tmp_path / f"external-{path.name}"
+    external.write_bytes(path.read_bytes())
+    path.unlink()
+    path.symlink_to(external)
+    before = _control_observations(control_paths, extra_paths=(external,))
+
+    payload = _evaluate(ws)
+
+    assert payload["status"] == RECOVERY_INVALID
+    assert payload["reason_code"] == "control_context_invalid"
+    assert payload["details"]["reason_code"] == "recovery_control_path_unsafe"
+    assert payload["details"]["control_input"] == control_input
+    assert _control_observations(control_paths, extra_paths=(external,)) == before
+
+
+def test_recovery_rejects_symlinked_control_ancestor_with_optional_report_absent(
+    tmp_path: Path,
+) -> None:
+    ws = _workspace(tmp_path)
+    _write_registry(ws)
+    control_paths = resolve_recovery_control_paths(ws)
+    output = ws / "output"
+    external_output = tmp_path / "external-output"
+    output.rename(external_output)
+    output.symlink_to(external_output, target_is_directory=True)
+    before = _control_observations(
+        control_paths,
+        extra_paths=tuple(path for path in external_output.rglob("*") if path.is_file()),
+    )
+
+    payload = _evaluate(ws)
+
+    assert payload["status"] == RECOVERY_INVALID
+    assert payload["reason_code"] == "control_context_invalid"
+    assert payload["details"]["reason_code"] == "recovery_control_path_unsafe"
+    assert payload["details"]["control_input"] == "runtime_manifest"
+    assert _control_observations(
+        control_paths,
+        extra_paths=tuple(path for path in external_output.rglob("*") if path.is_file()),
+    ) == before
+
+
+def test_recovery_loader_rejects_path_set_from_another_workspace(
+    tmp_path: Path,
+) -> None:
+    first = _workspace(tmp_path / "first")
+    second = _workspace(tmp_path / "second")
+    first_paths = resolve_recovery_control_paths(first)
+    second_paths = resolve_recovery_control_paths(second)
+    before = {
+        "first": _control_observations(first_paths),
+        "second": _control_observations(second_paths),
+    }
+
+    with pytest.raises(RuntimeStateError) as exc_info:
+        load_recovery_context(
+            workspace=second,
+            repo_workdir=ROOT,
+            control_paths=first_paths,
+        )
+
+    assert getattr(exc_info.value, "details")["reason_code"] == (
+        "recovery_control_workspace_mismatch"
+    )
+    assert _control_observations(first_paths) == before["first"]
+    assert _control_observations(second_paths) == before["second"]
+
+
+@pytest.mark.parametrize(
+    "path_case",
+    ["wrong-sibling", "workspace-escape", "logical-identity-drift"],
+    ids=lambda value: value,
+)
+def test_recovery_loader_rejects_noncanonical_supplied_path_set(
+    tmp_path: Path,
+    path_case: str,
+) -> None:
+    ws = _workspace(tmp_path)
+    control_paths = resolve_recovery_control_paths(ws)
+    forged_event_log = {
+        "wrong-sibling": ws / "output/intermediate/not-the-event-log.jsonl",
+        "workspace-escape": tmp_path / "external-event-log.jsonl",
+        "logical-identity-drift": (
+            ws / "output/intermediate/nested/../event_log.jsonl"
+        ),
+    }[path_case]
+    forged = replace(
+        control_paths,
+        event_log=forged_event_log,
+    )
+    before = _control_observations(control_paths)
+
+    with pytest.raises(RuntimeStateError) as exc_info:
+        load_recovery_context(
+            workspace=ws,
+            repo_workdir=ROOT,
+            control_paths=forged,
+        )
+
+    assert getattr(exc_info.value, "details")["reason_code"] == (
+        "recovery_control_path_binding_invalid"
+    )
+    assert getattr(exc_info.value, "details")["control_input"] == "event_log"
+    assert _control_observations(control_paths) == before
+
+
+def test_recovery_loader_repreflights_resolved_paths_before_read(
+    tmp_path: Path,
+) -> None:
+    ws = _workspace(tmp_path, current_stage="finalize")
+    contamination = _mark_contaminated(ws)
+    recovery = _recovery_event()
+    _write_events(ws, [contamination, _repair_started_for(recovery), recovery])
+    _bind_recovery_pointer(ws)
+    _write_bound_finalize_report(ws)
+    control_paths = resolve_recovery_control_paths(ws)
+    report_path = control_paths.finalize_report
+    external = tmp_path / "external-finalize-report.json"
+    external.write_bytes(report_path.read_bytes())
+    report_path.unlink()
+    report_path.symlink_to(external)
+    before = _control_observations(control_paths, extra_paths=(external,))
+
+    with pytest.raises(RuntimeStateError) as exc_info:
+        load_recovery_context(
+            workspace=ws,
+            repo_workdir=ROOT,
+            control_paths=control_paths,
+        )
+
+    assert getattr(exc_info.value, "details")["reason_code"] == (
+        "recovery_control_path_unsafe"
+    )
+    assert getattr(exc_info.value, "details")["control_input"] == "finalize_report"
+    payload = _evaluate(ws)
+    assert payload["status"] == RECOVERY_INVALID
+    assert payload["reason_code"] == "control_context_invalid"
+    assert payload["details"]["control_input"] == "finalize_report"
+    assert _control_observations(control_paths, extra_paths=(external,)) == before
+
+
+def test_recovery_loader_reads_only_the_preflighted_inventory(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    ws = _workspace(tmp_path)
+    _write_registry(ws)
+    control_paths = resolve_recovery_control_paths(ws)
+    object_loader = recovery_state_module.load_control_object
+    event_loader = recovery_state_module.read_event_log_records_strict
+    read_paths: list[Path] = []
+
+    def tracked_object_loader(path: str | Path, **kwargs):
+        read_paths.append(Path(path))
+        return object_loader(path, **kwargs)
+
+    def tracked_event_loader(path: str | Path):
+        read_paths.append(Path(path))
+        return event_loader(Path(path))
+
+    monkeypatch.setattr(
+        recovery_state_module,
+        "load_control_object",
+        tracked_object_loader,
+    )
+    monkeypatch.setattr(
+        recovery_state_module,
+        "read_event_log_records_strict",
+        tracked_event_loader,
+    )
+
+    context = load_recovery_context(
+        workspace=ws,
+        repo_workdir=ROOT,
+        control_paths=control_paths,
+    )
+
+    assert context.runtime_manifest["run_id"] == RUN_ID
+    assert read_paths == [
+        control_paths.runtime_manifest,
+        control_paths.workflow_state,
+        control_paths.artifact_registry,
+        control_paths.finalize_report,
+        control_paths.event_log,
+    ]
+    assert set(read_paths) == set(control_paths.as_mapping().values())
+
+
 def test_recovery_state_clean_run_is_not_applicable(tmp_path: Path) -> None:
     ws = _workspace(tmp_path)
+    assert not (ws / "output/intermediate/finalize_report.json").exists()
 
     payload = _evaluate(ws)
 
