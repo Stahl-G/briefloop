@@ -17,30 +17,23 @@ from multi_agent_brief.orchestrator.runtime_state.artifact_paths import (
 from multi_agent_brief.orchestrator.runtime_state.artifact_registry import (
     ARTIFACT_EXPECTED,
     ARTIFACT_MISSING,
-    ARTIFACT_REGISTRY_SCHEMA,
     _build_artifact_registry,
 )
 from multi_agent_brief.orchestrator.recovery_state import (
     RECOVERY_INVALID,
-    evaluate_recovery_state,
-)
-from multi_agent_brief.orchestrator.runtime_state.control_context import (
-    load_control_object,
+    RecoveryContextNotMaterialized,
+    interpret_recovery_state,
+    load_recovery_context_verdict,
 )
 from multi_agent_brief.orchestrator.runtime_state.contracts_loader import (
     load_artifact_contracts,
-    load_stage_specs,
 )
 from multi_agent_brief.orchestrator.runtime_state.errors import RuntimeStateError
 from multi_agent_brief.orchestrator.runtime_state.identity import (
     _validate_runtime_run_id,
 )
-from multi_agent_brief.orchestrator.runtime_state.manifest import (
-    RUNTIME_MANIFEST_SCHEMA,
-)
-from multi_agent_brief.orchestrator.runtime_state.paths import runtime_state_paths
+from multi_agent_brief.orchestrator.runtime_state.paths import RUNTIME_STATE_FILES
 from multi_agent_brief.orchestrator.runtime_state.workflow import (
-    WORKFLOW_STATE_SCHEMA,
     workflow_with_persistable_stage_completions,
 )
 from multi_agent_brief.orchestrator_contract import resolve_repo_workdir
@@ -74,14 +67,6 @@ _SNAPSHOT_DERIVED_FIELDS = {
     "stale_baseline_sha256",
     "intake_projection",
 }
-_CONTROL_PATH_REASON_CODES = (
-    ("artifact_registry", "artifact_registry_control_path_unsafe"),
-    ("runtime_manifest", "artifact_registry_manifest_path_unsafe"),
-    ("workflow_state", "artifact_registry_workflow_path_unsafe"),
-    ("event_log", "artifact_registry_event_log_path_unsafe"),
-)
-
-
 @dataclass(frozen=True)
 class RegistryNotMaterialized:
     """The legal pre-projection state; it carries no Registry values."""
@@ -144,40 +129,34 @@ def interpret_artifact_registry(
 ) -> RegistryReadVerdict:
     """Verify the persisted Registry against its unique producer without writing."""
 
-    ws = Path(workspace).expanduser().resolve()
-    state_paths = runtime_state_paths(ws)
-    control_path_reason = _control_path_chain_reason(
-        workspace=ws,
-        state_paths=state_paths,
-    )
-    if control_path_reason is not None:
-        return RegistryDegradation(control_path_reason)
-    registry_path = state_paths["artifact_registry"]
-    if not registry_path.exists():
+    try:
+        ws = Path(workspace).expanduser().resolve()
+    except (OSError, RuntimeError, ValueError):
+        return RegistryDegradation("artifact_registry_workspace_invalid")
+    try:
+        repo = resolve_repo_workdir(repo_workdir)
+        artifacts = load_artifact_contracts(repo)
+    except (RuntimeStateError, ValueError):
+        return RegistryDegradation("artifact_registry_contract_context_invalid")
+    try:
+        recovery_verdict = load_recovery_context_verdict(
+            workspace=ws,
+            repo_workdir=repo,
+        )
+    except RuntimeStateError:
+        return RegistryDegradation("artifact_registry_recovery_context_invalid")
+    if isinstance(recovery_verdict, RecoveryContextNotMaterialized):
         return RegistryNotMaterialized()
-
-    registry = _load_control_record(
-        registry_path,
-        schema=ARTIFACT_REGISTRY_SCHEMA,
-        unreadable_reason="artifact_registry_unreadable",
-        root_reason="artifact_registry_root_invalid",
-        schema_reason="artifact_registry_schema_unsupported",
-        missing_reason="artifact_registry_unreadable",
-    )
-    if isinstance(registry, RegistryDegradation):
-        return registry
-
-    manifest_path = state_paths["runtime_manifest"]
-    manifest = _load_control_record(
-        manifest_path,
-        schema=RUNTIME_MANIFEST_SCHEMA,
-        unreadable_reason="artifact_registry_manifest_unreadable",
-        root_reason="artifact_registry_manifest_root_invalid",
-        schema_reason="artifact_registry_manifest_schema_unsupported",
-        missing_reason="artifact_registry_manifest_missing",
-    )
-    if isinstance(manifest, RegistryDegradation):
-        return manifest
+    context = recovery_verdict
+    registry = context.artifact_registry
+    if registry is None:
+        recovery_state = interpret_recovery_state(context)
+        if recovery_state.get("status") == RECOVERY_INVALID:
+            return RegistryDegradation("artifact_registry_recovery_context_invalid")
+        return RegistryNotMaterialized()
+    manifest = context.runtime_manifest
+    workflow = context.workflow
+    stages = [{"stage_id": stage_id} for stage_id in context.stage_ids]
 
     if set(registry) != _TOP_LEVEL_FIELDS:
         return RegistryDegradation("artifact_registry_root_fields_invalid")
@@ -194,17 +173,6 @@ def interpret_artifact_registry(
     if registry_run_id != manifest_run_id:
         return RegistryDegradation("artifact_registry_run_id_mismatch")
 
-    workflow_path = state_paths["workflow_state"]
-    workflow = _load_control_record(
-        workflow_path,
-        schema=WORKFLOW_STATE_SCHEMA,
-        unreadable_reason="artifact_registry_workflow_unreadable",
-        root_reason="artifact_registry_workflow_root_invalid",
-        schema_reason="artifact_registry_workflow_schema_unsupported",
-        missing_reason="artifact_registry_workflow_missing",
-    )
-    if isinstance(workflow, RegistryDegradation):
-        return workflow
     workflow_run_id = _validated_run_id(workflow.get("run_id"))
     if workflow_run_id is None:
         return RegistryDegradation("artifact_registry_workflow_run_id_invalid")
@@ -212,16 +180,10 @@ def interpret_artifact_registry(
         return RegistryDegradation("artifact_registry_workflow_run_id_mismatch")
 
     try:
-        repo = resolve_repo_workdir(repo_workdir, workspace=ws)
-        artifacts = load_artifact_contracts(repo)
-        stages = load_stage_specs(repo)
-    except (RuntimeStateError, ValueError):
-        return RegistryDegradation("artifact_registry_contract_context_invalid")
-    try:
         workflow = workflow_with_persistable_stage_completions(
             workflow,
             stages=stages,
-            path=workflow_path,
+            path=ws / RUNTIME_STATE_FILES["workflow_state"],
         )
     except RuntimeStateError:
         return RegistryDegradation("artifact_registry_workflow_stage_status_invalid")
@@ -292,13 +254,7 @@ def interpret_artifact_registry(
         if not isinstance(required, bool) or required != bool(contract.get("required", False)):
             return RegistryDegradation("artifact_registry_record_contract_mismatch")
 
-    try:
-        recovery_state = evaluate_recovery_state(
-            workspace=ws,
-            repo_workdir=repo,
-        )
-    except Exception:  # fail closed at the trusted-read boundary
-        return RegistryDegradation("artifact_registry_recovery_context_invalid")
+    recovery_state = interpret_recovery_state(context)
     if (
         recovery_state.get("status") == RECOVERY_INVALID
         or _validated_run_id(recovery_state.get("run_id")) != registry_run_id
@@ -336,70 +292,6 @@ def interpret_artifact_registry(
         records=MappingProxyType(canonical_records),
         resolved_paths=MappingProxyType(dict(resolved_paths)),
     )
-
-
-def _load_control_record(
-    path: Path,
-    *,
-    schema: str,
-    unreadable_reason: str,
-    root_reason: str,
-    schema_reason: str,
-    missing_reason: str,
-) -> dict[str, Any] | RegistryDegradation:
-    try:
-        payload = load_control_object(path, expected_schema=schema)
-    except RuntimeStateError as exc:
-        details = exc.details
-        if details.get("reason_code") == "control_file_missing":
-            return RegistryDegradation(missing_reason)
-        if details.get("reason_code") == "control_file_not_object":
-            return RegistryDegradation(root_reason)
-        if details.get("expected_schema") == schema:
-            return RegistryDegradation(schema_reason)
-        return RegistryDegradation(unreadable_reason)
-    if payload is None:  # pragma: no cover - required=True contract
-        return RegistryDegradation(missing_reason)
-    return payload
-
-
-def _control_path_chain_reason(
-    *,
-    workspace: Path,
-    state_paths: Mapping[str, Path],
-) -> str | None:
-    """Reject every symlink or identity change in the consumed control path chain."""
-
-    for key, reason_code in _CONTROL_PATH_REASON_CODES:
-        path = state_paths.get(key)
-        if path is None or _control_path_chain_is_unsafe(
-            workspace=workspace,
-            path=path,
-        ):
-            return reason_code
-    return None
-
-
-def _control_path_chain_is_unsafe(*, workspace: Path, path: Path) -> bool:
-    try:
-        relative = path.relative_to(workspace)
-    except ValueError:
-        return True
-
-    current = workspace
-    try:
-        for part in relative.parts:
-            current = current / part
-            if current.is_symlink():
-                return True
-        resolved = path.resolve(strict=False)
-    except (OSError, RuntimeError):
-        return True
-    try:
-        resolved.relative_to(workspace)
-    except ValueError:
-        return True
-    return resolved != path
 
 
 def _validated_run_id(value: Any) -> str | None:

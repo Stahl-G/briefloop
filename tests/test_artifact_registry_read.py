@@ -12,9 +12,11 @@ from typing import Any
 import pytest
 import yaml
 
+import multi_agent_brief.orchestrator.runtime_state.artifact_registry_read as artifact_registry_read
 from multi_agent_brief.orchestrator.recovery_state import (
     OWNER_REVISION_SCHEMA,
     evaluate_recovery_state,
+    resolve_recovery_control_paths,
 )
 from multi_agent_brief.orchestrator.run_integrity import (
     contaminate_run_integrity_with_event_flag,
@@ -161,24 +163,6 @@ def _custom_repo(tmp_path: Path, *, artifact_path: str) -> Path:
     return repo
 
 
-def _custom_repo_with_artifacts_outside_output(tmp_path: Path) -> Path:
-    repo = _custom_repo(
-        tmp_path,
-        artifact_path="custom-artifacts/audited_brief.md",
-    )
-    contracts_path = repo / "configs" / "artifact_contracts.yaml"
-    contracts = yaml.safe_load(contracts_path.read_text(encoding="utf-8"))
-    for artifact in contracts["artifacts"]:
-        original = Path(str(artifact["path"]))
-        suffix = "".join(original.suffixes) or ".json"
-        artifact["path"] = f"custom-artifacts/{artifact['artifact_id']}{suffix}"
-    contracts_path.write_text(
-        yaml.safe_dump(contracts, sort_keys=False),
-        encoding="utf-8",
-    )
-    return repo
-
-
 def _install_bound_recovery_registry(
     workspace: Path,
     *,
@@ -306,10 +290,17 @@ def _install_bound_recovery_registry(
     return updated_registry
 
 
+@pytest.mark.parametrize(
+    "layout",
+    ["no-output-tree", "empty-intermediate"],
+)
 def test_reg_read_01_no_runtime_state_is_not_materialized_and_zero_write(
     tmp_path: Path,
+    layout: str,
 ) -> None:
     ws = write_minimal_workspace(tmp_path / "ws")
+    if layout == "empty-intermediate":
+        (ws / "output/intermediate").mkdir(parents=True)
     before = _workspace_snapshot(ws)
 
     verdict = interpret_artifact_registry(workspace=ws, repo_workdir=ROOT)
@@ -343,20 +334,81 @@ def test_reg_read_02_initialized_runtime_missing_registry_stays_not_materialized
     _assert_read_only(ws, before)
 
 
+def test_reg_read_24_missing_registry_preserves_invalid_recovery_precedence(
+    tmp_path: Path,
+) -> None:
+    ws = _workspace(tmp_path, materialize=False)
+    paths = runtime_state_paths(ws)
+    workflow = _read_json(paths["workflow_state"])
+    workflow, added = contaminate_run_integrity_with_event_flag(
+        workflow,
+        reason_code="registry_missing_recovery_fixture",
+        message="Missing Registry must not hide current-run contamination.",
+        created_at="2026-07-12T00:00:00+00:00",
+        event_type="run_integrity_contaminated",
+        stage_id="doctor",
+        artifact_id="config",
+    )
+    assert added is True
+    _write_json(paths["workflow_state"], workflow)
+    append_event(
+        workspace=ws,
+        run_id=str(workflow["run_id"]),
+        event_type="run_integrity_contaminated",
+        event_id="registry-missing-contamination",
+        actor="system",
+        stage_id="doctor",
+        artifact_id="config",
+        reason="Registry missing recovery precedence fixture.",
+        metadata={"reason_code": "registry_missing_recovery_fixture"},
+    )
+    assert not paths["artifact_registry"].exists()
+    recovery = evaluate_recovery_state(workspace=ws, repo_workdir=ROOT)
+    assert recovery["status"] == "invalid_recovery_state"
+    assert recovery["reason_code"] == "artifact_registry_missing_for_recovery"
+    before = _workspace_snapshot(ws)
+
+    verdict = interpret_artifact_registry(workspace=ws, repo_workdir=ROOT)
+
+    _assert_negative(
+        verdict,
+        verdict_type=RegistryDegradation,
+        reason_code="artifact_registry_recovery_context_invalid",
+    )
+    _assert_read_only(ws, before)
+
+
+def test_reg_read_25_workspace_normalization_error_is_typed_and_value_free(
+    tmp_path: Path,
+) -> None:
+    workspace = tmp_path / "self-referential-workspace"
+    workspace.symlink_to(workspace, target_is_directory=True)
+    before = (os.readlink(workspace), workspace.lstat().st_mtime_ns)
+
+    verdict = interpret_artifact_registry(workspace=workspace, repo_workdir=ROOT)
+
+    _assert_negative(
+        verdict,
+        verdict_type=RegistryDegradation,
+        reason_code="artifact_registry_workspace_invalid",
+    )
+    assert (os.readlink(workspace), workspace.lstat().st_mtime_ns) == before
+
+
 @pytest.mark.parametrize(
     ("case_id", "reason_code"),
     [
-        ("registry_utf8", "artifact_registry_unreadable"),
-        ("registry_json", "artifact_registry_unreadable"),
-        ("registry_root", "artifact_registry_root_invalid"),
-        ("registry_schema", "artifact_registry_schema_unsupported"),
-        ("registry_symlink", "artifact_registry_control_path_unsafe"),
-        ("manifest_missing", "artifact_registry_manifest_missing"),
-        ("manifest_json", "artifact_registry_manifest_unreadable"),
-        ("manifest_root", "artifact_registry_manifest_root_invalid"),
-        ("manifest_schema", "artifact_registry_manifest_schema_unsupported"),
-        ("manifest_symlink", "artifact_registry_manifest_path_unsafe"),
-        ("manifest_run_id", "artifact_registry_manifest_run_id_invalid"),
+        ("registry_utf8", "artifact_registry_recovery_context_invalid"),
+        ("registry_json", "artifact_registry_recovery_context_invalid"),
+        ("registry_root", "artifact_registry_recovery_context_invalid"),
+        ("registry_schema", "artifact_registry_recovery_context_invalid"),
+        ("registry_symlink", "artifact_registry_recovery_context_invalid"),
+        ("manifest_missing", "artifact_registry_recovery_context_invalid"),
+        ("manifest_json", "artifact_registry_recovery_context_invalid"),
+        ("manifest_root", "artifact_registry_recovery_context_invalid"),
+        ("manifest_schema", "artifact_registry_recovery_context_invalid"),
+        ("manifest_symlink", "artifact_registry_recovery_context_invalid"),
+        ("manifest_run_id", "artifact_registry_recovery_context_invalid"),
         ("registry_run_id", "artifact_registry_run_id_invalid"),
         ("cross_run", "artifact_registry_run_id_mismatch"),
     ],
@@ -783,11 +835,11 @@ def test_reg_read_12_writer_agent_read_error_remains_canonical(
 @pytest.mark.parametrize(
     ("case_id", "reason_code"),
     [
-        ("missing", "artifact_registry_workflow_missing"),
-        ("json", "artifact_registry_workflow_unreadable"),
-        ("root", "artifact_registry_workflow_root_invalid"),
-        ("schema", "artifact_registry_workflow_schema_unsupported"),
-        ("symlink", "artifact_registry_workflow_path_unsafe"),
+        ("missing", "artifact_registry_recovery_context_invalid"),
+        ("json", "artifact_registry_recovery_context_invalid"),
+        ("root", "artifact_registry_recovery_context_invalid"),
+        ("schema", "artifact_registry_recovery_context_invalid"),
+        ("symlink", "artifact_registry_recovery_context_invalid"),
         ("run_id", "artifact_registry_workflow_run_id_invalid"),
         ("cross_run", "artifact_registry_workflow_run_id_mismatch"),
     ],
@@ -900,22 +952,25 @@ def test_reg_read_15_current_recovery_stale_baseline_replays_exactly(
 
 
 @pytest.mark.parametrize(
-    ("path_key", "reason_code"),
+    "path_key",
     [
-        ("artifact_registry", "artifact_registry_control_path_unsafe"),
-        ("runtime_manifest", "artifact_registry_manifest_path_unsafe"),
-        ("workflow_state", "artifact_registry_workflow_path_unsafe"),
-        ("event_log", "artifact_registry_event_log_path_unsafe"),
+        "artifact_registry",
+        "runtime_manifest",
+        "workflow_state",
+        "event_log",
+        "finalize_report",
     ],
-    ids=["registry", "manifest", "workflow", "event-log"],
+    ids=["registry", "manifest", "workflow", "event-log", "finalize-report"],
 )
 def test_reg_read_16_control_path_preflight_rejects_direct_symlinks(
     tmp_path: Path,
     path_key: str,
-    reason_code: str,
 ) -> None:
     ws = _workspace(tmp_path)
-    control_path = runtime_state_paths(ws)[path_key]
+    control_path = getattr(resolve_recovery_control_paths(ws), path_key)
+    control_path.parent.mkdir(parents=True, exist_ok=True)
+    if not control_path.exists():
+        control_path.write_text("{}\n", encoding="utf-8")
     external_control = tmp_path / f"external-{control_path.name}"
     control_path.replace(external_control)
     control_path.symlink_to(external_control)
@@ -930,67 +985,13 @@ def test_reg_read_16_control_path_preflight_rejects_direct_symlinks(
     _assert_negative(
         verdict,
         verdict_type=RegistryDegradation,
-        reason_code=reason_code,
+        reason_code="artifact_registry_recovery_context_invalid",
     )
     _assert_read_only(ws, before)
     assert external_before == (
         external_control.read_bytes(),
         external_control.stat().st_mtime_ns,
     )
-
-
-@pytest.mark.parametrize(
-    "parent_name",
-    ["output", "output/intermediate"],
-    ids=["output-parent", "intermediate-parent"],
-)
-def test_reg_read_17_control_path_preflight_rejects_symlinked_ancestors(
-    tmp_path: Path,
-    parent_name: str,
-) -> None:
-    repo = _custom_repo_with_artifacts_outside_output(tmp_path)
-    ws = _workspace(tmp_path, repo_workdir=repo)
-    control_parent = ws / parent_name
-    external_parent = tmp_path / f"external-{parent_name.replace('/', '-')}"
-    control_parent.replace(external_parent)
-    control_parent.symlink_to(external_parent, target_is_directory=True)
-    before = _workspace_snapshot(ws)
-    external_before = _workspace_snapshot(external_parent)
-
-    verdict = interpret_artifact_registry(workspace=ws, repo_workdir=repo)
-
-    _assert_negative(
-        verdict,
-        verdict_type=RegistryDegradation,
-        reason_code="artifact_registry_control_path_unsafe",
-    )
-    _assert_read_only(ws, before)
-    assert _workspace_snapshot(external_parent) == external_before
-
-
-def test_reg_read_18_unsafe_missing_registry_path_does_not_become_not_materialized(
-    tmp_path: Path,
-) -> None:
-    repo = _custom_repo_with_artifacts_outside_output(tmp_path)
-    ws = _workspace(tmp_path, repo_workdir=repo, materialize=False)
-    registry_path = runtime_state_paths(ws)["artifact_registry"]
-    assert not registry_path.exists()
-    control_parent = registry_path.parent
-    external_parent = tmp_path / "external-missing-registry-parent"
-    control_parent.replace(external_parent)
-    control_parent.symlink_to(external_parent, target_is_directory=True)
-    before = _workspace_snapshot(ws)
-    external_before = _workspace_snapshot(external_parent)
-
-    verdict = interpret_artifact_registry(workspace=ws, repo_workdir=repo)
-
-    _assert_negative(
-        verdict,
-        verdict_type=RegistryDegradation,
-        reason_code="artifact_registry_control_path_unsafe",
-    )
-    _assert_read_only(ws, before)
-    assert _workspace_snapshot(external_parent) == external_before
 
 
 @pytest.mark.parametrize(
@@ -1096,3 +1097,88 @@ def test_reg_read_21_json_comparison_ignores_object_member_order(
     assert isinstance(verdict, CanonicalRegistryView)
     assert verdict.artifact_count == len(registry["artifacts"])
     _assert_read_only(ws, before)
+
+
+def _replace_workspace_after_recovery_load(
+    *,
+    monkeypatch: pytest.MonkeyPatch,
+    workspace: Path,
+    replacement: Path,
+    moved_workspace: Path,
+) -> None:
+    real_load_recovery_context_verdict = (
+        artifact_registry_read.load_recovery_context_verdict
+    )
+
+    def replacing_load_recovery_context_verdict(**kwargs: Any):
+        context = real_load_recovery_context_verdict(**kwargs)
+        workspace.rename(moved_workspace)
+        replacement.rename(workspace)
+        return context
+
+    monkeypatch.setattr(
+        artifact_registry_read,
+        "load_recovery_context_verdict",
+        replacing_load_recovery_context_verdict,
+    )
+
+
+def _workspace_with_audited_brief(tmp_path: Path) -> tuple[Path, Path]:
+    ws = _workspace(tmp_path)
+    brief_path = ws / "output/intermediate/audited_brief.md"
+    brief_path.write_text("# Audited brief\n\nBound content.\n", encoding="utf-8")
+    check_runtime_state(workspace=ws, repo_workdir=ROOT, actor="cli")
+    return ws, brief_path
+
+
+@pytest.mark.parametrize(
+    "change_artifact",
+    [False, True],
+    ids=["REG-READ-22-byte-equivalent", "REG-READ-23-changed-artifact"],
+)
+def test_reg_read_22_root_substitution_uses_invocation_local_byte_semantics(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    change_artifact: bool,
+) -> None:
+    # CanonicalRegistryView is an invocation-local semantic replay. Returned
+    # paths are lexical selectors, not retained handles or future-freshness
+    # receipts; byte changes observed by replay must still degrade.
+    ws, brief_path = _workspace_with_audited_brief(tmp_path)
+    replacement = tmp_path / "replacement-workspace"
+    moved_workspace = tmp_path / "session-bound-workspace"
+    shutil.copytree(ws, replacement, copy_function=shutil.copy2)
+    if change_artifact:
+        replacement_brief = replacement / brief_path.relative_to(ws)
+        original_stat = replacement_brief.stat()
+        replacement_brief.write_text(
+            "# Audited brief\n\nBound content changed after Recovery loading.\n",
+            encoding="utf-8",
+        )
+        os.utime(
+            replacement_brief,
+            ns=(original_stat.st_atime_ns, original_stat.st_mtime_ns),
+        )
+    trusted_before = _workspace_snapshot(ws)
+    replacement_before = _workspace_snapshot(replacement)
+    _replace_workspace_after_recovery_load(
+        monkeypatch=monkeypatch,
+        workspace=ws,
+        replacement=replacement,
+        moved_workspace=moved_workspace,
+    )
+
+    verdict = interpret_artifact_registry(workspace=ws, repo_workdir=ROOT)
+
+    if change_artifact:
+        _assert_negative(
+            verdict,
+            verdict_type=RegistrySnapshotDrift,
+            reason_code="artifact_registry_snapshot_size_drift",
+        )
+    else:
+        assert isinstance(verdict, CanonicalRegistryView)
+        assert verdict.resolved_paths["audited_brief"] == brief_path
+        assert all(path.is_relative_to(ws) for path in verdict.resolved_paths.values())
+    assert _workspace_snapshot(moved_workspace) == trusted_before
+    assert _workspace_snapshot(ws) == replacement_before
