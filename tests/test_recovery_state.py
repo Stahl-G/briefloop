@@ -42,7 +42,10 @@ from multi_agent_brief.orchestrator.runtime_state.artifact_registry import (
     ARTIFACT_REGISTRY_SCHEMA,
 )
 from multi_agent_brief.orchestrator.runtime_state.event_log import EVENT_LOG_SCHEMA
-from multi_agent_brief.orchestrator.runtime_state.errors import RuntimeStateError
+from multi_agent_brief.orchestrator.runtime_state.errors import (
+    E_TRANSACTION_INTEGRITY,
+    RuntimeStateError,
+)
 from multi_agent_brief.orchestrator.runtime_state.manifest import RUNTIME_MANIFEST_SCHEMA
 from multi_agent_brief.orchestrator.runtime_state.workflow import WORKFLOW_STATE_SCHEMA
 
@@ -258,11 +261,48 @@ def _write_source_repo_contracts(
     configs = repo / "configs"
     (configs / "policy_packs").mkdir(parents=True, exist_ok=True)
     (configs / "orchestrator_contract.yaml").write_text("{}\n", encoding="utf-8")
-    (configs / "artifact_contracts.yaml").write_text("{}\n", encoding="utf-8")
+    (configs / "artifact_contracts.yaml").write_text(
+        json.dumps(
+            {
+                "schema_version": "multi-agent-brief-artifact-contracts/v1",
+                "artifact_contract": {
+                    "status_values": ["expected"],
+                    "provenance_ready_fields": ["artifact_id"],
+                    "producer_kind_values": ["workflow_stage", "control_tool"],
+                    "edge_direction_notes": {},
+                },
+                "artifacts": [],
+            },
+            indent=2,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
     (configs / "policy_packs/default.yaml").write_text("{}\n", encoding="utf-8")
     (configs / "stage_specs.yaml").write_text(
-        "workflow:\n  stages:\n"
-        + "".join(f"    - stage_id: {stage_id}\n" for stage_id in stage_ids),
+        json.dumps(
+            {
+                "schema_version": "multi-agent-brief-stage-specs/v1",
+                "workflow": {
+                    "orchestrator_role": "main_agent",
+                    "default_policy_pack": "default",
+                    "stages": [
+                        {
+                            "stage_id": stage_id,
+                            "owner": "python_tool",
+                            "category": "test",
+                            "consumes": [],
+                            "produces": [],
+                            "expected_artifacts": [],
+                            "allowed_decisions": ["continue"],
+                        }
+                        for stage_id in stage_ids
+                    ],
+                },
+            },
+            indent=2,
+        )
+        + "\n",
         encoding="utf-8",
     )
 
@@ -805,6 +845,37 @@ def test_recovery_preserves_explicit_repo_workdir_stage_contracts(
     )
 
     assert tuple(context.stage_ids) == expected_stage_ids
+
+
+@pytest.mark.parametrize(
+    "malformed_half",
+    ["duplicate-stage", "scalar-artifact-entry"],
+)
+def test_recovery_rejects_incoherent_contract_pair_without_values_or_writes(
+    tmp_path: Path,
+    malformed_half: str,
+) -> None:
+    workspace = _workspace(tmp_path / "workspace")
+    repo = tmp_path / "explicit-repo"
+    _write_source_repo_contracts(repo, stage_ids=("first", "second"))
+    if malformed_half == "duplicate-stage":
+        path = repo / "configs/stage_specs.yaml"
+        payload = json.loads(path.read_text(encoding="utf-8"))
+        payload["workflow"]["stages"][1]["stage_id"] = "first"
+    else:
+        path = repo / "configs/artifact_contracts.yaml"
+        payload = json.loads(path.read_text(encoding="utf-8"))
+        payload["artifacts"] = ["silently-dropped-before-contract-load-p"]
+    path.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
+    workspace_before = _tree_file_observations(workspace)
+    repo_before = _tree_file_observations(repo)
+
+    with pytest.raises(RuntimeStateError) as exc_info:
+        load_recovery_context(workspace=workspace, repo_workdir=repo)
+
+    assert exc_info.value.error_code == E_TRANSACTION_INTEGRITY
+    assert _tree_file_observations(workspace) == workspace_before
+    assert _tree_file_observations(repo) == repo_before
 
 
 @pytest.mark.parametrize(
