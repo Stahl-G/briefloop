@@ -240,6 +240,38 @@ def _write_bound_finalize_report(ws: Path) -> None:
     )
 
 
+def _write_source_repo_contracts(
+    repo: Path,
+    *,
+    stage_ids: tuple[str, ...],
+) -> None:
+    """Create the minimal source-repo shape used by contract discovery."""
+
+    (repo / "src/multi_agent_brief").mkdir(parents=True, exist_ok=True)
+    (repo / "pyproject.toml").write_text(
+        "[project]\nname = 'recovery-contract-test'\n",
+        encoding="utf-8",
+    )
+    configs = repo / "configs"
+    (configs / "policy_packs").mkdir(parents=True, exist_ok=True)
+    (configs / "orchestrator_contract.yaml").write_text("{}\n", encoding="utf-8")
+    (configs / "artifact_contracts.yaml").write_text("{}\n", encoding="utf-8")
+    (configs / "policy_packs/default.yaml").write_text("{}\n", encoding="utf-8")
+    (configs / "stage_specs.yaml").write_text(
+        "workflow:\n  stages:\n"
+        + "".join(f"    - stage_id: {stage_id}\n" for stage_id in stage_ids),
+        encoding="utf-8",
+    )
+
+
+def _tree_file_observations(root: Path) -> dict[str, tuple[bytes, int]]:
+    return {
+        path.relative_to(root).as_posix(): (path.read_bytes(), path.stat().st_mtime_ns)
+        for path in root.rglob("*")
+        if path.is_file()
+    }
+
+
 def _evaluate(ws: Path) -> dict:
     return evaluate_recovery_state(workspace=ws, repo_workdir=ROOT)
 
@@ -553,6 +585,83 @@ def test_recovery_session_stays_bound_when_workspace_is_replaced_after_preflight
         assert _read_workflow(moved_workspace)["current_stage"] == "editor"
     else:
         assert _read_workflow(workspace)["current_stage"] == "editor"
+
+
+def test_recovery_binds_stage_contracts_before_workspace_replacement(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    neutral_cwd = tmp_path / "neutral-cwd"
+    neutral_cwd.mkdir()
+    monkeypatch.chdir(neutral_cwd)
+    workspace = _workspace(tmp_path / "trusted", current_stage="analyst")
+    contamination = _mark_contaminated(workspace)
+    recovery = _recovery_event(rerun_start_stage="analyst")
+    _write_events(workspace, [contamination, _repair_started_for(recovery), recovery])
+    _bind_recovery_pointer(workspace, rerun_start_stage="analyst")
+    canonical_context = load_recovery_context(
+        workspace=workspace,
+        repo_workdir=ROOT,
+    )
+    canonical_state = recovery_state_module.interpret_recovery_state(
+        canonical_context
+    )
+    foreign_contract_state = recovery_state_module.interpret_recovery_state(
+        replace(
+            canonical_context,
+            stage_ids=("editor", "analyst", "auditor", "finalize"),
+        )
+    )
+    assert canonical_state["status"] == RECOVERY_INVALID
+    assert canonical_state["reason_code"] == "owner_revision_binding_invalid"
+    assert foreign_contract_state["status"] == RECOVERY_RERUN_PENDING
+    replacement = _workspace(tmp_path / "replacement", current_stage="auditor")
+    _write_source_repo_contracts(
+        replacement,
+        stage_ids=("editor", "analyst", "auditor", "finalize"),
+    )
+    trusted_before = _tree_file_observations(workspace)
+    replacement_before = _tree_file_observations(replacement)
+    moved_workspace = tmp_path / "opened-workspace"
+    session_events: list[tuple[str, str, bool]] = []
+    swapped = False
+
+    def replace_workspace_before_first_read() -> None:
+        nonlocal swapped
+        assert [event[0] for event in session_events] == ["preflight"] * 5
+        workspace.rename(moved_workspace)
+        replacement.rename(workspace)
+        swapped = True
+
+    _observe_recovery_session_factory(
+        monkeypatch,
+        events=session_events,
+        before_first_read=replace_workspace_before_first_read,
+    )
+
+    payload = evaluate_recovery_state(workspace=workspace, repo_workdir=None)
+
+    assert swapped is True
+    assert payload["status"] == RECOVERY_INVALID
+    assert payload["reason_code"] == "owner_revision_binding_invalid"
+    assert _tree_file_observations(moved_workspace) == trusted_before
+    assert _tree_file_observations(workspace) == replacement_before
+
+
+def test_recovery_preserves_explicit_repo_workdir_stage_contracts(
+    tmp_path: Path,
+) -> None:
+    workspace = _workspace(tmp_path / "workspace")
+    repo = tmp_path / "explicit-repo"
+    expected_stage_ids = ("custom-first", "custom-second")
+    _write_source_repo_contracts(repo, stage_ids=expected_stage_ids)
+
+    context = load_recovery_context(
+        workspace=workspace,
+        repo_workdir=repo,
+    )
+
+    assert tuple(context.stage_ids) == expected_stage_ids
 
 
 @pytest.mark.parametrize(

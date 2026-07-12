@@ -418,6 +418,13 @@ def load_recovery_context(
     """Load recovery inputs only through the canonical five-path inventory."""
 
     ws = _recovery_workspace_path(workspace)
+    # Stage contracts are a separate semantic input, not a sixth workspace
+    # control file. Bind and interpret their authority before acquiring the
+    # workspace session, without using the mutable workspace pathname as a
+    # repository-discovery fallback. The resulting immutable IDs cannot be
+    # replaced after the five-file session has been acquired.
+    repo = resolve_repo_workdir(repo_workdir)
+    stage_ids = tuple(_stage_ids(load_stage_specs(repo)))
     paths = (
         resolve_recovery_control_paths(ws)
         if control_paths is None
@@ -470,8 +477,6 @@ def load_recovery_context(
         event_raw,
         path=path_map["event_log"],
     )
-    repo = resolve_repo_workdir(repo_workdir, workspace=ws)
-    stages = load_stage_specs(repo)
     run_id = _text((manifest or {}).get("run_id"))
     if not run_id:
         raise RuntimeStateError("runtime_manifest.json run_id is required.")
@@ -480,7 +485,7 @@ def load_recovery_context(
         runtime_manifest=manifest or {},
         workflow=workflow or {},
         event_records=event_records,
-        stage_ids=_stage_ids(stages),
+        stage_ids=stage_ids,
         artifact_registry=registry,
         finalize_report=report,
     )
