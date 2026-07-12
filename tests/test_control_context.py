@@ -1,7 +1,9 @@
 from __future__ import annotations
 
+import copy
 import json
 import os
+import pickle
 import subprocess
 from pathlib import Path
 
@@ -19,6 +21,7 @@ from multi_agent_brief.orchestrator.runtime_state.errors import (
 
 
 CONTROL_RELATIVE_PATH = "output/intermediate/control.json"
+SECOND_CONTROL_RELATIVE_PATH = "output/intermediate/second.json"
 WINDOWS_NATIVE = os.name == "nt" and control_context._WINDOWS_DESCRIPTOR_READ_SUPPORTED
 
 
@@ -33,8 +36,18 @@ def _control_path(workspace: Path) -> Path:
 
 
 def _write_control(workspace: Path, payload: object) -> bytes:
+    return _write_relative_control(workspace, CONTROL_RELATIVE_PATH, payload)
+
+
+def _write_relative_control(
+    workspace: Path,
+    relative_path: str,
+    payload: object,
+) -> bytes:
     raw = json.dumps(payload, sort_keys=True).encode("utf-8")
-    _control_path(workspace).write_bytes(raw)
+    target = workspace / relative_path
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_bytes(raw)
     return raw
 
 
@@ -59,6 +72,426 @@ def _observation(path: Path) -> tuple[object, ...]:
     if path.is_file():
         return ("file", path.read_bytes(), stat_result.st_mtime_ns)
     return ("other", stat_result.st_mode, stat_result.st_mtime_ns)
+
+
+def test_session_stays_bound_after_preflight_when_workspace_is_replaced(
+    tmp_path: Path,
+) -> None:
+    workspace = _workspace(tmp_path)
+    trusted = _write_control(workspace, {"value": "trusted"})
+    foreign = tmp_path / "foreign-workspace"
+    foreign_raw = _write_control(foreign, {"value": "foreign"})
+    moved = tmp_path / "opened-workspace"
+
+    with control_context._open_workspace_control_read_session(workspace) as session:
+        assert session.preflight(CONTROL_RELATIVE_PATH) is True
+        workspace.rename(moved)
+        foreign.rename(workspace)
+
+        raw = session.read_bytes(CONTROL_RELATIVE_PATH)
+
+    assert raw == trusted
+    assert raw != foreign_raw
+
+
+def test_session_load_object_uses_retained_root_after_workspace_replacement(
+    tmp_path: Path,
+) -> None:
+    workspace = _workspace(tmp_path)
+    trusted = {"schema_version": "control.v1", "value": "trusted"}
+    _write_control(workspace, trusted)
+    foreign = tmp_path / "foreign-workspace"
+    _write_control(
+        foreign,
+        {"schema_version": "control.v1", "value": "foreign"},
+    )
+    moved = tmp_path / "opened-workspace"
+
+    with control_context._open_workspace_control_read_session(workspace) as session:
+        assert session.preflight(CONTROL_RELATIVE_PATH) is True
+        workspace.rename(moved)
+        foreign.rename(workspace)
+
+        payload = session.load_object(
+            CONTROL_RELATIVE_PATH,
+            expected_schema="control.v1",
+        )
+
+    assert payload == trusted
+
+
+@pytest.mark.parametrize(
+    "parts_kind",
+    ["parent", "absolute", "empty", "embedded-separator"],
+)
+@pytest.mark.skipif(os.name == "nt", reason="POSIX compatibility backend")
+def test_compatibility_parts_reject_escape_before_external_read(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    parts_kind: str,
+) -> None:
+    workspace = _workspace(tmp_path)
+    outside = tmp_path / "outside.json"
+    outside.write_bytes(b"outside-secret")
+    before = _observation(outside)
+    parts_by_kind = {
+        "parent": ("..", "outside.json"),
+        "absolute": (outside.as_posix(),),
+        "empty": ("", "outside.json"),
+        "embedded-separator": ("nested/outside.json",),
+    }
+    read_calls: list[int] = []
+    real_read = os.read
+
+    def tracking_read(fd: int, size: int) -> bytes:
+        read_calls.append(fd)
+        return real_read(fd, size)
+
+    monkeypatch.setattr(control_context.os, "read", tracking_read)
+
+    with pytest.raises(RuntimeStateError) as exc_info:
+        control_context._read_workspace_control_bytes_posix(
+            display_root=workspace.absolute(),
+            parts=parts_by_kind[parts_kind],
+            display_path=outside,
+            required=True,
+        )
+
+    assert exc_info.value.details["reason_code"] == (
+        "control_file_relative_path_invalid"
+    )
+    assert read_calls == []
+    assert _observation(outside) == before
+
+
+def test_session_stays_bound_when_workspace_is_replaced_between_reads(
+    tmp_path: Path,
+) -> None:
+    workspace = _workspace(tmp_path)
+    first = _write_control(workspace, {"value": "trusted-first"})
+    second = _write_relative_control(
+        workspace,
+        SECOND_CONTROL_RELATIVE_PATH,
+        {"value": "trusted-second"},
+    )
+    foreign = tmp_path / "foreign-workspace"
+    _write_control(foreign, {"value": "foreign-first"})
+    foreign_second = _write_relative_control(
+        foreign,
+        SECOND_CONTROL_RELATIVE_PATH,
+        {"value": "foreign-second"},
+    )
+    moved = tmp_path / "opened-workspace"
+
+    with control_context._open_workspace_control_read_session(workspace) as session:
+        assert session.read_bytes(CONTROL_RELATIVE_PATH) == first
+        workspace.rename(moved)
+        foreign.rename(workspace)
+
+        raw = session.read_bytes(SECOND_CONTROL_RELATIVE_PATH)
+
+    assert raw == second
+    assert raw != foreign_second
+
+
+@pytest.mark.skipif(os.name == "nt", reason="Windows blocks ancestor rename")
+def test_session_stays_bound_when_workspace_ancestor_is_replaced(
+    tmp_path: Path,
+) -> None:
+    trusted_parent = tmp_path / "trusted-parent"
+    workspace = trusted_parent / "workspace"
+    trusted = _write_control(workspace, {"value": "trusted"})
+    foreign_parent = tmp_path / "foreign-parent"
+    foreign_workspace = foreign_parent / "workspace"
+    foreign = _write_control(foreign_workspace, {"value": "foreign"})
+    moved_parent = tmp_path / "opened-parent"
+
+    with control_context._open_workspace_control_read_session(workspace) as session:
+        trusted_parent.rename(moved_parent)
+        foreign_parent.rename(trusted_parent)
+
+        raw = session.read_bytes(CONTROL_RELATIVE_PATH)
+
+    assert raw == trusted
+    assert raw != foreign
+
+
+@pytest.mark.skipif(not WINDOWS_NATIVE, reason="requires native Windows handles")
+def test_windows_session_blocks_workspace_ancestor_replacement(
+    tmp_path: Path,
+) -> None:
+    trusted_parent = tmp_path / "trusted-parent"
+    workspace = trusted_parent / "workspace"
+    trusted = _write_control(workspace, {"value": "trusted"})
+    moved_parent = tmp_path / "opened-parent"
+
+    with control_context._open_workspace_control_read_session(workspace) as session:
+        with pytest.raises(PermissionError):
+            trusted_parent.rename(moved_parent)
+
+        raw = session.read_bytes(CONTROL_RELATIVE_PATH)
+
+    assert raw == trusted
+
+
+def test_session_optional_absence_is_only_missing_final_component(
+    tmp_path: Path,
+) -> None:
+    workspace = _workspace(tmp_path)
+    intermediate = workspace / "output/intermediate"
+    external = tmp_path / "external"
+    external.mkdir()
+
+    with control_context._open_workspace_control_read_session(workspace) as session:
+        assert session.preflight(CONTROL_RELATIVE_PATH, required=False) is False
+        assert session.read_bytes(CONTROL_RELATIVE_PATH, required=False) is None
+
+        intermediate.rmdir()
+        if WINDOWS_NATIVE:
+            _create_windows_junction(intermediate, external)
+        else:
+            intermediate.symlink_to(external, target_is_directory=True)
+        try:
+            with pytest.raises(RuntimeStateError) as exc_info:
+                session.preflight(CONTROL_RELATIVE_PATH, required=False)
+            assert exc_info.value.details["reason_code"] == "control_file_path_unsafe"
+        finally:
+            if WINDOWS_NATIVE and intermediate.exists():
+                intermediate.rmdir()
+
+
+@pytest.mark.skipif(os.name == "nt", reason="POSIX dir_fd matrix")
+def test_session_descendant_opens_use_retained_posix_root(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    workspace = _workspace(tmp_path)
+    expected = _write_control(workspace, {"value": "trusted"})
+    real_open = os.open
+    calls: list[tuple[object, int | None, int]] = []
+
+    with control_context._open_workspace_control_read_session(workspace) as session:
+
+        def tracking_open(path, flags, mode=0o777, *, dir_fd=None):
+            opened = real_open(path, flags, mode, dir_fd=dir_fd)
+            calls.append((path, dir_fd, opened))
+            return opened
+
+        monkeypatch.setattr(control_context.os, "open", tracking_open)
+        assert session.preflight(CONTROL_RELATIVE_PATH) is True
+        raw = session.read_bytes(CONTROL_RELATIVE_PATH)
+
+    assert raw == expected
+    assert [call[0] for call in calls] == [
+        "output",
+        "intermediate",
+        "control.json",
+        "output",
+        "intermediate",
+        "control.json",
+    ]
+    assert calls[0][1] is not None
+    assert calls[1][1] == calls[0][2]
+    assert calls[2][1] == calls[1][2]
+    assert calls[3][1] == calls[0][1]
+    assert calls[4][1] == calls[3][2]
+    assert calls[5][1] == calls[4][2]
+
+
+@pytest.mark.skipif(os.name == "nt", reason="POSIX descriptor lifecycle")
+def test_session_closes_resources_on_partial_acquisition(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    workspace = _workspace(tmp_path)
+    real_open = os.open
+    real_close = os.close
+    opened: list[int] = []
+    closed: list[int] = []
+
+    def failing_open(path, flags, mode=0o777, *, dir_fd=None):
+        if path == workspace.name and dir_fd is not None:
+            raise PermissionError("injected workspace acquisition failure")
+        fd = real_open(path, flags, mode, dir_fd=dir_fd)
+        opened.append(fd)
+        return fd
+
+    def tracking_close(fd: int) -> None:
+        closed.append(fd)
+        real_close(fd)
+
+    monkeypatch.setattr(control_context.os, "open", failing_open)
+    monkeypatch.setattr(control_context.os, "close", tracking_close)
+
+    with pytest.raises(RuntimeStateError):
+        control_context._open_workspace_control_read_session(workspace)
+
+    assert opened
+    assert sorted(opened) == sorted(closed)
+
+
+@pytest.mark.skipif(os.name == "nt", reason="POSIX descriptor lifecycle")
+def test_session_read_failure_close_is_idempotent_and_use_after_close_fails(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    workspace = _workspace(tmp_path)
+    _write_control(workspace, {"value": "trusted"})
+    session = control_context._open_workspace_control_read_session(workspace)
+    real_close = os.close
+    closed: list[int] = []
+
+    def tracking_close(fd: int) -> None:
+        closed.append(fd)
+        real_close(fd)
+
+    def failing_read(_fd: int, _size: int) -> bytes:
+        raise OSError("injected read failure")
+
+    monkeypatch.setattr(control_context.os, "close", tracking_close)
+    monkeypatch.setattr(control_context.os, "read", failing_read)
+
+    with pytest.raises(RuntimeStateError) as exc_info:
+        session.read_bytes(CONTROL_RELATIVE_PATH)
+    assert exc_info.value.details["reason_code"] == "control_file_read_failed"
+
+    closed_before_root = len(closed)
+    session.close()
+    assert len(closed) == closed_before_root + 1
+    session.close()
+    assert len(closed) == closed_before_root + 1
+    assert len(closed) == len(set(closed))
+
+    with pytest.raises(RuntimeStateError) as exc_info:
+        session.read_bytes(CONTROL_RELATIVE_PATH)
+    assert exc_info.value.details["reason_code"] == "control_read_session_closed"
+
+
+def test_session_cannot_be_forged_copied_or_serialized(tmp_path: Path) -> None:
+    workspace = _workspace(tmp_path)
+
+    with pytest.raises(TypeError):
+        control_context._WorkspaceControlReadSession(
+            _token=object(),
+            backend="posix",
+            display_root=workspace,
+            root_resource=1,
+        )
+
+    session = control_context._open_workspace_control_read_session(workspace)
+    try:
+        with pytest.raises(TypeError):
+            copy.copy(session)
+        with pytest.raises(TypeError):
+            copy.deepcopy(session)
+        with pytest.raises(TypeError):
+            pickle.dumps(session)
+    finally:
+        session.close()
+
+
+def test_windows_session_descendants_use_retained_workspace_handle(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    opened: list[tuple[int, str, bool, int]] = []
+    closed: list[int] = []
+    handles = iter([201, 202, 203, 204, 205, 206, 207])
+
+    monkeypatch.setattr(control_context, "_windows_open_root_handle", lambda _root: 100)
+    monkeypatch.setattr(control_context, "_require_windows_handle_kind", lambda *_args, **_kwargs: None)
+
+    def fake_relative_open(*, parent_handle: int, component: str, directory: bool):
+        handle = next(handles)
+        opened.append((parent_handle, component, directory, handle))
+        return handle
+
+    monkeypatch.setattr(control_context, "_windows_open_relative_handle", fake_relative_open)
+    monkeypatch.setattr(control_context, "_windows_close_handle", closed.append)
+    monkeypatch.setattr(
+        control_context,
+        "_windows_read_handle",
+        lambda handle, *, path: b"trusted" if handle == 207 else b"wrong",
+    )
+
+    with control_context._open_workspace_control_read_session_windows(
+        Path(r"C:\workspace")
+    ) as session:
+        assert session.preflight(CONTROL_RELATIVE_PATH) is True
+        raw = session.read_bytes(CONTROL_RELATIVE_PATH)
+
+    assert raw == b"trusted"
+    assert opened == [
+        (100, "workspace", True, 201),
+        (201, "output", True, 202),
+        (202, "intermediate", True, 203),
+        (203, "control.json", False, 204),
+        (201, "output", True, 205),
+        (205, "intermediate", True, 206),
+        (206, "control.json", False, 207),
+    ]
+    assert closed == [100, 204, 203, 202, 207, 206, 205, 201]
+
+
+def test_windows_session_closes_partial_workspace_acquisition(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    closed: list[int] = []
+    calls = 0
+
+    monkeypatch.setattr(control_context, "_windows_open_root_handle", lambda _root: 100)
+    monkeypatch.setattr(control_context, "_require_windows_handle_kind", lambda *_args, **_kwargs: None)
+
+    def failing_relative_open(*, parent_handle: int, component: str, directory: bool):
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            return 201
+        raise OSError(5, "injected workspace acquisition failure")
+
+    monkeypatch.setattr(control_context, "_windows_open_relative_handle", failing_relative_open)
+    monkeypatch.setattr(control_context, "_windows_close_handle", closed.append)
+
+    with pytest.raises(RuntimeStateError):
+        control_context._open_workspace_control_read_session_windows(
+            Path(r"C:\parent\workspace")
+        )
+
+    assert closed == [100, 201]
+
+
+def test_windows_session_read_failure_closes_descendants_and_root_once(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    closed: list[int] = []
+    handles = iter([201, 202, 203, 204])
+
+    monkeypatch.setattr(control_context, "_windows_open_root_handle", lambda _root: 100)
+    monkeypatch.setattr(control_context, "_require_windows_handle_kind", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(
+        control_context,
+        "_windows_open_relative_handle",
+        lambda **_kwargs: next(handles),
+    )
+    monkeypatch.setattr(control_context, "_windows_close_handle", closed.append)
+
+    def failing_read(_handle: int, *, path: Path) -> bytes:
+        raise RuntimeStateError(
+            f"injected read failure: {path}",
+            details={"reason_code": "control_file_read_failed"},
+            error_code=E_TRANSACTION_INTEGRITY,
+        )
+
+    monkeypatch.setattr(control_context, "_windows_read_handle", failing_read)
+
+    with pytest.raises(RuntimeStateError) as exc_info:
+        with control_context._open_workspace_control_read_session_windows(
+            Path(r"C:\workspace")
+        ) as session:
+            session.read_bytes(CONTROL_RELATIVE_PATH)
+
+    assert exc_info.value.details["reason_code"] == "control_file_read_failed"
+    assert closed == [100, 204, 203, 202, 201]
+    assert len(closed) == len(set(closed))
 
 
 def test_descriptor_read_decodes_exact_acquired_json_bytes_once(
@@ -905,7 +1338,9 @@ def test_windows_descriptor_read_closes_every_native_handle(
 
     assert raw == expected
     assert len(closed) >= 5
-    assert len(closed) == len(set(closed))
+    # Windows may recycle a numeric handle value after an ancestor is closed.
+    # The synthetic lifecycle tests track open/close generations exactly; this
+    # native test proves that no live handle prevents the final rename.
     workspace.rename(tmp_path / "closed-workspace")
 
 

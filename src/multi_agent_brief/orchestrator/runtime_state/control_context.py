@@ -50,6 +50,7 @@ _WINDOWS_ERROR_PATH_NOT_FOUND = 3
 _WINDOWS_INVALID_HANDLE_VALUE = ctypes.c_void_p(-1).value
 _WINDOWS_UNICODE_STRING_MAX_BYTES = (1 << 16) - 1
 _CONCRETE_PATH_TYPE = type(Path())
+_CONTROL_SESSION_TOKEN = object()
 
 
 class _WindowsUnicodeString(ctypes.Structure):
@@ -83,6 +84,209 @@ class _WindowsFileAttributeTagInfo(ctypes.Structure):
         ("FileAttributes", wintypes.DWORD),
         ("ReparseTag", wintypes.DWORD),
     )
+
+
+class _WorkspaceControlReadSession:
+    """One internal, non-transferable workspace-root read capability."""
+
+    __slots__ = (
+        "__backend",
+        "__closed",
+        "__display_root",
+        "__root_resource",
+    )
+
+    def __init__(
+        self,
+        *,
+        _token: object,
+        backend: str,
+        display_root: Path,
+        root_resource: int,
+    ) -> None:
+        if (
+            _token is not _CONTROL_SESSION_TOKEN
+            or backend not in {"posix", "windows"}
+            or type(display_root) is not _CONCRETE_PATH_TYPE
+            or type(root_resource) is not int
+        ):
+            raise TypeError("Workspace control read sessions are factory-owned.")
+        self.__backend = backend
+        self.__closed = False
+        self.__display_root = display_root
+        self.__root_resource: int | None = root_resource
+
+    def __enter__(self) -> "_WorkspaceControlReadSession":
+        self.__require_open()
+        return self
+
+    def __exit__(self, _exc_type, _exc, _traceback) -> bool:
+        self.close()
+        return False
+
+    def __copy__(self):
+        raise TypeError("Workspace control read sessions cannot be copied.")
+
+    def __deepcopy__(self, _memo):
+        raise TypeError("Workspace control read sessions cannot be copied.")
+
+    def __reduce__(self):
+        raise TypeError("Workspace control read sessions cannot be serialized.")
+
+    def __reduce_ex__(self, _protocol):
+        raise TypeError("Workspace control read sessions cannot be serialized.")
+
+    def close(self) -> None:
+        """Close the retained workspace root exactly once."""
+
+        if self.__closed:
+            return
+        resource = self.__root_resource
+        self.__root_resource = None
+        self.__closed = True
+        if resource is None:
+            return
+        if self.__backend == "windows":
+            _windows_close_handle(resource)
+            return
+        try:
+            os.close(resource)
+        except OSError:
+            pass
+
+    def preflight(self, relative_path: str, *, required: bool = True) -> bool:
+        """Validate one relative control target through the retained root."""
+
+        parts, display_path = self.__relative_target(relative_path)
+        present, _raw = self.__acquire(
+            parts=parts,
+            display_path=display_path,
+            required=required,
+            read_contents=False,
+        )
+        return present
+
+    def read_bytes(
+        self,
+        relative_path: str,
+        *,
+        required: bool = True,
+    ) -> bytes | None:
+        """Read one relative control target through the retained root."""
+
+        parts, display_path = self.__relative_target(relative_path)
+        present, raw = self.__acquire(
+            parts=parts,
+            display_path=display_path,
+            required=required,
+            read_contents=True,
+        )
+        if not present:
+            return None
+        if raw is None:
+            raise _control_read_error(
+                display_path,
+                reason_code="control_file_read_failed",
+                reason="Control file bytes were not returned by the session backend.",
+            )
+        return raw
+
+    def load_object(
+        self,
+        relative_path: str,
+        *,
+        expected_schema: str | None = None,
+        required: bool = True,
+    ) -> dict[str, Any] | None:
+        """Read and decode one JSON object through the retained root."""
+
+        parts, display_path = self.__relative_target(relative_path)
+        present, raw = self.__acquire(
+            parts=parts,
+            display_path=display_path,
+            required=required,
+            read_contents=True,
+        )
+        if not present:
+            return None
+        if raw is None:
+            raise _control_read_error(
+                display_path,
+                reason_code="control_file_read_failed",
+                reason="Control file bytes were not returned by the session backend.",
+            )
+        return _decode_control_object_bytes(
+            raw,
+            path=display_path,
+            expected_schema=expected_schema,
+        )
+
+    def __relative_target(self, relative_path: str) -> tuple[tuple[str, ...], Path]:
+        self.__require_open()
+        parts = _workspace_control_relative_parts(relative_path)
+        display_path = self.__display_root.joinpath(*parts)
+        if self.__backend == "windows":
+            _validate_windows_path_parts(
+                parts,
+                display_path=display_path,
+                reason_code="control_file_relative_path_invalid",
+            )
+        return parts, display_path
+
+    def __acquire(
+        self,
+        *,
+        parts: tuple[str, ...],
+        display_path: Path,
+        required: bool,
+        read_contents: bool,
+    ) -> tuple[bool, bytes | None]:
+        resource = self.__require_open()
+        if self.__backend == "windows":
+            return _acquire_workspace_control_file_windows(
+                workspace_handle=resource,
+                parts=parts,
+                display_root=self.__display_root,
+                display_path=display_path,
+                required=required,
+                read_contents=read_contents,
+            )
+        return _acquire_workspace_control_file_posix(
+            workspace_fd=resource,
+            parts=parts,
+            display_root=self.__display_root,
+            display_path=display_path,
+            required=required,
+            read_contents=read_contents,
+        )
+
+    def __require_open(self) -> int:
+        resource = self.__root_resource
+        if self.__closed or resource is None:
+            raise _control_read_error(
+                self.__display_root,
+                reason_code="control_read_session_closed",
+                reason="Workspace control read session is closed.",
+            )
+        return resource
+
+
+def _open_workspace_control_read_session(
+    workspace: str | Path,
+) -> _WorkspaceControlReadSession:
+    """Acquire one internal workspace-root capability for repeated reads."""
+
+    if _WINDOWS_DESCRIPTOR_READ_SUPPORTED:
+        display_root = _windows_workspace_selector(workspace)
+        return _open_workspace_control_read_session_windows(display_root)
+    display_root = Path(workspace).expanduser().absolute()
+    if not _DESCRIPTOR_READ_SUPPORTED:
+        raise _control_read_error(
+            display_root,
+            reason_code="control_file_descriptor_read_unsupported",
+            reason="Descriptor-bound no-follow control reads are unavailable.",
+        )
+    return _open_workspace_control_read_session_posix(display_root)
 
 
 def read_workspace_control_bytes(
@@ -128,6 +332,107 @@ def _read_workspace_control_bytes_posix(
 ) -> bytes | None:
     """Acquire one control file through a POSIX descriptor chain."""
 
+    relative_path = _workspace_control_relative_path_from_parts(
+        parts,
+        display_path=display_path,
+    )
+    with _open_workspace_control_read_session_posix(display_root) as session:
+        return session.read_bytes(relative_path, required=required)
+
+
+def _read_workspace_control_bytes_windows(
+    *,
+    display_root: Path,
+    parts: tuple[str, ...],
+    display_path: Path,
+    required: bool,
+) -> bytes | None:
+    """Acquire one control file through a Windows handle-relative chain."""
+
+    relative_path = _workspace_control_relative_path_from_parts(
+        parts,
+        display_path=display_path,
+    )
+    _validate_windows_path_parts(
+        parts,
+        display_path=display_path,
+        reason_code="control_file_relative_path_invalid",
+    )
+    with _open_workspace_control_read_session_windows(display_root) as session:
+        return session.read_bytes(relative_path, required=required)
+
+
+def _open_workspace_control_read_session_posix(
+    display_root: Path,
+) -> _WorkspaceControlReadSession:
+    """Acquire and retain one POSIX workspace directory descriptor."""
+
+    workspace_parts = _workspace_root_relative_parts(display_root)
+    directory_flags = (
+        os.O_RDONLY
+        | os.O_DIRECTORY
+        | os.O_NOFOLLOW
+        | getattr(os, "O_CLOEXEC", 0)
+    )
+    current_fd: int | None = None
+    current_display = Path(os.sep)
+    try:
+        try:
+            current_fd = os.open(os.sep, directory_flags)
+        except OSError as exc:
+            raise _control_open_error(
+                display_root,
+                reason_code="control_workspace_root_unsafe",
+                exc=exc,
+            ) from exc
+
+        for component in workspace_parts:
+            current_display = current_display / component
+            try:
+                next_fd = os.open(
+                    component,
+                    directory_flags,
+                    dir_fd=current_fd,
+                )
+            except OSError as exc:
+                raise _control_open_error(
+                    current_display,
+                    reason_code="control_workspace_root_unsafe",
+                    exc=exc,
+                ) from exc
+            try:
+                os.close(current_fd)
+            except OSError:
+                pass
+            current_fd = next_fd
+
+        session = _WorkspaceControlReadSession(
+            _token=_CONTROL_SESSION_TOKEN,
+            backend="posix",
+            display_root=display_root,
+            root_resource=current_fd,
+        )
+        current_fd = None
+        return session
+    finally:
+        if current_fd is not None:
+            try:
+                os.close(current_fd)
+            except OSError:
+                pass
+
+
+def _acquire_workspace_control_file_posix(
+    *,
+    workspace_fd: int,
+    parts: tuple[str, ...],
+    display_root: Path,
+    display_path: Path,
+    required: bool,
+    read_contents: bool,
+) -> tuple[bool, bytes | None]:
+    """Open one target relative to an already-open POSIX workspace root."""
+
     directory_flags = (
         os.O_RDONLY
         | os.O_DIRECTORY
@@ -142,34 +447,9 @@ def _read_workspace_control_bytes_posix(
     )
     directory_fds: list[int] = []
     file_fd: int | None = None
+    current_fd = workspace_fd
+    current_display = display_root
     try:
-        try:
-            directory_fds.append(os.open(os.sep, directory_flags))
-        except OSError as exc:
-            raise _control_open_error(
-                display_path,
-                reason_code="control_workspace_root_unsafe",
-                exc=exc,
-            ) from exc
-
-        current_fd = directory_fds[-1]
-        current_display = Path(os.sep)
-        for component in _workspace_root_relative_parts(display_root):
-            current_display = current_display / component
-            try:
-                current_fd = os.open(
-                    component,
-                    directory_flags,
-                    dir_fd=current_fd,
-                )
-            except OSError as exc:
-                raise _control_open_error(
-                    current_display,
-                    reason_code="control_workspace_root_unsafe",
-                    exc=exc,
-                ) from exc
-            directory_fds.append(current_fd)
-
         for component in parts[:-1]:
             current_display = current_display / component
             try:
@@ -194,7 +474,7 @@ def _read_workspace_control_bytes_posix(
             )
         except FileNotFoundError as exc:
             if not required:
-                return None
+                return False, None
             raise RuntimeStateError(
                 f"Required control file is missing: {display_path}",
                 details={
@@ -224,6 +504,8 @@ def _read_workspace_control_bytes_posix(
                 reason_code="control_file_not_regular",
                 reason="Control file target must be a regular file.",
             )
+        if not read_contents:
+            return True, None
 
         chunks: list[bytes] = []
         while True:
@@ -236,7 +518,7 @@ def _read_workspace_control_bytes_posix(
                     exc=exc,
                 ) from exc
             if not chunk:
-                return b"".join(chunks)
+                return True, b"".join(chunks)
             chunks.append(chunk)
     finally:
         if file_fd is not None:
@@ -251,16 +533,64 @@ def _read_workspace_control_bytes_posix(
                 pass
 
 
-def _read_workspace_control_bytes_windows(
-    *,
+def _open_workspace_control_read_session_windows(
     display_root: Path,
-    parts: tuple[str, ...],
-    display_path: Path,
-    required: bool,
-) -> bytes | None:
-    """Acquire one control file through a Windows handle-relative chain."""
+) -> _WorkspaceControlReadSession:
+    """Acquire and retain one Windows workspace directory handle."""
 
     root_path, workspace_parts = _windows_workspace_root_and_parts(display_root)
+    current_handle: int | None = None
+    current_display = Path(PureWindowsPath(str(display_root)).anchor)
+    try:
+        try:
+            current_handle = _windows_open_root_handle(root_path)
+        except OSError as exc:
+            raise _windows_control_open_error(
+                display_root,
+                reason_code="control_workspace_root_unsafe",
+                exc=exc,
+            ) from exc
+        _require_windows_handle_kind(
+            current_handle,
+            path=current_display,
+            directory=True,
+        )
+
+        for component in workspace_parts:
+            current_display = current_display / component
+            next_handle = _windows_open_safe_directory(
+                parent_handle=current_handle,
+                component=component,
+                path=current_display,
+                reason_code="control_workspace_root_unsafe",
+            )
+            _windows_close_handle(current_handle)
+            current_handle = next_handle
+
+        session = _WorkspaceControlReadSession(
+            _token=_CONTROL_SESSION_TOKEN,
+            backend="windows",
+            display_root=display_root,
+            root_resource=current_handle,
+        )
+        current_handle = None
+        return session
+    finally:
+        if current_handle is not None:
+            _windows_close_handle(current_handle)
+
+
+def _acquire_workspace_control_file_windows(
+    *,
+    workspace_handle: int,
+    parts: tuple[str, ...],
+    display_root: Path,
+    display_path: Path,
+    required: bool,
+    read_contents: bool,
+) -> tuple[bool, bytes | None]:
+    """Open one target relative to an already-open Windows workspace root."""
+
     _validate_windows_path_parts(
         parts,
         display_path=display_path,
@@ -268,35 +598,9 @@ def _read_workspace_control_bytes_windows(
     )
     directory_handles: list[int] = []
     file_handle: int | None = None
-    current_display = Path(display_root.anchor)
+    current_handle = workspace_handle
+    current_display = display_root
     try:
-        try:
-            root_handle = _windows_open_root_handle(root_path)
-        except OSError as exc:
-            raise _windows_control_open_error(
-                display_path,
-                reason_code="control_workspace_root_unsafe",
-                exc=exc,
-            ) from exc
-        directory_handles.append(root_handle)
-        _require_windows_handle_kind(
-            root_handle,
-            path=Path(display_root.anchor),
-            directory=True,
-        )
-
-        current_handle = root_handle
-        for component in workspace_parts:
-            current_display = current_display / component
-            current_handle = _windows_open_safe_directory(
-                parent_handle=current_handle,
-                component=component,
-                path=current_display,
-                reason_code="control_workspace_root_unsafe",
-            )
-            directory_handles.append(current_handle)
-
-        current_display = display_root
         for component in parts[:-1]:
             current_display = current_display / component
             current_handle = _windows_open_safe_directory(
@@ -319,7 +623,7 @@ def _read_workspace_control_bytes_windows(
                 _WINDOWS_ERROR_PATH_NOT_FOUND,
             }:
                 if not required:
-                    return None
+                    return False, None
                 raise RuntimeStateError(
                     f"Required control file is missing: {display_path}",
                     details={
@@ -338,7 +642,9 @@ def _read_workspace_control_bytes_windows(
             path=display_path,
             directory=False,
         )
-        return _windows_read_handle(file_handle, path=display_path)
+        if not read_contents:
+            return True, None
+        return True, _windows_read_handle(file_handle, path=display_path)
     finally:
         if file_handle is not None:
             _windows_close_handle(file_handle)
@@ -916,6 +1222,41 @@ def _workspace_control_relative_parts(relative_path: str) -> tuple[str, ...]:
             reason="Control file path must be canonical and workspace-relative.",
         )
     return parts
+
+
+def _workspace_control_relative_path_from_parts(
+    parts: tuple[str, ...],
+    *,
+    display_path: Path,
+) -> str:
+    """Re-enter the canonical string validator from a compatibility tuple."""
+
+    if (
+        type(parts) is not tuple
+        or not parts
+        or any(
+            type(part) is not str
+            or not part
+            or part in {".", ".."}
+            or "/" in part
+            or "\\" in part
+            or "\x00" in part
+            for part in parts
+        )
+    ):
+        raise _control_read_error(
+            display_path,
+            reason_code="control_file_relative_path_invalid",
+            reason="Control file path parts must be canonical relative components.",
+        )
+    relative_path = "/".join(parts)
+    if _workspace_control_relative_parts(relative_path) != parts:
+        raise _control_read_error(
+            display_path,
+            reason_code="control_file_relative_path_invalid",
+            reason="Control file path parts do not match the canonical relative path.",
+        )
+    return relative_path
 
 
 def _workspace_root_relative_parts(display_root: Path) -> tuple[str, ...]:
