@@ -57,7 +57,7 @@ def read_workspace_control_bytes(
     file_fd: int | None = None
     try:
         try:
-            directory_fds.append(os.open(display_root, directory_flags))
+            directory_fds.append(os.open(os.sep, directory_flags))
         except OSError as exc:
             raise _control_open_error(
                 display_path,
@@ -66,7 +66,23 @@ def read_workspace_control_bytes(
             ) from exc
 
         current_fd = directory_fds[-1]
-        current_display = display_root
+        current_display = Path(os.sep)
+        for component in _workspace_root_relative_parts(display_root):
+            current_display = current_display / component
+            try:
+                current_fd = os.open(
+                    component,
+                    directory_flags,
+                    dir_fd=current_fd,
+                )
+            except OSError as exc:
+                raise _control_open_error(
+                    current_display,
+                    reason_code="control_workspace_root_unsafe",
+                    exc=exc,
+                ) from exc
+            directory_fds.append(current_fd)
+
         for component in parts[:-1]:
             current_display = current_display / component
             try:
@@ -273,6 +289,20 @@ def _workspace_control_relative_parts(relative_path: str) -> tuple[str, ...]:
             reason="Control file path must be canonical and workspace-relative.",
         )
     return parts
+
+
+def _workspace_root_relative_parts(display_root: Path) -> tuple[str, ...]:
+    if (
+        display_root.anchor != os.sep
+        or not display_root.is_absolute()
+        or any(part in {"", ".", ".."} for part in display_root.parts[1:])
+    ):
+        raise _control_read_error(
+            display_root,
+            reason_code="control_workspace_root_invalid",
+            reason="Workspace root must be a canonical absolute path.",
+        )
+    return tuple(display_root.parts[1:])
 
 
 def _control_open_error(

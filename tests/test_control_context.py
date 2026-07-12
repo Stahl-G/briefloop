@@ -119,6 +119,45 @@ def test_descriptor_read_rejects_preexisting_symlink_without_external_read(
     assert _observation(external) == before_external
 
 
+@pytest.mark.parametrize("symlink_kind", ["workspace", "workspace_ancestor"])
+def test_descriptor_read_rejects_symlink_in_workspace_absolute_chain_before_read(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    symlink_kind: str,
+) -> None:
+    real_parent = tmp_path / "real"
+    workspace = real_parent / "workspace"
+    (workspace / "output/intermediate").mkdir(parents=True)
+    trusted = _control_path(workspace)
+    trusted.write_bytes(b'{"value":"trusted"}')
+    if symlink_kind == "workspace":
+        supplied_workspace = tmp_path / "workspace-alias"
+        supplied_workspace.symlink_to(workspace, target_is_directory=True)
+    else:
+        alias_parent = tmp_path / "parent-alias"
+        alias_parent.symlink_to(real_parent, target_is_directory=True)
+        supplied_workspace = alias_parent / "workspace"
+    before_trusted = _observation(trusted)
+    read_calls: list[int] = []
+    real_read = os.read
+
+    def tracking_read(fd: int, size: int) -> bytes:
+        read_calls.append(fd)
+        return real_read(fd, size)
+
+    monkeypatch.setattr(control_context.os, "read", tracking_read)
+
+    with pytest.raises(RuntimeStateError) as exc_info:
+        read_workspace_control_bytes(
+            workspace=supplied_workspace,
+            relative_path=CONTROL_RELATIVE_PATH,
+        )
+
+    assert exc_info.value.details["reason_code"] == "control_file_path_unsafe"
+    assert read_calls == []
+    assert _observation(trusted) == before_trusted
+
+
 def test_descriptor_read_rejects_target_symlink_swap_at_open(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -175,6 +214,44 @@ def test_descriptor_read_stays_bound_when_opened_ancestor_is_replaced(
         if path == "intermediate" and dir_fd is not None and not swapped:
             output.rename(moved_output)
             output.symlink_to(external_output, target_is_directory=True)
+            swapped = True
+        return real_open(path, flags, mode, dir_fd=dir_fd)
+
+    monkeypatch.setattr(control_context.os, "open", racing_open)
+
+    raw = read_workspace_control_bytes(
+        workspace=workspace,
+        relative_path=CONTROL_RELATIVE_PATH,
+    )
+
+    assert swapped is True
+    assert raw == trusted_raw
+    assert b"external-secret" not in raw
+    assert _observation(external_target) == before_external
+
+
+def test_descriptor_read_stays_bound_when_opened_workspace_ancestor_is_replaced(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    workspace_parent = tmp_path / "workspace-parent"
+    workspace = workspace_parent / "workspace"
+    (workspace / "output/intermediate").mkdir(parents=True)
+    trusted_raw = _write_control(workspace, {"value": "trusted"})
+    moved_parent = tmp_path / "opened-workspace-parent"
+    external_parent = tmp_path / "external-parent"
+    external_target = external_parent / "workspace/output/intermediate/control.json"
+    external_target.parent.mkdir(parents=True)
+    external_target.write_bytes(b'{"value":"external-secret"}')
+    before_external = _observation(external_target)
+    real_open = os.open
+    swapped = False
+
+    def racing_open(path, flags, mode=0o777, *, dir_fd=None):
+        nonlocal swapped
+        if path == workspace.name and dir_fd is not None and not swapped:
+            workspace_parent.rename(moved_parent)
+            workspace_parent.symlink_to(external_parent, target_is_directory=True)
             swapped = True
         return real_open(path, flags, mode, dir_fd=dir_fd)
 
@@ -318,6 +395,18 @@ def test_descriptor_read_rejects_noncanonical_relative_path(
     assert exc_info.value.details["reason_code"] == (
         "control_file_relative_path_invalid"
     )
+
+
+def test_descriptor_read_rejects_noncanonical_workspace_root(tmp_path: Path) -> None:
+    workspace = _workspace(tmp_path)
+
+    with pytest.raises(RuntimeStateError) as exc_info:
+        read_workspace_control_bytes(
+            workspace=workspace / ".." / workspace.name,
+            relative_path=CONTROL_RELATIVE_PATH,
+        )
+
+    assert exc_info.value.details["reason_code"] == "control_workspace_root_invalid"
 
 
 def test_descriptor_read_fails_closed_when_platform_support_is_unavailable(
