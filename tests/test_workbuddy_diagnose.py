@@ -236,6 +236,37 @@ def test_workbuddy_diagnose_does_not_expose_forged_registry_values(
     )
 
 
+def test_workbuddy_diagnose_preserves_invalid_recovery_action_with_real_registry(
+    tmp_path: Path,
+    capsys,
+) -> None:
+    ws = _workspace(tmp_path)
+    _init_runtime(
+        ws,
+        current_stage="doctor",
+        blocked=True,
+        run_integrity={
+            "status": "unknown",
+            "reference_eligible": False,
+            "clean_single_shot": False,
+        },
+    )
+
+    rc = main(["workbuddy", "diagnose", "--workspace", str(ws), "--json"])
+
+    assert rc == 0
+    payload = json.loads(capsys.readouterr().out)
+    projection = payload["completion_projection"]
+    assert projection["control_files"]["artifact_registry"] == "degradation"
+    assert projection["artifacts"]["reason_code"] == (
+        "artifact_registry_recovery_context_invalid"
+    )
+    assert projection["recovery_state"]["status"] == "invalid_recovery_state"
+    assert projection["next_allowed_action"] == "inspect_invalid_recovery"
+    assert payload["run_card"]["recovery_action"] == "inspect_invalid_recovery"
+    assert payload["run_card"]["next_allowed_action"] == "inspect_invalid_recovery"
+
+
 @pytest.mark.parametrize(
     "event_type",
     [

@@ -563,10 +563,16 @@ def _next_allowed_action(
     assessment_target: Mapping[str, Any],
     current_stage: str,
 ) -> str:
-    if any(status in _CONTROL_STOP_STATUSES for status in control_file_status.values()):
+    if any(
+        status in _CONTROL_STOP_STATUSES
+        for control_id, status in control_file_status.items()
+        if control_id != "artifact_registry"
+    ):
         return "inspect_unreadable_or_missing_control_files"
     if recovery_state.get("status") == "invalid_recovery_state":
         return "inspect_invalid_recovery"
+    if control_file_status.get("artifact_registry") in _CONTROL_STOP_STATUSES:
+        return "inspect_unreadable_or_missing_control_files"
     if workflow_truth.get("active_repair_present"):
         return "stop_complete_or_inspect_active_repair"
     if workflow_truth.get("blocked"):

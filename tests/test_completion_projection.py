@@ -465,9 +465,10 @@ def test_completion_projection_stops_on_missing_required_control_file(tmp_path: 
     _init_workspace(ws)
     (_intermediate(ws) / "runtime_manifest.json").unlink()
 
-    payload = _project(ws)
+    payload = build_completion_projection(workspace=ws, repo_workdir=ROOT)
 
     assert payload["control_files"]["runtime_manifest"] == "missing"
+    assert payload["control_files"]["artifact_registry"] == "degradation"
     assert payload["next_allowed_action"] == "inspect_unreadable_or_missing_control_files"
 
 
@@ -845,6 +846,37 @@ def test_completion_projection_unknown_integrity_is_invalid_recovery_state(tmp_p
 
     assert payload["recovery_state"]["status"] == "invalid_recovery_state"
     assert payload["next_allowed_action"] == "inspect_invalid_recovery"
+
+
+def test_completion_projection_real_registry_degradation_preserves_invalid_recovery_action(
+    tmp_path: Path,
+) -> None:
+    ws = _write_workspace(tmp_path)
+    _init_workspace(ws)
+    check_runtime_state(workspace=ws, repo_workdir=ROOT)
+    _set_workflow(
+        ws,
+        blocked=True,
+        blocking_reason="Gate blocked human review.",
+        run_integrity={
+            "status": "unknown",
+            "reference_eligible": False,
+            "clean_single_shot": False,
+        },
+    )
+    before = _control_snapshot(ws)
+
+    payload = build_completion_projection(workspace=ws, repo_workdir=ROOT)
+
+    assert payload["control_files"]["artifact_registry"] == "degradation"
+    assert payload["artifacts"]["reason_code"] == (
+        "artifact_registry_recovery_context_invalid"
+    )
+    assert payload["artifacts"]["invalid_or_stale"] == []
+    assert payload["recovery_state"]["status"] == "invalid_recovery_state"
+    assert payload["recovery_state"]["reason_code"] == "run_integrity_invalid"
+    assert payload["next_allowed_action"] == "inspect_invalid_recovery"
+    assert _control_snapshot(ws) == before
 
 
 def test_completion_projection_rejects_invalid_experiment_condition_before_finalize(tmp_path: Path) -> None:
