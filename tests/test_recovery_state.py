@@ -8,6 +8,7 @@ from pathlib import Path
 import pytest
 
 import multi_agent_brief.orchestrator.recovery_state as recovery_state_module
+import multi_agent_brief.orchestrator.runtime_state.control_context as control_context_module
 
 from multi_agent_brief.cli.deliver_commands import (
     DeliverCommandError,
@@ -308,6 +309,7 @@ def test_recovery_control_input_inventory_is_exact_and_resolver_is_read_only(
 )
 def test_recovery_rejects_direct_control_input_symlink_before_read(
     tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
     control_input: str,
 ) -> None:
     ws = _workspace(tmp_path)
@@ -321,6 +323,20 @@ def test_recovery_rejects_direct_control_input_symlink_before_read(
     path.symlink_to(external)
     before = _control_observations(control_paths, extra_paths=(external,))
 
+    def forbidden_loader(**_kwargs):
+        raise AssertionError("preexisting unsafe inventory must fail before reads")
+
+    monkeypatch.setattr(
+        recovery_state_module,
+        "load_workspace_control_object",
+        forbidden_loader,
+    )
+    monkeypatch.setattr(
+        recovery_state_module,
+        "read_workspace_control_bytes",
+        forbidden_loader,
+    )
+
     payload = _evaluate(ws)
 
     assert payload["status"] == RECOVERY_INVALID
@@ -328,6 +344,44 @@ def test_recovery_rejects_direct_control_input_symlink_before_read(
     assert payload["details"]["reason_code"] == "recovery_control_path_unsafe"
     assert payload["details"]["control_input"] == control_input
     assert _control_observations(control_paths, extra_paths=(external,)) == before
+
+
+def test_recovery_rejects_workspace_ancestor_alias_before_read(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    real_parent = tmp_path / "real"
+    workspace = _workspace(real_parent)
+    alias_parent = tmp_path / "alias"
+    alias_parent.symlink_to(real_parent, target_is_directory=True)
+    supplied_workspace = alias_parent / workspace.name
+    control_paths = resolve_recovery_control_paths(workspace)
+    before = _control_observations(control_paths)
+
+    def forbidden_loader(**_kwargs):
+        raise AssertionError("workspace aliases must fail before reads")
+
+    monkeypatch.setattr(
+        recovery_state_module,
+        "load_workspace_control_object",
+        forbidden_loader,
+    )
+    monkeypatch.setattr(
+        recovery_state_module,
+        "read_workspace_control_bytes",
+        forbidden_loader,
+    )
+
+    payload = evaluate_recovery_state(
+        workspace=supplied_workspace,
+        repo_workdir=ROOT,
+    )
+
+    assert payload["status"] == RECOVERY_INVALID
+    assert payload["reason_code"] == "control_context_invalid"
+    assert payload["details"]["reason_code"] == "recovery_control_path_unsafe"
+    assert payload["details"]["control_input"] == "runtime_manifest"
+    assert _control_observations(control_paths) == before
 
 
 @pytest.mark.parametrize(
@@ -498,23 +552,23 @@ def test_recovery_loader_rejects_polymorphic_path_field_before_read(
     }
     loader_calls: list[tuple[str, Path]] = []
 
-    def forbidden_object_loader(path: str | Path, **_kwargs):
-        loader_calls.append(("object", Path(path)))
+    def forbidden_object_loader(*, workspace: str | Path, relative_path: str, **_kwargs):
+        loader_calls.append(("object", Path(workspace) / relative_path))
         raise AssertionError("control object loader must not be called")
 
-    def forbidden_event_loader(path: str | Path):
-        loader_calls.append(("event", Path(path)))
-        raise AssertionError("event loader must not be called")
+    def forbidden_byte_reader(*, workspace: str | Path, relative_path: str, **_kwargs):
+        loader_calls.append(("event", Path(workspace) / relative_path))
+        raise AssertionError("control byte reader must not be called")
 
     monkeypatch.setattr(
         recovery_state_module,
-        "load_control_object",
+        "load_workspace_control_object",
         forbidden_object_loader,
     )
     monkeypatch.setattr(
         recovery_state_module,
-        "read_event_log_records_strict",
-        forbidden_event_loader,
+        "read_workspace_control_bytes",
+        forbidden_byte_reader,
     )
 
     with pytest.raises(RuntimeStateError) as exc_info:
@@ -575,27 +629,35 @@ def test_recovery_loader_reads_only_the_preflighted_inventory(
     ws = _workspace(tmp_path)
     _write_registry(ws)
     control_paths = resolve_recovery_control_paths(ws)
-    object_loader = recovery_state_module.load_control_object
-    event_loader = recovery_state_module.read_event_log_records_strict
-    read_paths: list[Path] = []
+    object_loader = recovery_state_module.load_workspace_control_object
+    byte_reader = recovery_state_module.read_workspace_control_bytes
+    read_bindings: list[tuple[Path, str]] = []
 
-    def tracked_object_loader(path: str | Path, **kwargs):
-        read_paths.append(Path(path))
-        return object_loader(path, **kwargs)
+    def tracked_object_loader(*, workspace: str | Path, relative_path: str, **kwargs):
+        read_bindings.append((Path(workspace), relative_path))
+        return object_loader(
+            workspace=workspace,
+            relative_path=relative_path,
+            **kwargs,
+        )
 
-    def tracked_event_loader(path: str | Path):
-        read_paths.append(Path(path))
-        return event_loader(Path(path))
+    def tracked_byte_reader(*, workspace: str | Path, relative_path: str, **kwargs):
+        read_bindings.append((Path(workspace), relative_path))
+        return byte_reader(
+            workspace=workspace,
+            relative_path=relative_path,
+            **kwargs,
+        )
 
     monkeypatch.setattr(
         recovery_state_module,
-        "load_control_object",
+        "load_workspace_control_object",
         tracked_object_loader,
     )
     monkeypatch.setattr(
         recovery_state_module,
-        "read_event_log_records_strict",
-        tracked_event_loader,
+        "read_workspace_control_bytes",
+        tracked_byte_reader,
     )
 
     context = load_recovery_context(
@@ -605,14 +667,62 @@ def test_recovery_loader_reads_only_the_preflighted_inventory(
     )
 
     assert context.runtime_manifest["run_id"] == RUN_ID
-    assert read_paths == [
-        control_paths.runtime_manifest,
-        control_paths.workflow_state,
-        control_paths.artifact_registry,
-        control_paths.finalize_report,
-        control_paths.event_log,
+    assert read_bindings == [
+        (control_paths.workspace, "output/intermediate/runtime_manifest.json"),
+        (control_paths.workspace, "output/intermediate/workflow_state.json"),
+        (control_paths.workspace, "output/intermediate/artifact_registry.json"),
+        (control_paths.workspace, "output/intermediate/finalize_report.json"),
+        (control_paths.workspace, "output/intermediate/event_log.jsonl"),
     ]
-    assert set(read_paths) == set(_control_path_mapping(control_paths).values())
+    assert {
+        workspace / relative_path for workspace, relative_path in read_bindings
+    } == set(_control_path_mapping(control_paths).values())
+
+
+def test_recovery_workflow_target_swap_cannot_import_foreign_context(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    workspace = _workspace(tmp_path / "trusted", current_stage="editor")
+    foreign_workspace = _workspace(tmp_path / "foreign", current_stage="auditor")
+    control_paths = resolve_recovery_control_paths(workspace)
+    target = control_paths.workflow_state
+    foreign_target = resolve_recovery_control_paths(foreign_workspace).workflow_state
+    before_foreign = _path_observation(foreign_target)
+    before_unchanged = {
+        key: _path_observation(path)
+        for key, path in _control_path_mapping(control_paths).items()
+        if key != "workflow_state"
+    }
+    real_open = control_context_module.os.open
+    swapped = False
+
+    def racing_open(path, flags, mode=0o777, *, dir_fd=None):
+        nonlocal swapped
+        if path == target.name and dir_fd is not None and not swapped:
+            target.unlink()
+            target.symlink_to(foreign_target)
+            swapped = True
+        return real_open(path, flags, mode, dir_fd=dir_fd)
+
+    monkeypatch.setattr(control_context_module.os, "open", racing_open)
+
+    with pytest.raises(RuntimeStateError) as exc_info:
+        load_recovery_context(
+            workspace=workspace,
+            repo_workdir=ROOT,
+            control_paths=control_paths,
+        )
+
+    assert swapped is True
+    assert exc_info.value.details["reason_code"] == "control_file_path_unsafe"
+    assert target.is_symlink()
+    assert _path_observation(foreign_target) == before_foreign
+    assert {
+        key: _path_observation(path)
+        for key, path in _control_path_mapping(control_paths).items()
+        if key != "workflow_state"
+    } == before_unchanged
 
 
 def test_recovery_state_clean_run_is_not_applicable(tmp_path: Path) -> None:

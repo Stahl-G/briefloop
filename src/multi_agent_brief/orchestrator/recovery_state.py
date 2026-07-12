@@ -21,14 +21,15 @@ from multi_agent_brief.orchestrator.runtime_state.contracts_loader import (
     load_stage_specs,
 )
 from multi_agent_brief.orchestrator.runtime_state.control_context import (
-    load_control_object,
+    load_workspace_control_object,
+    read_workspace_control_bytes,
 )
 from multi_agent_brief.orchestrator.runtime_state.errors import (
     E_TRANSACTION_INTEGRITY,
     RuntimeStateError,
 )
 from multi_agent_brief.orchestrator.runtime_state.event_log import (
-    read_event_log_records_strict,
+    parse_event_log_records_strict,
 )
 from multi_agent_brief.orchestrator.runtime_state.manifest import (
     RUNTIME_MANIFEST_SCHEMA,
@@ -128,7 +129,7 @@ def evaluate_recovery_state(
 ) -> dict[str, Any]:
     """Load current control records and return the canonical recovery state."""
 
-    ws = Path(workspace).expanduser().resolve()
+    ws = _recovery_workspace_path(workspace)
     try:
         control_paths = resolve_recovery_control_paths(ws)
         context = load_recovery_context(
@@ -403,7 +404,7 @@ def resolve_recovery_control_paths(
 ) -> RecoveryControlPaths:
     """Return one canonical, preflighted path capability for recovery reads."""
 
-    ws = Path(workspace).expanduser().resolve()
+    ws = _recovery_workspace_path(workspace)
     paths = _expected_recovery_control_paths(ws)
     return _validate_recovery_control_paths(workspace=ws, control_paths=paths)
 
@@ -416,37 +417,60 @@ def load_recovery_context(
 ) -> RecoveryContext:
     """Load recovery inputs only through the canonical five-path inventory."""
 
-    ws = Path(workspace).expanduser().resolve()
+    ws = _recovery_workspace_path(workspace)
     paths = (
         resolve_recovery_control_paths(ws)
         if control_paths is None
         else control_paths
     )
     # A caller-supplied capability may be forged, belong to another workspace,
-    # or become stale after resolution. Rebind and preflight immediately before
-    # every read instead of trusting either the dataclass instance or its Path
-    # fields as executable I/O selectors.
+    # or become stale after resolution. Rebind and preflight the complete
+    # inventory before reading, then let each descriptor-bound acquisition
+    # reject any later path replacement at its actual open.
     canonical_paths = _validate_recovery_control_paths(
         workspace=ws,
         control_paths=paths,
     )
     path_map = _recovery_control_path_mapping(canonical_paths)
-    manifest = load_control_object(
-        path_map["runtime_manifest"], expected_schema=RUNTIME_MANIFEST_SCHEMA
+    relative_path_map = _recovery_control_relative_path_mapping(canonical_paths)
+    manifest = load_workspace_control_object(
+        workspace=canonical_paths.workspace,
+        relative_path=relative_path_map["runtime_manifest"],
+        expected_schema=RUNTIME_MANIFEST_SCHEMA,
     )
-    workflow = load_control_object(
-        path_map["workflow_state"], expected_schema=WORKFLOW_STATE_SCHEMA
+    workflow = load_workspace_control_object(
+        workspace=canonical_paths.workspace,
+        relative_path=relative_path_map["workflow_state"],
+        expected_schema=WORKFLOW_STATE_SCHEMA,
     )
-    registry = load_control_object(
-        path_map["artifact_registry"],
+    registry = load_workspace_control_object(
+        workspace=canonical_paths.workspace,
+        relative_path=relative_path_map["artifact_registry"],
         expected_schema=ARTIFACT_REGISTRY_SCHEMA,
         required=False,
     )
-    report = load_control_object(
-        path_map["finalize_report"],
+    report = load_workspace_control_object(
+        workspace=canonical_paths.workspace,
+        relative_path=relative_path_map["finalize_report"],
         required=False,
     )
-    event_records = read_event_log_records_strict(path_map["event_log"])
+    event_raw = read_workspace_control_bytes(
+        workspace=canonical_paths.workspace,
+        relative_path=relative_path_map["event_log"],
+    )
+    if event_raw is None:
+        raise RuntimeStateError(
+            f"Required control file is missing: {path_map['event_log']}",
+            details={
+                "path": str(path_map["event_log"]),
+                "reason_code": "control_file_missing",
+            },
+            error_code=E_TRANSACTION_INTEGRITY,
+        )
+    event_records = parse_event_log_records_strict(
+        event_raw,
+        path=path_map["event_log"],
+    )
     repo = resolve_repo_workdir(repo_workdir, workspace=ws)
     stages = load_stage_specs(repo)
     run_id = _text((manifest or {}).get("run_id"))
@@ -469,6 +493,12 @@ def _expected_recovery_control_paths(workspace: Path) -> RecoveryControlPaths:
         for key, relative_path in RECOVERY_CONTROL_INPUT_FILES
     }
     return RecoveryControlPaths(workspace=workspace, **values)
+
+
+def _recovery_workspace_path(workspace: str | Path) -> Path:
+    """Return a lexical absolute workspace identity without following aliases."""
+
+    return Path(workspace).expanduser().absolute()
 
 
 def _validate_recovery_control_paths(
@@ -534,6 +564,21 @@ def _recovery_control_path_mapping(
     return MappingProxyType(
         {
             key: getattr(control_paths, key)
+            for key, _relative_path in RECOVERY_CONTROL_INPUT_FILES
+        }
+    )
+
+
+def _recovery_control_relative_path_mapping(
+    control_paths: RecoveryControlPaths,
+) -> Mapping[str, str]:
+    """Derive descriptor-bound read selectors from the validated path binding."""
+
+    return MappingProxyType(
+        {
+            key: getattr(control_paths, key)
+            .relative_to(control_paths.workspace)
+            .as_posix()
             for key, _relative_path in RECOVERY_CONTROL_INPUT_FILES
         }
     )
