@@ -13269,9 +13269,118 @@ def test_artifact_contract_rejects_non_string_path_without_state_writes(tmp_path
         check_runtime_state(workspace=ws, repo_workdir=repo)
 
     assert excinfo.value.error_code == "E_TRANSACTION_INTEGRITY"
-    assert "path must be a non-empty string" in str(excinfo.value)
+    assert excinfo.value.details["field"].endswith(".path")
     assert {
         key: _state_file(ws, key).read_bytes() if _state_file(ws, key).exists() else None
+        for key in RUNTIME_STATE_FILES
+    } == before
+
+
+def test_contract_rejection_during_initialize_writes_no_control_files(
+    tmp_path: Path,
+) -> None:
+    repo = _repo_with_role_topology(tmp_path, "default")
+    ws = _write_workspace(tmp_path)
+    stage_specs_path = repo / "configs" / "stage_specs.yaml"
+    import yaml
+
+    stage_specs = yaml.safe_load(stage_specs_path.read_text(encoding="utf-8"))
+    stages = stage_specs["workflow"]["stages"]
+    stages[1]["stage_id"] = stages[0]["stage_id"]
+    stage_specs_path.write_text(
+        yaml.safe_dump(stage_specs, sort_keys=False),
+        encoding="utf-8",
+    )
+    before_files = {
+        path.relative_to(ws).as_posix(): (path.read_bytes(), path.stat().st_mtime_ns)
+        for path in ws.rglob("*")
+        if path.is_file()
+    }
+
+    with pytest.raises(RuntimeStateError) as excinfo:
+        initialize_runtime_state(workspace=ws, repo_workdir=repo)
+
+    assert excinfo.value.error_code == runtime_state.operations.E_TRANSACTION_INTEGRITY
+    assert {
+        path.relative_to(ws).as_posix(): (path.read_bytes(), path.stat().st_mtime_ns)
+        for path in ws.rglob("*")
+        if path.is_file()
+    } == before_files
+    assert all(not _state_file(ws, key).exists() for key in RUNTIME_STATE_FILES)
+
+
+def test_contract_rejection_during_stage_completion_preserves_control_state(
+    tmp_path: Path,
+) -> None:
+    repo = _repo_with_role_topology(tmp_path, "default")
+    ws = _write_workspace(tmp_path)
+    initialize_runtime_state(workspace=ws, repo_workdir=repo)
+    contracts_path = repo / "configs" / "artifact_contracts.yaml"
+    import yaml
+
+    contracts = yaml.safe_load(contracts_path.read_text(encoding="utf-8"))
+    contracts["artifacts"][0]["required"] = 1
+    contracts_path.write_text(
+        yaml.safe_dump(contracts, sort_keys=False),
+        encoding="utf-8",
+    )
+    before = {
+        key: _state_file(ws, key).read_bytes() if _state_file(ws, key).exists() else None
+        for key in RUNTIME_STATE_FILES
+    }
+
+    with pytest.raises(RuntimeStateError) as excinfo:
+        complete_stage_transaction(
+            workspace=ws,
+            repo_workdir=repo,
+            stage_id="doctor",
+            reason="contract rejection",
+        )
+
+    assert excinfo.value.error_code == runtime_state.operations.E_TRANSACTION_INTEGRITY
+    assert {
+        key: _state_file(ws, key).read_bytes() if _state_file(ws, key).exists() else None
+        for key in RUNTIME_STATE_FILES
+    } == before
+
+
+def test_contract_ownership_mismatch_during_check_preserves_control_state(
+    tmp_path: Path,
+) -> None:
+    repo = _repo_with_role_topology(tmp_path, "default")
+    ws = _write_workspace(tmp_path)
+    initialize_runtime_state(workspace=ws, repo_workdir=repo)
+    stage_specs_path = repo / "configs" / "stage_specs.yaml"
+    import yaml
+
+    stage_specs = yaml.safe_load(stage_specs_path.read_text(encoding="utf-8"))
+    stage_specs["workflow"]["stages"][0]["produces"] = ["audit_report"]
+    stage_specs_path.write_text(
+        yaml.safe_dump(stage_specs, sort_keys=False),
+        encoding="utf-8",
+    )
+    before = {
+        key: (
+            _state_file(ws, key).read_bytes(),
+            _state_file(ws, key).stat().st_mtime_ns,
+        )
+        if _state_file(ws, key).exists()
+        else None
+        for key in RUNTIME_STATE_FILES
+    }
+
+    with pytest.raises(RuntimeStateError) as excinfo:
+        check_runtime_state(workspace=ws, repo_workdir=repo)
+
+    assert excinfo.value.error_code == runtime_state.operations.E_TRANSACTION_INTEGRITY
+    assert excinfo.value.details["field"] == "workflow.stages[0].produces[0]"
+    assert {
+        key: (
+            _state_file(ws, key).read_bytes(),
+            _state_file(ws, key).stat().st_mtime_ns,
+        )
+        if _state_file(ws, key).exists()
+        else None
         for key in RUNTIME_STATE_FILES
     } == before
 
