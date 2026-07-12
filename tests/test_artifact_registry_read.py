@@ -991,3 +991,108 @@ def test_reg_read_18_unsafe_missing_registry_path_does_not_become_not_materializ
     )
     _assert_read_only(ws, before)
     assert _workspace_snapshot(external_parent) == external_before
+
+
+@pytest.mark.parametrize(
+    "alias_kind",
+    ["float", "bool"],
+    ids=["int-as-float", "int-as-bool"],
+)
+def test_reg_read_19_producer_replay_comparison_is_json_type_strict(
+    tmp_path: Path,
+    alias_kind: str,
+) -> None:
+    ws = write_minimal_workspace(tmp_path / "ws")
+    artifact_path = ws / "output" / "intermediate" / "audited_brief.md"
+    artifact_path.parent.mkdir(parents=True)
+    artifact_path.write_text("x" if alias_kind == "bool" else "AAAA\n", encoding="utf-8")
+    initialize_runtime_state(workspace=ws, repo_workdir=ROOT, actor="cli")
+    check_runtime_state(workspace=ws, repo_workdir=ROOT, actor="cli")
+    registry_path = runtime_state_paths(ws)["artifact_registry"]
+    registry = _read_json(registry_path)
+    record = registry["artifacts"]["audited_brief"]
+    writer_size = record["size_bytes"]
+    assert isinstance(writer_size, int) and not isinstance(writer_size, bool)
+    if alias_kind == "float":
+        record["size_bytes"] = float(writer_size)
+    else:
+        assert writer_size == 1
+        record["size_bytes"] = True
+    assert record["size_bytes"] == writer_size
+    assert type(record["size_bytes"]) is not type(writer_size)
+    _write_json(registry_path, registry)
+    before = _workspace_snapshot(ws)
+
+    verdict = interpret_artifact_registry(workspace=ws, repo_workdir=ROOT)
+
+    _assert_negative(
+        verdict,
+        verdict_type=RegistryDegradation,
+        reason_code="artifact_registry_producer_replay_mismatch",
+    )
+    _assert_read_only(ws, before)
+
+
+def test_reg_read_19_manifest_contract_comparison_is_json_type_strict(
+    tmp_path: Path,
+) -> None:
+    ws = _workspace(tmp_path)
+    manifest_path = runtime_state_paths(ws)["runtime_manifest"]
+    manifest = _read_json(manifest_path)
+    required = manifest["expected_artifacts"][0]["required"]
+    assert isinstance(required, bool)
+    manifest["expected_artifacts"][0]["required"] = int(required)
+    assert manifest["expected_artifacts"][0]["required"] == required
+    assert type(manifest["expected_artifacts"][0]["required"]) is not type(required)
+    _write_json(manifest_path, manifest)
+    before = _workspace_snapshot(ws)
+
+    verdict = interpret_artifact_registry(workspace=ws, repo_workdir=ROOT)
+
+    _assert_negative(
+        verdict,
+        verdict_type=RegistryDegradation,
+        reason_code="artifact_registry_manifest_contract_mismatch",
+    )
+    _assert_read_only(ws, before)
+
+
+def test_reg_read_20_writer_workflow_stage_validation_precedes_replay(
+    tmp_path: Path,
+) -> None:
+    ws = _workspace(tmp_path)
+    workflow_path = runtime_state_paths(ws)["workflow_state"]
+    workflow = _read_json(workflow_path)
+    workflow["stage_statuses"]["doctor"]["status"] = "banana"
+    _write_json(workflow_path, workflow)
+    before = _workspace_snapshot(ws)
+
+    verdict = interpret_artifact_registry(workspace=ws, repo_workdir=ROOT)
+
+    _assert_negative(
+        verdict,
+        verdict_type=RegistryDegradation,
+        reason_code="artifact_registry_workflow_stage_status_invalid",
+    )
+    _assert_read_only(ws, before)
+
+
+def test_reg_read_21_json_comparison_ignores_object_member_order(
+    tmp_path: Path,
+) -> None:
+    ws = _workspace(tmp_path)
+    registry_path = runtime_state_paths(ws)["artifact_registry"]
+    registry = _read_json(registry_path)
+    registry["artifacts"] = dict(reversed(list(registry["artifacts"].items())))
+    reordered = dict(reversed(list(registry.items())))
+    registry_path.write_text(
+        json.dumps(reordered, ensure_ascii=False, indent=2, sort_keys=False) + "\n",
+        encoding="utf-8",
+    )
+    before = _workspace_snapshot(ws)
+
+    verdict = interpret_artifact_registry(workspace=ws, repo_workdir=ROOT)
+
+    assert isinstance(verdict, CanonicalRegistryView)
+    assert verdict.artifact_count == len(registry["artifacts"])
+    _assert_read_only(ws, before)

@@ -29,6 +29,7 @@ from multi_agent_brief.orchestrator.runtime_state.control_context import (
 )
 from multi_agent_brief.orchestrator.runtime_state.contracts_loader import (
     load_artifact_contracts,
+    load_stage_specs,
 )
 from multi_agent_brief.orchestrator.runtime_state.errors import RuntimeStateError
 from multi_agent_brief.orchestrator.runtime_state.identity import (
@@ -40,6 +41,7 @@ from multi_agent_brief.orchestrator.runtime_state.manifest import (
 from multi_agent_brief.orchestrator.runtime_state.paths import runtime_state_paths
 from multi_agent_brief.orchestrator.runtime_state.workflow import (
     WORKFLOW_STATE_SCHEMA,
+    workflow_with_persistable_stage_completions,
 )
 from multi_agent_brief.orchestrator_contract import resolve_repo_workdir
 
@@ -212,8 +214,17 @@ def interpret_artifact_registry(
     try:
         repo = resolve_repo_workdir(repo_workdir, workspace=ws)
         artifacts = load_artifact_contracts(repo)
+        stages = load_stage_specs(repo)
     except (RuntimeStateError, ValueError):
         return RegistryDegradation("artifact_registry_contract_context_invalid")
+    try:
+        workflow = workflow_with_persistable_stage_completions(
+            workflow,
+            stages=stages,
+            path=workflow_path,
+        )
+    except RuntimeStateError:
+        return RegistryDegradation("artifact_registry_workflow_stage_status_invalid")
     artifacts_by_id = {
         str(artifact["artifact_id"]): artifact
         for artifact in artifacts
@@ -228,7 +239,10 @@ def interpret_artifact_registry(
         }
         for artifact in artifacts
     ]
-    if manifest.get("expected_artifacts") != expected_manifest_artifacts:
+    if not _json_values_equal(
+        manifest.get("expected_artifacts"),
+        expected_manifest_artifacts,
+    ):
         return RegistryDegradation("artifact_registry_manifest_contract_mismatch")
     try:
         resolved_paths = artifact_paths_from_contracts(ws, artifacts_by_id)
@@ -269,7 +283,10 @@ def interpret_artifact_registry(
             return RegistryDegradation("artifact_registry_record_path_invalid")
         if canonical_path != raw_path:
             return RegistryDegradation("artifact_registry_record_path_invalid")
-        if any(record.get(field) != contract.get(field) for field in _CONTRACT_BOUND_RECORD_FIELDS):
+        if any(
+            not _json_values_equal(record.get(field), contract.get(field))
+            for field in _CONTRACT_BOUND_RECORD_FIELDS
+        ):
             return RegistryDegradation("artifact_registry_record_contract_mismatch")
         required = record.get("required")
         if not isinstance(required, bool) or required != bool(contract.get("required", False)):
@@ -299,7 +316,7 @@ def interpret_artifact_registry(
         )
     except Exception:  # producer failures never release persisted values
         return RegistryDegradation("artifact_registry_producer_replay_failed")
-    if producer_replay != registry:
+    if not _json_values_equal(producer_replay, registry):
         return _producer_replay_mismatch_verdict(
             persisted=registry,
             expected=producer_replay,
@@ -400,7 +417,7 @@ def _producer_replay_mismatch_verdict(
     """Classify producer-derived snapshot drift without exposing either payload."""
 
     if any(
-        persisted.get(field) != expected.get(field)
+        not _json_values_equal(persisted.get(field), expected.get(field))
         for field in _TOP_LEVEL_FIELDS - {"artifacts"}
     ):
         return RegistryDegradation("artifact_registry_producer_replay_mismatch")
@@ -417,7 +434,7 @@ def _producer_replay_mismatch_verdict(
     for artifact_id in sorted(persisted_records):
         persisted_record = persisted_records[artifact_id]
         expected_record = expected_records[artifact_id]
-        if persisted_record == expected_record:
+        if _json_values_equal(persisted_record, expected_record):
             continue
         reason = _producer_snapshot_drift_reason(
             persisted_record=persisted_record,
@@ -443,9 +460,20 @@ def _producer_snapshot_drift_reason(
     changed_fields = {
         field
         for field in set(persisted_record) | set(expected_record)
-        if persisted_record.get(field) != expected_record.get(field)
+        if not _json_values_equal(
+            persisted_record.get(field),
+            expected_record.get(field),
+        )
     }
     if not changed_fields or not changed_fields.issubset(_SNAPSHOT_DERIVED_FIELDS):
+        return None
+    if any(
+        persisted_record.get(field) == expected_record.get(field)
+        for field in changed_fields
+    ):
+        # Python aliases JSON scalar types (notably ``bool`` and ``int``) and
+        # also propagates that equality through lists/dicts. Such a mutation
+        # is malformed persisted authority, not workspace snapshot drift.
         return None
     persisted_snapshot = tuple(
         persisted_record.get(field) for field in ("size_bytes", "mtime", "sha256")
@@ -453,7 +481,7 @@ def _producer_snapshot_drift_reason(
     expected_snapshot = tuple(
         expected_record.get(field) for field in ("size_bytes", "mtime", "sha256")
     )
-    if persisted_snapshot == expected_snapshot:
+    if _json_values_equal(persisted_snapshot, expected_snapshot):
         return None
 
     persisted_absent = persisted_record.get("status") in _ABSENT_STATUSES
@@ -469,13 +497,30 @@ def _producer_snapshot_drift_reason(
         and ((persisted_sha is None) != (expected_sha is None))
     ):
         return "artifact_registry_snapshot_file_type_drift"
-    if persisted_mtime != expected_mtime:
+    if not _json_values_equal(persisted_mtime, expected_mtime):
         return "artifact_registry_snapshot_mtime_drift"
-    if persisted_size != expected_size:
+    if not _json_values_equal(persisted_size, expected_size):
         return "artifact_registry_snapshot_size_drift"
-    if persisted_sha != expected_sha:
+    if not _json_values_equal(persisted_sha, expected_sha):
         return "artifact_registry_snapshot_sha256_drift"
     return "artifact_registry_snapshot_metadata_drift"
+
+
+def _json_values_equal(left: Any, right: Any) -> bool:
+    """Compare JSON values recursively without Python's numeric type aliases."""
+
+    if type(left) is not type(right):
+        return False
+    if isinstance(left, dict):
+        return set(left) == set(right) and all(
+            _json_values_equal(left[key], right[key]) for key in left
+        )
+    if isinstance(left, (list, tuple)):
+        return len(left) == len(right) and all(
+            _json_values_equal(left_item, right_item)
+            for left_item, right_item in zip(left, right)
+        )
+    return left == right
 
 
 def _freeze_json(value: Any) -> Any:
