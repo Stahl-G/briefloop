@@ -191,7 +191,9 @@ def _unit_guard_findings(markdown: str) -> list[AuditFinding]:
     for marker in parse_internal_citation_markers(markdown):
         if marker.status == "malformed" or not marker.claim_id.startswith("EIA_GEN_"):
             continue
-        window = markdown[max(0, marker.start - 100) : marker.start]
+        # Keep the original guard semantics: the 100-character bound applies
+        # after the numeric/unit phrase, not to the phrase's leading digits.
+        window = markdown[: marker.start]
         match = re.search(
             r"([0-9][0-9,]*(?:\.[0-9]+)?)\s*(?:千兆瓦时|GWh).{0,100}$",
             window,
