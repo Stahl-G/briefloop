@@ -12,7 +12,7 @@ WorkBuddy 是 BriefLoop 的本地操作外壳，不是新的 BriefLoop 权威层
   `TAVILY_API_KEY`；
 - 用户拒绝在线搜索时，继续之前显式关闭 web 搜索；
 - 完整工作流 handoff 使用 `--runtime codebuddy`；
-- 角色专属草稿工作调用匹配的兼容 CodeBuddy 的角色子代理；
+- 在 CodeBuddy/WorkBuddy host 中按精确名称调用匹配的项目角色子代理；
 - 用户同意后运行确定性 BriefLoop CLI 命令；
 - 在关键命令、角色返回、repair、gate、finalize 尝试、quality 摘要和
   打包/导出请求之后打印机器事实 Run Card；

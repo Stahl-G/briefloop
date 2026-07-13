@@ -23,6 +23,7 @@ REQUIRED_SKILL_FILES = (
     "references/quickstart.md",
     "references/repair-protocol.md",
     "references/status-and-gates.md",
+    "references/workbuddy-delegation.md",
     "references/workbuddy-safety.md",
     "references/workspace-workflow.md",
 )

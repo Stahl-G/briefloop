@@ -129,10 +129,19 @@ Use `--runtime codebuddy` only when the source checkout contains
 `.codebuddy/agents/briefloop-*.md`. The local WorkBuddy Skill zip alone does
 not install those CodeBuddy project assets.
 
-The WorkBuddy main session owns deterministic CLI transactions. It must invoke
-the matching CodeBuddy-compatible role subagent for role-owned draft artifact
-work, then return to the main session for validation, gate, state, finalize,
-delivery, and quality commands.
+Full execution requires the CodeBuddy/WorkBuddy main session itself to have a
+command-execution capability that can invoke `briefloop`; the host may present
+it as a terminal, shell, or equivalent tool rather than naming it `Bash`. Read
+`references/workbuddy-delegation.md` before role work. A CodeBuddy or WorkBuddy
+host that has loaded the project assets uses the same checked-in
+`.codebuddy/agents/briefloop-*.md` role definitions and invokes them by exact
+name. After a role returns, the main session runs validation, gate, state,
+finalize, delivery, and quality commands.
+
+The drafting roles declare `Read, Write, Grep, Glob`; the read-only Formatter
+declares `Read, Grep, Glob`. All intentionally omit `Bash`, so deterministic
+CLI transactions stay in the command-capable main session. The role and main
+session are separate permission domains.
 
 Use these role names exactly when the handoff assigns the corresponding stage:
 
@@ -150,11 +159,21 @@ The checked-in role definitions live under:
 .codebuddy/agents/briefloop-*.md
 ```
 
-If the current WorkBuddy environment cannot invoke those role subagents, stop
-before full workflow execution. You may still run deterministic setup,
-`status`, `state check`, `quality summarize`, or `demo` commands, but do not
-fall back to hand-authoring BriefLoop JSON artifacts and do not silently switch
-to `--runtime operator`.
+Invoke a role explicitly, for example: `Use the briefloop-scout subagent for
+the Scout work assigned by the current BriefLoop handoff, then return the
+written artifact paths to the main session.` Verify the host actually invoked
+and returned from that exact role; a generic helper or narrative claim is not
+delegation evidence.
+
+If the main session cannot invoke `briefloop`, stop before role work or state
+advancement and use a CodeBuddy/WorkBuddy environment with command execution.
+If the host can run CLI commands but cannot invoke those project roles, stop
+before full workflow execution. You may still run deterministic setup, `status`, `state
+check`, `quality summarize`, `doctor`, or demo commands, but do not fall back
+to hand-authoring role artifacts under the codebuddy handoff and do not
+silently switch runtime. The user must explicitly choose either a
+CodeBuddy/WorkBuddy session with project-role dispatch or a regenerated
+`--runtime operator` handoff.
 
 Before each stage or role-owned artifact action, and after each BriefLoop CLI
 command, re-open the relevant step in `output/intermediate/agent_handoff.md`
@@ -249,6 +268,7 @@ Read the relevant reference before acting:
 - `references/status-and-gates.md`
 - `references/repair-protocol.md`
 - `references/workbuddy-safety.md`
+- `references/workbuddy-delegation.md`
 
 ## Hard Boundaries
 

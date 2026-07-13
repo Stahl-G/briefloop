@@ -42,15 +42,19 @@ CodeBuddy's official project Skill discovery can find BriefLoop at:
    ```
 
 2. Report only the resolved command path and version.
-3. Ask whether the user wants online search enabled. If yes, strongly recommend
+3. If the main session cannot resolve and invoke `briefloop` or
+   `multi-agent-brief`, stop before workspace creation, role work, fallback, or
+   state advancement. Regenerating an operator handoff does not supply missing
+   command execution and is not a fallback for a missing CLI.
+4. Ask whether the user wants online search enabled. If yes, strongly recommend
    Tavily, verify only that `TAVILY_API_KEY` is present, and never print the key
    value. If no, explicitly disable web search before continuing.
-4. Classify the workspace path:
+5. Classify the workspace path:
    - existing workspace: ask for the folder path;
    - first-time run: explain that a BriefLoop workspace is the local folder for
      this report project, suggest a safe path, and ask for confirmation before
      creating it.
-5. When creating a workspace, make the search choice explicit:
+6. When creating a workspace, make the search choice explicit:
 
    ```bash
    # user enables online search; strongly recommend Tavily
@@ -62,9 +66,13 @@ CodeBuddy's official project Skill discovery can find BriefLoop at:
 
 ## Role Delegation
 
+Read `.agents/skills/briefloop-workbuddy/references/workbuddy-delegation.md`
+for the shared CodeBuddy/WorkBuddy invocation contract.
+
 Do not perform Scout, Screener, Claim Ledger, Analyst, Editor, Auditor, or
-Formatter work in the main conversation. For role-owned artifact work,
-explicitly invoke the matching project CodeBuddy sub-agent:
+Formatter work in the main conversation. In either a CodeBuddy or WorkBuddy
+host that has loaded the project assets, explicitly invoke the matching project
+sub-agent by its exact name:
 
 - `briefloop-scout`
 - `briefloop-screener`
@@ -90,13 +98,19 @@ Role sub-agents may draft only handoff-assigned role artifacts. They must not
 run `briefloop` or `multi-agent-brief` CLI commands. They return artifact paths
 or readiness summaries to the main CodeBuddy session.
 
-If the host cannot dispatch these project sub-agents (for example the Agent
-tool fails to honor the frontmatter-restricted tool set), stop before full
-codebuddy workflow execution. Do not draft role-owned artifacts in the main
-conversation under a codebuddy handoff, and do not suggest editing the role
-agents' frontmatter tools. The only legal continuation is an explicit user
-decision to regenerate the handoff with `--runtime operator`, whose contract
-allows operator-authored artifact work and never claims sub-agents ran.
+The drafting roles use `Read, Write, Grep, Glob`; the read-only Formatter uses
+`Read, Grep, Glob`. All intentionally omit `Bash`, so deterministic CLI
+transactions stay in the main session.
+
+If the main session can invoke BriefLoop CLI commands but the host cannot
+dispatch these project sub-agents (for example the Agent tool fails to honor
+the frontmatter-restricted tool set), stop before full codebuddy workflow
+execution. Do not draft role-owned artifacts in the main conversation under a
+codebuddy handoff, and do not suggest editing the role agents' frontmatter
+tools. With CLI execution already available, the only legal continuation is an
+explicit user decision to regenerate the handoff with `--runtime operator`,
+whose contract allows operator-authored artifact work and never claims
+sub-agents ran.
 
 ## Deterministic Transactions
 

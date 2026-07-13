@@ -123,9 +123,19 @@ briefloop run --workspace <workspace> --runtime codebuddy
 `.codebuddy/agents/briefloop-*.md` 时才使用 `--runtime codebuddy`。
 仅有本地 WorkBuddy Skill zip 不会安装这些 CodeBuddy 项目资产。
 
-WorkBuddy 主会话拥有确定性 CLI 事务。角色专属的草稿工件工作必须调用匹配的
-兼容 CodeBuddy 的角色子代理，然后回到主会话执行验证、gate、state、
-finalize、交付和 quality 命令。
+完整执行要求 CodeBuddy/WorkBuddy 主会话本身具有可调用 `briefloop` 的命令执行
+能力；宿主可以把它显示为终端、Shell 或等价工具，不要求 UI 中一定叫
+`Bash`。委派角色工作前先读
+`references/workbuddy-delegation.md`。CodeBuddy/WorkBuddy host 只要加载了
+源码检出中的项目角色，就使用同一组 `.codebuddy/agents/briefloop-*.md`
+定义，并按精确角色名显式调用。
+
+Scout、Screener、Claim Ledger、Analyst、Editor 和 Auditor 角色声明
+`Read, Write, Grep, Glob`；Formatter 是只读 readiness reporter，只声明
+`Read, Grep, Glob`。所有角色都故意不提供 `Bash`：角色负责 handoff 指派的
+草稿，返回后由拥有命令执行能力的主会话负责验证、gate、state、finalize、
+交付和 quality CLI 事务。角色不持有 Bash 不会禁用主会话的控制面；两者是
+分开的权限域。
 
 当 handoff 指派对应阶段时，严格使用这些角色名：
 
@@ -143,15 +153,25 @@ finalize、交付和 quality 命令。
 .codebuddy/agents/briefloop-*.md
 ```
 
-如果当前 WorkBuddy 环境无法调用这些角色子代理（例如 Agent 工具无法按
-frontmatter 受限工具集派发项目级子代理），在 codebuddy 完整工作流执行之前
-停下。你仍可以运行确定性 setup、`status`、`state check`、`quality
-summarize` 或 `demo` 命令，但在 codebuddy handoff 下不要退回手写 BriefLoop
-JSON 工件，不要静默切换到 `--runtime operator`，也不要建议修改角色子代理
-frontmatter 的 tools 清单来绕过设计。
+在 CodeBuddy/WorkBuddy 中显式调用时，使用类似下面的指令，并核对宿主确实
+显示了对应角色的调用和返回，而不是仅在正文中声称已经委派：
 
-此时合法的继续通道只有一条，且必须由用户明确决定：向用户说明本环境无法
-派发角色子代理，请用户选择是否改用 operator 运行时重新生成 handoff：
+```text
+使用 briefloop-scout 子代理执行当前 BriefLoop handoff 指派的 Scout 工作；
+完成后把写入的工件路径返回主会话。
+```
+
+如果主会话不能调用 `briefloop`，完整工作流无法执行，应在任何角色工作或状态
+推进前停下，并改用具有命令执行能力的 CodeBuddy/WorkBuddy 环境。如果当前
+host 能执行 CLI、但无法派发这些项目角色，则在 codebuddy 完整工作流执行之前
+停下。
+你仍可以运行确定性 setup、`status`、`state check`、`quality summarize`、
+`doctor` 或 demo 命令，但在 codebuddy handoff 下不要退回主会话代写角色工件，
+不要静默切换到 `--runtime operator`，也不要修改角色 frontmatter 的 tools
+清单来绕过设计。
+
+向用户说明限制。下一步必须由用户明确决定：在具有项目角色派发能力的
+CodeBuddy/WorkBuddy 会话中继续，或改用 operator 运行时重新生成 handoff：
 
 ```bash
 briefloop run --workspace <workspace> --runtime operator
@@ -271,6 +291,7 @@ handoff 步骤再继续。
 - `references/status-and-gates.md`
 - `references/repair-protocol.md`
 - `references/workbuddy-safety.md`
+- `references/workbuddy-delegation.md`
 
 ## 硬边界
 

@@ -94,8 +94,9 @@ created; neither is delivered.
 
 ## Role Delegation
 
-The WorkBuddy main session must delegate role-owned draft work explicitly. Use
-the checked-in CodeBuddy-compatible role names exactly:
+Read `workbuddy-delegation.md` first. The CodeBuddy/WorkBuddy main session must
+delegate role-owned draft work explicitly and use the checked-in project role
+names exactly:
 
 ```text
 briefloop-scout
@@ -115,9 +116,13 @@ transactions after a role returns.
 Do not claim Scout, Screener, Claim Ledger, Analyst, Editor, Auditor, or
 Formatter subagents ran unless WorkBuddy actually delegated those roles.
 
-If role subagents are not available, stop before full workflow execution. You
-may still run deterministic setup, `status`, `state check`, `quality summarize`,
-or demo commands, but you must not hand-author workflow JSON artifacts.
+If the host does not actually dispatch the exact `briefloop-*` project role,
+stop before full workflow execution. You may still run deterministic setup,
+`status`, `state check`, `quality summarize`, `doctor`, or demo commands, but
+you must not relabel a generic helper or hand-author role-owned artifacts under
+the codebuddy handoff. The user must explicitly choose either a
+CodeBuddy/WorkBuddy session with project-role dispatch or a regenerated
+`--runtime operator` handoff.
 
 If the user is chatting in Chinese, explain the next action in Chinese when
 useful, but follow the generated handoff literally. Preserve command
