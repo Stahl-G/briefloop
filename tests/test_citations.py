@@ -1,8 +1,13 @@
 from __future__ import annotations
 
 from multi_agent_brief.core.citations import (
+    extract_claim_id_tokens,
     extract_src_ref_ids,
+    iter_bracketed_source_markers,
+    iter_claim_id_residue_tokens,
     parse_internal_citation_markers,
+    remove_empty_source_marker_residue,
+    remove_src_marker_spans,
     resolved_internal_citation_ids,
     unresolved_internal_citation_markers,
 )
@@ -140,3 +145,20 @@ def test_parse_internal_citation_markers_ignores_include_bare_claim_ids_compat_a
         )
         == []
     )
+
+
+def test_canonical_residue_and_marker_helpers_own_spans() -> None:
+    text = "[src:CL-001] bare CLAIM_123456 [source:] [SRC:legacy]"
+
+    assert extract_claim_id_tokens(text) == ["CL-001", "CLAIM_123456"]
+    assert [(token.raw, token.start, token.end) for token in iter_claim_id_residue_tokens(text)] == [
+        ("CL-001", 5, 11),
+        ("CLAIM_123456", 18, 30),
+    ]
+    assert [marker.raw for marker in iter_bracketed_source_markers(text)] == [
+        "[src:CL-001]",
+        "[source:]",
+        "[SRC:legacy]",
+    ]
+    assert remove_empty_source_marker_residue(text) == "[src:CL-001] bare CLAIM_123456  [SRC:legacy]"
+    assert remove_src_marker_spans(text) == " bare CLAIM_123456 [source:] [SRC:legacy]"

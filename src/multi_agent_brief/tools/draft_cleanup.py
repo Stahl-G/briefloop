@@ -6,13 +6,14 @@ from __future__ import annotations
 
 import re
 
-from multi_agent_brief.core.citations import VALID_SRC_REF_PATTERN
+from multi_agent_brief.core.citations import (
+    parse_internal_citation_markers,
+    remove_empty_source_marker_residue,
+    remove_src_marker_spans,
+)
 
 # Patterns that match internal process residue — must be removed from final text.
 _RESIDUE_PATTERNS: list[re.Pattern[str]] = [
-    re.compile(r"\[SRC:\]"),
-    re.compile(r"\[SOURCE:\]"),
-    re.compile(r"\[src:\s*\]"),  # empty [src:] with optional whitespace
     re.compile(r"Thought for\b[^\n]*", re.IGNORECASE),
     re.compile(r"Bash\([^\n]*\)"),
     re.compile(r"Agent completed\b[^\n]*", re.IGNORECASE),
@@ -61,10 +62,6 @@ FINAL_CLEAN_PATTERNS: list[tuple[re.Pattern[str], str, str, str]] = [
      "Investment recommendation language found"),
 ]
 
-# Valid claim citation pattern: [src:<claim_id>] with stable alnum, underscore, or hyphen IDs.
-_VALID_SRC_REF = VALID_SRC_REF_PATTERN
-
-
 def clean_process_residue(text: str) -> str:
     """Remove process residue while preserving valid [src:<claim_id>] citations.
 
@@ -74,6 +71,7 @@ def clean_process_residue(text: str) -> str:
     Returns:
         Cleaned text with residue removed and excessive blank lines collapsed.
     """
+    text = remove_empty_source_marker_residue(text)
     for pattern in _RESIDUE_PATTERNS:
         text = pattern.sub("", text)
     # Collapse 3+ consecutive blank lines into 2
@@ -91,8 +89,16 @@ def validate_citations_intact(original: str, cleaned: str) -> bool:
     Returns:
         True if every valid citation in original is also in cleaned.
     """
-    original_refs = set(_VALID_SRC_REF.findall(original))
-    cleaned_refs = set(_VALID_SRC_REF.findall(cleaned))
+    original_refs = {
+        marker.raw
+        for marker in parse_internal_citation_markers(original)
+        if marker.status != "malformed"
+    }
+    cleaned_refs = {
+        marker.raw
+        for marker in parse_internal_citation_markers(cleaned)
+        if marker.status != "malformed"
+    }
     return original_refs.issubset(cleaned_refs)
 
 
@@ -108,9 +114,7 @@ def strip_claim_citations(text: str) -> str:
     Returns:
         Text with all [src:...] markers removed.
     """
-    text = _VALID_SRC_REF.sub("", text)
-    # Also strip any remaining [src:...] patterns (malformed, empty, etc.)
-    text = re.compile(r"\[src:[^\]]*\]").sub("", text)
+    text = remove_src_marker_spans(text)
     # Collapse 3+ consecutive blank lines into 2
     text = re.sub(r"\n{3,}", "\n\n", text)
     return text.strip()
@@ -160,39 +164,34 @@ def detect_invalid_citations(text: str, valid_ids: set[str]) -> list[dict]:
     """
     findings: list[dict] = []
 
-    # Find all [src:...] patterns
-    for match in re.finditer(r"\[src:([^\]]*)\]", text):
-        ref_id = match.group(1).strip()
+    for marker in parse_internal_citation_markers(text, valid_claim_ids=valid_ids):
+        ref_id = marker.claim_id.strip()
+        line_number = text[:marker.start].count("\n") + 1
+        start = text.rfind("\n", 0, marker.start) + 1
+        end = text.find("\n", marker.end)
+        if end == -1:
+            end = len(text)
+        evidence = text[start:end].strip()[:200]
 
         # Empty citation
         if not ref_id:
-            line_number = text[:match.start()].count("\n") + 1
-            start = text.rfind("\n", 0, match.start()) + 1
-            end = text.find("\n", match.end())
-            if end == -1:
-                end = len(text)
             findings.append({
                 "finding_type": "empty_source_marker",
                 "severity": "medium",
                 "description": "Empty source marker [src:] found",
                 "line_number": line_number,
-                "evidence": text[start:end].strip()[:200],
+                "evidence": evidence,
             })
             continue
 
         # Invalid claim ID (not in ledger)
-        if ref_id not in valid_ids:
-            line_number = text[:match.start()].count("\n") + 1
-            start = text.rfind("\n", 0, match.start()) + 1
-            end = text.find("\n", match.end())
-            if end == -1:
-                end = len(text)
+        if marker.status != "resolved":
             findings.append({
                 "finding_type": "invalid_claim_id",
                 "severity": "high",
                 "description": f"Invalid claim ID [src:{ref_id}] not found in ledger",
                 "line_number": line_number,
-                "evidence": text[start:end].strip()[:200],
+                "evidence": evidence,
             })
 
     return findings

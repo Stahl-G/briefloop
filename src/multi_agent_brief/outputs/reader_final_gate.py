@@ -5,7 +5,11 @@ from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Any, Literal
 
-from multi_agent_brief.core.citations import parse_internal_citation_markers
+from multi_agent_brief.core.citations import (
+    iter_bracketed_source_markers,
+    iter_claim_id_residue_tokens,
+    parse_internal_citation_markers,
+)
 
 
 FindingKind = Literal[
@@ -34,9 +38,6 @@ COUNT_KEYS = {
     "policy_forbidden_phrase": "policy_forbidden_phrase_count",
 }
 
-_CLAIM_ID_RE = re.compile(
-    r"(?<![A-Za-z0-9_])(?:\[(?:CLM-\d{3,}|CL-\d{3,})\]|CLM-\d{3,}|CL-\d{3,}|(?:[A-Z][A-Z0-9]*_)?CLAIM_[A-Z0-9][A-Z0-9_-]*)(?![A-Za-z0-9_])"
-)
 _SOURCE_ID_RE = re.compile(
     r"(?<![A-Za-z0-9_])(?:[A-Z][A-Z0-9]*_)?(?:SRC|SOURCE)_[A-Z0-9][A-Z0-9_-]*(?![A-Za-z0-9_])"
 )
@@ -177,14 +178,11 @@ def detect_reader_residue(
             line_number=line_number,
             artifact=artifact,
         )
-        _collect_regex_findings(
+        _collect_claim_id_residue_findings(
             findings,
-            kind="bare_claim_id",
-            regex=_CLAIM_ID_RE,
             line=line,
             line_number=line_number,
             artifact=artifact,
-            message="Reader-facing output contains a raw internal claim ID.",
         )
         _collect_regex_findings(
             findings,
@@ -461,13 +459,13 @@ def _collect_source_marker_residue_findings(
                 message=marker.message or "Reader-facing output contains an internal source marker.",
             )
         )
-    for start, end, raw in _iter_bracketed_source_marker_residue(line):
-        if (start, end) in occupied_spans:
+    for marker in iter_bracketed_source_markers(line):
+        if (marker.start, marker.end) in occupied_spans:
             continue
         findings.append(
             ReaderResidueFinding(
                 kind="src_marker",
-                text=_shorten(raw),
+                text=_shorten(marker.raw),
                 line=line_number,
                 artifact=artifact,
                 message="Reader-facing output contains unsupported legacy source marker syntax.",
@@ -475,23 +473,23 @@ def _collect_source_marker_residue_findings(
         )
 
 
-def _iter_bracketed_source_marker_residue(line: str):
-    start = 0
-    lower = line.lower()
-    while True:
-        marker_start = lower.find("[", start)
-        if marker_start < 0:
-            return
-        cursor = marker_start + 1
-        while cursor < len(line) and line[cursor].isspace():
-            cursor += 1
-        if lower.startswith("src:", cursor) or lower.startswith("source:", cursor):
-            close = line.find("]", cursor)
-            end = close + 1 if close >= 0 else len(line)
-            yield marker_start, end, line[marker_start:end]
-            start = end
-            continue
-        start = marker_start + 1
+def _collect_claim_id_residue_findings(
+    findings: list[ReaderResidueFinding],
+    *,
+    line: str,
+    line_number: int,
+    artifact: str,
+) -> None:
+    for token in iter_claim_id_residue_tokens(line):
+        findings.append(
+            ReaderResidueFinding(
+                kind="bare_claim_id",
+                text=_shorten(token.raw),
+                line=line_number,
+                artifact=artifact,
+                message="Reader-facing output contains a raw internal claim ID.",
+            )
+        )
 
 
 def _collect_process_wording_findings(

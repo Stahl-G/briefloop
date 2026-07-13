@@ -2,10 +2,10 @@ from __future__ import annotations
 
 import re
 
-from multi_agent_brief.audit.deterministic import SRC_REF_PATTERN
 from multi_agent_brief.audit.interfaces import AuditAgentInterface
 from multi_agent_brief.audit.rule_packs import tag_finding
 from multi_agent_brief.core.claim_ledger import ClaimLedger
+from multi_agent_brief.core.citations import parse_internal_citation_markers
 from multi_agent_brief.core.schemas import AuditFinding, AuditReport, PipelineContext
 
 
@@ -127,7 +127,11 @@ def _regex_rule_findings(markdown: str) -> list[AuditFinding]:
 
 def _claim_gate_findings(markdown: str, ledger: ClaimLedger) -> list[AuditFinding]:
     findings: list[AuditFinding] = []
-    referenced_ids = {match.group(1) for match in SRC_REF_PATTERN.finditer(markdown)}
+    referenced_ids = {
+        marker.claim_id
+        for marker in parse_internal_citation_markers(markdown)
+        if marker.status != "malformed" and marker.claim_id
+    }
     for claim_id in referenced_ids:
         claim = ledger.get_claim(claim_id)
         if claim is None:
@@ -163,7 +167,11 @@ def _claim_gate_findings(markdown: str, ledger: ClaimLedger) -> list[AuditFindin
 
 def _source_density_findings(markdown: str) -> list[AuditFinding]:
     numbers = NUMBER_PATTERN.findall(markdown)
-    refs = SRC_REF_PATTERN.findall(markdown)
+    refs = [
+        marker
+        for marker in parse_internal_citation_markers(markdown)
+        if marker.status != "malformed" and marker.claim_id
+    ]
     if numbers and len(refs) < len(numbers) * 0.5:
         return [
             _tag(
@@ -180,7 +188,18 @@ def _source_density_findings(markdown: str) -> list[AuditFinding]:
 
 def _unit_guard_findings(markdown: str) -> list[AuditFinding]:
     findings: list[AuditFinding] = []
-    for match in re.finditer(r"([0-9][0-9,]*(?:\.[0-9]+)?)\s*(?:千兆瓦时|GWh).{0,100}\[src:EIA_GEN_", markdown):
+    for marker in parse_internal_citation_markers(markdown):
+        if marker.status == "malformed" or not marker.claim_id.startswith("EIA_GEN_"):
+            continue
+        # Keep the original guard semantics: the 100-character bound applies
+        # after the numeric/unit phrase, not to the phrase's leading digits.
+        window = markdown[: marker.start]
+        match = re.search(
+            r"([0-9][0-9,]*(?:\.[0-9]+)?)\s*(?:千兆瓦时|GWh).{0,100}$",
+            window,
+        )
+        if match is None:
+            continue
         value = float(match.group(1).replace(",", ""))
         if value > 1000:
             findings.append(
@@ -190,7 +209,7 @@ def _unit_guard_findings(markdown: str) -> list[AuditFinding]:
                     severity="high",
                     description="EIA generation value may have been inflated from thousand MWh into GWh.",
                     recommendation="Check whether the source unit is thousand MWh; write the equivalent GWh correctly.",
-                    evidence=match.group(0),
+                    evidence=window[match.start() :] + marker.raw,
                 )
             )
     return findings
@@ -201,8 +220,10 @@ def _repeat_summary_findings(markdown: str, ledger: ClaimLedger) -> list[AuditFi
     if not summary:
         return []
     findings: list[AuditFinding] = []
-    for match in SRC_REF_PATTERN.finditer(summary):
-        claim = ledger.get_claim(match.group(1))
+    for marker in parse_internal_citation_markers(summary):
+        if marker.status == "malformed" or not marker.claim_id:
+            continue
+        claim = ledger.get_claim(marker.claim_id)
         if claim and claim.metadata.get("repeat") is True:
             findings.append(
                 _tag(

@@ -15,16 +15,12 @@ from multi_agent_brief.contracts.source_metadata import (
 )
 from multi_agent_brief.contracts.schemas.evidence_span_registry import EvidenceSpanRegistryContract
 from multi_agent_brief.core.claim_ledger import ClaimLedger
-from multi_agent_brief.core.citations import parse_internal_citation_markers
+from multi_agent_brief.core.citations import contains_internal_id, parse_internal_citation_markers
 from multi_agent_brief.core.schemas import Claim
 
 
-_SRC_REF_RE = re.compile(r"\[src:([^\]]+)\]")
 _LOCAL_PATH_MARKERS = ("/Users/", "/home/", "/private/", "/var/folders/")
 _WINDOWS_USER_RE = re.compile(r"[A-Za-z]:\\Users\\")
-_INTERNAL_ID_RE = re.compile(
-    r"\b(?:SYN_)?(?:CLAIM|SRC|SOURCE|CLM)_[A-Z0-9][A-Z0-9_-]*\b"
-)
 _TRACE_EXCERPT_LIMIT = 500
 _SOURCE_CATEGORY_LABELS = {
     "clin" + "ical_registry": "Clinical registry",
@@ -762,7 +758,7 @@ def _contains_private_path(value: str) -> bool:
 
 
 def _contains_internal_id(value: str) -> bool:
-    return bool(_INTERNAL_ID_RE.search(value))
+    return contains_internal_id(value)
 
 
 def _normalize(value: str) -> str:
