@@ -67,6 +67,7 @@ tree is fully bilingual.
 - [BriefLoop-090 experiment closeout](reference-runs/briefloop-090-experiment-closeout.md)
 - [BriefLoop-090 A-controlled auditable-brief pilot](reference-runs/briefloop-090-a-controlled-pilot.md)
 - [Security](security.md)
+- [Release notes v0.12.1](releases/v0.12.1.md)
 - [Release notes v0.12.0](releases/v0.12.0.md)
 - [Release notes v0.11.12](releases/v0.11.12.md)
 - [Release notes v0.11.9](releases/v0.11.9.md)

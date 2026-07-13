@@ -279,7 +279,7 @@ demo 用的是合成材料，主要用来展示证据链和门禁行为。真实
 
 ## 🧭 当前状态
 
-当前版本：**v0.12.0**
+当前版本：**v0.12.1**
 
 当前主要入口：
 
@@ -287,8 +287,18 @@ demo 用的是合成材料，主要用来展示证据链和门禁行为。真实
 - Claude command：`/briefloop`
 - 实验性 WorkBuddy 指南：[docs/workbuddy.zh-CN.md](docs/workbuddy.zh-CN.md)
 
-v0.12.0 发布的是累计的 v0.11 产品基线、WorkBuddy adapter、
-operator runtime 和 semantic-support auditor hardening line，包括：
+v0.12.1 延续 v0.12.0 产品基线，并新增：
+
+- 明确的 WorkBuddy / CodeBuddy 两阶段权限边界：checked-in role agent 只起草
+  handoff 分配的 artifact，由具备命令能力的主会话运行确定性的 BriefLoop CLI
+  transaction
+- repo-local Northstar 产品治理 Skill；它的建议不会自行成为有效的产品或 release
+  决策
+- 绑定历史 v0.11.12 snapshot 的双语 Architecture Reference v0.4.0 阅读版；live
+  产品仍以当前 architecture status 和 support matrix 为准
+
+延续的 v0.11 产品基线、WorkBuddy adapter、operator runtime 和
+semantic-support auditor hardening line 包括：
 
 - `ReportSpec`、`ReportPack`、`ReportTemplate` 和 `PolicyProfile` contract
 - workspace skeleton 和确定性的 PolicyProfile 解析
