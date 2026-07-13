@@ -36,8 +36,8 @@ briefloop workbuddy pack-skill --output dist/workbuddy
 这会写出本地 Skill zip 和 manifest，例如：
 
 ```text
-dist/workbuddy/briefloop-workbuddy-skill-v0.12.0.zip
-dist/workbuddy/briefloop-workbuddy-skill-v0.12.0.manifest.json
+dist/workbuddy/briefloop-workbuddy-skill-v0.12.1.zip
+dist/workbuddy/briefloop-workbuddy-skill-v0.12.1.manifest.json
 ```
 
 这个 zip 是确定性、public-safe 的本地包。它不是 Python package data，也不是

@@ -293,7 +293,7 @@ The demos use synthetic materials. They show the evidence chain and gate behavio
 
 ## 🧭 Current status
 
-Current version: **v0.12.0**
+Current version: **v0.12.1**
 
 Current main entrypoints:
 
@@ -301,8 +301,19 @@ Current main entrypoints:
 - Claude command: `/briefloop`
 - experimental WorkBuddy / CodeBuddy guide: [docs/workbuddy.md](docs/workbuddy.md)
 
-v0.12.0 releases the accumulated v0.11 product-baseline, WorkBuddy adapter,
-operator-runtime, and semantic-support auditor hardening line, including:
+v0.12.1 carries forward the v0.12.0 product baseline and adds:
+
+- an explicit WorkBuddy / CodeBuddy two-phase permission boundary: checked-in
+  role agents draft only handoff-assigned artifacts, while a command-capable
+  main session runs deterministic BriefLoop CLI transactions
+- the repo-local Northstar product-governance Skill, whose recommendations do
+  not become effective product or release decisions by themselves
+- bilingual Architecture Reference v0.4.0 reading editions bound to the
+  historical v0.11.12 snapshot; current status and support documents remain
+  authoritative for the live product
+
+The carried-forward v0.11 product-baseline, WorkBuddy adapter,
+operator-runtime, and semantic-support auditor hardening line includes:
 
 - `ReportSpec`, `ReportPack`, `ReportTemplate`, and `PolicyProfile` contracts
 - workspace skeletons and deterministic PolicyProfile resolution

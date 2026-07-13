@@ -7,6 +7,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.12.1] — 2026-07-14
+
+### Changed
+
+- Bound the experimental WorkBuddy / CodeBuddy workflow to an explicit
+  two-phase permission model: checked-in role agents draft only their
+  handoff-assigned artifacts, while a command-capable main session re-reads the
+  handoff and runs deterministic BriefLoop CLI transactions. Missing main-session
+  command capability is a hard stop, and host-visible invocation of the exact
+  checked-in role is required before claiming role delegation.
+- Added the repo-local Northstar product-governance Skill with bounded evals,
+  plus bilingual Architecture Reference v0.4.0 reading editions and a
+  deterministic source/render guard. The report remains a historical v0.11.12
+  snapshot; current architecture and support truth remain in the existing
+  status and support-matrix documents.
+
 ## [0.12.0] — 2026-07-13
 
 ### Changed
