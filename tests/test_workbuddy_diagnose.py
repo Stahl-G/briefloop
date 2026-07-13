@@ -160,7 +160,7 @@ def _gate_report(status: str) -> dict[str, object]:
 
 def _diagnose_json(ws: Path, capsys) -> dict:
     with patch(
-        "multi_agent_brief.orchestrator.runtime_state.completion_projection."
+        "multi_agent_brief.orchestrator.runtime_state.artifact_registry_read."
         "interpret_artifact_registry",
         return_value=_canonical_registry_verdict(ws),
     ):
@@ -363,7 +363,7 @@ def test_workbuddy_diagnose_secret_risk_overlays_only_benign_completion_action(t
     _write_finalized_delivery(ws)
 
     with patch(
-        "multi_agent_brief.orchestrator.runtime_state.completion_projection."
+        "multi_agent_brief.orchestrator.runtime_state.artifact_registry_read."
         "interpret_artifact_registry",
         return_value=_canonical_registry_verdict(ws),
     ):

@@ -1,7 +1,10 @@
 from __future__ import annotations
 
 import json
+import os
 from pathlib import Path
+import subprocess
+import sys
 from unittest.mock import patch
 
 import pytest
@@ -23,6 +26,53 @@ from tests.helpers import write_workspace_files_under
 
 
 ROOT = Path(__file__).resolve().parent.parent
+
+
+@pytest.mark.parametrize("optimized", [False, True], ids=["normal", "optimized"])
+@pytest.mark.parametrize(
+    ("case_id", "import_script"),
+    [
+        (
+            "recovery_first",
+            "import multi_agent_brief.orchestrator.recovery_state",
+        ),
+        (
+            "completion_then_recovery",
+            "import multi_agent_brief.orchestrator.runtime_state.completion_projection; "
+            "import multi_agent_brief.orchestrator.recovery_state",
+        ),
+        (
+            "runtime_state_facade",
+            "import multi_agent_brief.orchestrator.runtime_state",
+        ),
+    ],
+)
+def test_runtime_state_import_orders_are_acyclic_in_fresh_process(
+    optimized: bool,
+    case_id: str,
+    import_script: str,
+) -> None:
+    command = [sys.executable]
+    if optimized:
+        command.append("-O")
+    command.extend(["-c", import_script])
+    env = os.environ.copy()
+    env["PYTHONPATH"] = str(ROOT / "src")
+
+    completed = subprocess.run(
+        command,
+        cwd=ROOT,
+        env=env,
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+
+    assert completed.returncode == 0, (
+        case_id,
+        completed.stdout,
+        completed.stderr,
+    )
 
 
 def _write_workspace(tmp_path: Path) -> Path:
@@ -83,7 +133,7 @@ def _project(
             resolved_paths={},
         )
     with patch(
-        "multi_agent_brief.orchestrator.runtime_state.completion_projection."
+        "multi_agent_brief.orchestrator.runtime_state.artifact_registry_read."
         "interpret_artifact_registry",
         return_value=verdict,
     ) as interpreter:

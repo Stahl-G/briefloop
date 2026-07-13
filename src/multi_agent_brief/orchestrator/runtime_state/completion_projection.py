@@ -21,11 +21,6 @@ from multi_agent_brief.orchestrator.run_integrity import (
     interpret_run_integrity,
     project_for_read,
 )
-from multi_agent_brief.orchestrator.runtime_state.artifact_registry_read import (
-    CanonicalRegistryView,
-    RegistryReadVerdict,
-    interpret_artifact_registry,
-)
 from multi_agent_brief.orchestrator.runtime_state.contracts_loader import (
     load_artifact_contracts,
     load_stage_specs,
@@ -68,6 +63,15 @@ def build_completion_projection(
 ) -> dict[str, Any]:
     """Build the read-only completion projection for a workspace."""
 
+    # Keep this import at the runtime chokepoint. ``recovery_state`` imports the
+    # runtime-state facade, which exports this module; importing the Registry
+    # interpreter at module load time would re-enter partially initialized
+    # Recovery modules.
+    from multi_agent_brief.orchestrator.runtime_state.artifact_registry_read import (
+        CanonicalRegistryView,
+        interpret_artifact_registry,
+    )
+
     ws = Path(workspace).expanduser().resolve()
     repo = resolve_repo_workdir(repo_workdir, workspace=ws)
     intermediate = ws / "output" / "intermediate"
@@ -84,8 +88,14 @@ def build_completion_projection(
         workspace=ws,
         repo_workdir=repo,
     )
-    registry = _canonical_registry_payload(registry_verdict)
-    registry_status = _registry_control_status(registry_verdict)
+    registry = _canonical_registry_payload(
+        registry_verdict,
+        canonical_view_type=CanonicalRegistryView,
+    )
+    registry_status = _registry_control_status(
+        registry_verdict,
+        canonical_view_type=CanonicalRegistryView,
+    )
     event_records, event_log_status = _read_event_log(runtime_state_paths(ws)["event_log"])
 
     control_file_status = {
@@ -98,7 +108,10 @@ def build_completion_projection(
     current_stage = current_stage or "unknown"
     run_integrity = _run_integrity_projection(workflow, workflow_status)
     workflow_truth = _workflow_truth(workflow, workflow_status)
-    artifact_truth = _artifact_truth(registry_verdict)
+    artifact_truth = _artifact_truth(
+        registry_verdict,
+        canonical_view_type=CanonicalRegistryView,
+    )
     stages = load_stage_specs(repo)
     artifacts = load_artifact_contracts(repo)
     gate_truth = _stage_gate_truth(
@@ -208,9 +221,13 @@ def _workflow_truth(workflow: Any, status: str) -> dict[str, Any]:
     }
 
 
-def _artifact_truth(verdict: RegistryReadVerdict) -> dict[str, Any]:
+def _artifact_truth(
+    verdict: Any,
+    *,
+    canonical_view_type: type[Any],
+) -> dict[str, Any]:
     invalid_or_stale: list[dict[str, str]] = []
-    if isinstance(verdict, CanonicalRegistryView):
+    if isinstance(verdict, canonical_view_type):
         for artifact_id, record in verdict.records.items():
             artifact_status = _clean_text(record.get("status"))
             if artifact_status in {"invalid", "stale"}:
@@ -234,9 +251,11 @@ def _artifact_truth(verdict: RegistryReadVerdict) -> dict[str, Any]:
 
 
 def _canonical_registry_payload(
-    verdict: RegistryReadVerdict,
+    verdict: Any,
+    *,
+    canonical_view_type: type[Any],
 ) -> dict[str, Any] | None:
-    if not isinstance(verdict, CanonicalRegistryView):
+    if not isinstance(verdict, canonical_view_type):
         return None
     return {
         "run_id": verdict.run_id,
@@ -255,8 +274,12 @@ def _thaw_registry_value(value: Any) -> Any:
     return value
 
 
-def _registry_control_status(verdict: RegistryReadVerdict) -> str:
-    return "present" if isinstance(verdict, CanonicalRegistryView) else verdict.kind
+def _registry_control_status(
+    verdict: Any,
+    *,
+    canonical_view_type: type[Any],
+) -> str:
+    return "present" if isinstance(verdict, canonical_view_type) else verdict.kind
 
 
 def _stage_gate_truth(

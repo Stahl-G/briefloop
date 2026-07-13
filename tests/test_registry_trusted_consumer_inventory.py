@@ -1,16 +1,54 @@
 from __future__ import annotations
 
 import ast
+import importlib.util
 from pathlib import Path
+
+import pytest
 
 
 ROOT = Path(__file__).resolve().parent.parent
+COMPLETION_MODULE_PACKAGE = "multi_agent_brief.orchestrator.runtime_state"
+REGISTRY_READER_MODULE = f"{COMPLETION_MODULE_PACKAGE}.artifact_registry_read"
+APPROVED_COMPLETION_REGISTRY_SYMBOLS = {
+    "CanonicalRegistryView",
+    "interpret_artifact_registry",
+}
 TARGET_CALLS = {
     "_build_artifact_registry",
     "check_runtime_state",
     "interpret_artifact_registry",
     "show_runtime_state",
 }
+
+
+def _resolved_import_targets(
+    node: ast.Import | ast.ImportFrom,
+) -> tuple[tuple[str, str | None], ...]:
+    """Resolve ordinary import syntax without importing the referenced module.
+
+    The returned pairs are ``(module, imported_name)``.  ``import module`` has
+    no imported name; ``from module import name`` keeps both components so the
+    caller can distinguish a symbol import from a submodule import.
+    """
+
+    if isinstance(node, ast.Import):
+        return tuple((item.name, None) for item in node.names)
+
+    if node.level:
+        relative_name = f"{'.' * node.level}{node.module or ''}"
+        try:
+            module = importlib.util.resolve_name(
+                relative_name,
+                COMPLETION_MODULE_PACKAGE,
+            )
+        except (ImportError, ValueError) as exc:
+            raise ValueError("unresolvable relative import") from exc
+    else:
+        module = node.module or ""
+    if not module:
+        raise ValueError("import-from statement has no resolvable module")
+    return tuple((module, item.name) for item in node.names)
 
 
 def _python_registry_accesses() -> set[tuple[str, str, str]]:
@@ -140,14 +178,53 @@ def _completion_registry_boundary_findings(source: str) -> tuple[set[str], int]:
     findings: set[str] = set()
     interpreter_call_count = 0
 
+    def enclosing_function_name(node: ast.AST) -> str:
+        current = parents.get(node)
+        while current is not None:
+            if isinstance(current, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                return current.name
+            current = parents.get(current)
+        return "<module>"
+
     for node in ast.walk(tree):
-        if not isinstance(node, ast.ImportFrom):
+        if not isinstance(node, (ast.Import, ast.ImportFrom)):
             continue
-        for imported in node.names:
-            local_name = imported.asname or imported.name
-            imported_names[local_name] = imported.name
-            if imported.name in forbidden:
-                findings.add(f"forbidden_import:{imported.name}")
+        try:
+            resolved_targets = _resolved_import_targets(node)
+        except ValueError:
+            findings.add("unresolvable_ordinary_import")
+            continue
+
+        function_name = enclosing_function_name(node)
+        for module, imported_name in resolved_targets:
+            if imported_name == "*":
+                findings.add("star_import_forbidden")
+                continue
+
+            imports_reader_module = (
+                module == REGISTRY_READER_MODULE
+                or (
+                    imported_name is not None
+                    and f"{module}.{imported_name}" == REGISTRY_READER_MODULE
+                )
+            )
+            if not imports_reader_module:
+                continue
+            if function_name != "build_completion_projection":
+                findings.add("typed_registry_import_must_be_build_local")
+                continue
+            if not (
+                module == REGISTRY_READER_MODULE
+                and imported_name in APPROVED_COMPLETION_REGISTRY_SYMBOLS
+            ):
+                findings.add("typed_registry_import_requires_exact_symbols")
+
+        if isinstance(node, ast.ImportFrom):
+            for imported in node.names:
+                local_name = imported.asname or imported.name
+                imported_names[local_name] = imported.name
+                if imported.name in forbidden:
+                    findings.add(f"forbidden_import:{imported.name}")
 
     def call_name(node: ast.Call) -> str:
         if isinstance(node.func, ast.Name):
@@ -436,19 +513,137 @@ def project(workspace, selector):
 
 def test_completion_boundary_allows_only_direct_event_log_selection() -> None:
     source = """
-from multi_agent_brief.orchestrator.runtime_state.artifact_registry_read import (
-    interpret_artifact_registry as read_registry,
-)
 from multi_agent_brief.orchestrator.runtime_state.paths import (
     runtime_state_paths as state_paths,
 )
 
-def project(workspace):
+def build_completion_projection(workspace):
+    from multi_agent_brief.orchestrator.runtime_state.artifact_registry_read import (
+        interpret_artifact_registry as read_registry,
+    )
     read_registry(workspace=workspace)
     return state_paths(workspace)["event_log"]
 """
     findings, interpreter_call_count = _completion_registry_boundary_findings(source)
     assert findings == set()
+    assert interpreter_call_count == 1
+
+
+@pytest.mark.parametrize(
+    "import_statement",
+    [
+        (
+            "import multi_agent_brief.orchestrator.runtime_state."
+            "artifact_registry_read as registry_reader"
+        ),
+        (
+            "from multi_agent_brief.orchestrator.runtime_state import "
+            "artifact_registry_read as registry_reader"
+        ),
+        (
+            "from multi_agent_brief.orchestrator.runtime_state import "
+            "paths, artifact_registry_read as registry_reader"
+        ),
+        (
+            "from multi_agent_brief.orchestrator.runtime_state."
+            "artifact_registry_read import CanonicalRegistryView, "
+            "interpret_artifact_registry"
+        ),
+        "from . import artifact_registry_read as registry_reader",
+        (
+            "from .artifact_registry_read import CanonicalRegistryView, "
+            "interpret_artifact_registry"
+        ),
+    ],
+)
+def test_completion_boundary_rejects_module_scope_registry_import_forms(
+    import_statement: str,
+) -> None:
+    source = f"""
+{import_statement}
+
+def build_completion_projection(workspace):
+    return interpret_artifact_registry(workspace=workspace)
+"""
+    findings, interpreter_call_count = _completion_registry_boundary_findings(source)
+    assert "typed_registry_import_must_be_build_local" in findings
+    assert interpreter_call_count == 1
+
+
+@pytest.mark.parametrize(
+    "import_statement",
+    [
+        (
+            "from multi_agent_brief.orchestrator.runtime_state."
+            "artifact_registry_read import *"
+        ),
+        "from .artifact_registry_read import *",
+    ],
+)
+def test_completion_boundary_rejects_registry_star_import(
+    import_statement: str,
+) -> None:
+    source = f"""
+{import_statement}
+
+def build_completion_projection(workspace):
+    return interpret_artifact_registry(workspace=workspace)
+"""
+    findings, interpreter_call_count = _completion_registry_boundary_findings(source)
+    assert "star_import_forbidden" in findings
+    assert interpreter_call_count == 1
+
+
+def test_completion_boundary_rejects_unresolvable_relative_import() -> None:
+    source = """
+from .....runtime_state import artifact_registry_read
+
+def build_completion_projection(workspace):
+    return artifact_registry_read.interpret_artifact_registry(workspace=workspace)
+"""
+    findings, interpreter_call_count = _completion_registry_boundary_findings(source)
+    assert "unresolvable_ordinary_import" in findings
+    assert interpreter_call_count == 1
+
+
+def test_completion_boundary_allows_build_local_relative_exact_symbols() -> None:
+    source = """
+def build_completion_projection(workspace):
+    from .artifact_registry_read import (
+        CanonicalRegistryView,
+        interpret_artifact_registry,
+    )
+    verdict = interpret_artifact_registry(workspace=workspace)
+    return isinstance(verdict, CanonicalRegistryView)
+"""
+    findings, interpreter_call_count = _completion_registry_boundary_findings(source)
+    assert findings == set()
+    assert interpreter_call_count == 1
+
+
+@pytest.mark.parametrize(
+    "import_statement",
+    [
+        (
+            "from multi_agent_brief.orchestrator.runtime_state import "
+            "artifact_registry_read as registry_reader"
+        ),
+        (
+            "import multi_agent_brief.orchestrator.runtime_state."
+            "artifact_registry_read as registry_reader"
+        ),
+    ],
+)
+def test_completion_boundary_rejects_build_local_registry_module_import(
+    import_statement: str,
+) -> None:
+    source = f"""
+def build_completion_projection(workspace):
+    {import_statement}
+    return registry_reader.interpret_artifact_registry(workspace=workspace)
+"""
+    findings, interpreter_call_count = _completion_registry_boundary_findings(source)
+    assert "typed_registry_import_requires_exact_symbols" in findings
     assert interpreter_call_count == 1
 
 
