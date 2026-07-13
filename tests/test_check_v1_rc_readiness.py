@@ -239,16 +239,14 @@ def test_reports_name_and_signal_for_a_violation(tmp_path: Path) -> None:
     assert v.signal == "source_marker"
 
 
-def test_real_tree_currently_has_scattered_parsers(tmp_path: Path) -> None:
-    # Red-now baseline: the real repo has duplicate parsers pending PR-2A consolidation.
-    # This test documents the current violation set and MUST be updated (shrinking to
-    # empty) as consolidation lands. It is the acceptance ratchet, not a permanent fixture.
+def test_real_tree_has_only_the_canonical_citation_parser(tmp_path: Path) -> None:
+    # The readiness ratchet is green only when all consumer-local marker and
+    # claim-family grammars have been removed.
     guard = _load_guard()
     item = guard.check_single_citation_parser(ROOT)
     offenders = {v.path for v in item.violations}
-    assert "src/multi_agent_brief/outputs/finalize.py" in offenders
-    assert "src/multi_agent_brief/outputs/reader_final_gate.py" in offenders
-    assert item.satisfied is False
+    assert offenders == set()
+    assert item.satisfied is True
     # The canonical home must never be reported as a violation.
     assert "src/multi_agent_brief/core/citations.py" not in offenders
 

@@ -21,7 +21,7 @@ from multi_agent_brief.contracts.agent_artifact_intake import (
     evaluate_workspace_agent_artifact_intakes,
     validate_workspace_intake_consumption_context,
 )
-from multi_agent_brief.core.citations import SRC_REF_PATTERN
+from multi_agent_brief.core.citations import extract_src_ref_ids
 from multi_agent_brief.core.claim_ledger import ClaimLedger
 from multi_agent_brief.core.schemas import AuditFinding
 from multi_agent_brief.orchestrator.runtime_state import (
@@ -130,7 +130,7 @@ FINAL_ABSTRACT_CASE_HEADING_RE = re.compile(
 )
 FINAL_ABSTRACT_CASE_FIELD_PATTERNS: dict[str, re.Pattern[str]] = {
     "date_or_period": re.compile(r"\b20\d{2}(?:-\d{2}(?:-\d{2})?)?\b|(?:日期|时间|期间|窗口)"),
-    "source_reference": re.compile(r"\[src:[^\]]+\]|\[S\d+\]|(?:source|来源)[:：]", re.IGNORECASE),
+    "source_reference": re.compile(r"\[S\d+\]|(?:source|来源)[:：]", re.IGNORECASE),
     "impact_or_relevance": re.compile(r"\b(?:impact|relevance|implication|why it matters)\b|(?:影响|意义|启示|相关性)"),
 }
 GATE_RULE_DOC_ANCHOR = "docs/agent-contract.md#quality-gate-rule-summaries"
@@ -1234,7 +1234,7 @@ def _coverage_omission_projection(
     base["high_priority_selected_count"] = len(high_priority)
     base["trace_basis"] = "candidate_id_or_exact_statement"
 
-    cited_claim_ids = set(SRC_REF_PATTERN.findall(markdown))
+    cited_claim_ids = set(extract_src_ref_ids(markdown))
     missing_from_ledger: list[dict[str, Any]] = []
     missing_from_brief: list[dict[str, Any]] = []
     scoped_out: list[dict[str, Any]] = []
@@ -1527,7 +1527,7 @@ def _token_map(pattern: re.Pattern[str], text: str) -> dict[str, str]:
 
 
 def _claim_ref_map(text: str) -> dict[str, str]:
-    return {claim_id.lower(): claim_id for claim_id in SRC_REF_PATTERN.findall(text)}
+    return {claim_id.lower(): claim_id for claim_id in extract_src_ref_ids(text)}
 
 
 def _entity_map(text: str) -> dict[str, str]:
@@ -1735,7 +1735,7 @@ def _final_abstract_quality_findings(
         missing = [
             field
             for field, pattern in FINAL_ABSTRACT_CASE_FIELD_PATTERNS.items()
-            if not pattern.search(line)
+            if not _final_abstract_case_field_present(field, pattern, line)
         ]
         if missing:
             append_finding(
@@ -1760,6 +1760,16 @@ def _final_abstract_quality_findings(
         )
 
     return findings
+
+
+def _final_abstract_case_field_present(
+    field: str,
+    pattern: re.Pattern[str],
+    line: str,
+) -> bool:
+    if field == "source_reference":
+        return bool(extract_src_ref_ids(line) or pattern.search(line))
+    return bool(pattern.search(line))
 
 
 def _configured_report_cadence(config: dict[str, Any]) -> str:
@@ -1890,7 +1900,7 @@ def _unsupported_superlative_lines(markdown: str) -> list[tuple[int, str]]:
 
 def _line_has_local_source_reference(line: str) -> bool:
     return bool(
-        SRC_REF_PATTERN.search(line)
+        extract_src_ref_ids(line)
         or re.search(r"\[S\d+\]", line)
         or re.search(r"https?://", line, re.IGNORECASE)
     )
@@ -2079,7 +2089,7 @@ def _target_relevance_findings(
         and str((claim.metadata or {}).get("importance", "")).lower() in {"high", "critical", "blocking", "direct"}
     ]
     if summary and target_claims and not reader_facing_mode:
-        refs = set(SRC_REF_PATTERN.findall(summary))
+        refs = set(extract_src_ref_ids(summary))
         if not any(claim.claim_id in refs for claim in target_claims):
             findings.append(
                 _finding(

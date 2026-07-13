@@ -12,6 +12,18 @@ SRC_REF_PATTERN = re.compile(rf"\[src:({CLAIM_ID_RE_FRAGMENT})\]")
 VALID_SRC_REF_PATTERN = re.compile(rf"\[src:{CLAIM_ID_RE_FRAGMENT}\]")
 CLAIM_ID_TOKEN_RE = re.compile(rf"^{CLAIM_ID_RE_FRAGMENT}$")
 
+# These patterns are deliberately owned here.  Consumers must ask this module
+# for marker/token spans instead of re-declaring one of the internal ID
+# grammars locally.  The residue grammar preserves the historical reader gate
+# behavior, including bracketed bare CL/CLM IDs and prefixed CLAIM IDs.
+CLAIM_ID_RESIDUE_PATTERN = re.compile(
+    r"(?<![A-Za-z0-9_])(?:\[(?:CLM-\d{3,}|CL-\d{3,})\]|"
+    r"CLM-\d{3,}|CL-\d{3,}|(?:[A-Z][A-Z0-9]*_)?CLAIM_[A-Z0-9][A-Z0-9_-]*)(?![A-Za-z0-9_])"
+)
+INTERNAL_ID_RESIDUE_PATTERN = re.compile(
+    r"\b(?:SYN_)?(?:CLAIM|SRC|SOURCE|CLM)_[A-Z0-9][A-Z0-9_-]*\b"
+)
+
 _SRC_MARKER_OPEN = "[src:"
 
 InternalCitationKind = Literal["src_marker"]
@@ -36,9 +48,128 @@ class InternalCitationMarker:
     message: str = ""
 
 
+@dataclass(frozen=True)
+class InternalClaimIdResidue:
+    """A bare/internal claim-ID token found outside marker parsing."""
+
+    raw: str
+    claim_id: str
+    start: int
+    end: int
+
+
+@dataclass(frozen=True)
+class BracketedSourceMarker:
+    """A canonical or legacy bracketed source marker span."""
+
+    raw: str
+    start: int
+    end: int
+
+
 
 def extract_src_ref_ids(markdown: str) -> list[str]:
-    return SRC_REF_PATTERN.findall(markdown)
+    return [
+        marker.claim_id
+        for marker in parse_internal_citation_markers(markdown)
+        if marker.status != "malformed" and marker.claim_id
+    ]
+
+
+def iter_claim_id_residue_tokens(markdown: str) -> list[InternalClaimIdResidue]:
+    """Return bare/internal claim-ID residue spans in source order."""
+
+    return [
+        InternalClaimIdResidue(
+            raw=match.group(0),
+            claim_id=match.group(0).strip("[]"),
+            start=match.start(),
+            end=match.end(),
+        )
+        for match in CLAIM_ID_RESIDUE_PATTERN.finditer(markdown)
+    ]
+
+
+def extract_claim_id_tokens(markdown: str) -> list[str]:
+    """Return residue claim IDs in first-appearance order, preserving duplicates."""
+
+    return [token.claim_id for token in iter_claim_id_residue_tokens(markdown)]
+
+
+def contains_internal_id(value: str) -> bool:
+    """Return whether text contains an internal claim/source identifier token."""
+
+    return bool(INTERNAL_ID_RESIDUE_PATTERN.search(value))
+
+
+def iter_bracketed_source_markers(markdown: str) -> list[BracketedSourceMarker]:
+    """Return canonical and legacy bracketed source-marker spans.
+
+    This helper centralizes legacy/case-insensitive residue recognition for
+    reader and cleanup consumers.  Canonical status/ledger interpretation
+    remains in :func:`parse_internal_citation_markers`.
+    """
+
+    spans: list[BracketedSourceMarker] = []
+    start = 0
+    lowered = markdown.casefold()
+    while True:
+        marker_start = lowered.find("[", start)
+        if marker_start < 0:
+            return spans
+        cursor = marker_start + 1
+        while cursor < len(markdown) and markdown[cursor].isspace():
+            cursor += 1
+        if not (
+            lowered.startswith("src:", cursor)
+            or lowered.startswith("source:", cursor)
+        ):
+            start = marker_start + 1
+            continue
+        close = markdown.find("]", cursor)
+        end = close + 1 if close >= 0 else len(markdown)
+        spans.append(
+            BracketedSourceMarker(
+                raw=markdown[marker_start:end],
+                start=marker_start,
+                end=end,
+            )
+        )
+        start = end
+
+
+def remove_src_marker_spans(markdown: str) -> str:
+    """Remove lower-case canonical ``[src:...]`` marker spans."""
+
+    markers = parse_internal_citation_markers(markdown)
+    if not markers:
+        return markdown
+    parts: list[str] = []
+    cursor = 0
+    for marker in markers:
+        parts.append(markdown[cursor:marker.start])
+        cursor = marker.end
+    parts.append(markdown[cursor:])
+    return "".join(parts)
+
+
+def remove_empty_source_marker_residue(markdown: str) -> str:
+    """Remove empty canonical/legacy source markers while preserving others."""
+
+    parts: list[str] = []
+    cursor = 0
+    for marker in iter_bracketed_source_markers(markdown):
+        if not marker.raw.endswith("]"):
+            continue
+        body = marker.raw[marker.raw.find(":") + 1 : -1]
+        if body.strip():
+            continue
+        parts.append(markdown[cursor:marker.start])
+        cursor = marker.end
+    if cursor == 0:
+        return markdown
+    parts.append(markdown[cursor:])
+    return "".join(parts)
 
 
 def parse_internal_citation_markers(
