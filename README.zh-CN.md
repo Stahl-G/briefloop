@@ -279,7 +279,7 @@ demo 用的是合成材料，主要用来展示证据链和门禁行为。真实
 
 ## 🧭 当前状态
 
-当前版本：**v0.11.12**
+当前版本：**v0.12.0**
 
 当前主要入口：
 
@@ -287,7 +287,7 @@ demo 用的是合成材料，主要用来展示证据链和门禁行为。真实
 - Claude command：`/briefloop`
 - 实验性 WorkBuddy 指南：[docs/workbuddy.zh-CN.md](docs/workbuddy.zh-CN.md)
 
-v0.11.12 发布的是累计的 v0.11 产品基线、WorkBuddy adapter、
+v0.12.0 发布的是累计的 v0.11 产品基线、WorkBuddy adapter、
 operator runtime 和 semantic-support auditor hardening line，包括：
 
 - `ReportSpec`、`ReportPack`、`ReportTemplate` 和 `PolicyProfile` contract

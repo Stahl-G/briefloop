@@ -1,7 +1,7 @@
 ---
 name: multi-agent-brief-hermes
 description: Use when running BriefLoop workspaces inside Hermes with delegate_task subagents, source cache, cron scheduling, and deterministic CLI controls.
-version: 0.11.12
+version: 0.12.0
 author: multi-agent-brief-workflow
 license: MIT
 platforms:
