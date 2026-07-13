@@ -5,11 +5,20 @@ on:
     branches: ["main"]
   pull_request:
     branches: ["main"]
+    types: [opened, synchronize, reopened, ready_for_review, converted_to_draft]
   workflow_dispatch:
+
+concurrency:
+  group: >-
+    tests-${{ github.event_name == 'pull_request' &&
+    format('pr-{0}', github.event.pull_request.number) ||
+    format('{0}-{1}-{2}', github.event_name, github.ref, github.run_id) }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 env:
   PYTHONUTF8: "1"
   PYTHONIOENCODING: "utf-8"
+  CANDIDATE_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
 
 jobs:
   changes:
@@ -17,10 +26,12 @@ jobs:
     runs-on: ubuntu-latest
     outputs:
       docs_only: ${{ steps.classify.outputs.docs_only }}
+      run_candidate: ${{ steps.classify.outputs.run_candidate }}
       test_matrix: ${{ steps.classify.outputs.test_matrix }}
     steps:
       - uses: actions/checkout@v4
         with:
+          ref: ${{ env.CANDIDATE_SHA }}
           fetch-depth: 0
 
       - id: classify
@@ -33,7 +44,7 @@ jobs:
           from pathlib import Path
 
           event_name = os.environ.get("GITHUB_EVENT_NAME", "")
-          github_sha = os.environ["GITHUB_SHA"]
+          github_sha = os.environ["CANDIDATE_SHA"]
           base = ""
 
           if event_name == "pull_request":
@@ -63,38 +74,47 @@ jobs:
               }
               return path.startswith("docs/") or path in root_docs
 
-          # A manual dispatch is an explicit request for full validation. Do
-          # not let the docs-only shortcut skip the matrix on a docs-only commit.
+          pr_is_draft = (
+              event_name == "pull_request"
+              and "${{ github.event.pull_request.draft }}" == "true"
+          )
+          run_candidate = event_name != "pull_request" or not pr_is_draft
+          # Only a non-draft PR may take the docs-only route. Push-to-main and
+          # exceptional manual dispatch remain full shadow validations.
           docs_only = (
-              event_name != "workflow_dispatch"
+              event_name == "pull_request"
+              and run_candidate
               and bool(changed)
               and all(is_docs_path(path) for path in changed)
           )
-          if event_name == "pull_request":
-              test_matrix = {"os": ["ubuntu-latest"], "python-version": ["3.12"]}
-          else:
-              test_matrix = {
-                  "os": ["ubuntu-latest", "macos-latest", "windows-latest"],
-                  "python-version": ["3.9", "3.12"],
-              }
+          test_matrix = {
+              "os": ["ubuntu-latest", "macos-latest", "windows-latest"],
+              "python-version": ["3.9", "3.12"],
+          }
 
           print("Changed files:")
           for path in changed:
               print(f"- {path}")
           print(f"docs_only={str(docs_only).lower()}")
+          print(f"run_candidate={str(run_candidate).lower()}")
           print(f"test_matrix={test_matrix}")
 
           with Path(os.environ["GITHUB_OUTPUT"]).open("a", encoding="utf-8") as f:
               f.write(f"docs_only={str(docs_only).lower()}\n")
+              f.write(f"run_candidate={str(run_candidate).lower()}\n")
               f.write(f"test_matrix={json.dumps(test_matrix, separators=(',', ':'))}\n")
 
   docs-only:
     name: Docs-only smoke
     needs: changes
-    if: needs.changes.outputs.docs_only == 'true'
+    if: >-
+      needs.changes.outputs.run_candidate == 'true' &&
+      needs.changes.outputs.docs_only == 'true'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ env.CANDIDATE_SHA }}
 
       - uses: actions/setup-python@v5
         with:
@@ -150,7 +170,9 @@ jobs:
   test:
     name: ${{ matrix.os }} / Python ${{ matrix.python-version }}
     needs: changes
-    if: needs.changes.outputs.docs_only != 'true'
+    if: >-
+      needs.changes.outputs.run_candidate == 'true' &&
+      needs.changes.outputs.docs_only != 'true'
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
@@ -158,6 +180,8 @@ jobs:
 
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ env.CANDIDATE_SHA }}
 
       - uses: actions/setup-python@v5
         with:
@@ -239,10 +263,14 @@ jobs:
   non-dev-smoke:
     name: Non-dev install smoke
     needs: changes
-    if: needs.changes.outputs.docs_only != 'true'
+    if: >-
+      needs.changes.outputs.run_candidate == 'true' &&
+      needs.changes.outputs.docs_only != 'true'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ env.CANDIDATE_SHA }}
 
       - uses: actions/setup-python@v5
         with:
@@ -338,10 +366,14 @@ jobs:
   llm-decide-smoke:
     name: llm_decide + doctor + sources decide smoke
     needs: changes
-    if: needs.changes.outputs.docs_only != 'true'
+    if: >-
+      needs.changes.outputs.run_candidate == 'true' &&
+      needs.changes.outputs.docs_only != 'true'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ env.CANDIDATE_SHA }}
 
       - uses: actions/setup-python@v5
         with:
@@ -383,10 +415,14 @@ jobs:
   onboarding-smoke:
     name: Onboarding (--from-onboarding) smoke
     needs: changes
-    if: needs.changes.outputs.docs_only != 'true'
+    if: >-
+      needs.changes.outputs.run_candidate == 'true' &&
+      needs.changes.outputs.docs_only != 'true'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ env.CANDIDATE_SHA }}
 
       - uses: actions/setup-python@v5
         with:
@@ -430,10 +466,14 @@ jobs:
   docx-smoke:
     name: DOCX output smoke
     needs: changes
-    if: needs.changes.outputs.docs_only != 'true'
+    if: >-
+      needs.changes.outputs.run_candidate == 'true' &&
+      needs.changes.outputs.docs_only != 'true'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ env.CANDIDATE_SHA }}
 
       - uses: actions/setup-python@v5
         with:
@@ -496,10 +536,14 @@ jobs:
   golden-smoke:
     name: Subagent-first tool smoke
     needs: changes
-    if: needs.changes.outputs.docs_only != 'true'
+    if: >-
+      needs.changes.outputs.run_candidate == 'true' &&
+      needs.changes.outputs.docs_only != 'true'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ env.CANDIDATE_SHA }}
 
       - uses: actions/setup-python@v5
         with:
@@ -557,3 +601,88 @@ jobs:
 
       - name: Assert onboarding prepare stays removed
         run: python scripts/ci/smoke_pipeline.py /tmp/golden-onboarding/config.yaml /tmp/golden-onboarding/input /tmp/golden-onboarding/output
+
+  merge-gate:
+    name: >-
+      ${{ github.event_name == 'pull_request' && github.event.pull_request.draft &&
+      'Draft gate' || 'Merge gate' }}
+    if: always()
+    needs:
+      - changes
+      - docs-only
+      - test
+      - non-dev-smoke
+      - llm-decide-smoke
+      - onboarding-smoke
+      - docx-smoke
+      - golden-smoke
+    runs-on: ubuntu-latest
+    steps:
+      - name: Require the complete applicable candidate route
+        shell: python
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          RUN_CANDIDATE: ${{ needs.changes.outputs.run_candidate }}
+          DOCS_ONLY: ${{ needs.changes.outputs.docs_only }}
+          CHANGES_RESULT: ${{ needs.changes.result }}
+          DOCS_RESULT: ${{ needs['docs-only'].result }}
+          TEST_RESULT: ${{ needs.test.result }}
+          NON_DEV_RESULT: ${{ needs['non-dev-smoke'].result }}
+          LLM_DECIDE_RESULT: ${{ needs['llm-decide-smoke'].result }}
+          ONBOARDING_RESULT: ${{ needs['onboarding-smoke'].result }}
+          DOCX_RESULT: ${{ needs['docx-smoke'].result }}
+          GOLDEN_RESULT: ${{ needs['golden-smoke'].result }}
+        run: |
+          import os
+
+          results = {
+              "changes": os.environ.get("CHANGES_RESULT", ""),
+              "docs-only": os.environ.get("DOCS_RESULT", ""),
+              "test": os.environ.get("TEST_RESULT", ""),
+              "non-dev-smoke": os.environ.get("NON_DEV_RESULT", ""),
+              "llm-decide-smoke": os.environ.get("LLM_DECIDE_RESULT", ""),
+              "onboarding-smoke": os.environ.get("ONBOARDING_RESULT", ""),
+              "docx-smoke": os.environ.get("DOCX_RESULT", ""),
+              "golden-smoke": os.environ.get("GOLDEN_RESULT", ""),
+          }
+
+          def require(expected: dict[str, str]) -> None:
+              mismatches = {
+                  name: {"expected": wanted, "actual": results.get(name, "")}
+                  for name, wanted in expected.items()
+                  if results.get(name) != wanted
+              }
+              if mismatches:
+                  raise SystemExit(f"Merge gate dependency mismatch: {mismatches}")
+
+          require({"changes": "success"})
+          run_candidate = os.environ.get("RUN_CANDIDATE", "")
+          docs_only = os.environ.get("DOCS_ONLY", "")
+          heavy_jobs = {
+              "test": "success",
+              "non-dev-smoke": "success",
+              "llm-decide-smoke": "success",
+              "onboarding-smoke": "success",
+              "docx-smoke": "success",
+              "golden-smoke": "success",
+          }
+
+          if os.environ.get("EVENT_NAME") == "pull_request" and run_candidate == "false":
+              require({
+                  "docs-only": "skipped",
+                  **{name: "skipped" for name in heavy_jobs},
+              })
+              print("Draft PR: heavy candidate gate intentionally not run.")
+          elif run_candidate != "true":
+              raise SystemExit("Merge gate did not receive a candidate classification.")
+          elif docs_only == "true":
+              require({
+                  "docs-only": "success",
+                  **{name: "skipped" for name in heavy_jobs},
+              })
+              print("Docs-only candidate route passed.")
+          elif docs_only == "false":
+              require({"docs-only": "skipped", **heavy_jobs})
+              print("Full supported-platform candidate route passed.")
+          else:
+              raise SystemExit("Merge gate did not receive a docs-only classification.")

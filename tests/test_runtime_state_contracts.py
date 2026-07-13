@@ -920,4 +920,6 @@ def test_contract_loader_rejects_invalid_repo_selector_as_typed_failure(tmp_path
         load_stage_specs(loop)
 
     assert exc_info.value.error_code == E_TRANSACTION_INTEGRITY
-    assert exc_info.value.details["repo_workdir_type"] == "PosixPath"
+    # pathlib selects PosixPath or WindowsPath for the host platform; the
+    # typed error must report that exact concrete selector type on both.
+    assert exc_info.value.details["repo_workdir_type"] == type(loop).__name__
