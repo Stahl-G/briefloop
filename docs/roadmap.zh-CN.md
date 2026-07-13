@@ -1,6 +1,6 @@
 # 公开路线图
 
-这是 BriefLoop（原 MABW — Multi-Agent Brief Workflow）的公开路线图。它只描述产品方向和版本目标。详细实现计划、schema 草案、prompt notes、私有评测样例和商业化场景设计，在代码稳定前不放进公开仓库。
+这是 BriefLoop 的公开路线图，只描述产品方向和版本目标。详细实现计划、schema 草案、提示词笔记、私有评测样例和商业化场景设计，在代码稳定前不放进公开仓库。废弃名称仅允许出现在 `docs/briefloop-naming.md` 定义的归档标识或兼容性字面量中。
 
 ## 方向
 
@@ -15,6 +15,8 @@ subagent-first runtime
 → provenance-aware artifacts
 → policy packs and runtime parity
 → stable v0.11.0 product baseline
+→ v1.0 首用户证据与冻结产品契约
+→ 证据绑定复核与以证据为基础的底座裁决
 ```
 
 v0.11.0 产品基线前不优先重建完整分布式 multi-agent runtime。Python 继续作为 setup、source handling、validation、audit、rendering 工具箱；workflow runtime 由外部 main agent 和 delegated subagents 执行。
@@ -234,17 +236,17 @@ Non-goals:
 
 ### v0.9 — Support Sufficiency Core
 
-目标：从 source-level traceability 推进到最低可用的 support-sufficiency core，同时保留现有 MABW 兼容面。
+目标：从来源级追溯推进到最低可用的证据支持充分性核心，同时保留既有用户和归档实验所需的兼容性字面量。
 
 公开范围：
 
-- 使用 BriefLoop 作为公开项目名，同时保留 MABW 作为历史实现名和兼容面。
+- BriefLoop 是唯一项目名称；旧标识只作为兼容性字面量存在，不再充当别名或实现谱系名称。
 - 实现最低 support-sufficiency 路径：
   - Atomic Claim Graph
   - Evidence Span Registry
   - Claim-Support Matrix
 - 保持 Semantic Assessment Report 为 proposal-only 实验面：semantic assessment 可以提出 support labels、uncertainty、disagreement 和 adjudication needs，但不能修改 Claim-Support Matrix、创建 adjudication queue items、阻断 delivery、决定 release eligibility 或证明真理。
-- v0.9 兼容期内保留 `multi-agent-brief`、`briefloop` shell alias、`/briefloop`、`/mabw`、Python package/module paths、artifact names、workspace formats 和 MABW experiment IDs。
+- v0.9 兼容期内保留 `multi-agent-brief`、`/mabw`、Python 包和模块路径、工件名称、工作区格式，以及 `MABW-080` 等冻结实验标识；新用户统一使用 `briefloop` 和 `/briefloop`。
 - 对不稳定能力继续标注 experimental、interface-only 或 CLI-only。
 
 延后处理的 semantic-governance surfaces：
@@ -301,15 +303,51 @@ v0.11.0 应包含：
 - 无 force-deliver path 或 delivery override flag。
 - 清晰 runtime dependence、support status 和 non-goals。
 
+### v1.0.0 — 冻结产品契约并取得首用户证据
+
+目标：完成 RC 安全收口，冻结受支持的产品契约，并取得可公开复现的证据，证明新用户能在全新环境中完成并理解周期性报告工作流。
+
+公开范围：
+
+- 关闭 v1.0 发布边界要求的完成事务、污染恢复、Agent 工件收件、证据和交付真值不变量。
+- 执行可运行的 readiness checks，并在 `docs/v1-pilot-evidence.md` 中记录至少一条合格的首用户 pilot 证据。
+- 冻结发布流程认定的 CLI、工作区、控制记录、门禁、归档和交付支持面。
+- v1.0 继续以 JSON/JSONL 作为控制状态的唯一权威底座。
+
+Non-goals：
+
+- 不把存储权威迁移设为 v1.0 blocker。
+- 不让 SQLite 或其他数据库成为第二套控制面。
+- 不把大范围框架迁移混入 RC hardening。
+- 不作出超过已记录证据的输出质量或管理可用性声明。
+
+### v1 之后 — 由证据驱动的产品演进
+
+目标：让真实使用决定下一批受支持的产品能力，而不是在公开路线图中预先承诺某个框架或存储迁移。
+
+公开方向：
+
+- 只有在冻结输入、确定性检查和人类责任都明确时，才扩展证据绑定的语义复核。
+- 优先处理重复 Pilot 或生产使用已经证明有价值的报告包和工作流改进。
+- 基础设施或持久化变化先通过有界实验与可公开的架构裁决，再决定是否成为产品承诺。
+- 未来任何权威底座提案都必须证明它消除了真实故障、具备安全迁移路径，并始终保持唯一权威真值。
+
+Non-goals：
+
+- 不把技术选型在缺少用户证据时包装成产品价值。
+- 不长期维持双重权威，也不允许 Agent 写控制状态。
+- 不声称更换存储或框架本身能够提升报告质量。
+- 未经批准，不在公开路线图中写入详细实现顺序。
+
 ## 研究轨道
 
-v0.12.0 可以在 CLI product path 跑通后增加 local Studio preview。Studio 必须调用现有 CLI/service transactions，不得直接修改 frozen artifacts，也不得提供 force-deliver path 或 delivery override flag。
+在 v1 Pilot 取得相关用户证据后，可以重新评估 local Studio preview。Studio 必须调用现有 CLI/service transactions，不得直接修改 frozen artifacts，也不得提供 force-deliver path 或 delivery override flag。
 
-v0.13.0+ 可以增加 IR/disclosure support packs，但它们是 review-support surfaces，不是 publication automation。这些 pack 可以标记 forward-looking statements、materiality review items、KPI consistency issues 和 evidence-annex gaps，但不能声称自动判断 materiality、自动生成 SEC-ready filing，或替代律师、审计师、IR 负责人和 disclosure committee。
+后续研究版本可以增加 IR/disclosure support packs，但它们是 review-support surfaces，不是 publication automation。这些 pack 可以标记 forward-looking statements、materiality review items、KPI consistency issues 和 evidence-annex gaps，但不能声称自动判断 materiality、自动生成 SEC-ready filing，或替代律师、审计师、IR 负责人和 disclosure committee。
 
 v2.0 是未来研究轨道，不是短期产品承诺。product baseline 稳定后，项目可以探索更正式的 multi-agent runtime，包括 shared state、task boards、replay 和更丰富的 coordination protocols。
 
-v0.11.0 产品基线前不优先做：
+在这些产品结果得到证据前，项目不优先做：
 
 - distributed multi-server orchestration。
 - enterprise multi-tenancy。

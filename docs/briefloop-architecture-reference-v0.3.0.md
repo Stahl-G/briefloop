@@ -1,5 +1,7 @@
 **BriefLoop：Open-Source Loop Engineering for Auditable Business Briefings**
 
+> **Superseded.** 后续历史报告请使用 [BriefLoop architecture reference v0.4.0](briefloop-architecture-reference-v0.4.0.md)（代码快照 v0.11.12）；当前实现状态与支持边界分别以 [architecture-status.md](architecture-status.md) 和 [support-matrix.md](support-matrix.md) 为准。本文件保留为 v0.8.3 时代的历史参考。
+
 *Architecture Reference v0.3.0 — From Traceability to Support Sufficiency\
 Formerly MABW — Multi-Agent Brief Workflow\
 代码快照: v0.8.3 \| 分支: main \| 日期: 2026-06-19*

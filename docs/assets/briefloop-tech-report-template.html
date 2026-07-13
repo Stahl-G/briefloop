@@ -1,0 +1,31 @@
+<!DOCTYPE html>
+<html lang="$if(lang)$$lang$$else$zh-CN$endif$">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="light">
+  <title>$if(pagetitle)$$pagetitle$$else$BriefLoop 架构参考 v0.4.0$endif$</title>
+  $for(css)$<link rel="stylesheet" href="$css$">$endfor$
+</head>
+<body>
+  <a class="skip-link" href="#report-main">跳到正文</a>
+  <div class="report-layout">
+    <aside class="report-sidebar" aria-label="报告目录">
+      <p class="report-brand">BriefLoop</p>
+      <p class="report-edition">架构参考 v0.4.0 · 代码快照 v0.11.12</p>
+      $if(toc)$
+      <nav id="$idprefix$TOC" role="doc-toc">
+        <h2>目录</h2>
+        $table-of-contents$
+      </nav>
+      $endif$
+    </aside>
+    <main id="report-main" class="report-content">
+      $body$
+      <footer class="report-footer">
+        BriefLoop 架构参考 v0.4.0 · 2026-07-10 · 当前能力边界以 architecture-status 与 support-matrix 为准。
+      </footer>
+    </main>
+  </div>
+</body>
+</html>
