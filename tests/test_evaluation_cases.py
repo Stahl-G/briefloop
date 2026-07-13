@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 import shutil
 from pathlib import Path
@@ -77,6 +78,23 @@ def test_eval_cases_validate_and_run_packaged_cases(capsys):
 
 
 def test_eval_cases_reader_clean_failed_no_delivery_promotion(capsys):
+    with evaluation_cases_root() as cases_root:
+        workspace = (
+            cases_root
+            / "cases"
+            / "reader_clean_failed_no_delivery_promotion"
+            / "workspace"
+            / "output"
+            / "intermediate"
+        )
+        audit_report = workspace / "audit_report.json"
+        finalize_report = json.loads(
+            (workspace / "finalize_report.json").read_text(encoding="utf-8")
+        )
+        assert finalize_report["audit_binding"]["audit_report_sha256"] == hashlib.sha256(
+            audit_report.read_bytes()
+        ).hexdigest()
+
     rc = main([
         "eval-cases",
         "run",

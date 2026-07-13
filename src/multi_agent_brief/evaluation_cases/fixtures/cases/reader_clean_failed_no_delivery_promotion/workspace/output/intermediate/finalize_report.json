@@ -52,7 +52,7 @@
     "status": "pass",
     "claim_ledger_sha256": "ae2e8fbef88a25b373c9119ad49754b45884531ce540eba2637cac75ac0f2826",
     "audited_brief_sha256": "26964f4da3366ed57289ff7c008dc37db54a585a58848e4456ad04a09a25d0a9",
-    "audit_report_sha256": "3a551a06ee077ae4547d8fc0afc44ef92d39be6f4ab95d25609f2875e1d811e9",
+    "audit_report_sha256": "7fd96ed7cc1823702bc42bb432377f617e5f59cfadadeb75a8ec0d71419ed38d",
     "findings": [],
     "warnings": []
   },
