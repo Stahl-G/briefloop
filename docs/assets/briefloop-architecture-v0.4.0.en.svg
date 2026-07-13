@@ -1,0 +1,173 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1600 1120" role="img" aria-labelledby="title desc">
+  <title id="title">BriefLoop's auditable closed-loop architecture from source discovery to human delivery</title>
+  <desc id="desc">Three lanes show agent content work, the auditable artifact chain, and deterministic control with human authority. Each stage writes artifacts and is validated by the control plane. Humans decide delivery, and feedback affects future runs only.</desc>
+  <defs>
+    <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M 0 0 L 10 5 L 0 10 z" fill="#334155"/>
+    </marker>
+    <marker id="arrow-green" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M 0 0 L 10 5 L 0 10 z" fill="#15803d"/>
+    </marker>
+    <style>
+      text { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif; fill: #172033; }
+      .title { font-size: 34px; font-weight: 700; }
+      .subtitle { font-size: 18px; fill: #475569; }
+      .lane-title { font-size: 22px; font-weight: 700; }
+      .node-title { font-size: 20px; font-weight: 700; }
+      .node-sub { font-size: 15px; fill: #475569; }
+      .micro { font-size: 13px; fill: #64748b; }
+      .agent { fill: #dbeafe; stroke: #2563eb; stroke-width: 2; }
+      .artifact { fill: #f1f5f9; stroke: #64748b; stroke-width: 2; }
+      .control { fill: #dcfce7; stroke: #15803d; stroke-width: 2; }
+      .human { fill: #fef3c7; stroke: #a16207; stroke-width: 2; }
+      .feedback { fill: #fce7f3; stroke: #be185d; stroke-width: 2; }
+      .lane { fill: #ffffff; stroke: #d8dee8; stroke-width: 2; }
+      .row-line { stroke: #e2e8f0; stroke-width: 1.5; }
+      .flow { fill: none; stroke: #334155; stroke-width: 2.4; marker-end: url(#arrow); }
+      .control-flow { fill: none; stroke: #15803d; stroke-width: 2.2; stroke-dasharray: 8 7; marker-end: url(#arrow-green); }
+      .feedback-flow { fill: none; stroke: #be185d; stroke-width: 2.3; stroke-dasharray: 10 7; marker-end: url(#arrow); }
+      .pill { font-size: 12px; font-weight: 700; letter-spacing: .04em; }
+      .feedback-title { font-size: 17px; font-weight: 700; }
+    </style>
+  </defs>
+
+  <rect width="1600" height="1120" fill="#f8fafc"/>
+  <text x="70" y="62" class="title">BriefLoop Architecture: Agents Draft Content; the Control Plane Holds Authority</text>
+  <text x="70" y="96" class="subtitle">Source discovery, claim freezing, audit, finalization, and human delivery; feedback affects future runs only</text>
+
+  <rect x="55" y="125" width="455" height="820" rx="8" class="lane"/>
+  <rect x="570" y="125" width="455" height="820" rx="8" class="lane"/>
+  <rect x="1085" y="125" width="460" height="820" rx="8" class="lane"/>
+
+  <circle cx="90" cy="164" r="11" fill="#2563eb"/>
+  <text x="115" y="172" class="lane-title">Agent Content Work</text>
+  <circle cx="605" cy="164" r="11" fill="#64748b"/>
+  <text x="630" y="172" class="lane-title">Auditable Artifact Chain</text>
+  <circle cx="1120" cy="164" r="11" fill="#15803d"/>
+  <text x="1145" y="172" class="lane-title">Control Plane &amp; Human Authority</text>
+
+  <line x1="70" y1="197" x2="495" y2="197" class="row-line"/>
+  <line x1="585" y1="197" x2="1010" y2="197" class="row-line"/>
+  <line x1="1100" y1="197" x2="1530" y2="197" class="row-line"/>
+
+  <!-- Row 1 -->
+  <rect x="90" y="225" width="385" height="105" rx="8" class="agent"/>
+  <text x="282" y="266" text-anchor="middle" class="node-title">Source Discovery · Scout</text>
+  <text x="282" y="295" text-anchor="middle" class="node-sub">Search, read, propose candidate claims</text>
+
+  <rect x="605" y="225" width="385" height="105" rx="8" class="artifact"/>
+  <text x="797" y="263" text-anchor="middle" class="node-title">Source Evidence &amp; Candidate Claims</text>
+  <text x="797" y="292" text-anchor="middle" class="node-sub">sources · candidate_claims.json</text>
+
+  <rect x="1120" y="215" width="390" height="125" rx="8" class="control"/>
+  <text x="1315" y="254" text-anchor="middle" class="node-title">Run Initialization &amp; Input Governance</text>
+  <text x="1315" y="283" text-anchor="middle" class="node-sub">doctor · contract · source policy</text>
+  <text x="1315" y="309" text-anchor="middle" class="micro">Python writes state; humans set objectives and boundaries</text>
+
+  <!-- Row 2 -->
+  <rect x="90" y="375" width="385" height="105" rx="8" class="agent"/>
+  <text x="282" y="416" text-anchor="middle" class="node-title">Screening · Screener</text>
+  <text x="282" y="445" text-anchor="middle" class="node-sub">Relevance, materiality, duplicates</text>
+
+  <rect x="605" y="375" width="385" height="105" rx="8" class="artifact"/>
+  <text x="797" y="416" text-anchor="middle" class="node-title">Screened Candidates</text>
+  <text x="797" y="445" text-anchor="middle" class="node-sub">screened_candidates.json</text>
+
+  <rect x="1120" y="375" width="390" height="105" rx="8" class="control"/>
+  <text x="1315" y="416" text-anchor="middle" class="node-title">Stage Checks &amp; Event Recording</text>
+  <text x="1315" y="445" text-anchor="middle" class="node-sub">artifact check · stage-complete · event</text>
+
+  <!-- Row 3 -->
+  <rect x="90" y="525" width="385" height="105" rx="8" class="agent"/>
+  <text x="282" y="566" text-anchor="middle" class="node-title">Claim Role</text>
+  <text x="282" y="595" text-anchor="middle" class="node-sub">Draft claims; never assign authoritative IDs</text>
+
+  <rect x="605" y="515" width="385" height="125" rx="8" class="artifact"/>
+  <text x="797" y="553" text-anchor="middle" class="node-title">Claim Drafts → Frozen Ledger</text>
+  <text x="797" y="582" text-anchor="middle" class="node-sub">claim_drafts.json</text>
+  <line x1="670" y1="598" x2="925" y2="598" class="row-line"/>
+  <text x="797" y="623" text-anchor="middle" class="node-sub">claim_ledger.json · CL-####</text>
+
+  <rect x="1120" y="515" width="390" height="125" rx="8" class="control"/>
+  <text x="1315" y="553" text-anchor="middle" class="node-title">Claim-Freeze Transaction</text>
+  <text x="1315" y="582" text-anchor="middle" class="node-sub">validate · assign IDs · hash · freeze</text>
+  <text x="1315" y="610" text-anchor="middle" class="micro">Frozen ledger is agent-read-only; changes leave a trace</text>
+
+  <!-- Row 4 -->
+  <rect x="90" y="685" width="385" height="115" rx="8" class="agent"/>
+  <text x="282" y="728" text-anchor="middle" class="node-title">Analysis · Delivery Editing</text>
+  <text x="282" y="757" text-anchor="middle" class="node-sub">Analyst → Delivery Editor</text>
+  <text x="282" y="781" text-anchor="middle" class="micro">Read frozen facts; do not add unregistered claims</text>
+
+  <rect x="605" y="685" width="385" height="115" rx="8" class="artifact"/>
+  <text x="797" y="728" text-anchor="middle" class="node-title">Brief for Independent Audit</text>
+  <text x="797" y="757" text-anchor="middle" class="node-sub">audited_brief.md</text>
+  <text x="797" y="781" text-anchor="middle" class="micro">Internal references remain for audit and finalization</text>
+
+  <rect x="1120" y="675" width="390" height="135" rx="8" class="control"/>
+  <text x="1315" y="716" text-anchor="middle" class="node-title">Audit &amp; Stage Gates</text>
+  <text x="1315" y="745" text-anchor="middle" class="node-sub">support · freshness · relevance · coverage</text>
+  <text x="1315" y="774" text-anchor="middle" class="micro">Failure: retry, scoped repair, human review, or block</text>
+
+  <!-- Row 5 -->
+  <rect x="90" y="850" width="385" height="70" rx="8" class="agent"/>
+  <text x="282" y="881" text-anchor="middle" class="node-title">Auditor</text>
+  <text x="282" y="906" text-anchor="middle" class="node-sub">Reports findings; cannot approve delivery</text>
+
+  <rect x="605" y="840" width="385" height="90" rx="8" class="artifact"/>
+  <text x="797" y="874" text-anchor="middle" class="node-title">Audit &amp; Delivery Artifacts</text>
+  <text x="797" y="902" text-anchor="middle" class="node-sub">audit_report · source appendix · bundles</text>
+
+  <rect x="1120" y="830" width="235" height="110" rx="8" class="control"/>
+  <text x="1237" y="869" text-anchor="middle" class="node-title">Finalize Transaction</text>
+  <text x="1237" y="898" text-anchor="middle" class="node-sub">reader-clean · archive</text>
+  <text x="1237" y="923" text-anchor="middle" class="micro">Python</text>
+
+  <rect x="1380" y="830" width="130" height="110" rx="8" class="human"/>
+  <text x="1445" y="865" text-anchor="middle" class="node-title">Human</text>
+  <text x="1445" y="892" text-anchor="middle" class="node-sub">Delivery decision</text>
+  <text x="1445" y="917" text-anchor="middle" class="micro">approve / block</text>
+
+  <!-- Horizontal relationships -->
+  <path d="M475 277 H605" class="flow"/>
+  <path d="M990 277 H1120" class="flow"/>
+  <path d="M475 427 H605" class="flow"/>
+  <path d="M990 427 H1120" class="flow"/>
+  <path d="M475 577 H605" class="flow"/>
+  <path d="M990 577 H1120" class="flow"/>
+  <path d="M475 742 H605" class="flow"/>
+  <path d="M990 742 H1120" class="flow"/>
+  <path d="M475 885 H605" class="flow"/>
+  <path d="M990 885 H1120" class="flow"/>
+  <path d="M1355 885 H1380" class="flow"/>
+
+  <!-- Vertical stage progression -->
+  <path d="M282 330 V375" class="flow"/>
+  <path d="M282 480 V525" class="flow"/>
+  <path d="M282 630 V685" class="flow"/>
+  <path d="M282 800 V850" class="flow"/>
+  <path d="M797 330 V375" class="flow"/>
+  <path d="M797 480 V515" class="flow"/>
+  <path d="M797 640 V685" class="flow"/>
+  <path d="M797 800 V840" class="flow"/>
+
+  <!-- Global control plane -->
+  <rect x="55" y="985" width="1490" height="90" rx="8" fill="#ecfdf5" stroke="#15803d" stroke-width="2"/>
+  <text x="85" y="1021" class="lane-title">Deterministic Control Plane Across All Stages</text>
+  <text x="85" y="1053" class="node-sub">workflow_state · artifact_registry · event_log · runtime_manifest · contracts · immutable archive</text>
+  <rect x="1050" y="1005" width="460" height="48" rx="8" class="feedback"/>
+  <text x="1280" y="1035" text-anchor="middle" class="feedback-title">Human feedback → Improvement Ledger → next run</text>
+
+  <path d="M1315 985 V940" class="control-flow"/>
+  <path d="M1445 940 V965 C1445 975 1425 980 1380 985" class="feedback-flow"/>
+
+  <!-- Legend -->
+  <rect x="70" y="1090" width="18" height="18" rx="4" class="agent"/>
+  <text x="98" y="1104" class="micro">Agent draft</text>
+  <rect x="205" y="1090" width="18" height="18" rx="4" class="artifact"/>
+  <text x="233" y="1104" class="micro">Auditable artifact</text>
+  <rect x="360" y="1090" width="18" height="18" rx="4" class="control"/>
+  <text x="388" y="1104" class="micro">Python control plane</text>
+  <rect x="525" y="1090" width="18" height="18" rx="4" class="human"/>
+  <text x="553" y="1104" class="micro">Human authority</text>
+</svg>

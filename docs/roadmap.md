@@ -1,6 +1,6 @@
 # Public Roadmap
 
-This is the public roadmap for BriefLoop, formerly MABW — Multi-Agent Brief Workflow. It describes product direction and version goals at a high level. Detailed implementation planning, schema drafts, prompt notes, private evaluation cases, and commercial scenario design are intentionally kept out of the public repository until they are stabilized in code.
+This is the public roadmap for BriefLoop. It describes product direction and version goals at a high level. Detailed implementation planning, schema drafts, prompt notes, private evaluation cases, and commercial scenario design are intentionally kept out of the public repository until they are stabilized in code. Retired names appear only inside literal archived or compatibility identifiers defined by `docs/briefloop-naming.md`.
 
 ## Direction
 
@@ -15,6 +15,8 @@ subagent-first runtime
 → provenance-aware artifacts
 → policy packs and runtime parity
 → stable v0.11.0 product baseline
+→ v1.0 first-user evidence and frozen product contract
+→ evidence-bound review and evidence-led substrate decisions
 ```
 
 The project is not trying to rebuild a full distributed multi-agent runtime before the v0.11.0 product baseline. Python remains a toolkit for setup, source handling, validation, audit, and rendering. The workflow runtime is coordinated by an external main agent and delegated subagents.
@@ -235,11 +237,12 @@ Non-goals:
 ### v0.9 — Support Sufficiency Core
 
 Goal: move from source-level traceability toward a minimum support-sufficiency
-core while preserving the existing MABW compatibility surfaces.
+core while preserving literal legacy identifiers needed by existing users and
+archived experiments.
 
 Public scope:
 
-- Use BriefLoop as the public project name while keeping MABW as the historical implementation name and compatibility surface.
+- Use BriefLoop as the only project name; legacy identifiers remain literals, not an alternate name or implementation lineage.
 - Implement the minimum support-sufficiency path:
   - Atomic Claim Graph
   - Evidence Span Registry
@@ -249,7 +252,7 @@ Public scope:
   and adjudication needs, but they do not mutate the Claim-Support Matrix,
   create adjudication queue items, gate delivery, decide release eligibility, or
   prove truth.
-- Keep `multi-agent-brief`, the `briefloop` shell alias, `/briefloop`, `/mabw`, Python package/module paths, artifact names, workspace formats, and MABW experiment IDs compatible during the v0.9 period.
+- Keep `multi-agent-brief`, `/mabw`, Python package/module paths, artifact names, workspace formats, and frozen experiment IDs such as `MABW-080` compatible during the v0.9 period; recommend `briefloop` and `/briefloop` to new users.
 - Keep unsupported channels clearly labeled as experimental, interface-only, or CLI-only.
 
 Deferred semantic-governance surfaces:
@@ -320,25 +323,73 @@ v0.11.0 should provide:
 - no force-deliver path or delivery override flag
 - clear runtime dependence, support status, and non-goals
 
+### v1.0.0 — Frozen Product Contract And First-User Evidence
+
+Goal: close the release-candidate safety work, freeze the supported product
+contract, and obtain public-safe evidence that a new user can complete and
+understand the recurring-report workflow in a fresh environment.
+
+Public scope:
+
+- Close the completion, recovery, agent-artifact intake, evidence, and delivery
+  truth invariants required by the v1.0 release boundary.
+- Run the executable readiness checks and record at least one qualifying
+  first-user pilot in `docs/v1-pilot-evidence.md`.
+- Freeze the supported CLI, workspace, control-record, gate, archive, and
+  delivery surfaces identified by the release process.
+- Keep JSON/JSONL as the sole authoritative control-state substrate for v1.0.
+
+Non-goals:
+
+- no storage-authority migration as a v1.0 blocker
+- no SQLite or other database as a second control plane
+- no broad framework migration mixed into RC hardening
+- no output-quality or management-readiness claim beyond recorded evidence
+
+### Post-v1 — Evidence-Led Product Evolution
+
+Goal: let real use determine the next supported product surface instead of
+pre-committing the public roadmap to a framework or storage migration.
+
+Public direction:
+
+- Extend evidence-bound semantic review only where frozen inputs, deterministic
+  checks, and human responsibility remain explicit.
+- Prioritize report packs and workflow improvements that repeated Pilot or
+  production use shows are valuable.
+- Evaluate infrastructure or persistence changes through bounded experiments
+  and public-safe architecture decisions before they become product promises.
+- Require any future authority-substrate proposal to demonstrate a real failure
+  it removes, a safe migration path, and one authoritative truth throughout.
+
+Non-goals:
+
+- no technology choice promoted to product value without user evidence
+- no long-lived dual authority or agent-writable control state
+- no claim that a storage or framework change improves report quality by itself
+- no detailed implementation sequence in the public roadmap before approval
+
 ## Research Track
 
-v0.12.0 may add a local Studio preview after the CLI product path works. Studio
-must call existing CLI/service transactions, must not mutate frozen artifacts
-directly, and must not provide a force-deliver path or delivery override flag.
+A local Studio preview after the CLI product path works may reopen as a
+research track only after the v1 Pilot produces relevant user evidence.
+Studio must call existing CLI/service
+transactions, must not mutate frozen artifacts directly, and must not provide a
+force-deliver path or delivery override flag.
 
-v0.13.0+ may add IR/disclosure support packs as review-support surfaces, not
-publication automation. Those packs may flag forward-looking statements,
-materiality review items, KPI consistency issues, and evidence-annex gaps, but
-they must not claim automatic materiality decisions, SEC-ready filing
-automation, or replacement of lawyers, auditors, IR officers, or disclosure
-committees.
+Later research releases may add IR/disclosure support packs as review-support
+surfaces, not publication automation. Those packs may flag forward-looking
+statements, materiality review items, KPI consistency issues, and
+evidence-annex gaps, but they must not claim automatic materiality decisions,
+SEC-ready filing automation, or replacement of lawyers, auditors, IR officers,
+or disclosure committees.
 
 v2.0 is a future research track, not the short-term product promise. After the
 product baseline is stable, the project may explore a more formal multi-agent
 runtime, including shared state, task boards, replay, and richer coordination
 protocols.
 
-Before the v0.11.0 product baseline, the project will not prioritize:
+Until these product outcomes are evidenced, the project will not prioritize:
 
 - distributed multi-server orchestration
 - enterprise multi-tenancy

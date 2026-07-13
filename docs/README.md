@@ -34,8 +34,8 @@ tree is fully bilingual.
 | Roadmap | [roadmap.md](roadmap.md) | [roadmap.zh-CN.md](roadmap.zh-CN.md) |
 | BriefLoop naming policy | [briefloop-naming.md](briefloop-naming.md) | English-first |
 | Migration notes | [MIGRATION.md](MIGRATION.md) | [MIGRATION.zh-CN.md](MIGRATION.zh-CN.md) |
-| What MABW tracks | [what-mabw-keeps-track-of.md](what-mabw-keeps-track-of.md) | [what-mabw-keeps-track-of.zh-CN.md](what-mabw-keeps-track-of.zh-CN.md) |
-| Archived MABW-080 experiment guide | [experiments-080.md](experiments-080.md) | English-first |
+| What BriefLoop tracks | [what-mabw-keeps-track-of.md](what-mabw-keeps-track-of.md) | [what-mabw-keeps-track-of.zh-CN.md](what-mabw-keeps-track-of.zh-CN.md) |
+| Archived 080 experiment guide (`MABW-080` legacy ID) | [experiments-080.md](experiments-080.md) | English-first |
 
 `README_en.md` is retained only as a compatibility pointer to `README.md`.
 
@@ -52,7 +52,7 @@ tree is fully bilingual.
 - [BriefLoop naming policy](briefloop-naming.md)
 - [Evidence Span Registry](evidence-span-registry.md)
 - [Claim-Support Matrix](claim-support-matrix.md)
-- [Archived MABW-080 experiment guide](experiments-080.md)
+- [Archived 080 experiment guide (`MABW-080` legacy ID)](experiments-080.md)
 - [Onboarding](onboarding.md)
 - [Search backends](search-backends.md)
 - [Runtime recipes](runtime-recipes.md)
@@ -77,10 +77,22 @@ These longer-form technical notes are design and architecture references. Treat
 `docs/architecture-status.md` and `docs/support-matrix.md` as the current
 implementation/support source of truth when they differ.
 
-- [BriefLoop architecture reference v0.3.0](briefloop-architecture-reference-v0.3.0.md)
+- [BriefLoop architecture reference v0.4.0 — Chinese](briefloop-architecture-reference-v0.4.0.md) — latest report edition; historical code snapshot v0.11.12
+- [BriefLoop architecture reference v0.4.0 — English](briefloop-architecture-reference-v0.4.0.en.md) — full English edition
+- [BriefLoop architecture reference v0.4.0 — Chinese HTML](briefloop-architecture-reference-v0.4.0.html) — self-contained reading edition
+- [BriefLoop architecture reference v0.4.0 — English HTML](briefloop-architecture-reference-v0.4.0.en.html) — self-contained reading edition
+- [BriefLoop architecture reference v0.3.0](briefloop-architecture-reference-v0.3.0.md) — superseded (v0.8.3 snapshot)
+- [Historical architecture reference v0.2.0](archive/mabw-architecture-reference-v0.2.0.md) — archived legacy filename
+- [Historical architecture reference v0.3.0](archive/mabw-architecture-reference-v0.3.0-legacy.md) — archived legacy filename
+- [Historical v0.3.0 revision roadmap](archive/mabw-architecture-reference-v0.3.0-revision-roadmap.md) — archived legacy filename
+- [BriefLoop architecture reference v0.4.0 revision roadmap](briefloop-architecture-reference-v0.4.0-revision-roadmap.md)
 - [Tech report v0.3.0 abstract draft](tech-report-v0.3.0/abstract-draft-v0.3.0.md)
 - [Tech report v0.3.0 industrial related work](tech-report-v0.3.0/industrial-related-work.md)
 - [Tech report v0.3.0 v0.9 design rationale](tech-report-v0.3.0/v09-design-rationale.md)
+- [Tech report v0.4.0 v0.9 implementation status](tech-report-v0.4.0/v09-implementation-status.md)
+- [Tech report v0.4.0 implementation baseline v0.11](tech-report-v0.4.0/implementation-baseline-v0.11.md)
+- [Tech report v0.4.0 response to reviewers](tech-report-v0.4.0/response-to-reviewers-v0.4.0.md)
+- [Tech report v0.4.0 harness-engineering source note](tech-report-v0.4.0/harness-engineering-source-note.md)
 
 ## Chinese-Only Or Memo Docs
 

@@ -1,0 +1,324 @@
+:root {
+  --page: #ffffff;
+  --sidebar: #f3f5f8;
+  --ink: #18202b;
+  --muted: #5d6775;
+  --line: #d8dee8;
+  --blue: #1d4ed8;
+  --blue-soft: #eaf1ff;
+  --green: #166534;
+  --green-soft: #ecfdf3;
+  --amber: #854d0e;
+  --amber-soft: #fff8df;
+  --code: #f4f6f8;
+}
+
+* { box-sizing: border-box; }
+
+html {
+  scroll-behavior: smooth;
+  background: var(--page);
+}
+
+body {
+  margin: 0;
+  color: var(--ink);
+  background: var(--page);
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", sans-serif;
+  font-size: 17px;
+  line-height: 1.8;
+  letter-spacing: 0;
+}
+
+a {
+  color: var(--blue);
+  text-decoration-thickness: 1px;
+  text-underline-offset: 3px;
+}
+
+a:hover { text-decoration-thickness: 2px; }
+
+.skip-link {
+  position: absolute;
+  left: 16px;
+  top: -80px;
+  z-index: 10;
+  padding: 8px 12px;
+  color: var(--ink);
+  background: var(--page);
+  border: 1px solid var(--line);
+}
+
+.skip-link:focus { top: 16px; }
+
+.report-layout {
+  display: grid;
+  grid-template-columns: 300px minmax(0, 1fr);
+  align-items: start;
+}
+
+.report-sidebar {
+  position: sticky;
+  top: 0;
+  height: 100vh;
+  overflow-y: auto;
+  padding: 34px 28px 40px;
+  background: var(--sidebar);
+  border-right: 1px solid var(--line);
+}
+
+.report-brand {
+  margin: 0 0 4px;
+  color: var(--ink);
+  font-size: 24px;
+  font-weight: 700;
+}
+
+.report-edition {
+  margin: 0 0 28px;
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.report-sidebar h2 {
+  margin: 0 0 10px;
+  padding: 0;
+  border: 0;
+  color: var(--muted);
+  font-size: 13px;
+  text-transform: uppercase;
+}
+
+.report-sidebar ul {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.report-sidebar li { margin: 5px 0; }
+
+.report-sidebar li ul {
+  margin: 4px 0 8px 12px;
+  padding-left: 11px;
+  border-left: 1px solid var(--line);
+}
+
+.report-sidebar a {
+  display: block;
+  color: var(--muted);
+  font-size: 13px;
+  line-height: 1.35;
+  text-decoration: none;
+}
+
+.report-sidebar a:hover { color: var(--blue); }
+
+.report-content {
+  width: min(100%, 1040px);
+  max-width: 100%;
+  min-width: 0;
+  margin: 0 auto;
+  padding: 64px 64px 100px;
+}
+
+.report-content section { min-width: 0; }
+
+.report-content > h1:first-child {
+  max-width: 860px;
+  margin: 0 0 18px;
+  color: var(--ink);
+  font-size: 44px;
+  line-height: 1.18;
+  font-weight: 750;
+  overflow-wrap: anywhere;
+}
+
+.report-content > h2:first-of-type {
+  margin: 0 0 28px;
+  padding: 0 0 22px;
+  color: var(--muted);
+  border-top: 0;
+  border-bottom: 2px solid var(--ink);
+  font-size: 24px;
+  font-weight: 600;
+  overflow-wrap: anywhere;
+}
+
+h2 {
+  margin: 72px 0 22px;
+  padding-top: 22px;
+  border-top: 2px solid var(--ink);
+  font-size: 30px;
+  line-height: 1.3;
+  overflow-wrap: anywhere;
+}
+
+h3 {
+  margin: 42px 0 15px;
+  font-size: 23px;
+  line-height: 1.4;
+}
+
+h4 {
+  margin: 32px 0 12px;
+  font-size: 19px;
+}
+
+p { margin: 14px 0; }
+
+strong { font-weight: 700; }
+
+blockquote {
+  margin: 24px 0;
+  padding: 12px 18px;
+  color: var(--ink);
+  background: var(--blue-soft);
+  border-left: 4px solid var(--blue);
+}
+
+blockquote p { margin: 0; }
+
+ul, ol { padding-left: 1.4em; }
+
+li { margin: 7px 0; }
+
+code {
+  padding: 2px 5px;
+  color: #293241;
+  background: var(--code);
+  border: 1px solid #e2e7ed;
+  border-radius: 4px;
+  font-family: "SFMono-Regular", Consolas, "Liberation Mono", monospace;
+  font-size: .88em;
+  overflow-wrap: anywhere;
+}
+
+pre {
+  margin: 22px 0;
+  padding: 18px 20px;
+  overflow: visible;
+  color: #202938;
+  background: var(--code);
+  border-left: 4px solid var(--green);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+pre code {
+  padding: 0;
+  background: transparent;
+  border: 0;
+  font-size: 14px;
+}
+
+table {
+  width: 100%;
+  margin: 24px 0 34px;
+  border-collapse: collapse;
+  table-layout: fixed;
+  font-size: 14px;
+  line-height: 1.5;
+}
+
+th, td {
+  padding: 11px 12px;
+  vertical-align: top;
+  border: 1px solid var(--line);
+  overflow-wrap: anywhere;
+}
+
+th {
+  color: var(--ink);
+  background: var(--sidebar);
+  font-weight: 700;
+  text-align: left;
+}
+
+tbody tr:nth-child(even) { background: #fafbfc; }
+
+img, svg {
+  display: block;
+  width: 100%;
+  height: auto;
+  margin: 34px 0 12px;
+  border: 1px solid var(--line);
+}
+
+.report-content p > img + em,
+.report-content p em:only-child {
+  color: var(--muted);
+  font-size: 14px;
+}
+
+hr {
+  margin: 60px 0;
+  border: 0;
+  border-top: 1px solid var(--line);
+}
+
+.report-footer {
+  margin-top: 80px;
+  padding-top: 22px;
+  color: var(--muted);
+  border-top: 1px solid var(--line);
+  font-size: 13px;
+}
+
+@media (max-width: 920px) {
+  .report-layout { display: block; }
+  .report-sidebar {
+    position: static;
+    width: 100%;
+    height: auto;
+    max-height: none;
+    padding: 18px 22px;
+    border-right: 0;
+    border-bottom: 1px solid var(--line);
+  }
+  .report-sidebar nav { display: none; }
+  .report-brand { margin-bottom: 2px; }
+  .report-edition { margin-bottom: 0; }
+  .report-content {
+    padding: 42px 28px 80px;
+  }
+  .report-content table {
+    display: block;
+    overflow-x: auto;
+  }
+  .report-content img, .report-content svg, .report-content pre {
+    max-width: 100%;
+  }
+  .report-content > h1:first-child { font-size: 36px; }
+}
+
+@media (max-width: 560px) {
+  body { font-size: 16px; }
+  .report-content { padding: 34px 18px 64px; }
+  .report-content > h1:first-child {
+    font-size: 29px;
+    line-height: 1.35;
+    word-break: break-word;
+  }
+  .report-content > h2:first-of-type {
+    font-size: 22px;
+    line-height: 1.45;
+    word-break: break-word;
+  }
+  h2 { margin-top: 58px; font-size: 25px; }
+  h3 { font-size: 21px; }
+  table { font-size: 12px; }
+  th, td { padding: 8px 7px; }
+}
+
+@media print {
+  .report-layout { display: block; }
+  .report-sidebar, .skip-link { display: none; }
+  .report-content {
+    width: 100%;
+    max-width: none;
+    padding: 0;
+  }
+  h2, h3 { break-after: avoid; }
+  table, blockquote, pre, img { break-inside: avoid; }
+  a { color: inherit; text-decoration: none; }
+}

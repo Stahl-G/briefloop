@@ -1,0 +1,41 @@
+{
+  "skill_name": "briefloop-product-manager",
+  "evals": [
+    {
+      "id": 1,
+      "prompt": "我们想把 solar_industry_periodic 做成类似投行行业报告的正式模块。开发 Agent 建议一次加入自动抓取、宽表、柱状图、品牌模板和 Bloomberg 适配。用户已经说表格值得做，但图表是否适合应由人判断。请给产品裁决和给开发 Agent 的收口交接。",
+      "expected_output": "A Product Decision Card that chooses a table-first bounded slice, excludes automatic chart selection and broad data-provider integration, distinguishes post-RC experiment from current blockers, defines Pilot evidence, and ends with a bounded Product Handoff.",
+      "files": [],
+      "expectations": [
+        "The decision is explicit rather than a neutral options list.",
+        "The MVP preserves structured tables and excludes automatic chart selection.",
+        "The answer separates current RC work from a post-RC vertical ReportPack experiment.",
+        "The handoff names non-goals, acceptance evidence, authority boundaries, and a stop condition."
+      ]
+    },
+    {
+      "id": 2,
+      "prompt": "BriefLoop 现在只有 PyYAML，开发 Agent 说为了企业级应该在 RC 期间把状态改成 SQLite，再顺便上 Pydantic、FastAPI、Docker、Redis 和 LangGraph。现有 CI 全绿但 v1 pilot evidence 还是 not_satisfied。你作为北极星怎么决定？",
+      "expected_output": "A decisive defer or reject decision for the RC, separating product invariants from implementation choices, prioritizing Pilot evidence and current blockers, and approving at most a bounded post-RC experiment with no second authority.",
+      "files": [],
+      "expectations": [
+        "The answer does not approve the technology bundle merely as enterprise architecture.",
+        "Product invariants are separated from replaceable implementation choices.",
+        "Missing Pilot evidence is treated as a product gate rather than replaced by green CI.",
+        "Any post-RC storage experiment is bounded and cannot create a second authority."
+      ]
+    },
+    {
+      "id": 3,
+      "prompt": "帮我在 /tmp/my-briefloop-workspace 里检查 gate、修复失败项并 finalize，最后告诉我有没有交付。",
+      "expected_output": "Northstar recognizes this as workspace operation, does not infer or edit control truth, and routes the task to the BriefLoop operator Skill or deterministic CLI instead of fabricating a Product Decision Card.",
+      "files": [],
+      "expectations": [
+        "The answer identifies the request as runtime workspace operation.",
+        "The answer routes execution to the BriefLoop operator contract.",
+        "The answer does not infer delivery from files or claim that delivery occurred.",
+        "The answer does not propose direct edits to workflow state, artifact registry, or event log."
+      ]
+    }
+  ]
+}

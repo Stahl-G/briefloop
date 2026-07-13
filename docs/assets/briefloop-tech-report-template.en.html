@@ -1,0 +1,31 @@
+<!DOCTYPE html>
+<html lang="$if(lang)$$lang$$else$en$endif$">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="light">
+  <title>$if(pagetitle)$$pagetitle$$else$BriefLoop Architecture Reference v0.4.0$endif$</title>
+  $for(css)$<link rel="stylesheet" href="$css$">$endfor$
+</head>
+<body>
+  <a class="skip-link" href="#report-main">Skip to main content</a>
+  <div class="report-layout">
+    <aside class="report-sidebar" aria-label="Report contents">
+      <p class="report-brand">BriefLoop</p>
+      <p class="report-edition">Architecture Reference v0.4.0 · Code Snapshot v0.11.12</p>
+      $if(toc)$
+      <nav id="$idprefix$TOC" role="doc-toc">
+        <h2>Contents</h2>
+        $table-of-contents$
+      </nav>
+      $endif$
+    </aside>
+    <main id="report-main" class="report-content">
+      $body$
+      <footer class="report-footer">
+        BriefLoop Architecture Reference v0.4.0 · 2026-07-10 · Current capability boundaries are defined by architecture-status and support-matrix.
+      </footer>
+    </main>
+  </div>
+</body>
+</html>
