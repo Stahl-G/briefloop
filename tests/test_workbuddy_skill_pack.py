@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import os
 import re
+import shutil
 import subprocess
 import sys
 import zipfile
@@ -72,6 +73,7 @@ REFERENCE_NAMES = {
     "status-and-gates.md",
     "repair-protocol.md",
     "workbuddy-safety.md",
+    "workbuddy-delegation.md",
 }
 
 
@@ -99,6 +101,35 @@ def test_workbuddy_skill_bundle_has_required_files() -> None:
     assert (WORKBUDDY_SKILL / "SKILL.md").exists()
     for name in REFERENCE_NAMES:
         assert (WORKBUDDY_SKILL / "references" / name).exists(), name
+
+
+def test_workbuddy_delegation_reference_uses_one_host_capability_contract() -> None:
+    canonical = _read(WORKBUDDY_SKILL / "references" / "workbuddy-delegation.md")
+    legacy_mirror = _read(
+        LEGACY_WORKBUDDY_SKILL / "references" / "workbuddy-delegation.md"
+    )
+
+    assert canonical == legacy_mirror
+    for phrase in [
+        "CodeBuddy / WorkBuddy Role Delegation",
+        ".codebuddy/agents/briefloop-scout.md",
+        "https://www.codebuddy.cn/docs/cli/sub-agents",
+        "https://www.codebuddy.cn/docs/workbuddy/",
+        "Use the briefloop-scout subagent",
+        "使用 briefloop-scout 子代理",
+        "host-visible invocation and return",
+        "tools: Read, Write, Grep, Glob",
+        "tools: Read, Grep, Glob",
+        "The main CodeBuddy/WorkBuddy session is the Orchestrator",
+        "main** CodeBuddy/WorkBuddy session",
+        "two-phase at every role boundary",
+        "missing project-role dispatch, not a missing CLI",
+        "briefloop run --workspace <workspace> --runtime operator",
+    ]:
+        assert phrase in canonical
+
+    assert "orchestrator_draft_fallback" not in canonical
+    assert "WorkBuddy `Agent` tool" not in canonical
 
 
 def test_codebuddy_role_agents_are_project_level_assets() -> None:
@@ -132,6 +163,7 @@ def test_codebuddy_skill_adapter_is_main_session_orchestrator() -> None:
     text = _read(CODEBUDDY_SKILL)
     compact = _compact(text)
     frontmatter = text.split("---", 2)[1]
+    role_delegation_offset = text.index("## Role Delegation")
 
     assert "name: briefloop" in text
     assert "main CodeBuddy session" in text
@@ -141,6 +173,11 @@ def test_codebuddy_skill_adapter_is_main_session_orchestrator() -> None:
     assert ".agents/skills/briefloop-workbuddy/SKILL.md" in text
     assert ".agents/skills/briefloop-workbuddy/references/" in text
     assert ".codebuddy/skills/briefloop/SKILL.md" in text
+    assert text.index("If the main session cannot resolve and invoke") < role_delegation_offset
+    assert "stop before workspace creation, role work, fallback, or state advancement" in compact
+    assert "Regenerating an operator handoff does not supply missing command execution" in compact
+    assert "is not a fallback for a missing CLI" in compact
+    assert "If the main session can invoke BriefLoop CLI commands but the host cannot" in compact
     assert "Do not perform Scout, Screener, Claim Ledger, Analyst, Editor, Auditor, or" in text
     for role_name in [
         "briefloop-scout",
@@ -681,6 +718,26 @@ def test_workbuddy_skill_pack_contains_only_public_skill_files(tmp_path: Path) -
     assert "BriefLoop WorkBuddy Skill" in skill_text
     assert "BriefLoop Operator Protocol" not in skill_text
     assert "semantic proof" in skill_text
+
+
+def test_workbuddy_skill_pack_rejects_missing_delegation_reference_before_output(
+    tmp_path: Path,
+) -> None:
+    repo = tmp_path / "repo"
+    source = repo / ".agents" / "skills" / "briefloop-workbuddy"
+    shutil.copytree(WORKBUDDY_SKILL, source)
+    (repo / "pyproject.toml").write_text("[project]\nname = 'briefloop-pack-test'\n")
+    (source / "references" / "workbuddy-delegation.md").unlink()
+    output = tmp_path / "out"
+
+    try:
+        package_workbuddy_skill(output_dir=output, repo_workdir=repo)
+    except WorkBuddySkillPackError as exc:
+        assert "references/workbuddy-delegation.md" in str(exc)
+    else:  # pragma: no cover - clearer failure than a generic assertion
+        raise AssertionError("expected missing delegation reference rejection")
+
+    assert not output.exists()
 
 
 def test_workbuddy_skill_pack_is_reproducible(tmp_path: Path) -> None:

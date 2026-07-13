@@ -99,8 +99,8 @@ Quality Panel 已生成。
 
 ## 角色委派
 
-WorkBuddy 主会话必须显式委派角色专属草稿工作。严格使用签入的兼容
-CodeBuddy 的角色名：
+先读 `workbuddy-delegation.md`。CodeBuddy/WorkBuddy 主会话必须显式委派
+角色专属草稿工作，并严格使用签入的项目角色名：
 
 ```text
 briefloop-scout
@@ -119,14 +119,12 @@ briefloop-formatter
 除非 WorkBuddy 确实委派了这些角色，否则不要声称 Scout、Screener、
 Claim Ledger、Analyst、Editor、Auditor 或 Formatter 子代理已运行。
 
-如果角色子代理不可用（包括宿主的 Agent 工具无法派发 frontmatter 受限的
-项目级子代理），在 codebuddy 完整工作流执行之前停下。你仍可以运行确定性
-setup、`status`、`state check`、`quality summarize` 或 demo 命令，但在
-codebuddy handoff 下不得手写工作流 JSON 工件，也不要建议修改角色子代理
-frontmatter 的 tools 清单。唯一合法的继续通道是由用户明确决定改用
-`briefloop run --workspace <workspace> --runtime operator` 重新生成
-handoff——operator handoff 明确允许主会话亲自起草角色工件，且绝不声称
-子代理运行过。
+如果 host 没有实际派发精确的 `briefloop-*` 项目角色，在 codebuddy 完整工作流
+执行之前停下。你仍可以运行确定性 setup、`status`、`state check`、
+`quality summarize`、`doctor` 或 demo 命令，但不得把 generic helper 的工作
+描述成 BriefLoop 项目角色执行，也不得由主会话代写 codebuddy handoff 指派的
+角色工件。继续通道必须由用户明确选择：换到能派发项目角色的
+CodeBuddy/WorkBuddy 会话，或用 `--runtime operator` 重新生成 handoff。
 
 如果用户在用中文交流，可在需要时用中文解释下一步动作，但要严格按生成的
 handoff 执行。逐字保留命令名、工件名与 handoff 义务。翻译不得漏掉步骤、

@@ -12,8 +12,8 @@ authority layer.
 - when live web search is requested, use Tavily first and verify
   `TAVILY_API_KEY` without displaying the key value;
 - use `--runtime codebuddy` for full workflow handoff;
-- invoke the matching CodeBuddy-compatible role subagent for role-owned draft
-  work;
+- invoke the matching project role subagent by exact name in the active
+  CodeBuddy/WorkBuddy host;
 - run deterministic BriefLoop CLI commands when the user approves;
 - print a machine-fact Run Card after key commands, role returns, repairs,
   gates, finalize attempts, quality summaries, and bundle/export requests;

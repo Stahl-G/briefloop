@@ -1393,6 +1393,26 @@ def test_start_codebuddy_handoff_contains_project_skill_and_role_agent_contract(
     assert ".codebuddy/skills/briefloop/SKILL.md" in data["prompt"]
     assert "Do not add or use `context: fork`" in data["prompt"]
     assert "The main CodeBuddy session is the Orchestrator" in data["prompt"]
+    cli_hard_stop = (
+        "Before any role work or fallback, confirm that this main session can invoke "
+        "`briefloop` or `multi-agent-brief`"
+    )
+    assert cli_hard_stop in data["prompt"]
+    assert data["prompt"].index(cli_hard_stop) < data["prompt"].index(
+        "CodeBuddy role sub-agents are project-level assets"
+    )
+    assert "stop before role work or state advancement" in data["prompt"]
+    assert (
+        "Regenerating an operator handoff does not supply missing command execution "
+        "and is not a fallback for a missing CLI"
+        in data["prompt"]
+    )
+    assert (
+        "If the main session can run BriefLoop CLI commands but the host cannot dispatch "
+        "the exact checked-in BriefLoop role"
+        in data["prompt"]
+    )
+    assert cli_hard_stop in text
     assert "CodeBuddy sub-agents cannot spawn other sub-agents" in data["prompt"]
     assert "Role sub-agents must not run `briefloop` or `multi-agent-brief` CLI commands" in data["prompt"]
     assert "briefloop-screener" in data["prompt"]
