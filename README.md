@@ -293,7 +293,7 @@ The demos use synthetic materials. They show the evidence chain and gate behavio
 
 ## 🧭 Current status
 
-Current version: **v0.11.12**
+Current version: **v0.12.0**
 
 Current main entrypoints:
 
@@ -301,7 +301,7 @@ Current main entrypoints:
 - Claude command: `/briefloop`
 - experimental WorkBuddy / CodeBuddy guide: [docs/workbuddy.md](docs/workbuddy.md)
 
-v0.11.12 releases the accumulated v0.11 product-baseline, WorkBuddy adapter,
+v0.12.0 releases the accumulated v0.11 product-baseline, WorkBuddy adapter,
 operator-runtime, and semantic-support auditor hardening line, including:
 
 - `ReportSpec`, `ReportPack`, `ReportTemplate`, and `PolicyProfile` contracts
