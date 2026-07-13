@@ -605,7 +605,7 @@ jobs:
   merge-gate:
     name: >-
       ${{ github.event_name == 'pull_request' && github.event.pull_request.draft &&
-      'Draft gate' || 'Merge gate' }}
+      'Draft gate' || 'Merge gate spoof probe' }}
     if: always()
     needs:
       - changes
