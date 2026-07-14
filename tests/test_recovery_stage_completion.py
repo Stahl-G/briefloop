@@ -48,7 +48,7 @@ def test_stage_complete_rejects_unrecovered_contamination_without_writes(
         include_input_dir=True,
         include_output_dir=True,
     )
-    initialize_runtime_state(workspace=workspace, repo_workdir=ROOT)
+    initialize_runtime_state(runtime="operator", workspace=workspace, repo_workdir=ROOT)
     check_runtime_state(workspace=workspace, repo_workdir=ROOT)
     manifest = json.loads(
         _state_path(workspace, "runtime_manifest").read_text(encoding="utf-8")
@@ -87,7 +87,7 @@ def test_stage_complete_rejects_cross_cycle_owner_revision_without_writes(
         include_input_dir=True,
         include_output_dir=True,
     )
-    initialize_runtime_state(workspace=workspace, repo_workdir=ROOT)
+    initialize_runtime_state(runtime="operator", workspace=workspace, repo_workdir=ROOT)
     check_runtime_state(workspace=workspace, repo_workdir=ROOT)
     manifest = json.loads(
         _state_path(workspace, "runtime_manifest").read_text(encoding="utf-8")

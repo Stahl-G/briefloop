@@ -61,11 +61,10 @@ decision_record_fields:
 runtime_surfaces:
   - hermes
   - claude
+  - opencode
   - codex
   - codebuddy
-  - opencode
   - operator
-  - manual
 v060_boundaries:
   implements:
     - shared_orchestrator_authority

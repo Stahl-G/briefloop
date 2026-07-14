@@ -450,12 +450,14 @@ def test_status_command_is_read_only_for_existing_runtime_state(tmp_path, capsys
         "source": "workspace_status_projection",
         "current_stage": "doctor",
         "current_work": "prepare sources",
-        "next_command": f"/briefloop run {ws}",
+        "next_command": f"briefloop run --workspace {ws} --runtime claude",
         "status": "ready_for_operator",
         "message": "Continue the prepare sources step through the suggested command or handoff.",
     }
     assert "stage-complete" not in payload["suggested_next_command"]
-    assert payload["suggested_next_command"] == f"/briefloop run {ws}"
+    assert payload["suggested_next_command"] == (
+        f"briefloop run --workspace {ws} --runtime claude"
+    )
 
     for path in watched:
         assert path.read_bytes() == before_bytes[path]
@@ -786,7 +788,8 @@ def test_status_preserves_only_typed_legal_registry_absence(tmp_path):
     assert fresh["artifacts"]["artifact_count"] == 0
     assert fresh["runtime"]["present"] is False
     assert fresh["suggested_next_command"] == (
-        f"briefloop run --workspace {fresh_ws} --runtime claude"
+        f"briefloop run --workspace {fresh_ws} "
+        "--runtime <hermes|claude|opencode|codex|codebuddy|operator>"
     )
     assert _workspace_file_snapshot(fresh_ws) == fresh_before
 
@@ -802,7 +805,9 @@ def test_status_preserves_only_typed_legal_registry_absence(tmp_path):
     )
     assert initialized["artifacts"]["artifact_count"] == 0
     assert initialized["runtime"]["present"] is True
-    assert initialized["suggested_next_command"] == f"/briefloop run {initialized_ws}"
+    assert initialized["suggested_next_command"] == (
+        f"briefloop run --workspace {initialized_ws} --runtime claude"
+    )
     assert _workspace_file_snapshot(initialized_ws) == initialized_before
 
 
@@ -893,7 +898,10 @@ def test_status_command_reports_fact_layer_import_summary(tmp_path, capsys):
     assert summary["fact_layer_sha256"] == "a" * 64
     assert summary["next_stage"] == "analyst"
     assert all(stage["display_status"] == "complete via import" for stage in summary["imported_stages"])
-    assert payload["suggested_next_command"] == f"briefloop run --workspace {ws} --recipe fast-rerun --skip-doctor"
+    assert payload["suggested_next_command"] == (
+        f"briefloop run --workspace {ws} --runtime claude "
+        "--recipe fast-rerun --skip-doctor"
+    )
 
 
 def test_status_unsafe_registry_precedes_quality_package_recommendation(tmp_path, capsys):

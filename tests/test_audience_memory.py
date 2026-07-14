@@ -79,7 +79,7 @@ def test_default_audience_profile_is_plain_markdown():
 
 def test_snapshot_created_once_per_run_id_and_ignores_mid_run_profile_edits(tmp_path):
     ws = _write_workspace(tmp_path)
-    state = initialize_runtime_state(workspace=ws, repo_workdir=ROOT)
+    state = initialize_runtime_state(runtime="operator", workspace=ws, repo_workdir=ROOT)
     run_id = state["manifest"]["run_id"]
     ensure_audience_profile(ws, {"company": "TestCo"})
 
@@ -104,7 +104,7 @@ def test_snapshot_created_once_per_run_id_and_ignores_mid_run_profile_edits(tmp_
 
 def test_snapshot_rebuilds_when_metadata_missing_or_malformed(tmp_path):
     ws = _write_workspace(tmp_path)
-    state = initialize_runtime_state(workspace=ws, repo_workdir=ROOT)
+    state = initialize_runtime_state(runtime="operator", workspace=ws, repo_workdir=ROOT)
     run_id = state["manifest"]["run_id"]
     ensure_audience_profile(ws, {"company": "TestCo"})
     snapshot_path = ws / AUDIENCE_MEMORY_FILES["audience_profile_snapshot"]
@@ -126,7 +126,7 @@ def test_run_creates_profile_snapshot_event_and_handoff_refs(tmp_path):
     ws = _write_workspace(tmp_path)
 
     rc = main([
-        "run",
+        "run", "--runtime", "operator",
         "--workspace",
         str(ws),
         "--repo-workdir",
@@ -166,7 +166,7 @@ def test_run_backfills_missing_profile_from_workspace_config(tmp_path):
     assert not (ws / "audience_profile.md").exists()
 
     rc = main([
-        "run",
+        "run", "--runtime", "operator",
         "--workspace",
         str(ws),
         "--repo-workdir",
@@ -189,16 +189,16 @@ def test_runtime_state_commands_do_not_overwrite_existing_audience_profile(tmp_p
     custom_profile = "# Audience Profile\n\nCUSTOM_TASTE_MARKER_DO_NOT_OVERWRITE\n"
     (ws / "audience_profile.md").write_text(custom_profile, encoding="utf-8")
 
-    assert main(["run", "--workspace", str(ws), "--repo-workdir", str(ROOT), "--skip-doctor"]) == 0
+    assert main(["run", "--runtime", "operator", "--workspace", str(ws), "--repo-workdir", str(ROOT), "--skip-doctor"]) == 0
     assert (ws / "audience_profile.md").read_text(encoding="utf-8") == custom_profile
 
-    assert main(["state", "init", "--workspace", str(ws), "--repo-workdir", str(ROOT)]) == 0
+    assert main(["state", "init", "--runtime", "operator", "--workspace", str(ws), "--repo-workdir", str(ROOT)]) == 0
     assert (ws / "audience_profile.md").read_text(encoding="utf-8") == custom_profile
 
     assert main(["state", "check", "--workspace", str(ws), "--repo-workdir", str(ROOT)]) == 0
     assert (ws / "audience_profile.md").read_text(encoding="utf-8") == custom_profile
 
-    assert main(["state", "init", "--workspace", str(ws), "--repo-workdir", str(ROOT), "--reset-state"]) == 0
+    assert main(["state", "init", "--runtime", "operator", "--workspace", str(ws), "--repo-workdir", str(ROOT), "--reset-state"]) == 0
     assert (ws / "audience_profile.md").read_text(encoding="utf-8") == custom_profile
 
 
@@ -206,7 +206,7 @@ def test_rerun_same_run_id_does_not_duplicate_snapshot_created_event(tmp_path):
     ws = _write_workspace(tmp_path)
     for _ in range(2):
         rc = main([
-            "run",
+            "run", "--runtime", "operator",
             "--workspace",
             str(ws),
             "--repo-workdir",
@@ -220,14 +220,14 @@ def test_rerun_same_run_id_does_not_duplicate_snapshot_created_event(tmp_path):
 
 def test_reset_new_run_refreshes_fixed_snapshot_path(tmp_path):
     ws = _write_workspace(tmp_path)
-    rc = main(["run", "--workspace", str(ws), "--repo-workdir", str(ROOT), "--skip-doctor"])
+    rc = main(["run", "--runtime", "operator", "--workspace", str(ws), "--repo-workdir", str(ROOT), "--skip-doctor"])
     assert rc == 0
     first = (ws / AUDIENCE_MEMORY_FILES["audience_profile_snapshot"]).read_text(encoding="utf-8")
     first_run_id = json.loads((ws / RUNTIME_STATE_FILES["runtime_manifest"]).read_text(encoding="utf-8"))["run_id"]
 
-    rc = main(["state", "init", "--workspace", str(ws), "--repo-workdir", str(ROOT), "--reset-state"])
+    rc = main(["state", "init", "--runtime", "operator", "--workspace", str(ws), "--repo-workdir", str(ROOT), "--reset-state"])
     assert rc == 0
-    rc = main(["run", "--workspace", str(ws), "--repo-workdir", str(ROOT), "--skip-doctor"])
+    rc = main(["run", "--runtime", "operator", "--workspace", str(ws), "--repo-workdir", str(ROOT), "--skip-doctor"])
     assert rc == 0
 
     second = (ws / AUDIENCE_MEMORY_FILES["audience_profile_snapshot"]).read_text(encoding="utf-8")

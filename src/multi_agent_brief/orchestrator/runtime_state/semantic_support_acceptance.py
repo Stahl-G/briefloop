@@ -26,6 +26,10 @@ from multi_agent_brief.orchestrator.runtime_state.semantic_assessment_report imp
     build_semantic_assessment_checked_inputs,
     project_semantic_assessment_report_from_workspace,
 )
+from multi_agent_brief.orchestrator_contract import (
+    RUNTIME_CLI_CHOICE_PLACEHOLDER,
+    require_canonical_runtime,
+)
 
 
 SEMANTIC_SUPPORT_ACCEPTANCE_LEDGER_SCHEMA = "briefloop.semantic_support_acceptance_ledger.v1"
@@ -531,7 +535,9 @@ def _current_run_id(workspace: Path) -> str:
     workflow = _read_json_if_exists(paths["workflow_state"])
     if manifest is None or workflow is None:
         raise RuntimeStateError(
-            "Runtime state is not initialized. Run `multi-agent-brief state init --workspace <workspace>` first.",
+            "Runtime state is not initialized. Run `multi-agent-brief state init "
+            "--workspace <workspace> "
+            f"--runtime {RUNTIME_CLI_CHOICE_PLACEHOLDER}` first.",
             details={"workspace": str(workspace)},
             error_code=E_RUNTIME_STATE_NOT_INITIALIZED,
         )
@@ -541,6 +547,15 @@ def _current_run_id(workspace: Path) -> str:
             details={"path": str(paths["runtime_manifest"]), "schema_version": manifest.get("schema_version")},
             error_code=E_TRANSACTION_INTEGRITY,
         )
+    try:
+        require_canonical_runtime(manifest.get("runtime"))
+    except ValueError as exc:
+        raise RuntimeStateError(
+            "runtime_manifest.json contains a historical or unsupported runtime identity; "
+            "reset the workspace with an explicit canonical --runtime before adjudication.",
+            details={"path": str(paths["runtime_manifest"])},
+            error_code=E_TRANSACTION_INTEGRITY,
+        ) from exc
     run_id = _validate_runtime_run_id(manifest.get("run_id"), path=paths["runtime_manifest"])
     if workflow.get("run_id") and _clean_text(workflow.get("run_id")) != run_id:
         raise RuntimeStateError(

@@ -270,7 +270,7 @@ def run_launch_smoke() -> dict[str, Any]:
                     "--workspace",
                     str(workspace),
                     "--runtime",
-                    "manual",
+                    "operator",
                 ],
             ),
             (

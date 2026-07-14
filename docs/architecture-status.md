@@ -13,6 +13,11 @@ page describes implemented runtime capability, not a breaking deep rename.
 
 - The standard user path is subagent-first.
 - `multi-agent-brief run` creates runtime handoff artifacts rather than generating a full brief by itself.
+- Runtime identity is explicit and single-writer: dedicated adapters inject one
+  fixed canonical literal, generic CLI users pass `--runtime`, and subsequent
+  status/handoff/transaction consumers reuse `runtime_manifest.runtime` without
+  guessing or rewriting it. Historical `auto` / `manual` / implicit `controls` manifests are
+  read-only until an explicit reset starts a canonical run.
 - Runtime handoff now initializes minimum runtime state and artifact registry control files.
 - Feedback issues and bounded repair plans can be structured, validated, and recorded without executing repair.
 - The default role topology lets Scout perform discovery and screening while keeping `candidate_claims.json` and `screened_candidates.json` as distinct artifacts; strict topology can keep Screener independent.
@@ -211,8 +216,9 @@ page describes implemented runtime capability, not a breaking deep rename.
   runtime handoff requires `.codebuddy/skills/briefloop/` and
   `.codebuddy/agents/briefloop-*.md` in the source checkout; it is not packaged
   runtime proof. The operator runtime is a host-agnostic compact workflow for
-  environments without a dedicated runtime adapter; legacy `manual` remains a
-  CLI compatibility alias and is not a Python brief-generation path.
+  environments without a dedicated runtime adapter. Historical `manual`
+  manifests remain readable for diagnosis but cannot continue a run until an
+  explicit reset records a canonical runtime.
 - Input governance can extract supported non-text input documents to Markdown with MinerU, then separates evidence from feedback, instructions, and background context.
 - Old Python-pipeline framing is deprecated for the standard workflow.
 

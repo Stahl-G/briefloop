@@ -7,6 +7,7 @@ from functools import partial
 from pathlib import Path
 
 import yaml
+import pytest
 
 from multi_agent_brief.cli.main import main
 from multi_agent_brief.cli.start_commands import (
@@ -526,8 +527,8 @@ def test_start_help_shows_runtime_options(capsys):
     assert "hermes" in output
     assert "claude" in output
     assert "operator" in output
-    assert "manual" in output
-    assert "legacy alias for operator" in output
+    assert "manual" not in output
+    assert "{hermes,claude,opencode,codex,codebuddy,operator}" in output
     assert "--workspace" in output
 
 
@@ -560,7 +561,7 @@ def test_handoff_help_shows_config_required(capsys):
 def test_start_no_workspace_in_non_workspace_dir(tmp_path, monkeypatch, capsys):
     """start without --workspace in a non-workspace dir should give guidance."""
     monkeypatch.chdir(tmp_path)
-    rc = main(["start", "--skip-doctor"])
+    rc = main(["start", "--runtime", "operator", "--skip-doctor"])
     assert rc == 1
     captured = capsys.readouterr()
     output = captured.out
@@ -571,7 +572,7 @@ def test_start_auto_detects_workspace_in_cwd(tmp_path, monkeypatch):
     """start without --workspace should detect workspace if CWD is one."""
     ws = _write_workspace(tmp_path)
     monkeypatch.chdir(ws)
-    rc = main(["start", "--skip-doctor"])
+    rc = main(["start", "--runtime", "operator", "--skip-doctor"])
     assert rc == 0
     assert (ws / "output" / "intermediate" / "agent_handoff.md").exists()
     json_path = ws / "output" / "intermediate" / "agent_handoff.json"
@@ -596,7 +597,7 @@ def test_start_auto_detects_workspace_in_cwd(tmp_path, monkeypatch):
 def test_start_with_workspace_generates_handoff(tmp_path):
     ws = _write_workspace(tmp_path)
     rc = main([
-        "start",
+        "start", "--runtime", "operator",
         "--workspace", str(ws),
         "--skip-doctor",
         "--venv", str(tmp_path / ".venv" / "bin" / "activate"),
@@ -611,7 +612,7 @@ def test_start_with_workspace_generates_handoff(tmp_path):
     assert (ws / "output" / "intermediate" / "audience_profile_snapshot.md").exists()
 
     data = json.loads(js.read_text(encoding="utf-8"))
-    assert data["runtime"] == "hermes"
+    assert data["runtime"] == "operator"
     _assert_orchestrator_contract_handoff(data)
     md_text = md.read_text(encoding="utf-8")
     _assert_atomic_graph_boundary(data["prompt"])
@@ -629,7 +630,7 @@ def test_start_handoff_projects_policy_profile_without_runtime_effect(tmp_path):
     _write_market_report_spec(ws, policy_profile="internet_default")
 
     rc = main([
-        "start",
+        "start", "--runtime", "operator",
         "--workspace", str(ws),
         "--skip-doctor",
         "--venv", str(tmp_path / ".venv" / "bin" / "activate"),
@@ -674,7 +675,7 @@ def test_start_handoff_projects_sourcehub_runtime_search_tasks(tmp_path):
     )
 
     rc = main([
-        "start",
+        "start", "--runtime", "operator",
         "--workspace", str(ws),
         "--skip-doctor",
         "--venv", str(tmp_path / ".venv" / "bin" / "activate"),
@@ -740,7 +741,7 @@ def test_start_handoff_projects_report_template_section_order(tmp_path):
     _write_solar_report_spec(ws)
 
     rc = main([
-        "start",
+        "start", "--runtime", "operator",
         "--workspace", str(ws),
         "--skip-doctor",
         "--venv", str(tmp_path / ".venv" / "bin" / "activate"),
@@ -803,7 +804,7 @@ def test_start_handoff_projects_report_template_conformance_pass(tmp_path):
     )
 
     rc = main([
-        "start",
+        "start", "--runtime", "operator",
         "--workspace", str(ws),
         "--skip-doctor",
         "--venv", str(tmp_path / ".venv" / "bin" / "activate"),
@@ -853,7 +854,7 @@ def test_start_handoff_projects_report_template_render_plan(tmp_path):
     )
 
     rc = main([
-        "start",
+        "start", "--runtime", "operator",
         "--workspace", str(ws),
         "--skip-doctor",
         "--venv", str(tmp_path / ".venv" / "bin" / "activate"),
@@ -908,7 +909,7 @@ def test_start_handoff_projects_report_template_conformance_warning(tmp_path):
     )
 
     rc = main([
-        "start",
+        "start", "--runtime", "operator",
         "--workspace", str(ws),
         "--skip-doctor",
         "--venv", str(tmp_path / ".venv" / "bin" / "activate"),
@@ -939,7 +940,7 @@ def test_start_handoff_does_not_treat_invalid_report_template_as_contract(tmp_pa
     (ws / "report_spec.yaml").write_text(yaml.safe_dump(spec, sort_keys=False), encoding="utf-8")
 
     rc = main([
-        "start",
+        "start", "--runtime", "operator",
         "--workspace", str(ws),
         "--skip-doctor",
         "--venv", str(tmp_path / ".venv" / "bin" / "activate"),
@@ -959,7 +960,7 @@ def test_start_handoff_does_not_treat_invalid_report_template_as_contract(tmp_pa
 
 def test_run_handoff_projects_trajectory_decision_narrowing(tmp_path):
     ws = _write_workspace(tmp_path)
-    initialize_runtime_state(workspace=ws, repo_workdir=ROOT)
+    initialize_runtime_state(runtime="operator", workspace=ws, repo_workdir=ROOT)
     complete_stage_transaction(
         workspace=ws,
         repo_workdir=ROOT,
@@ -976,7 +977,7 @@ def test_run_handoff_projects_trajectory_decision_narrowing(tmp_path):
         )
 
     rc = main([
-        "run",
+        "run", "--runtime", "operator",
         "--workspace", str(ws),
         "--skip-doctor",
         "--venv", str(tmp_path / ".venv" / "bin" / "activate"),
@@ -998,7 +999,7 @@ def test_start_handoff_projects_auditable_assessment_target(tmp_path):
     _write_auditable_condition_metadata(ws)
 
     rc = main([
-        "start",
+        "start", "--runtime", "operator",
         "--workspace", str(ws),
         "--skip-doctor",
         "--venv", str(tmp_path / ".venv" / "bin" / "activate"),
@@ -1072,7 +1073,7 @@ def test_start_does_not_generate_brief(tmp_path):
     """start must NOT generate brief.md or claim_ledger.json."""
     ws = _write_workspace(tmp_path)
     rc = main([
-        "start",
+        "start", "--runtime", "operator",
         "--workspace", str(ws),
         "--skip-doctor",
         "--venv", str(tmp_path / ".venv" / "bin" / "activate"),
@@ -1217,7 +1218,11 @@ def test_run_fast_rerun_recipe_requires_fact_layer_import(tmp_path, capsys):
     assert rc == 1
     out = capsys.readouterr().out
     assert "E_FAST_RERUN_IMPORT_REQUIRED" in out
-    assert "briefloop state import-fact-layer" in out
+    assert (
+        "briefloop state import-fact-layer --workspace <workspace> "
+        "--archive <output/runs/run_id> "
+        "--runtime <hermes|claude|opencode|codex|codebuddy|operator>"
+    ) in out
     assert not (ws / "output" / "intermediate" / "agent_handoff.json").exists()
 
 
@@ -1264,6 +1269,11 @@ def test_run_fast_rerun_recipe_uses_imported_fact_layer_handoff(tmp_path):
     assert "Source run: mabw-20260614T010000Z-source" in text
     assert "Imported fact-layer hash" in text
     assert "Start model-backed content work at Analyst" in text
+    assert (
+        "briefloop state import-fact-layer --workspace <workspace> "
+        "--archive <output/runs/run_id> "
+        "--runtime <hermes|claude|opencode|codex|codebuddy|operator>"
+    ) in text
     assert "Do not regenerate source-discovery, input-governance, Scout, Screener, or Claim Ledger" in text
     assert "Do not synthesize or backfill upstream stage-complete" in text
     assert "Then record the pre-analyst successful completions" not in text
@@ -1325,7 +1335,7 @@ def test_start_operator_handoff_contains_compact_runtime_contract(tmp_path):
     data = json.loads((ws / "output" / "intermediate" / "agent_handoff.json").read_text(encoding="utf-8"))
     text = (ws / "output" / "intermediate" / "agent_handoff.md").read_text(encoding="utf-8")
     assert data["runtime"] == RUNTIME_OPERATOR
-    assert data["legacy_runtime_alias"] is None
+    assert "legacy_runtime_alias" not in data
     assert data["runtime_capabilities"]["runtime"] == RUNTIME_OPERATOR
     assert data["runtime_capabilities"]["delegation_assumed"] is False
     assert data["runtime_capabilities"]["compact_workflow_allowed"] is True
@@ -1457,27 +1467,17 @@ def test_start_codebuddy_handoff_fails_without_source_clone_assets(tmp_path, cap
     assert not (ws / "output" / "intermediate" / "agent_handoff.json").exists()
 
 
-def test_start_manual_alias_resolves_to_operator_and_warns(tmp_path, capsys):
+def test_start_rejects_historical_runtime_without_writes(tmp_path):
     ws = _write_workspace(tmp_path)
-    rc = main([
-        "start",
-        "--workspace", str(ws),
-        "--runtime", "manual",
-        "--skip-doctor",
-        "--venv", str(tmp_path / ".venv" / "bin" / "activate"),
-    ])
-    assert rc == 0
-    captured = capsys.readouterr()
-    assert 'runtime "manual" is a legacy alias for "operator"' in captured.err
-    data = json.loads((ws / "output" / "intermediate" / "agent_handoff.json").read_text(encoding="utf-8"))
-    assert data["runtime"] == RUNTIME_OPERATOR
-    assert data["legacy_runtime_alias"] == "manual"
-    assert data["runtime_capabilities"]["runtime"] == RUNTIME_OPERATOR
-    assert data["runtime_capabilities"]["legacy_runtime_alias"] == "manual"
-    assert data["artifact_ownership"]["schema_version"] == "briefloop.operator_artifact_ownership.v1"
-    assert "candidate_claims.json" in data["prompt"]
-    assert "briefloop finalize" in data["prompt"]
-    _assert_orchestrator_contract_handoff(data)
+    with pytest.raises(SystemExit):
+        main([
+            "start",
+            "--workspace", str(ws),
+            "--runtime", "manual",
+            "--skip-doctor",
+            "--venv", str(tmp_path / ".venv" / "bin" / "activate"),
+        ])
+    assert not (ws / "output").exists()
 
 
 # ---------------------------------------------------------------------------
@@ -1512,7 +1512,7 @@ def test_handoff_with_config_generates_artifacts(tmp_path):
 
 
 def test_handoff_no_config_fails(tmp_path):
-    rc = main(["handoff", "--config", str(tmp_path / "nonexistent" / "config.yaml"), "--skip-doctor"])
+    rc = main(["handoff", "--runtime", "operator", "--config", str(tmp_path / "nonexistent" / "config.yaml"), "--skip-doctor"])
     assert rc != 0
 
 
@@ -1680,14 +1680,7 @@ def test_build_handoff_all_runtimes_valid(tmp_path):
             runtime=runtime,
             run_doctor=False,
         )
-        # auto resolves to hermes in v0.5.5
-        if runtime == "auto":
-            assert handoff.runtime == "hermes"
-        elif runtime == "manual":
-            assert handoff.runtime == RUNTIME_OPERATOR
-            assert handoff.legacy_runtime_alias == "manual"
-        else:
-            assert handoff.runtime == runtime
+        assert handoff.runtime == runtime
         assert len(handoff.expected_artifacts) >= 2
         assert len(handoff.prompt) > 50
         _assert_orchestrator_contract_handoff(handoff.to_dict())
@@ -1764,28 +1757,17 @@ def test_run_help_does_not_contain_deprecated(capsys):
     assert "never generates" not in output.lower()
 
 
-def test_run_default_auto_resolves_to_hermes(tmp_path):
-    """Default run (--runtime auto) must resolve to hermes handoff."""
+def test_run_requires_explicit_runtime_without_writes(tmp_path):
     ws = _write_workspace(tmp_path)
-    rc = main([
+    argv = [
         "run",
         "--workspace", str(ws),
         "--skip-doctor",
         "--venv", str(tmp_path / ".venv" / "bin" / "activate"),
-    ])
-    assert rc == 0
-    data = json.loads((ws / "output" / "intermediate" / "agent_handoff.json").read_text(encoding="utf-8"))
-    assert data["runtime"] == "hermes"
-    assert "delegate_task" in data["prompt"]
-    assert "/generate-brief" not in data["prompt"]
-    _assert_orchestrator_contract_handoff(data)
-    manifest = json.loads((ws / "output" / "intermediate" / "runtime_manifest.json").read_text(encoding="utf-8"))
-    assert manifest["improvement"]["ledger_sha256"] is None
-    assert isinstance(manifest["improvement"]["memory_sha256"], str)
-    assert manifest["improvement"]["memory_sha256"]
-    assert manifest["improvement"]["snapshot_path"] is None
-    assert manifest["improvement"]["snapshot_sha256"] is None
-    assert manifest["improvement"]["materialized_entry_ids"] == []
+    ]
+    with pytest.raises(SystemExit):
+        main(argv)
+    assert not (ws / "output").exists()
 
 
 def test_run_claude_contains_stage_workflow_command(tmp_path):
@@ -1810,7 +1792,7 @@ def test_run_does_not_generate_brief(tmp_path):
     """run must NOT generate brief.md or claim_ledger.json."""
     ws = _write_workspace(tmp_path)
     rc = main([
-        "run",
+        "run", "--runtime", "operator",
         "--workspace", str(ws),
         "--skip-doctor",
         "--venv", str(tmp_path / ".venv" / "bin" / "activate"),
@@ -1863,7 +1845,7 @@ def test_init_help_mentions_onboard(capsys):
 
 def test_run_no_workspace_mentions_onboard(tmp_path, capsys):
     """run without a workspace must suggest onboard as the first path."""
-    rc = main(["run", "--workspace", str(tmp_path / "no-such-ws"), "--skip-doctor"])
+    rc = main(["run", "--runtime", "operator", "--workspace", str(tmp_path / "no-such-ws"), "--skip-doctor"])
     assert rc == 1
     captured = capsys.readouterr()
     output = captured.out

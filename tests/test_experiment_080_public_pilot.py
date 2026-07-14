@@ -88,7 +88,7 @@ def test_080_public_pilot_seed_archive_scaffolds_baseline(tmp_path, capsys):
         "--workspace",
         str(ws),
         "--runtime",
-        "manual",
+            "operator",
         "--repo-workdir",
         str(ROOT),
         "--json",

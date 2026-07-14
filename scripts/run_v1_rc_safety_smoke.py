@@ -282,7 +282,7 @@ def _initialize_and_advance_to_claim_ledger(
     else:
         if runtime_launched:
             raise AssertionError("runtime_launched requires the CLI lifecycle path.")
-        initialize_runtime_state(workspace=workspace, repo_workdir=repo_root)
+        initialize_runtime_state(runtime="operator", workspace=workspace, repo_workdir=repo_root)
 
         def complete(stage_id: str) -> None:
             complete_stage_transaction(
@@ -491,6 +491,8 @@ def _scenario_01(parent: Path, repo_root: Path) -> dict[str, Any]:
             "run",
             "--workspace",
             str(workspace),
+            "--runtime",
+            "operator",
             "--repo-workdir",
             str(repo_root),
         ]
@@ -888,7 +890,7 @@ def _assert_workbuddy_parity(workspace: Path, *, repo_root: Path) -> dict[str, A
 
 def _scenario_07(parent: Path, repo_root: Path) -> dict[str, Any]:
     fresh = _new_workspace(parent, "rc-smoke-07-fresh")
-    initialize_runtime_state(workspace=fresh, repo_workdir=repo_root)
+    initialize_runtime_state(runtime="operator", workspace=fresh, repo_workdir=repo_root)
     fresh_parity = _assert_workbuddy_parity(fresh, repo_root=repo_root)
     complete = _new_workspace(parent, "rc-smoke-07-complete")
     _advance_to_auditor_complete(complete, repo_root=repo_root)

@@ -1533,7 +1533,7 @@ def test_runtime_reset_archives_prior_run_quality_panel(tmp_path: Path) -> None:
     write_quality_panel_html(workspace=ws)
     assert main(["state", "check", "--workspace", str(ws), "--json"]) == 0
 
-    assert main(["state", "init", "--workspace", str(ws), "--reset-state"]) == 0
+    assert main(["state", "init", "--runtime", "operator", "--workspace", str(ws), "--reset-state"]) == 0
 
     intermediate = ws / "output" / "intermediate"
     assert (intermediate / f"quality_panel.{old_run_id}.json").exists()

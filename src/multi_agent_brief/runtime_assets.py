@@ -144,7 +144,7 @@ def _codex_writes(*, workspace: Path, repo: Path) -> list[PlannedWrite]:
         ),
         PlannedWrite(
             workspace / ".codex" / "skills" / SKILL_NAME / "SKILL.md",
-            _workspace_skill_text(runtime="Codex"),
+            _workspace_skill_text(runtime="codex", runtime_label="Codex"),
         ),
     ]
     writes.extend(
@@ -156,7 +156,8 @@ def _codex_writes(*, workspace: Path, repo: Path) -> list[PlannedWrite]:
     )
     writes.extend(
         _reference_writes(
-            workspace / ".codex" / "skills" / SKILL_NAME / "references"
+            workspace / ".codex" / "skills" / SKILL_NAME / "references",
+            runtime="codex",
         )
     )
     return writes
@@ -178,7 +179,7 @@ def _runtime_writes(
         ),
         PlannedWrite(
             workspace / runtime_dir_name / "skills" / SKILL_NAME / "SKILL.md",
-            _workspace_skill_text(runtime=runtime_label),
+            _workspace_skill_text(runtime=runtime, runtime_label=runtime_label),
         ),
     ]
     if runtime == "opencode":
@@ -200,15 +201,16 @@ def _runtime_writes(
     )
     writes.extend(
         _reference_writes(
-            workspace / runtime_dir_name / "skills" / SKILL_NAME / "references"
+            workspace / runtime_dir_name / "skills" / SKILL_NAME / "references",
+            runtime=runtime,
         )
     )
     return writes
 
 
-def _reference_writes(reference_dir: Path) -> list[PlannedWrite]:
+def _reference_writes(reference_dir: Path, *, runtime: str) -> list[PlannedWrite]:
     references = {
-        "runtime-workflow.md": _runtime_workflow_reference(),
+        "runtime-workflow.md": _runtime_workflow_reference(runtime=runtime),
         "control-surfaces.md": _control_surfaces_reference(),
         "artifact-boundary.md": _artifact_boundary_reference(),
     }
@@ -312,9 +314,9 @@ multi-agent-brief gates check --workspace <workspace> --stage finalize --brief <
 """)
 
 
-def _workspace_skill_text(*, runtime: str) -> str:
+def _workspace_skill_text(*, runtime: str, runtime_label: str) -> str:
     codex_protocol = ""
-    if runtime == "Codex":
+    if runtime == "codex":
         codex_protocol = """
 Codex writer flow:
 
@@ -345,7 +347,7 @@ Codex writer flow:
 """
     return _with_install_marker(f"""---
 name: multi-agent-brief-workflow
-description: Workspace-local MABW runtime contract for {runtime}.
+description: Workspace-local MABW runtime contract for {runtime_label}.
 ---
 
 # Multi-Agent Brief Workflow Workspace Runtime Kit
@@ -353,7 +355,7 @@ description: Workspace-local MABW runtime contract for {runtime}.
 This skill is installed into the business workspace so the runtime can operate
 without reading the MABW source repository.
 
-Start by running `multi-agent-brief run --workspace <workspace> --skip-doctor`,
+Start by running `multi-agent-brief run --workspace <workspace> --runtime {runtime} --skip-doctor`,
 then read the handoff files under `output/intermediate/`.
 
 References:
@@ -371,8 +373,9 @@ def _workspace_agents_text() -> str:
 
 This workspace has a local MABW runtime kit installed.
 
-Use `multi-agent-brief run --workspace . --runtime <runtime> --skip-doctor` to
-create handoff and control files before delegating role work.
+Read the installed runtime-local BriefLoop skill before creating handoff files.
+That adapter skill supplies its fixed runtime identity; this shared file does
+not select or infer one.
 
 Do not read the MABW source repository during normal runtime execution. Read
 workspace-local handoff files and project agents/skills instead.
@@ -396,10 +399,10 @@ def _opencode_jsonc_text() -> str:
 """
 
 
-def _runtime_workflow_reference() -> str:
-    return """# Runtime Workflow
+def _runtime_workflow_reference(*, runtime: str) -> str:
+    return f"""# Runtime Workflow
 
-Use `multi-agent-brief run --workspace <workspace>` as the handoff launcher.
+Use `multi-agent-brief run --workspace <workspace> --runtime {runtime}` as the handoff launcher.
 The Orchestrator reads handoff/control files and delegates external roles:
 scout, screener, claim-ledger, analyst, editor, auditor, and formatter.
 

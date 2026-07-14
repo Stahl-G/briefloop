@@ -157,7 +157,7 @@ def init_workspace(args: dict, **kwargs) -> str:
         result["workspace"] = str(workspace)
         result["onboarding_path"] = str(onboarding_path)
         result["next_tool"] = "mabw_run_handoff"
-        result["next_args"] = {"workspace": str(workspace), "runtime": "hermes"}
+        result["next_args"] = {"workspace": str(workspace)}
         return _json(result)
     except Exception as exc:
         return _json({"ok": False, "error": f"{type(exc).__name__}: {exc}"})
@@ -302,10 +302,9 @@ def run_handoff(args: dict, **kwargs) -> str:
     del kwargs
     try:
         workspace = _resolve_workspace(args["workspace"])
-        runtime = args.get("runtime") or "hermes"
         repo_root = _find_repo_root()
 
-        cmd = [_mabw_bin(), "run", "--workspace", str(workspace), "--runtime", runtime]
+        cmd = [_mabw_bin(), "run", "--workspace", str(workspace), "--runtime", "hermes"]
         if repo_root is not None:
             cmd.extend(["--repo-workdir", str(repo_root)])
         result = _run(cmd, cwd=str(repo_root) if repo_root is not None else None)
@@ -339,7 +338,7 @@ def run_handoff(args: dict, **kwargs) -> str:
 
         result.update({
             "workspace": str(workspace),
-            "runtime": runtime,
+            "runtime": "hermes",
             "repo_root": str(repo_root) if repo_root is not None else "",
             "handoff_md": str(handoff_md),
             "handoff_json": str(handoff_json),

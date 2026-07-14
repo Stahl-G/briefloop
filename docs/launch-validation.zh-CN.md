@@ -139,7 +139,7 @@ briefloop claude install --repo-workdir .
 
 ```bash
 briefloop doctor --config /tmp/briefloop-demo/config.yaml
-briefloop run --workspace /tmp/briefloop-demo --skip-doctor
+briefloop run --workspace /tmp/briefloop-demo --runtime operator --skip-doctor
 ```
 
 ### 需要她反馈什么

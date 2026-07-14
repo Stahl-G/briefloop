@@ -187,7 +187,7 @@ workspace:
 ```bash
 briefloop onboard
 briefloop init ~/briefloop-workspace --from-onboarding onboarding.json
-briefloop run --workspace ~/briefloop-workspace
+briefloop run --workspace ~/briefloop-workspace --runtime operator
 ```
 
 Common setup helpers:
@@ -334,8 +334,8 @@ operator-runtime, and semantic-support auditor hardening line includes:
 - experimental source-clone WorkBuddy Skill packaging and first-use routing
 - experimental source-clone CodeBuddy project Skill and role-agent handoff
   through `--runtime codebuddy`
-- `operator` runtime for host-agnostic compact operation, with `manual` kept as
-  a legacy alias
+- `operator` runtime for host-agnostic compact operation; historical `manual`
+  manifests are read-only and require an explicit reset to a canonical runtime
 - proposal-only Semantic Support Auditor surfaces and human adjudication records
   that do not create support truth, gates, delivery approval, or release
   authority

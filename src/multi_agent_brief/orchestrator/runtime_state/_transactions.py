@@ -13,6 +13,9 @@ import uuid
 from pathlib import Path
 from typing import Any
 
+from multi_agent_brief.orchestrator_contract import HISTORICAL_READ_ONLY_RUNTIMES
+from multi_agent_brief.orchestrator_contract import RUNTIME_CLI_CHOICE_PLACEHOLDER
+from multi_agent_brief.orchestrator_contract import VALID_RUNTIMES
 from multi_agent_brief.orchestrator_contract import resolve_repo_workdir
 from multi_agent_brief.orchestrator.run_archive import (
     RunArchiveError,
@@ -34,6 +37,7 @@ from multi_agent_brief.orchestrator.runtime_state._io import (
 from multi_agent_brief.orchestrator.runtime_state.contracts_loader import load_stage_specs
 from multi_agent_brief.orchestrator.runtime_state.errors import (
     E_RUNTIME_STATE_NOT_INITIALIZED,
+    E_TRANSACTION_INTEGRITY,
     E_TRANSACTION_PARTIAL_WRITE,
     RuntimeStateError,
     _wrap_archive_error,
@@ -108,7 +112,9 @@ def _preflight_transaction_files(paths: dict[str, Path]) -> list[dict[str, Any]]
     for key in ("runtime_manifest", "workflow_state"):
         if not paths[key].exists():
             raise RuntimeStateError(
-                "Runtime state is not initialized. Run `multi-agent-brief state init --workspace <workspace>` first.",
+                "Runtime state is not initialized. Run `multi-agent-brief state init "
+                "--workspace <workspace> "
+                f"--runtime {RUNTIME_CLI_CHOICE_PLACEHOLDER}` first.",
                 details={"missing": str(paths[key])},
                 error_code=E_RUNTIME_STATE_NOT_INITIALIZED,
             )
@@ -224,20 +230,40 @@ def _persist_run_contamination(
     return contaminated
 
 
-def _load_manifest_and_workflow(workspace: str | Path) -> tuple[Path, dict[str, Path], dict[str, Any], dict[str, Any]]:
+def _load_manifest_and_workflow(
+    workspace: str | Path,
+    *,
+    allow_noncanonical_runtime: bool = False,
+) -> tuple[Path, dict[str, Path], dict[str, Any], dict[str, Any]]:
     ws = _require_workspace(workspace)
     paths = runtime_state_paths(ws)
     manifest = _read_json_if_exists(paths["runtime_manifest"])
     workflow = _read_json_if_exists(paths["workflow_state"])
     if manifest is None or workflow is None:
         raise RuntimeStateError(
-            "Runtime state is not initialized. Run `multi-agent-brief state init --workspace <workspace>` first.",
+            "Runtime state is not initialized. Run `multi-agent-brief state init "
+            "--workspace <workspace> "
+            f"--runtime {RUNTIME_CLI_CHOICE_PLACEHOLDER}` first.",
             details={"workspace": str(ws)},
+            error_code=E_RUNTIME_STATE_NOT_INITIALIZED,
         )
     if manifest.get("schema_version") != RUNTIME_MANIFEST_SCHEMA:
         raise RuntimeStateError(
             "runtime_manifest.json has an unsupported schema.",
             details={"path": str(paths["runtime_manifest"]), "schema_version": manifest.get("schema_version")},
+        )
+    runtime = manifest.get("runtime")
+    if not allow_noncanonical_runtime and runtime not in VALID_RUNTIMES:
+        historical = runtime in HISTORICAL_READ_ONLY_RUNTIMES
+        raise RuntimeStateError(
+            (
+                "Runtime state uses a historical read-only runtime identity. "
+                "Start a new canonical run with state init --reset-state --runtime <runtime>."
+                if historical
+                else "runtime_manifest.json has an invalid runtime identity."
+            ),
+            details={"runtime": runtime, "valid_runtimes": list(VALID_RUNTIMES)},
+            error_code=E_TRANSACTION_INTEGRITY,
         )
     manifest["run_id"] = _validate_runtime_run_id(
         manifest.get("run_id"),

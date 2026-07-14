@@ -21,7 +21,7 @@ from tests.helpers import write_workspace_files_under
 ROOT = Path(__file__).resolve().parent.parent
 
 
-_write_workspace = partial(
+_write_workspace_files = partial(
     write_workspace_files_under,
     config_text="""
 project:
@@ -34,6 +34,16 @@ input:
     user_text="# User\n",
     include_input_dir=True,
 )
+
+
+def _write_workspace(tmp_path: Path) -> Path:
+    ws = _write_workspace_files(tmp_path)
+    initialize_runtime_state(workspace=ws, repo_workdir=ROOT, runtime="operator")
+    return ws
+
+
+def _write_uninitialized_workspace(tmp_path: Path) -> Path:
+    return _write_workspace_files(tmp_path)
 
 
 def _issues_path(ws: Path) -> Path:
@@ -345,7 +355,7 @@ def test_feedback_ingest_rejects_invalid_explicit_refs(tmp_path, capsys):
 
 
 def test_feedback_ingest_bad_existing_contract_does_not_initialize_runtime(tmp_path, capsys):
-    ws = _write_workspace(tmp_path)
+    ws = _write_uninitialized_workspace(tmp_path)
     out = ws / "output" / "intermediate"
     out.mkdir(parents=True)
     _issues_path(ws).write_text(
@@ -421,7 +431,7 @@ def test_feedback_ingest_event_failure_leaves_feedback_file_unwritten(tmp_path, 
 
 
 def test_feedback_validate_rejects_repair_plan_referencing_missing_issue(tmp_path, capsys):
-    ws = _write_workspace(tmp_path)
+    ws = _write_uninitialized_workspace(tmp_path)
     out = ws / "output" / "intermediate"
     out.mkdir(parents=True)
     _issues_path(ws).write_text(
@@ -765,7 +775,7 @@ def test_resolving_one_issue_does_not_complete_shared_repair_plan(tmp_path, caps
 
 def test_missing_delta_audit_report_is_not_blocking_without_active_repair(tmp_path):
     ws = _write_workspace(tmp_path)
-    initialize_runtime_state(workspace=ws, repo_workdir=ROOT)
+    initialize_runtime_state(runtime="operator", workspace=ws, repo_workdir=ROOT)
 
     state = check_runtime_state(workspace=ws, repo_workdir=ROOT)
 
@@ -819,7 +829,7 @@ def test_feedback_commands_do_not_modify_stage_output_artifacts(tmp_path):
 
 def test_delegate_repair_cannot_target_non_current_stage(tmp_path, capsys):
     ws = _write_workspace(tmp_path)
-    initialize_runtime_state(workspace=ws, repo_workdir=ROOT)
+    initialize_runtime_state(runtime="operator", workspace=ws, repo_workdir=ROOT)
 
     rc = main([
         "state",

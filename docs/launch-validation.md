@@ -150,7 +150,7 @@ If Claude Code is not available, test the CLI demo handoff:
 
 ```bash
 briefloop doctor --config /tmp/briefloop-demo/config.yaml
-briefloop run --workspace /tmp/briefloop-demo --skip-doctor
+briefloop run --workspace /tmp/briefloop-demo --runtime operator --skip-doctor
 ```
 
 ### What To Ask For

@@ -59,7 +59,7 @@ powershell -ExecutionPolicy Bypass -File .\scripts\setup.ps1
 ```powershell
 briefloop onboard
 briefloop init .\briefloop-workspace --from-onboarding onboarding.json
-briefloop run --workspace .\briefloop-workspace
+briefloop run --workspace .\briefloop-workspace --runtime operator
 ```
 
 ## Optional: Inspect The Demo
@@ -68,7 +68,7 @@ demo 用于查看合成材料上的控制面和证据链，不是使用产品前
 
 ```powershell
 briefloop init .\briefloop-demo --demo --force
-briefloop run --workspace .\briefloop-demo
+briefloop run --workspace .\briefloop-demo --runtime operator
 ```
 
 如果你从 source clone 使用 Claude Code，可以安装 writer command：

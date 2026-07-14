@@ -454,7 +454,7 @@ class TestRunTavilyGuidance:
             "--tavily",
         ]) == 0
 
-        exit_code = main(["run", "--config", str(ws / "config.yaml"), "--skip-doctor"])
+        exit_code = main(["run", "--runtime", "operator", "--config", str(ws / "config.yaml"), "--skip-doctor"])
         captured = capsys.readouterr()
         assert exit_code == 0
         assert "Runtime:" in captured.out
@@ -493,7 +493,7 @@ class TestRunTavilyGuidance:
         sources["web_search"] = {"enabled": True, "mode": "external_api", "backend": "exa"}
         sources_path.write_text(yaml.safe_dump(sources, sort_keys=False), encoding="utf-8")
 
-        exit_code = main(["run", "--config", str(ws / "config.yaml"), "--skip-doctor"])
+        exit_code = main(["run", "--runtime", "operator", "--config", str(ws / "config.yaml"), "--skip-doctor"])
         captured = capsys.readouterr()
         assert exit_code == 0
         assert "Runtime:" in captured.out

@@ -62,7 +62,7 @@ remain an additive user-facing entrypoint.
    /tmp/briefloop-wheel-smoke/bin/briefloop version
    /tmp/briefloop-wheel-smoke/bin/multi-agent-brief version
    /tmp/briefloop-wheel-smoke/bin/multi-agent-brief init /tmp/briefloop-wheel-ws --demo --force
-   /tmp/briefloop-wheel-smoke/bin/multi-agent-brief run --workspace /tmp/briefloop-wheel-ws --skip-doctor
+   /tmp/briefloop-wheel-smoke/bin/multi-agent-brief run --workspace /tmp/briefloop-wheel-ws --runtime operator --skip-doctor
    ```
 
 5. Publish only after the tag/release and package metadata agree.
@@ -78,7 +78,7 @@ python3 -m pip index versions briefloop
 pipx install briefloop
 briefloop version
 briefloop init /tmp/briefloop-pipx-ws --demo --force
-briefloop run --workspace /tmp/briefloop-pipx-ws --skip-doctor
+briefloop run --workspace /tmp/briefloop-pipx-ws --runtime operator --skip-doctor
 pipx uninstall briefloop
 ```
 

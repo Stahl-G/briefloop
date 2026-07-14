@@ -142,7 +142,7 @@ def test_propose_human_creates_ledger_without_runtime_event(tmp_path):
 
 def test_propose_human_records_origin_runtime_when_runtime_state_exists(tmp_path):
     ws = _workspace(tmp_path)
-    initialize_runtime_state(workspace=ws, repo_workdir=ROOT, runtime="deepseek-v4-flash")
+    initialize_runtime_state(workspace=ws, repo_workdir=ROOT, runtime="codex")
 
     state = propose_improvement(
         workspace=ws,
@@ -154,7 +154,7 @@ def test_propose_human_records_origin_runtime_when_runtime_state_exists(tmp_path
 
     evidence = state["entry"]["source_evidence"][0]
     assert evidence["source_type"] == "human_feedback"
-    assert evidence["origin"] == {"origin_runtime": "deepseek-v4-flash"}
+    assert evidence["origin"] == {"origin_runtime": "codex"}
     assert state["event_recorded"] is True
 
 
@@ -219,6 +219,7 @@ def test_propose_from_issue_freezes_minimal_feedback_evidence(tmp_path):
 
 def test_propose_from_real_feedback_issue_uses_original_run_after_reset(tmp_path):
     ws = _workspace(tmp_path)
+    initialize_runtime_state(workspace=ws, repo_workdir=ROOT, runtime="operator")
     feedback = tmp_path / "feedback.txt"
     feedback.write_text("The brief does not answer the executive audience question.", encoding="utf-8")
     ingest_feedback(
@@ -239,7 +240,7 @@ def test_propose_from_real_feedback_issue_uses_original_run_after_reset(tmp_path
     # Simulate a pre-fix feedback issue that lacks persisted run_id, then reset.
     issue["metadata"].pop("run_id")
     issues_path.write_text(json.dumps(issues_payload, ensure_ascii=False), encoding="utf-8")
-    reset_state = initialize_runtime_state(workspace=ws, repo_workdir=ROOT, reset_state=True)
+    reset_state = initialize_runtime_state(runtime="operator", workspace=ws, repo_workdir=ROOT, reset_state=True)
     assert reset_state["manifest"]["run_id"] != old_run_id
 
     state = propose_improvement(
@@ -313,7 +314,7 @@ def test_raw_gate_report_cannot_be_used_as_direct_issue_input(tmp_path):
 
 def test_propose_from_issue_rejects_audit_gate_target_relevance_without_writing(tmp_path):
     ws = _workspace(tmp_path)
-    initialize_runtime_state(workspace=ws, repo_workdir=ROOT)
+    initialize_runtime_state(runtime="operator", workspace=ws, repo_workdir=ROOT)
     _write_feedback_issue(
         ws,
         run_id="mabw-run-001",
@@ -365,7 +366,7 @@ def test_propose_from_issue_rejects_format_field_missing_without_writing(tmp_pat
 
 def test_transitions_append_revisions_and_runtime_events_when_state_exists(tmp_path):
     ws = _workspace(tmp_path)
-    initialize_runtime_state(workspace=ws, repo_workdir=ROOT)
+    initialize_runtime_state(runtime="operator", workspace=ws, repo_workdir=ROOT)
 
     proposed = propose_improvement(
         workspace=ws,
@@ -392,7 +393,7 @@ def test_transitions_append_revisions_and_runtime_events_when_state_exists(tmp_p
 
 def test_invalid_transition_writes_neither_ledger_revision_nor_event(tmp_path):
     ws = _workspace(tmp_path)
-    initialize_runtime_state(workspace=ws, repo_workdir=ROOT)
+    initialize_runtime_state(runtime="operator", workspace=ws, repo_workdir=ROOT)
     propose_improvement(
         workspace=ws,
         guidance="Lead with the decision-relevant number when evidence supports it.",
@@ -413,7 +414,7 @@ def test_invalid_transition_writes_neither_ledger_revision_nor_event(tmp_path):
 
 def test_event_append_failure_after_ledger_append_returns_warning(tmp_path, monkeypatch):
     ws = _workspace(tmp_path)
-    initialize_runtime_state(workspace=ws, repo_workdir=ROOT)
+    initialize_runtime_state(runtime="operator", workspace=ws, repo_workdir=ROOT)
 
     def fail_append_event(**_kwargs):
         raise RuntimeStateError("event append failed")
@@ -436,7 +437,7 @@ def test_event_append_failure_after_ledger_append_returns_warning(tmp_path, monk
 
 def test_damaged_runtime_manifest_prevents_ledger_append(tmp_path):
     ws = _workspace(tmp_path)
-    initialize_runtime_state(workspace=ws, repo_workdir=ROOT)
+    initialize_runtime_state(runtime="operator", workspace=ws, repo_workdir=ROOT)
     (ws / "output" / "intermediate" / "runtime_manifest.json").write_text("{bad json", encoding="utf-8")
 
     with pytest.raises(ImprovementLedgerError, match="runtime_manifest.json is not valid JSON"):
@@ -453,7 +454,7 @@ def test_damaged_runtime_manifest_prevents_ledger_append(tmp_path):
 
 def test_damaged_event_log_prevents_ledger_append(tmp_path):
     ws = _workspace(tmp_path)
-    initialize_runtime_state(workspace=ws, repo_workdir=ROOT)
+    initialize_runtime_state(runtime="operator", workspace=ws, repo_workdir=ROOT)
     (ws / "output" / "intermediate" / "event_log.jsonl").write_text("{bad json}\n", encoding="utf-8")
 
     with pytest.raises(ImprovementLedgerError, match="event_log.jsonl contains invalid JSON"):

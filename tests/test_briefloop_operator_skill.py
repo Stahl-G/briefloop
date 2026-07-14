@@ -58,7 +58,7 @@ def test_version_matrix_tracks_current_surface_without_planned_overclaim() -> No
     assert "Claude writer command: `/briefloop`" in text
     assert "/mabw" in text
     assert "`--runtime operator`: host-agnostic compact operator workflow" in text
-    assert "`--runtime manual`: legacy compatibility alias resolved to `operator`" in text
+    assert "historical `auto` / `manual` manifests are read-only diagnostics" in text
     assert "WorkBuddy Skill source bundle" in text
     assert ".agents/skills/briefloop-workbuddy/" in text
     assert "canonical path" in text
@@ -311,7 +311,7 @@ def test_runtime_status_and_control_references_track_quality_and_release_surface
     assert "briefloop quality summarize --workspace <workspace>" in runtime
     assert "briefloop run --workspace <workspace> --runtime operator" in runtime
     assert "briefloop run --workspace <workspace> --runtime codebuddy" in runtime
-    assert "Legacy `--runtime manual` remains a compatibility alias only." in runtime
+    assert "Historical `auto` / `manual` manifests are read-only" in runtime
     assert ".codebuddy/skills/briefloop/" in runtime
     assert ".codebuddy/agents/briefloop-*.md" in runtime
     assert "deterministic CLI transactions to the main session" in runtime

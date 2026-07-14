@@ -12,6 +12,32 @@ CONTRACT_REFERENCES = {
     "default_policy_pack": "configs/policy_packs/default.yaml",
 }
 
+RUNTIME_HERMES = "hermes"
+RUNTIME_CLAUDE = "claude"
+RUNTIME_OPENCODE = "opencode"
+RUNTIME_CODEX = "codex"
+RUNTIME_CODEBUDDY = "codebuddy"
+RUNTIME_OPERATOR = "operator"
+VALID_RUNTIMES = (
+    RUNTIME_HERMES,
+    RUNTIME_CLAUDE,
+    RUNTIME_OPENCODE,
+    RUNTIME_CODEX,
+    RUNTIME_CODEBUDDY,
+    RUNTIME_OPERATOR,
+)
+RUNTIME_CLI_CHOICE_PLACEHOLDER = "<" + "|".join(VALID_RUNTIMES) + ">"
+HISTORICAL_READ_ONLY_RUNTIMES = frozenset({"auto", "controls", "manual"})
+
+
+def require_canonical_runtime(runtime: object) -> str:
+    """Return one exact runtime identity or reject non-canonical input."""
+    if type(runtime) is not str or runtime not in VALID_RUNTIMES:
+        raise ValueError(
+            "Runtime identity must be one of: " + ", ".join(VALID_RUNTIMES)
+        )
+    return runtime
+
 DECISION_VOCABULARY = (
     "continue",
     "retry_stage",

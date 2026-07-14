@@ -6,10 +6,9 @@ from pathlib import Path
 
 import yaml
 
-from multi_agent_brief.orchestrator.handoff import RUNTIME_AUTO
-from multi_agent_brief.orchestrator.handoff import RUNTIME_MANUAL
-from multi_agent_brief.orchestrator.handoff import RUNTIME_OPERATOR
-from multi_agent_brief.orchestrator.handoff import VALID_RUNTIMES
+from multi_agent_brief.orchestrator_contract import HISTORICAL_READ_ONLY_RUNTIMES
+from multi_agent_brief.orchestrator_contract import RUNTIME_OPERATOR
+from multi_agent_brief.orchestrator_contract import VALID_RUNTIMES
 
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -139,8 +138,8 @@ def test_orchestrator_contract_runtime_surfaces_match_handoff_contract():
     runtime_surfaces = contract["runtime_surfaces"]
 
     assert RUNTIME_OPERATOR in runtime_surfaces
-    assert RUNTIME_MANUAL in runtime_surfaces
-    assert set(runtime_surfaces) == set(VALID_RUNTIMES) - {RUNTIME_AUTO}
+    assert runtime_surfaces == list(VALID_RUNTIMES)
+    assert set(runtime_surfaces).isdisjoint(HISTORICAL_READ_ONLY_RUNTIMES)
 
 
 def test_stage_specs_use_shared_decision_vocabulary_and_order():

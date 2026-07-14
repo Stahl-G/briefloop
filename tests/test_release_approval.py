@@ -434,7 +434,7 @@ def test_runtime_reset_archives_prior_run_approval_artifacts(tmp_path: Path) -> 
     ]) == 0
     assert main(["release", "check", "--workspace", str(ws), "--mode", "research_review"]) == 1
 
-    assert main(["state", "init", "--workspace", str(ws), "--reset-state"]) == 0
+    assert main(["state", "init", "--runtime", "operator", "--workspace", str(ws), "--reset-state"]) == 0
 
     intermediate = ws / "output" / "intermediate"
     assert (intermediate / f"event_log.{old_run_id}.jsonl").exists()
@@ -456,7 +456,7 @@ def test_approval_init_rebuilds_stale_prior_run_ledger_after_reset(tmp_path: Pat
     old_run_id = _json(ws / "output" / "intermediate" / "runtime_manifest.json")["run_id"]
     assert main(["approval", "init", "--workspace", str(ws), "--mode", "research_review"]) == 0
     stale_ledger = _json(ws / "output" / "intermediate" / "human_approval_ledger.json")
-    assert main(["state", "init", "--workspace", str(ws), "--reset-state"]) == 0
+    assert main(["state", "init", "--runtime", "operator", "--workspace", str(ws), "--reset-state"]) == 0
     new_run_id = _json(ws / "output" / "intermediate" / "runtime_manifest.json")["run_id"]
 
     ledger_path = ws / "output" / "intermediate" / "human_approval_ledger.json"

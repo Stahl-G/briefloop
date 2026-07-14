@@ -14,7 +14,11 @@ from multi_agent_brief.orchestrator.runtime_state import (
     runtime_state_paths,
     utc_now,
 )
-from multi_agent_brief.orchestrator_contract import resolve_repo_workdir
+from multi_agent_brief.orchestrator_contract import (
+    RUNTIME_CLI_CHOICE_PLACEHOLDER,
+    require_canonical_runtime,
+    resolve_repo_workdir,
+)
 from multi_agent_brief.provenance.io import (
     ensure_safe_relative_path,
     read_json_object,
@@ -70,6 +74,13 @@ def build_provenance_graph(
     workflow = required["workflow_state"]
     registry = required["artifact_registry"]
     events = required["event_log"]
+    try:
+        runtime = require_canonical_runtime(manifest.get("runtime"))
+    except ValueError as exc:
+        raise ProvenanceError(
+            "runtime_manifest.json contains a historical or unsupported runtime identity; "
+            "reset the workspace with an explicit canonical --runtime before building provenance."
+        ) from exc
     run_id = str(manifest.get("run_id") or workflow.get("run_id") or registry.get("run_id") or "")
     if not run_id:
         raise ProvenanceError("Runtime state is missing a run_id.")
@@ -85,7 +96,7 @@ def build_provenance_graph(
         "type": "run",
         "run_id": run_id,
         "mabw_version": manifest.get("mabw_version"),
-        "runtime": manifest.get("runtime"),
+        "runtime": runtime,
         "ref": ".",
     })
 
@@ -289,7 +300,8 @@ def _load_required_state(workspace: Path, *, source_files: list[dict[str, Any]])
     missing = [name for name, path in paths.items() if not path.exists()]
     if missing:
         raise ProvenanceError(
-            "Runtime state is missing. Run `multi-agent-brief run --workspace <ws>` first.",
+            "Runtime state is missing. Run `multi-agent-brief run --workspace <ws> "
+            f"--runtime {RUNTIME_CLI_CHOICE_PLACEHOLDER}` first.",
             details={"missing_state_files": missing},
         )
     runtime_manifest = read_json_object(paths["runtime_manifest"], label="runtime_manifest.json")

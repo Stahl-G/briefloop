@@ -12,12 +12,14 @@ Read this when operating a real BriefLoop workspace.
 
 - Inspect state with `briefloop status --workspace <workspace>`,
   `state show`, or `state check`.
-- Launch handoff with `briefloop run --workspace <workspace>`.
+- Dedicated adapters launch with their fixed runtime identity. Generic CLI
+  operators must choose one explicit canonical `--runtime` value.
 - Use `briefloop run --workspace <workspace> --runtime operator` when
   the host has no dedicated BriefLoop runtime adapter. Operator runtime is a
   host-agnostic compact workflow: it does not assume subagents ran, and it must
   still use deterministic transactions, artifacts, gates, and human-triggered
-  delivery. Legacy `--runtime manual` remains a compatibility alias only.
+  delivery. Historical `auto` / `manual` manifests are read-only and require
+  an explicit reset into a canonical runtime before execution continues.
   The generated operator handoff includes artifact ownership buckets:
   `agent_owned_drafts`, `cli_owned_outputs`, `read_only_diagnostics`, and
   `forbidden_direct_edits`; use these buckets instead of treating control JSON

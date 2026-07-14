@@ -806,6 +806,7 @@ cases:
     commands:
       - action: runtime.run_handoff
         args:
+          runtime: operator
           skip_doctor: true
     expected:
       exit_code: 0
@@ -837,6 +838,7 @@ cases:
     commands:
       - action: runtime.run_handoff
         args:
+          runtime: operator
           skip_doctor: true
       - action: state.check
         args:
@@ -883,6 +885,7 @@ cases:
     commands:
       - action: runtime.run_handoff
         args:
+          runtime: operator
           skip_doctor: true
     expected:
       exit_code: 0

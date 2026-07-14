@@ -86,7 +86,7 @@ contents as evidence.
 Create or refresh the runtime handoff:
 
 ```bash
-briefloop run --workspace ./weekly-brief
+briefloop run --workspace ./weekly-brief --runtime operator
 ```
 
 In Claude Code, the writer command equivalent is:

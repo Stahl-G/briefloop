@@ -16,6 +16,7 @@ from pathlib import Path
 
 from multi_agent_brief.onboarding.io import load_onboarding_result, save_onboarding_result
 from multi_agent_brief.onboarding.schema import OnboardingResult
+from multi_agent_brief.orchestrator_contract import RUNTIME_CLI_CHOICE_PLACEHOLDER
 
 
 def register(subparsers: argparse._SubParsersAction) -> None:
@@ -70,7 +71,10 @@ def _onboard_template(args: argparse.Namespace) -> int:
     print()
     print("Then create the workspace:")
     print(f"  briefloop init <workspace> --from-onboarding {output_path}")
-    print(f"  briefloop run --workspace <workspace>")
+    print(
+        "  briefloop run --workspace <workspace>"
+        f" --runtime {RUNTIME_CLI_CHOICE_PLACEHOLDER}"
+    )
     return 0
 
 
@@ -189,7 +193,10 @@ def _onboard_interactive(args: argparse.Namespace) -> int:
         f"Next: briefloop init <workspace> --from-onboarding"
         f" {output_path}"
     )
-    print(f"Then: briefloop run --workspace <workspace>")
+    print(
+        "Then: briefloop run --workspace <workspace>"
+        f" --runtime {RUNTIME_CLI_CHOICE_PLACEHOLDER}"
+    )
     return 0
 
 

@@ -64,7 +64,7 @@ def write_workspace_files(
 def initialize_workspace(path: Path) -> Path:
     from multi_agent_brief.cli.main import main
 
-    assert main(["state", "init", "--workspace", str(path)]) == 0
+    assert main(["state", "init", "--runtime", "operator", "--workspace", str(path)]) == 0
     return path
 
 

@@ -111,17 +111,11 @@ def _runtime_run_id(
     *,
     workspace: Path,
     repo_workdir: str | Path | None,
-    runtime: str = "hermes",
 ) -> str:
-    try:
-        state = show_runtime_state(workspace=workspace)
-    except RuntimeStateError:
-        state = initialize_runtime_state(
-            workspace=workspace,
-            runtime=runtime,
-            repo_workdir=repo_workdir,
-            actor=FEEDBACK_EVENT_ACTOR,
-        )
+    state = show_runtime_state(
+        workspace=workspace,
+        allow_noncanonical_runtime=False,
+    )
     return str((state.get("manifest") or {}).get("run_id") or "")
 
 

@@ -8,7 +8,7 @@ from pathlib import Path
 import pytest
 
 from multi_agent_brief.cli.main import main
-from multi_agent_brief.experiments import validate_run_record, validate_scorecard
+from multi_agent_brief.experiments import scaffold_condition, validate_run_record, validate_scorecard
 from multi_agent_brief.orchestrator.runtime_state import (
     E_ASSESSMENT_TARGET_COMPLETE,
     RuntimeStateError,
@@ -1215,6 +1215,21 @@ def test_experiments_080_scaffold_condition_imports_fact_layer_workspace(tmp_pat
     assert "multi-agent-brief run --workspace" in instructions
     assert f"--workspace '{ws}'" in instructions
     assert not (ws / "improvement" / "memory.md").exists()
+
+
+def test_experiments_080_scaffold_condition_api_requires_runtime_without_writes(tmp_path):
+    case_dir = tmp_path / "weekly_public_001"
+    ws = tmp_path / "baseline-workspace"
+
+    with pytest.raises(TypeError, match="runtime"):
+        scaffold_condition(  # type: ignore[call-arg]
+            case_dir=case_dir,
+            condition="baseline",
+            workspace=ws,
+        )
+
+    assert not case_dir.exists()
+    assert not ws.exists()
 
 
 def test_experiments_080_scaffold_accepts_init_sources_readme_placeholder(tmp_path, capsys):

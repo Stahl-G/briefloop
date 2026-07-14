@@ -10,6 +10,10 @@ from typing import Any
 from multi_agent_brief.orchestrator.run_integrity import (
     workflow_with_persistable_run_integrity as _workflow_with_persistable_run_integrity,
 )
+from multi_agent_brief.orchestrator_contract import (
+    RUNTIME_CLI_CHOICE_PLACEHOLDER,
+    require_canonical_runtime,
+)
 from multi_agent_brief.orchestrator.runtime_state._io import (
     _append_jsonl,
     _read_json_if_exists,
@@ -272,7 +276,9 @@ def _load_handoff_runtime_state(workspace: str | Path) -> tuple[Path, dict[str, 
     workflow = _read_json_if_exists(paths["workflow_state"])
     if manifest is None or workflow is None:
         raise RuntimeStateError(
-            "Runtime state is not initialized. Run `multi-agent-brief state init --workspace <workspace>` first.",
+            "Runtime state is not initialized. Run `multi-agent-brief state init "
+            "--workspace <workspace> "
+            f"--runtime {RUNTIME_CLI_CHOICE_PLACEHOLDER}` first.",
             details={"workspace": str(ws)},
             error_code=E_RUNTIME_STATE_NOT_INITIALIZED,
         )
@@ -285,6 +291,15 @@ def _load_handoff_runtime_state(workspace: str | Path) -> tuple[Path, dict[str, 
         manifest.get("run_id"),
         path=paths["runtime_manifest"],
     )
+    try:
+        manifest["runtime"] = require_canonical_runtime(manifest.get("runtime"))
+    except ValueError as exc:
+        raise RuntimeStateError(
+            "runtime_manifest.json contains a historical or unsupported runtime identity; "
+            "reset the workspace with an explicit canonical --runtime before writing a handoff event.",
+            details={"path": str(paths["runtime_manifest"])},
+            error_code=E_TRANSACTION_INTEGRITY,
+        ) from exc
     if workflow.get("schema_version") != WORKFLOW_STATE_SCHEMA:
         raise RuntimeStateError(
             "workflow_state.json has an unsupported schema.",

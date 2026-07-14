@@ -12,7 +12,7 @@ This repository contains both development code and runtime agent contracts.
 
 In repository development mode, files under `.agents/skills/`, `.agents/hermes-skills/`, `.claude/agents/`, `.codex/agents/`, and `.opencode/agents/` are source assets to inspect, edit, and test. Their role instructions become active only when the corresponding runtime explicitly invokes that role or skill.
 
-Use `multi-agent-brief run --workspace <workspace>` to create a runtime handoff. The handoff artifact, not this repository manual, is the execution contract for a specific brief run.
+Use `multi-agent-brief run --workspace <workspace> --runtime operator` to create a generic runtime handoff. The handoff artifact, not this repository manual, is the execution contract for a specific brief run.
 
 For BriefLoop operator protocol, use `.agents/skills/briefloop/SKILL.md`.
 
@@ -47,17 +47,17 @@ For a real brief workspace:
 ```bash
 multi-agent-brief onboard
 multi-agent-brief init <workspace> --from-onboarding onboarding.json
-multi-agent-brief run --workspace <workspace>
+multi-agent-brief run --workspace <workspace> --runtime operator
 ```
 
 For demo exploration:
 
 ```bash
 multi-agent-brief init <workspace> --demo
-multi-agent-brief run --workspace <workspace>
+multi-agent-brief run --workspace <workspace> --runtime operator
 ```
 
-`run` is the standard user-facing runtime handoff launcher. Hermes is the default runtime unless another runtime is selected.
+`run` is the standard user-facing runtime handoff launcher. Generic CLI users must select one canonical runtime explicitly; dedicated adapters inject their fixed identity.
 
 ## Runtime Handoff
 
@@ -67,7 +67,7 @@ Supported runtimes:
 - `claude`: Claude Code uses the repository command workflow.
 - `opencode`: OpenCode uses the repository command and agent files.
 - `codex`: Codex uses repository agent instructions and generated configs.
-- `operator`: host-agnostic workflow for environments without a dedicated adapter; `manual` is its legacy CLI alias.
+- `operator`: host-agnostic workflow for environments without a dedicated adapter. Historical `manual` manifests are read-only until an explicit reset records a canonical runtime.
 
 Canonical workflow:
 
@@ -215,5 +215,5 @@ python3 -m venv /tmp/mabw-install-smoke
 /tmp/mabw-install-smoke/bin/multi-agent-brief init /tmp/mabw-smoke --demo --force
 /tmp/mabw-install-smoke/bin/multi-agent-brief doctor --config /tmp/mabw-smoke/config.yaml
 cd /tmp
-/tmp/mabw-install-smoke/bin/multi-agent-brief run --workspace /tmp/mabw-smoke --skip-doctor
+/tmp/mabw-install-smoke/bin/multi-agent-brief run --workspace /tmp/mabw-smoke --runtime operator --skip-doctor
 ```

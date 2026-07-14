@@ -143,7 +143,7 @@ def test_feedback_only_text_does_not_contaminate_evidence_or_reader_artifacts(tm
     assert [item["name"] for item in classification["feedback"]] == ["operator_feedback.md"]
     assert sentinel in (feedback_dir / "operator_feedback.md").read_text(encoding="utf-8")
 
-    result = main(["run", "--workspace", str(ws), "--skip-doctor"])
+    result = main(["run", "--runtime", "operator", "--workspace", str(ws), "--skip-doctor"])
 
     assert result == 0
     handoff_json_path = ws / "output" / "intermediate" / "agent_handoff.json"

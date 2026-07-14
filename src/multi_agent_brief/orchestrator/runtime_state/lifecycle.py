@@ -94,7 +94,12 @@ from multi_agent_brief.orchestrator.run_integrity import (
     contaminate_run_integrity_with_event_flag as _contaminate_run_integrity_with_event_flag,
     workflow_with_persistable_run_integrity as _workflow_with_persistable_run_integrity,
 )
-from multi_agent_brief.orchestrator_contract import resolve_repo_workdir
+from multi_agent_brief.orchestrator_contract import (
+    HISTORICAL_READ_ONLY_RUNTIMES,
+    VALID_RUNTIMES,
+    require_canonical_runtime,
+    resolve_repo_workdir,
+)
 from multi_agent_brief.quality_gates.contract import current_stage_quality_gate_blocking_reasons
 
 
@@ -166,17 +171,24 @@ def _restore_reset_control_artifacts(
 def initialize_runtime_state(
     *,
     workspace: str | Path,
-    runtime: str = "hermes",
+    runtime: str,
     repo_workdir: str | Path | None = None,
     reset_state: bool = False,
     actor: str = "cli",
     recipe: str | None = None,
 ) -> dict[str, Any]:
     """Initialize runtime control files for a workspace."""
+    try:
+        runtime = require_canonical_runtime(runtime)
+    except ValueError as exc:
+        raise RuntimeStateError(
+            "Runtime state requires one explicit canonical runtime identity.",
+            details={"runtime": runtime, "valid_runtimes": list(VALID_RUNTIMES)},
+            error_code=E_TRANSACTION_INTEGRITY,
+        ) from exc
     ws = _require_workspace(workspace)
     repo = resolve_repo_workdir(repo_workdir, workspace=ws)
     paths = runtime_state_paths(ws)
-    paths["runtime_manifest"].parent.mkdir(parents=True, exist_ok=True)
 
     stages = load_stage_specs(repo)
     artifacts = load_artifact_contracts(repo)
@@ -193,6 +205,40 @@ def initialize_runtime_state(
     else:
         old_manifest = _read_json_if_exists(paths["runtime_manifest"])
         old_workflow = _read_json_if_exists(paths["workflow_state"])
+
+    if old_manifest and not reset_state:
+        existing_runtime = old_manifest.get("runtime")
+        if existing_runtime in HISTORICAL_READ_ONLY_RUNTIMES:
+            raise RuntimeStateError(
+                "Existing runtime state uses a historical read-only runtime identity. "
+                "Start a new canonical run with state init --reset-state --runtime <runtime>.",
+                details={
+                    "runtime": existing_runtime,
+                    "valid_runtimes": list(VALID_RUNTIMES),
+                },
+                error_code=E_TRANSACTION_INTEGRITY,
+            )
+        if existing_runtime not in VALID_RUNTIMES:
+            raise RuntimeStateError(
+                "Existing runtime_manifest.json has an invalid runtime identity.",
+                details={
+                    "runtime": existing_runtime,
+                    "valid_runtimes": list(VALID_RUNTIMES),
+                },
+                error_code=E_TRANSACTION_INTEGRITY,
+            )
+        if existing_runtime != runtime:
+            raise RuntimeStateError(
+                "Runtime identity does not match the initialized run. "
+                "Use --reset-state to start a new run with a different runtime.",
+                details={
+                    "existing_runtime": existing_runtime,
+                    "requested_runtime": runtime,
+                },
+                error_code=E_TRANSACTION_INTEGRITY,
+            )
+
+    paths["runtime_manifest"].parent.mkdir(parents=True, exist_ok=True)
     now = utc_now()
     created = old_manifest is None or reset_state
     previous_run_id = _safe_previous_run_id((old_manifest or {}).get("run_id")) if reset_state else None
@@ -263,6 +309,12 @@ def initialize_runtime_state(
             os.replace(paths["event_log"], archive)
             reset_archived_event_log_path = archive
             archived_event_log = _workspace_relative(ws, archive)
+        archived_manifest = _archive_reset_run_scoped_control_artifact(
+            paths["runtime_manifest"],
+            old_run_id=old_run_id,
+        )
+        if archived_manifest is not None:
+            reset_archived_control_artifact_paths.append(archived_manifest)
     elif old_manifest and old_manifest.get("schema_version") != RUNTIME_MANIFEST_SCHEMA:
         raise RuntimeStateError(
             "Existing runtime_manifest.json has an unsupported schema. "
@@ -390,8 +442,15 @@ def initialize_runtime_state(
     return show_runtime_state(workspace=ws)
 
 
-def show_runtime_state(*, workspace: str | Path) -> dict[str, Any]:
-    ws, paths, manifest, workflow = _load_manifest_and_workflow(workspace)
+def show_runtime_state(
+    *,
+    workspace: str | Path,
+    allow_noncanonical_runtime: bool = True,
+) -> dict[str, Any]:
+    ws, paths, manifest, workflow = _load_manifest_and_workflow(
+        workspace,
+        allow_noncanonical_runtime=allow_noncanonical_runtime,
+    )
     registry = _read_json_if_exists(paths["artifact_registry"])
     event_count = 0
     if paths["event_log"].exists():
@@ -537,10 +596,6 @@ def check_runtime_state(
 ) -> dict[str, Any]:
     """Refresh artifact registry and stage readiness without running stages."""
     ws = _require_workspace(workspace)
-    paths = runtime_state_paths(ws)
-    if not paths["runtime_manifest"].exists() or not paths["workflow_state"].exists():
-        initialize_runtime_state(workspace=ws, repo_workdir=repo_workdir, actor=actor)
-
     ws, paths, manifest, workflow = _load_manifest_and_workflow(ws)
     event_records = _read_event_log_records(paths["event_log"])
     old_registry = _read_json_if_exists(paths["artifact_registry"])

@@ -158,7 +158,10 @@ def main() -> int:
         strict_ws = root / "strict"
 
         _init_workspace(default_ws)
-        _run("run", "--workspace", str(default_ws), "--skip-doctor", cwd=Path("/tmp"))
+        _run(
+            "run", "--workspace", str(default_ws), "--runtime", "operator",
+            "--skip-doctor", cwd=Path("/tmp")
+        )
         _assert_default_handoff(default_ws)
 
         _init_workspace(strict_ws)
@@ -167,6 +170,8 @@ def main() -> int:
             "run",
             "--workspace",
             str(strict_ws),
+            "--runtime",
+            "operator",
             "--repo-workdir",
             str(strict_contract_base),
             "--skip-doctor",

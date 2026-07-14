@@ -421,7 +421,7 @@ Preferred Path: Hermes Plugin from `integrations/hermes-plugin/mabw`.
 Fallback: chat-to-JSON onboarding. Collect brief profile in chat, validate with
 `briefloop onboard --validate onboarding.json`, initialize with
 `briefloop init <workspace> --from-onboarding onboarding.json`, then run
-`briefloop run --workspace <workspace>`. Do not call `briefloop run` again mid-pipeline; use status, state, gates, and repair commands.
+`briefloop run --workspace <workspace> --runtime hermes`. Do not call `briefloop run` again mid-pipeline; use status, state, gates, and repair commands.
 
 Project is cloned and ready.
 I can continue generating the brief inside Hermes with delegate_task children.
@@ -594,7 +594,7 @@ If the plugin is not available and this workspace does not yet have config.yaml:
 2. Write onboarding.json from the collected answers.
 3. Validate with: briefloop onboard --validate onboarding.json
 4. Create the workspace: briefloop init <workspace> --from-onboarding onboarding.json
-5. Create runtime handoff: briefloop run --workspace <workspace>
+5. Create runtime handoff: briefloop run --workspace <workspace> --runtime hermes
 6. Read agent_handoff.md and continue with the delegated workflow below.
 
 ## Existing workspace: delegated brief run

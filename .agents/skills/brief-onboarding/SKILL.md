@@ -43,4 +43,7 @@ Run `multi-agent-brief onboard` for an interactive terminal wizard.
 
 ## Handoff
 
-Run `multi-agent-brief init <workspace> --from-onboarding onboarding.json`, then `multi-agent-brief run --workspace <workspace>`.
+Run `multi-agent-brief init <workspace> --from-onboarding onboarding.json`, then
+run `multi-agent-brief run --workspace <workspace> --runtime <canonical-runtime>`.
+Dedicated adapters provide their fixed runtime identity; generic CLI users must
+choose explicitly.

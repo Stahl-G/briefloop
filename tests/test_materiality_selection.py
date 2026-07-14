@@ -63,7 +63,7 @@ def _workspace(tmp_path: Path, *, with_policy: bool = True) -> Path:
             ),
             encoding="utf-8",
         )
-    assert main(["state", "init", "--workspace", str(ws)]) == 0
+    assert main(["state", "init", "--runtime", "operator", "--workspace", str(ws)]) == 0
     return ws
 
 

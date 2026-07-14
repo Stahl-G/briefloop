@@ -324,7 +324,7 @@ def test_cli_run_command_creates_handoff(capsys):
     config = d / "config.yaml"
     config.write_text("project:\n  name: test\noutput:\n  path: output\n", encoding="utf-8")
     (d / "user.md").write_text("# test\n", encoding="utf-8")
-    exit_code = main(["run", "--config", str(config), "--skip-doctor"])
+    exit_code = main(["run", "--runtime", "operator", "--config", str(config), "--skip-doctor"])
     captured = capsys.readouterr()
     assert exit_code == 0
     assert "Runtime:" in captured.out

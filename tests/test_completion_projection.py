@@ -49,7 +49,7 @@ def _write_json(path: Path, payload: dict) -> None:
 
 
 def _init_workspace(ws: Path) -> dict:
-    state = initialize_runtime_state(workspace=ws, repo_workdir=ROOT)
+    state = initialize_runtime_state(runtime="operator", workspace=ws, repo_workdir=ROOT)
     _write_minimal_registry(ws, run_id=state["manifest"]["run_id"])
     return state
 

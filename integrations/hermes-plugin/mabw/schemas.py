@@ -98,11 +98,6 @@ MABW_RUN_HANDOFF = {
                 "type": "string",
                 "description": "Initialized MABW workspace directory.",
             },
-            "runtime": {
-                "type": "string",
-                "description": "Optional runtime target. Defaults to hermes. manual is a legacy alias for operator.",
-                "enum": ["auto", "hermes", "claude", "opencode", "codex", "operator", "manual"],
-            },
         },
         "required": ["workspace"],
     },

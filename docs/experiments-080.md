@@ -211,18 +211,21 @@ multi-agent-brief experiments 080 scaffold-condition \
   --case "$CASE" \
   --condition baseline \
   --workspace ./080-baseline \
+  --runtime operator \
   --archive "$ARCHIVE"
 
 multi-agent-brief experiments 080 scaffold-condition \
   --case "$CASE" \
   --condition memory \
   --workspace ./080-memory \
+  --runtime operator \
   --archive "$ARCHIVE"
 
 multi-agent-brief experiments 080 scaffold-condition \
   --case "$CASE" \
   --condition prompt_only \
   --workspace ./080-prompt-only \
+  --runtime operator \
   --archive "$ARCHIVE"
 ```
 
@@ -243,9 +246,9 @@ After reading `experiment/080/operator_instructions.md`, run each condition
 from Analyst onward:
 
 ```bash
-multi-agent-brief run --workspace ./080-baseline --recipe fast-rerun --skip-doctor
-multi-agent-brief run --workspace ./080-memory --recipe fast-rerun --skip-doctor
-multi-agent-brief run --workspace ./080-prompt-only --recipe fast-rerun --skip-doctor
+multi-agent-brief run --workspace ./080-baseline --runtime operator --recipe fast-rerun --skip-doctor
+multi-agent-brief run --workspace ./080-memory --runtime operator --recipe fast-rerun --skip-doctor
+multi-agent-brief run --workspace ./080-prompt-only --runtime operator --recipe fast-rerun --skip-doctor
 ```
 
 Complete the normal downstream workflow for each condition. Source-discovery,
