@@ -10,6 +10,7 @@ import pytest
 import yaml
 
 import multi_agent_brief.product.bundle_projection as bundle_projection
+import multi_agent_brief.product.quality_closeout as quality_closeout
 from multi_agent_brief.cli.main import main
 from multi_agent_brief.orchestrator.runtime_state import (
     check_runtime_state,
@@ -409,6 +410,36 @@ def test_report_bundle_manifest_includes_quality_artifacts_in_audit_only(tmp_pat
             id="QP-BUNDLE-ALL-ABSENT-REGISTRY-SNAPSHOT-DRIFT",
         ),
         pytest.param(
+            "all_absent_registry_dangling",
+            "blocked",
+            "quality_panel_registry_degradation",
+            id="QP-BUNDLE-ALL-ABSENT-REGISTRY-DANGLING",
+        ),
+        pytest.param(
+            "dangling_quality_panel",
+            "blocked",
+            "quality_panel_registry_degradation",
+            id="QP-BUNDLE-DANGLING-PANEL",
+        ),
+        pytest.param(
+            "dangling_quality_summary",
+            "blocked",
+            "quality_panel_registry_degradation",
+            id="QP-BUNDLE-DANGLING-SUMMARY",
+        ),
+        pytest.param(
+            "dangling_quality_panel_html",
+            "blocked",
+            "quality_panel_registry_degradation",
+            id="QP-BUNDLE-DANGLING-HTML",
+        ),
+        pytest.param(
+            "quality_panel_directory",
+            "blocked",
+            "quality_panel_registry_degradation",
+            id="QP-BUNDLE-NON-REGULAR-PANEL",
+        ),
+        pytest.param(
             "all_absent_prior_valid",
             "blocked",
             "quality_panel_registry_degradation",
@@ -489,6 +520,19 @@ def test_report_bundle_quality_panel_binding_matrix(
             json.dumps(registry, ensure_ascii=False, indent=2, sort_keys=True) + "\n",
             encoding="utf-8",
         )
+    elif case == "all_absent_registry_dangling":
+        registry_path.unlink()
+        registry_path.symlink_to("missing-artifact-registry.json")
+    elif case.startswith("dangling_"):
+        filename_by_case = {
+            "dangling_quality_panel": "quality_panel.json",
+            "dangling_quality_summary": "quality_summary.md",
+            "dangling_quality_panel_html": "quality_panel.html",
+        }
+        target = intermediate / filename_by_case[case]
+        target.symlink_to(f"missing-{target.name}")
+    elif case == "quality_panel_directory":
+        (intermediate / "quality_panel.json").mkdir()
     elif case == "registry_mutated":
         registry = json.loads(registry_path.read_text(encoding="utf-8"))
         registry["artifacts"]["quality_panel_html"]["sha256"] = "0" * 64
@@ -515,6 +559,30 @@ def test_report_bundle_quality_panel_binding_matrix(
         return
 
     with pytest.raises(ReportBundleProjectionError, match=expected_reason):
+        write_report_bundle_manifest(workspace=ws, write_archives=True)
+    assert not (ws / "output" / "report_bundle_manifest.json").exists()
+    assert not (ws / "output" / "delivery_bundle.zip").exists()
+    assert not (ws / "output" / "audit_bundle.zip").exists()
+
+
+def test_report_bundle_blocks_quality_presence_probe_error_before_publication(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    ws = _finalized_workspace(tmp_path)
+    original_probe = quality_closeout._path_entry_presence
+
+    def fail_panel_probe(path: Path):
+        if path.name == "quality_panel.json":
+            return "unsafe"
+        return original_probe(path)
+
+    monkeypatch.setattr(quality_closeout, "_path_entry_presence", fail_panel_probe)
+
+    with pytest.raises(
+        ReportBundleProjectionError,
+        match="quality_panel_presence_probe_failed",
+    ):
         write_report_bundle_manifest(workspace=ws, write_archives=True)
     assert not (ws / "output" / "report_bundle_manifest.json").exists()
     assert not (ws / "output" / "delivery_bundle.zip").exists()

@@ -994,6 +994,58 @@ def test_quality_panel_closeout_registry_precedence_matrix(
     assert projection["present_artifacts"] == []
 
 
+@pytest.mark.parametrize(
+    ("present_filenames", "expected_status", "expected_bucket"),
+    [
+        pytest.param((), "not_ready", "missing_artifacts", id="QP-STATUS-NRM-NONE"),
+        pytest.param(
+            ("quality_panel.json",),
+            "stale_or_invalid",
+            "invalid_artifacts",
+            id="QP-STATUS-NRM-ONE",
+        ),
+        pytest.param(
+            ("quality_panel.json", "quality_summary.md", "quality_panel.html"),
+            "stale_or_invalid",
+            "invalid_artifacts",
+            id="QP-STATUS-NRM-ALL",
+        ),
+    ],
+)
+def test_quality_panel_closeout_registry_not_materialized_presence_matrix(
+    tmp_path: Path,
+    present_filenames: tuple[str, ...],
+    expected_status: str,
+    expected_bucket: str,
+) -> None:
+    ws = _workspace(tmp_path)
+    intermediate = ws / "output" / "intermediate"
+    (intermediate / "artifact_registry.json").unlink(missing_ok=True)
+    for filename in present_filenames:
+        (intermediate / filename).write_text("unbound projection\n", encoding="utf-8")
+
+    projection = quality_closeout.quality_panel_closeout_projection(
+        workspace=ws,
+        finalize_report={
+            "status": "pass",
+            "reader_clean": {"status": "pass", "sample_findings": []},
+        },
+        registry_verdict=RegistryNotMaterialized(),
+    )
+
+    assert projection["status"] == expected_status
+    assert projection["reason"] == "quality_panel_registry_not_materialized"
+    assert projection[expected_bucket] == list(
+        quality_closeout.QUALITY_PANEL_CLOSEOUT_ARTIFACTS
+    )
+    other_bucket = (
+        "invalid_artifacts"
+        if expected_bucket == "missing_artifacts"
+        else "missing_artifacts"
+    )
+    assert projection[other_bucket] == []
+
+
 def test_quality_summarize_marks_closeout_generated_and_then_complete(tmp_path: Path) -> None:
     ws = _workspace(tmp_path)
     _write_finalize_report(ws)
@@ -1096,6 +1148,36 @@ def test_quality_panel_legacy_generated_at_cannot_self_validate(
             id="QP-READ-ALL-ABSENT-REGISTRY-SNAPSHOT-DRIFT",
         ),
         pytest.param(
+            "all_absent_registry_dangling",
+            QualityPanelDegradation,
+            "quality_panel_registry_degradation",
+            id="QP-READ-ALL-ABSENT-REGISTRY-DANGLING",
+        ),
+        pytest.param(
+            "dangling_quality_panel",
+            QualityPanelDegradation,
+            "quality_panel_registry_degradation",
+            id="QP-READ-DANGLING-PANEL",
+        ),
+        pytest.param(
+            "dangling_quality_summary",
+            QualityPanelDegradation,
+            "quality_panel_registry_degradation",
+            id="QP-READ-DANGLING-SUMMARY",
+        ),
+        pytest.param(
+            "dangling_quality_panel_html",
+            QualityPanelDegradation,
+            "quality_panel_registry_degradation",
+            id="QP-READ-DANGLING-HTML",
+        ),
+        pytest.param(
+            "quality_panel_directory",
+            QualityPanelDegradation,
+            "quality_panel_registry_degradation",
+            id="QP-READ-NON-REGULAR-PANEL",
+        ),
+        pytest.param(
             "partial",
             QualityPanelDegradation,
             "quality_panel_artifact_set_incomplete",
@@ -1179,6 +1261,18 @@ def test_quality_panel_read_interpreter_matrix(
             json.dumps(registry, ensure_ascii=False, indent=2, sort_keys=True) + "\n",
             encoding="utf-8",
         )
+    elif case == "all_absent_registry_dangling":
+        registry_path.unlink()
+        registry_path.symlink_to("missing-artifact-registry.json")
+    elif case.startswith("dangling_"):
+        target_by_case = {
+            "dangling_quality_panel": quality_panel_path(ws),
+            "dangling_quality_summary": quality_summary_path(ws),
+            "dangling_quality_panel_html": quality_panel_html_path(ws),
+        }
+        target_by_case[case].symlink_to(f"missing-{target_by_case[case].name}")
+    elif case == "quality_panel_directory":
+        quality_panel_path(ws).mkdir()
     elif case == "registry_mutated":
         registry = _json(registry_path)
         registry["artifacts"]["quality_panel"]["sha256"] = "0" * 64
@@ -1210,6 +1304,56 @@ def test_quality_panel_read_interpreter_matrix(
             "quality_panel_html",
         }
         assert all(verdict.artifact_sha256.values())
+
+
+@pytest.mark.parametrize(
+    "case",
+    [
+        pytest.param("parent_missing", id="QP-PRESENCE-PARENT-MISSING"),
+        pytest.param("parent_dangling", id="QP-PRESENCE-PARENT-DANGLING"),
+        pytest.param("parent_escape", id="QP-PRESENCE-PARENT-ESCAPE"),
+    ],
+)
+def test_quality_panel_presence_context_fails_closed(
+    tmp_path: Path,
+    case: str,
+) -> None:
+    ws = _workspace(tmp_path)
+    intermediate = ws / "output" / "intermediate"
+    intermediate.rename(ws / "output" / "intermediate.backup")
+    if case == "parent_dangling":
+        intermediate.symlink_to("missing-intermediate", target_is_directory=True)
+    elif case == "parent_escape":
+        external = tmp_path / "external-intermediate"
+        external.mkdir()
+        intermediate.symlink_to(external, target_is_directory=True)
+
+    verdict = interpret_quality_panel_closeout(workspace=ws, repo_workdir=Path.cwd())
+
+    assert isinstance(verdict, QualityPanelDegradation)
+    assert verdict.reason_code == "quality_panel_presence_context_invalid"
+    assert set(vars(verdict)) <= {"kind", "reason_code"}
+
+
+def test_quality_panel_presence_probe_error_fails_closed(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    ws = _workspace(tmp_path)
+    original_probe = quality_closeout._path_entry_presence
+
+    def fail_panel_probe(path: Path):
+        if path.name == "quality_panel.json":
+            return "unsafe"
+        return original_probe(path)
+
+    monkeypatch.setattr(quality_closeout, "_path_entry_presence", fail_panel_probe)
+
+    verdict = interpret_quality_panel_closeout(workspace=ws, repo_workdir=Path.cwd())
+
+    assert isinstance(verdict, QualityPanelDegradation)
+    assert verdict.reason_code == "quality_panel_presence_probe_failed"
+    assert set(vars(verdict)) <= {"kind", "reason_code"}
 
 
 def test_quality_closeout_registry_refresh_failure_keeps_repair_evidence(

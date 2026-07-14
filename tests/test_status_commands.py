@@ -850,6 +850,100 @@ def test_status_preserves_only_typed_legal_registry_absence(tmp_path, monkeypatc
     )
 
 
+@pytest.mark.parametrize(
+    ("present_filenames", "expected_status", "expected_bucket"),
+    [
+        pytest.param((), "not_ready", "missing_artifacts", id="STATUS-QP-NRM-NONE"),
+        pytest.param(
+            ("quality_panel.json",),
+            "stale_or_invalid",
+            "invalid_artifacts",
+            id="STATUS-QP-NRM-ONE",
+        ),
+        pytest.param(
+            ("quality_panel.json", "quality_summary.md", "quality_panel.html"),
+            "stale_or_invalid",
+            "invalid_artifacts",
+            id="STATUS-QP-NRM-ALL",
+        ),
+    ],
+)
+def test_status_registry_not_materialized_preserves_typed_qp_presence(
+    tmp_path,
+    monkeypatch,
+    present_filenames,
+    expected_status,
+    expected_bucket,
+):
+    ws = _minimal_workspace(tmp_path / "ws")
+    initialize_runtime_state(workspace=ws, runtime="claude", actor="cli")
+    intermediate = ws / "output" / "intermediate"
+    (intermediate / "finalize_report.json").write_text(
+        json.dumps(
+            {
+                "schema_version": "mabw.finalize_report.v1",
+                "status": "pass",
+                "reader_clean": {"status": "pass", "sample_findings": []},
+            },
+            ensure_ascii=False,
+            indent=2,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    for filename in present_filenames:
+        (intermediate / filename).write_text("unbound projection\n", encoding="utf-8")
+    monkeypatch.setattr(
+        status_module,
+        "interpret_artifact_registry",
+        lambda **_kwargs: RegistryNotMaterialized(),
+    )
+
+    payload = status_module.build_workspace_status(ws)
+
+    closeout = payload["quality_panel_closeout"]
+    assert payload["artifacts"]["registry_status"] == "missing"
+    assert closeout["status"] == expected_status
+    assert closeout["reason"] == "quality_panel_registry_not_materialized"
+    assert closeout[expected_bucket] == closeout["artifacts"]
+    other_bucket = (
+        "invalid_artifacts"
+        if expected_bucket == "missing_artifacts"
+        else "missing_artifacts"
+    )
+    assert closeout[other_bucket] == []
+
+
+def test_status_dangling_registry_does_not_report_quality_panel_absence(tmp_path):
+    ws = _minimal_workspace(tmp_path / "ws")
+    initialize_runtime_state(workspace=ws, runtime="claude", actor="cli")
+    intermediate = ws / "output" / "intermediate"
+    registry_path = intermediate / "artifact_registry.json"
+    registry_path.symlink_to("missing-artifact-registry.json")
+    (intermediate / "finalize_report.json").write_text(
+        json.dumps(
+            {
+                "schema_version": "mabw.finalize_report.v1",
+                "status": "pass",
+                "reader_clean": {"status": "pass", "sample_findings": []},
+            },
+            ensure_ascii=False,
+            indent=2,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    payload = status_module.build_workspace_status(ws)
+
+    assert payload["artifacts"]["registry_status"] == "degradation"
+    closeout = payload["quality_panel_closeout"]
+    assert closeout["status"] == "stale_or_invalid"
+    assert closeout["reason"] == "quality_panel_registry_degradation"
+    assert closeout["missing_artifacts"] == []
+    assert closeout["invalid_artifacts"] == closeout["artifacts"]
+
+
 def test_status_command_human_output_reports_user_progress_language(tmp_path, capsys):
     ws = _minimal_workspace(tmp_path / "ws")
     initialize_runtime_state(workspace=ws, runtime="claude", actor="cli")

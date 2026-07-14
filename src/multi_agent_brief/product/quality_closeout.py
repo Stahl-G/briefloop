@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import stat
 import webbrowser
 from dataclasses import dataclass
 from pathlib import Path
@@ -28,6 +29,86 @@ QUALITY_PANEL_CLOSEOUT_ARTIFACT_IDS = (
     "quality_panel_html",
 )
 QUALITY_PANEL_BROWSER_BOUNDARY = "display_only_not_runtime_or_quality_authority"
+
+_PathEntryPresence = Literal["absent", "entry_present", "unsafe"]
+
+
+@dataclass(frozen=True)
+class _QualityPanelPresenceSnapshot:
+    """Value-free filesystem-entry presence for Quality Panel interpretation."""
+
+    context_valid: bool
+    artifact_entries: Mapping[str, _PathEntryPresence]
+    registry_entry: _PathEntryPresence
+    reason_code: str = ""
+
+
+def _path_entry_presence(path: Path) -> _PathEntryPresence:
+    try:
+        path.lstat()
+    except FileNotFoundError:
+        return "absent"
+    except (OSError, RuntimeError, ValueError):
+        return "unsafe"
+    return "entry_present"
+
+
+def _intermediate_directory_identity(
+    workspace: Path,
+) -> tuple[Path, int, int] | None:
+    intermediate = workspace / "output" / "intermediate"
+    try:
+        resolved = intermediate.resolve(strict=True)
+        resolved.relative_to(workspace)
+        stat_result = resolved.stat()
+    except (FileNotFoundError, OSError, RuntimeError, ValueError):
+        return None
+    if not stat.S_ISDIR(stat_result.st_mode):
+        return None
+    return resolved, stat_result.st_dev, stat_result.st_ino
+
+
+def _quality_panel_presence_snapshot(
+    workspace: Path,
+) -> _QualityPanelPresenceSnapshot:
+    before = _intermediate_directory_identity(workspace)
+    if before is None:
+        return _QualityPanelPresenceSnapshot(
+            context_valid=False,
+            artifact_entries=MappingProxyType(
+                {artifact_id: "unsafe" for artifact_id in QUALITY_PANEL_CLOSEOUT_ARTIFACT_IDS}
+            ),
+            registry_entry="unsafe",
+            reason_code="quality_panel_presence_context_invalid",
+        )
+
+    intermediate = workspace / "output" / "intermediate"
+    artifact_entries = {
+        artifact_id: _path_entry_presence(intermediate / Path(relative_path).name)
+        for artifact_id, relative_path in zip(
+            QUALITY_PANEL_CLOSEOUT_ARTIFACT_IDS,
+            QUALITY_PANEL_CLOSEOUT_ARTIFACTS,
+        )
+    }
+    registry_entry = _path_entry_presence(intermediate / "artifact_registry.json")
+    after = _intermediate_directory_identity(workspace)
+    if (
+        after is None
+        or after != before
+        or "unsafe" in artifact_entries.values()
+        or registry_entry == "unsafe"
+    ):
+        return _QualityPanelPresenceSnapshot(
+            context_valid=False,
+            artifact_entries=MappingProxyType(artifact_entries),
+            registry_entry=registry_entry,
+            reason_code="quality_panel_presence_probe_failed",
+        )
+    return _QualityPanelPresenceSnapshot(
+        context_valid=True,
+        artifact_entries=MappingProxyType(artifact_entries),
+        registry_entry=registry_entry,
+    )
 
 
 @dataclass(frozen=True)
@@ -277,12 +358,19 @@ def _interpret_quality_panel_closeout(
             QUALITY_PANEL_CLOSEOUT_ARTIFACTS,
         )
     }
-    existing = {artifact_id: path.exists() for artifact_id, path in expected_paths.items()}
-    registry_path = ws / "output" / "intermediate" / "artifact_registry.json"
+    presence = _quality_panel_presence_snapshot(ws)
+    if not presence.context_valid:
+        return QualityPanelDegradation(presence.reason_code)
+    all_artifacts_absent = all(
+        state == "absent" for state in presence.artifact_entries.values()
+    )
+    all_artifacts_present = all(
+        state == "entry_present" for state in presence.artifact_entries.values()
+    )
     if (
         registry_verdict is None
-        and not any(existing.values())
-        and not registry_path.exists()
+        and all_artifacts_absent
+        and presence.registry_entry == "absent"
     ):
         return QualityPanelNotMaterialized()
 
@@ -292,7 +380,7 @@ def _interpret_quality_panel_closeout(
             repo_workdir=repo_workdir,
         )
     if isinstance(registry_verdict, RegistryNotMaterialized):
-        if not any(existing.values()):
+        if all_artifacts_absent and presence.registry_entry == "absent":
             return QualityPanelNotMaterialized()
         return QualityPanelDegradation("quality_panel_registry_not_materialized")
     if isinstance(registry_verdict, RegistrySnapshotDrift):
@@ -301,8 +389,10 @@ def _interpret_quality_panel_closeout(
         return QualityPanelDegradation("quality_panel_registry_degradation")
     if not isinstance(registry_verdict, CanonicalRegistryView):
         return QualityPanelDegradation("quality_panel_registry_verdict_invalid")
+    if presence.registry_entry != "entry_present":
+        return QualityPanelDegradation("quality_panel_registry_not_materialized")
 
-    if not any(existing.values()):
+    if all_artifacts_absent:
         for artifact_id, relative_path in zip(
             QUALITY_PANEL_CLOSEOUT_ARTIFACT_IDS,
             QUALITY_PANEL_CLOSEOUT_ARTIFACTS,
@@ -322,7 +412,9 @@ def _interpret_quality_panel_closeout(
             ):
                 return QualityPanelDegradation("quality_panel_absence_not_registry_bound")
         return QualityPanelNotMaterialized()
-    if not all(existing.values()) or not all(path.is_file() for path in expected_paths.values()):
+    if not all_artifacts_present or not all(
+        path.is_file() for path in expected_paths.values()
+    ):
         return QualityPanelDegradation("quality_panel_artifact_set_incomplete")
 
     records: dict[str, Mapping[str, Any]] = {}
@@ -506,10 +598,19 @@ def quality_panel_closeout_projection(
                 status = "stale_or_invalid"
                 reason = "quality_panel_registry_snapshot_drift"
             elif isinstance(registry_verdict, RegistryNotMaterialized):
-                missing = list(QUALITY_PANEL_CLOSEOUT_ARTIFACTS)
-                if finalize_ready:
-                    status = "not_ready"
-                    reason = "quality_panel_registry_not_materialized"
+                if isinstance(verdict, QualityPanelNotMaterialized):
+                    missing = list(QUALITY_PANEL_CLOSEOUT_ARTIFACTS)
+                    if finalize_ready:
+                        status = "not_ready"
+                        reason = "quality_panel_registry_not_materialized"
+                else:
+                    invalid = list(QUALITY_PANEL_CLOSEOUT_ARTIFACTS)
+                    status = "stale_or_invalid"
+                    reason = (
+                        verdict.reason_code
+                        if isinstance(verdict, QualityPanelDegradation)
+                        else "quality_panel_registry_verdict_invalid"
+                    )
             elif not isinstance(registry_verdict, CanonicalRegistryView):
                 invalid = list(QUALITY_PANEL_CLOSEOUT_ARTIFACTS)
                 status = "stale_or_invalid"
