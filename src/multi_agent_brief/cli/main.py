@@ -43,6 +43,7 @@ from multi_agent_brief.cli import (
     release_commands,
     workbuddy_commands,
     semantic_support_commands,
+    contract_commands,
 )
 
 
@@ -141,6 +142,9 @@ def build_parser(*, prog: str | None = None) -> argparse.ArgumentParser:
 
     # Human adjudication for semantic support proposals
     semantic_support_commands.register(subparsers)
+
+    # Read-only strict contract schemas and examples
+    contract_commands.register(subparsers)
 
     # Meta
     subparsers.add_parser("version", help="Print package version.")
@@ -274,6 +278,9 @@ def _dispatch(args: argparse.Namespace) -> int:
 
     if cmd == "semantic-support":
         return semantic_support_commands.handle(args)
+
+    if cmd == "contract":
+        return contract_commands.handle(args)
 
     return 1
 
