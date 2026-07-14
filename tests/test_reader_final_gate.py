@@ -67,6 +67,17 @@ def test_reader_final_gate_blocks_direct_source_marker_scans_without_claim_shape
     ]
 
 
+@pytest.mark.parametrize("prefix", ["ß" * 30, "İ" * 30])
+def test_reader_final_gate_handles_expanding_unicode_before_legacy_marker(prefix: str) -> None:
+    marker = "[source:legacy-secret]"
+
+    result = detect_reader_residue(prefix + " " + marker, artifact="output/brief.md")
+
+    assert result.status == "fail"
+    assert result.counts["src_marker_count"] == 1
+    assert [finding.text for finding in result.findings] == [marker]
+
+
 def test_reader_final_gate_keeps_ordinary_source_prose_outside_citation_grammar() -> None:
     text = "\n".join(
         [

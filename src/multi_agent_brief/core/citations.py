@@ -25,6 +25,10 @@ INTERNAL_ID_RESIDUE_PATTERN = re.compile(
 )
 
 _SRC_MARKER_OPEN = "[src:"
+_BRACKETED_SOURCE_MARKER_OPEN_PATTERN = re.compile(
+    r"\[\s*(?:src|source):",
+    re.IGNORECASE,
+)
 
 InternalCitationKind = Literal["src_marker"]
 InternalCitationStatus = Literal["resolved", "unresolved", "malformed"]
@@ -112,21 +116,12 @@ def iter_bracketed_source_markers(markdown: str) -> list[BracketedSourceMarker]:
 
     spans: list[BracketedSourceMarker] = []
     start = 0
-    lowered = markdown.casefold()
     while True:
-        marker_start = lowered.find("[", start)
-        if marker_start < 0:
+        match = _BRACKETED_SOURCE_MARKER_OPEN_PATTERN.search(markdown, start)
+        if match is None:
             return spans
-        cursor = marker_start + 1
-        while cursor < len(markdown) and markdown[cursor].isspace():
-            cursor += 1
-        if not (
-            lowered.startswith("src:", cursor)
-            or lowered.startswith("source:", cursor)
-        ):
-            start = marker_start + 1
-            continue
-        close = markdown.find("]", cursor)
+        marker_start = match.start()
+        close = markdown.find("]", match.end())
         end = close + 1 if close >= 0 else len(markdown)
         spans.append(
             BracketedSourceMarker(
@@ -135,11 +130,11 @@ def iter_bracketed_source_markers(markdown: str) -> list[BracketedSourceMarker]:
                 end=end,
             )
         )
-        start = end
+        start = max(end, marker_start + 1)
 
 
 def remove_src_marker_spans(markdown: str) -> str:
-    """Remove lower-case canonical ``[src:...]`` marker spans."""
+    """Remove well-formed lower-case canonical ``[src:...]`` marker spans."""
 
     markers = parse_internal_citation_markers(markdown)
     if not markers:
@@ -147,6 +142,8 @@ def remove_src_marker_spans(markdown: str) -> str:
     parts: list[str] = []
     cursor = 0
     for marker in markers:
+        if marker.status == "malformed":
+            continue
         parts.append(markdown[cursor:marker.start])
         cursor = marker.end
     parts.append(markdown[cursor:])
