@@ -1,0 +1,877 @@
+from __future__ import annotations
+
+import ast
+from dataclasses import dataclass
+from datetime import datetime, timezone
+import hashlib
+from pathlib import Path
+import shutil
+import sqlite3
+
+import pytest
+
+from multi_agent_brief.contracts.v2 import (
+    Approval,
+    ArtifactRecord,
+    ArtifactRevision,
+    Delivery,
+    EventEnvelope,
+    Invocation,
+    RunIdentity,
+    SourceProposal,
+    StageState,
+)
+from multi_agent_brief.control_store import (
+    ControlStoreConflict,
+    ControlStoreIntegrityError,
+    ControlStoreSchemaError,
+    ControlStoreStateError,
+    SQLiteControlStore,
+)
+from multi_agent_brief.control_store.schema import migration_sql
+from multi_agent_brief.control_store.serialization import canonical_model_text
+
+
+RUN_ID = "RUN-20260715-001"
+WORKSPACE_ID = "WS-CONTROLSTORE-TEST"
+TRANSACTION_ID = "TX-CONTROLSTORE-001"
+NOW = "2026-07-15T09:00:00+00:00"
+COMMITTED_AT = datetime(2026, 7, 15, 9, 0, 1, tzinfo=timezone.utc)
+BLOB = b"BriefLoop SQLite substrate test artifact.\n"
+BLOB_SHA256 = hashlib.sha256(BLOB).hexdigest()
+
+
+@dataclass(frozen=True)
+class Records:
+    run: RunIdentity
+    stage: StageState
+    invocation: Invocation
+    artifact: ArtifactRecord
+    revision: ArtifactRevision
+    event: EventEnvelope
+    approval: Approval
+    delivery: Delivery
+
+
+def _record(model_type, **values):
+    return model_type.model_validate({"schema_version": model_type.schema_id, **values})
+
+
+def _records(
+    *,
+    run_id: str = RUN_ID,
+    workspace_id: str = WORKSPACE_ID,
+    transaction_id: str = TRANSACTION_ID,
+) -> Records:
+    return Records(
+        run=_record(
+            RunIdentity,
+            run_id=run_id,
+            workspace_id=workspace_id,
+            runtime="operator",
+            created_at=NOW,
+        ),
+        stage=_record(
+            StageState,
+            run_id=run_id,
+            stage_id="scout",
+            status="complete",
+            revision=1,
+            updated_at=NOW,
+        ),
+        invocation=_record(
+            Invocation,
+            invocation_id="INV-SCOUT-001",
+            run_id=run_id,
+            role_id="scout",
+            runtime="operator",
+            status="completed",
+            started_at=NOW,
+            completed_at=NOW,
+        ),
+        artifact=_record(
+            ArtifactRecord,
+            run_id=run_id,
+            artifact_id="brief",
+            current_revision=1,
+            status="valid",
+            required=True,
+            path="output/brief.md",
+            format="markdown",
+        ),
+        revision=_record(
+            ArtifactRevision,
+            run_id=run_id,
+            artifact_id="brief",
+            revision=1,
+            path=f"output/artifacts/{BLOB_SHA256}/brief.md",
+            sha256=BLOB_SHA256,
+            size_bytes=len(BLOB),
+            frozen=True,
+            producer_kind="workflow_stage",
+            producer_id="scout",
+            created_at=NOW,
+        ),
+        event=_record(
+            EventEnvelope,
+            event_id="EVT-CONTROLSTORE-001",
+            run_id=run_id,
+            event_type="stage_status_changed",
+            created_at=NOW,
+            actor="cli",
+            transaction_id=transaction_id,
+            stage_id="scout",
+            artifact_id="brief",
+            decision="continue",
+            reason="The typed test transaction completed.",
+            metadata={"z": 2, "a": {"finite": 1.25, "valid": True}},
+        ),
+        approval=_record(
+            Approval,
+            approval_id="APR-CONTROLSTORE-001",
+            run_id=run_id,
+            mode="internal_management_review",
+            role="content_owner",
+            decision="approve",
+            reason="Synthetic control-store fixture approved.",
+            actor_id="human-test-operator",
+            recorded_at=NOW,
+            boundary=(
+                "internal_review_approval_records_only_not_public_release_authorization"
+            ),
+            event_id="EVT-CONTROLSTORE-001",
+        ),
+        delivery=_record(
+            Delivery,
+            delivery_id="DEL-CONTROLSTORE-001",
+            run_id=run_id,
+            artifact_id="brief",
+            artifact_revision=1,
+            approval_id="APR-CONTROLSTORE-001",
+            status="succeeded",
+            target="local",
+            channel="local-test",
+            created_at=NOW,
+            completed_at=NOW,
+        ),
+    )
+
+
+def _create_store(
+    tmp_path: Path,
+    *,
+    failure_hook=None,
+) -> SQLiteControlStore:
+    return SQLiteControlStore.create(
+        tmp_path / "control.db",
+        workspace_id=WORKSPACE_ID,
+        clock=lambda: COMMITTED_AT,
+        _failure_hook=failure_hook,
+    )
+
+
+def _stage_all(store: SQLiteControlStore, records: Records | None = None):
+    records = records or _records()
+    unit = store.begin(
+        run_id=records.run.run_id,
+        transaction_id=records.event.transaction_id,
+        transaction_type="control_store_bootstrap",
+        expected_revision=0,
+    )
+    unit.put_run(records.run)
+    unit.put_stage_state(records.stage)
+    unit.put_invocation(records.invocation)
+    unit.put_artifact(records.artifact)
+    unit.put_artifact_revision(records.revision, BLOB)
+    unit.append_event(records.event)
+    unit.put_approval(records.approval)
+    unit.put_delivery(records.delivery)
+    return unit
+
+
+def _table_count(store: SQLiteControlStore, table: str) -> int:
+    return int(store._connection.execute(f"SELECT count(*) FROM {table}").fetchone()[0])
+
+
+def test_control_store_round_trips_exact_nine_control_dtos(tmp_path: Path) -> None:
+    records = _records()
+    with _create_store(tmp_path) as store:
+        receipt = _stage_all(store, records).commit()
+
+        assert receipt.schema_version == "briefloop.transaction_receipt.v2"
+        assert receipt.prior_revision == 0
+        assert receipt.committed_revision == 1
+        assert receipt.projection_status == "stale"
+        assert receipt.event_ids == [records.event.event_id]
+        assert [
+            (item.artifact_id, item.revision) for item in receipt.artifact_revisions
+        ] == [(records.revision.artifact_id, records.revision.revision)]
+
+        snapshot = store.load_snapshot(RUN_ID)
+        assert snapshot.workspace_id == WORKSPACE_ID
+        assert snapshot.store_revision == 1
+        assert snapshot.run == records.run
+        assert snapshot.stage_states == (records.stage,)
+        assert snapshot.invocations == (records.invocation,)
+        assert snapshot.artifacts == (records.artifact,)
+        assert snapshot.artifact_revisions == (records.revision,)
+        assert snapshot.events == (records.event,)
+        assert snapshot.approvals == (records.approval,)
+        assert snapshot.deliveries == (records.delivery,)
+        assert snapshot.transactions == (receipt,)
+        assert snapshot.run.created_at == NOW
+
+        event_row = store._connection.execute(
+            "SELECT metadata_json, payload_json FROM events WHERE event_id = ?",
+            (records.event.event_id,),
+        ).fetchone()
+        assert event_row[0] == '{"a":{"finite":1.25,"valid":true},"z":2}'
+        assert event_row[1] == canonical_model_text(records.event)
+
+
+def test_schema_settings_and_exact_table_universe(tmp_path: Path) -> None:
+    allowed_tables = {
+        "schema_migrations",
+        "workspaces",
+        "runs",
+        "stage_states",
+        "agent_invocations",
+        "transactions",
+        "transaction_events",
+        "transaction_artifact_revisions",
+        "events",
+        "artifacts",
+        "artifact_revisions",
+        "approvals",
+        "deliveries",
+    }
+    with _create_store(tmp_path) as store:
+        assert store._connection.execute("PRAGMA foreign_keys").fetchone()[0] == 1
+        assert store._connection.execute("PRAGMA journal_mode").fetchone()[0] == "wal"
+        assert store._connection.execute("PRAGMA synchronous").fetchone()[0] == 2
+        assert store._connection.execute("PRAGMA user_version").fetchone()[0] == 1
+        tables = {
+            row[0]
+            for row in store._connection.execute(
+                "SELECT name FROM sqlite_master WHERE type = 'table'"
+            ).fetchall()
+        }
+        assert tables == allowed_tables
+        assert (
+            not {
+                "stage_transitions",
+                "sources",
+                "claims",
+                "claim_source_bindings",
+                "repair_transactions",
+                "projection_receipts",
+            }
+            & tables
+        )
+
+
+def test_transaction_receipt_preserves_event_and_artifact_revision_order(
+    tmp_path: Path,
+) -> None:
+    transaction_id = "TX-ORDERED-LINKS-001"
+    contents = {"artifact-b": b"B\n", "artifact-a": b"A\n"}
+    records = _records(transaction_id=transaction_id)
+    with _create_store(tmp_path) as store:
+        unit = store.begin(RUN_ID, transaction_id, "ordered_links", 0)
+        unit.put_run(records.run)
+        expected_revisions: list[tuple[str, int]] = []
+        for artifact_id in ("artifact-b", "artifact-a"):
+            content = contents[artifact_id]
+            digest = hashlib.sha256(content).hexdigest()
+            unit.put_artifact(
+                _record(
+                    ArtifactRecord,
+                    run_id=RUN_ID,
+                    artifact_id=artifact_id,
+                    current_revision=1,
+                    status="valid",
+                    required=True,
+                    path=f"output/{artifact_id}.md",
+                    format="markdown",
+                )
+            )
+            revision = _record(
+                ArtifactRevision,
+                run_id=RUN_ID,
+                artifact_id=artifact_id,
+                revision=1,
+                path=f"output/artifacts/{digest}/{artifact_id}.md",
+                sha256=digest,
+                size_bytes=len(content),
+                frozen=True,
+                producer_kind="workflow_stage",
+                producer_id="scout",
+                created_at=NOW,
+            )
+            unit.put_artifact_revision(revision, content)
+            expected_revisions.append((artifact_id, 1))
+        expected_events = ["EVT-ORDER-B", "EVT-ORDER-A"]
+        for event_id, event_type in zip(
+            expected_events,
+            ("artifact_observed", "artifact_validated"),
+        ):
+            unit.append_event(
+                _record(
+                    EventEnvelope,
+                    event_id=event_id,
+                    run_id=RUN_ID,
+                    event_type=event_type,
+                    created_at=NOW,
+                    actor="system",
+                    transaction_id=transaction_id,
+                )
+            )
+        receipt = unit.commit()
+        assert receipt.event_ids == expected_events
+        assert [
+            (reference.artifact_id, reference.revision)
+            for reference in receipt.artifact_revisions
+        ] == expected_revisions
+        assert store.load_snapshot(RUN_ID).transactions == (receipt,)
+
+
+def test_transaction_exact_replay_is_idempotent_and_conflict_is_value_free(
+    tmp_path: Path,
+) -> None:
+    with _create_store(tmp_path) as store:
+        first = _stage_all(store).commit()
+        replay = _stage_all(store).commit()
+        assert replay == first
+        assert store.current_revision == 1
+        assert _table_count(store, "transactions") == 1
+
+        changed = _records()
+        changed_stage = changed.stage.model_copy(update={"status": "blocked"})
+        unit = store.begin(
+            run_id=RUN_ID,
+            transaction_id=TRANSACTION_ID,
+            transaction_type="control_store_bootstrap",
+            expected_revision=0,
+        )
+        unit.put_run(changed.run)
+        unit.put_stage_state(changed_stage)
+        with pytest.raises(ControlStoreConflict) as error:
+            unit.commit()
+        assert error.value.code == "transaction_replay_conflict"
+        assert str(error.value) == "transaction_replay_conflict"
+        assert store.current_revision == 1
+        assert store.load_snapshot(RUN_ID).stage_states == (changed.stage,)
+
+
+def test_exact_replay_cannot_return_success_when_its_committed_blob_is_missing(
+    tmp_path: Path,
+) -> None:
+    with _create_store(tmp_path) as store:
+        _stage_all(store).commit()
+        store._blob_path(BLOB_SHA256).unlink()
+        with pytest.raises(ControlStoreIntegrityError) as error:
+            _stage_all(store).commit()
+        assert error.value.code == "committed_blob_missing"
+        assert store.current_revision == 1
+        assert _table_count(store, "transactions") == 1
+
+
+def test_optimistic_revision_conflict_happens_before_blob_write(tmp_path: Path) -> None:
+    with _create_store(tmp_path) as store:
+        _stage_all(store).commit()
+        unit = store.begin(
+            run_id=RUN_ID,
+            transaction_id="TX-STALE-002",
+            transaction_type="stale_write",
+            expected_revision=0,
+        )
+        unit.put_stage_state(
+            _records().stage.model_copy(update={"status": "blocked", "revision": 2})
+        )
+        with pytest.raises(ControlStoreConflict) as error:
+            unit.commit()
+        assert error.value.code == "store_revision_conflict"
+        assert store.current_revision == 1
+        assert _table_count(store, "transactions") == 1
+
+
+def test_invalid_transaction_identity_is_typed_and_zero_write(tmp_path: Path) -> None:
+    with _create_store(tmp_path) as store:
+        _stage_all(store).commit()
+        unit = store.begin(RUN_ID, "transaction id with spaces", "update", 1)
+        with pytest.raises(ControlStoreIntegrityError) as error:
+            unit.commit()
+        assert error.value.code == "transaction_identity_invalid"
+        assert store.current_revision == 1
+        assert _table_count(store, "transactions") == 1
+
+
+def test_wrong_workspace_and_cross_run_records_fail_without_writes(
+    tmp_path: Path,
+) -> None:
+    with _create_store(tmp_path) as store:
+        wrong_workspace = _records(workspace_id="WS-OTHER")
+        unit = store.begin(
+            run_id=RUN_ID,
+            transaction_id="TX-WRONG-WORKSPACE",
+            transaction_type="bootstrap",
+            expected_revision=0,
+        )
+        with pytest.raises(ControlStoreConflict) as error:
+            unit.put_run(wrong_workspace.run)
+        assert error.value.code == "control_record_workspace_mismatch"
+
+        wrong_run_stage = _records(run_id="RUN-OTHER").stage
+        with pytest.raises(ControlStoreConflict) as error:
+            unit.put_stage_state(wrong_run_stage)
+        assert error.value.code == "control_record_run_mismatch"
+        unit.rollback()
+        assert store.current_revision == 0
+        assert _table_count(store, "runs") == 0
+
+
+def test_relational_cross_run_binding_rolls_back_entire_transaction(
+    tmp_path: Path,
+) -> None:
+    with _create_store(tmp_path) as store:
+        _stage_all(store).commit()
+        other_run_id = "RUN-20260715-OTHER"
+        other = _records(
+            run_id=other_run_id,
+            transaction_id="TX-CROSS-RUN-002",
+        )
+        unit = store.begin(
+            run_id=other_run_id,
+            transaction_id="TX-CROSS-RUN-002",
+            transaction_type="invalid_cross_run_delivery",
+            expected_revision=1,
+        )
+        unit.put_run(other.run)
+        unit.put_delivery(
+            other.delivery.model_copy(
+                update={"approval_id": None, "artifact_id": "brief"}
+            )
+        )
+        with pytest.raises(ControlStoreConflict) as error:
+            unit.commit()
+        assert error.value.code == "relational_integrity_conflict"
+        assert store.current_revision == 1
+        assert (
+            store._connection.execute(
+                "SELECT 1 FROM runs WHERE run_id = ?", (other_run_id,)
+            ).fetchone()
+            is None
+        )
+
+
+def test_artifact_current_revision_requires_exact_committed_revision(
+    tmp_path: Path,
+) -> None:
+    records = _records()
+    with _create_store(tmp_path) as store:
+        unit = store.begin(
+            run_id=RUN_ID,
+            transaction_id="TX-MISSING-BLOB-ROW",
+            transaction_type="invalid_artifact_binding",
+            expected_revision=0,
+        )
+        unit.put_run(records.run)
+        unit.put_artifact(records.artifact)
+        with pytest.raises(ControlStoreConflict) as error:
+            unit.commit()
+        assert error.value.code == "relational_integrity_conflict"
+        assert store.current_revision == 0
+        assert _table_count(store, "runs") == 0
+        assert _table_count(store, "artifacts") == 0
+
+
+@pytest.mark.parametrize(
+    "failure_stage",
+    [
+        "before_blob_write",
+        "after_blob_write",
+        "after_begin",
+        "after_records",
+        "before_commit",
+    ],
+)
+def test_failure_injection_rolls_back_sql_and_only_allows_blob_orphan(
+    tmp_path: Path,
+    failure_stage: str,
+) -> None:
+    class InjectedFailure(RuntimeError):
+        pass
+
+    def fail(stage: str) -> None:
+        if stage == failure_stage:
+            raise InjectedFailure(stage)
+
+    store = _create_store(tmp_path, failure_hook=fail)
+    try:
+        with pytest.raises(InjectedFailure):
+            _stage_all(store).commit()
+        assert store.current_revision == 0
+        assert _table_count(store, "runs") == 0
+        assert _table_count(store, "transactions") == 0
+        assert _table_count(store, "artifact_revisions") == 0
+        scan = store.scan_orphans()
+        expected = () if failure_stage == "before_blob_write" else (BLOB_SHA256,)
+        assert scan.orphan_hashes == expected
+        assert not list(tmp_path.glob("*.json"))
+    finally:
+        store.close()
+    reopened = SQLiteControlStore.open(tmp_path / "control.db")
+    assert reopened.current_revision == 0
+    reopened.close()
+
+
+def test_blob_deleted_before_sql_commit_cannot_receive_committed_row(
+    tmp_path: Path,
+) -> None:
+    store = _create_store(tmp_path)
+
+    def remove_blob(stage: str) -> None:
+        if stage == "before_commit":
+            store._blob_path(BLOB_SHA256).unlink()
+
+    store._failure_hook = remove_blob
+    try:
+        with pytest.raises(ControlStoreIntegrityError) as error:
+            _stage_all(store).commit()
+        assert error.value.code == "committed_blob_missing"
+        assert store.current_revision == 0
+        assert _table_count(store, "artifact_revisions") == 0
+        assert _table_count(store, "transactions") == 0
+    finally:
+        store.close()
+
+
+def test_orphan_scan_is_report_only_and_never_accepts_or_deletes(
+    tmp_path: Path,
+) -> None:
+    class InjectedFailure(RuntimeError):
+        pass
+
+    def fail(stage: str) -> None:
+        if stage == "after_blob_write":
+            raise InjectedFailure(stage)
+
+    with _create_store(tmp_path, failure_hook=fail) as store:
+        with pytest.raises(InjectedFailure):
+            _stage_all(store).commit()
+        malformed = store.blob_root / "unowned.bin"
+        malformed.write_bytes(b"unowned")
+        first = store.scan_orphans()
+        second = store.scan_orphans()
+        assert first == second
+        assert first.orphan_hashes == (BLOB_SHA256,)
+        assert first.malformed_paths == ("unowned.bin",)
+        assert store._blob_path(BLOB_SHA256).read_bytes() == BLOB
+        assert malformed.read_bytes() == b"unowned"
+        assert _table_count(store, "artifact_revisions") == 0
+
+
+def test_event_revision_and_approval_rows_are_append_only(tmp_path: Path) -> None:
+    with _create_store(tmp_path) as store:
+        _stage_all(store).commit()
+        connection = sqlite3.connect(store.path)
+        try:
+            for statement in (
+                "UPDATE events SET reason = 'changed'",
+                "DELETE FROM artifact_revisions",
+                "UPDATE approvals SET decision = 'reject'",
+            ):
+                with pytest.raises(sqlite3.IntegrityError, match="append_only"):
+                    connection.execute(statement)
+                connection.rollback()
+        finally:
+            connection.close()
+        snapshot = store.load_snapshot(RUN_ID)
+        assert snapshot.events == (_records().event,)
+        assert snapshot.artifact_revisions == (_records().revision,)
+        assert snapshot.approvals == (_records().approval,)
+
+
+def test_duplicate_immutable_identity_rolls_back_without_new_revision(
+    tmp_path: Path,
+) -> None:
+    records = _records()
+    with _create_store(tmp_path) as store:
+        _stage_all(store).commit()
+        duplicate = store.begin(
+            run_id=RUN_ID,
+            transaction_id="TX-DUPLICATE-EVENT-002",
+            transaction_type="duplicate_event",
+            expected_revision=1,
+        )
+        duplicate.append_event(records.event)
+        with pytest.raises(ControlStoreConflict) as error:
+            duplicate.commit()
+        assert error.value.code == "relational_integrity_conflict"
+        assert store.current_revision == 1
+        assert _table_count(store, "events") == 1
+        assert _table_count(store, "transactions") == 1
+
+
+def test_mutable_row_payload_corruption_is_rejected_on_load(tmp_path: Path) -> None:
+    with _create_store(tmp_path) as store:
+        _stage_all(store).commit()
+        store._connection.execute(
+            "UPDATE stage_states SET payload_json = '{}' WHERE run_id = ?",
+            (RUN_ID,),
+        )
+        with pytest.raises(ControlStoreIntegrityError) as error:
+            store.load_snapshot(RUN_ID)
+        assert error.value.code == "stored_payload_invalid"
+
+
+def test_reopen_rejects_missing_or_changed_committed_blob(tmp_path: Path) -> None:
+    store = _create_store(tmp_path)
+    _stage_all(store).commit()
+    blob_path = store._blob_path(BLOB_SHA256)
+    store.close()
+    blob_path.write_bytes(b"changed")
+    with pytest.raises(ControlStoreIntegrityError) as error:
+        SQLiteControlStore.open(tmp_path / "control.db")
+    assert error.value.code == "committed_blob_size_mismatch"
+
+
+def test_successful_store_reopens_with_typed_snapshot_and_exact_revision(
+    tmp_path: Path,
+) -> None:
+    store = _create_store(tmp_path)
+    receipt = _stage_all(store).commit()
+    store.close()
+
+    reopened = SQLiteControlStore.open(tmp_path / "control.db")
+    try:
+        snapshot = reopened.load_snapshot(RUN_ID)
+        assert snapshot.store_revision == 1
+        assert snapshot.run == _records().run
+        assert snapshot.transactions == (receipt,)
+        assert reopened._blob_path(BLOB_SHA256).read_bytes() == BLOB
+        assert _stage_all(reopened).commit() == receipt
+        assert reopened.current_revision == 1
+    finally:
+        reopened.close()
+
+
+def test_load_snapshot_keeps_one_sqlite_read_revision_across_external_commit(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    primary = _create_store(tmp_path)
+    _stage_all(primary).commit()
+    secondary = SQLiteControlStore.open(tmp_path / "control.db")
+    original_loader = primary._load_for_run
+    committed = False
+
+    def load_and_commit(model_type, table, run_id, order_by, columns):
+        nonlocal committed
+        values = original_loader(model_type, table, run_id, order_by, columns)
+        if model_type is StageState and not committed:
+            committed = True
+            update = secondary.begin(
+                RUN_ID,
+                "TX-CONCURRENT-STAGE-002",
+                "stage_state_update",
+                1,
+            )
+            update.put_stage_state(
+                _records().stage.model_copy(update={"status": "blocked", "revision": 2})
+            )
+            update.commit()
+        return values
+
+    monkeypatch.setattr(primary, "_load_for_run", load_and_commit)
+    try:
+        snapshot = primary.load_snapshot(RUN_ID)
+        assert committed is True
+        assert snapshot.store_revision == 1
+        assert snapshot.stage_states == (_records().stage,)
+        assert len(snapshot.transactions) == 1
+        assert primary.current_revision == 2
+    finally:
+        secondary.close()
+        primary.close()
+
+
+def test_blob_hash_mismatch_is_rejected_before_any_file_or_db_write(
+    tmp_path: Path,
+) -> None:
+    records = _records()
+    bad_revision = records.revision.model_copy(update={"sha256": "0" * 64})
+    with _create_store(tmp_path) as store:
+        unit = store.begin(RUN_ID, "TX-BAD-BLOB", "bad_blob", 0)
+        unit.put_run(records.run)
+        with pytest.raises(ControlStoreIntegrityError) as error:
+            unit.put_artifact_revision(bad_revision, BLOB)
+        assert error.value.code == "artifact_blob_hash_mismatch"
+        unit.rollback()
+        assert store.current_revision == 0
+        assert list(store.blob_root.rglob("*")) == []
+        assert _table_count(store, "runs") == 0
+
+
+def test_database_and_blob_paths_must_be_separate(tmp_path: Path) -> None:
+    blob_root = tmp_path / "blob-root"
+    blob_root.mkdir()
+    with pytest.raises(ControlStoreStateError) as error:
+        SQLiteControlStore.create(
+            blob_root / "control.db",
+            workspace_id=WORKSPACE_ID,
+            blob_root=blob_root,
+        )
+    assert error.value.code == "database_blob_paths_overlap"
+    assert list(blob_root.iterdir()) == []
+
+
+def test_invalid_sqlite_file_fails_with_typed_schema_error(tmp_path: Path) -> None:
+    path = tmp_path / "invalid.db"
+    path.write_bytes(b"not a SQLite database")
+    with pytest.raises(ControlStoreSchemaError) as error:
+        SQLiteControlStore.open(path)
+    assert error.value.code == "connection_configuration_failed"
+
+
+def test_future_schema_fails_closed(tmp_path: Path) -> None:
+    store = _create_store(tmp_path)
+    store.close()
+    connection = sqlite3.connect(tmp_path / "control.db")
+    connection.execute("PRAGMA user_version = 2")
+    connection.close()
+    with pytest.raises(ControlStoreSchemaError) as error:
+        SQLiteControlStore.open(tmp_path / "control.db")
+    assert error.value.code == "future_schema_version"
+
+
+def test_wal_backup_restore_preserves_latest_revision_and_blob_integrity(
+    tmp_path: Path,
+) -> None:
+    with _create_store(tmp_path) as store:
+        _stage_all(store).commit()
+        updated_stage = _records().stage.model_copy(
+            update={"status": "blocked", "revision": 2}
+        )
+        second = store.begin(
+            run_id=RUN_ID,
+            transaction_id="TX-STAGE-UPDATE-002",
+            transaction_type="stage_state_update",
+            expected_revision=1,
+        )
+        second.put_stage_state(updated_stage)
+        second.commit()
+        backup = store.backup_to(tmp_path / "backup")
+        assert backup == tmp_path / "backup"
+        assert (backup / "control.db").is_file()
+        assert (backup / "blobs").is_dir()
+
+    restored = SQLiteControlStore.restore_to_new_path(
+        tmp_path / "backup",
+        tmp_path / "restored.db",
+    )
+    try:
+        snapshot = restored.load_snapshot(RUN_ID)
+        assert snapshot.store_revision == 2
+        assert snapshot.stage_states == (updated_stage,)
+        assert len(snapshot.transactions) == 2
+        assert restored._blob_path(BLOB_SHA256).read_bytes() == BLOB
+        assert restored._connection.execute("PRAGMA quick_check").fetchone()[0] == "ok"
+    finally:
+        restored.close()
+
+
+def test_restore_rejects_incomplete_blob_backup_and_cleans_destination(
+    tmp_path: Path,
+) -> None:
+    with _create_store(tmp_path) as store:
+        _stage_all(store).commit()
+        backup = store.backup_to(tmp_path / "backup")
+    shutil.rmtree(backup / "blobs")
+    (backup / "blobs").mkdir()
+
+    destination = tmp_path / "restored.db"
+    with pytest.raises(ControlStoreIntegrityError) as error:
+        SQLiteControlStore.restore_to_new_path(backup, destination)
+    assert error.value.code == "committed_blob_missing"
+    assert not destination.exists()
+    assert not destination.with_name("restored.db.blobs").exists()
+
+
+def test_explicit_rollback_closes_uow_without_writing(tmp_path: Path) -> None:
+    with _create_store(tmp_path) as store:
+        unit = _stage_all(store)
+        unit.rollback()
+        with pytest.raises(ControlStoreStateError) as error:
+            unit.commit()
+        assert error.value.code == "unit_of_work_not_active"
+        assert store.current_revision == 0
+        assert _table_count(store, "runs") == 0
+
+
+def test_only_merged_control_dtos_are_serializable() -> None:
+    proposal = SourceProposal.model_validate(SourceProposal.minimal_example)
+    with pytest.raises(ControlStoreIntegrityError) as error:
+        canonical_model_text(proposal)
+    assert error.value.code == "unsupported_control_record"
+
+
+def test_migration_resource_is_exact_packaged_source_bytes() -> None:
+    source = (
+        Path(__file__).parents[1]
+        / "src"
+        / "multi_agent_brief"
+        / "control_store"
+        / "migrations"
+        / "0001.sql"
+    )
+    assert migration_sql().encode("utf-8") == source.read_bytes()
+
+
+def test_no_current_production_module_imports_control_store() -> None:
+    package_root = Path(__file__).parents[1] / "src" / "multi_agent_brief"
+    findings: list[str] = []
+    for path in sorted(package_root.rglob("*.py")):
+        if "control_store" in path.relative_to(package_root).parts:
+            continue
+        tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Import):
+                names = [alias.name for alias in node.names]
+            elif isinstance(node, ast.ImportFrom):
+                names = [node.module or ""]
+            else:
+                continue
+            if any(
+                name == "multi_agent_brief.control_store"
+                or name.startswith("multi_agent_brief.control_store.")
+                for name in names
+            ):
+                findings.append(f"{path.relative_to(package_root)}:{node.lineno}")
+    assert findings == []
+
+
+def test_closed_store_rejects_reads_and_new_uow(tmp_path: Path) -> None:
+    store = _create_store(tmp_path)
+    store.close()
+    with pytest.raises(ControlStoreStateError) as error:
+        _ = store.current_revision
+    assert error.value.code == "store_closed"
+    with pytest.raises(ControlStoreStateError) as error:
+        store.begin(
+            run_id=RUN_ID,
+            transaction_id="TX-CLOSED",
+            transaction_type="closed",
+            expected_revision=0,
+        )
+    assert error.value.code == "store_closed"
+
+
+def test_public_store_api_exposes_no_raw_sql_mutation_surface(tmp_path: Path) -> None:
+    with _create_store(tmp_path) as store:
+        assert not hasattr(store, "execute")
+        assert not hasattr(store, "executemany")
+        assert not hasattr(store, "cursor")
+        assert not hasattr(store, "delete_orphans")
+        assert not hasattr(store, "read_run_truth")
+        assert not hasattr(store, "export_projection")
