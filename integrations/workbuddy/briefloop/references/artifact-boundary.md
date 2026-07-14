@@ -23,8 +23,11 @@ BriefLoop separates draft/content work from deterministic control records.
 - delivery archives or bundle manifests to make them look valid
 
 Use the owning command or transaction instead. If a control file looks wrong,
-run `multi-agent-brief state check --workspace <workspace>` and report the
-failure.
+use the already-bound PowerShell executable and report the failure:
+
+```powershell
+& $BriefLoop state check --workspace "<workspace>"
+```
 
 ## Evidence Boundary
 

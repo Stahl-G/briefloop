@@ -5,12 +5,18 @@ WorkBuddy must not invent a repair by editing control files.
 
 ## Inspect Current-Gate Guidance
 
-```bash
-multi-agent-brief gates show --workspace <workspace> --json
+```powershell
+& $BriefLoop gates show --workspace "<workspace>" --json
 ```
 
-Follow the emitted `required_commands`. If no route exists, report that result.
-Do not start an unowned repair.
+Follow the emitted `required_commands`. When a command starts with `briefloop`
+or `multi-agent-brief`, the only permitted adapter transformation is replacing
+that leading token with the already-bound absolute `$BriefLoop`. Preserve every
+subcommand, option, and argument value. Do not use `Invoke-Expression`, `cmd /c`,
+Bash/Git-Bash fallback, PATH re-resolution, argument changes, or an unknown
+leading command. If safe rebinding cannot be established, stop and display the
+command instead of guessing. If no route exists, report that result. Do not
+start an unowned repair.
 
 ## Start Current-Gate Repair
 
@@ -23,8 +29,8 @@ repair start for current-gate blockers.
 For non-gate owner-stage repair routes from audit_report, finalize_report,
 artifact_registry, or transaction_integrity, inspect:
 
-```bash
-multi-agent-brief repair route --workspace <workspace> --json
+```powershell
+& $BriefLoop repair route --workspace "<workspace>" --json
 ```
 
 Start the selected non-gate route with `--finding-id <finding_id>` or
@@ -36,8 +42,8 @@ record and only for the repair owner/stage shown by BriefLoop.
 
 ## Complete Repair
 
-```bash
-multi-agent-brief repair complete --workspace <workspace> --reason "<reason>"
+```powershell
+& $BriefLoop repair complete --workspace "<workspace>" --reason "<reason>"
 ```
 
 Then rerun the downstream status/gate path that BriefLoop reports.
@@ -49,15 +55,15 @@ run is already contaminated, do not clear the contamination or edit
 `artifact_registry.json`. When the operator/human decision is to accept the
 current bytes as a new owner-stage revision, record that recovery transaction:
 
-```bash
-multi-agent-brief repair supersede-stage --workspace <workspace> --stage <owner_stage> --artifact <artifact_path> --reason "<reason>" --json
+```powershell
+& $BriefLoop repair supersede-stage --workspace "<workspace>" --stage "<owner_stage>" --artifact "<artifact_path>" --reason "<reason>" --json
 ```
 
 This records the old registered hash, current bytes hash, and reason, preserves
 the original contamination event, keeps `reference_eligible=false`, and requires
 downstream stages to rerun.
 
-When `briefloop workbuddy diagnose --workspace <workspace> --json` reports
+When `& $BriefLoop workbuddy diagnose --workspace "<workspace>" --json` reports
 `recovery_state.status=awaiting_recovery` and
 `recovery_state.recommended_recovery_action=request_recovery_decision`, inspect
 the bound contamination and owner revision before the operator chooses a

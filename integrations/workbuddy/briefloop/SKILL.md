@@ -8,8 +8,9 @@ description: Operate BriefLoop from WorkBuddy through CodeBuddy-compatible role 
 > Legacy mirror only. This English mirror is retained for compatibility and is
 > not the operating source of truth. The canonical WorkBuddy Skill is
 > `.agents/skills/briefloop-workbuddy/` (Chinese), packaged by
-> `briefloop workbuddy pack-skill`. For delivery-truth semantics
-> (`finalize_report.json` `delivery_promotion`, `briefloop workbuddy diagnose`
+> `& $BriefLoop workbuddy pack-skill`. For delivery-truth semantics
+> (`finalize_report.json` `delivery_promotion`,
+> `& $BriefLoop workbuddy diagnose --workspace "<workspace>" --json`
 > `delivery_truth.valid`, and current-bound `delivery_event`), follow the
 > canonical skill.
 
@@ -52,8 +53,8 @@ BriefLoop source code, use the repository development skill instead.
 ## Outputs
 
 - BriefLoop CLI commands that the user can inspect.
-- Deterministic progress summaries based on status, workflow state, event log,
-  or generated artifacts.
+- Deterministic progress summaries based on the current handoff and
+  `& $BriefLoop workbuddy diagnose --workspace "<workspace>" --json`.
 - Role-subagent draft artifacts only where the handoff assigns them.
 - No direct edits to Python-owned control files or frozen artifacts.
 
@@ -61,13 +62,30 @@ BriefLoop source code, use the repository development skill instead.
 
 Before operating a workspace:
 
-1. Locate the active BriefLoop command:
+1. For Windows WorkBuddy, use PowerShell only and bind one absolute CLI path:
 
-   ```bash
-   BRIEFLOOP_CLI="$(command -v briefloop)"
-   test -n "$BRIEFLOOP_CLI"
-   "$BRIEFLOOP_CLI" version
+   ```powershell
+   $ErrorActionPreference = "Stop"
+   $BriefLoopCommand = Get-Command `
+     -Name briefloop `
+     -CommandType Application `
+     -ErrorAction Stop |
+     Select-Object -First 1
+   $BriefLoop = $BriefLoopCommand.Path
+   if ($BriefLoop -notmatch '^(?:[A-Za-z]:\\|\\\\[^\\]+\\[^\\]+\\)') {
+     throw "BriefLoop application path is not fully qualified."
+   }
+   & $BriefLoop version
+   py -3 --version
+   git --version
    ```
+
+   Reuse `$BriefLoop` for bootstrap, doctor, run, secrets import, and diagnose.
+   `py -3 --version` is diagnostic only. Do not mix or fall back to `bash`,
+   `which`, `command -v`, `export`, `/c/Users/...`,
+   `source .venv/bin/activate`, or `bash scripts/setup.sh`. If the actual shell
+   is Git Bash, report it and stop the PowerShell route; do not guess path
+   translations or mix shells. This route does not claim Git Bash support.
 
 2. Report the resolved binary path and version to the user.
 3. If `briefloop` is not available, ask the user to activate the source-clone
@@ -88,13 +106,22 @@ Before operating a workspace:
 6. Explain that a BriefLoop workspace is the local folder for this report
    project. Before creating it, ask for explicit confirmation of the target
    path.
-7. If creating a workspace, use a product entry:
+7. If creating a workspace, persist the user's search choice in the product
+   entry. Do not create an undecided workspace after the user has enabled or
+   declined search:
 
-   ```bash
-   briefloop new industry-weekly <workspace>
-   briefloop new management-monthly <workspace>
-   briefloop new document-review <workspace>
-   briefloop new solar-periodic <workspace>
+   ```powershell
+   # user enables online search; strongly recommend Tavily
+   & $BriefLoop new industry-weekly "<workspace>" --search-backend tavily
+   & $BriefLoop new management-monthly "<workspace>" --search-backend tavily
+   & $BriefLoop new document-review "<workspace>" --search-backend tavily
+   & $BriefLoop new solar-periodic "<workspace>" --search-backend tavily
+
+   # user declines online search
+   & $BriefLoop new industry-weekly "<workspace>" --web-search-mode disabled
+   & $BriefLoop new management-monthly "<workspace>" --web-search-mode disabled
+   & $BriefLoop new document-review "<workspace>" --web-search-mode disabled
+   & $BriefLoop new solar-periodic "<workspace>" --web-search-mode disabled
    ```
 
 `solar-periodic` is an experimental product entry. Say that before using it.
@@ -106,13 +133,25 @@ can be created, inspected, and handed off with no search API key. Do not tell
 the user BriefLoop is unfinished only because `.env` has empty search-provider
 keys.
 
-If the user wants BriefLoop-hosted external web search, configure Tavily first:
+If the user wants external web search, persist Tavily through workspace secrets:
 
-```bash
-TAVILY_API_KEY=<user-provided-key>
+```powershell
+$SecretSource = Join-Path $HOME ".briefloop-secrets.env"
+if (-not (Test-Path -LiteralPath $SecretSource -PathType Leaf)) {
+  throw "Create the user-confirmed private secret file before importing Tavily."
+}
+& $BriefLoop secrets import `
+  --workspace "<workspace>" `
+  --from $SecretSource `
+  --keys TAVILY_API_KEY `
+  --json
 ```
 
-Then verify only that `TAVILY_API_KEY` is present. Do not display the key. Do
+`$SecretSource` must be a user-confirmed private file. If only the environment
+variable exists, stop and guide the user to create the file; never print,
+auto-copy, or expand the key on the command line. Do not temporarily export,
+mutate PATH, or inject a key into one command. Then
+verify only that `TAVILY_API_KEY` is present. Do not display or commit the key. Do
 not ask the user to choose among Tavily, Exa, Brave, Firecrawl, and Serper
 unless they explicitly ask for alternatives.
 
@@ -120,8 +159,12 @@ unless they explicitly ask for alternatives.
 
 Run full BriefLoop workspaces through the CodeBuddy runtime:
 
-```bash
-briefloop run --workspace <workspace> --runtime codebuddy
+```powershell
+& $BriefLoop run `
+  --workspace "<workspace>" `
+  --runtime codebuddy `
+  --repo-workdir "<canonical BriefLoop source checkout>"
+& $BriefLoop workbuddy diagnose --workspace "<workspace>" --json
 ```
 
 Use `--runtime codebuddy` only when the source checkout contains
@@ -165,6 +208,12 @@ written artifact paths to the main session.` Verify the host actually invoked
 and returned from that exact role; a generic helper or narrative claim is not
 delegation evidence.
 
+Before role work, read both handoff files and verify the handoff runtime,
+capability runtime, `delegation_supported=true`, exact seven-role
+`subagent_names`, and exact project assets. The capability flag is not
+execution proof. Generic Team, Expert, helper, Send Message, and narrative
+labels are not role-run evidence.
+
 If the main session cannot invoke `briefloop`, stop before role work or state
 advancement and use a CodeBuddy/WorkBuddy environment with command execution.
 If the host can run CLI commands but cannot invoke those project roles, stop
@@ -175,15 +224,25 @@ silently switch runtime. The user must explicitly choose either a
 CodeBuddy/WorkBuddy session with project-role dispatch or a regenerated
 `--runtime operator` handoff.
 
+If an operator handoff exists but the user requests subagents, stop using it,
+regenerate the codebuddy handoff with the canonical `--repo-workdir`, and reread
+both handoff files. Do not continue operator while promising later dispatch;
+operator must never claim that a `briefloop-*` role ran.
+
 Before each stage or role-owned artifact action, and after each BriefLoop CLI
 command, re-open the relevant step in `output/intermediate/agent_handoff.md`
 and `output/intermediate/agent_handoff.json` before continuing. Do not skip
 handoff steps or claim that a subagent ran unless WorkBuddy/CodeBuddy actually
 delegated and recorded that role.
 
-After each deterministic CLI transaction, summarize progress to the user. Only
-report completed states that are visible in `status`, `workflow_state.json`,
-`event_log.jsonl`, or generated artifacts.
+After every start, CLI command, role return, or interruption: reread both
+handoff files, run diagnose, and follow its current action. Invoke only the exact
+assigned role when that action explicitly assigns role-owned draft work. For a
+deterministic-only action, invoke no role and let the main session run the
+authorized transaction. Then diagnose again. Raw workflow state, event log,
+Registry, timestamps, and file existence
+are audit evidence only; they do not reconstruct next action, gate, finalize,
+or delivery truth.
 
 ## Run Card Protocol
 
@@ -208,8 +267,8 @@ delivery_event:
 next_allowed_action:
 ```
 
-Read these values only from `briefloop workbuddy diagnose --workspace
-<workspace> --json`. `delivery_truth.valid=true` means the current reader
+Read these values only from `& $BriefLoop workbuddy diagnose --workspace
+"<workspace>" --json`. `delivery_truth.valid=true` means the current reader
 bundle is eligible for a delivery action; it does not mean delivery occurred.
 Read `event_truth.delivery_outcome` as `delivery_event`:
 `delivery_bundle_prepared` means a local bundle is ready,
@@ -222,10 +281,17 @@ Stop immediately and show the machine evidence only for conditions that make
 the requested action unsafe. Do not turn normal pre-finalize state into a
 workflow stop.
 
-1. `briefloop doctor` reports any error. Show the full doctor output, actual
+1. `& $BriefLoop doctor` reports any error. Show the full doctor output, actual
    workspace path, current user, output path existence/writability check, and
    platform permission/ACL output. Do not downgrade the error in prose and do
-   not mark doctor complete unless the user explicitly confirms the evidence.
+   keep it failed until the environment/config is corrected and doctor reruns
+   successfully with the same `$BriefLoop`. `request_human_review`, user
+   confirmation, or a standalone pass in another environment cannot override
+   it. Diagnose may be displayed as evidence, but
+   `doctor.status=not_run_read_only` cannot clear, replace, or route around the
+   observed failure, and its completion action must not be followed. After an
+   interruption or uncertain session continuity, rerun doctor with the same
+   `$BriefLoop`, workspace, and config before continuing.
 2. Do not infer recovery progress from `run_integrity`. Follow only
    `recovery_action` / `next_allowed_action`; a recovered run remains
    contaminated and non-reference. Do not deliver while recovery is
@@ -242,6 +308,35 @@ workflow stop.
    `.env`, tokens, private planning files, or machine secrets. Stop, tell the
    user to remove the package, and recommend rotating any exposed key. Never
    share a whole workspace zip.
+
+## Formatter And Finalize
+
+`briefloop-formatter` is a read-only finalize-readiness reporter. It must not
+run Bash, PowerShell, or CLI; convert Markdown to DOCX; write reader delivery
+artifacts; or claim reader-clean, gate/finalize success, or delivery. A role
+return is not a stage pass. Only the main session may run the handoff-authorized
+finalize, finalize gate, and finalize-complete transactions.
+
+Do not say the formal finalize pipeline completed unless the current run has
+all of these deterministic observations: handoff/diagnose authorized and the
+current workspace-config-bound finalize transaction succeeded; structurally
+valid `finalize_report.json`; reader-clean passed;
+`delivery_promotion == promoted`; current `render_transaction_id`; passed
+finalize quality gate; handoff/diagnose authorized and the current-workspace-bound
+finalize-complete transaction with a recorded reason succeeded;
+diagnose reports the current finalize event; delivery truth is valid; and the
+delivery outcome is reported literally. `delivery_truth.valid=true` is only
+eligibility, not evidence that delivery occurred. Only the current
+deterministic delivery event can support a delivery claim.
+
+Markdown or DOCX written outside the deterministic finalize lifecycle by
+WorkBuddy or a generic helper is `draft/manual/unverified`. Do not move, rename,
+or describe it as a formal BriefLoop delivery. Do not claim internal IDs or
+reader residue were cleaned, template rendering occurred, or a later verbal
+response repaired it. If a reader artifact contains `CL-*`, `SRC-*`,
+`Claim Ledger`, local paths, or other forbidden residue, report it, stop the
+delivery claim, and follow deterministic repair/finalize. Never hand-edit a
+frozen artifact or bypass reader gates.
 
 ## Work
 
@@ -279,14 +374,18 @@ Read the relevant reference before acting:
 - Do not run delivery unless the user explicitly asks and current gates allow it.
 - Do not approve releases, human approval ledgers, or memory entries.
 - Do not present traceability as semantic proof or output-quality improvement.
-- Do not say "Analyst is complete" or "Auditor passed" unless the matching
-  artifact, event, status, or transaction is present.
+- Say `briefloop-analyst` or `briefloop-auditor` role returned only after a
+  host-visible exact-role invocation and return in the current handoff step.
+  Analyst stage completion requires current deterministic stage/transaction
+  truth; audit/gate success requires the current deterministic verdict/status.
+  A matching artifact, stale event, manual file, or prior transaction proves
+  none of role execution, stage completion, or audit success by itself.
 - Do not say "delivered" unless WorkBuddy diagnose reports both
   `delivery_truth.valid=true` and current-bound
   `event_truth.delivery_succeeded=true`.
 - Do not zip or share the whole workspace. Use BriefLoop-generated delivery
   or audit bundles when present; never include `.env`. If support is needed,
-  share only manually reviewed, non-secret excerpts from `briefloop status
+  share only manually reviewed, non-secret excerpts from `& $BriefLoop status
   --json` or doctor output.
 - Stop and ask when the workspace path, active binary, gate status, or delivery
   intent is unclear.
