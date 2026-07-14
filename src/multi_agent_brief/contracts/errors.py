@@ -53,6 +53,7 @@ _PYDANTIC_ERROR_MESSAGES = {
     "datetime_type": "must be a valid date-time",
     "dict_type": "must be an object",
     "enum": "must be one of the allowed values",
+    "finite_number": "must be a finite number",
     "float_type": "must be a number",
     "frozen_instance": "field is immutable",
     "greater_than": "must be greater than the minimum",
@@ -67,6 +68,7 @@ _PYDANTIC_ERROR_MESSAGES = {
     "mapping_type": "must be an object",
     "model_type": "must be an object",
     "multiple_of": "must use the required increment",
+    "non_finite_json_number": "must contain only finite JSON numbers",
     "set_type": "must be a set",
     "string_pattern_mismatch": "has invalid format",
     "string_too_long": "is too long",
@@ -108,6 +110,8 @@ def pydantic_error_violations(error: ValidationError) -> list[FieldViolation]:
             field=_stable_field_path(item.get("loc", ())),
             error=_PYDANTIC_ERROR_MESSAGES.get(str(item.get("type", "")), "is invalid"),
         )
-        for item in error.errors(include_url=False, include_context=False, include_input=False)
+        for item in error.errors(
+            include_url=False, include_context=False, include_input=False
+        )
     ]
     return sorted(violations, key=lambda item: (item.field, item.error, item.severity))

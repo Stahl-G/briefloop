@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 from dataclasses import FrozenInstanceError
+import math
 from types import MappingProxyType
+from typing import get_args
 
 import pytest
 
@@ -16,6 +18,12 @@ from multi_agent_brief.contracts import (
     V2_CONTRACT_MODELS,
     read_contract_payload,
 )
+from multi_agent_brief.orchestrator.runtime_state.event_log import ACTORS, EVENT_TYPES
+from multi_agent_brief.orchestrator.runtime_state.workflow import (
+    PERSISTED_STAGE_STATUSES,
+)
+from multi_agent_brief.orchestrator_contract import VALID_RUNTIMES
+from multi_agent_brief.product.release_approval import VALID_APPROVAL_DECISIONS
 
 
 EXPECTED_V2_CONTRACT_IDS = (
@@ -49,6 +57,7 @@ def test_strict_model_contract_is_strict_and_forbids_extra_fields() -> None:
     config = StrictModel.model_config
     assert config["strict"] is True
     assert config["extra"] == "forbid"
+    assert config["allow_inf_nan"] is False
 
 
 @pytest.mark.parametrize("model", V2_CONTRACT_MODELS, ids=V2_CONTRACT_IDS)
@@ -64,15 +73,62 @@ def test_every_embedded_example_is_valid_and_published_in_schema(model, detail) 
     assert schema["additionalProperties"] is False
 
 
+def test_exported_schema_carries_the_constraints_used_by_after_validators() -> None:
+    source_schema = SchemaRegistry.json_schema("briefloop.source_proposal.v2")
+    source_properties = source_schema["properties"]
+    assert source_properties["title"]["minLength"] == 1
+    assert source_properties["title"]["pattern"] == r"^\S(?:[\s\S]*\S)?$"
+    assert source_properties["retrieved_at"] == {
+        "format": "date-time",
+        "pattern": r"^\d{4}-\d{2}-\d{2}T[\s\S]*(?:Z|[+-]\d{2}:\d{2})$",
+        "title": "Retrieved At",
+        "type": "string",
+    }
+    published_schema = source_properties["published_at"]["anyOf"][0]
+    assert published_schema["format"] == "date"
+    assert published_schema["pattern"] == r"^\d{4}-\d{2}-\d{2}$"
+
+    file_path_schema = source_schema["$defs"]["FileSourceLocator"]["properties"]["path"]
+    submit_path_schema = SchemaRegistry.json_schema(
+        "briefloop.artifact_submit_request.v2"
+    )["properties"]["input_path"]
+    assert file_path_schema["minLength"] == 1
+    assert "(?!/)" in file_path_schema["pattern"]
+    assert "\\.{1,2}" in file_path_schema["pattern"]
+    assert submit_path_schema["minLength"] == 1
+    assert submit_path_schema["pattern"].startswith("^scratch/")
+    assert "(?:json|md)" in submit_path_schema["pattern"]
+
+
 @pytest.mark.parametrize(
     ("contract_id", "field", "invalid_value", "expected_error"),
     [
-        ("briefloop.artifact_submit_request.v2", "size_bytes", "128", "must be an integer"),
+        (
+            "briefloop.artifact_submit_request.v2",
+            "expected_revision",
+            "1",
+            "must be an integer",
+        ),
         ("briefloop.artifact_record.v2", "required", 1, "must be a boolean"),
-        ("briefloop.stage_state.v2", "status", "done", "must be one of the allowed values"),
+        (
+            "briefloop.stage_state.v2",
+            "status",
+            "done",
+            "must be one of the allowed values",
+        ),
         ("briefloop.run_identity.v2", "created_at", "July 14", "is invalid"),
-        ("briefloop.run_identity.v2", "runtime", "Operator", "must be one of the allowed values"),
-        ("briefloop.artifact_submit_request.v2", "sha256", "not-a-hash", "has invalid format"),
+        (
+            "briefloop.run_identity.v2",
+            "runtime",
+            "Operator",
+            "must be one of the allowed values",
+        ),
+        (
+            "briefloop.artifact_revision.v2",
+            "sha256",
+            "not-a-hash",
+            "has invalid format",
+        ),
     ],
 )
 def test_strict_type_enum_and_date_failures_are_stable(
@@ -119,24 +175,124 @@ def test_discriminated_source_locator_rejects_invalid_url_and_unknown_kind() -> 
     contract_id = "briefloop.source_proposal.v2"
     invalid_url = SchemaRegistry.example(contract_id, "minimal")
     invalid_url["locator"]["url"] = "not a URL"
-    assert [(item.field, item.error) for item in SchemaRegistry.validate(contract_id, invalid_url)] == [
-        ("locator.web.url", "must be a valid URL")
-    ]
+    assert [
+        (item.field, item.error)
+        for item in SchemaRegistry.validate(contract_id, invalid_url)
+    ] == [("locator.web.url", "must be a valid URL")]
 
     unknown_kind = SchemaRegistry.example(contract_id, "minimal")
     unknown_kind["locator"] = {"kind": "database", "url": "https://example.com"}
-    assert [(item.field, item.error) for item in SchemaRegistry.validate(contract_id, unknown_kind)] == [
-        ("locator", "has an unsupported discriminator")
-    ]
+    assert [
+        (item.field, item.error)
+        for item in SchemaRegistry.validate(contract_id, unknown_kind)
+    ] == [("locator", "has an unsupported discriminator")]
 
 
-def test_transaction_receipt_rejects_completion_before_start() -> None:
+def test_artifact_submit_request_binds_invocation_scratch_input_and_precondition() -> (
+    None
+):
+    contract_id = "briefloop.artifact_submit_request.v2"
+    payload = SchemaRegistry.example(contract_id, "minimal")
+    assert set(payload) == {
+        "schema_version",
+        "request_id",
+        "run_id",
+        "artifact_id",
+        "invocation_id",
+        "input_path",
+        "expected_revision",
+    }
+
+    for invalid_path, expected_field in (
+        ("output/intermediate/audited_brief.md", "input_path"),
+        ("scratch/INV-OTHER/audited_brief.md", "$"),
+        ("scratch/INV-EDITOR-001/other.md", "$"),
+        ("scratch/INV-EDITOR-001/audited_brief.pdf", "input_path"),
+    ):
+        invalid = dict(payload)
+        invalid["input_path"] = invalid_path
+        assert [
+            (item.field, item.error)
+            for item in SchemaRegistry.validate(contract_id, invalid)
+        ] == [(expected_field, "is invalid")]
+
+    for derived_field in ("stage_id", "format", "sha256", "size_bytes", "submitted_at"):
+        invalid = dict(payload)
+        invalid[derived_field] = "agent-supplied"
+        assert [
+            (item.field, item.error)
+            for item in SchemaRegistry.validate(contract_id, invalid)
+        ] == [(derived_field, "extra field is not permitted")]
+
+
+def test_control_dto_vocabularies_match_current_authority_values() -> None:
+    def values(contract_id: str, field: str) -> set[str]:
+        model = SchemaRegistry.get(contract_id)
+        assert model is not None
+        return set(get_args(model.model_fields[field].annotation))
+
+    assert values("briefloop.run_identity.v2", "runtime") == set(VALID_RUNTIMES)
+    assert values("briefloop.stage_state.v2", "status") == set(PERSISTED_STAGE_STATUSES)
+    assert values("briefloop.approval.v2", "decision") == set(VALID_APPROVAL_DECISIONS)
+    assert values("briefloop.delivery.v2", "target") == {"local", "feishu", "gmail"}
+    assert values("briefloop.artifact_record.v2", "status") == {
+        "expected",
+        "missing",
+        "present",
+        "valid",
+        "invalid",
+        "blocked",
+        "stale",
+    }
+
+    event = SchemaRegistry.example("briefloop.event_envelope.v2", "full")
+    assert event["event_type"] in EVENT_TYPES
+    assert event["actor"] in ACTORS
+
+
+@pytest.mark.parametrize("value", (math.nan, math.inf, -math.inf))
+@pytest.mark.parametrize(
+    "contract_id",
+    ("briefloop.source_proposal.v2", "briefloop.event_envelope.v2"),
+)
+def test_nested_non_finite_json_values_are_rejected_value_free(
+    contract_id: str,
+    value: float,
+) -> None:
+    payload = SchemaRegistry.example(contract_id, "minimal")
+    payload["metadata"] = {"nested": [value]}
+
+    assert [
+        (item.field, item.error)
+        for item in SchemaRegistry.validate(contract_id, payload)
+    ] == [("$", "must contain only finite JSON numbers")]
+
+
+def test_transaction_receipt_requires_revision_advance() -> None:
     contract_id = "briefloop.transaction_receipt.v2"
     payload = SchemaRegistry.example(contract_id, "minimal")
-    payload["completed_at"] = "2026-07-14T08:59:59Z"
+    payload["prior_revision"] = 1
+    payload["committed_revision"] = 1
 
-    assert [(item.field, item.error) for item in SchemaRegistry.validate(contract_id, payload)] == [
-        ("$", "is invalid")
+    assert [
+        (item.field, item.error)
+        for item in SchemaRegistry.validate(contract_id, payload)
+    ] == [("$", "is invalid")]
+
+
+def test_control_dto_examples_cover_required_revision_and_identity_bindings() -> None:
+    revision = SchemaRegistry.example("briefloop.artifact_revision.v2", "minimal")
+    assert revision["path"].startswith("output/artifacts/")
+    assert revision["frozen"] is True
+
+    invocation = SchemaRegistry.example("briefloop.invocation.v2", "full")
+    assert invocation["role_id"] == "scout"
+    assert invocation["runtime"] in VALID_RUNTIMES
+
+    receipt = SchemaRegistry.example("briefloop.transaction_receipt.v2", "full")
+    assert receipt["committed_revision"] > receipt["prior_revision"]
+    assert receipt["artifact_revisions"] == [
+        {"artifact_id": "candidate_claims", "revision": 1}
     ]
 
 
@@ -162,31 +318,32 @@ def test_local_identity_duplicates_fail_without_migrating_business_authority() -
     assert [(item.field, item.error) for item in violations] == [("$", "is invalid")]
 
 
-def test_legacy_inventory_is_exact_and_each_result_is_read_only() -> None:
+def test_legacy_inventory_is_exact_and_each_result_is_opaque_read_only() -> None:
     assert tuple(LEGACY_READ_ONLY_CONTRACTS) == (
-        "source_item",
-        "candidate_claims",
-        "screened_candidates",
-        "claim_drafts",
+        "analysis_card",
+        "atomic_claim_graph",
         "audit_report",
-        "artifact_submit_request",
-        "runtime_manifest",
-        "workflow_state",
-        "artifact_registry_record",
-        "artifact_revision",
-        "event_log_event",
-        "runtime_invocation",
-        "human_approval",
-        "delivery_record",
-        "transaction_receipt",
+        "candidate_claims",
+        "candidate_item",
+        "claim",
+        "claim_drafts",
+        "claim_support_matrix",
+        "evidence_span_registry",
+        "market_event",
+        "policy_profile",
+        "report_spec",
+        "screened_candidates",
+        "semantic_assessment_report",
+        "source_evidence_pack_manifest",
+        "source_item",
     )
-    for legacy_id, canonical_id in LEGACY_READ_ONLY_CONTRACTS.items():
+    for legacy_id in LEGACY_READ_ONLY_CONTRACTS:
         result = read_contract_payload(legacy_id, {"legacy": [1, {"ok": True}]})
-        assert result.classification == "legacy_read_only"
+        assert result.classification == "opaque_legacy_read_only"
         assert result.requested_schema_id == legacy_id
-        assert result.canonical_schema_id == canonical_id
         assert result.canonical_model is None
-        assert result.can_write is False
+        assert not hasattr(result, "canonical_schema_id")
+        assert not hasattr(result, "can_write")
         assert isinstance(result.legacy_payload, MappingProxyType)
         assert result.legacy_payload["legacy"] == (1, MappingProxyType({"ok": True}))
         with pytest.raises(TypeError):
@@ -195,20 +352,30 @@ def test_legacy_inventory_is_exact_and_each_result_is_read_only() -> None:
             result.classification = "canonical_v2"
 
 
-def test_canonical_v2_read_returns_model_but_wrong_version_never_becomes_legacy() -> None:
+def test_canonical_v2_read_returns_model_but_wrong_version_never_becomes_legacy() -> (
+    None
+):
     contract_id = "briefloop.run_identity.v2"
     payload = SchemaRegistry.example(contract_id, "minimal")
 
     canonical = read_contract_payload(contract_id, payload)
     assert canonical.classification == "canonical_v2"
-    assert canonical.can_write is True
     assert canonical.canonical_model is not None
     assert canonical.legacy_payload is None
+    assert not hasattr(canonical, "can_write")
+
+    canonical.canonical_model.runtime = "auto"
+    assert [
+        (item.field, item.error)
+        for item in SchemaRegistry.validate(
+            contract_id,
+            canonical.canonical_model.model_dump(),
+        )
+    ] == [("runtime", "must be one of the allowed values")]
 
     payload["schema_version"] = "briefloop.run_identity.v1"
     wrong_version = read_contract_payload(contract_id, payload)
     assert wrong_version.classification == "invalid"
-    assert wrong_version.can_write is False
     assert wrong_version.canonical_model is None
     assert wrong_version.legacy_payload is None
     assert [(item.field, item.error) for item in wrong_version.violations] == [
@@ -219,16 +386,20 @@ def test_canonical_v2_read_returns_model_but_wrong_version_never_becomes_legacy(
 def test_unknown_or_non_json_legacy_payload_is_invalid_and_value_free() -> None:
     unknown = read_contract_payload("briefloop.unknown.v2", {})
     assert unknown.classification == "invalid"
-    assert unknown.can_write is False
     assert [(item.field, item.error) for item in unknown.violations] == [
         ("schema_id", "unknown v2 contract")
     ]
 
-    invalid_legacy = read_contract_payload("runtime_manifest", {"bad": object()})
+    invalid_legacy = read_contract_payload("source_item", {"bad": object()})
     assert invalid_legacy.classification == "invalid"
-    assert invalid_legacy.can_write is False
     assert [(item.field, item.error) for item in invalid_legacy.violations] == [
-        ("$", "must contain JSON-compatible values")
+        ("$", "must contain finite JSON-compatible values")
+    ]
+
+    non_finite_legacy = read_contract_payload("source_item", {"bad": math.nan})
+    assert non_finite_legacy.classification == "invalid"
+    assert [(item.field, item.error) for item in non_finite_legacy.violations] == [
+        ("$", "must contain finite JSON-compatible values")
     ]
 
 
@@ -236,13 +407,16 @@ def test_legacy_contract_class_remains_registered_and_compatible() -> None:
     from multi_agent_brief.contracts.schemas.source_item import SourceItemContract
 
     assert SchemaRegistry.get("source_item") is SourceItemContract
-    assert SchemaRegistry.validate(
-        "source_item",
-        {
-            "source_id": "S1",
-            "source_name": "Test",
-            "source_type": "local_file",
-            "title": "Title",
-            "content": "Body",
-        },
-    ) == []
+    assert (
+        SchemaRegistry.validate(
+            "source_item",
+            {
+                "source_id": "S1",
+                "source_name": "Test",
+                "source_type": "local_file",
+                "title": "Title",
+                "content": "Body",
+            },
+        )
+        == []
+    )
