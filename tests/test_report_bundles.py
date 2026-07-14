@@ -384,6 +384,36 @@ def test_report_bundle_manifest_includes_quality_artifacts_in_audit_only(tmp_pat
     ("case", "expected_outcome", "expected_reason"),
     [
         pytest.param("all_absent", "omitted", None, id="QP-BUNDLE-ALL-ABSENT"),
+        pytest.param(
+            "all_absent_registry_missing",
+            "omitted",
+            None,
+            id="QP-BUNDLE-ALL-ABSENT-REGISTRY-MISSING",
+        ),
+        pytest.param(
+            "all_absent_registry_malformed",
+            "blocked",
+            "quality_panel_registry_degradation",
+            id="QP-BUNDLE-ALL-ABSENT-REGISTRY-MALFORMED",
+        ),
+        pytest.param(
+            "all_absent_registry_cross_run",
+            "blocked",
+            "quality_panel_registry_degradation",
+            id="QP-BUNDLE-ALL-ABSENT-REGISTRY-CROSS-RUN",
+        ),
+        pytest.param(
+            "all_absent_registry_snapshot_drift",
+            "blocked",
+            "quality_panel_registry_snapshot_drift",
+            id="QP-BUNDLE-ALL-ABSENT-REGISTRY-SNAPSHOT-DRIFT",
+        ),
+        pytest.param(
+            "all_absent_prior_valid",
+            "blocked",
+            "quality_panel_registry_degradation",
+            id="QP-BUNDLE-ALL-ABSENT-PRIOR-VALID",
+        ),
         pytest.param("canonical", "included", None, id="QP-BUNDLE-CANONICAL"),
         pytest.param(
             "partial",
@@ -418,15 +448,47 @@ def test_report_bundle_quality_panel_binding_matrix(
     expected_reason: str | None,
 ) -> None:
     ws = _finalized_workspace(tmp_path)
-    if case != "all_absent":
+    if case in {
+        "all_absent_prior_valid",
+        "canonical",
+        "partial",
+        "registry_missing",
+        "registry_mutated",
+        "artifact_mutated",
+    }:
         _write_quality_projection_artifacts(ws)
+    elif case == "all_absent_registry_snapshot_drift":
+        (ws / "output" / "brief.md").write_text(
+            "# Reader Brief\n\nCurrent reader text.\n",
+            encoding="utf-8",
+        )
+        check_runtime_state(workspace=ws, repo_workdir=ROOT)
 
     intermediate = ws / "output" / "intermediate"
     registry_path = intermediate / "artifact_registry.json"
-    if case == "partial":
+    if case == "all_absent_prior_valid":
+        for filename in ("quality_panel.json", "quality_summary.md", "quality_panel.html"):
+            (intermediate / filename).unlink()
+    elif case == "partial":
         (intermediate / "quality_summary.md").unlink()
-    elif case == "registry_missing":
+    elif case in {"registry_missing", "all_absent_registry_missing"}:
         registry_path.unlink()
+    elif case == "all_absent_registry_malformed":
+        registry_path.write_text("{broken\n", encoding="utf-8")
+    elif case == "all_absent_registry_cross_run":
+        registry = json.loads(registry_path.read_text(encoding="utf-8"))
+        registry["run_id"] = "run-from-another-workspace"
+        registry_path.write_text(
+            json.dumps(registry, ensure_ascii=False, indent=2, sort_keys=True) + "\n",
+            encoding="utf-8",
+        )
+    elif case == "all_absent_registry_snapshot_drift":
+        registry = json.loads(registry_path.read_text(encoding="utf-8"))
+        registry["artifacts"]["reader_brief"]["sha256"] = "0" * 64
+        registry_path.write_text(
+            json.dumps(registry, ensure_ascii=False, indent=2, sort_keys=True) + "\n",
+            encoding="utf-8",
+        )
     elif case == "registry_mutated":
         registry = json.loads(registry_path.read_text(encoding="utf-8"))
         registry["artifacts"]["quality_panel_html"]["sha256"] = "0" * 64

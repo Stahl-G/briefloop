@@ -161,7 +161,7 @@ def build_workspace_status(workspace: str | Path) -> dict[str, Any]:
     payload["quality_panel_closeout"] = quality_panel_closeout_projection(
         workspace=ws,
         finalize_report=finalize_report.get("payload") if finalize_report.get("status") == "present" else None,
-        artifact_registry=registry_payload,
+        registry_verdict=registry_verdict,
     )
     payload["improvement"] = _improvement_summary(ws, manifest)
     payload["feedback"] = _feedback_summary(feedback_issues, repair_plan)

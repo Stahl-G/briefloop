@@ -278,12 +278,22 @@ def _interpret_quality_panel_closeout(
         )
     }
     existing = {artifact_id: path.exists() for artifact_id, path in expected_paths.items()}
+    registry_path = ws / "output" / "intermediate" / "artifact_registry.json"
+    if (
+        registry_verdict is None
+        and not any(existing.values())
+        and not registry_path.exists()
+    ):
+        return QualityPanelNotMaterialized()
+
     if registry_verdict is None:
         registry_verdict = interpret_artifact_registry(
             workspace=ws,
             repo_workdir=repo_workdir,
         )
     if isinstance(registry_verdict, RegistryNotMaterialized):
+        if not any(existing.values()):
+            return QualityPanelNotMaterialized()
         return QualityPanelDegradation("quality_panel_registry_not_materialized")
     if isinstance(registry_verdict, RegistrySnapshotDrift):
         return QualityPanelDegradation("quality_panel_registry_snapshot_drift")
@@ -449,7 +459,7 @@ def quality_panel_closeout_projection(
     workspace: str | Path | None = None,
     finalize_report: Mapping[str, Any] | None = None,
     generated_by_quality_summarize: bool = False,
-    artifact_registry: Mapping[str, Any] | None = None,
+    registry_verdict: "RegistryReadVerdict | None" = None,
 ) -> dict[str, Any]:
     """Project the post-finalize Quality Panel closeout surface.
 
@@ -471,22 +481,50 @@ def quality_panel_closeout_projection(
     missing: list[str] = []
     invalid: list[str] = []
     if workspace is not None:
-        verdict = interpret_quality_panel_closeout(workspace=workspace)
-        if isinstance(verdict, CanonicalQualityPanelView):
-            present = list(QUALITY_PANEL_CLOSEOUT_ARTIFACTS)
-            if status == "recommended":
-                status = "complete"
-                reason = "quality_projection_artifacts_valid"
-        elif isinstance(verdict, QualityPanelNotMaterialized):
-            missing = list(QUALITY_PANEL_CLOSEOUT_ARTIFACTS)
-        else:
+        from multi_agent_brief.orchestrator.runtime_state.artifact_registry_read import (
+            CanonicalRegistryView,
+            RegistryDegradation,
+            RegistryNotMaterialized,
+            RegistrySnapshotDrift,
+        )
+
+        if registry_verdict is None:
             invalid = list(QUALITY_PANEL_CLOSEOUT_ARTIFACTS)
-            if status == "recommended":
+            status = "stale_or_invalid"
+            reason = "quality_panel_registry_verdict_missing"
+        else:
+            verdict = interpret_quality_panel_closeout(
+                workspace=workspace,
+                registry_verdict=registry_verdict,
+            )
+            if isinstance(registry_verdict, RegistryDegradation):
+                invalid = list(QUALITY_PANEL_CLOSEOUT_ARTIFACTS)
+                status = "stale_or_invalid"
+                reason = "quality_panel_registry_degradation"
+            elif isinstance(registry_verdict, RegistrySnapshotDrift):
+                invalid = list(QUALITY_PANEL_CLOSEOUT_ARTIFACTS)
+                status = "stale_or_invalid"
+                reason = "quality_panel_registry_snapshot_drift"
+            elif isinstance(registry_verdict, RegistryNotMaterialized):
+                missing = list(QUALITY_PANEL_CLOSEOUT_ARTIFACTS)
+                if finalize_ready:
+                    status = "not_ready"
+                    reason = "quality_panel_registry_not_materialized"
+            elif not isinstance(registry_verdict, CanonicalRegistryView):
+                invalid = list(QUALITY_PANEL_CLOSEOUT_ARTIFACTS)
+                status = "stale_or_invalid"
+                reason = "quality_panel_registry_verdict_invalid"
+            elif isinstance(verdict, CanonicalQualityPanelView):
+                present = list(QUALITY_PANEL_CLOSEOUT_ARTIFACTS)
+                if finalize_ready:
+                    status = "complete"
+                    reason = "quality_projection_artifacts_valid"
+            elif isinstance(verdict, QualityPanelNotMaterialized):
+                missing = list(QUALITY_PANEL_CLOSEOUT_ARTIFACTS)
+            else:
+                invalid = list(QUALITY_PANEL_CLOSEOUT_ARTIFACTS)
                 status = "stale_or_invalid"
                 reason = verdict.reason_code
-
-    # Kept for API compatibility; raw Registry mappings are never interpreted here.
-    _ = artifact_registry
 
     return {
         "status": status,

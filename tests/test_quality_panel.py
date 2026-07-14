@@ -19,6 +19,11 @@ import multi_agent_brief.cli.product_commands as product_commands
 import multi_agent_brief.product.quality_closeout as quality_closeout
 import multi_agent_brief.product.quality_panel as quality_panel_module
 from multi_agent_brief.cli.main import main
+from multi_agent_brief.orchestrator.runtime_state.artifact_registry_read import (
+    RegistryDegradation,
+    RegistryNotMaterialized,
+    RegistrySnapshotDrift,
+)
 from multi_agent_brief.orchestrator.runtime_state.semantic_assessment_report import (
     SEMANTIC_ASSESSMENT_REPORT_STATUSES,
     build_semantic_assessment_checked_inputs,
@@ -938,6 +943,57 @@ def test_status_recommends_quality_closeout_after_finalize_report_pass(tmp_path:
     assert "quality_panel_closeout: recommended" in format_workspace_status(status)
 
 
+@pytest.mark.parametrize(
+    ("registry_verdict", "expected_status", "expected_reason"),
+    [
+        pytest.param(
+            None,
+            "stale_or_invalid",
+            "quality_panel_registry_verdict_missing",
+            id="QP-STATUS-REGISTRY-VERDICT-MISSING",
+        ),
+        pytest.param(
+            RegistryDegradation("artifact_registry_recovery_context_invalid"),
+            "stale_or_invalid",
+            "quality_panel_registry_degradation",
+            id="QP-STATUS-REGISTRY-DEGRADATION",
+        ),
+        pytest.param(
+            RegistrySnapshotDrift("artifact_registry_snapshot_sha256_drift"),
+            "stale_or_invalid",
+            "quality_panel_registry_snapshot_drift",
+            id="QP-STATUS-REGISTRY-SNAPSHOT-DRIFT",
+        ),
+        pytest.param(
+            RegistryNotMaterialized(),
+            "not_ready",
+            "quality_panel_registry_not_materialized",
+            id="QP-STATUS-REGISTRY-NOT-MATERIALIZED",
+        ),
+    ],
+)
+def test_quality_panel_closeout_registry_precedence_matrix(
+    tmp_path: Path,
+    registry_verdict: object | None,
+    expected_status: str,
+    expected_reason: str,
+) -> None:
+    ws = _workspace(tmp_path)
+
+    projection = quality_closeout.quality_panel_closeout_projection(
+        workspace=ws,
+        finalize_report={
+            "status": "pass",
+            "reader_clean": {"status": "pass", "sample_findings": []},
+        },
+        registry_verdict=registry_verdict,
+    )
+
+    assert projection["status"] == expected_status
+    assert projection["reason"] == expected_reason
+    assert projection["present_artifacts"] == []
+
+
 def test_quality_summarize_marks_closeout_generated_and_then_complete(tmp_path: Path) -> None:
     ws = _workspace(tmp_path)
     _write_finalize_report(ws)
@@ -1016,6 +1072,30 @@ def test_quality_panel_legacy_generated_at_cannot_self_validate(
             id="QP-READ-ALL-ABSENT",
         ),
         pytest.param(
+            "all_absent_registry_missing",
+            QualityPanelNotMaterialized,
+            "quality_panel_not_materialized",
+            id="QP-READ-ALL-ABSENT-REGISTRY-MISSING",
+        ),
+        pytest.param(
+            "all_absent_registry_malformed",
+            QualityPanelDegradation,
+            "quality_panel_registry_degradation",
+            id="QP-READ-ALL-ABSENT-REGISTRY-MALFORMED",
+        ),
+        pytest.param(
+            "all_absent_registry_cross_run",
+            QualityPanelDegradation,
+            "quality_panel_registry_degradation",
+            id="QP-READ-ALL-ABSENT-REGISTRY-CROSS-RUN",
+        ),
+        pytest.param(
+            "all_absent_registry_snapshot_drift",
+            QualityPanelDegradation,
+            "quality_panel_registry_snapshot_drift",
+            id="QP-READ-ALL-ABSENT-REGISTRY-SNAPSHOT-DRIFT",
+        ),
+        pytest.param(
             "partial",
             QualityPanelDegradation,
             "quality_panel_artifact_set_incomplete",
@@ -1065,12 +1145,40 @@ def test_quality_panel_read_interpreter_matrix(
     if case == "partial":
         write_quality_panel(workspace=ws)
         assert main(["state", "check", "--workspace", str(ws), "--json"]) == 0
-    elif case != "all_absent":
+    elif case in {
+        "canonical",
+        "registry_missing",
+        "registry_mutated",
+        "artifact_mutated",
+        "all_deleted_after_canonical",
+    }:
         materialize_quality_panel_closeout(workspace=ws, repo_workdir=Path.cwd())
+    elif case == "all_absent_registry_snapshot_drift":
+        (ws / "output" / "brief.md").write_text(
+            "# Reader Brief\n\nCurrent reader text.\n",
+            encoding="utf-8",
+        )
+        assert main(["state", "check", "--workspace", str(ws), "--json"]) == 0
 
     registry_path = ws / "output" / "intermediate" / "artifact_registry.json"
-    if case == "registry_missing":
+    if case in {"registry_missing", "all_absent_registry_missing"}:
         registry_path.unlink()
+    elif case == "all_absent_registry_malformed":
+        registry_path.write_text("{broken\n", encoding="utf-8")
+    elif case == "all_absent_registry_cross_run":
+        registry = _json(registry_path)
+        registry["run_id"] = "run-from-another-workspace"
+        registry_path.write_text(
+            json.dumps(registry, ensure_ascii=False, indent=2, sort_keys=True) + "\n",
+            encoding="utf-8",
+        )
+    elif case == "all_absent_registry_snapshot_drift":
+        registry = _json(registry_path)
+        registry["artifacts"]["reader_brief"]["sha256"] = "0" * 64
+        registry_path.write_text(
+            json.dumps(registry, ensure_ascii=False, indent=2, sort_keys=True) + "\n",
+            encoding="utf-8",
+        )
     elif case == "registry_mutated":
         registry = _json(registry_path)
         registry["artifacts"]["quality_panel"]["sha256"] = "0" * 64
@@ -1344,7 +1452,10 @@ def test_quality_panel_handles_corrupt_finalize_report_utf8_without_crashing(tmp
     status = build_workspace_status(ws)
     panel = build_quality_panel(ws)
 
-    assert status["quality_panel_closeout"]["status"] == "not_ready"
+    assert status["quality_panel_closeout"]["status"] == "stale_or_invalid"
+    assert status["quality_panel_closeout"]["reason"] == (
+        "quality_panel_registry_degradation"
+    )
     assert panel["quality_panel_closeout"]["status"] == "not_ready"
     assert validate_quality_panel_payload(panel) is None
 

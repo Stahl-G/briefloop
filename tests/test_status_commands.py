@@ -19,6 +19,7 @@ from multi_agent_brief.orchestrator.runtime_state import (
 )
 from multi_agent_brief.orchestrator.runtime_state.artifact_registry_read import (
     CanonicalRegistryView,
+    RegistryNotMaterialized,
 )
 from tests.helpers import sha256_file as _sha256_file
 from tests.helpers import write_minimal_workspace
@@ -681,7 +682,8 @@ def test_status_consumes_registry_verdict_once_and_bounds_downstream_arguments(
     original_assessment = status_module.project_assessment_target_status
     original_materiality = status_module.project_workspace_materiality_selection
     calls: list[Path] = []
-    captured: dict[str, list[dict[str, object] | None]] = {
+    registry_verdicts: list[object] = []
+    captured: dict[str, list[object]] = {
         "quality": [],
         "assessment": [],
         "materiality": [],
@@ -689,10 +691,12 @@ def test_status_consumes_registry_verdict_once_and_bounds_downstream_arguments(
 
     def interpret_once(**kwargs):
         calls.append(Path(kwargs["workspace"]))
-        return original_interpret(**kwargs)
+        verdict = original_interpret(**kwargs)
+        registry_verdicts.append(verdict)
+        return verdict
 
     def quality_spy(*args, **kwargs):
-        captured["quality"].append(kwargs.get("artifact_registry"))
+        captured["quality"].append(kwargs.get("registry_verdict"))
         return original_quality(*args, **kwargs)
 
     def assessment_spy(*args, **kwargs):
@@ -714,8 +718,10 @@ def test_status_consumes_registry_verdict_once_and_bounds_downstream_arguments(
 
     canonical = status_module.build_workspace_status(ws)
     assert len(calls) == 1
+    assert captured["quality"][-1] is registry_verdicts[-1]
     assert canonical["artifacts"]["registry_status"] == "valid"
-    for values in captured.values():
+    for key in ("assessment", "materiality"):
+        values = captured[key]
         projected = values[-1]
         assert isinstance(projected, dict)
         assert set(projected) == {"run_id", "artifacts"}
@@ -738,11 +744,12 @@ def test_status_consumes_registry_verdict_once_and_bounds_downstream_arguments(
 
     degraded = status_module.build_workspace_status(ws)
     assert len(calls) == 2
+    assert captured["quality"][-1] is registry_verdicts[-1]
     assert degraded["artifacts"]["registry_status"] == "degradation"
     assert degraded["artifacts"]["artifact_count"] == 0
     assert "UNTRUSTED-UNKNOWN-ARTIFACT" not in json.dumps(degraded)
-    for values in captured.values():
-        assert values[-1] is None
+    for key in ("assessment", "materiality"):
+        assert captured[key][-1] is None
 
 
 def test_status_snapshot_drift_is_value_free_and_blocks_continue_guidance(
@@ -768,6 +775,10 @@ def test_status_snapshot_drift_is_value_free_and_blocks_continue_guidance(
     assert artifacts["registry_reason_code"] == "artifact_registry_snapshot_mtime_drift"
     assert artifacts["artifact_count"] == 0
     assert artifacts["intake"]["present"] is False
+    assert payload["quality_panel_closeout"]["status"] == "stale_or_invalid"
+    assert payload["quality_panel_closeout"]["reason"] == (
+        "quality_panel_registry_snapshot_drift"
+    )
     assert payload["suggested_next_command"] == (
         f"briefloop state show --workspace {ws} --json"
     )
@@ -775,7 +786,7 @@ def test_status_snapshot_drift_is_value_free_and_blocks_continue_guidance(
     assert _workspace_file_snapshot(ws) == before
 
 
-def test_status_preserves_only_typed_legal_registry_absence(tmp_path):
+def test_status_preserves_only_typed_legal_registry_absence(tmp_path, monkeypatch):
     fresh_ws = _minimal_workspace(tmp_path / "fresh")
     fresh_before = _workspace_file_snapshot(fresh_ws)
 
@@ -809,6 +820,34 @@ def test_status_preserves_only_typed_legal_registry_absence(tmp_path):
         f"briefloop run --workspace {initialized_ws} --runtime claude"
     )
     assert _workspace_file_snapshot(initialized_ws) == initialized_before
+
+    finalize_report = initialized_ws / "output" / "intermediate" / "finalize_report.json"
+    finalize_report.write_text(
+        json.dumps(
+            {
+                "schema_version": "mabw.finalize_report.v1",
+                "status": "pass",
+                "reader_clean": {"status": "pass", "sample_findings": []},
+            },
+            ensure_ascii=False,
+            indent=2,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(
+        status_module,
+        "interpret_artifact_registry",
+        lambda **_kwargs: RegistryNotMaterialized(),
+    )
+
+    initialized_with_finalize = status_module.build_workspace_status(initialized_ws)
+
+    assert initialized_with_finalize["artifacts"]["registry_status"] == "missing"
+    assert initialized_with_finalize["quality_panel_closeout"]["status"] == "not_ready"
+    assert initialized_with_finalize["quality_panel_closeout"]["reason"] == (
+        "quality_panel_registry_not_materialized"
+    )
 
 
 def test_status_command_human_output_reports_user_progress_language(tmp_path, capsys):
