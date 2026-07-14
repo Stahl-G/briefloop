@@ -24,7 +24,9 @@ from pydantic import (
     JsonValue,
     StringConstraints,
     ValidationError,
+    ValidationInfo,
     WithJsonSchema,
+    field_validator,
     model_validator,
 )
 from pydantic_core import PydanticCustomError
@@ -49,6 +51,7 @@ _SCRATCH_INPUT_PATH_PATTERN = (
     r"^scratch/[A-Za-z0-9][A-Za-z0-9._:-]*/"
     r"[A-Za-z0-9][A-Za-z0-9._:-]*\.(?:json|md)$"
 )
+_APPROVAL_REASON_MAX_LENGTH = 1000
 
 
 def _contains_non_finite_number(value: Any) -> bool:
@@ -134,6 +137,19 @@ CleanText = Annotated[
         }
     ),
 ]
+ApprovalReason = Annotated[
+    str,
+    StringConstraints(max_length=_APPROVAL_REASON_MAX_LENGTH),
+    AfterValidator(_clean_text),
+    WithJsonSchema(
+        {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": _APPROVAL_REASON_MAX_LENGTH,
+            "pattern": _CLEAN_TEXT_PATTERN,
+        }
+    ),
+]
 ContractId = Annotated[
     str,
     StringConstraints(
@@ -191,6 +207,12 @@ ScratchInputPath = Annotated[
 NonNegativeInt = Annotated[int, Field(ge=0)]
 PositiveInt = Annotated[int, Field(gt=0)]
 RuntimeName = Literal[VALID_RUNTIMES]
+
+
+def _event_type_json_schema(schema: dict[str, Any]) -> None:
+    from multi_agent_brief.orchestrator.runtime_state.event_log import EVENT_TYPES
+
+    schema["enum"] = sorted(EVENT_TYPES)
 
 
 class StrictModel(BaseModel):
@@ -470,7 +492,7 @@ class EventEnvelope(StrictModel):
     schema_version: Literal["briefloop.event_envelope.v2"]
     event_id: ContractId
     run_id: ContractId
-    event_type: ContractId
+    event_type: ContractId = Field(json_schema_extra=_event_type_json_schema)
     created_at: IsoDateTime
     actor: Literal["cli", "orchestrator", "runtime", "system"]
     transaction_id: Optional[ContractId] = None
@@ -479,6 +501,18 @@ class EventEnvelope(StrictModel):
     decision: Optional[ContractId] = None
     reason: str = ""
     metadata: dict[str, JsonValue] = Field(default_factory=dict)
+
+    @field_validator("event_type")
+    @classmethod
+    def event_type_is_owned(cls, value: str) -> str:
+        from multi_agent_brief.orchestrator.runtime_state.event_log import EVENT_TYPES
+
+        if value not in EVENT_TYPES:
+            raise PydanticCustomError(
+                "unknown_event_type",
+                "event type is not registered by the Event Log owner",
+            )
+        return value
 
 
 class Invocation(StrictModel):
@@ -514,13 +548,35 @@ class Approval(StrictModel):
         "legal_or_compliance_reviewer",
     ]
     decision: Literal["approve", "reject", "request_changes"]
-    reason: CleanText
+    reason: ApprovalReason
     actor_id: ContractId
     recorded_at: IsoDateTime
     boundary: Literal[
         "internal_review_approval_records_only_not_public_release_authorization"
     ]
     event_id: ContractId
+
+    @field_validator("role")
+    @classmethod
+    def role_is_required_for_mode(
+        cls,
+        value: str,
+        info: ValidationInfo,
+    ) -> str:
+        mode = info.data.get("mode")
+        if mode is None:
+            return value
+        # Import lazily so the strict contract package does not initialize the
+        # product package while its own registry is still being imported. The
+        # existing release-approval owner remains the mode/role authority.
+        from multi_agent_brief.product.release_approval import RELEASE_MODES
+
+        if value not in RELEASE_MODES[mode]["required_roles"]:
+            raise PydanticCustomError(
+                "approval_role_not_required",
+                "approval role is not required for the selected mode",
+            )
+        return value
 
 
 class Delivery(StrictModel):

@@ -45,6 +45,7 @@ class ContractError(Exception):
 
 
 _PYDANTIC_ERROR_MESSAGES = {
+    "approval_role_not_required": "must be required for the selected mode",
     "missing": "required field is missing",
     "extra_forbidden": "extra field is not permitted",
     "bool_type": "must be a boolean",
@@ -77,6 +78,7 @@ _PYDANTIC_ERROR_MESSAGES = {
     "tuple_type": "must be a tuple",
     "union_tag_invalid": "has an unsupported discriminator",
     "union_tag_not_found": "is missing a discriminator",
+    "unknown_event_type": "must be one of the allowed values",
     "url_parsing": "must be a valid URL",
     "url_scheme": "uses an unsupported URL scheme",
     "url_type": "must be a valid URL",
