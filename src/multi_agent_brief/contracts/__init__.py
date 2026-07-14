@@ -1,7 +1,11 @@
 """Contracts package — schema definitions, validators, and migrations."""
 
 from multi_agent_brief.contracts.base import Contract, SchemaRegistry
-from multi_agent_brief.contracts.errors import ContractError, FieldViolation
+from multi_agent_brief.contracts.errors import (
+    ContractError,
+    FieldViolation,
+    pydantic_error_violations,
+)
 from multi_agent_brief.contracts.registry import (
     ArtifactContract,
     ContractRegistry,
@@ -19,12 +23,36 @@ from multi_agent_brief.contracts.schemas import (
     SourceItemContract,
 )
 from multi_agent_brief.contracts.migrations import migrate_claim_v1_to_v2
+from multi_agent_brief.contracts.v2 import (
+    Approval,
+    ArtifactRecord,
+    ArtifactRevision,
+    ArtifactSubmitRequest,
+    AuditProposal,
+    CandidateClaimsProposal,
+    ClaimDraftsProposal,
+    ContractReadResult,
+    Delivery,
+    EventEnvelope,
+    Invocation,
+    LEGACY_READ_ONLY_CONTRACTS,
+    RunIdentity,
+    ScreenedCandidatesProposal,
+    SourceProposal,
+    StageState,
+    StrictModel,
+    TransactionReceipt,
+    V2_CONTRACT_IDS,
+    V2_CONTRACT_MODELS,
+    read_contract_payload,
+)
 
 __all__ = [
     "Contract",
     "SchemaRegistry",
     "ContractError",
     "FieldViolation",
+    "pydantic_error_violations",
     "ArtifactContract",
     "ContractRegistry",
     "StageSpec",
@@ -37,5 +65,26 @@ __all__ = [
     "ReportSpecContract",
     "SourceEvidencePackManifestContract",
     "SourceItemContract",
+    "Approval",
+    "ArtifactRecord",
+    "ArtifactRevision",
+    "ArtifactSubmitRequest",
+    "AuditProposal",
+    "CandidateClaimsProposal",
+    "ClaimDraftsProposal",
+    "ContractReadResult",
+    "Delivery",
+    "EventEnvelope",
+    "Invocation",
+    "LEGACY_READ_ONLY_CONTRACTS",
+    "RunIdentity",
+    "ScreenedCandidatesProposal",
+    "SourceProposal",
+    "StageState",
+    "StrictModel",
+    "TransactionReceipt",
+    "V2_CONTRACT_IDS",
+    "V2_CONTRACT_MODELS",
+    "read_contract_payload",
     "migrate_claim_v1_to_v2",
 ]

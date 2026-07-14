@@ -57,18 +57,24 @@ class Contract(ABC):
 
 
 class SchemaRegistry:
-    """Central registry mapping schema_id to Contract class."""
+    """Central registry for legacy Contracts and strict v2 model contracts."""
 
-    _registry: ClassVar[dict[str, type[Contract]]] = {}
+    _registry: ClassVar[dict[str, type[Any]]] = {}
 
     @classmethod
-    def register(cls, contract_cls: type[Contract]) -> type[Contract]:
+    def register(cls, contract_cls: type[Any]) -> type[Any]:
         """Register a contract class. Returns the class for use as decorator."""
-        cls._registry[contract_cls.schema_id] = contract_cls
+        schema_id = getattr(contract_cls, "schema_id", None)
+        if not isinstance(schema_id, str) or not schema_id:
+            raise TypeError("Registered contracts must define a non-empty schema_id.")
+        existing = cls._registry.get(schema_id)
+        if existing is not None and existing is not contract_cls:
+            raise ValueError(f"Schema already registered: {schema_id}")
+        cls._registry[schema_id] = contract_cls
         return contract_cls
 
     @classmethod
-    def get(cls, schema_id: str) -> type[Contract] | None:
+    def get(cls, schema_id: str) -> type[Any] | None:
         """Get a registered contract class by schema_id."""
         return cls._registry.get(schema_id)
 
@@ -83,6 +89,9 @@ class SchemaRegistry:
         contract = cls._registry.get(schema_id)
         if contract is None:
             raise KeyError(f"Unknown schema: {schema_id}")
+        strict_validate = getattr(contract, "contract_validate", None)
+        if strict_validate is not None:
+            return strict_validate(data)
         return contract.validate(data)
 
     @classmethod
@@ -91,7 +100,35 @@ class SchemaRegistry:
         contract = cls._registry.get(schema_id)
         if contract is None:
             raise KeyError(f"Unknown schema: {schema_id}")
+        strict_validate_or_raise = getattr(contract, "contract_validate_or_raise", None)
+        if strict_validate_or_raise is not None:
+            strict_validate_or_raise(data)
+            return
         contract.validate_or_raise(data)
+
+    @classmethod
+    def json_schema(cls, schema_id: str) -> dict[str, Any]:
+        """Return a registered contract's JSON Schema."""
+
+        contract = cls._registry.get(schema_id)
+        if contract is None:
+            raise KeyError(f"Unknown schema: {schema_id}")
+        strict_schema = getattr(contract, "contract_json_schema", None)
+        if strict_schema is not None:
+            return strict_schema()
+        return contract.json_schema()
+
+    @classmethod
+    def example(cls, schema_id: str, detail: str) -> dict[str, Any]:
+        """Return an embedded strict-contract example."""
+
+        contract = cls._registry.get(schema_id)
+        if contract is None:
+            raise KeyError(f"Unknown schema: {schema_id}")
+        strict_example = getattr(contract, "contract_example", None)
+        if strict_example is None:
+            raise ValueError(f"Schema does not publish examples: {schema_id}")
+        return strict_example(detail)
 
     @classmethod
     def clear(cls) -> None:
