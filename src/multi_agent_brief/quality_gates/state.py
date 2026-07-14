@@ -346,7 +346,10 @@ def _quality_gate_reports_equivalent(left: dict[str, Any], right: dict[str, Any]
 
 def _frozen_report_record(workspace: Path, artifact_id: str) -> dict[str, Any] | None:
     try:
-        state = show_runtime_state(workspace=workspace)
+        state = show_runtime_state(
+            workspace=workspace,
+            allow_noncanonical_runtime=False,
+        )
     except RuntimeStateError:
         return None
     stage_id = _gate_report_producer_stage(artifact_id)
@@ -433,14 +436,10 @@ def _runtime_intake_context(
 ) -> tuple[str, dict[str, Any]]:
     """Load the current-run registry used to decide intake consumption."""
 
-    try:
-        state = show_runtime_state(workspace=workspace)
-    except RuntimeStateError:
-        state = initialize_runtime_state(
-            workspace=workspace,
-            repo_workdir=repo_workdir,
-            actor=GATE_EVENT_ACTOR,
-        )
+    state = show_runtime_state(
+        workspace=workspace,
+        allow_noncanonical_runtime=False,
+    )
     manifest = state.get("manifest")
     registry = state.get("artifact_registry")
     artifacts = registry.get("artifacts") if isinstance(registry, dict) else None

@@ -53,7 +53,7 @@ def test_sources_materialize_pack_writes_durable_source_records_and_manifest(
         "      reliability: high\n",
         encoding="utf-8",
     )
-    initialize_runtime_state(workspace=ws, repo_workdir=ROOT)
+    initialize_runtime_state(runtime="operator", workspace=ws, repo_workdir=ROOT)
 
     assert main([
         "sources",
@@ -476,7 +476,7 @@ def test_source_evidence_pack_manifest_invalid_when_source_record_changes(
         "      path: input/raw/source-001.md\n",
         encoding="utf-8",
     )
-    initialize_runtime_state(workspace=ws, repo_workdir=ROOT)
+    initialize_runtime_state(runtime="operator", workspace=ws, repo_workdir=ROOT)
     assert main([
         "sources",
         "materialize-pack",
@@ -501,7 +501,7 @@ def test_source_evidence_pack_manifest_rejects_non_evidence_placeholder(
     tmp_path: Path,
 ) -> None:
     ws = _workspace(tmp_path)
-    initialize_runtime_state(workspace=ws, repo_workdir=ROOT)
+    initialize_runtime_state(runtime="operator", workspace=ws, repo_workdir=ROOT)
     source_dir = ws / "input" / "sources"
     source_dir.mkdir(parents=True)
     placeholder = source_dir / "README.md"
@@ -540,7 +540,7 @@ def test_source_evidence_pack_manifest_rejects_inconsistent_summary_counts(
         "      path: input/raw/source-001.md\n",
         encoding="utf-8",
     )
-    initialize_runtime_state(workspace=ws, repo_workdir=ROOT)
+    initialize_runtime_state(runtime="operator", workspace=ws, repo_workdir=ROOT)
     assert main([
         "sources",
         "materialize-pack",
@@ -579,7 +579,7 @@ def test_source_evidence_pack_manifest_rejects_noncanonical_source_category(
     tmp_path: Path,
 ) -> None:
     ws = _workspace(tmp_path)
-    initialize_runtime_state(workspace=ws, repo_workdir=ROOT)
+    initialize_runtime_state(runtime="operator", workspace=ws, repo_workdir=ROOT)
     source_dir = ws / "input" / "sources"
     source_dir.mkdir(parents=True)
     source = source_dir / "source-001.json"
@@ -628,7 +628,7 @@ def test_source_evidence_pack_manifest_rejects_noncanonical_taxonomy_fields(
     value: str,
 ) -> None:
     ws = _workspace(tmp_path)
-    initialize_runtime_state(workspace=ws, repo_workdir=ROOT)
+    initialize_runtime_state(runtime="operator", workspace=ws, repo_workdir=ROOT)
     source_dir = ws / "input" / "sources"
     source_dir.mkdir(parents=True)
     source = source_dir / "source-001.json"

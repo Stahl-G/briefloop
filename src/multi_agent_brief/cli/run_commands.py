@@ -3,20 +3,21 @@
 from __future__ import annotations
 
 import argparse
-import sys
 from pathlib import Path
 
 from multi_agent_brief.orchestrator.handoff import (
     RUNTIME_RECIPE_FAST_RERUN,
-    VALID_RUNTIMES,
     VALID_RUNTIME_RECIPES,
     build_handoff,
-    legacy_runtime_alias_warning,
     render_handoff_cli,
     write_handoff_and_state,
 )
 from multi_agent_brief.orchestrator.fact_layer_import import require_fast_rerun_handoff_ready
-from multi_agent_brief.orchestrator_contract import resolve_repo_workdir
+from multi_agent_brief.orchestrator_contract import (
+    RUNTIME_CLI_CHOICE_PLACEHOLDER,
+    VALID_RUNTIMES,
+    resolve_repo_workdir,
+)
 
 
 def register(subparsers: argparse._SubParsersAction) -> None:
@@ -35,9 +36,9 @@ def register(subparsers: argparse._SubParsersAction) -> None:
     )
     run_parser.add_argument(
         "--runtime",
-        default="auto",
+        required=True,
         choices=list(VALID_RUNTIMES),
-        help="Target runtime for handoff (default: auto, resolves to hermes; manual is a legacy alias for operator).",
+        help="Exact target runtime identity for this handoff.",
     )
     run_parser.add_argument(
         "--recipe",
@@ -74,9 +75,9 @@ def register(subparsers: argparse._SubParsersAction) -> None:
     )
     start_parser.add_argument(
         "--runtime",
-        default="auto",
+        required=True,
         choices=list(VALID_RUNTIMES),
-        help="Target runtime for handoff (default: auto, resolves to hermes; manual is a legacy alias for operator).",
+        help="Exact target runtime identity for this handoff.",
     )
     start_parser.add_argument(
         "--recipe",
@@ -103,9 +104,9 @@ def register(subparsers: argparse._SubParsersAction) -> None:
     )
     handoff_parser.add_argument(
         "--runtime",
-        default="auto",
+        required=True,
         choices=list(VALID_RUNTIMES),
-        help="Target runtime for handoff (default: auto, resolves to hermes; manual is a legacy alias for operator).",
+        help="Exact target runtime identity for this handoff.",
     )
     handoff_parser.add_argument(
         "--recipe",
@@ -207,8 +208,6 @@ def _run_launcher(args: argparse.Namespace) -> int:
     except ValueError as exc:
         print(f"{prefix} {exc}")
         return 1
-    _print_runtime_alias_warning(prefix, getattr(args, "runtime", ""))
-
     written = write_handoff_and_state(
         handoff=handoff,
         workspace=workspace_path,
@@ -229,6 +228,7 @@ def _run_prepare(args: argparse.Namespace) -> int:
     print(
         "[legacy] prepare has been replaced by:"
         " briefloop run --workspace <workspace>"
+        f" --runtime {RUNTIME_CLI_CHOICE_PLACEHOLDER}"
     )
     return 1
 
@@ -269,8 +269,6 @@ def _run_handoff(args: argparse.Namespace) -> int:
     except ValueError as exc:
         print(f"[handoff] {exc}")
         return 1
-    _print_runtime_alias_warning("[handoff]", getattr(args, "runtime", ""))
-
     written = write_handoff_and_state(
         handoff=handoff,
         workspace=workspace,
@@ -284,9 +282,3 @@ def _run_handoff(args: argparse.Namespace) -> int:
     print(f"[handoff] Written: {md_path}")
     print(f"[handoff] JSON:   {json_path}")
     return 0
-
-
-def _print_runtime_alias_warning(prefix: str, runtime: str) -> None:
-    warning = legacy_runtime_alias_warning(runtime)
-    if warning:
-        print(f"{prefix} WARNING: {warning}", file=sys.stderr)

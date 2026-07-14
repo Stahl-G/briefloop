@@ -43,7 +43,11 @@ from multi_agent_brief.orchestrator.runtime_state import (
     load_stage_specs,
     runtime_state_paths,
 )
-from multi_agent_brief.orchestrator_contract import resolve_repo_workdir
+from multi_agent_brief.orchestrator_contract import (
+    VALID_RUNTIMES,
+    require_canonical_runtime,
+    resolve_repo_workdir,
+)
 
 
 IMPROVEMENT_EVENT_TYPES = {
@@ -446,6 +450,17 @@ def _runtime_event_surface_preflight(workspace: Path) -> dict[str, Any]:
             "runtime_manifest.json is missing run_id; refusing to append ledger revision.",
             details={"path": str(manifest_path)},
         )
+    try:
+        require_canonical_runtime(manifest.get("runtime"))
+    except ValueError as exc:
+        raise ImprovementLedgerError(
+            "runtime_manifest.json does not contain a canonical runtime identity; "
+            "refusing to append ledger revision.",
+            details={
+                "path": str(manifest_path),
+                "valid_runtimes": list(VALID_RUNTIMES),
+            },
+        ) from exc
     _preflight_event_log_jsonl(event_log_path)
     return {"active": True, "run_id": run_id.strip()}
 

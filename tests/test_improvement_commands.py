@@ -4,6 +4,8 @@ import json
 from functools import partial
 from pathlib import Path
 
+import pytest
+
 from multi_agent_brief.cli.main import main
 from multi_agent_brief.improvement.state import improvement_ledger_path
 from multi_agent_brief.orchestrator.runtime_state import initialize_runtime_state
@@ -72,6 +74,49 @@ def test_improve_propose_list_show_validate_stats_json(tmp_path, capsys):
     assert stats["eligible_for_materialization_count"] == 0
 
 
+@pytest.mark.parametrize("historical_runtime", ["auto", "manual"])
+def test_improve_propose_rejects_historical_runtime_without_writes(
+    tmp_path,
+    capsys,
+    historical_runtime,
+):
+    ws = _workspace(tmp_path)
+    initialize_runtime_state(runtime="operator", workspace=ws, repo_workdir=ROOT)
+    manifest_path = ws / "output/intermediate/runtime_manifest.json"
+    event_log_path = ws / "output/intermediate/event_log.jsonl"
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    manifest["runtime"] = historical_runtime
+    manifest_path.write_text(
+        json.dumps(manifest, ensure_ascii=False, indent=2, sort_keys=True) + "\n",
+        encoding="utf-8",
+    )
+    manifest_before = manifest_path.read_bytes()
+    event_log_before = event_log_path.read_bytes()
+
+    rc = main([
+        "improve",
+        "propose",
+        "--workspace",
+        str(ws),
+        "--guidance",
+        "Lead with the decision-relevant number when evidence supports it.",
+        "--category",
+        "audience_mismatch",
+        "--scope",
+        "brief",
+        "--source-summary",
+        "Operator-created audience guidance proposal.",
+        "--json",
+    ])
+
+    assert rc == 1
+    payload = json.loads(capsys.readouterr().out)
+    assert "canonical runtime identity" in payload["error"]
+    assert not improvement_ledger_path(ws).exists()
+    assert manifest_path.read_bytes() == manifest_before
+    assert event_log_path.read_bytes() == event_log_before
+
+
 def test_improve_propose_requires_source_summary(tmp_path, capsys):
     ws = _workspace(tmp_path)
 
@@ -124,7 +169,7 @@ def test_improve_propose_rejects_source_summary_with_from_issue(tmp_path, capsys
 
 def test_improve_approve_reject_revert_cli_boundaries(tmp_path, capsys):
     ws = _workspace(tmp_path)
-    initialize_runtime_state(workspace=ws, repo_workdir=ROOT)
+    initialize_runtime_state(runtime="operator", workspace=ws, repo_workdir=ROOT)
 
     assert main([
         "improve",

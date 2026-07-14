@@ -7,6 +7,8 @@ import json
 from pathlib import Path
 from typing import Any
 
+from multi_agent_brief.orchestrator_contract import RUNTIME_CLI_CHOICE_PLACEHOLDER
+
 
 FACT_LAYER_IMPORT_SCHEMA = "mabw.fact_layer_import.v1"
 FAST_RERUN_IMPORT_REQUIRED_ERROR = "E_FAST_RERUN_IMPORT_REQUIRED"
@@ -336,7 +338,8 @@ def _format_import_required_message(summary: dict[str, Any]) -> str:
     return (
         f"{FAST_RERUN_IMPORT_REQUIRED_ERROR}: run --recipe fast-rerun requires an existing valid "
         f"runtime_manifest.fact_layer_import. First run `briefloop state import-fact-layer "
-        f"--workspace <workspace> --archive <output/runs/run_id>`; reason: {reasons}"
+        f"--workspace <workspace> --archive <output/runs/run_id> "
+        f"--runtime {RUNTIME_CLI_CHOICE_PLACEHOLDER}`; reason: {reasons}"
     )
 
 

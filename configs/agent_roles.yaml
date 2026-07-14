@@ -84,7 +84,7 @@ roles:
     - In repo-development mode, update source-of-truth role/config files before
       generated adapter files and run focused validation for the changed surfaces.
     - Act as the runtime main agent for Hermes, Claude Code, Codex, OpenCode, and
-      manual handoff surfaces.
+      operator handoff surfaces.
     - When speaking to a Chinese user, introduce this role as `司乐师（Orchestrator）`
       on first mention. This is a display alias only; the canonical role id remains
       `orchestrator`.

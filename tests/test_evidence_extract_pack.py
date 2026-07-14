@@ -159,7 +159,7 @@ def test_extract_registers_scope_and_local_sources(tmp_path: Path, capsys) -> No
     assert len(items) == 1
     assert items[0].metadata["path"].endswith("001-permit-summary.md")
 
-    initialize_runtime_state(workspace=workspace, repo_workdir=ROOT)
+    initialize_runtime_state(runtime="operator", workspace=workspace, repo_workdir=ROOT)
     state = check_runtime_state(workspace=workspace, repo_workdir=ROOT)
     source_lock_record = state["artifact_registry"]["artifacts"]["evidence_extract_source_lock"]
     assert source_lock_record["status"] == "valid"
@@ -195,7 +195,7 @@ def test_extract_source_lock_invalidates_modified_registered_source(tmp_path: Pa
     copied_source = workspace / payload["sources"][0]["path"]
     copied_source.write_text("Omega source bytes.\n", encoding="utf-8")
 
-    initialize_runtime_state(workspace=workspace, repo_workdir=ROOT)
+    initialize_runtime_state(runtime="operator", workspace=workspace, repo_workdir=ROOT)
     state = check_runtime_state(workspace=workspace, repo_workdir=ROOT)
     source_lock_record = state["artifact_registry"]["artifacts"]["evidence_extract_source_lock"]
     assert source_lock_record["status"] == "invalid"
@@ -286,7 +286,7 @@ def test_extract_bridges_adjacent_mineru_markdown_for_pdf(tmp_path: Path, capsys
     assert len(items) == 1
     assert "MinerU extracted capacity" in items[0].content
 
-    initialize_runtime_state(workspace=workspace, repo_workdir=ROOT)
+    initialize_runtime_state(runtime="operator", workspace=workspace, repo_workdir=ROOT)
     state = check_runtime_state(workspace=workspace, repo_workdir=ROOT)
     assert state["artifact_registry"]["artifacts"]["evidence_extract_source_lock"]["status"] == "valid"
     assert state["artifact_registry"]["artifacts"]["evidence_extract_page_inventory"]["status"] == "valid"
@@ -364,7 +364,7 @@ def test_extract_source_lock_invalidates_modified_derived_mineru_markdown(tmp_pa
     copied_derived = workspace / payload["sources"][0]["derived_markdown_path"]
     copied_derived.write_text("# Permit PDF\n\nTampered derived text.\n", encoding="utf-8")
 
-    initialize_runtime_state(workspace=workspace, repo_workdir=ROOT)
+    initialize_runtime_state(runtime="operator", workspace=workspace, repo_workdir=ROOT)
     state = check_runtime_state(workspace=workspace, repo_workdir=ROOT)
     record = state["artifact_registry"]["artifacts"]["evidence_extract_source_lock"]
     assert record["status"] == "invalid"
@@ -405,7 +405,7 @@ def test_extract_source_lock_rejects_derived_markdown_outside_evidence_root(tmp_
     source_lock["sources"][0]["derived_markdown"]["path"] = "input/context/permit_pdf.mineru.md"
     lock_path.write_text(json.dumps(source_lock, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
 
-    initialize_runtime_state(workspace=workspace, repo_workdir=ROOT)
+    initialize_runtime_state(runtime="operator", workspace=workspace, repo_workdir=ROOT)
     state = check_runtime_state(workspace=workspace, repo_workdir=ROOT)
     record = state["artifact_registry"]["artifacts"]["evidence_extract_source_lock"]
     assert record["status"] == "invalid"
@@ -450,7 +450,7 @@ def test_extract_source_lock_rejects_symlinked_evidence_extract_root(tmp_path: P
     except OSError as exc:
         pytest.skip(f"symlink creation not available: {exc}")
 
-    initialize_runtime_state(workspace=workspace, repo_workdir=ROOT)
+    initialize_runtime_state(runtime="operator", workspace=workspace, repo_workdir=ROOT)
     state = check_runtime_state(workspace=workspace, repo_workdir=ROOT)
     source_lock_record = state["artifact_registry"]["artifacts"]["evidence_extract_source_lock"]
     assert source_lock_record["status"] == "invalid"
@@ -487,7 +487,7 @@ def test_extract_page_inventory_rejects_unknown_source_id(tmp_path: Path, capsys
     inventory["sources"][0]["source_id"] = "SRC-999"
     inventory_path.write_text(json.dumps(inventory, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
 
-    initialize_runtime_state(workspace=workspace, repo_workdir=ROOT)
+    initialize_runtime_state(runtime="operator", workspace=workspace, repo_workdir=ROOT)
     state = check_runtime_state(workspace=workspace, repo_workdir=ROOT)
     record = state["artifact_registry"]["artifacts"]["evidence_extract_page_inventory"]
     assert record["status"] == "invalid"
@@ -524,7 +524,7 @@ def test_extract_page_inventory_rejects_stale_source_lock_sha(tmp_path: Path, ca
     inventory["source_lock_sha256"] = "0" * 64
     inventory_path.write_text(json.dumps(inventory, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
 
-    initialize_runtime_state(workspace=workspace, repo_workdir=ROOT)
+    initialize_runtime_state(runtime="operator", workspace=workspace, repo_workdir=ROOT)
     state = check_runtime_state(workspace=workspace, repo_workdir=ROOT)
     record = state["artifact_registry"]["artifacts"]["evidence_extract_page_inventory"]
     assert record["status"] == "invalid"
@@ -574,7 +574,7 @@ def test_extract_evidence_span_registry_rejects_forged_page_trace(
     registry["sources"][0]["spans"][0][field] = value
     registry_path.write_text(json.dumps(registry, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
 
-    initialize_runtime_state(workspace=workspace, repo_workdir=ROOT)
+    initialize_runtime_state(runtime="operator", workspace=workspace, repo_workdir=ROOT)
     state = check_runtime_state(workspace=workspace, repo_workdir=ROOT)
     record = state["artifact_registry"]["artifacts"]["evidence_span_registry"]
     assert record["status"] == "invalid"

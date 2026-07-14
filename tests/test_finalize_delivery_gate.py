@@ -264,6 +264,7 @@ def _write_runtime_manifest(output_dir: Path, *, run_id: str = "mabw-run-test") 
             {
                 "schema_version": "multi-agent-brief-runtime-manifest/v1",
                 "run_id": run_id,
+                "runtime": "operator",
             },
             ensure_ascii=False,
             indent=2,
@@ -647,7 +648,7 @@ def test_finalize_cli_preserves_auditable_target_precedence_over_recovery_eligib
         + "\n",
         encoding="utf-8",
     )
-    initialize_runtime_state(workspace=workspace, repo_workdir=ROOT)
+    initialize_runtime_state(runtime="operator", workspace=workspace, repo_workdir=ROOT)
     paths = runtime_state_paths(workspace)
     workflow = json.loads(paths["workflow_state"].read_text(encoding="utf-8"))
     ledger_sha = _sha256_file(intermediate / "claim_ledger.json")
@@ -794,7 +795,7 @@ def test_finalize_cli_blocks_contaminated_delivery_run_before_writing(
         "# Brief\n\nExampleCo opened a demo facility. [src:CL-001]\n",
         encoding="utf-8",
     )
-    initialize_runtime_state(workspace=workspace, repo_workdir=ROOT)
+    initialize_runtime_state(runtime="operator", workspace=workspace, repo_workdir=ROOT)
     paths = runtime_state_paths(workspace)
     workflow = json.loads(paths["workflow_state"].read_text(encoding="utf-8"))
     run_id = str(workflow["run_id"])
@@ -864,7 +865,7 @@ def test_finalize_cli_blocks_modified_frozen_audited_brief_before_writing(tmp_pa
         json.dumps(_passing_audit_payload(), ensure_ascii=False, indent=2),
         encoding="utf-8",
     )
-    initialize_runtime_state(workspace=workspace, repo_workdir=ROOT)
+    initialize_runtime_state(runtime="operator", workspace=workspace, repo_workdir=ROOT)
     workflow_path = runtime_state_paths(workspace)["workflow_state"]
     workflow = json.loads(workflow_path.read_text(encoding="utf-8"))
     _write_audit_control_chain(intermediate)
@@ -1747,7 +1748,7 @@ def test_malformed_projectable_block_failure_invalidates_stale_delivery_truth(
     audited = intermediate / "audited_brief.md"
     audited.write_text("# Brief\n\nFirst reader-safe delivery.\n", encoding="utf-8")
 
-    initialize_runtime_state(workspace=workspace, repo_workdir=ROOT)
+    initialize_runtime_state(runtime="operator", workspace=workspace, repo_workdir=ROOT)
     finalize_reader_outputs(
         output_dir=output_dir,
         project_name="ExampleCo Brief",

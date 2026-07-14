@@ -108,7 +108,7 @@ If you only want to inspect the repository mechanics:
 python3 scripts/check_launch_smoke.py
 ```
 
-If `briefloop run --workspace <workspace>` succeeds, it means the runtime
+If `briefloop run --workspace <workspace> --runtime operator` succeeds, it means the runtime
 handoff was created. It does not mean agents have completed the brief.
 
 ## Active Repair

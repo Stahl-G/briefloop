@@ -594,7 +594,7 @@ def import_fact_layer_transaction(
     *,
     workspace: str | Path,
     archive: str | Path,
-    runtime: str = "hermes",
+    runtime: str,
     repo_workdir: str | Path | None = None,
     actor: str = "cli",
 ) -> dict[str, Any]:

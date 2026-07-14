@@ -1,6 +1,6 @@
 # MABW Agent 开发指南
 
-本文是 coding agent 和 contributor 快速理解 MABW 源码仓库的开发入口。它不是 end-user brief workspace 的执行合同，也不是某一次 brief run 的 handoff。真实运行时合同以 `multi-agent-brief run --workspace <workspace>` 生成的 交接产物、runtime state files、role skills 和 workspace 配置为准。
+本文是 coding agent 和 contributor 快速理解 MABW 源码仓库的开发入口。它不是 end-user brief workspace 的执行合同，也不是某一次 brief run 的 handoff。真实运行时合同以 `multi-agent-brief run --workspace <workspace> --runtime operator` 生成的 交接产物、runtime state files、role skills 和 workspace 配置为准。
 
 如果需要一份可直接复制或注入给 coding agent 的开发提示词，使用 [MABW 开发 Agent Prompt](agent-dev-prompt.zh-CN.md)。本文件保留为解释版开发指南。
 

@@ -308,7 +308,7 @@ def _write_valid_claim_ledger(ws: Path, statement: str = "ExampleCo opened a dem
 
 def test_repair_route_ignores_semantic_support_proposal_findings(tmp_path):
     ws = _workspace(tmp_path)
-    initialize_runtime_state(workspace=ws)
+    initialize_runtime_state(runtime="operator", workspace=ws)
     (_intermediate(ws) / "audit_report.json").write_text(
         json.dumps(
             {
@@ -356,7 +356,7 @@ def test_repair_route_ignores_semantic_support_proposal_findings(tmp_path):
 
 def test_repair_route_does_not_ignore_spoofed_high_severity_proposal(tmp_path):
     ws = _workspace(tmp_path)
-    initialize_runtime_state(workspace=ws)
+    initialize_runtime_state(runtime="operator", workspace=ws)
     (_intermediate(ws) / "audit_report.json").write_text(
         json.dumps(
             {
@@ -390,7 +390,7 @@ def test_repair_route_does_not_ignore_spoofed_high_severity_proposal(tmp_path):
 
 def test_repair_route_maps_unsupported_claim_to_audited_brief(tmp_path, capsys):
     ws = _workspace(tmp_path)
-    initialize_runtime_state(workspace=ws)
+    initialize_runtime_state(runtime="operator", workspace=ws)
     before_events = runtime_state_paths(ws)["event_log"].read_bytes()
     _write_audit_report(
         ws,
@@ -418,7 +418,7 @@ def test_repair_route_maps_unsupported_claim_to_audited_brief(tmp_path, capsys):
 
 def test_repair_route_maps_finalize_reader_clean_failure_to_editor(tmp_path, capsys):
     ws = _workspace(tmp_path)
-    initialize_runtime_state(workspace=ws)
+    initialize_runtime_state(runtime="operator", workspace=ws)
     _set_workflow_stages(
         ws,
         completed=[
@@ -452,7 +452,7 @@ def test_repair_route_maps_finalize_reader_clean_failure_to_editor(tmp_path, cap
 
 def test_repair_route_ignores_stale_finalize_report_outside_finalize_stage(tmp_path, capsys):
     ws = _workspace(tmp_path)
-    initialize_runtime_state(workspace=ws)
+    initialize_runtime_state(runtime="operator", workspace=ws)
     _set_workflow_stages(
         ws,
         completed=[
@@ -480,7 +480,7 @@ def test_repair_route_ignores_stale_finalize_report_outside_finalize_stage(tmp_p
 
 def test_repair_start_accepts_finalize_reader_clean_route_from_finalize_stage(tmp_path, capsys):
     ws = _workspace(tmp_path)
-    initialize_runtime_state(workspace=ws)
+    initialize_runtime_state(runtime="operator", workspace=ws)
     _write_valid_claim_ledger(ws)
     (_intermediate(ws) / "audited_brief.md").write_text(
         "# Brief\n\nExampleCo opened a demo facility. [src:CL-0001]\n",
@@ -525,7 +525,7 @@ def test_repair_start_accepts_finalize_reader_clean_route_from_finalize_stage(tm
 
 def test_repair_route_maps_frozen_audited_brief_change_to_editor(tmp_path, capsys):
     ws = _workspace(tmp_path)
-    initialize_runtime_state(workspace=ws)
+    initialize_runtime_state(runtime="operator", workspace=ws)
     _write_valid_claim_ledger(ws)
     (_intermediate(ws) / "audited_brief.md").write_text("# Brief\n\nOriginal editor text.\n", encoding="utf-8")
     _set_workflow_stages(
@@ -556,7 +556,7 @@ def test_repair_route_maps_frozen_audited_brief_change_to_editor(tmp_path, capsy
 
 def test_repair_route_prioritizes_frozen_artifact_change_over_audit_text(tmp_path, capsys):
     ws = _workspace(tmp_path)
-    initialize_runtime_state(workspace=ws)
+    initialize_runtime_state(runtime="operator", workspace=ws)
     _write_valid_claim_ledger(ws)
     (_intermediate(ws) / "audited_brief.md").write_text("# Brief\n\nOriginal editor text.\n", encoding="utf-8")
     _set_workflow_stages(
@@ -592,7 +592,7 @@ def test_repair_route_prioritizes_frozen_artifact_change_over_audit_text(tmp_pat
 
 def test_repair_route_maps_frozen_claim_ledger_change_to_claim_ledger(tmp_path, capsys):
     ws = _workspace(tmp_path)
-    initialize_runtime_state(workspace=ws)
+    initialize_runtime_state(runtime="operator", workspace=ws)
     _write_valid_claim_ledger(ws)
     _set_workflow_stages(
         ws,
@@ -616,7 +616,7 @@ def test_repair_route_maps_frozen_claim_ledger_change_to_claim_ledger(tmp_path, 
 
 def test_repair_route_maps_claim_ledger_invalid_registry_to_claim_ledger(tmp_path, capsys):
     ws = _workspace(tmp_path)
-    initialize_runtime_state(workspace=ws)
+    initialize_runtime_state(runtime="operator", workspace=ws)
     registry_path = runtime_state_paths(ws)["artifact_registry"]
     registry_path.parent.mkdir(parents=True, exist_ok=True)
     registry_path.write_text(
@@ -653,7 +653,7 @@ def test_repair_route_maps_claim_ledger_invalid_registry_to_claim_ledger(tmp_pat
 
 def test_repair_route_maps_missing_claim_ledger_registry_to_claim_ledger(tmp_path, capsys):
     ws = _workspace(tmp_path)
-    initialize_runtime_state(workspace=ws)
+    initialize_runtime_state(runtime="operator", workspace=ws)
     registry_path = runtime_state_paths(ws)["artifact_registry"]
     registry_path.parent.mkdir(parents=True, exist_ok=True)
     registry_path.write_text(
@@ -690,7 +690,7 @@ def test_repair_route_maps_missing_claim_ledger_registry_to_claim_ledger(tmp_pat
 
 def test_repair_route_maps_missing_source_excerpt_to_source_discovery(tmp_path, capsys):
     ws = _workspace(tmp_path)
-    initialize_runtime_state(workspace=ws)
+    initialize_runtime_state(runtime="operator", workspace=ws)
     _write_quality_gate_report(
         ws,
         {
@@ -714,7 +714,7 @@ def test_repair_route_maps_missing_source_excerpt_to_source_discovery(tmp_path, 
 
 def test_repair_route_prefers_source_discovery_metadata_over_text_heuristic(tmp_path, capsys):
     ws = _workspace(tmp_path)
-    initialize_runtime_state(workspace=ws)
+    initialize_runtime_state(runtime="operator", workspace=ws)
     _write_quality_gate_report(
         ws,
         {
@@ -740,7 +740,7 @@ def test_repair_route_prefers_source_discovery_metadata_over_text_heuristic(tmp_
 
 def test_repair_route_prefers_low_confidence_source_metadata(tmp_path, capsys):
     ws = _workspace(tmp_path)
-    initialize_runtime_state(workspace=ws)
+    initialize_runtime_state(runtime="operator", workspace=ws)
     _write_quality_gate_report(
         ws,
         {
@@ -765,7 +765,7 @@ def test_repair_route_prefers_low_confidence_source_metadata(tmp_path, capsys):
 
 def test_repair_route_prefers_target_relevance_metadata(tmp_path, capsys):
     ws = _workspace(tmp_path)
-    initialize_runtime_state(workspace=ws)
+    initialize_runtime_state(runtime="operator", workspace=ws)
     _write_quality_gate_report(
         ws,
         {
@@ -791,7 +791,7 @@ def test_repair_route_prefers_target_relevance_metadata(tmp_path, capsys):
 
 def test_repair_route_prefers_target_priority_metadata(tmp_path, capsys):
     ws = _workspace(tmp_path)
-    initialize_runtime_state(workspace=ws)
+    initialize_runtime_state(runtime="operator", workspace=ws)
     _write_quality_gate_report(
         ws,
         {
@@ -816,7 +816,7 @@ def test_repair_route_prefers_target_priority_metadata(tmp_path, capsys):
 
 def test_repair_route_prefers_number_without_source_metadata(tmp_path, capsys):
     ws = _workspace(tmp_path)
-    initialize_runtime_state(workspace=ws)
+    initialize_runtime_state(runtime="operator", workspace=ws)
     _write_quality_gate_report(
         ws,
         {
@@ -841,7 +841,7 @@ def test_repair_route_prefers_number_without_source_metadata(tmp_path, capsys):
 
 def test_repair_route_maps_low_source_density_metadata_to_editor(tmp_path, capsys):
     ws = _workspace(tmp_path)
-    initialize_runtime_state(workspace=ws)
+    initialize_runtime_state(runtime="operator", workspace=ws)
     _write_quality_gate_report(
         ws,
         {
@@ -867,7 +867,7 @@ def test_repair_route_maps_low_source_density_metadata_to_editor(tmp_path, capsy
 
 def test_repair_route_does_not_let_minimum_text_override_explicit_editor_route(tmp_path, capsys):
     ws = _workspace(tmp_path)
-    initialize_runtime_state(workspace=ws)
+    initialize_runtime_state(runtime="operator", workspace=ws)
     _write_quality_gate_report(
         ws,
         {
@@ -892,7 +892,7 @@ def test_repair_route_does_not_let_minimum_text_override_explicit_editor_route(t
 
 def test_repair_route_does_not_auto_repair_input_limitation_findings(tmp_path, capsys):
     ws = _workspace(tmp_path)
-    initialize_runtime_state(workspace=ws)
+    initialize_runtime_state(runtime="operator", workspace=ws)
     _write_quality_gate_report(
         ws,
         {
@@ -922,7 +922,7 @@ def test_repair_route_does_not_auto_repair_input_limitation_findings(tmp_path, c
 @pytest.mark.parametrize("repair_owner", ["human", "human_review", "human-review"])
 def test_repair_route_treats_explicit_human_owner_as_human_review(tmp_path, capsys, repair_owner):
     ws = _workspace(tmp_path)
-    initialize_runtime_state(workspace=ws)
+    initialize_runtime_state(runtime="operator", workspace=ws)
     _write_quality_gate_report(
         ws,
         {
@@ -960,7 +960,7 @@ def test_repair_route_treats_explicit_human_owner_as_human_review(tmp_path, caps
 
 def test_repair_route_prioritizes_blocking_human_review_over_warning_repair(tmp_path, capsys):
     ws = _workspace(tmp_path)
-    initialize_runtime_state(workspace=ws)
+    initialize_runtime_state(runtime="operator", workspace=ws)
     path = _intermediate(ws) / "gates" / "auditor_quality_gate_report.json"
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(
@@ -1019,7 +1019,7 @@ def test_repair_route_prioritizes_blocking_human_review_over_warning_repair(tmp_
 
 def test_repair_route_for_gate_uses_current_finalize_gate_over_stale_auditor_gate(tmp_path):
     ws = _workspace(tmp_path)
-    initialize_runtime_state(workspace=ws)
+    initialize_runtime_state(runtime="operator", workspace=ws)
     _write_stage_quality_gate_report(
         ws,
         stage_id="auditor",
@@ -1054,7 +1054,7 @@ def test_repair_route_for_gate_uses_current_finalize_gate_over_stale_auditor_gat
 
 def test_repair_route_for_gate_returns_human_review_for_current_human_gate(tmp_path):
     ws = _workspace(tmp_path)
-    initialize_runtime_state(workspace=ws)
+    initialize_runtime_state(runtime="operator", workspace=ws)
     _write_stage_quality_gate_report(
         ws,
         stage_id="finalize",
@@ -1077,7 +1077,7 @@ def test_repair_route_for_gate_returns_human_review_for_current_human_gate(tmp_p
 
 def test_repair_route_for_gate_selects_blocking_editor_with_nonblocking_findings_present(tmp_path):
     ws = _workspace(tmp_path)
-    initialize_runtime_state(workspace=ws)
+    initialize_runtime_state(runtime="operator", workspace=ws)
     blocking_editor = _editor_gate_finding("QG_BLOCKING_EDITOR_001")
     nonblocking_claim_ledger = _claim_ledger_gate_finding("QG_WARNING_CLAIM_LEDGER_001", blocking=False)
     _write_stage_quality_gate_report(
@@ -1108,7 +1108,7 @@ def test_repair_route_for_gate_selects_blocking_editor_with_nonblocking_findings
 
 def test_repair_route_for_gate_does_not_fall_back_to_nonblocking_legal_route(tmp_path):
     ws = _workspace(tmp_path)
-    initialize_runtime_state(workspace=ws)
+    initialize_runtime_state(runtime="operator", workspace=ws)
     _mark_fact_layer_imported(ws)
     blocking_claim_ledger = _claim_ledger_gate_finding("QG_BLOCKING_CLAIM_LEDGER_001")
     nonblocking_editor = _editor_gate_finding("QG_WARNING_EDITOR_001", blocking=False)
@@ -1140,7 +1140,7 @@ def test_repair_route_for_gate_does_not_fall_back_to_nonblocking_legal_route(tmp
 
 def test_repair_route_for_gate_returns_none_for_nonblocking_current_gate(tmp_path):
     ws = _workspace(tmp_path)
-    initialize_runtime_state(workspace=ws)
+    initialize_runtime_state(runtime="operator", workspace=ws)
     _write_stage_quality_gate_report(
         ws,
         stage_id="finalize",
@@ -1167,7 +1167,7 @@ def test_repair_route_for_gate_returns_none_for_nonblocking_current_gate(tmp_pat
 
 def test_repair_route_for_gate_rejects_malformed_current_gate(tmp_path):
     ws = _workspace(tmp_path)
-    initialize_runtime_state(workspace=ws)
+    initialize_runtime_state(runtime="operator", workspace=ws)
     path = _intermediate(ws) / "gates" / "finalize_quality_gate_report.json"
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text("{broken", encoding="utf-8")
@@ -1209,7 +1209,7 @@ def test_repair_route_for_gate_rejects_invalid_required_control_context(
     expected_error,
 ):
     ws = _workspace(tmp_path)
-    initialize_runtime_state(workspace=ws)
+    initialize_runtime_state(runtime="operator", workspace=ws)
     _write_stage_quality_gate_report(
         ws,
         stage_id="finalize",
@@ -1251,7 +1251,7 @@ def test_repair_route_for_gate_rejects_invalid_present_artifact_registry(
     expected_error,
 ):
     ws = _workspace(tmp_path)
-    initialize_runtime_state(workspace=ws)
+    initialize_runtime_state(runtime="operator", workspace=ws)
     _write_stage_quality_gate_report(
         ws,
         stage_id="finalize",
@@ -1275,7 +1275,7 @@ def test_repair_route_for_gate_rejects_invalid_present_artifact_registry(
 
 def test_repair_route_for_gate_allows_missing_artifact_registry_for_fresh_gate(tmp_path):
     ws = _workspace(tmp_path)
-    initialize_runtime_state(workspace=ws)
+    initialize_runtime_state(runtime="operator", workspace=ws)
     _write_stage_quality_gate_report(
         ws,
         stage_id="finalize",
@@ -1298,7 +1298,7 @@ def test_repair_route_for_gate_allows_missing_artifact_registry_for_fresh_gate(t
 
 def test_repair_route_for_gate_accepts_finalize_delivery_markdown_brief_metadata(tmp_path):
     ws = _workspace(tmp_path)
-    initialize_runtime_state(workspace=ws)
+    initialize_runtime_state(runtime="operator", workspace=ws)
     path = _intermediate(ws) / "gates" / "finalize_quality_gate_report.json"
     path.parent.mkdir(parents=True, exist_ok=True)
     _write_stage_quality_gate_report(
@@ -1333,7 +1333,7 @@ def test_repair_route_for_gate_accepts_finalize_delivery_markdown_brief_metadata
 )
 def test_repair_route_for_gate_rejects_binding_invalid_current_gate(tmp_path, brief_ref):
     ws = _workspace(tmp_path)
-    initialize_runtime_state(workspace=ws)
+    initialize_runtime_state(runtime="operator", workspace=ws)
     path = _intermediate(ws) / "gates" / "finalize_quality_gate_report.json"
     path.parent.mkdir(parents=True, exist_ok=True)
     _write_stage_quality_gate_report(
@@ -1362,7 +1362,7 @@ def test_repair_route_for_gate_rejects_binding_invalid_current_gate(tmp_path, br
 
 def test_repair_route_for_gate_rejects_missing_required_gate_results(tmp_path):
     ws = _workspace(tmp_path)
-    initialize_runtime_state(workspace=ws)
+    initialize_runtime_state(runtime="operator", workspace=ws)
     path = _intermediate(ws) / "gates" / "finalize_quality_gate_report.json"
     path.parent.mkdir(parents=True, exist_ok=True)
     _write_stage_quality_gate_report(
@@ -1426,7 +1426,7 @@ def _write_blocking_target_relevance_gate(ws: Path) -> None:
 
 def _imported_auditor_workspace_with_repair_routes(tmp_path: Path) -> Path:
     ws = _workspace(tmp_path)
-    initialize_runtime_state(workspace=ws)
+    initialize_runtime_state(runtime="operator", workspace=ws)
     _mark_fact_layer_imported(ws)
     _set_workflow_stages(
         ws,
@@ -1572,7 +1572,7 @@ def test_route_repair_api_explicit_imported_fact_layer_route_fails(tmp_path):
 
 def test_repair_start_fails_when_only_imported_fact_layer_routes_exist(tmp_path, capsys):
     ws = _workspace(tmp_path)
-    initialize_runtime_state(workspace=ws)
+    initialize_runtime_state(runtime="operator", workspace=ws)
     _mark_fact_layer_imported(ws)
     _set_workflow_stages(
         ws,
@@ -1603,7 +1603,7 @@ def test_repair_start_fails_when_only_imported_fact_layer_routes_exist(tmp_path,
 
 def test_repair_route_fails_when_only_imported_fact_layer_routes_exist(tmp_path, capsys):
     ws = _workspace(tmp_path)
-    initialize_runtime_state(workspace=ws)
+    initialize_runtime_state(runtime="operator", workspace=ws)
     _mark_fact_layer_imported(ws)
     _set_workflow_stages(
         ws,
@@ -1634,7 +1634,7 @@ def test_repair_route_fails_when_only_imported_fact_layer_routes_exist(tmp_path,
 
 def test_repair_route_prioritizes_input_limitation_over_routeable_findings(tmp_path, capsys):
     ws = _workspace(tmp_path)
-    initialize_runtime_state(workspace=ws)
+    initialize_runtime_state(runtime="operator", workspace=ws)
     path = _intermediate(ws) / "gates" / "auditor_quality_gate_report.json"
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(
@@ -1686,7 +1686,7 @@ def test_repair_route_prioritizes_input_limitation_over_routeable_findings(tmp_p
 
 def test_repair_route_analyst_without_artifact_never_allows_snapshot_edit(tmp_path, capsys):
     ws = _workspace(tmp_path)
-    initialize_runtime_state(workspace=ws)
+    initialize_runtime_state(runtime="operator", workspace=ws)
     _write_quality_gate_report(
         ws,
         {
@@ -1713,7 +1713,7 @@ def test_repair_route_analyst_without_artifact_never_allows_snapshot_edit(tmp_pa
 
 def test_repair_route_rejects_invalid_gate_report_json(tmp_path, capsys):
     ws = _workspace(tmp_path)
-    initialize_runtime_state(workspace=ws)
+    initialize_runtime_state(runtime="operator", workspace=ws)
     path = _intermediate(ws) / "gates" / "auditor_quality_gate_report.json"
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text("{broken", encoding="utf-8")
@@ -1729,7 +1729,7 @@ def test_repair_route_rejects_invalid_gate_report_json(tmp_path, capsys):
 
 def test_repair_route_rejects_invalid_artifact_registry_json(tmp_path, capsys):
     ws = _workspace(tmp_path)
-    initialize_runtime_state(workspace=ws)
+    initialize_runtime_state(runtime="operator", workspace=ws)
     runtime_state_paths(ws)["artifact_registry"].write_text("{broken", encoding="utf-8")
 
     rc = main(["repair", "route", "--workspace", str(ws), "--json"])
@@ -1743,7 +1743,7 @@ def test_repair_route_rejects_invalid_artifact_registry_json(tmp_path, capsys):
 
 def test_repair_route_ignores_legacy_gate_projection_when_scoped_report_exists(tmp_path, capsys):
     ws = _workspace(tmp_path)
-    initialize_runtime_state(workspace=ws)
+    initialize_runtime_state(runtime="operator", workspace=ws)
     finding = {
         "finding_id": "QG_TARGET_RELEVANCE_001",
         "finding_type": "target_relevance_gap",
@@ -1767,7 +1767,7 @@ def test_repair_route_ignores_legacy_gate_projection_when_scoped_report_exists(t
 
 def test_repair_route_no_match_is_read_only_none_route(tmp_path, capsys):
     ws = _workspace(tmp_path)
-    initialize_runtime_state(workspace=ws)
+    initialize_runtime_state(runtime="operator", workspace=ws)
 
     rc = main(["repair", "route", "--workspace", str(ws), "--json"])
 
@@ -1780,7 +1780,7 @@ def test_repair_route_no_match_is_read_only_none_route(tmp_path, capsys):
 
 def test_repair_start_fails_when_no_deterministic_route_exists(tmp_path, capsys):
     ws = _workspace(tmp_path)
-    initialize_runtime_state(workspace=ws)
+    initialize_runtime_state(runtime="operator", workspace=ws)
 
     rc = main(["repair", "start", "--workspace", str(ws), "--json"])
 
@@ -1793,7 +1793,7 @@ def test_repair_start_fails_when_no_deterministic_route_exists(tmp_path, capsys)
 
 def test_final_abstract_quality_warning_does_not_open_repair_route(tmp_path, capsys):
     ws = _workspace(tmp_path)
-    initialize_runtime_state(workspace=ws)
+    initialize_runtime_state(runtime="operator", workspace=ws)
     path = _intermediate(ws) / "gates" / "auditor_quality_gate_report.json"
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(
@@ -1853,7 +1853,7 @@ def test_final_abstract_quality_warning_does_not_open_repair_route(tmp_path, cap
 
 def test_repair_start_fails_on_invalid_gate_report_json(tmp_path, capsys):
     ws = _workspace(tmp_path)
-    initialize_runtime_state(workspace=ws)
+    initialize_runtime_state(runtime="operator", workspace=ws)
     path = _intermediate(ws) / "gates" / "auditor_quality_gate_report.json"
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text("{broken", encoding="utf-8")
@@ -1868,7 +1868,7 @@ def test_repair_start_fails_on_invalid_gate_report_json(tmp_path, capsys):
 
 def test_repair_start_records_non_reference_contaminated_repair_semantics(tmp_path, capsys):
     ws = _workspace(tmp_path)
-    initialize_runtime_state(workspace=ws)
+    initialize_runtime_state(runtime="operator", workspace=ws)
     _set_workflow_stages(
         ws,
         completed=["doctor", "source-discovery", "input-governance", "scout", "screener", "claim-ledger", "analyst", "editor"],
@@ -1927,7 +1927,7 @@ def test_repair_start_records_non_reference_contaminated_repair_semantics(tmp_pa
 
 def test_repair_complete_fails_without_active_repair(tmp_path, capsys):
     ws = _workspace(tmp_path)
-    initialize_runtime_state(workspace=ws)
+    initialize_runtime_state(runtime="operator", workspace=ws)
 
     rc = main([
         "repair",

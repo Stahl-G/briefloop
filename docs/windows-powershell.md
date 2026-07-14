@@ -63,7 +63,7 @@ The real user path is onboarding, workspace initialization, and runtime handoff:
 ```powershell
 briefloop onboard
 briefloop init .\briefloop-workspace --from-onboarding onboarding.json
-briefloop run --workspace .\briefloop-workspace
+briefloop run --workspace .\briefloop-workspace --runtime operator
 ```
 
 `run` creates the runtime handoff. It does not make Python write a full brief.
@@ -75,7 +75,7 @@ materials. It is not a required step before using BriefLoop.
 
 ```powershell
 briefloop init .\briefloop-demo --demo --force
-briefloop run --workspace .\briefloop-demo
+briefloop run --workspace .\briefloop-demo --runtime operator
 ```
 
 If you use Claude Code from a source clone, you can also install the Claude

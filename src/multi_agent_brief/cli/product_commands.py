@@ -18,6 +18,7 @@ import yaml
 from multi_agent_brief.contracts.schemas.evidence_span_registry import EVIDENCE_SPAN_REGISTRY_SCHEMA_VERSION
 from multi_agent_brief.contracts.source_metadata import normalize_source_category
 from multi_agent_brief.inputs.contracts import extracted_markdown_path
+from multi_agent_brief.orchestrator_contract import RUNTIME_CLI_CHOICE_PLACEHOLDER
 from multi_agent_brief.product.bundle_projection import (
     ReportBundleProjectionError,
     write_report_bundle_manifest,
@@ -478,7 +479,10 @@ def _print_payload(label: str, payload: dict[str, Any], *, as_json: bool) -> Non
             print("Next:")
             print(f"  Add local evidence files under {workspace}/input/sources/")
             print(f"  briefloop doctor --config {workspace}/config.yaml")
-            print(f"  briefloop run --workspace {workspace}")
+            print(
+                f"  briefloop run --workspace {workspace}"
+                f" --runtime {RUNTIME_CLI_CHOICE_PLACEHOLDER}"
+            )
         else:
             print(payload.get("error"))
             available = payload.get("available_packs") or []

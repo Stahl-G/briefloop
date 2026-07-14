@@ -7,7 +7,7 @@ not add new artifact contracts.
 Every recipe starts after:
 
 ```bash
-briefloop run --workspace <workspace>
+briefloop run --workspace <workspace> --runtime operator
 ```
 
 The run command creates the runtime handoff, state files, audience snapshot, and
@@ -82,8 +82,8 @@ Not allowed:
 Use `--runtime operator` when the host does not have a dedicated BriefLoop
 runtime adapter such as Hermes, Claude Code, Codex, OpenCode, or CodeBuddy. This is a
 host-agnostic compact operator workflow. It does not assume subagent or delegate
-capability. The legacy `--runtime manual` value remains a compatibility alias
-for `operator`.
+capability. Historical `auto` / `manual` / implicit `controls` manifests are readable diagnostics,
+but execution resumes only after an explicit reset into a canonical runtime.
 
 The compact workflow compresses role assignment:
 
@@ -152,7 +152,7 @@ same frozen evidence, new writing -- verified by hash
 Import first:
 
 ```bash
-briefloop state import-fact-layer \
+briefloop state import-fact-layer --runtime operator \
   --workspace <new_workspace> \
   --archive <source_workspace>/output/runs/<run_id>/manifest.json
 ```
@@ -160,7 +160,7 @@ briefloop state import-fact-layer \
 Create handoff:
 
 ```bash
-briefloop run --workspace <new_workspace> --recipe fast-rerun
+briefloop run --workspace <new_workspace> --runtime operator --recipe fast-rerun
 ```
 
 This recipe is handoff guidance only. It does not import the fact layer by

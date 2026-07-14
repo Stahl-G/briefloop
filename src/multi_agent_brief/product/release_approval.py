@@ -29,6 +29,7 @@ from multi_agent_brief.orchestrator.runtime_state.event_log import (
 from multi_agent_brief.orchestrator.runtime_state.identity import _validate_runtime_run_id, utc_now
 from multi_agent_brief.orchestrator.runtime_state.manifest import RUNTIME_MANIFEST_SCHEMA
 from multi_agent_brief.orchestrator.runtime_state.paths import _require_workspace, runtime_state_paths
+from multi_agent_brief.orchestrator_contract import require_canonical_runtime
 
 HUMAN_APPROVAL_LEDGER_SCHEMA = "briefloop.human_approval_ledger.v1"
 RELEASE_READINESS_REPORT_SCHEMA = "briefloop.release_readiness_report.v1"
@@ -549,8 +550,9 @@ def _workspace_and_run_id(workspace: str | Path) -> tuple[Path, str]:
     if manifest.get("schema_version") != RUNTIME_MANIFEST_SCHEMA:
         raise ReleaseApprovalError("runtime_manifest.json has an unsupported schema.")
     try:
+        require_canonical_runtime(manifest.get("runtime"))
         run_id = _validate_runtime_run_id(manifest.get("run_id"), path=paths["runtime_manifest"])
-    except RuntimeStateError as exc:
+    except (RuntimeStateError, ValueError) as exc:
         raise ReleaseApprovalError(str(exc)) from exc
     _require_current_run_event_chain(paths["event_log"], run_id)
     return ws, run_id

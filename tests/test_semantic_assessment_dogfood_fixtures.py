@@ -126,7 +126,7 @@ def test_semantic_assessment_dogfood_fixtures_validate_through_runtime_state(
     case: dict[str, Any],
 ) -> None:
     ws = _write_fixture_workspace(tmp_path, case)
-    initialize_runtime_state(workspace=ws, repo_workdir=ROOT)
+    initialize_runtime_state(runtime="operator", workspace=ws, repo_workdir=ROOT)
 
     state = check_runtime_state(workspace=ws, repo_workdir=ROOT)
     registry = state["artifact_registry"]["artifacts"]

@@ -51,14 +51,14 @@ validation unless that is stated separately.
 | Source appendix audit/control copy (`source_appendix.md`) | Supported |
 | `multi-agent-brief` CLI | Supported |
 | `briefloop` shell CLI alias | Supported |
-| `multi-agent-brief run --workspace <path>` | Supported |
-| `multi-agent-brief run --workspace <path> --recipe fast-rerun` | Experimental |
+| `multi-agent-brief run --workspace <path> --runtime hermes\|claude\|opencode\|codex\|codebuddy\|operator` | Supported; dedicated adapters inject their fixed identity, generic CLI users choose explicitly |
+| `multi-agent-brief run --workspace <path> --runtime operator --recipe fast-rerun` | Experimental |
 | `multi-agent-brief status --workspace <path>` | Supported |
 | `multi-agent-brief deliver --workspace <path> --target local` | Supported |
 | `multi-agent-brief deliver --workspace <path> --target feishu` | Experimental |
 | `multi-agent-brief deliver --workspace <path> --target gmail --channel draft\|send` | Experimental |
-| `multi-agent-brief state init/check/show/decide/freeze-claim-ledger/stage-complete/finalize-complete` | Supported |
-| `multi-agent-brief state import-fact-layer` | Experimental |
+| `multi-agent-brief state init --runtime <canonical-runtime>` plus check/show/decide/freeze-claim-ledger/stage-complete/finalize-complete | Supported |
+| `multi-agent-brief state import-fact-layer --runtime <canonical-runtime>` | Experimental |
 | `multi-agent-brief controls build-switchboard/show/select/validate` | Supported |
 | `multi-agent-brief runtime install --workspace <path> --runtime opencode\|claude\|codex\|all` | Source-clone-only |
 | `multi-agent-brief feedback ingest/plan/resolve/show/validate` | Supported |
@@ -347,7 +347,7 @@ For the v1.0 product boundary, see the
 | OpenCode (subagent workflow) | Supported |
 | Codex (custom-agent workflow via `runtime install`) | Experimental |
 | CodeBuddy (`--runtime codebuddy` handoff using `.codebuddy/skills/briefloop/` and `.codebuddy/agents/briefloop-*.md`) | Experimental |
-| Operator (host-agnostic compact workflow; `manual` is a legacy CLI alias) | Supported |
+| Operator (host-agnostic compact workflow; historical `manual` manifests are read-only and require explicit reset) | Supported |
 
 Claude Code is the first-class writer / five-verb path (`new`, `run`, `status`,
 `feedback`, `deliver`). Hermes remains a supported delegated/scheduled runtime

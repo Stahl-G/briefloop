@@ -23,7 +23,6 @@ from multi_agent_brief.orchestrator.runtime_state.event_log import (
 )
 from multi_agent_brief.orchestrator.runtime_state.identity import utc_now
 from multi_agent_brief.orchestrator.runtime_state.lifecycle import (
-    initialize_runtime_state,
     show_runtime_state,
 )
 from multi_agent_brief.orchestrator.runtime_state.paths import (
@@ -58,10 +57,6 @@ def record_decision(
     actor: str = "orchestrator",
 ) -> dict[str, Any]:
     ws = _require_workspace(workspace)
-    paths = runtime_state_paths(ws)
-    if not paths["runtime_manifest"].exists() or not paths["workflow_state"].exists():
-        initialize_runtime_state(workspace=ws, repo_workdir=repo_workdir, actor=actor)
-
     ws, paths, manifest, workflow = _load_manifest_and_workflow(ws)
     workflow_before_decision = dict(workflow)
     repo = resolve_repo_workdir(repo_workdir, workspace=ws)

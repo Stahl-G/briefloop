@@ -42,7 +42,7 @@ _workspace = partial(
 
 
 def _init_state(ws: Path) -> str:
-    state = initialize_runtime_state(workspace=ws, repo_workdir=REPO, actor="system")
+    state = initialize_runtime_state(runtime="operator", workspace=ws, repo_workdir=REPO, actor="system")
     run_id = str((state.get("manifest") or {}).get("run_id") or "")
     append_event(
         workspace=ws,

@@ -128,7 +128,7 @@ def _append_non_materializable_approved_entry(
 
 def test_state_check_strict_preserves_improvement_manifest_after_freeze(tmp_path):
     ws = _workspace(tmp_path)
-    state = initialize_runtime_state(workspace=ws, repo_workdir=ROOT)
+    state = initialize_runtime_state(runtime="operator", workspace=ws, repo_workdir=ROOT)
     run_id = str(state["manifest"]["run_id"])
     entry_id = _propose_and_approve(ws)
 
@@ -357,7 +357,7 @@ def test_freeze_rejects_unsafe_runtime_run_id(tmp_path):
 def test_run_records_no_ledger_manifest_semantics_without_snapshot(tmp_path):
     ws = _workspace(tmp_path)
 
-    assert main(["run", "--workspace", str(ws), "--skip-doctor"]) == 0
+    assert main(["run", "--runtime", "operator", "--workspace", str(ws), "--skip-doctor"]) == 0
 
     improvement = _manifest(ws)["improvement"]
     memory_sha = sha256_file(ws / IMPROVEMENT_MEMORY_FILE)
@@ -378,7 +378,7 @@ def test_run_records_zero_eligible_manifest_semantics(tmp_path):
     _append_non_materializable_approved_entry(ws)
     ledger_sha = sha256_file(improvement_ledger_path(ws))
 
-    assert main(["run", "--workspace", str(ws), "--skip-doctor"]) == 0
+    assert main(["run", "--runtime", "operator", "--workspace", str(ws), "--skip-doctor"]) == 0
 
     improvement = _manifest(ws)["improvement"]
     memory_sha = sha256_file(ws / IMPROVEMENT_MEMORY_FILE)
@@ -399,7 +399,7 @@ def test_run_freezes_snapshot_manifest_and_handoff_consistently(tmp_path):
     (ws / IMPROVEMENT_MEMORY_FILE).parent.mkdir(parents=True, exist_ok=True)
     (ws / IMPROVEMENT_MEMORY_FILE).write_text("stale memory\n", encoding="utf-8")
 
-    assert main(["run", "--workspace", str(ws), "--skip-doctor"]) == 0
+    assert main(["run", "--runtime", "operator", "--workspace", str(ws), "--skip-doctor"]) == 0
 
     memory_text = (ws / IMPROVEMENT_MEMORY_FILE).read_text(encoding="utf-8")
     assert "stale memory" not in memory_text
@@ -431,13 +431,13 @@ def test_run_freezes_snapshot_manifest_and_handoff_consistently(tmp_path):
 def test_run_rejects_preserved_runtime_manifest_with_unsafe_run_id(tmp_path):
     ws = _workspace(tmp_path)
     _propose_and_approve(ws)
-    initialize_runtime_state(workspace=ws, repo_workdir=ROOT)
+    initialize_runtime_state(runtime="operator", workspace=ws, repo_workdir=ROOT)
     manifest_path = ws / "output" / "intermediate" / "runtime_manifest.json"
     manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
     manifest["run_id"] = "run-1\n# Injected Run"
     manifest_path.write_text(json.dumps(manifest, ensure_ascii=False), encoding="utf-8")
 
-    assert main(["run", "--workspace", str(ws), "--skip-doctor"]) == 1
+    assert main(["run", "--runtime", "operator", "--workspace", str(ws), "--skip-doctor"]) == 1
     assert not (ws / "output" / "intermediate" / "audience_profile_snapshot.md").exists()
     assert not (ws / "output" / "intermediate" / "orchestrator_control_switchboard.json").exists()
     assert not (ws / "output" / "intermediate" / "agent_handoff.json").exists()
@@ -449,12 +449,12 @@ def test_repeated_run_deduplicates_event_and_ledger_change_refreshes_snapshot(tm
     ws = _workspace(tmp_path)
     first_id = _propose_and_approve(ws)
 
-    assert main(["run", "--workspace", str(ws), "--skip-doctor"]) == 0
+    assert main(["run", "--runtime", "operator", "--workspace", str(ws), "--skip-doctor"]) == 0
     first_snapshot = (ws / IMPROVEMENT_MEMORY_SNAPSHOT_FILE).read_text(encoding="utf-8")
     first_sha = sha256_file(ws / IMPROVEMENT_MEMORY_SNAPSHOT_FILE)
     assert _event_types(ws).count("improvement_memory_snapshot_created") == 1
 
-    assert main(["run", "--workspace", str(ws), "--skip-doctor"]) == 0
+    assert main(["run", "--runtime", "operator", "--workspace", str(ws), "--skip-doctor"]) == 0
     assert (ws / IMPROVEMENT_MEMORY_SNAPSHOT_FILE).read_text(encoding="utf-8") == first_snapshot
     assert sha256_file(ws / IMPROVEMENT_MEMORY_SNAPSHOT_FILE) == first_sha
     assert _event_types(ws).count("improvement_memory_snapshot_created") == 1
@@ -465,7 +465,7 @@ def test_repeated_run_deduplicates_event_and_ledger_change_refreshes_snapshot(tm
         scope="executive_summary",
         source_summary="Operator-created second proposal.",
     )
-    assert main(["run", "--workspace", str(ws), "--skip-doctor"]) == 0
+    assert main(["run", "--runtime", "operator", "--workspace", str(ws), "--skip-doctor"]) == 0
 
     improvement = _manifest(ws)["improvement"]
     assert improvement["materialized_entry_ids"] == sorted([first_id, second_id])
@@ -480,7 +480,7 @@ def test_start_uses_same_improvement_snapshot_surface(tmp_path):
     ws = _workspace(tmp_path)
     entry_id = _propose_and_approve(ws)
 
-    assert main(["start", "--workspace", str(ws), "--skip-doctor"]) == 0
+    assert main(["start", "--runtime", "operator", "--workspace", str(ws), "--skip-doctor"]) == 0
 
     improvement = _manifest(ws)["improvement"]
     assert improvement["materialized_entry_ids"] == [entry_id]

@@ -19,7 +19,7 @@ from tests.helpers import write_workspace_files_under
 ROOT = Path(__file__).resolve().parent.parent
 
 
-_write_workspace = partial(
+_write_workspace_files = partial(
     write_workspace_files_under,
     config_text="""
 project:
@@ -46,6 +46,16 @@ manual:
 """.strip(),
     include_input_dir=True,
 )
+
+
+def _write_workspace(tmp_path: Path) -> Path:
+    ws = _write_workspace_files(tmp_path)
+    initialize_runtime_state(workspace=ws, repo_workdir=ROOT, runtime="operator")
+    return ws
+
+
+def _write_uninitialized_workspace(tmp_path: Path) -> Path:
+    return _write_workspace_files(tmp_path)
 
 
 def _event_types(ws: Path) -> list[str]:
@@ -143,12 +153,10 @@ def test_limitation_hygiene_control_uses_ledger_cli_contract(tmp_path):
 
 def test_build_switchboard_reuses_existing_runtime_state_without_reinitializing(tmp_path, monkeypatch):
     ws = _write_workspace(tmp_path)
-    initialize_runtime_state(workspace=ws, repo_workdir=ROOT)
+    initialize_runtime_state(runtime="operator", workspace=ws, repo_workdir=ROOT)
 
     def fail_initialize_runtime_state(**_kwargs):
         raise AssertionError("build_control_switchboard must not reinitialize existing runtime state")
-
-    monkeypatch.setattr(switchboard_module, "initialize_runtime_state", fail_initialize_runtime_state)
 
     state = build_control_switchboard(workspace=ws, repo_workdir=ROOT)
 
@@ -157,7 +165,7 @@ def test_build_switchboard_reuses_existing_runtime_state_without_reinitializing(
 
 def test_switchboard_refresh_preserves_improvement_manifest(tmp_path):
     ws = _write_workspace(tmp_path)
-    state = initialize_runtime_state(workspace=ws, repo_workdir=ROOT)
+    state = initialize_runtime_state(runtime="operator", workspace=ws, repo_workdir=ROOT)
     run_id = str(state["manifest"]["run_id"])
     entry_id = _propose_and_approve_improvement(ws)
     freeze_improvement_memory_for_run(workspace=ws, run_id=run_id)
@@ -339,7 +347,7 @@ def test_controls_reject_unknown_control_and_invalid_selection(tmp_path, capsys)
 
 def test_controls_strict_required_selection_does_not_block_runtime_state(tmp_path, capsys):
     ws = _write_workspace(tmp_path)
-    initialize_runtime_state(workspace=ws, repo_workdir=ROOT)
+    initialize_runtime_state(runtime="operator", workspace=ws, repo_workdir=ROOT)
     out = ws / "output" / "intermediate"
     out.mkdir(parents=True, exist_ok=True)
     (out / "audited_brief.md").write_text("# Audited Brief\n", encoding="utf-8")
@@ -369,7 +377,7 @@ def test_run_creates_switchboard_but_not_selections_or_gate_report(tmp_path):
     ws = _write_workspace(tmp_path)
 
     rc = main([
-        "run",
+        "run", "--runtime", "operator",
         "--workspace",
         str(ws),
         "--skip-doctor",
@@ -383,14 +391,14 @@ def test_run_creates_switchboard_but_not_selections_or_gate_report(tmp_path):
     assert not (ws / "output" / "intermediate" / "quality_gate_report.json").exists()
 
     manifest = json.loads((ws / "output" / "intermediate" / "runtime_manifest.json").read_text(encoding="utf-8"))
-    assert manifest["runtime"] == "hermes"
+    assert manifest["runtime"] == "operator"
 
 
 def test_run_builds_switchboard_after_doctor_decision(tmp_path, capsys):
     ws = _write_workspace(tmp_path)
 
     rc = main([
-        "run",
+        "run", "--runtime", "operator",
         "--workspace",
         str(ws),
         "--repo-workdir",
@@ -432,7 +440,7 @@ def test_stale_switchboard_after_reset_must_be_rebuilt(tmp_path, capsys):
     ]) == 0
     old_switchboard = json.loads(capsys.readouterr().out)["orchestrator_control_switchboard"]
 
-    assert main(["state", "init", "--workspace", str(ws), "--repo-workdir", str(ROOT), "--reset-state"]) == 0
+    assert main(["state", "init", "--runtime", "operator", "--workspace", str(ws), "--repo-workdir", str(ROOT), "--reset-state"]) == 0
     capsys.readouterr()
     current_manifest = json.loads((ws / "output" / "intermediate" / "runtime_manifest.json").read_text(encoding="utf-8"))
     assert current_manifest["run_id"] != old_switchboard["run_id"]
@@ -499,7 +507,7 @@ def test_stale_switchboard_after_reset_must_be_rebuilt(tmp_path, capsys):
 def test_reset_state_archives_old_control_selections(tmp_path, capsys):
     ws = _write_workspace(tmp_path)
 
-    assert main(["run", "--workspace", str(ws), "--skip-doctor", "--repo-workdir", str(ROOT)]) == 0
+    assert main(["run", "--runtime", "operator", "--workspace", str(ws), "--skip-doctor", "--repo-workdir", str(ROOT)]) == 0
     capsys.readouterr()
     assert main([
         "controls",
@@ -517,9 +525,9 @@ def test_reset_state_archives_old_control_selections(tmp_path, capsys):
     first_selections = json.loads((ws / "output" / "intermediate" / "control_selections.json").read_text(encoding="utf-8"))
     first_run_id = first_selections["run_id"]
 
-    assert main(["state", "init", "--workspace", str(ws), "--repo-workdir", str(ROOT), "--reset-state"]) == 0
+    assert main(["state", "init", "--runtime", "operator", "--workspace", str(ws), "--repo-workdir", str(ROOT), "--reset-state"]) == 0
     capsys.readouterr()
-    assert main(["run", "--workspace", str(ws), "--skip-doctor", "--repo-workdir", str(ROOT)]) == 0
+    assert main(["run", "--runtime", "operator", "--workspace", str(ws), "--skip-doctor", "--repo-workdir", str(ROOT)]) == 0
     capsys.readouterr()
 
     assert not (ws / "output" / "intermediate" / "control_selections.json").exists()
@@ -544,7 +552,7 @@ def test_reset_state_archives_old_control_selections(tmp_path, capsys):
 def test_state_check_refreshes_stale_switchboard_recommendations(tmp_path, capsys):
     ws = _write_workspace(tmp_path)
 
-    assert main(["run", "--workspace", str(ws), "--skip-doctor", "--repo-workdir", str(ROOT)]) == 0
+    assert main(["run", "--runtime", "operator", "--workspace", str(ws), "--skip-doctor", "--repo-workdir", str(ROOT)]) == 0
     capsys.readouterr()
     switchboard_path = ws / "output" / "intermediate" / "orchestrator_control_switchboard.json"
     switchboard = json.loads(switchboard_path.read_text(encoding="utf-8"))
@@ -563,7 +571,7 @@ def test_state_check_refreshes_stale_switchboard_recommendations(tmp_path, capsy
 
 def test_switchboard_quality_gate_hint_uses_finalize_stage_when_current_stage_finalize(tmp_path):
     ws = _write_workspace(tmp_path)
-    initialize_runtime_state(workspace=ws, repo_workdir=ROOT)
+    initialize_runtime_state(runtime="operator", workspace=ws, repo_workdir=ROOT)
     _set_current_stage(ws, "finalize")
     out = ws / "output"
     intermediate = out / "intermediate"
@@ -591,7 +599,7 @@ def test_switchboard_quality_gate_hint_uses_finalize_stage_when_current_stage_fi
 def test_switchboard_refresh_archives_same_run_stale_control_selections(tmp_path, capsys):
     ws = _write_workspace(tmp_path)
 
-    assert main(["run", "--workspace", str(ws), "--skip-doctor", "--repo-workdir", str(ROOT)]) == 0
+    assert main(["run", "--runtime", "operator", "--workspace", str(ws), "--skip-doctor", "--repo-workdir", str(ROOT)]) == 0
     capsys.readouterr()
     assert main([
         "controls",
@@ -641,7 +649,7 @@ def test_switchboard_refresh_archives_same_run_stale_control_selections(tmp_path
 def test_control_selection_context_signature_must_match_switchboard(tmp_path, capsys):
     ws = _write_workspace(tmp_path)
 
-    assert main(["run", "--workspace", str(ws), "--skip-doctor", "--repo-workdir", str(ROOT)]) == 0
+    assert main(["run", "--runtime", "operator", "--workspace", str(ws), "--skip-doctor", "--repo-workdir", str(ROOT)]) == 0
     capsys.readouterr()
     assert main([
         "controls",
@@ -673,7 +681,7 @@ def test_control_selection_context_signature_must_match_switchboard(tmp_path, ca
 def test_state_check_switchboard_refresh_is_idempotent(tmp_path, capsys):
     ws = _write_workspace(tmp_path)
 
-    assert main(["run", "--workspace", str(ws), "--skip-doctor", "--repo-workdir", str(ROOT)]) == 0
+    assert main(["run", "--runtime", "operator", "--workspace", str(ws), "--skip-doctor", "--repo-workdir", str(ROOT)]) == 0
     capsys.readouterr()
     initial_count = _event_types(ws).count("control_switchboard_built")
     assert initial_count == 1
@@ -690,7 +698,7 @@ def test_state_check_switchboard_refresh_is_idempotent(tmp_path, capsys):
 def test_state_check_reports_control_switchboard_warning_for_bad_json(tmp_path, capsys):
     ws = _write_workspace(tmp_path)
 
-    assert main(["run", "--workspace", str(ws), "--skip-doctor", "--repo-workdir", str(ROOT)]) == 0
+    assert main(["run", "--runtime", "operator", "--workspace", str(ws), "--skip-doctor", "--repo-workdir", str(ROOT)]) == 0
     capsys.readouterr()
     switchboard_path = ws / "output" / "intermediate" / "orchestrator_control_switchboard.json"
     switchboard_path.write_text("{not-json", encoding="utf-8")
@@ -708,7 +716,7 @@ def test_state_check_reports_control_switchboard_warning_for_bad_json(tmp_path, 
 def test_state_check_reports_control_selection_warning_for_bad_json(tmp_path, capsys):
     ws = _write_workspace(tmp_path)
 
-    assert main(["run", "--workspace", str(ws), "--skip-doctor", "--repo-workdir", str(ROOT)]) == 0
+    assert main(["run", "--runtime", "operator", "--workspace", str(ws), "--skip-doctor", "--repo-workdir", str(ROOT)]) == 0
     capsys.readouterr()
     selections_path = ws / "output" / "intermediate" / "control_selections.json"
     selections_path.write_text("{not-json", encoding="utf-8")

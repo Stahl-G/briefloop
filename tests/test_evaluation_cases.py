@@ -6,13 +6,48 @@ import json
 import shutil
 from pathlib import Path
 
+import pytest
 import yaml
 
 from multi_agent_brief.cli.main import main
 from multi_agent_brief.evaluation_cases.fixtures import evaluation_cases_root
+from multi_agent_brief.evaluation_cases.runner import (
+    EvaluationCaseRunError,
+    _run_action,
+)
+from multi_agent_brief.orchestrator.runtime_state import initialize_runtime_state
+from tests.helpers import write_minimal_workspace
 
 
 ROOT = Path(__file__).resolve().parent.parent
+
+
+def test_runtime_handoff_action_requires_and_honors_explicit_runtime(tmp_path: Path) -> None:
+    workspace = write_minimal_workspace(tmp_path / "ws")
+    initialize_runtime_state(
+        workspace=workspace,
+        runtime="codex",
+        repo_workdir=ROOT,
+    )
+    context = {"workspace": workspace, "repo_workdir": ROOT}
+
+    result = _run_action(
+        action="runtime.run_handoff",
+        args={"runtime": "codex", "skip_doctor": True},
+        context=context,
+    )
+
+    assert result["ok"] is True
+    handoff = json.loads(
+        (workspace / "output/intermediate/agent_handoff.json").read_text(encoding="utf-8")
+    )
+    assert handoff["runtime"] == "codex"
+    with pytest.raises(EvaluationCaseRunError, match="explicit canonical runtime"):
+        _run_action(
+            action="runtime.run_handoff",
+            args={"skip_doctor": True},
+            context=context,
+        )
 
 
 def _copy_packaged_cases(tmp_path: Path) -> tuple[Path, dict]:

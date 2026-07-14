@@ -80,7 +80,7 @@ runtime 使用其中内容作为 evidence。
 创建或刷新 runtime handoff：
 
 ```bash
-briefloop run --workspace ./weekly-brief
+briefloop run --workspace ./weekly-brief --runtime operator
 ```
 
 Claude Code 里的 writer 命令是：

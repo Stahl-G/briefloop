@@ -18,6 +18,7 @@ from multi_agent_brief.product.policy_gate_adapter import (
 )
 from multi_agent_brief.product.policy_projection import project_workspace_policy_profile
 from multi_agent_brief.quality_gates import state as quality_gate_state
+from multi_agent_brief.orchestrator.runtime_state import initialize_runtime_state
 
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -69,6 +70,12 @@ input:
         encoding="utf-8",
     )
     (intermediate / "audited_brief.md").write_text(case["audited_brief"], encoding="utf-8")
+    initialize_runtime_state(
+        workspace=ws,
+        runtime="operator",
+        repo_workdir=ROOT,
+        actor="system",
+    )
     return ws
 
 

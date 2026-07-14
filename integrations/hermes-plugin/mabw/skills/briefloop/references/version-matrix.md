@@ -58,9 +58,13 @@ currently available commands.
 - Claude writer command: `/briefloop`
 - Compatibility Claude command: `/mabw`
 - Runtime handoff surfaces:
+  - dedicated adapters inject their fixed runtime identity
+  - generic CLI use requires one explicit canonical `--runtime` value:
+    `hermes`, `claude`, `opencode`, `codex`, `codebuddy`, or `operator`
   - `--runtime operator`: host-agnostic compact operator workflow for hosts
     without a dedicated runtime adapter; it does not assume subagents ran
-  - `--runtime manual`: legacy compatibility alias resolved to `operator`
+  - historical `auto` / `manual` manifests are read-only diagnostics; start a
+    new canonical run with explicit `state init --reset-state --runtime ...`
 - WorkBuddy Skill source bundle:
   - canonical path: `.agents/skills/briefloop-workbuddy/`
   - legacy mirror: `integrations/workbuddy/briefloop/`

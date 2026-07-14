@@ -60,7 +60,7 @@ def _init_runtime(
     run_integrity: dict | None = None,
     blocked: bool = False,
 ) -> dict:
-    state = initialize_runtime_state(workspace=ws, repo_workdir=ROOT)
+    state = initialize_runtime_state(runtime="operator", workspace=ws, repo_workdir=ROOT)
     workflow_path = _intermediate(ws) / "workflow_state.json"
     workflow = _load_json(workflow_path)
     workflow["current_stage"] = current_stage

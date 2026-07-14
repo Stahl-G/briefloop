@@ -105,7 +105,7 @@ cp ./my-sources/*.md ./weekly-brief/input/sources/
 Start the runtime handoff:
 
 ```bash
-briefloop run --workspace ./weekly-brief
+briefloop run --workspace ./weekly-brief --runtime operator
 ```
 
 `run` prepares the handoff and control files. It does not make the final brief

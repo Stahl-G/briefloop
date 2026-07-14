@@ -23,6 +23,15 @@ from multi_agent_brief.contracts.target_contract import (
 from multi_agent_brief.orchestrator_contract import (
     CONTRACT_REFERENCES,
     ORCHESTRATOR_LOOP,
+    RUNTIME_CLAUDE,
+    RUNTIME_CODEBUDDY,
+    RUNTIME_CODEX,
+    RUNTIME_HERMES,
+    RUNTIME_OPENCODE,
+    RUNTIME_OPERATOR,
+    RUNTIME_CLI_CHOICE_PLACEHOLDER,
+    VALID_RUNTIMES,
+    require_canonical_runtime,
     resolve_repo_workdir,
 )
 from multi_agent_brief.orchestrator.runtime_state import (
@@ -59,26 +68,6 @@ from multi_agent_brief.product.template_render_plan import project_workspace_rep
 from multi_agent_brief.sources.sourcehub import project_sourcehub_handoff
 
 
-RUNTIME_AUTO = "auto"
-RUNTIME_HERMES = "hermes"
-RUNTIME_CLAUDE = "claude"
-RUNTIME_OPENCODE = "opencode"
-RUNTIME_CODEX = "codex"
-RUNTIME_CODEBUDDY = "codebuddy"
-RUNTIME_OPERATOR = "operator"
-RUNTIME_MANUAL = "manual"
-VALID_RUNTIMES = (
-    RUNTIME_AUTO,
-    RUNTIME_HERMES,
-    RUNTIME_CLAUDE,
-    RUNTIME_OPENCODE,
-    RUNTIME_CODEX,
-    RUNTIME_CODEBUDDY,
-    RUNTIME_OPERATOR,
-    RUNTIME_MANUAL,
-)
-RUNTIME_RESOLVED = {RUNTIME_AUTO: RUNTIME_HERMES}  # auto resolves to hermes in v0.5.5
-LEGACY_RUNTIME_ALIASES = {RUNTIME_MANUAL: RUNTIME_OPERATOR}
 RUNTIME_RECIPE_FULL = "full"
 RUNTIME_RECIPE_FAST_RERUN = "fast-rerun"
 VALID_RUNTIME_RECIPES = (RUNTIME_RECIPE_FULL, RUNTIME_RECIPE_FAST_RERUN)
@@ -337,7 +326,6 @@ class AgentHandoff:
     report_template_render_plan_projection: dict[str, Any] = field(default_factory=dict)
     runtime_capabilities: dict[str, Any] = field(default_factory=dict)
     artifact_ownership: dict[str, Any] = field(default_factory=dict)
-    legacy_runtime_alias: str | None = None
     notes: list[str] = field(default_factory=list)
 
     def to_dict(self) -> dict[str, Any]:
@@ -358,25 +346,6 @@ def _find_venv_activate(repo: Path) -> str:
         return str(cand) if cand.exists() else str(cand)
     cand = repo / ".venv" / "bin" / "activate"
     return str(cand) if cand.exists() else str(cand)
-
-
-def normalize_runtime(runtime: str) -> tuple[str, str | None]:
-    """Resolve legacy runtime aliases without writing alias names to handoff."""
-    value = str(runtime or "").strip().lower()
-    alias_target = LEGACY_RUNTIME_ALIASES.get(value)
-    if alias_target:
-        return alias_target, value
-    return value, None
-
-
-def legacy_runtime_alias_warning(runtime: str) -> str | None:
-    resolved, alias = normalize_runtime(runtime)
-    if not alias:
-        return None
-    return (
-        f'runtime "{alias}" is a legacy alias for "{resolved}". '
-        f"Use --runtime {resolved} for host-agnostic compact workflow."
-    )
 
 
 def _run_doctor(workspace: Path) -> tuple[int, str]:
@@ -609,10 +578,9 @@ def _codex_handoff(workspace: Path, repo: Path, venv: str) -> AgentHandoff:
     )
 
 
-def _operator_runtime_capabilities(legacy_alias: str | None = None) -> dict[str, Any]:
+def _operator_runtime_capabilities() -> dict[str, Any]:
     return {
         "runtime": RUNTIME_OPERATOR,
-        "legacy_runtime_alias": legacy_alias,
         "delegation_assumed": False,
         "compact_workflow_allowed": True,
         "host_specific_adapter": False,
@@ -756,15 +724,8 @@ def _operator_handoff(
     workspace: Path,
     repo: Path,
     venv: str,
-    *,
-    legacy_alias: str | None = None,
 ) -> AgentHandoff:
     ws_path = str(workspace.resolve())
-    legacy_note = (
-        f'\nLegacy alias: runtime "{legacy_alias}" was resolved to "operator".'
-        if legacy_alias
-        else ""
-    )
     return AgentHandoff(
         runtime=RUNTIME_OPERATOR,
         recipe=RUNTIME_RECIPE_FULL,
@@ -785,7 +746,6 @@ def _operator_handoff(
             "or delegate tool, you may delegate the named role. If not, one operator "
             "may perform one role at a time as operator-authored artifact work, but "
             "must not claim subagents ran.\n"
-            f"{legacy_note}\n\n"
             "Read contract references before delegation:\n"
             "- configs/orchestrator_contract.yaml\n"
             "- configs/stage_specs.yaml\n"
@@ -821,9 +781,8 @@ def _operator_handoff(
             f"17. briefloop workbuddy diagnose --workspace {ws_path} --json  (do not report delivery unless delivery_truth.valid=true)"
         ),
         expected_artifacts=list(EXPECTED_WORKFLOW_ARTIFACTS),
-        runtime_capabilities=_operator_runtime_capabilities(legacy_alias=legacy_alias),
+        runtime_capabilities=_operator_runtime_capabilities(),
         artifact_ownership=_operator_artifact_ownership(),
-        legacy_runtime_alias=legacy_alias,
         notes=[
             "Operator runtime is host-agnostic: it does not assume subagents ran.",
             "Delegate named roles only if the host provides real delegation; otherwise one operator performs one role at a time.",
@@ -839,10 +798,6 @@ def _operator_handoff(
     )
 
 
-def _manual_handoff(workspace: Path, repo: Path, venv: str) -> AgentHandoff:
-    return _operator_handoff(workspace, repo, venv, legacy_alias=RUNTIME_MANUAL)
-
-
 _HANDOFF_BUILDERS = {
     RUNTIME_HERMES: _hermes_handoff,
     RUNTIME_CLAUDE: _claude_handoff,
@@ -850,7 +805,6 @@ _HANDOFF_BUILDERS = {
     RUNTIME_CODEX: _codex_handoff,
     RUNTIME_CODEBUDDY: _codebuddy_handoff,
     RUNTIME_OPERATOR: _operator_handoff,
-    RUNTIME_MANUAL: _manual_handoff,
 }
 
 
@@ -867,21 +821,15 @@ def build_handoff(
     repo = resolve_repo_workdir(repo_workdir, workspace=ws)
     venv_activate = venv or _find_venv_activate(repo)
 
-    normalized_runtime, legacy_alias = normalize_runtime(runtime)
-
-    # resolve auto -> hermes in v0.5.5
-    resolved = RUNTIME_RESOLVED.get(normalized_runtime, normalized_runtime)
-
-    if resolved not in _HANDOFF_BUILDERS:
+    try:
+        resolved = require_canonical_runtime(runtime)
+    except ValueError as exc:
         raise ValueError(f"Unknown runtime '{runtime}'. Valid: {', '.join(VALID_RUNTIMES)}")
     if recipe not in VALID_RUNTIME_RECIPES:
         raise ValueError(f"Unknown runtime recipe '{recipe}'. Valid: {', '.join(VALID_RUNTIME_RECIPES)}")
 
     builder = _HANDOFF_BUILDERS[resolved]
-    if resolved == RUNTIME_OPERATOR:
-        handoff = _operator_handoff(ws, repo, venv_activate, legacy_alias=legacy_alias)
-    else:
-        handoff = builder(ws, repo, venv_activate)
+    handoff = builder(ws, repo, venv_activate)
     handoff.recipe = recipe
     if recipe == RUNTIME_RECIPE_FAST_RERUN:
         _apply_fast_rerun_recipe(handoff, ws)
@@ -1462,7 +1410,9 @@ def _apply_fast_rerun_recipe(handoff: AgentHandoff, workspace: Path) -> None:
         "Timing comparability is downstream_only: upstream fact-layer stages were "
         "satisfied by import and must not be compared directly with full runs.",
         "If runtime_manifest.fact_layer_import is missing or invalid, stop and run "
-        "`briefloop state import-fact-layer` first; do not silently fall back to a full run.",
+        "`briefloop state import-fact-layer --workspace <workspace> "
+        "--archive <output/runs/run_id> "
+        f"--runtime {RUNTIME_CLI_CHOICE_PLACEHOLDER}` first; do not silently fall back to a full run.",
         "This recipe is Experimental/internal in v0.8.1 and is not quality-equivalent to a full workflow.",
     ]
     text = "\n".join(guidance)
@@ -1648,9 +1598,6 @@ def render_handoff_cli(handoff: AgentHandoff) -> str:
         for n in handoff.notes:
             lines.append(f"  - {n}")
         lines.append("")
-    if handoff.legacy_runtime_alias:
-        lines.append(f"Legacy runtime alias: {handoff.legacy_runtime_alias}")
-        lines.append("")
     if handoff.assessment_target_manifest:
         lines.append(f"Assessment target: {handoff.assessment_target_manifest.get('assessment_target')}")
         lines.append("")
@@ -1677,11 +1624,6 @@ def write_handoff_artifacts(handoff: AgentHandoff, workspace: Path) -> tuple[Pat
         handoff.next_steps,
         "",
     ]
-    if handoff.legacy_runtime_alias:
-        md_content.extend([
-            f"- Legacy runtime alias: `{handoff.legacy_runtime_alias}`",
-            "",
-        ])
     if handoff.runtime_capabilities:
         md_content.extend([
             "## Runtime Capabilities",

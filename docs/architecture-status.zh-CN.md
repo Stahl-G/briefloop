@@ -11,6 +11,10 @@ Python package/module 路径、artifact 名称、workspace 格式和实验 ID。
 - `multi-agent-brief run` / `briefloop run` 是 runtime handoff launcher，不是
   Python 全流程简报生成器。它生成 handoff 和控制面文件，让外部 agent runtime
   按角色执行。
+- Runtime identity 由唯一初始化事务显式写入：专用 adapter 固定注入 canonical
+  literal，generic CLI 用户必须传 `--runtime`；后续 status、handoff 和 transaction
+  只复用 `runtime_manifest.runtime`，不猜测也不改写。历史 `auto` / `manual` / 隐式 `controls`
+  manifest 仅供只读诊断，必须显式 reset 后才能继续执行。
 - Agent 可以理解、拆分、建议、起草和报告；Python deterministic commands 才能写
   workflow state、artifact registry、event log、freeze metadata、gate reports、
   release/readiness reports 和 delivery/archive manifests。

@@ -101,7 +101,7 @@ def handle_mabw(ctx, argstr: str):
             )
 
         # 2. run handoff
-        handoff = tools.run_handoff({"workspace": str(ws_path), "runtime": "hermes"})
+        handoff = tools.run_handoff({"workspace": str(ws_path)})
         ho = json.loads(handoff)
         if not ho.get("ok"):
             return f"[mabw run] Handoff failed:\n{handoff}"

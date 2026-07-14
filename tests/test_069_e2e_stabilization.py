@@ -60,7 +60,7 @@ def test_public_safe_runtime_handoff_control_selection_and_finalize_e2e(tmp_path
         "--repo-workdir",
         str(ROOT),
         "--runtime",
-        "manual",
+        "operator",
         "--skip-doctor",
     ]) == 0
 

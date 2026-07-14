@@ -27,6 +27,10 @@ from multi_agent_brief.orchestrator.runtime_state import (
     raise_if_active_repair_open,
     runtime_state_paths,
 )
+from multi_agent_brief.orchestrator_contract import (
+    RUNTIME_CLI_CHOICE_PLACEHOLDER,
+    require_canonical_runtime,
+)
 from multi_agent_brief.orchestrator.run_integrity import (
     interpret_run_integrity,
     project_for_read,
@@ -813,11 +817,20 @@ def _delivery_run_id(workspace: Path) -> str:
     paths = runtime_state_paths(workspace)
     if not paths["runtime_manifest"].exists() or not paths["workflow_state"].exists():
         raise DeliverCommandError(
-            "Runtime state is not initialized; deliver will not create a new run trace. Run `multi-agent-brief run --workspace <workspace>` first.",
+            "Runtime state is not initialized; deliver will not create a new run trace. "
+            "Run `multi-agent-brief run --workspace <workspace> "
+            f"--runtime {RUNTIME_CLI_CHOICE_PLACEHOLDER}` first.",
             error_code=E_DELIVERY_RUNTIME_MISSING,
             extra={"runtime_error_code": E_RUNTIME_STATE_NOT_INITIALIZED},
         )
     manifest = json.loads(paths["runtime_manifest"].read_text(encoding="utf-8"))
+    try:
+        require_canonical_runtime(manifest.get("runtime"))
+    except ValueError as exc:
+        raise RuntimeStateError(
+            "runtime_manifest.json contains a historical or unsupported runtime identity; "
+            "reset the workspace with an explicit canonical --runtime before delivery."
+        ) from exc
     run_id = manifest.get("run_id")
     if not isinstance(run_id, str) or not run_id.strip():
         raise RuntimeStateError("runtime_manifest.json is missing run_id.")

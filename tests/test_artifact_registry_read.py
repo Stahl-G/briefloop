@@ -39,6 +39,7 @@ from multi_agent_brief.orchestrator.runtime_state.artifact_registry_read import 
     interpret_artifact_registry,
 )
 from multi_agent_brief.orchestrator.runtime_state.event_log import append_event
+from multi_agent_brief.orchestrator.runtime_state.errors import RuntimeStateError
 from tests.helpers import write_minimal_workspace
 
 
@@ -366,7 +367,7 @@ def test_reg_read_f02_initializer_recipe_remains_not_materialized(
     tmp_path: Path,
 ) -> None:
     ws = write_minimal_workspace(tmp_path / "ws")
-    initialize_runtime_state(
+    initialize_runtime_state(runtime="operator",
         workspace=ws,
         repo_workdir=ROOT,
         actor="cli",
@@ -437,7 +438,7 @@ def test_reg_read_f02_repeated_initializer_remains_not_materialized(
     _assert_read_only(ws, before)
 
 
-def test_reg_read_repeated_initializer_runtime_change_has_no_lineage(
+def test_reg_read_repeated_initializer_runtime_change_is_rejected_without_lineage(
     tmp_path: Path,
 ) -> None:
     ws = write_minimal_workspace(tmp_path / "ws")
@@ -447,25 +448,26 @@ def test_reg_read_repeated_initializer_runtime_change_has_no_lineage(
         actor="cli",
         runtime="operator",
     )
-    initialize_runtime_state(
-        workspace=ws,
-        repo_workdir=ROOT,
-        actor="cli",
-        runtime="hermes",
-    )
     paths = runtime_state_paths(ws)
-    manifest = _read_json(paths["runtime_manifest"])
-    event = json.loads(paths["event_log"].read_text(encoding="utf-8"))
-    assert manifest["runtime"] == "hermes"
-    assert event["metadata"]["runtime"] == "operator"
     before = _workspace_snapshot(ws)
+
+    with pytest.raises(RuntimeStateError, match="Runtime identity does not match"):
+        initialize_runtime_state(
+            workspace=ws,
+            repo_workdir=ROOT,
+            actor="cli",
+            runtime="hermes",
+        )
+
+    assert _read_json(paths["runtime_manifest"])["runtime"] == "operator"
+    assert _workspace_snapshot(ws) == before
 
     verdict = interpret_artifact_registry(workspace=ws, repo_workdir=ROOT)
 
     _assert_negative(
         verdict,
-        verdict_type=RegistryDegradation,
-        reason_code="artifact_registry_recovery_context_invalid",
+        verdict_type=RegistryNotMaterialized,
+        reason_code="artifact_registry_not_materialized",
     )
     _assert_read_only(ws, before)
 
@@ -1247,7 +1249,7 @@ def test_reg_read_05_forged_intake_projection_never_reaches_a_view(
             }
         ],
     )
-    initialize_runtime_state(workspace=ws, repo_workdir=ROOT, actor="cli")
+    initialize_runtime_state(runtime="operator", workspace=ws, repo_workdir=ROOT, actor="cli")
     check_runtime_state(workspace=ws, repo_workdir=ROOT, actor="cli")
     registry_path = runtime_state_paths(ws)["artifact_registry"]
     registry = _read_json(registry_path)
@@ -1285,7 +1287,7 @@ def test_reg_read_05_persisted_projection_must_match_current_evaluator(
     if case_id == "finding":
         candidate.pop("claim")
     _write_json(candidate_path, [candidate])
-    initialize_runtime_state(workspace=ws, repo_workdir=ROOT, actor="cli")
+    initialize_runtime_state(runtime="operator", workspace=ws, repo_workdir=ROOT, actor="cli")
     check_runtime_state(workspace=ws, repo_workdir=ROOT, actor="cli")
     registry_path = runtime_state_paths(ws)["artifact_registry"]
     registry = _read_json(registry_path)
@@ -1407,7 +1409,7 @@ def test_reg_read_07_truthful_invalid_writer_record_remains_canonical(
         artifact_path,
         [{"candidate_id": "CAND-001", "source_id": "SRC-001"}],
     )
-    initialize_runtime_state(workspace=ws, repo_workdir=ROOT, actor="cli")
+    initialize_runtime_state(runtime="operator", workspace=ws, repo_workdir=ROOT, actor="cli")
     check_runtime_state(workspace=ws, repo_workdir=ROOT, actor="cli")
 
     verdict = interpret_artifact_registry(workspace=ws, repo_workdir=ROOT)
@@ -1437,7 +1439,7 @@ def test_reg_read_08_structurally_bound_snapshot_drift_has_no_values(
     artifact_path = ws / "output" / "intermediate" / "audited_brief.md"
     artifact_path.parent.mkdir(parents=True)
     artifact_path.write_text("AAAA\n", encoding="utf-8")
-    initialize_runtime_state(workspace=ws, repo_workdir=ROOT, actor="cli")
+    initialize_runtime_state(runtime="operator", workspace=ws, repo_workdir=ROOT, actor="cli")
     check_runtime_state(workspace=ws, repo_workdir=ROOT, actor="cli")
     registry = _read_json(runtime_state_paths(ws)["artifact_registry"])
     record = registry["artifacts"]["audited_brief"]
@@ -1473,7 +1475,7 @@ def test_reg_read_r18_nonregular_transition_is_degradation(
     artifact_path = ws / "output" / "intermediate" / "audited_brief.md"
     artifact_path.parent.mkdir(parents=True)
     artifact_path.write_text("AAAA\n", encoding="utf-8")
-    initialize_runtime_state(workspace=ws, repo_workdir=ROOT, actor="cli")
+    initialize_runtime_state(runtime="operator", workspace=ws, repo_workdir=ROOT, actor="cli")
     check_runtime_state(workspace=ws, repo_workdir=ROOT, actor="cli")
     if case_id == "presence":
         artifact_path.unlink()
@@ -1505,7 +1507,7 @@ def test_reg_read_r24_incomplete_record_cannot_be_snapshot_drift(
     artifact_path = ws / "output" / "intermediate" / "audited_brief.md"
     artifact_path.parent.mkdir(parents=True)
     artifact_path.write_text("AAAA\n", encoding="utf-8")
-    initialize_runtime_state(workspace=ws, repo_workdir=ROOT, actor="cli")
+    initialize_runtime_state(runtime="operator", workspace=ws, repo_workdir=ROOT, actor="cli")
     check_runtime_state(workspace=ws, repo_workdir=ROOT, actor="cli")
     registry_path = runtime_state_paths(ws)["artifact_registry"]
     registry = _read_json(registry_path)
@@ -1564,7 +1566,7 @@ def test_reg_read_r25_malformed_physical_snapshot_cannot_be_drift(
     artifact_path = ws / "output" / "intermediate" / "audited_brief.md"
     artifact_path.parent.mkdir(parents=True)
     artifact_path.write_text("AAAA\n", encoding="utf-8")
-    initialize_runtime_state(workspace=ws, repo_workdir=ROOT, actor="cli")
+    initialize_runtime_state(runtime="operator", workspace=ws, repo_workdir=ROOT, actor="cli")
     check_runtime_state(workspace=ws, repo_workdir=ROOT, actor="cli")
     registry_path = runtime_state_paths(ws)["artifact_registry"]
     registry = _read_json(registry_path)
@@ -1598,7 +1600,7 @@ def test_reg_read_r26_nonphysical_record_change_precedes_physical_drift(
     artifact_path = ws / "output" / "intermediate" / "audited_brief.md"
     artifact_path.parent.mkdir(parents=True)
     artifact_path.write_text("AAAA\n", encoding="utf-8")
-    initialize_runtime_state(workspace=ws, repo_workdir=ROOT, actor="cli")
+    initialize_runtime_state(runtime="operator", workspace=ws, repo_workdir=ROOT, actor="cli")
     check_runtime_state(workspace=ws, repo_workdir=ROOT, actor="cli")
     registry_path = runtime_state_paths(ws)["artifact_registry"]
     registry = _read_json(registry_path)
@@ -1639,7 +1641,7 @@ def test_reg_read_r27_intake_forgery_precedes_every_physical_drift(
         "source_id": "SRC-001",
     }
     _write_json(candidate_path, [candidate])
-    initialize_runtime_state(workspace=ws, repo_workdir=ROOT, actor="cli")
+    initialize_runtime_state(runtime="operator", workspace=ws, repo_workdir=ROOT, actor="cli")
     check_runtime_state(workspace=ws, repo_workdir=ROOT, actor="cli")
     registry_path = runtime_state_paths(ws)["artifact_registry"]
     registry = _read_json(registry_path)
@@ -1704,7 +1706,7 @@ def test_reg_read_r28_one_nonphysical_mismatch_overrides_other_record_drift(
             }
         ],
     )
-    initialize_runtime_state(workspace=ws, repo_workdir=ROOT, actor="cli")
+    initialize_runtime_state(runtime="operator", workspace=ws, repo_workdir=ROOT, actor="cli")
     check_runtime_state(workspace=ws, repo_workdir=ROOT, actor="cli")
     registry_path = runtime_state_paths(ws)["artifact_registry"]
     registry = _read_json(registry_path)
@@ -1737,7 +1739,7 @@ def test_reg_read_09_custom_contract_path_is_canonical_and_bound(
     default_path = ws / "output" / "intermediate" / "audited_brief.md"
     default_path.parent.mkdir(parents=True)
     default_path.write_text("poison default bytes", encoding="utf-8")
-    initialize_runtime_state(workspace=ws, repo_workdir=repo, actor="cli")
+    initialize_runtime_state(runtime="operator", workspace=ws, repo_workdir=repo, actor="cli")
     check_runtime_state(workspace=ws, repo_workdir=repo, actor="cli")
 
     verdict = interpret_artifact_registry(workspace=ws, repo_workdir=repo)
@@ -1774,7 +1776,7 @@ def test_reg_read_11_forged_invalid_to_valid_status_fails_producer_replay(
     artifact_path = ws / "output" / "intermediate" / "audited_brief.md"
     artifact_path.parent.mkdir(parents=True)
     artifact_path.write_text("", encoding="utf-8")
-    initialize_runtime_state(workspace=ws, repo_workdir=ROOT, actor="cli")
+    initialize_runtime_state(runtime="operator", workspace=ws, repo_workdir=ROOT, actor="cli")
     check_runtime_state(workspace=ws, repo_workdir=ROOT, actor="cli")
     registry_path = runtime_state_paths(ws)["artifact_registry"]
     registry = _read_json(registry_path)
@@ -1804,7 +1806,7 @@ def test_reg_read_12_writer_agent_read_error_remains_canonical(
     ws = write_minimal_workspace(tmp_path / "ws")
     artifact_path = ws / "output" / "intermediate" / "candidate_claims.json"
     artifact_path.mkdir(parents=True)
-    initialize_runtime_state(workspace=ws, repo_workdir=ROOT, actor="cli")
+    initialize_runtime_state(runtime="operator", workspace=ws, repo_workdir=ROOT, actor="cli")
     checked = check_runtime_state(workspace=ws, repo_workdir=ROOT, actor="cli")
     writer_record = checked["artifact_registry"]["artifacts"]["candidate_claims"]
     assert writer_record["status"] == "invalid"
@@ -1923,7 +1925,7 @@ def test_reg_read_15_current_recovery_stale_baseline_replays_exactly(
             }
         ],
     )
-    initialize_runtime_state(workspace=ws, repo_workdir=ROOT, actor="cli")
+    initialize_runtime_state(runtime="operator", workspace=ws, repo_workdir=ROOT, actor="cli")
     check_runtime_state(workspace=ws, repo_workdir=ROOT, actor="cli")
     writer_registry = _install_bound_recovery_registry(ws, event_type=event_type)
     before = _workspace_snapshot(ws)
@@ -1993,7 +1995,7 @@ def test_reg_read_19_producer_replay_comparison_is_json_type_strict(
     artifact_path = ws / "output" / "intermediate" / "audited_brief.md"
     artifact_path.parent.mkdir(parents=True)
     artifact_path.write_text("x" if alias_kind == "bool" else "AAAA\n", encoding="utf-8")
-    initialize_runtime_state(workspace=ws, repo_workdir=ROOT, actor="cli")
+    initialize_runtime_state(runtime="operator", workspace=ws, repo_workdir=ROOT, actor="cli")
     check_runtime_state(workspace=ws, repo_workdir=ROOT, actor="cli")
     registry_path = runtime_state_paths(ws)["artifact_registry"]
     registry = _read_json(registry_path)

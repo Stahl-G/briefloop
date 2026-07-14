@@ -65,7 +65,7 @@ notes.
 ## 3. Run The Handoff
 
 ```bash
-briefloop run --workspace ./weekly-brief
+briefloop run --workspace ./weekly-brief --runtime operator
 ```
 
 Then follow the generated handoff for your runtime. In normal use, agents draft

@@ -573,7 +573,7 @@ def test_workspace_intake_bundle_owns_screened_universe_verdict(
     )
     (workspace / "user.md").write_text("# User\n", encoding="utf-8")
     (workspace / "input").mkdir()
-    initialize_runtime_state(workspace=workspace, repo_workdir=ROOT)
+    initialize_runtime_state(runtime="operator", workspace=workspace, repo_workdir=ROOT)
     intermediate = workspace / "output" / "intermediate"
     _write_json(intermediate / "candidate_claims.json", candidate_payload)
     _write_json(intermediate / "screened_candidates.json", screened_payload)

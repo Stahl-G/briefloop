@@ -17,7 +17,7 @@ through `experiments 080`.
 
 ```bash
 briefloop experiments 080 validate-case <case_dir>
-briefloop experiments 080 scaffold-condition --case <case_dir> --condition <baseline|memory|prompt_only> --workspace <workspace> --archive <archive>
+briefloop experiments 080 scaffold-condition --case <case_dir> --condition <baseline|memory|prompt_only> --workspace <workspace> --runtime operator --archive <archive>
 briefloop experiments 080 register-run --case <case_dir> --workspace <workspace> --condition <condition> --output <run_record.json>
 briefloop experiments 080 score-run --case <case_dir> --run-record <run_record.json> --output <scorecard.json>
 briefloop experiments 080 export-blind-pack --case <case_dir> --scorecard <baseline_scorecard.json> --scorecard <memory_scorecard.json> --scorecard <prompt_only_scorecard.json> --output <blind_pack_dir>

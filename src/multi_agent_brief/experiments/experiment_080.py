@@ -37,7 +37,10 @@ from multi_agent_brief.contracts.target_contract import (
     auditable_gate_projection_has_only_final_abstract_advisory_warnings,
     auditable_stage_completion_event_reasons,
 )
-from multi_agent_brief.orchestrator_contract import resolve_repo_workdir
+from multi_agent_brief.orchestrator_contract import (
+    require_canonical_runtime,
+    resolve_repo_workdir,
+)
 from multi_agent_brief.orchestrator.run_integrity import (
     PERSISTED_RUN_INTEGRITY_STATUSES,
     interpret_run_integrity,
@@ -780,7 +783,13 @@ def register_run_record(
         case_manifest=case_manifest,
         repo_workdir=repo_workdir,
     )
-    runtime = _require_text(runtime_manifest.get("runtime"), "runtime_manifest.runtime")
+    try:
+        runtime = require_canonical_runtime(runtime_manifest.get("runtime"))
+    except ValueError as exc:
+        raise Experiment080Error(
+            "runtime_manifest.runtime must be an explicit canonical runtime identity.",
+            details={"runtime": runtime_manifest.get("runtime")},
+        ) from exc
     treatment_isolation = _registered_treatment_isolation(
         workspace=ws,
         condition=condition,
@@ -1344,7 +1353,7 @@ def scaffold_condition(
     condition: str,
     workspace: str | Path,
     archive: str | Path | None = None,
-    runtime: str = "hermes",
+    runtime: str,
     repo_workdir: str | Path | None = None,
 ) -> dict[str, Any]:
     """Prepare an initialized 080 condition workspace using deterministic fast-rerun import.
@@ -2035,6 +2044,7 @@ def _scaffold_condition_metadata(
 ) -> dict[str, Any]:
     manifest = state.get("manifest") if isinstance(state.get("manifest"), dict) else {}
     workflow = state.get("workflow_state") if isinstance(state.get("workflow_state"), dict) else {}
+    runtime = require_canonical_runtime(manifest.get("runtime"))
     fact_import = manifest.get("fact_layer_import") if isinstance(manifest.get("fact_layer_import"), dict) else {}
     guidance_entries = _scaffold_guidance_entries(guidance_set)
     treatment: dict[str, Any] = {
@@ -2096,7 +2106,7 @@ def _scaffold_condition_metadata(
         "handoff": handoff,
         "next_command": (
             f"multi-agent-brief run --workspace {shlex.quote(str(workspace))} "
-            "--recipe fast-rerun --skip-doctor"
+            f"--runtime {runtime} --recipe fast-rerun --skip-doctor"
         ),
         "boundaries": [
             "scaffold-condition imports a frozen fact layer and writes experiment metadata only",

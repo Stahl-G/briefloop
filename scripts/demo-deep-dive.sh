@@ -66,7 +66,7 @@ echo "[demo-deep-dive] validating ledger and rebuilding projection"
 "${CLI[@]}" improve rebuild --workspace "$WORKSPACE" --json > "$TMP_DIR/rebuild.json"
 
 echo "[demo-deep-dive] preparing runtime handoff"
-"${CLI[@]}" run --workspace "$WORKSPACE" --skip-doctor >/dev/null
+"${CLI[@]}" run --workspace "$WORKSPACE" --runtime operator --skip-doctor >/dev/null
 
 "$PYTHON_BIN" - "$WORKSPACE" <<'PY'
 import json

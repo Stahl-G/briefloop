@@ -6,6 +6,8 @@ import argparse
 import json
 from typing import Any
 
+from multi_agent_brief.orchestrator_contract import VALID_RUNTIMES
+
 from multi_agent_brief.orchestrator.runtime_state import (
     RuntimeStateError,
     check_runtime_state,
@@ -34,8 +36,9 @@ def register(subparsers: argparse._SubParsersAction) -> None:
     init_parser.add_argument("--workspace", required=True, help="Path to workspace directory.")
     init_parser.add_argument(
         "--runtime",
-        default="hermes",
-        help="Runtime name recorded in runtime_manifest.json (default: hermes).",
+        required=True,
+        choices=list(VALID_RUNTIMES),
+        help="Exact runtime identity recorded in runtime_manifest.json.",
     )
     init_parser.add_argument(
         "--repo-workdir",
@@ -195,8 +198,9 @@ def register(subparsers: argparse._SubParsersAction) -> None:
     )
     import_fact_layer_parser.add_argument(
         "--runtime",
-        default="hermes",
-        help="Runtime name recorded in the new runtime_manifest.json (default: hermes).",
+        required=True,
+        choices=list(VALID_RUNTIMES),
+        help="Exact runtime identity recorded in the new runtime_manifest.json.",
     )
     import_fact_layer_parser.add_argument(
         "--repo-workdir",
@@ -331,7 +335,7 @@ def handle(args: argparse.Namespace) -> int:
             state = import_fact_layer_transaction(
                 workspace=args.workspace,
                 archive=args.archive,
-                runtime=getattr(args, "runtime", "hermes"),
+                runtime=args.runtime,
                 repo_workdir=getattr(args, "repo_workdir", None),
                 actor=getattr(args, "actor", "cli"),
             )

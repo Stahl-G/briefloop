@@ -1088,7 +1088,7 @@ def test_status_reports_invalid_semantic_assessment_report_without_writes(tmp_pa
 
 def test_status_formats_intake_projection(tmp_path: Path) -> None:
     ws = _write_runtime_workspace(tmp_path)
-    initialize_runtime_state(workspace=ws, repo_workdir=ROOT)
+    initialize_runtime_state(runtime="operator", workspace=ws, repo_workdir=ROOT)
     candidate_path = ws / "output" / "intermediate" / "candidate_claims.json"
     candidate_path.write_text(_normalized_candidate_wrapper(), encoding="utf-8")
     check_runtime_state(workspace=ws, repo_workdir=ROOT)
@@ -1133,7 +1133,7 @@ def test_status_formats_intake_projection(tmp_path: Path) -> None:
 
 def test_status_rejects_invalid_intake_projection(tmp_path: Path) -> None:
     ws = _write_runtime_workspace(tmp_path)
-    initialize_runtime_state(workspace=ws, repo_workdir=ROOT)
+    initialize_runtime_state(runtime="operator", workspace=ws, repo_workdir=ROOT)
     candidate_path = ws / "output" / "intermediate" / "candidate_claims.json"
     candidate_path.write_text(_normalized_candidate_wrapper(), encoding="utf-8")
     check_runtime_state(workspace=ws, repo_workdir=ROOT)

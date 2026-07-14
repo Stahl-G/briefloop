@@ -307,7 +307,7 @@ jobs:
 
       - name: Runtime handoff check
         run: |
-          multi-agent-brief run --workspace /tmp/mabw-ci-smoke --skip-doctor
+          multi-agent-brief run --workspace /tmp/mabw-ci-smoke --runtime operator --skip-doctor
           multi-agent-brief state show --workspace /tmp/mabw-ci-smoke --json
           multi-agent-brief state check --workspace /tmp/mabw-ci-smoke --json
           test -f /tmp/mabw-ci-smoke/output/intermediate/agent_handoff.json
@@ -360,7 +360,7 @@ jobs:
           /tmp/mabw-wheel-smoke/bin/python -m pip install dist/*.whl
           cd /tmp
           /tmp/mabw-wheel-smoke/bin/multi-agent-brief init /tmp/mabw-wheel-ws --demo --force --web-search-mode disabled
-          /tmp/mabw-wheel-smoke/bin/multi-agent-brief run --workspace /tmp/mabw-wheel-ws --skip-doctor
+          /tmp/mabw-wheel-smoke/bin/multi-agent-brief run --workspace /tmp/mabw-wheel-ws --runtime operator --skip-doctor
           /tmp/mabw-wheel-smoke/bin/multi-agent-brief eval-cases run --json
 
   llm-decide-smoke:

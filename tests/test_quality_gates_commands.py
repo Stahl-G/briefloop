@@ -38,7 +38,7 @@ from tests.helpers import write_workspace_files_under
 ROOT = Path(__file__).resolve().parent.parent
 
 
-_write_workspace = partial(
+_write_workspace_files = partial(
     write_workspace_files_under,
     config_text="""
 project:
@@ -51,6 +51,16 @@ input:
     user_text="# User\nTarget: TargetCo\n",
     include_input_dir=True,
 )
+
+
+def _write_workspace(tmp_path: Path) -> Path:
+    ws = _write_workspace_files(tmp_path)
+    initialize_runtime_state(workspace=ws, repo_workdir=ROOT, runtime="operator")
+    return ws
+
+
+def _write_uninitialized_workspace(tmp_path: Path) -> Path:
+    return _write_workspace_files(tmp_path)
 
 
 def _intermediate(ws: Path) -> Path:
@@ -378,7 +388,7 @@ def _write_supported_strategic_ledger(ws: Path) -> None:
 
 def _prepare_editor_gate_workspace(tmp_path: Path, *, analyst_text: str, editor_text: str) -> Path:
     ws = _write_workspace(tmp_path)
-    initialize_runtime_state(workspace=ws, repo_workdir=ROOT)
+    initialize_runtime_state(runtime="operator", workspace=ws, repo_workdir=ROOT)
     _write_supported_target_ledger(ws)
     _set_current_stage(ws, "analyst")
     _write_audited_brief(ws, analyst_text)
@@ -572,7 +582,7 @@ def _set_current_stage(ws: Path, stage_id: str) -> None:
 
 
 def _advance_to_auditor(ws: Path) -> None:
-    initialize_runtime_state(workspace=ws, repo_workdir=ROOT)
+    initialize_runtime_state(runtime="operator", workspace=ws, repo_workdir=ROOT)
     _write_json(ws, "candidate_claims.json")
     _write_json(ws, "screened_candidates.json")
     if not (_intermediate(ws) / "claim_ledger.json").exists():
@@ -770,7 +780,7 @@ def test_real_gate_check_blocks_current_auditor_but_keeps_repair_target(tmp_path
 @pytest.mark.parametrize("repair_owner", ["human", "human_review", "human-review"])
 def test_quality_gate_guidance_does_not_start_human_review_route(tmp_path, repair_owner):
     ws = _write_workspace(tmp_path)
-    initialize_runtime_state(workspace=ws, repo_workdir=ROOT)
+    initialize_runtime_state(runtime="operator", workspace=ws, repo_workdir=ROOT)
     _write_minimal_artifact_registry(ws)
     _set_current_stage(ws, "auditor")
     _auditor_report_path(ws).parent.mkdir(parents=True, exist_ok=True)
@@ -857,7 +867,7 @@ def test_quality_gate_guidance_does_not_start_human_review_route(tmp_path, repai
 
 def test_quality_gate_guidance_uses_current_gate_route_for_scoped_start(tmp_path):
     ws = _write_workspace(tmp_path)
-    initialize_runtime_state(workspace=ws, repo_workdir=ROOT)
+    initialize_runtime_state(runtime="operator", workspace=ws, repo_workdir=ROOT)
     _set_current_stage(ws, "finalize")
     _write_stage_gate_report(
         ws,
@@ -916,7 +926,7 @@ def test_quality_gate_guidance_uses_current_gate_route_for_scoped_start(tmp_path
 
 def test_quality_gate_guidance_does_not_route_stale_downstream_blocker(tmp_path):
     ws = _write_workspace(tmp_path)
-    initialize_runtime_state(workspace=ws, repo_workdir=ROOT)
+    initialize_runtime_state(runtime="operator", workspace=ws, repo_workdir=ROOT)
     _set_current_stage(ws, "auditor")
     _write_stage_gate_report(
         ws,
@@ -958,7 +968,7 @@ def test_quality_gate_guidance_does_not_route_stale_downstream_blocker(tmp_path)
 
 def test_quality_gate_guidance_does_not_scope_non_gate_current_stage(tmp_path, monkeypatch):
     ws = _write_workspace(tmp_path)
-    initialize_runtime_state(workspace=ws, repo_workdir=ROOT)
+    initialize_runtime_state(runtime="operator", workspace=ws, repo_workdir=ROOT)
     _set_current_stage(ws, "editor")
     _write_stage_gate_report(
         ws,
@@ -1004,7 +1014,7 @@ def test_quality_gate_guidance_does_not_scope_non_gate_current_stage(tmp_path, m
 
 def test_quality_gate_guidance_materializes_legacy_current_gate_blocker(tmp_path):
     ws = _write_workspace(tmp_path)
-    initialize_runtime_state(workspace=ws, repo_workdir=ROOT)
+    initialize_runtime_state(runtime="operator", workspace=ws, repo_workdir=ROOT)
     _set_current_stage(ws, "auditor")
     _report_path(ws).write_text(
         json.dumps(
@@ -1079,7 +1089,7 @@ def test_quality_gate_guidance_materializes_legacy_current_gate_blocker(tmp_path
 
 def test_quality_gate_guidance_uses_workflow_scope_for_scoped_start_command(tmp_path, monkeypatch):
     ws = _write_workspace(tmp_path)
-    initialize_runtime_state(workspace=ws, repo_workdir=ROOT)
+    initialize_runtime_state(runtime="operator", workspace=ws, repo_workdir=ROOT)
     _set_current_stage(ws, "finalize")
     _write_stage_gate_report(
         ws,
@@ -1186,6 +1196,8 @@ def test_runtime_repair_instructions_use_scoped_current_gate_start() -> None:
 
 def test_evaluate_quality_gate_findings_is_read_only_and_matches_report(tmp_path, capsys):
     ws = _write_workspace(tmp_path)
+    event_log = ws / "output" / "intermediate" / "event_log.jsonl"
+    event_log_before = event_log.read_bytes()
     _write_ledger(ws, [])
     _write_audited_brief(
         ws,
@@ -1211,7 +1223,7 @@ def test_evaluate_quality_gate_findings_is_read_only_and_matches_report(tmp_path
     assert list(gate_findings) == sorted(GATE_IDS)
     assert not _report_path(ws).exists()
     assert not _auditor_report_path(ws).exists()
-    assert not (ws / "output" / "intermediate" / "event_log.jsonl").exists()
+    assert event_log.read_bytes() == event_log_before
 
     rc = main([
         "gates",
@@ -1367,7 +1379,7 @@ def test_gates_check_repeated_same_report_preserves_stage_report_bytes(tmp_path,
 
 def test_gates_check_can_rerun_hashed_report_before_auditor_complete(tmp_path):
     ws = _write_workspace(tmp_path)
-    initialize_runtime_state(workspace=ws, repo_workdir=ROOT)
+    initialize_runtime_state(runtime="operator", workspace=ws, repo_workdir=ROOT)
     _set_current_stage(ws, "auditor")
     _write_ledger(ws, [])
     _write_audited_brief(
@@ -1967,7 +1979,7 @@ def test_coverage_omission_does_not_interpret_invalid_screened_candidates(tmp_pa
 
 def test_coverage_gate_rejects_screened_candidate_universe_mismatch(tmp_path: Path) -> None:
     ws = _write_workspace(tmp_path)
-    initialize_runtime_state(workspace=ws, repo_workdir=ROOT)
+    initialize_runtime_state(runtime="operator", workspace=ws, repo_workdir=ROOT)
     _write_supported_target_ledger(ws)
     _write_screened_candidates(
         ws,
@@ -2142,7 +2154,7 @@ def test_custom_auditor_brief_and_ledger_bind_quality_report_through_completion(
     contracts_path.write_text(yaml.safe_dump(contracts, sort_keys=False), encoding="utf-8")
 
     ws = _write_workspace(tmp_path)
-    initialize_runtime_state(workspace=ws, repo_workdir=repo)
+    initialize_runtime_state(runtime="operator", workspace=ws, repo_workdir=repo)
     _set_current_stage(ws, "auditor")
     _write_json(ws, "candidate_claims.json")
     _write_json(ws, "screened_candidates.json")
@@ -3200,7 +3212,7 @@ def test_editor_new_fact_gate_blocks_in_strict_mode(tmp_path, capsys):
 
 def test_high_severity_warning_does_not_block_by_default(tmp_path):
     ws = _write_workspace(tmp_path)
-    initialize_runtime_state(workspace=ws, repo_workdir=ROOT)
+    initialize_runtime_state(runtime="operator", workspace=ws, repo_workdir=ROOT)
     _auditor_report_path(ws).parent.mkdir(parents=True, exist_ok=True)
     _auditor_report_path(ws).write_text(
         json.dumps({

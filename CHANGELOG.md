@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- **Breaking:** runtime identity must now be explicit. Dedicated adapters inject
+  their fixed canonical identity, while generic CLI users pass `--runtime`.
+  New state accepts only `hermes`, `claude`, `opencode`, `codex`, `codebuddy`,
+  or `operator`; historical `auto` / `manual` / implicit `controls` manifests remain read-only until
+  an explicit reset starts a new canonical run and archives the old manifest.
+
 ## [0.12.1] — 2026-07-14
 
 ### Changed

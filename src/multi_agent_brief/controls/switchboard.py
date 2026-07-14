@@ -25,11 +25,10 @@ from multi_agent_brief.controls.contract import (
     ensure_safe_relative_path,
 )
 from multi_agent_brief.orchestrator.runtime_state import (
-    RUNTIME_MANIFEST_SCHEMA,
     RuntimeStateError,
     append_event,
-    initialize_runtime_state,
     runtime_state_paths,
+    show_runtime_state,
     utc_now,
 )
 from multi_agent_brief.orchestrator_contract import resolve_repo_workdir
@@ -54,33 +53,8 @@ def build_control_switchboard(
     ws = _require_workspace(workspace)
     repo = resolve_repo_workdir(repo_workdir, workspace=ws)
     state_paths = runtime_state_paths(ws)
-    existing_manifest = _read_json_object_if_exists(
-        state_paths["runtime_manifest"],
-        label="runtime_manifest.json",
-    )
-    if existing_manifest is not None and state_paths["workflow_state"].exists():
-        if existing_manifest.get("schema_version") != RUNTIME_MANIFEST_SCHEMA:
-            raise ControlSwitchboardError(
-                "Existing runtime_manifest.json has an unsupported schema.",
-                details={
-                    "path": str(state_paths["runtime_manifest"]),
-                    "schema_version": existing_manifest.get("schema_version"),
-                },
-            )
-        manifest = existing_manifest
-    else:
-        existing_runtime = (
-            str(existing_manifest.get("runtime") or "")
-            if isinstance(existing_manifest, dict)
-            else ""
-        )
-        state = initialize_runtime_state(
-            workspace=ws,
-            repo_workdir=repo,
-            runtime=existing_runtime or "controls",
-            actor=actor,
-        )
-        manifest = state.get("manifest") or {}
+    state = _canonical_runtime_state(ws)
+    manifest = state.get("manifest") or {}
     run_id = str(manifest.get("run_id") or "")
     if not run_id:
         raise ControlSwitchboardError(
@@ -160,6 +134,7 @@ def select_control(
 ) -> dict[str, Any]:
     """Record an Orchestrator selection without executing the control."""
     ws = _require_workspace(workspace)
+    _canonical_runtime_state(ws)
     if control_id not in CONTROL_IDS:
         raise ControlSwitchboardError(
             f"Unknown control id: {control_id}",
@@ -304,6 +279,7 @@ def validate_control_switchboard(
     actor: str = "cli",
 ) -> dict[str, Any]:
     ws = _require_workspace(workspace)
+    _canonical_runtime_state(ws)
     paths = control_switchboard_paths(ws)
     switchboard = _load_switchboard(paths=paths)
     selections = _read_json_object_if_exists(
@@ -997,6 +973,11 @@ def _current_run_id(ws: Path) -> str | None:
     if manifest:
         return str(manifest.get("run_id") or "")
     return None
+
+
+def _canonical_runtime_state(ws: Path) -> dict[str, Any]:
+    """Load runtime state only when its persisted identity is canonical."""
+    return show_runtime_state(workspace=ws, allow_noncanonical_runtime=False)
 
 
 def _require_workspace(workspace: str | Path) -> Path:

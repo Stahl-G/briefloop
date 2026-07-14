@@ -1049,7 +1049,7 @@ def _write_minimal_artifact_registry(ws: Path) -> None:
 
 def _prepare_scoped_repair_workspace(tmp_path: Path, *, current_stage: str = "finalize") -> Path:
     ws = _write_workspace(tmp_path)
-    initialize_runtime_state(workspace=ws, repo_workdir=ROOT)
+    initialize_runtime_state(runtime="operator", workspace=ws, repo_workdir=ROOT)
     _write_minimal_artifact_registry(ws)
     _write_json_artifact(ws, "claim_ledger.json", _valid_claim_ledger_payload())
     (_intermediate(ws) / "audited_brief.md").write_text(
@@ -1065,7 +1065,7 @@ def _prepare_scoped_repair_workspace(tmp_path: Path, *, current_stage: str = "fi
 
 def _start_active_editor_repair(tmp_path: Path) -> Path:
     ws = _write_workspace(tmp_path)
-    initialize_runtime_state(workspace=ws, repo_workdir=ROOT)
+    initialize_runtime_state(runtime="operator", workspace=ws, repo_workdir=ROOT)
     _write_json_artifact(ws, "claim_ledger.json", _valid_claim_ledger_payload())
     _set_current_stage(ws, "analyst")
     audited = _intermediate(ws) / "audited_brief.md"
@@ -1238,7 +1238,7 @@ def _advance_to_auditor(ws: Path) -> None:
 
 def _contaminated_editor_artifact_workspace(tmp_path: Path) -> tuple[Path, str, str]:
     ws = _write_workspace(tmp_path)
-    initialize_runtime_state(workspace=ws, repo_workdir=ROOT)
+    initialize_runtime_state(runtime="operator", workspace=ws, repo_workdir=ROOT)
     _write_json_artifact(ws, "claim_ledger.json", _valid_claim_ledger_payload())
     _set_current_stage(ws, "analyst")
     audited = _intermediate(ws) / "audited_brief.md"
@@ -1276,7 +1276,7 @@ def _contaminated_editor_artifact_workspace(tmp_path: Path) -> tuple[Path, str, 
 
 def _contaminated_auditor_artifact_workspace(tmp_path: Path) -> tuple[Path, str, str]:
     ws = _write_workspace(tmp_path)
-    initialize_runtime_state(workspace=ws, repo_workdir=ROOT)
+    initialize_runtime_state(runtime="operator", workspace=ws, repo_workdir=ROOT)
     _write_json_artifact(ws, "claim_ledger.json", _valid_claim_ledger_payload())
     _set_current_stage(ws, "analyst")
     audited = _intermediate(ws) / "audited_brief.md"
@@ -1324,7 +1324,7 @@ def _advance_to_source_discovery(ws: Path) -> None:
 
 
 def _complete_finalized_workspace(ws: Path) -> dict:
-    initialize_runtime_state(workspace=ws, repo_workdir=ROOT)
+    initialize_runtime_state(runtime="operator", workspace=ws, repo_workdir=ROOT)
     _advance_to_finalize(ws)
     _write_quality_gate_report(ws, stage_id="finalize")
     _write_finalize_report(ws)
@@ -1336,7 +1336,7 @@ def _complete_finalized_workspace(ws: Path) -> dict:
 
 
 def _complete_finalized_workspace_with_claim_metadata(ws: Path, metadata: dict[str, object]) -> dict:
-    initialize_runtime_state(workspace=ws, repo_workdir=ROOT)
+    initialize_runtime_state(runtime="operator", workspace=ws, repo_workdir=ROOT)
     _advance_to_finalize(ws)
     (_intermediate(ws) / "claim_ledger.json").write_text(
         _valid_claim_ledger_payload(metadata=metadata),
@@ -1354,7 +1354,7 @@ def _complete_finalized_workspace_with_claim_metadata(ws: Path, metadata: dict[s
 def test_state_init_creates_runtime_control_files_without_old_run_manifest(tmp_path):
     ws = _write_workspace(tmp_path)
 
-    state = initialize_runtime_state(workspace=ws, repo_workdir=ROOT)
+    state = initialize_runtime_state(runtime="operator", workspace=ws, repo_workdir=ROOT)
 
     assert state["ok"] is True
     assert _state_file(ws, "runtime_manifest").exists()
@@ -1378,7 +1378,7 @@ def test_state_init_creates_runtime_control_files_without_old_run_manifest(tmp_p
 
 def test_state_check_fresh_workspace_is_not_globally_blocked(tmp_path):
     ws = _write_workspace(tmp_path)
-    initialize_runtime_state(workspace=ws, repo_workdir=ROOT)
+    initialize_runtime_state(runtime="operator", workspace=ws, repo_workdir=ROOT)
 
     state = check_runtime_state(workspace=ws, repo_workdir=ROOT)
     workflow = state["workflow_state"]
@@ -1411,7 +1411,7 @@ def test_state_check_fresh_workspace_is_not_globally_blocked(tmp_path):
 
 def test_state_check_rejects_malformed_run_integrity_without_rewrite(tmp_path):
     ws = _write_workspace(tmp_path)
-    initialize_runtime_state(workspace=ws, repo_workdir=ROOT)
+    initialize_runtime_state(runtime="operator", workspace=ws, repo_workdir=ROOT)
     workflow_path = _state_file(ws, "workflow_state")
     workflow = json.loads(workflow_path.read_text(encoding="utf-8"))
     workflow["run_integrity"] = "bad"
@@ -1427,7 +1427,7 @@ def test_state_check_rejects_malformed_run_integrity_without_rewrite(tmp_path):
 
 def test_state_show_rejects_invalid_run_integrity_status_without_rewrite(tmp_path):
     ws = _write_workspace(tmp_path)
-    initialize_runtime_state(workspace=ws, repo_workdir=ROOT)
+    initialize_runtime_state(runtime="operator", workspace=ws, repo_workdir=ROOT)
     workflow_path = _state_file(ws, "workflow_state")
     workflow = json.loads(workflow_path.read_text(encoding="utf-8"))
     workflow["run_integrity"] = {
@@ -1448,7 +1448,7 @@ def test_state_show_rejects_invalid_run_integrity_status_without_rewrite(tmp_pat
 
 def test_stage_complete_rejects_invalid_run_integrity_status_without_rewrite(tmp_path):
     ws = _write_workspace(tmp_path)
-    initialize_runtime_state(workspace=ws, repo_workdir=ROOT)
+    initialize_runtime_state(runtime="operator", workspace=ws, repo_workdir=ROOT)
     workflow_path = _state_file(ws, "workflow_state")
     workflow = json.loads(workflow_path.read_text(encoding="utf-8"))
     workflow["run_integrity"] = {
@@ -1474,7 +1474,7 @@ def test_stage_complete_rejects_invalid_run_integrity_status_without_rewrite(tmp
 
 def test_state_check_rejects_invalid_stage_status_without_rewrite(tmp_path):
     ws = _write_workspace(tmp_path)
-    initialize_runtime_state(workspace=ws, repo_workdir=ROOT)
+    initialize_runtime_state(runtime="operator", workspace=ws, repo_workdir=ROOT)
     workflow_path = _state_file(ws, "workflow_state")
     workflow = json.loads(workflow_path.read_text(encoding="utf-8"))
     workflow["stage_statuses"]["doctor"]["status"] = "finished"
@@ -1489,7 +1489,7 @@ def test_state_check_rejects_invalid_stage_status_without_rewrite(tmp_path):
     assert workflow_path.read_bytes() == before
 
 
-def test_state_check_strict_fresh_workspace_returns_zero(tmp_path):
+def test_state_check_strict_fresh_workspace_fails_without_initializing(tmp_path):
     ws = _write_workspace(tmp_path)
 
     rc = main([
@@ -1503,12 +1503,13 @@ def test_state_check_strict_fresh_workspace_returns_zero(tmp_path):
         "--json",
     ])
 
-    assert rc == 0
+    assert rc == 1
+    assert not (ws / "output" / "intermediate" / "runtime_manifest.json").exists()
 
 
 def test_state_decide_continue_requires_completion_transaction(tmp_path):
     ws = _write_workspace(tmp_path)
-    initialize_runtime_state(workspace=ws, repo_workdir=ROOT)
+    initialize_runtime_state(runtime="operator", workspace=ws, repo_workdir=ROOT)
     _advance_to_auditor(ws)
 
     before = json.loads(_state_file(ws, "workflow_state").read_text(encoding="utf-8"))
@@ -1529,7 +1530,7 @@ def test_state_decide_continue_requires_completion_transaction(tmp_path):
 
 def test_auditor_stage_complete_records_python_owned_audit_binding(tmp_path):
     ws = _write_workspace(tmp_path)
-    initialize_runtime_state(workspace=ws, repo_workdir=ROOT)
+    initialize_runtime_state(runtime="operator", workspace=ws, repo_workdir=ROOT)
     _advance_to_auditor(ws)
     _write_quality_gate_report(ws, stage_id="auditor")
 
@@ -1555,7 +1556,7 @@ def test_auditor_stage_complete_records_python_owned_audit_binding(tmp_path):
 
 def test_state_decide_finalize_requires_completion_transaction(tmp_path):
     ws = _write_workspace(tmp_path)
-    initialize_runtime_state(workspace=ws, repo_workdir=ROOT)
+    initialize_runtime_state(runtime="operator", workspace=ws, repo_workdir=ROOT)
     _advance_to_finalize(ws)
 
     before = json.loads(_state_file(ws, "workflow_state").read_text(encoding="utf-8"))
@@ -1576,7 +1577,7 @@ def test_state_decide_finalize_requires_completion_transaction(tmp_path):
 
 def test_trajectory_regulation_narrows_retry_budget_and_rejects_retry(tmp_path):
     ws = _write_workspace(tmp_path)
-    initialize_runtime_state(workspace=ws, repo_workdir=ROOT)
+    initialize_runtime_state(runtime="operator", workspace=ws, repo_workdir=ROOT)
     _advance_to_source_discovery(ws)
 
     for idx in range(3):
@@ -1608,7 +1609,7 @@ def test_trajectory_regulation_narrows_retry_budget_and_rejects_retry(tmp_path):
 
 def test_trajectory_regulation_rejects_stage_complete_after_narrowing_without_mutation(tmp_path):
     ws = _write_workspace(tmp_path)
-    initialize_runtime_state(workspace=ws, repo_workdir=ROOT)
+    initialize_runtime_state(runtime="operator", workspace=ws, repo_workdir=ROOT)
     _advance_to_source_discovery(ws)
     for idx in range(3):
         record_decision(
@@ -1637,7 +1638,7 @@ def test_trajectory_regulation_rejects_stage_complete_after_narrowing_without_mu
 
 def test_trajectory_regulation_completion_clears_stale_non_current_narrowing(tmp_path):
     ws = _write_workspace(tmp_path)
-    initialize_runtime_state(workspace=ws, repo_workdir=ROOT)
+    initialize_runtime_state(runtime="operator", workspace=ws, repo_workdir=ROOT)
     workflow = json.loads(_state_file(ws, "workflow_state").read_text(encoding="utf-8"))
     workflow["trajectory_regulation"] = {
         "status": "decision_narrowed",
@@ -1672,7 +1673,7 @@ def test_trajectory_regulation_completion_clears_stale_non_current_narrowing(tmp
 
 def test_trajectory_regulation_allows_human_review_after_narrowing(tmp_path):
     ws = _write_workspace(tmp_path)
-    initialize_runtime_state(workspace=ws, repo_workdir=ROOT)
+    initialize_runtime_state(runtime="operator", workspace=ws, repo_workdir=ROOT)
     _advance_to_source_discovery(ws)
     for idx in range(3):
         record_decision(
@@ -1700,7 +1701,7 @@ def test_trajectory_regulation_allows_human_review_after_narrowing(tmp_path):
 
 def test_trajectory_regulation_state_check_narrows_repair_cycle_budget(tmp_path):
     ws = _write_workspace(tmp_path)
-    initialize_runtime_state(workspace=ws, repo_workdir=ROOT)
+    initialize_runtime_state(runtime="operator", workspace=ws, repo_workdir=ROOT)
     _advance_to_source_discovery(ws)
     run_id = json.loads(_state_file(ws, "runtime_manifest").read_text(encoding="utf-8"))["run_id"]
 
@@ -1725,7 +1726,7 @@ def test_trajectory_regulation_state_check_narrows_repair_cycle_budget(tmp_path)
 
 def test_trajectory_regulation_rejects_repair_start_after_narrowing_without_mutation(tmp_path):
     ws = _write_workspace(tmp_path)
-    initialize_runtime_state(workspace=ws, repo_workdir=ROOT)
+    initialize_runtime_state(runtime="operator", workspace=ws, repo_workdir=ROOT)
     _write_json_artifact(ws, "claim_ledger.json", _valid_claim_ledger_payload())
     _set_current_stage(ws, "analyst")
     audited = _intermediate(ws) / "audited_brief.md"
@@ -1769,7 +1770,7 @@ def test_trajectory_regulation_rejects_repair_start_after_narrowing_without_muta
 
 def test_trajectory_regulation_rejects_repair_start_for_exhausted_route_owner(tmp_path):
     ws = _write_workspace(tmp_path)
-    initialize_runtime_state(workspace=ws, repo_workdir=ROOT)
+    initialize_runtime_state(runtime="operator", workspace=ws, repo_workdir=ROOT)
     _write_json_artifact(ws, "claim_ledger.json", _valid_claim_ledger_payload())
     _set_current_stage(ws, "analyst")
     audited = _intermediate(ws) / "audited_brief.md"
@@ -1815,7 +1816,7 @@ def test_trajectory_regulation_rejects_repair_start_for_exhausted_route_owner(tm
 
 def test_trajectory_regulation_state_check_narrows_repeated_blocker_reason(tmp_path):
     ws = _write_workspace(tmp_path)
-    initialize_runtime_state(workspace=ws, repo_workdir=ROOT)
+    initialize_runtime_state(runtime="operator", workspace=ws, repo_workdir=ROOT)
     _advance_to_source_discovery(ws)
     run_id = json.loads(_state_file(ws, "runtime_manifest").read_text(encoding="utf-8"))["run_id"]
 
@@ -1841,7 +1842,7 @@ def test_trajectory_regulation_state_check_narrows_repeated_blocker_reason(tmp_p
 
 def test_trajectory_regulation_completed_historical_stage_does_not_narrow(tmp_path):
     ws = _write_workspace(tmp_path)
-    initialize_runtime_state(workspace=ws, repo_workdir=ROOT)
+    initialize_runtime_state(runtime="operator", workspace=ws, repo_workdir=ROOT)
     _advance_to_source_discovery(ws)
     for idx in range(3):
         record_decision(
@@ -1868,7 +1869,7 @@ def test_trajectory_regulation_completed_historical_stage_does_not_narrow(tmp_pa
 
 def test_trajectory_regulation_corrupt_event_log_fails_closed_without_narrowing(tmp_path):
     ws = _write_workspace(tmp_path)
-    initialize_runtime_state(workspace=ws, repo_workdir=ROOT)
+    initialize_runtime_state(runtime="operator", workspace=ws, repo_workdir=ROOT)
     _advance_to_source_discovery(ws)
     with _state_file(ws, "event_log").open("ab") as fh:
         fh.write(b"{not-json}\n")
@@ -1885,7 +1886,7 @@ def test_trajectory_regulation_corrupt_event_log_fails_closed_without_narrowing(
 
 def test_invalid_optional_expected_artifact_rejects_continue(tmp_path):
     ws = _write_workspace(tmp_path)
-    initialize_runtime_state(workspace=ws, repo_workdir=ROOT)
+    initialize_runtime_state(runtime="operator", workspace=ws, repo_workdir=ROOT)
     complete_stage_transaction(workspace=ws, repo_workdir=ROOT, stage_id="doctor", reason="doctor complete")
     (ws / "source_candidates.yaml").write_text(": [", encoding="utf-8")
 
@@ -1909,7 +1910,7 @@ def test_source_discovery_runtime_tool_without_sources_or_candidates_rejects_com
         "  mode: runtime_tool\n",
         encoding="utf-8",
     )
-    initialize_runtime_state(workspace=ws, repo_workdir=ROOT)
+    initialize_runtime_state(runtime="operator", workspace=ws, repo_workdir=ROOT)
     complete_stage_transaction(workspace=ws, repo_workdir=ROOT, stage_id="doctor", reason="doctor complete")
 
     with pytest.raises(RuntimeStateError) as excinfo:
@@ -1941,7 +1942,7 @@ def test_source_discovery_runtime_tool_allows_local_source(tmp_path):
         "  mode: runtime_tool\n",
         encoding="utf-8",
     )
-    initialize_runtime_state(workspace=ws, repo_workdir=ROOT)
+    initialize_runtime_state(runtime="operator", workspace=ws, repo_workdir=ROOT)
     complete_stage_transaction(workspace=ws, repo_workdir=ROOT, stage_id="doctor", reason="doctor complete")
 
     state = complete_stage_transaction(
@@ -1974,7 +1975,7 @@ def test_source_discovery_configure_later_with_plan_only_rejects_complete(tmp_pa
         "    url: https://example.com/source\n",
         encoding="utf-8",
     )
-    initialize_runtime_state(workspace=ws, repo_workdir=ROOT)
+    initialize_runtime_state(runtime="operator", workspace=ws, repo_workdir=ROOT)
     complete_stage_transaction(workspace=ws, repo_workdir=ROOT, stage_id="doctor", reason="doctor complete")
 
     with pytest.raises(RuntimeStateError) as excinfo:
@@ -2007,7 +2008,7 @@ def test_source_discovery_configure_later_allows_real_input_source(tmp_path):
         "  mode: configure_later\n",
         encoding="utf-8",
     )
-    initialize_runtime_state(workspace=ws, repo_workdir=ROOT)
+    initialize_runtime_state(runtime="operator", workspace=ws, repo_workdir=ROOT)
     complete_stage_transaction(workspace=ws, repo_workdir=ROOT, stage_id="doctor", reason="doctor complete")
 
     state = complete_stage_transaction(
@@ -2039,7 +2040,7 @@ def test_source_discovery_runtime_tool_rejects_source_candidates_plan_only(tmp_p
         "    enabled: true\n",
         encoding="utf-8",
     )
-    initialize_runtime_state(workspace=ws, repo_workdir=ROOT)
+    initialize_runtime_state(runtime="operator", workspace=ws, repo_workdir=ROOT)
     complete_stage_transaction(workspace=ws, repo_workdir=ROOT, stage_id="doctor", reason="doctor complete")
 
     with pytest.raises(RuntimeStateError) as excinfo:
@@ -2066,7 +2067,7 @@ def test_source_discovery_runtime_tool_rejects_input_readme_only(tmp_path):
         "  mode: runtime_tool\n",
         encoding="utf-8",
     )
-    initialize_runtime_state(workspace=ws, repo_workdir=ROOT)
+    initialize_runtime_state(runtime="operator", workspace=ws, repo_workdir=ROOT)
     complete_stage_transaction(workspace=ws, repo_workdir=ROOT, stage_id="doctor", reason="doctor complete")
 
     with pytest.raises(RuntimeStateError) as excinfo:
@@ -2095,7 +2096,7 @@ def test_source_discovery_runtime_tool_rejects_input_sources_readme_only(tmp_pat
         "  mode: runtime_tool\n",
         encoding="utf-8",
     )
-    initialize_runtime_state(workspace=ws, repo_workdir=ROOT)
+    initialize_runtime_state(runtime="operator", workspace=ws, repo_workdir=ROOT)
     complete_stage_transaction(workspace=ws, repo_workdir=ROOT, stage_id="doctor", reason="doctor complete")
 
     with pytest.raises(RuntimeStateError) as excinfo:
@@ -2127,7 +2128,7 @@ def test_source_discovery_runtime_tool_allows_input_sources_file(tmp_path):
         "  mode: runtime_tool\n",
         encoding="utf-8",
     )
-    initialize_runtime_state(workspace=ws, repo_workdir=ROOT)
+    initialize_runtime_state(runtime="operator", workspace=ws, repo_workdir=ROOT)
     complete_stage_transaction(workspace=ws, repo_workdir=ROOT, stage_id="doctor", reason="doctor complete")
 
     state = complete_stage_transaction(
@@ -2166,7 +2167,7 @@ def test_source_discovery_source_plan_only_allows_real_source_file(tmp_path):
         "    url: https://example.com/source\n",
         encoding="utf-8",
     )
-    initialize_runtime_state(workspace=ws, repo_workdir=ROOT)
+    initialize_runtime_state(runtime="operator", workspace=ws, repo_workdir=ROOT)
     complete_stage_transaction(workspace=ws, repo_workdir=ROOT, stage_id="doctor", reason="doctor complete")
 
     state = complete_stage_transaction(
@@ -2198,7 +2199,7 @@ def test_source_discovery_runtime_tool_rejects_context_only_input(tmp_path):
         "  mode: runtime_tool\n",
         encoding="utf-8",
     )
-    initialize_runtime_state(workspace=ws, repo_workdir=ROOT)
+    initialize_runtime_state(runtime="operator", workspace=ws, repo_workdir=ROOT)
     complete_stage_transaction(workspace=ws, repo_workdir=ROOT, stage_id="doctor", reason="doctor complete")
 
     with pytest.raises(RuntimeStateError) as excinfo:
@@ -2231,7 +2232,7 @@ def test_source_discovery_runtime_tool_rejects_zero_observation_fixture(tmp_path
         "recommended_sources: []\n",
         encoding="utf-8",
     )
-    initialize_runtime_state(workspace=ws, repo_workdir=ROOT)
+    initialize_runtime_state(runtime="operator", workspace=ws, repo_workdir=ROOT)
     complete_stage_transaction(workspace=ws, repo_workdir=ROOT, stage_id="doctor", reason="doctor complete")
 
     with pytest.raises(RuntimeStateError) as excinfo:
@@ -2265,7 +2266,7 @@ def test_source_discovery_runtime_tool_rejects_positive_observation_without_dura
         "recommended_sources: []\n",
         encoding="utf-8",
     )
-    initialize_runtime_state(workspace=ws, repo_workdir=ROOT)
+    initialize_runtime_state(runtime="operator", workspace=ws, repo_workdir=ROOT)
     complete_stage_transaction(workspace=ws, repo_workdir=ROOT, stage_id="doctor", reason="doctor complete")
 
     with pytest.raises(RuntimeStateError) as excinfo:
@@ -2306,7 +2307,7 @@ def test_source_discovery_runtime_tool_rejects_candidates_urls_even_with_positiv
         "    enabled: true\n",
         encoding="utf-8",
     )
-    initialize_runtime_state(workspace=ws, repo_workdir=ROOT)
+    initialize_runtime_state(runtime="operator", workspace=ws, repo_workdir=ROOT)
     complete_stage_transaction(workspace=ws, repo_workdir=ROOT, stage_id="doctor", reason="doctor complete")
 
     with pytest.raises(RuntimeStateError) as excinfo:
@@ -2323,7 +2324,7 @@ def test_source_discovery_runtime_tool_rejects_candidates_urls_even_with_positiv
 
 def test_optional_feedback_artifacts_do_not_become_missing_after_auditor_complete(tmp_path):
     ws = _write_workspace(tmp_path)
-    initialize_runtime_state(workspace=ws, repo_workdir=ROOT)
+    initialize_runtime_state(runtime="operator", workspace=ws, repo_workdir=ROOT)
     _advance_to_finalize(ws)
 
     state = check_runtime_state(workspace=ws, repo_workdir=ROOT)
@@ -2343,7 +2344,7 @@ def test_optional_feedback_artifacts_do_not_become_missing_after_auditor_complet
 
 def test_delta_audit_report_missing_only_when_repair_active(tmp_path):
     ws = _write_workspace(tmp_path)
-    initialize_runtime_state(workspace=ws, repo_workdir=ROOT)
+    initialize_runtime_state(runtime="operator", workspace=ws, repo_workdir=ROOT)
     _advance_to_finalize(ws)
     out = _intermediate(ws)
     (out / "feedback_issues.json").write_text(
@@ -2408,7 +2409,7 @@ def test_invalid_current_stage_output_blocks_only_that_stage(tmp_path):
     output = ws / "output" / "intermediate"
     output.mkdir(parents=True)
     (output / "candidate_claims.json").write_text("{broken", encoding="utf-8")
-    initialize_runtime_state(workspace=ws, repo_workdir=ROOT)
+    initialize_runtime_state(runtime="operator", workspace=ws, repo_workdir=ROOT)
     _set_current_stage(ws, "scout")
 
     state = check_runtime_state(workspace=ws, repo_workdir=ROOT)
@@ -2427,7 +2428,7 @@ def test_state_check_validates_candidate_screened_and_input_classification_shape
     source_path = ws / "input" / "sources" / "source-001.md"
     source_path.parent.mkdir(parents=True, exist_ok=True)
     source_path.write_text("# Source\n\nEvidence.\n", encoding="utf-8")
-    initialize_runtime_state(workspace=ws, repo_workdir=ROOT)
+    initialize_runtime_state(runtime="operator", workspace=ws, repo_workdir=ROOT)
     _write_json_artifact(ws, "candidate_claims.json", _valid_candidate_claims_payload())
     _write_json_artifact(ws, "screened_candidates.json", _valid_screened_candidates_payload())
     _write_input_classification(
@@ -2454,7 +2455,7 @@ def test_state_check_validates_candidate_screened_and_input_classification_shape
 
 def test_registry_intake_rebuild_idempotent(tmp_path: Path) -> None:
     ws = _write_workspace(tmp_path)
-    initialize_runtime_state(workspace=ws, repo_workdir=ROOT)
+    initialize_runtime_state(runtime="operator", workspace=ws, repo_workdir=ROOT)
     _write_json_artifact(ws, "candidate_claims.json", _normalized_candidate_wrapper())
     _write_json_artifact(ws, "screened_candidates.json", _normalized_screened_alias_payload())
 
@@ -2486,7 +2487,7 @@ def test_registry_intake_rebuild_idempotent(tmp_path: Path) -> None:
 
 def test_registry_intake_projection_rejects_cross_run_context(tmp_path: Path) -> None:
     ws = _write_workspace(tmp_path)
-    initialized = initialize_runtime_state(workspace=ws, repo_workdir=ROOT)
+    initialized = initialize_runtime_state(runtime="operator", workspace=ws, repo_workdir=ROOT)
     _write_json_artifact(ws, "candidate_claims.json", _normalized_candidate_wrapper())
     state = check_runtime_state(workspace=ws, repo_workdir=ROOT)
     registry = json.loads(json.dumps(state["artifact_registry"]))
@@ -2507,7 +2508,7 @@ def test_registry_intake_projection_rejects_unknown_version(
     field: str,
 ) -> None:
     ws = _write_workspace(tmp_path)
-    initialized = initialize_runtime_state(workspace=ws, repo_workdir=ROOT)
+    initialized = initialize_runtime_state(runtime="operator", workspace=ws, repo_workdir=ROOT)
     _write_json_artifact(ws, "candidate_claims.json", _normalized_candidate_wrapper())
     state = check_runtime_state(workspace=ws, repo_workdir=ROOT)
     registry = json.loads(json.dumps(state["artifact_registry"]))
@@ -2524,7 +2525,7 @@ def test_registry_intake_projection_rejects_unknown_version(
 
 def test_state_check_accepts_contract_shaped_candidate_claims(tmp_path):
     ws = _write_workspace(tmp_path)
-    initialize_runtime_state(workspace=ws, repo_workdir=ROOT)
+    initialize_runtime_state(runtime="operator", workspace=ws, repo_workdir=ROOT)
     _write_json_artifact(
         ws,
         "candidate_claims.json",
@@ -2556,7 +2557,7 @@ def test_state_check_accepts_contract_shaped_candidate_claims(tmp_path):
 
 def test_state_check_accepts_contract_candidate_with_claim_alias(tmp_path):
     ws = _write_workspace(tmp_path)
-    initialize_runtime_state(workspace=ws, repo_workdir=ROOT)
+    initialize_runtime_state(runtime="operator", workspace=ws, repo_workdir=ROOT)
     _write_json_artifact(
         ws,
         "candidate_claims.json",
@@ -2588,7 +2589,7 @@ def test_state_check_accepts_contract_candidate_with_claim_alias(tmp_path):
 
 def test_state_check_accepts_contract_candidate_with_source_path_only(tmp_path):
     ws = _write_workspace(tmp_path)
-    initialize_runtime_state(workspace=ws, repo_workdir=ROOT)
+    initialize_runtime_state(runtime="operator", workspace=ws, repo_workdir=ROOT)
     _write_json_artifact(
         ws,
         "candidate_claims.json",
@@ -2619,7 +2620,7 @@ def test_state_check_accepts_contract_candidate_with_source_path_only(tmp_path):
 
 def test_state_check_accepts_local_file_candidate_with_source_category(tmp_path):
     ws = _write_workspace(tmp_path)
-    initialize_runtime_state(workspace=ws, repo_workdir=ROOT)
+    initialize_runtime_state(runtime="operator", workspace=ws, repo_workdir=ROOT)
     _write_json_artifact(
         ws,
         "candidate_claims.json",
@@ -2653,7 +2654,7 @@ def test_state_check_accepts_local_file_candidate_with_source_category(tmp_path)
 
 def test_state_check_rejects_contract_candidate_plain_text_source_url(tmp_path):
     ws = _write_workspace(tmp_path)
-    initialize_runtime_state(workspace=ws, repo_workdir=ROOT)
+    initialize_runtime_state(runtime="operator", workspace=ws, repo_workdir=ROOT)
     _write_json_artifact(
         ws,
         "candidate_claims.json",
@@ -2684,7 +2685,7 @@ def test_state_check_rejects_contract_candidate_plain_text_source_url(tmp_path):
 
 def test_state_check_rejects_contract_candidate_without_source_identity(tmp_path):
     ws = _write_workspace(tmp_path)
-    initialize_runtime_state(workspace=ws, repo_workdir=ROOT)
+    initialize_runtime_state(runtime="operator", workspace=ws, repo_workdir=ROOT)
     _write_json_artifact(
         ws,
         "candidate_claims.json",
@@ -2717,7 +2718,7 @@ def test_state_check_rejects_contract_candidate_without_source_identity(tmp_path
 
 def test_state_check_rejects_contract_candidate_without_source_date(tmp_path):
     ws = _write_workspace(tmp_path)
-    initialize_runtime_state(workspace=ws, repo_workdir=ROOT)
+    initialize_runtime_state(runtime="operator", workspace=ws, repo_workdir=ROOT)
     _write_json_artifact(
         ws,
         "candidate_claims.json",
@@ -2749,7 +2750,7 @@ def test_state_check_rejects_contract_candidate_without_source_date(tmp_path):
 
 def test_state_check_marks_candidate_claims_missing_required_field_invalid(tmp_path):
     ws = _write_workspace(tmp_path)
-    initialize_runtime_state(workspace=ws, repo_workdir=ROOT)
+    initialize_runtime_state(runtime="operator", workspace=ws, repo_workdir=ROOT)
     _write_json_artifact(
         ws,
         "candidate_claims.json",
@@ -2765,7 +2766,7 @@ def test_state_check_marks_candidate_claims_missing_required_field_invalid(tmp_p
 
 def test_state_check_marks_duplicate_candidate_claim_ids_invalid(tmp_path):
     ws = _write_workspace(tmp_path)
-    initialize_runtime_state(workspace=ws, repo_workdir=ROOT)
+    initialize_runtime_state(runtime="operator", workspace=ws, repo_workdir=ROOT)
     _write_json_artifact(
         ws,
         "candidate_claims.json",
@@ -2787,7 +2788,7 @@ def test_state_check_marks_duplicate_candidate_claim_ids_invalid(tmp_path):
 
 def test_state_check_accepts_object_shaped_screened_candidates(tmp_path):
     ws = _write_workspace(tmp_path)
-    initialize_runtime_state(workspace=ws, repo_workdir=ROOT)
+    initialize_runtime_state(runtime="operator", workspace=ws, repo_workdir=ROOT)
     _write_candidate_universe(ws, "CAND-001", "CAND-002")
     _write_json_artifact(
         ws,
@@ -2828,7 +2829,7 @@ def test_state_check_accepts_object_shaped_screened_candidates(tmp_path):
 
 def test_state_check_rejects_object_screened_candidates_reason_only_discard_audit(tmp_path):
     ws = _write_workspace(tmp_path)
-    initialize_runtime_state(workspace=ws, repo_workdir=ROOT)
+    initialize_runtime_state(runtime="operator", workspace=ws, repo_workdir=ROOT)
     _write_candidate_universe(ws, "CAND-001", "CAND-002")
     _write_json_artifact(
         ws,
@@ -2866,7 +2867,7 @@ def test_state_check_rejects_object_screened_candidates_reason_only_discard_audi
 
 def test_state_check_accepts_object_screened_candidates_with_source_url_identity(tmp_path):
     ws = _write_workspace(tmp_path)
-    initialize_runtime_state(workspace=ws, repo_workdir=ROOT)
+    initialize_runtime_state(runtime="operator", workspace=ws, repo_workdir=ROOT)
     _write_candidate_universe(ws, "CAND-001", "CAND-002")
     _write_json_artifact(
         ws,
@@ -2909,7 +2910,7 @@ def test_state_check_accepts_object_screened_candidates_with_source_url_identity
 
 def test_state_check_accepts_object_screened_candidates_local_file_category(tmp_path):
     ws = _write_workspace(tmp_path)
-    initialize_runtime_state(workspace=ws, repo_workdir=ROOT)
+    initialize_runtime_state(runtime="operator", workspace=ws, repo_workdir=ROOT)
     _write_candidate_universe(ws, "CAND-001", "CAND-002")
     _write_json_artifact(
         ws,
@@ -2955,7 +2956,7 @@ def test_state_check_accepts_object_screened_candidates_local_file_category(tmp_
 
 def test_state_check_rejects_object_screened_candidates_plain_text_source_url(tmp_path):
     ws = _write_workspace(tmp_path)
-    initialize_runtime_state(workspace=ws, repo_workdir=ROOT)
+    initialize_runtime_state(runtime="operator", workspace=ws, repo_workdir=ROOT)
     _write_candidate_universe(ws, "CAND-001", "CAND-002")
     _write_json_artifact(
         ws,
@@ -2998,7 +2999,7 @@ def test_state_check_rejects_object_screened_candidates_plain_text_source_url(tm
 
 def test_state_check_rejects_object_screened_candidates_without_selected_evidence(tmp_path):
     ws = _write_workspace(tmp_path)
-    initialize_runtime_state(workspace=ws, repo_workdir=ROOT)
+    initialize_runtime_state(runtime="operator", workspace=ws, repo_workdir=ROOT)
     _write_candidate_universe(ws, "CAND-001")
     _write_json_artifact(
         ws,
@@ -3027,7 +3028,7 @@ def test_state_check_rejects_object_screened_candidates_without_selected_evidenc
 
 def test_state_check_rejects_object_screened_candidates_missing_reason(tmp_path):
     ws = _write_workspace(tmp_path)
-    initialize_runtime_state(workspace=ws, repo_workdir=ROOT)
+    initialize_runtime_state(runtime="operator", workspace=ws, repo_workdir=ROOT)
     _write_candidate_universe(ws, "CAND-001", "CAND-002")
     _write_json_artifact(
         ws,
@@ -3064,7 +3065,7 @@ def test_state_check_rejects_object_screened_candidates_missing_reason(tmp_path)
 
 def test_state_check_rejects_screened_candidates_missing_discard_audit(tmp_path):
     ws = _write_workspace(tmp_path)
-    initialize_runtime_state(workspace=ws, repo_workdir=ROOT)
+    initialize_runtime_state(runtime="operator", workspace=ws, repo_workdir=ROOT)
     _write_candidate_universe(ws, "CAND-001", "CAND-002")
     _write_json_artifact(
         ws,
@@ -3096,7 +3097,7 @@ def test_state_check_rejects_screened_candidates_missing_discard_audit(tmp_path)
 
 def test_state_check_accepts_screened_candidates_reason_code_without_legacy_reason(tmp_path):
     ws = _write_workspace(tmp_path)
-    initialize_runtime_state(workspace=ws, repo_workdir=ROOT)
+    initialize_runtime_state(runtime="operator", workspace=ws, repo_workdir=ROOT)
     _write_candidate_universe(ws, "CAND-001", "CAND-002")
     _write_json_artifact(
         ws,
@@ -3134,7 +3135,7 @@ def test_state_check_accepts_screened_candidates_reason_code_without_legacy_reas
 
 def test_state_check_rejects_screened_candidates_discard_count_mismatch(tmp_path):
     ws = _write_workspace(tmp_path)
-    initialize_runtime_state(workspace=ws, repo_workdir=ROOT)
+    initialize_runtime_state(runtime="operator", workspace=ws, repo_workdir=ROOT)
     _write_candidate_universe(ws, "CAND-001", "CAND-002", "CAND-003")
     _write_json_artifact(
         ws,
@@ -3173,7 +3174,7 @@ def test_state_check_rejects_screened_candidates_discard_count_mismatch(tmp_path
 
 def test_state_check_rejects_screened_candidates_unknown_discard_reason_code(tmp_path):
     ws = _write_workspace(tmp_path)
-    initialize_runtime_state(workspace=ws, repo_workdir=ROOT)
+    initialize_runtime_state(runtime="operator", workspace=ws, repo_workdir=ROOT)
     _write_candidate_universe(ws, "CAND-001", "CAND-002")
     _write_json_artifact(
         ws,
@@ -3212,7 +3213,7 @@ def test_state_check_rejects_screened_candidates_unknown_discard_reason_code(tmp
 
 def test_state_check_rejects_screened_candidates_missing_discard_explanation(tmp_path):
     ws = _write_workspace(tmp_path)
-    initialize_runtime_state(workspace=ws, repo_workdir=ROOT)
+    initialize_runtime_state(runtime="operator", workspace=ws, repo_workdir=ROOT)
     _write_candidate_universe(ws, "CAND-001", "CAND-002")
     _write_json_artifact(
         ws,
@@ -3250,7 +3251,7 @@ def test_state_check_rejects_screened_candidates_missing_discard_explanation(tmp
 
 def test_state_check_accepts_screened_candidates_complete_discard_audit(tmp_path):
     ws = _write_workspace(tmp_path)
-    initialize_runtime_state(workspace=ws, repo_workdir=ROOT)
+    initialize_runtime_state(runtime="operator", workspace=ws, repo_workdir=ROOT)
     _write_candidate_universe(
         ws,
         "CAND-001",
@@ -3309,7 +3310,7 @@ def test_state_check_accepts_screened_candidates_complete_discard_audit(tmp_path
 
 def test_state_check_rejects_screened_candidates_total_below_candidate_universe(tmp_path):
     ws = _write_workspace(tmp_path)
-    initialize_runtime_state(workspace=ws, repo_workdir=ROOT)
+    initialize_runtime_state(runtime="operator", workspace=ws, repo_workdir=ROOT)
     _write_json_artifact(
         ws,
         "candidate_claims.json",
@@ -3351,7 +3352,7 @@ def test_state_check_rejects_screened_candidates_total_below_candidate_universe(
 
 def test_state_check_rejects_screened_candidates_unknown_discard_id(tmp_path):
     ws = _write_workspace(tmp_path)
-    initialize_runtime_state(workspace=ws, repo_workdir=ROOT)
+    initialize_runtime_state(runtime="operator", workspace=ws, repo_workdir=ROOT)
     _write_json_artifact(
         ws,
         "candidate_claims.json",
@@ -3403,7 +3404,7 @@ def test_state_check_rejects_screened_candidates_unknown_discard_id(tmp_path):
 
 def test_state_check_rejects_screened_candidates_duplicate_screened_id(tmp_path):
     ws = _write_workspace(tmp_path)
-    initialize_runtime_state(workspace=ws, repo_workdir=ROOT)
+    initialize_runtime_state(runtime="operator", workspace=ws, repo_workdir=ROOT)
     _write_json_artifact(
         ws,
         "candidate_claims.json",
@@ -3452,7 +3453,7 @@ def test_state_check_rejects_screened_candidates_duplicate_screened_id(tmp_path)
 
 def test_state_check_rejects_screened_candidates_missing_id_against_stable_universe(tmp_path):
     ws = _write_workspace(tmp_path)
-    initialize_runtime_state(workspace=ws, repo_workdir=ROOT)
+    initialize_runtime_state(runtime="operator", workspace=ws, repo_workdir=ROOT)
     _write_json_artifact(
         ws,
         "candidate_claims.json",
@@ -3500,7 +3501,7 @@ def test_state_check_rejects_screened_candidates_missing_id_against_stable_unive
 
 def test_state_check_rejects_screened_candidates_missing_id_without_declared_total(tmp_path):
     ws = _write_workspace(tmp_path)
-    initialize_runtime_state(workspace=ws, repo_workdir=ROOT)
+    initialize_runtime_state(runtime="operator", workspace=ws, repo_workdir=ROOT)
     _write_json_artifact(
         ws,
         "candidate_claims.json",
@@ -3548,7 +3549,7 @@ def test_state_check_rejects_screened_candidates_missing_id_without_declared_tot
 
 def test_state_check_rejects_screened_candidates_unknown_id_without_declared_total(tmp_path):
     ws = _write_workspace(tmp_path)
-    initialize_runtime_state(workspace=ws, repo_workdir=ROOT)
+    initialize_runtime_state(runtime="operator", workspace=ws, repo_workdir=ROOT)
     _write_json_artifact(
         ws,
         "candidate_claims.json",
@@ -3600,7 +3601,7 @@ def test_state_check_rejects_screened_candidates_unknown_id_without_declared_tot
 
 def test_state_check_accepts_screened_candidates_total_matching_candidate_universe(tmp_path):
     ws = _write_workspace(tmp_path)
-    initialize_runtime_state(workspace=ws, repo_workdir=ROOT)
+    initialize_runtime_state(runtime="operator", workspace=ws, repo_workdir=ROOT)
     _write_json_artifact(
         ws,
         "candidate_claims.json",
@@ -3649,7 +3650,7 @@ def test_state_check_accepts_screened_candidates_total_matching_candidate_univer
 
 def test_state_check_marks_invalid_screening_status_invalid(tmp_path):
     ws = _write_workspace(tmp_path)
-    initialize_runtime_state(workspace=ws, repo_workdir=ROOT)
+    initialize_runtime_state(runtime="operator", workspace=ws, repo_workdir=ROOT)
     _write_json_artifact(
         ws,
         "screened_candidates.json",
@@ -3665,7 +3666,7 @@ def test_state_check_marks_invalid_screening_status_invalid(tmp_path):
 
 def test_state_check_requires_screening_reason_for_rejected_candidate(tmp_path):
     ws = _write_workspace(tmp_path)
-    initialize_runtime_state(workspace=ws, repo_workdir=ROOT)
+    initialize_runtime_state(runtime="operator", workspace=ws, repo_workdir=ROOT)
     _write_json_artifact(ws, "screened_candidates.json", _valid_screened_candidates_payload(status="rejected"))
 
     state = check_runtime_state(workspace=ws, repo_workdir=ROOT)
@@ -3677,7 +3678,7 @@ def test_state_check_requires_screening_reason_for_rejected_candidate(tmp_path):
 
 def test_state_check_marks_input_classification_path_escape_invalid(tmp_path):
     ws = _write_workspace(tmp_path)
-    initialize_runtime_state(workspace=ws, repo_workdir=ROOT)
+    initialize_runtime_state(runtime="operator", workspace=ws, repo_workdir=ROOT)
     _write_input_classification(
         ws,
         {
@@ -3698,7 +3699,7 @@ def test_state_check_marks_input_classification_path_escape_invalid(tmp_path):
 
 def test_state_decide_validates_decision_vocabulary(tmp_path, capsys):
     ws = _write_workspace(tmp_path)
-    initialize_runtime_state(workspace=ws, repo_workdir=ROOT)
+    initialize_runtime_state(runtime="operator", workspace=ws, repo_workdir=ROOT)
 
     rc = main([
         "state",
@@ -3724,7 +3725,7 @@ def test_state_decide_validates_decision_vocabulary(tmp_path, capsys):
 
 def test_state_decide_records_event_and_last_decision(tmp_path):
     ws = _write_workspace(tmp_path)
-    initialize_runtime_state(workspace=ws, repo_workdir=ROOT)
+    initialize_runtime_state(runtime="operator", workspace=ws, repo_workdir=ROOT)
 
     state = record_decision(
         workspace=ws,
@@ -3744,7 +3745,7 @@ def test_state_decide_records_event_and_last_decision(tmp_path):
 
 def test_state_decide_delegate_repair_requires_repair_transaction_without_mutation(tmp_path):
     ws = _write_workspace(tmp_path)
-    initialize_runtime_state(workspace=ws, repo_workdir=ROOT)
+    initialize_runtime_state(runtime="operator", workspace=ws, repo_workdir=ROOT)
     _advance_to_auditor(ws)
     _write_editor_repair_gate_report(ws)
     registry_path = _state_file(ws, "artifact_registry")
@@ -3785,7 +3786,7 @@ def test_state_decide_delegate_repair_requires_repair_transaction_without_mutati
 
 def test_state_decide_delegate_repair_human_output_points_to_repair_transaction(tmp_path, capsys):
     ws = _write_workspace(tmp_path)
-    initialize_runtime_state(workspace=ws, repo_workdir=ROOT)
+    initialize_runtime_state(runtime="operator", workspace=ws, repo_workdir=ROOT)
     _advance_to_auditor(ws)
     _write_editor_repair_gate_report(ws)
 
@@ -3818,7 +3819,7 @@ def test_state_decide_delegate_repair_human_output_points_to_repair_transaction(
 
 def test_state_decide_delegate_repair_uses_current_gate_over_stale_gate(tmp_path):
     ws = _write_workspace(tmp_path)
-    initialize_runtime_state(workspace=ws, repo_workdir=ROOT)
+    initialize_runtime_state(runtime="operator", workspace=ws, repo_workdir=ROOT)
     _advance_to_auditor(ws)
     _write_editor_repair_gate_report(ws)
     _write_finalize_human_gate_report(ws)
@@ -3843,7 +3844,7 @@ def test_state_decide_delegate_repair_uses_current_gate_over_stale_gate(tmp_path
 
 def test_state_decide_delegate_repair_preserves_selected_non_gate_repair_route(tmp_path):
     ws = _write_workspace(tmp_path)
-    initialize_runtime_state(workspace=ws, repo_workdir=ROOT)
+    initialize_runtime_state(runtime="operator", workspace=ws, repo_workdir=ROOT)
     _advance_to_auditor(ws)
     _write_editor_repair_audit_report(ws)
 
@@ -3869,7 +3870,7 @@ def test_state_decide_delegate_repair_preserves_selected_non_gate_repair_route(t
 
 def test_state_decide_delegate_repair_non_gate_uses_route_index_for_duplicate_finding_ids(tmp_path):
     ws = _write_workspace(tmp_path)
-    initialize_runtime_state(workspace=ws, repo_workdir=ROOT)
+    initialize_runtime_state(runtime="operator", workspace=ws, repo_workdir=ROOT)
     _advance_to_auditor(ws)
     _write_current_gate_report(
         ws,
@@ -3915,7 +3916,7 @@ def test_state_decide_delegate_repair_non_gate_uses_route_index_for_duplicate_fi
 
 def test_stage_complete_records_transaction_event_and_advances(tmp_path):
     ws = _write_workspace(tmp_path)
-    initialize_runtime_state(workspace=ws, repo_workdir=ROOT)
+    initialize_runtime_state(runtime="operator", workspace=ws, repo_workdir=ROOT)
 
     state = complete_stage_transaction(
         workspace=ws,
@@ -3940,7 +3941,7 @@ def test_stage_complete_records_transaction_event_and_advances(tmp_path):
 
 def test_stage_complete_records_runtime_model_provenance_from_cli(tmp_path, capsys):
     ws = _write_workspace(tmp_path)
-    initialize_runtime_state(workspace=ws, repo_workdir=ROOT)
+    initialize_runtime_state(runtime="operator", workspace=ws, repo_workdir=ROOT)
 
     rc = main([
         "state",
@@ -3986,7 +3987,7 @@ def test_stage_complete_records_runtime_model_provenance_from_cli(tmp_path, caps
 
 def test_stage_complete_duplicate_rejects_without_contamination_event(tmp_path):
     ws = _write_workspace(tmp_path)
-    initialize_runtime_state(workspace=ws, repo_workdir=ROOT)
+    initialize_runtime_state(runtime="operator", workspace=ws, repo_workdir=ROOT)
     complete_stage_transaction(
         workspace=ws,
         repo_workdir=ROOT,
@@ -4039,7 +4040,7 @@ def test_stage_complete_duplicate_rejects_without_contamination_event(tmp_path):
 
 def test_stage_complete_duplicate_validation_runs_before_contamination_event(tmp_path, monkeypatch):
     ws = _write_workspace(tmp_path)
-    initialize_runtime_state(workspace=ws, repo_workdir=ROOT)
+    initialize_runtime_state(runtime="operator", workspace=ws, repo_workdir=ROOT)
     complete_stage_transaction(
         workspace=ws,
         repo_workdir=ROOT,
@@ -4065,7 +4066,7 @@ def test_stage_complete_duplicate_validation_runs_before_contamination_event(tmp
 
 def test_stage_complete_missing_required_output_writes_nothing(tmp_path):
     ws = _write_workspace(tmp_path)
-    initialize_runtime_state(workspace=ws, repo_workdir=ROOT)
+    initialize_runtime_state(runtime="operator", workspace=ws, repo_workdir=ROOT)
     _set_current_stage(ws, "scout")
     before_workflow = json.loads(_state_file(ws, "workflow_state").read_text(encoding="utf-8"))
     before_events = _event_records(ws)
@@ -4085,7 +4086,7 @@ def test_stage_complete_missing_required_output_writes_nothing(tmp_path):
 
 def test_stage_complete_cli_json_error_includes_error_code(tmp_path, capsys):
     ws = _write_workspace(tmp_path)
-    initialize_runtime_state(workspace=ws, repo_workdir=ROOT)
+    initialize_runtime_state(runtime="operator", workspace=ws, repo_workdir=ROOT)
 
     rc = main([
         "state",
@@ -4109,7 +4110,7 @@ def test_stage_complete_cli_json_error_includes_error_code(tmp_path, capsys):
 
 def test_stage_complete_event_append_failure_is_detectable_partial_write(tmp_path, monkeypatch):
     ws = _write_workspace(tmp_path)
-    initialize_runtime_state(workspace=ws, repo_workdir=ROOT)
+    initialize_runtime_state(runtime="operator", workspace=ws, repo_workdir=ROOT)
 
     def fail_append(*args, **kwargs):
         raise RuntimeStateError("event append failed")
@@ -4137,7 +4138,7 @@ def test_stage_complete_event_append_failure_is_detectable_partial_write(tmp_pat
 
 def test_stage_complete_stale_gate_report_does_not_block_early_stage(tmp_path):
     ws = _write_workspace(tmp_path)
-    initialize_runtime_state(workspace=ws, repo_workdir=ROOT)
+    initialize_runtime_state(runtime="operator", workspace=ws, repo_workdir=ROOT)
     _set_current_stage(ws, "scout")
     _write_json_artifact(ws, "candidate_claims.json")
     _write_json_artifact(ws, "screened_candidates.json")
@@ -4159,7 +4160,7 @@ def test_default_topology_scout_completion_requires_screened_candidates(tmp_path
         "default",
     )
     ws = _write_workspace(tmp_path)
-    initialize_runtime_state(workspace=ws, repo_workdir=repo)
+    initialize_runtime_state(runtime="operator", workspace=ws, repo_workdir=repo)
     _set_current_stage(ws, "scout")
     _write_json_artifact(ws, "candidate_claims.json")
     before_workflow = json.loads(_state_file(ws, "workflow_state").read_text(encoding="utf-8"))
@@ -4185,7 +4186,7 @@ def test_default_topology_scout_completion_rejects_screened_candidate_universe_m
         "default",
     )
     ws = _write_workspace(tmp_path)
-    initialize_runtime_state(workspace=ws, repo_workdir=repo)
+    initialize_runtime_state(runtime="operator", workspace=ws, repo_workdir=repo)
     _set_current_stage(ws, "scout")
     _write_json_artifact(
         ws,
@@ -4300,7 +4301,7 @@ def _write_custom_screening_path_fixture(
 def test_strict_screener_completion_uses_contract_candidate_universe(tmp_path: Path) -> None:
     repo = _repo_with_role_topology(tmp_path, "strict")
     ws = _write_workspace(tmp_path)
-    initialize_runtime_state(workspace=ws, repo_workdir=repo)
+    initialize_runtime_state(runtime="operator", workspace=ws, repo_workdir=repo)
     _set_current_stage(ws, "screener")
     _write_custom_screening_path_fixture(
         repo=repo,
@@ -4327,7 +4328,7 @@ def test_strict_screener_completion_rejects_unknown_contract_candidate_without_w
 ) -> None:
     repo = _repo_with_role_topology(tmp_path, "strict")
     ws = _write_workspace(tmp_path)
-    initialize_runtime_state(workspace=ws, repo_workdir=repo)
+    initialize_runtime_state(runtime="operator", workspace=ws, repo_workdir=repo)
     _set_current_stage(ws, "screener")
     _write_custom_screening_path_fixture(
         repo=repo,
@@ -4361,7 +4362,7 @@ def test_default_topology_scout_completion_satisfies_screener(tmp_path):
         "default",
     )
     ws = _write_workspace(tmp_path)
-    initialize_runtime_state(workspace=ws, repo_workdir=repo)
+    initialize_runtime_state(runtime="operator", workspace=ws, repo_workdir=repo)
     _set_current_stage(ws, "scout")
     _write_json_artifact(ws, "candidate_claims.json")
     _write_json_artifact(ws, "screened_candidates.json")
@@ -4408,7 +4409,7 @@ def test_topology_completion_supports_mixed_agent_and_non_agent_artifacts(
         encoding="utf-8",
     )
     ws = _write_workspace(tmp_path)
-    initialize_runtime_state(workspace=ws, repo_workdir=repo)
+    initialize_runtime_state(runtime="operator", workspace=ws, repo_workdir=repo)
     _set_current_stage(ws, "scout")
     _write_json_artifact(ws, "candidate_claims.json", _normalized_candidate_wrapper())
     _write_json_artifact(ws, "screened_candidates.json", _normalized_screened_alias_payload())
@@ -4462,7 +4463,7 @@ def test_topology_completion_binds_intake_to_contract_paths(
         encoding="utf-8",
     )
     ws = _write_workspace(tmp_path)
-    initialize_runtime_state(workspace=ws, repo_workdir=repo)
+    initialize_runtime_state(runtime="operator", workspace=ws, repo_workdir=repo)
     _set_current_stage(ws, "scout")
     custom_dir = ws / "custom"
     custom_dir.mkdir()
@@ -4516,7 +4517,7 @@ def test_default_topology_satisfaction_rejects_unrefreshed_supersede_stale_targe
         "default",
     )
     ws = _write_workspace(tmp_path)
-    initialize_runtime_state(workspace=ws, repo_workdir=repo)
+    initialize_runtime_state(runtime="operator", workspace=ws, repo_workdir=repo)
     _set_current_stage(ws, "claim-ledger")
     (ws / "source_candidates.yaml").write_text(
         "schema_version: mabw.source_candidates.v1\n"
@@ -4663,7 +4664,7 @@ def test_default_topology_satisfaction_rejects_unrefreshed_supersede_stale_targe
 def test_default_topology_intake_views(tmp_path: Path) -> None:
     repo = _repo_with_role_topology(tmp_path, "default")
     ws = _write_workspace(tmp_path)
-    initialize_runtime_state(workspace=ws, repo_workdir=repo)
+    initialize_runtime_state(runtime="operator", workspace=ws, repo_workdir=repo)
     _set_current_stage(ws, "scout")
     _write_json_artifact(ws, "candidate_claims.json", _normalized_candidate_wrapper())
     _write_json_artifact(ws, "screened_candidates.json", _normalized_screened_alias_payload())
@@ -4691,7 +4692,7 @@ def test_default_topology_intake_views(tmp_path: Path) -> None:
 def test_strict_scout_intake_view(tmp_path: Path) -> None:
     repo = _repo_with_role_topology(tmp_path, "strict")
     ws = _write_workspace(tmp_path)
-    initialize_runtime_state(workspace=ws, repo_workdir=repo)
+    initialize_runtime_state(runtime="operator", workspace=ws, repo_workdir=repo)
     _set_current_stage(ws, "scout")
     _write_json_artifact(ws, "candidate_claims.json", _normalized_candidate_wrapper())
 
@@ -4711,7 +4712,7 @@ def test_strict_scout_intake_view(tmp_path: Path) -> None:
 def test_strict_screener_output_intake(tmp_path: Path) -> None:
     repo = _repo_with_role_topology(tmp_path, "strict")
     ws = _write_workspace(tmp_path)
-    initialize_runtime_state(workspace=ws, repo_workdir=repo)
+    initialize_runtime_state(runtime="operator", workspace=ws, repo_workdir=repo)
     _set_current_stage(ws, "scout")
     _write_json_artifact(ws, "candidate_claims.json", _normalized_candidate_wrapper())
     complete_stage_transaction(
@@ -4741,7 +4742,7 @@ def test_strict_screener_output_intake(tmp_path: Path) -> None:
 def test_topology_satisfaction_intake(tmp_path: Path) -> None:
     repo = _repo_with_role_topology(tmp_path, "default")
     ws = _write_workspace(tmp_path)
-    initialize_runtime_state(workspace=ws, repo_workdir=repo)
+    initialize_runtime_state(runtime="operator", workspace=ws, repo_workdir=repo)
     _set_current_stage(ws, "scout")
     _write_json_artifact(ws, "candidate_claims.json", _normalized_candidate_wrapper())
     _write_json_artifact(ws, "screened_candidates.json", _normalized_screened_alias_payload())
@@ -4792,7 +4793,7 @@ def test_topology_satisfaction_intake(tmp_path: Path) -> None:
 def test_public_safe_recoverable_intake_fixture(tmp_path: Path) -> None:
     repo = _repo_with_role_topology(tmp_path, "default")
     ws = _write_workspace(tmp_path)
-    initialize_runtime_state(workspace=ws, repo_workdir=repo)
+    initialize_runtime_state(runtime="operator", workspace=ws, repo_workdir=repo)
     _set_current_stage(ws, "scout")
     fixture_root = ROOT / "tests" / "fixtures" / "agent_artifact_intake" / "recoverable"
     for filename in ("candidate_claims.json", "screened_candidates.json"):
@@ -4818,7 +4819,7 @@ def test_public_safe_recoverable_intake_fixture(tmp_path: Path) -> None:
 def test_public_safe_fatal_intake_fixture(tmp_path: Path) -> None:
     repo = _repo_with_role_topology(tmp_path, "default")
     ws = _write_workspace(tmp_path)
-    initialize_runtime_state(workspace=ws, repo_workdir=repo)
+    initialize_runtime_state(runtime="operator", workspace=ws, repo_workdir=repo)
     _set_current_stage(ws, "scout")
     fixture_root = ROOT / "tests" / "fixtures" / "agent_artifact_intake"
     shutil.copyfile(
@@ -4856,7 +4857,7 @@ def test_supersede_stale_precedes_intake_validity(tmp_path):
         "default",
     )
     ws = _write_workspace(tmp_path)
-    initialize_runtime_state(workspace=ws, repo_workdir=repo)
+    initialize_runtime_state(runtime="operator", workspace=ws, repo_workdir=repo)
     _set_current_stage(ws, "claim-ledger")
     (ws / "source_candidates.yaml").write_text(
         "schema_version: mabw.source_candidates.v1\n"
@@ -5051,7 +5052,7 @@ def test_default_topology_screener_replay_rejects_without_contamination(tmp_path
         "default",
     )
     ws = _write_workspace(tmp_path)
-    initialize_runtime_state(workspace=ws, repo_workdir=repo)
+    initialize_runtime_state(runtime="operator", workspace=ws, repo_workdir=repo)
     _set_current_stage(ws, "scout")
     _write_json_artifact(ws, "candidate_claims.json")
     _write_json_artifact(ws, "screened_candidates.json")
@@ -5091,7 +5092,7 @@ def test_default_topology_satisfied_screener_artifact_is_frozen(tmp_path):
         "default",
     )
     ws = _write_workspace(tmp_path)
-    initialize_runtime_state(workspace=ws, repo_workdir=repo)
+    initialize_runtime_state(runtime="operator", workspace=ws, repo_workdir=repo)
     _set_current_stage(ws, "scout")
     _write_json_artifact(
         ws,
@@ -5173,7 +5174,7 @@ def test_topology_satisfaction_respects_target_stage_feedback_blockers(tmp_path)
         "default",
     )
     ws = _write_workspace(tmp_path)
-    initialize_runtime_state(workspace=ws, repo_workdir=repo)
+    initialize_runtime_state(runtime="operator", workspace=ws, repo_workdir=repo)
     _set_current_stage(ws, "scout")
     _write_json_artifact(ws, "candidate_claims.json")
     _write_json_artifact(ws, "screened_candidates.json")
@@ -5198,7 +5199,7 @@ def test_topology_satisfaction_respects_target_stage_feedback_blockers(tmp_path)
 def test_strict_topology_keeps_screener_independent(tmp_path):
     repo = _repo_with_role_topology(tmp_path, "strict")
     ws = _write_workspace(tmp_path)
-    initialize_runtime_state(workspace=ws, repo_workdir=repo)
+    initialize_runtime_state(runtime="operator", workspace=ws, repo_workdir=repo)
     _set_current_stage(ws, "scout")
     _write_json_artifact(ws, "candidate_claims.json")
 
@@ -5223,7 +5224,7 @@ def test_strict_topology_keeps_screener_independent(tmp_path):
 def test_human_assisted_topology_analyst_completion_satisfies_editor(tmp_path):
     repo = _repo_with_role_topology(tmp_path, "human_assisted")
     ws = _write_workspace(tmp_path)
-    initialize_runtime_state(workspace=ws, repo_workdir=repo)
+    initialize_runtime_state(runtime="operator", workspace=ws, repo_workdir=repo)
     _set_current_stage(ws, "analyst")
     (_intermediate(ws) / "audited_brief.md").write_text("# Brief\n\nWriter draft.\n", encoding="utf-8")
 
@@ -5246,7 +5247,7 @@ def test_human_assisted_topology_analyst_completion_satisfies_editor(tmp_path):
 
 def test_claim_ledger_stage_complete_rejects_non_ledger_json_shape(tmp_path):
     ws = _write_workspace(tmp_path)
-    initialize_runtime_state(workspace=ws, repo_workdir=ROOT)
+    initialize_runtime_state(runtime="operator", workspace=ws, repo_workdir=ROOT)
     _set_current_stage(ws, "claim-ledger")
     _write_json_artifact(ws, "claim_ledger.json", '{"not_claims": []}\n')
     before_workflow = json.loads(_state_file(ws, "workflow_state").read_text(encoding="utf-8"))
@@ -5269,7 +5270,7 @@ def test_claim_ledger_stage_complete_rejects_non_ledger_json_shape(tmp_path):
 
 def test_claim_ledger_stage_complete_rejects_invalid_claim_schema(tmp_path):
     ws = _write_workspace(tmp_path)
-    initialize_runtime_state(workspace=ws, repo_workdir=ROOT)
+    initialize_runtime_state(runtime="operator", workspace=ws, repo_workdir=ROOT)
     _set_current_stage(ws, "claim-ledger")
     _write_json_artifact(
         ws,
@@ -5302,7 +5303,7 @@ def test_claim_ledger_stage_complete_rejects_invalid_claim_schema(tmp_path):
 
 def test_freeze_claim_ledger_transaction_writes_canonical_ledger(tmp_path):
     ws = _write_workspace(tmp_path)
-    initialize_runtime_state(workspace=ws, repo_workdir=ROOT)
+    initialize_runtime_state(runtime="operator", workspace=ws, repo_workdir=ROOT)
     _set_current_stage(ws, "claim-ledger")
     _write_json_artifact(ws, "claim_drafts.json", _valid_claim_drafts_payload())
 
@@ -5335,7 +5336,7 @@ def test_freeze_claim_ledger_transaction_writes_canonical_ledger(tmp_path):
 
 def test_freeze_binds_intake_projection(tmp_path: Path) -> None:
     ws = _write_workspace(tmp_path)
-    initialize_runtime_state(workspace=ws, repo_workdir=ROOT)
+    initialize_runtime_state(runtime="operator", workspace=ws, repo_workdir=ROOT)
     _set_current_stage(ws, "claim-ledger")
     _write_json_artifact(ws, "claim_drafts.json", _normalized_claim_drafts_payload())
 
@@ -5374,7 +5375,7 @@ def test_freeze_binding_rejects_invalid_control_lineage(
     expected_reason: str,
 ) -> None:
     ws = _write_workspace(tmp_path)
-    initialize_runtime_state(workspace=ws, repo_workdir=ROOT)
+    initialize_runtime_state(runtime="operator", workspace=ws, repo_workdir=ROOT)
     _set_current_stage(ws, "claim-ledger")
     _write_json_artifact(ws, "claim_drafts.json", _normalized_claim_drafts_payload())
     freeze_claim_ledger_transaction(workspace=ws, repo_workdir=ROOT)
@@ -5407,7 +5408,7 @@ def test_freeze_binding_rejects_invalid_control_lineage(
 
 def test_freeze_rejects_projection_mismatch(tmp_path: Path) -> None:
     ws = _write_workspace(tmp_path)
-    initialize_runtime_state(workspace=ws, repo_workdir=ROOT)
+    initialize_runtime_state(runtime="operator", workspace=ws, repo_workdir=ROOT)
     _set_current_stage(ws, "claim-ledger")
     _write_json_artifact(ws, "claim_drafts.json", _normalized_claim_drafts_payload())
     check_runtime_state(workspace=ws, repo_workdir=ROOT)
@@ -5435,7 +5436,7 @@ def test_freeze_rejects_projection_mismatch(tmp_path: Path) -> None:
 
 def test_repeat_freeze_rejects_raw_drift(tmp_path: Path) -> None:
     ws = _write_workspace(tmp_path)
-    initialize_runtime_state(workspace=ws, repo_workdir=ROOT)
+    initialize_runtime_state(runtime="operator", workspace=ws, repo_workdir=ROOT)
     _set_current_stage(ws, "claim-ledger")
     path = _intermediate(ws) / "claim_drafts.json"
     _write_json_artifact(ws, "claim_drafts.json", _normalized_claim_drafts_payload())
@@ -5462,7 +5463,7 @@ def test_repeat_freeze_rejects_raw_drift(tmp_path: Path) -> None:
 
 def test_repeat_freeze_rejects_policy_drift(tmp_path: Path) -> None:
     ws = _write_workspace(tmp_path)
-    initialize_runtime_state(workspace=ws, repo_workdir=ROOT)
+    initialize_runtime_state(runtime="operator", workspace=ws, repo_workdir=ROOT)
     _set_current_stage(ws, "claim-ledger")
     _write_json_artifact(ws, "claim_drafts.json", _normalized_claim_drafts_payload())
     freeze_claim_ledger_transaction(workspace=ws, repo_workdir=ROOT)
@@ -5488,7 +5489,7 @@ def test_freeze_intake_binding_rolls_back_atomically(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     ws = _write_workspace(tmp_path)
-    initialize_runtime_state(workspace=ws, repo_workdir=ROOT)
+    initialize_runtime_state(runtime="operator", workspace=ws, repo_workdir=ROOT)
     _set_current_stage(ws, "claim-ledger")
     _write_json_artifact(ws, "claim_drafts.json", _normalized_claim_drafts_payload())
     manifest_before = _state_file(ws, "runtime_manifest").read_bytes()
@@ -5553,7 +5554,7 @@ def test_freeze_binds_claim_paths_from_artifact_contracts(
         encoding="utf-8",
     )
     ws = _write_workspace(tmp_path)
-    initialize_runtime_state(workspace=ws, repo_workdir=repo)
+    initialize_runtime_state(runtime="operator", workspace=ws, repo_workdir=repo)
     _set_current_stage(ws, "claim-ledger")
     custom_dir = ws / "custom"
     custom_dir.mkdir()
@@ -5629,7 +5630,7 @@ def test_metadata_enrichment_binds_claim_paths_from_artifact_contracts(
         encoding="utf-8",
     )
     ws = _write_workspace(tmp_path)
-    initialize_runtime_state(workspace=ws, repo_workdir=repo)
+    initialize_runtime_state(runtime="operator", workspace=ws, repo_workdir=repo)
     _set_current_stage(ws, "claim-ledger")
     _add_imported_source_authority(ws, metadata={"published_at": "2026-06-01"})
     _add_imported_source_authority(ws, source_id="SRC-002", filename="source-002.json")
@@ -5719,7 +5720,7 @@ def test_metadata_enrichment_binds_claim_paths_from_artifact_contracts(
 
 def test_legacy_freeze_binding_behavior(tmp_path: Path) -> None:
     ws = _write_workspace(tmp_path)
-    initialize_runtime_state(workspace=ws, repo_workdir=ROOT)
+    initialize_runtime_state(runtime="operator", workspace=ws, repo_workdir=ROOT)
     _set_current_stage(ws, "claim-ledger")
     _write_json_artifact(ws, "claim_drafts.json", _valid_claim_drafts_payload())
     frozen = freeze_claim_ledger_transaction(workspace=ws, repo_workdir=ROOT)
@@ -5748,7 +5749,7 @@ def test_current_freeze_hash_requires_metadata_enrichment_lineage(
     tmp_path: Path,
 ) -> None:
     ws = _write_workspace(tmp_path)
-    initialize_runtime_state(workspace=ws, repo_workdir=ROOT)
+    initialize_runtime_state(runtime="operator", workspace=ws, repo_workdir=ROOT)
     _set_current_stage(ws, "claim-ledger")
     _write_json_artifact(ws, "claim_drafts.json", _valid_claim_drafts_payload())
     freeze_claim_ledger_transaction(workspace=ws, repo_workdir=ROOT)
@@ -5797,7 +5798,7 @@ def test_current_freeze_hash_requires_metadata_enrichment_lineage(
 
 def test_legacy_freeze_remains_valid_after_metadata_enrichment(tmp_path: Path) -> None:
     ws = _write_workspace(tmp_path)
-    initialize_runtime_state(workspace=ws, repo_workdir=ROOT)
+    initialize_runtime_state(runtime="operator", workspace=ws, repo_workdir=ROOT)
     _set_current_stage(ws, "claim-ledger")
     _add_imported_source_authority(ws, metadata={"published_at": "2026-06-01"})
     _add_imported_source_authority(ws, source_id="SRC-002", filename="source-002.json")
@@ -5920,7 +5921,7 @@ def test_legacy_freeze_rejects_invalid_metadata_enrichment_lineage(
     expected_reason: str,
 ) -> None:
     ws = _write_workspace(tmp_path)
-    initialized = initialize_runtime_state(workspace=ws, repo_workdir=ROOT)
+    initialized = initialize_runtime_state(runtime="operator", workspace=ws, repo_workdir=ROOT)
     _set_current_stage(ws, "claim-ledger")
     _add_imported_source_authority(ws, metadata={"published_at": "2026-06-01"})
     _add_imported_source_authority(ws, source_id="SRC-002", filename="source-002.json")
@@ -6045,7 +6046,7 @@ def test_legacy_freeze_rejects_invalid_metadata_enrichment_lineage(
 
 def test_legacy_freeze_rejects_cross_run_transplant(tmp_path: Path) -> None:
     ws_a = _write_workspace(tmp_path / "run-a")
-    initialized_a = initialize_runtime_state(workspace=ws_a, repo_workdir=ROOT)
+    initialized_a = initialize_runtime_state(runtime="operator", workspace=ws_a, repo_workdir=ROOT)
     _set_current_stage(ws_a, "claim-ledger")
     _write_json_artifact(ws_a, "claim_drafts.json", _valid_claim_drafts_payload())
     frozen_a = freeze_claim_ledger_transaction(workspace=ws_a, repo_workdir=ROOT)
@@ -6053,7 +6054,7 @@ def test_legacy_freeze_rejects_cross_run_transplant(tmp_path: Path) -> None:
     legacy_freeze = _legacy_claim_ledger_freeze(current)
 
     ws_b = _write_workspace(tmp_path / "run-b")
-    initialized_b = initialize_runtime_state(workspace=ws_b, repo_workdir=ROOT)
+    initialized_b = initialize_runtime_state(runtime="operator", workspace=ws_b, repo_workdir=ROOT)
     _set_current_stage(ws_b, "claim-ledger")
     _write_json_artifact(ws_b, "claim_drafts.json", _valid_claim_drafts_payload())
     (_intermediate(ws_b) / "claim_ledger.json").write_bytes(
@@ -6081,7 +6082,7 @@ def test_legacy_freeze_rejects_cross_run_transplant(tmp_path: Path) -> None:
 
 def test_freeze_binding_rejects_duplicate_transaction_events(tmp_path: Path) -> None:
     ws = _write_workspace(tmp_path)
-    initialized = initialize_runtime_state(workspace=ws, repo_workdir=ROOT)
+    initialized = initialize_runtime_state(runtime="operator", workspace=ws, repo_workdir=ROOT)
     _set_current_stage(ws, "claim-ledger")
     _write_json_artifact(ws, "claim_drafts.json", _valid_claim_drafts_payload())
     frozen = freeze_claim_ledger_transaction(workspace=ws, repo_workdir=ROOT)
@@ -6139,7 +6140,7 @@ def test_freeze_binding_rejects_wrong_event_identity(
     expected_reason: str,
 ) -> None:
     ws = _write_workspace(tmp_path)
-    initialize_runtime_state(workspace=ws, repo_workdir=ROOT)
+    initialize_runtime_state(runtime="operator", workspace=ws, repo_workdir=ROOT)
     _set_current_stage(ws, "claim-ledger")
     _write_json_artifact(ws, "claim_drafts.json", _valid_claim_drafts_payload())
     freeze_claim_ledger_transaction(workspace=ws, repo_workdir=ROOT)
@@ -6188,7 +6189,7 @@ def test_freeze_binding_rejects_wrong_event_path_identity(
     expected_reason: str,
 ) -> None:
     ws = _write_workspace(tmp_path)
-    initialize_runtime_state(workspace=ws, repo_workdir=ROOT)
+    initialize_runtime_state(runtime="operator", workspace=ws, repo_workdir=ROOT)
     _set_current_stage(ws, "claim-ledger")
     _write_json_artifact(ws, "claim_drafts.json", _valid_claim_drafts_payload())
     freeze_claim_ledger_transaction(workspace=ws, repo_workdir=ROOT)
@@ -6217,7 +6218,7 @@ def test_freeze_binding_rejects_wrong_event_path_identity(
 
 def test_unknown_freeze_binding_schema_fails_closed(tmp_path: Path) -> None:
     ws = _write_workspace(tmp_path)
-    initialize_runtime_state(workspace=ws, repo_workdir=ROOT)
+    initialize_runtime_state(runtime="operator", workspace=ws, repo_workdir=ROOT)
     _set_current_stage(ws, "claim-ledger")
     _write_json_artifact(ws, "claim_drafts.json", _valid_claim_drafts_payload())
     freeze_claim_ledger_transaction(workspace=ws, repo_workdir=ROOT)
@@ -6255,7 +6256,7 @@ def test_stale_claim_drafts_blocks_repeat_freeze_and_stage_completion(
     operation: str,
 ) -> None:
     ws = _write_workspace(tmp_path)
-    initialized = initialize_runtime_state(workspace=ws, repo_workdir=ROOT)
+    initialized = initialize_runtime_state(runtime="operator", workspace=ws, repo_workdir=ROOT)
     _set_current_stage(ws, "claim-ledger")
     _write_json_artifact(ws, "claim_drafts.json", _normalized_claim_drafts_payload())
     frozen = freeze_claim_ledger_transaction(workspace=ws, repo_workdir=ROOT)
@@ -6335,7 +6336,7 @@ def test_stale_claim_drafts_blocks_repeat_freeze_and_stage_completion(
 
 def test_freeze_claim_ledger_preserves_draft_provenance_metadata(tmp_path):
     ws = _write_workspace(tmp_path)
-    initialize_runtime_state(workspace=ws, repo_workdir=ROOT)
+    initialize_runtime_state(runtime="operator", workspace=ws, repo_workdir=ROOT)
     _set_current_stage(ws, "claim-ledger")
     _write_json_artifact(
         ws,
@@ -6391,7 +6392,7 @@ def test_freeze_claim_ledger_preserves_draft_provenance_metadata(tmp_path):
 
 def test_freeze_claim_ledger_normalizes_blank_draft_source_type_to_default(tmp_path):
     ws = _write_workspace(tmp_path)
-    initialize_runtime_state(workspace=ws, repo_workdir=ROOT)
+    initialize_runtime_state(runtime="operator", workspace=ws, repo_workdir=ROOT)
     _set_current_stage(ws, "claim-ledger")
     _write_json_artifact(
         ws,
@@ -6425,7 +6426,7 @@ def test_freeze_claim_ledger_normalizes_blank_draft_source_type_to_default(tmp_p
 
 def test_enrich_claim_metadata_fills_source_type_after_blank_draft_default(tmp_path):
     ws = _write_workspace(tmp_path)
-    initialize_runtime_state(workspace=ws, repo_workdir=ROOT)
+    initialize_runtime_state(runtime="operator", workspace=ws, repo_workdir=ROOT)
     _set_current_stage(ws, "claim-ledger")
     _add_imported_source_authority(
         ws,
@@ -6469,7 +6470,7 @@ def test_enrich_claim_metadata_fills_source_type_after_blank_draft_default(tmp_p
 
 def test_enrich_claim_metadata_uses_imported_source_evidence(tmp_path):
     ws = _write_workspace(tmp_path)
-    initialize_runtime_state(workspace=ws, repo_workdir=ROOT)
+    initialize_runtime_state(runtime="operator", workspace=ws, repo_workdir=ROOT)
     _set_current_stage(ws, "claim-ledger")
     _add_imported_source_authority(
         ws,
@@ -6596,7 +6597,7 @@ def test_claim_metadata_enrichment_mirrors_source_type_from_existing_metadata(
 
 def test_enrich_claim_metadata_rejects_unrecorded_rerun_mutation(tmp_path):
     ws = _write_workspace(tmp_path)
-    initialize_runtime_state(workspace=ws, repo_workdir=ROOT)
+    initialize_runtime_state(runtime="operator", workspace=ws, repo_workdir=ROOT)
     _set_current_stage(ws, "claim-ledger")
     _add_imported_source_authority(
         ws,
@@ -6653,7 +6654,7 @@ def test_enrich_claim_metadata_rejects_unrecorded_rerun_mutation(tmp_path):
 
 def test_enrich_claim_metadata_updates_completed_claim_ledger_stage_hash(tmp_path):
     ws = _write_workspace(tmp_path)
-    initialize_runtime_state(workspace=ws, repo_workdir=ROOT)
+    initialize_runtime_state(runtime="operator", workspace=ws, repo_workdir=ROOT)
     _set_current_stage(ws, "claim-ledger")
     _add_imported_source_authority(ws, metadata={"published_at": "2026-06-01"})
     _add_imported_source_authority(ws, source_id="SRC-002", filename="source-002.json")
@@ -6830,7 +6831,7 @@ def test_enrich_claim_metadata_preserves_fast_rerun_import_after_chained_enrichm
 
 def test_state_enrich_claim_metadata_cli_json(tmp_path, capsys):
     ws = _write_workspace(tmp_path)
-    initialize_runtime_state(workspace=ws, repo_workdir=ROOT)
+    initialize_runtime_state(runtime="operator", workspace=ws, repo_workdir=ROOT)
     _set_current_stage(ws, "claim-ledger")
     _add_imported_source_authority(ws, metadata={"published_at": "2026-06-01"})
     _add_imported_source_authority(ws, source_id="SRC-002", filename="source-002.json")
@@ -6856,7 +6857,7 @@ def test_state_enrich_claim_metadata_cli_json(tmp_path, capsys):
 
 def test_enrich_claim_metadata_rejects_missing_imported_source_authority(tmp_path):
     ws = _write_workspace(tmp_path)
-    initialize_runtime_state(workspace=ws, repo_workdir=ROOT)
+    initialize_runtime_state(runtime="operator", workspace=ws, repo_workdir=ROOT)
     _set_current_stage(ws, "claim-ledger")
     _write_json_artifact(ws, "claim_drafts.json", _valid_claim_drafts_payload())
     freeze_claim_ledger_transaction(workspace=ws, repo_workdir=ROOT)
@@ -6874,7 +6875,7 @@ def test_enrich_claim_metadata_rejects_missing_imported_source_authority(tmp_pat
 
 def test_enrich_claim_metadata_rejects_hand_edited_statement(tmp_path):
     ws = _write_workspace(tmp_path)
-    initialize_runtime_state(workspace=ws, repo_workdir=ROOT)
+    initialize_runtime_state(runtime="operator", workspace=ws, repo_workdir=ROOT)
     _set_current_stage(ws, "claim-ledger")
     _add_imported_source_authority(ws, metadata={"published_at": "2026-06-01"})
     _add_imported_source_authority(ws, source_id="SRC-002", filename="source-002.json")
@@ -6894,7 +6895,7 @@ def test_enrich_claim_metadata_rejects_hand_edited_statement(tmp_path):
 
 def test_enrich_claim_metadata_rolls_back_when_state_write_fails(tmp_path, monkeypatch):
     ws = _write_workspace(tmp_path)
-    initialize_runtime_state(workspace=ws, repo_workdir=ROOT)
+    initialize_runtime_state(runtime="operator", workspace=ws, repo_workdir=ROOT)
     _set_current_stage(ws, "claim-ledger")
     _add_imported_source_authority(ws, metadata={"published_at": "2026-06-01"})
     _add_imported_source_authority(ws, source_id="SRC-002", filename="source-002.json")
@@ -6931,7 +6932,7 @@ def test_enrich_claim_metadata_rolls_back_when_state_write_fails(tmp_path, monke
 
 def test_freeze_claim_ledger_is_idempotent_for_same_frozen_inputs(tmp_path):
     ws = _write_workspace(tmp_path)
-    initialize_runtime_state(workspace=ws, repo_workdir=ROOT)
+    initialize_runtime_state(runtime="operator", workspace=ws, repo_workdir=ROOT)
     _set_current_stage(ws, "claim-ledger")
     _write_json_artifact(ws, "claim_drafts.json", _valid_claim_drafts_payload())
     freeze_claim_ledger_transaction(workspace=ws, repo_workdir=ROOT)
@@ -6951,7 +6952,7 @@ def test_freeze_claim_ledger_is_idempotent_for_same_frozen_inputs(tmp_path):
 
 def test_freeze_claim_ledger_rejects_hand_edited_frozen_ledger_metadata_with_guidance(tmp_path):
     ws = _write_workspace(tmp_path)
-    initialize_runtime_state(workspace=ws, repo_workdir=ROOT)
+    initialize_runtime_state(runtime="operator", workspace=ws, repo_workdir=ROOT)
     _set_current_stage(ws, "claim-ledger")
     _write_json_artifact(ws, "claim_drafts.json", _valid_claim_drafts_payload())
     freeze_claim_ledger_transaction(workspace=ws, repo_workdir=ROOT)
@@ -6978,7 +6979,7 @@ def test_freeze_claim_ledger_rejects_hand_edited_frozen_ledger_metadata_with_gui
 
 def test_freeze_claim_ledger_requires_existing_event_log(tmp_path):
     ws = _write_workspace(tmp_path)
-    initialize_runtime_state(workspace=ws, repo_workdir=ROOT)
+    initialize_runtime_state(runtime="operator", workspace=ws, repo_workdir=ROOT)
     _set_current_stage(ws, "claim-ledger")
     _write_json_artifact(ws, "claim_drafts.json", _valid_claim_drafts_payload())
     manifest_before = _state_file(ws, "runtime_manifest").read_bytes()
@@ -6997,7 +6998,7 @@ def test_freeze_claim_ledger_requires_existing_event_log(tmp_path):
 
 def test_freeze_claim_ledger_requires_current_run_initialized_event(tmp_path):
     ws = _write_workspace(tmp_path)
-    initialize_runtime_state(workspace=ws, repo_workdir=ROOT)
+    initialize_runtime_state(runtime="operator", workspace=ws, repo_workdir=ROOT)
     _set_current_stage(ws, "claim-ledger")
     _write_json_artifact(ws, "claim_drafts.json", _valid_claim_drafts_payload())
     manifest_before = _state_file(ws, "runtime_manifest").read_bytes()
@@ -7016,8 +7017,8 @@ def test_freeze_claim_ledger_requires_current_run_initialized_event(tmp_path):
 
 def test_freeze_claim_ledger_accepts_reset_run_start_event(tmp_path):
     ws = _write_workspace(tmp_path)
-    initialize_runtime_state(workspace=ws, repo_workdir=ROOT)
-    initialize_runtime_state(workspace=ws, repo_workdir=ROOT, reset_state=True)
+    initialize_runtime_state(runtime="operator", workspace=ws, repo_workdir=ROOT)
+    initialize_runtime_state(runtime="operator", workspace=ws, repo_workdir=ROOT, reset_state=True)
     _set_current_stage(ws, "claim-ledger")
     _write_json_artifact(ws, "claim_drafts.json", _valid_claim_drafts_payload())
 
@@ -7033,7 +7034,7 @@ def test_freeze_claim_ledger_accepts_reset_run_start_event(tmp_path):
 
 def test_freeze_claim_ledger_rejects_changed_drafts_after_existing_freeze(tmp_path):
     ws = _write_workspace(tmp_path)
-    initialize_runtime_state(workspace=ws, repo_workdir=ROOT)
+    initialize_runtime_state(runtime="operator", workspace=ws, repo_workdir=ROOT)
     _set_current_stage(ws, "claim-ledger")
     _write_json_artifact(ws, "claim_drafts.json", _valid_claim_drafts_payload())
     freeze_claim_ledger_transaction(workspace=ws, repo_workdir=ROOT)
@@ -7057,7 +7058,7 @@ def test_freeze_claim_ledger_rejects_changed_drafts_after_existing_freeze(tmp_pa
 
 def test_freeze_claim_ledger_rejects_draft_claim_id_without_writing_ledger(tmp_path):
     ws = _write_workspace(tmp_path)
-    initialize_runtime_state(workspace=ws, repo_workdir=ROOT)
+    initialize_runtime_state(runtime="operator", workspace=ws, repo_workdir=ROOT)
     _set_current_stage(ws, "claim-ledger")
     _write_json_artifact(
         ws,
@@ -7090,7 +7091,7 @@ def test_freeze_claim_ledger_rejects_draft_claim_id_without_writing_ledger(tmp_p
 
 def test_freeze_claim_ledger_rejects_empty_drafts_without_writing_ledger(tmp_path):
     ws = _write_workspace(tmp_path)
-    initialize_runtime_state(workspace=ws, repo_workdir=ROOT)
+    initialize_runtime_state(runtime="operator", workspace=ws, repo_workdir=ROOT)
     _set_current_stage(ws, "claim-ledger")
     _write_json_artifact(
         ws,
@@ -7114,7 +7115,7 @@ def test_freeze_claim_ledger_rejects_empty_drafts_without_writing_ledger(tmp_pat
 
 def test_freeze_claim_ledger_warns_on_lexical_duplicates_without_merging(tmp_path):
     ws = _write_workspace(tmp_path)
-    initialize_runtime_state(workspace=ws, repo_workdir=ROOT)
+    initialize_runtime_state(runtime="operator", workspace=ws, repo_workdir=ROOT)
     _set_current_stage(ws, "claim-ledger")
     _write_json_artifact(ws, "claim_drafts.json", _valid_claim_drafts_payload(duplicate=True))
 
@@ -7130,7 +7131,7 @@ def test_freeze_claim_ledger_warns_on_lexical_duplicates_without_merging(tmp_pat
 
 def test_claim_ledger_stage_complete_requires_freeze(tmp_path):
     ws = _write_workspace(tmp_path)
-    initialize_runtime_state(workspace=ws, repo_workdir=ROOT)
+    initialize_runtime_state(runtime="operator", workspace=ws, repo_workdir=ROOT)
     _set_current_stage(ws, "claim-ledger")
     _write_json_artifact(ws, "claim_ledger.json", _valid_claim_ledger_payload())
 
@@ -7148,7 +7149,7 @@ def test_claim_ledger_stage_complete_requires_freeze(tmp_path):
 
 def test_claim_ledger_stage_complete_accepts_frozen_ledger(tmp_path):
     ws = _write_workspace(tmp_path)
-    initialize_runtime_state(workspace=ws, repo_workdir=ROOT)
+    initialize_runtime_state(runtime="operator", workspace=ws, repo_workdir=ROOT)
     _set_current_stage(ws, "claim-ledger")
     _write_json_artifact(ws, "claim_drafts.json", _valid_claim_drafts_payload())
     freeze_claim_ledger_transaction(workspace=ws, repo_workdir=ROOT)
@@ -7166,7 +7167,7 @@ def test_claim_ledger_stage_complete_accepts_frozen_ledger(tmp_path):
 
 def test_claim_ledger_stage_complete_rejects_changed_drafts_after_freeze(tmp_path):
     ws = _write_workspace(tmp_path)
-    initialize_runtime_state(workspace=ws, repo_workdir=ROOT)
+    initialize_runtime_state(runtime="operator", workspace=ws, repo_workdir=ROOT)
     _set_current_stage(ws, "claim-ledger")
     _write_json_artifact(ws, "claim_drafts.json", _valid_claim_drafts_payload())
     freeze_claim_ledger_transaction(workspace=ws, repo_workdir=ROOT)
@@ -7186,7 +7187,7 @@ def test_claim_ledger_stage_complete_rejects_changed_drafts_after_freeze(tmp_pat
 
 def test_state_freeze_claim_ledger_cli_json(tmp_path, capsys):
     ws = _write_workspace(tmp_path)
-    initialize_runtime_state(workspace=ws, repo_workdir=ROOT)
+    initialize_runtime_state(runtime="operator", workspace=ws, repo_workdir=ROOT)
     _set_current_stage(ws, "claim-ledger")
     _write_json_artifact(ws, "claim_drafts.json", _valid_claim_drafts_payload())
 
@@ -7209,7 +7210,7 @@ def test_state_freeze_claim_ledger_cli_json(tmp_path, capsys):
 
 def test_state_freeze_claim_ledger_cli_json_explains_invalid_claim_type(tmp_path, capsys):
     ws = _write_workspace(tmp_path)
-    initialize_runtime_state(workspace=ws, repo_workdir=ROOT)
+    initialize_runtime_state(runtime="operator", workspace=ws, repo_workdir=ROOT)
     _set_current_stage(ws, "claim-ledger")
     _write_json_artifact(
         ws,
@@ -7260,7 +7261,7 @@ def test_state_freeze_claim_ledger_cli_json_explains_invalid_claim_type(tmp_path
 
 def test_state_freeze_claim_ledger_human_output_explains_forbidden_claim_id(tmp_path, capsys):
     ws = _write_workspace(tmp_path)
-    initialize_runtime_state(workspace=ws, repo_workdir=ROOT)
+    initialize_runtime_state(runtime="operator", workspace=ws, repo_workdir=ROOT)
     _set_current_stage(ws, "claim-ledger")
     _write_json_artifact(
         ws,
@@ -7300,7 +7301,7 @@ def test_state_freeze_claim_ledger_human_output_explains_forbidden_claim_id(tmp_
 
 def test_claim_ledger_stage_complete_accepts_valid_flat_ledger(tmp_path):
     ws = _write_workspace(tmp_path)
-    initialize_runtime_state(workspace=ws, repo_workdir=ROOT)
+    initialize_runtime_state(runtime="operator", workspace=ws, repo_workdir=ROOT)
     _set_current_stage(ws, "claim-ledger")
     _freeze_claim_ledger_fixture(ws)
 
@@ -7320,7 +7321,7 @@ def test_claim_ledger_stage_complete_accepts_valid_flat_ledger(tmp_path):
 
 def test_claim_ledger_stage_complete_records_valid_claim_drafts_after_freeze(tmp_path):
     ws = _write_workspace(tmp_path)
-    initialize_runtime_state(workspace=ws, repo_workdir=ROOT)
+    initialize_runtime_state(runtime="operator", workspace=ws, repo_workdir=ROOT)
     _set_current_stage(ws, "claim-ledger")
     _freeze_claim_ledger_fixture(ws)
 
@@ -7341,7 +7342,7 @@ def test_claim_ledger_stage_complete_records_valid_claim_drafts_after_freeze(tmp
 
 def test_state_check_marks_claim_drafts_with_claim_id_invalid(tmp_path):
     ws = _write_workspace(tmp_path)
-    initialize_runtime_state(workspace=ws, repo_workdir=ROOT)
+    initialize_runtime_state(runtime="operator", workspace=ws, repo_workdir=ROOT)
     _write_json_artifact(
         ws,
         "claim_drafts.json",
@@ -7370,7 +7371,7 @@ def test_state_check_marks_claim_drafts_with_claim_id_invalid(tmp_path):
 
 def test_state_check_marks_claim_drafts_omitted_source_type_without_url_invalid(tmp_path):
     ws = _write_workspace(tmp_path)
-    initialize_runtime_state(workspace=ws, repo_workdir=ROOT)
+    initialize_runtime_state(runtime="operator", workspace=ws, repo_workdir=ROOT)
     _write_json_artifact(
         ws,
         "claim_drafts.json",
@@ -7398,7 +7399,7 @@ def test_state_check_marks_claim_drafts_omitted_source_type_without_url_invalid(
 
 def test_state_check_marks_claim_drafts_with_nested_claim_id_invalid(tmp_path):
     ws = _write_workspace(tmp_path)
-    initialize_runtime_state(workspace=ws, repo_workdir=ROOT)
+    initialize_runtime_state(runtime="operator", workspace=ws, repo_workdir=ROOT)
     _write_json_artifact(
         ws,
         "claim_drafts.json",
@@ -7427,7 +7428,7 @@ def test_state_check_marks_claim_drafts_with_nested_claim_id_invalid(tmp_path):
 
 def test_state_check_marks_claim_drafts_with_non_string_required_fields_invalid(tmp_path):
     ws = _write_workspace(tmp_path)
-    initialize_runtime_state(workspace=ws, repo_workdir=ROOT)
+    initialize_runtime_state(runtime="operator", workspace=ws, repo_workdir=ROOT)
     _write_json_artifact(
         ws,
         "claim_drafts.json",
@@ -7455,7 +7456,7 @@ def test_state_check_marks_claim_drafts_with_non_string_required_fields_invalid(
 
 def test_state_check_validates_present_atomic_claim_graph_against_claim_ledger(tmp_path):
     ws = _write_workspace(tmp_path)
-    initialize_runtime_state(workspace=ws, repo_workdir=ROOT)
+    initialize_runtime_state(runtime="operator", workspace=ws, repo_workdir=ROOT)
     _write_json_artifact(ws, "claim_ledger.json", _valid_claim_ledger_payload("CL-0001"))
     _write_json_artifact(ws, "atomic_claim_graph.json", _valid_atomic_claim_graph_payload("CL-0001"))
 
@@ -7469,7 +7470,7 @@ def test_state_check_validates_present_atomic_claim_graph_against_claim_ledger(t
 
 def test_state_check_validates_complete_typed_atomic_claim_graph(tmp_path):
     ws = _write_workspace(tmp_path)
-    initialize_runtime_state(workspace=ws, repo_workdir=ROOT)
+    initialize_runtime_state(runtime="operator", workspace=ws, repo_workdir=ROOT)
     _write_json_artifact(
         ws,
         "claim_ledger.json",
@@ -7506,7 +7507,7 @@ def test_state_check_validates_complete_typed_atomic_claim_graph(tmp_path):
 
 def test_state_check_marks_atomic_claim_graph_unknown_claim_id_invalid(tmp_path):
     ws = _write_workspace(tmp_path)
-    initialize_runtime_state(workspace=ws, repo_workdir=ROOT)
+    initialize_runtime_state(runtime="operator", workspace=ws, repo_workdir=ROOT)
     _write_json_artifact(ws, "claim_ledger.json", _valid_claim_ledger_payload("CL-0001"))
     _write_json_artifact(ws, "atomic_claim_graph.json", _valid_atomic_claim_graph_payload("CL-9999", "AC-9999-01"))
 
@@ -7521,7 +7522,7 @@ def test_state_check_marks_atomic_claim_graph_unknown_claim_id_invalid(tmp_path)
 
 def test_state_check_marks_atomic_claim_graph_missing_claim_coverage_invalid(tmp_path):
     ws = _write_workspace(tmp_path)
-    initialize_runtime_state(workspace=ws, repo_workdir=ROOT)
+    initialize_runtime_state(runtime="operator", workspace=ws, repo_workdir=ROOT)
     _write_json_artifact(
         ws,
         "claim_ledger.json",
@@ -7544,7 +7545,7 @@ def test_state_check_marks_atomic_claim_graph_missing_claim_coverage_invalid(tmp
 
 def test_state_check_marks_atomic_claim_graph_duplicate_claim_coverage_invalid(tmp_path):
     ws = _write_workspace(tmp_path)
-    initialize_runtime_state(workspace=ws, repo_workdir=ROOT)
+    initialize_runtime_state(runtime="operator", workspace=ws, repo_workdir=ROOT)
     _write_json_artifact(ws, "claim_ledger.json", _claim_ledger_payload([_claim_dict("CL-0001")]))
     graph = {
         "schema_version": "mabw.atomic_claim_graph.v1",
@@ -7584,7 +7585,7 @@ def test_state_check_marks_atomic_claim_graph_duplicate_claim_coverage_invalid(t
 
 def test_state_check_marks_atomic_claim_graph_cross_claim_edge_invalid(tmp_path):
     ws = _write_workspace(tmp_path)
-    initialize_runtime_state(workspace=ws, repo_workdir=ROOT)
+    initialize_runtime_state(runtime="operator", workspace=ws, repo_workdir=ROOT)
     _write_json_artifact(
         ws,
         "claim_ledger.json",
@@ -7617,7 +7618,7 @@ def test_state_check_marks_atomic_claim_graph_cross_claim_edge_invalid(tmp_path)
 
 def test_state_check_validates_present_evidence_span_registry(tmp_path):
     ws = _write_workspace(tmp_path)
-    initialize_runtime_state(workspace=ws, repo_workdir=ROOT)
+    initialize_runtime_state(runtime="operator", workspace=ws, repo_workdir=ROOT)
     source_text = "Intro.\nExampleCo said module shipments reached 12 MW in Q2.\nOutro.\n"
     _write_source_text(ws, text=source_text)
     _write_json_artifact(
@@ -7636,7 +7637,7 @@ def test_state_check_validates_present_evidence_span_registry(tmp_path):
 
 def test_state_check_validates_present_claim_support_matrix_schema(tmp_path):
     ws = _write_workspace(tmp_path)
-    initialize_runtime_state(workspace=ws, repo_workdir=ROOT)
+    initialize_runtime_state(runtime="operator", workspace=ws, repo_workdir=ROOT)
     _write_valid_claim_support_matrix_dependencies(ws)
     _write_json_artifact(ws, "claim_support_matrix.json", _valid_claim_support_matrix_payload())
 
@@ -7650,7 +7651,7 @@ def test_state_check_validates_present_claim_support_matrix_schema(tmp_path):
 
 def test_state_check_validates_present_semantic_assessment_report_schema(tmp_path):
     ws = _write_workspace(tmp_path)
-    initialize_runtime_state(workspace=ws, repo_workdir=ROOT)
+    initialize_runtime_state(runtime="operator", workspace=ws, repo_workdir=ROOT)
     _write_valid_claim_support_matrix_dependencies(ws)
     _write_json_artifact(ws, "semantic_assessment_report.json", _valid_semantic_assessment_report_payload())
 
@@ -7664,7 +7665,7 @@ def test_state_check_validates_present_semantic_assessment_report_schema(tmp_pat
 
 def test_state_check_marks_stale_checked_semantic_assessment_report_invalid(tmp_path):
     ws = _write_workspace(tmp_path)
-    initialize_runtime_state(workspace=ws, repo_workdir=ROOT)
+    initialize_runtime_state(runtime="operator", workspace=ws, repo_workdir=ROOT)
     _write_valid_claim_support_matrix_dependencies(ws)
     intermediate = ws / "output" / "intermediate"
     (intermediate / "audited_brief.md").write_text("# Audited Brief\n", encoding="utf-8")
@@ -7683,7 +7684,7 @@ def test_state_check_marks_stale_checked_semantic_assessment_report_invalid(tmp_
 
 def test_state_check_marks_non_file_checked_semantic_assessment_report_input_invalid(tmp_path):
     ws = _write_workspace(tmp_path)
-    initialize_runtime_state(workspace=ws, repo_workdir=ROOT)
+    initialize_runtime_state(runtime="operator", workspace=ws, repo_workdir=ROOT)
     _write_valid_claim_support_matrix_dependencies(ws)
     intermediate = ws / "output" / "intermediate"
     (intermediate / "audited_brief.md").write_text("# Audited Brief\n", encoding="utf-8")
@@ -7707,7 +7708,7 @@ def test_state_check_marks_non_file_checked_semantic_assessment_report_input_inv
 
 def test_state_check_marks_semantic_assessment_report_missing_claim_ledger_invalid(tmp_path):
     ws = _write_workspace(tmp_path)
-    initialize_runtime_state(workspace=ws, repo_workdir=ROOT)
+    initialize_runtime_state(runtime="operator", workspace=ws, repo_workdir=ROOT)
     _write_json_artifact(ws, "semantic_assessment_report.json", _valid_semantic_assessment_report_payload())
 
     state = check_runtime_state(workspace=ws, repo_workdir=ROOT)
@@ -7720,7 +7721,7 @@ def test_state_check_marks_semantic_assessment_report_missing_claim_ledger_inval
 
 def test_state_check_marks_semantic_assessment_report_runtime_invalid_evidence_registry_invalid(tmp_path):
     ws = _write_workspace(tmp_path)
-    initialize_runtime_state(workspace=ws, repo_workdir=ROOT)
+    initialize_runtime_state(runtime="operator", workspace=ws, repo_workdir=ROOT)
     _write_json_artifact(ws, "claim_ledger.json", _valid_claim_ledger_payload("CL-0001"))
     _write_json_artifact(ws, "atomic_claim_graph.json", _valid_atomic_claim_graph_payload("CL-0001", "AC-0001-01"))
     _write_json_artifact(ws, "evidence_span_registry.json", _valid_evidence_span_registry_payload())
@@ -7742,7 +7743,7 @@ def test_state_check_marks_semantic_assessment_report_runtime_invalid_evidence_r
 
 def test_state_check_marks_semantic_assessment_report_unknown_claim_invalid(tmp_path):
     ws = _write_workspace(tmp_path)
-    initialize_runtime_state(workspace=ws, repo_workdir=ROOT)
+    initialize_runtime_state(runtime="operator", workspace=ws, repo_workdir=ROOT)
     _write_valid_claim_support_matrix_dependencies(ws)
     payload = json.loads(_valid_semantic_assessment_report_payload())
     payload["rows"][0]["claim_id"] = "CL-9999"
@@ -7758,7 +7759,7 @@ def test_state_check_marks_semantic_assessment_report_unknown_claim_invalid(tmp_
 
 def test_state_check_marks_semantic_assessment_report_unknown_atom_invalid(tmp_path):
     ws = _write_workspace(tmp_path)
-    initialize_runtime_state(workspace=ws, repo_workdir=ROOT)
+    initialize_runtime_state(runtime="operator", workspace=ws, repo_workdir=ROOT)
     _write_valid_claim_support_matrix_dependencies(ws)
     payload = json.loads(_valid_semantic_assessment_report_payload())
     payload["rows"][0]["atom_id"] = "AC-0001-99"
@@ -7773,7 +7774,7 @@ def test_state_check_marks_semantic_assessment_report_unknown_atom_invalid(tmp_p
 
 def test_state_check_marks_semantic_assessment_report_unknown_span_invalid(tmp_path):
     ws = _write_workspace(tmp_path)
-    initialize_runtime_state(workspace=ws, repo_workdir=ROOT)
+    initialize_runtime_state(runtime="operator", workspace=ws, repo_workdir=ROOT)
     _write_valid_claim_support_matrix_dependencies(ws)
     payload = json.loads(_valid_semantic_assessment_report_payload())
     payload["rows"][0]["evidence_span_id"] = "ESP-999-01"
@@ -7788,7 +7789,7 @@ def test_state_check_marks_semantic_assessment_report_unknown_span_invalid(tmp_p
 
 def test_state_check_marks_semantic_assessment_report_unknown_candidate_span_invalid(tmp_path):
     ws = _write_workspace(tmp_path)
-    initialize_runtime_state(workspace=ws, repo_workdir=ROOT)
+    initialize_runtime_state(runtime="operator", workspace=ws, repo_workdir=ROOT)
     _write_valid_claim_support_matrix_dependencies(ws)
     payload = json.loads(_valid_semantic_assessment_report_payload())
     payload["rows"][0].pop("evidence_span_id")
@@ -7817,7 +7818,7 @@ def test_state_check_marks_llm_only_high_materiality_unresolved_semantic_row_inv
     disagreement,
 ):
     ws = _write_workspace(tmp_path)
-    initialize_runtime_state(workspace=ws, repo_workdir=ROOT)
+    initialize_runtime_state(runtime="operator", workspace=ws, repo_workdir=ROOT)
     _write_valid_claim_support_matrix_dependencies(ws)
     payload = json.loads(_valid_semantic_assessment_report_payload())
     payload["assessors"][0]["assessment_method"] = "llm_only"
@@ -7839,7 +7840,7 @@ def test_state_check_marks_llm_only_high_materiality_unresolved_semantic_row_inv
 
 def test_state_check_rejects_semantic_assessment_row_method_mismatch(tmp_path):
     ws = _write_workspace(tmp_path)
-    initialize_runtime_state(workspace=ws, repo_workdir=ROOT)
+    initialize_runtime_state(runtime="operator", workspace=ws, repo_workdir=ROOT)
     _write_valid_claim_support_matrix_dependencies(ws)
     payload = json.loads(_valid_semantic_assessment_report_payload())
     payload["assessors"][0]["assessment_method"] = "llm_only"
@@ -7874,7 +7875,7 @@ def test_semantic_assessment_runtime_validator_derives_method_from_declared_asse
 
 def test_state_check_marks_invalid_semantic_assessment_report_schema_invalid(tmp_path):
     ws = _write_workspace(tmp_path)
-    initialize_runtime_state(workspace=ws, repo_workdir=ROOT)
+    initialize_runtime_state(runtime="operator", workspace=ws, repo_workdir=ROOT)
     payload = json.loads(_valid_semantic_assessment_report_payload())
     payload["rows"][0].pop("evidence_span_id")
     _write_json_artifact(ws, "semantic_assessment_report.json", json.dumps(payload) + "\n")
@@ -7889,7 +7890,7 @@ def test_state_check_marks_invalid_semantic_assessment_report_schema_invalid(tmp
 
 def test_state_check_marks_claim_support_matrix_missing_claim_ledger_invalid(tmp_path):
     ws = _write_workspace(tmp_path)
-    initialize_runtime_state(workspace=ws, repo_workdir=ROOT)
+    initialize_runtime_state(runtime="operator", workspace=ws, repo_workdir=ROOT)
     _write_json_artifact(ws, "atomic_claim_graph.json", _valid_atomic_claim_graph_payload("CL-0001", "AC-0001-01"))
     source_text = "Intro.\nExampleCo said module shipments reached 12 MW in Q2.\nOutro.\n"
     _write_source_text(ws, text=source_text)
@@ -7910,7 +7911,7 @@ def test_state_check_marks_claim_support_matrix_missing_claim_ledger_invalid(tmp
 
 def test_state_check_marks_claim_support_matrix_runtime_invalid_claim_ledger_invalid(tmp_path):
     ws = _write_workspace(tmp_path)
-    initialize_runtime_state(workspace=ws, repo_workdir=ROOT)
+    initialize_runtime_state(runtime="operator", workspace=ws, repo_workdir=ROOT)
     duplicate_ledger = [
         {
             "claim_id": "CL-0001",
@@ -7952,7 +7953,7 @@ def test_state_check_marks_claim_support_matrix_runtime_invalid_claim_ledger_inv
 
 def test_state_check_marks_claim_support_matrix_runtime_invalid_atomic_graph_invalid(tmp_path):
     ws = _write_workspace(tmp_path)
-    initialize_runtime_state(workspace=ws, repo_workdir=ROOT)
+    initialize_runtime_state(runtime="operator", workspace=ws, repo_workdir=ROOT)
     _write_json_artifact(ws, "claim_ledger.json", _valid_claim_ledger_payload("CL-0001"))
     _write_json_artifact(ws, "atomic_claim_graph.json", _valid_atomic_claim_graph_payload("CL-9999", "AC-9999-01"))
     source_text = "Intro.\nExampleCo said module shipments reached 12 MW in Q2.\nOutro.\n"
@@ -7980,7 +7981,7 @@ def test_state_check_marks_claim_support_matrix_runtime_invalid_atomic_graph_inv
 
 def test_state_check_marks_claim_support_matrix_runtime_invalid_evidence_span_registry_invalid(tmp_path):
     ws = _write_workspace(tmp_path)
-    initialize_runtime_state(workspace=ws, repo_workdir=ROOT)
+    initialize_runtime_state(runtime="operator", workspace=ws, repo_workdir=ROOT)
     _write_json_artifact(ws, "claim_ledger.json", _valid_claim_ledger_payload("CL-0001"))
     _write_json_artifact(ws, "atomic_claim_graph.json", _valid_atomic_claim_graph_payload("CL-0001", "AC-0001-01"))
     _write_json_artifact(ws, "evidence_span_registry.json", _valid_evidence_span_registry_payload())
@@ -8002,7 +8003,7 @@ def test_state_check_marks_claim_support_matrix_runtime_invalid_evidence_span_re
 
 def test_state_check_marks_claim_support_matrix_unknown_atom_invalid(tmp_path):
     ws = _write_workspace(tmp_path)
-    initialize_runtime_state(workspace=ws, repo_workdir=ROOT)
+    initialize_runtime_state(runtime="operator", workspace=ws, repo_workdir=ROOT)
     _write_valid_claim_support_matrix_dependencies(ws)
     payload = json.loads(_valid_claim_support_matrix_payload())
     payload["rows"][0]["atom_id"] = "AC-0001-99"
@@ -8018,7 +8019,7 @@ def test_state_check_marks_claim_support_matrix_unknown_atom_invalid(tmp_path):
 
 def test_state_check_marks_claim_support_matrix_unknown_span_invalid(tmp_path):
     ws = _write_workspace(tmp_path)
-    initialize_runtime_state(workspace=ws, repo_workdir=ROOT)
+    initialize_runtime_state(runtime="operator", workspace=ws, repo_workdir=ROOT)
     _write_valid_claim_support_matrix_dependencies(ws)
     payload = json.loads(_valid_claim_support_matrix_payload())
     payload["rows"][0]["evidence_span_id"] = "ESP-001-99"
@@ -8037,7 +8038,7 @@ def test_state_check_marks_claim_support_matrix_unknown_span_invalid(tmp_path):
 
 def test_state_check_marks_claim_support_matrix_missing_high_materiality_atom_invalid(tmp_path):
     ws = _write_workspace(tmp_path)
-    initialize_runtime_state(workspace=ws, repo_workdir=ROOT)
+    initialize_runtime_state(runtime="operator", workspace=ws, repo_workdir=ROOT)
     _write_json_artifact(ws, "claim_ledger.json", _valid_claim_ledger_payload("CL-0001"))
     graph = json.loads(_valid_atomic_claim_graph_payload("CL-0001", "AC-0001-01"))
     graph["claims"][0]["atoms"].append(
@@ -8071,7 +8072,7 @@ def test_state_check_marks_claim_support_matrix_missing_high_materiality_atom_in
 
 def test_state_check_marks_claim_support_matrix_support_label_without_span_invalid(tmp_path):
     ws = _write_workspace(tmp_path)
-    initialize_runtime_state(workspace=ws, repo_workdir=ROOT)
+    initialize_runtime_state(runtime="operator", workspace=ws, repo_workdir=ROOT)
     _write_valid_claim_support_matrix_dependencies(ws)
     payload = json.loads(_valid_claim_support_matrix_payload())
     payload["rows"][0]["evidence_span_id"] = None
@@ -8088,7 +8089,7 @@ def test_state_check_marks_claim_support_matrix_support_label_without_span_inval
 
 def test_state_check_marks_malformed_claim_support_matrix_invalid(tmp_path):
     ws = _write_workspace(tmp_path)
-    initialize_runtime_state(workspace=ws, repo_workdir=ROOT)
+    initialize_runtime_state(runtime="operator", workspace=ws, repo_workdir=ROOT)
     _write_json_artifact(ws, "claim_support_matrix.json", json.dumps({"rows": []}) + "\n")
 
     state = check_runtime_state(workspace=ws, repo_workdir=ROOT)
@@ -8101,7 +8102,7 @@ def test_state_check_marks_malformed_claim_support_matrix_invalid(tmp_path):
 
 def test_state_check_marks_duplicate_claim_support_matrix_relation_invalid(tmp_path):
     ws = _write_workspace(tmp_path)
-    initialize_runtime_state(workspace=ws, repo_workdir=ROOT)
+    initialize_runtime_state(runtime="operator", workspace=ws, repo_workdir=ROOT)
     payload = json.loads(_valid_claim_support_matrix_payload())
     duplicate = dict(payload["rows"][0])
     duplicate["row_id"] = "CSM-0002"
@@ -8121,7 +8122,7 @@ def test_state_check_marks_duplicate_claim_support_matrix_relation_invalid(tmp_p
 
 def test_state_check_marks_url_only_evidence_span_registry_runtime_invalid(tmp_path):
     ws = _write_workspace(tmp_path)
-    initialize_runtime_state(workspace=ws, repo_workdir=ROOT)
+    initialize_runtime_state(runtime="operator", workspace=ws, repo_workdir=ROOT)
     _write_json_artifact(ws, "evidence_span_registry.json", _valid_evidence_span_registry_payload())
 
     state = check_runtime_state(workspace=ws, repo_workdir=ROOT)
@@ -8137,7 +8138,7 @@ def test_state_check_marks_url_only_evidence_span_registry_runtime_invalid(tmp_p
 
 def test_state_check_marks_evidence_span_registry_hash_mismatch_invalid(tmp_path):
     ws = _write_workspace(tmp_path)
-    initialize_runtime_state(workspace=ws, repo_workdir=ROOT)
+    initialize_runtime_state(runtime="operator", workspace=ws, repo_workdir=ROOT)
     payload = json.loads(_valid_evidence_span_registry_payload())
     payload["sources"][0]["spans"][0]["hash"] = _span_hash("different excerpt")
     _write_json_artifact(ws, "evidence_span_registry.json", json.dumps(payload) + "\n")
@@ -8151,7 +8152,7 @@ def test_state_check_marks_evidence_span_registry_hash_mismatch_invalid(tmp_path
 
 def test_state_check_marks_evidence_span_registry_missing_source_date_invalid(tmp_path):
     ws = _write_workspace(tmp_path)
-    initialize_runtime_state(workspace=ws, repo_workdir=ROOT)
+    initialize_runtime_state(runtime="operator", workspace=ws, repo_workdir=ROOT)
     payload = json.loads(_valid_evidence_span_registry_payload())
     payload["sources"][0].pop("published_at")
     _write_json_artifact(ws, "evidence_span_registry.json", json.dumps(payload) + "\n")
@@ -8175,7 +8176,7 @@ def test_state_check_marks_evidence_span_registry_missing_source_date_invalid(tm
 )
 def test_state_check_marks_evidence_span_registry_unsafe_source_path_invalid(tmp_path, source_path):
     ws = _write_workspace(tmp_path)
-    initialize_runtime_state(workspace=ws, repo_workdir=ROOT)
+    initialize_runtime_state(runtime="operator", workspace=ws, repo_workdir=ROOT)
     _write_source_text(ws)
     _write_json_artifact(
         ws,
@@ -8192,7 +8193,7 @@ def test_state_check_marks_evidence_span_registry_unsafe_source_path_invalid(tmp
 
 def test_state_check_marks_evidence_span_registry_symlink_escape_invalid(tmp_path):
     ws = _write_workspace(tmp_path)
-    initialize_runtime_state(workspace=ws, repo_workdir=ROOT)
+    initialize_runtime_state(runtime="operator", workspace=ws, repo_workdir=ROOT)
     outside = tmp_path / "outside-source.md"
     outside.write_text("ExampleCo said module shipments reached 12 MW in Q2.\n", encoding="utf-8")
     source_path = ws / "input" / "sources" / "source-001.md"
@@ -8212,7 +8213,7 @@ def test_state_check_marks_evidence_span_registry_symlink_escape_invalid(tmp_pat
 
 def test_state_check_marks_evidence_span_registry_symlinked_source_root_invalid(tmp_path):
     ws = _write_workspace(tmp_path)
-    initialize_runtime_state(workspace=ws, repo_workdir=ROOT)
+    initialize_runtime_state(runtime="operator", workspace=ws, repo_workdir=ROOT)
     outside_sources = tmp_path / "outside-sources"
     outside_sources.mkdir()
     (outside_sources / "source-001.md").write_text(
@@ -8235,7 +8236,7 @@ def test_state_check_marks_evidence_span_registry_symlinked_source_root_invalid(
 
 def test_state_check_marks_evidence_span_registry_symlinked_input_root_invalid(tmp_path):
     ws = _write_workspace(tmp_path)
-    initialize_runtime_state(workspace=ws, repo_workdir=ROOT)
+    initialize_runtime_state(runtime="operator", workspace=ws, repo_workdir=ROOT)
     outside_input = tmp_path / "outside-input"
     outside_sources = outside_input / "sources"
     outside_sources.mkdir(parents=True)
@@ -8259,7 +8260,7 @@ def test_state_check_marks_evidence_span_registry_symlinked_input_root_invalid(t
 
 def test_state_check_marks_evidence_span_registry_non_evidence_source_path_invalid(tmp_path):
     ws = _write_workspace(tmp_path)
-    initialize_runtime_state(workspace=ws, repo_workdir=ROOT)
+    initialize_runtime_state(runtime="operator", workspace=ws, repo_workdir=ROOT)
     _write_source_text(ws, name="README.md")
     _write_json_artifact(
         ws,
@@ -8276,7 +8277,7 @@ def test_state_check_marks_evidence_span_registry_non_evidence_source_path_inval
 
 def test_state_check_marks_evidence_span_registry_missing_source_file_invalid(tmp_path):
     ws = _write_workspace(tmp_path)
-    initialize_runtime_state(workspace=ws, repo_workdir=ROOT)
+    initialize_runtime_state(runtime="operator", workspace=ws, repo_workdir=ROOT)
     _write_json_artifact(ws, "evidence_span_registry.json", _source_backed_evidence_span_registry_payload())
 
     state = check_runtime_state(workspace=ws, repo_workdir=ROOT)
@@ -8288,7 +8289,7 @@ def test_state_check_marks_evidence_span_registry_missing_source_file_invalid(tm
 
 def test_state_check_marks_evidence_span_registry_unreadable_source_file_invalid(tmp_path):
     ws = _write_workspace(tmp_path)
-    initialize_runtime_state(workspace=ws, repo_workdir=ROOT)
+    initialize_runtime_state(runtime="operator", workspace=ws, repo_workdir=ROOT)
     source_path = ws / "input" / "sources" / "source-001.md"
     source_path.parent.mkdir(parents=True, exist_ok=True)
     source_path.write_bytes(b"\xff\xfe\xfd")
@@ -8303,7 +8304,7 @@ def test_state_check_marks_evidence_span_registry_unreadable_source_file_invalid
 
 def test_state_check_marks_evidence_span_registry_missing_excerpt_invalid(tmp_path):
     ws = _write_workspace(tmp_path)
-    initialize_runtime_state(workspace=ws, repo_workdir=ROOT)
+    initialize_runtime_state(runtime="operator", workspace=ws, repo_workdir=ROOT)
     _write_source_text(ws, text="Different source text.\n")
     _write_json_artifact(ws, "evidence_span_registry.json", _source_backed_evidence_span_registry_payload())
 
@@ -8316,7 +8317,7 @@ def test_state_check_marks_evidence_span_registry_missing_excerpt_invalid(tmp_pa
 
 def test_state_check_allows_duplicate_evidence_span_excerpt_without_offsets(tmp_path):
     ws = _write_workspace(tmp_path)
-    initialize_runtime_state(workspace=ws, repo_workdir=ROOT)
+    initialize_runtime_state(runtime="operator", workspace=ws, repo_workdir=ROOT)
     raw_excerpt = "ExampleCo said module shipments reached 12 MW in Q2."
     _write_source_text(ws, text=f"{raw_excerpt}\nRepeated.\n{raw_excerpt}\n")
     _write_json_artifact(ws, "evidence_span_registry.json", _source_backed_evidence_span_registry_payload())
@@ -8330,7 +8331,7 @@ def test_state_check_allows_duplicate_evidence_span_excerpt_without_offsets(tmp_
 
 def test_state_check_marks_evidence_span_registry_incomplete_offset_invalid(tmp_path):
     ws = _write_workspace(tmp_path)
-    initialize_runtime_state(workspace=ws, repo_workdir=ROOT)
+    initialize_runtime_state(runtime="operator", workspace=ws, repo_workdir=ROOT)
     _write_source_text(ws)
     payload = json.loads(_source_backed_evidence_span_registry_payload())
     payload["sources"][0]["spans"][0]["char_start"] = 7
@@ -8345,7 +8346,7 @@ def test_state_check_marks_evidence_span_registry_incomplete_offset_invalid(tmp_
 
 def test_state_check_marks_evidence_span_registry_offset_mismatch_invalid(tmp_path):
     ws = _write_workspace(tmp_path)
-    initialize_runtime_state(workspace=ws, repo_workdir=ROOT)
+    initialize_runtime_state(runtime="operator", workspace=ws, repo_workdir=ROOT)
     _write_source_text(ws)
     payload = json.loads(_source_backed_evidence_span_registry_payload())
     payload["sources"][0]["spans"][0]["char_start"] = 0
@@ -8361,7 +8362,7 @@ def test_state_check_marks_evidence_span_registry_offset_mismatch_invalid(tmp_pa
 
 def test_state_check_validates_evidence_span_registry_against_json_content(tmp_path):
     ws = _write_workspace(tmp_path)
-    initialize_runtime_state(workspace=ws, repo_workdir=ROOT)
+    initialize_runtime_state(runtime="operator", workspace=ws, repo_workdir=ROOT)
     raw_excerpt = "ExampleCo said module shipments reached 12 MW in Q2."
     source_path = ws / "input" / "sources" / "source-001.json"
     source_path.parent.mkdir(parents=True, exist_ok=True)
@@ -8389,7 +8390,7 @@ def test_state_check_validates_evidence_span_registry_against_json_content(tmp_p
 
 def test_state_check_marks_evidence_span_registry_json_source_id_mismatch_invalid(tmp_path):
     ws = _write_workspace(tmp_path)
-    initialize_runtime_state(workspace=ws, repo_workdir=ROOT)
+    initialize_runtime_state(runtime="operator", workspace=ws, repo_workdir=ROOT)
     raw_excerpt = "ExampleCo said module shipments reached 12 MW in Q2."
     source_path = ws / "input" / "sources" / "source-001.json"
     source_path.parent.mkdir(parents=True, exist_ok=True)
@@ -8442,7 +8443,7 @@ def test_state_check_marks_atomic_claim_graph_type_consistency_invalid(
     reason: str,
 ):
     ws = _write_workspace(tmp_path)
-    initialize_runtime_state(workspace=ws, repo_workdir=ROOT)
+    initialize_runtime_state(runtime="operator", workspace=ws, repo_workdir=ROOT)
     claim_id = str(claim["claim_id"])
     _write_json_artifact(ws, "claim_ledger.json", _claim_ledger_payload([claim]))
     _write_json_artifact(ws, "atomic_claim_graph.json", _atomic_claim_graph_payload({claim_id: roles}))
@@ -8456,7 +8457,7 @@ def test_state_check_marks_atomic_claim_graph_type_consistency_invalid(
 
 def test_state_check_does_not_require_numeric_atom_for_date_claim(tmp_path):
     ws = _write_workspace(tmp_path)
-    initialize_runtime_state(workspace=ws, repo_workdir=ROOT)
+    initialize_runtime_state(runtime="operator", workspace=ws, repo_workdir=ROOT)
     _write_json_artifact(ws, "claim_ledger.json", _claim_ledger_payload([_claim_dict("CL-0001", claim_type="date")]))
     _write_json_artifact(ws, "atomic_claim_graph.json", _atomic_claim_graph_payload({"CL-0001": ["observed_fact"]}))
 
@@ -8469,7 +8470,7 @@ def test_state_check_does_not_require_numeric_atom_for_date_claim(tmp_path):
 
 def test_state_check_marks_atomic_claim_graph_missing_claim_ledger_invalid(tmp_path):
     ws = _write_workspace(tmp_path)
-    initialize_runtime_state(workspace=ws, repo_workdir=ROOT)
+    initialize_runtime_state(runtime="operator", workspace=ws, repo_workdir=ROOT)
     _write_json_artifact(ws, "atomic_claim_graph.json", _valid_atomic_claim_graph_payload("CL-0001"))
 
     state = check_runtime_state(workspace=ws, repo_workdir=ROOT)
@@ -8481,7 +8482,7 @@ def test_state_check_marks_atomic_claim_graph_missing_claim_ledger_invalid(tmp_p
 
 def test_state_check_marks_malformed_atomic_claim_graph_invalid(tmp_path):
     ws = _write_workspace(tmp_path)
-    initialize_runtime_state(workspace=ws, repo_workdir=ROOT)
+    initialize_runtime_state(runtime="operator", workspace=ws, repo_workdir=ROOT)
     _write_json_artifact(ws, "claim_ledger.json", _valid_claim_ledger_payload("CL-0001"))
     _write_json_artifact(ws, "atomic_claim_graph.json", json.dumps({"claims": []}) + "\n")
 
@@ -8494,7 +8495,7 @@ def test_state_check_marks_malformed_atomic_claim_graph_invalid(tmp_path):
 
 def test_claim_ledger_stage_complete_rejects_nested_meta_ai_shape(tmp_path):
     ws = _write_workspace(tmp_path)
-    initialize_runtime_state(workspace=ws, repo_workdir=ROOT)
+    initialize_runtime_state(runtime="operator", workspace=ws, repo_workdir=ROOT)
     _set_current_stage(ws, "claim-ledger")
     _write_json_artifact(
         ws,
@@ -8532,7 +8533,7 @@ def test_claim_ledger_stage_complete_rejects_nested_meta_ai_shape(tmp_path):
 
 def test_claim_ledger_stage_complete_rejects_missing_evidence_text(tmp_path):
     ws = _write_workspace(tmp_path)
-    initialize_runtime_state(workspace=ws, repo_workdir=ROOT)
+    initialize_runtime_state(runtime="operator", workspace=ws, repo_workdir=ROOT)
     _set_current_stage(ws, "claim-ledger")
     _write_json_artifact(
         ws,
@@ -8563,7 +8564,7 @@ def test_claim_ledger_stage_complete_rejects_missing_evidence_text(tmp_path):
 
 def test_state_check_marks_malformed_claim_ledger_invalid(tmp_path):
     ws = _write_workspace(tmp_path)
-    initialize_runtime_state(workspace=ws, repo_workdir=ROOT)
+    initialize_runtime_state(runtime="operator", workspace=ws, repo_workdir=ROOT)
     _write_json_artifact(ws, "claim_ledger.json", _valid_claim_ledger_payload())
     _set_current_stage(ws, "analyst")
     _write_json_artifact(ws, "candidate_claims.json")
@@ -8580,7 +8581,7 @@ def test_state_check_marks_malformed_claim_ledger_invalid(tmp_path):
 
 def test_state_check_blocks_modified_frozen_claim_ledger(tmp_path):
     ws = _write_workspace(tmp_path)
-    initialize_runtime_state(workspace=ws, repo_workdir=ROOT)
+    initialize_runtime_state(runtime="operator", workspace=ws, repo_workdir=ROOT)
     _set_current_stage(ws, "claim-ledger")
     _freeze_claim_ledger_fixture(ws)
     complete_stage_transaction(
@@ -8621,7 +8622,7 @@ def test_state_check_blocks_modified_frozen_claim_ledger(tmp_path):
 
 def test_state_check_rejects_malformed_registry_before_frozen_integrity_laundering(tmp_path):
     ws = _write_workspace(tmp_path)
-    initialize_runtime_state(workspace=ws, repo_workdir=ROOT)
+    initialize_runtime_state(runtime="operator", workspace=ws, repo_workdir=ROOT)
     _set_current_stage(ws, "claim-ledger")
     _freeze_claim_ledger_fixture(ws)
     complete_stage_transaction(
@@ -8686,7 +8687,7 @@ def test_frozen_artifact_interpreter_rejects_malformed_producer_stage_status():
 
 def test_state_check_contamination_event_failure_rolls_back_workflow(tmp_path, monkeypatch):
     ws = _write_workspace(tmp_path)
-    initialize_runtime_state(workspace=ws, repo_workdir=ROOT)
+    initialize_runtime_state(runtime="operator", workspace=ws, repo_workdir=ROOT)
     _set_current_stage(ws, "claim-ledger")
     _freeze_claim_ledger_fixture(ws)
     complete_stage_transaction(
@@ -8717,7 +8718,7 @@ def test_state_check_contamination_event_failure_rolls_back_workflow(tmp_path, m
 
 def test_state_check_accepts_unchanged_frozen_claim_ledger(tmp_path):
     ws = _write_workspace(tmp_path)
-    initialize_runtime_state(workspace=ws, repo_workdir=ROOT)
+    initialize_runtime_state(runtime="operator", workspace=ws, repo_workdir=ROOT)
     _set_current_stage(ws, "claim-ledger")
     _freeze_claim_ledger_fixture(ws)
     complete_stage_transaction(
@@ -8734,7 +8735,7 @@ def test_state_check_accepts_unchanged_frozen_claim_ledger(tmp_path):
 
 def test_editor_stage_complete_can_rewrite_audited_brief(tmp_path):
     ws = _write_workspace(tmp_path)
-    initialize_runtime_state(workspace=ws, repo_workdir=ROOT)
+    initialize_runtime_state(runtime="operator", workspace=ws, repo_workdir=ROOT)
     _write_json_artifact(ws, "claim_ledger.json", _valid_claim_ledger_payload())
     _set_current_stage(ws, "analyst")
     audited = _intermediate(ws) / "audited_brief.md"
@@ -8776,7 +8777,7 @@ def test_editor_stage_complete_can_rewrite_audited_brief(tmp_path):
 
 def test_audited_brief_mutation_after_editor_complete_contaminates(tmp_path):
     ws = _write_workspace(tmp_path)
-    initialize_runtime_state(workspace=ws, repo_workdir=ROOT)
+    initialize_runtime_state(runtime="operator", workspace=ws, repo_workdir=ROOT)
     _write_json_artifact(ws, "claim_ledger.json", _valid_claim_ledger_payload())
     _set_current_stage(ws, "analyst")
     audited = _intermediate(ws) / "audited_brief.md"
@@ -8810,7 +8811,7 @@ def test_audited_brief_mutation_after_editor_complete_contaminates(tmp_path):
 
 def test_analyst_snapshot_mutation_after_analyst_complete_contaminates(tmp_path):
     ws = _write_workspace(tmp_path)
-    initialize_runtime_state(workspace=ws, repo_workdir=ROOT)
+    initialize_runtime_state(runtime="operator", workspace=ws, repo_workdir=ROOT)
     _write_json_artifact(ws, "claim_ledger.json", _valid_claim_ledger_payload())
     _set_current_stage(ws, "analyst")
     audited = _intermediate(ws) / "audited_brief.md"
@@ -9015,7 +9016,7 @@ def test_scoped_repair_start_rejects_non_gate_current_stage_before_routing(tmp_p
 
 def test_repair_start_records_editor_owner_transaction(tmp_path):
     ws = _write_workspace(tmp_path)
-    initialize_runtime_state(workspace=ws, repo_workdir=ROOT)
+    initialize_runtime_state(runtime="operator", workspace=ws, repo_workdir=ROOT)
     _write_json_artifact(ws, "claim_ledger.json", _valid_claim_ledger_payload())
     _set_current_stage(ws, "analyst")
     audited = _intermediate(ws) / "audited_brief.md"
@@ -9099,7 +9100,7 @@ def test_finalize_complete_fails_while_active_repair_open_without_events(tmp_pat
 
 def test_repair_start_applies_non_reference_integrity_effect_for_frozen_artifact_change(tmp_path):
     ws = _write_workspace(tmp_path)
-    initialize_runtime_state(workspace=ws, repo_workdir=ROOT)
+    initialize_runtime_state(runtime="operator", workspace=ws, repo_workdir=ROOT)
     _write_json_artifact(ws, "claim_ledger.json", _valid_claim_ledger_payload())
     _set_current_stage(ws, "analyst")
     audited = _intermediate(ws) / "audited_brief.md"
@@ -9273,7 +9274,7 @@ def test_supersede_stage_rejects_invalid_current_artifact_bytes_without_writing_
 def test_supersede_stage_accepts_selected_contract_artifact_not_in_stage_produces(tmp_path):
     ws = _write_workspace(tmp_path)
     _write_source_discovery_plan_with_evidence(ws)
-    initialize_runtime_state(workspace=ws, repo_workdir=ROOT)
+    initialize_runtime_state(runtime="operator", workspace=ws, repo_workdir=ROOT)
     complete_stage_transaction(workspace=ws, repo_workdir=ROOT, stage_id="doctor", reason="doctor complete")
     _write_source_evidence_pack_manifest(ws, source_label="original")
     completed = complete_stage_transaction(
@@ -9317,7 +9318,7 @@ def test_supersede_stage_accepts_selected_contract_artifact_not_in_stage_produce
 def test_supersede_stage_rejects_unselected_frozen_artifact_change(tmp_path):
     ws = _write_workspace(tmp_path)
     _write_source_discovery_plan_with_evidence(ws)
-    initialize_runtime_state(workspace=ws, repo_workdir=ROOT)
+    initialize_runtime_state(runtime="operator", workspace=ws, repo_workdir=ROOT)
     complete_stage_transaction(workspace=ws, repo_workdir=ROOT, stage_id="doctor", reason="doctor complete")
     _write_source_evidence_pack_manifest(ws, source_label="original")
     complete_stage_transaction(
@@ -9411,7 +9412,7 @@ def test_supersede_stage_rejects_audit_report_control_artifact_without_writing_c
 
 def test_supersede_stage_rejects_claim_ledger_control_anchor_without_refreeze(tmp_path):
     ws = _write_workspace(tmp_path)
-    initialize_runtime_state(workspace=ws, repo_workdir=ROOT)
+    initialize_runtime_state(runtime="operator", workspace=ws, repo_workdir=ROOT)
     _set_current_stage(ws, "claim-ledger")
     _freeze_claim_ledger_fixture(ws)
     completed = complete_stage_transaction(
@@ -9588,7 +9589,7 @@ def test_auditor_rerun_after_editor_supersede_records_supersede_in_audit_binding
 
 def test_supersede_stage_rejects_clean_run_without_contamination(tmp_path):
     ws = _write_workspace(tmp_path)
-    initialize_runtime_state(workspace=ws, repo_workdir=ROOT)
+    initialize_runtime_state(runtime="operator", workspace=ws, repo_workdir=ROOT)
     _write_json_artifact(ws, "claim_ledger.json", _valid_claim_ledger_payload())
     _set_current_stage(ws, "analyst")
     audited = _intermediate(ws) / "audited_brief.md"
@@ -9649,7 +9650,7 @@ def test_repair_supersede_stage_cli_records_current_revision(tmp_path, capsys):
 
 def test_repair_start_contamination_event_failure_rolls_back_control_files(tmp_path, monkeypatch):
     ws = _write_workspace(tmp_path)
-    initialize_runtime_state(workspace=ws, repo_workdir=ROOT)
+    initialize_runtime_state(runtime="operator", workspace=ws, repo_workdir=ROOT)
     _write_json_artifact(ws, "claim_ledger.json", _valid_claim_ledger_payload())
     _set_current_stage(ws, "analyst")
     audited = _intermediate(ws) / "audited_brief.md"
@@ -9698,7 +9699,7 @@ def test_repair_start_rejects_finalized_workflow_without_mutating_state(tmp_path
 
 def test_repair_start_rejects_stale_report_from_non_current_stage(tmp_path):
     ws = _write_workspace(tmp_path)
-    initialize_runtime_state(workspace=ws, repo_workdir=ROOT)
+    initialize_runtime_state(runtime="operator", workspace=ws, repo_workdir=ROOT)
     _set_current_stage(ws, "claim-ledger")
     _write_editor_repair_gate_report(ws)
     before_workflow = _state_file(ws, "workflow_state").read_bytes()
@@ -9715,7 +9716,7 @@ def test_repair_start_rejects_stale_report_from_non_current_stage(tmp_path):
 
 def test_repair_stale_precedes_intake_validity(tmp_path: Path) -> None:
     ws = _write_workspace(tmp_path)
-    initialized = initialize_runtime_state(workspace=ws, repo_workdir=ROOT)
+    initialized = initialize_runtime_state(runtime="operator", workspace=ws, repo_workdir=ROOT)
     _write_json_artifact(ws, "candidate_claims.json", _normalized_candidate_wrapper())
     checked = check_runtime_state(workspace=ws, repo_workdir=ROOT)
     baseline = checked["artifact_registry"]["artifacts"]["candidate_claims"]
@@ -9758,7 +9759,7 @@ def test_invalid_intake_precedes_recovery_stale_overlay(
     recovery_event_type: str,
 ) -> None:
     ws = _write_workspace(tmp_path)
-    initialized = initialize_runtime_state(workspace=ws, repo_workdir=ROOT)
+    initialized = initialize_runtime_state(runtime="operator", workspace=ws, repo_workdir=ROOT)
     _write_json_artifact(ws, "candidate_claims.json", "{broken")
     checked = check_runtime_state(workspace=ws, repo_workdir=ROOT)
     baseline = checked["artifact_registry"]["artifacts"]["candidate_claims"]
@@ -9796,7 +9797,7 @@ def test_invalid_intake_precedes_recovery_stale_overlay(
 
 def test_repair_complete_refreezes_allowed_editor_artifact_and_invalidates_downstream(tmp_path):
     ws = _write_workspace(tmp_path)
-    initialize_runtime_state(workspace=ws, repo_workdir=ROOT)
+    initialize_runtime_state(runtime="operator", workspace=ws, repo_workdir=ROOT)
     _write_json_artifact(ws, "claim_ledger.json", _valid_claim_ledger_payload())
     _set_current_stage(ws, "analyst")
     audited = _intermediate(ws) / "audited_brief.md"
@@ -9887,7 +9888,7 @@ def test_repair_complete_refreezes_allowed_editor_artifact_and_invalidates_downs
 
 def test_auditor_rerun_after_editor_repair_clears_stale_downstream_artifacts(tmp_path):
     ws = _write_workspace(tmp_path)
-    initialize_runtime_state(workspace=ws, repo_workdir=ROOT)
+    initialize_runtime_state(runtime="operator", workspace=ws, repo_workdir=ROOT)
     _write_json_artifact(ws, "claim_ledger.json", _valid_claim_ledger_payload())
     _set_current_stage(ws, "analyst")
     audited = _intermediate(ws) / "audited_brief.md"
@@ -9955,7 +9956,7 @@ def test_auditor_rerun_after_editor_repair_clears_stale_downstream_artifacts(tmp
 
 def test_auditor_rerun_after_editor_repair_accepts_new_artifact_without_stale_baseline(tmp_path):
     ws = _write_workspace(tmp_path)
-    initialize_runtime_state(workspace=ws, repo_workdir=ROOT)
+    initialize_runtime_state(runtime="operator", workspace=ws, repo_workdir=ROOT)
     _write_json_artifact(ws, "claim_ledger.json", _valid_claim_ledger_payload())
     _set_current_stage(ws, "analyst")
     audited = _intermediate(ws) / "audited_brief.md"
@@ -10014,7 +10015,7 @@ def test_auditor_rerun_after_editor_repair_accepts_new_artifact_without_stale_ba
 
 def test_auditor_rerun_rejects_unrefreshed_stale_audit_report(tmp_path):
     ws = _write_workspace(tmp_path)
-    initialize_runtime_state(workspace=ws, repo_workdir=ROOT)
+    initialize_runtime_state(runtime="operator", workspace=ws, repo_workdir=ROOT)
     _write_json_artifact(ws, "claim_ledger.json", _valid_claim_ledger_payload())
     _set_current_stage(ws, "analyst")
     audited = _intermediate(ws) / "audited_brief.md"
@@ -10063,7 +10064,7 @@ def test_auditor_rerun_rejects_unrefreshed_stale_audit_report(tmp_path):
 
 def test_repair_complete_rejects_blocked_artifact_edit(tmp_path):
     ws = _write_workspace(tmp_path)
-    initialize_runtime_state(workspace=ws, repo_workdir=ROOT)
+    initialize_runtime_state(runtime="operator", workspace=ws, repo_workdir=ROOT)
     _write_json_artifact(ws, "claim_ledger.json", _valid_claim_ledger_payload())
     _set_current_stage(ws, "analyst")
     audited = _intermediate(ws) / "audited_brief.md"
@@ -10104,7 +10105,7 @@ def test_repair_complete_rejects_blocked_artifact_edit(tmp_path):
 
 def test_repair_complete_rejects_downstream_artifact_created_during_repair(tmp_path):
     ws = _write_workspace(tmp_path)
-    initialize_runtime_state(workspace=ws, repo_workdir=ROOT)
+    initialize_runtime_state(runtime="operator", workspace=ws, repo_workdir=ROOT)
     _write_json_artifact(ws, "claim_ledger.json", _valid_claim_ledger_payload())
     _set_current_stage(ws, "analyst")
     audited = _intermediate(ws) / "audited_brief.md"
@@ -10142,7 +10143,7 @@ def test_repair_complete_rejects_downstream_artifact_created_during_repair(tmp_p
 
 def test_repair_complete_rejects_noop_repair(tmp_path):
     ws = _write_workspace(tmp_path)
-    initialize_runtime_state(workspace=ws, repo_workdir=ROOT)
+    initialize_runtime_state(runtime="operator", workspace=ws, repo_workdir=ROOT)
     _write_json_artifact(ws, "claim_ledger.json", _valid_claim_ledger_payload())
     _set_current_stage(ws, "analyst")
     audited = _intermediate(ws) / "audited_brief.md"
@@ -10178,7 +10179,7 @@ def test_repair_complete_rejects_noop_repair(tmp_path):
 
 def test_analyst_snapshot_rolls_back_when_stage_completion_fails_after_snapshot(tmp_path, monkeypatch):
     ws = _write_workspace(tmp_path)
-    initialize_runtime_state(workspace=ws, repo_workdir=ROOT)
+    initialize_runtime_state(runtime="operator", workspace=ws, repo_workdir=ROOT)
     _set_current_stage(ws, "analyst")
     audited = _intermediate(ws) / "audited_brief.md"
     audited.write_text("# Brief\n\nAnalyst draft. [src:CL-001]\n", encoding="utf-8")
@@ -10210,7 +10211,7 @@ def test_analyst_snapshot_rolls_back_when_stage_completion_fails_after_snapshot(
 
 def test_analyst_snapshot_rolls_back_when_state_write_fails_after_snapshot(tmp_path, monkeypatch):
     ws = _write_workspace(tmp_path)
-    initialize_runtime_state(workspace=ws, repo_workdir=ROOT)
+    initialize_runtime_state(runtime="operator", workspace=ws, repo_workdir=ROOT)
     _set_current_stage(ws, "analyst")
     audited = _intermediate(ws) / "audited_brief.md"
     audited.write_text("# Brief\n\nAnalyst draft. [src:CL-001]\n", encoding="utf-8")
@@ -10257,7 +10258,7 @@ def test_analyst_snapshot_rolls_back_when_state_write_fails_after_snapshot(tmp_p
 
 def test_state_check_allows_append_only_event_log_after_frozen_artifact(tmp_path):
     ws = _write_workspace(tmp_path)
-    state = initialize_runtime_state(workspace=ws, repo_workdir=ROOT)
+    state = initialize_runtime_state(runtime="operator", workspace=ws, repo_workdir=ROOT)
     _set_current_stage(ws, "claim-ledger")
     _freeze_claim_ledger_fixture(ws)
     complete_stage_transaction(
@@ -10282,7 +10283,7 @@ def test_state_check_allows_append_only_event_log_after_frozen_artifact(tmp_path
 
 def test_auditor_stage_complete_requires_passing_quality_gate_report(tmp_path):
     ws = _write_workspace(tmp_path)
-    initialize_runtime_state(workspace=ws, repo_workdir=ROOT)
+    initialize_runtime_state(runtime="operator", workspace=ws, repo_workdir=ROOT)
     _advance_to_auditor(ws)
 
     with pytest.raises(RuntimeStateError) as missing:
@@ -10307,7 +10308,7 @@ def test_auditor_stage_complete_requires_passing_quality_gate_report(tmp_path):
 
 def test_auditor_stage_complete_rejects_wrong_stage_quality_gate_report(tmp_path):
     ws = _write_workspace(tmp_path)
-    initialize_runtime_state(workspace=ws, repo_workdir=ROOT)
+    initialize_runtime_state(runtime="operator", workspace=ws, repo_workdir=ROOT)
     _advance_to_auditor(ws)
     _write_quality_gate_report(ws, stage_id="doctor")
 
@@ -10325,7 +10326,7 @@ def test_auditor_stage_complete_rejects_wrong_stage_quality_gate_report(tmp_path
 
 def test_auditor_stage_complete_rejects_incomplete_quality_gate_report(tmp_path):
     ws = _write_workspace(tmp_path)
-    initialize_runtime_state(workspace=ws, repo_workdir=ROOT)
+    initialize_runtime_state(runtime="operator", workspace=ws, repo_workdir=ROOT)
     _advance_to_auditor(ws)
     _write_quality_gate_report(ws)
     report_path = _intermediate(ws) / "gates" / "auditor_quality_gate_report.json"
@@ -10349,7 +10350,7 @@ def test_auditor_stage_complete_rejects_incomplete_quality_gate_report(tmp_path)
 
 def test_auditor_stage_complete_rejects_missing_quality_gate_input_metadata(tmp_path):
     ws = _write_workspace(tmp_path)
-    initialize_runtime_state(workspace=ws, repo_workdir=ROOT)
+    initialize_runtime_state(runtime="operator", workspace=ws, repo_workdir=ROOT)
     _advance_to_auditor(ws)
     _write_quality_gate_report(ws)
     report_path = _intermediate(ws) / "gates" / "auditor_quality_gate_report.json"
@@ -10372,7 +10373,7 @@ def test_auditor_stage_complete_rejects_missing_quality_gate_input_metadata(tmp_
 
 def test_auditor_stage_complete_passes_with_clean_quality_gate_report(tmp_path):
     ws = _write_workspace(tmp_path)
-    initialize_runtime_state(workspace=ws, repo_workdir=ROOT)
+    initialize_runtime_state(runtime="operator", workspace=ws, repo_workdir=ROOT)
     _advance_to_auditor(ws)
     _write_quality_gate_report(ws)
 
@@ -10388,7 +10389,7 @@ def test_auditor_stage_complete_passes_with_clean_quality_gate_report(tmp_path):
 
 def test_auditor_stage_complete_allows_warning_gate_for_non_experiment_workflow(tmp_path):
     ws = _write_workspace(tmp_path)
-    initialize_runtime_state(workspace=ws, repo_workdir=ROOT)
+    initialize_runtime_state(runtime="operator", workspace=ws, repo_workdir=ROOT)
     _advance_to_auditor(ws)
     _write_quality_gate_report(ws, status="warning", stage_id="auditor")
 
@@ -10405,7 +10406,7 @@ def test_auditor_stage_complete_allows_warning_gate_for_non_experiment_workflow(
 def test_auditable_target_auditor_stage_complete_requires_gate_status_pass(tmp_path):
     ws = _write_workspace(tmp_path)
     _write_auditable_condition_metadata(ws)
-    initialize_runtime_state(workspace=ws, repo_workdir=ROOT)
+    initialize_runtime_state(runtime="operator", workspace=ws, repo_workdir=ROOT)
     _advance_to_auditor(ws)
     _write_quality_gate_report(ws, status="warning", stage_id="auditor")
 
@@ -10431,7 +10432,7 @@ def test_auditable_target_auditor_stage_complete_requires_gate_status_pass(tmp_p
 def test_auditable_target_auditor_stage_complete_allows_final_abstract_advisory_warning(tmp_path):
     ws = _write_workspace(tmp_path)
     _write_auditable_condition_metadata(ws)
-    initialize_runtime_state(workspace=ws, repo_workdir=ROOT)
+    initialize_runtime_state(runtime="operator", workspace=ws, repo_workdir=ROOT)
     _advance_to_auditor(ws)
     _write_quality_gate_report(ws, stage_id="auditor")
     report_path = _intermediate(ws) / "gates" / "auditor_quality_gate_report.json"
@@ -10475,7 +10476,7 @@ def test_auditable_target_auditor_stage_complete_allows_final_abstract_advisory_
 
 def test_auditor_stage_complete_ignores_legacy_quality_gate_projection(tmp_path):
     ws = _write_workspace(tmp_path)
-    initialize_runtime_state(workspace=ws, repo_workdir=ROOT)
+    initialize_runtime_state(runtime="operator", workspace=ws, repo_workdir=ROOT)
     _advance_to_auditor(ws)
     _write_quality_gate_report(ws, legacy_only=True)
 
@@ -10493,7 +10494,7 @@ def test_auditor_stage_complete_ignores_legacy_quality_gate_projection(tmp_path)
 
 def test_finalize_gate_does_not_mutate_frozen_auditor_gate_report(tmp_path):
     ws = _write_workspace(tmp_path)
-    initialize_runtime_state(workspace=ws, repo_workdir=ROOT)
+    initialize_runtime_state(runtime="operator", workspace=ws, repo_workdir=ROOT)
     _advance_to_auditor(ws)
     _write_quality_gate_report(ws)
 
@@ -10528,7 +10529,7 @@ def test_finalize_gate_does_not_mutate_frozen_auditor_gate_report(tmp_path):
 
 def test_auditor_stage_complete_rejects_audit_report_missing_audit_status(tmp_path):
     ws = _write_workspace(tmp_path)
-    initialize_runtime_state(workspace=ws, repo_workdir=ROOT)
+    initialize_runtime_state(runtime="operator", workspace=ws, repo_workdir=ROOT)
     _advance_to_auditor(ws)
     report = json.loads((_intermediate(ws) / "audit_report.json").read_text(encoding="utf-8"))
     report.pop("audit_status")
@@ -10549,7 +10550,7 @@ def test_auditor_stage_complete_rejects_audit_report_missing_audit_status(tmp_pa
 
 def test_auditor_stage_complete_rejects_audit_report_missing_audit_score(tmp_path):
     ws = _write_workspace(tmp_path)
-    initialize_runtime_state(workspace=ws, repo_workdir=ROOT)
+    initialize_runtime_state(runtime="operator", workspace=ws, repo_workdir=ROOT)
     _advance_to_auditor(ws)
     report = json.loads((_intermediate(ws) / "audit_report.json").read_text(encoding="utf-8"))
     report.pop("audit_score")
@@ -10570,7 +10571,7 @@ def test_auditor_stage_complete_rejects_audit_report_missing_audit_score(tmp_pat
 
 def test_auditor_stage_complete_rejects_non_integer_audit_score(tmp_path):
     ws = _write_workspace(tmp_path)
-    initialize_runtime_state(workspace=ws, repo_workdir=ROOT)
+    initialize_runtime_state(runtime="operator", workspace=ws, repo_workdir=ROOT)
     _advance_to_auditor(ws)
     report = json.loads((_intermediate(ws) / "audit_report.json").read_text(encoding="utf-8"))
     report["audit_score"] = 99.5
@@ -10591,7 +10592,7 @@ def test_auditor_stage_complete_rejects_non_integer_audit_score(tmp_path):
 
 def test_auditor_stage_complete_records_ledger_and_audit_report_sha(tmp_path):
     ws = _write_workspace(tmp_path)
-    initialize_runtime_state(workspace=ws, repo_workdir=ROOT)
+    initialize_runtime_state(runtime="operator", workspace=ws, repo_workdir=ROOT)
     _advance_to_auditor(ws)
     _write_quality_gate_report(ws)
 
@@ -10617,7 +10618,7 @@ def test_auditor_stage_complete_records_ledger_and_audit_report_sha(tmp_path):
 
 def test_state_check_preserves_auditor_binding_metadata_for_finalize(tmp_path):
     ws = _write_workspace(tmp_path)
-    initialize_runtime_state(workspace=ws, repo_workdir=ROOT)
+    initialize_runtime_state(runtime="operator", workspace=ws, repo_workdir=ROOT)
     _advance_to_auditor(ws)
     _write_quality_gate_report(ws)
 
@@ -10645,7 +10646,7 @@ def test_state_check_preserves_auditor_binding_metadata_for_finalize(tmp_path):
 
 def test_finalize_complete_does_not_consume_delivery_snapshot(tmp_path):
     ws = _write_workspace(tmp_path)
-    initialize_runtime_state(workspace=ws, repo_workdir=ROOT)
+    initialize_runtime_state(runtime="operator", workspace=ws, repo_workdir=ROOT)
     _advance_to_finalize(ws)
     _write_quality_gate_report(ws, stage_id="finalize")
     _write_finalize_report(ws)
@@ -10675,7 +10676,7 @@ def test_finalize_complete_does_not_consume_delivery_snapshot(tmp_path):
 
 def test_finalize_complete_rejects_non_list_delivery_artifacts_without_crashing(tmp_path):
     ws = _write_workspace(tmp_path)
-    initialize_runtime_state(workspace=ws, repo_workdir=ROOT)
+    initialize_runtime_state(runtime="operator", workspace=ws, repo_workdir=ROOT)
     _advance_to_finalize(ws)
     _write_quality_gate_report(ws, stage_id="finalize")
     _write_finalize_report(ws)
@@ -10697,7 +10698,7 @@ def test_finalize_complete_rejects_non_list_delivery_artifacts_without_crashing(
 
 def test_finalize_complete_rejects_external_delivery_artifact_without_crashing(tmp_path):
     ws = _write_workspace(tmp_path)
-    initialize_runtime_state(workspace=ws, repo_workdir=ROOT)
+    initialize_runtime_state(runtime="operator", workspace=ws, repo_workdir=ROOT)
     _advance_to_finalize(ws)
     _write_quality_gate_report(ws, stage_id="finalize")
     _write_finalize_report(ws)
@@ -10722,7 +10723,7 @@ def test_finalize_complete_rejects_external_delivery_artifact_without_crashing(t
 
 def test_finalize_complete_requires_passing_audit_binding(tmp_path):
     ws = _write_workspace(tmp_path)
-    initialize_runtime_state(workspace=ws, repo_workdir=ROOT)
+    initialize_runtime_state(runtime="operator", workspace=ws, repo_workdir=ROOT)
     _advance_to_finalize(ws)
     _write_quality_gate_report(ws, stage_id="finalize")
     _write_finalize_report(ws)
@@ -10744,7 +10745,7 @@ def test_finalize_complete_requires_passing_audit_binding(tmp_path):
 
 def test_finalize_complete_rejects_stale_audit_binding_hash(tmp_path):
     ws = _write_workspace(tmp_path)
-    initialize_runtime_state(workspace=ws, repo_workdir=ROOT)
+    initialize_runtime_state(runtime="operator", workspace=ws, repo_workdir=ROOT)
     _advance_to_finalize(ws)
     _write_quality_gate_report(ws, stage_id="finalize")
     _write_finalize_report(ws)
@@ -10768,7 +10769,7 @@ def test_finalize_complete_rejects_stale_audit_binding_hash(tmp_path):
 
 def test_finalize_complete_rejects_forged_clean_report_with_dirty_artifact(tmp_path):
     ws = _write_workspace(tmp_path)
-    initialize_runtime_state(workspace=ws, repo_workdir=ROOT)
+    initialize_runtime_state(runtime="operator", workspace=ws, repo_workdir=ROOT)
     _advance_to_finalize(ws)
     _write_quality_gate_report(ws, stage_id="finalize")
     _write_finalize_report(ws)
@@ -10786,7 +10787,7 @@ def test_finalize_complete_rejects_forged_clean_report_with_dirty_artifact(tmp_p
 
 def test_finalize_complete_records_terminal_transaction(tmp_path):
     ws = _write_workspace(tmp_path)
-    initialize_runtime_state(workspace=ws, repo_workdir=ROOT)
+    initialize_runtime_state(runtime="operator", workspace=ws, repo_workdir=ROOT)
     _advance_to_finalize(ws)
     _write_quality_gate_report(ws, stage_id="finalize")
     _write_finalize_report(ws)
@@ -10818,7 +10819,7 @@ def test_finalize_complete_records_terminal_transaction(tmp_path):
 
 def test_finalize_complete_cli_records_runtime_model_provenance(tmp_path, capsys):
     ws = _write_workspace(tmp_path)
-    initialize_runtime_state(workspace=ws, repo_workdir=ROOT)
+    initialize_runtime_state(runtime="operator", workspace=ws, repo_workdir=ROOT)
     _advance_to_finalize(ws)
     _write_quality_gate_report(ws, stage_id="finalize")
     _write_finalize_report(ws)
@@ -10850,7 +10851,7 @@ def test_finalize_complete_cli_records_runtime_model_provenance(tmp_path, capsys
 
 def test_run_integrity_contamination_event_is_sticky_on_state_check(tmp_path):
     ws = _write_workspace(tmp_path)
-    initialize_runtime_state(workspace=ws, repo_workdir=ROOT)
+    initialize_runtime_state(runtime="operator", workspace=ws, repo_workdir=ROOT)
     manifest = json.loads(_state_file(ws, "runtime_manifest").read_text(encoding="utf-8"))
     workflow_path = _state_file(ws, "workflow_state")
     workflow = json.loads(workflow_path.read_text(encoding="utf-8"))
@@ -10888,7 +10889,7 @@ def test_run_integrity_contamination_event_is_sticky_on_state_check(tmp_path):
 
 def test_finalize_complete_rejects_unbound_contaminated_run(tmp_path):
     ws = _write_workspace(tmp_path)
-    initialize_runtime_state(workspace=ws, repo_workdir=ROOT)
+    initialize_runtime_state(runtime="operator", workspace=ws, repo_workdir=ROOT)
     _advance_to_finalize(ws)
     _write_quality_gate_report(ws, stage_id="finalize")
     _write_finalize_report(ws)
@@ -10944,7 +10945,7 @@ def test_finalize_complete_archives_delivery_intermediate_and_control_files(tmp_
 
 def test_finalize_complete_archives_source_appendix_trace_as_auxiliary_artifact(tmp_path):
     ws = _write_workspace(tmp_path)
-    initialize_runtime_state(workspace=ws, repo_workdir=ROOT)
+    initialize_runtime_state(runtime="operator", workspace=ws, repo_workdir=ROOT)
     _advance_to_finalize(ws)
     _write_quality_gate_report(ws, stage_id="finalize")
     _write_finalize_report(ws)
@@ -10983,7 +10984,7 @@ def test_finalize_complete_archives_source_appendix_trace_as_auxiliary_artifact(
 
 def test_finalize_complete_rejects_missing_source_appendix_trace_reference(tmp_path):
     ws = _write_workspace(tmp_path)
-    initialize_runtime_state(workspace=ws, repo_workdir=ROOT)
+    initialize_runtime_state(runtime="operator", workspace=ws, repo_workdir=ROOT)
     _advance_to_finalize(ws)
     _write_quality_gate_report(ws, stage_id="finalize")
     _write_finalize_report(ws)
@@ -11510,6 +11511,7 @@ input:
         workspace=target_ws,
         archive=archive_manifest,
         repo_workdir=ROOT,
+        runtime="operator",
     )
 
     freshness = state["manifest"]["fact_layer_import"]["freshness_at_import"]
@@ -11552,6 +11554,7 @@ input:
         workspace=target_ws,
         archive=archive_manifest,
         repo_workdir=ROOT,
+        runtime="operator",
     )
     (target_ws / "output" / "intermediate" / "audited_brief.md").write_text("# Brief\n", encoding="utf-8")
     _write_json_artifact(target_ws, "audit_report.json", _valid_audit_report_payload())
@@ -11615,7 +11618,7 @@ input:
         {"published_at": "2026-06-10"},
     )
     archive_manifest = source_ws / "output" / "runs" / finalized["manifest"]["run_id"] / "manifest.json"
-    import_fact_layer_transaction(
+    import_fact_layer_transaction(runtime="operator",
         workspace=target_ws,
         archive=archive_manifest,
         repo_workdir=ROOT,
@@ -11665,7 +11668,7 @@ input:
         {"retrieved_at": "2026-06-19"},
     )
     archive_manifest = source_ws / "output" / "runs" / finalized["manifest"]["run_id"] / "manifest.json"
-    import_state = import_fact_layer_transaction(
+    import_state = import_fact_layer_transaction(runtime="operator",
         workspace=target_ws,
         archive=archive_manifest,
         repo_workdir=ROOT,
@@ -11719,7 +11722,7 @@ input:
         {"published_at": "2026-06-10"},
     )
     archive_manifest = source_ws / "output" / "runs" / finalized["manifest"]["run_id"] / "manifest.json"
-    import_state = import_fact_layer_transaction(
+    import_state = import_fact_layer_transaction(runtime="operator",
         workspace=target_ws,
         archive=archive_manifest,
         repo_workdir=ROOT,
@@ -11773,7 +11776,7 @@ input:
         {"published_at": "2026-05-01"},
     )
     archive_manifest = source_ws / "output" / "runs" / finalized["manifest"]["run_id"] / "manifest.json"
-    import_fact_layer_transaction(
+    import_fact_layer_transaction(runtime="operator",
         workspace=target_ws,
         archive=archive_manifest,
         repo_workdir=ROOT,
@@ -11855,7 +11858,7 @@ def test_import_fact_layer_transaction_rejects_incomplete_fact_layer(tmp_path):
     archive_manifest = source_ws / "output" / "runs" / finalized["manifest"]["run_id"] / "manifest.json"
 
     with pytest.raises(RuntimeStateError) as excinfo:
-        import_fact_layer_transaction(
+        import_fact_layer_transaction(runtime="operator",
             workspace=target_ws,
             archive=archive_manifest,
             repo_workdir=ROOT,
@@ -11885,7 +11888,7 @@ def test_import_fact_layer_transaction_rejects_contaminated_archive(tmp_path):
     archive_manifest.write_text(json.dumps(manifest, ensure_ascii=False, indent=2), encoding="utf-8")
 
     with pytest.raises(RuntimeStateError) as excinfo:
-        import_fact_layer_transaction(
+        import_fact_layer_transaction(runtime="operator",
             workspace=target_ws,
             archive=archive_manifest,
             repo_workdir=ROOT,
@@ -11912,7 +11915,7 @@ def test_import_fact_layer_transaction_rejects_archive_hash_mismatch(tmp_path):
     )
 
     with pytest.raises(RuntimeStateError) as excinfo:
-        import_fact_layer_transaction(
+        import_fact_layer_transaction(runtime="operator",
             workspace=target_ws,
             archive=archive_manifest,
             repo_workdir=ROOT,
@@ -11939,7 +11942,7 @@ def test_import_fact_layer_transaction_rejects_existing_source_target(tmp_path):
     before = existing_source.read_bytes()
 
     with pytest.raises(RuntimeStateError) as excinfo:
-        import_fact_layer_transaction(
+        import_fact_layer_transaction(runtime="operator",
             workspace=target_ws,
             archive=archive_manifest,
             repo_workdir=ROOT,
@@ -11966,7 +11969,7 @@ def test_import_fact_layer_transaction_rejects_existing_intermediate_target(tmp_
     before = existing_ledger.read_bytes()
 
     with pytest.raises(RuntimeStateError) as excinfo:
-        import_fact_layer_transaction(
+        import_fact_layer_transaction(runtime="operator",
             workspace=target_ws,
             archive=archive_manifest,
             repo_workdir=ROOT,
@@ -11999,7 +12002,7 @@ def test_import_fact_layer_transaction_uses_code_required_artifacts_not_manifest
     archive_manifest.write_text(json.dumps(manifest, ensure_ascii=False, indent=2), encoding="utf-8")
 
     with pytest.raises(RuntimeStateError) as excinfo:
-        import_fact_layer_transaction(
+        import_fact_layer_transaction(runtime="operator",
             workspace=target_ws,
             archive=archive_manifest,
             repo_workdir=ROOT,
@@ -12031,7 +12034,7 @@ def test_import_fact_layer_transaction_rejects_self_consistent_invalid_claim_led
     archive_manifest.write_text(json.dumps(manifest, ensure_ascii=False, indent=2), encoding="utf-8")
 
     with pytest.raises(RuntimeStateError) as excinfo:
-        import_fact_layer_transaction(
+        import_fact_layer_transaction(runtime="operator",
             workspace=target_ws,
             archive=archive_manifest,
             repo_workdir=ROOT,
@@ -12068,7 +12071,7 @@ def test_import_fact_layer_transaction_rejects_source_candidates_fact_layer_arti
     archive_manifest.write_text(json.dumps(manifest, ensure_ascii=False, indent=2), encoding="utf-8")
 
     with pytest.raises(RuntimeStateError) as excinfo:
-        import_fact_layer_transaction(
+        import_fact_layer_transaction(runtime="operator",
             workspace=target_ws,
             archive=archive_manifest,
             repo_workdir=ROOT,
@@ -12105,7 +12108,7 @@ def test_import_fact_layer_transaction_rejects_unknown_delivery_artifact(tmp_pat
     archive_manifest.write_text(json.dumps(manifest, ensure_ascii=False, indent=2), encoding="utf-8")
 
     with pytest.raises(RuntimeStateError) as excinfo:
-        import_fact_layer_transaction(
+        import_fact_layer_transaction(runtime="operator",
             workspace=target_ws,
             archive=archive_manifest,
             repo_workdir=ROOT,
@@ -12142,7 +12145,7 @@ def test_import_fact_layer_transaction_rejects_source_pack_file_outside_sources(
     archive_manifest.write_text(json.dumps(manifest, ensure_ascii=False, indent=2), encoding="utf-8")
 
     with pytest.raises(RuntimeStateError) as excinfo:
-        import_fact_layer_transaction(
+        import_fact_layer_transaction(runtime="operator",
             workspace=target_ws,
             archive=archive_manifest,
             repo_workdir=ROOT,
@@ -12181,7 +12184,7 @@ def test_import_fact_layer_transaction_rejects_source_candidates_inside_source_p
     archive_manifest.write_text(json.dumps(manifest, ensure_ascii=False, indent=2), encoding="utf-8")
 
     with pytest.raises(RuntimeStateError) as excinfo:
-        import_fact_layer_transaction(
+        import_fact_layer_transaction(runtime="operator",
             workspace=target_ws,
             archive=archive_manifest,
             repo_workdir=ROOT,
@@ -12213,7 +12216,7 @@ def test_import_fact_layer_transaction_rejects_duplicate_non_pack_artifact_id(tm
     archive_manifest.write_text(json.dumps(manifest, ensure_ascii=False, indent=2), encoding="utf-8")
 
     with pytest.raises(RuntimeStateError) as excinfo:
-        import_fact_layer_transaction(
+        import_fact_layer_transaction(runtime="operator",
             workspace=target_ws,
             archive=archive_manifest,
             repo_workdir=ROOT,
@@ -12251,7 +12254,7 @@ def test_import_fact_layer_transaction_rejects_duplicate_workspace_target(tmp_pa
     archive_manifest.write_text(json.dumps(manifest, ensure_ascii=False, indent=2), encoding="utf-8")
 
     with pytest.raises(RuntimeStateError) as excinfo:
-        import_fact_layer_transaction(
+        import_fact_layer_transaction(runtime="operator",
             workspace=target_ws,
             archive=archive_manifest,
             repo_workdir=ROOT,
@@ -12279,7 +12282,7 @@ def test_import_fact_layer_transaction_rejects_stale_downstream_output(tmp_path)
     before = stale_delivery.read_bytes()
 
     with pytest.raises(RuntimeStateError) as excinfo:
-        import_fact_layer_transaction(
+        import_fact_layer_transaction(runtime="operator",
             workspace=target_ws,
             archive=archive_manifest,
             repo_workdir=ROOT,
@@ -12301,10 +12304,10 @@ def test_import_fact_layer_transaction_rejects_existing_runtime_state(tmp_path):
     _write_fact_layer_inputs(source_ws)
     finalized = _complete_finalized_workspace(source_ws)
     archive_manifest = source_ws / "output" / "runs" / finalized["manifest"]["run_id"] / "manifest.json"
-    initialize_runtime_state(workspace=target_ws, repo_workdir=ROOT)
+    initialize_runtime_state(runtime="operator", workspace=target_ws, repo_workdir=ROOT)
 
     with pytest.raises(RuntimeStateError) as excinfo:
-        import_fact_layer_transaction(
+        import_fact_layer_transaction(runtime="operator",
             workspace=target_ws,
             archive=archive_manifest,
             repo_workdir=ROOT,
@@ -12328,6 +12331,7 @@ def test_state_import_fact_layer_cli_outputs_json(tmp_path, capsys):
     rc = main([
         "state",
         "import-fact-layer",
+        "--runtime", "operator",
         "--workspace",
         str(target_ws),
         "--archive",
@@ -12345,7 +12349,7 @@ def test_state_import_fact_layer_cli_outputs_json(tmp_path, capsys):
 
 def test_finalize_complete_rejects_archive_conflict_for_same_run_id(tmp_path):
     ws = _write_workspace(tmp_path)
-    initialized = initialize_runtime_state(workspace=ws, repo_workdir=ROOT)
+    initialized = initialize_runtime_state(runtime="operator", workspace=ws, repo_workdir=ROOT)
     run_id = initialized["manifest"]["run_id"]
     _advance_to_finalize(ws)
     _write_quality_gate_report(ws, stage_id="finalize")
@@ -12397,7 +12401,7 @@ def test_reset_state_archives_finalized_run_before_new_run(tmp_path):
     old_run_id = first["manifest"]["run_id"]
     shutil.rmtree(ws / "output" / "runs" / old_run_id)
 
-    second = initialize_runtime_state(
+    second = initialize_runtime_state(runtime="operator",
         workspace=ws,
         repo_workdir=ROOT,
         reset_state=True,
@@ -12410,7 +12414,7 @@ def test_reset_state_archives_finalized_run_before_new_run(tmp_path):
 def test_fresh_reset_state_init_remains_reference_eligible(tmp_path):
     ws = _write_workspace(tmp_path)
 
-    state = initialize_runtime_state(
+    state = initialize_runtime_state(runtime="operator",
         workspace=ws,
         repo_workdir=ROOT,
         reset_state=True,
@@ -12429,9 +12433,9 @@ def test_fresh_reset_state_init_remains_reference_eligible(tmp_path):
 
 def test_reset_state_does_not_require_archive_for_incomplete_run(tmp_path):
     ws = _write_workspace(tmp_path)
-    first = initialize_runtime_state(workspace=ws, repo_workdir=ROOT)
+    first = initialize_runtime_state(runtime="operator", workspace=ws, repo_workdir=ROOT)
 
-    second = initialize_runtime_state(
+    second = initialize_runtime_state(runtime="operator",
         workspace=ws,
         repo_workdir=ROOT,
         reset_state=True,
@@ -12454,7 +12458,7 @@ def test_reset_state_does_not_require_archive_for_incomplete_run(tmp_path):
 
 def test_reset_state_event_append_failure_rolls_back_control_files(tmp_path, monkeypatch):
     ws = _write_workspace(tmp_path)
-    first = initialize_runtime_state(workspace=ws, repo_workdir=ROOT)
+    first = initialize_runtime_state(runtime="operator", workspace=ws, repo_workdir=ROOT)
     old_run_id = first["manifest"]["run_id"]
     before_manifest = _state_file(ws, "runtime_manifest").read_bytes()
     before_workflow = _state_file(ws, "workflow_state").read_bytes()
@@ -12462,7 +12466,7 @@ def test_reset_state_event_append_failure_rolls_back_control_files(tmp_path, mon
     _fail_appending_event_type(monkeypatch, "run_reset")
 
     with pytest.raises(RuntimeStateError) as excinfo:
-        initialize_runtime_state(
+        initialize_runtime_state(runtime="operator",
             workspace=ws,
             repo_workdir=ROOT,
             reset_state=True,
@@ -12477,7 +12481,7 @@ def test_reset_state_event_append_failure_rolls_back_control_files(tmp_path, mon
 
 def test_archive_rejects_finalize_report_delivery_artifact_outside_output_delivery(tmp_path):
     ws = _write_workspace(tmp_path)
-    initialize_runtime_state(workspace=ws, repo_workdir=ROOT)
+    initialize_runtime_state(runtime="operator", workspace=ws, repo_workdir=ROOT)
     _advance_to_finalize(ws)
     _write_quality_gate_report(ws, stage_id="finalize")
     _write_finalize_report(ws)
@@ -12502,7 +12506,7 @@ def test_archive_rejects_finalize_report_delivery_artifact_outside_output_delive
 
 def test_finalize_complete_rejects_stale_delivery_artifact_hash(tmp_path):
     ws = _write_workspace(tmp_path)
-    initialize_runtime_state(workspace=ws, repo_workdir=ROOT)
+    initialize_runtime_state(runtime="operator", workspace=ws, repo_workdir=ROOT)
     _advance_to_finalize(ws)
     _write_quality_gate_report(ws, stage_id="finalize")
     _write_finalize_report(ws)
@@ -12524,7 +12528,7 @@ def test_finalize_complete_rejects_stale_delivery_artifact_hash(tmp_path):
 
 def test_finalize_complete_rejects_missing_delivery_artifact_hash(tmp_path):
     ws = _write_workspace(tmp_path)
-    initialize_runtime_state(workspace=ws, repo_workdir=ROOT)
+    initialize_runtime_state(runtime="operator", workspace=ws, repo_workdir=ROOT)
     _advance_to_finalize(ws)
     _write_quality_gate_report(ws, stage_id="finalize")
     _write_finalize_report(ws)
@@ -12546,7 +12550,7 @@ def test_finalize_complete_rejects_missing_delivery_artifact_hash(tmp_path):
 
 def test_finalize_complete_rejects_non_file_delivery_artifact(tmp_path):
     ws = _write_workspace(tmp_path)
-    initialize_runtime_state(workspace=ws, repo_workdir=ROOT)
+    initialize_runtime_state(runtime="operator", workspace=ws, repo_workdir=ROOT)
     _advance_to_finalize(ws)
     _write_quality_gate_report(ws, stage_id="finalize")
     _write_finalize_report(ws)
@@ -12567,7 +12571,7 @@ def test_finalize_complete_rejects_non_file_delivery_artifact(tmp_path):
 
 def test_finalize_complete_rejects_unsupported_delivery_artifact(tmp_path):
     ws = _write_workspace(tmp_path)
-    initialize_runtime_state(workspace=ws, repo_workdir=ROOT)
+    initialize_runtime_state(runtime="operator", workspace=ws, repo_workdir=ROOT)
     _advance_to_finalize(ws)
     _write_quality_gate_report(ws, stage_id="finalize")
     _write_finalize_report(ws)
@@ -12593,7 +12597,7 @@ def test_finalize_complete_rejects_unsupported_delivery_artifact(tmp_path):
 
 def test_finalize_complete_accepts_reader_facing_quality_gate_report(tmp_path):
     ws = _write_workspace(tmp_path)
-    initialize_runtime_state(workspace=ws, repo_workdir=ROOT)
+    initialize_runtime_state(runtime="operator", workspace=ws, repo_workdir=ROOT)
     _advance_to_finalize(ws)
     _write_finalize_report(ws)
     _write_quality_gate_report(ws, stage_id="finalize")
@@ -12615,7 +12619,7 @@ def test_finalize_complete_accepts_reader_facing_quality_gate_report(tmp_path):
 
 def test_finalize_complete_ignores_legacy_quality_gate_projection(tmp_path):
     ws = _write_workspace(tmp_path)
-    initialize_runtime_state(workspace=ws, repo_workdir=ROOT)
+    initialize_runtime_state(runtime="operator", workspace=ws, repo_workdir=ROOT)
     _advance_to_finalize(ws)
     _write_finalize_report(ws)
     _write_quality_gate_report(ws, stage_id="finalize", legacy_only=True)
@@ -12633,7 +12637,7 @@ def test_finalize_complete_ignores_legacy_quality_gate_projection(tmp_path):
 
 def test_completion_transactions_preserve_manifest_extensions(tmp_path):
     ws = _write_workspace(tmp_path)
-    initialize_runtime_state(workspace=ws, repo_workdir=ROOT)
+    initialize_runtime_state(runtime="operator", workspace=ws, repo_workdir=ROOT)
     manifest_path = _state_file(ws, "runtime_manifest")
     manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
     manifest["recipe"] = "fast-rerun"
@@ -12676,7 +12680,7 @@ def test_completion_transactions_preserve_manifest_extensions(tmp_path):
 
 def test_state_decide_rejects_out_of_order_stage_and_leaves_workflow_unchanged(tmp_path, capsys):
     ws = _write_workspace(tmp_path)
-    initialize_runtime_state(workspace=ws, repo_workdir=ROOT)
+    initialize_runtime_state(runtime="operator", workspace=ws, repo_workdir=ROOT)
     before = json.loads(_state_file(ws, "workflow_state").read_text(encoding="utf-8"))
 
     rc = main([
@@ -12705,7 +12709,7 @@ def test_state_decide_rejects_out_of_order_stage_and_leaves_workflow_unchanged(t
 
 def test_state_decide_event_failure_leaves_workflow_unchanged(tmp_path, monkeypatch):
     ws = _write_workspace(tmp_path)
-    initialize_runtime_state(workspace=ws, repo_workdir=ROOT)
+    initialize_runtime_state(runtime="operator", workspace=ws, repo_workdir=ROOT)
     before = json.loads(_state_file(ws, "workflow_state").read_text(encoding="utf-8"))
 
     def fail_append(*args, **kwargs):
@@ -12728,7 +12732,7 @@ def test_state_decide_event_failure_leaves_workflow_unchanged(tmp_path, monkeypa
 
 def test_state_check_preserves_explicit_block_decision(tmp_path):
     ws = _write_workspace(tmp_path)
-    initialize_runtime_state(workspace=ws, repo_workdir=ROOT)
+    initialize_runtime_state(runtime="operator", workspace=ws, repo_workdir=ROOT)
     record_decision(
         workspace=ws,
         repo_workdir=ROOT,
@@ -12747,7 +12751,7 @@ def test_state_check_preserves_explicit_block_decision(tmp_path):
 
 def test_state_check_event_failure_leaves_state_unchanged(tmp_path, monkeypatch):
     ws = _write_workspace(tmp_path)
-    initialize_runtime_state(workspace=ws, repo_workdir=ROOT)
+    initialize_runtime_state(runtime="operator", workspace=ws, repo_workdir=ROOT)
     _write_json_artifact(ws, "candidate_claims.json")
     _set_current_stage(ws, "scout")
     before = json.loads(_state_file(ws, "workflow_state").read_text(encoding="utf-8"))
@@ -12767,7 +12771,7 @@ def test_state_check_event_failure_leaves_state_unchanged(tmp_path, monkeypatch)
 
 def test_state_check_rejects_unknown_event_type(tmp_path):
     ws = _write_workspace(tmp_path)
-    state = initialize_runtime_state(workspace=ws, repo_workdir=ROOT)
+    state = initialize_runtime_state(runtime="operator", workspace=ws, repo_workdir=ROOT)
     event_log = _state_file(ws, "event_log")
     event_log.write_text(
         event_log.read_text(encoding="utf-8")
@@ -12796,7 +12800,7 @@ def test_state_check_rejects_unknown_event_type(tmp_path):
 
 def test_state_check_rejects_unknown_event_actor(tmp_path):
     ws = _write_workspace(tmp_path)
-    state = initialize_runtime_state(workspace=ws, repo_workdir=ROOT)
+    state = initialize_runtime_state(runtime="operator", workspace=ws, repo_workdir=ROOT)
     event_log = _state_file(ws, "event_log")
     event_log.write_text(
         event_log.read_text(encoding="utf-8")
@@ -12825,7 +12829,7 @@ def test_state_check_rejects_unknown_event_actor(tmp_path):
 
 def test_state_check_strict_json_reports_event_log_integrity_error(tmp_path, capsys):
     ws = _write_workspace(tmp_path)
-    state = initialize_runtime_state(workspace=ws, repo_workdir=ROOT)
+    state = initialize_runtime_state(runtime="operator", workspace=ws, repo_workdir=ROOT)
     event_log = _state_file(ws, "event_log")
     event_log.write_text(
         event_log.read_text(encoding="utf-8")
@@ -12864,7 +12868,7 @@ def test_state_check_strict_json_reports_event_log_integrity_error(tmp_path, cap
 
 def test_state_check_rejects_event_log_missing_schema_version(tmp_path):
     ws = _write_workspace(tmp_path)
-    state = initialize_runtime_state(workspace=ws, repo_workdir=ROOT)
+    state = initialize_runtime_state(runtime="operator", workspace=ws, repo_workdir=ROOT)
     event_log = _state_file(ws, "event_log")
     event_log.write_text(
         event_log.read_text(encoding="utf-8")
@@ -12892,7 +12896,7 @@ def test_state_check_rejects_event_log_missing_schema_version(tmp_path):
 
 def test_state_check_rejects_non_newline_terminated_event_log(tmp_path):
     ws = _write_workspace(tmp_path)
-    state = initialize_runtime_state(workspace=ws, repo_workdir=ROOT)
+    state = initialize_runtime_state(runtime="operator", workspace=ws, repo_workdir=ROOT)
     event_log = _state_file(ws, "event_log")
     event_log.write_text(
         event_log.read_text(encoding="utf-8")
@@ -12920,7 +12924,7 @@ def test_state_check_rejects_non_newline_terminated_event_log(tmp_path):
 
 def test_state_check_rejects_malformed_event_log_line(tmp_path):
     ws = _write_workspace(tmp_path)
-    initialize_runtime_state(workspace=ws, repo_workdir=ROOT)
+    initialize_runtime_state(runtime="operator", workspace=ws, repo_workdir=ROOT)
     event_log = _state_file(ws, "event_log")
     event_log.write_text(event_log.read_text(encoding="utf-8") + "{bad json}\n", encoding="utf-8")
 
@@ -12935,7 +12939,7 @@ def test_event_log_snapshot_parser_matches_descriptor_acquisition_without_reopen
     tmp_path: Path,
 ) -> None:
     ws = _write_workspace(tmp_path)
-    initialize_runtime_state(workspace=ws, repo_workdir=ROOT)
+    initialize_runtime_state(runtime="operator", workspace=ws, repo_workdir=ROOT)
     event_log = _state_file(ws, "event_log")
     expected = runtime_event_log.read_event_log_records_strict(event_log)
 
@@ -12979,7 +12983,7 @@ def test_event_log_snapshot_parser_preserves_strict_failures(
 
 def test_state_check_only_writes_changed_events_once(tmp_path):
     ws = _write_workspace(tmp_path)
-    initialize_runtime_state(workspace=ws, repo_workdir=ROOT)
+    initialize_runtime_state(runtime="operator", workspace=ws, repo_workdir=ROOT)
     _set_current_stage(ws, "scout")
     (_intermediate(ws) / "candidate_claims.json").write_text("{broken", encoding="utf-8")
 
@@ -12996,7 +13000,7 @@ def test_state_check_only_writes_changed_events_once(tmp_path):
 
 def test_state_show_json_handles_corrupted_state_without_traceback(tmp_path, capsys):
     ws = _write_workspace(tmp_path)
-    initialize_runtime_state(workspace=ws, repo_workdir=ROOT)
+    initialize_runtime_state(runtime="operator", workspace=ws, repo_workdir=ROOT)
     _state_file(ws, "workflow_state").write_text("{broken", encoding="utf-8")
 
     rc = main(["state", "show", "--workspace", str(ws), "--json"])
@@ -13009,10 +13013,10 @@ def test_state_show_json_handles_corrupted_state_without_traceback(tmp_path, cap
 
 def test_reset_state_archives_old_event_log(tmp_path):
     ws = _write_workspace(tmp_path)
-    first = initialize_runtime_state(workspace=ws, repo_workdir=ROOT)
+    first = initialize_runtime_state(runtime="operator", workspace=ws, repo_workdir=ROOT)
     old_run_id = first["manifest"]["run_id"]
 
-    second = initialize_runtime_state(
+    second = initialize_runtime_state(runtime="operator",
         workspace=ws,
         repo_workdir=ROOT,
         reset_state=True,
@@ -13030,10 +13034,10 @@ def test_reset_state_archives_old_event_log(tmp_path):
 
 def test_reset_state_recovers_from_corrupted_workflow_state(tmp_path):
     ws = _write_workspace(tmp_path)
-    initialize_runtime_state(workspace=ws, repo_workdir=ROOT)
+    initialize_runtime_state(runtime="operator", workspace=ws, repo_workdir=ROOT)
     _state_file(ws, "workflow_state").write_text("{broken", encoding="utf-8")
 
-    state = initialize_runtime_state(
+    state = initialize_runtime_state(runtime="operator",
         workspace=ws,
         repo_workdir=ROOT,
         reset_state=True,
@@ -13045,7 +13049,7 @@ def test_reset_state_recovers_from_corrupted_workflow_state(tmp_path):
 
 def test_state_paths_are_workspace_relative(tmp_path):
     ws = _write_workspace(tmp_path)
-    initialize_runtime_state(workspace=ws, repo_workdir=ROOT)
+    initialize_runtime_state(runtime="operator", workspace=ws, repo_workdir=ROOT)
     state = check_runtime_state(workspace=ws, repo_workdir=ROOT)
 
     assert state["manifest"]["runtime_state_files"] == RUNTIME_STATE_FILES
@@ -13055,7 +13059,7 @@ def test_state_paths_are_workspace_relative(tmp_path):
 
 def test_show_runtime_state_reports_event_count(tmp_path):
     ws = _write_workspace(tmp_path)
-    initialize_runtime_state(workspace=ws, repo_workdir=ROOT)
+    initialize_runtime_state(runtime="operator", workspace=ws, repo_workdir=ROOT)
 
     state = show_runtime_state(workspace=ws)
 
@@ -13073,7 +13077,7 @@ def test_artifact_contract_rejects_runtime_control_paths_without_state_writes(
 ) -> None:
     repo = _repo_with_role_topology(tmp_path, "default")
     ws = _write_workspace(tmp_path)
-    initialize_runtime_state(workspace=ws, repo_workdir=repo)
+    initialize_runtime_state(runtime="operator", workspace=ws, repo_workdir=repo)
     contracts_path = repo / "configs" / "artifact_contracts.yaml"
     import yaml
 
@@ -13104,7 +13108,7 @@ def test_artifact_contract_rejects_duplicate_canonical_owner_without_state_write
 ) -> None:
     repo = _repo_with_role_topology(tmp_path, "default")
     ws = _write_workspace(tmp_path)
-    initialize_runtime_state(workspace=ws, repo_workdir=repo)
+    initialize_runtime_state(runtime="operator", workspace=ws, repo_workdir=repo)
     contracts_path = repo / "configs" / "artifact_contracts.yaml"
     import yaml
 
@@ -13134,7 +13138,7 @@ def test_artifact_contract_rejects_symlink_identity_drift_without_state_writes(
 ) -> None:
     repo = _repo_with_role_topology(tmp_path, "default")
     ws = _write_workspace(tmp_path)
-    initialize_runtime_state(workspace=ws, repo_workdir=repo)
+    initialize_runtime_state(runtime="operator", workspace=ws, repo_workdir=repo)
     real_dir = ws / "real"
     real_dir.mkdir()
     (ws / "alias").symlink_to(real_dir, target_is_directory=True)
@@ -13174,7 +13178,7 @@ def test_artifact_contract_casefold_identity_collisions_leave_state_unchanged(
 ) -> None:
     repo = _repo_with_role_topology(tmp_path, "default")
     ws = _write_workspace(tmp_path)
-    initialize_runtime_state(workspace=ws, repo_workdir=repo)
+    initialize_runtime_state(runtime="operator", workspace=ws, repo_workdir=repo)
     contracts_path = repo / "configs" / "artifact_contracts.yaml"
     import yaml
 
@@ -13220,7 +13224,7 @@ def test_artifact_contract_rejects_non_unique_or_missing_ids_without_state_write
 ) -> None:
     repo = _repo_with_role_topology(tmp_path, "default")
     ws = _write_workspace(tmp_path)
-    initialize_runtime_state(workspace=ws, repo_workdir=repo)
+    initialize_runtime_state(runtime="operator", workspace=ws, repo_workdir=repo)
     contracts_path = repo / "configs" / "artifact_contracts.yaml"
     import copy
     import yaml
@@ -13258,7 +13262,7 @@ def test_artifact_contract_rejects_non_unique_or_missing_ids_without_state_write
 def test_artifact_contract_rejects_non_string_path_without_state_writes(tmp_path: Path) -> None:
     repo = _repo_with_role_topology(tmp_path, "default")
     ws = _write_workspace(tmp_path)
-    initialize_runtime_state(workspace=ws, repo_workdir=repo)
+    initialize_runtime_state(runtime="operator", workspace=ws, repo_workdir=repo)
     contracts_path = repo / "configs" / "artifact_contracts.yaml"
     import yaml
 
@@ -13307,7 +13311,7 @@ def test_contract_rejection_during_initialize_writes_no_control_files(
     }
 
     with pytest.raises(RuntimeStateError) as excinfo:
-        initialize_runtime_state(workspace=ws, repo_workdir=repo)
+        initialize_runtime_state(runtime="operator", workspace=ws, repo_workdir=repo)
 
     assert excinfo.value.error_code == runtime_state.operations.E_TRANSACTION_INTEGRITY
     assert {
@@ -13323,7 +13327,7 @@ def test_contract_rejection_during_stage_completion_preserves_control_state(
 ) -> None:
     repo = _repo_with_role_topology(tmp_path, "default")
     ws = _write_workspace(tmp_path)
-    initialize_runtime_state(workspace=ws, repo_workdir=repo)
+    initialize_runtime_state(runtime="operator", workspace=ws, repo_workdir=repo)
     contracts_path = repo / "configs" / "artifact_contracts.yaml"
     import yaml
 
@@ -13358,7 +13362,7 @@ def test_contract_ownership_mismatch_during_check_preserves_control_state(
 ) -> None:
     repo = _repo_with_role_topology(tmp_path, "default")
     ws = _write_workspace(tmp_path)
-    initialize_runtime_state(workspace=ws, repo_workdir=repo)
+    initialize_runtime_state(runtime="operator", workspace=ws, repo_workdir=repo)
     stage_specs_path = repo / "configs" / "stage_specs.yaml"
     import yaml
 

@@ -63,7 +63,11 @@ from multi_agent_brief.orchestrator.runtime_state import (
     record_decision,
     show_runtime_state,
 )
-from multi_agent_brief.orchestrator_contract import is_source_repo, resolve_repo_workdir
+from multi_agent_brief.orchestrator_contract import (
+    is_source_repo,
+    require_canonical_runtime,
+    resolve_repo_workdir,
+)
 from multi_agent_brief.outputs.finalize import finalize_reader_outputs
 from multi_agent_brief.provenance.builder import (
     build_provenance_workspace,
@@ -281,7 +285,12 @@ def _prepare_workspace_case(
     )
     workspace = temp_root / case_id
     shutil.copytree(source, workspace)
-    initialize_runtime_state(workspace=workspace, repo_workdir=repo_workdir, actor="system")
+    initialize_runtime_state(
+        workspace=workspace,
+        runtime="operator",
+        repo_workdir=repo_workdir,
+        actor="system",
+    )
     _advance_to_stage(
         workspace=workspace,
         repo_workdir=repo_workdir,
@@ -762,10 +771,16 @@ def _run_action(*, action: str, args: dict[str, Any], context: dict[str, Any]) -
         )
     if action == "runtime.run_handoff":
         ws = _require_workspace(workspace)
+        try:
+            runtime = require_canonical_runtime(args.get("runtime"))
+        except ValueError as exc:
+            raise EvaluationCaseRunError(
+                "runtime.run_handoff requires one explicit canonical runtime."
+            ) from exc
         handoff = build_handoff(
             workspace=ws,
             repo_workdir=repo_workdir,
-            runtime=str(args.get("runtime") or "hermes"),
+            runtime=runtime,
             venv=args.get("venv"),
             run_doctor=not bool(args.get("skip_doctor", True)),
         )

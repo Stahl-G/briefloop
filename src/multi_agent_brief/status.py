@@ -32,7 +32,11 @@ from multi_agent_brief.orchestrator.runtime_state.artifact_registry_read import 
 from multi_agent_brief.orchestrator.runtime_state.claim_support_matrix import (
     project_claim_support_matrix_from_workspace,
 )
-from multi_agent_brief.orchestrator.runtime_state.manifest import RUNTIME_MANIFEST_SCHEMA
+from multi_agent_brief.orchestrator.runtime_state import RUNTIME_MANIFEST_SCHEMA
+from multi_agent_brief.orchestrator_contract import (
+    HISTORICAL_READ_ONLY_RUNTIMES,
+    VALID_RUNTIMES,
+)
 from multi_agent_brief.orchestrator.runtime_state.semantic_assessment_report import (
     project_semantic_assessment_report_from_workspace,
 )
@@ -287,6 +291,7 @@ def format_workspace_status(status: dict[str, Any]) -> str:
         [
             f"[status] run_id: {runtime.get('run_id') or 'unknown'}",
             f"[status] runtime: {runtime.get('runtime') or 'unknown'}",
+            f"[status] runtime_identity: {runtime.get('identity_status') or 'unknown'}",
             f"[status] recipe: {runtime.get('recipe') or 'unknown'}",
             f"[status] current_stage: {workflow.get('current_stage') or 'unknown'}",
             f"[status] blocked: {workflow.get('blocked')}",
@@ -683,13 +688,31 @@ def _atomic_reader_projection_summary(workspace: Path) -> dict[str, Any]:
 def _runtime_summary(result: dict[str, Any]) -> dict[str, Any]:
     payload = result.get("payload") if result.get("status") == "present" else None
     if not isinstance(payload, dict):
-        return {"present": False, "run_id": None, "runtime": None, "recipe": None}
+        return {
+            "present": False,
+            "run_id": None,
+            "runtime": None,
+            "recipe": None,
+            "identity_status": "not_initialized",
+            "runtime_choices": list(VALID_RUNTIMES),
+            "requires_reset": False,
+        }
+    runtime = payload.get("runtime")
+    if runtime in VALID_RUNTIMES:
+        identity_status = "canonical"
+    elif runtime in HISTORICAL_READ_ONLY_RUNTIMES:
+        identity_status = "historical_read_only"
+    else:
+        identity_status = "invalid"
     return {
         "present": True,
         "run_id": payload.get("run_id"),
-        "runtime": payload.get("runtime"),
+        "runtime": runtime,
         "recipe": payload.get("recipe"),
         "schema_version": payload.get("schema_version"),
+        "identity_status": identity_status,
+        "runtime_choices": list(VALID_RUNTIMES),
+        "requires_reset": identity_status != "canonical",
     }
 
 
@@ -1081,10 +1104,21 @@ def _suggested_next_command(workspace: Path, status: dict[str, Any]) -> str:
     fact_layer_import = status.get("fact_layer_import") or {}
     experiment_080 = status.get("experiment_080") or {}
     recovery_state = status.get("recovery_state") or {}
+    runtime = status.get("runtime") or {}
+    runtime_identity = runtime.get("identity_status")
+    runtime_value = runtime.get("runtime")
+    runtime_choices = "|".join(VALID_RUNTIMES)
+    if runtime_identity == "historical_read_only":
+        return (
+            f"briefloop state init --workspace {workspace} --reset-state "
+            f"--runtime <{runtime_choices}>"
+        )
+    if runtime_identity == "invalid":
+        return f"briefloop state show --workspace {workspace} --json"
     if artifacts.get("registry_status") in _UNSAFE_REGISTRY_STATUSES:
         return f"briefloop state show --workspace {workspace} --json"
-    if not (status.get("runtime") or {}).get("present"):
-        return f"briefloop run --workspace {workspace} --runtime claude"
+    if not runtime.get("present"):
+        return f"briefloop run --workspace {workspace} --runtime <{runtime_choices}>"
     if recovery_state.get("status") not in {"not_applicable", "completed_non_reference"}:
         return f"briefloop workbuddy diagnose --workspace {workspace} --json"
     if workflow.get("blocked"):
@@ -1103,7 +1137,10 @@ def _suggested_next_command(workspace: Path, status: dict[str, Any]) -> str:
         return f"briefloop status --workspace {workspace} --json"
     current_stage = workflow.get("current_stage")
     if fact_layer_import.get("status") == "valid" and current_stage == "analyst":
-        return f"briefloop run --workspace {workspace} --recipe fast-rerun --skip-doctor"
+        return (
+            f"briefloop run --workspace {workspace} --runtime {runtime_value} "
+            "--recipe fast-rerun --skip-doctor"
+        )
     quality_closeout = status.get("quality_panel_closeout") or {}
     if quality_closeout.get("status") in {"recommended", "stale_or_invalid"}:
         return f"briefloop quality summarize --workspace {workspace}"
@@ -1112,8 +1149,8 @@ def _suggested_next_command(workspace: Path, status: dict[str, Any]) -> str:
     if current_stage == "auditor" and gate.get("status") != "pass":
         return f"briefloop gates check --workspace {workspace} --stage auditor"
     if current_stage:
-        return f"/briefloop run {workspace}"
-    return f"briefloop run --workspace {workspace} --runtime claude --skip-doctor"
+        return f"briefloop run --workspace {workspace} --runtime {runtime_value}"
+    return f"briefloop run --workspace {workspace} --runtime {runtime_value} --skip-doctor"
 
 
 def _progress_summary(status: dict[str, Any]) -> dict[str, Any]:

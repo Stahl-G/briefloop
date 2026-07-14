@@ -16,6 +16,7 @@ from multi_agent_brief.experiments import (
     summarize_case,
     validate_case_dir,
 )
+from multi_agent_brief.orchestrator_contract import VALID_RUNTIMES
 
 
 def register(subparsers: argparse._SubParsersAction) -> None:
@@ -137,7 +138,12 @@ def register(subparsers: argparse._SubParsersAction) -> None:
         "--archive",
         help="Optional run archive manifest or archive directory. Defaults to frozen_fact_layer.source_archive_path.",
     )
-    scaffold.add_argument("--runtime", default="hermes", help="Runtime value to record in imported runtime state.")
+    scaffold.add_argument(
+        "--runtime",
+        required=True,
+        choices=list(VALID_RUNTIMES),
+        help="Exact runtime identity to record in imported runtime state.",
+    )
     scaffold.add_argument("--repo-workdir", help="Optional MABW source checkout for packaged config resolution.")
     scaffold.add_argument("--json", action="store_true", help="Emit machine-readable JSON.")
 

@@ -5,6 +5,8 @@ from __future__ import annotations
 import argparse
 from pathlib import Path
 
+from multi_agent_brief.orchestrator_contract import RUNTIME_CLI_CHOICE_PLACEHOLDER
+
 
 def register(subparsers: argparse._SubParsersAction) -> None:
     """Register the init subparser."""
@@ -502,7 +504,10 @@ def _init_workspace(args: argparse.Namespace) -> int:
     create_workspace(target, profile, force=args.force)
     print(f"Created brief workspace: {target}")
     print_context_reference_guidance(target, profile.interface_language)
-    print(f"Next: briefloop run --workspace {target}")
+    print(
+        f"Next: briefloop run --workspace {target}"
+        f" --runtime {RUNTIME_CLI_CHOICE_PLACEHOLDER}"
+    )
     print(
         "Hermes prompt: briefloop hermes prompt"
         f" --config {target}/config.yaml"

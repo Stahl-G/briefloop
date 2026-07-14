@@ -50,7 +50,8 @@ when the user explicitly asks for repo-development work.
 
 ## Work
 
-- Use multi-agent-brief run --workspace <workspace> as the standard launcher.
+- Use `multi-agent-brief run --workspace <workspace> --runtime <canonical-runtime>`
+  as the standard launcher; dedicated adapters provide the literal identity.
 - Determine the active mode before acting:
   - Brief-runtime mode coordinates one workspace run.
   - Repo-development mode changes contracts, generated adapters, docs, or tests.

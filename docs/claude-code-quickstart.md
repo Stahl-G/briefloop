@@ -76,7 +76,7 @@ briefloop claude install --repo-workdir .
 You can also use the standard CLI handoff instead:
 
 ```bash
-briefloop run --workspace ../briefloop-workspace
+briefloop run --workspace ../briefloop-workspace --runtime operator
 ```
 
 ## Advanced: Continue From The Handoff
