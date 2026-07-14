@@ -9,8 +9,11 @@ must not hand-edit control files.
 1. Confirm the workspace path.
 2. Run CodeBuddy handoff:
 
-   ```bash
-   briefloop run --workspace <workspace> --runtime codebuddy
+   ```powershell
+   & $BriefLoop run `
+     --workspace "<workspace>" `
+     --runtime codebuddy `
+     --repo-workdir "<canonical BriefLoop source checkout>"
    ```
 
 3. Read `output/intermediate/agent_handoff.md` and
@@ -21,22 +24,25 @@ must not hand-edit control files.
    the handoff.
 6. Use the owning CLI transaction when an artifact is ready.
 7. After every CLI command, re-read the relevant handoff step before continuing.
-8. Re-check status before repair, finalize, quality summary, or delivery.
+8. Run diagnose after every start, CLI command, role return, or interruption;
+   follow only the current handoff/diagnose action before repair, finalize,
+   quality summary, or delivery.
 
 ## Common Inspection Commands
 
-```bash
-multi-agent-brief status --workspace <workspace>
-multi-agent-brief status --workspace <workspace> --json
-multi-agent-brief state check --workspace <workspace>
-multi-agent-brief quality summarize --workspace <workspace>
+```powershell
+& $BriefLoop workbuddy diagnose --workspace "<workspace>" --json
+& $BriefLoop status --workspace "<workspace>" --json
+& $BriefLoop state check --workspace "<workspace>"
+& $BriefLoop quality summarize --workspace "<workspace>"
 ```
 
 ## Progress Updates
 
-After each deterministic CLI transaction, summarize progress to the user. Only
-report completed states that are visible in `status`, `workflow_state.json`,
-`event_log.jsonl`, or generated artifacts.
+After each deterministic CLI transaction, summarize progress visible in the
+handoff/diagnose result. Raw workflow state, event log, Registry, timestamps,
+and file existence are audit evidence only; they are not an action router and
+must not reconstruct gate, finalize, delivery, or next-action truth.
 
 Use a Run Card after every key CLI command, role return, repair action, gate
 check, finalize attempt, quality summary, or bundle/export request:
@@ -55,8 +61,8 @@ delivery_event:
 next_allowed_action:
 ```
 
-Read these fields only from `briefloop workbuddy diagnose --workspace
-<workspace> --json`. Do not rebuild them from raw control files.
+Read these fields only from `& $BriefLoop workbuddy diagnose --workspace
+"<workspace>" --json`. Do not rebuild them from raw control files.
 
 Allowed examples:
 
@@ -67,8 +73,11 @@ Allowed examples:
 Quality Panel 已生成。
 ```
 
-Do not say `Analyst 已经分析完成` or `Auditor 已通过` unless the matching
-artifact, event, transaction, or status output exists.
+Say an exact Analyst/Auditor role returned only after a host-visible invocation
+and return in the current handoff step. Stage completion and audit/gate success
+require current deterministic transaction/verdict truth. A matching artifact,
+stale event, manual file, or prior transaction proves none of those facts by
+itself.
 
 `delivery_truth.valid=true` means the current reader bundle is eligible for a
 delivery action. Do not say `交付完成`, `delivered`, or `delivery complete`
@@ -80,7 +89,12 @@ created; neither is delivered.
 
 - If `doctor` reports any error, stop. Show the full doctor output, workspace
   path, current user, output path existence/writability result, and permission
-  or ACL output. Do not downgrade the error yourself.
+  or ACL output. Do not downgrade the error yourself. User confirmation,
+  `request_human_review`, or a standalone pass in another environment cannot
+  turn it into pass; fix it and rerun with the same `$BriefLoop`. A following
+  diagnose's `doctor.status=not_run_read_only` cannot clear or route around the
+  failure, and its completion action must not be followed. Rerun doctor after
+  interruption or uncertain session continuity.
 - Do not infer recovery from `run_integrity`; follow `recovery_action` and do
   not deliver while recovery is nonterminal or invalid.
 - If `delivery_truth.valid` is not true, do not execute delivery. If
@@ -109,9 +123,20 @@ briefloop-formatter
 ```
 
 Role subagents draft only handoff-assigned artifacts. They do not run
-BriefLoop CLI commands, edit control files, run gates, approve delivery, or
-authorize release. The main WorkBuddy session runs deterministic CLI
-transactions after a role returns.
+BriefLoop CLI commands, edit control files, run gates, complete stages, freeze
+the Claim Ledger, finalize, approve/report delivery, or authorize release. A
+role return is not a stage pass. The main WorkBuddy session runs deterministic
+CLI transactions and diagnose after a role returns.
+
+Formatter is a read-only finalize-readiness reporter. It must not run shell or
+CLI, convert Markdown to DOCX, write reader delivery artifacts, or claim
+reader-clean, gate/finalize success, or delivery.
+
+Hand-written Markdown/DOCX is `draft/manual/unverified`. A formal finalize
+claim must bind actual finalize, valid Finalize Report,
+reader-clean/promoted/current render, gate, finalize-complete, current finalize
+event, valid delivery truth, and literal outcome; residue routes to
+deterministic repair/finalize.
 
 Do not claim Scout, Screener, Claim Ledger, Analyst, Editor, Auditor, or
 Formatter subagents ran unless WorkBuddy actually delegated those roles.

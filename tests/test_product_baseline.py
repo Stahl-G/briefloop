@@ -8,6 +8,8 @@ import subprocess
 import sys
 from pathlib import Path
 
+import pytest
+
 
 ROOT = Path(__file__).resolve().parent.parent
 SCRIPT = ROOT / "scripts" / "check_product_baseline.py"
@@ -32,6 +34,70 @@ def test_product_baseline_check_runs_clean() -> None:
     assert result.returncode == 0, result.stdout + result.stderr
     assert "Product Baseline Readiness Check" in result.stdout
     assert "ALL CHECKS PASSED" in result.stdout
+
+
+def _write_product_boundary_fixture(module, root: Path) -> None:
+    for rel_path, phrases in module.REQUIRED_DOC_BOUNDARY_PHRASES.items():
+        path = root / rel_path
+        path.parent.mkdir(parents=True, exist_ok=True)
+        if rel_path == "README_en.md":
+            text = module.README_EN_POINTER
+        else:
+            text = "\n".join(phrases)
+        path.write_text(text, encoding="utf-8")
+
+
+def test_workbuddy_product_baseline_requires_bound_powershell_commands() -> None:
+    module = _load_product_baseline_module()
+    requirements = module.REQUIRED_DOC_BOUNDARY_PHRASES[
+        "docs/workbuddy-smoke-checklist.md"
+    ]
+
+    assert "-CommandType Application" in requirements
+    assert "$BriefLoop = $BriefLoopCommand.Path" in requirements
+    assert "$BriefLoop -notmatch" in requirements
+    assert "^(?:[A-Za-z]:\\\\|\\\\\\\\[^\\\\]+\\\\[^\\\\]+\\\\)" in requirements
+    assert "& $BriefLoop workbuddy pack-skill --output dist/workbuddy" in requirements
+    assert "& $BriefLoop run" in requirements
+    assert "& $BriefLoop status --workspace \"<workspace>\"" in requirements
+    assert "& $BriefLoop state check --workspace \"<workspace>\"" in requirements
+    assert "& $BriefLoop quality summarize --workspace \"<workspace>\"" in requirements
+    assert not any(
+        phrase.startswith("briefloop ") or phrase.startswith("multi-agent-brief ")
+        for phrase in requirements
+    )
+
+
+@pytest.mark.parametrize(
+    ("required_phrase", "unsafe_replacement"),
+    [
+        ("-CommandType Application", "Get-Command briefloop"),
+        ("$BriefLoop = $BriefLoopCommand.Path", "$BriefLoop = 'briefloop'"),
+        ("$BriefLoop -notmatch", "path check omitted"),
+        (
+            "& $BriefLoop quality summarize --workspace \"<workspace>\"",
+            "briefloop quality summarize --workspace <workspace>",
+        ),
+    ],
+)
+def test_workbuddy_product_baseline_rejects_unbound_command_contract(
+    tmp_path, monkeypatch, required_phrase: str, unsafe_replacement: str
+) -> None:
+    module = _load_product_baseline_module()
+    _write_product_boundary_fixture(module, tmp_path)
+    smoke_path = tmp_path / "docs" / "workbuddy-smoke-checklist.md"
+    text = smoke_path.read_text(encoding="utf-8")
+    assert required_phrase in text
+    smoke_path.write_text(
+        text.replace(required_phrase, unsafe_replacement, 1), encoding="utf-8"
+    )
+    monkeypatch.setattr(module, "ROOT", tmp_path)
+
+    checks: list[dict[str, str]] = []
+    module._check_cli_and_docs_boundaries(checks)
+    checks_by_id = {item["id"]: item for item in checks}
+
+    assert checks_by_id["docs.docs/workbuddy-smoke-checklist.md"]["status"] == "fail"
 
 
 def test_product_baseline_json_locks_v011_entrypoints_and_boundaries() -> None:

@@ -43,8 +43,19 @@ allowlist.
 
 ## How To Invoke A BriefLoop Role
 
-1. Confirm that the BriefLoop source checkout contains the project role file.
-2. Re-read the current `agent_handoff.md` and `agent_handoff.json`.
+1. Confirm that the canonical BriefLoop source checkout contains all seven
+   exact project role files.
+2. Re-read the current `agent_handoff.md` and `agent_handoff.json`, run
+   `& $BriefLoop workbuddy diagnose --workspace "<workspace>" --json`, and verify
+   all of the following before role work:
+   - handoff `runtime == codebuddy`;
+   - `runtime_capabilities.runtime == codebuddy`;
+   - `runtime_capabilities.delegation_supported == true`;
+   - `runtime_capabilities.subagent_names` is exactly the seven-role inventory
+     in this document.
+
+   `delegation_supported=true` is only a declared handoff capability. It is not
+   evidence that the host loaded or invoked any role.
 3. Explicitly ask the host to use the exact role name, for example:
 
    ```text
@@ -67,6 +78,10 @@ allowlist.
 Repeat the same pattern with the other exact `briefloop-*` role names. Do not
 substitute a generic agent, Expert, or Expert Team while claiming that a
 checked-in BriefLoop role ran.
+
+Generic Team, Expert, helper, Send Message, or narrative role labels are not
+acceptable role-run evidence. The only acceptable evidence is a host-visible
+invocation and return of the exact `briefloop-*` name.
 
 ## Tool Surface Is A BriefLoop Choice
 
@@ -104,14 +119,27 @@ control:
 - never direct-edit control files or frozen artifacts.
 
 Role subagents must not run CLI transactions, gates, finalize, delivery, or
-release actions. They cannot spawn another subagent; delegation depth remains
-one.
+release actions; complete stages; freeze the Claim Ledger; or approve/report
+delivery. A role return never means its stage transaction passed. They cannot
+spawn another subagent; delegation depth remains one.
+
+`briefloop-formatter` is a read-only finalize-readiness reporter. It must not
+run Bash, PowerShell, or CLI; convert Markdown to DOCX; write reader delivery
+artifacts; or claim reader-clean, finalize success, gate success, or delivery.
+After Formatter returns, the main session alone may run the handoff-authorized
+finalize, finalize gate, and finalize-complete transactions.
+
+A manual Markdown/DOCX written outside those transactions is
+`draft/manual/unverified`, not a formal BriefLoop delivery. Formatter output or
+file existence cannot prove reader-clean, promotion, finalize completion, or
+delivery. Report forbidden residue such as `CL-*`, `SRC-*`, `Claim Ledger`, or
+local paths and follow the deterministic repair/finalize route.
 
 The executable sequence is therefore two-phase at every role boundary:
 
 1. the role subagent reads or writes only its handoff-assigned artifact and returns;
 2. the main session re-reads the handoff and runs the permitted deterministic
-   CLI validation or transaction.
+   CLI validation or transaction, then runs diagnose again.
 
 If the main session has no command-execution capability, full BriefLoop cannot
 run in that session; stop before role work or state advancement. The operator
@@ -130,8 +158,8 @@ role. The user may either:
    available; or
 2. explicitly regenerate the handoff with the host-agnostic operator runtime:
 
-   ```bash
-   briefloop run --workspace <workspace> --runtime operator
+   ```powershell
+   & $BriefLoop run --workspace "<workspace>" --runtime operator
    ```
 
 Do not silently switch runtime, edit the role agents' tool frontmatter, draft

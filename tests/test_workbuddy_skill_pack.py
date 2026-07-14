@@ -124,7 +124,7 @@ def test_workbuddy_delegation_reference_uses_one_host_capability_contract() -> N
         "main** CodeBuddy/WorkBuddy session",
         "two-phase at every role boundary",
         "missing project-role dispatch, not a missing CLI",
-        "briefloop run --workspace <workspace> --runtime operator",
+        '& $BriefLoop run --workspace "<workspace>" --runtime operator',
     ]:
         assert phrase in canonical
 
@@ -192,9 +192,9 @@ def test_codebuddy_skill_adapter_is_main_session_orchestrator() -> None:
         assert f".codebuddy/agents/{role_name}.md" in text
     for phrase in [
         "Role sub-agents may draft only handoff-assigned role artifacts",
-        "They must not run `briefloop` or `multi-agent-brief` CLI commands",
+        "They must not run CLI, complete stages, run gates",
         "The main CodeBuddy session owns deterministic CLI transactions",
-        "Before every role delegation and after every deterministic CLI transaction",
+        "At startup, after every CLI transaction, after every role return",
         "Do not let a role sub-agent spawn another sub-agent",
     ]:
         assert phrase in compact
@@ -289,7 +289,8 @@ def test_workbuddy_skill_has_natural_language_triggers() -> None:
 def test_workbuddy_skill_uses_codebuddy_role_agent_runtime_not_operator_default() -> None:
     text = _all_skill_text()
     compact = _compact(text)
-    assert "briefloop run --workspace <workspace> --runtime codebuddy" in text
+    assert "--runtime codebuddy" in text
+    assert '--repo-workdir "<canonical BriefLoop source checkout>"' in text
     assert "兼容 CodeBuddy 的角色子代理" in compact
     assert "只有当源码检出包含" in text
     assert "仅有本地 WorkBuddy Skill zip 不会安装这些 CodeBuddy 项目资产" in compact
@@ -300,7 +301,7 @@ def test_workbuddy_skill_uses_codebuddy_role_agent_runtime_not_operator_default(
     # operator runtime may appear only as the explicit user-decision escape
     # lane, never as a default or silent fallback
     assert "必须由用户明确决定" in compact
-    assert "briefloop run --workspace <workspace> --runtime operator" in text
+    assert '& $BriefLoop run --workspace "<workspace>" --runtime operator' in text
     assert "绝不声称 子代理运行过" in compact or "绝不声称子代理运行过" in compact
     assert "frontmatter 的 tools 清单" in compact
     assert "Use `--runtime operator`" not in text
@@ -321,7 +322,9 @@ def test_workbuddy_default_runtime_matches_version_matrix() -> None:
     )
 
     matrix_default = runtime_pattern.search(matrix_workbuddy)
-    skill_default = runtime_pattern.search(skill_runtime)
+    skill_default = re.search(
+        r"--runtime (?P<runtime>[a-z0-9-]+)", skill_runtime
+    )
 
     assert matrix_default is not None
     assert skill_default is not None
@@ -335,29 +338,37 @@ def test_workbuddy_skill_includes_required_cli_surface() -> None:
     compact = _compact(text)
     normalized = _compact_without_code_ticks(text)
     for phrase in [
-        'BRIEFLOOP_CLI="$(command -v briefloop)"',
-        'test -n "$BRIEFLOOP_CLI"',
-        '"$BRIEFLOOP_CLI" version',
-        "command -v briefloop",
-        "briefloop new industry-weekly <workspace> --search-backend tavily",
-        "briefloop new management-monthly <workspace> --search-backend tavily",
-        "briefloop new document-review <workspace> --search-backend tavily",
-        "briefloop new solar-periodic <workspace> --search-backend tavily",
-        "briefloop new industry-weekly <workspace> --web-search-mode disabled",
-        "briefloop new management-monthly <workspace> --web-search-mode disabled",
-        "briefloop new document-review <workspace> --web-search-mode disabled",
-        "briefloop new solar-periodic <workspace> --web-search-mode disabled",
-        "briefloop run --workspace <workspace> --runtime codebuddy",
-        "multi-agent-brief status --workspace <workspace>",
-        "multi-agent-brief state check --workspace <workspace>",
-        "multi-agent-brief quality summarize --workspace <workspace>",
-        "multi-agent-brief gates show --workspace <workspace> --json",
-        "multi-agent-brief repair route --workspace <workspace> --json",
+        '$ErrorActionPreference = "Stop"',
+        "$BriefLoopCommand = Get-Command",
+        "-Name briefloop",
+        "-CommandType Application",
+        "$BriefLoop = $BriefLoopCommand.Path",
+        "$BriefLoop -notmatch",
+        "^(?:[A-Za-z]:\\\\|\\\\\\\\[^\\\\]+\\\\[^\\\\]+\\\\)",
+        "& $BriefLoop version",
+        "py -3 --version",
+        "git --version",
+        '& $BriefLoop new industry-weekly "<workspace>" --search-backend tavily',
+        '& $BriefLoop new management-monthly "<workspace>" --search-backend tavily',
+        '& $BriefLoop new document-review "<workspace>" --search-backend tavily',
+        '& $BriefLoop new solar-periodic "<workspace>" --search-backend tavily',
+        '& $BriefLoop new industry-weekly "<workspace>" --web-search-mode disabled',
+        '& $BriefLoop new management-monthly "<workspace>" --web-search-mode disabled',
+        '& $BriefLoop new document-review "<workspace>" --web-search-mode disabled',
+        '& $BriefLoop new solar-periodic "<workspace>" --web-search-mode disabled',
+        "--runtime codebuddy",
+        '--repo-workdir "<canonical BriefLoop source checkout>"',
+        "& $BriefLoop workbuddy diagnose",
+        "& $BriefLoop status --workspace",
+        "& $BriefLoop state check --workspace",
+        "& $BriefLoop quality summarize --workspace",
+        '& $BriefLoop gates show --workspace "<workspace>" --json',
+        '& $BriefLoop repair route --workspace "<workspace>" --json',
         "--gate-stage",
         "--gate-artifact",
         "--finding-id <finding_id>",
         "--route-index <route_index>",
-        "multi-agent-brief repair complete --workspace <workspace> --reason",
+        '& $BriefLoop repair complete --workspace "<workspace>" --reason',
     ]:
         assert phrase in text
     assert "do not use unscoped repair start for current-gate blockers" in compact
@@ -368,7 +379,7 @@ def test_workbuddy_skill_includes_required_cli_surface() -> None:
 def test_workbuddy_repair_reference_documents_supersede_lane() -> None:
     for text in (_all_skill_text(), _all_legacy_workbuddy_text()):
         compact = _compact(text)
-        assert "multi-agent-brief repair supersede-stage --workspace <workspace>" in text
+        assert '& $BriefLoop repair supersede-stage --workspace "<workspace>"' in text
         assert "old registered hash, current bytes hash, and reason" in compact
         assert "original contamination event" in compact
         assert "does not make the run clean or reference-eligible" in compact
@@ -399,8 +410,8 @@ def test_legacy_workbuddy_mirror_uses_scoped_repair_contract() -> None:
     compact = _compact(text)
     normalized = _compact_without_code_ticks(text)
 
-    assert "multi-agent-brief gates show --workspace <workspace> --json" in text
-    assert "multi-agent-brief repair route --workspace <workspace> --json" in text
+    assert '& $BriefLoop gates show --workspace "<workspace>" --json' in text
+    assert '& $BriefLoop repair route --workspace "<workspace>" --json' in text
     assert "--gate-stage" in text
     assert "--gate-artifact" in text
     assert "--finding-id <finding_id>" in text
@@ -463,7 +474,7 @@ def test_workbuddy_skill_requires_stage_handoff_reread_and_deterministic_progres
     for phrase in [
         "在每个 stage 或角色工件动作之前",
         "`agent_handoff.md` / `agent_handoff.json` 步骤",
-        "每个确定性 CLI 事务之后，向用户总结进度",
+        "每个确定性 CLI 事务之后，向用户总结 handoff/diagnose 中可见的进度",
         "已创建工作区。",
         "已生成 CodeBuddy handoff。",
         "当前状态：等待 source/scout artifact。",
@@ -471,8 +482,8 @@ def test_workbuddy_skill_requires_stage_handoff_reread_and_deterministic_progres
     ]:
         assert phrase in text
     for phrase in [
-        "或生成工件中看到的完成状态",
-        "不要说 `Analyst 已经分析完成` 或 `Auditor 已通过`",
+        "raw workflow state、event log、Registry、时间戳和文件存在性只能作为审计证据",
+        "匹配工件、stale event、manual file 或旧事务单独都",
         "逐字保留命令名、工件名与 handoff 义务",
     ]:
         assert phrase in compact
@@ -497,7 +508,7 @@ def test_workbuddy_skill_requires_run_card_and_hard_stop_rules() -> None:
         assert field in text
     for phrase in [
         "在每个关键 CLI 命令、角色返回、repair 动作、gate 检查、finalize",
-        "`briefloop doctor` 报告任何错误",
+        "`& $BriefLoop doctor` 报告任何错误",
         "展示完整 doctor 输出",
         "`recovery_status` 为",
         "`recovery_status=completed_non_reference`",
@@ -515,11 +526,12 @@ def test_workbuddy_skill_requires_run_card_and_hard_stop_rules() -> None:
         "非交付工作流步骤",
         "否则说目前既没有草稿也没有交付",
         "本身不阻塞更早的 handoff 指派阶段",
-        "`briefloop workbuddy diagnose --json` 同时报告 `delivery_truth.valid=true`",
+            "`& $BriefLoop workbuddy diagnose --workspace \"<workspace>\" --json` "
+            "同时报告 `delivery_truth.valid=true`",
         "不要打包或分享整个工作区",
         "绝不包含 `.env`",
         "只分享经人工确认的非敏感摘录",
-        "`briefloop status --json` 或 doctor 输出",
+        "`& $BriefLoop status --json` 或 doctor 输出",
         "整个工作区 zip",
         "不要自行降级",
         "建议轮换任何暴露的密钥",
@@ -608,7 +620,7 @@ def test_workbuddy_public_docs_declare_install_and_assistant_boundaries() -> Non
         assert ".codebuddy/agents/briefloop-*.md" in text
         assert "Experimental" in text
         assert "source-clone-only" in text.lower()
-        assert "briefloop workbuddy pack-skill --output dist/workbuddy" in text
+        assert "& $BriefLoop workbuddy pack-skill --output dist/workbuddy" in text
         assert "WorkBuddy Assistant trigger" in text
         assert "--runtime codebuddy" in text
         assert "WorkBuddy role-agent orchestration" in text
@@ -641,7 +653,8 @@ def test_workbuddy_assistant_prompt_is_trigger_only() -> None:
         "remote trigger into a local WorkBuddy session",
         "BriefLoop Skill installed",
         "You are not a BriefLoop runtime",
-        "Use `--runtime codebuddy`",
+        "--runtime codebuddy",
+        "--repo-workdir",
         "briefloop-scout",
         "briefloop-auditor",
         "Do not hand-author control files",
@@ -660,18 +673,20 @@ def test_workbuddy_manual_smoke_checklist_is_non_authoritative() -> None:
         "WorkBuddy Integration Smoke Checklist",
         "experimental integration smoke",
         "not runtime proof",
-        "briefloop workbuddy pack-skill --output dist/workbuddy",
-        "briefloop run --workspace <workspace> --runtime codebuddy",
-        "briefloop status --workspace <workspace>",
-        "briefloop state check --workspace <workspace>",
-        "briefloop quality summarize --workspace <workspace>",
+        "& $BriefLoop workbuddy pack-skill --output dist/workbuddy",
+        "--runtime codebuddy",
+        "--repo-workdir",
+        "& $BriefLoop workbuddy diagnose",
+        "& $BriefLoop status",
+        "& $BriefLoop state check",
         ".codebuddy/skills/briefloop/",
         ".codebuddy/agents/briefloop-*.md",
         "must not auto-deliver",
         "WorkBuddy did not silently fall back to `--runtime operator`",
         "WorkBuddy printed machine-fact Run Cards",
-        "WorkBuddy stopped on doctor errors, stopped finalize/delivery/export/share",
-        "did not claim delivery when completion projection reported `delivery_truth.valid=false`",
+        "WorkBuddy stopped on doctor errors, never routed an action from `run_integrity`",
+        "allowed `completed_non_reference` bounded local delivery only when",
+        "blocked invalid or nonterminal recovery",
         "WorkBuddy did not share a whole workspace zip",
     ]:
         assert phrase in compact

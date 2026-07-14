@@ -6,10 +6,13 @@ WorkBuddy 是 BriefLoop 的本地操作外壳，不是新的 BriefLoop 权威层
 
 - 把缺少工作区路径的请求分类为"已有工作区"或"首次运行"，创建之前先确认
   文件夹路径；
-- 报告生效的 BriefLoop CLI 路径和版本；
+- Windows 中用 PowerShell 一次绑定 `$BriefLoop` 绝对路径，并让 doctor、run、
+  secrets import 和 diagnose 全部复用它；
 - 信源发现之前询问用户是否开启在线搜索；
 - 开启在线搜索时优先使用 Tavily，并在不显示密钥值的前提下验证
   `TAVILY_API_KEY`；
+- 仅从用户确认且经 `Test-Path -LiteralPath $SecretSource -PathType Leaf` 验证的
+  私有 `$SecretSource` 文件导入 Tavily secret；
 - 用户拒绝在线搜索时，继续之前显式关闭 web 搜索；
 - 完整工作流 handoff 使用 `--runtime codebuddy`；
 - 在 CodeBuddy/WorkBuddy host 中按精确名称调用匹配的项目角色子代理；
@@ -18,8 +21,8 @@ WorkBuddy 是 BriefLoop 的本地操作外壳，不是新的 BriefLoop 权威层
   打包/导出请求之后打印机器事实 Run Card；
 - 在每个 stage 或角色工件动作之前，重读相应的
   `agent_handoff.md` / `agent_handoff.json` 步骤；
-- 每条 CLI 命令之后，只报告可在 status、workflow state、event log 或生成
-  工件中看到的确定性进度；
+- 每次启动、CLI、角色返回或中断后，重读 handoff、运行 diagnose，并只跟随
+  handoff/diagnose 的当前动作；
 - 角色委派的说法保持字面准确；
 - 把 Quality Panel 解释为审计附件。
 
@@ -27,6 +30,11 @@ WorkBuddy 是 BriefLoop 的本地操作外壳，不是新的 BriefLoop 权威层
 
 - 从仓库路径猜测工作区；
 - 在 `TAVILY_API_KEY` 缺失时继续启用 Tavily 的在线信源发现；
+- 在 Windows PowerShell 路径中混用 `bash`、`which`、`command -v`、`export`、
+  `/c/Users/...`、`source .venv/bin/activate` 或 `bash scripts/setup.sh`；
+- 临时修改 PATH 或把 API key 注入单条命令，而不是使用 workspace secrets import；
+- 把环境变量本身当作 secrets import 的文件来源，或在私有 `$SecretSource`
+  不存在时继续导入；
 - 未经用户要求替代方案就让用户在所有搜索提供商之间做选择；
 - 直接编辑控制文件或冻结工件；
 - 在 WorkBuddy 没有真正委派时说专家子代理已运行；
@@ -36,12 +44,13 @@ WorkBuddy 是 BriefLoop 的本地操作外壳，不是新的 BriefLoop 权威层
 - 建议修改角色子代理 frontmatter 的 tools 清单来绕过派发失败；
 - 在 Run Card 里自行宣布 `run_integrity=contaminated`——完整性由 Python
   判定，只能引用 diagnose/status 输出；
-- 说 `Analyst 已经分析完成` 或 `Auditor 已通过`，除非对应的工件、事件、
-  事务或 status 输出存在；
+- 没有当前 handoff step 中 host-visible 的精确调用和返回，却声称 Analyst /
+  Auditor role 已返回；或没有当前确定性 transaction/verdict truth，却声称
+  stage / audit 已通过；匹配工件、stale event、manual file 或旧事务都不充分；
 - 把 `delivery_truth.valid=true` 当成已经交付；它只表示当前 bundle 可进入
   交付动作；
 - 说 `delivered`、`delivery complete` 或 `交付完成`，除非
-  `briefloop workbuddy diagnose --json` 报告当前绑定的
+  `& $BriefLoop workbuddy diagnose --workspace "<workspace>" --json` 报告当前绑定的
   `event_truth.delivery_succeeded=true`；`delivery_bundle_prepared` 和
   `delivery_draft_created` 都不是 delivered；
 - 不要从 `run_integrity` 推断恢复阶段或下一步；恢复动作必须读取 WorkBuddy
@@ -51,7 +60,18 @@ WorkBuddy 是 BriefLoop 的本地操作外壳，不是新的 BriefLoop 权威层
 - 对 `recovery_status=completed_non_reference` 的 run，不要再次运行 finalize；
   在 `delivery_truth.valid=true` 之前也不要交付。终态恢复仍永久不具备
   reference 资格；
-- 在叙述里降级 `doctor` 错误；要展示完整输出并等待用户确认；
+- 从 raw workflow state、event log、Registry、时间戳或文件存在性重构下一步、
+  gate、finalize 或 delivery 真值；这些 raw controls 只能作为审计证据；
+- 在叙述里降级 `doctor` 错误，或用 `request_human_review`、用户确认、另一
+  shell/环境中先前的 standalone pass 把 error 改成 pass；必须修复并在同一
+  `$BriefLoop` 执行上下文重新通过；diagnose 的
+  `doctor.status=not_run_read_only` 不能清除或绕过该失败，也不得跟随其
+  completion action；
+- 让 `briefloop-formatter` 运行 shell/CLI、转换 Markdown-to-DOCX、写 reader
+  delivery artifacts，或声称 reader-clean、gate/finalize/delivery 成功；
+- 把正式 finalize 生命周期之外的手写 Markdown/DOCX 改名或描述成正式交付；
+  它只能标为 `draft/manual/unverified`，reader residue 必须报告并进入确定性
+  repair/finalize；
 - 打包或分享整个工作区；附件里绝不包含 `.env`、token 或私有规划文件；
 - 批准交付、release、gate 或 memory 条目；
 - 声称语义证明（semantic proof）、自动真值检查、幻觉消除或输出质量提升；

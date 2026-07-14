@@ -5,21 +5,23 @@
 
 ## 查看 Status
 
-```bash
-multi-agent-brief status --workspace <workspace>
-multi-agent-brief status --workspace <workspace> --json
-multi-agent-brief state check --workspace <workspace>
+```powershell
+& $BriefLoop workbuddy diagnose --workspace "<workspace>" --json
+& $BriefLoop status --workspace "<workspace>" --json
+& $BriefLoop state check --workspace "<workspace>"
 ```
 
-如果 `status` 报告阻塞、contamination、active repair、过期工件或无效
-工件，停下并按指示的事务路径处理。
+下一步、gate、finalize 和 delivery 路由只跟随 handoff/diagnose。raw status、
+workflow state、event log、Registry、时间戳和文件存在性只用于审计，不用于
+重构当前动作。如果 diagnose 报告阻塞、contamination、active repair、过期
+工件或无效工件，停下并按它指示的事务路径处理。
 
 ## Quality Panel
 
 用这条命令生成静态 Quality Panel：
 
-```bash
-multi-agent-brief quality summarize --workspace <workspace>
+```powershell
+& $BriefLoop quality summarize --workspace "<workspace>"
 ```
 
 输出文件是：
@@ -34,6 +36,13 @@ multi-agent-brief quality summarize --workspace <workspace>
 
 只有当用户明确要求、且当前 gate/status 路径允许时才执行交付。交付真值来自
 `finalize_report.json` 和 completion projection（经
-`briefloop workbuddy diagnose --workspace <workspace> --json` 读取），
+`& $BriefLoop workbuddy diagnose --workspace "<workspace>" --json` 读取），
 不是文件存在性。如果存在 reader-clean 或 gate 阻塞，不要绕开它打包或
 交付；reader-clean 失败不会晋升交付，也不会改动之前的交付包。
+
+“正式 finalize 管线已完成”要求当前 run 的成功 finalize 命令、结构有效的
+Finalize Report、reader-clean pass、promoted、当前 render transaction、finalize
+gate pass、成功 finalize-complete、diagnose 当前 finalize event、valid delivery
+truth 与准确 delivery outcome 全部存在。任何手写 Markdown/DOCX 只能标为
+`draft/manual/unverified`。若含 `CL-*`、`SRC-*`、`Claim Ledger`、本地路径或其他
+forbidden residue，停止交付声明，走正式 repair/finalize，不得手改 frozen artifact。

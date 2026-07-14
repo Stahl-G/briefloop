@@ -8,8 +8,11 @@ BriefLoop 工作区靠确定性 CLI 事务和角色专属草稿工件推进。Wo
 1. 确认工作区路径。
 2. 运行 CodeBuddy handoff：
 
-   ```bash
-   briefloop run --workspace <workspace> --runtime codebuddy
+   ```powershell
+   & $BriefLoop run `
+     --workspace "<workspace>" `
+     --runtime codebuddy `
+     --repo-workdir "<canonical BriefLoop source checkout>"
    ```
 
 3. 阅读 `output/intermediate/agent_handoff.md` 和
@@ -19,21 +22,23 @@ BriefLoop 工作区靠确定性 CLI 事务和角色专属草稿工件推进。Wo
 5. 为 handoff 指派的角色工件工作调用匹配的角色子代理。
 6. 工件就绪时使用对应的 owning CLI 事务。
 7. 每条 CLI 命令之后，先重读相应的 handoff 步骤再继续。
-8. 在 repair、finalize、quality 摘要或交付之前重新检查 status。
+8. 每次启动、CLI、角色返回或中断后运行 diagnose；在 repair、finalize、
+   quality 摘要或交付之前只跟随 handoff/diagnose 的当前动作。
 
 ## 常用查看命令
 
-```bash
-multi-agent-brief status --workspace <workspace>
-multi-agent-brief status --workspace <workspace> --json
-multi-agent-brief state check --workspace <workspace>
-multi-agent-brief quality summarize --workspace <workspace>
+```powershell
+& $BriefLoop workbuddy diagnose --workspace "<workspace>" --json
+& $BriefLoop status --workspace "<workspace>" --json
+& $BriefLoop state check --workspace "<workspace>"
+& $BriefLoop quality summarize --workspace "<workspace>"
 ```
 
 ## 进度更新
 
-每个确定性 CLI 事务之后，向用户总结进度。只报告可在 `status`、
-`workflow_state.json`、`event_log.jsonl` 或生成工件中看到的完成状态。
+每个确定性 CLI 事务之后，向用户总结 handoff/diagnose 中可见的进度。raw
+workflow state、event log、Registry、时间戳和文件存在性只能作为审计证据，
+不能替代 action router 或用于重构 gate、finalize、delivery 与 next action。
 
 在每个关键 CLI 命令、角色返回、repair 动作、gate 检查、finalize 尝试、
 quality 摘要或打包/导出请求之后使用 Run Card：
@@ -52,7 +57,7 @@ delivery_event:
 next_allowed_action:
 ```
 
-这些字段从 `briefloop workbuddy diagnose --workspace <workspace>
+这些字段从 `& $BriefLoop workbuddy diagnose --workspace "<workspace>"
 --json` 读取；该命令格式化的是规范 completion projection，只对
 `next_allowed_action` 叠加 WorkBuddy 的 doctor/密钥安全覆盖。不要从文件
 存在性检查或叙述文字重构交付、gate、finalize 或下一步动作的真值。
@@ -69,8 +74,10 @@ next_allowed_action:
 Quality Panel 已生成。
 ```
 
-不要说 `Analyst 已经分析完成` 或 `Auditor 已通过`，除非对应的工件、事件、
-事务或 status 输出存在。
+只有当前 handoff step 中 host-visible 的精确调用和返回，才能说 Analyst 或
+Auditor role 已返回。Stage 完成和 audit/gate 成功必须读取当前确定性
+transaction/verdict truth。匹配工件、stale event、manual file 或旧事务单独
+都不能证明这些事实。
 
 `delivery_truth.valid=true` 只表示当前 reader bundle 可进入交付动作。不要说
 `交付完成`、`delivered` 或 `delivery complete`，除非 WorkBuddy 诊断报告
@@ -81,7 +88,10 @@ Quality Panel 已生成。
 
 - 如果 `doctor` 报告任何错误，停止。展示完整 doctor 输出、工作区路径、
   当前用户、输出路径存在性/可写性结果、以及权限或 ACL 输出。不要自行降级
-  该错误。
+  该错误。用户确认、`request_human_review` 或另一环境中的 standalone pass
+  不能将它改成 pass；必须修复并用同一 `$BriefLoop` 重新通过。随后 diagnose
+  的 `doctor.status=not_run_read_only` 不能清除或绕过该失败，也不得跟随其
+  completion action；中断后或会话连续性不确定时重跑 doctor。
 - 恢复非终态或无效时，只执行 `recovery_action` / `next_allowed_action` 指定的
   事务；不要从 `run_integrity` 推断恢复通道，也不要交付、导出或分享。
 - 如果 `recovery_status=completed_non_reference`，不要再次运行 finalize；仅当
@@ -113,8 +123,18 @@ briefloop-formatter
 ```
 
 角色子代理只起草 handoff 指派的工件。它们不运行 BriefLoop CLI 命令、
-不编辑控制文件、不执行 gate、不批准交付、不授权 release。角色返回之后，
-由 WorkBuddy 主会话运行确定性 CLI 事务。
+不编辑控制文件、不执行 gate、不完成 stage、不冻结 Claim Ledger、不 finalize、
+不批准或汇报交付、不授权 release。角色返回不等于 stage 通过；返回之后由
+WorkBuddy 主会话运行确定性 CLI 事务并再次 diagnose。
+
+Formatter 只是只读 finalize-readiness reporter：不得运行 shell/CLI、执行
+Markdown-to-DOCX、写 reader delivery artifacts，或声称 reader-clean、gate、
+finalize、delivery 成功。
+
+手写 Markdown/DOCX 只能标为 `draft/manual/unverified`。正式 finalize 完成声明
+必须绑定 actual finalize、有效 Finalize Report、reader-clean/promoted/current
+render、gate、finalize-complete、当前 finalize event、valid delivery truth 与
+准确 outcome；任何 residue 都必须走确定性 repair/finalize。
 
 除非 WorkBuddy 确实委派了这些角色，否则不要声称 Scout、Screener、
 Claim Ledger、Analyst、Editor、Auditor 或 Formatter 子代理已运行。

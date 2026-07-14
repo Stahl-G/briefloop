@@ -24,22 +24,34 @@ Examples:
 ## Required Routing
 
 1. Confirm that the local WorkBuddy session has the BriefLoop Skill installed.
-2. Ask the local Skill to locate the active BriefLoop CLI and report the path
-   and version.
+2. On Windows, ask the local Skill to select PowerShell once, resolve
+   `briefloop` with `Get-Command -CommandType Application`, bind the first
+   result's fully qualified `.Path` to `$BriefLoop`, and reuse that absolute
+   path for doctor, run, secrets import, and diagnose. A function or alias
+   named `briefloop` must never win. Do not mix
+   Bash/Unix syntax or paths; stop if the actual shell is Git Bash.
 3. If the user did not provide a workspace path, classify:
    - existing workspace: ask for the folder path;
    - first-time run: explain that a BriefLoop workspace is the local folder for
      this report project, suggest a safe path, and ask for explicit
      confirmation before creation.
 4. Use the Skill to run BriefLoop commands. Do not hand-author control files.
-5. Use `--runtime codebuddy` for WorkBuddy full workflow operation.
-6. Invoke checked-in role agents explicitly for role-owned draft artifacts:
+   For a new workspace, create it before importing workspace secrets; for an
+   existing workspace, verify it exists before `secrets import`.
+5. Use `& $BriefLoop run --workspace "<workspace>" --runtime codebuddy
+   --repo-workdir "<canonical BriefLoop source checkout>"` for the full workflow,
+   then read both handoff files and run
+   `& $BriefLoop workbuddy diagnose --workspace "<workspace>" --json`.
+6. Follow only the current handoff/diagnose action. When that action explicitly
+   assigns role-owned draft work, invoke only the exact assigned checked-in role:
    `briefloop-scout`, `briefloop-screener`, `briefloop-claim-ledger`,
-   `briefloop-analyst`, `briefloop-editor`, `briefloop-auditor`, and
+   `briefloop-analyst`, `briefloop-editor`, `briefloop-auditor`, or
    `briefloop-formatter`.
-7. After each deterministic CLI transaction, report only progress visible in
-   CLI output, `status`, `workflow_state.json`, `event_log.jsonl`, or generated
-   artifacts.
+7. For a deterministic-only action, invoke no role and let the main session run
+   the authorized transaction. After every start, CLI transaction, role return,
+   or interruption, reread the handoff, run diagnose, and follow the refreshed
+   current action. Raw workflow state, event log, Registry, timestamps, and file
+   existence are audit evidence only, not an action router.
 
 ## Do Not
 
@@ -47,11 +59,31 @@ Examples:
   memory entries on behalf of the user.
 - Do not say role subagents ran unless WorkBuddy explicitly delegated and
   recorded those roles.
+- A host-visible exact-role return proves only that role execution. Stage
+  completion and audit/gate success require current deterministic
+  transaction/verdict truth; artifacts or prior events do not prove them.
 - Do not silently fall back to `--runtime operator` for full workflow execution.
+- If an operator handoff exists and the user requests subagents, stop using it,
+  regenerate codebuddy with the canonical `--repo-workdir`, and reread handoff;
+  do not promise delegation while continuing operator.
 - Do not hand-author BriefLoop workflow JSON artifacts when role agents are
   unavailable.
 - Do not treat traceability as semantic proof.
 - Do not claim hallucination elimination, output-quality improvement, or
   ready-to-send delivery.
+- Do not let human confirmation, `request_human_review`, or a standalone pass
+  elsewhere override a doctor error; fix it and rerun with the same CLI.
+  Diagnose may be displayed, but `doctor.status=not_run_read_only` cannot clear
+  or route around the observed failure, and its completion action must not be
+  followed. After interruption or uncertain session continuity, rerun doctor.
+- Do not let Formatter run shell/CLI, convert Markdown to DOCX, write delivery
+  artifacts, or claim reader-clean/finalize/delivery success.
+- Do not call manual Markdown/DOCX a formal BriefLoop delivery. Label it
+  `draft/manual/unverified`; report `CL-*`, `SRC-*`, `Claim Ledger`, local-path,
+  or other reader residue and route to deterministic repair/finalize.
+- Do not claim formal finalize completion without successful finalize, a valid
+  Finalize Report, reader-clean/promoted/current-render truth, finalize gate,
+  successful finalize-complete, current finalize event, valid delivery truth,
+  and an accurately reported delivery outcome.
 - Do not use the Assistant's fixed folder as a BriefLoop workspace unless the
   user explicitly creates a workspace there.

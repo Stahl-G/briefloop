@@ -22,8 +22,12 @@ BriefLoop 把草稿/内容工作和确定性控制记录分开。
 - 冻结的 Claim Ledger 修订
 - 交付归档或 bundle 清单——不得为了"看起来有效"而改
 
-改动一律走对应的 owning 命令或事务。如果某个控制文件看起来不对，运行
-`multi-agent-brief state check --workspace <workspace>` 并报告失败结果。
+改动一律走对应的 owning 命令或事务。如果某个控制文件看起来不对，使用已
+绑定的 PowerShell 可执行文件并报告失败结果：
+
+```powershell
+& $BriefLoop state check --workspace "<workspace>"
+```
 
 ## 证据边界
 
