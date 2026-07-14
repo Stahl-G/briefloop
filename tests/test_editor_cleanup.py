@@ -3,6 +3,7 @@ from __future__ import annotations
 
 from multi_agent_brief.tools.draft_cleanup import (
     clean_process_residue,
+    strip_claim_citations,
     validate_citations_intact,
 )
 
@@ -77,6 +78,10 @@ class TestCleanProcessResidue:
         assert "[SRC:]" not in result
         assert "Thought for" not in result
 
+    def test_handles_expanding_unicode_before_empty_legacy_marker(self):
+        for prefix in ("ß" * 30, "İ" * 30):
+            assert clean_process_residue(prefix + " [SOURCE:] tail") == prefix + "  tail"
+
     def test_empty_input(self):
         assert clean_process_residue("") == ""
 
@@ -115,3 +120,11 @@ class TestValidateCitationsIntact:
         original = "Text [src:]"
         cleaned = "Text"
         assert validate_citations_intact(original, cleaned) is True
+
+
+def test_strip_claim_citations_preserves_malformed_text_and_removes_later_valid_marker() -> None:
+    unclosed = "Before [src:CL-001 reader text that must remain"
+    mixed = "Malformed [src:bad id] stays; valid [src:CL-001] is removed."
+
+    assert strip_claim_citations(unclosed) == unclosed
+    assert strip_claim_citations(mixed) == "Malformed [src:bad id] stays; valid  is removed."

@@ -288,6 +288,34 @@ def test_reader_brief_date_check_uses_audited_context(tmp_path):
     assert len(date_findings) == 3
 
 
+def test_malformed_marker_cannot_make_truncated_reader_inherit_audited_citations(tmp_path):
+    ledger = _make_ledger_with_claims(1, with_dates=False)
+    audited = (
+        "Known [src:TEST0000ABCD]\n"
+        "Before [src:TEST0001ABCD reader text that must remain"
+    )
+    formerly_truncated_reader = "Known \nBefore"
+    context = PipelineContext(
+        project_name="Final",
+        input_dir=str(tmp_path),
+        output_dir=str(tmp_path / "output"),
+    )
+    context.report_state.prepared_markdown = audited
+
+    report = FinalQualityAuditAgent(
+        FinalQualityConfig(
+            min_markdown_chars=0,
+            expected_summary_bullets=None,
+            required_metadata_labels=[],
+            min_selected_claims=0,
+            require_dates=True,
+        )
+    ).run_audit(formerly_truncated_reader, ledger, context)
+
+    assert strip_claim_citations(audited) != formerly_truncated_reader
+    assert not any(finding.finding_type == "missing_date" for finding in report.findings)
+
+
 def test_dated_claims_pass_date_check():
     """Claims with dates should pass when require_dates is True."""
     ledger = _make_ledger_with_claims(3, with_dates=True)

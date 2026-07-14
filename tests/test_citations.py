@@ -162,3 +162,23 @@ def test_canonical_residue_and_marker_helpers_own_spans() -> None:
     ]
     assert remove_empty_source_marker_residue(text) == "[src:CL-001] bare CLAIM_123456  [SRC:legacy]"
     assert remove_src_marker_spans(text) == " bare CLAIM_123456 [source:] [SRC:legacy]"
+
+
+def test_bracketed_source_marker_spans_use_original_unicode_indexes() -> None:
+    for prefix in ("ß" * 30, "İ" * 30):
+        text = prefix + " [SoUrCe:legacy-secret]"
+        marker_start = text.index("[")
+
+        markers = iter_bracketed_source_markers(text)
+
+        assert [(marker.raw, marker.start, marker.end) for marker in markers] == [
+            ("[SoUrCe:legacy-secret]", marker_start, len(text)),
+        ]
+
+
+def test_remove_src_marker_spans_preserves_malformed_markers() -> None:
+    unclosed = "Before [src:CL-001 reader text that must remain"
+    mixed = "Malformed [src:bad id] stays; valid [src:CL-001] is removed."
+
+    assert remove_src_marker_spans(unclosed) == unclosed
+    assert remove_src_marker_spans(mixed) == "Malformed [src:bad id] stays; valid  is removed."
