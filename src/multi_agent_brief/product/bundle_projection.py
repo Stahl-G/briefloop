@@ -8,7 +8,10 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 import re
+import shutil
+import uuid
 import zipfile
 from pathlib import Path
 from typing import Any
@@ -27,13 +30,11 @@ from multi_agent_brief.product.citation_profile import (
     normalize_citation_profile,
     validate_citation_profile_report,
 )
-from multi_agent_brief.product.quality_panel import (
-    QualityPanelError,
-    render_quality_panel_html,
-    render_quality_summary,
-    validate_quality_panel_html,
-    validate_quality_panel_payload,
-    validate_quality_summary_markdown,
+from multi_agent_brief.product.quality_closeout import (
+    CanonicalQualityPanelView,
+    QualityPanelDegradation,
+    QualityPanelNotMaterialized,
+    interpret_quality_panel_closeout,
 )
 from multi_agent_brief.product.report_spec import ReportSpecLoadError, load_report_spec
 from multi_agent_brief.product.template_registry import ReportTemplateRegistry
@@ -140,11 +141,13 @@ def write_report_bundle_manifest(
     target = _manifest_output_path(ws, output_path)
     _raise_if_reserved_archive_output(ws, target)
     manifest = build_report_bundle_manifest(workspace=ws, template_registry=template_registry)
-    if write_archives:
-        manifest["bundle_archives"] = _write_bundle_archives(ws, manifest)
     manifest["manifest_path"] = _workspace_relative(ws, target)
-    target.parent.mkdir(parents=True, exist_ok=True)
-    target.write_text(json.dumps(manifest, ensure_ascii=False, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    if write_archives:
+        cleanup_warning = _write_bundle_publication(ws, target, manifest)
+    else:
+        cleanup_warning = _write_manifest_publication(target, manifest)
+    if cleanup_warning is not None:
+        manifest["publication_cleanup_warning"] = cleanup_warning
     return manifest
 
 
@@ -172,31 +175,281 @@ def _raise_if_reserved_archive_output(workspace: Path, target: Path) -> None:
         )
 
 
-def _write_bundle_archives(workspace: Path, manifest: dict[str, Any]) -> dict[str, Any]:
+def _write_bundle_publication(
+    workspace: Path,
+    manifest_path: Path,
+    manifest: dict[str, Any],
+) -> dict[str, str] | None:
     output_dir = workspace / "output"
-    output_dir.mkdir(parents=True, exist_ok=True)
     delivery_path = output_dir / "delivery_bundle.zip"
     audit_path = output_dir / "audit_bundle.zip"
+    delivery_staged: Path | None = None
+    audit_staged: Path | None = None
+    manifest_staged: Path | None = None
     delivery_records = _records_from_bundle(manifest, "delivery_bundle")
     audit_records = _records_from_bundle(manifest, "audit_bundle")
-    _write_zip_from_records(
-        workspace=workspace,
-        archive_path=delivery_path,
-        records=delivery_records,
-        surface="delivery",
+    try:
+        output_dir.mkdir(parents=True, exist_ok=True)
+        delivery_staged = _staged_path(delivery_path)
+        audit_staged = _staged_path(audit_path)
+        manifest_staged = _staged_path(manifest_path)
+        _write_zip_from_records(
+            workspace=workspace,
+            archive_path=delivery_staged,
+            records=delivery_records,
+            surface="delivery",
+        )
+        _write_zip_from_records(
+            workspace=workspace,
+            archive_path=audit_staged,
+            records=audit_records,
+            surface="audit",
+        )
+        manifest["bundle_archives"] = {
+            "status": "generated",
+            "semantics": "clean_archives_from_report_bundle_manifest",
+            "delivery": _archive_record(
+                workspace,
+                delivery_path,
+                artifact_count=len(delivery_records),
+                content_path=delivery_staged,
+            ),
+            "audit": _archive_record(
+                workspace,
+                audit_path,
+                artifact_count=len(audit_records),
+                content_path=audit_staged,
+            ),
+        }
+        manifest_bytes = _manifest_bytes(manifest)
+        _write_staged_bytes(manifest_staged, manifest_bytes)
+        _verify_staged_bundle_publication(
+            manifest=manifest,
+            manifest_path=manifest_staged,
+            expected_manifest_bytes=manifest_bytes,
+            delivery_path=delivery_staged,
+            audit_path=audit_staged,
+        )
+        return _publish_bundle_generation(
+            manifest=manifest,
+            delivery_staged=delivery_staged,
+            delivery_path=delivery_path,
+            audit_staged=audit_staged,
+            audit_path=audit_path,
+            manifest_staged=manifest_staged,
+            manifest_path=manifest_path,
+        )
+    except ReportBundleProjectionError:
+        _cleanup_paths(delivery_staged, audit_staged, manifest_staged)
+        raise
+    except Exception as exc:
+        _cleanup_paths(delivery_staged, audit_staged, manifest_staged)
+        raise ReportBundleProjectionError(
+            "report bundle publication staging failed."
+        ) from exc
+
+
+def _write_manifest_publication(
+    target: Path,
+    manifest: dict[str, Any],
+) -> dict[str, str] | None:
+    manifest_bytes = _manifest_bytes(manifest)
+    manifest_staged: Path | None = None
+    try:
+        manifest_staged = _staged_path(target)
+        _write_staged_bytes(manifest_staged, manifest_bytes)
+        _verify_staged_manifest(
+            target=manifest_staged,
+            expected_bytes=manifest_bytes,
+        )
+    except Exception as exc:
+        _cleanup_paths(manifest_staged)
+        raise ReportBundleProjectionError(
+            "report bundle manifest staging failed."
+        ) from exc
+
+    try:
+        os.replace(manifest_staged, target)
+    except Exception as exc:
+        _cleanup_paths(manifest_staged)
+        raise ReportBundleProjectionError(
+            "report_bundle_publication_failed"
+        ) from exc
+    if _cleanup_paths(manifest_staged):
+        return _publication_cleanup_warning()
+    return None
+
+
+def _manifest_bytes(manifest: dict[str, Any]) -> bytes:
+    return (
+        json.dumps(manifest, ensure_ascii=False, indent=2, sort_keys=True) + "\n"
+    ).encode("utf-8")
+
+
+def _staged_path(target: Path) -> Path:
+    target.parent.mkdir(parents=True, exist_ok=True)
+    return target.parent / f".{target.name}.{uuid.uuid4().hex}.tmp"
+
+
+def _backup_path(target: Path) -> Path:
+    return target.parent / f".{target.name}.{uuid.uuid4().hex}.backup"
+
+
+def _write_staged_bytes(path: Path, content: bytes) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_bytes(content)
+
+
+def _publish_bundle_generation(
+    *,
+    manifest: dict[str, Any],
+    delivery_staged: Path,
+    delivery_path: Path,
+    audit_staged: Path,
+    audit_path: Path,
+    manifest_staged: Path,
+    manifest_path: Path,
+) -> dict[str, str] | None:
+    states: list[dict[str, Any]] = [
+        {
+            "staged": staged,
+            "target": target,
+            "existed": target.exists(),
+            "backup": _backup_path(target) if target.exists() else None,
+        }
+        for staged, target in (
+            (delivery_staged, delivery_path),
+            (audit_staged, audit_path),
+        )
+    ]
+    attempted: list[dict[str, Any]] = []
+    try:
+        for state in states:
+            target = state["target"]
+            backup = state["backup"]
+            if backup is not None:
+                shutil.copyfile(target, backup)
+        for state in states:
+            attempted.append(state)
+            os.replace(state["staged"], state["target"])
+        _verify_bundle_archives(
+            manifest=manifest,
+            delivery_path=delivery_path,
+            audit_path=audit_path,
+        )
+        # This atomic replacement is the only publication commit point.
+        os.replace(manifest_staged, manifest_path)
+    except Exception as exc:
+        rollback_failures = _rollback_zip_targets(attempted)
+        cleanup_paths = [delivery_staged, audit_staged, manifest_staged]
+        if not rollback_failures:
+            cleanup_paths.extend(
+                state["backup"]
+                for state in states
+                if isinstance(state["backup"], Path)
+            )
+        _cleanup_paths(*cleanup_paths)
+        if rollback_failures:
+            raise ReportBundleProjectionError(
+                "report_bundle_publication_rollback_incomplete"
+            ) from exc
+        raise ReportBundleProjectionError(
+            "report_bundle_publication_failed"
+        ) from exc
+    cleanup_failed = _cleanup_paths(
+        delivery_staged,
+        audit_staged,
+        manifest_staged,
+        *(state["backup"] for state in states),
     )
-    _write_zip_from_records(
-        workspace=workspace,
-        archive_path=audit_path,
-        records=audit_records,
-        surface="audit",
-    )
+    if cleanup_failed:
+        return _publication_cleanup_warning()
+    return None
+
+
+def _rollback_zip_targets(
+    states: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    failures: list[dict[str, Any]] = []
+    for state in reversed(states):
+        target = state["target"]
+        try:
+            if state["existed"]:
+                os.replace(state["backup"], target)
+            else:
+                target.unlink(missing_ok=True)
+        except Exception as exc:
+            failed_state = dict(state)
+            failed_state["rollback_error_type"] = type(exc).__name__
+            failures.append(failed_state)
+    return failures
+
+
+def _cleanup_paths(*paths: Path | None) -> bool:
+    cleanup_failed = False
+    for path in paths:
+        if path is None:
+            continue
+        try:
+            path.unlink(missing_ok=True)
+        except Exception:
+            cleanup_failed = True
+    return cleanup_failed
+
+
+def _publication_cleanup_warning() -> dict[str, str]:
     return {
-        "status": "generated",
-        "semantics": "clean_archives_from_report_bundle_manifest",
-        "delivery": _archive_record(workspace, delivery_path, artifact_count=len(delivery_records)),
-        "audit": _archive_record(workspace, audit_path, artifact_count=len(audit_records)),
+        "reason_code": "publication_cleanup_warning",
+        "boundary": "post_commit_housekeeping_only_not_bundle_authority",
     }
+
+
+def _verify_staged_manifest(*, target: Path, expected_bytes: bytes) -> None:
+    if target.read_bytes() != expected_bytes:
+        raise ReportBundleProjectionError(
+            "staged report bundle manifest does not match expected bytes."
+        )
+
+
+def _verify_staged_bundle_publication(
+    *,
+    manifest: dict[str, Any],
+    manifest_path: Path,
+    expected_manifest_bytes: bytes,
+    delivery_path: Path,
+    audit_path: Path,
+) -> None:
+    _verify_staged_manifest(
+        target=manifest_path,
+        expected_bytes=expected_manifest_bytes,
+    )
+    _verify_bundle_archives(
+        manifest=manifest,
+        delivery_path=delivery_path,
+        audit_path=audit_path,
+    )
+
+
+def _verify_bundle_archives(
+    *,
+    manifest: dict[str, Any],
+    delivery_path: Path,
+    audit_path: Path,
+) -> None:
+    archives = manifest.get("bundle_archives")
+    archives = archives if isinstance(archives, dict) else {}
+    for key, path in (("delivery", delivery_path), ("audit", audit_path)):
+        record = archives.get(key)
+        if not isinstance(record, dict):
+            raise ReportBundleProjectionError(
+                "published report bundle archive record is missing."
+            )
+        if record.get("sha256") != _sha256_file(path) or record.get(
+            "size_bytes"
+        ) != path.stat().st_size:
+            raise ReportBundleProjectionError(
+                "published report bundle archive does not match manifest."
+            )
 
 
 def _records_from_bundle(manifest: dict[str, Any], key: str) -> list[dict[str, Any]]:
@@ -222,12 +475,19 @@ def _write_zip_from_records(
             if not rel:
                 continue
             source = _resolve_workspace_path(workspace, rel)
+            content = source.read_bytes()
+            expected_sha256 = str(record.get("sha256") or "")
+            actual_sha256 = hashlib.sha256(content).hexdigest()
+            if not expected_sha256 or actual_sha256 != expected_sha256:
+                raise ReportBundleProjectionError(
+                    f"bundle artifact changed after manifest projection: {rel}"
+                )
             arcname = _archive_member_name(rel, surface=surface)
             info = zipfile.ZipInfo(arcname)
             info.date_time = (1980, 1, 1, 0, 0, 0)
             info.compress_type = zipfile.ZIP_DEFLATED
             info.external_attr = 0o644 << 16
-            zf.writestr(info, source.read_bytes())
+            zf.writestr(info, content)
 
 
 def _write_bundle_readme(zf: zipfile.ZipFile, *, surface: str) -> None:
@@ -253,11 +513,18 @@ def _archive_member_name(rel_path: str, *, surface: str) -> str:
     return f"{surface}/{rel}".replace("//", "/")
 
 
-def _archive_record(workspace: Path, path: Path, *, artifact_count: int) -> dict[str, Any]:
+def _archive_record(
+    workspace: Path,
+    path: Path,
+    *,
+    artifact_count: int,
+    content_path: Path | None = None,
+) -> dict[str, Any]:
+    content = content_path or path
     return {
         "path": _workspace_relative(workspace, path),
-        "sha256": _sha256_file(path),
-        "size_bytes": path.stat().st_size,
+        "sha256": _sha256_file(content),
+        "size_bytes": content.stat().st_size,
         "artifact_count": artifact_count,
     }
 
@@ -369,35 +636,71 @@ def _audit_records(
     *,
     hygiene: dict[str, Any],
 ) -> list[dict[str, Any]]:
-    _validate_present_quality_artifacts(workspace)
+    quality_verdict = interpret_quality_panel_closeout(workspace=workspace)
+    quality_candidates: list[tuple[str, Path, str | None]] = []
+    if isinstance(quality_verdict, CanonicalQualityPanelView):
+        quality_candidates = [
+            (
+                artifact_id,
+                quality_verdict.artifact_paths[artifact_id],
+                quality_verdict.artifact_sha256[artifact_id],
+            )
+            for artifact_id in ("quality_panel", "quality_summary", "quality_panel_html")
+        ]
+    elif isinstance(quality_verdict, QualityPanelDegradation):
+        raise ReportBundleProjectionError(
+            "quality projection artifacts are not canonically bound: "
+            f"{quality_verdict.reason_code}; rerun briefloop quality summarize"
+        )
+    elif not isinstance(quality_verdict, QualityPanelNotMaterialized):
+        raise ReportBundleProjectionError(
+            "quality projection artifact interpretation failed; "
+            "rerun briefloop quality summarize"
+        )
+
     candidates = [
-        ("finalize_report", workspace / "output" / "intermediate" / "finalize_report.json"),
-        ("claim_ledger", workspace / "output" / "intermediate" / "claim_ledger.json"),
-        ("audited_brief", workspace / "output" / "intermediate" / "audited_brief.md"),
-        ("audit_report", workspace / "output" / "intermediate" / "audit_report.json"),
-        ("artifact_registry", workspace / "output" / "intermediate" / "artifact_registry.json"),
-        ("runtime_manifest", workspace / "output" / "intermediate" / "runtime_manifest.json"),
-        ("workflow_state", workspace / "output" / "intermediate" / "workflow_state.json"),
-        ("event_log", workspace / "output" / "intermediate" / "event_log.jsonl"),
-        ("auditor_gate_report", workspace / "output" / "intermediate" / "gates" / "auditor_quality_gate_report.json"),
+        ("finalize_report", workspace / "output" / "intermediate" / "finalize_report.json", None),
+        ("claim_ledger", workspace / "output" / "intermediate" / "claim_ledger.json", None),
+        ("audited_brief", workspace / "output" / "intermediate" / "audited_brief.md", None),
+        ("audit_report", workspace / "output" / "intermediate" / "audit_report.json", None),
+        ("artifact_registry", workspace / "output" / "intermediate" / "artifact_registry.json", None),
+        ("runtime_manifest", workspace / "output" / "intermediate" / "runtime_manifest.json", None),
+        ("workflow_state", workspace / "output" / "intermediate" / "workflow_state.json", None),
+        ("event_log", workspace / "output" / "intermediate" / "event_log.jsonl", None),
+        (
+            "auditor_gate_report",
+            workspace / "output" / "intermediate" / "gates" / "auditor_quality_gate_report.json",
+            None,
+        ),
         (
             "finalize_gate_report",
             workspace / "output" / "intermediate" / "gates" / "finalize_quality_gate_report.json",
+            None,
         ),
-        ("source_appendix", workspace / "output" / "source_appendix.md"),
-        ("source_appendix_trace", _optional_report_path(workspace, finalize_report, "source_appendix_trace")),
-        ("atomic_claim_graph", workspace / "output" / "intermediate" / "atomic_claim_graph.json"),
-        ("evidence_span_registry", workspace / "output" / "intermediate" / "evidence_span_registry.json"),
-        ("claim_support_matrix", workspace / "output" / "intermediate" / "claim_support_matrix.json"),
-        ("semantic_assessment_report", workspace / "output" / "intermediate" / "semantic_assessment_report.json"),
-        ("quality_panel", workspace / "output" / "intermediate" / "quality_panel.json"),
-        ("quality_summary", workspace / "output" / "intermediate" / "quality_summary.md"),
-        ("quality_panel_html", workspace / "output" / "intermediate" / "quality_panel.html"),
+        ("source_appendix", workspace / "output" / "source_appendix.md", None),
+        (
+            "source_appendix_trace",
+            _optional_report_path(workspace, finalize_report, "source_appendix_trace"),
+            None,
+        ),
+        ("atomic_claim_graph", workspace / "output" / "intermediate" / "atomic_claim_graph.json", None),
+        (
+            "evidence_span_registry",
+            workspace / "output" / "intermediate" / "evidence_span_registry.json",
+            None,
+        ),
+        ("claim_support_matrix", workspace / "output" / "intermediate" / "claim_support_matrix.json", None),
+        (
+            "semantic_assessment_report",
+            workspace / "output" / "intermediate" / "semantic_assessment_report.json",
+            None,
+        ),
+        *quality_candidates,
     ]
     records: list[dict[str, Any]] = []
     seen: set[str] = set()
     delivery_root = (workspace / "output" / "delivery").resolve()
-    for role, path in candidates:
+    for role, path, expected_sha256 in candidates:
         if path is None or not path.exists() or not path.is_file():
             continue
         resolved = path.resolve()
@@ -413,98 +716,15 @@ def _audit_records(
             _record_hygiene_exclusion(workspace, resolved, hygiene=hygiene, surface="audit")
             continue
         seen.add(rel)
-        records.append(_artifact_record(workspace, resolved, role=role))
-    return records
-
-
-def _validate_present_quality_artifacts(workspace: Path) -> None:
-    quality_paths = {
-        "quality_panel": workspace / "output" / "intermediate" / "quality_panel.json",
-        "quality_summary": workspace / "output" / "intermediate" / "quality_summary.md",
-        "quality_panel_html": workspace / "output" / "intermediate" / "quality_panel.html",
-    }
-    if not any(path.exists() for path in quality_paths.values()):
-        return
-
-    panel_path = quality_paths["quality_panel"]
-    panel_payload = _load_valid_quality_panel_payload(workspace, panel_path)
-    if quality_paths["quality_summary"].exists():
-        _validate_quality_summary_binding(workspace, quality_paths["quality_summary"], panel_path, panel_payload)
-    if quality_paths["quality_panel_html"].exists():
-        _validate_quality_panel_html_binding(workspace, quality_paths["quality_panel_html"], panel_path, panel_payload)
-
-
-def _load_valid_quality_panel_payload(workspace: Path, panel_path: Path) -> dict[str, Any]:
-    if not panel_path.exists():
-        _raise_quality_artifact_error(
-            workspace,
-            panel_path,
-            "quality_panel_missing",
+        records.append(
+            _artifact_record(
+                workspace,
+                resolved,
+                role=role,
+                expected_sha256=expected_sha256,
+            )
         )
-    try:
-        payload = json.loads(panel_path.read_text(encoding="utf-8"))
-    except (OSError, UnicodeDecodeError):
-        _raise_quality_artifact_error(workspace, panel_path, "quality_panel_unreadable")
-    except json.JSONDecodeError:
-        _raise_quality_artifact_error(workspace, panel_path, "quality_panel_parse_error")
-    if not isinstance(payload, dict):
-        _raise_quality_artifact_error(workspace, panel_path, "quality_panel_invalid:not_object")
-    reason = validate_quality_panel_payload(payload)
-    if reason:
-        _raise_quality_artifact_error(workspace, panel_path, f"quality_panel_invalid:{reason}")
-    return payload
-
-
-def _validate_quality_summary_binding(
-    workspace: Path,
-    summary_path: Path,
-    panel_path: Path,
-    panel_payload: dict[str, Any],
-) -> None:
-    try:
-        text = summary_path.read_text(encoding="utf-8")
-    except (OSError, UnicodeDecodeError):
-        _raise_quality_artifact_error(workspace, summary_path, "quality_summary_unreadable")
-    reason = validate_quality_summary_markdown(text)
-    if reason:
-        _raise_quality_artifact_error(workspace, summary_path, reason)
-    try:
-        expected = render_quality_summary(panel_payload, quality_panel_sha256=_sha256_file(panel_path))
-    except QualityPanelError as exc:
-        _raise_quality_artifact_error(workspace, summary_path, f"quality_summary_render:{exc}")
-    if text != expected:
-        _raise_quality_artifact_error(workspace, summary_path, "quality_summary_stale_or_hand_edited")
-
-
-def _validate_quality_panel_html_binding(
-    workspace: Path,
-    html_path: Path,
-    panel_path: Path,
-    panel_payload: dict[str, Any],
-) -> None:
-    try:
-        text = html_path.read_text(encoding="utf-8")
-    except (OSError, UnicodeDecodeError):
-        _raise_quality_artifact_error(workspace, html_path, "quality_panel_html_unreadable")
-    reason = validate_quality_panel_html(text)
-    if reason:
-        _raise_quality_artifact_error(workspace, html_path, reason)
-    try:
-        expected = render_quality_panel_html(panel_payload, quality_panel_sha256=_sha256_file(panel_path))
-    except QualityPanelError as exc:
-        _raise_quality_artifact_error(workspace, html_path, f"quality_panel_html_render:{exc}")
-    if text != expected:
-        _raise_quality_artifact_error(workspace, html_path, "quality_panel_html_stale_or_hand_edited")
-
-
-def _raise_quality_artifact_error(workspace: Path, path: Path, reason: str) -> None:
-    try:
-        rel = _workspace_relative(workspace, path)
-    except ValueError:
-        rel = path.as_posix()
-    raise ReportBundleProjectionError(
-        f"quality projection artifact invalid: {rel}: {reason}; rerun briefloop quality summarize"
-    )
+    return records
 
 
 def _template_projection(
@@ -617,11 +837,23 @@ def _hash_for_path(
     return ""
 
 
-def _artifact_record(workspace: Path, path: Path, *, role: str) -> dict[str, Any]:
+def _artifact_record(
+    workspace: Path,
+    path: Path,
+    *,
+    role: str,
+    expected_sha256: str | None = None,
+) -> dict[str, Any]:
+    actual_sha256 = _sha256_file(path)
+    if expected_sha256 is not None and actual_sha256 != expected_sha256:
+        raise ReportBundleProjectionError(
+            "quality projection artifact changed after canonical interpretation: "
+            f"{_workspace_relative(workspace, path)}"
+        )
     record = {
         "path": _workspace_relative(workspace, path),
         "role": role,
-        "sha256": _sha256_file(path),
+        "sha256": actual_sha256,
         "size_bytes": path.stat().st_size,
     }
     fallback = _ascii_fallback_name(path.name)

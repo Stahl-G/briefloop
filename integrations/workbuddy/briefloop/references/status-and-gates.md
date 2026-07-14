@@ -19,7 +19,12 @@ indicated transaction path.
 
 ## Quality Panel
 
-Generate the static Quality Panel with:
+Successful CLI `finalize-complete` first completes the authoritative transaction
+and immutable run archive, then automatically materializes the static Quality
+Panel artifacts and binds them through the Artifact Registry.
+
+If the automatic projection is missing, stale, or invalid, repair or reproject
+it explicitly with:
 
 ```powershell
 & $BriefLoop quality summarize --workspace "<workspace>"
@@ -31,8 +36,8 @@ The output files are:
 - `output/intermediate/quality_summary.md`
 - `output/intermediate/quality_panel.html`
 
-These are audit projections. They are not gates, release approval, or
-delivery approval.
+`quality summarize` is not the unique normal writer. These are audit
+projections. They are not gates, release approval, or delivery approval.
 
 ## Delivery
 

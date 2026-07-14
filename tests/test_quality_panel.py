@@ -2,27 +2,45 @@
 
 from __future__ import annotations
 
+import ast
 import hashlib
+import importlib
+import inspect
 import json
 import os
 import subprocess
 import sys
+import textwrap
 from pathlib import Path
 
 import pytest
 
+import multi_agent_brief.cli.product_commands as product_commands
+import multi_agent_brief.product.quality_closeout as quality_closeout
+import multi_agent_brief.product.quality_panel as quality_panel_module
 from multi_agent_brief.cli.main import main
 from multi_agent_brief.orchestrator.runtime_state.semantic_assessment_report import (
     SEMANTIC_ASSESSMENT_REPORT_STATUSES,
     build_semantic_assessment_checked_inputs,
 )
 from multi_agent_brief.status import build_workspace_status, format_workspace_status
+from multi_agent_brief.product.quality_closeout import (
+    CanonicalQualityPanelView,
+    QualityPanelDegradation,
+    QualityPanelCloseoutError,
+    QualityPanelNotMaterialized,
+    display_quality_panel_closeout,
+    interpret_quality_panel_closeout,
+    materialize_quality_panel_closeout,
+)
 from multi_agent_brief.product.quality_panel import (
     QUALITY_PANEL_HTML_BOUNDARY,
     QUALITY_PANEL_BOUNDARY,
     QUALITY_SUMMARY_BOUNDARY,
     QualityPanelError,
     build_quality_panel,
+    build_quality_panel_producer_context,
+    project_quality_panel,
     quality_panel_html_path,
     quality_panel_path,
     render_quality_panel_html,
@@ -59,6 +77,71 @@ def _sha256_file(path: Path) -> str:
 def _sha256_json(payload: object) -> str:
     raw = json.dumps(payload, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
     return hashlib.sha256(raw.encode("utf-8")).hexdigest()
+
+
+def _write_materiality_inputs(ws: Path) -> None:
+    intermediate = ws / "output" / "intermediate"
+    candidate_ids = ("CAND-001", "CAND-002", "CAND-003")
+    (intermediate / "candidate_claims.json").write_text(
+        json.dumps(
+            [
+                {
+                    "candidate_id": candidate_id,
+                    "claim": f"Example candidate {candidate_id}.",
+                    "source_id": f"SRC-{index:03d}",
+                }
+                for index, candidate_id in enumerate(candidate_ids, start=1)
+            ],
+            ensure_ascii=False,
+            indent=2,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    (intermediate / "screened_candidates.json").write_text(
+        json.dumps(
+            {
+                "selected": [
+                    {
+                        "candidate_id": "CAND-001",
+                        "statement": "ExampleCo reported routine supplier updates.",
+                        "evidence_text": "ExampleCo reported routine supplier updates.",
+                        "source_id": "SRC-001",
+                        "retrieved_at": "2026-07-01",
+                    }
+                ],
+                "excluded": [
+                    {
+                        "candidate_id": "CAND-002",
+                        "statement": (
+                            "ExampleCo capacity expansion is delayed by tariff uncertainty."
+                        ),
+                        "source_id": "SRC-002",
+                        "reason_code": "capacity_capped",
+                        "explanation": "Capacity cap applied after selection.",
+                    }
+                ],
+                "deprioritized": [
+                    {
+                        "candidate_id": "CAND-003",
+                        "statement": "Inventory movements were off focus for this brief.",
+                        "source_id": "SRC-003",
+                        "reason_code": "off_focus",
+                        "explanation": "Outside the selected brief focus.",
+                    }
+                ],
+                "screening_policy": {
+                    "method": "deterministic_test",
+                    "total_candidates": 3,
+                },
+            },
+            ensure_ascii=False,
+            indent=2,
+            sort_keys=True,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
 
 
 def _write_source_evidence_pack(ws: Path) -> None:
@@ -511,12 +594,322 @@ def test_quality_panel_direct_import_has_no_runtime_state_cycle() -> None:
     assert "render_quality_summary" in result.stdout
 
 
+def test_quality_panel_projector_consumes_only_deep_frozen_context(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    ws = _workspace(tmp_path)
+    _write_finalize_report(ws, duplicate_citation_count=2)
+    context = build_quality_panel_producer_context(ws)
+    expected = project_quality_panel(producer_context=context)
+
+    def fail_workspace_read(*args, **kwargs):
+        raise AssertionError("pure projector attempted a workspace read")
+
+    for helper_name in (
+        "_source_evidence_summary",
+        "_gate_summary",
+        "_claim_summary",
+        "_delivery_summary",
+    ):
+        monkeypatch.setattr(quality_panel_module, helper_name, fail_workspace_read)
+
+    assert project_quality_panel(producer_context=context) == expected
+    with pytest.raises(TypeError):
+        context["ok"] = False
+    with pytest.raises(TypeError):
+        context["workflow"]["blocked"] = True
+
+
+def test_quality_panel_context_is_an_immutable_workspace_snapshot(tmp_path: Path) -> None:
+    ws = _workspace(tmp_path)
+    _write_finalize_report(ws, duplicate_citation_count=0)
+    context = build_quality_panel_producer_context(ws)
+    before = project_quality_panel(producer_context=context)
+
+    _write_finalize_report(ws, duplicate_citation_count=3)
+
+    assert project_quality_panel(producer_context=context) == before
+    refreshed = project_quality_panel(
+        producer_context=build_quality_panel_producer_context(ws),
+    )
+    assert refreshed != before
+    assert refreshed["delivery"]["duplicate_citation_count"] == 3
+
+
+def test_quality_panel_projector_is_structurally_free_of_workspace_reads() -> None:
+    signature = inspect.signature(project_quality_panel)
+    assert tuple(signature.parameters) == ("producer_context",)
+    tree = ast.parse(textwrap.dedent(inspect.getsource(project_quality_panel)))
+    call_names: set[str] = set()
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Call):
+            continue
+        if isinstance(node.func, ast.Name):
+            call_names.add(node.func.id)
+        elif isinstance(node.func, ast.Attribute):
+            call_names.add(node.func.attr)
+
+    forbidden_calls = {
+        "Path",
+        "build_quality_panel_producer_context",
+        "exists",
+        "is_file",
+        "read_bytes",
+        "read_text",
+        "_claim_summary",
+        "_delivery_summary",
+        "_gate_summary",
+        "_read_json_mapping",
+        "_source_evidence_summary",
+    }
+    assert call_names.isdisjoint(forbidden_calls)
+    assert not any(name.startswith("project_workspace_") for name in call_names)
+
+
+def test_quality_panel_projector_is_identical_under_optimized_python(
+    tmp_path: Path,
+) -> None:
+    ws = _workspace(tmp_path)
+    _write_finalize_report(ws, duplicate_citation_count=1)
+    context_path = tmp_path / "quality-panel-context.json"
+    context_path.write_text(
+        json.dumps(
+            quality_panel_module._plain_json(
+                build_quality_panel_producer_context(ws)
+            ),
+            ensure_ascii=False,
+            indent=2,
+            sort_keys=True,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    script = (
+        "import json,sys;"
+        "from pathlib import Path;"
+        "from multi_agent_brief.product.quality_panel import project_quality_panel;"
+        "context=json.loads(Path(sys.argv[1]).read_text(encoding='utf-8'));"
+        "payload=project_quality_panel(producer_context=context);"
+        "print(json.dumps(payload,ensure_ascii=False,sort_keys=True,separators=(',',':')))"
+    )
+    env = dict(os.environ)
+    src_path = str(Path.cwd() / "src")
+    env["PYTHONPATH"] = (
+        f"{src_path}{os.pathsep}{env['PYTHONPATH']}"
+        if env.get("PYTHONPATH")
+        else src_path
+    )
+    outputs: list[str] = []
+    for optimize in (False, True):
+        command = [sys.executable]
+        if optimize:
+            command.append("-O")
+        command.extend(["-c", script, str(context_path)])
+        result = subprocess.run(
+            command,
+            check=False,
+            cwd=Path.cwd(),
+            env=env,
+            text=True,
+            capture_output=True,
+        )
+        assert result.returncode == 0, result.stderr
+        outputs.append(result.stdout)
+    assert outputs[0] == outputs[1]
+
+
+@pytest.mark.parametrize(
+    ("manifest_state", "expected_reason"),
+    [
+        pytest.param("missing", "runtime_manifest_missing", id="QP-CONTEXT-MANIFEST-MISSING"),
+        pytest.param(
+            "unreadable",
+            "runtime_manifest_unreadable",
+            id="QP-CONTEXT-MANIFEST-UNREADABLE",
+        ),
+    ],
+)
+def test_quality_panel_context_preserves_guidance_manifest_input_state(
+    tmp_path: Path,
+    manifest_state: str,
+    expected_reason: str,
+) -> None:
+    ws = _workspace(tmp_path)
+    manifest_path = ws / "output" / "intermediate" / "runtime_manifest.json"
+    if manifest_state == "missing":
+        manifest_path.unlink()
+    else:
+        manifest_path.write_bytes(b"\xff\xfe\x00invalid-runtime-manifest")
+
+    direct = quality_panel_module.project_workspace_guidance_manifestation(ws)
+    status = build_workspace_status(ws)["guidance_manifestation"]
+    panel = build_quality_panel(ws)["guidance_manifestation"]
+
+    assert direct["reason"] == expected_reason
+    assert status["reason"] == expected_reason
+    assert panel["reason"] == expected_reason
+
+
+def test_quality_panel_context_distinguishes_stale_disk_and_fresh_explicit_registry(
+    tmp_path: Path,
+) -> None:
+    ws = _workspace(tmp_path)
+    registry_path = ws / "output" / "intermediate" / "artifact_registry.json"
+    assert main(["state", "check", "--workspace", str(ws), "--json"]) == 0
+    stale_registry_bytes = registry_path.read_bytes()
+    _write_materiality_inputs(ws)
+
+    status_materiality = build_workspace_status(ws)["materiality_selection"]
+    ordinary_context = build_quality_panel_producer_context(ws)
+    ordinary_panel = project_quality_panel(producer_context=ordinary_context)
+
+    assert ordinary_panel["materiality_selection"] == status_materiality
+    assert registry_path.read_bytes() == stale_registry_bytes
+
+    assert main(["state", "check", "--workspace", str(ws), "--json"]) == 0
+    fresh_registry = _json(registry_path)
+    replay_context = build_quality_panel_producer_context(
+        ws,
+        artifact_registry=fresh_registry,
+    )
+    refreshed_context = build_quality_panel_producer_context(ws)
+
+    assert replay_context["materiality_selection"] == refreshed_context[
+        "materiality_selection"
+    ]
+    assert project_quality_panel(
+        producer_context=replay_context,
+    ) == project_quality_panel(producer_context=refreshed_context)
+
+
+def test_quality_panel_context_calls_each_child_workspace_projector_once(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    claim_support_matrix = importlib.import_module(
+        "multi_agent_brief.orchestrator.runtime_state.claim_support_matrix"
+    )
+    semantic_assessment_report = importlib.import_module(
+        "multi_agent_brief.orchestrator.runtime_state.semantic_assessment_report"
+    )
+
+    ws = _workspace(tmp_path)
+    calls: dict[str, int] = {}
+    projectors = [
+        (quality_panel_module, "project_workspace_policy_profile"),
+        (quality_panel_module, "project_workspace_materiality_selection"),
+        (quality_panel_module, "project_workspace_support_wording"),
+        (quality_panel_module, "project_workspace_report_template_conformance"),
+        (quality_panel_module, "project_workspace_trajectory_regulation"),
+        (quality_panel_module, "project_workspace_guidance_manifestation"),
+        (claim_support_matrix, "project_claim_support_matrix_from_workspace"),
+        (semantic_assessment_report, "project_semantic_assessment_report_from_workspace"),
+    ]
+    for module, name in projectors:
+        original = getattr(module, name)
+
+        def counted(*args, _name=name, _original=original, **kwargs):
+            calls[_name] = calls.get(_name, 0) + 1
+            return _original(*args, **kwargs)
+
+        monkeypatch.setattr(module, name, counted)
+
+    build_quality_panel_producer_context(ws)
+
+    assert calls == {name: 1 for _module, name in projectors}
+
+
+def test_quality_panel_materializer_allows_only_one_registry_reprojection(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    ws = _workspace(tmp_path)
+    _write_finalize_report(ws)
+    _write_source_evidence_pack(ws)
+    refresh_calls = 0
+    write_calls = 0
+    original_refresh = quality_closeout._refresh_runtime_state
+    original_write = quality_panel_module.write_quality_panel
+
+    def counted_refresh(**kwargs):
+        nonlocal refresh_calls
+        refresh_calls += 1
+        return original_refresh(**kwargs)
+
+    def counted_write(**kwargs):
+        nonlocal write_calls
+        write_calls += 1
+        return original_write(**kwargs)
+
+    monkeypatch.setattr(quality_closeout, "_refresh_runtime_state", counted_refresh)
+    monkeypatch.setattr(quality_panel_module, "write_quality_panel", counted_write)
+
+    result = materialize_quality_panel_closeout(workspace=ws, repo_workdir=Path.cwd())
+
+    assert result["status"] == "complete"
+    assert refresh_calls == 2
+    assert write_calls == 2
+
+
+def test_quality_panel_second_registry_replay_mismatch_fails_value_free(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    ws = _workspace(tmp_path)
+    _write_finalize_report(ws)
+    refresh_calls = 0
+    write_calls = 0
+    original_write = quality_panel_module.write_quality_panel
+
+    def mismatching_refresh(**_kwargs):
+        nonlocal refresh_calls
+        refresh_calls += 1
+        return {
+            "artifact_registry": {
+                "artifacts": {
+                    "quality_panel": {
+                        "status": "invalid",
+                        "validation_result": (
+                            "quality_panel_validation_error:producer_replay_mismatch"
+                        ),
+                    }
+                }
+            }
+        }
+
+    def counted_write(**kwargs):
+        nonlocal write_calls
+        write_calls += 1
+        return original_write(**kwargs)
+
+    monkeypatch.setattr(quality_closeout, "_refresh_runtime_state", mismatching_refresh)
+    monkeypatch.setattr(
+        quality_closeout,
+        "interpret_quality_panel_closeout",
+        lambda **_kwargs: QualityPanelDegradation(
+            "quality_panel_registry_producer_replay_mismatch"
+        ),
+    )
+    monkeypatch.setattr(quality_panel_module, "write_quality_panel", counted_write)
+
+    with pytest.raises(QualityPanelCloseoutError) as excinfo:
+        materialize_quality_panel_closeout(workspace=ws, repo_workdir=Path.cwd())
+
+    assert excinfo.value.reason_code == "quality_projection_registry_binding_invalid"
+    assert refresh_calls == 2
+    assert write_calls == 2
+    assert "expected" not in excinfo.value.details
+    assert "actual" not in excinfo.value.details
+
+
 def test_quality_panel_builds_incomplete_projection_without_writing(tmp_path: Path) -> None:
     ws = _workspace(tmp_path)
 
     payload = build_quality_panel(ws)
 
     assert payload["schema_version"] == "briefloop.quality_panel.v1"
+    assert "generated_at" not in payload
     assert payload["boundary"] == QUALITY_PANEL_BOUNDARY
     assert payload["runtime_effect"] == "projection_only"
     assert payload["overall_status"] == "incomplete"
@@ -531,6 +924,7 @@ def test_quality_panel_builds_incomplete_projection_without_writing(tmp_path: Pa
 def test_status_recommends_quality_closeout_after_finalize_report_pass(tmp_path: Path) -> None:
     ws = _workspace(tmp_path)
     _write_finalize_report(ws)
+    assert main(["state", "check", "--workspace", str(ws), "--json"]) == 0
 
     status = build_workspace_status(ws)
     closeout = status["quality_panel_closeout"]
@@ -548,22 +942,21 @@ def test_quality_summarize_marks_closeout_generated_and_then_complete(tmp_path: 
     ws = _workspace(tmp_path)
     _write_finalize_report(ws)
 
-    panel = write_quality_panel(workspace=ws)
-    summary = write_quality_summary(workspace=ws, panel_payload=panel)
-    html = write_quality_panel_html(workspace=ws, panel_payload=panel)
+    result = materialize_quality_panel_closeout(workspace=ws, repo_workdir=Path.cwd())
+    panel = _json(quality_panel_path(ws))
 
+    assert "generated_at" not in panel
     assert panel["quality_panel_closeout"]["status"] == "generated"
     assert panel["quality_panel_closeout"]["audit_bundle"] == "included_when_present_and_valid"
     assert panel["quality_panel_closeout"]["delivery_bundle"] == "excluded"
     assert panel["quality_panel_closeout"]["gate_authority"] is False
     assert validate_quality_panel_payload(panel) is None
-    assert summary["path"] == "output/intermediate/quality_summary.md"
-    assert html["path"] == "output/intermediate/quality_panel.html"
+    assert result["status"] == "complete"
+    assert result["reason_code"] == "quality_projection_materialized"
+    assert result["artifacts"]["quality_summary"]["path"] == "output/intermediate/quality_summary.md"
+    assert result["artifacts"]["quality_panel_html"]["path"] == "output/intermediate/quality_panel.html"
+    assert result["registry_refresh"]["status"] == "complete"
 
-    pre_registry_status = build_workspace_status(ws)
-    assert pre_registry_status["quality_panel_closeout"]["status"] == "stale_or_invalid"
-
-    assert main(["state", "check", "--workspace", str(ws), "--json"]) == 0
     status = build_workspace_status(ws)
     assert status["quality_panel_closeout"]["status"] == "complete"
     assert not status["quality_panel_closeout"]["missing_artifacts"]
@@ -575,9 +968,262 @@ def test_quality_summarize_marks_closeout_generated_and_then_complete(tmp_path: 
     assert "Quality Closeout And Bundle Separation" in html_text
 
 
+def test_quality_panel_legacy_generated_at_cannot_self_validate(
+    tmp_path: Path,
+) -> None:
+    ws = _workspace(tmp_path)
+    _write_finalize_report(ws)
+    materialize_quality_panel_closeout(workspace=ws, repo_workdir=Path.cwd())
+
+    panel_path = quality_panel_path(ws)
+    panel = _json(panel_path)
+    panel["generated_at"] = "2099-01-01T00:00:00Z"
+    panel_path.write_text(
+        json.dumps(panel, ensure_ascii=False, indent=2, sort_keys=True) + "\n",
+        encoding="utf-8",
+    )
+    write_quality_summary(workspace=ws, panel_payload=panel)
+    write_quality_panel_html(workspace=ws, panel_payload=panel)
+
+    assert main(["state", "check", "--workspace", str(ws), "--json"]) == 0
+    registry = _json(ws / "output" / "intermediate" / "artifact_registry.json")
+    assert registry["artifacts"]["quality_panel"]["status"] == "invalid"
+    assert registry["artifacts"]["quality_panel"]["validation_result"] == (
+        "quality_panel_validation_error:producer_replay_mismatch"
+    )
+    verdict = interpret_quality_panel_closeout(workspace=ws, repo_workdir=Path.cwd())
+    assert isinstance(verdict, QualityPanelDegradation)
+
+    repaired = materialize_quality_panel_closeout(
+        workspace=ws,
+        repo_workdir=Path.cwd(),
+    )
+    assert repaired["status"] == "complete"
+    assert "generated_at" not in _json(panel_path)
+    assert isinstance(
+        interpret_quality_panel_closeout(workspace=ws, repo_workdir=Path.cwd()),
+        CanonicalQualityPanelView,
+    )
+
+
+@pytest.mark.parametrize(
+    ("case", "expected_kind", "expected_reason"),
+    [
+        pytest.param(
+            "all_absent",
+            QualityPanelNotMaterialized,
+            "quality_panel_not_materialized",
+            id="QP-READ-ALL-ABSENT",
+        ),
+        pytest.param(
+            "partial",
+            QualityPanelDegradation,
+            "quality_panel_artifact_set_incomplete",
+            id="QP-READ-PARTIAL",
+        ),
+        pytest.param(
+            "canonical",
+            CanonicalQualityPanelView,
+            None,
+            id="QP-READ-CANONICAL",
+        ),
+        pytest.param(
+            "registry_missing",
+            QualityPanelDegradation,
+            "quality_panel_registry_degradation",
+            id="QP-READ-REGISTRY-MISSING",
+        ),
+        pytest.param(
+            "registry_mutated",
+            QualityPanelDegradation,
+            "quality_panel_registry_snapshot_drift",
+            id="QP-READ-REGISTRY-MUTATED",
+        ),
+        pytest.param(
+            "artifact_mutated",
+            QualityPanelDegradation,
+            "quality_panel_registry_degradation",
+            id="QP-READ-ARTIFACT-MUTATED",
+        ),
+        pytest.param(
+            "all_deleted_after_canonical",
+            QualityPanelDegradation,
+            "quality_panel_registry_degradation",
+            id="QP-READ-REGISTRY-VALID-ALL-DELETED",
+        ),
+    ],
+)
+def test_quality_panel_read_interpreter_matrix(
+    tmp_path: Path,
+    case: str,
+    expected_kind: type,
+    expected_reason: str | None,
+) -> None:
+    ws = _workspace(tmp_path)
+    _write_finalize_report(ws)
+    assert main(["state", "check", "--workspace", str(ws), "--json"]) == 0
+    if case == "partial":
+        write_quality_panel(workspace=ws)
+        assert main(["state", "check", "--workspace", str(ws), "--json"]) == 0
+    elif case != "all_absent":
+        materialize_quality_panel_closeout(workspace=ws, repo_workdir=Path.cwd())
+
+    registry_path = ws / "output" / "intermediate" / "artifact_registry.json"
+    if case == "registry_missing":
+        registry_path.unlink()
+    elif case == "registry_mutated":
+        registry = _json(registry_path)
+        registry["artifacts"]["quality_panel"]["sha256"] = "0" * 64
+        registry_path.write_text(
+            json.dumps(registry, ensure_ascii=False, indent=2, sort_keys=True) + "\n",
+            encoding="utf-8",
+        )
+    elif case == "artifact_mutated":
+        quality_panel_html_path(ws).write_text(
+            quality_panel_html_path(ws).read_text(encoding="utf-8") + "\n",
+            encoding="utf-8",
+        )
+    elif case == "all_deleted_after_canonical":
+        quality_panel_path(ws).unlink()
+        quality_summary_path(ws).unlink()
+        quality_panel_html_path(ws).unlink()
+
+    verdict = interpret_quality_panel_closeout(workspace=ws, repo_workdir=Path.cwd())
+
+    assert isinstance(verdict, expected_kind)
+    if expected_reason is not None:
+        assert verdict.reason_code == expected_reason
+        assert set(vars(verdict)) <= {"kind", "reason_code"}
+    else:
+        assert isinstance(verdict, CanonicalQualityPanelView)
+        assert set(verdict.artifact_paths) == {
+            "quality_panel",
+            "quality_summary",
+            "quality_panel_html",
+        }
+        assert all(verdict.artifact_sha256.values())
+
+
+def test_quality_closeout_registry_refresh_failure_keeps_repair_evidence(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    ws = _workspace(tmp_path)
+    _write_finalize_report(ws)
+
+    def fail_refresh(**_kwargs):
+        raise RuntimeError("synthetic registry refresh failure")
+
+    monkeypatch.setattr(quality_closeout, "_refresh_runtime_state", fail_refresh)
+
+    with pytest.raises(QualityPanelCloseoutError) as excinfo:
+        materialize_quality_panel_closeout(workspace=ws, repo_workdir=Path.cwd())
+
+    assert excinfo.value.reason_code == "quality_projection_registry_refresh_failed"
+    assert quality_panel_path(ws).exists()
+    assert quality_summary_path(ws).exists()
+    assert quality_panel_html_path(ws).exists()
+    assert build_workspace_status(ws)["quality_panel_closeout"]["status"] != "complete"
+
+
+@pytest.mark.parametrize(
+    (
+        "as_json",
+        "is_interactive",
+        "open_outcome",
+        "expected_status",
+        "expected_reason",
+        "expected_calls",
+    ),
+    [
+        pytest.param(
+            True,
+            True,
+            True,
+            "skipped",
+            "quality_panel_browser_suppressed_for_json",
+            0,
+            id="QP-AUTO-BROWSER-JSON",
+        ),
+        pytest.param(
+            False,
+            False,
+            True,
+            "skipped",
+            "quality_panel_browser_suppressed_for_non_interactive_output",
+            0,
+            id="QP-AUTO-BROWSER-NONINTERACTIVE",
+        ),
+        pytest.param(
+            False,
+            True,
+            True,
+            "opened",
+            "quality_panel_opened_in_default_browser",
+            1,
+            id="QP-AUTO-BROWSER-OPENED",
+        ),
+        pytest.param(
+            False,
+            True,
+            False,
+            "warning",
+            "quality_panel_browser_open_rejected",
+            1,
+            id="QP-AUTO-BROWSER-REJECTED",
+        ),
+        pytest.param(
+            False,
+            True,
+            RuntimeError("synthetic browser failure"),
+            "warning",
+            "quality_panel_browser_open_failed",
+            1,
+            id="QP-AUTO-BROWSER-ERROR",
+        ),
+    ],
+)
+def test_quality_panel_browser_display_matrix(
+    tmp_path: Path,
+    monkeypatch,
+    as_json: bool,
+    is_interactive: bool,
+    open_outcome: bool | Exception,
+    expected_status: str,
+    expected_reason: str,
+    expected_calls: int,
+) -> None:
+    ws = _workspace(tmp_path)
+    _write_finalize_report(ws)
+    materialization = materialize_quality_panel_closeout(workspace=ws, repo_workdir=Path.cwd())
+    calls: list[tuple[str, int]] = []
+
+    def fake_open(url: str, *, new: int = 0) -> bool:
+        calls.append((url, new))
+        if isinstance(open_outcome, Exception):
+            raise open_outcome
+        return open_outcome
+
+    monkeypatch.setattr(quality_closeout.webbrowser, "open", fake_open)
+
+    display = display_quality_panel_closeout(
+        materialization,
+        as_json=as_json,
+        is_interactive=is_interactive,
+    )
+
+    assert display["status"] == expected_status
+    assert display["reason_code"] == expected_reason
+    assert len(calls) == expected_calls
+    if calls:
+        assert calls[0][0].startswith("file://")
+        assert calls[0][1] == 2
+
+
 def test_quality_closeout_rejects_stale_or_hand_edited_quality_artifacts(tmp_path: Path) -> None:
     ws = _workspace(tmp_path)
     _write_finalize_report(ws)
+    assert main(["state", "check", "--workspace", str(ws), "--json"]) == 0
     panel = write_quality_panel(workspace=ws)
     write_quality_summary(workspace=ws, panel_payload=panel)
     write_quality_panel_html(workspace=ws, panel_payload=panel)
@@ -593,7 +1239,7 @@ def test_quality_closeout_rejects_stale_or_hand_edited_quality_artifacts(tmp_pat
 
     closeout = status["quality_panel_closeout"]
     assert closeout["status"] == "stale_or_invalid"
-    assert closeout["reason"] == "quality_panel_html_stale_or_hand_edited"
+    assert closeout["reason"] == "quality_panel_registry_degradation"
     assert "quality_panel.html" in "\n".join(closeout["invalid_artifacts"])
     assert status["artifacts"]["registry_status"] == "degradation"
     assert status["artifacts"]["registry_reason_code"] == (
@@ -603,6 +1249,91 @@ def test_quality_closeout_rejects_stale_or_hand_edited_quality_artifacts(tmp_pat
     assert status["artifacts"]["intake"]["present"] is False
     assert status["suggested_next_command"] == (
         f"briefloop state show --workspace {ws} --json"
+    )
+
+
+@pytest.mark.parametrize(
+    "case",
+    [
+        pytest.param("overall_status", id="QP-REPLAY-OVERALL-STATUS"),
+        pytest.param("recommended_actions", id="QP-REPLAY-RECOMMENDED-ACTIONS"),
+        pytest.param("control_projection", id="QP-REPLAY-CONTROL"),
+        pytest.param("source_projection", id="QP-REPLAY-SOURCE"),
+        pytest.param("gate_projection", id="QP-REPLAY-GATE"),
+        pytest.param("delivery_projection", id="QP-REPLAY-DELIVERY"),
+        pytest.param("run_identity", id="QP-REPLAY-RUN-IDENTITY"),
+    ],
+)
+def test_quality_panel_registry_replay_rejects_coherent_hand_edit(
+    tmp_path: Path,
+    case: str,
+) -> None:
+    ws = _workspace(tmp_path)
+    _write_finalize_report(ws)
+    materialize_quality_panel_closeout(workspace=ws, repo_workdir=Path.cwd())
+    panel_path = quality_panel_path(ws)
+    panel = _json(panel_path)
+    if case == "overall_status":
+        panel["overall_status"] = (
+            "pass" if panel["overall_status"] != "pass" else "warning"
+        )
+    elif case == "recommended_actions":
+        panel["recommended_actions"].append(
+            {"action": "inspect_run_integrity", "reason": "forged_action"}
+        )
+    elif case == "control_projection":
+        panel["control_integrity"]["reference_eligible"] = not panel[
+            "control_integrity"
+        ]["reference_eligible"]
+    elif case == "source_projection":
+        panel["source_evidence"]["source_count"] += 1
+    elif case == "gate_projection":
+        panel["gates"]["warning_count"] += 1
+    elif case == "delivery_projection":
+        panel["delivery"]["duplicate_citation_count"] += 1
+    elif case == "run_identity":
+        panel["run_id"] = "forged-run"
+    panel_path.write_text(
+        json.dumps(panel, ensure_ascii=False, indent=2, sort_keys=True) + "\n",
+        encoding="utf-8",
+    )
+    write_quality_summary(workspace=ws, panel_payload=panel)
+    write_quality_panel_html(workspace=ws, panel_payload=panel)
+
+    assert main(["state", "check", "--workspace", str(ws), "--json"]) == 0
+
+    registry = _json(ws / "output" / "intermediate" / "artifact_registry.json")
+    record = registry["artifacts"]["quality_panel"]
+    assert record["status"] == "invalid"
+    assert record["validation_result"] == (
+        "quality_panel_validation_error:producer_replay_mismatch"
+    )
+    assert "expected" not in record
+    assert "actual" not in record
+    verdict = interpret_quality_panel_closeout(workspace=ws, repo_workdir=Path.cwd())
+    assert isinstance(verdict, QualityPanelDegradation)
+
+
+def test_quality_panel_registry_replay_rejects_stale_authoritative_inputs(
+    tmp_path: Path,
+) -> None:
+    ws = _workspace(tmp_path)
+    _write_finalize_report(ws)
+    materialize_quality_panel_closeout(workspace=ws, repo_workdir=Path.cwd())
+    finalize_path = ws / "output" / "intermediate" / "finalize_report.json"
+    finalize_report = _json(finalize_path)
+    finalize_report["duplicate_citation_count"] = 1
+    finalize_path.write_text(
+        json.dumps(finalize_report, ensure_ascii=False, indent=2, sort_keys=True) + "\n",
+        encoding="utf-8",
+    )
+
+    assert main(["state", "check", "--workspace", str(ws), "--json"]) == 0
+
+    registry = _json(ws / "output" / "intermediate" / "artifact_registry.json")
+    assert registry["artifacts"]["quality_panel"]["status"] == "invalid"
+    assert registry["artifacts"]["quality_panel"]["validation_result"] == (
+        "quality_panel_validation_error:producer_replay_mismatch"
     )
 
 
@@ -1093,9 +1824,18 @@ def test_quality_panel_html_write_reads_existing_panel_and_registers_artifact(tm
     assert record["validation_result"] == "experimental_quality_panel_html"
 
 
-def test_quality_summarize_cli_writes_panel_and_summary_json(tmp_path: Path, capsys) -> None:
+def test_quality_summarize_cli_writes_panel_and_summary_json(
+    tmp_path: Path,
+    capsys,
+    monkeypatch,
+) -> None:
     ws = _workspace(tmp_path)
     capsys.readouterr()
+    monkeypatch.setattr(
+        quality_closeout.webbrowser,
+        "open",
+        lambda *_args, **_kwargs: pytest.fail("--json must not open a browser"),
+    )
 
     assert main(["quality", "summarize", "--workspace", str(ws), "--json"]) == 0
     payload = json.loads(capsys.readouterr().out)
@@ -1104,6 +1844,9 @@ def test_quality_summarize_cli_writes_panel_and_summary_json(tmp_path: Path, cap
     assert payload["quality_panel"] == "output/intermediate/quality_panel.json"
     assert payload["quality_summary"] == "output/intermediate/quality_summary.md"
     assert payload["quality_panel_html"] == "output/intermediate/quality_panel.html"
+    assert payload["registry_refresh"]["status"] == "complete"
+    assert payload["browser_display"]["status"] == "skipped"
+    assert payload["browser_display"]["reason_code"] == "quality_panel_browser_suppressed_for_json"
     assert payload["boundary"] == "quality_projection_only_not_gate_or_release_authority"
     assert "not_release_authorization" in payload["non_claims"]
     assert quality_panel_path(ws).exists()
@@ -1111,16 +1854,26 @@ def test_quality_summarize_cli_writes_panel_and_summary_json(tmp_path: Path, cap
     assert quality_panel_html_path(ws).exists()
     assert validate_quality_summary_markdown(quality_summary_path(ws).read_text(encoding="utf-8")) is None
     assert validate_quality_panel_html(quality_panel_html_path(ws).read_text(encoding="utf-8")) is None
-    assert main(["state", "check", "--workspace", str(ws), "--json"]) == 0
     registry = _json(ws / "output" / "intermediate" / "artifact_registry.json")
     assert registry["artifacts"]["quality_panel"]["status"] == "valid"
     assert registry["artifacts"]["quality_summary"]["status"] == "valid"
     assert registry["artifacts"]["quality_panel_html"]["status"] == "valid"
 
 
-def test_quality_summarize_cli_human_output_keeps_projection_boundary(tmp_path: Path, capsys) -> None:
+def test_quality_summarize_cli_human_output_keeps_projection_boundary(
+    tmp_path: Path,
+    capsys,
+    monkeypatch,
+) -> None:
     ws = _workspace(tmp_path)
     capsys.readouterr()
+    opened: list[str] = []
+    monkeypatch.setattr(product_commands, "_stdout_is_interactive", lambda: True)
+    monkeypatch.setattr(
+        quality_closeout.webbrowser,
+        "open",
+        lambda url, **_kwargs: opened.append(url) or True,
+    )
 
     assert main(["quality", "summarize", "--workspace", str(ws)]) == 0
     output = capsys.readouterr().out
@@ -1128,11 +1881,42 @@ def test_quality_summarize_cli_human_output_keeps_projection_boundary(tmp_path: 
     assert "quality_panel: output/intermediate/quality_panel.json" in output
     assert "quality_summary: output/intermediate/quality_summary.md" in output
     assert "quality_panel_html: output/intermediate/quality_panel.html" in output
+    assert "registry_refresh: complete" in output
+    assert "browser_display: opened" in output
     assert "quality projection only" in output
     assert "no gates were run" in output
     assert "no release was authorized" in output
     assert "ready to publish" not in output.lower()
     assert "truth proven" not in output.lower()
+    assert len(opened) == 1
+    assert opened[0].startswith("file://")
+
+
+def test_quality_summarize_cli_registry_failure_is_nonzero_without_changing_finalize_truth(
+    tmp_path: Path,
+    capsys,
+    monkeypatch,
+) -> None:
+    ws = _workspace(tmp_path)
+    _write_finalize_report(ws)
+    workflow_path = ws / "output" / "intermediate" / "workflow_state.json"
+    finalize_path = ws / "output" / "intermediate" / "finalize_report.json"
+    workflow_before = workflow_path.read_bytes()
+    finalize_before = finalize_path.read_bytes()
+    capsys.readouterr()
+
+    def fail_refresh(**_kwargs):
+        raise RuntimeError("synthetic registry refresh failure")
+
+    monkeypatch.setattr(quality_closeout, "_refresh_runtime_state", fail_refresh)
+
+    assert main(["quality", "summarize", "--workspace", str(ws), "--json"]) == 1
+    payload = json.loads(capsys.readouterr().out)
+
+    assert payload["ok"] is False
+    assert payload["reason_code"] == "quality_projection_registry_refresh_failed"
+    assert workflow_path.read_bytes() == workflow_before
+    assert finalize_path.read_bytes() == finalize_before
 
 
 def test_quality_summarize_cli_rejects_missing_workspace_without_writing(tmp_path: Path, capsys) -> None:
@@ -1514,6 +2298,7 @@ def test_quality_panel_dogfood_surfaces_source_and_reader_hygiene_failures(tmp_p
 
 def test_quality_panel_artifact_registry_validation(tmp_path: Path) -> None:
     ws = _workspace(tmp_path)
+    assert main(["state", "check", "--workspace", str(ws), "--json"]) == 0
     write_quality_panel(workspace=ws)
 
     assert main(["state", "check", "--workspace", str(ws), "--json"]) == 0

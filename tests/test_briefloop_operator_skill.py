@@ -7,6 +7,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 CANONICAL = ROOT / ".agents" / "skills" / "briefloop"
 CLAUDE_WRAPPER = ROOT / ".claude" / "skills" / "briefloop" / "SKILL.md"
+HERMES_MIRROR = ROOT / "integrations" / "hermes-plugin" / "mabw" / "skills" / "briefloop"
 
 
 def _read(path: Path) -> str:
@@ -323,6 +324,10 @@ def test_runtime_status_and_control_references_track_quality_and_release_surface
     assert "SHA-256 binding" in status
     assert "Completion And Delivery Truth" in status
     assert "delivery_truth.valid=true" in status
+    assert "successful CLI `finalize-complete`" in status
+    assert "automatically materializes" in status
+    assert "explicit repair" in status
+    assert "It is not the unique normal writer" in status
     assert "leaves any prior delivery bundle unchanged" in status
     assert "delivery_truth.valid=true" in runtime
     assert "Agent Artifact Intake" in runtime
@@ -332,6 +337,17 @@ def test_runtime_status_and_control_references_track_quality_and_release_surface
     control_normalized = " ".join(control.split())
     assert "single delivery-truth record" in control_normalized
     assert "There is no separate delivery manifest" in control_normalized
+
+
+def test_quality_panel_auto_materialization_contract_matches_hermes_mirror() -> None:
+    for filename in ("status-and-gates.md", "version-matrix.md"):
+        canonical = _read(CANONICAL / "references" / filename)
+        mirror = _read(HERMES_MIRROR / "references" / filename)
+        assert mirror == canonical
+        assert "successful cli `finalize-complete`" in canonical.lower()
+        assert "Artifact Registry" in canonical
+        assert "repair" in canonical
+        assert "not the unique normal writer" in canonical
 
 
 def test_repo_development_reference_includes_product_baseline_and_review_checklist() -> None:

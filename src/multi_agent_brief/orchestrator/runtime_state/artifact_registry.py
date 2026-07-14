@@ -72,6 +72,8 @@ from multi_agent_brief.orchestrator.runtime_state.workflow import (
 )
 from multi_agent_brief.product.quality_panel import (
     QualityPanelError,
+    build_quality_panel_producer_context,
+    project_quality_panel,
     render_quality_panel_html,
     render_quality_summary,
     validate_quality_panel_html,
@@ -181,6 +183,7 @@ def _validate_artifact(
     workspace: Path,
     intake_result: IntakeResult | None = None,
     artifact_paths: Mapping[str, Path],
+    quality_panel_producer_context: Mapping[str, Any] | None = None,
 ) -> tuple[str, str]:
     if not path.exists():
         return ARTIFACT_EXPECTED, "not_checked"
@@ -258,7 +261,11 @@ def _validate_artifact(
             if artifact_id == "release_readiness_report":
                 return _validate_release_readiness_report_payload(payload, artifact_path=path)
             if artifact_id == "quality_panel":
-                return _validate_quality_panel_payload(payload)
+                return _validate_quality_panel_payload(
+                    payload,
+                    workspace=workspace,
+                    producer_context=quality_panel_producer_context,
+                )
             if artifact_id == "guidance_manifestation_report":
                 return _validate_guidance_manifestation_report_payload(payload, artifact_path=path)
         elif fmt in {"yaml", "yml"}:
@@ -1155,11 +1162,43 @@ def _validate_release_readiness_report_payload(payload: Any, *, artifact_path: P
     return ARTIFACT_VALID, "experimental_release_readiness_report"
 
 
-def _validate_quality_panel_payload(payload: Any) -> tuple[str, str]:
+def _validate_quality_panel_payload(
+    payload: Any,
+    *,
+    workspace: Path,
+    producer_context: Mapping[str, Any] | None,
+) -> tuple[str, str]:
     reason = validate_quality_panel_payload(payload)
     if reason:
         return ARTIFACT_INVALID, reason
+    if not isinstance(producer_context, Mapping):
+        return ARTIFACT_INVALID, "quality_panel_validation_error:producer_context_unavailable"
+    try:
+        expected = project_quality_panel(producer_context=producer_context)
+    except Exception:
+        return ARTIFACT_INVALID, "quality_panel_validation_error:producer_replay_failed"
+    if not _json_values_equal(payload, expected):
+        return ARTIFACT_INVALID, "quality_panel_validation_error:producer_replay_mismatch"
     return ARTIFACT_VALID, "experimental_quality_panel"
+
+
+def _json_values_equal(left: Any, right: Any) -> bool:
+    if isinstance(left, Mapping) or isinstance(right, Mapping):
+        if not isinstance(left, Mapping) or not isinstance(right, Mapping):
+            return False
+        if set(left) != set(right):
+            return False
+        return all(_json_values_equal(left[key], right[key]) for key in left)
+    if isinstance(left, (list, tuple)) or isinstance(right, (list, tuple)):
+        if not isinstance(left, (list, tuple)) or not isinstance(right, (list, tuple)):
+            return False
+        return len(left) == len(right) and all(
+            _json_values_equal(left_item, right_item)
+            for left_item, right_item in zip(left, right)
+        )
+    if left is None or right is None:
+        return left is None and right is None
+    return type(left) is type(right) and left == right
 
 
 def _validate_guidance_manifestation_report_payload(payload: Any, *, artifact_path: Path) -> tuple[str, str]:
@@ -1689,6 +1728,7 @@ def _artifact_record(
     recovery_state: Mapping[str, Any] | None = None,
     intake_result: IntakeResult | None = None,
     artifact_paths: Mapping[str, Path],
+    quality_panel_producer_context: Mapping[str, Any] | None = None,
 ) -> dict[str, Any]:
     artifact_id = str(artifact.get("artifact_id") or "")
     rel_path = str(artifact.get("path") or "")
@@ -1702,6 +1742,7 @@ def _artifact_record(
         workspace=workspace,
         intake_result=intake_result,
         artifact_paths=artifact_paths,
+        quality_panel_producer_context=quality_panel_producer_context,
     )
 
     activated_optional = optional_feedback_artifact_activated(
@@ -1846,6 +1887,11 @@ def _build_artifact_registry(
         workspace=workspace,
         artifact_paths=artifact_paths,
     )
+    quality_panel_artifact_ids = {
+        "quality_panel",
+        "quality_summary",
+        "quality_panel_html",
+    }
     records = {
         str(artifact.get("artifact_id")): _artifact_record(
             workspace=workspace,
@@ -1857,7 +1903,31 @@ def _build_artifact_registry(
         )
         for artifact in artifacts
         if artifact.get("artifact_id")
+        and str(artifact.get("artifact_id")) not in quality_panel_artifact_ids
     }
+    producer_registry = {
+        "schema_version": ARTIFACT_REGISTRY_SCHEMA,
+        "run_id": run_id,
+        "updated_at": updated_at,
+        "artifacts": records,
+    }
+    quality_panel_producer_context = build_quality_panel_producer_context(
+        workspace,
+        artifact_registry=producer_registry,
+    )
+    for artifact in artifacts:
+        artifact_id = str(artifact.get("artifact_id") or "")
+        if artifact_id not in quality_panel_artifact_ids:
+            continue
+        records[artifact_id] = _artifact_record(
+            workspace=workspace,
+            artifact=artifact,
+            workflow=workflow,
+            recovery_state=recovery_state,
+            intake_result=intake_results.get(artifact_id),
+            artifact_paths=artifact_paths,
+            quality_panel_producer_context=quality_panel_producer_context,
+        )
     return {
         "schema_version": ARTIFACT_REGISTRY_SCHEMA,
         "run_id": run_id,

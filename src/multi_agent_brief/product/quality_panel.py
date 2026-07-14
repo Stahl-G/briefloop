@@ -11,23 +11,41 @@ import json
 import os
 import uuid
 from collections import Counter
-from datetime import datetime, timezone
 from html import escape as _html_escape
 from pathlib import Path
+from types import MappingProxyType
 from typing import Any, Mapping
 
 from multi_agent_brief.core.claim_ledger import ClaimLedger
+from multi_agent_brief.orchestrator.run_integrity import (
+    interpret_run_integrity,
+    project_for_read as project_run_integrity_for_read,
+)
 from multi_agent_brief.product.guidance_manifestation import (
+    project_workspace_guidance_manifestation,
     validate_guidance_manifestation_projection_payload,
 )
-from multi_agent_brief.product.materiality_selection import validate_materiality_selection_payload
+from multi_agent_brief.product.materiality_selection import (
+    project_workspace_materiality_selection,
+    validate_materiality_selection_payload,
+)
+from multi_agent_brief.product.policy_projection import project_workspace_policy_profile
 from multi_agent_brief.product.quality_closeout import (
     quality_panel_closeout_projection,
     validate_quality_panel_closeout_payload,
 )
-from multi_agent_brief.product.support_wording import validate_support_wording_payload
-from multi_agent_brief.product.template_conformance import validate_report_template_conformance_payload
-from multi_agent_brief.product.trajectory_regulation import validate_trajectory_regulation_payload
+from multi_agent_brief.product.support_wording import (
+    project_workspace_support_wording,
+    validate_support_wording_payload,
+)
+from multi_agent_brief.product.template_conformance import (
+    project_workspace_report_template_conformance,
+    validate_report_template_conformance_payload,
+)
+from multi_agent_brief.product.trajectory_regulation import (
+    project_workspace_trajectory_regulation,
+    validate_trajectory_regulation_payload,
+)
 from multi_agent_brief.contracts.semantic_assessment_status import SEMANTIC_ASSESSMENT_REPORT_STATUSES
 
 QUALITY_PANEL_SCHEMA_VERSION = "briefloop.quality_panel.v1"
@@ -48,6 +66,11 @@ QUALITY_PANEL_HTML_BOUNDARY_ZH = (
 )
 
 _INTERMEDIATE = Path("output") / "intermediate"
+_QUALITY_PANEL_PROJECTION_ARTIFACT_IDS = {
+    "quality_panel",
+    "quality_summary",
+    "quality_panel_html",
+}
 _BLOCKING_SUPPORT_LABELS = {"unsupported", "contradicted", "insufficient_evidence"}
 _QUALITY_SUMMARY_FORBIDDEN_PHRASES = (
     "ready to publish",
@@ -88,7 +111,6 @@ _QUALITY_PANEL_HTML_LABELS = {
     "quality_panel": ("Quality Panel", "质量面板"),
     "overall_status": ("Overall status", "总体状态"),
     "run_id": ("Run ID", "运行 ID"),
-    "generated": ("Generated", "生成时间"),
     "gate_blockers": ("Gate blockers", "门禁阻断项"),
     "gate_warnings": ("Gate warnings", "门禁警告"),
     "missing_incomplete": ("Missing/incomplete", "缺失/未完成"),
@@ -292,58 +314,171 @@ def quality_panel_html_path(workspace: str | Path) -> Path:
 
 def build_quality_panel(
     workspace: str | Path,
-    *,
-    generated_at: str | None = None,
 ) -> dict[str, Any]:
     """Build a read-only machine-readable quality projection."""
 
-    from multi_agent_brief.status import build_workspace_status
+    ws = Path(workspace).expanduser().resolve()
+    producer_context = build_quality_panel_producer_context(ws)
+    return project_quality_panel(producer_context=producer_context)
+
+
+def build_quality_panel_producer_context(
+    workspace: str | Path,
+    *,
+    artifact_registry: Mapping[str, Any] | None = None,
+) -> Mapping[str, Any]:
+    """Load the authoritative, non-QP inputs consumed by the QP projector."""
+
+    from multi_agent_brief.orchestrator.runtime_state.claim_support_matrix import (
+        project_claim_support_matrix_from_workspace,
+    )
+    from multi_agent_brief.orchestrator.runtime_state.semantic_assessment_report import (
+        project_semantic_assessment_report_from_workspace,
+    )
 
     ws = Path(workspace).expanduser().resolve()
-    workspace_status = build_workspace_status(ws)
-    registry_payload = _read_json_mapping(ws / _INTERMEDIATE / "artifact_registry.json") or {}
-    artifacts = registry_payload.get("artifacts") if isinstance(registry_payload, dict) else {}
-    artifacts = artifacts if isinstance(artifacts, dict) else {}
+    explicit_registry = isinstance(artifact_registry, Mapping)
+    manifest = _read_json_mapping(ws / _INTERMEDIATE / "runtime_manifest.json") or {}
+    workflow_payload = _read_json_mapping(ws / _INTERMEDIATE / "workflow_state.json") or {}
+    finalize_report = _read_json_mapping(ws / _INTERMEDIATE / "finalize_report.json") or {}
+    registry_payload = quality_panel_producer_registry(
+        artifact_registry
+        if explicit_registry
+        else (_read_json_mapping(ws / _INTERMEDIATE / "artifact_registry.json") or {})
+    )
+    run_id = _text(manifest.get("run_id")) or _text(registry_payload.get("run_id"))
+    claim_support_matrix = project_claim_support_matrix_from_workspace(ws)
+    policy_profile = project_workspace_policy_profile(ws)
+    materiality_kwargs: dict[str, Any] = {"policy_profile": policy_profile}
+    if explicit_registry:
+        materiality_kwargs.update(
+            artifact_registry=registry_payload,
+            expected_run_id=run_id,
+        )
+    context: dict[str, Any] = {
+        "ok": ws.exists() and ws.is_dir(),
+        "runtime": {"run_id": run_id or "unknown"},
+        "workflow": {
+            "blocked": workflow_payload.get("blocked"),
+            "blocking_reason": workflow_payload.get("blocking_reason"),
+            "run_integrity": project_run_integrity_for_read(
+                interpret_run_integrity(
+                    workflow_payload.get("run_integrity"),
+                    field_present="run_integrity" in workflow_payload,
+                )
+            ),
+        },
+        "artifact_registry": registry_payload,
+        "claim_support_matrix": claim_support_matrix,
+        "semantic_assessment_report": project_semantic_assessment_report_from_workspace(ws),
+        "materiality_selection": project_workspace_materiality_selection(
+            ws,
+            **materiality_kwargs,
+        ),
+        "support_wording": project_workspace_support_wording(
+            ws,
+            claim_support_matrix=claim_support_matrix,
+        ),
+        "report_template_conformance": project_workspace_report_template_conformance(ws),
+        "trajectory_regulation": project_workspace_trajectory_regulation(ws),
+        "guidance_manifestation": project_workspace_guidance_manifestation(ws),
+        "reader_clean": _reader_clean_summary(finalize_report),
+        "finalize_report": finalize_report,
+    }
+    artifacts = registry_payload.get("artifacts")
+    artifacts = artifacts if isinstance(artifacts, Mapping) else {}
+    context["source_evidence"] = _source_evidence_summary(ws, artifacts)
+    context["gates"] = _gate_summary(ws)
+    context["claims"] = _claim_summary(ws, context, artifacts)
+    context["delivery"] = _delivery_summary(
+        finalize_report=finalize_report,
+        reader_clean=context["reader_clean"],
+    )
+    context["semantic_support"] = _semantic_support_summary(context)
+    return _freeze_json(context)
 
-    runtime = workspace_status.get("runtime") if isinstance(workspace_status.get("runtime"), dict) else {}
-    workflow = workspace_status.get("workflow") if isinstance(workspace_status.get("workflow"), dict) else {}
-    run_integrity = workflow.get("run_integrity") if isinstance(workflow.get("run_integrity"), dict) else {}
-    source_evidence = _source_evidence_summary(ws, artifacts)
-    gates = _gate_summary(ws)
-    claims = _claim_summary(ws, workspace_status, artifacts)
-    delivery = _delivery_summary(ws, workspace_status)
+
+def quality_panel_producer_registry(
+    artifact_registry: Mapping[str, Any],
+) -> dict[str, Any]:
+    """Return Registry producer inputs with all QP self-observation removed."""
+
+    records = artifact_registry.get("artifacts")
+    records = records if isinstance(records, Mapping) else {}
+    return {
+        "schema_version": artifact_registry.get("schema_version"),
+        "run_id": artifact_registry.get("run_id"),
+        "artifacts": {
+            str(artifact_id): _plain_json(record)
+            for artifact_id, record in records.items()
+            if str(artifact_id) not in _QUALITY_PANEL_PROJECTION_ARTIFACT_IDS
+            and isinstance(record, Mapping)
+        },
+    }
+
+
+def project_quality_panel(
+    *,
+    producer_context: Mapping[str, Any],
+) -> dict[str, Any]:
+    """Pure QP projection shared by materialization and Registry replay."""
+
+    workspace_status = producer_context
+    registry_payload = producer_context.get("artifact_registry")
+    registry_payload = registry_payload if isinstance(registry_payload, Mapping) else {}
+    artifacts = registry_payload.get("artifacts")
+    artifacts = artifacts if isinstance(artifacts, Mapping) else {}
+
+    runtime = workspace_status.get("runtime") if isinstance(workspace_status.get("runtime"), Mapping) else {}
+    workflow = workspace_status.get("workflow") if isinstance(workspace_status.get("workflow"), Mapping) else {}
+    run_integrity = workflow.get("run_integrity") if isinstance(workflow.get("run_integrity"), Mapping) else {}
+    source_evidence = (
+        workspace_status.get("source_evidence")
+        if isinstance(workspace_status.get("source_evidence"), Mapping)
+        else {}
+    )
+    gates = workspace_status.get("gates") if isinstance(workspace_status.get("gates"), Mapping) else {}
+    claims = workspace_status.get("claims") if isinstance(workspace_status.get("claims"), Mapping) else {}
+    delivery = (
+        workspace_status.get("delivery")
+        if isinstance(workspace_status.get("delivery"), Mapping)
+        else {}
+    )
     trajectory = (
         workspace_status.get("trajectory_regulation")
-        if isinstance(workspace_status.get("trajectory_regulation"), dict)
+        if isinstance(workspace_status.get("trajectory_regulation"), Mapping)
         else {}
     )
     guidance_manifestation = (
         workspace_status.get("guidance_manifestation")
-        if isinstance(workspace_status.get("guidance_manifestation"), dict)
+        if isinstance(workspace_status.get("guidance_manifestation"), Mapping)
         else {}
     )
     materiality_selection = (
         workspace_status.get("materiality_selection")
-        if isinstance(workspace_status.get("materiality_selection"), dict)
+        if isinstance(workspace_status.get("materiality_selection"), Mapping)
         else {}
     )
     report_template_conformance = (
         workspace_status.get("report_template_conformance")
-        if isinstance(workspace_status.get("report_template_conformance"), dict)
+        if isinstance(workspace_status.get("report_template_conformance"), Mapping)
         else {}
     )
     support_wording = (
         workspace_status.get("support_wording")
-        if isinstance(workspace_status.get("support_wording"), dict)
+        if isinstance(workspace_status.get("support_wording"), Mapping)
         else {}
     )
-    semantic_support = _semantic_support_summary(workspace_status)
-    finalize_report = _read_json_mapping(ws / _INTERMEDIATE / "finalize_report.json") or {}
+    semantic_support = (
+        workspace_status.get("semantic_support")
+        if isinstance(workspace_status.get("semantic_support"), Mapping)
+        else {}
+    )
+    finalize_report = producer_context.get("finalize_report")
+    finalize_report = finalize_report if isinstance(finalize_report, Mapping) else {}
     closeout = quality_panel_closeout_projection(
-        workspace=ws,
         finalize_report=finalize_report,
         generated_by_quality_summarize=True,
-        artifact_registry=registry_payload,
     )
     control_integrity = {
         "run_integrity": run_integrity.get("status") or "unknown",
@@ -381,22 +516,21 @@ def build_quality_panel(
         "schema_version": QUALITY_PANEL_SCHEMA_VERSION,
         "workspace": ".",
         "run_id": _text(runtime.get("run_id")) or "unknown",
-        "generated_at": _text(generated_at) or _utc_now(),
         "read_only": True,
         "runtime_effect": QUALITY_PANEL_RUNTIME_EFFECT,
         "boundary": QUALITY_PANEL_BOUNDARY,
         "overall_status": overall_status,
         "control_integrity": control_integrity,
-        "source_evidence": source_evidence,
-        "gates": gates,
-        "claims": claims,
-        "delivery": delivery,
-        "trajectory_regulation": trajectory,
-        "guidance_manifestation": guidance_manifestation,
-        "materiality_selection": materiality_selection,
-        "report_template_conformance": report_template_conformance,
-        "support_wording": support_wording,
-        "semantic_support": semantic_support,
+        "source_evidence": _plain_json(source_evidence),
+        "gates": _plain_json(gates),
+        "claims": _plain_json(claims),
+        "delivery": _plain_json(delivery),
+        "trajectory_regulation": _plain_json(trajectory),
+        "guidance_manifestation": _plain_json(guidance_manifestation),
+        "materiality_selection": _plain_json(materiality_selection),
+        "report_template_conformance": _plain_json(report_template_conformance),
+        "support_wording": _plain_json(support_wording),
+        "semantic_support": _plain_json(semantic_support),
         "quality_panel_closeout": closeout,
         "recommended_actions": recommended_actions,
         "non_goals": [
@@ -414,7 +548,6 @@ def write_quality_panel(
     *,
     workspace: str | Path,
     output_path: str | Path | None = None,
-    generated_at: str | None = None,
 ) -> dict[str, Any]:
     ws = Path(workspace).expanduser().resolve()
     target = Path(output_path).expanduser() if output_path else quality_panel_path(ws)
@@ -425,7 +558,7 @@ def write_quality_panel(
         target.relative_to(ws)
     except ValueError as exc:
         raise ValueError("quality_panel output must stay inside the workspace.") from exc
-    payload = build_quality_panel(ws, generated_at=generated_at)
+    payload = build_quality_panel(ws)
     _write_json_atomic(target, payload)
     return payload
 
@@ -1239,10 +1372,12 @@ def _semantic_support_summary(workspace_status: Mapping[str, Any]) -> dict[str, 
     }
 
 
-def _delivery_summary(workspace: Path, workspace_status: Mapping[str, Any]) -> dict[str, Any]:
-    reader = workspace_status.get("reader_clean")
-    reader = reader if isinstance(reader, dict) else {}
-    finalize_report = _read_json_mapping(workspace / _INTERMEDIATE / "finalize_report.json") or {}
+def _delivery_summary(
+    *,
+    finalize_report: Mapping[str, Any],
+    reader_clean: Any,
+) -> dict[str, Any]:
+    reader = reader_clean if isinstance(reader_clean, Mapping) else {}
     source_warnings = finalize_report.get("source_appendix_warnings")
     trace_warnings = finalize_report.get("source_appendix_trace_warnings")
     source_warning_count = len(source_warnings) if isinstance(source_warnings, list) else 0
@@ -1712,7 +1847,6 @@ def _quality_panel_incomplete_count(
 def _html_header_card(panel_payload: Mapping[str, Any], *, overall_status: str) -> str:
     level = _status_level(overall_status)
     run_id = _text(panel_payload.get("run_id")) or "unknown"
-    generated_at = _text(panel_payload.get("generated_at")) or "unknown"
     return (
         "<header class=\"panel-hero\" data-section=\"panel-header\">\n"
         "  <div>\n"
@@ -1725,8 +1859,7 @@ def _html_header_card(panel_payload: Mapping[str, Any], *, overall_status: str) 
         "  </div>\n"
         f"  <div class=\"status-pill level-{level}\"><span>{_html_label('overall_status')}</span>"
         f"<strong>{_html_bilingual_value(overall_status)}</strong></div>\n"
-        f"  <dl class=\"hero-meta\"><dt>{_html_label('run_id')}</dt><dd>{_html(run_id)}</dd>"
-        f"<dt>{_html_label('generated')}</dt><dd>{_html(generated_at)}</dd></dl>\n"
+        f"  <dl class=\"hero-meta\"><dt>{_html_label('run_id')}</dt><dd>{_html(run_id)}</dd></dl>\n"
         "</header>"
     )
 
@@ -2191,10 +2324,6 @@ def _workspace_relative(workspace: Path, path: Path) -> str:
     return path.resolve().relative_to(workspace.resolve()).as_posix()
 
 
-def _utc_now() -> str:
-    return datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
-
-
 def _read_json_mapping(path: Path) -> dict[str, Any] | None:
     if not path.exists():
         return None
@@ -2203,6 +2332,40 @@ def _read_json_mapping(path: Path) -> dict[str, Any] | None:
     except (OSError, UnicodeDecodeError, json.JSONDecodeError):
         return None
     return payload if isinstance(payload, dict) else None
+
+
+def _reader_clean_summary(finalize_report: Mapping[str, Any]) -> dict[str, Any]:
+    reader_clean = finalize_report.get("reader_clean")
+    if not isinstance(reader_clean, Mapping):
+        return {
+            "present": bool(finalize_report),
+            "status": "unknown" if finalize_report else None,
+            "finding_count": 0,
+        }
+    findings = reader_clean.get("sample_findings")
+    return {
+        "present": True,
+        "status": reader_clean.get("status"),
+        "finding_count": len(findings) if isinstance(findings, list) else 0,
+    }
+
+
+def _plain_json(value: Any) -> Any:
+    if isinstance(value, Mapping):
+        return {str(key): _plain_json(item) for key, item in value.items()}
+    if isinstance(value, (list, tuple)):
+        return [_plain_json(item) for item in value]
+    return value
+
+
+def _freeze_json(value: Any) -> Any:
+    if isinstance(value, Mapping):
+        return MappingProxyType(
+            {str(key): _freeze_json(item) for key, item in value.items()}
+        )
+    if isinstance(value, (list, tuple)):
+        return tuple(_freeze_json(item) for item in value)
+    return value
 
 
 def _first_text(mapping: Mapping[str, Any], *keys: str) -> str:

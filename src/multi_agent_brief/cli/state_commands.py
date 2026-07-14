@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import sys
 from typing import Any
 
 from multi_agent_brief.orchestrator_contract import VALID_RUNTIMES
@@ -19,6 +20,13 @@ from multi_agent_brief.orchestrator.runtime_state import (
     initialize_runtime_state,
     record_decision,
     show_runtime_state,
+)
+from multi_agent_brief.product.quality_closeout import (
+    QUALITY_PANEL_BROWSER_BOUNDARY,
+    QUALITY_PANEL_CLOSEOUT_BOUNDARY,
+    QUALITY_PANEL_CLOSEOUT_COMMAND,
+    display_quality_panel_closeout,
+    materialize_quality_panel_closeout,
 )
 
 
@@ -325,10 +333,28 @@ def handle(args: argparse.Namespace) -> int:
                 runtime=getattr(args, "runtime", None),
                 model=getattr(args, "model", None),
             )
-            if getattr(args, "json", False):
+            as_json = bool(getattr(args, "json", False))
+            state["post_finalize_quality_projection"] = _post_finalize_quality_projection(
+                workspace=args.workspace,
+                repo_workdir=getattr(args, "repo_workdir", None),
+                actor=args.actor,
+                as_json=as_json,
+                is_interactive=_stdout_is_interactive(),
+            )
+            if state["post_finalize_quality_projection"].get("status") == "complete":
+                try:
+                    state.update(show_runtime_state(workspace=args.workspace))
+                except Exception as exc:
+                    state["post_finalize_quality_projection"]["response_refresh_warning"] = {
+                        "reason_code": "quality_projection_response_refresh_failed",
+                        "error_type": type(exc).__name__,
+                        "error": str(exc),
+                    }
+            if as_json:
                 print(json.dumps(state, ensure_ascii=False, indent=2, sort_keys=True))
             else:
                 _print_human_summary("state finalize-complete", state)
+                _print_post_finalize_quality_projection(state)
             return 0
 
         if args.state_action == "import-fact-layer":
@@ -359,6 +385,52 @@ def _is_blocked(state: dict[str, Any]) -> bool:
     return bool(workflow.get("blocked"))
 
 
+def _post_finalize_quality_projection(
+    *,
+    workspace: str,
+    repo_workdir: str | None,
+    actor: str,
+    as_json: bool,
+    is_interactive: bool,
+) -> dict[str, Any]:
+    try:
+        materialization = materialize_quality_panel_closeout(
+            workspace=workspace,
+            repo_workdir=repo_workdir,
+            actor=actor,
+        )
+    except Exception as exc:
+        return {
+            "status": "warning",
+            "reason_code": "quality_projection_generation_failed",
+            "error_type": type(exc).__name__,
+            "error": str(exc),
+            "details": getattr(exc, "details", {}),
+            "repair_command": QUALITY_PANEL_CLOSEOUT_COMMAND,
+            "browser_display": {
+                "status": "skipped",
+                "reason_code": "quality_panel_browser_projection_not_materialized",
+                "boundary": QUALITY_PANEL_BROWSER_BOUNDARY,
+            },
+            "boundary": QUALITY_PANEL_CLOSEOUT_BOUNDARY,
+        }
+
+    projection = dict(materialization)
+    projection["browser_display"] = display_quality_panel_closeout(
+        materialization,
+        as_json=as_json,
+        is_interactive=is_interactive,
+    )
+    return projection
+
+
+def _stdout_is_interactive() -> bool:
+    try:
+        return bool(sys.stdout.isatty())
+    except (AttributeError, OSError):
+        return False
+
+
 def _print_human_summary(label: str, state: dict[str, Any]) -> None:
     manifest = state.get("manifest") or {}
     workflow = state.get("workflow_state") or {}
@@ -372,6 +444,26 @@ def _print_human_summary(label: str, state: dict[str, Any]) -> None:
     for key, rel_path in (state.get("runtime_state_files") or {}).items():
         print(f"  - {key}: {rel_path}")
     _print_fact_layer_import_summary(label, fact_layer_import)
+
+
+def _print_post_finalize_quality_projection(state: dict[str, Any]) -> None:
+    projection = state.get("post_finalize_quality_projection")
+    projection = projection if isinstance(projection, dict) else {}
+    display = projection.get("browser_display")
+    display = display if isinstance(display, dict) else {}
+    print(
+        "[state finalize-complete] post_finalize_quality_projection: "
+        f"{projection.get('status') or 'unknown'}"
+    )
+    print(
+        "[state finalize-complete] quality_panel_browser: "
+        f"{display.get('status') or 'unknown'}"
+    )
+    if projection.get("status") == "warning":
+        print(
+            "[state finalize-complete] quality_panel_repair_command: "
+            f"{projection.get('repair_command') or QUALITY_PANEL_CLOSEOUT_COMMAND}"
+        )
 
 
 def _print_fact_layer_import_summary(label: str, summary: dict[str, Any]) -> None:

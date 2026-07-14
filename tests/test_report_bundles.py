@@ -9,14 +9,22 @@ from pathlib import Path
 import pytest
 import yaml
 
+import multi_agent_brief.product.bundle_projection as bundle_projection
 from multi_agent_brief.cli.main import main
+from multi_agent_brief.orchestrator.runtime_state import (
+    check_runtime_state,
+    initialize_runtime_state,
+)
 from multi_agent_brief.product.bundle_projection import (
     ReportBundleProjectionError,
     build_report_bundle_manifest,
     write_report_bundle_manifest,
 )
+from multi_agent_brief.product.quality_closeout import (
+    materialize_quality_panel_closeout,
+)
 from multi_agent_brief.product.quality_panel import (
-    write_quality_panel,
+    quality_panel_path,
     write_quality_panel_html,
     write_quality_summary,
 )
@@ -135,13 +143,37 @@ def _finalized_workspace(tmp_path: Path) -> Path:
         json.dumps(finalize_report, ensure_ascii=False, indent=2) + "\n",
         encoding="utf-8",
     )
+    for filename in (
+        "runtime_manifest.json",
+        "workflow_state.json",
+        "artifact_registry.json",
+        "event_log.jsonl",
+    ):
+        (intermediate / filename).unlink(missing_ok=True)
+    initialize_runtime_state(runtime="operator", workspace=ws, repo_workdir=ROOT)
+    check_runtime_state(workspace=ws, repo_workdir=ROOT)
     return ws
 
 
 def _write_quality_projection_artifacts(ws: Path) -> None:
-    panel = write_quality_panel(workspace=ws)
-    write_quality_summary(workspace=ws, panel_payload=panel)
-    write_quality_panel_html(workspace=ws, panel_payload=panel)
+    materialize_quality_panel_closeout(workspace=ws, repo_workdir=ROOT)
+
+
+def _bundle_publication_targets(ws: Path) -> tuple[Path, Path, Path]:
+    output = ws / "output"
+    return (
+        output / "delivery_bundle.zip",
+        output / "audit_bundle.zip",
+        output / "report_bundle_manifest.json",
+    )
+
+
+def _bundle_publication_residue(ws: Path) -> list[Path]:
+    output = ws / "output"
+    return sorted(
+        [*output.rglob(".*.tmp"), *output.rglob(".*.backup")],
+        key=lambda path: path.as_posix(),
+    )
 
 
 def test_report_template_registry_discovers_root_and_packaged_templates() -> None:
@@ -348,6 +380,85 @@ def test_report_bundle_manifest_includes_quality_artifacts_in_audit_only(tmp_pat
     }
 
 
+@pytest.mark.parametrize(
+    ("case", "expected_outcome", "expected_reason"),
+    [
+        pytest.param("all_absent", "omitted", None, id="QP-BUNDLE-ALL-ABSENT"),
+        pytest.param("canonical", "included", None, id="QP-BUNDLE-CANONICAL"),
+        pytest.param(
+            "partial",
+            "blocked",
+            "quality_panel_registry_degradation",
+            id="QP-BUNDLE-PARTIAL",
+        ),
+        pytest.param(
+            "registry_missing",
+            "blocked",
+            "quality_panel_registry_degradation",
+            id="QP-BUNDLE-REGISTRY-MISSING",
+        ),
+        pytest.param(
+            "registry_mutated",
+            "blocked",
+            "quality_panel_registry_snapshot_drift",
+            id="QP-BUNDLE-REGISTRY-MUTATED",
+        ),
+        pytest.param(
+            "artifact_mutated",
+            "blocked",
+            "quality_panel_registry_degradation",
+            id="QP-BUNDLE-ARTIFACT-MUTATED",
+        ),
+    ],
+)
+def test_report_bundle_quality_panel_binding_matrix(
+    tmp_path: Path,
+    case: str,
+    expected_outcome: str,
+    expected_reason: str | None,
+) -> None:
+    ws = _finalized_workspace(tmp_path)
+    if case != "all_absent":
+        _write_quality_projection_artifacts(ws)
+
+    intermediate = ws / "output" / "intermediate"
+    registry_path = intermediate / "artifact_registry.json"
+    if case == "partial":
+        (intermediate / "quality_summary.md").unlink()
+    elif case == "registry_missing":
+        registry_path.unlink()
+    elif case == "registry_mutated":
+        registry = json.loads(registry_path.read_text(encoding="utf-8"))
+        registry["artifacts"]["quality_panel_html"]["sha256"] = "0" * 64
+        registry_path.write_text(
+            json.dumps(registry, ensure_ascii=False, indent=2, sort_keys=True) + "\n",
+            encoding="utf-8",
+        )
+    elif case == "artifact_mutated":
+        html_path = intermediate / "quality_panel.html"
+        html_path.write_text(html_path.read_text(encoding="utf-8") + "\n", encoding="utf-8")
+
+    quality_paths = {
+        "output/intermediate/quality_panel.json",
+        "output/intermediate/quality_summary.md",
+        "output/intermediate/quality_panel.html",
+    }
+    if expected_outcome in {"omitted", "included"}:
+        manifest = build_report_bundle_manifest(workspace=ws)
+        audit_paths = {item["path"] for item in manifest["audit_bundle"]["artifacts"]}
+        if expected_outcome == "included":
+            assert quality_paths <= audit_paths
+        else:
+            assert quality_paths.isdisjoint(audit_paths)
+        return
+
+    with pytest.raises(ReportBundleProjectionError, match=expected_reason):
+        write_report_bundle_manifest(workspace=ws, write_archives=True)
+    assert not (ws / "output" / "report_bundle_manifest.json").exists()
+    assert not (ws / "output" / "delivery_bundle.zip").exists()
+    assert not (ws / "output" / "audit_bundle.zip").exists()
+
+
 def test_report_bundle_manifest_rejects_hand_edited_quality_panel_html(tmp_path: Path) -> None:
     ws = _finalized_workspace(tmp_path)
     _write_quality_projection_artifacts(ws)
@@ -360,9 +471,8 @@ def test_report_bundle_manifest_rejects_hand_edited_quality_panel_html(tmp_path:
     try:
         build_report_bundle_manifest(workspace=ws)
     except ReportBundleProjectionError as exc:
-        assert "quality projection artifact invalid" in str(exc)
-        assert "output/intermediate/quality_panel.html" in str(exc)
-        assert "quality_panel_html_stale_or_hand_edited" in str(exc)
+        assert "quality projection artifacts are not canonically bound" in str(exc)
+        assert "quality_panel_registry_degradation" in str(exc)
         assert "rerun briefloop quality summarize" in str(exc)
     else:  # pragma: no cover
         raise AssertionError("Expected stale Quality Panel HTML rejection")
@@ -380,9 +490,8 @@ def test_report_bundle_manifest_rejects_stale_quality_summary(tmp_path: Path) ->
     try:
         build_report_bundle_manifest(workspace=ws)
     except ReportBundleProjectionError as exc:
-        assert "quality projection artifact invalid" in str(exc)
-        assert "output/intermediate/quality_summary.md" in str(exc)
-        assert "quality_summary_stale_or_hand_edited" in str(exc)
+        assert "quality projection artifacts are not canonically bound" in str(exc)
+        assert "quality_panel_registry_degradation" in str(exc)
     else:  # pragma: no cover
         raise AssertionError("Expected stale Quality Summary rejection")
 
@@ -398,11 +507,101 @@ def test_report_bundle_manifest_rejects_modified_quality_panel_source(tmp_path: 
     try:
         build_report_bundle_manifest(workspace=ws)
     except ReportBundleProjectionError as exc:
-        assert "quality projection artifact invalid" in str(exc)
-        assert "output/intermediate/quality_summary.md" in str(exc)
-        assert "quality_summary_stale_or_hand_edited" in str(exc)
+        assert "quality projection artifacts are not canonically bound" in str(exc)
+        assert "quality_panel_registry_degradation" in str(exc)
     else:  # pragma: no cover
         raise AssertionError("Expected modified Quality Panel source rejection")
+
+
+def test_report_bundle_rejects_coherently_rerendered_legacy_quality_panel(
+    tmp_path: Path,
+) -> None:
+    ws = _finalized_workspace(tmp_path)
+    _write_quality_projection_artifacts(ws)
+    panel_path = quality_panel_path(ws)
+    panel = json.loads(panel_path.read_text(encoding="utf-8"))
+    panel["generated_at"] = "2099-01-01T00:00:00Z"
+    panel_path.write_text(
+        json.dumps(panel, ensure_ascii=False, indent=2, sort_keys=True) + "\n",
+        encoding="utf-8",
+    )
+    write_quality_summary(workspace=ws, panel_payload=panel)
+    write_quality_panel_html(workspace=ws, panel_payload=panel)
+    check_runtime_state(workspace=ws, repo_workdir=ROOT)
+
+    with pytest.raises(
+        ReportBundleProjectionError,
+        match="quality projection artifacts are not canonically bound",
+    ):
+        write_report_bundle_manifest(workspace=ws, write_archives=True)
+
+    assert not (ws / "output" / "report_bundle_manifest.json").exists()
+    assert not (ws / "output" / "delivery_bundle.zip").exists()
+    assert not (ws / "output" / "audit_bundle.zip").exists()
+
+
+def test_report_bundle_rejects_quality_mutation_after_interpretation(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    ws = _finalized_workspace(tmp_path)
+    _write_quality_projection_artifacts(ws)
+    real_interpret = bundle_projection.interpret_quality_panel_closeout
+
+    def interpret_then_mutate(*args, **kwargs):
+        verdict = real_interpret(*args, **kwargs)
+        panel_path = ws / "output" / "intermediate" / "quality_panel.json"
+        panel_path.write_text(
+            panel_path.read_text(encoding="utf-8") + "\n",
+            encoding="utf-8",
+        )
+        return verdict
+
+    monkeypatch.setattr(
+        bundle_projection,
+        "interpret_quality_panel_closeout",
+        interpret_then_mutate,
+    )
+
+    with pytest.raises(
+        ReportBundleProjectionError,
+        match="changed after canonical interpretation",
+    ):
+        write_report_bundle_manifest(workspace=ws, write_archives=True)
+
+    assert not (ws / "output" / "report_bundle_manifest.json").exists()
+    assert not (ws / "output" / "delivery_bundle.zip").exists()
+    assert not (ws / "output" / "audit_bundle.zip").exists()
+
+
+def test_report_bundle_rejects_quality_mutation_before_zip_write(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    ws = _finalized_workspace(tmp_path)
+    _write_quality_projection_artifacts(ws)
+    real_write_readme = bundle_projection._write_bundle_readme
+
+    def mutate_before_records(zf, *, surface: str) -> None:
+        real_write_readme(zf, surface=surface)
+        if surface == "audit":
+            summary_path = ws / "output" / "intermediate" / "quality_summary.md"
+            summary_path.write_text(
+                summary_path.read_text(encoding="utf-8") + "\n",
+                encoding="utf-8",
+            )
+
+    monkeypatch.setattr(bundle_projection, "_write_bundle_readme", mutate_before_records)
+
+    with pytest.raises(
+        ReportBundleProjectionError,
+        match="changed after manifest projection",
+    ):
+        write_report_bundle_manifest(workspace=ws, write_archives=True)
+
+    assert not (ws / "output" / "report_bundle_manifest.json").exists()
+    assert not (ws / "output" / "delivery_bundle.zip").exists()
+    assert not (ws / "output" / "audit_bundle.zip").exists()
 
 
 def test_report_bundle_manifest_excludes_packaging_junk(tmp_path: Path) -> None:
@@ -631,6 +830,8 @@ def test_packs_bundle_cli_writes_clean_archives_from_manifest(
     assert audit_zip.exists()
     assert archives["delivery"]["sha256"] == _sha256_file(delivery_zip)
     assert archives["audit"]["sha256"] == _sha256_file(audit_zip)
+    assert archives["delivery"]["size_bytes"] == delivery_zip.stat().st_size
+    assert archives["audit"]["size_bytes"] == audit_zip.stat().st_size
     first_delivery_sha = archives["delivery"]["sha256"]
     first_audit_sha = archives["audit"]["sha256"]
 
@@ -676,6 +877,312 @@ def test_packs_bundle_cli_writes_clean_archives_from_manifest(
     rerun_manifest = json.loads((ws / rerun_payload["manifest_path"]).read_text(encoding="utf-8"))
     assert rerun_manifest["bundle_archives"]["delivery"]["sha256"] == first_delivery_sha
     assert rerun_manifest["bundle_archives"]["audit"]["sha256"] == first_audit_sha
+    assert _bundle_publication_residue(ws) == []
+
+
+@pytest.mark.parametrize("publish_step", [1, 2, 3])
+@pytest.mark.parametrize("existing_targets", [False, True])
+def test_report_bundle_publication_rolls_back_each_publish_step(
+    tmp_path: Path,
+    monkeypatch,
+    publish_step: int,
+    existing_targets: bool,
+) -> None:
+    ws = _finalized_workspace(tmp_path)
+    targets = _bundle_publication_targets(ws)
+    if existing_targets:
+        for index, target in enumerate(targets):
+            target.write_bytes(f"old-target-{index}".encode())
+    before = {
+        target: target.read_bytes() if target.exists() else None
+        for target in targets
+    }
+    real_replace = bundle_projection.os.replace
+    calls = 0
+
+    def fail_publish_step(source, target) -> None:
+        nonlocal calls
+        calls += 1
+        if calls == publish_step:
+            raise OSError(f"injected publish failure {publish_step}")
+        real_replace(source, target)
+
+    monkeypatch.setattr(bundle_projection.os, "replace", fail_publish_step)
+
+    with pytest.raises(
+        ReportBundleProjectionError,
+        match="report_bundle_publication_failed",
+    ):
+        write_report_bundle_manifest(workspace=ws, write_archives=True)
+
+    for target in targets:
+        if before[target] is None:
+            assert not target.exists()
+        else:
+            assert target.read_bytes() == before[target]
+    assert _bundle_publication_residue(ws) == []
+
+
+@pytest.mark.parametrize("existing_targets", [False, True])
+def test_report_bundle_staging_failure_preserves_all_targets(
+    tmp_path: Path,
+    monkeypatch,
+    existing_targets: bool,
+) -> None:
+    ws = _finalized_workspace(tmp_path)
+    targets = _bundle_publication_targets(ws)
+    if existing_targets:
+        for index, target in enumerate(targets):
+            target.write_bytes(f"old-target-{index}".encode())
+    before = {
+        target: target.read_bytes() if target.exists() else None
+        for target in targets
+    }
+    real_write_zip = bundle_projection._write_zip_from_records
+
+    def fail_audit_stage(*args, **kwargs) -> None:
+        if kwargs.get("surface") == "audit":
+            raise OSError("injected audit staging failure")
+        real_write_zip(*args, **kwargs)
+
+    monkeypatch.setattr(
+        bundle_projection,
+        "_write_zip_from_records",
+        fail_audit_stage,
+    )
+
+    with pytest.raises(
+        ReportBundleProjectionError,
+        match="report bundle publication staging failed",
+    ):
+        write_report_bundle_manifest(workspace=ws, write_archives=True)
+
+    for target in targets:
+        if before[target] is None:
+            assert not target.exists()
+        else:
+            assert target.read_bytes() == before[target]
+    assert _bundle_publication_residue(ws) == []
+
+
+def test_report_bundle_manifest_only_failure_preserves_old_manifest(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    ws = _finalized_workspace(tmp_path)
+    manifest_path = ws / "output" / "report_bundle_manifest.json"
+    old_bytes = b"old manifest bytes"
+    manifest_path.write_bytes(old_bytes)
+    real_replace = bundle_projection.os.replace
+    calls = 0
+
+    def fail_first_replace(source, target) -> None:
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            raise OSError("injected manifest publish failure")
+        real_replace(source, target)
+
+    monkeypatch.setattr(bundle_projection.os, "replace", fail_first_replace)
+
+    with pytest.raises(
+        ReportBundleProjectionError,
+        match="report_bundle_publication_failed",
+    ):
+        write_report_bundle_manifest(workspace=ws, write_archives=False)
+
+    assert manifest_path.read_bytes() == old_bytes
+    assert _bundle_publication_residue(ws) == []
+
+
+def test_report_bundle_publication_reports_incomplete_zip_rollback_with_old_manifest(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    ws = _finalized_workspace(tmp_path)
+    targets = _bundle_publication_targets(ws)
+    for index, target in enumerate(targets):
+        target.write_bytes(f"old-target-{index}".encode())
+    old_manifest = targets[-1].read_bytes()
+    real_replace = bundle_projection.os.replace
+    calls = 0
+
+    def fail_audit_publish_then_delivery_restore(source, target) -> None:
+        nonlocal calls
+        calls += 1
+        if calls == 2:
+            raise OSError("injected audit publish failure")
+        if calls == 4:
+            raise OSError("injected delivery rollback failure")
+        real_replace(source, target)
+
+    monkeypatch.setattr(
+        bundle_projection.os,
+        "replace",
+        fail_audit_publish_then_delivery_restore,
+    )
+
+    with pytest.raises(
+        ReportBundleProjectionError,
+        match="report_bundle_publication_rollback_incomplete",
+    ):
+        write_report_bundle_manifest(workspace=ws, write_archives=True)
+
+    assert targets[-1].read_bytes() == old_manifest
+    assert targets[1].read_bytes() == b"old-target-1"
+    assert targets[0].read_bytes() != b"old-target-0"
+    assert any(path.name.endswith(".backup") for path in _bundle_publication_residue(ws))
+
+
+def test_report_bundle_verification_failure_rolls_back_before_manifest_commit(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    ws = _finalized_workspace(tmp_path)
+    targets = _bundle_publication_targets(ws)
+    for index, target in enumerate(targets):
+        target.write_bytes(f"old-target-{index}".encode())
+    before = {target: target.read_bytes() for target in targets}
+    real_verify = bundle_projection._verify_bundle_archives
+    calls = 0
+
+    def fail_published_zip_verification(*args, **kwargs) -> None:
+        nonlocal calls
+        calls += 1
+        if calls == 2:
+            raise OSError("injected published ZIP verification failure")
+        real_verify(*args, **kwargs)
+
+    monkeypatch.setattr(
+        bundle_projection,
+        "_verify_bundle_archives",
+        fail_published_zip_verification,
+    )
+
+    with pytest.raises(
+        ReportBundleProjectionError,
+        match="report_bundle_publication_failed",
+    ):
+        write_report_bundle_manifest(workspace=ws, write_archives=True)
+
+    assert {target: target.read_bytes() for target in targets} == before
+    assert _bundle_publication_residue(ws) == []
+
+
+def test_report_bundle_post_commit_cleanup_failure_returns_success_warning(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    ws = _finalized_workspace(tmp_path)
+    targets = _bundle_publication_targets(ws)
+    for index, target in enumerate(targets):
+        target.write_bytes(f"old-target-{index}".encode())
+    old_manifest = targets[-1].read_bytes()
+    real_unlink = Path.unlink
+
+    def fail_backup_cleanup(path: Path, *args, **kwargs) -> None:
+        if path.name.endswith(".backup"):
+            raise OSError("injected post-commit backup cleanup failure")
+        real_unlink(path, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "unlink", fail_backup_cleanup)
+
+    payload = write_report_bundle_manifest(workspace=ws, write_archives=True)
+
+    assert payload["publication_cleanup_warning"] == {
+        "reason_code": "publication_cleanup_warning",
+        "boundary": "post_commit_housekeeping_only_not_bundle_authority",
+    }
+    assert targets[-1].read_bytes() != old_manifest
+    persisted = json.loads(targets[-1].read_text(encoding="utf-8"))
+    assert "publication_cleanup_warning" not in persisted
+    assert persisted["bundle_archives"]["delivery"]["sha256"] == _sha256_file(
+        targets[0]
+    )
+    assert persisted["bundle_archives"]["audit"]["sha256"] == _sha256_file(
+        targets[1]
+    )
+    residue = _bundle_publication_residue(ws)
+    assert len(residue) == 2
+    assert all(path.name.endswith(".backup") for path in residue)
+    for path in residue:
+        real_unlink(path)
+
+
+def test_packs_bundle_json_returns_typed_error_on_second_publish_failure(
+    tmp_path: Path,
+    capsys,
+    monkeypatch,
+) -> None:
+    ws = _finalized_workspace(tmp_path)
+    real_replace = bundle_projection.os.replace
+    calls = 0
+
+    def fail_second_replace(source, target) -> None:
+        nonlocal calls
+        calls += 1
+        if calls == 2:
+            raise OSError("injected second publish failure")
+        real_replace(source, target)
+
+    monkeypatch.setattr(bundle_projection.os, "replace", fail_second_replace)
+
+    assert main(
+        [
+            "packs",
+            "bundle",
+            "--workspace",
+            str(ws),
+            "--write-archives",
+            "--json",
+        ]
+    ) == 1
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["ok"] is False
+    assert "report_bundle_publication_failed" in payload["error"]
+    assert not any(target.exists() for target in _bundle_publication_targets(ws))
+    assert _bundle_publication_residue(ws) == []
+
+
+def test_packs_bundle_json_reports_post_commit_cleanup_warning_as_success(
+    tmp_path: Path,
+    capsys,
+    monkeypatch,
+) -> None:
+    ws = _finalized_workspace(tmp_path)
+    targets = _bundle_publication_targets(ws)
+    for index, target in enumerate(targets):
+        target.write_bytes(f"old-target-{index}".encode())
+    real_unlink = Path.unlink
+
+    def fail_backup_cleanup(path: Path, *args, **kwargs) -> None:
+        if path.name.endswith(".backup"):
+            raise OSError("injected post-commit backup cleanup failure")
+        real_unlink(path, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "unlink", fail_backup_cleanup)
+
+    assert main(
+        [
+            "packs",
+            "bundle",
+            "--workspace",
+            str(ws),
+            "--write-archives",
+            "--json",
+        ]
+    ) == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["ok"] is True
+    assert payload["publication_cleanup_warning"]["reason_code"] == (
+        "publication_cleanup_warning"
+    )
+    persisted = json.loads(targets[-1].read_text(encoding="utf-8"))
+    assert "publication_cleanup_warning" not in persisted
+    residue = _bundle_publication_residue(ws)
+    assert len(residue) == 2
+    for path in residue:
+        real_unlink(path)
 
 
 def test_packs_bundle_rejects_manifest_output_reserved_for_archives(

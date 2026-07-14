@@ -51,9 +51,9 @@ Core Python-only control files include `workflow_state.json`,
 | `output/intermediate/analyst_draft_snapshot.md` | `python_promoted_authoritative` | `state stage-complete --stage analyst` | Frozen snapshot of Analyst output. |
 | `output/intermediate/audit_report.json` | `agent_owned_draft` | Auditor role | Semantic audit report, then Python-owned binding/freshness checks constrain downstream use. |
 | `output/intermediate/gates/*_quality_gate_report.json` | `python_only_control` | `gates check` | Deterministic gate report, not role-authored prose. |
-| `output/intermediate/quality_panel.json` | `projection_only` | `quality summarize` | Diagnostic projection only; no gate, delivery, or release authority. |
-| `output/intermediate/quality_summary.md` | `projection_only` | `quality summarize` | Human-readable projection derived from `quality_panel.json`. |
-| `output/intermediate/quality_panel.html` | `projection_only` | `quality summarize` | Static projection derived from `quality_panel.json`. |
+| `output/intermediate/quality_panel.json` | `projection_only` | Shared Quality Panel closeout writer (`state finalize-complete` CLI / `quality summarize`) | Post-transaction diagnostic projection only; categorically excluded from immutable finalized-run archives; no gate, delivery, or release authority. |
+| `output/intermediate/quality_summary.md` | `projection_only` | Shared Quality Panel closeout writer (`state finalize-complete` CLI / `quality summarize`) | Human-readable projection derived from `quality_panel.json`; categorically excluded from immutable finalized-run archives; manual command is the repair entrypoint. |
+| `output/intermediate/quality_panel.html` | `projection_only` | Shared Quality Panel closeout writer (`state finalize-complete` CLI / `quality summarize`) | Static projection derived from `quality_panel.json`; categorically excluded from immutable finalized-run archives; interactive CLI may display it in the default browser without creating authority. |
 | `output/delivery/brief.md` | `reader_delivery` | `finalize` | Reader-facing artifact generated from audited inputs. |
 | `output/delivery_bundle.zip` | `reader_delivery` | `packs bundle` | Bundle projection/export only; no delivery approval. |
 | `output/audit_bundle.zip` | `projection_only` | `packs bundle` | Audit/control bundle projection only. |

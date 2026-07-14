@@ -932,7 +932,8 @@ def test_status_unsafe_registry_precedes_quality_package_recommendation(tmp_path
     assert rc == 0
     payload = json.loads(capsys.readouterr().out)
     expected = f"briefloop state show --workspace {ws} --json"
-    assert payload["quality_panel_closeout"]["status"] == "recommended"
+    assert payload["quality_panel_closeout"]["status"] == "stale_or_invalid"
+    assert payload["quality_panel_closeout"]["reason"] == "quality_panel_registry_degradation"
     assert payload["workflow"]["blocked"] is False
     assert payload["quality_panel_closeout"]["gate_authority"] is False
     assert payload["quality_panel_closeout"]["delivery_authority"] is False

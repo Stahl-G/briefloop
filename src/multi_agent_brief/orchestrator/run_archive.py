@@ -8,7 +8,7 @@ import os
 import shutil
 import uuid
 from pathlib import Path
-from typing import Any
+from typing import Any, Mapping
 
 from multi_agent_brief.orchestrator.run_integrity import interpret_run_integrity, project_for_read
 from multi_agent_brief.orchestrator.runtime_state.evidence_span_registry import (
@@ -17,6 +17,12 @@ from multi_agent_brief.orchestrator.runtime_state.evidence_span_registry import 
 )
 from multi_agent_brief.orchestrator.source_evidence import is_evidence_input_path
 from multi_agent_brief.orchestrator.timing import derive_control_timing_from_path
+from multi_agent_brief.product.quality_closeout import (
+    CanonicalQualityPanelView,
+    QualityPanelDegradation,
+    QualityPanelNotMaterialized,
+    interpret_quality_panel_closeout,
+)
 
 
 RUN_ARCHIVE_SCHEMA = "mabw.run_archive.v1"
@@ -42,6 +48,34 @@ _CONTROL_FILES = (
     "workflow_state.json",
     "artifact_registry.json",
     "event_log.jsonl",
+)
+_POST_FINALIZE_PROJECTION_ARCHIVE_EXCLUSIONS = frozenset(
+    {
+        ("quality_panel", "output/intermediate/quality_panel.json"),
+        ("quality_summary", "output/intermediate/quality_summary.md"),
+        ("quality_panel_html", "output/intermediate/quality_panel.html"),
+    }
+)
+_QUALITY_PANEL_REGISTRY_PRODUCER_FIELDS = frozenset(
+    {
+        "status",
+        "validation_result",
+        "blocking_reason",
+        "size_bytes",
+        "mtime",
+        "sha256",
+    }
+)
+_QUALITY_PANEL_REGISTRY_IDENTITY_FIELDS = (
+    "artifact_id",
+    "path",
+    "format",
+    "required",
+    "producer_stage",
+    "producer_role",
+    "consumer_stages",
+    "allowed_decisions",
+    "retry_or_human_review_decision",
 )
 _FACT_LAYER_REQUIRED_ARTIFACTS: dict[str, str] = {
     "input_classification": "output/input_classification.json",
@@ -108,6 +142,7 @@ def archive_finalized_run(
         archive_manifest["evidence_span_registry"] = evidence_span_registry
     if archive_root.exists():
         _verify_existing_archive_matches_plan(
+            workspace=ws,
             archive_root=archive_root,
             planned_files=files,
             planned_fact_layer=archive_plan["fact_layer"],
@@ -169,6 +204,7 @@ def preflight_finalized_run_archive(
     evidence_span_registry = archive_plan["evidence_span_registry"]
     if archive_root.exists():
         return _verify_existing_archive_matches_plan(
+            workspace=ws,
             archive_root=archive_root,
             planned_files=files,
             planned_fact_layer=archive_plan["fact_layer"],
@@ -251,6 +287,8 @@ def _archive_plan(
             continue
         rel_path = str(artifact.get("path") or "")
         if not rel_path.startswith("output/intermediate/"):
+            continue
+        if (str(artifact_id), rel_path) in _POST_FINALIZE_PROJECTION_ARCHIVE_EXCLUSIONS:
             continue
         source = workspace / rel_path
         if not source.exists() or not source.is_file():
@@ -696,6 +734,7 @@ def _verify_existing_archive(
 
 def _verify_existing_archive_matches_plan(
     *,
+    workspace: Path,
     archive_root: Path,
     planned_files: list[dict[str, Any]],
     planned_fact_layer: dict[str, Any],
@@ -703,6 +742,35 @@ def _verify_existing_archive_matches_plan(
     planned_evidence_span_registry: dict[str, Any] | None,
 ) -> dict[str, Any]:
     result = _verify_existing_archive(archive_root=archive_root)
+    quality_verdict = interpret_quality_panel_closeout(workspace=workspace)
+    quality_control_deltas: frozenset[str] = frozenset()
+    if isinstance(quality_verdict, CanonicalQualityPanelView):
+        _verify_canonical_quality_panel_control_delta(
+            workspace=workspace,
+            archive_root=archive_root,
+            quality_view=quality_verdict,
+        )
+        quality_control_deltas = frozenset(
+            {
+                "control/artifact_registry.json",
+                "control/workflow_state.json",
+            }
+        )
+    elif isinstance(quality_verdict, QualityPanelDegradation):
+        raise RunArchiveError(
+            "Existing run archive cannot be reconciled with a degraded live Quality Panel.",
+            details={
+                "archive_path": _workspaceish(archive_root),
+                "reason_code": quality_verdict.reason_code,
+            },
+            error_code=E_RUN_ARCHIVE_CONFLICT,
+        )
+    elif not isinstance(quality_verdict, QualityPanelNotMaterialized):
+        raise RunArchiveError(
+            "Existing run archive cannot interpret the live Quality Panel state.",
+            details={"archive_path": _workspaceish(archive_root)},
+            error_code=E_RUN_ARCHIVE_CONFLICT,
+        )
     existing_files = result["manifest"].get("files")
     if not isinstance(existing_files, list):
         raise RunArchiveError(
@@ -743,6 +811,8 @@ def _verify_existing_archive_matches_plan(
                 and result["manifest"].get("event_log_semantics")
                 == "copied_before_current_archive_event"
             ):
+                continue
+            if archive_path in quality_control_deltas and field in {"sha256", "size_bytes"}:
                 continue
             if existing.get(field) != planned.get(field):
                 raise RunArchiveError(
@@ -786,6 +856,143 @@ def _verify_existing_archive_matches_plan(
             error_code=E_RUN_ARCHIVE_CONFLICT,
         )
     return result
+
+
+def _verify_canonical_quality_panel_control_delta(
+    *,
+    workspace: Path,
+    archive_root: Path,
+    quality_view: CanonicalQualityPanelView,
+) -> None:
+    archived_registry = _read_archive_comparison_object(
+        archive_root / "control" / "artifact_registry.json",
+        label="archived artifact_registry",
+    )
+    live_registry = _read_archive_comparison_object(
+        workspace / "output" / "intermediate" / "artifact_registry.json",
+        label="live artifact_registry",
+    )
+    archived_registry_normalized = _normalized_quality_panel_registry(
+        archived_registry,
+        quality_view=quality_view,
+    )
+    live_registry_normalized = _normalized_quality_panel_registry(
+        live_registry,
+        quality_view=quality_view,
+    )
+    if not _archive_json_values_equal(
+        archived_registry_normalized,
+        live_registry_normalized,
+    ):
+        raise RunArchiveError(
+            "Existing run archive artifact_registry differs beyond canonical post-finalize Quality Panel fields.",
+            details={
+                "archive_path": _workspaceish(archive_root),
+                "field": "artifact_registry",
+            },
+            error_code=E_RUN_ARCHIVE_CONFLICT,
+        )
+
+    archived_workflow = _read_archive_comparison_object(
+        archive_root / "control" / "workflow_state.json",
+        label="archived workflow_state",
+    )
+    live_workflow = _read_archive_comparison_object(
+        workspace / "output" / "intermediate" / "workflow_state.json",
+        label="live workflow_state",
+    )
+    archived_workflow.pop("updated_at", None)
+    live_workflow.pop("updated_at", None)
+    if not _archive_json_values_equal(archived_workflow, live_workflow):
+        raise RunArchiveError(
+            "Existing run archive workflow_state differs beyond the post-finalize timestamp.",
+            details={
+                "archive_path": _workspaceish(archive_root),
+                "field": "workflow_state",
+            },
+            error_code=E_RUN_ARCHIVE_CONFLICT,
+        )
+
+
+def _normalized_quality_panel_registry(
+    payload: dict[str, Any],
+    *,
+    quality_view: CanonicalQualityPanelView,
+) -> dict[str, Any]:
+    normalized = dict(payload)
+    normalized.pop("updated_at", None)
+    raw_records = normalized.get("artifacts")
+    if not isinstance(raw_records, dict):
+        raise RunArchiveError(
+            "Run archive artifact_registry artifacts must be an object.",
+            details={"field": "artifact_registry.artifacts"},
+            error_code=E_RUN_ARCHIVE_CONFLICT,
+        )
+    records = dict(raw_records)
+    for artifact_id in ("quality_panel", "quality_summary", "quality_panel_html"):
+        record = records.get(artifact_id)
+        canonical = quality_view.registry_records.get(artifact_id)
+        if not isinstance(record, dict) or not isinstance(canonical, Mapping):
+            raise RunArchiveError(
+                "Run archive Quality Panel Registry identity is incomplete.",
+                details={"field": f"artifact_registry.artifacts.{artifact_id}"},
+                error_code=E_RUN_ARCHIVE_CONFLICT,
+            )
+        if any(
+            not _archive_json_values_equal(record.get(field), canonical.get(field))
+            for field in _QUALITY_PANEL_REGISTRY_IDENTITY_FIELDS
+        ):
+            raise RunArchiveError(
+                "Run archive Quality Panel Registry identity differs from the canonical contract.",
+                details={
+                    "field": f"artifact_registry.artifacts.{artifact_id}",
+                },
+                error_code=E_RUN_ARCHIVE_CONFLICT,
+            )
+        records[artifact_id] = {
+            key: value
+            for key, value in record.items()
+            if key not in _QUALITY_PANEL_REGISTRY_PRODUCER_FIELDS
+        }
+    normalized["artifacts"] = records
+    return normalized
+
+
+def _read_archive_comparison_object(path: Path, *, label: str) -> dict[str, Any]:
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError) as exc:
+        raise RunArchiveError(
+            f"{label} is unreadable.",
+            details={"path": _workspaceish(path)},
+            error_code=E_RUN_ARCHIVE_CONFLICT,
+        ) from exc
+    if not isinstance(payload, dict):
+        raise RunArchiveError(
+            f"{label} must contain an object.",
+            details={"path": _workspaceish(path)},
+            error_code=E_RUN_ARCHIVE_CONFLICT,
+        )
+    return payload
+
+
+def _archive_json_values_equal(left: Any, right: Any) -> bool:
+    if isinstance(left, Mapping) or isinstance(right, Mapping):
+        if not isinstance(left, Mapping) or not isinstance(right, Mapping):
+            return False
+        return set(left) == set(right) and all(
+            _archive_json_values_equal(left[key], right[key]) for key in left
+        )
+    if isinstance(left, (list, tuple)) or isinstance(right, (list, tuple)):
+        if not isinstance(left, (list, tuple)) or not isinstance(right, (list, tuple)):
+            return False
+        return len(left) == len(right) and all(
+            _archive_json_values_equal(left_item, right_item)
+            for left_item, right_item in zip(left, right)
+        )
+    if left is None or right is None:
+        return left is None and right is None
+    return type(left) is type(right) and left == right
 
 
 def _archive_result(archive_root: Path) -> dict[str, Any]:

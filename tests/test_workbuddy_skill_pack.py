@@ -376,6 +376,26 @@ def test_workbuddy_skill_includes_required_cli_surface() -> None:
     assert _bare_repair_start_offenders(text) == []
 
 
+def test_workbuddy_quality_panel_auto_materialization_contract() -> None:
+    canonical = _compact(
+        (WORKBUDDY_SKILL / "references" / "status-and-gates.md").read_text(encoding="utf-8")
+    )
+    mirror = _compact(
+        (LEGACY_WORKBUDDY_SKILL / "references" / "status-and-gates.md").read_text(
+            encoding="utf-8"
+        )
+    )
+
+    assert "CLI `finalize-complete` 成功时" in canonical
+    assert "自动生成静态 Quality Panel 三件套并通过 Artifact Registry 绑定" in canonical
+    assert "显式修复或重新投影" in canonical
+    assert "`quality summarize` 不是唯一的正常 writer" in canonical
+    assert "Successful CLI `finalize-complete`" in mirror
+    assert "automatically materializes" in mirror
+    assert "repair or reproject" in mirror
+    assert "`quality summarize` is not the unique normal writer" in mirror
+
+
 def test_workbuddy_repair_reference_documents_supersede_lane() -> None:
     for text in (_all_skill_text(), _all_legacy_workbuddy_text()):
         compact = _compact(text)

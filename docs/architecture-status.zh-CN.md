@@ -150,13 +150,20 @@ Python package/module 路径、artifact 名称、workspace 格式和实验 ID。
   `release_readiness_report.json`。这些 checks 区分 internal readiness 和
   authorization：它们不会对外发布、替代 legal/compliance/IR owners，或绕过已有
   gates 和 human delivery approval。
-  Experimental Quality Panel projection 可以把现有 control integrity、source
+  Quality Panel projection 可以把现有 control integrity、source
   evidence、gate、claim/support 和 delivery hygiene surfaces 汇总为
   `output/intermediate/quality_panel.json`，并可生成 SHA-bound
   `output/intermediate/quality_summary.md` 和 no-JavaScript
-  `output/intermediate/quality_panel.html` audit attachment。`quality summarize`
-  会一起写这些 artifacts，report bundle projection 可把它们放进 audit bundle，
-  但不会放入 reader-facing delivery bundle。这些 projection 不运行 gates、不创建
+  `output/intermediate/quality_panel.html` audit attachment。`state
+  finalize-complete` CLI 只有在权威 transaction、archive 和 `run_archived` event
+  全部完成后，才调用与 `quality summarize` 相同的 deterministic closeout writer，
+  再由 `state check` 刷新 Artifact Registry。交互式人工 CLI 会尝试用默认浏览器
+  打开静态 HTML；JSON 或非交互调用不会打开浏览器，展示失败也不改变 finalize 或
+  closeout truth。`quality summarize` 继续作为手动修复入口；直接调用 Python
+  finalize transaction 不承诺这个 CLI-only hook。report bundle projection 可把有效的
+  QP artifacts 放进 audit bundle，但不会放入 reader-facing delivery bundle。三个可修复的
+  QP projection artifacts 永远不属于 immutable finalized-run archive，即使 finalize 前
+  已存在较早投影；已生成 archive 也不会因事务后 closeout 被改写。这些 projection 不运行 gates、不创建
   quality score、不替代 gate reports、不决定 release eligibility、不批准
   delivery、不证明 semantic truth，也不执行 repair。
   Experimental Guidance Manifestation projection 可以读取可选

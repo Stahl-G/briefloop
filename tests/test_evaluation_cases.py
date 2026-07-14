@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import ast
+import hashlib
 import json
 import shutil
 from pathlib import Path
@@ -10,12 +12,20 @@ import pytest
 import yaml
 
 from multi_agent_brief.cli.main import main
+from multi_agent_brief.evaluation_cases import runner as evaluation_runner
 from multi_agent_brief.evaluation_cases.fixtures import evaluation_cases_root
 from multi_agent_brief.evaluation_cases.runner import (
     EvaluationCaseRunError,
+    _dispatch_action,
     _run_action,
+    run_evaluation_cases,
 )
 from multi_agent_brief.orchestrator.runtime_state import initialize_runtime_state
+from multi_agent_brief.product.quality_closeout import (
+    CanonicalQualityPanelView,
+    QualityPanelCloseoutError,
+    interpret_quality_panel_closeout,
+)
 from tests.helpers import write_minimal_workspace
 
 
@@ -194,6 +204,97 @@ def test_eval_cases_same_evidence_reader_quality_regression(capsys):
     assert bundle_action["report_bundle_manifest"] == "output/report_bundle_manifest.json"
     assert bundle_action["delivery_bundle_archive"] == "output/delivery_bundle.zip"
     assert bundle_action["audit_bundle_archive"] == "output/audit_bundle.zip"
+
+
+def test_eval_quality_summarize_materializes_canonical_registry_binding(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.chdir(tmp_path)
+
+    result = run_evaluation_cases(
+        case_id="same_evidence_reader_quality_regression",
+        repo_workdir=ROOT,
+        keep_workspaces=True,
+    )
+
+    assert result["ok"] is True
+    case = result["results"][0]
+    workspace = Path(case["workspace"])
+    quality_action = case["actions"][2]
+    assert quality_action == {
+        "action": "quality.summarize",
+        "exit_code": 0,
+        "ok": True,
+        "quality_panel": "output/intermediate/quality_panel.json",
+        "quality_summary": "output/intermediate/quality_summary.md",
+        "quality_panel_html": "output/intermediate/quality_panel.html",
+    }
+    verdict = interpret_quality_panel_closeout(
+        workspace=workspace,
+        repo_workdir=ROOT,
+    )
+    assert isinstance(verdict, CanonicalQualityPanelView)
+    for artifact_id, path in verdict.artifact_paths.items():
+        assert path.is_file()
+        assert verdict.registry_records[artifact_id]["sha256"] == hashlib.sha256(
+            path.read_bytes()
+        ).hexdigest()
+    bundle_action = case["actions"][3]
+    assert bundle_action["action"] == "packs.bundle"
+    assert bundle_action["ok"] is True
+    assert bundle_action["audit_artifact_count"] >= 3
+
+
+def test_eval_quality_summarize_does_not_mask_materializer_failure(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def _fail_materialization(**_kwargs: object) -> dict[str, object]:
+        raise QualityPanelCloseoutError(
+            "Synthetic Registry refresh failure.",
+            reason_code="quality_projection_registry_refresh_failed",
+        )
+
+    monkeypatch.setattr(
+        evaluation_runner,
+        "materialize_quality_panel_closeout",
+        _fail_materialization,
+    )
+
+    action = _dispatch_action(
+        {"action": "quality.summarize", "args": {}},
+        {"workspace": tmp_path, "repo_workdir": ROOT},
+    )
+
+    assert action["ok"] is False
+    assert action["exit_code"] == 1
+    assert action["details"]["reason_code"] == "quality_projection_registry_refresh_failed"
+
+
+def test_production_quality_panel_writers_are_choked_through_closeout() -> None:
+    writer_names = {
+        "write_quality_panel",
+        "write_quality_summary",
+        "write_quality_panel_html",
+    }
+    call_sites: dict[str, set[str]] = {}
+    source_root = ROOT / "src" / "multi_agent_brief"
+    for path in source_root.rglob("*.py"):
+        tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+        calls = {
+            node.func.id
+            for node in ast.walk(tree)
+            if isinstance(node, ast.Call)
+            and isinstance(node.func, ast.Name)
+            and node.func.id in writer_names
+        }
+        if calls:
+            call_sites[path.relative_to(ROOT).as_posix()] = calls
+
+    assert call_sites == {
+        "src/multi_agent_brief/product/quality_closeout.py": writer_names,
+    }
 
 
 def test_eval_cases_issue_96_release_and_evidence_blockers(capsys):

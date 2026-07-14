@@ -115,13 +115,14 @@ projection. Stage-scoped gate authority lives under
 `quality_panel.json`, `quality_summary.md`, and `quality_panel.html` are
 experimental product-quality audit/control projections.
 
-- Write them with `briefloop quality summarize --workspace <workspace>`.
-- After successful finalize, `finalize_report.json` and `status --json` may
-  project `quality_panel_closeout` as a post-finalize recommendation to run
-  `briefloop quality summarize --workspace <workspace>`. This recommendation
-  may be prioritized as the status suggested next command before delivery. It
-  is not a gate, delivery blocker, delivery approval, release approval, or
-  automatic writer.
+- A successful CLI `finalize-complete` first finishes the authoritative
+  transaction and immutable run archive, then automatically materializes these
+  projections and binds them through the Artifact Registry.
+- The read-only `quality_panel_closeout` field reports whether that projection
+  is complete or needs repair; it does not create additional authority.
+- `briefloop quality summarize --workspace <workspace>` is the explicit repair
+  and reprojection command when the post-finalize projection is missing, stale,
+  or invalid. It is not the unique normal writer.
 - `quality_summary.md` and `quality_panel.html` must be rendered from the
   sibling `quality_panel.json` and carry its SHA-256 binding.
 - They may be included in the audit bundle when valid. They remain excluded from reader-facing delivery bundles.

@@ -224,9 +224,13 @@ currently available commands.
     - `briefloop quality summarize --workspace <workspace>`
     - artifacts: `quality_panel.json`, `quality_summary.md`,
       `quality_panel.html`
-    - `quality_panel_closeout` in finalize/status is a post-finalize
-      recommendation to run `briefloop quality summarize --workspace
-      <workspace>`, not an automatic writer
+    - successful CLI `finalize-complete` auto-materializes the projections after
+      the authoritative transaction and immutable archive, then binds them
+      through the Artifact Registry
+    - read-only `quality_panel_closeout` reports complete or repair-needed
+      projection state without creating authority
+    - `briefloop quality summarize --workspace <workspace>` is the explicit
+      repair/reprojection command, not the unique normal writer
     - quality summary and HTML are SHA-bound projections of
       `quality_panel.json`
     - audit bundle inclusion is allowed when present and valid; delivery bundle

@@ -219,9 +219,19 @@ evidence, gate, claim/support, and delivery hygiene surfaces into optional
 compact human-readable `output/intermediate/quality_summary.md` from a valid
 panel. Static Quality Panel HTML can render
 `output/intermediate/quality_panel.html` from the same valid panel with inline
-CSS and no external assets or frontend runtime. `quality summarize` can write
-these artifacts together, and bundle projection can include them in audit
-bundles while keeping them out of reader-facing delivery bundles. These are
+CSS and no external assets or frontend runtime. A successful `state
+finalize-complete` CLI invocation materializes all three artifacts after its
+transaction and archive have completed, then uses the existing state check to
+refresh Artifact Registry. Interactive human output attempts to open the HTML
+in the default browser; JSON or non-interactive output suppresses that display,
+and browser failure is non-authoritative. `quality summarize` uses the same
+writer as a manual repair entrypoint. The direct Python finalize transaction
+remains transaction-only, and existing finalized archives are not rewritten.
+Bundle projection can include valid Quality Panel artifacts in audit bundles
+while keeping them out of reader-facing delivery bundles. The three repairable
+Quality Panel projection artifacts are categorically excluded from immutable
+finalized-run archive membership, including when an earlier projection exists
+before finalize. These are
 product-quality projections only: they do not run gates, replace gate reports,
 create a quality score, decide release eligibility, approve delivery, prove
 semantic truth, or execute repair.

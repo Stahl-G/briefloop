@@ -24,7 +24,6 @@ from multi_agent_brief.product.quality_panel import (  # noqa: E402
 
 REFERENCE_DIR = ROOT / "examples" / "reference-workspaces" / "industry-weekly-demo"
 ARTIFACTS_DIR = REFERENCE_DIR / "artifacts"
-DEMO_GENERATED_AT = "2026-07-04T00:00:00Z"
 
 
 def _write_text(path: Path, text: str) -> None:
@@ -118,7 +117,7 @@ deterministic demo of artifact traceability, not a live source run.
         shutil.copyfile(source, target)
 
     try:
-        panel = write_quality_panel(workspace=workspace, generated_at=DEMO_GENERATED_AT)
+        panel = write_quality_panel(workspace=workspace)
         write_quality_summary(workspace=workspace, panel_payload=panel)
         write_quality_panel_html(workspace=workspace, panel_payload=panel)
     except QualityPanelError as exc:

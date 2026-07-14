@@ -71,6 +71,13 @@ def test_demo_quality_panel_artifacts_are_deterministic(tmp_path):
     first = module.create_demo_workspace(output_dir=str(tmp_path / "first"))
     second = module.create_demo_workspace(output_dir=str(tmp_path / "second"))
 
+    panel = json.loads(
+        (first / "output/intermediate/quality_panel.json").read_text(
+            encoding="utf-8"
+        )
+    )
+    assert "generated_at" not in panel
+
     for rel_path in (
         "output/intermediate/quality_panel.json",
         "output/intermediate/quality_summary.md",

@@ -157,17 +157,28 @@ page describes implemented runtime capability, not a breaking deep rename.
   workflows. These checks separate internal readiness from authorization: they
   do not publish externally, authorize public release, replace legal/compliance
   or IR owners, or bypass existing gates and human delivery approval.
-  Experimental Quality Panel projection can write
+  Quality Panel projection can write
   `output/intermediate/quality_panel.json` as a machine-readable summary of
   existing control integrity, source evidence, gate, claim/support, and
   delivery hygiene surfaces, with optional
   `output/intermediate/quality_summary.md` as a compact human-readable
   projection from that panel and optional
   `output/intermediate/quality_panel.html` as a static no-JavaScript audit
-  attachment. The experimental `quality summarize` command can
-  write these artifacts together, and report bundle projection can include
-  them in audit bundles while keeping them out of reader-facing delivery
-  bundles. These product-quality audit/control
+  attachment. After the `state finalize-complete` CLI has completed its
+  authoritative transaction, archive, and `run_archived` event, it invokes the
+  same deterministic closeout writer used by `quality summarize`, then asks
+  `state check` to refresh Artifact Registry. Interactive human CLI output also
+  attempts to open the static HTML in the default browser; JSON and
+  non-interactive invocations do not open a browser, and display failure does
+  not change finalize or closeout truth. `quality summarize` remains the manual
+  repair entrypoint. Direct Python finalize transactions do not promise this
+  CLI-only projection hook. Report bundle projection can include valid panel
+  artifacts in audit bundles while keeping them out of reader-facing delivery
+  bundles. The three repairable Quality Panel projection artifacts are
+  categorically excluded from immutable finalized-run archive membership,
+  including when an earlier projection exists before finalize; finalized
+  archives are not rewritten by the post-transaction closeout. These
+  product-quality audit/control
   projections do not run gates, create a quality score, replace gate reports,
   decide release eligibility, approve delivery, prove semantic truth, or execute
   repair.

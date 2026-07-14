@@ -7,6 +7,7 @@ import glob
 import hashlib
 import json
 import shutil
+import sys
 import tempfile
 from copy import deepcopy
 from datetime import datetime, timezone
@@ -25,12 +26,11 @@ from multi_agent_brief.product.bundle_projection import (
 )
 from multi_agent_brief.product.policy_registry import PolicyProfileRegistry
 from multi_agent_brief.product.policy_resolver import PolicyProfileResolution, resolve_policy_profile
-from multi_agent_brief.product.quality_panel import (
-    QualityPanelError,
-    quality_panel_path,
-    write_quality_panel,
-    write_quality_panel_html,
-    write_quality_summary,
+from multi_agent_brief.product.quality_closeout import (
+    QUALITY_PANEL_CLOSEOUT_COMMAND,
+    QualityPanelCloseoutError,
+    display_quality_panel_closeout,
+    materialize_quality_panel_closeout,
 )
 from multi_agent_brief.product.report_pack_aliases import (
     RECOMMENDED_REPORT_PACK_ENTRIES,
@@ -186,7 +186,7 @@ def register_extract(subparsers: argparse._SubParsersAction) -> None:
 def register_quality(subparsers: argparse._SubParsersAction) -> None:
     parser = subparsers.add_parser(
         "quality",
-        help="Write experimental Quality Panel projection artifacts.",
+        help="Write Quality Panel projection artifacts.",
     )
     actions = parser.add_subparsers(dest="quality_action", required=True)
 
@@ -354,31 +354,46 @@ def handle_quality(args: argparse.Namespace) -> int:
         return 1
 
     workspace = Path(args.workspace).expanduser().resolve()
+    as_json = bool(getattr(args, "json", False))
     try:
         _require_existing_briefloop_workspace(workspace)
-        panel = write_quality_panel(workspace=workspace)
-        summary = write_quality_summary(workspace=workspace, panel_payload=panel)
-        html = write_quality_panel_html(workspace=workspace, panel_payload=panel)
-    except (QualityPanelError, OSError, ValueError, json.JSONDecodeError) as exc:
+        materialization = materialize_quality_panel_closeout(
+            workspace=workspace,
+            actor="cli",
+        )
+    except (QualityPanelCloseoutError, OSError, ValueError, json.JSONDecodeError) as exc:
         payload = {
             "ok": False,
             "error": str(exc),
+            "reason_code": getattr(exc, "reason_code", "quality_projection_generation_failed"),
+            "details": getattr(exc, "details", {}),
             "workspace": str(workspace),
+            "repair_command": QUALITY_PANEL_CLOSEOUT_COMMAND,
             "boundary": "quality_projection_only_not_gate_or_release_authority",
         }
-        _print_payload("quality summarize", payload, as_json=getattr(args, "json", False))
+        _print_payload("quality summarize", payload, as_json=as_json)
         return 1
 
+    artifacts = materialization["artifacts"]
+    browser_display = display_quality_panel_closeout(
+        materialization,
+        as_json=as_json,
+        is_interactive=_stdout_is_interactive(),
+    )
     payload = {
         "ok": True,
         "workspace": str(workspace),
-        "quality_panel": _workspace_relative(workspace, quality_panel_path(workspace)),
-        "quality_summary": summary["path"],
-        "quality_summary_sha256": summary["sha256"],
-        "quality_panel_html": html["path"],
-        "quality_panel_html_sha256": html["sha256"],
-        "overall_status": panel.get("overall_status"),
-        "recommended_actions": panel.get("recommended_actions", []),
+        "quality_panel": artifacts["quality_panel"]["path"],
+        "quality_panel_sha256": artifacts["quality_panel"]["sha256"],
+        "quality_summary": artifacts["quality_summary"]["path"],
+        "quality_summary_sha256": artifacts["quality_summary"]["sha256"],
+        "quality_panel_html": artifacts["quality_panel_html"]["path"],
+        "quality_panel_html_sha256": artifacts["quality_panel_html"]["sha256"],
+        "registry_refresh": materialization["registry_refresh"],
+        "browser_display": browser_display,
+        "overall_status": materialization.get("overall_status"),
+        "recommended_actions": materialization.get("recommended_actions", []),
+        "repair_command": materialization["repair_command"],
         "boundary": "quality_projection_only_not_gate_or_release_authority",
         "non_claims": [
             "not_a_quality_score",
@@ -389,7 +404,7 @@ def handle_quality(args: argparse.Namespace) -> int:
             "not_repair_execution",
         ],
     }
-    _print_payload("quality summarize", payload, as_json=getattr(args, "json", False))
+    _print_payload("quality summarize", payload, as_json=as_json)
     return 0
 
 
@@ -400,6 +415,13 @@ def _require_existing_briefloop_workspace(workspace: Path) -> None:
         workspace / "output" / "intermediate" / "runtime_manifest.json"
     ).exists():
         raise ValueError(f"not a BriefLoop workspace: {workspace}")
+
+
+def _stdout_is_interactive() -> bool:
+    try:
+        return bool(sys.stdout.isatty())
+    except (AttributeError, OSError):
+        return False
 
 
 def _print_payload(label: str, payload: dict[str, Any], *, as_json: bool) -> None:
@@ -505,6 +527,12 @@ def _print_payload(label: str, payload: dict[str, Any], *, as_json: bool) -> Non
                 audit_archive = archives.get("audit") if isinstance(archives.get("audit"), dict) else {}
                 print(f"delivery_archive: {delivery_archive.get('path')}")
                 print(f"audit_archive: {audit_archive.get('path')}")
+            cleanup_warning = payload.get("publication_cleanup_warning")
+            if isinstance(cleanup_warning, dict):
+                print(
+                    "[warning] "
+                    f"{cleanup_warning.get('reason_code') or 'publication_cleanup_warning'}"
+                )
             print("boundary: bundle projection/export only; no render, delivery approval, or gate bypass")
         else:
             print(payload.get("error"))
@@ -536,6 +564,12 @@ def _print_payload(label: str, payload: dict[str, Any], *, as_json: bool) -> Non
             actions = payload.get("recommended_actions")
             action_count = len(actions) if isinstance(actions, list) else 0
             print(f"recommended_actions: {action_count}")
+            registry_refresh = payload.get("registry_refresh")
+            registry_refresh = registry_refresh if isinstance(registry_refresh, dict) else {}
+            print(f"registry_refresh: {registry_refresh.get('status') or 'unknown'}")
+            browser_display = payload.get("browser_display")
+            browser_display = browser_display if isinstance(browser_display, dict) else {}
+            print(f"browser_display: {browser_display.get('status') or 'unknown'}")
             print(
                 "boundary: quality projection only; no gates were run, no repair was started,"
                 " no delivery was approved, and no release was authorized"

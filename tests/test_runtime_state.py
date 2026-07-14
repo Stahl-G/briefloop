@@ -11,9 +11,11 @@ from pathlib import Path
 
 import pytest
 
+import multi_agent_brief.cli.state_commands as state_commands
 import multi_agent_brief.orchestrator.runtime_state as runtime_state
 import multi_agent_brief.orchestrator.runtime_state.claim_metadata_enrichment as claim_metadata_enrichment
 import multi_agent_brief.orchestrator.runtime_state.completion_gates as runtime_completion_gates
+import multi_agent_brief.product.quality_closeout as quality_closeout
 import multi_agent_brief.orchestrator.runtime_state.control_context as runtime_control_context
 import multi_agent_brief.orchestrator.runtime_state.event_log as runtime_event_log
 import multi_agent_brief.orchestrator.runtime_state.stage_completion as runtime_stage_completion
@@ -66,7 +68,12 @@ from multi_agent_brief.orchestrator.runtime_state import (
     supersede_stage_artifact_transaction,
 )
 from multi_agent_brief.orchestrator.runtime_state.workflow import _allowed_decisions_for_stage
-from multi_agent_brief.orchestrator.run_archive import archive_finalized_run
+from multi_agent_brief.orchestrator.run_archive import (
+    E_RUN_ARCHIVE_CONFLICT,
+    RunArchiveError,
+    _archive_json_values_equal,
+    archive_finalized_run,
+)
 from multi_agent_brief.orchestrator.timing import derive_control_timing_from_path
 from multi_agent_brief.outputs.finalize import finalize_reader_outputs
 from multi_agent_brief.outputs.source_appendix import build_source_appendix
@@ -10815,6 +10822,9 @@ def test_finalize_complete_records_terminal_transaction(tmp_path):
         and (event.get("metadata") or {}).get("runtime_provenance") == provenance
         for event in _event_records(ws)
     )
+    assert not (_intermediate(ws) / "quality_panel.json").exists()
+    assert not (_intermediate(ws) / "quality_summary.md").exists()
+    assert not (_intermediate(ws) / "quality_panel.html").exists()
 
 
 def test_finalize_complete_cli_records_runtime_model_provenance(tmp_path, capsys):
@@ -10847,6 +10857,446 @@ def test_finalize_complete_cli_records_runtime_model_provenance(tmp_path, capsys
     assert provenance["model"] == "gpt-5-codex"
     assert provenance["provenance_only"] is True
     assert provenance["quality_claim"] is False
+
+
+def test_finalize_complete_cli_materializes_quality_panel_after_archive(tmp_path, capsys):
+    ws = _write_workspace(tmp_path)
+    initialize_runtime_state(runtime="operator", workspace=ws, repo_workdir=ROOT)
+    _advance_to_finalize(ws)
+    _write_quality_gate_report(ws, stage_id="finalize")
+    _write_finalize_report(ws)
+
+    rc = main([
+        "state",
+        "finalize-complete",
+        "--workspace",
+        str(ws),
+        "--repo-workdir",
+        str(ROOT),
+        "--reason",
+        "reader artifacts finalized and clean",
+        "--json",
+    ])
+
+    assert rc == 0
+    payload = json.loads(capsys.readouterr().out)
+    projection = payload["post_finalize_quality_projection"]
+    assert projection["status"] == "complete"
+    assert projection["reason_code"] == "quality_projection_materialized"
+    assert projection["registry_refresh"]["status"] == "complete"
+    assert projection["browser_display"]["status"] == "skipped"
+    assert projection["browser_display"]["reason_code"] == (
+        "quality_panel_browser_suppressed_for_json"
+    )
+    assert payload["artifact_registry"]["artifacts"]["quality_panel"]["status"] == "valid"
+    assert payload["artifact_registry"]["artifacts"]["quality_summary"]["status"] == "valid"
+    assert payload["artifact_registry"]["artifacts"]["quality_panel_html"]["status"] == "valid"
+
+    intermediate = _intermediate(ws)
+    registry = json.loads(_state_file(ws, "artifact_registry").read_text(encoding="utf-8"))
+    for artifact_id, filename in (
+        ("quality_panel", "quality_panel.json"),
+        ("quality_summary", "quality_summary.md"),
+        ("quality_panel_html", "quality_panel.html"),
+    ):
+        assert (intermediate / filename).exists()
+        assert registry["artifacts"][artifact_id]["status"] == "valid"
+
+    run_id = payload["manifest"]["run_id"]
+    archive_manifest = json.loads(
+        (ws / "output" / "runs" / run_id / "manifest.json").read_text(encoding="utf-8")
+    )
+    archived_original_paths = {
+        str(record.get("original_path") or "") for record in archive_manifest["files"]
+    }
+    assert not {
+        "output/intermediate/quality_panel.json",
+        "output/intermediate/quality_summary.md",
+        "output/intermediate/quality_panel.html",
+    } & archived_original_paths
+
+    events = _event_records(ws)
+    archived_index = next(
+        index for index, event in enumerate(events) if event["event_type"] == "run_archived"
+    )
+    quality_validated_indexes = [
+        index
+        for index, event in enumerate(events)
+        if event["event_type"] == "artifact_validated"
+        and event.get("artifact_id") in {"quality_panel", "quality_summary", "quality_panel_html"}
+    ]
+    assert len(quality_validated_indexes) == 3
+    assert all(index > archived_index for index in quality_validated_indexes)
+    assert build_workspace_status(ws)["quality_panel_closeout"]["status"] == "complete"
+
+
+def test_finalize_complete_excludes_preexisting_quality_projection_from_run_archive(
+    tmp_path,
+    capsys,
+):
+    ws = _write_workspace(tmp_path)
+    initialize_runtime_state(runtime="operator", workspace=ws, repo_workdir=ROOT)
+    _advance_to_finalize(ws)
+    _write_quality_gate_report(ws, stage_id="finalize")
+    _write_finalize_report(ws)
+
+    before = quality_closeout.materialize_quality_panel_closeout(
+        workspace=ws,
+        repo_workdir=ROOT,
+    )
+    before_hashes = {
+        artifact_id: record["sha256"]
+        for artifact_id, record in before["artifacts"].items()
+    }
+
+    rc = main([
+        "state",
+        "finalize-complete",
+        "--workspace",
+        str(ws),
+        "--repo-workdir",
+        str(ROOT),
+        "--reason",
+        "reader artifacts finalized and clean",
+        "--json",
+    ])
+
+    assert rc == 0
+    payload = json.loads(capsys.readouterr().out)
+    run_id = payload["manifest"]["run_id"]
+    archive = ws / "output" / "runs" / run_id
+    archive_manifest_path = archive / "manifest.json"
+    archive_manifest = json.loads(archive_manifest_path.read_text(encoding="utf-8"))
+    archived_artifact_ids = {
+        str(record.get("artifact_id") or "") for record in archive_manifest["files"]
+    }
+    archived_original_paths = {
+        str(record.get("original_path") or "") for record in archive_manifest["files"]
+    }
+    quality_artifact_ids = {"quality_panel", "quality_summary", "quality_panel_html"}
+    quality_paths = {
+        "quality_panel": "output/intermediate/quality_panel.json",
+        "quality_summary": "output/intermediate/quality_summary.md",
+        "quality_panel_html": "output/intermediate/quality_panel.html",
+    }
+
+    assert not quality_artifact_ids & archived_artifact_ids
+    assert not set(quality_paths.values()) & archived_original_paths
+    assert not (archive / "intermediate" / "quality_panel.json").exists()
+    assert not (archive / "intermediate" / "quality_summary.md").exists()
+    assert not (archive / "intermediate" / "quality_panel.html").exists()
+    assert (archive / "intermediate" / "audit_report.json").exists()
+
+    registry = json.loads(_state_file(ws, "artifact_registry").read_text(encoding="utf-8"))
+    projection = payload["post_finalize_quality_projection"]
+    for artifact_id, relative_path in quality_paths.items():
+        live_path = ws / relative_path
+        live_sha = _sha256_file(live_path)
+        assert live_sha != before_hashes[artifact_id]
+        assert registry["artifacts"][artifact_id]["status"] == "valid"
+        assert registry["artifacts"][artifact_id]["sha256"] == live_sha
+        assert projection["artifacts"][artifact_id]["sha256"] == live_sha
+        assert projection["registry_refresh"]["artifacts"][artifact_id]["sha256"] == live_sha
+
+    events = _event_records(ws)
+    archived_index = next(
+        index for index, event in enumerate(events) if event["event_type"] == "run_archived"
+    )
+    post_archive_quality_validation_events = [
+        event
+        for event in events[archived_index + 1 :]
+        if event["event_type"] == "artifact_validated"
+        and event.get("artifact_id") in quality_artifact_ids
+    ]
+    assert post_archive_quality_validation_events == []
+
+    archived_bytes = {
+        path.relative_to(archive).as_posix(): path.read_bytes()
+        for path in archive.rglob("*")
+        if path.is_file()
+    }
+    repaired = quality_closeout.materialize_quality_panel_closeout(
+        workspace=ws,
+        repo_workdir=ROOT,
+    )
+    assert repaired["registry_refresh"]["status"] == "complete"
+    assert {
+        path.relative_to(archive).as_posix(): path.read_bytes()
+        for path in archive.rglob("*")
+        if path.is_file()
+    } == archived_bytes
+
+    reset = initialize_runtime_state(
+        runtime="operator",
+        workspace=ws,
+        repo_workdir=ROOT,
+        reset_state=True,
+    )
+    assert reset["manifest"]["run_id"] != run_id
+    assert {
+        path.relative_to(archive).as_posix(): path.read_bytes()
+        for path in archive.rglob("*")
+        if path.is_file()
+    } == archived_bytes
+
+
+@pytest.mark.parametrize(
+    "case",
+    [
+        pytest.param("partial_quality_panel", id="QP-ARCHIVE-PARTIAL"),
+        pytest.param("registry_missing", id="QP-ARCHIVE-REGISTRY-MISSING"),
+        pytest.param("quality_bytes_mutated", id="QP-ARCHIVE-QUALITY-SHA"),
+        pytest.param("non_quality_registry_mutated", id="QP-ARCHIVE-NON-QP-REGISTRY"),
+        pytest.param("quality_required_bool_as_int", id="QP-ARCHIVE-BOOL-AS-INT"),
+        pytest.param("non_quality_int_as_float", id="QP-ARCHIVE-INT-AS-FLOAT"),
+        pytest.param("workflow_meaningful_mutation", id="QP-ARCHIVE-WORKFLOW-MEANINGFUL"),
+        pytest.param("archive_member_corrupt", id="QP-ARCHIVE-MEMBER-CORRUPT"),
+    ],
+)
+def test_post_finalize_quality_projection_archive_conflict_matrix(
+    tmp_path,
+    capsys,
+    case,
+):
+    ws = _write_workspace(tmp_path)
+    initialize_runtime_state(runtime="operator", workspace=ws, repo_workdir=ROOT)
+    _advance_to_finalize(ws)
+    _write_quality_gate_report(ws, stage_id="finalize")
+    _write_finalize_report(ws)
+    assert main([
+        "state",
+        "finalize-complete",
+        "--workspace",
+        str(ws),
+        "--repo-workdir",
+        str(ROOT),
+        "--reason",
+        "reader artifacts finalized and clean",
+        "--json",
+    ]) == 0
+    payload = json.loads(capsys.readouterr().out)
+    run_id = payload["manifest"]["run_id"]
+    intermediate = _intermediate(ws)
+    manifest = json.loads(_state_file(ws, "runtime_manifest").read_text(encoding="utf-8"))
+    workflow = json.loads(_state_file(ws, "workflow_state").read_text(encoding="utf-8"))
+    registry_path = _state_file(ws, "artifact_registry")
+    registry = json.loads(registry_path.read_text(encoding="utf-8"))
+    finalize_report = json.loads(
+        (intermediate / "finalize_report.json").read_text(encoding="utf-8")
+    )
+
+    if case == "partial_quality_panel":
+        (intermediate / "quality_summary.md").unlink()
+    elif case == "registry_missing":
+        registry_path.unlink()
+    elif case == "quality_bytes_mutated":
+        html_path = intermediate / "quality_panel.html"
+        html_path.write_text(html_path.read_text(encoding="utf-8") + "\n", encoding="utf-8")
+    elif case == "non_quality_registry_mutated":
+        registry["artifacts"]["audit_report"]["blocking_reason"] = "mutated after archive"
+        registry_path.write_text(
+            json.dumps(registry, ensure_ascii=False, indent=2, sort_keys=True) + "\n",
+            encoding="utf-8",
+        )
+    elif case == "quality_required_bool_as_int":
+        registry["artifacts"]["quality_panel"]["required"] = 0
+        registry_path.write_text(
+            json.dumps(registry, ensure_ascii=False, indent=2, sort_keys=True) + "\n",
+            encoding="utf-8",
+        )
+    elif case == "non_quality_int_as_float":
+        size_bytes = registry["artifacts"]["audit_report"]["size_bytes"]
+        assert isinstance(size_bytes, int)
+        registry["artifacts"]["audit_report"]["size_bytes"] = float(size_bytes)
+        registry_path.write_text(
+            json.dumps(registry, ensure_ascii=False, indent=2, sort_keys=True) + "\n",
+            encoding="utf-8",
+        )
+    elif case == "workflow_meaningful_mutation":
+        workflow["blocking_reason"] = "mutated after archive"
+        _state_file(ws, "workflow_state").write_text(
+            json.dumps(workflow, ensure_ascii=False, indent=2, sort_keys=True) + "\n",
+            encoding="utf-8",
+        )
+    elif case == "archive_member_corrupt":
+        archived_audit = ws / "output" / "runs" / run_id / "intermediate" / "audit_report.json"
+        archived_audit.write_text('{"audit_status":"fail"}\n', encoding="utf-8")
+
+    with pytest.raises(RunArchiveError) as excinfo:
+        archive_finalized_run(
+            workspace=ws,
+            run_id=run_id,
+            manifest=manifest,
+            workflow=workflow,
+            artifact_registry=registry,
+            finalize_report=finalize_report,
+        )
+    assert excinfo.value.error_code == E_RUN_ARCHIVE_CONFLICT
+
+
+@pytest.mark.parametrize(
+    ("left", "right"),
+    [
+        pytest.param(True, 1, id="QP-ARCHIVE-STRICT-BOOL-INT"),
+        pytest.param(1, 1.0, id="QP-ARCHIVE-STRICT-INT-FLOAT"),
+    ],
+)
+def test_archive_json_comparison_is_scalar_type_strict(left, right) -> None:
+    assert _archive_json_values_equal(left, right) is False
+
+
+def test_finalize_complete_cli_opens_quality_panel_for_interactive_output(
+    tmp_path,
+    capsys,
+    monkeypatch,
+):
+    ws = _write_workspace(tmp_path)
+    initialize_runtime_state(runtime="operator", workspace=ws, repo_workdir=ROOT)
+    _advance_to_finalize(ws)
+    _write_quality_gate_report(ws, stage_id="finalize")
+    _write_finalize_report(ws)
+    opened: list[str] = []
+    monkeypatch.setattr(state_commands, "_stdout_is_interactive", lambda: True)
+    monkeypatch.setattr(
+        quality_closeout.webbrowser,
+        "open",
+        lambda url, **_kwargs: opened.append(url) or True,
+    )
+
+    rc = main([
+        "state",
+        "finalize-complete",
+        "--workspace",
+        str(ws),
+        "--repo-workdir",
+        str(ROOT),
+        "--reason",
+        "reader artifacts finalized and clean",
+    ])
+
+    assert rc == 0
+    output = capsys.readouterr().out
+    assert "post_finalize_quality_projection: complete" in output
+    assert "quality_panel_browser: opened" in output
+    assert len(opened) == 1
+    assert opened[0].startswith("file://")
+
+
+def test_finalize_complete_cli_keeps_success_when_quality_projection_fails(
+    tmp_path,
+    capsys,
+    monkeypatch,
+):
+    ws = _write_workspace(tmp_path)
+    initialize_runtime_state(runtime="operator", workspace=ws, repo_workdir=ROOT)
+    _advance_to_finalize(ws)
+    _write_quality_gate_report(ws, stage_id="finalize")
+    _write_finalize_report(ws)
+
+    def fail_materialization(**_kwargs):
+        raise RuntimeError("synthetic Quality Panel writer failure")
+
+    monkeypatch.setattr(
+        state_commands,
+        "materialize_quality_panel_closeout",
+        fail_materialization,
+    )
+
+    rc = main([
+        "state",
+        "finalize-complete",
+        "--workspace",
+        str(ws),
+        "--repo-workdir",
+        str(ROOT),
+        "--reason",
+        "reader artifacts finalized and clean",
+        "--json",
+    ])
+
+    assert rc == 0
+    payload = json.loads(capsys.readouterr().out)
+    projection = payload["post_finalize_quality_projection"]
+    assert projection["status"] == "warning"
+    assert projection["reason_code"] == "quality_projection_generation_failed"
+    assert projection["repair_command"] == "briefloop quality summarize --workspace <workspace>"
+    assert payload["workflow_state"]["stage_statuses"]["finalize"]["status"] == "complete"
+    assert payload["workflow_state"]["current_stage"] is None
+    assert any(event["event_type"] == "run_archived" for event in _event_records(ws))
+    assert (ws / "output" / "runs" / payload["manifest"]["run_id"] / "manifest.json").exists()
+
+
+def test_finalize_complete_cli_does_not_run_quality_projection_when_transaction_fails(
+    tmp_path,
+    capsys,
+    monkeypatch,
+):
+    ws = _write_workspace(tmp_path)
+    initialize_runtime_state(runtime="operator", workspace=ws, repo_workdir=ROOT)
+    _set_current_stage(ws, "finalize")
+    calls: list[dict[str, object]] = []
+    monkeypatch.setattr(
+        state_commands,
+        "materialize_quality_panel_closeout",
+        lambda **kwargs: calls.append(kwargs),
+    )
+
+    rc = main([
+        "state",
+        "finalize-complete",
+        "--workspace",
+        str(ws),
+        "--repo-workdir",
+        str(ROOT),
+        "--reason",
+        "invalid finalize attempt",
+        "--json",
+    ])
+
+    assert rc == 1
+    assert calls == []
+    assert not (_intermediate(ws) / "quality_panel.json").exists()
+    assert not (_intermediate(ws) / "quality_summary.md").exists()
+    assert not (_intermediate(ws) / "quality_panel.html").exists()
+    assert json.loads(capsys.readouterr().out)["ok"] is False
+
+
+def test_repeated_finalize_complete_does_not_rewrite_quality_panel(tmp_path, capsys, monkeypatch):
+    ws = _write_workspace(tmp_path)
+    initialize_runtime_state(runtime="operator", workspace=ws, repo_workdir=ROOT)
+    _advance_to_finalize(ws)
+    _write_quality_gate_report(ws, stage_id="finalize")
+    _write_finalize_report(ws)
+    command = [
+        "state",
+        "finalize-complete",
+        "--workspace",
+        str(ws),
+        "--repo-workdir",
+        str(ROOT),
+        "--reason",
+        "reader artifacts finalized and clean",
+        "--json",
+    ]
+
+    assert main(command) == 0
+    capsys.readouterr()
+    panel_paths = [
+        _intermediate(ws) / "quality_panel.json",
+        _intermediate(ws) / "quality_summary.md",
+        _intermediate(ws) / "quality_panel.html",
+    ]
+    bytes_before = {path: path.read_bytes() for path in panel_paths}
+    calls: list[dict[str, object]] = []
+    monkeypatch.setattr(
+        state_commands,
+        "materialize_quality_panel_closeout",
+        lambda **kwargs: calls.append(kwargs),
+    )
+
+    assert main(command) == 1
+    assert calls == []
+    assert {path: path.read_bytes() for path in panel_paths} == bytes_before
 
 
 def test_run_integrity_contamination_event_is_sticky_on_state_check(tmp_path):
