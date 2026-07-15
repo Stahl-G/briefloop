@@ -27,6 +27,10 @@ from multi_agent_brief.control_store import (
     ControlStoreIntegrityError,
     SQLiteControlStore,
 )
+from multi_agent_brief.control_store.serialization import (
+    canonical_fingerprint,
+    canonical_json_bytes,
+)
 from multi_agent_brief.core_run_v2 import (
     ArtifactAcceptanceService,
     ClaimFreezeService,
@@ -35,6 +39,13 @@ from multi_agent_brief.core_run_v2 import (
 )
 from multi_agent_brief.core_run_v2.integrity import read_workspace_file
 from multi_agent_brief.core_run_v2.policy import REQUIRED_AUDITOR_GATES
+from multi_agent_brief.core_run_v2.errors import CoreRunError
+from multi_agent_brief.core_run_v2.verifier import (
+    CoreRunDomainVerifier,
+    _CORE_EFFECT_BINDING_RULES,
+    resolve_core_replay,
+)
+from multi_agent_brief.inputs.classifier import classify_input_dir
 from multi_agent_brief.intake_v2.service import IntakeService
 from multi_agent_brief.quality_gates.contract import GATE_IDS
 
@@ -95,6 +106,7 @@ def _initialize(
     workspace: Path,
     *,
     topology: str = "default",
+    input_governance_required: bool = False,
 ) -> CoreRunService:
     service = CoreRunService(workspace, clock=CLOCK)
     request = deepcopy(CoreRunInitializeRequest.minimal_example)
@@ -103,7 +115,7 @@ def _initialize(
         workspace_id=WORKSPACE_ID,
         run_id=RUN_ID,
         role_topology=topology,
-        input_governance_required=False,
+        input_governance_required=input_governance_required,
         workspace_config_sha256=read_workspace_file(
             workspace, "config.yaml"
         ).sha256,
@@ -321,6 +333,136 @@ def _advance_to_scout_ready(
     )
     _complete_stage(service, workspace, stage_id="input-governance", artifacts=[])
     return service
+
+
+def _advance_to_input_governance_ready(workspace: Path) -> CoreRunService:
+    service = _initialize(workspace, input_governance_required=True)
+    doctor = service.doctor_check(
+        _record(
+            IntegrityCheckRequest,
+            request_id="REQ-DOCTOR-INPUT-GOV",
+            run_id=RUN_ID,
+            expected_store_revision=_store_revision(workspace),
+        )
+    )
+    assert doctor.status == "committed", doctor.to_dict()
+    planner = _start_invocation(
+        service,
+        workspace,
+        request_id="REQ-INVOKE-PLANNER-INPUT-GOV",
+        stage_id="source-discovery",
+        role_id="source-planner",
+    )
+    candidates = workspace / "scratch" / planner / "source_candidates.yaml"
+    candidates.parent.mkdir(parents=True, exist_ok=True)
+    candidates.write_text("sources:\n  - SRC-001\n", encoding="utf-8")
+    accepted = ArtifactAcceptanceService(
+        workspace,
+        clock=CLOCK,
+    ).submit_owned_artifact(
+        _record(
+            OwnedArtifactSubmitRequest,
+            request_id="REQ-ARTIFACT-SOURCES-INPUT-GOV",
+            run_id=RUN_ID,
+            artifact_id="source_candidates",
+            invocation_id=planner,
+            producer_tool_id=None,
+            input_path=candidates.relative_to(workspace).as_posix(),
+            expected_store_revision=_store_revision(workspace),
+            expected_artifact_revision=0,
+            expected_parent_artifact=None,
+        )
+    )
+    assert accepted.status == "committed", accepted.to_dict()
+    provider = _start_invocation(
+        service,
+        workspace,
+        request_id="REQ-INVOKE-PROVIDER-INPUT-GOV",
+        stage_id="source-discovery",
+        role_id="source-provider",
+    )
+    _submit_source(workspace, provider)
+    with SQLiteControlStore.open(workspace / "briefloop.db") as store:
+        source = store.load_snapshot(RUN_ID).sources[0]
+    _complete_stage(
+        service,
+        workspace,
+        stage_id="source-discovery",
+        artifacts=[
+            ("source_candidates", 1),
+            (source.content_artifact_id, source.content_artifact_revision),
+        ],
+    )
+    assert _stage(workspace, "input-governance").status == "ready"
+    return service
+
+
+def test_input_governance_accepts_only_recomputed_canonical_tool_bytes(
+    tmp_path: Path,
+) -> None:
+    workspace = _workspace(tmp_path)
+    service = _advance_to_input_governance_ready(workspace)
+    scratch = workspace / "scratch" / "input-governance-v2"
+    scratch.mkdir(parents=True, exist_ok=True)
+    candidate = scratch / "input_classification.json"
+    candidate.write_bytes(b"this is not json\n")
+    before = _store_revision(workspace)
+    request_values = {
+        "run_id": RUN_ID,
+        "artifact_id": "input_classification",
+        "invocation_id": None,
+        "producer_tool_id": "input-governance-v2",
+        "input_path": candidate.relative_to(workspace).as_posix(),
+        "expected_store_revision": before,
+        "expected_artifact_revision": 0,
+        "expected_parent_artifact": None,
+    }
+    rejected = ArtifactAcceptanceService(
+        workspace,
+        clock=CLOCK,
+    ).submit_owned_artifact(
+        _record(
+            OwnedArtifactSubmitRequest,
+            request_id="REQ-INPUT-GOV-FORGED",
+            **request_values,
+        )
+    )
+    assert rejected.to_dict() == {
+        "status": "failed_uncommitted",
+        "error_code": "artifact_input_unsafe",
+    }
+    assert _store_revision(workspace) == before
+    assert _stage(workspace, "input-governance").status == "ready"
+    assert not (
+        workspace / "output" / "intermediate" / "input_classification.json"
+    ).exists()
+
+    canonical = canonical_json_bytes(classify_input_dir(workspace / "input")) + b"\n"
+    candidate.write_bytes(canonical)
+    accepted = ArtifactAcceptanceService(
+        workspace,
+        clock=CLOCK,
+    ).submit_owned_artifact(
+        _record(
+            OwnedArtifactSubmitRequest,
+            request_id="REQ-INPUT-GOV-CANONICAL",
+            **request_values,
+        )
+    )
+    assert accepted.status == "committed", accepted.to_dict()
+    with SQLiteControlStore.open(workspace / "briefloop.db") as store:
+        assert store.read_artifact_revision_bytes(
+            RUN_ID,
+            "input_classification",
+            1,
+        ) == canonical
+    _complete_stage(
+        service,
+        workspace,
+        stage_id="input-governance",
+        artifacts=[("input_classification", 1)],
+    )
+    assert _stage(workspace, "input-governance").status == "complete"
 
 
 def _candidate_payload() -> dict[str, object]:
@@ -621,6 +763,74 @@ def _gate_request(workspace: Path, *, request_id: str = "REQ-GATE-001"):
             {"artifact_id": "candidate_claims", "revision": 1},
         ],
     )
+
+
+def test_gate_batch_exactly_replays_and_a_second_request_is_zero_write(
+    tmp_path: Path,
+) -> None:
+    workspace = _workspace(tmp_path)
+    core = _advance_to_auditor_ready(workspace)
+    service = GateEvaluationService(workspace, clock=CLOCK)
+    request = _gate_request(workspace, request_id="REQ-GATE-REPLAY")
+    first = service.evaluate(request)
+    assert first.status == "committed", first.to_dict()
+    committed_revision = _store_revision(workspace)
+    with SQLiteControlStore.open(workspace / "briefloop.db") as store:
+        snapshot = store.load_snapshot(RUN_ID)
+    report_path = workspace / next(
+        item.path
+        for item in snapshot.artifacts
+        if item.artifact_id == "auditor_quality_gate_report"
+    )
+    report_bytes = report_path.read_bytes()
+
+    replay = service.evaluate(request)
+    assert replay.status == "replayed"
+    assert replay.receipt == first.receipt
+    assert replay.primary_record_id == first.primary_record_id
+    assert _store_revision(workspace) == committed_revision
+    assert report_path.read_bytes() == report_bytes
+
+    second_values = request.model_dump(mode="python", exclude_unset=False)
+    second_values.update(
+        request_id="REQ-GATE-SECOND-BATCH",
+        expected_store_revision=committed_revision,
+        expected_report_artifact_revision=1,
+    )
+    second = service.evaluate(
+        GateCheckRequest.model_validate(second_values, strict=True)
+    )
+    assert second.to_dict() == {
+        "status": "failed_uncommitted",
+        "error_code": "gate_policy_binding_invalid",
+    }
+    assert _store_revision(workspace) == committed_revision
+    assert report_path.read_bytes() == report_bytes
+
+    _complete_stage(
+        core,
+        workspace,
+        stage_id="auditor",
+        artifacts=[
+            ("claim_ledger", 1),
+            ("audited_brief", 1),
+            ("audit_report", 1),
+            ("auditor_quality_gate_report", 1),
+            ("analyst_draft_snapshot", 1),
+        ],
+        gate_evaluation_ids=[
+            item.evaluation_id
+            for item in snapshot.gate_evaluations
+            if item.gate_id in REQUIRED_AUDITOR_GATES
+        ],
+    )
+    after_completion = _store_revision(workspace)
+    assert _stage(workspace, "finalize").status == "ready"
+    lifecycle_replay = service.evaluate(request)
+    assert lifecycle_replay.status == "replayed"
+    assert lifecycle_replay.receipt == first.receipt
+    assert _store_revision(workspace) == after_completion
+    assert report_path.read_bytes() == report_bytes
 
 
 def test_strict_topology_requires_independent_screener(tmp_path: Path) -> None:
@@ -1617,6 +1827,65 @@ def test_stage_state_without_transition_rolls_back(tmp_path: Path) -> None:
     assert _stage(workspace, "doctor") == doctor
 
 
+def test_core_effect_receipt_binding_table_is_exact() -> None:
+    assert set(_CORE_EFFECT_BINDING_RULES) == {
+        "initialize",
+        "invocation_start",
+        "owned_artifact_acceptance",
+        "claim_freeze",
+        "audit_promotion",
+        "gate_evaluation",
+        "stage_transition",
+        "integrity_contamination",
+    }
+
+
+def test_forged_core_primary_record_id_is_rejected_before_replay(
+    tmp_path: Path,
+) -> None:
+    workspace = _workspace(tmp_path)
+    _advance_to_scout_ready(workspace)
+    database = workspace / "briefloop.db"
+    with SQLiteControlStore.open(database) as store:
+        row = store._connection.execute(
+            "SELECT event_id, transaction_id, payload_json FROM events "
+            "WHERE event_type = 'owned_artifact_accepted' LIMIT 1"
+        ).fetchone()
+        assert row is not None
+        event_id, transaction_id, payload_json = row
+        payload = json.loads(payload_json)
+        fingerprint = payload["core_run_binding"]["request_fingerprint"]
+        payload["core_run_binding"]["primary_record_id"] = "SUBMISSION-FORGED"
+        trigger_sql = store._connection.execute(
+            "SELECT sql FROM sqlite_master WHERE type = 'trigger' "
+            "AND name = 'events_no_update'"
+        ).fetchone()
+        assert trigger_sql is not None
+        store._connection.execute("DROP TRIGGER events_no_update")
+        store._connection.execute(
+            "UPDATE events SET payload_json = ? WHERE event_id = ?",
+            (
+                json.dumps(payload, sort_keys=True, separators=(",", ":")),
+                event_id,
+            ),
+        )
+        store._connection.execute(trigger_sql[0])
+        store._connection.commit()
+
+    with SQLiteControlStore.open(database) as store:
+        revision = store.current_revision
+        with pytest.raises(CoreRunError, match="control_store_integrity_invalid"):
+            CoreRunDomainVerifier().verify(store, RUN_ID)
+        with pytest.raises(CoreRunError, match="control_store_integrity_invalid"):
+            resolve_core_replay(
+                store,
+                run_id=RUN_ID,
+                request_id=transaction_id,
+                request_fingerprint=fingerprint,
+            )
+        assert store.current_revision == revision
+
+
 @pytest.mark.parametrize("mutation", ["edit", "delete"])
 def test_protected_checkout_mutation_records_contamination_and_blocks_effect(
     tmp_path: Path,
@@ -1635,17 +1904,16 @@ def test_protected_checkout_mutation_records_contamination_and_blocks_effect(
     else:
         candidate_path.unlink()
     before = snapshot.store_revision
-    result = service.start_invocation(
-        _record(
-            InvocationStartRequest,
-            request_id="REQ-INVOKE-CONTAMINATED",
-            run_id=RUN_ID,
-            stage_id="scout",
-            role_id="scout",
-            runtime="operator",
-            expected_store_revision=before,
-        )
+    request = _record(
+        InvocationStartRequest,
+        request_id="REQ-INVOKE-CONTAMINATED",
+        run_id=RUN_ID,
+        stage_id="scout",
+        role_id="scout",
+        runtime="operator",
+        expected_store_revision=before,
     )
+    result = service.start_invocation(request)
     assert result.status == "blocked"
     assert result.error_code == "frozen_artifact_contaminated"
     assert result.receipt is not None
@@ -1658,6 +1926,27 @@ def test_protected_checkout_mutation_records_contamination_and_blocks_effect(
         item.invocation_id == result.primary_record_id for item in after.invocations
     )
     assert _stage(workspace, "scout").status == "ready"
+    contamination_event = next(
+        item
+        for item in after.events
+        if item.event_type == "run_integrity_contaminated"
+    )
+    assert contamination_event.core_run_binding is not None
+    assert contamination_event.core_run_binding.request_fingerprint == (
+        canonical_fingerprint(
+            request.model_dump(mode="json", exclude_unset=False)
+        )
+    )
+    assert (
+        after.run_integrity_records[-1].request_fingerprint
+        != contamination_event.core_run_binding.request_fingerprint
+    )
+
+    exact_replay = service.start_invocation(request)
+    assert exact_replay.status == "blocked"
+    assert exact_replay.receipt == result.receipt
+    assert exact_replay.primary_record_id == result.primary_record_id
+    assert _store_revision(workspace) == after.store_revision
 
     repeated = service.start_invocation(
         _record(

@@ -169,6 +169,7 @@ class ClaimFreezeService:
                 store,
                 verified,
                 request_id=request.request_id,
+                request_fingerprint=fingerprint,
                 expected_store_revision=request.expected_store_revision,
                 additional_revisions=(drafts_revision,),
             )

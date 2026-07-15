@@ -24,7 +24,7 @@ from multi_agent_brief.control_store.serialization import (
 
 from .errors import CoreRunError, CoreRunResult, core_run_error_code
 from .policy import derived_id, transaction_type_for
-from .verifier import CoreRunDomainVerifier, VerifiedCoreRun
+from .verifier import CoreRunDomainVerifier, VerifiedCoreRun, resolve_core_replay
 
 
 _Clock = Callable[[], datetime]
@@ -59,7 +59,18 @@ class RunIntegrityService:
             raise CoreRunError(core_run_error_code(exc)) from exc
 
     def _inspect(self, request: IntegrityCheckRequest) -> dict[str, object]:
+        request_fingerprint = canonical_fingerprint(
+            request.model_dump(mode="json", exclude_unset=False)
+        )
         with self._open_store() as store:
+            replay = resolve_core_replay(
+                store,
+                run_id=request.run_id,
+                request_id=request.request_id,
+                request_fingerprint=request_fingerprint,
+            )
+            if replay is not None:
+                return replay.to_dict()
             verified = self._verifier.verify(store, request.run_id)
             if verified.snapshot.store_revision != request.expected_store_revision:
                 raise CoreRunError("store_revision_conflict")
@@ -81,6 +92,7 @@ class RunIntegrityService:
                 store,
                 verified,
                 request_id=request.request_id,
+                request_fingerprint=request_fingerprint,
                 expected_store_revision=request.expected_store_revision,
                 revision=revision,
                 observation=observation,
@@ -93,6 +105,7 @@ class RunIntegrityService:
         verified: VerifiedCoreRun,
         *,
         request_id: str,
+        request_fingerprint: str,
         expected_store_revision: int,
         additional_revisions: Iterable[ArtifactRevision] = (),
     ) -> CoreRunResult | None:
@@ -110,6 +123,7 @@ class RunIntegrityService:
             store,
             verified,
             request_id=request_id,
+            request_fingerprint=request_fingerprint,
             expected_store_revision=expected_store_revision,
             revision=revision,
             observation=observation,
@@ -159,25 +173,29 @@ class RunIntegrityService:
         verified: VerifiedCoreRun,
         *,
         request_id: str,
+        request_fingerprint: str,
         expected_store_revision: int,
         revision: ArtifactRevision,
         observation: CheckoutObservation,
     ) -> CoreRunResult:
         current = verified.snapshot.run_integrity_records[-1]
-        fingerprint = canonical_fingerprint(
+        observation_fingerprint = canonical_fingerprint(
             {
-                "request_id": request_id,
                 "run_id": verified.snapshot.run.run_id,
-                "expected_store_revision": expected_store_revision,
                 "artifact_id": revision.artifact_id,
                 "artifact_revision": revision.revision,
+                "expected_workspace_path": revision.path,
                 "expected_sha256": revision.sha256,
                 "observed_entry_kind": observation.entry_kind,
                 "observed_sha256": observation.sha256,
             }
         )
         now = _now(self._clock)
-        event_id = derived_id("EVT-INTEGRITY", request_id, fingerprint)
+        event_id = derived_id(
+            "EVT-INTEGRITY",
+            request_id,
+            observation_fingerprint,
+        )
         integrity_revision = current.integrity_revision + 1
         record = RunIntegrityRecord.model_validate(
             {
@@ -196,7 +214,7 @@ class RunIntegrityService:
                 "first_detected_at": now,
                 "first_detected_event_id": event_id,
                 "accepted_transaction_id": request_id,
-                "request_fingerprint": fingerprint,
+                "request_fingerprint": observation_fingerprint,
             },
             strict=True,
         )
@@ -215,7 +233,7 @@ class RunIntegrityService:
                 "metadata": {},
                 "core_run_binding": CoreRunEventBinding(
                     request_id=request_id,
-                    request_fingerprint=fingerprint,
+                    request_fingerprint=request_fingerprint,
                     effect_kind="integrity_contamination",
                     primary_record_id=str(integrity_revision),
                     outcome="blocked",
@@ -226,7 +244,11 @@ class RunIntegrityService:
         block_event = EventEnvelope.model_validate(
             {
                 "schema_version": EventEnvelope.schema_id,
-                "event_id": derived_id("EVT-BLOCK", request_id, fingerprint),
+                "event_id": derived_id(
+                    "EVT-BLOCK",
+                    request_id,
+                    observation_fingerprint,
+                ),
                 "run_id": verified.snapshot.run.run_id,
                 "event_type": "run_blocked",
                 "created_at": now,

@@ -94,8 +94,6 @@ class GateEvaluationService:
                 ),
                 None,
             )
-            if stage is None or stage.status != "ready":
-                raise CoreRunError("stage_not_current")
             artifacts = {item.artifact_id: item for item in verified.snapshot.artifacts}
             revisions = {
                 (item.artifact_id, item.revision): item
@@ -161,12 +159,8 @@ class GateEvaluationService:
             if expected != actual or len(request.expected_input_artifacts) != len(actual):
                 raise CoreRunError("gate_input_binding_invalid")
             report_record = artifacts.get("auditor_quality_gate_report")
-            if (
-                report_record is None
-                or report_record.current_revision
-                != request.expected_report_artifact_revision
-            ):
-                raise CoreRunError("artifact_revision_conflict")
+            if report_record is None:
+                raise CoreRunError("control_store_integrity_invalid")
             input_hashes = [
                 {
                     "artifact_id": item.artifact_id,
@@ -193,12 +187,22 @@ class GateEvaluationService:
             )
             if replay is not None:
                 return replay
+            if stage is None or stage.status != "ready":
+                raise CoreRunError("stage_not_current")
             if verified.snapshot.store_revision != request.expected_store_revision:
                 raise CoreRunError("store_revision_conflict")
+            if verified.snapshot.gate_evaluations:
+                raise CoreRunError("gate_policy_binding_invalid")
+            if (
+                report_record.current_revision
+                != request.expected_report_artifact_revision
+            ):
+                raise CoreRunError("artifact_revision_conflict")
             blocked = self._integrity.require_clean(
                 store,
                 verified,
                 request_id=request.request_id,
+                request_fingerprint=fingerprint,
                 expected_store_revision=request.expected_store_revision,
                 additional_revisions=tuple(item for item, _usage in required),
             )

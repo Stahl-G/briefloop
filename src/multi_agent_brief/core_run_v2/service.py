@@ -417,6 +417,7 @@ class CoreRunService:
                 store,
                 verified,
                 request_id=request.request_id,
+                request_fingerprint=fingerprint,
                 expected_store_revision=request.expected_store_revision,
             )
             if blocked is not None:
@@ -599,6 +600,7 @@ class CoreRunService:
                 store,
                 verified,
                 request_id=request.request_id,
+                request_fingerprint=fingerprint,
                 expected_store_revision=request.expected_store_revision,
                 additional_revisions=(
                     item for item, _usage in required_revisions

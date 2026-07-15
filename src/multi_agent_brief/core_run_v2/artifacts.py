@@ -29,6 +29,7 @@ from multi_agent_brief.control_store.serialization import (
 )
 from multi_agent_brief.intake_v2.errors import IntakeError
 from multi_agent_brief.intake_v2.scratch import ScratchReader, parse_json_object
+from multi_agent_brief.inputs.classifier import classify_input_dir
 
 from .errors import CoreRunError, CoreRunResult, core_run_error_code
 from .integrity import RunIntegrityService, materialize_checkout
@@ -94,6 +95,11 @@ class ArtifactAcceptanceService:
             raise CoreRunError("artifact_input_unsafe") from exc
         if PurePosixPath(request.input_path).suffix != policy.input_suffix:
             raise CoreRunError("artifact_input_unsafe")
+        if request.artifact_id == "input_classification":
+            expected_content = _input_classification_bytes(self.workspace)
+            if content != expected_content:
+                raise CoreRunError("artifact_input_unsafe")
+            content = expected_content
         fingerprint = canonical_fingerprint(
             {
                 "request": request.model_dump(mode="json", exclude_unset=False),
@@ -184,6 +190,7 @@ class ArtifactAcceptanceService:
                 store,
                 verified,
                 request_id=request.request_id,
+                request_fingerprint=fingerprint,
                 expected_store_revision=request.expected_store_revision,
                 additional_revisions=(() if parent is None else (parent,)),
             )
@@ -392,6 +399,7 @@ class ArtifactAcceptanceService:
                 store,
                 verified,
                 request_id=request.request_id,
+                request_fingerprint=fingerprint,
                 expected_store_revision=request.expected_store_revision,
                 additional_revisions=(target,),
             )
@@ -548,6 +556,16 @@ def _completed_invocation(invocation: Invocation, completed_at: str) -> Invocati
         },
         strict=True,
     )
+
+
+def _input_classification_bytes(workspace: Path) -> bytes:
+    """Recompute the fixed input-governance tool output before acceptance."""
+
+    try:
+        classified = classify_input_dir(workspace / "input")
+        return canonical_json_bytes(classified) + b"\n"
+    except (OSError, RuntimeError, TypeError, ValueError) as exc:
+        raise CoreRunError("artifact_input_unsafe") from exc
 
 
 def _invocation_stage(events: tuple[EventEnvelope, ...], invocation_id: str) -> str:
