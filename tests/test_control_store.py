@@ -293,6 +293,16 @@ def _corrupt_delivery_foreign_key(database: Path) -> None:
         connection.close()
 
 
+def _mutate_schema(database: Path, script: str) -> None:
+    connection = sqlite3.connect(database)
+    try:
+        connection.executescript(script)
+        assert connection.execute("PRAGMA quick_check").fetchone()[0] == "ok"
+        assert connection.execute("PRAGMA foreign_key_check").fetchone() is None
+    finally:
+        connection.close()
+
+
 def _stage_crash_boundary_unit(store: SQLiteControlStore):
     records = _records(transaction_id=CRASH_TRANSACTION_ID)
     unit = store.begin(
@@ -816,6 +826,82 @@ def test_artifact_current_revision_requires_exact_committed_revision(
         assert _table_count(store, "artifacts") == 0
 
 
+def test_unbound_artifact_revision_is_rejected_before_blob_write(
+    tmp_path: Path,
+) -> None:
+    records = _records()
+    with _create_store(tmp_path) as store:
+        unit = store.begin(
+            run_id=RUN_ID,
+            transaction_id="TX-UNBOUND-REVISION-001",
+            transaction_type="invalid_artifact_binding",
+            expected_revision=0,
+        )
+        unit.put_run(records.run)
+        unit.put_artifact_revision(records.revision, BLOB)
+        with pytest.raises(ControlStoreConflict) as error:
+            unit.commit()
+        assert error.value.code == "relational_integrity_conflict"
+        assert str(error.value) == "relational_integrity_conflict"
+        assert store.current_revision == 0
+        assert _table_count(store, "runs") == 0
+        assert _table_count(store, "artifact_revisions") == 0
+        assert list(store.blob_root.rglob("*")) == []
+
+
+def test_artifact_subgraph_preflight_is_independent_of_staging_order(
+    tmp_path: Path,
+) -> None:
+    records = _records(transaction_id="TX-REVISION-FIRST-001")
+    with _create_store(tmp_path) as store:
+        unit = store.begin(
+            run_id=RUN_ID,
+            transaction_id=records.event.transaction_id,
+            transaction_type="revision_first",
+            expected_revision=0,
+        )
+        unit.put_run(records.run)
+        unit.put_artifact_revision(records.revision, BLOB)
+        unit.put_artifact(records.artifact)
+        receipt = unit.commit()
+        snapshot = store.load_snapshot(RUN_ID)
+        assert receipt.artifact_revisions[0].artifact_id == "brief"
+        assert snapshot.artifacts == (records.artifact,)
+        assert snapshot.artifact_revisions == (records.revision,)
+        assert store.scan_orphans().orphan_hashes == ()
+
+
+def test_existing_revision_key_conflict_is_rejected_before_new_blob_write(
+    tmp_path: Path,
+) -> None:
+    conflicting_content = b"Conflicting bytes for an existing revision key.\n"
+    conflicting_sha256 = hashlib.sha256(conflicting_content).hexdigest()
+    with _create_store(tmp_path) as store:
+        _stage_all(store).commit()
+        unit = store.begin(
+            RUN_ID,
+            "TX-DUPLICATE-REVISION-002",
+            "duplicate_revision",
+            1,
+        )
+        unit.put_artifact_revision(
+            _records().revision.model_copy(
+                update={
+                    "path": f"output/artifacts/{conflicting_sha256}/brief.md",
+                    "sha256": conflicting_sha256,
+                    "size_bytes": len(conflicting_content),
+                }
+            ),
+            conflicting_content,
+        )
+        with pytest.raises(ControlStoreConflict) as error:
+            unit.commit()
+        assert error.value.code == "relational_integrity_conflict"
+        assert store.current_revision == 1
+        assert not store._blob_path(conflicting_sha256).exists()
+        assert store.scan_orphans().orphan_hashes == ()
+
+
 @pytest.mark.parametrize(
     "failure_stage",
     [
@@ -1131,6 +1217,20 @@ def test_reopen_rejects_foreign_key_corruption_that_quick_check_misses(
     assert str(error.value) == "database_foreign_key_check_failed"
 
 
+def test_reopen_rejects_missing_append_only_trigger_definition(
+    tmp_path: Path,
+) -> None:
+    store = _create_store(tmp_path)
+    _stage_all(store).commit()
+    store.close()
+    _mutate_schema(tmp_path / "control.db", "DROP TRIGGER events_no_update;")
+
+    with pytest.raises(ControlStoreIntegrityError) as error:
+        SQLiteControlStore.open(tmp_path / "control.db")
+    assert error.value.code == "database_schema_definition_mismatch"
+    assert str(error.value) == "database_schema_definition_mismatch"
+
+
 def test_future_schema_fails_closed(tmp_path: Path) -> None:
     store = _create_store(tmp_path)
     store.close()
@@ -1196,6 +1296,27 @@ def test_backup_rejects_foreign_key_corruption_without_destination(
     assert not destination.exists()
 
 
+def test_backup_rejects_replaced_append_only_trigger_without_destination(
+    tmp_path: Path,
+) -> None:
+    destination = tmp_path / "schema-drift-backup"
+    with _create_store(tmp_path) as store:
+        _stage_all(store).commit()
+        _mutate_schema(
+            store.path,
+            """
+            DROP TRIGGER events_no_update;
+            CREATE TRIGGER events_no_update
+            BEFORE UPDATE ON events BEGIN SELECT 1; END;
+            """,
+        )
+        with pytest.raises(ControlStoreIntegrityError) as error:
+            store.backup_to(destination)
+        assert error.value.code == "database_schema_definition_mismatch"
+        assert str(error.value) == "database_schema_definition_mismatch"
+    assert not destination.exists()
+
+
 def test_restore_rejects_foreign_key_corruption_and_cleans_destination(
     tmp_path: Path,
 ) -> None:
@@ -1209,6 +1330,26 @@ def test_restore_rejects_foreign_key_corruption_and_cleans_destination(
         SQLiteControlStore.restore_to_new_path(backup, destination)
     assert error.value.code == "database_foreign_key_check_failed"
     assert str(error.value) == "database_foreign_key_check_failed"
+    assert not destination.exists()
+    assert not destination.with_name(f"{destination.name}.blobs").exists()
+
+
+def test_restore_rejects_table_definition_drift_and_cleans_destination(
+    tmp_path: Path,
+) -> None:
+    with _create_store(tmp_path) as store:
+        _stage_all(store).commit()
+        backup = store.backup_to(tmp_path / "backup-with-schema-drift")
+    _mutate_schema(
+        backup / "control.db",
+        "ALTER TABLE stage_states ADD COLUMN unexpected_extension TEXT;",
+    )
+
+    destination = tmp_path / "restored-schema-drift.db"
+    with pytest.raises(ControlStoreIntegrityError) as error:
+        SQLiteControlStore.restore_to_new_path(backup, destination)
+    assert error.value.code == "database_schema_definition_mismatch"
+    assert str(error.value) == "database_schema_definition_mismatch"
     assert not destination.exists()
     assert not destination.with_name(f"{destination.name}.blobs").exists()
 

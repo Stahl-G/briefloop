@@ -391,6 +391,7 @@ class SQLiteControlStore:
                 ).fetchone()
                 if existing_run is None:
                     raise ControlStoreConflict("run_not_found")
+            self._preflight_artifact_subgraph(uow, run_id)
             self._inject("before_blob_write")
             for item in uow._artifact_revisions:
                 self._write_blob(item.record, item.content)
@@ -456,6 +457,53 @@ class SQLiteControlStore:
             self._inject("after_commit")
             self._verify_committed_blob_bindings(run_id=run_id)
             return receipt
+
+    def _preflight_artifact_subgraph(
+        self,
+        uow: "ControlUnitOfWork",
+        run_id: str,
+    ) -> None:
+        """Reject deterministically unbound blob records before file writes."""
+
+        staged_artifact_ids = set(uow._artifacts)
+        staged_revision_keys = {
+            (item.record.artifact_id, item.record.revision)
+            for item in uow._artifact_revisions
+        }
+        existing_artifact_ids = {
+            str(row[0])
+            for row in self._connection.execute(
+                "SELECT artifact_id FROM artifacts WHERE run_id = ?",
+                (run_id,),
+            ).fetchall()
+        }
+        for artifact_id, revision in staged_revision_keys:
+            if artifact_id not in staged_artifact_ids | existing_artifact_ids:
+                raise ControlStoreConflict("relational_integrity_conflict")
+            if self._connection.execute(
+                """
+                SELECT 1 FROM artifact_revisions
+                WHERE run_id = ? AND artifact_id = ? AND revision = ?
+                """,
+                (run_id, artifact_id, revision),
+            ).fetchone() is not None:
+                # Exact transaction replay returned before this preflight. Any
+                # remaining revision-key collision belongs to different intent.
+                raise ControlStoreConflict("relational_integrity_conflict")
+        for record in uow._artifacts.values():
+            if record.current_revision == 0:
+                continue
+            key = (record.artifact_id, record.current_revision)
+            if key in staged_revision_keys:
+                continue
+            if self._connection.execute(
+                """
+                SELECT 1 FROM artifact_revisions
+                WHERE run_id = ? AND artifact_id = ? AND revision = ?
+                """,
+                (run_id, record.artifact_id, record.current_revision),
+            ).fetchone() is None:
+                raise ControlStoreConflict("relational_integrity_conflict")
 
     def _workspace_revision_in_transaction(self) -> int:
         row = self._connection.execute(

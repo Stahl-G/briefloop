@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from functools import lru_cache
 from importlib import resources
 import sqlite3
 
@@ -13,6 +14,54 @@ from multi_agent_brief.control_store.errors import (
 
 SCHEMA_VERSION = 1
 MIGRATION_NAME = "0001"
+_SCHEMA_OBJECT_TYPES = ("index", "table", "trigger", "view")
+
+
+def _schema_inventory(
+    connection: sqlite3.Connection,
+) -> tuple[tuple[str, str, str, str | None], ...]:
+    try:
+        rows = connection.execute(
+            """
+            SELECT type, name, tbl_name, sql
+            FROM sqlite_schema
+            WHERE type IN ('index', 'table', 'trigger', 'view')
+              AND name NOT LIKE 'sqlite_%'
+            ORDER BY type, name
+            """
+        ).fetchall()
+    except sqlite3.Error as exc:
+        raise ControlStoreIntegrityError(
+            "database_schema_definition_mismatch"
+        ) from exc
+    inventory: list[tuple[str, str, str, str | None]] = []
+    for row in rows:
+        object_type, name, table_name, definition = row
+        if object_type not in _SCHEMA_OBJECT_TYPES:
+            raise ControlStoreIntegrityError("database_schema_definition_mismatch")
+        inventory.append(
+            (
+                str(object_type),
+                str(name),
+                str(table_name),
+                None if definition is None else str(definition),
+            )
+        )
+    return tuple(inventory)
+
+
+@lru_cache(maxsize=1)
+def _expected_schema_inventory() -> tuple[tuple[str, str, str, str | None], ...]:
+    connection = sqlite3.connect(":memory:")
+    try:
+        connection.executescript(migration_sql())
+        return _schema_inventory(connection)
+    except ControlStoreIntegrityError:
+        raise
+    except sqlite3.Error as exc:
+        raise ControlStoreSchemaError("migration_resource_invalid") from exc
+    finally:
+        connection.close()
 
 
 def migration_sql() -> str:
@@ -85,6 +134,8 @@ def verify_schema(connection: sqlite3.Connection) -> None:
         raise ControlStoreSchemaError("schema_metadata_invalid") from exc
     if row is None or row[0] != MIGRATION_NAME:
         raise ControlStoreSchemaError("schema_metadata_invalid")
+    if _schema_inventory(connection) != _expected_schema_inventory():
+        raise ControlStoreIntegrityError("database_schema_definition_mismatch")
     try:
         result = connection.execute("PRAGMA quick_check").fetchone()
     except sqlite3.Error as exc:
