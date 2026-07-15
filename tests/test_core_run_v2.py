@@ -1741,7 +1741,12 @@ def test_direct_legacy_control_files_have_zero_run_truth_effect(
     }
 
 
-def test_initialize_replay_is_exact_and_conflict_is_zero_write(tmp_path: Path) -> None:
+@pytest.mark.parametrize("filename", ["config.yaml", "sources.yaml"])
+def test_initialize_replay_is_exact_and_conflict_is_zero_write(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    filename: str,
+) -> None:
     workspace = _workspace(tmp_path)
     service = CoreRunService(workspace, clock=CLOCK)
     payload = deepcopy(CoreRunInitializeRequest.minimal_example)
@@ -1762,6 +1767,16 @@ def test_initialize_replay_is_exact_and_conflict_is_zero_write(tmp_path: Path) -
     assert first.status == "committed"
     revision = _store_revision(workspace)
 
+    with (workspace / filename).open("a", encoding="utf-8") as stream:
+        stream.write("\n# mutable input changed after initialization\n")
+
+    def reject_workspace_reread(*_args, **_kwargs):
+        raise AssertionError("initialize replay reread mutable workspace inputs")
+
+    monkeypatch.setattr(
+        "multi_agent_brief.core_run_v2.service.workspace_input_fingerprints",
+        reject_workspace_reread,
+    )
     replay = service.initialize(request)
     assert replay.status == "replayed"
     assert replay.receipt == first.receipt
@@ -1775,6 +1790,40 @@ def test_initialize_replay_is_exact_and_conflict_is_zero_write(tmp_path: Path) -
     assert conflict.status == "failed_uncommitted"
     assert conflict.error_code == "submission_replay_conflict"
     assert _store_revision(workspace) == revision
+
+
+@pytest.mark.parametrize("filename", ["config.yaml", "sources.yaml"])
+def test_new_initialize_rejects_workspace_input_hash_mismatch_without_store(
+    tmp_path: Path,
+    filename: str,
+) -> None:
+    workspace = _workspace(tmp_path)
+    payload = deepcopy(CoreRunInitializeRequest.minimal_example)
+    payload.update(
+        request_id=f"REQ-INIT-MISMATCH-{filename.split('.')[0].upper()}",
+        workspace_id=WORKSPACE_ID,
+        run_id=RUN_ID,
+        input_governance_required=False,
+        workspace_config_sha256=read_workspace_file(
+            workspace, "config.yaml"
+        ).sha256,
+        sources_config_sha256=read_workspace_file(
+            workspace, "sources.yaml"
+        ).sha256,
+    )
+    with (workspace / filename).open("a", encoding="utf-8") as stream:
+        stream.write("\n# changed before first initialize\n")
+
+    result = CoreRunService(workspace, clock=CLOCK).initialize(
+        CoreRunInitializeRequest.model_validate(payload, strict=True)
+    )
+
+    assert result.to_dict() == {
+        "status": "failed_uncommitted",
+        "error_code": "core_run_contract_mismatch",
+    }
+    assert not (workspace / "briefloop.db").exists()
+    assert not (workspace / "briefloop.db.blobs").exists()
 
 
 @pytest.mark.parametrize("filename", ["config.yaml", "sources.yaml"])

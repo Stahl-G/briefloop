@@ -133,12 +133,6 @@ class CoreRunService:
             and _legacy_control_state_present(self.workspace)
         ):
             raise CoreRunError("unsupported_schema_version")
-        config_sha256, sources_sha256 = workspace_input_fingerprints(self.workspace)
-        if (
-            config_sha256 != request.workspace_config_sha256
-            or sources_sha256 != request.sources_config_sha256
-        ):
-            raise CoreRunError("core_run_contract_mismatch")
         contracts = self._load_contracts()
         stage_bytes = canonical_json_bytes(contracts.stage_specs)
         artifact_bytes = canonical_json_bytes(contracts.artifact_contracts)
@@ -184,6 +178,13 @@ class CoreRunService:
                 if replay is not None:
                     return replay
             raise CoreRunError("core_run_head_mismatch")
+
+        config_sha256, sources_sha256 = workspace_input_fingerprints(self.workspace)
+        if (
+            config_sha256 != request.workspace_config_sha256
+            or sources_sha256 != request.sources_config_sha256
+        ):
+            raise CoreRunError("core_run_contract_mismatch")
 
         created = False
         store: SQLiteControlStore | None = None
