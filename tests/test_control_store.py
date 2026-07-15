@@ -1088,7 +1088,7 @@ def test_only_merged_control_dtos_are_serializable() -> None:
     assert error.value.code == "unsupported_control_record"
 
 
-def test_migration_resource_is_exact_packaged_source_bytes() -> None:
+def test_migration_resource_matches_packaged_source_text() -> None:
     source = (
         Path(__file__).parents[1]
         / "src"
@@ -1097,7 +1097,11 @@ def test_migration_resource_is_exact_packaged_source_bytes() -> None:
         / "migrations"
         / "0001.sql"
     )
-    assert migration_sql().encode("utf-8") == source.read_bytes()
+    # Git may materialize the Windows checkout with CRLF, while Python text
+    # reads (including importlib.resources) apply universal-newline semantics.
+    # The executable migration contract is the exact decoded SQL text, not the
+    # platform-specific working-tree newline representation.
+    assert migration_sql() == source.read_text(encoding="utf-8")
 
 
 def test_no_current_production_module_imports_control_store() -> None:
