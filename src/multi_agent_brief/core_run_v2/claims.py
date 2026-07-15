@@ -146,6 +146,20 @@ class ClaimFreezeService:
                 != request.expected_claim_drafts_artifact.revision
             ):
                 raise CoreRunError("artifact_revision_conflict")
+            drafts_artifact = next(
+                (
+                    item
+                    for item in verified.snapshot.artifacts
+                    if item.artifact_id == drafts_record.artifact_id
+                ),
+                None,
+            )
+            if (
+                drafts_artifact is None
+                or drafts_artifact.current_revision
+                != drafts_record.artifact_revision
+            ):
+                raise CoreRunError("artifact_revision_conflict")
             ledger = next(
                 (
                     item

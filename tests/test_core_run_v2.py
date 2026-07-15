@@ -2998,6 +2998,148 @@ def test_claim_commit_failure_rolls_back_claims_bindings_freeze_and_ledger(
     assert (workspace / ledger.path).is_file()
 
 
+def test_claim_freeze_requires_current_drafts_revision_and_exactly_replays(
+    tmp_path: Path,
+) -> None:
+    workspace = _workspace(tmp_path)
+    core = _advance_to_claim_ledger_ready(workspace)
+
+    def submit_claim_drafts(*, revision: int) -> None:
+        invocation_id = _start_invocation(
+            core,
+            workspace,
+            request_id=f"REQ-INVOKE-CLAIMS-REV{revision}",
+            stage_id="claim-ledger",
+            role_id="claim-ledger",
+        )
+        _submit_proposal(
+            workspace,
+            lane="claim-drafts",
+            invocation_id=invocation_id,
+            request_id=f"REQ-CLAIM-DRAFTS-REV{revision}",
+            artifact_id="claim_drafts",
+            expected_artifact_revision=revision - 1,
+            payload={
+                "schema_version": "briefloop.claim_drafts_proposal.v2",
+                "proposal_id": f"PROP-CLAIM-DRAFTS-REV{revision}",
+                "run_id": RUN_ID,
+                "screened_candidates_proposal_id": "PROP-SCREENED-001",
+                "created_at": NOW,
+                "drafts": [
+                    {
+                        "draft_id": f"DRAFT-REV{revision}",
+                        "statement": (
+                            "ExampleCo opened a public pilot facility."
+                        ),
+                        "evidence_text": (
+                            "ExampleCo opened a public pilot facility on "
+                            "2026-07-14."
+                        ),
+                        "source_ids": ["SRC-001"],
+                        "claim_type": "fact",
+                    }
+                ],
+            },
+        )
+
+    submit_claim_drafts(revision=1)
+    submit_claim_drafts(revision=2)
+
+    def tracked_file_state() -> dict[str, tuple[bytes, int]]:
+        state: dict[str, tuple[bytes, int]] = {}
+        for root_name in ("briefloop.db.blobs", "output"):
+            root = workspace / root_name
+            if not root.is_dir():
+                continue
+            for path in sorted(root.rglob("*")):
+                if path.is_file() and not path.is_symlink():
+                    state[path.relative_to(workspace).as_posix()] = (
+                        path.read_bytes(),
+                        path.stat().st_mtime_ns,
+                    )
+        return state
+
+    service = ClaimFreezeService(workspace, clock=CLOCK)
+    before_files = tracked_file_state()
+    with SQLiteControlStore.open(workspace / "briefloop.db") as store:
+        before_stale = store.load_snapshot(RUN_ID)
+    stale = service.freeze(
+        _record(
+            ClaimFreezeRequest,
+            request_id="REQ-FREEZE-STALE-DRAFTS",
+            run_id=RUN_ID,
+            claim_drafts_proposal_id="PROP-CLAIM-DRAFTS-REV1",
+            expected_claim_drafts_artifact={
+                "artifact_id": "claim_drafts",
+                "revision": 1,
+            },
+            expected_store_revision=before_stale.store_revision,
+            expected_ledger_revision=0,
+        )
+    )
+    assert stale.to_dict() == {
+        "status": "failed_uncommitted",
+        "error_code": "artifact_revision_conflict",
+    }
+    with SQLiteControlStore.open(workspace / "briefloop.db") as store:
+        assert store.load_snapshot(RUN_ID) == before_stale
+    assert tracked_file_state() == before_files
+
+    current_request = _record(
+        ClaimFreezeRequest,
+        request_id="REQ-FREEZE-CURRENT-DRAFTS",
+        run_id=RUN_ID,
+        claim_drafts_proposal_id="PROP-CLAIM-DRAFTS-REV2",
+        expected_claim_drafts_artifact={
+            "artifact_id": "claim_drafts",
+            "revision": 2,
+        },
+        expected_store_revision=before_stale.store_revision,
+        expected_ledger_revision=0,
+    )
+    frozen = service.freeze(current_request)
+    assert frozen.status == "committed", frozen.to_dict()
+    _complete_stage(
+        core,
+        workspace,
+        stage_id="claim-ledger",
+        artifacts=[("claim_drafts", 2), ("claim_ledger", 1)],
+    )
+    assert _stage(workspace, "analyst").status == "ready"
+
+    replay = service.freeze(current_request)
+    assert replay.status == "replayed"
+    assert replay.receipt == frozen.receipt
+    assert replay.primary_record_id == frozen.primary_record_id
+
+    with SQLiteControlStore.open(workspace / "briefloop.db") as store:
+        verified = CoreRunDomainVerifier().verify(store, RUN_ID)
+        drafts_artifact = next(
+            item
+            for item in verified.snapshot.artifacts
+            if item.artifact_id == "claim_drafts"
+        )
+        stale_snapshot = replace(
+            verified.snapshot,
+            artifacts=tuple(
+                item.model_copy(update={"current_revision": 1})
+                if item.artifact_id == "claim_drafts"
+                else item
+                for item in verified.snapshot.artifacts
+            ),
+        )
+        assert drafts_artifact.current_revision == 2
+        with pytest.raises(
+            CoreRunError,
+            match="control_store_integrity_invalid",
+        ):
+            CoreRunDomainVerifier._verify_claim_chain(
+                store,
+                stale_snapshot,
+                verified.binding,
+            )
+
+
 def test_stage_state_without_transition_rolls_back(tmp_path: Path) -> None:
     workspace = _workspace(tmp_path)
     _initialize(workspace)

@@ -1277,12 +1277,21 @@ class CoreRunDomainVerifier:
         proposals = {
             item.proposal_id: item for item in snapshot.accepted_proposals
         }
+        artifacts = {item.artifact_id: item for item in snapshot.artifacts}
         drafts_record = proposals.get(freeze.claim_drafts_proposal_id)
         screened_record = proposals.get(freeze.screened_proposal_id)
         candidate_record = proposals.get(freeze.candidate_proposal_id)
+        drafts_artifact = (
+            artifacts.get(drafts_record.artifact_id)
+            if drafts_record is not None
+            else None
+        )
         if (
             drafts_record is None
             or drafts_record.proposal_kind != "claim_drafts"
+            or drafts_artifact is None
+            or drafts_artifact.current_revision
+            != drafts_record.artifact_revision
             or screened_record is None
             or screened_record.proposal_kind != "screened"
             or candidate_record is None
