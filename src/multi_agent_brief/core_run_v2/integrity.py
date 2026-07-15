@@ -310,7 +310,11 @@ def read_workspace_file(workspace: Path, relative_path: str) -> CheckoutObservat
         before = leaf.lstat()
         if not stat.S_ISREG(before.st_mode) or stat.S_ISLNK(before.st_mode):
             return CheckoutObservation("non_regular")
-        flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0)
+        flags = (
+            os.O_RDONLY
+            | getattr(os, "O_NOFOLLOW", 0)
+            | getattr(os, "O_BINARY", 0)
+        )
         descriptor = os.open(leaf, flags)
         try:
             opened = os.fstat(descriptor)
@@ -362,7 +366,10 @@ def materialize_checkout(workspace: Path, relative_path: str, content: bytes) ->
             temporary.unlink()
         descriptor = os.open(
             temporary,
-            os.O_WRONLY | os.O_CREAT | os.O_EXCL,
+            os.O_WRONLY
+            | os.O_CREAT
+            | os.O_EXCL
+            | getattr(os, "O_BINARY", 0),
             0o600,
         )
         try:
