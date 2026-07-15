@@ -1,12 +1,15 @@
 from __future__ import annotations
 
 import ast
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import datetime, timezone
 import hashlib
+import os
 from pathlib import Path
 import shutil
 import sqlite3
+import subprocess
+import sys
 
 import pytest
 
@@ -39,6 +42,88 @@ NOW = "2026-07-15T09:00:00+00:00"
 COMMITTED_AT = datetime(2026, 7, 15, 9, 0, 1, tzinfo=timezone.utc)
 BLOB = b"BriefLoop SQLite substrate test artifact.\n"
 BLOB_SHA256 = hashlib.sha256(BLOB).hexdigest()
+CRASH_TRANSACTION_ID = "TX-CRASH-BOUNDARY-001"
+
+
+_CRASH_SUBPROCESS = r"""
+from datetime import datetime, timezone
+import hashlib
+import os
+from pathlib import Path
+import sys
+
+from multi_agent_brief.contracts.v2 import (
+    ArtifactRecord,
+    ArtifactRevision,
+    RunIdentity,
+)
+from multi_agent_brief.control_store import SQLiteControlStore
+
+database = Path(sys.argv[1])
+failure_stage = sys.argv[2]
+content = b"BriefLoop SQLite substrate test artifact.\n"
+digest = hashlib.sha256(content).hexdigest()
+
+
+def crash(stage: str) -> None:
+    if stage == failure_stage:
+        os._exit(73)
+
+
+store = SQLiteControlStore.open(
+    database,
+    clock=lambda: datetime(2026, 7, 15, 9, 0, 1, tzinfo=timezone.utc),
+    _failure_hook=crash,
+)
+run = RunIdentity.model_validate(
+    {
+        "schema_version": RunIdentity.schema_id,
+        "run_id": "RUN-20260715-001",
+        "workspace_id": "WS-CONTROLSTORE-TEST",
+        "runtime": "operator",
+        "created_at": "2026-07-15T09:00:00+00:00",
+    }
+)
+artifact = ArtifactRecord.model_validate(
+    {
+        "schema_version": ArtifactRecord.schema_id,
+        "run_id": run.run_id,
+        "artifact_id": "brief",
+        "current_revision": 1,
+        "status": "valid",
+        "required": True,
+        "path": "output/brief.md",
+        "format": "markdown",
+    }
+)
+revision = ArtifactRevision.model_validate(
+    {
+        "schema_version": ArtifactRevision.schema_id,
+        "run_id": run.run_id,
+        "artifact_id": artifact.artifact_id,
+        "revision": 1,
+        "path": f"output/artifacts/{digest}/brief.md",
+        "sha256": digest,
+        "size_bytes": len(content),
+        "frozen": True,
+        "producer_kind": "workflow_stage",
+        "producer_id": "scout",
+        "created_at": "2026-07-15T09:00:00+00:00",
+    }
+)
+unit = store.begin(
+    run.run_id,
+    "TX-CRASH-BOUNDARY-001",
+    "crash_boundary",
+    0,
+)
+unit.put_run(run)
+unit.put_artifact(artifact)
+unit.put_artifact_revision(revision, content)
+unit.commit()
+store.close()
+raise SystemExit(0)
+"""
 
 
 @dataclass(frozen=True)
@@ -191,6 +276,64 @@ def _stage_all(store: SQLiteControlStore, records: Records | None = None):
 
 def _table_count(store: SQLiteControlStore, table: str) -> int:
     return int(store._connection.execute(f"SELECT count(*) FROM {table}").fetchone()[0])
+
+
+def _stage_crash_boundary_unit(store: SQLiteControlStore):
+    records = _records(transaction_id=CRASH_TRANSACTION_ID)
+    unit = store.begin(
+        RUN_ID,
+        CRASH_TRANSACTION_ID,
+        "crash_boundary",
+        0,
+    )
+    unit.put_run(records.run)
+    unit.put_artifact(records.artifact)
+    unit.put_artifact_revision(records.revision, BLOB)
+    return unit
+
+
+def _run_crash_subprocess(database: Path, failure_stage: str) -> None:
+    repo = Path(__file__).parents[1]
+    environment = os.environ.copy()
+    source_path = str(repo / "src")
+    existing_pythonpath = environment.get("PYTHONPATH")
+    environment["PYTHONPATH"] = (
+        source_path
+        if not existing_pythonpath
+        else source_path + os.pathsep + existing_pythonpath
+    )
+    command = [sys.executable]
+    if sys.flags.optimize:
+        command.append("-O")
+    command.extend(["-c", _CRASH_SUBPROCESS, str(database), failure_stage])
+    result = subprocess.run(
+        command,
+        cwd=repo,
+        env=environment,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert result.returncode == 73, result.stderr
+
+
+@pytest.mark.parametrize(
+    "workspace_id",
+    ["workspace id with spaces", "工作区", "", 7],
+)
+def test_create_rejects_invalid_workspace_id_before_any_path_write(
+    tmp_path: Path,
+    workspace_id: object,
+) -> None:
+    store_root = tmp_path / "not-created"
+    with pytest.raises(ControlStoreIntegrityError) as error:
+        SQLiteControlStore.create(
+            store_root / "control.db",
+            workspace_id=workspace_id,  # type: ignore[arg-type]
+        )
+    assert error.value.code == "workspace_id_invalid"
+    assert str(error.value) == "workspace_id_invalid"
+    assert not store_root.exists()
 
 
 def test_control_store_round_trips_exact_nine_control_dtos(tmp_path: Path) -> None:
@@ -395,15 +538,88 @@ def test_optimistic_revision_conflict_happens_before_blob_write(tmp_path: Path) 
         assert _table_count(store, "transactions") == 1
 
 
-def test_invalid_transaction_identity_is_typed_and_zero_write(tmp_path: Path) -> None:
+@pytest.mark.parametrize(
+    ("transaction_id", "transaction_type"),
+    [
+        ("transaction id with spaces", "update"),
+        ("TX-VALID-001", "type/with/slashes"),
+        ("交易", "update"),
+        ("TX-VALID-001", ""),
+    ],
+)
+def test_invalid_transaction_identity_is_rejected_before_uow_or_blob_write(
+    tmp_path: Path,
+    transaction_id: str,
+    transaction_type: str,
+) -> None:
     with _create_store(tmp_path) as store:
-        _stage_all(store).commit()
-        unit = store.begin(RUN_ID, "transaction id with spaces", "update", 1)
         with pytest.raises(ControlStoreIntegrityError) as error:
-            unit.commit()
+            store.begin(RUN_ID, transaction_id, transaction_type, 0)
         assert error.value.code == "transaction_identity_invalid"
+        assert str(error.value) == "transaction_identity_invalid"
+        assert store.current_revision == 0
+        assert _table_count(store, "transactions") == 0
+        assert _table_count(store, "artifact_revisions") == 0
+        assert list(store.blob_root.rglob("*")) == []
+
+
+def test_uow_transaction_identity_is_read_only_after_begin(
+    tmp_path: Path,
+) -> None:
+    with _create_store(tmp_path) as store:
+        unit = _stage_all(store)
+        for field_name, value in (
+            ("run_id", "RUN-CHANGED-VALID"),
+            ("transaction_id", "TX-CHANGED-VALID"),
+            ("transaction_type", "changed_valid_type"),
+            ("expected_revision", 9),
+        ):
+            with pytest.raises(AttributeError):
+                setattr(unit, field_name, value)
+        unit.rollback()
+        assert store.current_revision == 0
+        assert _table_count(store, "transactions") == 0
+        assert _table_count(store, "artifact_revisions") == 0
+        assert list(store.blob_root.rglob("*")) == []
+
+
+@pytest.mark.parametrize(
+    ("field_name", "changed_value"),
+    [
+        ("run_id", "RUN-CHANGED-VALID"),
+        ("transaction_id", "invalid transaction id"),
+        ("transaction_type", "changed_valid_type"),
+        ("expected_revision", 99),
+    ],
+)
+def test_commit_uses_one_frozen_identity_across_blob_and_sql_boundaries(
+    tmp_path: Path,
+    field_name: str,
+    changed_value: object,
+) -> None:
+    store = _create_store(tmp_path)
+    unit = _stage_all(store)
+
+    def replace_private_identity(stage: str) -> None:
+        if stage == "before_blob_write":
+            unit._identity = replace(
+                unit._identity,
+                **{field_name: changed_value},
+            )
+
+    store._failure_hook = replace_private_identity
+    try:
+        receipt = unit.commit()
+        assert receipt.run_id == RUN_ID
+        assert receipt.transaction_id == TRANSACTION_ID
+        assert receipt.transaction_type == "control_store_bootstrap"
+        assert receipt.prior_revision == 0
         assert store.current_revision == 1
         assert _table_count(store, "transactions") == 1
+        assert _table_count(store, "artifact_revisions") == 1
+        assert store.scan_orphans().orphan_hashes == ()
+    finally:
+        store.close()
 
 
 def test_wrong_workspace_and_cross_run_records_fail_without_writes(
@@ -569,6 +785,58 @@ def test_orphan_scan_is_report_only_and_never_accepts_or_deletes(
         assert store._blob_path(BLOB_SHA256).read_bytes() == BLOB
         assert malformed.read_bytes() == b"unowned"
         assert _table_count(store, "artifact_revisions") == 0
+
+
+@pytest.mark.parametrize(
+    ("failure_stage", "expected_orphans"),
+    [
+        ("before_blob_write", ()),
+        ("after_blob_write", (BLOB_SHA256,)),
+    ],
+)
+def test_real_process_exit_before_db_commit_never_creates_committed_records(
+    tmp_path: Path,
+    failure_stage: str,
+    expected_orphans: tuple[str, ...],
+) -> None:
+    store = _create_store(tmp_path)
+    database = store.path
+    store.close()
+
+    _run_crash_subprocess(database, failure_stage)
+
+    with SQLiteControlStore.open(database) as reopened:
+        assert reopened.current_revision == 0
+        assert _table_count(reopened, "runs") == 0
+        assert _table_count(reopened, "transactions") == 0
+        assert _table_count(reopened, "artifact_revisions") == 0
+        assert reopened.scan_orphans().orphan_hashes == expected_orphans
+        assert reopened._connection.execute("PRAGMA quick_check").fetchone()[0] == "ok"
+        with pytest.raises(ControlStoreStateError) as error:
+            reopened.load_snapshot(RUN_ID)
+        assert error.value.code == "run_not_found"
+
+
+def test_real_process_exit_after_commit_reopens_and_exactly_replays_receipt(
+    tmp_path: Path,
+) -> None:
+    store = _create_store(tmp_path)
+    database = store.path
+    store.close()
+
+    _run_crash_subprocess(database, "after_commit")
+
+    with SQLiteControlStore.open(database, clock=lambda: COMMITTED_AT) as reopened:
+        snapshot = reopened.load_snapshot(RUN_ID)
+        assert snapshot.store_revision == 1
+        assert len(snapshot.transactions) == 1
+        receipt = snapshot.transactions[0]
+        assert receipt.transaction_id == CRASH_TRANSACTION_ID
+        assert reopened._blob_path(BLOB_SHA256).read_bytes() == BLOB
+        assert reopened._connection.execute("PRAGMA quick_check").fetchone()[0] == "ok"
+        assert _stage_crash_boundary_unit(reopened).commit() == receipt
+        assert reopened.current_revision == 1
+        assert _table_count(reopened, "transactions") == 1
 
 
 def test_event_revision_and_approval_rows_are_append_only(tmp_path: Path) -> None:
@@ -749,6 +1017,7 @@ def test_wal_backup_restore_preserves_latest_revision_and_blob_integrity(
     tmp_path: Path,
 ) -> None:
     with _create_store(tmp_path) as store:
+        store._connection.execute("PRAGMA wal_autocheckpoint = 0")
         _stage_all(store).commit()
         updated_stage = _records().stage.model_copy(
             update={"status": "blocked", "revision": 2}
@@ -761,6 +1030,9 @@ def test_wal_backup_restore_preserves_latest_revision_and_blob_integrity(
         )
         second.put_stage_state(updated_stage)
         second.commit()
+        wal_path = store.path.with_name(f"{store.path.name}-wal")
+        assert wal_path.is_file()
+        assert wal_path.stat().st_size > 0
         backup = store.backup_to(tmp_path / "backup")
         assert backup == tmp_path / "backup"
         assert (backup / "control.db").is_file()

@@ -37,6 +37,14 @@ class _StagedArtifactRevision:
     content: bytes
 
 
+@dataclass(frozen=True)
+class _TransactionIdentity:
+    run_id: str
+    transaction_id: str
+    transaction_type: str
+    expected_revision: int
+
+
 class ControlUnitOfWork:
     """Collect one exact-revision transaction before its atomic DB commit."""
 
@@ -50,10 +58,12 @@ class ControlUnitOfWork:
         expected_revision: int,
     ) -> None:
         self._store = store
-        self.run_id = run_id
-        self.transaction_id = transaction_id
-        self.transaction_type = transaction_type
-        self.expected_revision = expected_revision
+        self._identity = _TransactionIdentity(
+            run_id=run_id,
+            transaction_id=transaction_id,
+            transaction_type=transaction_type,
+            expected_revision=expected_revision,
+        )
         self._run: RunIdentity | None = None
         self._stage_states: dict[str, StageState] = {}
         self._invocations: dict[str, Invocation] = {}
@@ -65,6 +75,22 @@ class ControlUnitOfWork:
         self._approvals: dict[str, Approval] = {}
         self._deliveries: dict[str, Delivery] = {}
         self._state = "active"
+
+    @property
+    def run_id(self) -> str:
+        return self._identity.run_id
+
+    @property
+    def transaction_id(self) -> str:
+        return self._identity.transaction_id
+
+    @property
+    def transaction_type(self) -> str:
+        return self._identity.transaction_type
+
+    @property
+    def expected_revision(self) -> int:
+        return self._identity.expected_revision
 
     def __enter__(self) -> "ControlUnitOfWork":
         self._require_active()
@@ -161,14 +187,18 @@ class ControlUnitOfWork:
             raise ControlStoreConflict("duplicate_staged_record")
         collection[key] = value
 
-    def _fingerprint(self) -> str:
+    def _identity_snapshot(self) -> _TransactionIdentity:
+        self._require_active()
+        return self._identity
+
+    def _fingerprint(self, identity: _TransactionIdentity) -> str:
         """Fingerprint caller intent, excluding the store-generated receipt."""
 
         payload = {
-            "run_id": self.run_id,
-            "transaction_id": self.transaction_id,
-            "transaction_type": self.transaction_type,
-            "expected_revision": self.expected_revision,
+            "run_id": identity.run_id,
+            "transaction_id": identity.transaction_id,
+            "transaction_type": identity.transaction_type,
+            "expected_revision": identity.expected_revision,
             "run": (
                 canonical_model_payload(self._run) if self._run is not None else None
             ),

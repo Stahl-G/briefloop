@@ -11,11 +11,14 @@ import threading
 from typing import TYPE_CHECKING, Callable, Iterable, TypeVar
 from uuid import uuid4
 
+from pydantic import TypeAdapter, ValidationError
+
 from multi_agent_brief.contracts.v2 import (
     Approval,
     ArtifactRecord,
     ArtifactRevision,
     ArtifactRevisionReference,
+    ContractId,
     Delivery,
     EventEnvelope,
     Invocation,
@@ -45,6 +48,16 @@ from multi_agent_brief.control_store.serialization import (
 
 _ModelT = TypeVar("_ModelT", bound=StrictModel)
 _FailureHook = Callable[[str], None]
+_CONTRACT_ID_ADAPTER = TypeAdapter(ContractId)
+
+
+def _validate_contract_id(value: object, error_code: str) -> str:
+    """Reuse the PR-1 ContractId vocabulary without copying its grammar."""
+
+    try:
+        return _CONTRACT_ID_ADAPTER.validate_python(value, strict=True)
+    except ValidationError as exc:
+        raise ControlStoreIntegrityError(error_code) from exc
 
 
 @dataclass(frozen=True)
@@ -104,9 +117,8 @@ class SQLiteControlStore:
         clock: Callable[[], datetime] | None = None,
         _failure_hook: _FailureHook | None = None,
     ) -> "SQLiteControlStore":
+        workspace_id = _validate_contract_id(workspace_id, "workspace_id_invalid")
         database_path = cls._normalize_path(path, "database_path_invalid")
-        if type(workspace_id) is not str or not workspace_id:
-            raise ControlStoreIntegrityError("workspace_id_invalid")
         blobs = cls._blob_root_for(database_path, blob_root)
         cls._validate_database_blob_separation(database_path, blobs)
         if database_path.exists() or database_path.is_symlink():
@@ -193,7 +205,10 @@ class SQLiteControlStore:
             ).fetchall()
             if len(workspace_rows) != 1:
                 raise ControlStoreIntegrityError("workspace_binding_invalid")
-            workspace_id = str(workspace_rows[0][0])
+            workspace_id = _validate_contract_id(
+                workspace_rows[0][0],
+                "workspace_id_invalid",
+            )
             store = cls(
                 path=database_path,
                 blob_root=blobs,
@@ -293,9 +308,15 @@ class SQLiteControlStore:
         expected_revision: int,
     ) -> "ControlUnitOfWork":
         self._require_open()
-        for value in (run_id, transaction_id, transaction_type):
-            if type(value) is not str or not value:
-                raise ControlStoreIntegrityError("transaction_identity_invalid")
+        run_id = _validate_contract_id(run_id, "transaction_identity_invalid")
+        transaction_id = _validate_contract_id(
+            transaction_id,
+            "transaction_identity_invalid",
+        )
+        transaction_type = _validate_contract_id(
+            transaction_type,
+            "transaction_identity_invalid",
+        )
         if type(expected_revision) is not int or expected_revision < 0:
             raise ControlStoreIntegrityError("expected_revision_invalid")
         from multi_agent_brief.control_store.uow import ControlUnitOfWork
@@ -332,22 +353,41 @@ class SQLiteControlStore:
         return receipt
 
     def _commit_unit_of_work(self, uow: "ControlUnitOfWork") -> TransactionReceipt:
-        fingerprint = uow._fingerprint()
+        # Freeze the validated identity at the commit linearization point. Every
+        # replay lookup, fingerprint, receipt, and revision check below uses this
+        # immutable snapshot rather than rereading caller-visible UoW state.
+        identity = uow._identity_snapshot()
+        run_id = _validate_contract_id(
+            identity.run_id,
+            "transaction_identity_invalid",
+        )
+        transaction_id = _validate_contract_id(
+            identity.transaction_id,
+            "transaction_identity_invalid",
+        )
+        transaction_type = _validate_contract_id(
+            identity.transaction_type,
+            "transaction_identity_invalid",
+        )
+        expected_revision = identity.expected_revision
+        if type(expected_revision) is not int or expected_revision < 0:
+            raise ControlStoreIntegrityError("expected_revision_invalid")
+        fingerprint = uow._fingerprint(identity)
         with self._lock:
             self._require_open()
             prior = self._existing_receipt(
-                uow.run_id,
-                uow.transaction_id,
+                run_id,
+                transaction_id,
                 fingerprint,
             )
             if prior is not None:
                 return prior
-            if self.current_revision != uow.expected_revision:
+            if self.current_revision != expected_revision:
                 raise ControlStoreConflict("store_revision_conflict")
             if uow._run is None:
                 existing_run = self._connection.execute(
                     "SELECT 1 FROM runs WHERE run_id = ?",
-                    (uow.run_id,),
+                    (run_id,),
                 ).fetchone()
                 if existing_run is None:
                     raise ControlStoreConflict("run_not_found")
@@ -360,18 +400,22 @@ class SQLiteControlStore:
                 self._connection.execute("BEGIN IMMEDIATE")
                 self._inject("after_begin")
                 replay = self._existing_receipt(
-                    uow.run_id,
-                    uow.transaction_id,
+                    run_id,
+                    transaction_id,
                     fingerprint,
                 )
                 if replay is not None:
                     self._connection.rollback()
                     return replay
                 locked_revision = self._workspace_revision_in_transaction()
-                if locked_revision != uow.expected_revision:
+                if locked_revision != expected_revision:
                     raise ControlStoreConflict("store_revision_conflict")
                 committed_revision = locked_revision + 1
-                receipt = self._build_receipt(uow, committed_revision)
+                receipt = self._build_receipt(
+                    uow,
+                    identity,
+                    committed_revision,
+                )
                 self._insert_run(uow._run)
                 self._insert_transaction(receipt, self.workspace_id, fingerprint)
                 self._upsert_stage_states(uow._stage_states.values())
@@ -407,7 +451,10 @@ class SQLiteControlStore:
                 raise
             if receipt is None:
                 raise ControlStoreIntegrityError("transaction_receipt_missing")
-            self._verify_committed_blob_bindings(run_id=uow.run_id)
+            # Private test-only boundary for a real process exit after the durable
+            # commit but before the caller observes the receipt.
+            self._inject("after_commit")
+            self._verify_committed_blob_bindings(run_id=run_id)
             return receipt
 
     def _workspace_revision_in_transaction(self) -> int:
@@ -422,6 +469,7 @@ class SQLiteControlStore:
     def _build_receipt(
         self,
         uow: "ControlUnitOfWork",
+        identity: "_TransactionIdentity",
         committed_revision: int,
     ) -> TransactionReceipt:
         timestamp = self._clock()
@@ -432,10 +480,10 @@ class SQLiteControlStore:
             return TransactionReceipt.model_validate(
                 {
                     "schema_version": TransactionReceipt.schema_id,
-                    "transaction_id": uow.transaction_id,
-                    "run_id": uow.run_id,
-                    "transaction_type": uow.transaction_type,
-                    "prior_revision": uow.expected_revision,
+                    "transaction_id": identity.transaction_id,
+                    "run_id": identity.run_id,
+                    "transaction_type": identity.transaction_type,
+                    "prior_revision": identity.expected_revision,
                     "committed_revision": committed_revision,
                     "committed_at": committed_at,
                     "projection_status": "stale",
@@ -1152,6 +1200,7 @@ if TYPE_CHECKING:
     from multi_agent_brief.control_store.uow import (
         ControlUnitOfWork,
         _StagedArtifactRevision,
+        _TransactionIdentity,
     )
 
 

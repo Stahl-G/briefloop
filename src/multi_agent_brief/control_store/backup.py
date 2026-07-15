@@ -101,6 +101,8 @@ def restore_store(
         blobs.parent.mkdir(parents=True, exist_ok=True)
         shutil.copy2(source_database, temporary_database)
         shutil.copytree(source_blobs, temporary_blobs)
+        _fsync_file(temporary_database)
+        _fsync_tree(temporary_blobs)
         os.replace(temporary_database, database_path)
         os.replace(temporary_blobs, blobs)
         _fsync_directory(database_path.parent)
@@ -128,8 +130,7 @@ def restore_store(
 def _fsync_tree(root: Path) -> None:
     for path in sorted(root.rglob("*")):
         if path.is_file():
-            with path.open("rb") as stream:
-                os.fsync(stream.fileno())
+            _fsync_file(path)
     for path in sorted(
         (item for item in root.rglob("*") if item.is_dir()),
         key=lambda item: len(item.parts),
@@ -139,8 +140,29 @@ def _fsync_tree(root: Path) -> None:
     _fsync_directory(root)
 
 
+def _fsync_file(path: Path) -> None:
+    # Windows' CRT rejects fsync on the read-only descriptor produced by ``rb``.
+    # These are newly written store/backup files, so open a write-capable handle
+    # there. POSIX retains its existing read-only file sync behavior.
+    flags = os.O_RDWR if os.name == "nt" else os.O_RDONLY
+    flags |= getattr(os, "O_BINARY", 0)
+    try:
+        descriptor = os.open(path, flags)
+    except OSError as exc:
+        raise ControlStoreIntegrityError("file_sync_failed") from exc
+    try:
+        os.fsync(descriptor)
+    except OSError as exc:
+        raise ControlStoreIntegrityError("file_sync_failed") from exc
+    finally:
+        os.close(descriptor)
+
+
 def _fsync_directory(path: Path) -> None:
     if os.name == "nt":
+        # Python exposes no portable Windows directory handle that os.fsync can
+        # accept. File handles are flushed before each atomic replacement; POSIX
+        # additionally fsyncs the containing directories below.
         return
     try:
         descriptor = os.open(path, os.O_RDONLY)
