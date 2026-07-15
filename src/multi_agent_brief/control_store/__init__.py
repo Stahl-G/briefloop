@@ -1,7 +1,7 @@
 """Non-authoritative typed SQLite ControlStore substrate.
 
 No current BriefLoop runtime consumer imports this package.  The package stores
-only the merged v2 control DTOs and does not decide workflow legality.
+typed v2 control DTOs and does not decide workflow legality.
 """
 
 from multi_agent_brief.control_store.errors import (

@@ -33,11 +33,16 @@ from multi_agent_brief.product.release_approval import (
 
 EXPECTED_V2_CONTRACT_IDS = (
     "briefloop.source_proposal.v2",
+    "briefloop.source_commit_request.v2",
     "briefloop.candidate_claims_proposal.v2",
     "briefloop.screened_candidates_proposal.v2",
     "briefloop.claim_drafts_proposal.v2",
     "briefloop.audit_proposal.v2",
     "briefloop.artifact_submit_request.v2",
+    "briefloop.workspace_run_head.v2",
+    "briefloop.accepted_source_record.v2",
+    "briefloop.accepted_proposal_record.v2",
+    "briefloop.proposal_source_binding.v2",
     "briefloop.run_identity.v2",
     "briefloop.stage_state.v2",
     "briefloop.artifact_record.v2",
@@ -52,8 +57,8 @@ EXPECTED_V2_CONTRACT_IDS = (
 
 def test_v2_contract_inventory_is_exact_and_uses_existing_registry() -> None:
     assert V2_CONTRACT_IDS == EXPECTED_V2_CONTRACT_IDS
-    assert len(V2_CONTRACT_MODELS) == 15
-    assert len(set(V2_CONTRACT_IDS)) == 15
+    assert len(V2_CONTRACT_MODELS) == 20
+    assert len(set(V2_CONTRACT_IDS)) == 20
     for contract_id, model in zip(V2_CONTRACT_IDS, V2_CONTRACT_MODELS):
         assert SchemaRegistry.get(contract_id) is model
 
@@ -110,7 +115,7 @@ def test_exported_schema_carries_the_constraints_used_by_after_validators() -> N
     [
         (
             "briefloop.artifact_submit_request.v2",
-            "expected_revision",
+            "expected_store_revision",
             "1",
             "must be an integer",
         ),
@@ -178,7 +183,7 @@ def test_extra_field_error_is_value_free_and_does_not_expose_pydantic_message() 
 
 def test_discriminated_source_locator_rejects_invalid_url_and_unknown_kind() -> None:
     contract_id = "briefloop.source_proposal.v2"
-    invalid_url = SchemaRegistry.example(contract_id, "minimal")
+    invalid_url = SchemaRegistry.example(contract_id, "full")
     invalid_url["locator"]["url"] = "not a URL"
     assert [
         (item.field, item.error)
@@ -205,14 +210,15 @@ def test_artifact_submit_request_binds_invocation_scratch_input_and_precondition
         "artifact_id",
         "invocation_id",
         "input_path",
-        "expected_revision",
+        "expected_store_revision",
+        "expected_artifact_revision",
     }
 
     for invalid_path, expected_field in (
-        ("output/intermediate/audited_brief.md", "input_path"),
-        ("scratch/INV-OTHER/audited_brief.md", "$"),
-        ("scratch/INV-EDITOR-001/other.md", "$"),
-        ("scratch/INV-EDITOR-001/audited_brief.pdf", "input_path"),
+        ("output/intermediate/candidate_claims.json", "input_path"),
+        ("scratch/INV-OTHER/candidate_claims.json", "$"),
+        ("scratch/INV-SCOUT-001/other.json", "$"),
+        ("scratch/INV-SCOUT-001/candidate_claims.md", "$"),
     ):
         invalid = dict(payload)
         invalid["input_path"] = invalid_path
@@ -228,6 +234,38 @@ def test_artifact_submit_request_binds_invocation_scratch_input_and_precondition
             (item.field, item.error)
             for item in SchemaRegistry.validate(contract_id, invalid)
         ] == [(derived_field, "extra field is not permitted")]
+
+
+def test_source_commit_request_paths_are_exactly_invocation_scoped() -> None:
+    contract_id = "briefloop.source_commit_request.v2"
+    payload = SchemaRegistry.example(contract_id, "minimal")
+    assert SchemaRegistry.validate(contract_id, payload) == []
+    for field, value in (
+        ("proposal_path", "scratch/INV-OTHER/source_proposal.json"),
+        ("proposal_path", "scratch/INV-SOURCE-001/other.json"),
+        ("content_path", "scratch/INV-SOURCE-001/source_content.exe"),
+        ("raw_payload_path", "scratch/INV-SOURCE-001/source_raw.pdf"),
+    ):
+        invalid = {**payload, field: value}
+        assert SchemaRegistry.validate(contract_id, invalid)
+
+
+def test_source_proposal_has_no_generic_metadata_escape_hatch() -> None:
+    contract_id = "briefloop.source_proposal.v2"
+    payload = SchemaRegistry.example(contract_id, "minimal")
+    payload["metadata"] = {"claims_eligible": True}
+    assert [
+        (item.field, item.error)
+        for item in SchemaRegistry.validate(contract_id, payload)
+    ] == [("metadata", "extra field is not permitted")]
+
+
+def test_receipt_source_and_proposal_relations_are_unique() -> None:
+    contract_id = "briefloop.transaction_receipt.v2"
+    payload = SchemaRegistry.example(contract_id, "minimal")
+    for field in ("source_ids", "proposal_ids"):
+        invalid = {**payload, field: ["IDENTITY-001", "IDENTITY-001"]}
+        assert SchemaRegistry.validate(contract_id, invalid)
 
 
 def test_control_dto_vocabularies_match_current_authority_values() -> None:
@@ -261,7 +299,12 @@ def test_control_dto_vocabularies_match_current_authority_values() -> None:
 def test_event_envelope_rejects_every_event_type_outside_the_current_owner() -> None:
     contract_id = "briefloop.event_envelope.v2"
     payload = SchemaRegistry.example(contract_id, "minimal")
-    for event_type in EVENT_TYPES:
+    intake_types = {
+        "source_evidence_committed",
+        "role_proposal_committed",
+        "intake_rejected",
+    }
+    for event_type in EVENT_TYPES - intake_types:
         assert SchemaRegistry.validate(
             contract_id,
             {**payload, "event_type": event_type},
@@ -277,6 +320,59 @@ def test_event_envelope_rejects_every_event_type_outside_the_current_owner() -> 
     schema = SchemaRegistry.json_schema(contract_id)
     assert set(schema["properties"]["event_type"]["enum"]) == set(EVENT_TYPES)
     assert set(schema["properties"]["actor"]["enum"]) == set(ACTORS)
+
+
+def test_intake_event_types_require_exact_typed_binding() -> None:
+    contract_id = "briefloop.event_envelope.v2"
+    base = SchemaRegistry.example(contract_id, "minimal")
+    common = {
+        "request_id": "REQ-001",
+        "request_fingerprint": "a" * 64,
+        "invocation_id": "INV-001",
+        "reason_code": None,
+    }
+    source = {
+        **base,
+        "event_type": "source_evidence_committed",
+        "intake_binding": {
+            **common,
+            "outcome": "committed",
+            "source_id": "SRC-001",
+            "proposal_id": None,
+        },
+    }
+    proposal = {
+        **base,
+        "event_type": "role_proposal_committed",
+        "intake_binding": {
+            **common,
+            "outcome": "committed",
+            "source_id": None,
+            "proposal_id": "PROP-001",
+        },
+    }
+    rejection = {
+        **base,
+        "event_type": "intake_rejected",
+        "intake_binding": {
+            **common,
+            "outcome": "rejected",
+            "source_id": None,
+            "proposal_id": None,
+            "reason_code": "proposal_contract_invalid",
+        },
+    }
+    assert SchemaRegistry.validate(contract_id, source) == []
+    assert SchemaRegistry.validate(contract_id, proposal) == []
+    assert SchemaRegistry.validate(contract_id, rejection) == []
+    assert SchemaRegistry.validate(
+        contract_id,
+        {**source, "intake_binding": None},
+    )
+    assert SchemaRegistry.validate(
+        contract_id,
+        {**base, "intake_binding": source["intake_binding"]},
+    )
 
 
 def test_approval_contract_matches_current_owner_mode_role_matrix_and_reason_limit() -> None:

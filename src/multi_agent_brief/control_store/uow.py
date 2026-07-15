@@ -4,21 +4,26 @@ from __future__ import annotations
 
 from copy import deepcopy
 from dataclasses import dataclass
+from collections.abc import Hashable
 from typing import TYPE_CHECKING, TypeVar, cast
 
 from pydantic import ValidationError
 
 from multi_agent_brief.contracts.v2 import (
+    AcceptedProposalRecord,
+    AcceptedSourceRecord,
     Approval,
     ArtifactRecord,
     ArtifactRevision,
     Delivery,
     EventEnvelope,
     Invocation,
+    ProposalSourceBinding,
     RunIdentity,
     StageState,
     StrictModel,
     TransactionReceipt,
+    WorkspaceRunHead,
 )
 from multi_agent_brief.control_store.errors import (
     ControlStoreConflict,
@@ -27,7 +32,6 @@ from multi_agent_brief.control_store.errors import (
 )
 from multi_agent_brief.control_store.serialization import (
     canonical_fingerprint,
-    canonical_model_payload,
     sha256_hex,
 )
 
@@ -72,6 +76,7 @@ class ControlUnitOfWork:
             expected_revision=expected_revision,
         )
         self._run: RunIdentity | None = None
+        self._workspace_run_head: WorkspaceRunHead | None = None
         self._stage_states: dict[str, StageState] = {}
         self._invocations: dict[str, Invocation] = {}
         self._artifacts: dict[str, ArtifactRecord] = {}
@@ -81,6 +86,11 @@ class ControlUnitOfWork:
         self._event_ids: set[str] = set()
         self._approvals: dict[str, Approval] = {}
         self._deliveries: dict[str, Delivery] = {}
+        self._sources: dict[str, AcceptedSourceRecord] = {}
+        self._accepted_proposals: dict[str, AcceptedProposalRecord] = {}
+        self._proposal_source_bindings: dict[
+            tuple[str, str], ProposalSourceBinding
+        ] = {}
         self._state = "active"
 
     @property
@@ -145,6 +155,16 @@ class ControlUnitOfWork:
             raise ControlStoreConflict("duplicate_staged_record")
         self._run = snapshot
 
+    def put_workspace_run_head(self, record: WorkspaceRunHead) -> None:
+        snapshot = self._snapshot_record(record, WorkspaceRunHead)
+        if snapshot.workspace_id != self._store.workspace_id:
+            raise ControlStoreConflict("control_record_workspace_mismatch")
+        if snapshot.current_run_id != self.run_id:
+            raise ControlStoreConflict("control_record_run_mismatch")
+        if self._workspace_run_head is not None:
+            raise ControlStoreConflict("duplicate_staged_record")
+        self._workspace_run_head = snapshot
+
     def put_stage_state(self, record: StageState) -> None:
         snapshot = self._snapshot_record(record, StageState)
         self._require_run(snapshot)
@@ -204,8 +224,34 @@ class ControlUnitOfWork:
         self._require_run(snapshot)
         self._put_unique(self._deliveries, snapshot.delivery_id, snapshot)
 
+    def put_source(self, record: AcceptedSourceRecord) -> None:
+        snapshot = self._snapshot_record(record, AcceptedSourceRecord)
+        self._require_run(snapshot)
+        self._put_unique(self._sources, snapshot.source_id, snapshot)
+
+    def put_accepted_proposal(self, record: AcceptedProposalRecord) -> None:
+        snapshot = self._snapshot_record(record, AcceptedProposalRecord)
+        self._require_run(snapshot)
+        self._put_unique(
+            self._accepted_proposals,
+            snapshot.proposal_id,
+            snapshot,
+        )
+
+    def put_proposal_source_binding(self, record: ProposalSourceBinding) -> None:
+        snapshot = self._snapshot_record(record, ProposalSourceBinding)
+        self._require_run(snapshot)
+        self._put_unique(
+            self._proposal_source_bindings,
+            (snapshot.proposal_id, snapshot.source_id),
+            snapshot,
+        )
+
     def _put_unique(
-        self, collection: dict[str, object], key: str, value: object
+        self,
+        collection: dict[Hashable, object],
+        key: Hashable,
+        value: object,
     ) -> None:
         if key in collection:
             raise ControlStoreConflict("duplicate_staged_record")
@@ -224,35 +270,58 @@ class ControlUnitOfWork:
             "transaction_type": identity.transaction_type,
             "expected_revision": identity.expected_revision,
             "run": (
-                canonical_model_payload(self._run) if self._run is not None else None
+                self._record_payload(self._run) if self._run is not None else None
+            ),
+            "workspace_run_head": (
+                self._record_payload(self._workspace_run_head)
+                if self._workspace_run_head is not None
+                else None
             ),
             "stage_states": [
-                canonical_model_payload(self._stage_states[key])
+                self._record_payload(self._stage_states[key])
                 for key in sorted(self._stage_states)
             ],
             "invocations": [
-                canonical_model_payload(self._invocations[key])
+                self._record_payload(self._invocations[key])
                 for key in sorted(self._invocations)
             ],
             "artifacts": [
-                canonical_model_payload(self._artifacts[key])
+                self._record_payload(self._artifacts[key])
                 for key in sorted(self._artifacts)
             ],
             "artifact_revisions": [
-                canonical_model_payload(item.record)
+                self._record_payload(item.record)
                 for item in self._artifact_revisions
             ],
-            "events": [canonical_model_payload(item) for item in self._events],
+            "events": [self._record_payload(item) for item in self._events],
             "approvals": [
-                canonical_model_payload(self._approvals[key])
+                self._record_payload(self._approvals[key])
                 for key in sorted(self._approvals)
             ],
             "deliveries": [
-                canonical_model_payload(self._deliveries[key])
+                self._record_payload(self._deliveries[key])
                 for key in sorted(self._deliveries)
+            ],
+            "sources": [
+                self._record_payload(record) for record in self._sources.values()
+            ],
+            "accepted_proposals": [
+                self._record_payload(record)
+                for record in self._accepted_proposals.values()
+            ],
+            "proposal_source_bindings": [
+                self._record_payload(self._proposal_source_bindings[key])
+                for key in sorted(self._proposal_source_bindings)
             ],
         }
         return canonical_fingerprint(payload)
+
+    @staticmethod
+    def _record_payload(record: StrictModel) -> dict[str, object]:
+        payload = record.model_dump(mode="json", exclude_unset=False)
+        if not isinstance(payload, dict):
+            raise ControlStoreIntegrityError("canonical_payload_invalid")
+        return payload
 
     def commit(self) -> TransactionReceipt:
         self._require_active()

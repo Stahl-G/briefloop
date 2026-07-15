@@ -12,8 +12,9 @@ from multi_agent_brief.control_store.errors import (
 )
 
 
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2
 MIGRATION_NAME = "0001"
+MIGRATIONS = ((1, "0001"), (2, "0002"))
 _SCHEMA_OBJECT_TYPES = ("index", "table", "trigger", "view")
 
 
@@ -54,7 +55,8 @@ def _schema_inventory(
 def _expected_schema_inventory() -> tuple[tuple[str, str, str, str | None], ...]:
     connection = sqlite3.connect(":memory:")
     try:
-        connection.executescript(migration_sql())
+        for sql in _ordered_migration_sql():
+            connection.executescript(sql)
         return _schema_inventory(connection)
     except ControlStoreIntegrityError:
         raise
@@ -65,16 +67,26 @@ def _expected_schema_inventory() -> tuple[tuple[str, str, str, str | None], ...]
 
 
 def migration_sql() -> str:
-    """Load the packaged schema resource in source clones and wheels."""
+    """Load the immutable v1 migration compatibility resource."""
+
+    return _load_migration_sql(MIGRATION_NAME)
+
+
+def _load_migration_sql(name: str) -> str:
+    """Load one exact packaged migration in source clones and wheels."""
 
     resource = resources.files("multi_agent_brief.control_store").joinpath(
         "migrations",
-        "0001.sql",
+        f"{name}.sql",
     )
     try:
         return resource.read_text(encoding="utf-8")
     except (FileNotFoundError, OSError, UnicodeError) as exc:
         raise ControlStoreSchemaError("migration_resource_unavailable") from exc
+
+
+def _ordered_migration_sql() -> tuple[str, ...]:
+    return tuple(_load_migration_sql(name) for _version, name in MIGRATIONS)
 
 
 def configure_connection(connection: sqlite3.Connection) -> None:
@@ -98,13 +110,14 @@ def configure_connection(connection: sqlite3.Connection) -> None:
 
 
 def initialize_schema(connection: sqlite3.Connection) -> None:
-    """Install schema v1 into a newly created empty database."""
+    """Install every immutable migration into a newly created database."""
 
     try:
         version = int(connection.execute("PRAGMA user_version").fetchone()[0])
         if version != 0:
             raise ControlStoreSchemaError("database_not_empty")
-        connection.executescript(migration_sql())
+        for sql in _ordered_migration_sql():
+            connection.executescript(sql)
     except ControlStoreSchemaError:
         raise
     except sqlite3.Error as exc:
@@ -126,13 +139,12 @@ def verify_schema(connection: sqlite3.Connection) -> None:
     if version != SCHEMA_VERSION:
         raise ControlStoreSchemaError("unsupported_schema_version")
     try:
-        row = connection.execute(
-            "SELECT name FROM schema_migrations WHERE version = ?",
-            (SCHEMA_VERSION,),
-        ).fetchone()
+        rows = connection.execute(
+            "SELECT version, name FROM schema_migrations ORDER BY version"
+        ).fetchall()
     except sqlite3.Error as exc:
         raise ControlStoreSchemaError("schema_metadata_invalid") from exc
-    if row is None or row[0] != MIGRATION_NAME:
+    if tuple((int(row[0]), str(row[1])) for row in rows) != MIGRATIONS:
         raise ControlStoreSchemaError("schema_metadata_invalid")
     if _schema_inventory(connection) != _expected_schema_inventory():
         raise ControlStoreIntegrityError("database_schema_definition_mismatch")
@@ -156,6 +168,7 @@ def verify_schema(connection: sqlite3.Connection) -> None:
 
 __all__ = [
     "MIGRATION_NAME",
+    "MIGRATIONS",
     "SCHEMA_VERSION",
     "configure_connection",
     "initialize_schema",

@@ -4,6 +4,7 @@ import ast
 from dataclasses import dataclass, replace
 from datetime import datetime, timezone
 import hashlib
+from importlib import resources
 import os
 from pathlib import Path
 import shutil
@@ -997,17 +998,23 @@ def test_schema_settings_and_exact_table_universe(tmp_path: Path) -> None:
         "transactions",
         "transaction_events",
         "transaction_artifact_revisions",
+        "transaction_sources",
+        "transaction_proposals",
         "events",
         "artifacts",
         "artifact_revisions",
         "approvals",
         "deliveries",
+        "workspace_run_heads",
+        "sources",
+        "accepted_proposals",
+        "proposal_source_bindings",
     }
     with _create_store(tmp_path) as store:
         assert store._connection.execute("PRAGMA foreign_keys").fetchone()[0] == 1
         assert store._connection.execute("PRAGMA journal_mode").fetchone()[0] == "wal"
         assert store._connection.execute("PRAGMA synchronous").fetchone()[0] == 2
-        assert store._connection.execute("PRAGMA user_version").fetchone()[0] == 1
+        assert store._connection.execute("PRAGMA user_version").fetchone()[0] == 2
         tables = {
             row[0]
             for row in store._connection.execute(
@@ -1018,7 +1025,6 @@ def test_schema_settings_and_exact_table_universe(tmp_path: Path) -> None:
         assert (
             not {
                 "stage_transitions",
-                "sources",
                 "claims",
                 "claim_source_bindings",
                 "repair_transactions",
@@ -2094,11 +2100,33 @@ def test_future_schema_fails_closed(tmp_path: Path) -> None:
     store = _create_store(tmp_path)
     store.close()
     connection = sqlite3.connect(tmp_path / "control.db")
-    connection.execute("PRAGMA user_version = 2")
+    connection.execute("PRAGMA user_version = 3")
     connection.close()
     with pytest.raises(ControlStoreSchemaError) as error:
         SQLiteControlStore.open(tmp_path / "control.db")
     assert error.value.code == "future_schema_version"
+
+
+def test_schema_v1_store_is_rejected_without_automatic_upgrade(tmp_path: Path) -> None:
+    database = tmp_path / "control.db"
+    connection = sqlite3.connect(database)
+    connection.executescript(migration_sql())
+    connection.execute(
+        "INSERT INTO workspaces(workspace_id, revision) VALUES (?, 0)",
+        (WORKSPACE_ID,),
+    )
+    connection.commit()
+    connection.close()
+
+    with pytest.raises(ControlStoreSchemaError) as error:
+        SQLiteControlStore.open(database)
+    assert error.value.code == "unsupported_schema_version"
+    connection = sqlite3.connect(database)
+    assert connection.execute("PRAGMA user_version").fetchone()[0] == 1
+    assert connection.execute(
+        "SELECT version, name FROM schema_migrations"
+    ).fetchall() == [(1, "0001")]
+    connection.close()
 
 
 def test_wal_backup_restore_preserves_latest_revision_and_blob_integrity(
@@ -2306,12 +2334,24 @@ def test_migration_resource_matches_packaged_source_text() -> None:
     # platform-specific working-tree newline representation.
     assert migration_sql() == source.read_text(encoding="utf-8")
 
+    migration_2 = source.with_name("0002.sql")
+    packaged_2 = resources.files("multi_agent_brief.control_store").joinpath(
+        "migrations",
+        "0002.sql",
+    )
+    assert packaged_2.read_text(encoding="utf-8") == migration_2.read_text(
+        encoding="utf-8"
+    )
 
-def test_no_current_production_module_imports_control_store() -> None:
+
+def test_only_dormant_intake_modules_import_control_store() -> None:
     package_root = Path(__file__).parents[1] / "src" / "multi_agent_brief"
     findings: list[str] = []
     for path in sorted(package_root.rglob("*.py")):
         if "control_store" in path.relative_to(package_root).parts:
+            continue
+        relative = path.relative_to(package_root).as_posix()
+        if relative == "intake_v2/service.py":
             continue
         tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
         for node in ast.walk(tree):

@@ -85,6 +85,9 @@ EVENT_TYPES = {
     "run_reset",
     "semantic_assessment_checked_inputs_bound",
     "semantic_support_finding_adjudicated",
+    "source_evidence_committed",
+    "role_proposal_committed",
+    "intake_rejected",
 }
 
 ACTORS = {"cli", "orchestrator", "runtime", "system"}
