@@ -60,6 +60,16 @@ def backup_store(
             backup_blobs,
             error_code="blob_topology_invalid",
         )
+        # Validate the exact database and blob bytes that will be published.
+        # Source verification necessarily precedes the two copy operations, so
+        # another connection or filesystem actor can change the source in that
+        # interval. The staged candidate is private to this transaction and is
+        # the only snapshot whose successful validation can authorize publish.
+        with type(store).open(
+            backup_database,
+            blob_root=backup_blobs,
+        ):
+            pass
         _fsync_tree(staging)
         os.replace(staging, target)
         _fsync_directory(target.parent)

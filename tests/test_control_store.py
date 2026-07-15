@@ -928,6 +928,65 @@ def test_backup_and_restore_reject_corrupt_workspace_ledger(
     assert not destination.with_name(f"{destination.name}.blobs").exists()
 
 
+def test_backup_validates_copied_ledger_before_publish(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    destination = tmp_path / "ledger-race-backup"
+    with _create_store(tmp_path) as store:
+        _stage_all(store).commit()
+        verify_source = store._verify_all_payloads
+
+        def corrupt_after_source_verification() -> None:
+            verify_source()
+            connection = sqlite3.connect(store.path, isolation_level=None)
+            try:
+                connection.execute(
+                    "UPDATE workspaces SET revision = 2 WHERE workspace_id = ?",
+                    (WORKSPACE_ID,),
+                )
+            finally:
+                connection.close()
+
+        monkeypatch.setattr(
+            store,
+            "_verify_all_payloads",
+            corrupt_after_source_verification,
+        )
+        with pytest.raises(ControlStoreIntegrityError) as error:
+            store.backup_to(destination)
+
+    assert error.value.code == "transaction_ledger_integrity_invalid"
+    assert not destination.exists()
+    assert not tuple(tmp_path.glob(f".{destination.name}.*.tmp"))
+
+
+def test_backup_validates_copied_blob_before_publish(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    destination = tmp_path / "blob-race-backup"
+    with _create_store(tmp_path) as store:
+        _stage_all(store).commit()
+        verify_source = store._verify_all_payloads
+
+        def corrupt_after_source_verification() -> None:
+            verify_source()
+            store._blob_path(BLOB_SHA256).write_bytes(b"X" * len(BLOB))
+
+        monkeypatch.setattr(
+            store,
+            "_verify_all_payloads",
+            corrupt_after_source_verification,
+        )
+        with pytest.raises(ControlStoreIntegrityError) as error:
+            store.backup_to(destination)
+
+    assert error.value.code == "committed_blob_hash_mismatch"
+    assert not destination.exists()
+    assert not tuple(tmp_path.glob(f".{destination.name}.*.tmp"))
+
+
 def test_schema_settings_and_exact_table_universe(tmp_path: Path) -> None:
     allowed_tables = {
         "schema_migrations",
@@ -2066,6 +2125,11 @@ def test_wal_backup_restore_preserves_latest_revision_and_blob_integrity(
         assert backup == tmp_path / "backup"
         assert (backup / "control.db").is_file()
         assert (backup / "blobs").is_dir()
+        with SQLiteControlStore.open(
+            backup / "control.db",
+            blob_root=backup / "blobs",
+        ) as verified_backup:
+            assert verified_backup.load_snapshot(RUN_ID).store_revision == 2
 
     restored = SQLiteControlStore.restore_to_new_path(
         tmp_path / "backup",
