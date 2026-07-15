@@ -420,13 +420,22 @@ class CoreRunService:
                 request.stage_id,
             ):
                 raise CoreRunError("invocation_owner_mismatch")
-            if (
-                verified.binding.role_topology == "human_assisted"
-                and request.stage_id == "analyst"
-                and classify_human_assisted_analyst_route(verified.snapshot)
-                != "open"
-            ):
-                raise CoreRunError("invocation_owner_mismatch")
+            if verified.binding.role_topology == "human_assisted" and request.stage_id in {
+                "analyst",
+                "editor",
+            }:
+                route = classify_human_assisted_analyst_route(verified.snapshot)
+                if request.stage_id == "analyst":
+                    expected_family = (
+                        "snapshot" if request.role_id == "analyst" else "writer"
+                    )
+                    if (
+                        route.active_analyst_role is not None
+                        or route.route_family not in {"undecided", expected_family}
+                    ):
+                        raise CoreRunError("invocation_owner_mismatch")
+                elif route.route_family != "snapshot" or route.editor_reserved:
+                    raise CoreRunError("invocation_owner_mismatch")
             blocked = self._integrity.require_clean(
                 store,
                 verified,
@@ -859,7 +868,7 @@ class CoreRunService:
         elif stage_id == "analyst":
             if verified.binding.role_topology == "human_assisted":
                 route = classify_human_assisted_analyst_route(snapshot)
-                if route == "writer_route":
+                if route.route_family == "writer":
                     brief = require_artifact(
                         "audited_brief",
                         "topology_required",
@@ -870,7 +879,7 @@ class CoreRunService:
                         owner_role_id="writer",
                     )
                     producer_invocation_id = submission.invocation_id
-                elif route == "snapshot_route":
+                elif route.route_family == "snapshot":
                     analyst = require_artifact(
                         "analyst_draft_snapshot",
                         "produced",

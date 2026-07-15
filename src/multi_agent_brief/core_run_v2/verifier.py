@@ -59,121 +59,185 @@ class VerifiedCoreRun:
         return self.contracts.artifacts
 
 
-HumanAssistedAnalystRoute = Literal[
-    "open",
-    "analyst_reserved",
-    "writer_reserved",
-    "snapshot_route",
-    "writer_route",
-]
+HumanAssistedRouteFamily = Literal["undecided", "snapshot", "writer"]
+
+
+@dataclass(frozen=True)
+class HumanAssistedAnalystRoute:
+    """One replayed route family plus its transient draft state."""
+
+    route_family: HumanAssistedRouteFamily
+    active_analyst_role: Literal["analyst", "writer"] | None
+    editor_reserved: bool
+    analyst_snapshot_revision: int
+    audited_brief_revision: int
+    consumed_analyst_snapshot_revision: int | None
 
 
 def classify_human_assisted_analyst_route(
     snapshot: ControlStoreSnapshot,
 ) -> HumanAssistedAnalystRoute:
-    """Derive the mutually exclusive human-assisted Analyst route."""
+    """Replay the sticky route family and transient revision reservations."""
 
     artifacts = {item.artifact_id: item for item in snapshot.artifacts}
-    analyst_states = [
-        item for item in snapshot.stage_states if item.stage_id == "analyst"
-    ]
-    if len(analyst_states) != 1:
+    states = {
+        item.stage_id: item
+        for item in snapshot.stage_states
+        if item.stage_id in {"analyst", "editor"}
+    }
+    if set(states) != {"analyst", "editor"}:
         raise CoreRunError("control_store_integrity_invalid")
-    analyst_status = analyst_states[0].status
+    analyst_status = states["analyst"].status
+    editor_status = states["editor"].status
 
-    def current_submission(artifact_id: str):
+    def submission_history(artifact_id: str):
         artifact = artifacts.get(artifact_id)
         if artifact is None:
             raise CoreRunError("control_store_integrity_invalid")
-        submissions = [
-            item
-            for item in snapshot.owned_artifact_submissions
-            if item.artifact_id == artifact_id
-        ]
-        if artifact.current_revision == 0:
-            if submissions:
-                raise CoreRunError("control_store_integrity_invalid")
-            return None
-        if (
-            len(submissions) != 1
-            or submissions[0].artifact_revision != artifact.current_revision
+        submissions = sorted(
+            (
+                item
+                for item in snapshot.owned_artifact_submissions
+                if item.artifact_id == artifact_id
+            ),
+            key=lambda item: item.artifact_revision,
+        )
+        if [item.artifact_revision for item in submissions] != list(
+            range(1, artifact.current_revision + 1)
         ):
             raise CoreRunError("control_store_integrity_invalid")
-        return submissions[0]
+        return tuple(submissions)
 
-    snapshot_submission = current_submission("analyst_draft_snapshot")
-    brief_submission = current_submission("audited_brief")
-    if snapshot_submission is not None and (
-        snapshot_submission.owner_stage_id != "analyst"
-        or snapshot_submission.owner_role_id != "analyst"
-        or snapshot_submission.parent_artifact is not None
+    snapshot_submissions = submission_history("analyst_draft_snapshot")
+    brief_submissions = submission_history("audited_brief")
+    if any(
+        item.owner_stage_id != "analyst"
+        or item.owner_role_id != "analyst"
+        or item.parent_artifact is not None
+        for item in snapshot_submissions
     ):
         raise CoreRunError("control_store_integrity_invalid")
 
-    writer_brief = False
-    editor_brief = False
-    if brief_submission is not None:
-        owner = (
-            brief_submission.owner_stage_id,
-            brief_submission.owner_role_id,
-        )
+    writer_submissions = []
+    editor_submissions = []
+    for submission in brief_submissions:
+        owner = (submission.owner_stage_id, submission.owner_role_id)
         if owner == ("analyst", "writer"):
-            if brief_submission.parent_artifact is not None:
+            if submission.parent_artifact is not None:
                 raise CoreRunError("control_store_integrity_invalid")
-            writer_brief = True
+            writer_submissions.append(submission)
         elif owner == ("editor", "editor"):
-            snapshot_artifact = artifacts["analyst_draft_snapshot"]
-            parent = brief_submission.parent_artifact
-            if (
-                snapshot_submission is None
-                or parent is None
-                or parent.artifact_id != "analyst_draft_snapshot"
-                or parent.revision != snapshot_artifact.current_revision
-            ):
-                raise CoreRunError("control_store_integrity_invalid")
-            editor_brief = True
+            editor_submissions.append(submission)
         else:
             raise CoreRunError("control_store_integrity_invalid")
 
-    if snapshot_submission is not None and writer_brief:
+    if writer_submissions and (snapshot_submissions or editor_submissions):
         raise CoreRunError("control_store_integrity_invalid")
-    if editor_brief and snapshot_submission is None:
+    if editor_submissions and not snapshot_submissions:
+        raise CoreRunError("control_store_integrity_invalid")
+
+    route_family: HumanAssistedRouteFamily
+    if writer_submissions:
+        route_family = "writer"
+    elif snapshot_submissions or editor_submissions:
+        route_family = "snapshot"
+    else:
+        route_family = "undecided"
+
+    analyst_completions = [
+        item
+        for item in snapshot.stage_transitions
+        if item.stage_id == "analyst" and item.transition_kind == "complete"
+    ]
+    if len(analyst_completions) > 1:
+        raise CoreRunError("control_store_integrity_invalid")
+    consumed_snapshot_revision: int | None = None
+    if analyst_completions:
+        snapshot_bindings = [
+            item
+            for item in snapshot.stage_artifact_bindings
+            if item.transition_id == analyst_completions[0].transition_id
+            and item.artifact_id == "analyst_draft_snapshot"
+            and item.usage == "produced"
+        ]
+        if snapshot_bindings:
+            if len(snapshot_bindings) != 1:
+                raise CoreRunError("control_store_integrity_invalid")
+            consumed_snapshot_revision = snapshot_bindings[0].artifact_revision
+
+    snapshot_revision = artifacts["analyst_draft_snapshot"].current_revision
+    brief_revision = artifacts["audited_brief"].current_revision
+    if route_family == "snapshot":
+        if analyst_status not in {"ready", "complete"}:
+            raise CoreRunError("control_store_integrity_invalid")
+        if analyst_status == "complete" and (
+            consumed_snapshot_revision is None
+            or consumed_snapshot_revision != snapshot_revision
+        ):
+            raise CoreRunError("control_store_integrity_invalid")
+        if editor_submissions:
+            if consumed_snapshot_revision is None:
+                raise CoreRunError("control_store_integrity_invalid")
+            for submission in editor_submissions:
+                parent = submission.parent_artifact
+                if (
+                    parent is None
+                    or parent.artifact_id != "analyst_draft_snapshot"
+                    or parent.revision != consumed_snapshot_revision
+                ):
+                    raise CoreRunError("control_store_integrity_invalid")
+    elif route_family == "writer":
+        if analyst_status not in {"ready", "complete"}:
+            raise CoreRunError("control_store_integrity_invalid")
+    elif analyst_status not in {"pending", "ready"}:
         raise CoreRunError("control_store_integrity_invalid")
 
     invocation_stages = _invocation_stage_map(snapshot)
-    active = [
+    active_analyst = [
         item
         for item in snapshot.invocations
         if item.status == "active"
         and invocation_stages.get(item.invocation_id) == "analyst"
     ]
-    if (
-        len(active) > 1
-        or any(item.role_id not in {"analyst", "writer"} for item in active)
-    ):
+    active_editor = [
+        item
+        for item in snapshot.invocations
+        if item.status == "active"
+        and invocation_stages.get(item.invocation_id) == "editor"
+    ]
+    if len(active_analyst) > 1 or len(active_editor) > 1:
         raise CoreRunError("control_store_integrity_invalid")
-    if active and (snapshot_submission is not None or brief_submission is not None):
+    if any(item.role_id not in {"analyst", "writer"} for item in active_analyst):
         raise CoreRunError("control_store_integrity_invalid")
-
-    if writer_brief:
-        if analyst_status not in {"ready", "complete"}:
-            raise CoreRunError("control_store_integrity_invalid")
-        return "writer_route"
-    if snapshot_submission is not None:
-        if analyst_status not in {"ready", "complete"}:
-            raise CoreRunError("control_store_integrity_invalid")
-        return "snapshot_route"
-    if active:
+    if any(item.role_id != "editor" for item in active_editor):
+        raise CoreRunError("control_store_integrity_invalid")
+    if active_analyst and active_editor:
+        raise CoreRunError("control_store_integrity_invalid")
+    active_analyst_role: Literal["analyst", "writer"] | None = None
+    if active_analyst:
+        active_analyst_role = (
+            "analyst" if active_analyst[0].role_id == "analyst" else "writer"
+        )
+    if active_analyst_role is not None:
         if analyst_status != "ready":
             raise CoreRunError("control_store_integrity_invalid")
-        return (
-            "analyst_reserved"
-            if active[0].role_id == "analyst"
-            else "writer_reserved"
+        allowed_family = (
+            "snapshot" if active_analyst_role == "analyst" else "writer"
         )
-    if analyst_status not in {"pending", "ready"}:
-        raise CoreRunError("control_store_integrity_invalid")
-    return "open"
+        if route_family not in {"undecided", allowed_family}:
+            raise CoreRunError("control_store_integrity_invalid")
+    if active_editor:
+        if editor_status != "ready" or route_family != "snapshot":
+            raise CoreRunError("control_store_integrity_invalid")
+
+    return HumanAssistedAnalystRoute(
+        route_family=route_family,
+        active_analyst_role=active_analyst_role,
+        editor_reserved=bool(active_editor),
+        analyst_snapshot_revision=snapshot_revision,
+        audited_brief_revision=brief_revision,
+        consumed_analyst_snapshot_revision=consumed_snapshot_revision,
+    )
 
 
 def _invocation_stage_map(snapshot: ControlStoreSnapshot) -> dict[str, str]:
@@ -885,7 +949,8 @@ class CoreRunDomainVerifier:
                     }
                     if bound_ids == {"audited_brief"}:
                         if (
-                            analyst_route != "writer_route"
+                            analyst_route is None
+                            or analyst_route.route_family != "writer"
                             or transaction_shape
                             != {
                                 ("analyst", "complete"),
@@ -902,7 +967,8 @@ class CoreRunDomainVerifier:
                         )
                     if bound_ids == {"analyst_draft_snapshot"}:
                         if (
-                            analyst_route != "snapshot_route"
+                            analyst_route is None
+                            or analyst_route.route_family != "snapshot"
                             or transaction_shape
                             != {
                                 ("analyst", "complete"),

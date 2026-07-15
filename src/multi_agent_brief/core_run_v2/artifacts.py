@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from dataclasses import replace
 from datetime import datetime, timezone
 import os
 from pathlib import Path, PurePosixPath
@@ -169,14 +170,19 @@ class ArtifactAcceptanceService:
                     verified.snapshot
                 )
                 if stage_id == "analyst":
-                    required_route = (
-                        "writer_reserved"
-                        if owner_role == "writer"
-                        else "analyst_reserved"
+                    expected_family = (
+                        "writer" if owner_role == "writer" else "snapshot"
                     )
-                    if route != required_route:
+                    if (
+                        route.active_analyst_role != owner_role
+                        or route.route_family
+                        not in {"undecided", expected_family}
+                    ):
                         raise CoreRunError("artifact_revision_conflict")
-                elif stage_id == "editor" and route != "snapshot_route":
+                elif stage_id == "editor" and (
+                    route.route_family != "snapshot"
+                    or not route.editor_reserved
+                ):
                     raise CoreRunError("artifact_revision_conflict")
             stage = next(
                 (item for item in verified.snapshot.stage_states if item.stage_id == stage_id),
@@ -272,6 +278,38 @@ class ArtifactAcceptanceService:
                 },
                 strict=True,
             )
+            completed_invocation = (
+                _completed_invocation(invocation, now)
+                if invocation is not None
+                else None
+            )
+            if (
+                verified.binding.role_topology == "human_assisted"
+                and request.artifact_id
+                in {"analyst_draft_snapshot", "audited_brief"}
+            ):
+                proposed = replace(
+                    verified.snapshot,
+                    artifacts=tuple(
+                        updated if item.artifact_id == updated.artifact_id else item
+                        for item in verified.snapshot.artifacts
+                    ),
+                    invocations=tuple(
+                        completed_invocation
+                        if completed_invocation is not None
+                        and item.invocation_id == completed_invocation.invocation_id
+                        else item
+                        for item in verified.snapshot.invocations
+                    ),
+                    owned_artifact_submissions=(
+                        *verified.snapshot.owned_artifact_submissions,
+                        submission,
+                    ),
+                )
+                try:
+                    classify_human_assisted_analyst_route(proposed)
+                except CoreRunError as exc:
+                    raise CoreRunError("artifact_revision_conflict") from exc
             event = _event(
                 event_id=event_id,
                 run_id=request.run_id,
@@ -296,8 +334,8 @@ class ArtifactAcceptanceService:
                 transaction_type_for("owned_artifact_acceptance"),
                 request.expected_store_revision,
             )
-            if invocation is not None:
-                unit.put_invocation(_completed_invocation(invocation, now))
+            if completed_invocation is not None:
+                unit.put_invocation(completed_invocation)
             unit.put_artifact(updated)
             unit.put_artifact_revision(revision, content)
             unit.put_owned_artifact_submission(submission)

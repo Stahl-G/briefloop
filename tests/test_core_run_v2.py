@@ -1294,6 +1294,270 @@ def test_human_assisted_pending_analyst_rejects_route_reservation_replay(
             CoreRunDomainVerifier().verify(store, RUN_ID)
 
 
+def _submit_human_assisted_draft(
+    workspace: Path,
+    *,
+    invocation_id: str,
+    request_id: str,
+    artifact_id: str,
+    revision: int,
+    parent: dict[str, object] | None = None,
+) -> bytes:
+    content = (
+        f"# {artifact_id} revision {revision}\n\n"
+        "ExampleCo opened a public pilot facility. [src:CL-0001]\n"
+    ).encode()
+    scratch = workspace / "scratch" / invocation_id / f"{artifact_id}.md"
+    scratch.parent.mkdir(parents=True, exist_ok=True)
+    scratch.write_bytes(content)
+    result = ArtifactAcceptanceService(
+        workspace,
+        clock=CLOCK,
+    ).submit_owned_artifact(
+        _record(
+            OwnedArtifactSubmitRequest,
+            request_id=request_id,
+            run_id=RUN_ID,
+            artifact_id=artifact_id,
+            invocation_id=invocation_id,
+            producer_tool_id=(
+                "analyst-snapshot-v2"
+                if artifact_id == "analyst_draft_snapshot"
+                else None
+            ),
+            input_path=scratch.relative_to(workspace).as_posix(),
+            expected_store_revision=_store_revision(workspace),
+            expected_artifact_revision=revision - 1,
+            expected_parent_artifact=parent,
+        )
+    )
+    assert result.status == "committed", result.to_dict()
+    return content
+
+
+@pytest.mark.parametrize(
+    ("role_id", "artifact_id", "route_family"),
+    [
+        ("analyst", "analyst_draft_snapshot", "snapshot"),
+        ("writer", "audited_brief", "writer"),
+    ],
+)
+def test_human_assisted_analyst_routes_accept_revision_two_before_consumption(
+    tmp_path: Path,
+    role_id: str,
+    artifact_id: str,
+    route_family: str,
+) -> None:
+    workspace = _workspace(tmp_path)
+    service = _advance_to_analyst_ready(workspace, topology="human_assisted")
+    first_invocation = _start_invocation(
+        service,
+        workspace,
+        request_id=f"REQ-INVOKE-{role_id.upper()}-REV-1",
+        stage_id="analyst",
+        role_id=role_id,
+    )
+    first_bytes = _submit_human_assisted_draft(
+        workspace,
+        invocation_id=first_invocation,
+        request_id=f"REQ-ARTIFACT-{role_id.upper()}-REV-1",
+        artifact_id=artifact_id,
+        revision=1,
+    )
+    second_invocation = _start_invocation(
+        service,
+        workspace,
+        request_id=f"REQ-INVOKE-{role_id.upper()}-REV-2",
+        stage_id="analyst",
+        role_id=role_id,
+    )
+    second_bytes = _submit_human_assisted_draft(
+        workspace,
+        invocation_id=second_invocation,
+        request_id=f"REQ-ARTIFACT-{role_id.upper()}-REV-2",
+        artifact_id=artifact_id,
+        revision=2,
+    )
+
+    with SQLiteControlStore.open(workspace / "briefloop.db") as store:
+        verified = CoreRunDomainVerifier().verify(store, RUN_ID)
+        route = classify_human_assisted_analyst_route(verified.snapshot)
+        assert route.route_family == route_family
+        assert route.active_analyst_role is None
+        assert store.read_artifact_revision_bytes(RUN_ID, artifact_id, 1) == first_bytes
+        assert store.read_artifact_revision_bytes(RUN_ID, artifact_id, 2) == second_bytes
+
+    _complete_stage(
+        service,
+        workspace,
+        stage_id="analyst",
+        artifacts=[(artifact_id, 2)],
+    )
+    with SQLiteControlStore.open(workspace / "briefloop.db") as store:
+        verified = CoreRunDomainVerifier().verify(store, RUN_ID)
+        transition = next(
+            item
+            for item in verified.snapshot.stage_transitions
+            if item.stage_id == "analyst" and item.transition_kind == "complete"
+        )
+        bindings = [
+            item
+            for item in verified.snapshot.stage_artifact_bindings
+            if item.transition_id == transition.transition_id
+        ]
+        assert {(item.artifact_id, item.artifact_revision) for item in bindings} == {
+            (artifact_id, 2)
+        }
+        assert store.read_artifact_revision_bytes(RUN_ID, artifact_id, 1) == first_bytes
+
+
+def test_human_assisted_editor_accepts_revision_two_before_consumption(
+    tmp_path: Path,
+) -> None:
+    workspace = _workspace(tmp_path)
+    service = _advance_to_analyst_ready(workspace, topology="human_assisted")
+    analyst = _start_invocation(
+        service,
+        workspace,
+        request_id="REQ-INVOKE-ANALYST-EDITOR-REVISIONS",
+        stage_id="analyst",
+        role_id="analyst",
+    )
+    _submit_human_assisted_draft(
+        workspace,
+        invocation_id=analyst,
+        request_id="REQ-ARTIFACT-ANALYST-EDITOR-REVISIONS",
+        artifact_id="analyst_draft_snapshot",
+        revision=1,
+    )
+    _complete_stage(
+        service,
+        workspace,
+        stage_id="analyst",
+        artifacts=[("analyst_draft_snapshot", 1)],
+    )
+
+    first_editor = _start_invocation(
+        service,
+        workspace,
+        request_id="REQ-INVOKE-EDITOR-REV-1",
+        stage_id="editor",
+        role_id="editor",
+    )
+    parent = {"artifact_id": "analyst_draft_snapshot", "revision": 1}
+    first_bytes = _submit_human_assisted_draft(
+        workspace,
+        invocation_id=first_editor,
+        request_id="REQ-ARTIFACT-EDITOR-REV-1",
+        artifact_id="audited_brief",
+        revision=1,
+        parent=parent,
+    )
+    second_editor = _start_invocation(
+        service,
+        workspace,
+        request_id="REQ-INVOKE-EDITOR-REV-2",
+        stage_id="editor",
+        role_id="editor",
+    )
+    with SQLiteControlStore.open(workspace / "briefloop.db") as store:
+        before_rejections = store.load_snapshot(RUN_ID)
+        brief = next(
+            item for item in before_rejections.artifacts if item.artifact_id == "audited_brief"
+        )
+    canonical_path = workspace / brief.path
+    assert canonical_path.read_bytes() == first_bytes
+
+    concurrent = service.start_invocation(
+        _record(
+            InvocationStartRequest,
+            request_id="REQ-INVOKE-EDITOR-CONCURRENT-REV-2",
+            run_id=RUN_ID,
+            stage_id="editor",
+            role_id="editor",
+            runtime="operator",
+            expected_store_revision=before_rejections.store_revision,
+        )
+    )
+    assert concurrent.to_dict() == {
+        "status": "failed_uncommitted",
+        "error_code": "invocation_owner_mismatch",
+    }
+    scratch = workspace / "scratch" / second_editor / "audited_brief.md"
+    scratch.parent.mkdir(parents=True, exist_ok=True)
+    scratch.write_text("# invalid parent\n", encoding="utf-8")
+    wrong_parent = ArtifactAcceptanceService(
+        workspace,
+        clock=CLOCK,
+    ).submit_owned_artifact(
+        _record(
+            OwnedArtifactSubmitRequest,
+            request_id="REQ-ARTIFACT-EDITOR-REV-2-WRONG-PARENT",
+            run_id=RUN_ID,
+            artifact_id="audited_brief",
+            invocation_id=second_editor,
+            producer_tool_id=None,
+            input_path=scratch.relative_to(workspace).as_posix(),
+            expected_store_revision=before_rejections.store_revision,
+            expected_artifact_revision=1,
+            expected_parent_artifact={
+                "artifact_id": "analyst_draft_snapshot",
+                "revision": 2,
+            },
+        )
+    )
+    assert wrong_parent.to_dict() == {
+        "status": "failed_uncommitted",
+        "error_code": "artifact_revision_conflict",
+    }
+    with SQLiteControlStore.open(workspace / "briefloop.db") as store:
+        assert store.load_snapshot(RUN_ID) == before_rejections
+    assert canonical_path.read_bytes() == first_bytes
+
+    second_bytes = _submit_human_assisted_draft(
+        workspace,
+        invocation_id=second_editor,
+        request_id="REQ-ARTIFACT-EDITOR-REV-2",
+        artifact_id="audited_brief",
+        revision=2,
+        parent=parent,
+    )
+    with SQLiteControlStore.open(workspace / "briefloop.db") as store:
+        verified = CoreRunDomainVerifier().verify(store, RUN_ID)
+        route = classify_human_assisted_analyst_route(verified.snapshot)
+        assert route.route_family == "snapshot"
+        assert route.audited_brief_revision == 2
+        assert route.consumed_analyst_snapshot_revision == 1
+        assert store.read_artifact_revision_bytes(RUN_ID, "audited_brief", 1) == first_bytes
+        assert store.read_artifact_revision_bytes(RUN_ID, "audited_brief", 2) == second_bytes
+
+    _complete_stage(
+        service,
+        workspace,
+        stage_id="editor",
+        artifacts=[("analyst_draft_snapshot", 1), ("audited_brief", 2)],
+    )
+    with SQLiteControlStore.open(workspace / "briefloop.db") as store:
+        verified = CoreRunDomainVerifier().verify(store, RUN_ID)
+        transition = next(
+            item
+            for item in verified.snapshot.stage_transitions
+            if item.stage_id == "editor" and item.transition_kind == "complete"
+        )
+        bindings = [
+            item
+            for item in verified.snapshot.stage_artifact_bindings
+            if item.transition_id == transition.transition_id
+        ]
+        assert {
+            (item.artifact_id, item.artifact_revision, item.usage)
+            for item in bindings
+        } == {
+            ("analyst_draft_snapshot", 1, "consumed"),
+            ("audited_brief", 2, "produced"),
+        }
+
+
 def test_human_assisted_writer_satisfies_analyst_and_editor(tmp_path: Path) -> None:
     workspace = _workspace(tmp_path)
     service = _advance_to_analyst_ready(workspace, topology="human_assisted")
