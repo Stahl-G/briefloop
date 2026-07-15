@@ -91,6 +91,16 @@ def verify_schema(connection: sqlite3.Connection) -> None:
         raise ControlStoreIntegrityError("database_integrity_check_failed") from exc
     if result is None or result[0] != "ok":
         raise ControlStoreIntegrityError("database_integrity_check_failed")
+    try:
+        foreign_key_violation = connection.execute(
+            "PRAGMA foreign_key_check"
+        ).fetchone()
+    except sqlite3.Error as exc:
+        raise ControlStoreIntegrityError(
+            "database_foreign_key_check_failed"
+        ) from exc
+    if foreign_key_violation is not None:
+        raise ControlStoreIntegrityError("database_foreign_key_check_failed")
 
 
 __all__ = [

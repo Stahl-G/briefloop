@@ -278,6 +278,21 @@ def _table_count(store: SQLiteControlStore, table: str) -> int:
     return int(store._connection.execute(f"SELECT count(*) FROM {table}").fetchone()[0])
 
 
+def _corrupt_delivery_foreign_key(database: Path) -> None:
+    connection = sqlite3.connect(database)
+    try:
+        connection.execute("PRAGMA foreign_keys = OFF")
+        connection.execute(
+            "UPDATE deliveries SET artifact_revision = 999 WHERE run_id = ?",
+            (RUN_ID,),
+        )
+        connection.commit()
+        assert connection.execute("PRAGMA quick_check").fetchone()[0] == "ok"
+        assert connection.execute("PRAGMA foreign_key_check").fetchone() is not None
+    finally:
+        connection.close()
+
+
 def _stage_crash_boundary_unit(store: SQLiteControlStore):
     records = _records(transaction_id=CRASH_TRANSACTION_ID)
     unit = store.begin(
@@ -536,6 +551,106 @@ def test_optimistic_revision_conflict_happens_before_blob_write(tmp_path: Path) 
         assert error.value.code == "store_revision_conflict"
         assert store.current_revision == 1
         assert _table_count(store, "transactions") == 1
+
+
+def test_dual_connection_late_conflict_leaves_only_non_authoritative_orphan(
+    tmp_path: Path,
+) -> None:
+    primary = _create_store(tmp_path)
+    _stage_all(primary).commit()
+    winner = SQLiteControlStore.open(tmp_path / "control.db", clock=lambda: COMMITTED_AT)
+    loser_content = b"Late conflicting content-addressed blob.\n"
+    loser_sha256 = hashlib.sha256(loser_content).hexdigest()
+    loser_artifact_id = "late-conflict-brief"
+    loser_transaction_id = "TX-LATE-CONFLICT-002"
+    loser = primary.begin(
+        RUN_ID,
+        loser_transaction_id,
+        "late_conflict",
+        1,
+    )
+    loser.put_artifact(
+        _record(
+            ArtifactRecord,
+            run_id=RUN_ID,
+            artifact_id=loser_artifact_id,
+            current_revision=1,
+            status="valid",
+            required=False,
+            path=f"output/{loser_artifact_id}.md",
+            format="markdown",
+        )
+    )
+    loser.put_artifact_revision(
+        _record(
+            ArtifactRevision,
+            run_id=RUN_ID,
+            artifact_id=loser_artifact_id,
+            revision=1,
+            path=f"output/artifacts/{loser_sha256}/{loser_artifact_id}.md",
+            sha256=loser_sha256,
+            size_bytes=len(loser_content),
+            frozen=True,
+            producer_kind="workflow_stage",
+            producer_id="scout",
+            created_at=NOW,
+        ),
+        loser_content,
+    )
+    winner_committed = False
+
+    def commit_winner(stage: str) -> None:
+        nonlocal winner_committed
+        if stage != "before_blob_write" or winner_committed:
+            return
+        winner_committed = True
+        unit = winner.begin(
+            RUN_ID,
+            "TX-CONCURRENT-WINNER-002",
+            "stage_state_update",
+            1,
+        )
+        unit.put_stage_state(
+            _records().stage.model_copy(update={"status": "blocked", "revision": 2})
+        )
+        unit.commit()
+
+    primary._failure_hook = commit_winner
+    try:
+        with pytest.raises(ControlStoreConflict) as error:
+            loser.commit()
+        assert error.value.code == "store_revision_conflict"
+        assert winner_committed is True
+        assert primary.current_revision == 2
+        assert primary._blob_path(loser_sha256).read_bytes() == loser_content
+        assert primary.scan_orphans().orphan_hashes == (loser_sha256,)
+        assert (
+            primary._connection.execute(
+                "SELECT 1 FROM artifacts WHERE run_id = ? AND artifact_id = ?",
+                (RUN_ID, loser_artifact_id),
+            ).fetchone()
+            is None
+        )
+        assert (
+            primary._connection.execute(
+                "SELECT 1 FROM transactions WHERE run_id = ? AND transaction_id = ?",
+                (RUN_ID, loser_transaction_id),
+            ).fetchone()
+            is None
+        )
+    finally:
+        winner.close()
+        primary.close()
+
+    with SQLiteControlStore.open(tmp_path / "control.db") as reopened:
+        snapshot = reopened.load_snapshot(RUN_ID)
+        assert snapshot.store_revision == 2
+        assert {item.artifact_id for item in snapshot.artifacts} == {"brief"}
+        assert {item.transaction_id for item in snapshot.transactions} == {
+            TRANSACTION_ID,
+            "TX-CONCURRENT-WINNER-002",
+        }
+        assert reopened.scan_orphans().orphan_hashes == (loser_sha256,)
 
 
 @pytest.mark.parametrize(
@@ -1002,6 +1117,20 @@ def test_invalid_sqlite_file_fails_with_typed_schema_error(tmp_path: Path) -> No
     assert error.value.code == "connection_configuration_failed"
 
 
+def test_reopen_rejects_foreign_key_corruption_that_quick_check_misses(
+    tmp_path: Path,
+) -> None:
+    store = _create_store(tmp_path)
+    _stage_all(store).commit()
+    store.close()
+    _corrupt_delivery_foreign_key(tmp_path / "control.db")
+
+    with pytest.raises(ControlStoreIntegrityError) as error:
+        SQLiteControlStore.open(tmp_path / "control.db")
+    assert error.value.code == "database_foreign_key_check_failed"
+    assert str(error.value) == "database_foreign_key_check_failed"
+
+
 def test_future_schema_fails_closed(tmp_path: Path) -> None:
     store = _create_store(tmp_path)
     store.close()
@@ -1051,6 +1180,37 @@ def test_wal_backup_restore_preserves_latest_revision_and_blob_integrity(
         assert restored._connection.execute("PRAGMA quick_check").fetchone()[0] == "ok"
     finally:
         restored.close()
+
+
+def test_backup_rejects_foreign_key_corruption_without_destination(
+    tmp_path: Path,
+) -> None:
+    destination = tmp_path / "invalid-backup"
+    with _create_store(tmp_path) as store:
+        _stage_all(store).commit()
+        _corrupt_delivery_foreign_key(store.path)
+        with pytest.raises(ControlStoreIntegrityError) as error:
+            store.backup_to(destination)
+        assert error.value.code == "database_foreign_key_check_failed"
+        assert str(error.value) == "database_foreign_key_check_failed"
+    assert not destination.exists()
+
+
+def test_restore_rejects_foreign_key_corruption_and_cleans_destination(
+    tmp_path: Path,
+) -> None:
+    with _create_store(tmp_path) as store:
+        _stage_all(store).commit()
+        backup = store.backup_to(tmp_path / "backup-with-invalid-foreign-key")
+    _corrupt_delivery_foreign_key(backup / "control.db")
+
+    destination = tmp_path / "restored-invalid-foreign-key.db"
+    with pytest.raises(ControlStoreIntegrityError) as error:
+        SQLiteControlStore.restore_to_new_path(backup, destination)
+    assert error.value.code == "database_foreign_key_check_failed"
+    assert str(error.value) == "database_foreign_key_check_failed"
+    assert not destination.exists()
+    assert not destination.with_name(f"{destination.name}.blobs").exists()
 
 
 def test_restore_rejects_incomplete_blob_backup_and_cleans_destination(
