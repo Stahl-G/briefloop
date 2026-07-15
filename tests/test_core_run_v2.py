@@ -1232,6 +1232,35 @@ def test_human_assisted_writer_satisfies_analyst_and_editor(tmp_path: Path) -> N
         "ExampleCo opened a public pilot facility. [src:CL-0001]\n",
         encoding="utf-8",
     )
+    with SQLiteControlStore.open(workspace / "briefloop.db") as store:
+        before_parent_rejection = store.load_snapshot(RUN_ID)
+    rejected_parent = ArtifactAcceptanceService(
+        workspace,
+        clock=CLOCK,
+    ).submit_owned_artifact(
+        _record(
+            OwnedArtifactSubmitRequest,
+            request_id="REQ-ARTIFACT-WRITER-WITH-PARENT",
+            run_id=RUN_ID,
+            artifact_id="audited_brief",
+            invocation_id=writer,
+            producer_tool_id=None,
+            input_path=brief_path.relative_to(workspace).as_posix(),
+            expected_store_revision=before_parent_rejection.store_revision,
+            expected_artifact_revision=0,
+            expected_parent_artifact={
+                "artifact_id": "claim_ledger",
+                "revision": 1,
+            },
+        )
+    )
+    assert rejected_parent.to_dict() == {
+        "status": "failed_uncommitted",
+        "error_code": "artifact_revision_conflict",
+    }
+    with SQLiteControlStore.open(workspace / "briefloop.db") as store:
+        after_parent_rejection = store.load_snapshot(RUN_ID)
+    assert after_parent_rejection == before_parent_rejection
     accepted = ArtifactAcceptanceService(
         workspace,
         clock=CLOCK,
@@ -1384,6 +1413,46 @@ def test_human_assisted_analyst_snapshot_routes_only_to_editor(
         "ExampleCo opened a public pilot facility. [src:CL-0001]\n",
         encoding="utf-8",
     )
+    with SQLiteControlStore.open(workspace / "briefloop.db") as store:
+        before_parent_rejections = store.load_snapshot(RUN_ID)
+        audited_brief = next(
+            item
+            for item in before_parent_rejections.artifacts
+            if item.artifact_id == "audited_brief"
+        )
+    canonical_brief = workspace / audited_brief.path
+    assert not canonical_brief.exists()
+    invalid_parents = (
+        None,
+        {"artifact_id": "claim_ledger", "revision": 1},
+        {"artifact_id": "analyst_draft_snapshot", "revision": 2},
+    )
+    for index, invalid_parent in enumerate(invalid_parents, start=1):
+        rejected = ArtifactAcceptanceService(
+            workspace,
+            clock=CLOCK,
+        ).submit_owned_artifact(
+            _record(
+                OwnedArtifactSubmitRequest,
+                request_id=f"REQ-ARTIFACT-EDITOR-BAD-PARENT-{index}",
+                run_id=RUN_ID,
+                artifact_id="audited_brief",
+                invocation_id=editor,
+                producer_tool_id=None,
+                input_path=brief_path.relative_to(workspace).as_posix(),
+                expected_store_revision=before_parent_rejections.store_revision,
+                expected_artifact_revision=0,
+                expected_parent_artifact=invalid_parent,
+            )
+        )
+        assert rejected.to_dict() == {
+            "status": "failed_uncommitted",
+            "error_code": "artifact_revision_conflict",
+        }
+        with SQLiteControlStore.open(workspace / "briefloop.db") as store:
+            after_parent_rejection = store.load_snapshot(RUN_ID)
+        assert after_parent_rejection == before_parent_rejections
+        assert not canonical_brief.exists()
     editor_result = ArtifactAcceptanceService(
         workspace,
         clock=CLOCK,

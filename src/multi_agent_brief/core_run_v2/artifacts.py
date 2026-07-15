@@ -184,7 +184,8 @@ class ArtifactAcceptanceService:
                 verified.snapshot,
                 request,
                 artifact.artifact_id,
-                verified.binding.role_topology,
+                owner_stage_id=stage_id,
+                owner_role_id=owner_role,
             )
             blocked = self._integrity.require_clean(
                 store,
@@ -502,14 +503,18 @@ class ArtifactAcceptanceService:
         snapshot: object,
         request: OwnedArtifactSubmitRequest,
         artifact_id: str,
-        topology: str,
+        *,
+        owner_stage_id: str,
+        owner_role_id: str,
     ):
         expected = request.expected_parent_artifact
         if artifact_id != "audited_brief":
             if expected is not None:
                 raise CoreRunError("artifact_owner_mismatch")
             return None
-        if expected is None and topology == "human_assisted":
+        if owner_stage_id == "analyst" and owner_role_id == "writer":
+            if expected is not None:
+                raise CoreRunError("artifact_revision_conflict")
             return None
         if expected is None:
             raise CoreRunError("artifact_revision_conflict")
