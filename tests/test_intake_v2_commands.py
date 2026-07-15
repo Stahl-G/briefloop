@@ -245,6 +245,7 @@ def test_intake_cli_is_labelled_internal_and_requires_json() -> None:
 def test_intake_v2_imports_are_confined_to_dormant_package_and_cli_adapter() -> None:
     package_root = Path(__file__).parents[1] / "src" / "multi_agent_brief"
     allowed = {
+        "cli/core_v2_commands.py",
         "cli/intake_v2_commands.py",
         "intake_v2/__init__.py",
         "intake_v2/service.py",
@@ -260,7 +261,11 @@ def test_intake_v2_imports_are_confined_to_dormant_package_and_cli_adapter() -> 
             if module == "multi_agent_brief.intake_v2" or module.startswith(
                 "multi_agent_brief.intake_v2."
             ):
-                if relative not in allowed and not relative.startswith("intake_v2/"):
+                if (
+                    relative not in allowed
+                    and not relative.startswith("intake_v2/")
+                    and not relative.startswith("core_run_v2/")
+                ):
                     findings.append(f"{relative}:{node.lineno}")
     assert findings == []
 

@@ -270,6 +270,23 @@ MimeType = Annotated[
 NonNegativeInt = Annotated[int, Field(ge=0)]
 PositiveInt = Annotated[int, Field(gt=0)]
 RuntimeName = Literal[VALID_RUNTIMES]
+RoleTopology = Literal["default", "strict", "human_assisted"]
+GateId = Literal[
+    "coverage_omission",
+    "editor_new_fact",
+    "final_abstract_quality",
+    "material_fact",
+    "freshness",
+    "target_relevance",
+]
+GATE_ID_VALUES = (
+    "coverage_omission",
+    "editor_new_fact",
+    "final_abstract_quality",
+    "material_fact",
+    "freshness",
+    "target_relevance",
+)
 
 
 def _event_type_json_schema(schema: dict[str, Any]) -> None:
@@ -368,6 +385,7 @@ class CandidateClaimItem(StrictModel):
 class ScreeningDecisionItem(StrictModel):
     candidate_id: ContractId
     decision: Literal["selected", "excluded", "deprioritized"]
+    priority: Optional[Literal["low", "medium", "high"]] = None
     reason_code: Optional[ContractId] = None
     explanation: Optional[CleanText] = None
 
@@ -411,6 +429,25 @@ class IntakeEventBinding(StrictModel):
         if self.outcome == "rejected" and self.reason_code is None:
             raise ValueError("rejected intake binding requires a reason code")
         return self
+
+
+class CoreRunEventBinding(StrictModel):
+    """Replay identity for one deterministic PR-4A domain effect."""
+
+    request_id: ContractId
+    request_fingerprint: Sha256
+    effect_kind: Literal[
+        "initialize",
+        "invocation_start",
+        "owned_artifact_acceptance",
+        "claim_freeze",
+        "audit_promotion",
+        "gate_evaluation",
+        "stage_transition",
+        "integrity_contamination",
+    ]
+    primary_record_id: ContractId
+    outcome: Literal["committed", "blocked"]
 
 
 class SourceProposal(StrictModel):
@@ -774,6 +811,7 @@ class EventEnvelope(StrictModel):
     reason: str = ""
     metadata: dict[str, JsonValue] = Field(default_factory=dict)
     intake_binding: Optional[IntakeEventBinding] = None
+    core_run_binding: Optional[CoreRunEventBinding] = None
 
     @field_validator("event_type")
     @classmethod
@@ -812,6 +850,36 @@ class EventEnvelope(StrictModel):
             valid = self.intake_binding is None
         if not valid:
             raise ValueError("event intake binding does not match event type")
+        if self.intake_binding is not None and self.core_run_binding is not None:
+            raise ValueError("event cannot carry intake and core-run replay bindings")
+        if self.core_run_binding is not None:
+            allowed_core_events = {
+                "initialize": {"run_initialized"},
+                "invocation_start": {"role_invocation_started"},
+                "owned_artifact_acceptance": {"owned_artifact_accepted"},
+                "claim_freeze": {"claim_ledger_frozen"},
+                "audit_promotion": {"audit_proposal_promoted"},
+                "gate_evaluation": {"quality_gate_checked"},
+                "stage_transition": {
+                    "stage_status_changed",
+                    "stage_satisfied_by_topology",
+                },
+                "integrity_contamination": {"run_integrity_contaminated"},
+            }
+            binding = self.core_run_binding
+            if (
+                self.event_type not in allowed_core_events[binding.effect_kind]
+                or binding.request_id != self.transaction_id
+                or (
+                    binding.effect_kind == "integrity_contamination"
+                    and binding.outcome != "blocked"
+                )
+                or (
+                    binding.effect_kind != "integrity_contamination"
+                    and binding.outcome != "committed"
+                )
+            ):
+                raise ValueError("event core-run binding does not match event type")
         return self
 
 
@@ -913,6 +981,635 @@ class ArtifactRevisionReference(StrictModel):
     revision: PositiveInt
 
 
+class RunDirection(StrictModel):
+    schema_id = "briefloop.run_direction.v2"
+
+    schema_version: Literal["briefloop.run_direction.v2"]
+    subject_name: CleanText
+    industry_or_theme: Optional[CleanText] = None
+    brief_title: CleanText
+    task_objective: CleanText
+    audience: CleanText
+    audience_profile: CleanText
+    output_language: CleanText
+    source_handling: CleanText
+    cadence: CleanText
+    focus_areas: list[CleanText]
+    excluded_topics: list[CleanText]
+    forbidden_sources: list[CleanText]
+    source_profile: CleanText
+    web_search_mode: Literal[
+        "disabled",
+        "runtime_tool",
+        "external_api",
+        "configure_later",
+    ]
+    search_backend: Optional[
+        Literal["tavily", "exa", "brave", "firecrawl", "serper"]
+    ] = None
+    output_style: Optional[CleanText] = None
+    output_formats: list[ContractId] = Field(min_length=1)
+    report_date: IsoDate
+    report_window_start: Optional[IsoDate] = None
+    report_window_end: Optional[IsoDate] = None
+    max_source_age_days: Optional[PositiveInt] = None
+    target_terms: list[CleanText] = Field(min_length=1)
+
+    @model_validator(mode="after")
+    def direction_is_canonical(self) -> "RunDirection":
+        for field_name in (
+            "focus_areas",
+            "excluded_topics",
+            "forbidden_sources",
+            "output_formats",
+            "target_terms",
+        ):
+            values = getattr(self, field_name)
+            if len(values) != len(set(values)):
+                raise ValueError(f"{field_name} must contain unique values")
+        if (self.report_window_start is None) != (self.report_window_end is None):
+            raise ValueError("report window boundaries must be paired")
+        if self.report_window_start is not None:
+            if self.report_window_start > self.report_window_end:
+                raise ValueError("report window is not ordered")
+            if self.report_window_end > self.report_date:
+                raise ValueError("report window cannot end after report date")
+        if self.web_search_mode == "external_api":
+            if self.search_backend is None:
+                raise ValueError("external API search requires a backend")
+        elif self.search_backend is not None:
+            raise ValueError("search backend is allowed only for external API mode")
+        return self
+
+
+class CoreRunInitializeRequest(StrictModel):
+    schema_id = "briefloop.core_run_initialize_request.v2"
+
+    schema_version: Literal["briefloop.core_run_initialize_request.v2"]
+    request_id: ContractId
+    workspace_id: ContractId
+    run_id: ContractId
+    runtime: RuntimeName
+    expected_store_revision: Literal[0]
+    run_direction: RunDirection
+    workspace_config_sha256: Sha256
+    sources_config_sha256: Sha256
+    role_topology: RoleTopology
+    gate_strictness: dict[GateId, bool]
+    input_governance_required: bool
+
+    @field_validator("gate_strictness")
+    @classmethod
+    def exact_gate_set(cls, value: dict[str, bool]) -> dict[str, bool]:
+        if set(value) != set(GATE_ID_VALUES):
+            raise ValueError("gate strictness must name the exact Gate universe")
+        return value
+
+
+class RunContractBinding(StrictModel):
+    schema_id = "briefloop.run_contract_binding.v2"
+
+    schema_version: Literal["briefloop.run_contract_binding.v2"]
+    run_id: ContractId
+    workspace_id: ContractId
+    runtime: RuntimeName
+    stage_specs_schema: CleanText
+    stage_specs_artifact: ArtifactRevisionReference
+    stage_specs_sha256: Sha256
+    artifact_contracts_schema: CleanText
+    artifact_contracts_artifact: ArtifactRevisionReference
+    artifact_contracts_sha256: Sha256
+    policy_pack_schema: CleanText
+    policy_pack_name: ContractId
+    policy_pack_artifact: ArtifactRevisionReference
+    policy_pack_sha256: Sha256
+    run_direction: RunDirection
+    workspace_config_sha256: Sha256
+    sources_config_sha256: Sha256
+    role_topology: RoleTopology
+    gate_strictness: dict[GateId, bool]
+    input_governance_required: bool
+    contract_fingerprint: Sha256
+    created_at: IsoDateTime
+    initialization_event_id: ContractId
+    accepted_transaction_id: ContractId
+    request_fingerprint: Sha256
+
+    @field_validator("gate_strictness")
+    @classmethod
+    def exact_binding_gate_set(cls, value: dict[str, bool]) -> dict[str, bool]:
+        if set(value) != set(GATE_ID_VALUES):
+            raise ValueError("gate strictness must name the exact Gate universe")
+        return value
+
+
+class InvocationStartRequest(StrictModel):
+    schema_id = "briefloop.invocation_start_request.v2"
+
+    schema_version: Literal["briefloop.invocation_start_request.v2"]
+    request_id: ContractId
+    run_id: ContractId
+    stage_id: ContractId
+    role_id: ContractId
+    runtime: RuntimeName
+    expected_store_revision: NonNegativeInt
+
+
+class OwnedArtifactSubmitRequest(StrictModel):
+    schema_id = "briefloop.owned_artifact_submit_request.v2"
+
+    schema_version: Literal["briefloop.owned_artifact_submit_request.v2"]
+    request_id: ContractId
+    run_id: ContractId
+    artifact_id: ContractId
+    invocation_id: Optional[ContractId] = None
+    producer_tool_id: Optional[ContractId] = None
+    input_path: WorkspacePath
+    expected_store_revision: NonNegativeInt
+    expected_artifact_revision: NonNegativeInt
+    expected_parent_artifact: Optional[ArtifactRevisionReference] = None
+
+    @model_validator(mode="after")
+    def producer_and_scratch_shape(self) -> "OwnedArtifactSubmitRequest":
+        if self.invocation_id is None and self.producer_tool_id is None:
+            raise ValueError("owned artifact requires an invocation or producer tool")
+        path = PurePosixPath(self.input_path)
+        if self.invocation_id is not None:
+            if path.parent != PurePosixPath("scratch") / self.invocation_id:
+                raise ValueError("owned artifact input must be invocation scoped")
+        elif path.parts[:1] != ("scratch",):
+            raise ValueError("owned artifact tool input must be scratch scoped")
+        return self
+
+
+class OwnedArtifactSubmissionRecord(StrictModel):
+    schema_id = "briefloop.owned_artifact_submission_record.v2"
+
+    schema_version: Literal["briefloop.owned_artifact_submission_record.v2"]
+    submission_id: ContractId
+    run_id: ContractId
+    artifact_id: ContractId
+    artifact_revision: PositiveInt
+    artifact_sha256: Sha256
+    owner_stage_id: ContractId
+    owner_role_id: ContractId
+    run_contract_fingerprint: Sha256
+    invocation_id: Optional[ContractId] = None
+    producer_tool_id: Optional[ContractId] = None
+    parent_artifact: Optional[ArtifactRevisionReference] = None
+    source_proposal_id: Optional[ContractId] = None
+    canonical_workspace_path: WorkspacePath
+    request_fingerprint: Sha256
+    accepted_event_id: ContractId
+    accepted_transaction_id: ContractId
+    created_at: IsoDateTime
+
+    @model_validator(mode="after")
+    def producer_identity_present(self) -> "OwnedArtifactSubmissionRecord":
+        if self.invocation_id is None and self.producer_tool_id is None:
+            raise ValueError("owned artifact record requires a producer")
+        return self
+
+
+class ClaimRecord(StrictModel):
+    schema_id = "briefloop.claim_record.v2"
+
+    schema_version: Literal["briefloop.claim_record.v2"]
+    run_id: ContractId
+    claim_id: ContractId
+    freeze_id: ContractId
+    ordinal: PositiveInt
+    claim_drafts_proposal_id: ContractId
+    draft_id: ContractId
+    statement: CleanText
+    evidence_text: CleanText
+    primary_source_id: ContractId
+    claim_type: Literal["fact", "trend", "risk", "opportunity", "estimate"]
+    confidence: Literal["medium"]
+    requires_audit: Literal[True]
+    epistemic_type: Literal["observed", "interpreted", "hypothesis"]
+    evidence_relation: Literal["direct"]
+    applicability_reason: None = None
+    limitations: list[CleanText] = Field(default_factory=list)
+    metadata: dict[str, JsonValue] = Field(default_factory=dict)
+    created_at: IsoDateTime
+    accepted_transaction_id: ContractId
+
+
+class ClaimSourceBinding(StrictModel):
+    schema_id = "briefloop.claim_source_binding.v2"
+
+    schema_version: Literal["briefloop.claim_source_binding.v2"]
+    run_id: ContractId
+    claim_id: ContractId
+    source_id: ContractId
+    position: NonNegativeInt
+    citation_role: Literal["primary", "additional"]
+    claim_drafts_proposal_id: ContractId
+    accepted_transaction_id: ContractId
+
+    @model_validator(mode="after")
+    def primary_position_matches_role(self) -> "ClaimSourceBinding":
+        if (self.position == 0) != (self.citation_role == "primary"):
+            raise ValueError("primary Claim source must occupy position zero")
+        return self
+
+
+class ClaimFreezeWarning(StrictModel):
+    warning_type: Literal["lexical_duplicate_statement"]
+    draft_ids: list[ContractId] = Field(min_length=2)
+
+    @model_validator(mode="after")
+    def draft_ids_are_canonical(self) -> "ClaimFreezeWarning":
+        if self.draft_ids != sorted(set(self.draft_ids)):
+            raise ValueError("warning draft identities must be sorted and unique")
+        return self
+
+
+class ClaimFreezeRecord(StrictModel):
+    schema_id = "briefloop.claim_freeze_record.v2"
+
+    schema_version: Literal["briefloop.claim_freeze_record.v2"]
+    freeze_id: ContractId
+    run_id: ContractId
+    claim_drafts_proposal_id: ContractId
+    screened_proposal_id: ContractId
+    candidate_proposal_id: ContractId
+    claim_drafts_artifact: ArtifactRevisionReference
+    claim_drafts_sha256: Sha256
+    ledger_artifact: ArtifactRevisionReference
+    ledger_sha256: Sha256
+    normalization_policy: Literal["sorted_sequential_v2"]
+    run_contract_fingerprint: Sha256
+    claim_count: PositiveInt
+    warnings: list[ClaimFreezeWarning] = Field(default_factory=list)
+    warning_count: NonNegativeInt
+    frozen_at: IsoDateTime
+    freeze_event_id: ContractId
+    accepted_transaction_id: ContractId
+    request_fingerprint: Sha256
+
+    @model_validator(mode="after")
+    def warning_count_matches(self) -> "ClaimFreezeRecord":
+        if self.warning_count != len(self.warnings):
+            raise ValueError("warning count does not match warnings")
+        return self
+
+
+class ClaimFreezeRequest(StrictModel):
+    schema_id = "briefloop.claim_freeze_request.v2"
+
+    schema_version: Literal["briefloop.claim_freeze_request.v2"]
+    request_id: ContractId
+    run_id: ContractId
+    claim_drafts_proposal_id: ContractId
+    expected_claim_drafts_artifact: ArtifactRevisionReference
+    expected_store_revision: NonNegativeInt
+    expected_ledger_revision: NonNegativeInt
+
+
+class StageTransitionRecord(StrictModel):
+    schema_id = "briefloop.stage_transition_record.v2"
+
+    schema_version: Literal["briefloop.stage_transition_record.v2"]
+    transition_id: ContractId
+    run_id: ContractId
+    stage_id: ContractId
+    transition_kind: Literal[
+        "initialize", "activate", "complete", "satisfied_by_topology"
+    ]
+    requested_decision: Optional[Literal["continue"]] = None
+    prior_status: Optional[Literal["pending", "ready", "complete", "blocked", "skipped"]] = None
+    prior_revision: Optional[NonNegativeInt] = None
+    result_status: Literal["pending", "ready", "complete", "blocked", "skipped"]
+    result_revision: NonNegativeInt
+    reason: CleanText
+    run_contract_fingerprint: Sha256
+    actor: Literal["cli", "orchestrator", "runtime", "system"]
+    producer_invocation_id: Optional[ContractId] = None
+    producer_tool_id: Optional[ContractId] = None
+    producer_result_status: Optional[Literal["pass"]] = None
+    producer_result_fingerprint: Optional[Sha256] = None
+    producer_implementation: Optional[ContractId] = None
+    producer_version: Optional[ContractId] = None
+    topology: Optional[RoleTopology] = None
+    satisfaction_source_kind: Optional[Literal["stage", "role"]] = None
+    satisfied_by_id: Optional[ContractId] = None
+    created_at: IsoDateTime
+    transition_event_id: ContractId
+    accepted_transaction_id: ContractId
+    request_fingerprint: Sha256
+
+    @model_validator(mode="after")
+    def transition_shape_is_complete(self) -> "StageTransitionRecord":
+        if self.transition_kind == "initialize":
+            if self.prior_status is not None or self.prior_revision is not None:
+                raise ValueError("initial transition cannot have prior state")
+            if self.result_revision != 0:
+                raise ValueError("initial transition must create revision zero")
+        else:
+            if self.prior_status is None or self.prior_revision is None:
+                raise ValueError("non-initial transition requires prior state")
+            if self.result_revision != self.prior_revision + 1:
+                raise ValueError("stage transition revision must advance once")
+        topology_values = (self.topology, self.satisfaction_source_kind, self.satisfied_by_id)
+        if self.transition_kind == "satisfied_by_topology":
+            if any(item is None for item in topology_values):
+                raise ValueError("topology transition requires its source tuple")
+        elif any(item is not None for item in topology_values):
+            raise ValueError("non-topology transition cannot carry topology source")
+        doctor_values = (
+            self.producer_result_status,
+            self.producer_result_fingerprint,
+            self.producer_implementation,
+            self.producer_version,
+        )
+        if any(item is not None for item in doctor_values) and not all(
+            item is not None for item in doctor_values
+        ):
+            raise ValueError("deterministic producer result tuple is incomplete")
+        return self
+
+
+class StageArtifactBinding(StrictModel):
+    schema_id = "briefloop.stage_artifact_binding.v2"
+
+    schema_version: Literal["briefloop.stage_artifact_binding.v2"]
+    run_id: ContractId
+    transition_id: ContractId
+    position: NonNegativeInt
+    artifact_id: ContractId
+    artifact_revision: PositiveInt
+    artifact_sha256: Sha256
+    usage: Literal["produced", "consumed", "topology_required"]
+    accepted_transaction_id: ContractId
+
+
+class StageGateBinding(StrictModel):
+    schema_id = "briefloop.stage_gate_binding.v2"
+
+    schema_version: Literal["briefloop.stage_gate_binding.v2"]
+    run_id: ContractId
+    transition_id: ContractId
+    gate_id: GateId
+    evaluation_id: ContractId
+    accepted_transaction_id: ContractId
+
+
+class StageCompleteRequest(StrictModel):
+    schema_id = "briefloop.stage_complete_request.v2"
+
+    schema_version: Literal["briefloop.stage_complete_request.v2"]
+    request_id: ContractId
+    run_id: ContractId
+    stage_id: ContractId
+    reason: CleanText
+    expected_stage_revision: NonNegativeInt
+    expected_store_revision: NonNegativeInt
+    expected_artifact_revisions: list[ArtifactRevisionReference]
+    expected_gate_evaluation_ids: list[ContractId]
+
+    @model_validator(mode="after")
+    def expected_bindings_are_unique(self) -> "StageCompleteRequest":
+        artifact_keys = [
+            (item.artifact_id, item.revision)
+            for item in self.expected_artifact_revisions
+        ]
+        if len(artifact_keys) != len(set(artifact_keys)):
+            raise ValueError("duplicate expected artifact revision")
+        if len(self.expected_gate_evaluation_ids) != len(
+            set(self.expected_gate_evaluation_ids)
+        ):
+            raise ValueError("duplicate expected Gate evaluation")
+        return self
+
+
+class GateFindingRecord(StrictModel):
+    schema_id = "briefloop.gate_finding_record.v2"
+
+    schema_version: Literal["briefloop.gate_finding_record.v2"]
+    run_id: ContractId
+    evaluation_id: ContractId
+    finding_id: ContractId
+    gate_id: GateId
+    finding_type: ContractId
+    severity: Literal["low", "medium", "high"]
+    blocking_level: Literal["none", "warning", "blocking"]
+    repair_owner: ContractId
+    stage_id: Optional[ContractId] = None
+    artifact_id: Optional[ContractId] = None
+    claim_id: Optional[ContractId] = None
+    source_id: Optional[ContractId] = None
+    line_number: Optional[PositiveInt] = None
+    description: CleanText
+    recommendation: CleanText
+    category: ContractId
+    evidence_ref: CleanText
+    metadata: dict[str, JsonValue] = Field(default_factory=dict)
+    accepted_transaction_id: ContractId
+
+
+class GateEvaluationRecord(StrictModel):
+    schema_id = "briefloop.gate_evaluation_record.v2"
+
+    schema_version: Literal["briefloop.gate_evaluation_record.v2"]
+    evaluation_id: ContractId
+    gate_batch_id: ContractId
+    run_id: ContractId
+    stage_id: Literal["auditor"]
+    gate_id: GateId
+    policy_version: ContractId
+    run_contract_fingerprint: Sha256
+    status: Literal["pass", "warning", "fail", "unavailable", "invalid"]
+    blocking: bool
+    finding_ids: list[ContractId]
+    checked_at: IsoDateTime
+    producer_implementation: ContractId
+    producer_version: ContractId
+    report_artifact: ArtifactRevisionReference
+    evaluation_event_id: ContractId
+    accepted_transaction_id: ContractId
+    request_fingerprint: Sha256
+
+    @model_validator(mode="after")
+    def findings_are_unique(self) -> "GateEvaluationRecord":
+        if len(self.finding_ids) != len(set(self.finding_ids)):
+            raise ValueError("duplicate Gate finding identity")
+        expected_blocking = self.status in {"fail", "unavailable", "invalid"}
+        if self.blocking != expected_blocking:
+            raise ValueError("Gate blocking flag does not match its status")
+        if self.status in {"unavailable", "invalid"} and not self.finding_ids:
+            raise ValueError("negative Gate availability requires a finding")
+        return self
+
+
+class GateArtifactBinding(StrictModel):
+    schema_id = "briefloop.gate_artifact_binding.v2"
+
+    schema_version: Literal["briefloop.gate_artifact_binding.v2"]
+    run_id: ContractId
+    evaluation_id: ContractId
+    position: NonNegativeInt
+    artifact_id: ContractId
+    artifact_revision: PositiveInt
+    artifact_sha256: Sha256
+    usage: Literal["brief", "ledger", "analyst_snapshot", "screened_candidates"]
+    accepted_transaction_id: ContractId
+
+
+class GateCheckRequest(StrictModel):
+    schema_id = "briefloop.gate_check_request.v2"
+
+    schema_version: Literal["briefloop.gate_check_request.v2"]
+    request_id: ContractId
+    run_id: ContractId
+    stage_id: Literal["auditor"]
+    expected_store_revision: NonNegativeInt
+    expected_report_artifact_revision: NonNegativeInt
+    expected_input_artifacts: list[ArtifactRevisionReference]
+
+    @model_validator(mode="after")
+    def gate_inputs_are_unique(self) -> "GateCheckRequest":
+        keys = [(item.artifact_id, item.revision) for item in self.expected_input_artifacts]
+        if len(keys) != len(set(keys)):
+            raise ValueError("duplicate Gate input artifact")
+        return self
+
+
+class AuditPromotionRequest(StrictModel):
+    schema_id = "briefloop.audit_promotion_request.v2"
+
+    schema_version: Literal["briefloop.audit_promotion_request.v2"]
+    request_id: ContractId
+    run_id: ContractId
+    audit_proposal_id: ContractId
+    expected_target_artifact: ArtifactRevisionReference
+    expected_audit_report_revision: NonNegativeInt
+    expected_store_revision: NonNegativeInt
+
+
+class AuditReportArtifact(StrictModel):
+    schema_id = "briefloop.audit_report_artifact.v2"
+
+    schema_version: Literal["briefloop.audit_report_artifact.v2"]
+    run_id: ContractId
+    audit_proposal_id: ContractId
+    target_artifact_id: ContractId
+    target_artifact_revision: PositiveInt
+    target_artifact_sha256: Sha256
+    decision: Literal["pass", "warning", "fail"]
+    findings: list[AuditFindingItem] = Field(default_factory=list)
+
+
+class RunIntegrityRecord(StrictModel):
+    schema_id = "briefloop.run_integrity_record.v2"
+
+    schema_version: Literal["briefloop.run_integrity_record.v2"]
+    run_id: ContractId
+    integrity_revision: PositiveInt
+    status: Literal["clean", "contaminated"]
+    prior_integrity_revision: Optional[PositiveInt] = None
+    affected_artifact_id: Optional[ContractId] = None
+    affected_artifact_revision: Optional[PositiveInt] = None
+    expected_workspace_path: Optional[WorkspacePath] = None
+    expected_sha256: Optional[Sha256] = None
+    observed_entry_kind: Optional[
+        Literal["absent", "regular_file", "non_regular", "unsafe"]
+    ] = None
+    observed_sha256: Optional[Sha256] = None
+    reason_code: Optional[ContractId] = None
+    first_detected_at: Optional[IsoDateTime] = None
+    first_detected_event_id: Optional[ContractId] = None
+    accepted_transaction_id: ContractId
+    request_fingerprint: Sha256
+
+    @model_validator(mode="after")
+    def integrity_shape_matches_status(self) -> "RunIntegrityRecord":
+        contamination = (
+            self.affected_artifact_id,
+            self.affected_artifact_revision,
+            self.expected_workspace_path,
+            self.expected_sha256,
+            self.observed_entry_kind,
+            self.reason_code,
+            self.first_detected_at,
+            self.first_detected_event_id,
+        )
+        if self.status == "clean":
+            if self.integrity_revision != 1 or self.prior_integrity_revision is not None:
+                raise ValueError("clean integrity is the initial revision")
+            if any(item is not None for item in contamination) or self.observed_sha256 is not None:
+                raise ValueError("clean integrity cannot carry contamination data")
+        else:
+            if self.prior_integrity_revision is None or any(
+                item is None for item in contamination
+            ):
+                raise ValueError("contaminated integrity requires complete lineage")
+        return self
+
+
+class IntegrityCheckRequest(StrictModel):
+    schema_id = "briefloop.integrity_check_request.v2"
+
+    schema_version: Literal["briefloop.integrity_check_request.v2"]
+    request_id: ContractId
+    run_id: ContractId
+    expected_store_revision: NonNegativeInt
+
+
+class RunContractBindingReference(StrictModel):
+    run_id: ContractId
+
+
+class OwnedArtifactSubmissionReference(StrictModel):
+    submission_id: ContractId
+
+
+class StageTransitionReference(StrictModel):
+    transition_id: ContractId
+
+
+class StageArtifactBindingReference(StrictModel):
+    transition_id: ContractId
+    position: NonNegativeInt
+
+
+class StageGateBindingReference(StrictModel):
+    transition_id: ContractId
+    gate_id: GateId
+
+
+class ClaimReference(StrictModel):
+    claim_id: ContractId
+
+
+class ClaimSourceBindingReference(StrictModel):
+    claim_id: ContractId
+    source_id: ContractId
+
+
+class ClaimFreezeReference(StrictModel):
+    freeze_id: ContractId
+
+
+class GateEvaluationReference(StrictModel):
+    evaluation_id: ContractId
+
+
+class GateFindingReference(StrictModel):
+    evaluation_id: ContractId
+    finding_id: ContractId
+
+
+class GateArtifactBindingReference(StrictModel):
+    evaluation_id: ContractId
+    position: NonNegativeInt
+
+
+class RunIntegrityReference(StrictModel):
+    integrity_revision: PositiveInt
+
+
 class TransactionReceipt(StrictModel):
     schema_id = "briefloop.transaction_receipt.v2"
 
@@ -928,6 +1625,18 @@ class TransactionReceipt(StrictModel):
     artifact_revisions: list[ArtifactRevisionReference] = Field(default_factory=list)
     source_ids: list[ContractId] = Field(default_factory=list)
     proposal_ids: list[ContractId] = Field(default_factory=list)
+    run_contract_bindings: list[RunContractBindingReference] = Field(default_factory=list)
+    owned_artifact_submissions: list[OwnedArtifactSubmissionReference] = Field(default_factory=list)
+    stage_transitions: list[StageTransitionReference] = Field(default_factory=list)
+    stage_artifact_bindings: list[StageArtifactBindingReference] = Field(default_factory=list)
+    stage_gate_bindings: list[StageGateBindingReference] = Field(default_factory=list)
+    claims: list[ClaimReference] = Field(default_factory=list)
+    claim_source_bindings: list[ClaimSourceBindingReference] = Field(default_factory=list)
+    claim_freezes: list[ClaimFreezeReference] = Field(default_factory=list)
+    gate_evaluations: list[GateEvaluationReference] = Field(default_factory=list)
+    gate_findings: list[GateFindingReference] = Field(default_factory=list)
+    gate_artifact_bindings: list[GateArtifactBindingReference] = Field(default_factory=list)
+    run_integrity_records: list[RunIntegrityReference] = Field(default_factory=list)
 
     @model_validator(mode="after")
     def revision_advances(self) -> "TransactionReceipt":
@@ -944,6 +1653,24 @@ class TransactionReceipt(StrictModel):
             raise ValueError("duplicate source identity")
         if len(self.proposal_ids) != len(set(self.proposal_ids)):
             raise ValueError("duplicate proposal identity")
+        relation_lists = (
+            self.run_contract_bindings,
+            self.owned_artifact_submissions,
+            self.stage_transitions,
+            self.stage_artifact_bindings,
+            self.stage_gate_bindings,
+            self.claims,
+            self.claim_source_bindings,
+            self.claim_freezes,
+            self.gate_evaluations,
+            self.gate_findings,
+            self.gate_artifact_bindings,
+            self.run_integrity_records,
+        )
+        for values in relation_lists:
+            keys = [item.model_dump_json() for item in values]
+            if len(keys) != len(set(keys)):
+                raise ValueError("duplicate transaction relation identity")
         return self
 
 
@@ -1338,6 +2065,407 @@ TransactionReceipt.full_example = {
     "proposal_ids": ["PROP-CANDIDATES-001"],
 }
 
+_RUN_DIRECTION = {
+    "schema_version": RunDirection.schema_id,
+    "subject_name": "ExampleCo",
+    "industry_or_theme": "synthetic operations",
+    "brief_title": "ExampleCo weekly brief",
+    "task_objective": "Summarize the supplied public evidence.",
+    "audience": "management",
+    "audience_profile": "management",
+    "output_language": "en",
+    "source_handling": "local_first",
+    "cadence": "weekly",
+    "focus_areas": ["operations"],
+    "excluded_topics": [],
+    "forbidden_sources": [],
+    "source_profile": "public_safe",
+    "web_search_mode": "disabled",
+    "search_backend": None,
+    "output_style": "concise",
+    "output_formats": ["markdown", "docx"],
+    "report_date": "2026-07-14",
+    "report_window_start": "2026-07-07",
+    "report_window_end": "2026-07-14",
+    "max_source_age_days": 30,
+    "target_terms": ["ExampleCo"],
+}
+RunDirection.minimal_example = deepcopy(_RUN_DIRECTION)
+RunDirection.full_example = deepcopy(_RUN_DIRECTION)
+
+_GATE_STRICTNESS = {gate_id: True for gate_id in GATE_ID_VALUES}
+CoreRunInitializeRequest.minimal_example = {
+    "schema_version": CoreRunInitializeRequest.schema_id,
+    "request_id": "REQ-CORE-INIT-001",
+    "workspace_id": "WS-PUBLIC-DEMO",
+    "run_id": _RUN,
+    "runtime": "operator",
+    "expected_store_revision": 0,
+    "run_direction": deepcopy(_RUN_DIRECTION),
+    "workspace_config_sha256": _SHA_A,
+    "sources_config_sha256": _SHA_B,
+    "role_topology": "default",
+    "gate_strictness": deepcopy(_GATE_STRICTNESS),
+    "input_governance_required": True,
+}
+CoreRunInitializeRequest.full_example = deepcopy(
+    CoreRunInitializeRequest.minimal_example
+)
+
+RunContractBinding.minimal_example = {
+    "schema_version": RunContractBinding.schema_id,
+    "run_id": _RUN,
+    "workspace_id": "WS-PUBLIC-DEMO",
+    "runtime": "operator",
+    "stage_specs_schema": "multi-agent-brief-stage-specs/v1",
+    "stage_specs_artifact": {
+        "artifact_id": "run_contract_stage_specs",
+        "revision": 1,
+    },
+    "stage_specs_sha256": _SHA_A,
+    "artifact_contracts_schema": "multi-agent-brief-artifact-contracts/v1",
+    "artifact_contracts_artifact": {
+        "artifact_id": "run_contract_artifact_contracts",
+        "revision": 1,
+    },
+    "artifact_contracts_sha256": _SHA_B,
+    "policy_pack_schema": "multi-agent-brief-policy-pack/v1",
+    "policy_pack_name": "default",
+    "policy_pack_artifact": {
+        "artifact_id": "run_contract_policy_pack",
+        "revision": 1,
+    },
+    "policy_pack_sha256": "c" * 64,
+    "run_direction": deepcopy(_RUN_DIRECTION),
+    "workspace_config_sha256": _SHA_A,
+    "sources_config_sha256": _SHA_B,
+    "role_topology": "default",
+    "gate_strictness": deepcopy(_GATE_STRICTNESS),
+    "input_governance_required": True,
+    "contract_fingerprint": "d" * 64,
+    "created_at": _NOW,
+    "initialization_event_id": "EVT-CORE-INIT-001",
+    "accepted_transaction_id": "REQ-CORE-INIT-001",
+    "request_fingerprint": "e" * 64,
+}
+RunContractBinding.full_example = deepcopy(RunContractBinding.minimal_example)
+
+InvocationStartRequest.minimal_example = {
+    "schema_version": InvocationStartRequest.schema_id,
+    "request_id": "REQ-INVOCATION-001",
+    "run_id": _RUN,
+    "stage_id": "scout",
+    "role_id": "scout",
+    "runtime": "operator",
+    "expected_store_revision": 2,
+}
+InvocationStartRequest.full_example = deepcopy(InvocationStartRequest.minimal_example)
+
+OwnedArtifactSubmitRequest.minimal_example = {
+    "schema_version": OwnedArtifactSubmitRequest.schema_id,
+    "request_id": "REQ-OWNED-001",
+    "run_id": _RUN,
+    "artifact_id": "audited_brief",
+    "invocation_id": "INV-EDITOR-001",
+    "producer_tool_id": None,
+    "input_path": "scratch/INV-EDITOR-001/audited_brief.md",
+    "expected_store_revision": 8,
+    "expected_artifact_revision": 0,
+    "expected_parent_artifact": {
+        "artifact_id": "analyst_draft_snapshot",
+        "revision": 1,
+    },
+}
+OwnedArtifactSubmitRequest.full_example = deepcopy(
+    OwnedArtifactSubmitRequest.minimal_example
+)
+
+OwnedArtifactSubmissionRecord.minimal_example = {
+    "schema_version": OwnedArtifactSubmissionRecord.schema_id,
+    "submission_id": "SUBMISSION-OWNED-001",
+    "run_id": _RUN,
+    "artifact_id": "audited_brief",
+    "artifact_revision": 1,
+    "artifact_sha256": _SHA_A,
+    "owner_stage_id": "editor",
+    "owner_role_id": "editor",
+    "run_contract_fingerprint": "d" * 64,
+    "invocation_id": "INV-EDITOR-001",
+    "producer_tool_id": None,
+    "parent_artifact": {"artifact_id": "analyst_draft_snapshot", "revision": 1},
+    "source_proposal_id": None,
+    "canonical_workspace_path": "output/intermediate/audited_brief.md",
+    "request_fingerprint": "e" * 64,
+    "accepted_event_id": "EVT-OWNED-001",
+    "accepted_transaction_id": "REQ-OWNED-001",
+    "created_at": _NOW,
+}
+OwnedArtifactSubmissionRecord.full_example = deepcopy(
+    OwnedArtifactSubmissionRecord.minimal_example
+)
+
+ClaimRecord.minimal_example = {
+    "schema_version": ClaimRecord.schema_id,
+    "run_id": _RUN,
+    "claim_id": "CL-0001",
+    "freeze_id": "FREEZE-001",
+    "ordinal": 1,
+    "claim_drafts_proposal_id": "PROP-DRAFTS-001",
+    "draft_id": "DRAFT-001",
+    "statement": "ExampleCo opened a public pilot facility.",
+    "evidence_text": "The supplied release states that the facility opened.",
+    "primary_source_id": "SRC-001",
+    "claim_type": "fact",
+    "confidence": "medium",
+    "requires_audit": True,
+    "epistemic_type": "observed",
+    "evidence_relation": "direct",
+    "applicability_reason": None,
+    "limitations": [],
+    "metadata": {"source_title": "Public release"},
+    "created_at": _NOW,
+    "accepted_transaction_id": "REQ-FREEZE-001",
+}
+ClaimRecord.full_example = deepcopy(ClaimRecord.minimal_example)
+
+ClaimSourceBinding.minimal_example = {
+    "schema_version": ClaimSourceBinding.schema_id,
+    "run_id": _RUN,
+    "claim_id": "CL-0001",
+    "source_id": "SRC-001",
+    "position": 0,
+    "citation_role": "primary",
+    "claim_drafts_proposal_id": "PROP-DRAFTS-001",
+    "accepted_transaction_id": "REQ-FREEZE-001",
+}
+ClaimSourceBinding.full_example = deepcopy(ClaimSourceBinding.minimal_example)
+
+ClaimFreezeRecord.minimal_example = {
+    "schema_version": ClaimFreezeRecord.schema_id,
+    "freeze_id": "FREEZE-001",
+    "run_id": _RUN,
+    "claim_drafts_proposal_id": "PROP-DRAFTS-001",
+    "screened_proposal_id": "PROP-SCREENED-001",
+    "candidate_proposal_id": "PROP-CANDIDATES-001",
+    "claim_drafts_artifact": {"artifact_id": "claim_drafts", "revision": 1},
+    "claim_drafts_sha256": _SHA_A,
+    "ledger_artifact": {"artifact_id": "claim_ledger", "revision": 1},
+    "ledger_sha256": _SHA_B,
+    "normalization_policy": "sorted_sequential_v2",
+    "run_contract_fingerprint": "d" * 64,
+    "claim_count": 1,
+    "warnings": [],
+    "warning_count": 0,
+    "frozen_at": _NOW,
+    "freeze_event_id": "EVT-FREEZE-001",
+    "accepted_transaction_id": "REQ-FREEZE-001",
+    "request_fingerprint": "e" * 64,
+}
+ClaimFreezeRecord.full_example = deepcopy(ClaimFreezeRecord.minimal_example)
+
+ClaimFreezeRequest.minimal_example = {
+    "schema_version": ClaimFreezeRequest.schema_id,
+    "request_id": "REQ-FREEZE-001",
+    "run_id": _RUN,
+    "claim_drafts_proposal_id": "PROP-DRAFTS-001",
+    "expected_claim_drafts_artifact": {"artifact_id": "claim_drafts", "revision": 1},
+    "expected_store_revision": 7,
+    "expected_ledger_revision": 0,
+}
+ClaimFreezeRequest.full_example = deepcopy(ClaimFreezeRequest.minimal_example)
+
+StageTransitionRecord.minimal_example = {
+    "schema_version": StageTransitionRecord.schema_id,
+    "transition_id": "TRANSITION-SCOUT-001",
+    "run_id": _RUN,
+    "stage_id": "scout",
+    "transition_kind": "complete",
+    "requested_decision": "continue",
+    "prior_status": "ready",
+    "prior_revision": 0,
+    "result_status": "complete",
+    "result_revision": 1,
+    "reason": "The accepted Scout output satisfies the stage contract.",
+    "run_contract_fingerprint": "d" * 64,
+    "actor": "orchestrator",
+    "producer_invocation_id": "INV-SCOUT-001",
+    "producer_tool_id": None,
+    "producer_result_status": None,
+    "producer_result_fingerprint": None,
+    "producer_implementation": None,
+    "producer_version": None,
+    "topology": None,
+    "satisfaction_source_kind": None,
+    "satisfied_by_id": None,
+    "created_at": _NOW,
+    "transition_event_id": "EVT-TRANSITION-SCOUT-001",
+    "accepted_transaction_id": "REQ-STAGE-SCOUT-001",
+    "request_fingerprint": "e" * 64,
+}
+StageTransitionRecord.full_example = deepcopy(StageTransitionRecord.minimal_example)
+
+StageArtifactBinding.minimal_example = {
+    "schema_version": StageArtifactBinding.schema_id,
+    "run_id": _RUN,
+    "transition_id": "TRANSITION-SCOUT-001",
+    "position": 0,
+    "artifact_id": "candidate_claims",
+    "artifact_revision": 1,
+    "artifact_sha256": _SHA_A,
+    "usage": "produced",
+    "accepted_transaction_id": "REQ-STAGE-SCOUT-001",
+}
+StageArtifactBinding.full_example = deepcopy(StageArtifactBinding.minimal_example)
+
+StageGateBinding.minimal_example = {
+    "schema_version": StageGateBinding.schema_id,
+    "run_id": _RUN,
+    "transition_id": "TRANSITION-AUDITOR-001",
+    "gate_id": "material_fact",
+    "evaluation_id": "EVAL-MATERIAL-001",
+    "accepted_transaction_id": "REQ-STAGE-AUDITOR-001",
+}
+StageGateBinding.full_example = deepcopy(StageGateBinding.minimal_example)
+
+StageCompleteRequest.minimal_example = {
+    "schema_version": StageCompleteRequest.schema_id,
+    "request_id": "REQ-STAGE-SCOUT-001",
+    "run_id": _RUN,
+    "stage_id": "scout",
+    "reason": "Scout output accepted.",
+    "expected_stage_revision": 0,
+    "expected_store_revision": 5,
+    "expected_artifact_revisions": [{"artifact_id": "candidate_claims", "revision": 1}],
+    "expected_gate_evaluation_ids": [],
+}
+StageCompleteRequest.full_example = deepcopy(StageCompleteRequest.minimal_example)
+
+GateFindingRecord.minimal_example = {
+    "schema_version": GateFindingRecord.schema_id,
+    "run_id": _RUN,
+    "evaluation_id": "EVAL-MATERIAL-001",
+    "finding_id": "FINDING-MATERIAL-001",
+    "gate_id": "material_fact",
+    "finding_type": "missing_claim_citation",
+    "severity": "high",
+    "blocking_level": "blocking",
+    "repair_owner": "editor",
+    "stage_id": "auditor",
+    "artifact_id": "audited_brief",
+    "claim_id": "CL-0001",
+    "source_id": "SRC-001",
+    "line_number": 1,
+    "description": "A material statement lacks a valid Claim citation.",
+    "recommendation": "Bind the statement to a frozen Claim.",
+    "category": "material_fact",
+    "evidence_ref": "audited_brief:1",
+    "metadata": {},
+    "accepted_transaction_id": "REQ-GATE-001",
+}
+GateFindingRecord.full_example = deepcopy(GateFindingRecord.minimal_example)
+
+GateEvaluationRecord.minimal_example = {
+    "schema_version": GateEvaluationRecord.schema_id,
+    "evaluation_id": "EVAL-MATERIAL-001",
+    "gate_batch_id": "GATE-BATCH-001",
+    "run_id": _RUN,
+    "stage_id": "auditor",
+    "gate_id": "material_fact",
+    "policy_version": "default-v1",
+    "run_contract_fingerprint": "d" * 64,
+    "status": "pass",
+    "blocking": False,
+    "finding_ids": [],
+    "checked_at": _NOW,
+    "producer_implementation": "quality-gates-preloaded",
+    "producer_version": "1",
+    "report_artifact": {"artifact_id": "auditor_quality_gate_report", "revision": 1},
+    "evaluation_event_id": "EVT-GATE-MATERIAL-001",
+    "accepted_transaction_id": "REQ-GATE-001",
+    "request_fingerprint": "e" * 64,
+}
+GateEvaluationRecord.full_example = deepcopy(GateEvaluationRecord.minimal_example)
+
+GateArtifactBinding.minimal_example = {
+    "schema_version": GateArtifactBinding.schema_id,
+    "run_id": _RUN,
+    "evaluation_id": "EVAL-MATERIAL-001",
+    "position": 0,
+    "artifact_id": "audited_brief",
+    "artifact_revision": 1,
+    "artifact_sha256": _SHA_A,
+    "usage": "brief",
+    "accepted_transaction_id": "REQ-GATE-001",
+}
+GateArtifactBinding.full_example = deepcopy(GateArtifactBinding.minimal_example)
+
+GateCheckRequest.minimal_example = {
+    "schema_version": GateCheckRequest.schema_id,
+    "request_id": "REQ-GATE-001",
+    "run_id": _RUN,
+    "stage_id": "auditor",
+    "expected_store_revision": 12,
+    "expected_report_artifact_revision": 0,
+    "expected_input_artifacts": [
+        {"artifact_id": "claim_ledger", "revision": 1},
+        {"artifact_id": "audited_brief", "revision": 1},
+        {"artifact_id": "analyst_draft_snapshot", "revision": 1},
+        {"artifact_id": "screened_candidates", "revision": 1},
+    ],
+}
+GateCheckRequest.full_example = deepcopy(GateCheckRequest.minimal_example)
+
+AuditPromotionRequest.minimal_example = {
+    "schema_version": AuditPromotionRequest.schema_id,
+    "request_id": "REQ-AUDIT-PROMOTE-001",
+    "run_id": _RUN,
+    "audit_proposal_id": "PROP-AUDIT-001",
+    "expected_target_artifact": {"artifact_id": "audited_brief", "revision": 1},
+    "expected_audit_report_revision": 0,
+    "expected_store_revision": 11,
+}
+AuditPromotionRequest.full_example = deepcopy(AuditPromotionRequest.minimal_example)
+
+AuditReportArtifact.minimal_example = {
+    "schema_version": AuditReportArtifact.schema_id,
+    "run_id": _RUN,
+    "audit_proposal_id": "PROP-AUDIT-001",
+    "target_artifact_id": "audited_brief",
+    "target_artifact_revision": 1,
+    "target_artifact_sha256": _SHA_A,
+    "decision": "pass",
+    "findings": [],
+}
+AuditReportArtifact.full_example = deepcopy(AuditReportArtifact.minimal_example)
+
+RunIntegrityRecord.minimal_example = {
+    "schema_version": RunIntegrityRecord.schema_id,
+    "run_id": _RUN,
+    "integrity_revision": 1,
+    "status": "clean",
+    "prior_integrity_revision": None,
+    "affected_artifact_id": None,
+    "affected_artifact_revision": None,
+    "expected_workspace_path": None,
+    "expected_sha256": None,
+    "observed_entry_kind": None,
+    "observed_sha256": None,
+    "reason_code": None,
+    "first_detected_at": None,
+    "first_detected_event_id": None,
+    "accepted_transaction_id": "REQ-CORE-INIT-001",
+    "request_fingerprint": "e" * 64,
+}
+RunIntegrityRecord.full_example = deepcopy(RunIntegrityRecord.minimal_example)
+
+IntegrityCheckRequest.minimal_example = {
+    "schema_version": IntegrityCheckRequest.schema_id,
+    "request_id": "REQ-INTEGRITY-001",
+    "run_id": _RUN,
+    "expected_store_revision": 14,
+}
+IntegrityCheckRequest.full_example = deepcopy(IntegrityCheckRequest.minimal_example)
+
 
 V2_CONTRACT_MODELS: tuple[type[StrictModel], ...] = (
     SourceProposal,
@@ -1360,6 +2488,28 @@ V2_CONTRACT_MODELS: tuple[type[StrictModel], ...] = (
     Approval,
     Delivery,
     TransactionReceipt,
+    RunDirection,
+    CoreRunInitializeRequest,
+    RunContractBinding,
+    InvocationStartRequest,
+    OwnedArtifactSubmitRequest,
+    OwnedArtifactSubmissionRecord,
+    ClaimRecord,
+    ClaimSourceBinding,
+    ClaimFreezeRecord,
+    ClaimFreezeRequest,
+    StageTransitionRecord,
+    StageArtifactBinding,
+    StageGateBinding,
+    StageCompleteRequest,
+    GateFindingRecord,
+    GateEvaluationRecord,
+    GateArtifactBinding,
+    GateCheckRequest,
+    AuditPromotionRequest,
+    AuditReportArtifact,
+    RunIntegrityRecord,
+    IntegrityCheckRequest,
 )
 
 V2_CONTRACT_IDS: tuple[str, ...] = tuple(
@@ -1470,19 +2620,40 @@ __all__ = [
     "Approval",
     "ArtifactRecord",
     "ArtifactRevision",
+    "ArtifactRevisionReference",
     "ArtifactSubmitRequest",
+    "AuditPromotionRequest",
     "AuditProposal",
+    "AuditReportArtifact",
     "CandidateClaimsProposal",
+    "ClaimFreezeRecord",
+    "ClaimFreezeRequest",
+    "ClaimRecord",
+    "ClaimSourceBinding",
     "ClaimDraftsProposal",
     "ContractReadResult",
+    "CoreRunEventBinding",
+    "CoreRunInitializeRequest",
     "Delivery",
     "EventEnvelope",
+    "GATE_ID_VALUES",
+    "GateArtifactBinding",
+    "GateCheckRequest",
+    "GateEvaluationRecord",
+    "GateFindingRecord",
+    "IntegrityCheckRequest",
     "IntakeEventBinding",
     "Invocation",
+    "InvocationStartRequest",
     "LEGACY_READ_ONLY_CONTRACTS",
     "MimeType",
+    "OwnedArtifactSubmissionRecord",
+    "OwnedArtifactSubmitRequest",
     "ProposalSourceBinding",
+    "RunContractBinding",
+    "RunDirection",
     "RunIdentity",
+    "RunIntegrityRecord",
     "ScreenedCandidatesProposal",
     "SOURCE_ACQUISITION_METHODS",
     "SOURCE_ELIGIBILITY_REASONS",
@@ -1490,7 +2661,11 @@ __all__ = [
     "SOURCE_ORIGIN_TYPES",
     "SourceCommitRequest",
     "SourceProposal",
+    "StageArtifactBinding",
+    "StageCompleteRequest",
+    "StageGateBinding",
     "StageState",
+    "StageTransitionRecord",
     "StrictModel",
     "TransactionReceipt",
     "V2_CONTRACT_IDS",

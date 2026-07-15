@@ -21,13 +21,25 @@ from multi_agent_brief.contracts.v2 import (
     ArtifactRecord,
     ArtifactRevision,
     ArtifactRevisionReference,
+    ClaimFreezeRecord,
+    ClaimRecord,
+    ClaimSourceBinding,
     ContractId,
     Delivery,
     EventEnvelope,
+    GateArtifactBinding,
+    GateEvaluationRecord,
+    GateFindingRecord,
     Invocation,
+    OwnedArtifactSubmissionRecord,
     ProposalSourceBinding,
+    RunContractBinding,
     RunIdentity,
+    RunIntegrityRecord,
+    StageArtifactBinding,
+    StageGateBinding,
     StageState,
+    StageTransitionRecord,
     StrictModel,
     TransactionReceipt,
     WorkspaceRunHead,
@@ -44,6 +56,7 @@ from multi_agent_brief.control_store.schema import (
     verify_schema,
 )
 from multi_agent_brief.control_store.serialization import (
+    canonical_fingerprint,
     canonical_json_bytes,
     canonical_model_text,
     decode_model,
@@ -54,23 +67,35 @@ from multi_agent_brief.control_store.serialization import (
 _ModelT = TypeVar("_ModelT", bound=StrictModel)
 _FailureHook = Callable[[str], None]
 _CONTRACT_ID_ADAPTER = TypeAdapter(ContractId)
-_PR3_RECORD_MODELS = (
+_EXTENDED_RECORD_MODELS = (
     WorkspaceRunHead,
     AcceptedSourceRecord,
     AcceptedProposalRecord,
     ProposalSourceBinding,
+    RunContractBinding,
+    OwnedArtifactSubmissionRecord,
+    StageTransitionRecord,
+    StageArtifactBinding,
+    StageGateBinding,
+    ClaimRecord,
+    ClaimSourceBinding,
+    ClaimFreezeRecord,
+    GateEvaluationRecord,
+    GateFindingRecord,
+    GateArtifactBinding,
+    RunIntegrityRecord,
 )
 
 
 def _canonical_record_text(record: StrictModel) -> str:
-    if type(record) not in _PR3_RECORD_MODELS:
+    if type(record) not in _EXTENDED_RECORD_MODELS:
         return canonical_model_text(record)
     payload = record.model_dump(mode="json", exclude_unset=False)
     return canonical_json_bytes(payload).decode("utf-8")
 
 
 def _decode_record(model_type: type[_ModelT], payload_text: str) -> _ModelT:
-    if model_type not in _PR3_RECORD_MODELS:
+    if model_type not in _EXTENDED_RECORD_MODELS:
         return decode_model(model_type, payload_text)
     try:
         model = model_type.model_validate_json(payload_text, strict=True)
@@ -250,6 +275,18 @@ class ControlStoreSnapshot:
     sources: tuple[AcceptedSourceRecord, ...]
     accepted_proposals: tuple[AcceptedProposalRecord, ...]
     proposal_source_bindings: tuple[ProposalSourceBinding, ...]
+    run_contract_bindings: tuple[RunContractBinding, ...]
+    owned_artifact_submissions: tuple[OwnedArtifactSubmissionRecord, ...]
+    stage_transitions: tuple[StageTransitionRecord, ...]
+    stage_artifact_bindings: tuple[StageArtifactBinding, ...]
+    stage_gate_bindings: tuple[StageGateBinding, ...]
+    claims: tuple[ClaimRecord, ...]
+    claim_source_bindings: tuple[ClaimSourceBinding, ...]
+    claim_freezes: tuple[ClaimFreezeRecord, ...]
+    gate_evaluations: tuple[GateEvaluationRecord, ...]
+    gate_findings: tuple[GateFindingRecord, ...]
+    gate_artifact_bindings: tuple[GateArtifactBinding, ...]
+    run_integrity_records: tuple[RunIntegrityRecord, ...]
     transactions: tuple[TransactionReceipt, ...]
 
 
@@ -587,6 +624,7 @@ class SQLiteControlStore:
                     raise ControlStoreConflict("run_not_found")
             self._preflight_artifact_subgraph(uow, run_id)
             self._preflight_intake_subgraph(uow, run_id)
+            self._preflight_core_run_subgraph(uow, run_id)
             self._inject("before_blob_write")
             for position, item in enumerate(uow._artifact_revisions, start=1):
                 self._inject(f"before_blob_write:{position}")
@@ -635,6 +673,30 @@ class SQLiteControlStore:
                 self._insert_proposal_source_bindings(
                     uow._proposal_source_bindings.values()
                 )
+                self._insert_run_contract_binding(uow._run_contract_binding)
+                self._insert_owned_artifact_submissions(
+                    uow._owned_artifact_submissions.values()
+                )
+                self._insert_stage_transitions(uow._stage_transitions.values())
+                self._insert_stage_artifact_bindings(
+                    uow._stage_artifact_bindings.values()
+                )
+                self._insert_stage_gate_bindings(
+                    uow._stage_gate_bindings.values()
+                )
+                self._insert_claims(uow._claims.values())
+                self._insert_claim_source_bindings(
+                    uow._claim_source_bindings.values()
+                )
+                self._insert_claim_freezes(uow._claim_freezes.values())
+                self._insert_gate_evaluations(uow._gate_evaluations.values())
+                self._insert_gate_findings(uow._gate_findings.values())
+                self._insert_gate_artifact_bindings(
+                    uow._gate_artifact_bindings.values()
+                )
+                self._insert_run_integrity_records(
+                    uow._run_integrity_records.values()
+                )
                 self._insert_transaction_relations(receipt)
                 self._inject("after_records")
                 self._inject("before_commit")
@@ -653,6 +715,7 @@ class SQLiteControlStore:
                 # workspace revision remain rollback-capable in this same
                 # SQLite write transaction.
                 self._verify_workspace_ledger_graph()
+                self._load_snapshot_in_transaction(run_id)
                 self._connection.commit()
             except sqlite3.IntegrityError as exc:
                 self._connection.rollback()
@@ -837,6 +900,231 @@ class SQLiteControlStore:
         ):
             raise ControlStoreConflict("relational_integrity_conflict")
 
+    def _preflight_core_run_subgraph(
+        self,
+        uow: "ControlUnitOfWork",
+        run_id: str,
+    ) -> None:
+        """Reject structurally unbound PR-4A rows before blob promotion."""
+
+        staged_revisions = {
+            (item.record.artifact_id, item.record.revision)
+            for item in uow._artifact_revisions
+        }
+        existing_revisions = {
+            (str(row[0]), int(row[1]))
+            for row in self._connection.execute(
+                "SELECT artifact_id, revision FROM artifact_revisions WHERE run_id = ?",
+                (run_id,),
+            ).fetchall()
+        }
+        available_revisions = staged_revisions | existing_revisions
+        staged_events = {event.event_id for event in uow._events}
+        available_invocations = set(uow._invocations) | {
+            str(row[0])
+            for row in self._connection.execute(
+                "SELECT invocation_id FROM agent_invocations WHERE run_id = ?",
+                (run_id,),
+            ).fetchall()
+        }
+        available_proposals = set(uow._accepted_proposals) | {
+            str(row[0])
+            for row in self._connection.execute(
+                "SELECT proposal_id FROM accepted_proposals WHERE run_id = ?",
+                (run_id,),
+            ).fetchall()
+        }
+        available_sources = set(uow._sources) | {
+            str(row[0])
+            for row in self._connection.execute(
+                "SELECT source_id FROM sources WHERE run_id = ?",
+                (run_id,),
+            ).fetchall()
+        }
+        available_transitions = set(uow._stage_transitions) | {
+            str(row[0])
+            for row in self._connection.execute(
+                "SELECT transition_id FROM stage_transitions WHERE run_id = ?",
+                (run_id,),
+            ).fetchall()
+        }
+        available_evaluations = set(uow._gate_evaluations) | {
+            str(row[0])
+            for row in self._connection.execute(
+                "SELECT evaluation_id FROM gate_evaluations WHERE run_id = ?",
+                (run_id,),
+            ).fetchall()
+        }
+
+        binding = uow._run_contract_binding
+        if binding is not None:
+            refs = {
+                (binding.stage_specs_artifact.artifact_id, binding.stage_specs_artifact.revision),
+                (
+                    binding.artifact_contracts_artifact.artifact_id,
+                    binding.artifact_contracts_artifact.revision,
+                ),
+                (binding.policy_pack_artifact.artifact_id, binding.policy_pack_artifact.revision),
+            }
+            if (
+                binding.accepted_transaction_id != uow.transaction_id
+                or binding.initialization_event_id not in staged_events
+                or not refs <= available_revisions
+            ):
+                raise ControlStoreConflict("relational_integrity_conflict")
+
+        for record in uow._owned_artifact_submissions.values():
+            if (
+                record.accepted_transaction_id != uow.transaction_id
+                or record.accepted_event_id not in staged_events
+                or (record.artifact_id, record.artifact_revision)
+                not in available_revisions
+                or (
+                    record.invocation_id is not None
+                    and record.invocation_id not in available_invocations
+                )
+                or (
+                    record.parent_artifact is not None
+                    and (
+                        record.parent_artifact.artifact_id,
+                        record.parent_artifact.revision,
+                    )
+                    not in available_revisions
+                )
+                or (
+                    record.source_proposal_id is not None
+                    and record.source_proposal_id not in available_proposals
+                )
+            ):
+                raise ControlStoreConflict("relational_integrity_conflict")
+
+        for record in uow._stage_transitions.values():
+            if (
+                record.accepted_transaction_id != uow.transaction_id
+                or record.transition_event_id not in staged_events
+            ):
+                raise ControlStoreConflict("relational_integrity_conflict")
+        for record in uow._stage_artifact_bindings.values():
+            if (
+                record.accepted_transaction_id != uow.transaction_id
+                or record.transition_id not in available_transitions
+                or (record.artifact_id, record.artifact_revision)
+                not in available_revisions
+            ):
+                raise ControlStoreConflict("relational_integrity_conflict")
+        for record in uow._stage_gate_bindings.values():
+            if (
+                record.accepted_transaction_id != uow.transaction_id
+                or record.transition_id not in available_transitions
+                or record.evaluation_id not in available_evaluations
+            ):
+                raise ControlStoreConflict("relational_integrity_conflict")
+        core_run_effect = any(
+            (
+                uow._run_contract_binding is not None,
+                bool(uow._owned_artifact_submissions),
+                bool(uow._stage_transitions),
+                bool(uow._claims),
+                bool(uow._claim_freezes),
+                bool(uow._gate_evaluations),
+                bool(uow._run_integrity_records),
+            )
+        )
+        if core_run_effect:
+            for record in uow._stage_states.values():
+                if not any(
+                    transition.stage_id == record.stage_id
+                    and transition.result_revision == record.revision
+                    and transition.result_status == record.status
+                    for transition in uow._stage_transitions.values()
+                ):
+                    raise ControlStoreConflict("relational_integrity_conflict")
+
+        for record in uow._claims.values():
+            if (
+                record.accepted_transaction_id != uow.transaction_id
+                or record.claim_drafts_proposal_id not in available_proposals
+                or record.primary_source_id not in available_sources
+            ):
+                raise ControlStoreConflict("relational_integrity_conflict")
+        available_claims = set(uow._claims) | {
+            str(row[0])
+            for row in self._connection.execute(
+                "SELECT claim_id FROM claims WHERE run_id = ?",
+                (run_id,),
+            ).fetchall()
+        }
+        for record in uow._claim_source_bindings.values():
+            if (
+                record.accepted_transaction_id != uow.transaction_id
+                or record.claim_id not in available_claims
+                or record.source_id not in available_sources
+                or record.claim_drafts_proposal_id not in available_proposals
+            ):
+                raise ControlStoreConflict("relational_integrity_conflict")
+        for record in uow._claim_freezes.values():
+            if (
+                record.accepted_transaction_id != uow.transaction_id
+                or record.freeze_event_id not in staged_events
+                or not {
+                    record.claim_drafts_proposal_id,
+                    record.screened_proposal_id,
+                    record.candidate_proposal_id,
+                }
+                <= available_proposals
+                or (
+                    record.claim_drafts_artifact.artifact_id,
+                    record.claim_drafts_artifact.revision,
+                )
+                not in available_revisions
+                or (record.ledger_artifact.artifact_id, record.ledger_artifact.revision)
+                not in available_revisions
+            ):
+                raise ControlStoreConflict("relational_integrity_conflict")
+
+        for record in uow._gate_evaluations.values():
+            if (
+                record.accepted_transaction_id != uow.transaction_id
+                or record.evaluation_event_id not in staged_events
+                or (record.report_artifact.artifact_id, record.report_artifact.revision)
+                not in available_revisions
+            ):
+                raise ControlStoreConflict("relational_integrity_conflict")
+        for record in uow._gate_findings.values():
+            if (
+                record.accepted_transaction_id != uow.transaction_id
+                or record.evaluation_id not in available_evaluations
+                or (record.claim_id is not None and record.claim_id not in available_claims)
+                or (record.source_id is not None and record.source_id not in available_sources)
+            ):
+                raise ControlStoreConflict("relational_integrity_conflict")
+        for record in uow._gate_artifact_bindings.values():
+            if (
+                record.accepted_transaction_id != uow.transaction_id
+                or record.evaluation_id not in available_evaluations
+                or (record.artifact_id, record.artifact_revision)
+                not in available_revisions
+            ):
+                raise ControlStoreConflict("relational_integrity_conflict")
+
+        for record in uow._run_integrity_records.values():
+            if (
+                record.accepted_transaction_id != uow.transaction_id
+                or (
+                    record.first_detected_event_id is not None
+                    and record.first_detected_event_id not in staged_events
+                )
+                or (
+                    record.affected_artifact_id is not None
+                    and (
+                        record.affected_artifact_id,
+                        record.affected_artifact_revision,
+                    )
+                    not in available_revisions
+                )
+            ):
+                raise ControlStoreConflict("relational_integrity_conflict")
+
     def _build_receipt(
         self,
         uow: "ControlUnitOfWork",
@@ -868,6 +1156,54 @@ class SQLiteControlStore:
                     ],
                     "source_ids": list(uow._sources),
                     "proposal_ids": list(uow._accepted_proposals),
+                    "run_contract_bindings": (
+                        [{"run_id": uow._run_contract_binding.run_id}]
+                        if uow._run_contract_binding is not None
+                        else []
+                    ),
+                    "owned_artifact_submissions": [
+                        {"submission_id": key}
+                        for key in sorted(uow._owned_artifact_submissions)
+                    ],
+                    "stage_transitions": [
+                        {"transition_id": key}
+                        for key in sorted(uow._stage_transitions)
+                    ],
+                    "stage_artifact_bindings": [
+                        {"transition_id": key[0], "position": key[1]}
+                        for key in sorted(uow._stage_artifact_bindings)
+                    ],
+                    "stage_gate_bindings": [
+                        {"transition_id": key[0], "gate_id": key[1]}
+                        for key in sorted(uow._stage_gate_bindings)
+                    ],
+                    "claims": [
+                        {"claim_id": key} for key in sorted(uow._claims)
+                    ],
+                    "claim_source_bindings": [
+                        {"claim_id": key[0], "source_id": key[1]}
+                        for key in sorted(uow._claim_source_bindings)
+                    ],
+                    "claim_freezes": [
+                        {"freeze_id": key}
+                        for key in sorted(uow._claim_freezes)
+                    ],
+                    "gate_evaluations": [
+                        {"evaluation_id": key}
+                        for key in sorted(uow._gate_evaluations)
+                    ],
+                    "gate_findings": [
+                        {"evaluation_id": key[0], "finding_id": key[1]}
+                        for key in sorted(uow._gate_findings)
+                    ],
+                    "gate_artifact_bindings": [
+                        {"evaluation_id": key[0], "position": key[1]}
+                        for key in sorted(uow._gate_artifact_bindings)
+                    ],
+                    "run_integrity_records": [
+                        {"integrity_revision": key}
+                        for key in sorted(uow._run_integrity_records)
+                    ],
                 }
             )
         except ValueError as exc:
@@ -888,7 +1224,7 @@ class SQLiteControlStore:
                 record.schema_version,
                 record.runtime,
                 record.created_at,
-                canonical_model_text(record),
+                _canonical_record_text(record),
             ),
         )
 
@@ -969,7 +1305,7 @@ class SQLiteControlStore:
                     record.status,
                     record.revision,
                     record.updated_at,
-                    canonical_model_text(record),
+                    _canonical_record_text(record),
                 ),
             )
 
@@ -1001,7 +1337,7 @@ class SQLiteControlStore:
                     record.started_at,
                     record.completed_at,
                     record.failure_reason,
-                    canonical_model_text(record),
+                    _canonical_record_text(record),
                 ),
             )
 
@@ -1034,7 +1370,7 @@ class SQLiteControlStore:
                     int(record.required),
                     record.path,
                     record.format,
-                    canonical_model_text(record),
+                    _canonical_record_text(record),
                 ),
             )
 
@@ -1065,7 +1401,7 @@ class SQLiteControlStore:
                     record.producer_id,
                     record.created_at,
                     self._blob_relpath(record.sha256),
-                    canonical_model_text(record),
+                    _canonical_record_text(record),
                 ),
             )
 
@@ -1092,7 +1428,7 @@ class SQLiteControlStore:
                     record.decision,
                     record.reason,
                     canonical_json_bytes(record.metadata).decode("utf-8"),
-                    canonical_model_text(record),
+                    _canonical_record_text(record),
                 ),
             )
 
@@ -1117,7 +1453,7 @@ class SQLiteControlStore:
                     record.recorded_at,
                     record.boundary,
                     record.event_id,
-                    canonical_model_text(record),
+                    _canonical_record_text(record),
                 ),
             )
 
@@ -1154,7 +1490,7 @@ class SQLiteControlStore:
                     record.channel,
                     record.created_at,
                     record.completed_at,
-                    canonical_model_text(record),
+                    _canonical_record_text(record),
                 ),
             )
 
@@ -1282,6 +1618,395 @@ class SQLiteControlStore:
                 ),
             )
 
+    def _insert_run_contract_binding(
+        self,
+        record: RunContractBinding | None,
+    ) -> None:
+        if record is None:
+            return
+        self._connection.execute(
+            """
+            INSERT INTO run_contract_bindings(
+                run_id, workspace_id, schema_version, runtime,
+                stage_specs_artifact_id, stage_specs_revision, stage_specs_sha256,
+                artifact_contracts_artifact_id, artifact_contracts_revision,
+                artifact_contracts_sha256, policy_pack_artifact_id,
+                policy_pack_revision, policy_pack_sha256, contract_fingerprint,
+                initialization_event_id, accepted_transaction_id,
+                request_fingerprint, payload_json
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                record.run_id,
+                record.workspace_id,
+                record.schema_version,
+                record.runtime,
+                record.stage_specs_artifact.artifact_id,
+                record.stage_specs_artifact.revision,
+                record.stage_specs_sha256,
+                record.artifact_contracts_artifact.artifact_id,
+                record.artifact_contracts_artifact.revision,
+                record.artifact_contracts_sha256,
+                record.policy_pack_artifact.artifact_id,
+                record.policy_pack_artifact.revision,
+                record.policy_pack_sha256,
+                record.contract_fingerprint,
+                record.initialization_event_id,
+                record.accepted_transaction_id,
+                record.request_fingerprint,
+                _canonical_record_text(record),
+            ),
+        )
+
+    def _insert_owned_artifact_submissions(
+        self,
+        records: Iterable[OwnedArtifactSubmissionRecord],
+    ) -> None:
+        for record in records:
+            self._connection.execute(
+                """
+                INSERT INTO owned_artifact_submissions(
+                    run_id, submission_id, schema_version, artifact_id,
+                    artifact_revision, artifact_sha256, owner_stage_id,
+                    owner_role_id, run_contract_fingerprint, invocation_id,
+                    producer_tool_id, parent_artifact_id,
+                    parent_artifact_revision, source_proposal_id,
+                    canonical_workspace_path, request_fingerprint,
+                    accepted_event_id, accepted_transaction_id, created_at,
+                    payload_json
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    record.run_id,
+                    record.submission_id,
+                    record.schema_version,
+                    record.artifact_id,
+                    record.artifact_revision,
+                    record.artifact_sha256,
+                    record.owner_stage_id,
+                    record.owner_role_id,
+                    record.run_contract_fingerprint,
+                    record.invocation_id,
+                    record.producer_tool_id,
+                    (
+                        record.parent_artifact.artifact_id
+                        if record.parent_artifact is not None
+                        else None
+                    ),
+                    (
+                        record.parent_artifact.revision
+                        if record.parent_artifact is not None
+                        else None
+                    ),
+                    record.source_proposal_id,
+                    record.canonical_workspace_path,
+                    record.request_fingerprint,
+                    record.accepted_event_id,
+                    record.accepted_transaction_id,
+                    record.created_at,
+                    _canonical_record_text(record),
+                ),
+            )
+
+    def _insert_stage_transitions(
+        self,
+        records: Iterable[StageTransitionRecord],
+    ) -> None:
+        for record in records:
+            self._connection.execute(
+                """
+                INSERT INTO stage_transitions(
+                    run_id, transition_id, schema_version, stage_id,
+                    transition_kind, prior_status, prior_revision, result_status,
+                    result_revision, run_contract_fingerprint,
+                    transition_event_id, accepted_transaction_id,
+                    request_fingerprint, payload_json
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    record.run_id,
+                    record.transition_id,
+                    record.schema_version,
+                    record.stage_id,
+                    record.transition_kind,
+                    record.prior_status,
+                    record.prior_revision,
+                    record.result_status,
+                    record.result_revision,
+                    record.run_contract_fingerprint,
+                    record.transition_event_id,
+                    record.accepted_transaction_id,
+                    record.request_fingerprint,
+                    _canonical_record_text(record),
+                ),
+            )
+
+    def _insert_stage_artifact_bindings(
+        self,
+        records: Iterable[StageArtifactBinding],
+    ) -> None:
+        for record in records:
+            self._connection.execute(
+                """
+                INSERT INTO stage_artifact_bindings(
+                    run_id, transition_id, position, schema_version, artifact_id,
+                    artifact_revision, artifact_sha256, usage,
+                    accepted_transaction_id, payload_json
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    record.run_id,
+                    record.transition_id,
+                    record.position,
+                    record.schema_version,
+                    record.artifact_id,
+                    record.artifact_revision,
+                    record.artifact_sha256,
+                    record.usage,
+                    record.accepted_transaction_id,
+                    _canonical_record_text(record),
+                ),
+            )
+
+    def _insert_stage_gate_bindings(
+        self,
+        records: Iterable[StageGateBinding],
+    ) -> None:
+        for record in records:
+            self._connection.execute(
+                """
+                INSERT INTO stage_gate_bindings(
+                    run_id, transition_id, gate_id, schema_version,
+                    evaluation_id, accepted_transaction_id, payload_json
+                ) VALUES (?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    record.run_id,
+                    record.transition_id,
+                    record.gate_id,
+                    record.schema_version,
+                    record.evaluation_id,
+                    record.accepted_transaction_id,
+                    _canonical_record_text(record),
+                ),
+            )
+
+    def _insert_claims(self, records: Iterable[ClaimRecord]) -> None:
+        for record in records:
+            self._connection.execute(
+                """
+                INSERT INTO claims(
+                    run_id, claim_id, schema_version, freeze_id, ordinal,
+                    claim_drafts_proposal_id, draft_id, primary_source_id,
+                    claim_type, accepted_transaction_id, payload_json
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    record.run_id,
+                    record.claim_id,
+                    record.schema_version,
+                    record.freeze_id,
+                    record.ordinal,
+                    record.claim_drafts_proposal_id,
+                    record.draft_id,
+                    record.primary_source_id,
+                    record.claim_type,
+                    record.accepted_transaction_id,
+                    _canonical_record_text(record),
+                ),
+            )
+
+    def _insert_claim_source_bindings(
+        self,
+        records: Iterable[ClaimSourceBinding],
+    ) -> None:
+        for record in records:
+            self._connection.execute(
+                """
+                INSERT INTO claim_source_bindings(
+                    run_id, claim_id, source_id, schema_version, position,
+                    citation_role, claim_drafts_proposal_id,
+                    accepted_transaction_id, payload_json
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    record.run_id,
+                    record.claim_id,
+                    record.source_id,
+                    record.schema_version,
+                    record.position,
+                    record.citation_role,
+                    record.claim_drafts_proposal_id,
+                    record.accepted_transaction_id,
+                    _canonical_record_text(record),
+                ),
+            )
+
+    def _insert_claim_freezes(
+        self,
+        records: Iterable[ClaimFreezeRecord],
+    ) -> None:
+        for record in records:
+            self._connection.execute(
+                """
+                INSERT INTO claim_freezes(
+                    run_id, freeze_id, schema_version,
+                    claim_drafts_proposal_id, screened_proposal_id,
+                    candidate_proposal_id, claim_drafts_artifact_id,
+                    claim_drafts_artifact_revision, claim_drafts_sha256,
+                    ledger_artifact_id, ledger_artifact_revision, ledger_sha256,
+                    run_contract_fingerprint, claim_count, freeze_event_id,
+                    accepted_transaction_id, request_fingerprint, payload_json
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    record.run_id,
+                    record.freeze_id,
+                    record.schema_version,
+                    record.claim_drafts_proposal_id,
+                    record.screened_proposal_id,
+                    record.candidate_proposal_id,
+                    record.claim_drafts_artifact.artifact_id,
+                    record.claim_drafts_artifact.revision,
+                    record.claim_drafts_sha256,
+                    record.ledger_artifact.artifact_id,
+                    record.ledger_artifact.revision,
+                    record.ledger_sha256,
+                    record.run_contract_fingerprint,
+                    record.claim_count,
+                    record.freeze_event_id,
+                    record.accepted_transaction_id,
+                    record.request_fingerprint,
+                    _canonical_record_text(record),
+                ),
+            )
+
+    def _insert_gate_evaluations(
+        self,
+        records: Iterable[GateEvaluationRecord],
+    ) -> None:
+        for record in records:
+            self._connection.execute(
+                """
+                INSERT INTO gate_evaluations(
+                    run_id, evaluation_id, schema_version, gate_batch_id,
+                    stage_id, gate_id, policy_version, run_contract_fingerprint,
+                    status, blocking, report_artifact_id,
+                    report_artifact_revision, evaluation_event_id,
+                    accepted_transaction_id, request_fingerprint, payload_json
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    record.run_id,
+                    record.evaluation_id,
+                    record.schema_version,
+                    record.gate_batch_id,
+                    record.stage_id,
+                    record.gate_id,
+                    record.policy_version,
+                    record.run_contract_fingerprint,
+                    record.status,
+                    int(record.blocking),
+                    record.report_artifact.artifact_id,
+                    record.report_artifact.revision,
+                    record.evaluation_event_id,
+                    record.accepted_transaction_id,
+                    record.request_fingerprint,
+                    _canonical_record_text(record),
+                ),
+            )
+
+    def _insert_gate_findings(
+        self,
+        records: Iterable[GateFindingRecord],
+    ) -> None:
+        for record in records:
+            self._connection.execute(
+                """
+                INSERT INTO gate_findings(
+                    run_id, evaluation_id, finding_id, schema_version, gate_id,
+                    blocking_level, artifact_id, claim_id, source_id,
+                    accepted_transaction_id, payload_json
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    record.run_id,
+                    record.evaluation_id,
+                    record.finding_id,
+                    record.schema_version,
+                    record.gate_id,
+                    record.blocking_level,
+                    record.artifact_id,
+                    record.claim_id,
+                    record.source_id,
+                    record.accepted_transaction_id,
+                    _canonical_record_text(record),
+                ),
+            )
+
+    def _insert_gate_artifact_bindings(
+        self,
+        records: Iterable[GateArtifactBinding],
+    ) -> None:
+        for record in records:
+            self._connection.execute(
+                """
+                INSERT INTO gate_artifact_bindings(
+                    run_id, evaluation_id, position, schema_version, artifact_id,
+                    artifact_revision, artifact_sha256, usage,
+                    accepted_transaction_id, payload_json
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    record.run_id,
+                    record.evaluation_id,
+                    record.position,
+                    record.schema_version,
+                    record.artifact_id,
+                    record.artifact_revision,
+                    record.artifact_sha256,
+                    record.usage,
+                    record.accepted_transaction_id,
+                    _canonical_record_text(record),
+                ),
+            )
+
+    def _insert_run_integrity_records(
+        self,
+        records: Iterable[RunIntegrityRecord],
+    ) -> None:
+        for record in records:
+            self._connection.execute(
+                """
+                INSERT INTO run_integrity_records(
+                    run_id, integrity_revision, schema_version, status,
+                    prior_integrity_revision, affected_artifact_id,
+                    affected_artifact_revision, expected_workspace_path,
+                    expected_sha256, observed_entry_kind, observed_sha256,
+                    reason_code, first_detected_event_id,
+                    accepted_transaction_id, request_fingerprint, payload_json
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    record.run_id,
+                    record.integrity_revision,
+                    record.schema_version,
+                    record.status,
+                    record.prior_integrity_revision,
+                    record.affected_artifact_id,
+                    record.affected_artifact_revision,
+                    record.expected_workspace_path,
+                    record.expected_sha256,
+                    record.observed_entry_kind,
+                    record.observed_sha256,
+                    record.reason_code,
+                    record.first_detected_event_id,
+                    record.accepted_transaction_id,
+                    record.request_fingerprint,
+                    _canonical_record_text(record),
+                ),
+            )
+
     def _insert_transaction_relations(self, receipt: TransactionReceipt) -> None:
         for position, event_id in enumerate(receipt.event_ids):
             self._connection.execute(
@@ -1324,6 +2049,181 @@ class SQLiteControlStore:
                 ) VALUES (?, ?, ?, ?)
                 """,
                 (receipt.run_id, receipt.transaction_id, position, proposal_id),
+            )
+        for position, reference in enumerate(receipt.run_contract_bindings):
+            self._connection.execute(
+                """
+                INSERT INTO transaction_run_contract_bindings(
+                    run_id, transaction_id, position, binding_run_id
+                ) VALUES (?, ?, ?, ?)
+                """,
+                (
+                    receipt.run_id,
+                    receipt.transaction_id,
+                    position,
+                    reference.run_id,
+                ),
+            )
+        for position, reference in enumerate(receipt.owned_artifact_submissions):
+            self._connection.execute(
+                """
+                INSERT INTO transaction_owned_artifact_submissions(
+                    run_id, transaction_id, position, submission_id
+                ) VALUES (?, ?, ?, ?)
+                """,
+                (
+                    receipt.run_id,
+                    receipt.transaction_id,
+                    position,
+                    reference.submission_id,
+                ),
+            )
+        for position, reference in enumerate(receipt.stage_transitions):
+            self._connection.execute(
+                """
+                INSERT INTO transaction_stage_transitions(
+                    run_id, transaction_id, position, transition_id
+                ) VALUES (?, ?, ?, ?)
+                """,
+                (
+                    receipt.run_id,
+                    receipt.transaction_id,
+                    position,
+                    reference.transition_id,
+                ),
+            )
+        for position, reference in enumerate(receipt.stage_artifact_bindings):
+            self._connection.execute(
+                """
+                INSERT INTO transaction_stage_artifact_bindings(
+                    run_id, transaction_id, position, transition_id,
+                    binding_position
+                ) VALUES (?, ?, ?, ?, ?)
+                """,
+                (
+                    receipt.run_id,
+                    receipt.transaction_id,
+                    position,
+                    reference.transition_id,
+                    reference.position,
+                ),
+            )
+        for position, reference in enumerate(receipt.stage_gate_bindings):
+            self._connection.execute(
+                """
+                INSERT INTO transaction_stage_gate_bindings(
+                    run_id, transaction_id, position, transition_id, gate_id
+                ) VALUES (?, ?, ?, ?, ?)
+                """,
+                (
+                    receipt.run_id,
+                    receipt.transaction_id,
+                    position,
+                    reference.transition_id,
+                    reference.gate_id,
+                ),
+            )
+        for position, reference in enumerate(receipt.claims):
+            self._connection.execute(
+                """
+                INSERT INTO transaction_claims(
+                    run_id, transaction_id, position, claim_id
+                ) VALUES (?, ?, ?, ?)
+                """,
+                (
+                    receipt.run_id,
+                    receipt.transaction_id,
+                    position,
+                    reference.claim_id,
+                ),
+            )
+        for position, reference in enumerate(receipt.claim_source_bindings):
+            self._connection.execute(
+                """
+                INSERT INTO transaction_claim_source_bindings(
+                    run_id, transaction_id, position, claim_id, source_id
+                ) VALUES (?, ?, ?, ?, ?)
+                """,
+                (
+                    receipt.run_id,
+                    receipt.transaction_id,
+                    position,
+                    reference.claim_id,
+                    reference.source_id,
+                ),
+            )
+        for position, reference in enumerate(receipt.claim_freezes):
+            self._connection.execute(
+                """
+                INSERT INTO transaction_claim_freezes(
+                    run_id, transaction_id, position, freeze_id
+                ) VALUES (?, ?, ?, ?)
+                """,
+                (
+                    receipt.run_id,
+                    receipt.transaction_id,
+                    position,
+                    reference.freeze_id,
+                ),
+            )
+        for position, reference in enumerate(receipt.gate_evaluations):
+            self._connection.execute(
+                """
+                INSERT INTO transaction_gate_evaluations(
+                    run_id, transaction_id, position, evaluation_id
+                ) VALUES (?, ?, ?, ?)
+                """,
+                (
+                    receipt.run_id,
+                    receipt.transaction_id,
+                    position,
+                    reference.evaluation_id,
+                ),
+            )
+        for position, reference in enumerate(receipt.gate_findings):
+            self._connection.execute(
+                """
+                INSERT INTO transaction_gate_findings(
+                    run_id, transaction_id, position, evaluation_id, finding_id
+                ) VALUES (?, ?, ?, ?, ?)
+                """,
+                (
+                    receipt.run_id,
+                    receipt.transaction_id,
+                    position,
+                    reference.evaluation_id,
+                    reference.finding_id,
+                ),
+            )
+        for position, reference in enumerate(receipt.gate_artifact_bindings):
+            self._connection.execute(
+                """
+                INSERT INTO transaction_gate_artifact_bindings(
+                    run_id, transaction_id, position, evaluation_id,
+                    binding_position
+                ) VALUES (?, ?, ?, ?, ?)
+                """,
+                (
+                    receipt.run_id,
+                    receipt.transaction_id,
+                    position,
+                    reference.evaluation_id,
+                    reference.position,
+                ),
+            )
+        for position, reference in enumerate(receipt.run_integrity_records):
+            self._connection.execute(
+                """
+                INSERT INTO transaction_run_integrity_records(
+                    run_id, transaction_id, position, integrity_revision
+                ) VALUES (?, ?, ?, ?)
+                """,
+                (
+                    receipt.run_id,
+                    receipt.transaction_id,
+                    position,
+                    reference.integrity_revision,
+                ),
             )
 
     def _blob_relpath(self, sha256: str) -> str:
@@ -1659,7 +2559,7 @@ class SQLiteControlStore:
                 "created_at": "created_at",
             },
         )
-        return ControlStoreSnapshot(
+        snapshot = ControlStoreSnapshot(
             workspace_id=self.workspace_id,
             store_revision=self.current_revision,
             run=run,
@@ -1870,8 +2770,743 @@ class SQLiteControlStore:
                     "schema_version": "schema_version",
                 },
             ),
+            run_contract_bindings=self._load_for_run(
+                RunContractBinding,
+                "run_contract_bindings",
+                run_id,
+                "run_id",
+                {
+                    "run_id": "run_id",
+                    "workspace_id": "workspace_id",
+                    "schema_version": "schema_version",
+                    "runtime": "runtime",
+                    "stage_specs_artifact_id": "stage_specs_artifact.artifact_id",
+                    "stage_specs_revision": "stage_specs_artifact.revision",
+                    "stage_specs_sha256": "stage_specs_sha256",
+                    "artifact_contracts_artifact_id": (
+                        "artifact_contracts_artifact.artifact_id"
+                    ),
+                    "artifact_contracts_revision": (
+                        "artifact_contracts_artifact.revision"
+                    ),
+                    "artifact_contracts_sha256": "artifact_contracts_sha256",
+                    "policy_pack_artifact_id": "policy_pack_artifact.artifact_id",
+                    "policy_pack_revision": "policy_pack_artifact.revision",
+                    "policy_pack_sha256": "policy_pack_sha256",
+                    "contract_fingerprint": "contract_fingerprint",
+                    "initialization_event_id": "initialization_event_id",
+                    "accepted_transaction_id": "accepted_transaction_id",
+                    "request_fingerprint": "request_fingerprint",
+                },
+            ),
+            owned_artifact_submissions=self._load_for_run(
+                OwnedArtifactSubmissionRecord,
+                "owned_artifact_submissions",
+                run_id,
+                "submission_id",
+                {
+                    "run_id": "run_id",
+                    "submission_id": "submission_id",
+                    "schema_version": "schema_version",
+                    "artifact_id": "artifact_id",
+                    "artifact_revision": "artifact_revision",
+                    "artifact_sha256": "artifact_sha256",
+                    "owner_stage_id": "owner_stage_id",
+                    "owner_role_id": "owner_role_id",
+                    "run_contract_fingerprint": "run_contract_fingerprint",
+                    "invocation_id": "invocation_id",
+                    "producer_tool_id": "producer_tool_id",
+                    "parent_artifact_id": "parent_artifact.artifact_id",
+                    "parent_artifact_revision": "parent_artifact.revision",
+                    "source_proposal_id": "source_proposal_id",
+                    "canonical_workspace_path": "canonical_workspace_path",
+                    "request_fingerprint": "request_fingerprint",
+                    "accepted_event_id": "accepted_event_id",
+                    "accepted_transaction_id": "accepted_transaction_id",
+                    "created_at": "created_at",
+                },
+            ),
+            stage_transitions=self._load_for_run(
+                StageTransitionRecord,
+                "stage_transitions",
+                run_id,
+                "result_revision, transition_id",
+                {
+                    "run_id": "run_id",
+                    "transition_id": "transition_id",
+                    "schema_version": "schema_version",
+                    "stage_id": "stage_id",
+                    "transition_kind": "transition_kind",
+                    "prior_status": "prior_status",
+                    "prior_revision": "prior_revision",
+                    "result_status": "result_status",
+                    "result_revision": "result_revision",
+                    "run_contract_fingerprint": "run_contract_fingerprint",
+                    "transition_event_id": "transition_event_id",
+                    "accepted_transaction_id": "accepted_transaction_id",
+                    "request_fingerprint": "request_fingerprint",
+                },
+            ),
+            stage_artifact_bindings=self._load_for_run(
+                StageArtifactBinding,
+                "stage_artifact_bindings",
+                run_id,
+                "transition_id, position",
+                {
+                    "run_id": "run_id",
+                    "transition_id": "transition_id",
+                    "position": "position",
+                    "schema_version": "schema_version",
+                    "artifact_id": "artifact_id",
+                    "artifact_revision": "artifact_revision",
+                    "artifact_sha256": "artifact_sha256",
+                    "usage": "usage",
+                    "accepted_transaction_id": "accepted_transaction_id",
+                },
+            ),
+            stage_gate_bindings=self._load_for_run(
+                StageGateBinding,
+                "stage_gate_bindings",
+                run_id,
+                "transition_id, gate_id",
+                {
+                    "run_id": "run_id",
+                    "transition_id": "transition_id",
+                    "gate_id": "gate_id",
+                    "schema_version": "schema_version",
+                    "evaluation_id": "evaluation_id",
+                    "accepted_transaction_id": "accepted_transaction_id",
+                },
+            ),
+            claims=self._load_for_run(
+                ClaimRecord,
+                "claims",
+                run_id,
+                "ordinal, claim_id",
+                {
+                    "run_id": "run_id",
+                    "claim_id": "claim_id",
+                    "schema_version": "schema_version",
+                    "freeze_id": "freeze_id",
+                    "ordinal": "ordinal",
+                    "claim_drafts_proposal_id": "claim_drafts_proposal_id",
+                    "draft_id": "draft_id",
+                    "primary_source_id": "primary_source_id",
+                    "claim_type": "claim_type",
+                    "accepted_transaction_id": "accepted_transaction_id",
+                },
+            ),
+            claim_source_bindings=self._load_for_run(
+                ClaimSourceBinding,
+                "claim_source_bindings",
+                run_id,
+                "claim_id, position",
+                {
+                    "run_id": "run_id",
+                    "claim_id": "claim_id",
+                    "source_id": "source_id",
+                    "schema_version": "schema_version",
+                    "position": "position",
+                    "citation_role": "citation_role",
+                    "claim_drafts_proposal_id": "claim_drafts_proposal_id",
+                    "accepted_transaction_id": "accepted_transaction_id",
+                },
+            ),
+            claim_freezes=self._load_for_run(
+                ClaimFreezeRecord,
+                "claim_freezes",
+                run_id,
+                "freeze_id",
+                {
+                    "run_id": "run_id",
+                    "freeze_id": "freeze_id",
+                    "schema_version": "schema_version",
+                    "claim_drafts_proposal_id": "claim_drafts_proposal_id",
+                    "screened_proposal_id": "screened_proposal_id",
+                    "candidate_proposal_id": "candidate_proposal_id",
+                    "claim_drafts_artifact_id": "claim_drafts_artifact.artifact_id",
+                    "claim_drafts_artifact_revision": (
+                        "claim_drafts_artifact.revision"
+                    ),
+                    "claim_drafts_sha256": "claim_drafts_sha256",
+                    "ledger_artifact_id": "ledger_artifact.artifact_id",
+                    "ledger_artifact_revision": "ledger_artifact.revision",
+                    "ledger_sha256": "ledger_sha256",
+                    "run_contract_fingerprint": "run_contract_fingerprint",
+                    "claim_count": "claim_count",
+                    "freeze_event_id": "freeze_event_id",
+                    "accepted_transaction_id": "accepted_transaction_id",
+                    "request_fingerprint": "request_fingerprint",
+                },
+            ),
+            gate_evaluations=self._load_for_run(
+                GateEvaluationRecord,
+                "gate_evaluations",
+                run_id,
+                "gate_batch_id, gate_id",
+                {
+                    "run_id": "run_id",
+                    "evaluation_id": "evaluation_id",
+                    "schema_version": "schema_version",
+                    "gate_batch_id": "gate_batch_id",
+                    "stage_id": "stage_id",
+                    "gate_id": "gate_id",
+                    "policy_version": "policy_version",
+                    "run_contract_fingerprint": "run_contract_fingerprint",
+                    "status": "status",
+                    "blocking": "blocking",
+                    "report_artifact_id": "report_artifact.artifact_id",
+                    "report_artifact_revision": "report_artifact.revision",
+                    "evaluation_event_id": "evaluation_event_id",
+                    "accepted_transaction_id": "accepted_transaction_id",
+                    "request_fingerprint": "request_fingerprint",
+                },
+            ),
+            gate_findings=self._load_for_run(
+                GateFindingRecord,
+                "gate_findings",
+                run_id,
+                "evaluation_id, finding_id",
+                {
+                    "run_id": "run_id",
+                    "evaluation_id": "evaluation_id",
+                    "finding_id": "finding_id",
+                    "schema_version": "schema_version",
+                    "gate_id": "gate_id",
+                    "blocking_level": "blocking_level",
+                    "artifact_id": "artifact_id",
+                    "claim_id": "claim_id",
+                    "source_id": "source_id",
+                    "accepted_transaction_id": "accepted_transaction_id",
+                },
+            ),
+            gate_artifact_bindings=self._load_for_run(
+                GateArtifactBinding,
+                "gate_artifact_bindings",
+                run_id,
+                "evaluation_id, position",
+                {
+                    "run_id": "run_id",
+                    "evaluation_id": "evaluation_id",
+                    "position": "position",
+                    "schema_version": "schema_version",
+                    "artifact_id": "artifact_id",
+                    "artifact_revision": "artifact_revision",
+                    "artifact_sha256": "artifact_sha256",
+                    "usage": "usage",
+                    "accepted_transaction_id": "accepted_transaction_id",
+                },
+            ),
+            run_integrity_records=self._load_for_run(
+                RunIntegrityRecord,
+                "run_integrity_records",
+                run_id,
+                "integrity_revision",
+                {
+                    "run_id": "run_id",
+                    "integrity_revision": "integrity_revision",
+                    "schema_version": "schema_version",
+                    "status": "status",
+                    "prior_integrity_revision": "prior_integrity_revision",
+                    "affected_artifact_id": "affected_artifact_id",
+                    "affected_artifact_revision": "affected_artifact_revision",
+                    "expected_workspace_path": "expected_workspace_path",
+                    "expected_sha256": "expected_sha256",
+                    "observed_entry_kind": "observed_entry_kind",
+                    "observed_sha256": "observed_sha256",
+                    "reason_code": "reason_code",
+                    "first_detected_event_id": "first_detected_event_id",
+                    "accepted_transaction_id": "accepted_transaction_id",
+                    "request_fingerprint": "request_fingerprint",
+                },
+            ),
             transactions=self._load_transactions(run_id),
         )
+        self._verify_core_snapshot_structure(snapshot)
+        return snapshot
+
+    @staticmethod
+    def _verify_core_snapshot_structure(snapshot: ControlStoreSnapshot) -> None:
+        """Verify PR-4A relation closure without interpreting domain policy."""
+
+        core_rows_exist = any(
+            (
+                snapshot.run_contract_bindings,
+                snapshot.owned_artifact_submissions,
+                snapshot.stage_transitions,
+                snapshot.stage_artifact_bindings,
+                snapshot.stage_gate_bindings,
+                snapshot.claims,
+                snapshot.claim_source_bindings,
+                snapshot.claim_freezes,
+                snapshot.gate_evaluations,
+                snapshot.gate_findings,
+                snapshot.gate_artifact_bindings,
+                snapshot.run_integrity_records,
+            )
+        )
+        if not snapshot.run_contract_bindings:
+            if core_rows_exist:
+                raise ControlStoreIntegrityError("core_run_relation_invalid")
+            return
+        if len(snapshot.run_contract_bindings) != 1:
+            raise ControlStoreIntegrityError("core_run_relation_invalid")
+
+        binding = snapshot.run_contract_bindings[0]
+        head = snapshot.workspace_run_head
+        if (
+            binding.run_id != snapshot.run.run_id
+            or binding.workspace_id != snapshot.workspace_id
+            or binding.workspace_id != snapshot.run.workspace_id
+            or binding.runtime != snapshot.run.runtime
+            or head is None
+            or head.workspace_id != snapshot.workspace_id
+            or head.current_run_id != snapshot.run.run_id
+        ):
+            raise ControlStoreIntegrityError("core_run_relation_invalid")
+
+        expected_fingerprint = canonical_fingerprint(
+            {
+                "runtime": binding.runtime,
+                "stage_specs_schema": binding.stage_specs_schema,
+                "stage_specs_sha256": binding.stage_specs_sha256,
+                "artifact_contracts_schema": binding.artifact_contracts_schema,
+                "artifact_contracts_sha256": binding.artifact_contracts_sha256,
+                "policy_pack_schema": binding.policy_pack_schema,
+                "policy_pack_name": binding.policy_pack_name,
+                "policy_pack_sha256": binding.policy_pack_sha256,
+                "run_direction": binding.run_direction.model_dump(
+                    mode="json",
+                    exclude_unset=False,
+                ),
+                "workspace_config_sha256": binding.workspace_config_sha256,
+                "sources_config_sha256": binding.sources_config_sha256,
+                "role_topology": binding.role_topology,
+                "gate_strictness": binding.gate_strictness,
+                "input_governance_required": binding.input_governance_required,
+            }
+        )
+        if binding.contract_fingerprint != expected_fingerprint:
+            raise ControlStoreIntegrityError("core_run_relation_invalid")
+
+        receipts = {
+            item.transaction_id: item for item in snapshot.transactions
+        }
+        events = {item.event_id: item for item in snapshot.events}
+        revisions = {
+            (item.artifact_id, item.revision): item
+            for item in snapshot.artifact_revisions
+        }
+        initialization = receipts.get(binding.accepted_transaction_id)
+        contract_refs = {
+            (
+                binding.stage_specs_artifact.artifact_id,
+                binding.stage_specs_artifact.revision,
+                binding.stage_specs_sha256,
+            ),
+            (
+                binding.artifact_contracts_artifact.artifact_id,
+                binding.artifact_contracts_artifact.revision,
+                binding.artifact_contracts_sha256,
+            ),
+            (
+                binding.policy_pack_artifact.artifact_id,
+                binding.policy_pack_artifact.revision,
+                binding.policy_pack_sha256,
+            ),
+        }
+        if (
+            initialization is None
+            or initialization.run_id != snapshot.run.run_id
+            or initialization.transaction_type != "core-v2-initialize"
+            or [item.run_id for item in initialization.run_contract_bindings]
+            != [snapshot.run.run_id]
+            or binding.initialization_event_id not in initialization.event_ids
+        ):
+            raise ControlStoreIntegrityError("core_run_relation_invalid")
+        init_event = events.get(binding.initialization_event_id)
+        if (
+            init_event is None
+            or init_event.transaction_id != initialization.transaction_id
+            or init_event.core_run_binding is None
+            or init_event.core_run_binding.effect_kind != "initialize"
+            or init_event.core_run_binding.primary_record_id
+            != snapshot.run.run_id
+        ):
+            raise ControlStoreIntegrityError("core_run_relation_invalid")
+        receipt_revision_refs = {
+            (item.artifact_id, item.revision)
+            for item in initialization.artifact_revisions
+        }
+        for artifact_id, revision_number, digest in contract_refs:
+            revision = revisions.get((artifact_id, revision_number))
+            if (
+                revision is None
+                or revision.sha256 != digest
+                or (artifact_id, revision_number) not in receipt_revision_refs
+            ):
+                raise ControlStoreIntegrityError("core_run_relation_invalid")
+
+        transitions_by_stage: dict[str, list[StageTransitionRecord]] = {}
+        transition_by_id: dict[str, StageTransitionRecord] = {}
+        for transition in snapshot.stage_transitions:
+            if transition.transition_id in transition_by_id:
+                raise ControlStoreIntegrityError("core_run_relation_invalid")
+            transition_by_id[transition.transition_id] = transition
+            transitions_by_stage.setdefault(transition.stage_id, []).append(
+                transition
+            )
+        states = {item.stage_id: item for item in snapshot.stage_states}
+        if set(states) != set(transitions_by_stage):
+            raise ControlStoreIntegrityError("core_run_relation_invalid")
+        initial_transition_ids: set[str] = set()
+        for stage_id, state in states.items():
+            rows = sorted(
+                transitions_by_stage[stage_id],
+                key=lambda item: item.result_revision,
+            )
+            if not rows or rows[0].transition_kind != "initialize":
+                raise ControlStoreIntegrityError("core_run_relation_invalid")
+            initial_transition_ids.add(rows[0].transition_id)
+            for position, transition in enumerate(rows):
+                if (
+                    transition.result_revision != position
+                    or transition.run_contract_fingerprint
+                    != binding.contract_fingerprint
+                ):
+                    raise ControlStoreIntegrityError("core_run_relation_invalid")
+                if position and (
+                    transition.prior_revision != position - 1
+                    or transition.prior_status != rows[position - 1].result_status
+                ):
+                    raise ControlStoreIntegrityError("core_run_relation_invalid")
+            if (
+                state.revision != rows[-1].result_revision
+                or state.status != rows[-1].result_status
+            ):
+                raise ControlStoreIntegrityError("core_run_relation_invalid")
+        if {
+            item.transition_id for item in initialization.stage_transitions
+        } != initial_transition_ids:
+            raise ControlStoreIntegrityError("core_run_relation_invalid")
+
+        integrity_rows = sorted(
+            snapshot.run_integrity_records,
+            key=lambda item: item.integrity_revision,
+        )
+        if (
+            not integrity_rows
+            or integrity_rows[0].integrity_revision != 1
+            or integrity_rows[0].status != "clean"
+            or [item.integrity_revision for item in initialization.run_integrity_records]
+            != [1]
+        ):
+            raise ControlStoreIntegrityError("core_run_relation_invalid")
+        contaminated = False
+        for position, record in enumerate(integrity_rows, start=1):
+            if record.integrity_revision != position:
+                raise ControlStoreIntegrityError("core_run_relation_invalid")
+            if record.status == "contaminated":
+                contaminated = True
+            elif contaminated:
+                raise ControlStoreIntegrityError("core_run_relation_invalid")
+
+        invocation_events: dict[str, list[EventEnvelope]] = {}
+        for event in snapshot.events:
+            core = event.core_run_binding
+            if core is not None and core.effect_kind == "invocation_start":
+                invocation_events.setdefault(core.primary_record_id, []).append(
+                    event
+                )
+        source_invocations = [item.invocation_id for item in snapshot.sources]
+        proposal_invocations = [
+            item.invocation_id for item in snapshot.accepted_proposals
+        ]
+        submission_invocations = [
+            item.invocation_id
+            for item in snapshot.owned_artifact_submissions
+            if item.invocation_id is not None
+            and item.source_proposal_id is None
+        ]
+        completed_records = (
+            source_invocations + proposal_invocations + submission_invocations
+        )
+        failed_records = [
+            event.intake_binding.invocation_id
+            for event in snapshot.events
+            if event.intake_binding is not None
+            and event.intake_binding.outcome == "rejected"
+        ]
+        for invocation in snapshot.invocations:
+            start_events = invocation_events.get(invocation.invocation_id, [])
+            if (
+                len(start_events) != 1
+                or start_events[0].transaction_id is None
+                or start_events[0].run_id != snapshot.run.run_id
+            ):
+                raise ControlStoreIntegrityError("core_run_relation_invalid")
+            explanations = completed_records.count(invocation.invocation_id)
+            failures = failed_records.count(invocation.invocation_id)
+            if invocation.status == "active" and (explanations or failures):
+                raise ControlStoreIntegrityError("core_run_relation_invalid")
+            if invocation.status == "completed" and (
+                explanations != 1 or failures
+            ):
+                raise ControlStoreIntegrityError("core_run_relation_invalid")
+            if invocation.status == "failed" and (
+                failures != 1 or explanations
+            ):
+                raise ControlStoreIntegrityError("core_run_relation_invalid")
+        if set(invocation_events) != {
+            item.invocation_id for item in snapshot.invocations
+        }:
+            raise ControlStoreIntegrityError("core_run_relation_invalid")
+
+        producer_transactions: dict[tuple[str, int], set[str]] = {}
+
+        def add_producer(
+            artifact_id: str,
+            revision_number: int,
+            transaction_id: str,
+        ) -> None:
+            producer_transactions.setdefault(
+                (artifact_id, revision_number),
+                set(),
+            ).add(transaction_id)
+
+        for artifact_id, revision_number, _digest in contract_refs:
+            add_producer(
+                artifact_id,
+                revision_number,
+                initialization.transaction_id,
+            )
+        for source in snapshot.sources:
+            add_producer(
+                source.content_artifact_id,
+                source.content_artifact_revision,
+                source.accepted_transaction_id,
+            )
+            if source.raw_payload_artifact_id is not None:
+                add_producer(
+                    source.raw_payload_artifact_id,
+                    cast(int, source.raw_payload_artifact_revision),
+                    source.accepted_transaction_id,
+                )
+        for proposal in snapshot.accepted_proposals:
+            add_producer(
+                proposal.artifact_id,
+                proposal.artifact_revision,
+                proposal.accepted_transaction_id,
+            )
+        for submission in snapshot.owned_artifact_submissions:
+            add_producer(
+                submission.artifact_id,
+                submission.artifact_revision,
+                submission.accepted_transaction_id,
+            )
+        for freeze in snapshot.claim_freezes:
+            add_producer(
+                freeze.ledger_artifact.artifact_id,
+                freeze.ledger_artifact.revision,
+                freeze.accepted_transaction_id,
+            )
+        for evaluation in snapshot.gate_evaluations:
+            add_producer(
+                evaluation.report_artifact.artifact_id,
+                evaluation.report_artifact.revision,
+                evaluation.accepted_transaction_id,
+            )
+        revisions_by_artifact: dict[str, list[ArtifactRevision]] = {}
+        for revision in snapshot.artifact_revisions:
+            revisions_by_artifact.setdefault(revision.artifact_id, []).append(
+                revision
+            )
+        for artifact in snapshot.artifacts:
+            values = sorted(
+                revisions_by_artifact.get(artifact.artifact_id, []),
+                key=lambda item: item.revision,
+            )
+            if artifact.current_revision == 0:
+                if values or artifact.status != "expected":
+                    raise ControlStoreIntegrityError("core_run_relation_invalid")
+                continue
+            if (
+                not values
+                or values[-1].revision != artifact.current_revision
+                or [item.revision for item in values]
+                != list(range(1, artifact.current_revision + 1))
+                or artifact.status != "valid"
+            ):
+                raise ControlStoreIntegrityError("core_run_relation_invalid")
+            for revision in values:
+                producers = producer_transactions.get(
+                    (revision.artifact_id, revision.revision),
+                    set(),
+                )
+                if len(producers) != 1:
+                    raise ControlStoreIntegrityError("core_run_relation_invalid")
+                receipt = receipts.get(next(iter(producers)))
+                if receipt is None or (
+                    revision.artifact_id,
+                    revision.revision,
+                ) not in {
+                    (item.artifact_id, item.revision)
+                    for item in receipt.artifact_revisions
+                }:
+                    raise ControlStoreIntegrityError("core_run_relation_invalid")
+
+        for artifact_binding in snapshot.stage_artifact_bindings:
+            transition = transition_by_id.get(artifact_binding.transition_id)
+            revision = revisions.get(
+                (
+                    artifact_binding.artifact_id,
+                    artifact_binding.artifact_revision,
+                )
+            )
+            if (
+                transition is None
+                or revision is None
+                or revision.sha256 != artifact_binding.artifact_sha256
+                or transition.accepted_transaction_id
+                != artifact_binding.accepted_transaction_id
+            ):
+                raise ControlStoreIntegrityError("core_run_relation_invalid")
+        evaluations = {
+            item.evaluation_id: item for item in snapshot.gate_evaluations
+        }
+        for gate_binding in snapshot.stage_gate_bindings:
+            transition = transition_by_id.get(gate_binding.transition_id)
+            evaluation = evaluations.get(gate_binding.evaluation_id)
+            if (
+                transition is None
+                or evaluation is None
+                or evaluation.gate_id != gate_binding.gate_id
+                or evaluation.stage_id != transition.stage_id
+                or transition.accepted_transaction_id
+                != gate_binding.accepted_transaction_id
+            ):
+                raise ControlStoreIntegrityError("core_run_relation_invalid")
+
+        claims_by_id = {item.claim_id: item for item in snapshot.claims}
+        bindings_by_claim: dict[str, list[ClaimSourceBinding]] = {}
+        for source_binding in snapshot.claim_source_bindings:
+            if source_binding.claim_id not in claims_by_id:
+                raise ControlStoreIntegrityError("core_run_relation_invalid")
+            bindings_by_claim.setdefault(source_binding.claim_id, []).append(
+                source_binding
+            )
+        for freeze in snapshot.claim_freezes:
+            receipt = receipts.get(freeze.accepted_transaction_id)
+            freeze_claims = {
+                item.claim_id
+                for item in snapshot.claims
+                if item.accepted_transaction_id == freeze.accepted_transaction_id
+            }
+            freeze_bindings = {
+                (item.claim_id, item.source_id)
+                for item in snapshot.claim_source_bindings
+                if item.accepted_transaction_id == freeze.accepted_transaction_id
+            }
+            if (
+                receipt is None
+                or {item.freeze_id for item in receipt.claim_freezes}
+                != {freeze.freeze_id}
+                or {item.claim_id for item in receipt.claims} != freeze_claims
+                or {
+                    (item.claim_id, item.source_id)
+                    for item in receipt.claim_source_bindings
+                }
+                != freeze_bindings
+                or (
+                    freeze.ledger_artifact.artifact_id,
+                    freeze.ledger_artifact.revision,
+                )
+                not in {
+                    (item.artifact_id, item.revision)
+                    for item in receipt.artifact_revisions
+                }
+            ):
+                raise ControlStoreIntegrityError("core_run_relation_invalid")
+        if bool(snapshot.claims or snapshot.claim_source_bindings) != bool(
+            snapshot.claim_freezes
+        ):
+            raise ControlStoreIntegrityError("core_run_relation_invalid")
+
+        findings_by_evaluation: dict[str, set[str]] = {}
+        for finding in snapshot.gate_findings:
+            if finding.evaluation_id not in evaluations:
+                raise ControlStoreIntegrityError("core_run_relation_invalid")
+            findings_by_evaluation.setdefault(finding.evaluation_id, set()).add(
+                finding.finding_id
+            )
+        bindings_by_evaluation: dict[str, list[GateArtifactBinding]] = {}
+        for gate_binding in snapshot.gate_artifact_bindings:
+            if gate_binding.evaluation_id not in evaluations:
+                raise ControlStoreIntegrityError("core_run_relation_invalid")
+            bindings_by_evaluation.setdefault(
+                gate_binding.evaluation_id,
+                [],
+            ).append(gate_binding)
+        evaluations_by_transaction: dict[str, list[GateEvaluationRecord]] = {}
+        for evaluation in snapshot.gate_evaluations:
+            if set(evaluation.finding_ids) != findings_by_evaluation.get(
+                evaluation.evaluation_id,
+                set(),
+            ):
+                raise ControlStoreIntegrityError("core_run_relation_invalid")
+            positions = sorted(
+                item.position
+                for item in bindings_by_evaluation.get(
+                    evaluation.evaluation_id,
+                    [],
+                )
+            )
+            if positions != list(range(len(positions))):
+                raise ControlStoreIntegrityError("core_run_relation_invalid")
+            evaluations_by_transaction.setdefault(
+                evaluation.accepted_transaction_id,
+                [],
+            ).append(evaluation)
+        for transaction_id, transaction_evaluations in evaluations_by_transaction.items():
+            receipt = receipts.get(transaction_id)
+            evaluation_ids = {
+                item.evaluation_id for item in transaction_evaluations
+            }
+            finding_ids = {
+                (item.evaluation_id, item.finding_id)
+                for item in snapshot.gate_findings
+                if item.accepted_transaction_id == transaction_id
+            }
+            input_ids = {
+                (item.evaluation_id, item.position)
+                for item in snapshot.gate_artifact_bindings
+                if item.accepted_transaction_id == transaction_id
+            }
+            report_refs = {
+                (item.report_artifact.artifact_id, item.report_artifact.revision)
+                for item in transaction_evaluations
+            }
+            if (
+                receipt is None
+                or {item.evaluation_id for item in receipt.gate_evaluations}
+                != evaluation_ids
+                or {
+                    (item.evaluation_id, item.finding_id)
+                    for item in receipt.gate_findings
+                }
+                != finding_ids
+                or {
+                    (item.evaluation_id, item.position)
+                    for item in receipt.gate_artifact_bindings
+                }
+                != input_ids
+                or not report_refs
+                <= {
+                    (item.artifact_id, item.revision)
+                    for item in receipt.artifact_revisions
+                }
+            ):
+                raise ControlStoreIntegrityError("core_run_relation_invalid")
 
     def _load_workspace_run_head_in_transaction(self) -> WorkspaceRunHead | None:
         rows = self._connection.execute(
@@ -1917,7 +3552,11 @@ class SQLiteControlStore:
         model = _decode_record(model_type, str(row["payload_json"]))
         for column, attribute in columns.items():
             stored = row[column]
-            expected = getattr(model, attribute)
+            expected: object = model
+            for component in attribute.split("."):
+                if expected is None:
+                    break
+                expected = getattr(expected, component)
             if type(expected) is bool:
                 expected = int(expected)
             if stored != expected:
@@ -2107,6 +3746,109 @@ class SQLiteControlStore:
             or list(proposal_ids) != receipt.proposal_ids
         ):
             raise ControlStoreIntegrityError("transaction_relation_mismatch")
+        self._verify_core_transaction_relations(receipt)
+
+    def _verify_core_transaction_relations(
+        self,
+        receipt: TransactionReceipt,
+    ) -> None:
+        specs: tuple[
+            tuple[str, tuple[str, ...], tuple[tuple[object, ...], ...]], ...
+        ] = (
+            (
+                "transaction_run_contract_bindings",
+                ("binding_run_id",),
+                tuple((item.run_id,) for item in receipt.run_contract_bindings),
+            ),
+            (
+                "transaction_owned_artifact_submissions",
+                ("submission_id",),
+                tuple(
+                    (item.submission_id,)
+                    for item in receipt.owned_artifact_submissions
+                ),
+            ),
+            (
+                "transaction_stage_transitions",
+                ("transition_id",),
+                tuple((item.transition_id,) for item in receipt.stage_transitions),
+            ),
+            (
+                "transaction_stage_artifact_bindings",
+                ("transition_id", "binding_position"),
+                tuple(
+                    (item.transition_id, item.position)
+                    for item in receipt.stage_artifact_bindings
+                ),
+            ),
+            (
+                "transaction_stage_gate_bindings",
+                ("transition_id", "gate_id"),
+                tuple(
+                    (item.transition_id, item.gate_id)
+                    for item in receipt.stage_gate_bindings
+                ),
+            ),
+            (
+                "transaction_claims",
+                ("claim_id",),
+                tuple((item.claim_id,) for item in receipt.claims),
+            ),
+            (
+                "transaction_claim_source_bindings",
+                ("claim_id", "source_id"),
+                tuple(
+                    (item.claim_id, item.source_id)
+                    for item in receipt.claim_source_bindings
+                ),
+            ),
+            (
+                "transaction_claim_freezes",
+                ("freeze_id",),
+                tuple((item.freeze_id,) for item in receipt.claim_freezes),
+            ),
+            (
+                "transaction_gate_evaluations",
+                ("evaluation_id",),
+                tuple((item.evaluation_id,) for item in receipt.gate_evaluations),
+            ),
+            (
+                "transaction_gate_findings",
+                ("evaluation_id", "finding_id"),
+                tuple(
+                    (item.evaluation_id, item.finding_id)
+                    for item in receipt.gate_findings
+                ),
+            ),
+            (
+                "transaction_gate_artifact_bindings",
+                ("evaluation_id", "binding_position"),
+                tuple(
+                    (item.evaluation_id, item.position)
+                    for item in receipt.gate_artifact_bindings
+                ),
+            ),
+            (
+                "transaction_run_integrity_records",
+                ("integrity_revision",),
+                tuple(
+                    (item.integrity_revision,)
+                    for item in receipt.run_integrity_records
+                ),
+            ),
+        )
+        for table, columns, expected in specs:
+            selected = ", ".join(("position", *columns))
+            rows = self._connection.execute(
+                f"SELECT {selected} FROM {table} "
+                "WHERE run_id = ? AND transaction_id = ? ORDER BY position",
+                (receipt.run_id, receipt.transaction_id),
+            ).fetchall()
+            if [row[0] for row in rows] != list(range(len(rows))):
+                raise ControlStoreIntegrityError("transaction_relation_mismatch")
+            actual = tuple(tuple(row[index + 1] for index in range(len(columns))) for row in rows)
+            if actual != expected:
+                raise ControlStoreIntegrityError("transaction_relation_mismatch")
 
     def _verify_workspace_ledger_graph(self) -> None:
         """Verify one complete workspace transaction graph in this SQL snapshot."""
@@ -2146,6 +3888,7 @@ class SQLiteControlStore:
                 or list(proposal_ids) != receipt.proposal_ids
             ):
                 raise ControlStoreIntegrityError("transaction_relation_mismatch")
+            self._verify_core_transaction_relations(receipt)
             for event_id in event_ids:
                 key = (receipt.run_id, event_id)
                 if key in event_owners:
@@ -2291,6 +4034,138 @@ class SQLiteControlStore:
                 invalid()
         if set(binding_source_ids) - set(proposal_source_ids):
             invalid()
+        self._verify_core_relation_coverage()
+
+    def _verify_core_relation_coverage(self) -> None:
+        """Prove every PR-4A append-only row has exactly one receipt owner."""
+
+        specs = (
+            (
+                "transaction_run_contract_bindings",
+                ("binding_run_id",),
+                "run_contract_bindings",
+                ("run_id",),
+                False,
+            ),
+            (
+                "transaction_owned_artifact_submissions",
+                ("submission_id",),
+                "owned_artifact_submissions",
+                ("submission_id",),
+                True,
+            ),
+            (
+                "transaction_stage_transitions",
+                ("transition_id",),
+                "stage_transitions",
+                ("transition_id",),
+                True,
+            ),
+            (
+                "transaction_stage_artifact_bindings",
+                ("transition_id", "binding_position"),
+                "stage_artifact_bindings",
+                ("transition_id", "position"),
+                True,
+            ),
+            (
+                "transaction_stage_gate_bindings",
+                ("transition_id", "gate_id"),
+                "stage_gate_bindings",
+                ("transition_id", "gate_id"),
+                True,
+            ),
+            (
+                "transaction_claims",
+                ("claim_id",),
+                "claims",
+                ("claim_id",),
+                True,
+            ),
+            (
+                "transaction_claim_source_bindings",
+                ("claim_id", "source_id"),
+                "claim_source_bindings",
+                ("claim_id", "source_id"),
+                True,
+            ),
+            (
+                "transaction_claim_freezes",
+                ("freeze_id",),
+                "claim_freezes",
+                ("freeze_id",),
+                True,
+            ),
+            (
+                "transaction_gate_evaluations",
+                ("evaluation_id",),
+                "gate_evaluations",
+                ("evaluation_id",),
+                True,
+            ),
+            (
+                "transaction_gate_findings",
+                ("evaluation_id", "finding_id"),
+                "gate_findings",
+                ("evaluation_id", "finding_id"),
+                True,
+            ),
+            (
+                "transaction_gate_artifact_bindings",
+                ("evaluation_id", "binding_position"),
+                "gate_artifact_bindings",
+                ("evaluation_id", "position"),
+                True,
+            ),
+            (
+                "transaction_run_integrity_records",
+                ("integrity_revision",),
+                "run_integrity_records",
+                ("integrity_revision",),
+                True,
+            ),
+        )
+        for relation_table, relation_ids, domain_table, domain_ids, with_run in specs:
+            relation_columns = ", ".join(
+                ("run_id", "transaction_id", *relation_ids)
+            )
+            relation_rows = self._connection.execute(
+                f"SELECT {relation_columns} FROM {relation_table}"
+            ).fetchall()
+            owners: dict[tuple[object, ...], str] = {}
+            for row in relation_rows:
+                identity = tuple(row[index + 2] for index in range(len(relation_ids)))
+                key = ((row[0],) + identity) if with_run else identity
+                if not with_run and row[0] != identity[0]:
+                    raise ControlStoreIntegrityError(
+                        "transaction_ledger_integrity_invalid"
+                    )
+                if key in owners:
+                    raise ControlStoreIntegrityError(
+                        "transaction_ledger_integrity_invalid"
+                    )
+                owners[key] = str(row[1])
+
+            domain_columns = ", ".join(
+                ("run_id", *domain_ids, "accepted_transaction_id")
+            )
+            domain_rows = self._connection.execute(
+                f"SELECT {domain_columns} FROM {domain_table}"
+            ).fetchall()
+            domain_keys: set[tuple[object, ...]] = set()
+            for row in domain_rows:
+                identity = tuple(row[index + 1] for index in range(len(domain_ids)))
+                key = ((row[0],) + identity) if with_run else identity
+                accepted_transaction_id = str(row[len(domain_ids) + 1])
+                if key in domain_keys or owners.get(key) != accepted_transaction_id:
+                    raise ControlStoreIntegrityError(
+                        "transaction_ledger_integrity_invalid"
+                    )
+                domain_keys.add(key)
+            if domain_keys != set(owners):
+                raise ControlStoreIntegrityError(
+                    "transaction_ledger_integrity_invalid"
+                )
 
     def _verify_source_graph_record(self, source: AcceptedSourceRecord) -> None:
         content_revision = self._artifact_revision_for(
