@@ -57,7 +57,12 @@ from .policy import (
     run_contract_fingerprint,
     transaction_type_for,
 )
-from .verifier import CoreRunDomainVerifier, VerifiedCoreRun, resolve_core_replay
+from .verifier import (
+    CoreRunDomainVerifier,
+    VerifiedCoreRun,
+    _audit_targets_revision,
+    resolve_core_replay,
+)
 
 
 _Clock = Callable[[], datetime]
@@ -869,26 +874,25 @@ class CoreRunService:
                 owner_role_id="editor",
             )
             producer_invocation_id = submission.invocation_id
-            if verified.binding.role_topology != "human_assisted":
-                snapshot_revision = require_artifact(
-                    "analyst_draft_snapshot",
-                    "consumed",
-                )
-                submissions = [
-                    item
-                    for item in snapshot.owned_artifact_submissions
-                    if item.artifact_id == brief.artifact_id
-                    and item.artifact_revision == brief.revision
-                ]
-                if (
-                    len(submissions) != 1
-                    or submissions[0].parent_artifact is None
-                    or submissions[0].parent_artifact.artifact_id
-                    != snapshot_revision.artifact_id
-                    or submissions[0].parent_artifact.revision
-                    != snapshot_revision.revision
-                ):
-                    raise CoreRunError("stage_artifact_binding_invalid")
+            snapshot_revision = require_artifact(
+                "analyst_draft_snapshot",
+                "consumed",
+            )
+            submissions = [
+                item
+                for item in snapshot.owned_artifact_submissions
+                if item.artifact_id == brief.artifact_id
+                and item.artifact_revision == brief.revision
+            ]
+            if (
+                len(submissions) != 1
+                or submissions[0].parent_artifact is None
+                or submissions[0].parent_artifact.artifact_id
+                != snapshot_revision.artifact_id
+                or submissions[0].parent_artifact.revision
+                != snapshot_revision.revision
+            ):
+                raise CoreRunError("stage_artifact_binding_invalid")
         elif stage_id == "auditor":
             ledger = require_artifact("claim_ledger", "consumed")
             brief = require_artifact("audited_brief", "consumed")
@@ -917,7 +921,7 @@ class CoreRunService:
             )
             if artifacts["analyst_draft_snapshot"].current_revision:
                 require_artifact("analyst_draft_snapshot", "consumed")
-            del ledger, brief
+            del ledger
             audit_payload = store.read_artifact_revision_bytes(
                 report.run_id,
                 report.artifact_id,
@@ -933,8 +937,10 @@ class CoreRunService:
                 )
             except Exception as exc:
                 raise CoreRunError("stage_artifact_binding_invalid") from exc
-            if audit.decision == "fail" or any(
-                finding.severity == "error" for finding in audit.findings
+            if (
+                not _audit_targets_revision(audit, brief)
+                or audit.decision == "fail"
+                or any(finding.severity == "error" for finding in audit.findings)
             ):
                 raise CoreRunError("stage_artifact_binding_invalid")
             evaluations = {
@@ -1226,10 +1232,10 @@ class CoreRunService:
         )
 
     def _roles_for(self, verified: VerifiedCoreRun, stage_id: str) -> tuple[str, ...]:
-        if verified.binding.role_topology == "human_assisted" and stage_id in {
-            "analyst",
-            "editor",
-        }:
+        if (
+            verified.binding.role_topology == "human_assisted"
+            and stage_id == "analyst"
+        ):
             return (*STAGE_ROLES.get(stage_id, ()), "writer")
         return STAGE_ROLES.get(stage_id, ())
 

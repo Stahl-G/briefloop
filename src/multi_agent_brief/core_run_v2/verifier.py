@@ -7,6 +7,7 @@ from dataclasses import dataclass
 from typing import Any
 
 from multi_agent_brief.contracts.v2 import (
+    ArtifactRevision,
     AuditReportArtifact,
     CandidateClaimsProposal,
     ClaimDraftsProposal,
@@ -234,6 +235,19 @@ class CoreRunDomainVerifier:
 
     @staticmethod
     def _verify_receipt_bindings(snapshot: ControlStoreSnapshot) -> None:
+        receipts = {item.transaction_id: item for item in snapshot.transactions}
+        if len(receipts) != len(snapshot.transactions):
+            raise CoreRunError("control_store_integrity_invalid")
+        for event in snapshot.events:
+            if event.core_run_binding is None:
+                continue
+            receipt = receipts.get(event.transaction_id)
+            if (
+                receipt is None
+                or not receipt.transaction_type.startswith("core-v2-")
+                or event.event_id not in receipt.event_ids
+            ):
+                raise CoreRunError("control_store_integrity_invalid")
         for receipt in snapshot.transactions:
             if not receipt.transaction_type.startswith("core-v2-"):
                 continue
@@ -320,11 +334,15 @@ class CoreRunDomainVerifier:
         }
         for submission in snapshot.owned_artifact_submissions:
             if submission.artifact_id == "audited_brief":
+                allowed = {("editor", "editor")}
+                if binding.role_topology == "human_assisted":
+                    allowed.add(("analyst", "writer"))
                 expected = (
-                    ("analyst", "writer")
-                    if binding.role_topology == "human_assisted"
-                    else ("editor", "editor")
+                    submission.owner_stage_id,
+                    submission.owner_role_id,
                 )
+                if expected not in allowed:
+                    raise CoreRunError("control_store_integrity_invalid")
             else:
                 expected = owned_artifact_owners.get(submission.artifact_id)
             if expected is None or (
@@ -704,15 +722,46 @@ class CoreRunDomainVerifier:
                 return ((draft, "consumed"), (ledger, "produced"))
             if stage_id == "analyst":
                 if binding.role_topology == "human_assisted":
-                    return (
-                        (current_revision("audited_brief"), "topology_required"),
-                    )
+                    bound_ids = {
+                        item.artifact_id
+                        for item in artifact_bindings.get(transition.transition_id, [])
+                    }
+                    transaction_shape = {
+                        (item.stage_id, item.transition_kind)
+                        for item in snapshot.stage_transitions
+                        if item.accepted_transaction_id
+                        == transition.accepted_transaction_id
+                    }
+                    if bound_ids == {"audited_brief"}:
+                        if transaction_shape != {
+                            ("analyst", "complete"),
+                            ("editor", "satisfied_by_topology"),
+                            ("auditor", "activate"),
+                        }:
+                            raise CoreRunError("control_store_integrity_invalid")
+                        return (
+                            (
+                                current_revision("audited_brief"),
+                                "topology_required",
+                            ),
+                        )
+                    if bound_ids == {"analyst_draft_snapshot"}:
+                        if transaction_shape != {
+                            ("analyst", "complete"),
+                            ("editor", "activate"),
+                        }:
+                            raise CoreRunError("control_store_integrity_invalid")
+                        return (
+                            (
+                                current_revision("analyst_draft_snapshot"),
+                                "produced",
+                            ),
+                        )
+                    raise CoreRunError("control_store_integrity_invalid")
                 return (
                     (current_revision("analyst_draft_snapshot"), "produced"),
                 )
             if stage_id == "editor":
-                if binding.role_topology == "human_assisted":
-                    raise CoreRunError("control_store_integrity_invalid")
                 return (
                     (current_revision("audited_brief"), "produced"),
                     (current_revision("analyst_draft_snapshot"), "consumed"),
@@ -804,8 +853,11 @@ class CoreRunDomainVerifier:
                     )
                 except Exception as exc:
                     raise CoreRunError("control_store_integrity_invalid") from exc
-                if audit.decision == "fail" or any(
-                    finding.severity == "error" for finding in audit.findings
+                brief_revision = current_revision("audited_brief")
+                if (
+                    not _audit_targets_revision(audit, brief_revision)
+                    or audit.decision == "fail"
+                    or any(finding.severity == "error" for finding in audit.findings)
                 ):
                     raise CoreRunError("control_store_integrity_invalid")
             else:
@@ -827,11 +879,7 @@ class CoreRunDomainVerifier:
             "scout": {"scout"},
             "screener": {"screener"},
             "claim-ledger": {"claim-ledger"},
-            "analyst": (
-                {"writer"}
-                if binding.role_topology == "human_assisted"
-                else {"analyst"}
-            ),
+            "analyst": {"analyst"},
             "editor": {"editor"},
             "auditor": {"auditor"},
         }
@@ -880,6 +928,20 @@ class CoreRunDomainVerifier:
                 and transition.stage_id == "editor"
             ):
                 expected_roles = {"writer"}
+                expected_invocation_stage = "analyst"
+            elif (
+                transition.stage_id == "analyst"
+                and binding.role_topology == "human_assisted"
+            ):
+                bound_ids = {
+                    item.artifact_id
+                    for item in artifact_bindings.get(transition.transition_id, [])
+                }
+                expected_roles = (
+                    {"writer"}
+                    if bound_ids == {"audited_brief"}
+                    else {"analyst"}
+                )
                 expected_invocation_stage = "analyst"
             else:
                 expected_roles = producer_roles.get(transition.stage_id, set())
@@ -1654,9 +1716,28 @@ def _verify_core_receipt_event_set(
     by_id = {event.event_id: event for event in events}
     if any(
         by_id[item.transition_event_id].stage_id != item.stage_id
+        or by_id[item.transition_event_id].event_type
+        != (
+            "stage_satisfied_by_topology"
+            if item.transition_kind == "satisfied_by_topology"
+            else "stage_status_changed"
+        )
         for item in transitions
     ):
         raise CoreRunError("control_store_integrity_invalid")
+
+
+def _audit_targets_revision(
+    audit: AuditReportArtifact,
+    revision: ArtifactRevision,
+) -> bool:
+    """Return whether one audit report names the exact consumed brief revision."""
+
+    return (
+        audit.target_artifact_id == revision.artifact_id
+        and audit.target_artifact_revision == revision.revision
+        and audit.target_artifact_sha256 == revision.sha256
+    )
 
 
 def resolve_core_replay(
