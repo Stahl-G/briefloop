@@ -278,6 +278,20 @@ def _table_count(store: SQLiteControlStore, table: str) -> int:
     return int(store._connection.execute(f"SELECT count(*) FROM {table}").fetchone()[0])
 
 
+def _symlink_directory(link: Path, target: Path) -> None:
+    try:
+        link.symlink_to(target, target_is_directory=True)
+    except (NotImplementedError, OSError) as exc:
+        pytest.skip(f"directory symlink creation is unavailable: {exc}")
+
+
+def _replace_blob_prefix_with_symlink(blob_path: Path, outside: Path) -> Path:
+    prefix = blob_path.parent
+    prefix.rename(outside)
+    _symlink_directory(prefix, outside)
+    return prefix
+
+
 def _corrupt_delivery_foreign_key(database: Path) -> None:
     connection = sqlite3.connect(database)
     try:
@@ -1282,6 +1296,78 @@ def test_reopen_rejects_missing_or_changed_committed_blob(tmp_path: Path) -> Non
     assert error.value.code == "committed_blob_size_mismatch"
 
 
+@pytest.mark.parametrize("symlink_level", ["blob_root", "sha256", "prefix"])
+def test_symlinked_blob_directory_rejects_write_before_database_binding(
+    tmp_path: Path,
+    symlink_level: str,
+) -> None:
+    with _create_store(tmp_path) as store:
+        outside = tmp_path / f"outside-{symlink_level}"
+        if symlink_level == "blob_root":
+            store.blob_root.rename(outside)
+            _symlink_directory(store.blob_root, outside)
+        else:
+            outside.mkdir()
+            hash_root = store.blob_root / "sha256"
+            if symlink_level == "sha256":
+                _symlink_directory(hash_root, outside)
+            else:
+                hash_root.mkdir()
+                _symlink_directory(hash_root / BLOB_SHA256[:2], outside)
+
+        with pytest.raises(ControlStoreIntegrityError) as error:
+            _stage_all(store).commit()
+        assert error.value.code == "blob_topology_invalid"
+        assert str(error.value) == "blob_topology_invalid"
+        assert store.current_revision == 0
+        assert _table_count(store, "runs") == 0
+        assert _table_count(store, "artifact_revisions") == 0
+        assert _table_count(store, "transactions") == 0
+        assert list(outside.iterdir()) == []
+
+
+def test_committed_prefix_symlink_blocks_load_and_reopen(
+    tmp_path: Path,
+) -> None:
+    store = _create_store(tmp_path)
+    _stage_all(store).commit()
+    database = store.path
+    blob_path = store._blob_path(BLOB_SHA256)
+    outside = tmp_path / "outside-committed-prefix"
+    prefix = _replace_blob_prefix_with_symlink(blob_path, outside)
+
+    with pytest.raises(ControlStoreIntegrityError) as error:
+        store.load_snapshot(RUN_ID)
+    assert error.value.code == "blob_topology_invalid"
+    assert prefix.is_symlink()
+    assert (outside / BLOB_SHA256).read_bytes() == BLOB
+    store.close()
+
+    with pytest.raises(ControlStoreIntegrityError) as error:
+        SQLiteControlStore.open(database)
+    assert error.value.code == "blob_topology_invalid"
+    assert (outside / BLOB_SHA256).read_bytes() == BLOB
+
+
+def test_orphan_scan_rejects_prefix_symlink_without_traversing_target(
+    tmp_path: Path,
+) -> None:
+    outside = tmp_path / "outside-orphans"
+    outside.mkdir()
+    external_blob = outside / BLOB_SHA256
+    external_blob.write_bytes(BLOB)
+    with _create_store(tmp_path) as store:
+        hash_root = store.blob_root / "sha256"
+        hash_root.mkdir()
+        _symlink_directory(hash_root / BLOB_SHA256[:2], outside)
+
+        with pytest.raises(ControlStoreIntegrityError) as error:
+            store.scan_orphans()
+        assert error.value.code == "blob_topology_invalid"
+        assert external_blob.read_bytes() == BLOB
+        assert _table_count(store, "artifact_revisions") == 0
+
+
 def test_successful_store_reopens_with_typed_snapshot_and_exact_revision(
     tmp_path: Path,
 ) -> None:
@@ -1479,6 +1565,25 @@ def test_wal_backup_restore_preserves_latest_revision_and_blob_integrity(
         restored.close()
 
 
+def test_backup_rejects_blob_prefix_symlink_without_copying_target(
+    tmp_path: Path,
+) -> None:
+    destination = tmp_path / "symlink-backup"
+    with _create_store(tmp_path) as store:
+        _stage_all(store).commit()
+        outside = tmp_path / "outside-backup-prefix"
+        _replace_blob_prefix_with_symlink(
+            store._blob_path(BLOB_SHA256),
+            outside,
+        )
+
+        with pytest.raises(ControlStoreIntegrityError) as error:
+            store.backup_to(destination)
+        assert error.value.code == "blob_topology_invalid"
+        assert (outside / BLOB_SHA256).read_bytes() == BLOB
+    assert not destination.exists()
+
+
 def test_backup_rejects_foreign_key_corruption_without_destination(
     tmp_path: Path,
 ) -> None:
@@ -1566,6 +1671,25 @@ def test_restore_rejects_incomplete_blob_backup_and_cleans_destination(
     assert error.value.code == "committed_blob_missing"
     assert not destination.exists()
     assert not destination.with_name("restored.db.blobs").exists()
+
+
+def test_restore_rejects_symlinked_backup_blob_prefix_and_cleans_destination(
+    tmp_path: Path,
+) -> None:
+    with _create_store(tmp_path) as store:
+        _stage_all(store).commit()
+        backup = store.backup_to(tmp_path / "backup-with-symlink")
+    backup_blob = backup / "blobs" / "sha256" / BLOB_SHA256[:2] / BLOB_SHA256
+    outside = tmp_path / "outside-restore-prefix"
+    _replace_blob_prefix_with_symlink(backup_blob, outside)
+
+    destination = tmp_path / "restored-symlink.db"
+    with pytest.raises(ControlStoreIntegrityError) as error:
+        SQLiteControlStore.restore_to_new_path(backup, destination)
+    assert error.value.code == "blob_topology_invalid"
+    assert (outside / BLOB_SHA256).read_bytes() == BLOB
+    assert not destination.exists()
+    assert not destination.with_name(f"{destination.name}.blobs").exists()
 
 
 def test_explicit_rollback_closes_uow_without_writing(tmp_path: Path) -> None:

@@ -7,6 +7,7 @@ from datetime import datetime, timezone
 import os
 from pathlib import Path
 import sqlite3
+import stat
 import threading
 from typing import TYPE_CHECKING, Callable, Iterable, TypeVar
 from uuid import uuid4
@@ -58,6 +59,148 @@ def _validate_contract_id(value: object, error_code: str) -> str:
         return _CONTRACT_ID_ADAPTER.validate_python(value, strict=True)
     except ValidationError as exc:
         raise ControlStoreIntegrityError(error_code) from exc
+
+
+def _validate_blob_topology(
+    blob_root: Path,
+    *,
+    error_code: str,
+    blob_path: Path | None = None,
+    allow_missing_directories: bool = False,
+    require_blob: bool = False,
+    missing_blob_error_code: str | None = None,
+) -> tuple[Path, ...]:
+    """Validate one lexical, non-symlink blob tree without following links."""
+
+    def fail(exc: BaseException | None = None) -> None:
+        if exc is None:
+            raise ControlStoreIntegrityError(error_code)
+        raise ControlStoreIntegrityError(error_code) from exc
+
+    def require_real_directory(path: Path, *, allow_missing: bool = False) -> bool:
+        try:
+            mode = path.lstat().st_mode
+        except FileNotFoundError:
+            if allow_missing:
+                return False
+            if require_blob and blob_path is not None:
+                raise ControlStoreIntegrityError(
+                    missing_blob_error_code or error_code
+                )
+            fail()
+        except OSError as exc:
+            fail(exc)
+        if not stat.S_ISDIR(mode):
+            fail()
+        try:
+            resolved = path.resolve(strict=True)
+        except (OSError, RuntimeError) as exc:
+            fail(exc)
+        if not resolved.is_relative_to(root_resolved):
+            fail()
+        return True
+
+    try:
+        root_mode = blob_root.lstat().st_mode
+    except OSError as exc:
+        fail(exc)
+    if not stat.S_ISDIR(root_mode):
+        fail()
+    try:
+        root_resolved = blob_root.resolve(strict=True)
+    except (OSError, RuntimeError) as exc:
+        fail(exc)
+    if os.path.normcase(str(root_resolved)) != os.path.normcase(str(blob_root)):
+        fail()
+
+    hash_root = blob_root / "sha256"
+    if blob_path is not None:
+        try:
+            relative = blob_path.relative_to(blob_root)
+        except ValueError:
+            fail()
+        parts = relative.parts
+        if (
+            len(parts) != 3
+            or parts[0] != "sha256"
+            or len(parts[1]) != 2
+            or len(parts[2]) != 64
+            or parts[1] != parts[2][:2]
+            or any(char not in "0123456789abcdef" for char in parts[2])
+        ):
+            fail()
+        if not require_real_directory(
+            hash_root,
+            allow_missing=allow_missing_directories,
+        ):
+            return ()
+        prefix = hash_root / parts[1]
+        if not require_real_directory(
+            prefix,
+            allow_missing=allow_missing_directories,
+        ):
+            return ()
+        try:
+            mode = blob_path.lstat().st_mode
+        except FileNotFoundError:
+            if require_blob:
+                raise ControlStoreIntegrityError(
+                    missing_blob_error_code or error_code
+                )
+            return ()
+        except OSError as exc:
+            fail(exc)
+        if not stat.S_ISREG(mode):
+            fail()
+        try:
+            resolved_blob = blob_path.resolve(strict=True)
+        except (OSError, RuntimeError) as exc:
+            fail(exc)
+        if not resolved_blob.is_relative_to(root_resolved):
+            fail()
+        return (blob_path,)
+
+    files: list[Path] = []
+    try:
+        with os.scandir(blob_root) as root_entries:
+            for root_entry in root_entries:
+                if root_entry.name == "sha256":
+                    continue
+                if root_entry.is_symlink() or not root_entry.is_file(
+                    follow_symlinks=False
+                ):
+                    fail()
+                files.append(Path(root_entry.path))
+    except OSError as exc:
+        fail(exc)
+    if not require_real_directory(hash_root, allow_missing=True):
+        return tuple(sorted(files, key=lambda path: path.as_posix()))
+    try:
+        with os.scandir(hash_root) as prefixes:
+            for prefix_entry in prefixes:
+                if prefix_entry.is_symlink() or not prefix_entry.is_dir(
+                    follow_symlinks=False
+                ):
+                    fail()
+                prefix = Path(prefix_entry.path)
+                require_real_directory(prefix)
+                with os.scandir(prefix) as blobs:
+                    for blob_entry in blobs:
+                        if blob_entry.is_symlink() or not blob_entry.is_file(
+                            follow_symlinks=False
+                        ):
+                            fail()
+                        path = Path(blob_entry.path)
+                        try:
+                            resolved_blob = path.resolve(strict=True)
+                        except (OSError, RuntimeError) as exc:
+                            fail(exc)
+                        if not resolved_blob.is_relative_to(root_resolved):
+                            fail()
+                        files.append(path)
+    except OSError as exc:
+        fail(exc)
+    return tuple(sorted(files, key=lambda path: path.as_posix()))
 
 
 @dataclass(frozen=True)
@@ -131,6 +274,10 @@ class SQLiteControlStore:
             if blobs.exists() and any(blobs.iterdir()):
                 raise ControlStoreStateError("blob_root_not_empty")
             blobs.mkdir(parents=True, exist_ok=True)
+            _validate_blob_topology(
+                blobs,
+                error_code="blob_topology_invalid",
+            )
             connection = sqlite3.connect(
                 database_path,
                 isolation_level=None,
@@ -187,8 +334,6 @@ class SQLiteControlStore:
             raise ControlStoreStateError("database_not_found")
         blobs = cls._blob_root_for(database_path, blob_root)
         cls._validate_database_blob_separation(database_path, blobs)
-        if blobs.is_symlink() or (blobs.exists() and not blobs.is_dir()):
-            raise ControlStoreStateError("blob_root_invalid")
         try:
             connection = sqlite3.connect(
                 database_path,
@@ -208,6 +353,10 @@ class SQLiteControlStore:
             workspace_id = _validate_contract_id(
                 workspace_rows[0][0],
                 "workspace_id_invalid",
+            )
+            _validate_blob_topology(
+                blobs,
+                error_code="blob_topology_invalid",
             )
             store = cls(
                 path=database_path,
@@ -242,6 +391,14 @@ class SQLiteControlStore:
     ) -> Path:
         if blob_root is None:
             return database_path.with_name(f"{database_path.name}.blobs")
+        try:
+            lexical_root = Path(blob_root).expanduser()
+            if lexical_root.is_symlink():
+                raise ControlStoreStateError("blob_root_invalid")
+        except ControlStoreError:
+            raise
+        except (OSError, RuntimeError, TypeError, ValueError) as exc:
+            raise ControlStoreStateError("blob_root_invalid") from exc
         return cls._normalize_path(blob_root, "blob_root_invalid")
 
     @staticmethod
@@ -839,10 +996,21 @@ class SQLiteControlStore:
 
     def _write_blob(self, record: ArtifactRevision, content: bytes) -> None:
         destination = self._blob_path(record.sha256)
-        if destination.exists():
+        existing = _validate_blob_topology(
+            self.blob_root,
+            error_code="blob_topology_invalid",
+            blob_path=destination,
+            allow_missing_directories=True,
+        )
+        if existing:
             self._verify_blob(record, destination)
             return
         destination.parent.mkdir(parents=True, exist_ok=True)
+        _validate_blob_topology(
+            self.blob_root,
+            error_code="blob_topology_invalid",
+            blob_path=destination,
+        )
         temporary = destination.with_name(f".{destination.name}.{uuid4().hex}.tmp")
         try:
             with temporary.open("xb") as stream:
@@ -872,9 +1040,14 @@ class SQLiteControlStore:
         self._verify_blob(record, destination)
 
     def _verify_blob(self, record: ArtifactRevision, path: Path) -> None:
+        _validate_blob_topology(
+            self.blob_root,
+            error_code="blob_topology_invalid",
+            blob_path=path,
+            require_blob=True,
+            missing_blob_error_code="committed_blob_missing",
+        )
         try:
-            if not path.is_file() or path.is_symlink():
-                raise ControlStoreIntegrityError("committed_blob_missing")
             content = path.read_bytes()
         except OSError as exc:
             raise ControlStoreIntegrityError("committed_blob_unreadable") from exc
@@ -1200,23 +1373,25 @@ class SQLiteControlStore:
             found: set[str] = set()
             malformed: list[str] = []
             try:
-                if self.blob_root.exists():
-                    for path in sorted(self.blob_root.rglob("*")):
-                        if not path.is_file():
-                            continue
-                        relative = path.relative_to(self.blob_root).as_posix()
-                        parts = relative.split("/")
-                        if (
-                            len(parts) == 3
-                            and parts[0] == "sha256"
-                            and len(parts[1]) == 2
-                            and len(parts[2]) == 64
-                            and parts[1] == parts[2][:2]
-                            and all(char in "0123456789abcdef" for char in parts[2])
-                        ):
-                            found.add(parts[2])
-                        else:
-                            malformed.append(relative)
+                for path in _validate_blob_topology(
+                    self.blob_root,
+                    error_code="blob_topology_invalid",
+                ):
+                    relative = path.relative_to(self.blob_root).as_posix()
+                    parts = relative.split("/")
+                    if (
+                        len(parts) == 3
+                        and parts[0] == "sha256"
+                        and len(parts[1]) == 2
+                        and len(parts[2]) == 64
+                        and parts[1] == parts[2][:2]
+                        and all(char in "0123456789abcdef" for char in parts[2])
+                    ):
+                        found.add(parts[2])
+                    else:
+                        malformed.append(relative)
+            except ControlStoreError:
+                raise
             except OSError as exc:
                 raise ControlStoreIntegrityError("orphan_scan_failed") from exc
             return OrphanBlobScan(

@@ -15,6 +15,7 @@ from multi_agent_brief.control_store.errors import (
     ControlStoreStateError,
 )
 from multi_agent_brief.control_store.schema import verify_schema
+from multi_agent_brief.control_store.sqlite_store import _validate_blob_topology
 
 if TYPE_CHECKING:
     from multi_agent_brief.control_store.sqlite_store import SQLiteControlStore
@@ -33,6 +34,10 @@ def backup_store(
         raise ControlStoreStateError("backup_destination_exists")
     if target.is_relative_to(store.blob_root):
         raise ControlStoreStateError("backup_destination_overlaps_store")
+    _validate_blob_topology(
+        store.blob_root,
+        error_code="blob_topology_invalid",
+    )
     store._verify_all_payloads()
     staging = target.with_name(f".{target.name}.{uuid4().hex}.tmp")
     try:
@@ -50,10 +55,11 @@ def backup_store(
         finally:
             destination_connection.close()
         backup_blobs = staging / BACKUP_BLOB_DIRECTORY
-        if store.blob_root.exists():
-            shutil.copytree(store.blob_root, backup_blobs)
-        else:
-            backup_blobs.mkdir()
+        shutil.copytree(store.blob_root, backup_blobs, symlinks=True)
+        _validate_blob_topology(
+            backup_blobs,
+            error_code="blob_topology_invalid",
+        )
         _fsync_tree(staging)
         os.replace(staging, target)
         _fsync_directory(target.parent)
@@ -86,8 +92,16 @@ def restore_store(
         raise ControlStoreStateError("restore_destination_overlaps_backup")
     source_database = backup / BACKUP_DATABASE_NAME
     source_blobs = backup / BACKUP_BLOB_DIRECTORY
-    if not source_database.is_file() or not source_blobs.is_dir():
+    if (
+        not source_database.is_file()
+        or source_database.is_symlink()
+        or not source_blobs.exists()
+    ):
         raise ControlStoreStateError("backup_incomplete")
+    _validate_blob_topology(
+        source_blobs,
+        error_code="blob_topology_invalid",
+    )
     if database_path.exists() or database_path.is_symlink():
         raise ControlStoreStateError("restore_destination_exists")
     if blobs.exists() or blobs.is_symlink():
@@ -100,7 +114,11 @@ def restore_store(
         database_path.parent.mkdir(parents=True, exist_ok=True)
         blobs.parent.mkdir(parents=True, exist_ok=True)
         shutil.copy2(source_database, temporary_database)
-        shutil.copytree(source_blobs, temporary_blobs)
+        shutil.copytree(source_blobs, temporary_blobs, symlinks=True)
+        _validate_blob_topology(
+            temporary_blobs,
+            error_code="blob_topology_invalid",
+        )
         _fsync_file(temporary_database)
         _fsync_tree(temporary_blobs)
         os.replace(temporary_database, database_path)
