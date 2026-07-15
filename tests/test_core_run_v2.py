@@ -1268,6 +1268,8 @@ def test_human_assisted_writer_satisfies_analyst_and_editor(tmp_path: Path) -> N
     assert editor.satisfaction_source_kind == "role"
     assert editor.satisfied_by_id == "writer"
     assert _stage(workspace, "auditor").status == "ready"
+    with SQLiteControlStore.open(workspace / "briefloop.db") as store:
+        CoreRunDomainVerifier().verify(store, RUN_ID)
 
     receipt = next(
         item
@@ -1410,6 +1412,43 @@ def test_human_assisted_analyst_snapshot_routes_only_to_editor(
         artifacts=[("analyst_draft_snapshot", 1), ("audited_brief", 1)],
     )
     assert _stage(workspace, "auditor").status == "ready"
+
+    with SQLiteControlStore.open(workspace / "briefloop.db") as store:
+        verified = CoreRunDomainVerifier().verify(store, RUN_ID)
+        snapshot = verified.snapshot
+        submission = next(
+            item
+            for item in snapshot.owned_artifact_submissions
+            if item.artifact_id == "audited_brief"
+        )
+        assert submission.parent_artifact is not None
+        bad_parents = (
+            None,
+            submission.parent_artifact.model_copy(
+                update={"artifact_id": "claim_ledger"}
+            ),
+            submission.parent_artifact.model_copy(update={"revision": 2}),
+        )
+        for bad_parent in bad_parents:
+            forged_submissions = tuple(
+                item.model_copy(update={"parent_artifact": bad_parent})
+                if item.submission_id == submission.submission_id
+                else item
+                for item in snapshot.owned_artifact_submissions
+            )
+            with pytest.raises(
+                CoreRunError,
+                match="control_store_integrity_invalid",
+            ):
+                CoreRunDomainVerifier._verify_stage_chain(
+                    store,
+                    replace(
+                        snapshot,
+                        owned_artifact_submissions=forged_submissions,
+                    ),
+                    verified.contracts,
+                    verified.binding,
+                )
 
 
 @pytest.mark.parametrize(
@@ -2427,13 +2466,20 @@ def test_all_core_effects_replay_and_reject_extra_unbound_events(
     assert set(cases) == set(_CORE_EFFECT_BINDING_RULES)
 
     for effect_kind, (workspace, snapshot, receipt, binding) in cases.items():
+        replay_fingerprint = binding.request_fingerprint
+        if effect_kind == "integrity_contamination":
+            replay_fingerprint = next(
+                item.request_fingerprint
+                for item in snapshot.run_integrity_records
+                if str(item.integrity_revision) == binding.primary_record_id
+            )
         with SQLiteControlStore.open(workspace / "briefloop.db") as store:
             before = store.current_revision
             replay = resolve_core_replay(
                 store,
                 run_id=RUN_ID,
                 request_id=receipt.transaction_id,
-                request_fingerprint=binding.request_fingerprint,
+                request_fingerprint=replay_fingerprint,
             )
             assert replay is not None
             assert replay.receipt == receipt
@@ -2562,14 +2608,32 @@ def test_protected_checkout_mutation_records_contamination_and_blocks_effect(
         if item.event_type == "run_integrity_contaminated"
     )
     assert contamination_event.core_run_binding is not None
+    base_request_fingerprint = canonical_fingerprint(
+        request.model_dump(mode="json", exclude_unset=False)
+    )
+    contamination_record = after.run_integrity_records[-1]
+    assert contamination_record.request_fingerprint == base_request_fingerprint
+    observation_fingerprint = canonical_fingerprint(
+        {
+            "run_id": contamination_record.run_id,
+            "artifact_id": contamination_record.affected_artifact_id,
+            "artifact_revision": contamination_record.affected_artifact_revision,
+            "expected_workspace_path": (
+                contamination_record.expected_workspace_path
+            ),
+            "expected_sha256": contamination_record.expected_sha256,
+            "observed_entry_kind": contamination_record.observed_entry_kind,
+            "observed_sha256": contamination_record.observed_sha256,
+        }
+    )
     assert contamination_event.core_run_binding.request_fingerprint == (
         canonical_fingerprint(
-            request.model_dump(mode="json", exclude_unset=False)
+            {
+                "effect_kind": "integrity_contamination",
+                "base_request_fingerprint": base_request_fingerprint,
+                "observation_fingerprint": observation_fingerprint,
+            }
         )
-    )
-    assert (
-        after.run_integrity_records[-1].request_fingerprint
-        != contamination_event.core_run_binding.request_fingerprint
     )
 
     exact_replay = service.start_invocation(request)
@@ -2592,6 +2656,120 @@ def test_protected_checkout_mutation_records_contamination_and_blocks_effect(
     assert repeated.status == "failed_uncommitted"
     assert repeated.error_code == "core_run_integrity_blocked"
     assert _store_revision(workspace) == after.store_revision
+
+
+def test_contamination_replay_binds_request_and_observation_identity(
+    tmp_path: Path,
+) -> None:
+    workspace = _workspace(tmp_path)
+    service = _advance_to_scout_ready(workspace)
+    with SQLiteControlStore.open(workspace / "briefloop.db") as store:
+        before = store.load_snapshot(RUN_ID)
+    candidate = next(
+        item for item in before.artifacts if item.artifact_id == "source_candidates"
+    )
+    (workspace / candidate.path).write_text(
+        "sources:\n  - MUTATED\n",
+        encoding="utf-8",
+    )
+    request = _record(
+        InvocationStartRequest,
+        request_id="REQ-CONTAMINATION-IDENTITY",
+        run_id=RUN_ID,
+        stage_id="scout",
+        role_id="scout",
+        runtime="operator",
+        expected_store_revision=before.store_revision,
+    )
+    blocked = service.start_invocation(request)
+    assert blocked.status == "blocked", blocked.to_dict()
+    assert blocked.receipt is not None
+
+    with SQLiteControlStore.open(workspace / "briefloop.db") as store:
+        snapshot = store.load_snapshot(RUN_ID)
+        receipt = blocked.receipt
+        event = next(
+            item
+            for item in snapshot.events
+            if item.event_type == "run_integrity_contaminated"
+            and item.transaction_id == request.request_id
+        )
+        binding = event.core_run_binding
+        assert binding is not None
+        record = next(
+            item
+            for item in snapshot.run_integrity_records
+            if str(item.integrity_revision) == binding.primary_record_id
+        )
+        base_fingerprint = canonical_fingerprint(
+            request.model_dump(mode="json", exclude_unset=False)
+        )
+        assert record.request_fingerprint == base_fingerprint
+
+        exact = resolve_core_replay(
+            store,
+            run_id=RUN_ID,
+            request_id=request.request_id,
+            request_fingerprint=base_fingerprint,
+        )
+        assert exact is not None
+        assert exact.status == "blocked"
+        assert exact.receipt == receipt
+
+        with pytest.raises(CoreRunError, match="submission_replay_conflict"):
+            resolve_core_replay(
+                store,
+                run_id=RUN_ID,
+                request_id=request.request_id,
+                request_fingerprint=canonical_fingerprint(
+                    {
+                        **request.model_dump(mode="json", exclude_unset=False),
+                        "role_id": "editor",
+                    }
+                ),
+            )
+
+        forged_binding = binding.model_copy(
+            update={"request_fingerprint": "0" * 64}
+        )
+        forged_events = tuple(
+            item.model_copy(update={"core_run_binding": forged_binding})
+            if item.event_id == event.event_id
+            else item
+            for item in snapshot.events
+        )
+        with pytest.raises(CoreRunError, match="control_store_integrity_invalid"):
+            _verified_core_receipt_binding(
+                replace(snapshot, events=forged_events),
+                receipt,
+            )
+
+        forged_records = tuple(
+            item.model_copy(update={"request_fingerprint": "0" * 64})
+            if item.integrity_revision == record.integrity_revision
+            else item
+            for item in snapshot.run_integrity_records
+        )
+        with pytest.raises(CoreRunError, match="control_store_integrity_invalid"):
+            _verified_core_receipt_binding(
+                replace(snapshot, run_integrity_records=forged_records),
+                receipt,
+            )
+
+        observed_sha256 = record.observed_sha256
+        assert observed_sha256 is not None
+        forged_observation = "0" * 64 if observed_sha256 != "0" * 64 else "1" * 64
+        forged_records = tuple(
+            item.model_copy(update={"observed_sha256": forged_observation})
+            if item.integrity_revision == record.integrity_revision
+            else item
+            for item in snapshot.run_integrity_records
+        )
+        with pytest.raises(CoreRunError, match="control_store_integrity_invalid"):
+            _verified_core_receipt_binding(
+                replace(snapshot, run_integrity_records=forged_records),
+                receipt,
+            )
 
 
 def test_claim_freeze_is_byte_deterministic_for_equivalent_inputs(

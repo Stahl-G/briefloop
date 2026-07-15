@@ -119,6 +119,33 @@ _CORE_EFFECT_BINDING_RULES = {
 }
 
 
+def _integrity_observation_fingerprint(record: Any) -> str:
+    return canonical_fingerprint(
+        {
+            "run_id": record.run_id,
+            "artifact_id": record.affected_artifact_id,
+            "artifact_revision": record.affected_artifact_revision,
+            "expected_workspace_path": record.expected_workspace_path,
+            "expected_sha256": record.expected_sha256,
+            "observed_entry_kind": record.observed_entry_kind,
+            "observed_sha256": record.observed_sha256,
+        }
+    )
+
+
+def _integrity_contamination_binding_fingerprint(
+    base_request_fingerprint: str,
+    observation_fingerprint: str,
+) -> str:
+    return canonical_fingerprint(
+        {
+            "effect_kind": "integrity_contamination",
+            "base_request_fingerprint": base_request_fingerprint,
+            "observation_fingerprint": observation_fingerprint,
+        }
+    )
+
+
 class CoreRunDomainVerifier:
     """Replay business legality from one structurally verified Store snapshot."""
 
@@ -815,6 +842,43 @@ class CoreRunDomainVerifier:
             ]
             if actual_signature != expected_signature:
                 raise CoreRunError("control_store_integrity_invalid")
+
+            if (
+                transition.stage_id == "editor"
+                and transition.transition_kind == "complete"
+            ):
+                produced = [
+                    revision
+                    for revision, usage in expected
+                    if revision.artifact_id == "audited_brief"
+                    and usage == "produced"
+                ]
+                consumed = [
+                    revision
+                    for revision, usage in expected
+                    if revision.artifact_id == "analyst_draft_snapshot"
+                    and usage == "consumed"
+                ]
+                submissions = [
+                    item
+                    for item in snapshot.owned_artifact_submissions
+                    if len(produced) == 1
+                    and item.artifact_id == produced[0].artifact_id
+                    and item.artifact_revision == produced[0].revision
+                    and item.owner_stage_id == "editor"
+                    and item.owner_role_id == "editor"
+                ]
+                if (
+                    len(produced) != 1
+                    or len(consumed) != 1
+                    or len(submissions) != 1
+                    or submissions[0].parent_artifact is None
+                    or submissions[0].parent_artifact.artifact_id
+                    != consumed[0].artifact_id
+                    or submissions[0].parent_artifact.revision
+                    != consumed[0].revision
+                ):
+                    raise CoreRunError("control_store_integrity_invalid")
 
             actual_gates = {
                 (item.gate_id, item.evaluation_id)
@@ -1651,23 +1715,19 @@ def _verified_core_receipt_binding(
         if len(records) != 1:
             raise CoreRunError("control_store_integrity_invalid")
         record = records[0]
-        observation_fingerprint = canonical_fingerprint(
-            {
-                "run_id": record.run_id,
-                "artifact_id": record.affected_artifact_id,
-                "artifact_revision": record.affected_artifact_revision,
-                "expected_workspace_path": record.expected_workspace_path,
-                "expected_sha256": record.expected_sha256,
-                "observed_entry_kind": record.observed_entry_kind,
-                "observed_sha256": record.observed_sha256,
-            }
+        observation_fingerprint = _integrity_observation_fingerprint(record)
+        expected_binding_fingerprint = (
+            _integrity_contamination_binding_fingerprint(
+                record.request_fingerprint,
+                observation_fingerprint,
+            )
         )
         if (
             refs != [integrity_revision]
             or record.status != "contaminated"
             or record.accepted_transaction_id != transaction_id
             or record.first_detected_event_id != event.event_id
-            or record.request_fingerprint != observation_fingerprint
+            or fingerprint != expected_binding_fingerprint
         ):
             raise CoreRunError("control_store_integrity_invalid")
     else:  # pragma: no cover - the frozen table exhausts this branch.
@@ -1762,7 +1822,30 @@ def resolve_core_replay(
     event, binding = _verified_core_receipt_binding(snapshot, receipt)
     if binding.request_id != request_id:
         raise CoreRunError("control_store_integrity_invalid")
-    if binding.request_fingerprint != request_fingerprint:
+    if binding.effect_kind == "integrity_contamination":
+        try:
+            integrity_revision = int(binding.primary_record_id)
+        except ValueError as exc:
+            raise CoreRunError("control_store_integrity_invalid") from exc
+        records = [
+            item
+            for item in snapshot.run_integrity_records
+            if item.integrity_revision == integrity_revision
+        ]
+        if len(records) != 1:
+            raise CoreRunError("control_store_integrity_invalid")
+        record = records[0]
+        if record.request_fingerprint != request_fingerprint:
+            raise CoreRunError("submission_replay_conflict")
+        expected_binding_fingerprint = (
+            _integrity_contamination_binding_fingerprint(
+                request_fingerprint,
+                _integrity_observation_fingerprint(record),
+            )
+        )
+        if binding.request_fingerprint != expected_binding_fingerprint:
+            raise CoreRunError("control_store_integrity_invalid")
+    elif binding.request_fingerprint != request_fingerprint:
         raise CoreRunError("submission_replay_conflict")
     if binding.outcome == "blocked":
         return CoreRunResult(

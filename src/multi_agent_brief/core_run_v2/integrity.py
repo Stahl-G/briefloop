@@ -24,7 +24,12 @@ from multi_agent_brief.control_store.serialization import (
 
 from .errors import CoreRunError, CoreRunResult, core_run_error_code
 from .policy import derived_id, transaction_type_for
-from .verifier import CoreRunDomainVerifier, VerifiedCoreRun, resolve_core_replay
+from .verifier import (
+    CoreRunDomainVerifier,
+    VerifiedCoreRun,
+    _integrity_contamination_binding_fingerprint,
+    resolve_core_replay,
+)
 
 
 _Clock = Callable[[], datetime]
@@ -190,6 +195,10 @@ class RunIntegrityService:
                 "observed_sha256": observation.sha256,
             }
         )
+        binding_fingerprint = _integrity_contamination_binding_fingerprint(
+            request_fingerprint,
+            observation_fingerprint,
+        )
         now = _now(self._clock)
         event_id = derived_id(
             "EVT-INTEGRITY",
@@ -214,7 +223,7 @@ class RunIntegrityService:
                 "first_detected_at": now,
                 "first_detected_event_id": event_id,
                 "accepted_transaction_id": request_id,
-                "request_fingerprint": observation_fingerprint,
+                "request_fingerprint": request_fingerprint,
             },
             strict=True,
         )
@@ -233,7 +242,7 @@ class RunIntegrityService:
                 "metadata": {},
                 "core_run_binding": CoreRunEventBinding(
                     request_id=request_id,
-                    request_fingerprint=request_fingerprint,
+                    request_fingerprint=binding_fingerprint,
                     effect_kind="integrity_contamination",
                     primary_record_id=str(integrity_revision),
                     outcome="blocked",
