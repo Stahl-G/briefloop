@@ -771,6 +771,63 @@ def test_wrong_workspace_and_cross_run_records_fail_without_writes(
         assert _table_count(store, "runs") == 0
 
 
+def test_event_transaction_ownership_is_exact_or_explicitly_unbound(
+    tmp_path: Path,
+) -> None:
+    records = _records()
+    with _create_store(tmp_path) as store:
+        rejected = store.begin(
+            run_id=RUN_ID,
+            transaction_id="TX-CURRENT-EVENT-001",
+            transaction_type="event_ownership_rejection",
+            expected_revision=0,
+        )
+        mismatched_event = records.event.model_copy(
+            update={"transaction_id": "TX-ALREADY-COMMITTED-001"}
+        )
+        with pytest.raises(ControlStoreConflict) as error:
+            rejected.append_event(mismatched_event)
+        assert error.value.code == "control_record_transaction_mismatch"
+        assert str(error.value) == "control_record_transaction_mismatch"
+        assert rejected._events == []
+        assert rejected._event_ids == set()
+        rejected.rollback()
+        assert store.current_revision == 0
+        assert _table_count(store, "events") == 0
+        assert _table_count(store, "transactions") == 0
+
+        exact = store.begin(
+            run_id=RUN_ID,
+            transaction_id=records.event.transaction_id,
+            transaction_type="event_ownership_exact",
+            expected_revision=0,
+        )
+        exact.put_run(records.run)
+        exact.append_event(records.event)
+        exact_receipt = exact.commit()
+        assert exact_receipt.event_ids == [records.event.event_id]
+
+        unbound_event = records.event.model_copy(
+            update={
+                "event_id": "EVT-CONTROLSTORE-UNBOUND-002",
+                "transaction_id": None,
+            }
+        )
+        unbound = store.begin(
+            run_id=RUN_ID,
+            transaction_id="TX-UNBOUND-EVENT-002",
+            transaction_type="event_ownership_unbound",
+            expected_revision=1,
+        )
+        unbound.append_event(unbound_event)
+        unbound_receipt = unbound.commit()
+        assert unbound_receipt.event_ids == [unbound_event.event_id]
+        assert store.load_snapshot(RUN_ID).events == (
+            records.event,
+            unbound_event,
+        )
+
+
 def test_relational_cross_run_binding_rolls_back_entire_transaction(
     tmp_path: Path,
 ) -> None:
@@ -1073,7 +1130,11 @@ def test_duplicate_immutable_identity_rolls_back_without_new_revision(
             transaction_type="duplicate_event",
             expected_revision=1,
         )
-        duplicate.append_event(records.event)
+        duplicate.append_event(
+            records.event.model_copy(
+                update={"transaction_id": "TX-DUPLICATE-EVENT-002"}
+            )
+        )
         with pytest.raises(ControlStoreConflict) as error:
             duplicate.commit()
         assert error.value.code == "relational_integrity_conflict"

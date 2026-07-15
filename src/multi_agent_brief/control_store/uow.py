@@ -163,6 +163,11 @@ class ControlUnitOfWork:
         self._require_run(record)
         if type(record) is not EventEnvelope:
             raise ControlStoreIntegrityError("unsupported_control_record")
+        if (
+            record.transaction_id is not None
+            and record.transaction_id != self.transaction_id
+        ):
+            raise ControlStoreConflict("control_record_transaction_mismatch")
         if record.event_id in self._event_ids:
             raise ControlStoreConflict("duplicate_staged_record")
         self._event_ids.add(record.event_id)
