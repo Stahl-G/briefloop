@@ -38,6 +38,11 @@ from multi_agent_brief.contracts.errors import (
     FieldViolation,
     pydantic_error_violations,
 )
+from multi_agent_brief.contracts.source_metadata import (
+    VALID_RETRIEVAL_SOURCE_TYPES,
+    VALID_SOURCE_CATEGORIES,
+    VALID_UNDERLYING_EVIDENCE_TYPES,
+)
 from multi_agent_brief.orchestrator_contract import VALID_RUNTIMES
 
 
@@ -52,6 +57,54 @@ _SCRATCH_INPUT_PATH_PATTERN = (
     r"[A-Za-z0-9][A-Za-z0-9._:-]*\.(?:json|md)$"
 )
 _APPROVAL_REASON_MAX_LENGTH = 1000
+_MIME_TYPE_PATTERN = (
+    r"^[a-z0-9][a-z0-9!#$&^_.+-]*/[a-z0-9][a-z0-9!#$&^_.+-]*$"
+)
+
+SOURCE_ORIGIN_TYPES = (
+    "uploaded_file",
+    "manual_evidence",
+    "provider_response",
+    "authorized_web_fetch",
+    "cached_provider_response",
+    "claim_ledger_derivative",
+    "claim_draft_derivative",
+    "brief_derivative",
+    "audit_derivative",
+    "model_summary_derivative",
+    "search_snippet_only",
+    "unknown",
+)
+SOURCE_ACQUISITION_METHODS = (
+    "manual_upload",
+    "manual_evidence",
+    "provider_search",
+    "provider_extract",
+    "authorized_web_fetch",
+    "cached_provider_response",
+    "model_generated",
+    "downstream_derivative",
+    "unknown",
+)
+SOURCE_MATERIAL_KINDS = (
+    "full_content",
+    "partial_extract",
+    "dataset_snapshot",
+    "uploaded_file",
+    "search_result",
+    "search_snippet",
+    "model_synthesis",
+    "downstream_derivative",
+    "unknown",
+)
+SOURCE_ELIGIBILITY_REASONS = (
+    "eligible_durable_source_content",
+    "ineligible_search_result",
+    "ineligible_search_snippet",
+    "ineligible_model_synthesis",
+    "ineligible_downstream_derivative",
+    "ineligible_unknown_origin",
+)
 
 
 def _contains_non_finite_number(value: Any) -> bool:
@@ -204,6 +257,16 @@ ScratchInputPath = Annotated[
         }
     ),
 ]
+MimeType = Annotated[
+    str,
+    StringConstraints(pattern=_MIME_TYPE_PATTERN),
+    WithJsonSchema(
+        {
+            "type": "string",
+            "pattern": _MIME_TYPE_PATTERN,
+        }
+    ),
+]
 NonNegativeInt = Annotated[int, Field(ge=0)]
 PositiveInt = Annotated[int, Field(gt=0)]
 RuntimeName = Literal[VALID_RUNTIMES]
@@ -330,6 +393,26 @@ class AuditFindingItem(StrictModel):
     summary: CleanText
 
 
+class IntakeEventBinding(StrictModel):
+    request_id: ContractId
+    request_fingerprint: Sha256
+    invocation_id: ContractId
+    outcome: Literal["committed", "rejected"]
+    source_id: Optional[ContractId] = None
+    proposal_id: Optional[ContractId] = None
+    reason_code: Optional[ContractId] = None
+
+    @model_validator(mode="after")
+    def identity_shape_is_unambiguous(self) -> "IntakeEventBinding":
+        if self.source_id is not None and self.proposal_id is not None:
+            raise ValueError("intake binding cannot name source and proposal")
+        if self.outcome == "committed" and self.reason_code is not None:
+            raise ValueError("committed intake binding cannot carry a rejection reason")
+        if self.outcome == "rejected" and self.reason_code is None:
+            raise ValueError("rejected intake binding requires a reason code")
+        return self
+
+
 class SourceProposal(StrictModel):
     schema_id = "briefloop.source_proposal.v2"
 
@@ -337,12 +420,69 @@ class SourceProposal(StrictModel):
     proposal_id: ContractId
     run_id: ContractId
     source_id: ContractId
-    title: CleanText
+    origin_type: Literal[SOURCE_ORIGIN_TYPES]
+    acquisition_method: Literal[SOURCE_ACQUISITION_METHODS]
+    material_kind: Literal[SOURCE_MATERIAL_KINDS]
+    provider: Optional[ContractId] = None
     locator: SourceLocator
-    retrieved_at: IsoDateTime
+    title: CleanText
+    publisher: Optional[CleanText] = None
     published_at: Optional[IsoDate] = None
-    content_sha256: Optional[Sha256] = None
-    metadata: dict[str, JsonValue] = Field(default_factory=dict)
+    retrieved_at: IsoDateTime
+    source_category: Literal[tuple(sorted(VALID_SOURCE_CATEGORIES))]
+    retrieval_source_type: Literal[tuple(sorted(VALID_RETRIEVAL_SOURCE_TYPES))]
+    underlying_evidence_type: Literal[
+        tuple(sorted(VALID_UNDERLYING_EVIDENCE_TYPES))
+    ]
+    raw_underlying_evidence_type: Optional[CleanText] = None
+    content_sha256: Sha256
+    content_media_type: MimeType
+    raw_payload_sha256: Optional[Sha256] = None
+    raw_payload_media_type: Optional[MimeType] = None
+
+    @model_validator(mode="after")
+    def raw_payload_fields_are_paired(self) -> "SourceProposal":
+        if (self.raw_payload_sha256 is None) != (
+            self.raw_payload_media_type is None
+        ):
+            raise ValueError("raw payload hash and media type must be paired")
+        return self
+
+
+class SourceCommitRequest(StrictModel):
+    schema_id = "briefloop.source_commit_request.v2"
+
+    schema_version: Literal["briefloop.source_commit_request.v2"]
+    request_id: ContractId
+    run_id: ContractId
+    invocation_id: ContractId
+    proposal_path: WorkspacePath
+    content_path: WorkspacePath
+    raw_payload_path: Optional[WorkspacePath] = None
+    expected_store_revision: NonNegativeInt
+
+    @model_validator(mode="after")
+    def paths_bind_exactly_to_invocation(self) -> "SourceCommitRequest":
+        parent = PurePosixPath("scratch") / self.invocation_id
+        proposal = PurePosixPath(self.proposal_path)
+        content = PurePosixPath(self.content_path)
+        if proposal.parent != parent or proposal.name != "source_proposal.json":
+            raise ValueError("source proposal path must be invocation scoped")
+        if (
+            content.parent != parent
+            or content.stem != "source_content"
+            or content.suffix not in {".json", ".md", ".txt", ".html", ".pdf", ".bin"}
+        ):
+            raise ValueError("source content path must be invocation scoped")
+        if self.raw_payload_path is not None:
+            raw = PurePosixPath(self.raw_payload_path)
+            if (
+                raw.parent != parent
+                or raw.stem != "source_raw"
+                or raw.suffix not in {".json", ".txt", ".bin"}
+            ):
+                raise ValueError("source raw payload path must be invocation scoped")
+        return self
 
 
 class CandidateClaimsProposal(StrictModel):
@@ -420,18 +560,148 @@ class ArtifactSubmitRequest(StrictModel):
     artifact_id: ContractId
     invocation_id: ContractId
     input_path: ScratchInputPath
-    expected_revision: NonNegativeInt
+    expected_store_revision: NonNegativeInt
+    expected_artifact_revision: NonNegativeInt
 
     @model_validator(mode="after")
     def scratch_input_matches_invocation_and_artifact(self) -> "ArtifactSubmitRequest":
         path = PurePosixPath(self.input_path)
         expected_parent = PurePosixPath("scratch") / self.invocation_id
-        expected_names = {f"{self.artifact_id}.json", f"{self.artifact_id}.md"}
-        if path.parent != expected_parent or path.name not in expected_names:
+        if path.parent != expected_parent or path.name != f"{self.artifact_id}.json":
             raise ValueError(
                 "artifact submission input must use its invocation scratch path"
             )
         return self
+
+
+class WorkspaceRunHead(StrictModel):
+    schema_id = "briefloop.workspace_run_head.v2"
+
+    schema_version: Literal["briefloop.workspace_run_head.v2"]
+    workspace_id: ContractId
+    current_run_id: ContractId
+    updated_at: IsoDateTime
+
+
+class AcceptedSourceRecord(StrictModel):
+    schema_id = "briefloop.accepted_source_record.v2"
+
+    schema_version: Literal["briefloop.accepted_source_record.v2"]
+    source_id: ContractId
+    run_id: ContractId
+    origin_type: Literal[SOURCE_ORIGIN_TYPES]
+    acquisition_method: Literal[SOURCE_ACQUISITION_METHODS]
+    material_kind: Literal[SOURCE_MATERIAL_KINDS]
+    provider: Optional[ContractId] = None
+    locator: SourceLocator
+    title: CleanText
+    publisher: Optional[CleanText] = None
+    published_at: Optional[IsoDate] = None
+    retrieved_at: IsoDateTime
+    source_category: Literal[tuple(sorted(VALID_SOURCE_CATEGORIES))]
+    retrieval_source_type: Literal[tuple(sorted(VALID_RETRIEVAL_SOURCE_TYPES))]
+    underlying_evidence_type: Literal[
+        tuple(sorted(VALID_UNDERLYING_EVIDENCE_TYPES))
+    ]
+    raw_underlying_evidence_type: Optional[CleanText] = None
+    content_sha256: Sha256
+    content_size_bytes: NonNegativeInt
+    content_media_type: MimeType
+    content_blob_path: WorkspacePath
+    content_artifact_id: ContractId
+    content_artifact_revision: Literal[1]
+    raw_payload_sha256: Optional[Sha256] = None
+    raw_payload_size_bytes: Optional[NonNegativeInt] = None
+    raw_payload_media_type: Optional[MimeType] = None
+    raw_payload_blob_path: Optional[WorkspacePath] = None
+    raw_payload_artifact_id: Optional[ContractId] = None
+    raw_payload_artifact_revision: Optional[Literal[1]] = None
+    claims_eligible: bool
+    eligibility_reason: Literal[SOURCE_ELIGIBILITY_REASONS]
+    invocation_id: ContractId
+    acquisition_event_id: ContractId
+    accepted_transaction_id: ContractId
+    request_fingerprint: Sha256
+    created_at: IsoDateTime
+
+    @model_validator(mode="after")
+    def source_record_shape_is_complete(self) -> "AcceptedSourceRecord":
+        raw_values = (
+            self.raw_payload_sha256,
+            self.raw_payload_size_bytes,
+            self.raw_payload_media_type,
+            self.raw_payload_blob_path,
+            self.raw_payload_artifact_id,
+            self.raw_payload_artifact_revision,
+        )
+        if not (all(value is None for value in raw_values) or all(value is not None for value in raw_values)):
+            raise ValueError("raw payload fields must be all present or all absent")
+        if self.claims_eligible != (
+            self.eligibility_reason == "eligible_durable_source_content"
+        ):
+            raise ValueError("source eligibility reason does not match verdict")
+        return self
+
+
+class AcceptedProposalRecord(StrictModel):
+    schema_id = "briefloop.accepted_proposal_record.v2"
+
+    schema_version: Literal["briefloop.accepted_proposal_record.v2"]
+    proposal_id: ContractId
+    run_id: ContractId
+    proposal_kind: Literal["candidate", "screened", "claim_drafts", "audit"]
+    artifact_id: ContractId
+    artifact_revision: PositiveInt
+    proposal_sha256: Sha256
+    invocation_id: ContractId
+    owner_stage_id: ContractId
+    owner_role_id: ContractId
+    parent_proposal_id: Optional[ContractId] = None
+    target_artifact_id: Optional[ContractId] = None
+    target_artifact_revision: Optional[PositiveInt] = None
+    source_ids: list[ContractId] = Field(default_factory=list)
+    accepted_event_id: ContractId
+    accepted_transaction_id: ContractId
+    request_fingerprint: Sha256
+    created_at: IsoDateTime
+
+    @model_validator(mode="after")
+    def proposal_shape_matches_kind(self) -> "AcceptedProposalRecord":
+        if len(self.source_ids) != len(set(self.source_ids)):
+            raise ValueError("duplicate direct source identity")
+        if self.proposal_kind == "candidate":
+            valid = (
+                self.parent_proposal_id is None
+                and self.target_artifact_id is None
+                and self.target_artifact_revision is None
+                and bool(self.source_ids)
+            )
+        elif self.proposal_kind in {"screened", "claim_drafts"}:
+            valid = (
+                self.parent_proposal_id is not None
+                and self.target_artifact_id is None
+                and self.target_artifact_revision is None
+                and (self.proposal_kind == "claim_drafts" or not self.source_ids)
+            )
+        else:
+            valid = (
+                self.parent_proposal_id is None
+                and self.target_artifact_id is not None
+                and self.target_artifact_revision is not None
+                and not self.source_ids
+            )
+        if not valid:
+            raise ValueError("accepted proposal shape does not match its kind")
+        return self
+
+
+class ProposalSourceBinding(StrictModel):
+    schema_id = "briefloop.proposal_source_binding.v2"
+
+    schema_version: Literal["briefloop.proposal_source_binding.v2"]
+    run_id: ContractId
+    proposal_id: ContractId
+    source_id: ContractId
 
 
 class RunIdentity(StrictModel):
@@ -467,7 +737,9 @@ class ArtifactRecord(StrictModel):
     ]
     required: bool
     path: WorkspacePath
-    format: Literal["json", "yaml", "markdown", "html", "docx", "pdf"]
+    format: Literal[
+        "json", "yaml", "markdown", "html", "docx", "pdf", "text", "binary"
+    ]
 
 
 class ArtifactRevision(StrictModel):
@@ -501,6 +773,7 @@ class EventEnvelope(StrictModel):
     decision: Optional[ContractId] = None
     reason: str = ""
     metadata: dict[str, JsonValue] = Field(default_factory=dict)
+    intake_binding: Optional[IntakeEventBinding] = None
 
     @field_validator("event_type")
     @classmethod
@@ -514,6 +787,33 @@ class EventEnvelope(StrictModel):
             )
         return value
 
+    @model_validator(mode="after")
+    def intake_binding_matches_event_type(self) -> "EventEnvelope":
+        if self.event_type == "source_evidence_committed":
+            valid = (
+                self.intake_binding is not None
+                and self.intake_binding.outcome == "committed"
+                and self.intake_binding.source_id is not None
+                and self.intake_binding.proposal_id is None
+            )
+        elif self.event_type == "role_proposal_committed":
+            valid = (
+                self.intake_binding is not None
+                and self.intake_binding.outcome == "committed"
+                and self.intake_binding.proposal_id is not None
+                and self.intake_binding.source_id is None
+            )
+        elif self.event_type == "intake_rejected":
+            valid = (
+                self.intake_binding is not None
+                and self.intake_binding.outcome == "rejected"
+            )
+        else:
+            valid = self.intake_binding is None
+        if not valid:
+            raise ValueError("event intake binding does not match event type")
+        return self
+
 
 class Invocation(StrictModel):
     schema_id = "briefloop.invocation.v2"
@@ -526,6 +826,19 @@ class Invocation(StrictModel):
     status: Literal["pending", "active", "completed", "failed"]
     started_at: IsoDateTime
     completed_at: Optional[IsoDateTime] = None
+    failure_reason: Optional[ContractId] = None
+
+    @model_validator(mode="after")
+    def completion_fields_match_status(self) -> "Invocation":
+        if self.status in {"pending", "active"}:
+            valid = self.completed_at is None and self.failure_reason is None
+        elif self.status == "completed":
+            valid = self.completed_at is not None and self.failure_reason is None
+        else:
+            valid = self.completed_at is not None and self.failure_reason is not None
+        if not valid:
+            raise ValueError("invocation completion fields do not match status")
+        return self
 
 
 class Approval(StrictModel):
@@ -613,6 +926,8 @@ class TransactionReceipt(StrictModel):
     projection_status: Literal["current", "stale"]
     event_ids: list[ContractId] = Field(default_factory=list)
     artifact_revisions: list[ArtifactRevisionReference] = Field(default_factory=list)
+    source_ids: list[ContractId] = Field(default_factory=list)
+    proposal_ids: list[ContractId] = Field(default_factory=list)
 
     @model_validator(mode="after")
     def revision_advances(self) -> "TransactionReceipt":
@@ -625,27 +940,71 @@ class TransactionReceipt(StrictModel):
         ]
         if len(artifact_keys) != len(set(artifact_keys)):
             raise ValueError("duplicate artifact revision identity")
+        if len(self.source_ids) != len(set(self.source_ids)):
+            raise ValueError("duplicate source identity")
+        if len(self.proposal_ids) != len(set(self.proposal_ids)):
+            raise ValueError("duplicate proposal identity")
         return self
 
 
 _RUN = "RUN-20260714-001"
 _NOW = "2026-07-14T09:00:00Z"
 _SHA_A = "a" * 64
+_SHA_B = "b" * 64
 
 SourceProposal.minimal_example = {
     "schema_version": SourceProposal.schema_id,
     "proposal_id": "PROP-SOURCE-001",
     "run_id": _RUN,
     "source_id": "SRC-001",
-    "title": "Public source",
-    "locator": {"kind": "web", "url": "https://example.com/report"},
+    "origin_type": "uploaded_file",
+    "acquisition_method": "manual_upload",
+    "material_kind": "uploaded_file",
+    "locator": {"kind": "file", "path": "scratch/INV-SOURCE-001/source_content.pdf"},
+    "title": "Uploaded public filing",
     "retrieved_at": _NOW,
+    "source_category": "regulator",
+    "retrieval_source_type": "local_file",
+    "underlying_evidence_type": "filing",
+    "content_sha256": _SHA_A,
+    "content_media_type": "application/pdf",
 }
 SourceProposal.full_example = {
-    **SourceProposal.minimal_example,
+    "schema_version": SourceProposal.schema_id,
+    "proposal_id": "PROP-SOURCE-002",
+    "run_id": _RUN,
+    "source_id": "SRC-002",
+    "origin_type": "provider_response",
+    "acquisition_method": "provider_extract",
+    "material_kind": "full_content",
+    "provider": "tavily",
+    "locator": {"kind": "web", "url": "https://example.com/report"},
+    "title": "Public source",
+    "publisher": "Example Publisher",
     "published_at": "2026-07-13",
+    "retrieved_at": _NOW,
+    "source_category": "market_report",
+    "retrieval_source_type": "paper_page",
+    "underlying_evidence_type": "market_data",
+    "raw_underlying_evidence_type": "research-report",
     "content_sha256": _SHA_A,
-    "metadata": {"language": "en"},
+    "content_media_type": "text/html",
+    "raw_payload_sha256": _SHA_B,
+    "raw_payload_media_type": "application/json",
+}
+
+SourceCommitRequest.minimal_example = {
+    "schema_version": SourceCommitRequest.schema_id,
+    "request_id": "REQ-SOURCE-001",
+    "run_id": _RUN,
+    "invocation_id": "INV-SOURCE-001",
+    "proposal_path": "scratch/INV-SOURCE-001/source_proposal.json",
+    "content_path": "scratch/INV-SOURCE-001/source_content.pdf",
+    "expected_store_revision": 1,
+}
+SourceCommitRequest.full_example = {
+    **SourceCommitRequest.minimal_example,
+    "raw_payload_path": "scratch/INV-SOURCE-001/source_raw.json",
 }
 
 _CANDIDATE = {
@@ -733,15 +1092,107 @@ ArtifactSubmitRequest.minimal_example = {
     "schema_version": ArtifactSubmitRequest.schema_id,
     "request_id": "REQ-ARTIFACT-001",
     "run_id": _RUN,
-    "artifact_id": "audited_brief",
-    "invocation_id": "INV-EDITOR-001",
-    "input_path": "scratch/INV-EDITOR-001/audited_brief.md",
-    "expected_revision": 0,
+    "artifact_id": "candidate_claims",
+    "invocation_id": "INV-SCOUT-001",
+    "input_path": "scratch/INV-SCOUT-001/candidate_claims.json",
+    "expected_store_revision": 1,
+    "expected_artifact_revision": 0,
 }
 ArtifactSubmitRequest.full_example = {
     **ArtifactSubmitRequest.minimal_example,
-    "expected_revision": 1,
+    "expected_store_revision": 2,
+    "expected_artifact_revision": 1,
 }
+
+WorkspaceRunHead.minimal_example = {
+    "schema_version": WorkspaceRunHead.schema_id,
+    "workspace_id": "WS-PUBLIC-DEMO",
+    "current_run_id": _RUN,
+    "updated_at": _NOW,
+}
+WorkspaceRunHead.full_example = deepcopy(WorkspaceRunHead.minimal_example)
+
+AcceptedSourceRecord.minimal_example = {
+    "schema_version": AcceptedSourceRecord.schema_id,
+    "source_id": "SRC-001",
+    "run_id": _RUN,
+    "origin_type": "uploaded_file",
+    "acquisition_method": "manual_upload",
+    "material_kind": "uploaded_file",
+    "locator": {"kind": "file", "path": "scratch/INV-SOURCE-001/source_content.pdf"},
+    "title": "Uploaded public filing",
+    "retrieved_at": _NOW,
+    "source_category": "regulator",
+    "retrieval_source_type": "local_file",
+    "underlying_evidence_type": "filing",
+    "content_sha256": _SHA_A,
+    "content_size_bytes": 100,
+    "content_media_type": "application/pdf",
+    "content_blob_path": f"briefloop.db.blobs/sha256/{_SHA_A[:2]}/{_SHA_A}",
+    "content_artifact_id": "SRC-CONTENT-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "content_artifact_revision": 1,
+    "claims_eligible": True,
+    "eligibility_reason": "eligible_durable_source_content",
+    "invocation_id": "INV-SOURCE-001",
+    "acquisition_event_id": "EVT-SOURCE-001",
+    "accepted_transaction_id": "REQ-SOURCE-001",
+    "request_fingerprint": _SHA_B,
+    "created_at": _NOW,
+}
+AcceptedSourceRecord.full_example = {
+    **AcceptedSourceRecord.minimal_example,
+    "source_id": "SRC-002",
+    "origin_type": "provider_response",
+    "acquisition_method": "provider_extract",
+    "material_kind": "full_content",
+    "provider": "tavily",
+    "locator": {"kind": "web", "url": "https://example.com/report"},
+    "publisher": "Example Publisher",
+    "raw_underlying_evidence_type": "research-report",
+    "raw_payload_sha256": _SHA_B,
+    "raw_payload_size_bytes": 200,
+    "raw_payload_media_type": "application/json",
+    "raw_payload_blob_path": f"briefloop.db.blobs/sha256/{_SHA_B[:2]}/{_SHA_B}",
+    "raw_payload_artifact_id": "SRC-RAW-bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+    "raw_payload_artifact_revision": 1,
+}
+
+AcceptedProposalRecord.minimal_example = {
+    "schema_version": AcceptedProposalRecord.schema_id,
+    "proposal_id": "PROP-CANDIDATES-001",
+    "run_id": _RUN,
+    "proposal_kind": "candidate",
+    "artifact_id": "candidate_claims",
+    "artifact_revision": 1,
+    "proposal_sha256": _SHA_A,
+    "invocation_id": "INV-SCOUT-001",
+    "owner_stage_id": "scout",
+    "owner_role_id": "scout",
+    "source_ids": ["SRC-001"],
+    "accepted_event_id": "EVT-PROPOSAL-001",
+    "accepted_transaction_id": "REQ-PROPOSAL-001",
+    "request_fingerprint": _SHA_B,
+    "created_at": _NOW,
+}
+AcceptedProposalRecord.full_example = {
+    **AcceptedProposalRecord.minimal_example,
+    "proposal_id": "PROP-SCREENED-001",
+    "proposal_kind": "screened",
+    "artifact_id": "screened_candidates",
+    "invocation_id": "INV-SCREENER-001",
+    "owner_stage_id": "screener",
+    "owner_role_id": "screener",
+    "parent_proposal_id": "PROP-CANDIDATES-001",
+    "source_ids": [],
+}
+
+ProposalSourceBinding.minimal_example = {
+    "schema_version": ProposalSourceBinding.schema_id,
+    "run_id": _RUN,
+    "proposal_id": "PROP-CANDIDATES-001",
+    "source_id": "SRC-001",
+}
+ProposalSourceBinding.full_example = deepcopy(ProposalSourceBinding.minimal_example)
 
 RunIdentity.minimal_example = {
     "schema_version": RunIdentity.schema_id,
@@ -884,16 +1335,22 @@ TransactionReceipt.full_example = {
     **TransactionReceipt.minimal_example,
     "event_ids": ["EVT-001"],
     "artifact_revisions": [{"artifact_id": "candidate_claims", "revision": 1}],
+    "proposal_ids": ["PROP-CANDIDATES-001"],
 }
 
 
 V2_CONTRACT_MODELS: tuple[type[StrictModel], ...] = (
     SourceProposal,
+    SourceCommitRequest,
     CandidateClaimsProposal,
     ScreenedCandidatesProposal,
     ClaimDraftsProposal,
     AuditProposal,
     ArtifactSubmitRequest,
+    WorkspaceRunHead,
+    AcceptedSourceRecord,
+    AcceptedProposalRecord,
+    ProposalSourceBinding,
     RunIdentity,
     StageState,
     ArtifactRecord,
@@ -1008,6 +1465,8 @@ def read_contract_payload(schema_id: str, payload: Any) -> ContractReadResult:
 
 
 __all__ = [
+    "AcceptedProposalRecord",
+    "AcceptedSourceRecord",
     "Approval",
     "ArtifactRecord",
     "ArtifactRevision",
@@ -1018,15 +1477,24 @@ __all__ = [
     "ContractReadResult",
     "Delivery",
     "EventEnvelope",
+    "IntakeEventBinding",
     "Invocation",
     "LEGACY_READ_ONLY_CONTRACTS",
+    "MimeType",
+    "ProposalSourceBinding",
     "RunIdentity",
     "ScreenedCandidatesProposal",
+    "SOURCE_ACQUISITION_METHODS",
+    "SOURCE_ELIGIBILITY_REASONS",
+    "SOURCE_MATERIAL_KINDS",
+    "SOURCE_ORIGIN_TYPES",
+    "SourceCommitRequest",
     "SourceProposal",
     "StageState",
     "StrictModel",
     "TransactionReceipt",
     "V2_CONTRACT_IDS",
     "V2_CONTRACT_MODELS",
+    "WorkspaceRunHead",
     "read_contract_payload",
 ]
