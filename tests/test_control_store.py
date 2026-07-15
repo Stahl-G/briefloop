@@ -828,6 +828,122 @@ def test_event_transaction_ownership_is_exact_or_explicitly_unbound(
         )
 
 
+def test_uow_stages_detached_snapshots_for_every_typed_record(
+    tmp_path: Path,
+) -> None:
+    records = _records()
+    expected = _records()
+    with _create_store(tmp_path) as store:
+        unit = _stage_all(store, records)
+        staged_fingerprint = unit._fingerprint(unit._identity_snapshot())
+
+        assert unit._run is not records.run
+        assert unit._stage_states[records.stage.stage_id] is not records.stage
+        assert (
+            unit._invocations[records.invocation.invocation_id]
+            is not records.invocation
+        )
+        assert unit._artifacts[records.artifact.artifact_id] is not records.artifact
+        assert unit._artifact_revisions[0].record is not records.revision
+        assert unit._events[0] is not records.event
+        assert unit._approvals[records.approval.approval_id] is not records.approval
+        assert unit._deliveries[records.delivery.delivery_id] is not records.delivery
+
+        records.run.runtime = "claude"
+        records.stage.status = "blocked"
+        records.invocation.status = "failed"
+        records.artifact.current_revision = 99
+        records.revision.sha256 = "0" * 64
+        records.event.transaction_id = "TX-FOREIGN-MUTATION-001"
+        nested_metadata = records.event.metadata["a"]
+        assert isinstance(nested_metadata, dict)
+        nested_metadata["finite"] = 99.0
+        records.approval.decision = "reject"
+        records.delivery.status = "failed"
+
+        assert unit._fingerprint(unit._identity_snapshot()) == staged_fingerprint
+        receipt = unit.commit()
+        snapshot = store.load_snapshot(RUN_ID)
+
+        assert receipt.event_ids == [expected.event.event_id]
+        assert snapshot.run == expected.run
+        assert snapshot.stage_states == (expected.stage,)
+        assert snapshot.invocations == (expected.invocation,)
+        assert snapshot.artifacts == (expected.artifact,)
+        assert snapshot.artifact_revisions == (expected.revision,)
+        assert snapshot.events == (expected.event,)
+        assert snapshot.approvals == (expected.approval,)
+        assert snapshot.deliveries == (expected.delivery,)
+
+
+def test_staged_event_snapshot_cannot_be_rebound_before_commit(
+    tmp_path: Path,
+) -> None:
+    with _create_store(tmp_path) as store:
+        _stage_all(store).commit()
+        transaction_id = "TX-EVENT-SNAPSHOT-002"
+        event = _records(transaction_id=transaction_id).event.model_copy(
+            update={"event_id": "EVT-EVENT-SNAPSHOT-002"},
+            deep=True,
+        )
+        expected_event = event.model_copy(deep=True)
+        unit = store.begin(
+            run_id=RUN_ID,
+            transaction_id=transaction_id,
+            transaction_type="event_snapshot_ownership",
+            expected_revision=1,
+        )
+        unit.append_event(event)
+        staged_fingerprint = unit._fingerprint(unit._identity_snapshot())
+
+        event.transaction_id = TRANSACTION_ID
+        nested_metadata = event.metadata["a"]
+        assert isinstance(nested_metadata, dict)
+        nested_metadata["finite"] = 99.0
+
+        assert unit._fingerprint(unit._identity_snapshot()) == staged_fingerprint
+        receipt = unit.commit()
+        persisted_event = store.load_snapshot(RUN_ID).events[-1]
+        event_owner = store._connection.execute(
+            "SELECT transaction_id FROM events WHERE event_id = ?",
+            (expected_event.event_id,),
+        ).fetchone()
+        receipt_owner = store._connection.execute(
+            "SELECT transaction_id FROM transaction_events WHERE event_id = ?",
+            (expected_event.event_id,),
+        ).fetchone()
+
+        assert receipt.transaction_id == transaction_id
+        assert receipt.event_ids == [expected_event.event_id]
+        assert persisted_event == expected_event
+        assert tuple(event_owner) == (transaction_id,)
+        assert tuple(receipt_owner) == (transaction_id,)
+
+
+def test_illegally_mutated_model_is_revalidated_before_staging(
+    tmp_path: Path,
+) -> None:
+    event = _records().event
+    event.transaction_id = "invalid transaction id"
+    with _create_store(tmp_path) as store:
+        unit = store.begin(
+            run_id=RUN_ID,
+            transaction_id=TRANSACTION_ID,
+            transaction_type="invalid_mutated_record",
+            expected_revision=0,
+        )
+        with pytest.raises(ControlStoreIntegrityError) as error:
+            unit.append_event(event)
+        assert error.value.code == "control_record_invalid"
+        assert str(error.value) == "control_record_invalid"
+        assert unit._events == []
+        assert unit._event_ids == set()
+        unit.rollback()
+        assert store.current_revision == 0
+        assert _table_count(store, "events") == 0
+        assert _table_count(store, "transactions") == 0
+
+
 def test_relational_cross_run_binding_rolls_back_entire_transaction(
     tmp_path: Path,
 ) -> None:

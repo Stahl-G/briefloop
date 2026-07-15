@@ -2,8 +2,11 @@
 
 from __future__ import annotations
 
+from copy import deepcopy
 from dataclasses import dataclass
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, TypeVar, cast
+
+from pydantic import ValidationError
 
 from multi_agent_brief.contracts.v2 import (
     Approval,
@@ -14,6 +17,7 @@ from multi_agent_brief.contracts.v2 import (
     Invocation,
     RunIdentity,
     StageState,
+    StrictModel,
     TransactionReceipt,
 )
 from multi_agent_brief.control_store.errors import (
@@ -29,6 +33,9 @@ from multi_agent_brief.control_store.serialization import (
 
 if TYPE_CHECKING:
     from multi_agent_brief.control_store.sqlite_store import SQLiteControlStore
+
+
+_RecordT = TypeVar("_RecordT", bound=StrictModel)
 
 
 @dataclass(frozen=True)
@@ -109,81 +116,93 @@ class ControlUnitOfWork:
         if getattr(model, "run_id", None) != self.run_id:
             raise ControlStoreConflict("control_record_run_mismatch")
 
-    def put_run(self, record: RunIdentity) -> None:
-        self._require_run(record)
-        if type(record) is not RunIdentity:
+    def _snapshot_record(
+        self,
+        record: object,
+        expected_type: type[_RecordT],
+    ) -> _RecordT:
+        """Revalidate and detach caller-owned DTO state at the staging boundary."""
+
+        self._require_active()
+        if type(record) is not expected_type:
             raise ControlStoreIntegrityError("unsupported_control_record")
-        if record.workspace_id != self._store.workspace_id:
+        typed_record = cast(StrictModel, record)
+        try:
+            payload = {
+                name: deepcopy(getattr(typed_record, name))
+                for name in expected_type.model_fields
+            }
+            return expected_type.model_validate(payload, strict=True)
+        except (AttributeError, ValidationError) as exc:
+            raise ControlStoreIntegrityError("control_record_invalid") from exc
+
+    def put_run(self, record: RunIdentity) -> None:
+        snapshot = self._snapshot_record(record, RunIdentity)
+        self._require_run(snapshot)
+        if snapshot.workspace_id != self._store.workspace_id:
             raise ControlStoreConflict("control_record_workspace_mismatch")
         if self._run is not None:
             raise ControlStoreConflict("duplicate_staged_record")
-        self._run = record
+        self._run = snapshot
 
     def put_stage_state(self, record: StageState) -> None:
-        self._require_run(record)
-        if type(record) is not StageState:
-            raise ControlStoreIntegrityError("unsupported_control_record")
-        self._put_unique(self._stage_states, record.stage_id, record)
+        snapshot = self._snapshot_record(record, StageState)
+        self._require_run(snapshot)
+        self._put_unique(self._stage_states, snapshot.stage_id, snapshot)
 
     def put_invocation(self, record: Invocation) -> None:
-        self._require_run(record)
-        if type(record) is not Invocation:
-            raise ControlStoreIntegrityError("unsupported_control_record")
-        self._put_unique(self._invocations, record.invocation_id, record)
+        snapshot = self._snapshot_record(record, Invocation)
+        self._require_run(snapshot)
+        self._put_unique(self._invocations, snapshot.invocation_id, snapshot)
 
     def put_artifact(self, record: ArtifactRecord) -> None:
-        self._require_run(record)
-        if type(record) is not ArtifactRecord:
-            raise ControlStoreIntegrityError("unsupported_control_record")
-        self._put_unique(self._artifacts, record.artifact_id, record)
+        snapshot = self._snapshot_record(record, ArtifactRecord)
+        self._require_run(snapshot)
+        self._put_unique(self._artifacts, snapshot.artifact_id, snapshot)
 
     def put_artifact_revision(
         self,
         record: ArtifactRevision,
         content: bytes,
     ) -> None:
-        self._require_run(record)
-        if type(record) is not ArtifactRevision:
-            raise ControlStoreIntegrityError("unsupported_control_record")
+        snapshot = self._snapshot_record(record, ArtifactRevision)
+        self._require_run(snapshot)
         if type(content) is not bytes:
             raise ControlStoreIntegrityError("artifact_blob_bytes_required")
-        key = (record.artifact_id, record.revision)
+        key = (snapshot.artifact_id, snapshot.revision)
         if key in self._artifact_revision_keys:
             raise ControlStoreConflict("duplicate_staged_record")
-        if len(content) != record.size_bytes:
+        if len(content) != snapshot.size_bytes:
             raise ControlStoreIntegrityError("artifact_blob_size_mismatch")
-        if sha256_hex(content) != record.sha256:
+        if sha256_hex(content) != snapshot.sha256:
             raise ControlStoreIntegrityError("artifact_blob_hash_mismatch")
         self._artifact_revision_keys.add(key)
         self._artifact_revisions.append(
-            _StagedArtifactRevision(record=record, content=content)
+            _StagedArtifactRevision(record=snapshot, content=content)
         )
 
     def append_event(self, record: EventEnvelope) -> None:
-        self._require_run(record)
-        if type(record) is not EventEnvelope:
-            raise ControlStoreIntegrityError("unsupported_control_record")
+        snapshot = self._snapshot_record(record, EventEnvelope)
+        self._require_run(snapshot)
         if (
-            record.transaction_id is not None
-            and record.transaction_id != self.transaction_id
+            snapshot.transaction_id is not None
+            and snapshot.transaction_id != self.transaction_id
         ):
             raise ControlStoreConflict("control_record_transaction_mismatch")
-        if record.event_id in self._event_ids:
+        if snapshot.event_id in self._event_ids:
             raise ControlStoreConflict("duplicate_staged_record")
-        self._event_ids.add(record.event_id)
-        self._events.append(record)
+        self._event_ids.add(snapshot.event_id)
+        self._events.append(snapshot)
 
     def put_approval(self, record: Approval) -> None:
-        self._require_run(record)
-        if type(record) is not Approval:
-            raise ControlStoreIntegrityError("unsupported_control_record")
-        self._put_unique(self._approvals, record.approval_id, record)
+        snapshot = self._snapshot_record(record, Approval)
+        self._require_run(snapshot)
+        self._put_unique(self._approvals, snapshot.approval_id, snapshot)
 
     def put_delivery(self, record: Delivery) -> None:
-        self._require_run(record)
-        if type(record) is not Delivery:
-            raise ControlStoreIntegrityError("unsupported_control_record")
-        self._put_unique(self._deliveries, record.delivery_id, record)
+        snapshot = self._snapshot_record(record, Delivery)
+        self._require_run(snapshot)
+        self._put_unique(self._deliveries, snapshot.delivery_id, snapshot)
 
     def _put_unique(
         self, collection: dict[str, object], key: str, value: object
