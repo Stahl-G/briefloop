@@ -1231,6 +1231,26 @@ def test_reopen_rejects_missing_append_only_trigger_definition(
     assert str(error.value) == "database_schema_definition_mismatch"
 
 
+def test_reopen_rejects_noninternal_sqlitex_schema_object(
+    tmp_path: Path,
+) -> None:
+    store = _create_store(tmp_path)
+    _stage_all(store).commit()
+    store.close()
+    _mutate_schema(
+        tmp_path / "control.db",
+        """
+        CREATE TRIGGER sqliteX_extra
+        BEFORE UPDATE ON events BEGIN SELECT 1; END;
+        """,
+    )
+
+    with pytest.raises(ControlStoreIntegrityError) as error:
+        SQLiteControlStore.open(tmp_path / "control.db")
+    assert error.value.code == "database_schema_definition_mismatch"
+    assert str(error.value) == "database_schema_definition_mismatch"
+
+
 def test_future_schema_fails_closed(tmp_path: Path) -> None:
     store = _create_store(tmp_path)
     store.close()

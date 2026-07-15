@@ -26,7 +26,7 @@ def _schema_inventory(
             SELECT type, name, tbl_name, sql
             FROM sqlite_schema
             WHERE type IN ('index', 'table', 'trigger', 'view')
-              AND name NOT LIKE 'sqlite_%'
+              AND substr(name, 1, 7) != 'sqlite_'
             ORDER BY type, name
             """
         ).fetchall()
