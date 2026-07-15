@@ -23,18 +23,21 @@ from multi_agent_brief.contracts.v2 import (
 from multi_agent_brief.core_run_v2 import (
     ArtifactAcceptanceService,
     ClaimFreezeService,
+    CoreRunDomainVerifier,
     CoreRunError,
     CoreRunResult,
     CoreRunService,
     GateEvaluationService,
     RunIntegrityService,
 )
+from multi_agent_brief.control_store import SQLiteControlStore
 from multi_agent_brief.intake_v2.errors import IntakeError
 from multi_agent_brief.intake_v2.scratch import ScratchReader, parse_json_object
 from multi_agent_brief.core_run_v2.service import workspace_input_fingerprints
 
 
 _RequestT = TypeVar("_RequestT", bound=StrictModel)
+_ADAPTER_HASH_PLACEHOLDER = "0" * 64
 _ACTIONS = (
     "initialize",
     "doctor-check",
@@ -83,11 +86,7 @@ def _handle(args: argparse.Namespace) -> CoreRunResult | dict[str, object]:
     workspace = _workspace(args.workspace)
     action = args.core_v2_action
     if action == "initialize":
-        payload = _read_request_payload(workspace, args.request)
-        config_sha256, sources_sha256 = workspace_input_fingerprints(workspace)
-        payload["workspace_config_sha256"] = config_sha256
-        payload["sources_config_sha256"] = sources_sha256
-        request = _validate(CoreRunInitializeRequest, payload)
+        request = _initialize_request(workspace, args.request)
         return CoreRunService(workspace).initialize(request)
     if action in {"doctor-check", "integrity-check"}:
         request = _read_request(
@@ -120,6 +119,45 @@ def _handle(args: argparse.Namespace) -> CoreRunResult | dict[str, object]:
         request = _read_request(workspace, args.request, StageCompleteRequest)
         return CoreRunService(workspace).complete_stage(request)
     raise CoreRunError("core_run_request_invalid")
+
+
+def _initialize_request(
+    workspace: Path,
+    request_path: str,
+) -> CoreRunInitializeRequest:
+    payload = _read_request_payload(workspace, request_path)
+    caller_payload = dict(payload)
+    caller_payload["workspace_config_sha256"] = _ADAPTER_HASH_PLACEHOLDER
+    caller_payload["sources_config_sha256"] = _ADAPTER_HASH_PLACEHOLDER
+    caller_request = _validate(CoreRunInitializeRequest, caller_payload)
+    config_sha256, sources_sha256 = _initialize_input_fingerprints(workspace)
+    request_payload = caller_request.model_dump(mode="json", exclude_unset=False)
+    request_payload["workspace_config_sha256"] = config_sha256
+    request_payload["sources_config_sha256"] = sources_sha256
+    return _validate(CoreRunInitializeRequest, request_payload)
+
+
+def _initialize_input_fingerprints(workspace: Path) -> tuple[str, str]:
+    database = workspace / "briefloop.db"
+    if not database.exists() and not database.is_symlink():
+        return workspace_input_fingerprints(workspace)
+    try:
+        with SQLiteControlStore.open(database) as store:
+            head = store.load_workspace_run_head()
+            if head is None:
+                raise CoreRunError("control_store_integrity_invalid")
+            verified = CoreRunDomainVerifier().verify(
+                store,
+                head.current_run_id,
+            )
+            return (
+                verified.binding.workspace_config_sha256,
+                verified.binding.sources_config_sha256,
+            )
+    except CoreRunError:
+        raise
+    except Exception as exc:
+        raise CoreRunError("control_store_integrity_invalid") from exc
 
 
 def _read_request(

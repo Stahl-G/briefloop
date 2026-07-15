@@ -11,6 +11,7 @@ from multi_agent_brief.cli.init_wizard import create_demo_workspace
 from multi_agent_brief.cli.main import build_parser, main
 from multi_agent_brief.contracts.v2 import CoreRunInitializeRequest
 from multi_agent_brief.control_store import SQLiteControlStore
+from multi_agent_brief.core_run_v2.service import workspace_input_fingerprints
 
 
 ROOT = Path(__file__).parents[1]
@@ -58,8 +59,163 @@ def test_hidden_core_v2_initialize_emits_one_json_result(
         snapshot = store.load_snapshot("RUN-CLI-CORE-V2-001")
     assert snapshot.workspace_run_head is not None
     assert snapshot.workspace_run_head.current_run_id == "RUN-CLI-CORE-V2-001"
+    assert len(snapshot.run_contract_bindings) == 1
+    config_sha256, sources_sha256 = workspace_input_fingerprints(workspace)
+    assert snapshot.run_contract_bindings[0].workspace_config_sha256 == config_sha256
+    assert snapshot.run_contract_bindings[0].sources_config_sha256 == sources_sha256
     assert not (workspace / "output" / "intermediate" / "runtime_manifest.json").exists()
     assert not (workspace / "output" / "intermediate" / "event_log.jsonl").exists()
+
+
+@pytest.mark.parametrize("filename", ["config.yaml", "sources.yaml"])
+def test_hidden_core_v2_initialize_replay_uses_verified_binding_hashes(
+    tmp_path: Path,
+    capsys,
+    monkeypatch: pytest.MonkeyPatch,
+    filename: str,
+) -> None:
+    workspace = tmp_path / "workspace"
+    create_demo_workspace(workspace)
+    request_path = workspace / "scratch" / "cli" / "submit_request.json"
+    request_path.parent.mkdir(parents=True)
+    payload = deepcopy(CoreRunInitializeRequest.minimal_example)
+    payload.update(
+        request_id="REQ-CLI-INIT-REPLAY",
+        run_id="RUN-CLI-INIT-REPLAY",
+        workspace_id="WS-CLI-INIT-REPLAY",
+        input_governance_required=False,
+        workspace_config_sha256="caller-value-is-ignored",
+        sources_config_sha256="caller-value-is-ignored",
+    )
+    request_path.write_text(json.dumps(payload), encoding="utf-8")
+    command = [
+        "core-v2",
+        "initialize",
+        "--workspace",
+        str(workspace),
+        "--request",
+        request_path.relative_to(workspace).as_posix(),
+        "--json",
+    ]
+
+    assert main(command) == 0
+    first = json.loads(capsys.readouterr().out)
+    assert first["status"] == "committed"
+    with SQLiteControlStore.open(workspace / "briefloop.db") as store:
+        revision = store.current_revision
+        snapshot = store.load_snapshot("RUN-CLI-INIT-REPLAY")
+    binding = snapshot.run_contract_bindings[0]
+
+    with (workspace / filename).open("a", encoding="utf-8") as stream:
+        stream.write("\n# changed after initialization\n")
+    payload["workspace_config_sha256"] = "f" * 64
+    payload["sources_config_sha256"] = "e" * 64
+    request_path.write_text(json.dumps(payload), encoding="utf-8")
+
+    def reject_workspace_reread(*_args, **_kwargs):
+        raise AssertionError("existing Store replay reread workspace inputs")
+
+    monkeypatch.setattr(
+        "multi_agent_brief.cli.core_v2_commands.workspace_input_fingerprints",
+        reject_workspace_reread,
+    )
+    assert main(command) == 0
+    replay = json.loads(capsys.readouterr().out)
+    assert replay["status"] == "replayed"
+    assert replay["receipt"] == first["receipt"]
+    with SQLiteControlStore.open(workspace / "briefloop.db") as store:
+        assert store.current_revision == revision
+        replay_snapshot = store.load_snapshot("RUN-CLI-INIT-REPLAY")
+    replay_binding = replay_snapshot.run_contract_bindings[0]
+    assert replay_binding.workspace_config_sha256 == binding.workspace_config_sha256
+    assert replay_binding.sources_config_sha256 == binding.sources_config_sha256
+
+
+def test_hidden_core_v2_initialize_semantic_conflict_is_zero_write(
+    tmp_path: Path,
+    capsys,
+) -> None:
+    workspace = tmp_path / "workspace"
+    create_demo_workspace(workspace)
+    request_path = workspace / "scratch" / "cli" / "submit_request.json"
+    request_path.parent.mkdir(parents=True)
+    payload = deepcopy(CoreRunInitializeRequest.minimal_example)
+    payload.update(
+        request_id="REQ-CLI-INIT-CONFLICT",
+        run_id="RUN-CLI-INIT-CONFLICT",
+        workspace_id="WS-CLI-INIT-CONFLICT",
+        input_governance_required=False,
+    )
+    request_path.write_text(json.dumps(payload), encoding="utf-8")
+    command = [
+        "core-v2",
+        "initialize",
+        "--workspace",
+        str(workspace),
+        "--request",
+        request_path.relative_to(workspace).as_posix(),
+        "--json",
+    ]
+
+    assert main(command) == 0
+    assert json.loads(capsys.readouterr().out)["status"] == "committed"
+    with SQLiteControlStore.open(workspace / "briefloop.db") as store:
+        revision = store.current_revision
+
+    payload["run_direction"]["brief_title"] = "A changed semantic request"
+    request_path.write_text(json.dumps(payload), encoding="utf-8")
+    assert main(command) == 1
+    conflict = json.loads(capsys.readouterr().out)
+    assert conflict == {
+        "error_code": "submission_replay_conflict",
+        "status": "failed_uncommitted",
+    }
+    with SQLiteControlStore.open(workspace / "briefloop.db") as store:
+        assert store.current_revision == revision
+
+
+def test_hidden_core_v2_initialize_invalid_store_does_not_fallback(
+    tmp_path: Path,
+    capsys,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    workspace = tmp_path / "workspace"
+    create_demo_workspace(workspace)
+    request_path = workspace / "scratch" / "cli" / "submit_request.json"
+    request_path.parent.mkdir(parents=True)
+    request_path.write_text(
+        json.dumps(CoreRunInitializeRequest.minimal_example),
+        encoding="utf-8",
+    )
+    database = workspace / "briefloop.db"
+    database.write_bytes(b"not a sqlite database")
+    original = database.read_bytes()
+
+    def reject_workspace_fallback(*_args, **_kwargs):
+        raise AssertionError("invalid Store fell back to workspace inputs")
+
+    monkeypatch.setattr(
+        "multi_agent_brief.cli.core_v2_commands.workspace_input_fingerprints",
+        reject_workspace_fallback,
+    )
+    exit_code = main(
+        [
+            "core-v2",
+            "initialize",
+            "--workspace",
+            str(workspace),
+            "--request",
+            request_path.relative_to(workspace).as_posix(),
+            "--json",
+        ]
+    )
+
+    assert exit_code == 1
+    assert json.loads(capsys.readouterr().out) == {
+        "error_code": "control_store_integrity_invalid",
+        "status": "failed_uncommitted",
+    }
+    assert database.read_bytes() == original
 
 
 def test_core_v2_cli_is_internal_and_requires_json() -> None:
@@ -258,7 +414,7 @@ def test_core_v2_static_authority_chokepoints_are_exact() -> None:
             ):
                 fingerprint_calls.append((path.name, function.name))
     assert sorted(fingerprint_calls) == [
-        ("core_v2_commands.py", "_handle"),
+        ("core_v2_commands.py", "_initialize_input_fingerprints"),
         ("service.py", "_doctor_check"),
         ("service.py", "_initialize"),
     ]
