@@ -1,10 +1,13 @@
 from __future__ import annotations
 
 from copy import deepcopy
+from dataclasses import replace
 from datetime import datetime, timezone
 import hashlib
 import json
+import os
 from pathlib import Path
+import sys
 from types import SimpleNamespace
 
 import pytest
@@ -15,6 +18,7 @@ from multi_agent_brief.contracts.v2 import (
     AuditPromotionRequest,
     ClaimFreezeRequest,
     CoreRunInitializeRequest,
+    EventEnvelope,
     GateCheckRequest,
     IntegrityCheckRequest,
     InvocationStartRequest,
@@ -37,15 +41,16 @@ from multi_agent_brief.core_run_v2 import (
     CoreRunService,
     GateEvaluationService,
 )
+from multi_agent_brief.core_run_v2.artifacts import _input_classification_bytes
 from multi_agent_brief.core_run_v2.integrity import read_workspace_file
 from multi_agent_brief.core_run_v2.policy import REQUIRED_AUDITOR_GATES
 from multi_agent_brief.core_run_v2.errors import CoreRunError
 from multi_agent_brief.core_run_v2.verifier import (
     CoreRunDomainVerifier,
     _CORE_EFFECT_BINDING_RULES,
+    _verified_core_receipt_binding,
     resolve_core_replay,
 )
-from multi_agent_brief.inputs.classifier import classify_input_dir
 from multi_agent_brief.intake_v2.service import IntakeService
 from multi_agent_brief.quality_gates.contract import GATE_IDS
 
@@ -437,7 +442,7 @@ def test_input_governance_accepts_only_recomputed_canonical_tool_bytes(
         workspace / "output" / "intermediate" / "input_classification.json"
     ).exists()
 
-    canonical = canonical_json_bytes(classify_input_dir(workspace / "input")) + b"\n"
+    canonical = _input_classification_bytes(workspace)
     candidate.write_bytes(canonical)
     accepted = ArtifactAcceptanceService(
         workspace,
@@ -463,6 +468,98 @@ def test_input_governance_accepts_only_recomputed_canonical_tool_bytes(
         artifacts=[("input_classification", 1)],
     )
     assert _stage(workspace, "input-governance").status == "complete"
+
+
+def test_input_classification_exact_replay_precedes_current_input_scan(
+    tmp_path: Path,
+) -> None:
+    workspace = _workspace(tmp_path)
+    _advance_to_input_governance_ready(workspace)
+    scratch = workspace / "scratch" / "input-governance-v2"
+    scratch.mkdir(parents=True, exist_ok=True)
+    candidate = scratch / "input_classification.json"
+    original_content = _input_classification_bytes(workspace)
+    candidate.write_bytes(original_content)
+    before = _store_revision(workspace)
+    request = _record(
+        OwnedArtifactSubmitRequest,
+        request_id="REQ-INPUT-GOV-REPLAY",
+        run_id=RUN_ID,
+        artifact_id="input_classification",
+        invocation_id=None,
+        producer_tool_id="input-governance-v2",
+        input_path=candidate.relative_to(workspace).as_posix(),
+        expected_store_revision=before,
+        expected_artifact_revision=0,
+        expected_parent_artifact=None,
+    )
+    service = ArtifactAcceptanceService(workspace, clock=CLOCK)
+    first = service.submit_owned_artifact(request)
+    assert first.status == "committed", first.to_dict()
+    committed_revision = _store_revision(workspace)
+
+    (workspace / "input" / "later.md").write_text("later\n", encoding="utf-8")
+    replay = service.submit_owned_artifact(request)
+    assert replay.status == "replayed"
+    assert replay.receipt == first.receipt
+    assert replay.primary_record_id == first.primary_record_id
+    assert _store_revision(workspace) == committed_revision
+
+    candidate.write_bytes(_input_classification_bytes(workspace))
+    conflict = service.submit_owned_artifact(request)
+    assert conflict.to_dict() == {
+        "status": "failed_uncommitted",
+        "error_code": "submission_replay_conflict",
+    }
+    assert _store_revision(workspace) == committed_revision
+
+    candidate.write_bytes(original_content)
+    stale = service.submit_owned_artifact(
+        _record(
+            OwnedArtifactSubmitRequest,
+            **{
+                **request.model_dump(mode="python", exclude_unset=False),
+                "request_id": "REQ-INPUT-GOV-STALE",
+                "expected_store_revision": committed_revision,
+                "expected_artifact_revision": 1,
+            },
+        )
+    )
+    assert stale.to_dict() == {
+        "status": "failed_uncommitted",
+        "error_code": "artifact_input_unsafe",
+    }
+    assert _store_revision(workspace) == committed_revision
+
+
+def test_input_classification_identity_is_workspace_relative_and_selector_stable(
+    tmp_path: Path,
+) -> None:
+    workspace = _workspace(tmp_path)
+    source = workspace / "input" / "source.md"
+    source.write_text("public evidence\n", encoding="utf-8")
+    canonical = _input_classification_bytes(workspace)
+    payload = json.loads(canonical)
+    reported_paths = [
+        item[field]
+        for lane in payload.values()
+        for item in lane
+        for field in ("path", "extracted_markdown")
+        if item.get(field)
+    ]
+    assert reported_paths
+    assert all(not Path(item).is_absolute() for item in reported_paths)
+    assert "input/source.md" in reported_paths
+
+    if os.name != "nt":
+        alias = tmp_path / "workspace-alias"
+        alias.symlink_to(workspace, target_is_directory=True)
+        assert _input_classification_bytes(alias) == canonical
+
+    if sys.platform == "darwin" and str(workspace).startswith("/private/var/"):
+        var_alias = Path(str(workspace).removeprefix("/private"))
+        assert var_alias.is_dir()
+        assert _input_classification_bytes(var_alias) == canonical
 
 
 def _candidate_payload() -> dict[str, object]:
@@ -831,6 +928,79 @@ def test_gate_batch_exactly_replays_and_a_second_request_is_zero_write(
     assert lifecycle_replay.receipt == first.receipt
     assert _store_revision(workspace) == after_completion
     assert report_path.read_bytes() == report_bytes
+
+
+def test_audit_promotion_exact_replay_precedes_report_revision_and_stage_checks(
+    tmp_path: Path,
+) -> None:
+    workspace = _workspace(tmp_path)
+    core = _advance_to_auditor_ready(workspace)
+    with SQLiteControlStore.open(workspace / "briefloop.db") as store:
+        receipt = store.load_transaction_receipt(
+            RUN_ID,
+            "REQ-AUDIT-PROMOTE-001",
+        )
+    assert receipt is not None
+
+    gate = GateEvaluationService(workspace, clock=CLOCK).evaluate(
+        _gate_request(workspace)
+    )
+    assert gate.status == "committed", gate.to_dict()
+    with SQLiteControlStore.open(workspace / "briefloop.db") as store:
+        snapshot = store.load_snapshot(RUN_ID)
+    _complete_stage(
+        core,
+        workspace,
+        stage_id="auditor",
+        artifacts=[
+            ("claim_ledger", 1),
+            ("audited_brief", 1),
+            ("audit_report", 1),
+            ("auditor_quality_gate_report", 1),
+            ("analyst_draft_snapshot", 1),
+        ],
+        gate_evaluation_ids=[
+            item.evaluation_id
+            for item in snapshot.gate_evaluations
+            if item.gate_id in REQUIRED_AUDITOR_GATES
+        ],
+    )
+    after_completion = _store_revision(workspace)
+    assert _stage(workspace, "finalize").status == "ready"
+
+    original = _record(
+        AuditPromotionRequest,
+        request_id="REQ-AUDIT-PROMOTE-001",
+        run_id=RUN_ID,
+        audit_proposal_id="PROP-AUDIT-001",
+        expected_target_artifact={
+            "artifact_id": "audited_brief",
+            "revision": 1,
+        },
+        expected_audit_report_revision=0,
+        expected_store_revision=receipt.prior_revision,
+    )
+    replay = ArtifactAcceptanceService(
+        workspace,
+        clock=CLOCK,
+    ).promote_audit_proposal(original)
+    assert replay.status == "replayed"
+    assert replay.receipt == receipt
+    assert _store_revision(workspace) == after_completion
+
+    changed_values = original.model_dump(mode="python", exclude_unset=False)
+    changed_values["expected_audit_report_revision"] = 1
+    conflict = ArtifactAcceptanceService(
+        workspace,
+        clock=CLOCK,
+    ).promote_audit_proposal(
+        AuditPromotionRequest.model_validate(changed_values, strict=True)
+    )
+    assert conflict.to_dict() == {
+        "status": "failed_uncommitted",
+        "error_code": "submission_replay_conflict",
+    }
+    assert _store_revision(workspace) == after_completion
 
 
 def test_strict_topology_requires_independent_screener(tmp_path: Path) -> None:
@@ -1838,6 +2008,125 @@ def test_core_effect_receipt_binding_table_is_exact() -> None:
         "stage_transition",
         "integrity_contamination",
     }
+    assert {
+        effect: rule.receipt_event_counts
+        for effect, rule in _CORE_EFFECT_BINDING_RULES.items()
+    } == {
+        "initialize": (("run_initialized", 1),),
+        "invocation_start": (("role_invocation_started", 1),),
+        "owned_artifact_acceptance": (("owned_artifact_accepted", 1),),
+        "claim_freeze": (("claim_ledger_frozen", 1),),
+        "audit_promotion": (("audit_proposal_promoted", 1),),
+        "gate_evaluation": (("quality_gate_checked", 1),),
+        "stage_transition": None,
+        "integrity_contamination": (
+            ("run_integrity_contaminated", 1),
+            ("run_blocked", 1),
+        ),
+    }
+
+
+def test_all_core_effects_replay_and_reject_extra_unbound_events(
+    tmp_path: Path,
+) -> None:
+    complete_workspace = _workspace(tmp_path / "complete")
+    _advance_to_finalize_ready(complete_workspace)
+    with SQLiteControlStore.open(complete_workspace / "briefloop.db") as store:
+        complete_snapshot = store.load_snapshot(RUN_ID)
+
+    contaminated_workspace = _workspace(tmp_path / "contaminated")
+    contaminated_service = _advance_to_scout_ready(contaminated_workspace)
+    with SQLiteControlStore.open(
+        contaminated_workspace / "briefloop.db"
+    ) as store:
+        before_contamination = store.load_snapshot(RUN_ID)
+    candidate_path = contaminated_workspace / next(
+        item.path
+        for item in before_contamination.artifacts
+        if item.artifact_id == "source_candidates"
+    )
+    candidate_path.write_text("sources:\n  - MUTATED\n", encoding="utf-8")
+    blocked = contaminated_service.start_invocation(
+        _record(
+            InvocationStartRequest,
+            request_id="REQ-EFFECT-TABLE-CONTAMINATION",
+            run_id=RUN_ID,
+            stage_id="scout",
+            role_id="scout",
+            runtime="operator",
+            expected_store_revision=before_contamination.store_revision,
+        )
+    )
+    assert blocked.status == "blocked", blocked.to_dict()
+    with SQLiteControlStore.open(
+        contaminated_workspace / "briefloop.db"
+    ) as store:
+        contaminated_snapshot = store.load_snapshot(RUN_ID)
+
+    cases = {}
+    for workspace, snapshot in (
+        (complete_workspace, complete_snapshot),
+        (contaminated_workspace, contaminated_snapshot),
+    ):
+        events = {item.event_id: item for item in snapshot.events}
+        for receipt in snapshot.transactions:
+            bound_events = [
+                events[event_id]
+                for event_id in receipt.event_ids
+                if events[event_id].core_run_binding is not None
+            ]
+            if len(bound_events) != 1:
+                continue
+            binding = bound_events[0].core_run_binding
+            assert binding is not None
+            cases.setdefault(
+                binding.effect_kind,
+                (workspace, snapshot, receipt, binding),
+            )
+    assert set(cases) == set(_CORE_EFFECT_BINDING_RULES)
+
+    for effect_kind, (workspace, snapshot, receipt, binding) in cases.items():
+        with SQLiteControlStore.open(workspace / "briefloop.db") as store:
+            before = store.current_revision
+            replay = resolve_core_replay(
+                store,
+                run_id=RUN_ID,
+                request_id=receipt.transaction_id,
+                request_fingerprint=binding.request_fingerprint,
+            )
+            assert replay is not None
+            assert replay.receipt == receipt
+            assert replay.primary_record_id == binding.primary_record_id
+            assert replay.status == (
+                "blocked" if effect_kind == "integrity_contamination" else "replayed"
+            )
+            assert store.current_revision == before
+
+        extra = _record(
+            EventEnvelope,
+            event_id=f"EVT-EXTRA-{effect_kind.upper().replace('_', '-')}",
+            run_id=RUN_ID,
+            event_type="run_blocked",
+            created_at=NOW,
+            actor="system",
+            transaction_id=receipt.transaction_id,
+            stage_id=None,
+            artifact_id=None,
+            decision="block",
+            reason="forged_extra_event",
+            metadata={},
+            intake_binding=None,
+            core_run_binding=None,
+        )
+        forged_receipt = receipt.model_copy(
+            update={"event_ids": [*receipt.event_ids, extra.event_id]}
+        )
+        forged_snapshot = replace(
+            snapshot,
+            events=(*snapshot.events, extra),
+        )
+        with pytest.raises(CoreRunError, match="control_store_integrity_invalid"):
+            _verified_core_receipt_binding(forged_snapshot, forged_receipt)
 
 
 def test_forged_core_primary_record_id_is_rejected_before_replay(
@@ -1993,14 +2282,8 @@ def test_claim_freeze_is_byte_deterministic_for_equivalent_inputs(
     assert claim_payloads[0] == claim_payloads[1]
 
 
-def test_default_core_spine_reaches_finalize_ready(tmp_path: Path) -> None:
-    workspace = _workspace(tmp_path)
+def _advance_to_finalize_ready(workspace: Path) -> CoreRunService:
     service = _advance_to_auditor_ready(workspace)
-
-    assert _stage(workspace, "scout").status == "complete"
-    assert _stage(workspace, "screener").status == "complete"
-    assert _stage(workspace, "claim-ledger").status == "complete"
-
     gate_result = GateEvaluationService(workspace, clock=CLOCK).evaluate(
         _gate_request(workspace)
     )
@@ -2025,6 +2308,16 @@ def test_default_core_spine_reaches_finalize_ready(tmp_path: Path) -> None:
         ],
         gate_evaluation_ids=gate_ids,
     )
+    return service
+
+
+def test_default_core_spine_reaches_finalize_ready(tmp_path: Path) -> None:
+    workspace = _workspace(tmp_path)
+    _advance_to_finalize_ready(workspace)
+
+    assert _stage(workspace, "scout").status == "complete"
+    assert _stage(workspace, "screener").status == "complete"
+    assert _stage(workspace, "claim-ledger").status == "complete"
 
     assert _stage(workspace, "auditor").status == "complete"
     assert _stage(workspace, "finalize").status == "ready"

@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from collections import defaultdict
+from collections import Counter, defaultdict
 from dataclasses import dataclass
 from typing import Any
 
@@ -61,8 +61,9 @@ class VerifiedCoreRun:
 @dataclass(frozen=True)
 class _CoreEffectBindingRule:
     transaction_type: str
-    event_types: frozenset[str]
+    primary_event_types: frozenset[str]
     primary_family: str
+    receipt_event_counts: tuple[tuple[str, int], ...] | None
 
 
 _CORE_EFFECT_BINDING_RULES = {
@@ -70,41 +71,49 @@ _CORE_EFFECT_BINDING_RULES = {
         transaction_type_for("initialize"),
         frozenset({"run_initialized"}),
         "run_contract_binding",
+        (("run_initialized", 1),),
     ),
     "invocation_start": _CoreEffectBindingRule(
         transaction_type_for("invocation_start"),
         frozenset({"role_invocation_started"}),
         "invocation",
+        (("role_invocation_started", 1),),
     ),
     "owned_artifact_acceptance": _CoreEffectBindingRule(
         transaction_type_for("owned_artifact_acceptance"),
         frozenset({"owned_artifact_accepted"}),
         "owned_artifact_submission",
+        (("owned_artifact_accepted", 1),),
     ),
     "claim_freeze": _CoreEffectBindingRule(
         transaction_type_for("claim_freeze"),
         frozenset({"claim_ledger_frozen"}),
         "claim_freeze",
+        (("claim_ledger_frozen", 1),),
     ),
     "audit_promotion": _CoreEffectBindingRule(
         transaction_type_for("audit_promotion"),
         frozenset({"audit_proposal_promoted"}),
         "audit_submission",
+        (("audit_proposal_promoted", 1),),
     ),
     "gate_evaluation": _CoreEffectBindingRule(
         transaction_type_for("gate_evaluation"),
         frozenset({"quality_gate_checked"}),
         "gate_batch",
+        (("quality_gate_checked", 1),),
     ),
     "stage_transition": _CoreEffectBindingRule(
         transaction_type_for("stage_transition"),
         frozenset({"stage_status_changed", "stage_satisfied_by_topology"}),
         "stage_transition",
+        None,
     ),
     "integrity_contamination": _CoreEffectBindingRule(
         transaction_type_for("integrity_contamination"),
         frozenset({"run_integrity_contaminated"}),
         "run_integrity_record",
+        (("run_integrity_contaminated", 1), ("run_blocked", 1)),
     ),
 }
 
@@ -1403,11 +1412,16 @@ def _verified_core_receipt_binding(
     """Bind one core transaction to its exact effect and primary record."""
 
     events = {event.event_id: event for event in snapshot.events}
-    bound = [
-        events[event_id]
-        for event_id in receipt.event_ids
-        if event_id in events and events[event_id].core_run_binding is not None
-    ]
+    receipt_events = [events.get(event_id) for event_id in receipt.event_ids]
+    if any(
+        event is None
+        or event.run_id != receipt.run_id
+        or event.transaction_id != receipt.transaction_id
+        for event in receipt_events
+    ):
+        raise CoreRunError("control_store_integrity_invalid")
+    owned_events = [event for event in receipt_events if event is not None]
+    bound = [event for event in owned_events if event.core_run_binding is not None]
     if len(bound) != 1:
         raise CoreRunError("control_store_integrity_invalid")
     event = bound[0]
@@ -1419,11 +1433,17 @@ def _verified_core_receipt_binding(
         rule is None
         or receipt.run_id != snapshot.run.run_id
         or receipt.transaction_type != rule.transaction_type
-        or event.event_type not in rule.event_types
+        or event.event_type not in rule.primary_event_types
         or binding.request_id != receipt.transaction_id
         or event.transaction_id != receipt.transaction_id
     ):
         raise CoreRunError("control_store_integrity_invalid")
+    _verify_core_receipt_event_set(
+        snapshot,
+        receipt,
+        rule,
+        owned_events,
+    )
 
     primary_id = binding.primary_record_id
     fingerprint = binding.request_fingerprint
@@ -1591,6 +1611,52 @@ def _verified_core_receipt_binding(
     else:  # pragma: no cover - the frozen table exhausts this branch.
         raise CoreRunError("control_store_integrity_invalid")
     return event, binding
+
+
+def _verify_core_receipt_event_set(
+    snapshot: ControlStoreSnapshot,
+    receipt: TransactionReceipt,
+    rule: _CoreEffectBindingRule,
+    events: list[EventEnvelope],
+) -> None:
+    """Require the receipt's complete event set to match its domain effect."""
+
+    actual_counts = Counter(event.event_type for event in events)
+    if rule.receipt_event_counts is not None:
+        if actual_counts != Counter(dict(rule.receipt_event_counts)):
+            raise CoreRunError("control_store_integrity_invalid")
+        return
+    if rule.primary_family != "stage_transition":
+        raise CoreRunError("control_store_integrity_invalid")
+
+    transition_ids = [item.transition_id for item in receipt.stage_transitions]
+    transitions = [
+        item
+        for item in snapshot.stage_transitions
+        if item.transition_id in transition_ids
+    ]
+    if len(transitions) != len(transition_ids):
+        raise CoreRunError("control_store_integrity_invalid")
+    expected_event_ids = {item.transition_event_id for item in transitions}
+    if (
+        len(expected_event_ids) != len(transitions)
+        or set(receipt.event_ids) != expected_event_ids
+    ):
+        raise CoreRunError("control_store_integrity_invalid")
+    expected_counts = Counter(
+        "stage_satisfied_by_topology"
+        if item.transition_kind == "satisfied_by_topology"
+        else "stage_status_changed"
+        for item in transitions
+    )
+    if actual_counts != expected_counts:
+        raise CoreRunError("control_store_integrity_invalid")
+    by_id = {event.event_id: event for event in events}
+    if any(
+        by_id[item.transition_event_id].stage_id != item.stage_id
+        for item in transitions
+    ):
+        raise CoreRunError("control_store_integrity_invalid")
 
 
 def resolve_core_replay(

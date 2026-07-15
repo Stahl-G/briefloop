@@ -95,11 +95,6 @@ class ArtifactAcceptanceService:
             raise CoreRunError("artifact_input_unsafe") from exc
         if PurePosixPath(request.input_path).suffix != policy.input_suffix:
             raise CoreRunError("artifact_input_unsafe")
-        if request.artifact_id == "input_classification":
-            expected_content = _input_classification_bytes(self.workspace)
-            if content != expected_content:
-                raise CoreRunError("artifact_input_unsafe")
-            content = expected_content
         fingerprint = canonical_fingerprint(
             {
                 "request": request.model_dump(mode="json", exclude_unset=False),
@@ -115,6 +110,11 @@ class ArtifactAcceptanceService:
             )
             if replay is not None:
                 return replay
+            if request.artifact_id == "input_classification":
+                expected_content = _input_classification_bytes(self.workspace)
+                if content != expected_content:
+                    raise CoreRunError("artifact_input_unsafe")
+                content = expected_content
             verified = self._verifier.verify(store, request.run_id)
             self._require_store_revision(
                 verified.snapshot.store_revision,
@@ -339,7 +339,6 @@ class ArtifactAcceptanceService:
                 or proposal_record.target_artifact_revision != target.revision
                 or request.expected_target_artifact.artifact_id != target.artifact_id
                 or request.expected_target_artifact.revision != target.revision
-                or report_record.current_revision != request.expected_audit_report_revision
             ):
                 raise CoreRunError("artifact_revision_conflict")
             report = AuditReportArtifact.model_validate(
@@ -375,6 +374,11 @@ class ArtifactAcceptanceService:
             )
             if replay is not None:
                 return replay
+            if (
+                report_record.current_revision
+                != request.expected_audit_report_revision
+            ):
+                raise CoreRunError("artifact_revision_conflict")
             self._require_store_revision(
                 verified.snapshot.store_revision,
                 request.expected_store_revision,
@@ -559,11 +563,24 @@ def _completed_invocation(invocation: Invocation, completed_at: str) -> Invocati
 
 
 def _input_classification_bytes(workspace: Path) -> bytes:
-    """Recompute the fixed input-governance tool output before acceptance."""
+    """Build one workspace-relative input-governance payload."""
 
     try:
-        classified = classify_input_dir(workspace / "input")
-        return canonical_json_bytes(classified) + b"\n"
+        root = workspace.resolve(strict=True)
+        classified = classify_input_dir(root / "input")
+        relative: dict[str, list[dict[str, object]]] = {}
+        for lane in ("evidence", "feedback", "instruction", "context", "skipped"):
+            rows: list[dict[str, object]] = []
+            for raw in classified[lane]:
+                row = dict(raw)
+                for field in ("path", "extracted_markdown"):
+                    value = row.get(field)
+                    if isinstance(value, str) and value:
+                        resolved = Path(value).resolve(strict=True)
+                        row[field] = resolved.relative_to(root).as_posix()
+                rows.append(row)
+            relative[lane] = rows
+        return canonical_json_bytes(relative) + b"\n"
     except (OSError, RuntimeError, TypeError, ValueError) as exc:
         raise CoreRunError("artifact_input_unsafe") from exc
 
