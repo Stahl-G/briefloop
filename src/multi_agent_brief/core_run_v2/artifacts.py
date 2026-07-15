@@ -34,7 +34,11 @@ from multi_agent_brief.inputs.classifier import classify_input_dir
 from .errors import CoreRunError, CoreRunResult, core_run_error_code
 from .integrity import RunIntegrityService, materialize_checkout
 from .policy import ARTIFACT_POLICIES, derived_id, transaction_type_for
-from .verifier import CoreRunDomainVerifier, resolve_core_replay
+from .verifier import (
+    CoreRunDomainVerifier,
+    classify_human_assisted_analyst_route,
+    resolve_core_replay,
+)
 
 
 _Clock = Callable[[], datetime]
@@ -156,6 +160,24 @@ class ArtifactAcceptanceService:
                 raise CoreRunError("artifact_owner_mismatch")
             if request.producer_tool_id != policy.producer_tool_id:
                 raise CoreRunError("artifact_owner_mismatch")
+            if (
+                verified.binding.role_topology == "human_assisted"
+                and request.artifact_id
+                in {"analyst_draft_snapshot", "audited_brief"}
+            ):
+                route = classify_human_assisted_analyst_route(
+                    verified.snapshot
+                )
+                if stage_id == "analyst":
+                    required_route = (
+                        "writer_reserved"
+                        if owner_role == "writer"
+                        else "analyst_reserved"
+                    )
+                    if route != required_route:
+                        raise CoreRunError("artifact_revision_conflict")
+                elif stage_id == "editor" and route != "snapshot_route":
+                    raise CoreRunError("artifact_revision_conflict")
             stage = next(
                 (item for item in verified.snapshot.stage_states if item.stage_id == stage_id),
                 None,

@@ -61,6 +61,7 @@ from .verifier import (
     CoreRunDomainVerifier,
     VerifiedCoreRun,
     _audit_targets_revision,
+    classify_human_assisted_analyst_route,
     resolve_core_replay,
 )
 
@@ -417,6 +418,13 @@ class CoreRunService:
             if stage.status != "ready" or request.role_id not in self._roles_for(
                 verified,
                 request.stage_id,
+            ):
+                raise CoreRunError("invocation_owner_mismatch")
+            if (
+                verified.binding.role_topology == "human_assisted"
+                and request.stage_id == "analyst"
+                and classify_human_assisted_analyst_route(verified.snapshot)
+                != "open"
             ):
                 raise CoreRunError("invocation_owner_mismatch")
             blocked = self._integrity.require_clean(
@@ -849,16 +857,32 @@ class CoreRunService:
                 )
             )
         elif stage_id == "analyst":
-            if verified.binding.role_topology == "human_assisted" and artifacts[
-                "audited_brief"
-            ].current_revision:
-                brief = require_artifact("audited_brief", "topology_required")
-                submission = require_submission(
-                    brief,
-                    owner_stage_id="analyst",
-                    owner_role_id="writer",
-                )
-                producer_invocation_id = submission.invocation_id
+            if verified.binding.role_topology == "human_assisted":
+                route = classify_human_assisted_analyst_route(snapshot)
+                if route == "writer_route":
+                    brief = require_artifact(
+                        "audited_brief",
+                        "topology_required",
+                    )
+                    submission = require_submission(
+                        brief,
+                        owner_stage_id="analyst",
+                        owner_role_id="writer",
+                    )
+                    producer_invocation_id = submission.invocation_id
+                elif route == "snapshot_route":
+                    analyst = require_artifact(
+                        "analyst_draft_snapshot",
+                        "produced",
+                    )
+                    submission = require_submission(
+                        analyst,
+                        owner_stage_id="analyst",
+                        owner_role_id="analyst",
+                    )
+                    producer_invocation_id = submission.invocation_id
+                else:
+                    raise CoreRunError("stage_artifact_binding_invalid")
             else:
                 analyst = require_artifact("analyst_draft_snapshot", "produced")
                 submission = require_submission(

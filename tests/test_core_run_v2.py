@@ -22,6 +22,7 @@ from multi_agent_brief.contracts.v2 import (
     EventEnvelope,
     GateCheckRequest,
     IntegrityCheckRequest,
+    Invocation,
     InvocationStartRequest,
     OwnedArtifactSubmitRequest,
     SourceCommitRequest,
@@ -44,12 +45,17 @@ from multi_agent_brief.core_run_v2 import (
 )
 from multi_agent_brief.core_run_v2.artifacts import _input_classification_bytes
 from multi_agent_brief.core_run_v2.integrity import read_workspace_file
-from multi_agent_brief.core_run_v2.policy import REQUIRED_AUDITOR_GATES
+from multi_agent_brief.core_run_v2.policy import (
+    REQUIRED_AUDITOR_GATES,
+    derived_id,
+    transaction_type_for,
+)
 from multi_agent_brief.core_run_v2.errors import CoreRunError
 from multi_agent_brief.core_run_v2.verifier import (
     CoreRunDomainVerifier,
     _CORE_EFFECT_BINDING_RULES,
     _verified_core_receipt_binding,
+    classify_human_assisted_analyst_route,
     resolve_core_replay,
 )
 from multi_agent_brief.intake_v2.service import IntakeService
@@ -1215,6 +1221,79 @@ def test_strict_topology_requires_independent_screener(tmp_path: Path) -> None:
     assert _stage(workspace, "claim-ledger").status == "ready"
 
 
+@pytest.mark.parametrize("role_id", ["analyst", "writer"])
+def test_human_assisted_pending_analyst_rejects_route_reservation_replay(
+    tmp_path: Path,
+    role_id: str,
+) -> None:
+    workspace = _workspace(tmp_path)
+    _initialize(workspace, topology="human_assisted")
+    assert _stage(workspace, "analyst").status == "pending"
+    request_id = f"REQ-FORGED-EARLY-{role_id.upper()}"
+    with SQLiteControlStore.open(workspace / "briefloop.db") as store:
+        request = _record(
+            InvocationStartRequest,
+            request_id=request_id,
+            run_id=RUN_ID,
+            stage_id="analyst",
+            role_id=role_id,
+            runtime="operator",
+            expected_store_revision=store.current_revision,
+        )
+        fingerprint = canonical_fingerprint(
+            request.model_dump(mode="json", exclude_unset=False)
+        )
+        invocation_id = derived_id("INV", request_id, fingerprint)
+        event_id = derived_id("EVT-INVOKE", request_id, fingerprint)
+        invocation = _record(
+            Invocation,
+            invocation_id=invocation_id,
+            run_id=RUN_ID,
+            role_id=role_id,
+            runtime="operator",
+            status="active",
+            started_at=NOW,
+        )
+        event = _record(
+            EventEnvelope,
+            event_id=event_id,
+            run_id=RUN_ID,
+            event_type="role_invocation_started",
+            created_at=NOW,
+            actor="system",
+            transaction_id=request_id,
+            stage_id="analyst",
+            artifact_id=None,
+            decision="continue",
+            reason="forged early route reservation",
+            metadata={},
+            core_run_binding=CoreRunEventBinding.model_validate(
+                {
+                    "request_id": request_id,
+                    "request_fingerprint": fingerprint,
+                    "effect_kind": "invocation_start",
+                    "primary_record_id": invocation_id,
+                    "outcome": "committed",
+                },
+                strict=True,
+            ),
+        )
+        unit = store.begin(
+            RUN_ID,
+            request_id,
+            transaction_type_for("invocation_start"),
+            store.current_revision,
+        )
+        unit.put_invocation(invocation)
+        unit.append_event(event)
+        unit.commit()
+        with pytest.raises(
+            CoreRunError,
+            match="control_store_integrity_invalid",
+        ):
+            CoreRunDomainVerifier().verify(store, RUN_ID)
+
+
 def test_human_assisted_writer_satisfies_analyst_and_editor(tmp_path: Path) -> None:
     workspace = _workspace(tmp_path)
     service = _advance_to_analyst_ready(workspace, topology="human_assisted")
@@ -1225,6 +1304,25 @@ def test_human_assisted_writer_satisfies_analyst_and_editor(tmp_path: Path) -> N
         stage_id="analyst",
         role_id="writer",
     )
+    with SQLiteControlStore.open(workspace / "briefloop.db") as store:
+        before_reserved_conflict = store.load_snapshot(RUN_ID)
+    rejected_analyst = service.start_invocation(
+        _record(
+            InvocationStartRequest,
+            request_id="REQ-INVOKE-ANALYST-WHILE-WRITER-RESERVED",
+            run_id=RUN_ID,
+            stage_id="analyst",
+            role_id="analyst",
+            runtime="operator",
+            expected_store_revision=before_reserved_conflict.store_revision,
+        )
+    )
+    assert rejected_analyst.to_dict() == {
+        "status": "failed_uncommitted",
+        "error_code": "invocation_owner_mismatch",
+    }
+    with SQLiteControlStore.open(workspace / "briefloop.db") as store:
+        assert store.load_snapshot(RUN_ID) == before_reserved_conflict
     brief_path = workspace / "scratch" / writer / "audited_brief.md"
     brief_path.parent.mkdir(parents=True, exist_ok=True)
     brief_path.write_text(
@@ -1279,6 +1377,25 @@ def test_human_assisted_writer_satisfies_analyst_and_editor(tmp_path: Path) -> N
         )
     )
     assert accepted.status == "committed", accepted.to_dict()
+    with SQLiteControlStore.open(workspace / "briefloop.db") as store:
+        before_writer_route_conflict = store.load_snapshot(RUN_ID)
+    rejected_after_brief = service.start_invocation(
+        _record(
+            InvocationStartRequest,
+            request_id="REQ-INVOKE-ANALYST-AFTER-WRITER-BRIEF",
+            run_id=RUN_ID,
+            stage_id="analyst",
+            role_id="analyst",
+            runtime="operator",
+            expected_store_revision=before_writer_route_conflict.store_revision,
+        )
+    )
+    assert rejected_after_brief.to_dict() == {
+        "status": "failed_uncommitted",
+        "error_code": "invocation_owner_mismatch",
+    }
+    with SQLiteControlStore.open(workspace / "briefloop.db") as store:
+        assert store.load_snapshot(RUN_ID) == before_writer_route_conflict
     _complete_stage(
         service,
         workspace,
@@ -1286,7 +1403,44 @@ def test_human_assisted_writer_satisfies_analyst_and_editor(tmp_path: Path) -> N
         artifacts=[("audited_brief", 1)],
     )
     with SQLiteControlStore.open(workspace / "briefloop.db") as store:
-        snapshot = store.load_snapshot(RUN_ID)
+        verified = CoreRunDomainVerifier().verify(store, RUN_ID)
+        snapshot = verified.snapshot
+        writer_submission = next(
+            item
+            for item in snapshot.owned_artifact_submissions
+            if item.artifact_id == "audited_brief"
+        )
+        forged_payload = writer_submission.model_dump(
+            mode="json",
+            exclude_unset=False,
+        )
+        forged_payload["parent_artifact"] = {
+            "artifact_id": "claim_ledger",
+            "revision": 1,
+        }
+        forged_writer_submission = type(writer_submission).model_validate(
+            forged_payload,
+            strict=True,
+        )
+        with pytest.raises(
+            CoreRunError,
+            match="control_store_integrity_invalid",
+        ):
+            CoreRunDomainVerifier._verify_stage_chain(
+                store,
+                replace(
+                    snapshot,
+                    owned_artifact_submissions=tuple(
+                        forged_writer_submission
+                        if item.submission_id
+                        == writer_submission.submission_id
+                        else item
+                        for item in snapshot.owned_artifact_submissions
+                    ),
+                ),
+                verified.contracts,
+                verified.binding,
+            )
     transitions = {
         (item.stage_id, item.transition_kind): item
         for item in snapshot.stage_transitions
@@ -1343,6 +1497,80 @@ def test_human_assisted_analyst_snapshot_routes_only_to_editor(
         stage_id="analyst",
         role_id="analyst",
     )
+    with SQLiteControlStore.open(workspace / "briefloop.db") as store:
+        verified_reserved = CoreRunDomainVerifier().verify(store, RUN_ID)
+        reserved_snapshot = verified_reserved.snapshot
+        active_analyst = next(
+            item
+            for item in reserved_snapshot.invocations
+            if item.invocation_id == analyst
+        )
+        analyst_start = next(
+            item
+            for item in reserved_snapshot.events
+            if item.core_run_binding is not None
+            and item.core_run_binding.effect_kind == "invocation_start"
+            and item.core_run_binding.primary_record_id == analyst
+        )
+        assert analyst_start.core_run_binding is not None
+        forged_writer_id = "INV-FORGED-CONCURRENT-WRITER"
+        forged_writer = active_analyst.model_copy(
+            update={
+                "invocation_id": forged_writer_id,
+                "role_id": "writer",
+            }
+        )
+        forged_writer_event = analyst_start.model_copy(
+            update={
+                "event_id": "EVT-FORGED-CONCURRENT-WRITER",
+                "transaction_id": "REQ-FORGED-CONCURRENT-WRITER",
+                "core_run_binding": analyst_start.core_run_binding.model_copy(
+                    update={
+                        "request_id": "REQ-FORGED-CONCURRENT-WRITER",
+                        "primary_record_id": forged_writer_id,
+                    }
+                ),
+            }
+        )
+        with pytest.raises(
+            CoreRunError,
+            match="control_store_integrity_invalid",
+        ):
+            CoreRunDomainVerifier._verify_stage_chain(
+                store,
+                replace(
+                    reserved_snapshot,
+                    invocations=(
+                        *reserved_snapshot.invocations,
+                        forged_writer,
+                    ),
+                    events=(
+                        *reserved_snapshot.events,
+                        forged_writer_event,
+                    ),
+                ),
+                verified_reserved.contracts,
+                verified_reserved.binding,
+            )
+    with SQLiteControlStore.open(workspace / "briefloop.db") as store:
+        before_reserved_conflict = store.load_snapshot(RUN_ID)
+    rejected_writer = service.start_invocation(
+        _record(
+            InvocationStartRequest,
+            request_id="REQ-INVOKE-WRITER-WHILE-ANALYST-RESERVED",
+            run_id=RUN_ID,
+            stage_id="analyst",
+            role_id="writer",
+            runtime="operator",
+            expected_store_revision=before_reserved_conflict.store_revision,
+        )
+    )
+    assert rejected_writer.to_dict() == {
+        "status": "failed_uncommitted",
+        "error_code": "invocation_owner_mismatch",
+    }
+    with SQLiteControlStore.open(workspace / "briefloop.db") as store:
+        assert store.load_snapshot(RUN_ID) == before_reserved_conflict
     analyst_path = workspace / "scratch" / analyst / "analyst_draft_snapshot.md"
     analyst_path.parent.mkdir(parents=True, exist_ok=True)
     analyst_path.write_text(
@@ -1368,6 +1596,25 @@ def test_human_assisted_analyst_snapshot_routes_only_to_editor(
         )
     )
     assert accepted.status == "committed", accepted.to_dict()
+    with SQLiteControlStore.open(workspace / "briefloop.db") as store:
+        before_snapshot_route_conflict = store.load_snapshot(RUN_ID)
+    rejected_after_snapshot = service.start_invocation(
+        _record(
+            InvocationStartRequest,
+            request_id="REQ-INVOKE-WRITER-AFTER-ANALYST-SNAPSHOT",
+            run_id=RUN_ID,
+            stage_id="analyst",
+            role_id="writer",
+            runtime="operator",
+            expected_store_revision=before_snapshot_route_conflict.store_revision,
+        )
+    )
+    assert rejected_after_snapshot.to_dict() == {
+        "status": "failed_uncommitted",
+        "error_code": "invocation_owner_mismatch",
+    }
+    with SQLiteControlStore.open(workspace / "briefloop.db") as store:
+        assert store.load_snapshot(RUN_ID) == before_snapshot_route_conflict
     _complete_stage(
         service,
         workspace,
@@ -1518,6 +1765,74 @@ def test_human_assisted_analyst_snapshot_routes_only_to_editor(
                     verified.contracts,
                     verified.binding,
                 )
+        mixed_payload = submission.model_dump(
+            mode="json",
+            exclude_unset=False,
+        )
+        mixed_payload.update(
+            owner_stage_id="analyst",
+            owner_role_id="writer",
+            parent_artifact=None,
+        )
+        mixed_writer_submission = type(submission).model_validate(
+            mixed_payload,
+            strict=True,
+        )
+        with pytest.raises(
+            CoreRunError,
+            match="control_store_integrity_invalid",
+        ):
+            CoreRunDomainVerifier._verify_stage_chain(
+                store,
+                replace(
+                    snapshot,
+                    owned_artifact_submissions=tuple(
+                        mixed_writer_submission
+                        if item.submission_id == submission.submission_id
+                        else item
+                        for item in snapshot.owned_artifact_submissions
+                    ),
+                ),
+                verified.contracts,
+                verified.binding,
+            )
+        historical_writer = submission.model_copy(
+            update={
+                "submission_id": "SUBMISSION-FORGED-HISTORICAL-WRITER",
+                "artifact_revision": 1,
+                "owner_stage_id": "analyst",
+                "owner_role_id": "writer",
+                "parent_artifact": None,
+            }
+        )
+        current_editor = submission.model_copy(
+            update={
+                "submission_id": "SUBMISSION-FORGED-CURRENT-EDITOR",
+                "artifact_revision": 2,
+            }
+        )
+        historical_route_snapshot = replace(
+            snapshot,
+            artifacts=tuple(
+                item.model_copy(update={"current_revision": 2})
+                if item.artifact_id == "audited_brief"
+                else item
+                for item in snapshot.artifacts
+            ),
+            owned_artifact_submissions=tuple(
+                item
+                for item in snapshot.owned_artifact_submissions
+                if item.submission_id != submission.submission_id
+            )
+            + (historical_writer, current_editor),
+        )
+        with pytest.raises(
+            CoreRunError,
+            match="control_store_integrity_invalid",
+        ):
+            classify_human_assisted_analyst_route(
+                historical_route_snapshot
+            )
 
 
 @pytest.mark.parametrize(
