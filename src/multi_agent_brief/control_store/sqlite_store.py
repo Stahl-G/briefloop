@@ -532,7 +532,11 @@ class SQLiteControlStore:
         fingerprint = uow._fingerprint(identity)
         with self._lock:
             self._require_open()
-            prior = self._existing_receipt(
+            # Exact replay and new work both require a complete trusted
+            # baseline. This read transaction finishes before any new blob is
+            # written, so pre-existing ledger corruption cannot create another
+            # orphan or be mistaken for a successful replay.
+            prior = self._verify_baseline_and_existing_receipt(
                 run_id,
                 transaction_id,
                 fingerprint,
@@ -557,6 +561,12 @@ class SQLiteControlStore:
             try:
                 self._connection.execute("BEGIN IMMEDIATE")
                 self._inject("after_begin")
+                # Another connection may have committed after the first read
+                # snapshot and before this write transaction. Recheck the
+                # accepted baseline before an exact replay can return.
+                verify_schema(self._connection)
+                self._verify_committed_blob_bindings()
+                self._verify_workspace_ledger_graph()
                 replay = self._existing_receipt(
                     run_id,
                     transaction_id,
@@ -597,6 +607,10 @@ class SQLiteControlStore:
                 )
                 if updated.rowcount != 1:
                     raise ControlStoreConflict("store_revision_conflict")
+                # Validate the proposed graph while all inserted rows and the
+                # workspace revision remain rollback-capable in this same
+                # SQLite write transaction.
+                self._verify_workspace_ledger_graph()
                 self._connection.commit()
             except sqlite3.IntegrityError as exc:
                 self._connection.rollback()
@@ -1088,20 +1102,49 @@ class SQLiteControlStore:
             record = decode_model(ArtifactRevision, str(row[0]))
             self._verify_blob(record, self._blob_path(record.sha256))
 
+    def _verify_baseline_and_existing_receipt(
+        self,
+        run_id: str,
+        transaction_id: str,
+        fingerprint: str,
+    ) -> TransactionReceipt | None:
+        try:
+            self._connection.execute("BEGIN")
+            self._verify_all_payloads_in_transaction()
+            receipt = self._existing_receipt(run_id, transaction_id, fingerprint)
+            self._connection.commit()
+            return receipt
+        except sqlite3.Error as exc:
+            self._connection.rollback()
+            raise ControlStoreIntegrityError("sqlite_read_failed") from exc
+        except Exception:
+            self._connection.rollback()
+            raise
+
     def _verify_all_payloads(self) -> None:
+        try:
+            self._connection.execute("BEGIN")
+            self._verify_all_payloads_in_transaction()
+            self._connection.commit()
+        except sqlite3.Error as exc:
+            self._connection.rollback()
+            raise ControlStoreIntegrityError("sqlite_read_failed") from exc
+        except Exception:
+            self._connection.rollback()
+            raise
+
+    def _verify_all_payloads_in_transaction(self) -> None:
         verify_schema(self._connection)
         self._verify_committed_blob_bindings()
+        self._verify_workspace_ledger_graph()
         run_ids = [
             str(row[0])
             for row in self._connection.execute(
                 "SELECT run_id FROM runs ORDER BY run_id"
             ).fetchall()
         ]
-        if not run_ids:
-            _ = self.current_revision
-            return
         for run_id in run_ids:
-            self.load_snapshot(run_id)
+            self._load_snapshot_in_transaction(run_id)
 
     def load_snapshot(self, run_id: str) -> ControlStoreSnapshot:
         with self._lock:
@@ -1110,6 +1153,9 @@ class SQLiteControlStore:
                 raise ControlStoreIntegrityError("run_id_invalid")
             try:
                 self._connection.execute("BEGIN")
+                verify_schema(self._connection)
+                self._verify_committed_blob_bindings()
+                self._verify_workspace_ledger_graph()
                 snapshot = self._load_snapshot_in_transaction(run_id)
                 self._connection.commit()
                 return snapshot
@@ -1121,8 +1167,6 @@ class SQLiteControlStore:
                 raise
 
     def _load_snapshot_in_transaction(self, run_id: str) -> ControlStoreSnapshot:
-        verify_schema(self._connection)
-        self._verify_committed_blob_bindings(run_id=run_id)
         run_rows = self._connection.execute(
             "SELECT * FROM runs WHERE run_id = ?",
             (run_id,),
@@ -1314,52 +1358,174 @@ class SQLiteControlStore:
         ).fetchall()
         receipts: list[TransactionReceipt] = []
         for row in rows:
-            receipt = self._decode_checked(
-                TransactionReceipt,
-                row,
-                {
-                    "run_id": "run_id",
-                    "transaction_id": "transaction_id",
-                    "schema_version": "schema_version",
-                    "transaction_type": "transaction_type",
-                    "prior_revision": "prior_revision",
-                    "committed_revision": "committed_revision",
-                    "committed_at": "committed_at",
-                    "projection_status": "projection_status",
-                },
-            )
+            receipt = self._decode_transaction_row(row)
             self._verify_transaction_relations(receipt)
             receipts.append(receipt)
         return tuple(receipts)
 
-    def _verify_transaction_relations(self, receipt: TransactionReceipt) -> None:
-        event_ids = [
-            str(row[0])
-            for row in self._connection.execute(
-                """
-                SELECT event_id FROM transaction_events
-                WHERE run_id = ? AND transaction_id = ? ORDER BY position
-                """,
-                (receipt.run_id, receipt.transaction_id),
-            ).fetchall()
-        ]
-        revision_refs = [
-            ArtifactRevisionReference.model_validate(
-                {"artifact_id": row[0], "revision": row[1]}
+    def _decode_transaction_row(self, row: sqlite3.Row) -> TransactionReceipt:
+        return self._decode_checked(
+            TransactionReceipt,
+            row,
+            {
+                "run_id": "run_id",
+                "transaction_id": "transaction_id",
+                "schema_version": "schema_version",
+                "transaction_type": "transaction_type",
+                "prior_revision": "prior_revision",
+                "committed_revision": "committed_revision",
+                "committed_at": "committed_at",
+                "projection_status": "projection_status",
+            },
+        )
+
+    def _transaction_relation_values(
+        self,
+        receipt: TransactionReceipt,
+    ) -> tuple[tuple[str, ...], tuple[ArtifactRevisionReference, ...]]:
+        event_rows = self._connection.execute(
+            """
+            SELECT position, event_id FROM transaction_events
+            WHERE run_id = ? AND transaction_id = ? ORDER BY position
+            """,
+            (receipt.run_id, receipt.transaction_id),
+        ).fetchall()
+        revision_rows = self._connection.execute(
+            """
+            SELECT position, artifact_id, revision
+            FROM transaction_artifact_revisions
+            WHERE run_id = ? AND transaction_id = ? ORDER BY position
+            """,
+            (receipt.run_id, receipt.transaction_id),
+        ).fetchall()
+        if [row[0] for row in event_rows] != list(range(len(event_rows))) or [
+            row[0] for row in revision_rows
+        ] != list(range(len(revision_rows))):
+            raise ControlStoreIntegrityError("transaction_relation_mismatch")
+        event_ids = tuple(str(row[1]) for row in event_rows)
+        try:
+            revision_refs = tuple(
+                ArtifactRevisionReference.model_validate(
+                    {"artifact_id": row[1], "revision": row[2]}
+                )
+                for row in revision_rows
             )
-            for row in self._connection.execute(
-                """
-                SELECT artifact_id, revision FROM transaction_artifact_revisions
-                WHERE run_id = ? AND transaction_id = ? ORDER BY position
-                """,
-                (receipt.run_id, receipt.transaction_id),
-            ).fetchall()
-        ]
+        except ValidationError as exc:
+            raise ControlStoreIntegrityError("transaction_relation_mismatch") from exc
+        return event_ids, revision_refs
+
+    def _verify_transaction_relations(self, receipt: TransactionReceipt) -> None:
+        event_ids, revision_refs = self._transaction_relation_values(receipt)
         if (
-            event_ids != receipt.event_ids
-            or revision_refs != receipt.artifact_revisions
+            list(event_ids) != receipt.event_ids
+            or list(revision_refs) != receipt.artifact_revisions
         ):
             raise ControlStoreIntegrityError("transaction_relation_mismatch")
+
+    def _verify_workspace_ledger_graph(self) -> None:
+        """Verify one complete workspace transaction graph in this SQL snapshot."""
+
+        def invalid() -> None:
+            raise ControlStoreIntegrityError("transaction_ledger_integrity_invalid")
+
+        workspace_revision = self._workspace_revision_in_transaction()
+        transaction_rows = self._connection.execute(
+            """
+            SELECT * FROM transactions
+            ORDER BY committed_revision, run_id, transaction_id
+            """
+        ).fetchall()
+        if len(transaction_rows) != workspace_revision:
+            invalid()
+
+        event_owners: dict[tuple[str, str], str] = {}
+        revision_owners: dict[tuple[str, str, int], str] = {}
+        for expected_revision, row in enumerate(transaction_rows, start=1):
+            receipt = self._decode_transaction_row(row)
+            if (
+                row["workspace_id"] != self.workspace_id
+                or receipt.prior_revision != expected_revision - 1
+                or receipt.committed_revision != expected_revision
+            ):
+                invalid()
+            event_ids, revision_refs = self._transaction_relation_values(receipt)
+            if (
+                list(event_ids) != receipt.event_ids
+                or list(revision_refs) != receipt.artifact_revisions
+            ):
+                raise ControlStoreIntegrityError("transaction_relation_mismatch")
+            for event_id in event_ids:
+                key = (receipt.run_id, event_id)
+                if key in event_owners:
+                    invalid()
+                event_owners[key] = receipt.transaction_id
+            for reference in revision_refs:
+                key = (receipt.run_id, reference.artifact_id, reference.revision)
+                if key in revision_owners:
+                    invalid()
+                revision_owners[key] = receipt.transaction_id
+
+        event_keys: set[tuple[str, str]] = set()
+        for row in self._connection.execute(
+            "SELECT * FROM events ORDER BY run_id, event_id"
+        ).fetchall():
+            event = self._decode_checked(
+                EventEnvelope,
+                row,
+                {
+                    "run_id": "run_id",
+                    "event_id": "event_id",
+                    "schema_version": "schema_version",
+                    "event_type": "event_type",
+                    "created_at": "created_at",
+                    "actor": "actor",
+                    "transaction_id": "transaction_id",
+                    "stage_id": "stage_id",
+                    "artifact_id": "artifact_id",
+                    "decision": "decision",
+                    "reason": "reason",
+                },
+            )
+            key = (event.run_id, event.event_id)
+            owner = event_owners.get(key)
+            if owner is None or key in event_keys:
+                invalid()
+            if event.transaction_id is not None and event.transaction_id != owner:
+                invalid()
+            event_keys.add(key)
+        if event_keys != set(event_owners):
+            invalid()
+
+        revision_keys: set[tuple[str, str, int]] = set()
+        for row in self._connection.execute(
+            """
+            SELECT * FROM artifact_revisions
+            ORDER BY run_id, artifact_id, revision
+            """
+        ).fetchall():
+            revision = self._decode_checked(
+                ArtifactRevision,
+                row,
+                {
+                    "run_id": "run_id",
+                    "artifact_id": "artifact_id",
+                    "revision": "revision",
+                    "schema_version": "schema_version",
+                    "path": "path",
+                    "sha256": "sha256",
+                    "size_bytes": "size_bytes",
+                    "frozen": "frozen",
+                    "producer_kind": "producer_kind",
+                    "producer_id": "producer_id",
+                    "created_at": "created_at",
+                },
+            )
+            key = (revision.run_id, revision.artifact_id, revision.revision)
+            if key not in revision_owners or key in revision_keys:
+                invalid()
+            revision_keys.add(key)
+        if revision_keys != set(revision_owners):
+            invalid()
 
     def scan_orphans(self) -> OrphanBlobScan:
         with self._lock:

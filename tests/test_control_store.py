@@ -23,6 +23,7 @@ from multi_agent_brief.contracts.v2 import (
     RunIdentity,
     SourceProposal,
     StageState,
+    TransactionReceipt,
 )
 from multi_agent_brief.control_store import (
     ControlStoreConflict,
@@ -317,6 +318,113 @@ def _mutate_schema(database: Path, script: str) -> None:
         connection.close()
 
 
+def _forged_receipt(
+    base: TransactionReceipt,
+    *,
+    transaction_id: str,
+    prior_revision: int,
+    committed_revision: int,
+    event_ids: tuple[str, ...] = (),
+    artifact_revisions: tuple[tuple[str, int], ...] = (),
+) -> TransactionReceipt:
+    values = base.model_dump(mode="python")
+    values.update(
+        {
+            "transaction_id": transaction_id,
+            "prior_revision": prior_revision,
+            "committed_revision": committed_revision,
+            "event_ids": list(event_ids),
+            "artifact_revisions": [
+                {"artifact_id": artifact_id, "revision": revision}
+                for artifact_id, revision in artifact_revisions
+            ],
+        }
+    )
+    return TransactionReceipt.model_validate(values)
+
+
+def _insert_receipt_row(
+    connection: sqlite3.Connection,
+    receipt: TransactionReceipt,
+) -> None:
+    connection.execute(
+        """
+        INSERT INTO transactions(
+            run_id, transaction_id, workspace_id, schema_version,
+            transaction_type, prior_revision, committed_revision, committed_at,
+            projection_status, fingerprint, payload_json
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """,
+        (
+            receipt.run_id,
+            receipt.transaction_id,
+            WORKSPACE_ID,
+            receipt.schema_version,
+            receipt.transaction_type,
+            receipt.prior_revision,
+            receipt.committed_revision,
+            receipt.committed_at,
+            receipt.projection_status,
+            "0" * 64,
+            canonical_model_text(receipt),
+        ),
+    )
+    for position, event_id in enumerate(receipt.event_ids):
+        connection.execute(
+            """
+            INSERT INTO transaction_events(
+                run_id, transaction_id, position, event_id
+            ) VALUES (?, ?, ?, ?)
+            """,
+            (receipt.run_id, receipt.transaction_id, position, event_id),
+        )
+    for position, reference in enumerate(receipt.artifact_revisions):
+        connection.execute(
+            """
+            INSERT INTO transaction_artifact_revisions(
+                run_id, transaction_id, position, artifact_id, revision
+            ) VALUES (?, ?, ?, ?, ?)
+            """,
+            (
+                receipt.run_id,
+                receipt.transaction_id,
+                position,
+                reference.artifact_id,
+                reference.revision,
+            ),
+        )
+
+
+def _insert_artifact_revision_row(
+    connection: sqlite3.Connection,
+    record: ArtifactRevision,
+) -> None:
+    connection.execute(
+        """
+        INSERT INTO artifact_revisions(
+            run_id, artifact_id, revision, schema_version, path, sha256,
+            size_bytes, frozen, producer_kind, producer_id, created_at,
+            blob_relpath, payload_json
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """,
+        (
+            record.run_id,
+            record.artifact_id,
+            record.revision,
+            record.schema_version,
+            record.path,
+            record.sha256,
+            record.size_bytes,
+            int(record.frozen),
+            record.producer_kind,
+            record.producer_id,
+            record.created_at,
+            f"sha256/{record.sha256[:2]}/{record.sha256}",
+            canonical_model_text(record),
+        ),
+    )
+
+
 def _stage_crash_boundary_unit(store: SQLiteControlStore):
     records = _records(transaction_id=CRASH_TRANSACTION_ID)
     unit = store.begin(
@@ -409,6 +517,415 @@ def test_control_store_round_trips_exact_nine_control_dtos(tmp_path: Path) -> No
         ).fetchone()
         assert event_row[0] == '{"a":{"finite":1.25,"valid":true},"z":2}'
         assert event_row[1] == canonical_model_text(records.event)
+
+
+@pytest.mark.parametrize(
+    "corruption",
+    [
+        "revision_zero_with_transaction",
+        "missing_terminal_transaction",
+        "noncontiguous_transaction",
+        "transaction_beyond_revision",
+    ],
+)
+def test_open_rejects_noncontiguous_workspace_transaction_ledger(
+    tmp_path: Path,
+    corruption: str,
+) -> None:
+    store = _create_store(tmp_path)
+    first = _stage_all(store).commit()
+    if corruption == "revision_zero_with_transaction":
+        store._connection.execute(
+            "UPDATE workspaces SET revision = 0 WHERE workspace_id = ?",
+            (WORKSPACE_ID,),
+        )
+    elif corruption == "missing_terminal_transaction":
+        store._connection.execute(
+            "UPDATE workspaces SET revision = 2 WHERE workspace_id = ?",
+            (WORKSPACE_ID,),
+        )
+    elif corruption == "noncontiguous_transaction":
+        _insert_receipt_row(
+            store._connection,
+            _forged_receipt(
+                first,
+                transaction_id="TX-FORGED-GAP-008",
+                prior_revision=7,
+                committed_revision=8,
+            ),
+        )
+        store._connection.execute(
+            "UPDATE workspaces SET revision = 8 WHERE workspace_id = ?",
+            (WORKSPACE_ID,),
+        )
+    else:
+        _insert_receipt_row(
+            store._connection,
+            _forged_receipt(
+                first,
+                transaction_id="TX-FORGED-BEYOND-002",
+                prior_revision=1,
+                committed_revision=2,
+            ),
+        )
+    store.close()
+
+    with pytest.raises(ControlStoreIntegrityError) as error:
+        SQLiteControlStore.open(tmp_path / "control.db")
+    assert error.value.code == "transaction_ledger_integrity_invalid"
+    assert str(error.value) == "transaction_ledger_integrity_invalid"
+
+
+def test_load_rejects_event_without_reverse_receipt_coverage(tmp_path: Path) -> None:
+    with _create_store(tmp_path) as store:
+        first = _stage_all(store).commit()
+        uncovered = _records().event.model_copy(
+            update={
+                "event_id": "EV-UNCOVERED-002",
+                "transaction_id": first.transaction_id,
+            }
+        )
+        store._insert_events((uncovered,))
+
+        with pytest.raises(ControlStoreIntegrityError) as error:
+            store.load_snapshot(RUN_ID)
+        assert error.value.code == "transaction_ledger_integrity_invalid"
+        assert store.current_revision == 1
+        assert _table_count(store, "transactions") == 1
+
+
+def test_open_rejects_artifact_revision_without_reverse_receipt_coverage(
+    tmp_path: Path,
+) -> None:
+    store = _create_store(tmp_path)
+    _stage_all(store).commit()
+    uncovered = _records().revision.model_copy(
+        update={
+            "revision": 2,
+            "path": f"output/artifacts/{BLOB_SHA256}/brief-v2.md",
+        }
+    )
+    _insert_artifact_revision_row(store._connection, uncovered)
+    store.close()
+
+    with pytest.raises(ControlStoreIntegrityError) as error:
+        SQLiteControlStore.open(tmp_path / "control.db")
+    assert error.value.code == "transaction_ledger_integrity_invalid"
+
+
+@pytest.mark.parametrize("covered_kind", ["event", "artifact_revision"])
+def test_open_rejects_rows_covered_by_two_transaction_receipts(
+    tmp_path: Path,
+    covered_kind: str,
+) -> None:
+    store = _create_store(tmp_path)
+    first = _stage_all(store).commit()
+    second = _forged_receipt(
+        first,
+        transaction_id=f"TX-DUPLICATE-{covered_kind.upper()}-002",
+        prior_revision=1,
+        committed_revision=2,
+        event_ids=(first.event_ids[0],) if covered_kind == "event" else (),
+        artifact_revisions=(
+            (
+                first.artifact_revisions[0].artifact_id,
+                first.artifact_revisions[0].revision,
+            ),
+        )
+        if covered_kind == "artifact_revision"
+        else (),
+    )
+    _insert_receipt_row(store._connection, second)
+    store._connection.execute(
+        "UPDATE workspaces SET revision = 2 WHERE workspace_id = ?",
+        (WORKSPACE_ID,),
+    )
+    store.close()
+
+    with pytest.raises(ControlStoreIntegrityError) as error:
+        SQLiteControlStore.open(tmp_path / "control.db")
+    assert error.value.code == "transaction_ledger_integrity_invalid"
+
+
+def test_open_rejects_event_transaction_id_that_differs_from_receipt_owner(
+    tmp_path: Path,
+) -> None:
+    store = _create_store(tmp_path)
+    first = _stage_all(store).commit()
+    event_id = "EV-CROSS-OWNER-002"
+    cross_owned = _records().event.model_copy(
+        update={"event_id": event_id, "transaction_id": first.transaction_id}
+    )
+    store._insert_events((cross_owned,))
+    second = _forged_receipt(
+        first,
+        transaction_id="TX-ACTUAL-OWNER-002",
+        prior_revision=1,
+        committed_revision=2,
+        event_ids=(event_id,),
+    )
+    _insert_receipt_row(store._connection, second)
+    store._connection.execute(
+        "UPDATE workspaces SET revision = 2 WHERE workspace_id = ?",
+        (WORKSPACE_ID,),
+    )
+    store.close()
+
+    with pytest.raises(ControlStoreIntegrityError) as error:
+        SQLiteControlStore.open(tmp_path / "control.db")
+    assert error.value.code == "transaction_ledger_integrity_invalid"
+
+
+def test_forward_receipt_relation_mismatch_keeps_existing_error(
+    tmp_path: Path,
+) -> None:
+    with _create_store(tmp_path) as store:
+        first = _stage_all(store).commit()
+        extra = _records().event.model_copy(
+            update={
+                "event_id": "EV-EXTRA-RELATION-002",
+                "transaction_id": first.transaction_id,
+            }
+        )
+        store._insert_events((extra,))
+        store._connection.execute(
+            """
+            INSERT INTO transaction_events(
+                run_id, transaction_id, position, event_id
+            ) VALUES (?, ?, 1, ?)
+            """,
+            (RUN_ID, first.transaction_id, extra.event_id),
+        )
+
+        with pytest.raises(ControlStoreIntegrityError) as error:
+            store.load_snapshot(RUN_ID)
+        assert error.value.code == "transaction_relation_mismatch"
+
+
+def test_exact_replay_rejects_preexisting_corrupt_ledger(tmp_path: Path) -> None:
+    with _create_store(tmp_path) as store:
+        first = _stage_all(store).commit()
+        uncovered = _records().event.model_copy(
+            update={
+                "event_id": "EV-REPLAY-UNCOVERED-002",
+                "transaction_id": first.transaction_id,
+            }
+        )
+        store._insert_events((uncovered,))
+
+        with pytest.raises(ControlStoreIntegrityError) as error:
+            _stage_all(store).commit()
+        assert error.value.code == "transaction_ledger_integrity_invalid"
+        assert store.current_revision == 1
+        assert _table_count(store, "transactions") == 1
+
+
+def test_commit_rechecks_second_connection_damage_before_new_blob(
+    tmp_path: Path,
+) -> None:
+    with _create_store(tmp_path) as store:
+        first = _stage_all(store).commit()
+        content = b"new artifact that must not be staged\n"
+        digest = hashlib.sha256(content).hexdigest()
+        unit = store.begin(
+            RUN_ID,
+            "TX-BLOCKED-BY-LEDGER-002",
+            "artifact_update",
+            1,
+        )
+        unit.put_artifact(
+            _record(
+                ArtifactRecord,
+                run_id=RUN_ID,
+                artifact_id="new-artifact",
+                current_revision=1,
+                status="valid",
+                required=False,
+                path="output/new-artifact.md",
+                format="markdown",
+            )
+        )
+        unit.put_artifact_revision(
+            _record(
+                ArtifactRevision,
+                run_id=RUN_ID,
+                artifact_id="new-artifact",
+                revision=1,
+                path=f"output/artifacts/{digest}/new-artifact.md",
+                sha256=digest,
+                size_bytes=len(content),
+                frozen=True,
+                producer_kind="control_tool",
+                producer_id="control-store-test",
+                created_at=NOW,
+            ),
+            content,
+        )
+        second_connection = sqlite3.connect(store.path, isolation_level=None)
+        try:
+            uncovered = _records().event.model_copy(
+                update={
+                    "event_id": "EV-EXTERNAL-UNCOVERED-002",
+                    "transaction_id": first.transaction_id,
+                }
+            )
+            second_connection.execute(
+                """
+                INSERT INTO events(
+                    event_id, run_id, schema_version, event_type, created_at,
+                    actor, transaction_id, stage_id, artifact_id, decision,
+                    reason, metadata_json, payload_json
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    uncovered.event_id,
+                    uncovered.run_id,
+                    uncovered.schema_version,
+                    uncovered.event_type,
+                    uncovered.created_at,
+                    uncovered.actor,
+                    uncovered.transaction_id,
+                    uncovered.stage_id,
+                    uncovered.artifact_id,
+                    uncovered.decision,
+                    uncovered.reason,
+                    '{"a":{"finite":1.25,"valid":true},"z":2}',
+                    canonical_model_text(uncovered),
+                ),
+            )
+        finally:
+            second_connection.close()
+
+        with pytest.raises(ControlStoreIntegrityError) as error:
+            unit.commit()
+        assert error.value.code == "transaction_ledger_integrity_invalid"
+        assert not store._blob_path(digest).exists()
+        assert store.current_revision == 1
+        assert _table_count(store, "artifact_revisions") == 1
+
+
+def test_proposed_graph_is_verified_before_sqlite_commit(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    with _create_store(tmp_path) as store:
+        original = store._verify_workspace_ledger_graph
+        observations: list[tuple[bool, int]] = []
+
+        def reject_proposed_graph() -> None:
+            original()
+            revision = store._workspace_revision_in_transaction()
+            observations.append((store._connection.in_transaction, revision))
+            if revision == 1:
+                raise ControlStoreIntegrityError(
+                    "transaction_ledger_integrity_invalid"
+                )
+
+        monkeypatch.setattr(
+            store,
+            "_verify_workspace_ledger_graph",
+            reject_proposed_graph,
+        )
+        with pytest.raises(ControlStoreIntegrityError) as error:
+            _stage_all(store).commit()
+        assert error.value.code == "transaction_ledger_integrity_invalid"
+        assert (True, 1) in observations
+        assert store.current_revision == 0
+        assert _table_count(store, "transactions") == 0
+        assert _table_count(store, "events") == 0
+        assert _table_count(store, "artifact_revisions") == 0
+        assert store._blob_path(BLOB_SHA256).is_file()
+
+
+def test_multi_run_transactions_share_one_workspace_revision_chain(
+    tmp_path: Path,
+) -> None:
+    second_run_id = "RUN-20260715-002"
+    second_transaction_id = "TX-SECOND-RUN-002"
+    with _create_store(tmp_path) as store:
+        first = _stage_all(store).commit()
+        second_run = _record(
+            RunIdentity,
+            run_id=second_run_id,
+            workspace_id=WORKSPACE_ID,
+            runtime="operator",
+            created_at=NOW,
+        )
+        second_event = _record(
+            EventEnvelope,
+            event_id="EV-SECOND-RUN-002",
+            run_id=second_run_id,
+            event_type="run_initialized",
+            created_at=NOW,
+            actor="cli",
+            transaction_id=second_transaction_id,
+            stage_id=None,
+            artifact_id=None,
+            decision="continue",
+            reason="Synthetic second run.",
+            metadata={},
+        )
+        unit = store.begin(
+            second_run_id,
+            second_transaction_id,
+            "run_initialize",
+            1,
+        )
+        unit.put_run(second_run)
+        unit.append_event(second_event)
+        second = unit.commit()
+
+        assert (first.prior_revision, first.committed_revision) == (0, 1)
+        assert (second.prior_revision, second.committed_revision) == (1, 2)
+        assert store.load_snapshot(RUN_ID).store_revision == 2
+        second_snapshot = store.load_snapshot(second_run_id)
+        assert second_snapshot.store_revision == 2
+        assert second_snapshot.transactions == (second,)
+
+
+def test_backup_and_restore_reject_corrupt_workspace_ledger(
+    tmp_path: Path,
+) -> None:
+    backup_destination = tmp_path / "blocked-backup"
+    with _create_store(tmp_path) as store:
+        _stage_all(store).commit()
+        store._connection.execute(
+            "UPDATE workspaces SET revision = 2 WHERE workspace_id = ?",
+            (WORKSPACE_ID,),
+        )
+        with pytest.raises(ControlStoreIntegrityError) as error:
+            store.backup_to(backup_destination)
+        assert error.value.code == "transaction_ledger_integrity_invalid"
+        assert not backup_destination.exists()
+
+    valid_root = tmp_path / "valid"
+    valid_root.mkdir()
+    with _create_store(valid_root) as valid_store:
+        first = _stage_all(valid_store).commit()
+        backup = valid_store.backup_to(tmp_path / "restore-source")
+    connection = sqlite3.connect(backup / "control.db", isolation_level=None)
+    try:
+        _insert_receipt_row(
+            connection,
+            _forged_receipt(
+                first,
+                transaction_id="TX-RESTORE-GAP-008",
+                prior_revision=7,
+                committed_revision=8,
+            ),
+        )
+        connection.execute(
+            "UPDATE workspaces SET revision = 8 WHERE workspace_id = ?",
+            (WORKSPACE_ID,),
+        )
+    finally:
+        connection.close()
+    destination = tmp_path / "rejected-restore.db"
+    with pytest.raises(ControlStoreIntegrityError) as error:
+        SQLiteControlStore.restore_to_new_path(backup, destination)
+    assert error.value.code == "transaction_ledger_integrity_invalid"
+    assert not destination.exists()
+    assert not destination.with_name(f"{destination.name}.blobs").exists()
 
 
 def test_schema_settings_and_exact_table_universe(tmp_path: Path) -> None:
