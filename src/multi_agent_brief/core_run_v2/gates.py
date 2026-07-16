@@ -45,6 +45,7 @@ from multi_agent_brief.quality_gates.state import (
 
 from .errors import CoreRunError, CoreRunResult, core_run_error_code
 from .integrity import RunIntegrityService, materialize_checkout
+from .lineage import classify_current_lineage
 from .policy import derived_id, transaction_type_for
 from .verifier import CoreRunDomainVerifier, resolve_core_replay
 
@@ -86,6 +87,7 @@ class GateEvaluationService:
     def _evaluate(self, request: GateCheckRequest) -> CoreRunResult:
         with self._open_store() as store:
             verified = self._verifier.verify(store, request.run_id)
+            lineage = classify_current_lineage(verified.snapshot)
             stage = next(
                 (
                     item
@@ -99,6 +101,54 @@ class GateEvaluationService:
                 (item.artifact_id, item.revision): item
                 for item in verified.snapshot.artifact_revisions
             }
+            explicit = {
+                (item.artifact_id, item.revision): revisions.get(
+                    (item.artifact_id, item.revision)
+                )
+                for item in request.expected_input_artifacts
+            }
+            if any(item is None for item in explicit.values()):
+                raise CoreRunError("gate_input_binding_invalid")
+            usage_order = (
+                ("claim_ledger", "ledger"),
+                ("audited_brief", "brief"),
+                ("analyst_draft_snapshot", "analyst_snapshot"),
+                ("screened_candidates", "screened_candidates"),
+                ("candidate_claims", "screened_candidates"),
+            )
+            explicit_by_id = {
+                item.artifact_id: item
+                for item in explicit.values()
+                if item is not None
+            }
+            explicit_hashes = [
+                {
+                    "artifact_id": explicit_by_id[artifact_id].artifact_id,
+                    "revision": explicit_by_id[artifact_id].revision,
+                    "sha256": explicit_by_id[artifact_id].sha256,
+                    "usage": usage,
+                }
+                for artifact_id, usage in usage_order
+                if artifact_id in explicit_by_id
+            ]
+            replay_fingerprint = canonical_fingerprint(
+                {
+                    "request": request.model_dump(mode="json", exclude_unset=False),
+                    "inputs": explicit_hashes,
+                    "contract_fingerprint": verified.binding.contract_fingerprint,
+                    "evaluator": _EVALUATOR_IMPLEMENTATION,
+                    "evaluator_version": _EVALUATOR_VERSION,
+                }
+            )
+            replay = resolve_core_replay(
+                store,
+                run_id=request.run_id,
+                request_id=request.request_id,
+                request_fingerprint=replay_fingerprint,
+            )
+            if replay is not None:
+                return replay
+            lineage.require_stage_mutable("auditor")
             required: list[tuple[ArtifactRevision, str]] = []
 
             def add_current(artifact_id: str, usage: str) -> ArtifactRevision:
@@ -136,6 +186,13 @@ class GateEvaluationService:
                 None,
             )
             if candidate_record is None:
+                raise CoreRunError("gate_input_binding_invalid")
+            if (
+                candidate_record.proposal_id
+                != lineage.current_proposal("candidate").proposal_id
+                or screened_record.parent_proposal_id
+                != candidate_record.proposal_id
+            ):
                 raise CoreRunError("gate_input_binding_invalid")
             screened_revision = revisions.get(
                 (screened_record.artifact_id, screened_record.artifact_revision)
@@ -179,20 +236,12 @@ class GateEvaluationService:
                     "evaluator_version": _EVALUATOR_VERSION,
                 }
             )
-            replay = resolve_core_replay(
-                store,
-                run_id=request.run_id,
-                request_id=request.request_id,
-                request_fingerprint=fingerprint,
-            )
-            if replay is not None:
-                return replay
+            if fingerprint != replay_fingerprint:
+                raise CoreRunError("gate_input_binding_invalid")
             if stage is None or stage.status != "ready":
                 raise CoreRunError("stage_not_current")
             if verified.snapshot.store_revision != request.expected_store_revision:
                 raise CoreRunError("store_revision_conflict")
-            if verified.snapshot.gate_evaluations:
-                raise CoreRunError("gate_policy_binding_invalid")
             if (
                 report_record.current_revision
                 != request.expected_report_artifact_revision
@@ -528,6 +577,7 @@ def _replay_gate_outcomes(
     *,
     stages: tuple[dict[str, object], ...],
     artifacts: tuple[dict[str, object], ...],
+    artifact_bindings: tuple[GateArtifactBinding, ...] | None = None,
 ) -> dict[str, tuple[str | None, list[dict[str, object]]]]:
     """Replay the sole preloaded Gate evaluator from exact Store revisions."""
 
@@ -546,17 +596,42 @@ def _replay_gate_outcomes(
             raise CoreRunError("control_store_integrity_invalid")
         return revision
 
-    ledger_revision = current_revision("claim_ledger")
-    brief_revision = current_revision("audited_brief")
-    analyst_revision = (
-        current_revision("analyst_draft_snapshot")
-        if artifact_records["analyst_draft_snapshot"].current_revision
-        else None
+    exact = {
+        (item.artifact_id, item.usage): revisions.get(
+            (item.artifact_id, item.artifact_revision)
+        )
+        for item in (artifact_bindings or ())
+    }
+
+    def selected_revision(artifact_id: str, usage: str) -> ArtifactRevision:
+        if artifact_bindings is None:
+            return current_revision(artifact_id)
+        revision = exact.get((artifact_id, usage))
+        if revision is None:
+            raise CoreRunError("gate_input_binding_invalid")
+        return revision
+
+    ledger_revision = selected_revision("claim_ledger", "ledger")
+    brief_revision = selected_revision("audited_brief", "brief")
+    analyst_revision = None
+    if artifact_bindings is None:
+        if artifact_records["analyst_draft_snapshot"].current_revision:
+            analyst_revision = current_revision("analyst_draft_snapshot")
+    else:
+        analyst_revision = exact.get(
+            ("analyst_draft_snapshot", "analyst_snapshot")
+        )
+    screened_revision_number = (
+        artifact_records["screened_candidates"].current_revision
+        if artifact_bindings is None
+        else selected_revision(
+            "screened_candidates", "screened_candidates"
+        ).revision
     )
     screened_record = _one_proposal(
         snapshot.accepted_proposals,
         "screened",
-        current_revision=artifact_records["screened_candidates"].current_revision,
+        current_revision=screened_revision_number,
     )
     candidate_record = next(
         (
@@ -567,7 +642,13 @@ def _replay_gate_outcomes(
         ),
         None,
     )
-    if candidate_record is None:
+    if candidate_record is None or (
+        artifact_bindings is not None
+        and selected_revision(
+            "candidate_claims", "screened_candidates"
+        ).revision
+        != candidate_record.artifact_revision
+    ):
         raise CoreRunError("gate_input_binding_invalid")
     try:
         ledger = _claim_ledger(

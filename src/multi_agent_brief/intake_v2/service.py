@@ -129,7 +129,12 @@ class IntakeService:
             )
             if replay is not None:
                 return replay
-            snapshot, invocation, owner_stage = self._trusted_submission_context(
+            (
+                snapshot,
+                invocation,
+                owner_stage,
+                core_run_bound,
+            ) = self._trusted_submission_context(
                 store,
                 INTAKE_LANES["source"],
                 request,
@@ -178,6 +183,7 @@ class IntakeService:
                     request_fingerprint=request_fingerprint,
                     invocation=invocation,
                     owner_stage=owner_stage,
+                    core_run_bound=core_run_bound,
                     reason_code=exc.code,
                     source_id=None if proposal is None else proposal.source_id,
                 )
@@ -189,6 +195,7 @@ class IntakeService:
                         request_fingerprint=request_fingerprint,
                         invocation=invocation,
                         owner_stage=owner_stage,
+                        core_run_bound=core_run_bound,
                         reason_code="proposal_contract_invalid",
                     )
                 raise
@@ -201,6 +208,7 @@ class IntakeService:
                 request_fingerprint=request_fingerprint,
                 invocation=invocation,
                 owner_stage=owner_stage,
+                core_run_bound=core_run_bound,
                 claims_eligible=claims_eligible,
                 eligibility_reason=eligibility_reason,
             )
@@ -228,7 +236,12 @@ class IntakeService:
             )
             if replay is not None:
                 return replay
-            snapshot, invocation, owner_stage = self._trusted_submission_context(
+            (
+                snapshot,
+                invocation,
+                owner_stage,
+                core_run_bound,
+            ) = self._trusted_submission_context(
                 store,
                 lane,
                 request,
@@ -264,6 +277,7 @@ class IntakeService:
                     request_fingerprint=request_fingerprint,
                     invocation=invocation,
                     owner_stage=owner_stage,
+                    core_run_bound=core_run_bound,
                     reason_code=exc.code,
                     proposal_id=(
                         None if proposal is None else getattr(proposal, "proposal_id")
@@ -277,6 +291,7 @@ class IntakeService:
                         request_fingerprint=request_fingerprint,
                         invocation=invocation,
                         owner_stage=owner_stage,
+                        core_run_bound=core_run_bound,
                         reason_code="proposal_contract_invalid",
                     )
                 raise
@@ -289,6 +304,7 @@ class IntakeService:
                 request_fingerprint=request_fingerprint,
                 invocation=invocation,
                 owner_stage=owner_stage,
+                core_run_bound=core_run_bound,
                 lineage=lineage,
                 prior_artifact=artifact,
             )
@@ -396,19 +412,28 @@ class IntakeService:
         store: SQLiteControlStore,
         lane: LanePolicy,
         request: SourceCommitRequest | ArtifactSubmitRequest,
-    ) -> tuple[ControlStoreSnapshot, Invocation, str]:
+    ) -> tuple[ControlStoreSnapshot, Invocation, str, bool]:
+        # A structural snapshot is sufficient only to select the dormant PR-3
+        # path or the PR-4A domain-verified path.  Every subsequent bound-run
+        # decision uses the verifier's single snapshot.
         try:
-            head = store.load_workspace_run_head()
+            structural_snapshot = store.load_snapshot(request.run_id)
         except ControlStoreError as exc:
             raise IntakeError("control_store_integrity_invalid") from exc
+        core_run_bound = bool(structural_snapshot.run_contract_bindings)
+        if core_run_bound:
+            snapshot = self._verify_core_run(store, request.run_id)
+            head = snapshot.workspace_run_head
+        else:
+            snapshot = structural_snapshot
+            try:
+                head = store.load_workspace_run_head()
+            except ControlStoreError as exc:
+                raise IntakeError("control_store_integrity_invalid") from exc
         if head is None:
             raise IntakeError("current_run_binding_missing")
         if head.current_run_id != request.run_id:
             raise IntakeError("run_not_current")
-        try:
-            snapshot = store.load_snapshot(request.run_id)
-        except ControlStoreError as exc:
-            raise IntakeError("control_store_integrity_invalid") from exc
         if any(
             stage.stage_id == "finalize" and stage.status == "complete"
             for stage in snapshot.stage_states
@@ -443,7 +468,31 @@ class IntakeService:
         stage = _by_id(snapshot.stage_states, "stage_id", owner_stage)
         if stage is None or stage.status != "ready":
             raise IntakeError("stage_not_ready")
-        return snapshot, invocation, owner_stage
+        if snapshot.run_contract_bindings:
+            from multi_agent_brief.core_run_v2.errors import CoreRunError
+            from multi_agent_brief.core_run_v2.lineage import classify_current_lineage
+
+            try:
+                classify_current_lineage(snapshot).require_stage_mutable(
+                    owner_stage,
+                    allow_reservation=request.invocation_id,
+                )
+            except CoreRunError as exc:
+                raise IntakeError("stage_not_ready") from exc
+        return snapshot, invocation, owner_stage, core_run_bound
+
+    @staticmethod
+    def _verify_core_run(
+        store: SQLiteControlStore,
+        run_id: str,
+    ) -> ControlStoreSnapshot:
+        from multi_agent_brief.core_run_v2.errors import CoreRunError
+        from multi_agent_brief.core_run_v2.verifier import CoreRunDomainVerifier
+
+        try:
+            return CoreRunDomainVerifier().verify(store, run_id).snapshot
+        except (CoreRunError, ControlStoreError) as exc:
+            raise IntakeError("control_store_integrity_invalid") from exc
 
     def _validate_proposal_lineage(
         self,
@@ -458,6 +507,9 @@ class IntakeService:
             self._require_eligible_sources(snapshot, source_ids)
             return _ProposalLineage(source_ids=source_ids)
         if lane.lane == "screened":
+            from multi_agent_brief.core_run_v2.errors import CoreRunError
+            from multi_agent_brief.core_run_v2.lineage import classify_current_lineage
+
             typed = cast(ScreenedCandidatesProposal, proposal)
             parent = _by_id(
                 snapshot.accepted_proposals,
@@ -466,6 +518,15 @@ class IntakeService:
             )
             if parent is None or parent.proposal_kind != "candidate":
                 raise _KnownInvalid("proposal_parent_invalid")
+            if snapshot.run_contract_bindings:
+                try:
+                    current = classify_current_lineage(snapshot).current_proposal(
+                        "candidate"
+                    )
+                except CoreRunError as exc:
+                    raise _KnownInvalid("proposal_parent_invalid") from exc
+                if parent.proposal_id != current.proposal_id:
+                    raise _KnownInvalid("proposal_parent_invalid")
             parent_bytes = self._trusted_proposal_bytes(
                 store,
                 parent,
@@ -477,6 +538,9 @@ class IntakeService:
                 raise _KnownInvalid("candidate_universe_mismatch")
             return _ProposalLineage(parent_proposal_id=parent.proposal_id)
         if lane.lane == "claim-drafts":
+            from multi_agent_brief.core_run_v2.errors import CoreRunError
+            from multi_agent_brief.core_run_v2.lineage import classify_current_lineage
+
             typed = cast(ClaimDraftsProposal, proposal)
             parent = _by_id(
                 snapshot.accepted_proposals,
@@ -485,6 +549,15 @@ class IntakeService:
             )
             if parent is None or parent.proposal_kind != "screened":
                 raise _KnownInvalid("proposal_parent_invalid")
+            if snapshot.run_contract_bindings:
+                try:
+                    current = classify_current_lineage(snapshot).current_proposal(
+                        "screened"
+                    )
+                except CoreRunError as exc:
+                    raise _KnownInvalid("proposal_parent_invalid") from exc
+                if parent.proposal_id != current.proposal_id:
+                    raise _KnownInvalid("proposal_parent_invalid")
             source_ids = _ordered_unique(
                 source_id for draft in typed.drafts for source_id in draft.source_ids
             )
@@ -510,6 +583,8 @@ class IntakeService:
             or artifact.current_revision != typed.artifact_revision
             or not revision.frozen
         ):
+            raise _KnownInvalid("audit_target_invalid")
+        if snapshot.run_contract_bindings and typed.artifact_id != "audited_brief":
             raise _KnownInvalid("audit_target_invalid")
         return _ProposalLineage(
             target_artifact_id=typed.artifact_id,
@@ -564,6 +639,7 @@ class IntakeService:
         request_fingerprint: str,
         invocation: Invocation,
         owner_stage: str,
+        core_run_bound: bool,
         claims_eligible: bool,
         eligibility_reason: str,
     ) -> IntakeResult:
@@ -682,7 +758,12 @@ class IntakeService:
         unit.append_event(event)
         unit.put_source(source)
         receipt = self._commit_uow(unit)
-        self._verify_source_readback(store, source, receipt)
+        post_snapshot = (
+            self._verify_core_run(store, request.run_id)
+            if core_run_bound
+            else None
+        )
+        self._verify_source_readback(store, source, receipt, post_snapshot)
         return IntakeResult(
             status="committed",
             receipt=receipt,
@@ -700,6 +781,7 @@ class IntakeService:
         request_fingerprint: str,
         invocation: Invocation,
         owner_stage: str,
+        core_run_bound: bool,
         lineage: "_ProposalLineage",
         prior_artifact: ArtifactRecord | None,
     ) -> IntakeResult:
@@ -782,7 +864,12 @@ class IntakeService:
                 )
             )
         receipt = self._commit_uow(unit)
-        self._verify_proposal_readback(store, accepted, receipt)
+        post_snapshot = (
+            self._verify_core_run(store, request.run_id)
+            if core_run_bound
+            else None
+        )
+        self._verify_proposal_readback(store, accepted, receipt, post_snapshot)
         return IntakeResult(
             status="committed",
             receipt=receipt,
@@ -797,6 +884,7 @@ class IntakeService:
         request_fingerprint: str,
         invocation: Invocation,
         owner_stage: str,
+        core_run_bound: bool,
         reason_code: str,
         source_id: str | None = None,
         proposal_id: str | None = None,
@@ -826,6 +914,8 @@ class IntakeService:
         unit.put_invocation(failed)
         unit.append_event(event)
         receipt = self._commit_uow(unit)
+        if core_run_bound:
+            self._verify_core_run(store, request.run_id)
         return IntakeResult(
             status="rejected_recorded",
             receipt=receipt,
@@ -848,21 +938,33 @@ class IntakeService:
             raise IntakeError("intake_commit_failed") from exc
 
     @staticmethod
-    def _verify_source_readback(store, expected, receipt) -> None:
-        try:
-            snapshot = store.load_snapshot(expected.run_id)
-        except ControlStoreError as exc:
-            raise IntakeError("intake_commit_failed") from exc
+    def _verify_source_readback(
+        store,
+        expected,
+        receipt,
+        snapshot: ControlStoreSnapshot | None = None,
+    ) -> None:
+        if snapshot is None:
+            try:
+                snapshot = store.load_snapshot(expected.run_id)
+            except ControlStoreError as exc:
+                raise IntakeError("intake_commit_failed") from exc
         actual = _by_id(snapshot.sources, "source_id", expected.source_id)
         if actual != expected or receipt.source_ids != [expected.source_id]:
             raise IntakeError("intake_commit_failed")
 
     @staticmethod
-    def _verify_proposal_readback(store, expected, receipt) -> None:
-        try:
-            snapshot = store.load_snapshot(expected.run_id)
-        except ControlStoreError as exc:
-            raise IntakeError("intake_commit_failed") from exc
+    def _verify_proposal_readback(
+        store,
+        expected,
+        receipt,
+        snapshot: ControlStoreSnapshot | None = None,
+    ) -> None:
+        if snapshot is None:
+            try:
+                snapshot = store.load_snapshot(expected.run_id)
+            except ControlStoreError as exc:
+                raise IntakeError("intake_commit_failed") from exc
         actual = _by_id(
             snapshot.accepted_proposals,
             "proposal_id",

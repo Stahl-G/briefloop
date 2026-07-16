@@ -856,6 +856,40 @@ def test_malformed_request_is_uncommitted_but_malformed_owned_proposal_is_record
         assert store.current_revision == 2
 
 
+def test_pr3_unbound_intake_never_invokes_core_run_verifier(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    workspace = tmp_path / "workspace"
+    _seed_workspace(workspace)
+
+    def forbidden_core_verification(*_args, **_kwargs):
+        pytest.fail("PR-3 unbound intake must not invoke the PR-4A domain verifier")
+
+    monkeypatch.setattr(
+        IntakeService,
+        "_verify_core_run",
+        forbidden_core_verification,
+    )
+    service = IntakeService(workspace, clock=CLOCK)
+    committed = service.submit_source(
+        _source_request(workspace).relative_to(workspace).as_posix()
+    )
+    assert committed.status == "committed"
+
+    request = _candidate_request(workspace, expected_revision=2)
+    proposal = workspace / "scratch" / "INV-SCOUT-001" / "candidate_claims.json"
+    proposal.write_text('{"schema_version":', encoding="utf-8")
+    rejected = service.submit_proposal(
+        "candidate",
+        request.relative_to(workspace).as_posix(),
+    )
+    assert rejected.status == "rejected_recorded"
+    assert rejected.error_code == "proposal_contract_invalid"
+    with SQLiteControlStore.open(workspace / "briefloop.db") as store:
+        assert store.current_revision == 3
+
+
 def test_all_five_lanes_and_both_screening_owners_commit_without_stage_advance(
     tmp_path: Path,
 ) -> None:

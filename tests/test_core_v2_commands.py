@@ -265,9 +265,9 @@ def test_core_v2_cli_is_internal_and_requires_json() -> None:
         assert required == {"--workspace", "--request", "--json"}
 
 
-def test_core_v2_imports_are_confined_to_dormant_cli_and_package() -> None:
+def test_core_v2_imports_are_confined_to_dormant_cli_package_and_bound_intake() -> None:
     package_root = ROOT / "src" / "multi_agent_brief"
-    allowed = {"cli/core_v2_commands.py"}
+    allowed = {"cli/core_v2_commands.py", "intake_v2/service.py"}
     findings: list[str] = []
     for path in sorted(package_root.rglob("*.py")):
         relative = path.relative_to(package_root).as_posix()

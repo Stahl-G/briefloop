@@ -14,8 +14,6 @@ from multi_agent_brief.contracts.v2 import (
     ArtifactRecord,
     ArtifactRevision,
     AuditPromotionRequest,
-    AuditProposal,
-    AuditReportArtifact,
     CoreRunEventBinding,
     EventEnvelope,
     Invocation,
@@ -34,6 +32,7 @@ from multi_agent_brief.inputs.classifier import classify_input_dir
 
 from .errors import CoreRunError, CoreRunResult, core_run_error_code
 from .integrity import RunIntegrityService, materialize_checkout
+from .lineage import canonical_audit_report_bytes, classify_current_lineage
 from .policy import ARTIFACT_POLICIES, derived_id, transaction_type_for
 from .verifier import (
     CoreRunDomainVerifier,
@@ -121,6 +120,7 @@ class ArtifactAcceptanceService:
                     raise CoreRunError("artifact_input_unsafe")
                 content = expected_content
             verified = self._verifier.verify(store, request.run_id)
+            lineage = classify_current_lineage(verified.snapshot)
             self._require_store_revision(
                 verified.snapshot.store_revision,
                 request.expected_store_revision,
@@ -141,6 +141,10 @@ class ArtifactAcceptanceService:
                 )
                 if invocation is None or invocation.status != "active":
                     raise CoreRunError("artifact_owner_mismatch")
+                lineage.require_stage_mutable(
+                    stage_id,
+                    allow_reservation=request.invocation_id,
+                )
                 allowed_role = policy.invocation_role_id
                 if (
                     request.artifact_id == "audited_brief"
@@ -354,6 +358,7 @@ class ArtifactAcceptanceService:
     ) -> CoreRunResult:
         with self._open_store() as store:
             verified = self._verifier.verify(store, request.run_id)
+            lineage = classify_current_lineage(verified.snapshot)
             proposal_record = next(
                 (
                     item
@@ -370,18 +375,14 @@ class ArtifactAcceptanceService:
                     proposal_record.artifact_id,
                     proposal_record.artifact_revision,
                 )
-                proposal = AuditProposal.model_validate(
-                    parse_json_object(proposal_bytes),
-                    strict=True,
-                )
-            except (ControlStoreError, IntakeError, ValidationError) as exc:
+            except ControlStoreError as exc:
                 raise CoreRunError("control_store_integrity_invalid") from exc
             target = next(
                 (
                     item
                     for item in verified.snapshot.artifact_revisions
-                    if item.artifact_id == proposal.artifact_id
-                    and item.revision == proposal.artifact_revision
+                    if item.artifact_id == proposal_record.target_artifact_id
+                    and item.revision == proposal_record.target_artifact_revision
                 ),
                 None,
             )
@@ -402,23 +403,12 @@ class ArtifactAcceptanceService:
                 or request.expected_target_artifact.revision != target.revision
             ):
                 raise CoreRunError("artifact_revision_conflict")
-            report = AuditReportArtifact.model_validate(
-                {
-                    "schema_version": AuditReportArtifact.schema_id,
-                    "run_id": request.run_id,
-                    "audit_proposal_id": proposal.proposal_id,
-                    "target_artifact_id": target.artifact_id,
-                    "target_artifact_revision": target.revision,
-                    "target_artifact_sha256": target.sha256,
-                    "decision": proposal.decision,
-                    "findings": [
-                        item.model_dump(mode="json", exclude_unset=False)
-                        for item in proposal.findings
-                    ],
-                },
-                strict=True,
+            _proposal, content = canonical_audit_report_bytes(
+                run_id=request.run_id,
+                proposal_record=proposal_record,
+                proposal_bytes=proposal_bytes,
+                brief_revision=target,
             )
-            content = canonical_json_bytes(report.model_dump(mode="json")) + b"\n"
             fingerprint = canonical_fingerprint(
                 {
                     "request": request.model_dump(mode="json", exclude_unset=False),
@@ -435,6 +425,22 @@ class ArtifactAcceptanceService:
             )
             if replay is not None:
                 return replay
+            lineage.require_current_audit(
+                proposal_id=proposal_record.proposal_id,
+                target_artifact_id=target.artifact_id,
+                target_artifact_revision=target.revision,
+            )
+            current_brief = next(
+                item
+                for item in verified.snapshot.artifacts
+                if item.artifact_id == "audited_brief"
+            )
+            if (
+                target.artifact_id != "audited_brief"
+                or current_brief.current_revision != target.revision
+            ):
+                raise CoreRunError("artifact_revision_conflict")
+            lineage.require_stage_mutable("auditor")
             if (
                 report_record.current_revision
                 != request.expected_audit_report_revision

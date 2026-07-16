@@ -45,6 +45,10 @@ from multi_agent_brief.sources.doctor import run_doctor
 
 from .errors import CoreRunError, CoreRunResult, core_run_error_code
 from .integrity import RunIntegrityService, read_workspace_file
+from .lineage import (
+    classify_current_audit_promotion,
+    classify_current_lineage,
+)
 from .policy import (
     CORE_ARTIFACT_IDS,
     DOCTOR_IMPLEMENTATION,
@@ -60,7 +64,6 @@ from .policy import (
 from .verifier import (
     CoreRunDomainVerifier,
     VerifiedCoreRun,
-    _audit_targets_revision,
     classify_human_assisted_analyst_route,
     resolve_core_replay,
 )
@@ -412,6 +415,8 @@ class CoreRunService:
                 return replay
             verified = self._verifier.verify(store, request.run_id)
             self._require_store_revision(verified, request.expected_store_revision)
+            lineage = classify_current_lineage(verified.snapshot)
+            lineage.require_stage_mutable(request.stage_id)
             if request.runtime != verified.snapshot.run.runtime:
                 raise CoreRunError("invocation_owner_mismatch")
             stage = _stage_state(verified, request.stage_id)
@@ -571,6 +576,7 @@ class CoreRunService:
         request_base = request.model_dump(mode="json", exclude_unset=False)
         with self._open_store() as store:
             verified = self._verifier.verify(store, request.run_id)
+            lineage = classify_current_lineage(verified.snapshot)
             (
                 required_revisions,
                 gate_ids,
@@ -605,6 +611,8 @@ class CoreRunService:
                 return replay
             self._require_store_revision(verified, request.expected_store_revision)
             state = _stage_state(verified, request.stage_id)
+            if lineage.active_invocations_by_stage.get(request.stage_id):
+                raise CoreRunError("stage_artifact_binding_invalid")
             if state.status != "ready" or state.revision != request.expected_stage_revision:
                 raise CoreRunError("stage_not_current")
             expected_artifacts = {
@@ -657,6 +665,7 @@ class CoreRunService:
         str | None,
     ]:
         snapshot = verified.snapshot
+        lineage = classify_current_lineage(snapshot)
         artifacts = {item.artifact_id: item for item in snapshot.artifacts}
         revisions = {
             (item.artifact_id, item.revision): item
@@ -690,7 +699,7 @@ class CoreRunService:
             owner_stage_id: str,
             owner_role_id: str,
         ):
-            proposal = _proposal(snapshot, kind)
+            proposal = lineage.current_proposal(kind)
             if (
                 proposal.owner_stage_id != owner_stage_id
                 or proposal.owner_role_id != owner_role_id
@@ -805,6 +814,8 @@ class CoreRunService:
                         "topology_required",
                     )
                 )
+                if screened.parent_proposal_id != candidate.proposal_id:
+                    raise CoreRunError("stage_artifact_binding_invalid")
         elif stage_id == "screener":
             if verified.binding.role_topology != "strict":
                 raise CoreRunError("stage_decision_not_supported")
@@ -831,6 +842,8 @@ class CoreRunService:
                     ),
                 )
             )
+            if screened.parent_proposal_id != candidate.proposal_id:
+                raise CoreRunError("stage_artifact_binding_invalid")
         elif stage_id == "claim-ledger":
             if len(snapshot.claim_freezes) != 1:
                 raise CoreRunError("claim_lineage_invalid")
@@ -841,6 +854,17 @@ class CoreRunService:
                 owner_role_id="claim-ledger",
             )
             if drafts.proposal_id != freeze.claim_drafts_proposal_id:
+                raise CoreRunError("claim_lineage_invalid")
+            candidate, screened, current_drafts = (
+                lineage.proposals.require_current_claim_chain(
+                    claim_drafts_proposal_id=freeze.claim_drafts_proposal_id,
+                )
+            )
+            if (
+                freeze.candidate_proposal_id != candidate.proposal_id
+                or freeze.screened_proposal_id != screened.proposal_id
+                or current_drafts.proposal_id != drafts.proposal_id
+            ):
                 raise CoreRunError("claim_lineage_invalid")
             producer_invocation_id = drafts.invocation_id
             selected.extend(
@@ -935,46 +959,36 @@ class CoreRunService:
                 "auditor_quality_gate_report",
                 "produced",
             )
-            audit_submissions = [
-                item
-                for item in snapshot.owned_artifact_submissions
-                if item.artifact_id == report.artifact_id
-                and item.artifact_revision == report.revision
-                and item.owner_stage_id == "auditor"
-                and item.owner_role_id == "auditor"
-                and item.source_proposal_id is not None
-            ]
+            try:
+                audit_promotion = classify_current_audit_promotion(
+                    snapshot,
+                    store.read_artifact_revision_bytes,
+                )
+            except CoreRunError as exc:
+                raise CoreRunError("stage_artifact_binding_invalid") from exc
             if (
-                len(audit_submissions) != 1
-                or audit_submissions[0].invocation_id is None
+                audit_promotion is None
+                or not audit_promotion.is_current_lineage
+                or audit_promotion.report_revision.artifact_id
+                != report.artifact_id
+                or audit_promotion.report_revision.revision != report.revision
+                or audit_promotion.brief_revision.artifact_id != brief.artifact_id
+                or audit_promotion.brief_revision.revision != brief.revision
             ):
                 raise CoreRunError("stage_artifact_binding_invalid")
             producer_invocation_id = require_invocation(
-                audit_submissions[0].invocation_id,
+                audit_promotion.submission.invocation_id or "",
                 role_id="auditor",
             )
             if artifacts["analyst_draft_snapshot"].current_revision:
                 require_artifact("analyst_draft_snapshot", "consumed")
             del ledger
-            audit_payload = store.read_artifact_revision_bytes(
-                report.run_id,
-                report.artifact_id,
-                report.revision,
-            )
-            from multi_agent_brief.contracts.v2 import AuditReportArtifact
-            from multi_agent_brief.intake_v2.scratch import parse_json_object
-
-            try:
-                audit = AuditReportArtifact.model_validate(
-                    parse_json_object(audit_payload),
-                    strict=True,
-                )
-            except Exception as exc:
-                raise CoreRunError("stage_artifact_binding_invalid") from exc
             if (
-                not _audit_targets_revision(audit, brief)
-                or audit.decision == "fail"
-                or any(finding.severity == "error" for finding in audit.findings)
+                audit_promotion.proposal.decision == "fail"
+                or any(
+                    finding.severity == "error"
+                    for finding in audit_promotion.proposal.findings
+                )
             ):
                 raise CoreRunError("stage_artifact_binding_invalid")
             evaluations = {
@@ -983,6 +997,12 @@ class CoreRunService:
                 if item.report_artifact.artifact_id == gate_report.artifact_id
                 and item.report_artifact.revision == gate_report.revision
             }
+            current_gate = lineage.current_gate_batch
+            if (
+                current_gate is None
+                or current_gate.report_artifact_revision != gate_report.revision
+            ):
+                raise CoreRunError("stage_gate_binding_invalid")
             if set(REQUIRED_AUDITOR_GATES) - set(evaluations):
                 raise CoreRunError("stage_gate_binding_invalid")
             required = [evaluations[gate_id] for gate_id in REQUIRED_AUDITOR_GATES]
@@ -1022,6 +1042,7 @@ class CoreRunService:
         producer_tool_id: str | None = None,
     ) -> CoreRunResult:
         now = _now(self._clock)
+        lineage = classify_current_lineage(verified.snapshot)
         stage_order = [str(item["stage_id"]) for item in verified.stages]
         states = {item.stage_id: item for item in verified.snapshot.stage_states}
         current = states[completed_stage_id]
@@ -1156,6 +1177,8 @@ class CoreRunService:
             completed_stage_id == "scout"
             and verified.binding.role_topology in {"default", "human_assisted"}
         ):
+            if lineage.active_invocations_by_stage.get("screener"):
+                raise CoreRunError("stage_artifact_binding_invalid")
             topology_transition = add_transition(
                 "screener",
                 transition_kind="satisfied_by_topology",
@@ -1179,6 +1202,8 @@ class CoreRunService:
                 for revision, _usage in revisions
             )
         ):
+            if lineage.active_invocations_by_stage.get("editor"):
+                raise CoreRunError("stage_artifact_binding_invalid")
             topology_transition = add_transition(
                 "editor",
                 transition_kind="satisfied_by_topology",

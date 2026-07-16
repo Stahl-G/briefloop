@@ -394,10 +394,6 @@ def protected_revision_keys(
         (item.artifact_id, item.artifact_revision)
         for item in verified.snapshot.stage_artifact_bindings
     }
-    keys.update(
-        (item.artifact_id, item.artifact_revision)
-        for item in verified.snapshot.gate_artifact_bindings
-    )
     for freeze in verified.snapshot.claim_freezes:
         keys.add(
             (

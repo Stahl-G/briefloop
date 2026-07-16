@@ -8,7 +8,6 @@ from typing import Any, Literal
 
 from multi_agent_brief.contracts.v2 import (
     ArtifactRevision,
-    AuditReportArtifact,
     CandidateClaimsProposal,
     ClaimDraftsProposal,
     CoreRunEventBinding,
@@ -32,6 +31,11 @@ from multi_agent_brief.orchestrator.runtime_state.contracts_loader import (
 from multi_agent_brief.quality_gates.contract import GATE_IDS
 
 from .errors import CoreRunError, CoreRunResult
+from .lineage import (
+    classify_current_audit_promotion,
+    classify_current_lineage,
+    verify_no_post_seal_records,
+)
 from .policy import (
     CLAIM_EPISTEMIC,
     CORE_ARTIFACT_IDS,
@@ -368,6 +372,8 @@ class CoreRunDomainVerifier:
         self._verify_contract_fingerprint(binding)
         self._verify_receipt_bindings(snapshot)
         self._verify_invocation_ownership(snapshot, binding)
+        classify_current_lineage(snapshot)
+        verify_no_post_seal_records(snapshot)
         self._verify_artifact_graph(snapshot, contracts, binding)
         self._verify_stage_chain(store, snapshot, contracts, binding)
         self._verify_integrity_chain(snapshot)
@@ -729,6 +735,11 @@ class CoreRunDomainVerifier:
         contracts: ValidatedRuntimeContractPayloads,
         binding: RunContractBinding,
     ) -> None:
+        lineage = classify_current_lineage(snapshot)
+        audit_promotion = classify_current_audit_promotion(
+            snapshot,
+            store.read_artifact_revision_bytes,
+        )
         analyst_route = (
             classify_human_assisted_analyst_route(snapshot)
             if binding.role_topology == "human_assisted"
@@ -1102,24 +1113,17 @@ class CoreRunDomainVerifier:
                     raise CoreRunError("control_store_integrity_invalid")
                 expected_gates = required
                 audit_revision = current_revision("audit_report")
-                try:
-                    audit = AuditReportArtifact.model_validate(
-                        parse_json_object(
-                            store.read_artifact_revision_bytes(
-                                snapshot.run.run_id,
-                                audit_revision.artifact_id,
-                                audit_revision.revision,
-                            )
-                        ),
-                        strict=True,
-                    )
-                except Exception as exc:
-                    raise CoreRunError("control_store_integrity_invalid") from exc
                 brief_revision = current_revision("audited_brief")
                 if (
-                    not _audit_targets_revision(audit, brief_revision)
-                    or audit.decision == "fail"
-                    or any(finding.severity == "error" for finding in audit.findings)
+                    audit_promotion is None
+                    or not audit_promotion.is_current_lineage
+                    or audit_promotion.report_revision != audit_revision
+                    or audit_promotion.brief_revision != brief_revision
+                    or audit_promotion.proposal.decision == "fail"
+                    or any(
+                        finding.severity == "error"
+                        for finding in audit_promotion.proposal.findings
+                    )
                 ):
                     raise CoreRunError("control_store_integrity_invalid")
             else:
@@ -1286,6 +1290,16 @@ class CoreRunDomainVerifier:
             if drafts_record is not None
             else None
         )
+        screened_artifact = (
+            artifacts.get(screened_record.artifact_id)
+            if screened_record is not None
+            else None
+        )
+        candidate_artifact = (
+            artifacts.get(candidate_record.artifact_id)
+            if candidate_record is not None
+            else None
+        )
         if (
             drafts_record is None
             or drafts_record.proposal_kind != "claim_drafts"
@@ -1294,8 +1308,14 @@ class CoreRunDomainVerifier:
             != drafts_record.artifact_revision
             or screened_record is None
             or screened_record.proposal_kind != "screened"
+            or screened_artifact is None
+            or screened_artifact.current_revision
+            != screened_record.artifact_revision
             or candidate_record is None
             or candidate_record.proposal_kind != "candidate"
+            or candidate_artifact is None
+            or candidate_artifact.current_revision
+            != candidate_record.artifact_revision
             or drafts_record.parent_proposal_id != screened_record.proposal_id
             or screened_record.parent_proposal_id != candidate_record.proposal_id
             or freeze.run_contract_fingerprint != binding.contract_fingerprint
@@ -1540,66 +1560,13 @@ class CoreRunDomainVerifier:
                 raise CoreRunError("control_store_integrity_invalid")
             return
         evaluations = {item.evaluation_id: item for item in snapshot.gate_evaluations}
-        batches = {item.gate_batch_id for item in evaluations.values()}
-        if len(batches) != 1 or {
-            item.gate_id for item in evaluations.values()
-        } != set(GATE_IDS):
-            raise CoreRunError("control_store_integrity_invalid")
-        ordered_evaluations = sorted(
-            evaluations.values(),
-            key=lambda item: item.gate_id,
-        )
-        if len(ordered_evaluations) != len(GATE_IDS):
+        if len(evaluations) != len(snapshot.gate_evaluations):
             raise CoreRunError("control_store_integrity_invalid")
         policy_version = f"{binding.policy_pack_name}:{binding.policy_pack_sha256[:16]}"
-        report_refs = {
-            (item.report_artifact.artifact_id, item.report_artifact.revision)
-            for item in ordered_evaluations
-        }
-        event_ids = {item.evaluation_event_id for item in ordered_evaluations}
-        request_ids = {
-            item.accepted_transaction_id for item in ordered_evaluations
-        }
-        fingerprints = {
-            item.request_fingerprint for item in ordered_evaluations
-        }
-        if (
-            len(report_refs) != 1
-            or len(event_ids) != 1
-            or len(request_ids) != 1
-            or len(fingerprints) != 1
-            or any(
-                item.policy_version != policy_version
-                or item.run_contract_fingerprint != binding.contract_fingerprint
-                or item.producer_implementation
-                != "core-v2-preloaded-quality-gates"
-                or item.producer_version != "1"
-                for item in ordered_evaluations
-            )
-        ):
-            raise CoreRunError("control_store_integrity_invalid")
-
         findings = {
             (item.evaluation_id, item.finding_id): item
             for item in snapshot.gate_findings
         }
-        ordered_findings: list[object] = []
-        for evaluation in ordered_evaluations:
-            selected = []
-            for finding_id in evaluation.finding_ids:
-                finding = findings.get((evaluation.evaluation_id, finding_id))
-                if finding is None or finding.gate_id != evaluation.gate_id:
-                    raise CoreRunError("control_store_integrity_invalid")
-                selected.append(finding)
-            expected_status = (
-                evaluation.status in {"fail", "unavailable", "invalid"}
-            )
-            if evaluation.blocking != expected_status:
-                raise CoreRunError("control_store_integrity_invalid")
-            ordered_findings.extend(selected)
-        if len(ordered_findings) != len(snapshot.gate_findings):
-            raise CoreRunError("control_store_integrity_invalid")
-
         bindings_by_evaluation: dict[str, list[object]] = {}
         revisions = {
             (item.artifact_id, item.revision): item
@@ -1625,117 +1592,191 @@ class CoreRunDomainVerifier:
                 artifact_binding.evaluation_id,
                 [],
             ).append(artifact_binding)
-        canonical_bindings: list[object] | None = None
-        for evaluation in ordered_evaluations:
-            selected = sorted(
-                bindings_by_evaluation.get(evaluation.evaluation_id, []),
-                key=lambda item: item.position,  # type: ignore[attr-defined]
-            )
-            if [item.position for item in selected] != list(range(len(selected))):
-                raise CoreRunError("control_store_integrity_invalid")
-            signature = [
+        batch_ids = sorted({item.gate_batch_id for item in evaluations.values()})
+        seen_findings: set[tuple[str, str]] = set()
+        seen_bindings: set[tuple[str, int]] = set()
+        report_revisions: list[int] = []
+        from .gates import _gate_finding_record, _replay_gate_outcomes
+
+        for batch_id in batch_ids:
+            ordered_evaluations = sorted(
                 (
-                    item.position,
-                    item.artifact_id,
-                    item.artifact_revision,
-                    item.artifact_sha256,
-                    item.usage,
-                )
-                for item in selected
-            ]
-            if canonical_bindings is None:
-                canonical_bindings = signature
-            elif signature != canonical_bindings:
-                raise CoreRunError("control_store_integrity_invalid")
-        if not canonical_bindings:
-            raise CoreRunError("control_store_integrity_invalid")
-
-        report_artifact_id, report_revision_number = next(iter(report_refs))
-        try:
-            report_bytes = store.read_artifact_revision_bytes(
-                snapshot.run.run_id,
-                report_artifact_id,
-                report_revision_number,
-            )
-        except Exception as exc:
-            raise CoreRunError("control_store_integrity_invalid") from exc
-        input_artifacts = [
-            {
-                "artifact_id": item[1],
-                "revision": item[2],
-                "sha256": item[3],
-                "usage": item[4],
-            }
-            for item in canonical_bindings
-        ]
-        expected_report = {
-            "schema_version": "briefloop.gate_report.v2",
-            "run_id": snapshot.run.run_id,
-            "stage_id": "auditor",
-            "gate_batch_id": next(iter(batches)),
-            "policy_version": policy_version,
-            "run_contract_fingerprint": binding.contract_fingerprint,
-            "input_artifacts": input_artifacts,
-            "evaluations": [
-                item.model_dump(mode="json", exclude_unset=False)
-                for item in ordered_evaluations
-            ],
-            "findings": [
-                item.model_dump(mode="json", exclude_unset=False)
-                for item in ordered_findings
-            ],
-        }
-        if report_bytes != canonical_json_bytes(expected_report) + b"\n":
-            raise CoreRunError("control_store_integrity_invalid")
-
-        try:
-            from .gates import _gate_finding_record, _replay_gate_outcomes
-
-            replayed = _replay_gate_outcomes(
-                store,
-                snapshot,
-                binding,
-                stages=tuple(dict(item) for item in contracts.stages),
-                artifacts=tuple(dict(item) for item in contracts.artifacts),
-            )
-        except Exception as exc:
-            raise CoreRunError("control_store_integrity_invalid") from exc
-        for evaluation in ordered_evaluations:
-            forced_status, raw_findings = replayed[evaluation.gate_id]
-            expected_findings = [
-                _gate_finding_record(
-                    run_id=snapshot.run.run_id,
-                    evaluation_id=evaluation.evaluation_id,
-                    gate_id=evaluation.gate_id,
-                    position=position,
-                    raw=raw,
-                    accepted_transaction_id=evaluation.accepted_transaction_id,
-                )
-                for position, raw in enumerate(raw_findings, start=1)
-            ]
-            actual_findings = [
-                findings[(evaluation.evaluation_id, finding_id)]
-                for finding_id in evaluation.finding_ids
-            ]
-            if actual_findings != expected_findings:
-                raise CoreRunError("control_store_integrity_invalid")
-            replay_blocking = any(
-                item.blocking_level == "blocking" for item in expected_findings
-            )
-            replay_status = (
-                forced_status
-                if forced_status is not None
-                else (
-                    "fail"
-                    if replay_blocking
-                    else ("warning" if expected_findings else "pass")
-                )
+                    item
+                    for item in evaluations.values()
+                    if item.gate_batch_id == batch_id
+                ),
+                key=lambda item: item.gate_id,
             )
             if (
-                evaluation.status != replay_status
-                or evaluation.blocking != replay_blocking
+                len(ordered_evaluations) != len(GATE_IDS)
+                or {item.gate_id for item in ordered_evaluations} != set(GATE_IDS)
             ):
                 raise CoreRunError("control_store_integrity_invalid")
+            report_refs = {
+                (item.report_artifact.artifact_id, item.report_artifact.revision)
+                for item in ordered_evaluations
+            }
+            if (
+                len(report_refs) != 1
+                or len({item.evaluation_event_id for item in ordered_evaluations}) != 1
+                or len(
+                    {item.accepted_transaction_id for item in ordered_evaluations}
+                )
+                != 1
+                or len({item.request_fingerprint for item in ordered_evaluations})
+                != 1
+                or any(
+                    item.policy_version != policy_version
+                    or item.run_contract_fingerprint != binding.contract_fingerprint
+                    or item.producer_implementation
+                    != "core-v2-preloaded-quality-gates"
+                    or item.producer_version != "1"
+                    for item in ordered_evaluations
+                )
+            ):
+                raise CoreRunError("control_store_integrity_invalid")
+
+            ordered_findings: list[object] = []
+            canonical_bindings: list[tuple[object, ...]] | None = None
+            first_bindings: tuple[object, ...] = ()
+            for evaluation in ordered_evaluations:
+                selected_findings = []
+                for finding_id in evaluation.finding_ids:
+                    key = (evaluation.evaluation_id, finding_id)
+                    finding = findings.get(key)
+                    if finding is None or finding.gate_id != evaluation.gate_id:
+                        raise CoreRunError("control_store_integrity_invalid")
+                    seen_findings.add(key)
+                    selected_findings.append(finding)
+                if evaluation.blocking != (
+                    evaluation.status in {"fail", "unavailable", "invalid"}
+                ):
+                    raise CoreRunError("control_store_integrity_invalid")
+                ordered_findings.extend(selected_findings)
+
+                selected_bindings = tuple(
+                    sorted(
+                        bindings_by_evaluation.get(evaluation.evaluation_id, []),
+                        key=lambda item: item.position,  # type: ignore[attr-defined]
+                    )
+                )
+                if [item.position for item in selected_bindings] != list(
+                    range(len(selected_bindings))
+                ):
+                    raise CoreRunError("control_store_integrity_invalid")
+                signature = [
+                    (
+                        item.position,
+                        item.artifact_id,
+                        item.artifact_revision,
+                        item.artifact_sha256,
+                        item.usage,
+                    )
+                    for item in selected_bindings
+                ]
+                if canonical_bindings is None:
+                    canonical_bindings = signature
+                    first_bindings = selected_bindings
+                elif signature != canonical_bindings:
+                    raise CoreRunError("control_store_integrity_invalid")
+                seen_bindings.update(
+                    (item.evaluation_id, item.position)
+                    for item in selected_bindings
+                )
+            if not canonical_bindings:
+                raise CoreRunError("control_store_integrity_invalid")
+
+            report_artifact_id, report_revision_number = next(iter(report_refs))
+            report_revisions.append(report_revision_number)
+            try:
+                report_bytes = store.read_artifact_revision_bytes(
+                    snapshot.run.run_id,
+                    report_artifact_id,
+                    report_revision_number,
+                )
+                replayed = _replay_gate_outcomes(
+                    store,
+                    snapshot,
+                    binding,
+                    stages=tuple(dict(item) for item in contracts.stages),
+                    artifacts=tuple(dict(item) for item in contracts.artifacts),
+                    artifact_bindings=first_bindings,  # type: ignore[arg-type]
+                )
+            except Exception as exc:
+                raise CoreRunError("control_store_integrity_invalid") from exc
+            expected_report = {
+                "schema_version": "briefloop.gate_report.v2",
+                "run_id": snapshot.run.run_id,
+                "stage_id": "auditor",
+                "gate_batch_id": batch_id,
+                "policy_version": policy_version,
+                "run_contract_fingerprint": binding.contract_fingerprint,
+                "input_artifacts": [
+                    {
+                        "artifact_id": item[1],
+                        "revision": item[2],
+                        "sha256": item[3],
+                        "usage": item[4],
+                    }
+                    for item in canonical_bindings
+                ],
+                "evaluations": [
+                    item.model_dump(mode="json", exclude_unset=False)
+                    for item in ordered_evaluations
+                ],
+                "findings": [
+                    item.model_dump(mode="json", exclude_unset=False)
+                    for item in ordered_findings
+                ],
+            }
+            if report_bytes != canonical_json_bytes(expected_report) + b"\n":
+                raise CoreRunError("control_store_integrity_invalid")
+            for evaluation in ordered_evaluations:
+                forced_status, raw_findings = replayed[evaluation.gate_id]
+                expected_findings = [
+                    _gate_finding_record(
+                        run_id=snapshot.run.run_id,
+                        evaluation_id=evaluation.evaluation_id,
+                        gate_id=evaluation.gate_id,
+                        position=position,
+                        raw=raw,
+                        accepted_transaction_id=evaluation.accepted_transaction_id,
+                    )
+                    for position, raw in enumerate(raw_findings, start=1)
+                ]
+                actual_findings = [
+                    findings[(evaluation.evaluation_id, finding_id)]
+                    for finding_id in evaluation.finding_ids
+                ]
+                replay_blocking = any(
+                    item.blocking_level == "blocking" for item in expected_findings
+                )
+                replay_status = (
+                    forced_status
+                    if forced_status is not None
+                    else (
+                        "fail"
+                        if replay_blocking
+                        else ("warning" if expected_findings else "pass")
+                    )
+                )
+                if (
+                    actual_findings != expected_findings
+                    or evaluation.status != replay_status
+                    or evaluation.blocking != replay_blocking
+                ):
+                    raise CoreRunError("control_store_integrity_invalid")
+
+        if (
+            seen_findings != set(findings)
+            or seen_bindings
+            != {
+                (item.evaluation_id, item.position)
+                for item in snapshot.gate_artifact_bindings
+            }
+            or sorted(report_revisions) != list(range(1, len(batch_ids) + 1))
+        ):
+            raise CoreRunError("control_store_integrity_invalid")
 
 
 def _verified_core_receipt_binding(
@@ -1992,19 +2033,6 @@ def _verify_core_receipt_event_set(
         for item in transitions
     ):
         raise CoreRunError("control_store_integrity_invalid")
-
-
-def _audit_targets_revision(
-    audit: AuditReportArtifact,
-    revision: ArtifactRevision,
-) -> bool:
-    """Return whether one audit report names the exact consumed brief revision."""
-
-    return (
-        audit.target_artifact_id == revision.artifact_id
-        and audit.target_artifact_revision == revision.revision
-        and audit.target_artifact_sha256 == revision.sha256
-    )
 
 
 def resolve_core_replay(

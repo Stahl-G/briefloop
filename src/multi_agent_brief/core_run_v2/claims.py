@@ -36,6 +36,7 @@ from multi_agent_brief.intake_v2.scratch import parse_json_object
 
 from .errors import CoreRunError, CoreRunResult, core_run_error_code
 from .integrity import RunIntegrityService, materialize_checkout
+from .lineage import classify_current_lineage
 from .policy import (
     CLAIM_EPISTEMIC,
     derived_id,
@@ -78,31 +79,26 @@ class ClaimFreezeService:
     def _freeze(self, request: ClaimFreezeRequest) -> CoreRunResult:
         with self._open_store() as store:
             verified = self._verifier.verify(store, request.run_id)
-            drafts_record = _accepted(
-                verified.snapshot.accepted_proposals,
-                request.claim_drafts_proposal_id,
-                "claim_drafts",
+            lineage = classify_current_lineage(verified.snapshot)
+            candidate_record, screened_record, drafts_record = (
+                lineage.proposals.require_current_claim_chain()
             )
+            if drafts_record.proposal_id != request.claim_drafts_proposal_id:
+                raise CoreRunError("artifact_revision_conflict")
             drafts, drafts_bytes = _load_proposal(
                 store,
                 drafts_record,
                 ClaimDraftsProposal,
             )
-            screened_record = _accepted(
-                verified.snapshot.accepted_proposals,
-                drafts.screened_candidates_proposal_id,
-                "screened",
-            )
+            if drafts.screened_candidates_proposal_id != screened_record.proposal_id:
+                raise CoreRunError("claim_lineage_invalid")
             screened, screened_bytes = _load_proposal(
                 store,
                 screened_record,
                 ScreenedCandidatesProposal,
             )
-            candidate_record = _accepted(
-                verified.snapshot.accepted_proposals,
-                screened.candidate_claims_proposal_id,
-                "candidate",
-            )
+            if screened.candidate_claims_proposal_id != candidate_record.proposal_id:
+                raise CoreRunError("claim_lineage_invalid")
             candidates, candidate_bytes = _load_proposal(
                 store,
                 candidate_record,
@@ -125,6 +121,8 @@ class ClaimFreezeService:
             )
             if replay is not None:
                 return replay
+            lineage.require_no_active_invocation("claim-ledger")
+            lineage.require_stage_mutable("claim-ledger")
             if verified.snapshot.store_revision != request.expected_store_revision:
                 raise CoreRunError("store_revision_conflict")
             if verified.snapshot.claim_freezes:
