@@ -1,0 +1,87 @@
+"""Markdown block identity and span replay tests."""
+
+from __future__ import annotations
+
+import pytest
+
+from multi_agent_brief.semantic_evaluator.errors import SemanticEvaluatorError
+from multi_agent_brief.semantic_evaluator.normalization import (
+    make_span_locator,
+    normalize_markdown,
+    replay_reader_artifact,
+    replay_span,
+)
+
+
+MARKDOWN_LF = (
+    "# 标题\n\n"
+    "段落一。\n段落二。\n\n"
+    "- 项目一\n- 项目二\n\n"
+    "| 列一 | 列二 |\n| --- | --- |\n| 甲 | 乙 |\n\n"
+    "```text\n合成代码\n```\n"
+)
+
+
+def test_markdown_blocks_v1_normalizes_bom_newlines_and_lexical_roles() -> None:
+    raw = ("\ufeff" + MARKDOWN_LF.replace("\n", "\r\n")).encode("utf-8")
+    normalized = normalize_markdown(raw, artifact_id="reader-synthetic-1")
+    assert normalized.normalized_text == MARKDOWN_LF
+    assert [item.role for item in normalized.artifact.blocks] == [
+        "heading",
+        "paragraph",
+        "list",
+        "table",
+        "code",
+    ]
+    assert [item.block_id for item in normalized.artifact.blocks] == [
+        "B000001",
+        "B000002",
+        "B000003",
+        "B000004",
+        "B000005",
+    ]
+    assert all(item.section_path == ["标题"] for item in normalized.artifact.blocks)
+    replay_reader_artifact(normalized.artifact, normalized.normalized_text)
+
+
+def test_raw_report_identity_and_normalized_text_identity_are_separate() -> None:
+    lf = normalize_markdown(MARKDOWN_LF.encode(), artifact_id="reader-lf")
+    crlf = normalize_markdown(
+        MARKDOWN_LF.replace("\n", "\r\n").encode(), artifact_id="reader-crlf"
+    )
+    assert lf.artifact.report_sha256 != crlf.artifact.report_sha256
+    assert lf.artifact.normalized_text_sha256 == crlf.artifact.normalized_text_sha256
+    assert [item.text for item in lf.artifact.blocks] == [
+        item.text for item in crlf.artifact.blocks
+    ]
+
+
+def test_span_locator_uses_python_code_point_offsets_and_exact_hash_replay() -> None:
+    reader = normalize_markdown(
+        "# 标题\n\n甲乙丙。\n".encode(), artifact_id="reader-span"
+    )
+    block = reader.artifact.blocks[1]
+    span = make_span_locator(
+        reader.artifact,
+        block_id=block.block_id,
+        start_char=1,
+        end_char=3,
+    )
+    assert replay_span(reader.artifact, span) == "乙丙"
+    stale = span.model_copy(update={"excerpt_sha256": "0" * 64})
+    with pytest.raises(SemanticEvaluatorError, match="span_excerpt_hash_mismatch"):
+        replay_span(reader.artifact, stale)
+
+
+@pytest.mark.parametrize("raw", [b"\xff", b"# ok\x00bad"])
+def test_invalid_utf8_and_nul_fail_closed(raw: bytes) -> None:
+    with pytest.raises(SemanticEvaluatorError) as caught:
+        normalize_markdown(raw, artifact_id="reader-invalid")
+    assert caught.value.reason_code == "input_not_utf8"
+
+
+def test_normalization_is_deterministic_and_does_not_reflow_text() -> None:
+    first = normalize_markdown(MARKDOWN_LF.encode(), artifact_id="reader-stable")
+    second = normalize_markdown(MARKDOWN_LF.encode(), artifact_id="reader-stable")
+    assert first == second
+    assert "段落一。\n段落二。" in first.artifact.blocks[1].text

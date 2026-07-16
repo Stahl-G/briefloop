@@ -1,0 +1,21 @@
+checklist_id: structured_checklist_zh_v1
+language: zh-CN
+items:
+  - dimension_id: cross_section_consistency
+    text: 请人工检查跨章节的状态、数字范围和结论是否能够同时成立。
+  - dimension_id: scope_definition_stability
+    text: 请人工检查实体、时间、单位和构念范围是否发生未声明变化。
+  - dimension_id: reasoning_continuity
+    text: 请人工检查报告自己的前提、推理桥梁和限定是否连续支撑结论。
+  - dimension_id: uncertainty_calibration
+    text: 请人工检查措辞强度是否与报告内部限制、分歧和证据状态一致。
+  - dimension_id: summary_body_alignment
+    text: 请人工检查标题、摘要、状态表和正文是否实质一致。
+  - dimension_id: recommendation_constraint_consistency
+    text: 请人工检查建议是否满足报告自己声明的前提、状态和相互约束。
+  - dimension_id: brief_requirement_coverage
+    text: 请人工检查所有 must-answer 和 must-include 要求是否得到实质回应。
+  - dimension_id: audience_decision_fit
+    text: 请人工检查目标读者需求和约定决策用途是否得到覆盖。
+  - dimension_id: explicit_scope_constraint_compliance
+    text: 请人工检查 must-not-claim、included 和 excluded 范围约束是否被遵守。
