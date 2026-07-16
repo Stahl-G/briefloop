@@ -52,13 +52,35 @@ EXPECTED_V2_CONTRACT_IDS = (
     "briefloop.approval.v2",
     "briefloop.delivery.v2",
     "briefloop.transaction_receipt.v2",
+    "briefloop.run_direction.v2",
+    "briefloop.core_run_initialize_request.v2",
+    "briefloop.run_contract_binding.v2",
+    "briefloop.invocation_start_request.v2",
+    "briefloop.owned_artifact_submit_request.v2",
+    "briefloop.owned_artifact_submission_record.v2",
+    "briefloop.claim_record.v2",
+    "briefloop.claim_source_binding.v2",
+    "briefloop.claim_freeze_record.v2",
+    "briefloop.claim_freeze_request.v2",
+    "briefloop.stage_transition_record.v2",
+    "briefloop.stage_artifact_binding.v2",
+    "briefloop.stage_gate_binding.v2",
+    "briefloop.stage_complete_request.v2",
+    "briefloop.gate_finding_record.v2",
+    "briefloop.gate_evaluation_record.v2",
+    "briefloop.gate_artifact_binding.v2",
+    "briefloop.gate_check_request.v2",
+    "briefloop.audit_promotion_request.v2",
+    "briefloop.audit_report_artifact.v2",
+    "briefloop.run_integrity_record.v2",
+    "briefloop.integrity_check_request.v2",
 )
 
 
 def test_v2_contract_inventory_is_exact_and_uses_existing_registry() -> None:
     assert V2_CONTRACT_IDS == EXPECTED_V2_CONTRACT_IDS
-    assert len(V2_CONTRACT_MODELS) == 20
-    assert len(set(V2_CONTRACT_IDS)) == 20
+    assert len(V2_CONTRACT_MODELS) == 42
+    assert len(set(V2_CONTRACT_IDS)) == 42
     for contract_id, model in zip(V2_CONTRACT_IDS, V2_CONTRACT_MODELS):
         assert SchemaRegistry.get(contract_id) is model
 
@@ -155,6 +177,28 @@ def test_strict_type_enum_and_date_failures_are_stable(
     assert [(item.field, item.error, item.severity) for item in violations] == [
         (field, expected_error, "error")
     ]
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [
+        ("web_search_mode", "automatic"),
+        ("search_backend", "custom"),
+    ],
+)
+def test_run_direction_reuses_the_existing_search_mode_contract(
+    field: str,
+    value: str,
+) -> None:
+    payload = SchemaRegistry.example("briefloop.run_direction.v2", "minimal")
+    payload[field] = value
+    if field == "search_backend":
+        payload["web_search_mode"] = "external_api"
+
+    assert [item.field for item in SchemaRegistry.validate(
+        "briefloop.run_direction.v2",
+        payload,
+    )] == [field]
 
 
 def test_extra_field_error_is_value_free_and_does_not_expose_pydantic_message() -> None:

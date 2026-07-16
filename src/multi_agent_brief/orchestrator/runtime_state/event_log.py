@@ -88,6 +88,9 @@ EVENT_TYPES = {
     "source_evidence_committed",
     "role_proposal_committed",
     "intake_rejected",
+    "role_invocation_started",
+    "owned_artifact_accepted",
+    "audit_proposal_promoted",
 }
 
 ACTORS = {"cli", "orchestrator", "runtime", "system"}

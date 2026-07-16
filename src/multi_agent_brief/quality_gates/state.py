@@ -50,6 +50,7 @@ from multi_agent_brief.orchestrator.runtime_state.errors import (
 )
 from multi_agent_brief.orchestrator_contract import resolve_repo_workdir
 from multi_agent_brief.outputs.atomic_reader_projection import (
+    project_atomic_reader_text,
     project_atomic_reader_text_from_workspace,
 )
 from multi_agent_brief.product.policy_gate_adapter import (
@@ -2236,6 +2237,69 @@ def evaluate_quality_gate_findings(
         raise RuntimeStateError(
             "Quality gate evaluation failed.",
             details={"gate_errors": {gate_id: gate_errors[gate_id] for gate_id in sorted(gate_errors)}},
+        )
+    return gate_findings
+
+
+def evaluate_quality_gate_findings_preloaded(
+    *,
+    markdown: str,
+    ledger: ClaimLedger,
+    config: dict[str, Any],
+    user_text: str,
+    analyst_markdown: str | None,
+    report_date: str,
+    max_source_age_days: int | None,
+    strict: bool,
+    stages: list[dict[str, Any]],
+    artifacts: list[dict[str, Any]],
+    gate_stage_id: str,
+    gate_artifact_id: str,
+    policy_gate_adapter: dict[str, Any],
+    coverage_omission_projection: dict[str, Any],
+    atomic_graph_payload: dict[str, Any] | None = None,
+) -> dict[str, list[dict[str, Any]]]:
+    """Run the existing deterministic Gate logic from detached trusted values.
+
+    This entrypoint performs no workspace reads or writes.  The dormant
+    ControlStore path supplies exact revision bytes and owns persistence.
+    """
+
+    gate_findings = evaluate_quality_gate_findings(
+        markdown=markdown,
+        ledger=ledger,
+        config=config,
+        user_text=user_text,
+        analyst_markdown=analyst_markdown,
+        report_date=report_date,
+        max_source_age_days=max_source_age_days,
+        strict=strict,
+        reader_facing_mode=False,
+        stages=stages,
+        artifacts=artifacts,
+        policy_gate_adapter=policy_gate_adapter,
+        coverage_omission_projection=coverage_omission_projection,
+        parallel=False,
+    )
+    atomic_projection = project_atomic_reader_text(
+        graph_payload=atomic_graph_payload,
+        target_text=markdown,
+        target_artifact="audited_brief",
+    )
+    gate_findings["material_fact"].extend(
+        _atomic_reader_projection_findings(
+            projection=atomic_projection,
+            start_idx=len(gate_findings["material_fact"]) + 1,
+            stages=stages,
+            artifacts=artifacts,
+            reader_facing_mode=False,
+        )
+    )
+    for gate_id in sorted(GATE_IDS):
+        gate_findings[gate_id] = _apply_gate_context(
+            gate_findings[gate_id],
+            gate_stage_id=gate_stage_id,
+            gate_artifact_id=gate_artifact_id,
         )
     return gate_findings
 

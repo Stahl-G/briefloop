@@ -16,6 +16,8 @@ from multi_agent_brief.contracts.v2 import (
     WorkspaceRunHead,
 )
 from multi_agent_brief.control_store import SQLiteControlStore
+from multi_agent_brief.intake_v2 import IntakeResult
+from multi_agent_brief.intake_v2.service import IntakeService
 
 
 RUN_ID = "RUN-PR3-CLI-001"
@@ -170,6 +172,41 @@ def test_hidden_intake_cli_commits_source_and_emits_one_json_object(
         ]
 
 
+def test_hidden_intake_cli_emits_unknown_and_nonzero_without_values(
+    tmp_path: Path,
+    capsys,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    monkeypatch.setattr(
+        IntakeService,
+        "submit_source",
+        lambda _self, _request: IntakeResult(
+            status="commit_outcome_unknown",
+            error_code="commit_outcome_unknown",
+        ),
+    )
+
+    exit_code = main(
+        [
+            "intake-v2",
+            "source",
+            "--workspace",
+            str(workspace),
+            "--request",
+            "scratch/unused.json",
+            "--json",
+        ]
+    )
+
+    assert exit_code == 1
+    assert json.loads(capsys.readouterr().out) == {
+        "status": "commit_outcome_unknown",
+        "error_code": "commit_outcome_unknown",
+    }
+
+
 def test_intake_cli_json_only_workspace_never_creates_sqlite_fallback(
     tmp_path: Path,
     capsys,
@@ -245,6 +282,7 @@ def test_intake_cli_is_labelled_internal_and_requires_json() -> None:
 def test_intake_v2_imports_are_confined_to_dormant_package_and_cli_adapter() -> None:
     package_root = Path(__file__).parents[1] / "src" / "multi_agent_brief"
     allowed = {
+        "cli/core_v2_commands.py",
         "cli/intake_v2_commands.py",
         "intake_v2/__init__.py",
         "intake_v2/service.py",
@@ -260,7 +298,11 @@ def test_intake_v2_imports_are_confined_to_dormant_package_and_cli_adapter() -> 
             if module == "multi_agent_brief.intake_v2" or module.startswith(
                 "multi_agent_brief.intake_v2."
             ):
-                if relative not in allowed and not relative.startswith("intake_v2/"):
+                if (
+                    relative not in allowed
+                    and not relative.startswith("intake_v2/")
+                    and not relative.startswith("core_run_v2/")
+                ):
                     findings.append(f"{relative}:{node.lineno}")
     assert findings == []
 

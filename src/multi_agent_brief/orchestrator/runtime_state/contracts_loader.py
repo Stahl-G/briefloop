@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import re
+from copy import deepcopy
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, NoReturn
@@ -32,6 +33,17 @@ _CONTROL_OWNER_NAMESPACE = re.compile(r"^[a-z][a-z0-9]*(?:-[a-z0-9]+)*$")
 class _RuntimeContractUniverse:
     """One completely validated runtime contract pair."""
 
+    stages: tuple[dict[str, Any], ...]
+    artifacts: tuple[dict[str, Any], ...]
+
+
+@dataclass(frozen=True)
+class ValidatedRuntimeContractPayloads:
+    """Validated detached payloads shared by file and Store-backed callers."""
+
+    stage_specs: dict[str, Any]
+    artifact_contracts: dict[str, Any]
+    policy_pack: dict[str, Any]
     stages: tuple[dict[str, Any], ...]
     artifacts: tuple[dict[str, Any], ...]
 
@@ -675,6 +687,57 @@ def _load_runtime_contract_universe(repo_workdir: str | Path) -> _RuntimeContrac
     return _RuntimeContractUniverse(stages=tuple(stages), artifacts=tuple(artifacts))
 
 
+def validate_runtime_contract_payloads(
+    stage_specs: dict[str, Any],
+    artifact_contracts: dict[str, Any],
+    policy_pack: dict[str, Any],
+) -> ValidatedRuntimeContractPayloads:
+    """Validate detached contract payloads without reading or writing files."""
+
+    if type(stage_specs) is not dict or type(artifact_contracts) is not dict:
+        raise RuntimeStateError("Runtime contract payloads must contain objects")
+    if type(policy_pack) is not dict:
+        raise RuntimeStateError("policy_packs/default.yaml must contain an object")
+    stage_payload = deepcopy(stage_specs)
+    artifact_payload = deepcopy(artifact_contracts)
+    policy_payload = deepcopy(policy_pack)
+    stages = _validate_stage_specs(stage_payload)
+    artifacts, producer_kinds = _validate_artifact_contracts(artifact_payload)
+    _validate_local_coherence(stages, artifacts, producer_kinds)
+    if policy_payload.get("schema_version") != "multi-agent-brief-policy-pack/v1":
+        raise RuntimeStateError("policy_packs/default.yaml schema_version is invalid")
+    policy_identity = policy_payload.get("policy_pack")
+    if type(policy_identity) is not dict or policy_identity.get("name") != "default":
+        raise RuntimeStateError("policy_packs/default.yaml identity is invalid")
+    return ValidatedRuntimeContractPayloads(
+        stage_specs=stage_payload,
+        artifact_contracts=artifact_payload,
+        policy_pack=policy_payload,
+        stages=tuple(deepcopy(stages)),
+        artifacts=tuple(deepcopy(artifacts)),
+    )
+
+
+def load_runtime_contract_payloads(
+    repo_workdir: str | Path,
+) -> ValidatedRuntimeContractPayloads:
+    """Load and validate the exact three-file runtime contract universe."""
+
+    repo = _resolve_repo_workdir(repo_workdir)
+    stage_payload = _load_contract_yaml(repo, "stage_specs")
+    artifact_payload = _load_contract_yaml(repo, "artifact_contracts")
+    policy_payload = _load_yaml(
+        _contract_file(repo, CONTRACT_REFERENCES["default_policy_pack"])
+    )
+    if type(policy_payload) is not dict:
+        raise RuntimeStateError("policy_packs/default.yaml must contain an object")
+    return validate_runtime_contract_payloads(
+        stage_payload,
+        artifact_payload,
+        policy_payload,
+    )
+
+
 def load_stage_specs(repo_workdir: str | Path) -> list[dict[str, Any]]:
     return list(_load_runtime_contract_universe(repo_workdir).stages)
 
@@ -684,7 +747,7 @@ def load_artifact_contracts(repo_workdir: str | Path) -> list[dict[str, Any]]:
 
 
 def load_default_policy_pack(repo_workdir: str | Path) -> dict[str, Any]:
-    repo = Path(repo_workdir).expanduser().resolve()
+    repo = _resolve_repo_workdir(repo_workdir)
     data = _load_yaml(_contract_file(repo, CONTRACT_REFERENCES["default_policy_pack"]))
     if not isinstance(data, dict):
         raise RuntimeStateError("policy_packs/default.yaml must contain an object")

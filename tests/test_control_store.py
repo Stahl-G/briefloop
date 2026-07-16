@@ -27,6 +27,7 @@ from multi_agent_brief.contracts.v2 import (
     TransactionReceipt,
 )
 from multi_agent_brief.control_store import (
+    ControlStoreCommitOutcomeUnknown,
     ControlStoreConflict,
     ControlStoreIntegrityError,
     ControlStoreSchemaError,
@@ -1009,12 +1010,36 @@ def test_schema_settings_and_exact_table_universe(tmp_path: Path) -> None:
         "sources",
         "accepted_proposals",
         "proposal_source_bindings",
+        "run_contract_bindings",
+        "owned_artifact_submissions",
+        "stage_transitions",
+        "stage_artifact_bindings",
+        "stage_gate_bindings",
+        "claims",
+        "claim_source_bindings",
+        "claim_freezes",
+        "gate_evaluations",
+        "gate_findings",
+        "gate_artifact_bindings",
+        "run_integrity_records",
+        "transaction_run_contract_bindings",
+        "transaction_owned_artifact_submissions",
+        "transaction_stage_transitions",
+        "transaction_stage_artifact_bindings",
+        "transaction_stage_gate_bindings",
+        "transaction_claims",
+        "transaction_claim_source_bindings",
+        "transaction_claim_freezes",
+        "transaction_gate_evaluations",
+        "transaction_gate_findings",
+        "transaction_gate_artifact_bindings",
+        "transaction_run_integrity_records",
     }
     with _create_store(tmp_path) as store:
         assert store._connection.execute("PRAGMA foreign_keys").fetchone()[0] == 1
         assert store._connection.execute("PRAGMA journal_mode").fetchone()[0] == "wal"
         assert store._connection.execute("PRAGMA synchronous").fetchone()[0] == 2
-        assert store._connection.execute("PRAGMA user_version").fetchone()[0] == 2
+        assert store._connection.execute("PRAGMA user_version").fetchone()[0] == 3
         tables = {
             row[0]
             for row in store._connection.execute(
@@ -1024,9 +1049,6 @@ def test_schema_settings_and_exact_table_universe(tmp_path: Path) -> None:
         assert tables == allowed_tables
         assert (
             not {
-                "stage_transitions",
-                "claims",
-                "claim_source_bindings",
                 "repair_transactions",
                 "projection_receipts",
             }
@@ -2100,7 +2122,7 @@ def test_future_schema_fails_closed(tmp_path: Path) -> None:
     store = _create_store(tmp_path)
     store.close()
     connection = sqlite3.connect(tmp_path / "control.db")
-    connection.execute("PRAGMA user_version = 3")
+    connection.execute("PRAGMA user_version = 4")
     connection.close()
     with pytest.raises(ControlStoreSchemaError) as error:
         SQLiteControlStore.open(tmp_path / "control.db")
@@ -2312,6 +2334,32 @@ def test_explicit_rollback_closes_uow_without_writing(tmp_path: Path) -> None:
         assert _table_count(store, "runs") == 0
 
 
+def test_postcommit_observer_failure_preserves_commit_and_closes_uow(
+    tmp_path: Path,
+) -> None:
+    with _create_store(tmp_path) as store:
+        unit = _stage_all(store)
+
+        def fail_observation(_receipt: TransactionReceipt) -> None:
+            raise RuntimeError("injected read-only postcommit observation failure")
+
+        with pytest.raises(ControlStoreCommitOutcomeUnknown) as error:
+            unit.commit(_postcommit_observer=fail_observation)
+        assert error.value.code == "commit_outcome_unknown"
+        assert store.current_revision == 1
+        assert _table_count(store, "transactions") == 1
+        with pytest.raises(ControlStoreStateError, match="unit_of_work_not_active"):
+            unit.rollback()
+        with pytest.raises(ControlStoreStateError, match="unit_of_work_not_active"):
+            unit.commit()
+
+        replayed = _stage_all(store).commit(
+            _postcommit_observer=lambda _receipt: None
+        )
+        assert replayed.transaction_id == TRANSACTION_ID
+        assert store.current_revision == 1
+
+
 def test_only_merged_control_dtos_are_serializable() -> None:
     proposal = SourceProposal.model_validate(SourceProposal.minimal_example)
     with pytest.raises(ControlStoreIntegrityError) as error:
@@ -2342,16 +2390,28 @@ def test_migration_resource_matches_packaged_source_text() -> None:
     assert packaged_2.read_text(encoding="utf-8") == migration_2.read_text(
         encoding="utf-8"
     )
+    migration_3 = source.with_name("0003.sql")
+    packaged_3 = resources.files("multi_agent_brief.control_store").joinpath(
+        "migrations",
+        "0003.sql",
+    )
+    assert packaged_3.read_text(encoding="utf-8") == migration_3.read_text(
+        encoding="utf-8"
+    )
 
 
-def test_only_dormant_intake_modules_import_control_store() -> None:
+def test_only_dormant_v2_modules_import_control_store() -> None:
     package_root = Path(__file__).parents[1] / "src" / "multi_agent_brief"
     findings: list[str] = []
     for path in sorted(package_root.rglob("*.py")):
         if "control_store" in path.relative_to(package_root).parts:
             continue
         relative = path.relative_to(package_root).as_posix()
-        if relative == "intake_v2/service.py":
+        if (
+            relative == "intake_v2/service.py"
+            or relative == "cli/core_v2_commands.py"
+            or relative.startswith("core_run_v2/")
+        ):
             continue
         tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
         for node in ast.walk(tree):

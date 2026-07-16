@@ -45,6 +45,7 @@ from multi_agent_brief.cli import (
     semantic_support_commands,
     contract_commands,
     intake_v2_commands,
+    core_v2_commands,
 )
 
 
@@ -149,6 +150,9 @@ def build_parser(*, prog: str | None = None) -> argparse.ArgumentParser:
 
     # Dormant fresh-v2 ControlStore intake; no active adapter invokes it.
     intake_v2_commands.register(subparsers)
+
+    # Dormant fresh-v2 core-run harness; no active adapter invokes it.
+    core_v2_commands.register(subparsers)
 
     # Meta
     subparsers.add_parser("version", help="Print package version.")
@@ -288,6 +292,9 @@ def _dispatch(args: argparse.Namespace) -> int:
 
     if cmd == "intake-v2":
         return intake_v2_commands.handle(args)
+
+    if cmd == "core-v2":
+        return core_v2_commands.handle(args)
 
     return 1
 

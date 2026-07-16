@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from copy import deepcopy
 from dataclasses import dataclass
-from collections.abc import Hashable
+from collections.abc import Callable, Hashable
 from typing import TYPE_CHECKING, TypeVar, cast
 
 from pydantic import ValidationError
@@ -15,17 +15,30 @@ from multi_agent_brief.contracts.v2 import (
     Approval,
     ArtifactRecord,
     ArtifactRevision,
+    ClaimFreezeRecord,
+    ClaimRecord,
+    ClaimSourceBinding,
     Delivery,
     EventEnvelope,
+    GateArtifactBinding,
+    GateEvaluationRecord,
+    GateFindingRecord,
     Invocation,
+    OwnedArtifactSubmissionRecord,
     ProposalSourceBinding,
+    RunContractBinding,
     RunIdentity,
+    RunIntegrityRecord,
+    StageArtifactBinding,
+    StageGateBinding,
     StageState,
+    StageTransitionRecord,
     StrictModel,
     TransactionReceipt,
     WorkspaceRunHead,
 )
 from multi_agent_brief.control_store.errors import (
+    ControlStoreCommitOutcomeUnknown,
     ControlStoreConflict,
     ControlStoreIntegrityError,
     ControlStoreStateError,
@@ -91,6 +104,26 @@ class ControlUnitOfWork:
         self._proposal_source_bindings: dict[
             tuple[str, str], ProposalSourceBinding
         ] = {}
+        self._run_contract_binding: RunContractBinding | None = None
+        self._owned_artifact_submissions: dict[
+            str, OwnedArtifactSubmissionRecord
+        ] = {}
+        self._stage_transitions: dict[str, StageTransitionRecord] = {}
+        self._stage_artifact_bindings: dict[
+            tuple[str, int], StageArtifactBinding
+        ] = {}
+        self._stage_gate_bindings: dict[tuple[str, str], StageGateBinding] = {}
+        self._claims: dict[str, ClaimRecord] = {}
+        self._claim_source_bindings: dict[
+            tuple[str, str], ClaimSourceBinding
+        ] = {}
+        self._claim_freezes: dict[str, ClaimFreezeRecord] = {}
+        self._gate_evaluations: dict[str, GateEvaluationRecord] = {}
+        self._gate_findings: dict[tuple[str, str], GateFindingRecord] = {}
+        self._gate_artifact_bindings: dict[
+            tuple[str, int], GateArtifactBinding
+        ] = {}
+        self._run_integrity_records: dict[int, RunIntegrityRecord] = {}
         self._state = "active"
 
     @property
@@ -247,6 +280,109 @@ class ControlUnitOfWork:
             snapshot,
         )
 
+    def put_run_contract_binding(self, record: RunContractBinding) -> None:
+        snapshot = self._snapshot_record(record, RunContractBinding)
+        self._require_run(snapshot)
+        if snapshot.workspace_id != self._store.workspace_id:
+            raise ControlStoreConflict("control_record_workspace_mismatch")
+        if self._run_contract_binding is not None:
+            raise ControlStoreConflict("duplicate_staged_record")
+        self._run_contract_binding = snapshot
+
+    def put_owned_artifact_submission(
+        self,
+        record: OwnedArtifactSubmissionRecord,
+    ) -> None:
+        snapshot = self._snapshot_record(record, OwnedArtifactSubmissionRecord)
+        self._require_run(snapshot)
+        self._put_unique(
+            self._owned_artifact_submissions,
+            snapshot.submission_id,
+            snapshot,
+        )
+
+    def append_stage_transition(self, record: StageTransitionRecord) -> None:
+        snapshot = self._snapshot_record(record, StageTransitionRecord)
+        self._require_run(snapshot)
+        self._put_unique(
+            self._stage_transitions,
+            snapshot.transition_id,
+            snapshot,
+        )
+
+    def put_stage_artifact_binding(self, record: StageArtifactBinding) -> None:
+        snapshot = self._snapshot_record(record, StageArtifactBinding)
+        self._require_run(snapshot)
+        self._put_unique(
+            self._stage_artifact_bindings,
+            (snapshot.transition_id, snapshot.position),
+            snapshot,
+        )
+
+    def put_stage_gate_binding(self, record: StageGateBinding) -> None:
+        snapshot = self._snapshot_record(record, StageGateBinding)
+        self._require_run(snapshot)
+        self._put_unique(
+            self._stage_gate_bindings,
+            (snapshot.transition_id, snapshot.gate_id),
+            snapshot,
+        )
+
+    def put_claim(self, record: ClaimRecord) -> None:
+        snapshot = self._snapshot_record(record, ClaimRecord)
+        self._require_run(snapshot)
+        self._put_unique(self._claims, snapshot.claim_id, snapshot)
+
+    def put_claim_source_binding(self, record: ClaimSourceBinding) -> None:
+        snapshot = self._snapshot_record(record, ClaimSourceBinding)
+        self._require_run(snapshot)
+        self._put_unique(
+            self._claim_source_bindings,
+            (snapshot.claim_id, snapshot.source_id),
+            snapshot,
+        )
+
+    def put_claim_freeze(self, record: ClaimFreezeRecord) -> None:
+        snapshot = self._snapshot_record(record, ClaimFreezeRecord)
+        self._require_run(snapshot)
+        self._put_unique(self._claim_freezes, snapshot.freeze_id, snapshot)
+
+    def put_gate_evaluation(self, record: GateEvaluationRecord) -> None:
+        snapshot = self._snapshot_record(record, GateEvaluationRecord)
+        self._require_run(snapshot)
+        self._put_unique(
+            self._gate_evaluations,
+            snapshot.evaluation_id,
+            snapshot,
+        )
+
+    def put_gate_finding(self, record: GateFindingRecord) -> None:
+        snapshot = self._snapshot_record(record, GateFindingRecord)
+        self._require_run(snapshot)
+        self._put_unique(
+            self._gate_findings,
+            (snapshot.evaluation_id, snapshot.finding_id),
+            snapshot,
+        )
+
+    def put_gate_artifact_binding(self, record: GateArtifactBinding) -> None:
+        snapshot = self._snapshot_record(record, GateArtifactBinding)
+        self._require_run(snapshot)
+        self._put_unique(
+            self._gate_artifact_bindings,
+            (snapshot.evaluation_id, snapshot.position),
+            snapshot,
+        )
+
+    def append_run_integrity_record(self, record: RunIntegrityRecord) -> None:
+        snapshot = self._snapshot_record(record, RunIntegrityRecord)
+        self._require_run(snapshot)
+        self._put_unique(
+            self._run_integrity_records,
+            snapshot.integrity_revision,
+            snapshot,
+        )
+
     def _put_unique(
         self,
         collection: dict[Hashable, object],
@@ -313,6 +449,55 @@ class ControlUnitOfWork:
                 self._record_payload(self._proposal_source_bindings[key])
                 for key in sorted(self._proposal_source_bindings)
             ],
+            "run_contract_binding": (
+                self._record_payload(self._run_contract_binding)
+                if self._run_contract_binding is not None
+                else None
+            ),
+            "owned_artifact_submissions": [
+                self._record_payload(self._owned_artifact_submissions[key])
+                for key in sorted(self._owned_artifact_submissions)
+            ],
+            "stage_transitions": [
+                self._record_payload(self._stage_transitions[key])
+                for key in sorted(self._stage_transitions)
+            ],
+            "stage_artifact_bindings": [
+                self._record_payload(self._stage_artifact_bindings[key])
+                for key in sorted(self._stage_artifact_bindings)
+            ],
+            "stage_gate_bindings": [
+                self._record_payload(self._stage_gate_bindings[key])
+                for key in sorted(self._stage_gate_bindings)
+            ],
+            "claims": [
+                self._record_payload(self._claims[key])
+                for key in sorted(self._claims)
+            ],
+            "claim_source_bindings": [
+                self._record_payload(self._claim_source_bindings[key])
+                for key in sorted(self._claim_source_bindings)
+            ],
+            "claim_freezes": [
+                self._record_payload(self._claim_freezes[key])
+                for key in sorted(self._claim_freezes)
+            ],
+            "gate_evaluations": [
+                self._record_payload(self._gate_evaluations[key])
+                for key in sorted(self._gate_evaluations)
+            ],
+            "gate_findings": [
+                self._record_payload(self._gate_findings[key])
+                for key in sorted(self._gate_findings)
+            ],
+            "gate_artifact_bindings": [
+                self._record_payload(self._gate_artifact_bindings[key])
+                for key in sorted(self._gate_artifact_bindings)
+            ],
+            "run_integrity_records": [
+                self._record_payload(self._run_integrity_records[key])
+                for key in sorted(self._run_integrity_records)
+            ],
         }
         return canonical_fingerprint(payload)
 
@@ -323,13 +508,31 @@ class ControlUnitOfWork:
             raise ControlStoreIntegrityError("canonical_payload_invalid")
         return payload
 
-    def commit(self) -> TransactionReceipt:
+    def commit(
+        self,
+        *,
+        _postcommit_observer: Callable[[TransactionReceipt], None] | None = None,
+    ) -> TransactionReceipt:
         self._require_active()
         try:
             receipt = self._store._commit_unit_of_work(self)
+        except ControlStoreCommitOutcomeUnknown:
+            self._state = "outcome_unknown"
+            raise
         except Exception:
             self._state = "rolled_back"
             raise
+        try:
+            if _postcommit_observer is not None:
+                _postcommit_observer(receipt)
+        except ControlStoreCommitOutcomeUnknown:
+            self._state = "outcome_unknown"
+            raise
+        except Exception as exc:
+            self._state = "outcome_unknown"
+            raise ControlStoreCommitOutcomeUnknown(
+                "commit_outcome_unknown"
+            ) from exc
         self._state = "committed"
         return receipt
 
