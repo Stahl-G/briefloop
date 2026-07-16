@@ -4,6 +4,10 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import pytest
+
+from multi_agent_brief.semantic_evaluator.admission import admit_inputs
+import multi_agent_brief.semantic_evaluator.validator as validator_module
 from multi_agent_brief.semantic_evaluator.contracts import (
     DIMENSION_RESPONSE_SCHEMA_ID,
     AbstainConflictingContextResult,
@@ -12,12 +16,14 @@ from multi_agent_brief.semantic_evaluator.contracts import (
     AttemptRef,
     BoundedRequirement,
     DimensionResponse,
+    FindingDraft,
     FindingEmittedResult,
-    FindingProposal,
+    InstrumentConfig,
     NoFindingResult,
-    O3Handoff,
+    O3HandoffDraft,
     SpanLocator,
 )
+from multi_agent_brief.semantic_evaluator.errors import SemanticEvaluatorError
 from multi_agent_brief.semantic_evaluator.normalization import (
     freeze_bounded_context,
     make_span_locator,
@@ -25,13 +31,15 @@ from multi_agent_brief.semantic_evaluator.normalization import (
 )
 from multi_agent_brief.semantic_evaluator.parser import parse_dimension_response
 from multi_agent_brief.semantic_evaluator.profile import load_profile
-from multi_agent_brief.semantic_evaluator.serialization import canonical_json_bytes
+from multi_agent_brief.semantic_evaluator.serialization import (
+    canonical_json_bytes,
+    sha256_bytes,
+)
 from multi_agent_brief.semantic_evaluator.unit_planner import (
     build_assessment_plan,
-    derive_finding_id,
-    derive_handoff_id,
 )
 from multi_agent_brief.semantic_evaluator.validator import (
+    DimensionEvidence,
     assemble_semantic_assessment_run,
     recompute_event_counts,
     validate_dimension_response,
@@ -39,13 +47,18 @@ from multi_agent_brief.semantic_evaluator.validator import (
 
 
 FIXTURE_ROOT = Path(__file__).parent / "fixtures" / "semantic_evaluator"
+REPORT_BYTES = "# 合成报告\n\n当前状态为 HOLD。\n\n结论写为 READY。\n".encode()
 
 
-def _case():
-    reader = normalize_markdown(
-        "# 合成报告\n\n当前状态为 HOLD。\n\n结论写为 READY。\n".encode(),
-        artifact_id="reader-validator",
-    )
+class _Sizer:
+    sizer_id = "fake-sizer"
+    sizer_version = "v1"
+
+    def count_tokens(self, *, system_text: str, user_text: str) -> int:
+        return 10
+
+
+def _admitted_case():
     context = freeze_bounded_context(
         context_id="context-validator",
         data_class="synthetic",
@@ -65,27 +78,33 @@ def _case():
         ],
     )
     profile = load_profile()
-    plan = build_assessment_plan(
+    decision = admit_inputs(
+        report_bytes=REPORT_BYTES,
+        declared_report_sha256=sha256_bytes(REPORT_BYTES),
+        artifact_id="reader-validator",
+        bounded_context=context,
+        declared_bounded_context_sha256=context.context_sha256,
+        instrument_config=InstrumentConfig.model_validate(
+            InstrumentConfig.minimal_example
+        ),
         trial_id="trial-validator",
-        report_sha256=reader.artifact.report_sha256,
-        profile=profile.profile,
-        profile_sha256=profile.profile_sha256,
+        public_data_attestation=True,
+        private_or_confidential_material=False,
+        prompt_sizer=_Sizer(),
     )
+    assert decision.admitted
+    return decision.reader, context, profile, decision.assessment_plan, decision
+
+
+def _case():
+    reader, context, profile, plan, _decision = _admitted_case()
     return reader, context, profile, plan
 
 
-def _finding(unit, span, *, requirement_ids=None, finding_id=None):
+def _finding(unit, span, *, requirement_ids=None):
     requirement_ids = requirement_ids or []
-    identity = [unit.assessment_unit_id, span.model_dump(mode="json"), requirement_ids]
-    return FindingProposal(
-        finding_id=finding_id
-        or derive_finding_id(
-            assessment_unit_id=unit.assessment_unit_id,
-            ordinal=0,
-            proposal_identity=identity,
-        ),
+    return FindingDraft(
         assessment_unit_id=unit.assessment_unit_id,
-        status="proposal",
         scope_class=unit.scope_class,
         dimension_id=unit.dimension_id,
         severity="major",
@@ -123,8 +142,8 @@ def _no_finding_response(plan, dimension_id: str) -> DimensionResponse:
 
 
 def _complete_no_finding_validation_case(*, inject_security: bool = False):
-    reader, context, profile, plan = _case()
-    results = []
+    reader, context, profile, plan, decision = _admitted_case()
+    evidence = []
     attempts = []
     for ordinal, dimension in enumerate(profile.profile.dimensions):
         response = _no_finding_response(plan, dimension.dimension_id)
@@ -132,14 +151,11 @@ def _complete_no_finding_validation_case(*, inject_security: bool = False):
         if inject_security and ordinal == 0:
             raw["tool_calls"] = [{"name": "forbidden-synthetic-tool"}]
         attempt_ref = f"attempt-{dimension.dimension_id}"
-        results.append(
-            validate_dimension_response(
-                response,
+        evidence.append(
+            DimensionEvidence(
+                response=response,
                 raw_object=raw,
                 expected_dimension_id=dimension.dimension_id,
-                plan=plan,
-                reader_artifact=reader.artifact,
-                bounded_context=context,
                 attempt_ref=attempt_ref,
             )
         )
@@ -151,7 +167,7 @@ def _complete_no_finding_validation_case(*, inject_security: bool = False):
                 reason_code=None,
             )
         )
-    return reader, context, profile, plan, results, attempts
+    return reader, context, profile, plan, decision, evidence, attempts
 
 
 def test_parser_accepts_one_strict_object_and_never_repairs_wrapped_json() -> None:
@@ -178,6 +194,107 @@ def test_parser_classifies_nested_authority_keys_before_generic_extra_failure() 
     parsed = parse_dimension_response(canonical_json_bytes(payload))
     assert parsed.reason_codes == ("authority_output_forbidden",)
     assert parsed.violations == ()
+
+
+def test_parser_rejects_duplicate_members_before_collapse_with_security_precedence() -> (
+    None
+):
+    _reader, _context, _profile, plan = _case()
+    response = _no_finding_response(plan, "cross_section_consistency")
+    text = canonical_json_bytes(response).decode("utf-8")
+    top_level_duplicate = text[:-1] + f',"trial_id":"{plan.trial_id}"}}'
+    assert parse_dimension_response(top_level_duplicate.encode()).reason_codes == (
+        "parser_duplicate_member",
+    )
+    unit_id = response.unit_results[0].assessment_unit_id
+    nested_duplicate = text.replace(
+        f'"assessment_unit_id":"{unit_id}"',
+        f'"assessment_unit_id":"{unit_id}","assessment_unit_id":"{unit_id}"',
+        1,
+    )
+    assert parse_dimension_response(nested_duplicate.encode()).reason_codes == (
+        "parser_duplicate_member",
+    )
+    authority = b'{"pass":false,"pass":true}'
+    assert parse_dimension_response(authority).reason_codes == (
+        "authority_output_forbidden",
+    )
+    security = b'{"pass":false,"tool_calls":[],"pass":true}'
+    assert parse_dimension_response(security).reason_codes == (
+        "tool_or_canary_output_forbidden",
+    )
+
+
+def test_provider_supplied_finding_or_handoff_ids_are_schema_invalid() -> None:
+    reader, _context, _profile, plan = _case()
+    units = [
+        item for item in plan.units if item.dimension_id == "cross_section_consistency"
+    ]
+    span = make_span_locator(
+        reader.artifact,
+        block_id="B000002",
+        start_char=0,
+        end_char=1,
+    )
+    finding_response = DimensionResponse(
+        schema_version=DIMENSION_RESPONSE_SCHEMA_ID,
+        trial_id=plan.trial_id,
+        dimension_id="cross_section_consistency",
+        unit_results=[
+            FindingEmittedResult(
+                assessment_unit_id=units[0].assessment_unit_id,
+                disposition="finding_emitted",
+                findings=[_finding(units[0], span)],
+            ),
+            *[
+                NoFindingResult(
+                    assessment_unit_id=item.assessment_unit_id,
+                    disposition="no_finding",
+                )
+                for item in units[1:]
+            ],
+        ],
+    )
+    finding_payload = finding_response.model_dump(mode="json")
+    finding_payload["unit_results"][0]["findings"][0].update(
+        {"finding_id": "F-000000000001", "status": "proposal"}
+    )
+    assert parse_dimension_response(
+        canonical_json_bytes(finding_payload)
+    ).reason_codes == ("parser_schema_invalid",)
+
+    handoff = O3HandoffDraft(
+        assessment_unit_id=units[0].assessment_unit_id,
+        type="evidence_dependent_assessment",
+        report_spans=[span],
+        context_requirement_ids=[],
+        reason="需要外部证据，转人工复核。",
+    )
+    handoff_response = DimensionResponse(
+        schema_version=DIMENSION_RESPONSE_SCHEMA_ID,
+        trial_id=plan.trial_id,
+        dimension_id="cross_section_consistency",
+        unit_results=[
+            AbstainUnableToAssessResult(
+                assessment_unit_id=units[0].assessment_unit_id,
+                disposition="abstain_unable_to_assess",
+                reason_code="evidence_dependent_assessment",
+                handoffs=[handoff],
+            ),
+            *[
+                NoFindingResult(
+                    assessment_unit_id=item.assessment_unit_id,
+                    disposition="no_finding",
+                )
+                for item in units[1:]
+            ],
+        ],
+    )
+    handoff_payload = handoff_response.model_dump(mode="json")
+    handoff_payload["unit_results"][0]["handoffs"][0]["handoff_id"] = "H-000000000001"
+    assert parse_dimension_response(
+        canonical_json_bytes(handoff_payload)
+    ).reason_codes == ("parser_schema_invalid",)
 
 
 def test_valid_o1_finding_replays_span_and_preserves_explicit_dispositions() -> None:
@@ -222,7 +339,10 @@ def test_valid_o1_finding_replays_span_and_preserves_explicit_dispositions() -> 
         attempt_ref="attempt-o1",
     )
     assert result.accepted is True
-    assert result.accepted_findings == (finding,)
+    assert len(result.accepted_findings) == 1
+    assert result.accepted_findings[0].model_dump(
+        mode="json", exclude={"finding_id", "status"}
+    ) == finding.model_dump(mode="json")
     assert [item.disposition for item in result.unit_outcomes] == [
         "finding_emitted",
         "no_finding",
@@ -279,7 +399,7 @@ def test_bad_span_is_rejected_and_canary_value_is_security_failure() -> None:
     )
     assert "span_excerpt_hash_mismatch" in result.reason_codes
     assert "tool_or_canary_output_forbidden" in result.reason_codes
-    assert result.rejected_finding_ids == (finding.finding_id,)
+    assert len(result.rejected_finding_ids) == 1
 
 
 def test_o2_requires_legal_requirement_binding() -> None:
@@ -338,12 +458,7 @@ def test_evidence_question_is_an_o3_handoff_not_a_truth_finding() -> None:
     span = make_span_locator(
         reader.artifact, block_id="B000003", start_char=0, end_char=1
     )
-    handoff = O3Handoff(
-        handoff_id=derive_handoff_id(
-            assessment_unit_id=units[0].assessment_unit_id,
-            ordinal=0,
-            handoff_identity="source-support-question",
-        ),
+    handoff = O3HandoffDraft(
         assessment_unit_id=units[0].assessment_unit_id,
         type="evidence_dependent_assessment",
         report_spans=[span],
@@ -380,7 +495,10 @@ def test_evidence_question_is_an_o3_handoff_not_a_truth_finding() -> None:
     )
     assert result.accepted is True
     assert result.accepted_findings == ()
-    assert result.handoffs == (handoff,)
+    assert len(result.handoffs) == 1
+    assert result.handoffs[0].model_dump(
+        mode="json", exclude={"handoff_id"}
+    ) == handoff.model_dump(mode="json")
 
 
 def test_evidence_dependent_abstention_cannot_drop_the_o3_handoff() -> None:
@@ -513,18 +631,12 @@ def test_raw_object_and_requested_dimension_are_bound_before_acceptance() -> Non
 
 
 def test_synthetic_events_recompute_complete_25_unit_run_counts() -> None:
-    reader, context, profile, plan, results, attempts = (
+    _reader, _context, _profile, plan, decision, evidence, attempts = (
         _complete_no_finding_validation_case()
     )
     assembled = assemble_semantic_assessment_run(
-        run_id="run-synthetic-complete",
-        trial_id=plan.trial_id,
-        report_sha256=reader.artifact.report_sha256,
-        bounded_context_sha256=context.context_sha256,
-        profile_sha256=profile.profile_sha256,
-        instrument_sha256="4" * 64,
-        plan=plan,
-        results=results,
+        admission=decision,
+        dimension_evidence=evidence,
         attempt_refs=attempts,
     )
     assert assembled.run.run_status == "completed"
@@ -541,32 +653,20 @@ def test_synthetic_events_recompute_complete_25_unit_run_counts() -> None:
         range(1, len(assembled.events) + 1)
     )
     replay = assemble_semantic_assessment_run(
-        run_id="run-synthetic-complete",
-        trial_id=plan.trial_id,
-        report_sha256=reader.artifact.report_sha256,
-        bounded_context_sha256=context.context_sha256,
-        profile_sha256=profile.profile_sha256,
-        instrument_sha256="4" * 64,
-        plan=plan,
-        results=results,
+        admission=decision,
+        dimension_evidence=evidence,
         attempt_refs=attempts,
     )
     assert replay == assembled
 
 
 def test_security_failure_has_precedence_and_a_recomputable_event() -> None:
-    reader, context, profile, plan, results, attempts = (
+    _reader, _context, _profile, _plan, decision, evidence, attempts = (
         _complete_no_finding_validation_case(inject_security=True)
     )
     assembled = assemble_semantic_assessment_run(
-        run_id="run-synthetic-security",
-        trial_id=plan.trial_id,
-        report_sha256=reader.artifact.report_sha256,
-        bounded_context_sha256=context.context_sha256,
-        profile_sha256=profile.profile_sha256,
-        instrument_sha256="5" * 64,
-        plan=plan,
-        results=results,
+        admission=decision,
+        dimension_evidence=evidence,
         attempt_refs=attempts,
     )
     assert assembled.run.run_status == "security_failed"
@@ -583,7 +683,7 @@ def test_security_failure_has_precedence_and_a_recomputable_event() -> None:
 def test_failed_retry_attempt_does_not_turn_a_completed_dimension_into_failure() -> (
     None
 ):
-    reader, context, profile, plan, results, attempts = (
+    _reader, _context, _profile, _plan, decision, evidence, attempts = (
         _complete_no_finding_validation_case()
     )
     retry_history = [
@@ -596,16 +696,224 @@ def test_failed_retry_attempt_does_not_turn_a_completed_dimension_into_failure()
         *attempts,
     ]
     assembled = assemble_semantic_assessment_run(
-        run_id="run-synthetic-retry",
-        trial_id=plan.trial_id,
-        report_sha256=reader.artifact.report_sha256,
-        bounded_context_sha256=context.context_sha256,
-        profile_sha256=profile.profile_sha256,
-        instrument_sha256="6" * 64,
-        plan=plan,
-        results=results,
+        admission=decision,
+        dimension_evidence=evidence,
         attempt_refs=retry_history,
     )
     assert assembled.run.run_status == "completed"
     assert assembled.validation_report.validation_status == "accepted"
-    assert recompute_event_counts(assembled.events)["failure_count"] == 1
+    assert recompute_event_counts(assembled.events)["failure_count"] == 0
+
+
+def test_missing_dimension_requires_explicit_terminal_failed_attempt() -> None:
+    _reader, _context, _profile, _plan, decision, evidence, attempts = (
+        _complete_no_finding_validation_case()
+    )
+    with pytest.raises(
+        SemanticEvaluatorError,
+        match="assessment_unit_failure_link_missing",
+    ):
+        assemble_semantic_assessment_run(
+            admission=decision,
+            dimension_evidence=evidence[:-1],
+            attempt_refs=attempts[:-1],
+        )
+
+    first = evidence[0]
+    partial_response = first.response.model_copy(
+        update={"unit_results": first.response.unit_results[:1]}
+    )
+    partial = DimensionEvidence(
+        response=partial_response,
+        raw_object=partial_response.model_dump(mode="json"),
+        expected_dimension_id=first.expected_dimension_id,
+        attempt_ref=first.attempt_ref,
+    )
+    with pytest.raises(
+        SemanticEvaluatorError,
+        match="assessment_unit_failure_link_missing",
+    ):
+        assemble_semantic_assessment_run(
+            admission=decision,
+            dimension_evidence=[partial, *evidence[1:]],
+            attempt_refs=attempts,
+        )
+
+
+def test_assembly_revalidates_evidence_and_rejects_injected_validation_result() -> None:
+    reader, context, _profile, plan, decision, evidence, attempts = (
+        _complete_no_finding_validation_case()
+    )
+    injected = validate_dimension_response(
+        evidence[0].response,
+        raw_object=evidence[0].raw_object,
+        expected_dimension_id=evidence[0].expected_dimension_id,
+        plan=plan,
+        reader_artifact=reader.artifact,
+        bounded_context=context,
+        attempt_ref=evidence[0].attempt_ref,
+    )
+    with pytest.raises(SemanticEvaluatorError, match="run_binding_mismatch"):
+        assemble_semantic_assessment_run(
+            admission=decision,
+            dimension_evidence=[injected, *evidence[1:]],
+            attempt_refs=attempts,
+        )
+
+
+def test_cross_admission_response_substitution_fails_before_run_witness() -> None:
+    _reader, context, _profile, _plan, _first, evidence, attempts = (
+        _complete_no_finding_validation_case()
+    )
+    other_report = REPORT_BYTES + "\n不同报告。\n".encode()
+    second = admit_inputs(
+        report_bytes=other_report,
+        declared_report_sha256=sha256_bytes(other_report),
+        artifact_id="reader-validator-other",
+        bounded_context=context,
+        declared_bounded_context_sha256=context.context_sha256,
+        instrument_config=InstrumentConfig.model_validate(
+            InstrumentConfig.minimal_example
+        ),
+        trial_id="trial-validator",
+        public_data_attestation=True,
+        private_or_confidential_material=False,
+        prompt_sizer=_Sizer(),
+    )
+    assert second.admitted
+    with pytest.raises(SemanticEvaluatorError, match="run_binding_mismatch"):
+        assemble_semantic_assessment_run(
+            admission=second,
+            dimension_evidence=evidence,
+            attempt_refs=attempts,
+        )
+
+
+def test_global_derived_finding_collision_has_stable_value_free_error(
+    monkeypatch,
+) -> None:
+    reader, _context, _profile, _plan, decision, evidence, attempts = (
+        _complete_no_finding_validation_case()
+    )
+    first = evidence[0]
+    units = [
+        item
+        for item in decision.assessment_plan.units
+        if item.dimension_id == first.expected_dimension_id
+    ]
+    span = make_span_locator(
+        reader.artifact,
+        block_id="B000002",
+        start_char=0,
+        end_char=1,
+    )
+    response = DimensionResponse(
+        schema_version=DIMENSION_RESPONSE_SCHEMA_ID,
+        trial_id=decision.assessment_plan.trial_id,
+        dimension_id=first.expected_dimension_id,
+        unit_results=[
+            FindingEmittedResult(
+                assessment_unit_id=units[0].assessment_unit_id,
+                disposition="finding_emitted",
+                findings=[_finding(units[0], span)],
+            ),
+            FindingEmittedResult(
+                assessment_unit_id=units[1].assessment_unit_id,
+                disposition="finding_emitted",
+                findings=[_finding(units[1], span)],
+            ),
+            NoFindingResult(
+                assessment_unit_id=units[2].assessment_unit_id,
+                disposition="no_finding",
+            ),
+        ],
+    )
+    collision = DimensionEvidence(
+        response=response,
+        raw_object=response.model_dump(mode="json"),
+        expected_dimension_id=first.expected_dimension_id,
+        attempt_ref=first.attempt_ref,
+    )
+    monkeypatch.setattr(
+        validator_module,
+        "derive_finding_id",
+        lambda **_kwargs: "F-000000000001",
+    )
+    with pytest.raises(SemanticEvaluatorError, match="finding_id_duplicate") as caught:
+        assemble_semantic_assessment_run(
+            admission=decision,
+            dimension_evidence=[collision, *evidence[1:]],
+            attempt_refs=attempts,
+        )
+    assert str(caught.value) == "finding_id_duplicate"
+
+
+def test_global_derived_handoff_collision_has_stable_value_free_error(
+    monkeypatch,
+) -> None:
+    reader, _context, _profile, _plan, decision, evidence, attempts = (
+        _complete_no_finding_validation_case()
+    )
+    first = evidence[0]
+    units = [
+        item
+        for item in decision.assessment_plan.units
+        if item.dimension_id == first.expected_dimension_id
+    ]
+    span = make_span_locator(
+        reader.artifact,
+        block_id="B000003",
+        start_char=0,
+        end_char=1,
+    )
+
+    def handoff(unit):
+        return O3HandoffDraft(
+            assessment_unit_id=unit.assessment_unit_id,
+            type="evidence_dependent_assessment",
+            report_spans=[span],
+            context_requirement_ids=[],
+            reason="需要外部证据，转人工复核。",
+        )
+
+    response = DimensionResponse(
+        schema_version=DIMENSION_RESPONSE_SCHEMA_ID,
+        trial_id=decision.assessment_plan.trial_id,
+        dimension_id=first.expected_dimension_id,
+        unit_results=[
+            AbstainUnableToAssessResult(
+                assessment_unit_id=units[0].assessment_unit_id,
+                disposition="abstain_unable_to_assess",
+                reason_code="evidence_dependent_assessment",
+                handoffs=[handoff(units[0])],
+            ),
+            AbstainUnableToAssessResult(
+                assessment_unit_id=units[1].assessment_unit_id,
+                disposition="abstain_unable_to_assess",
+                reason_code="evidence_dependent_assessment",
+                handoffs=[handoff(units[1])],
+            ),
+            NoFindingResult(
+                assessment_unit_id=units[2].assessment_unit_id,
+                disposition="no_finding",
+            ),
+        ],
+    )
+    collision = DimensionEvidence(
+        response=response,
+        raw_object=response.model_dump(mode="json"),
+        expected_dimension_id=first.expected_dimension_id,
+        attempt_ref=first.attempt_ref,
+    )
+    monkeypatch.setattr(
+        validator_module,
+        "derive_handoff_id",
+        lambda **_kwargs: "H-000000000001",
+    )
+    with pytest.raises(SemanticEvaluatorError, match="handoff_id_duplicate") as caught:
+        assemble_semantic_assessment_run(
+            admission=decision,
+            dimension_evidence=[collision, *evidence[1:]],
+            attempt_refs=attempts,
+        )
+    assert str(caught.value) == "handoff_id_duplicate"

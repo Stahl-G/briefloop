@@ -3,15 +3,19 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+import os
 from pathlib import Path
+import stat
 from typing import Optional
 
+from multi_agent_brief.contracts.errors import FieldViolation
 from multi_agent_brief.semantic_evaluator.contracts import (
     INPUT_BINDING_SCHEMA_ID,
     AssessmentPlan,
     BoundedContext,
     InputBinding,
     InstrumentConfig,
+    InstrumentManifest,
 )
 from multi_agent_brief.semantic_evaluator.errors import SemanticEvaluatorError
 from multi_agent_brief.semantic_evaluator.normalization import (
@@ -44,14 +48,25 @@ from multi_agent_brief.semantic_evaluator.unit_planner import (
 class AdmissionDecision:
     admitted: bool
     reason_codes: tuple[str, ...]
+    violations: tuple[FieldViolation, ...] = ()
     reader: Optional[NormalizedReader] = None
+    bounded_context: Optional[BoundedContext] = None
     input_binding: Optional[InputBinding] = None
+    instrument_manifest: Optional[InstrumentManifest] = None
     assessment_plan: Optional[AssessmentPlan] = None
     prompts: tuple[FrozenDimensionPrompt, ...] = ()
+    prompt_request_sha256s: tuple[str, ...] = ()
 
 
-def _blocked(*reason_codes: str) -> AdmissionDecision:
-    return AdmissionDecision(False, tuple(sorted(set(reason_codes))))
+def _blocked(
+    *reason_codes: str,
+    violations: tuple[FieldViolation, ...] = (),
+) -> AdmissionDecision:
+    return AdmissionDecision(
+        False,
+        tuple(sorted(set(reason_codes))),
+        violations=violations,
+    )
 
 
 def _is_relative_to(path: Path, root: Path) -> bool:
@@ -63,9 +78,36 @@ def _is_relative_to(path: Path, root: Path) -> bool:
 
 
 def archive_root_is_safe(*, archive_root: Path, workspace_root: Path) -> bool:
-    archive = archive_root.expanduser().resolve(strict=False)
-    workspace = workspace_root.expanduser().resolve(strict=False)
-    return archive != workspace and not _is_relative_to(archive, workspace)
+    try:
+        expanded_archive = archive_root.expanduser()
+        if ".." in expanded_archive.parts:
+            return False
+        archive = Path(os.path.normpath(str(expanded_archive)))
+        workspace_selector = Path(os.path.normpath(str(workspace_root.expanduser())))
+        if not archive.is_absolute() or not workspace_selector.is_absolute():
+            return False
+        current = Path(archive.anchor)
+        missing_component = False
+        for component in archive.parts[1:]:
+            current /= component
+            if missing_component:
+                continue
+            try:
+                metadata = current.lstat()
+            except FileNotFoundError:
+                missing_component = True
+                continue
+            except (OSError, RuntimeError):
+                return False
+            if stat.S_ISLNK(metadata.st_mode) or not stat.S_ISDIR(metadata.st_mode):
+                return False
+        canonical_archive = archive.resolve(strict=False)
+        canonical_workspace = workspace_selector.resolve(strict=False)
+    except (OSError, RuntimeError, ValueError):
+        return False
+    return canonical_archive != canonical_workspace and not _is_relative_to(
+        canonical_archive, canonical_workspace
+    )
 
 
 def input_binding_sha256(binding: InputBinding) -> str:
@@ -125,7 +167,24 @@ def admit_inputs(
     archive_root: Path | None = None,
     workspace_root: Path | None = None,
     existing_binding: InputBinding | None = None,
+    instrument_manifest: InstrumentManifest | None = None,
 ) -> AdmissionDecision:
+    invalid_boolean_fields = tuple(
+        field
+        for field, value in (
+            ("public_data_attestation", public_data_attestation),
+            ("private_or_confidential_material", private_or_confidential_material),
+        )
+        if type(value) is not bool
+    )
+    if invalid_boolean_fields:
+        return _blocked(
+            "admission_contract_invalid",
+            violations=tuple(
+                FieldViolation(field=field, error="must be a boolean")
+                for field in invalid_boolean_fields
+            ),
+        )
     if report_bytes is None or not report_bytes:
         return _blocked("input_missing")
     if sha256_bytes(report_bytes) != declared_report_sha256:
@@ -136,6 +195,9 @@ def admit_inputs(
         or declared_bounded_context_sha256 != expected_context_sha
     ):
         return _blocked("input_sha_mismatch")
+    bounded_context = BoundedContext.model_validate(
+        bounded_context.model_dump(mode="json")
+    )
     profile = loaded_profile or load_profile()
     try:
         validate_loaded_profile(profile)
@@ -153,6 +215,8 @@ def admit_inputs(
         return _blocked("public_data_attestation_required")
     if private_or_confidential_material:
         return _blocked("private_material_forbidden")
+    if (archive_root is None) != (workspace_root is None):
+        return _blocked("archive_root_unsafe")
     if archive_root is not None and workspace_root is not None:
         if not archive_root_is_safe(
             archive_root=archive_root, workspace_root=workspace_root
@@ -172,6 +236,32 @@ def admit_inputs(
     except SemanticEvaluatorError as exc:
         return _blocked(exc.reason_code)
     config_sha = canonical_model_sha256(instrument_config)
+    from multi_agent_brief.semantic_evaluator.instrument import (
+        build_instrument_manifest,
+        verify_instrument_manifest,
+    )
+
+    try:
+        manifest = (
+            instrument_manifest
+            if instrument_manifest is not None
+            else build_instrument_manifest(
+                instrument_config,
+                loaded_profile=profile,
+            )
+        )
+        verify_instrument_manifest(
+            manifest,
+            instrument_config,
+            loaded_profile=profile,
+        )
+        manifest = InstrumentManifest.model_validate(
+            manifest.model_dump(mode="json")
+            if isinstance(manifest, InstrumentManifest)
+            else manifest
+        )
+    except (SemanticEvaluatorError, OSError, RuntimeError, ValueError):
+        return _blocked("instrument_manifest_mismatch")
     binding = _build_input_binding(
         trial_id=trial_id,
         reader=reader,
@@ -219,9 +309,12 @@ def admit_inputs(
         admitted=True,
         reason_codes=(),
         reader=reader,
+        bounded_context=bounded_context,
         input_binding=binding,
+        instrument_manifest=manifest,
         assessment_plan=plan,
         prompts=tuple(prompts),
+        prompt_request_sha256s=tuple(item.request_sha256 for item in prompts),
     )
 
 

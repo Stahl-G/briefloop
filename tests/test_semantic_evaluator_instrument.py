@@ -27,7 +27,9 @@ from multi_agent_brief.semantic_evaluator.prompts import (
 )
 from multi_agent_brief.semantic_evaluator.serialization import (
     canonical_json_bytes,
+    canonical_model_payload,
     canonical_model_sha256,
+    canonical_sha256,
     normalized_source_bytes,
 )
 
@@ -52,7 +54,7 @@ def test_same_frozen_components_produce_identical_canonical_manifest() -> None:
     second = build_instrument_manifest(config)
     assert first == second
     assert first.instrument_sha256 == second.instrument_sha256
-    assert verify_instrument_manifest(first) is True
+    assert verify_instrument_manifest(first, config) is True
     reread = InstrumentManifest.model_validate_json(canonical_json_bytes(first))
     assert canonical_json_bytes(reread) == canonical_json_bytes(first)
     assert reread.instrument_config_sha256 == canonical_model_sha256(config)
@@ -75,12 +77,13 @@ def test_manifest_binds_exact_frozen_resources_schemas_and_source_components() -
     assert tuple(manifest.schema_sha256s) == tuple(
         sorted(SEMANTIC_EVALUATOR_CONTRACT_IDS)
     )
-    assert len(manifest.schema_sha256s) == 14
+    assert len(manifest.schema_sha256s) == 15
     assert [item.component_id for item in manifest.implementation_components] == [
         "parser",
         "validator",
         "normalizer",
         "unit_planner",
+        "prompt_assembler",
     ]
     assert all(
         SHA256_RE.fullmatch(item.source_sha256)
@@ -104,6 +107,47 @@ def test_each_representative_bound_component_change_rotates_instrument_hash(
     prompt_changed = build_instrument_manifest(_config())
     assert prompt_changed.dimension_prompt_sha256 == "f" * 64
     assert prompt_changed.instrument_sha256 != original.instrument_sha256
+
+
+def test_prompt_assembler_source_change_rotates_identity_without_resource_change(
+    monkeypatch,
+) -> None:
+    config = _config()
+    original = build_instrument_manifest(config)
+    original_source_hasher = instrument.source_sha256_for_module
+
+    def changed_source(module_name: str) -> str:
+        if module_name == "multi_agent_brief.semantic_evaluator.prompts":
+            return "e" * 64
+        return original_source_hasher(module_name)
+
+    monkeypatch.setattr(instrument, "source_sha256_for_module", changed_source)
+    changed = build_instrument_manifest(config)
+    assert changed.system_prompt_sha256 == original.system_prompt_sha256
+    assert changed.dimension_prompt_sha256 == original.dimension_prompt_sha256
+    assert changed.implementation_components[-1].source_sha256 == "e" * 64
+    assert changed.instrument_sha256 != original.instrument_sha256
+
+
+def test_self_consistent_but_non_current_manifest_is_rejected() -> None:
+    config = _config()
+    current = build_instrument_manifest(config)
+    payload = current.model_dump(mode="json")
+    payload["model_version"] = "self-consistent-forgery"
+    payload["instrument_sha256"] = canonical_sha256(
+        {key: value for key, value in payload.items() if key != "instrument_sha256"}
+    )
+    forged = InstrumentManifest.model_validate(payload)
+    with pytest.raises(SemanticEvaluatorError, match="instrument_manifest_mismatch"):
+        verify_instrument_manifest(forged, config)
+
+
+def test_old_four_component_manifest_has_no_compatibility_path() -> None:
+    config = _config()
+    payload = build_instrument_manifest(config).model_dump(mode="json")
+    payload["implementation_components"] = payload["implementation_components"][:-1]
+    with pytest.raises(SemanticEvaluatorError, match="instrument_manifest_mismatch"):
+        verify_instrument_manifest(payload, config)
 
 
 def test_explicit_unavailable_model_version_is_bound_not_inferred() -> None:

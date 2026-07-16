@@ -13,6 +13,7 @@ from typing import Annotated, ClassVar, Literal, Optional, Union
 from pydantic import (
     Field,
     JsonValue,
+    StrictBool,
     StringConstraints,
     field_validator,
     model_validator,
@@ -39,6 +40,9 @@ DIMENSION_RESPONSE_SCHEMA_ID = "briefloop.semantic_evaluator.dimension_response.
 RUN_SCHEMA_ID = "briefloop.semantic_evaluator.run.v1"
 VALIDATION_REPORT_SCHEMA_ID = "briefloop.semantic_evaluator.validation_report.v1"
 EVENT_SCHEMA_ID = "briefloop.semantic_evaluator.event.v1"
+LAJ_COMPOSITION_WITNESS_SCHEMA_ID = (
+    "briefloop.semantic_evaluator.laj_composition_witness.v1"
+)
 BASELINE_SCHEMA_ID = "briefloop.semantic_evaluator.baseline.v1"
 COMPOSITION_SCHEMA_ID = "briefloop.semantic_evaluator.composition.v1"
 PRESENTATION_SCHEMA_ID = "briefloop.semantic_evaluator.presentation.v1"
@@ -55,6 +59,7 @@ _INSTRUMENT_SCHEMA_IDS = (
     RUN_SCHEMA_ID,
     VALIDATION_REPORT_SCHEMA_ID,
     EVENT_SCHEMA_ID,
+    LAJ_COMPOSITION_WITNESS_SCHEMA_ID,
     BASELINE_SCHEMA_ID,
     COMPOSITION_SCHEMA_ID,
     PRESENTATION_SCHEMA_ID,
@@ -357,7 +362,9 @@ class InstrumentConfig(StrictModel):
 
 
 class ImplementationComponent(StrictModel):
-    component_id: Literal["parser", "validator", "normalizer", "unit_planner"]
+    component_id: Literal[
+        "parser", "validator", "normalizer", "unit_planner", "prompt_assembler"
+    ]
     implementation_version: ContractId
     source_sha256: Sha256
 
@@ -389,7 +396,13 @@ class InstrumentManifest(StrictModel):
 
     @model_validator(mode="after")
     def validate_component_inventory(self) -> "InstrumentManifest":
-        expected = ["parser", "validator", "normalizer", "unit_planner"]
+        expected = [
+            "parser",
+            "validator",
+            "normalizer",
+            "unit_planner",
+            "prompt_assembler",
+        ]
         if [item.component_id for item in self.implementation_components] != expected:
             raise ValueError("implementation component inventory is not canonical")
         expected_schema_ids = sorted(_INSTRUMENT_SCHEMA_IDS)
@@ -410,8 +423,8 @@ class InputBinding(StrictModel):
     instrument_config_sha256: Sha256
     language: Language
     data_class: DataClass
-    public_data_attestation: bool
-    private_or_confidential_material: bool
+    public_data_attestation: StrictBool
+    private_or_confidential_material: StrictBool
     input_binding_sha256: Sha256
 
 
@@ -474,10 +487,8 @@ class SpanLocator(StrictModel):
         return self
 
 
-class FindingProposal(StrictModel):
-    finding_id: FindingId
+class FindingDraft(StrictModel):
     assessment_unit_id: AssessmentUnitId
-    status: Literal["proposal"]
     scope_class: ScopeClass
     dimension_id: DimensionId
     severity: Severity
@@ -493,7 +504,7 @@ class FindingProposal(StrictModel):
     suggested_rewrite: None
 
     @model_validator(mode="after")
-    def validate_scope_binding(self) -> "FindingProposal":
+    def validate_scope_binding(self) -> "FindingDraft":
         _require_unique(self.context_requirement_ids, "context requirement ids")
         if self.scope_class == "O1":
             if self.context_requirement_ids:
@@ -505,8 +516,12 @@ class FindingProposal(StrictModel):
         return self
 
 
-class O3Handoff(StrictModel):
-    handoff_id: HandoffId
+class FindingProposal(FindingDraft):
+    finding_id: FindingId
+    status: Literal["proposal"]
+
+
+class O3HandoffDraft(StrictModel):
     assessment_unit_id: AssessmentUnitId
     type: Literal["evidence_dependent_assessment"]
     report_spans: list[SpanLocator] = Field(min_length=1)
@@ -514,10 +529,14 @@ class O3Handoff(StrictModel):
     reason: CleanText
 
 
+class O3Handoff(O3HandoffDraft):
+    handoff_id: HandoffId
+
+
 class FindingEmittedResult(StrictModel):
     assessment_unit_id: AssessmentUnitId
     disposition: Literal["finding_emitted"]
-    findings: list[FindingProposal] = Field(min_length=1)
+    findings: list[FindingDraft] = Field(min_length=1)
 
 
 class NoFindingResult(StrictModel):
@@ -529,21 +548,21 @@ class AbstainInsufficientContextResult(StrictModel):
     assessment_unit_id: AssessmentUnitId
     disposition: Literal["abstain_insufficient_context"]
     reason_code: Literal["insufficient_context"]
-    handoffs: list[O3Handoff]
+    handoffs: list[O3HandoffDraft]
 
 
 class AbstainUnableToAssessResult(StrictModel):
     assessment_unit_id: AssessmentUnitId
     disposition: Literal["abstain_unable_to_assess"]
     reason_code: Literal["unable_to_assess", "evidence_dependent_assessment"]
-    handoffs: list[O3Handoff]
+    handoffs: list[O3HandoffDraft]
 
 
 class AbstainConflictingContextResult(StrictModel):
     assessment_unit_id: AssessmentUnitId
     disposition: Literal["abstain_conflicting_context"]
     reason_code: Literal["conflicting_context"]
-    handoffs: list[O3Handoff]
+    handoffs: list[O3HandoffDraft]
 
 
 class RubricNotApplicableResult(StrictModel):
@@ -575,14 +594,11 @@ class DimensionResponse(StrictModel):
     def validate_response_inventory(self) -> "DimensionResponse":
         unit_ids = [item.assessment_unit_id for item in self.unit_results]
         _require_unique(unit_ids, "unit result ids")
-        finding_ids: list[str] = []
-        handoff_ids: list[str] = []
         for result in self.unit_results:
             if isinstance(result, FindingEmittedResult):
                 for finding in result.findings:
                     if finding.assessment_unit_id != result.assessment_unit_id:
                         raise ValueError("finding owner mismatch")
-                    finding_ids.append(finding.finding_id)
             elif isinstance(
                 result,
                 (
@@ -594,9 +610,6 @@ class DimensionResponse(StrictModel):
                 for handoff in result.handoffs:
                     if handoff.assessment_unit_id != result.assessment_unit_id:
                         raise ValueError("handoff owner mismatch")
-                    handoff_ids.append(handoff.handoff_id)
-        _require_unique(finding_ids, "finding ids")
-        _require_unique(handoff_ids, "handoff ids")
         return self
 
 
@@ -833,6 +846,20 @@ class SemanticEvaluatorEvent(StrictModel):
         return self
 
 
+class LajCompositionWitness(StrictModel):
+    schema_id: ClassVar[str] = LAJ_COMPOSITION_WITNESS_SCHEMA_ID
+    schema_version: Literal[LAJ_COMPOSITION_WITNESS_SCHEMA_ID]
+    input_binding: InputBinding
+    reader_artifact: ReaderArtifact
+    bounded_context: BoundedContext
+    instrument_manifest: InstrumentManifest
+    assessment_plan: AssessmentPlan
+    run: SemanticAssessmentRun
+    validation_report: ValidationReport
+    events: list[SemanticEvaluatorEvent] = Field(min_length=1)
+    witness_sha256: Sha256
+
+
 class ChecklistItem(StrictModel):
     item_id: ContractId
     ordinal: NonNegativeInt
@@ -893,7 +920,11 @@ class CompositionRecord(StrictModel):
     baseline_schema_id: Literal[BASELINE_SCHEMA_ID]
     baseline_sha256: Sha256
     baseline_payload: BaselinePayload
+    laj_witness_sha256: Optional[Sha256]
     laj_run_sha256: Optional[Sha256]
+    laj_run_status: Optional[RunStatus]
+    laj_validation_status: Optional[Literal["accepted", "rejected", "incomplete"]]
+    laj_reason_codes: list[ContractId]
     laj_advice_items: list[FindingProposal]
     duplicate_annotations: list[DuplicateAnnotation]
     composition_sha256: Sha256
@@ -903,10 +934,44 @@ class CompositionRecord(StrictModel):
         if self.baseline_payload.baseline_sha256 != self.baseline_sha256:
             raise ValueError("embedded baseline hash mismatch")
         if self.condition == "matched_non_LLM":
-            if self.laj_run_sha256 is not None or self.laj_advice_items:
+            if (
+                self.laj_witness_sha256 is not None
+                or self.laj_run_sha256 is not None
+                or self.laj_run_status is not None
+                or self.laj_validation_status is not None
+                or self.laj_reason_codes
+                or self.laj_advice_items
+                or self.duplicate_annotations
+            ):
                 raise ValueError("matched baseline cannot include LAJ data")
-        elif self.laj_run_sha256 is None:
-            raise ValueError("actual LAJ composition requires a run hash")
+        elif any(
+            item is None
+            for item in (
+                self.laj_witness_sha256,
+                self.laj_run_sha256,
+                self.laj_run_status,
+                self.laj_validation_status,
+            )
+        ):
+            raise ValueError("actual LAJ composition requires witness status")
+        if self.condition == "actual_LAJ":
+            legal_pairs = {
+                ("completed", "accepted"),
+                ("incomplete", "incomplete"),
+                ("validation_failed", "rejected"),
+                ("security_failed", "rejected"),
+            }
+            if (self.laj_run_status, self.laj_validation_status) not in legal_pairs:
+                raise ValueError("actual LAJ status pair is invalid")
+            if (
+                self.laj_run_status != "completed"
+                or self.laj_validation_status != "accepted"
+            ) and self.laj_advice_items:
+                raise ValueError("failed LAJ composition cannot display advice")
+        if self.laj_reason_codes != sorted(set(self.laj_reason_codes)):
+            raise ValueError("LAJ reason codes must be sorted and unique")
+        if not self.laj_advice_items and self.duplicate_annotations:
+            raise ValueError("annotations require displayable LAJ advice")
         return self
 
 
@@ -920,13 +985,56 @@ class PresentationRecord(StrictModel):
     baseline_items: list[ChecklistItem]
     baseline_lint_items: list[LintItem]
     additional_semantic_findings: list[FindingProposal]
+    laj_witness_sha256: Optional[Sha256]
+    laj_run_status: Optional[RunStatus]
+    laj_validation_status: Optional[Literal["accepted", "rejected", "incomplete"]]
+    failure_reason_codes: list[ContractId]
     assessed_unit_count: NonNegativeInt
     finding_count: NonNegativeInt
+    withheld_finding_count: NonNegativeInt
     abstention_count: NonNegativeInt
     failure_count: NonNegativeInt
     advisory_only: Literal[True]
     disclaimer: CleanText
     presentation_sha256: Sha256
+
+    @model_validator(mode="after")
+    def validate_failure_reasons(self) -> "PresentationRecord":
+        if self.failure_reason_codes != sorted(set(self.failure_reason_codes)):
+            raise ValueError("failure reason codes must be sorted and unique")
+        if self.finding_count != len(self.additional_semantic_findings):
+            raise ValueError("presentation finding count mismatch")
+        if self.condition == "matched_non_LLM":
+            if any(
+                item is not None
+                for item in (
+                    self.laj_witness_sha256,
+                    self.laj_run_status,
+                    self.laj_validation_status,
+                )
+            ) or any(
+                (
+                    self.failure_reason_codes,
+                    self.additional_semantic_findings,
+                    self.withheld_finding_count,
+                )
+            ):
+                raise ValueError("matched presentation cannot include LAJ data")
+        elif any(
+            item is None
+            for item in (
+                self.laj_witness_sha256,
+                self.laj_run_status,
+                self.laj_validation_status,
+            )
+        ):
+            raise ValueError("actual LAJ presentation requires witness status")
+        elif (
+            self.laj_run_status != "completed"
+            or self.laj_validation_status != "accepted"
+        ) and self.additional_semantic_findings:
+            raise ValueError("failed LAJ presentation cannot display findings")
+        return self
 
 
 _ZERO_SHA = "0" * 64
@@ -1041,6 +1149,11 @@ _EXAMPLE_FINDING = {
     "recommended_human_action": "reconcile_status_language",
     "suggested_rewrite": None,
 }
+_EXAMPLE_FINDING_DRAFT = {
+    key: value
+    for key, value in _EXAMPLE_FINDING.items()
+    if key not in {"finding_id", "status"}
+}
 
 ReaderArtifact.minimal_example = ReaderArtifact.full_example = {
     "schema_version": READER_ARTIFACT_SCHEMA_ID,
@@ -1085,7 +1198,13 @@ InstrumentManifest.minimal_example = InstrumentManifest.full_example = {
             "implementation_version": "v1",
             "source_sha256": _ZERO_SHA,
         }
-        for name in ("parser", "validator", "normalizer", "unit_planner")
+        for name in (
+            "parser",
+            "validator",
+            "normalizer",
+            "unit_planner",
+            "prompt_assembler",
+        )
     ],
     "retry_policy_sha256": _ZERO_SHA,
     "decoding_sha256": _ZERO_SHA,
@@ -1133,7 +1252,7 @@ DimensionResponse.minimal_example = DimensionResponse.full_example = {
         {
             "assessment_unit_id": "AU-000000000001",
             "disposition": "finding_emitted",
-            "findings": [_EXAMPLE_FINDING],
+            "findings": [_EXAMPLE_FINDING_DRAFT],
         }
     ],
 }
@@ -1181,6 +1300,18 @@ SemanticEvaluatorEvent.minimal_example = SemanticEvaluatorEvent.full_example = {
         "reason_codes": [],
     },
 }
+LajCompositionWitness.minimal_example = LajCompositionWitness.full_example = {
+    "schema_version": LAJ_COMPOSITION_WITNESS_SCHEMA_ID,
+    "input_binding": InputBinding.minimal_example,
+    "reader_artifact": ReaderArtifact.minimal_example,
+    "bounded_context": BoundedContext.minimal_example,
+    "instrument_manifest": InstrumentManifest.minimal_example,
+    "assessment_plan": AssessmentPlan.minimal_example,
+    "run": SemanticAssessmentRun.minimal_example,
+    "validation_report": ValidationReport.minimal_example,
+    "events": [SemanticEvaluatorEvent.minimal_example],
+    "witness_sha256": _ZERO_SHA,
+}
 BaselinePayload.minimal_example = BaselinePayload.full_example = {
     "schema_version": BASELINE_SCHEMA_ID,
     "baseline_id": "baseline-001",
@@ -1199,7 +1330,11 @@ CompositionRecord.minimal_example = CompositionRecord.full_example = {
     "baseline_schema_id": BASELINE_SCHEMA_ID,
     "baseline_sha256": _ZERO_SHA,
     "baseline_payload": BaselinePayload.minimal_example,
+    "laj_witness_sha256": None,
     "laj_run_sha256": None,
+    "laj_run_status": None,
+    "laj_validation_status": None,
+    "laj_reason_codes": [],
     "laj_advice_items": [],
     "duplicate_annotations": [],
     "composition_sha256": _ZERO_SHA,
@@ -1213,8 +1348,13 @@ PresentationRecord.minimal_example = PresentationRecord.full_example = {
     "baseline_items": [],
     "baseline_lint_items": [],
     "additional_semantic_findings": [],
+    "laj_witness_sha256": None,
+    "laj_run_status": None,
+    "laj_validation_status": None,
+    "failure_reason_codes": [],
     "assessed_unit_count": 0,
     "finding_count": 0,
+    "withheld_finding_count": 0,
     "abstention_count": 0,
     "failure_count": 0,
     "advisory_only": True,
@@ -1235,6 +1375,7 @@ SEMANTIC_EVALUATOR_CONTRACT_MODELS: tuple[type[StrictModel], ...] = (
     SemanticAssessmentRun,
     ValidationReport,
     SemanticEvaluatorEvent,
+    LajCompositionWitness,
     BaselinePayload,
     CompositionRecord,
     PresentationRecord,
@@ -1255,6 +1396,7 @@ __all__ = [
     "INPUT_BINDING_SCHEMA_ID",
     "INSTRUMENT_CONFIG_SCHEMA_ID",
     "INSTRUMENT_MANIFEST_SCHEMA_ID",
+    "LAJ_COMPOSITION_WITNESS_SCHEMA_ID",
     "PRESENTATION_SCHEMA_ID",
     "PROFILE_SCHEMA_ID",
     "READER_ARTIFACT_SCHEMA_ID",
@@ -1287,6 +1429,7 @@ __all__ = [
     "DuplicateAnnotation",
     "EvaluatorProfile",
     "FindingEmittedResult",
+    "FindingDraft",
     "FindingId",
     "FindingProposal",
     "HandoffId",
@@ -1297,8 +1440,10 @@ __all__ = [
     "JsonObject",
     "Language",
     "LintItem",
+    "LajCompositionWitness",
     "NoFindingResult",
     "O3Handoff",
+    "O3HandoffDraft",
     "PresentationRecord",
     "PromptSizerConfig",
     "ReaderArtifact",

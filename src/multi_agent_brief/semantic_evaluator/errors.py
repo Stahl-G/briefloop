@@ -11,6 +11,7 @@ from multi_agent_brief.contracts.errors import FieldViolation, pydantic_error_vi
 
 
 ADMISSION_REASON_CODES = (
+    "admission_contract_invalid",
     "input_missing",
     "input_unreadable",
     "input_sha_mismatch",
@@ -32,7 +33,9 @@ PARSER_REASON_CODES = (
     "parser_invalid_json",
     "parser_top_level_not_object",
     "parser_schema_invalid",
+    "parser_duplicate_member",
     "authority_output_forbidden",
+    "tool_or_canary_output_forbidden",
 )
 
 VALIDATION_REASON_CODES = (
@@ -41,8 +44,10 @@ VALIDATION_REASON_CODES = (
     "raw_response_binding_mismatch",
     "run_binding_mismatch",
     "assessment_unit_set_mismatch",
+    "assessment_unit_failure_link_missing",
     "finding_owner_mismatch",
     "finding_id_duplicate",
+    "handoff_id_duplicate",
     "span_report_mismatch",
     "span_block_unknown",
     "span_offset_invalid",
@@ -58,6 +63,9 @@ VALIDATION_REASON_CODES = (
     "attempt_reference_incomplete",
     "event_sequence_invalid",
     "run_count_mismatch",
+    "composition_record_mismatch",
+    "composition_witness_mismatch",
+    "instrument_manifest_mismatch",
 )
 
 

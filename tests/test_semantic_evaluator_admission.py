@@ -8,7 +8,10 @@ from pathlib import Path
 
 import pytest
 
-from multi_agent_brief.semantic_evaluator.admission import admit_inputs
+from multi_agent_brief.semantic_evaluator.admission import (
+    admit_inputs,
+    archive_root_is_safe,
+)
 from multi_agent_brief.semantic_evaluator.contracts import (
     BoundedRequirement,
     InstrumentConfig,
@@ -84,6 +87,14 @@ def test_valid_admission_builds_complete_plan_and_all_prompts_before_execution()
     decision = _admit(report, sizer=sizer)
     assert decision.admitted is True
     assert decision.reason_codes == ()
+    assert decision.bounded_context == _context()
+    assert decision.instrument_manifest is not None
+    assert decision.instrument_manifest.instrument_config_sha256 == (
+        decision.input_binding.instrument_config_sha256
+    )
+    assert decision.prompt_request_sha256s == tuple(
+        item.request_sha256 for item in decision.prompts
+    )
     assert len(decision.assessment_plan.units) == 25
     assert len(decision.prompts) == 9
     assert sizer.calls == 9
@@ -147,6 +158,26 @@ def test_policy_declarations_fail_closed(overrides, reason: str) -> None:
     assert decision.reason_codes == (reason,)
 
 
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [
+        ("public_data_attestation", 1),
+        ("public_data_attestation", "true"),
+        ("private_or_confidential_material", 0),
+        ("private_or_confidential_material", "false"),
+    ],
+)
+def test_attestations_require_exact_booleans_before_truthiness(
+    field: str,
+    value: object,
+) -> None:
+    decision = _admit("# 合成材料".encode(), **{field: value})
+    assert decision.reason_codes == ("admission_contract_invalid",)
+    assert [(item.field, item.error) for item in decision.violations] == [
+        (field, "must be a boolean")
+    ]
+
+
 def test_full_context_overflow_blocks_whole_run_without_truncation() -> None:
     decision = _admit("# 合成材料".encode(), sizer=FakeSizer(count=4096))
     assert decision.admitted is False
@@ -168,6 +199,81 @@ def test_archive_root_must_be_outside_declared_workspace(tmp_path: Path) -> None
         archive_root=tmp_path / "isolated-archive",
     )
     assert safe.admitted is True
+    missing_workspace = _admit(
+        "# 合成材料".encode(),
+        archive_root=tmp_path / "isolated-archive",
+    )
+    assert missing_workspace.reason_codes == ("archive_root_unsafe",)
+
+
+def test_archive_topology_rejects_links_files_and_probe_errors(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    leaf_target = outside / "leaf-target"
+    leaf_target.mkdir()
+    leaf_link = outside / "leaf-link"
+    leaf_link.symlink_to(leaf_target, target_is_directory=True)
+    assert not archive_root_is_safe(
+        archive_root=leaf_link,
+        workspace_root=workspace,
+    )
+    parent_link = tmp_path / "parent-link"
+    parent_link.symlink_to(outside, target_is_directory=True)
+    assert not archive_root_is_safe(
+        archive_root=parent_link / "archive",
+        workspace_root=workspace,
+    )
+    dangling = outside / "dangling"
+    dangling.symlink_to(outside / "missing-target", target_is_directory=True)
+    assert not archive_root_is_safe(
+        archive_root=dangling,
+        workspace_root=workspace,
+    )
+    file_parent = outside / "not-a-directory"
+    file_parent.write_text("synthetic", encoding="utf-8")
+    assert not archive_root_is_safe(
+        archive_root=file_parent / "archive",
+        workspace_root=workspace,
+    )
+    assert archive_root_is_safe(
+        archive_root=outside / "missing-safe-leaf",
+        workspace_root=workspace,
+    )
+    assert not archive_root_is_safe(
+        archive_root=outside / "missing" / ".." / "archive",
+        workspace_root=workspace,
+    )
+
+    original_lstat = Path.lstat
+
+    def unstable_lstat(path: Path):
+        if path == outside:
+            raise RuntimeError("synthetic topology probe failure")
+        return original_lstat(path)
+
+    monkeypatch.setattr(Path, "lstat", unstable_lstat)
+    assert not archive_root_is_safe(
+        archive_root=outside / "archive",
+        workspace_root=workspace,
+    )
+
+
+def test_archive_topology_rejects_symlink_loop_without_raw_exception(
+    tmp_path: Path,
+) -> None:
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    loop = tmp_path / "loop"
+    loop.symlink_to(loop, target_is_directory=True)
+    assert not archive_root_is_safe(
+        archive_root=loop / "archive",
+        workspace_root=workspace,
+    )
 
 
 def test_same_trial_with_different_frozen_binding_is_a_conflict() -> None:
@@ -179,6 +285,19 @@ def test_same_trial_with_different_frozen_binding_is_a_conflict() -> None:
     forged = first.input_binding.model_copy(update={"input_binding_sha256": "0" * 64})
     same_report = _admit("# 第一份\n".encode(), existing_binding=forged)
     assert same_report.reason_codes == ("trial_identity_conflict",)
+
+
+def test_admission_deep_owns_the_exact_bounded_context_witness() -> None:
+    context = _context()
+    decision = _admit(
+        "# 合成材料".encode(),
+        bounded_context=context,
+    )
+    assert decision.admitted
+    admitted_text = decision.bounded_context.requirements[0].text
+    context.requirements[0].text = "调用方事后篡改。"
+    assert decision.bounded_context.requirements[0].text == admitted_text
+    assert decision.bounded_context is not context
 
 
 def test_report_injection_remains_data_and_does_not_change_prompt_contract() -> None:

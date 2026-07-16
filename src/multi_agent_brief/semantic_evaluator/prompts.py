@@ -28,6 +28,7 @@ from multi_agent_brief.semantic_evaluator.unit_planner import (
 
 SYSTEM_PROMPT_RESOURCE = "system_v1.txt"
 DIMENSION_PROMPT_RESOURCE = "dimension_v1.txt"
+PROMPT_ASSEMBLER_VERSION = "dimension_prompt_assembler_v1"
 
 
 class PromptSizer(Protocol):
@@ -144,6 +145,7 @@ __all__ = [
     "DIMENSION_PROMPT_RESOURCE",
     "FrozenDimensionPrompt",
     "PromptSizer",
+    "PROMPT_ASSEMBLER_VERSION",
     "SYSTEM_PROMPT_RESOURCE",
     "build_dimension_prompt",
     "dimension_prompt_sha256",

@@ -2,6 +2,10 @@
 
 from __future__ import annotations
 
+from typing import Any
+
+from pydantic import ValidationError
+
 from multi_agent_brief.semantic_evaluator.contracts import (
     INSTRUMENT_MANIFEST_SCHEMA_ID,
     SEMANTIC_EVALUATOR_CONTRACT_MODELS,
@@ -17,10 +21,13 @@ from multi_agent_brief.semantic_evaluator.profile import (
     validate_loaded_profile,
 )
 from multi_agent_brief.semantic_evaluator.prompts import (
+    PROMPT_ASSEMBLER_VERSION,
     dimension_prompt_sha256,
     system_prompt_sha256,
 )
+from multi_agent_brief.semantic_evaluator.errors import SemanticEvaluatorError
 from multi_agent_brief.semantic_evaluator.serialization import (
+    canonical_json_bytes,
     canonical_model_payload,
     canonical_model_sha256,
     canonical_sha256,
@@ -50,6 +57,11 @@ _IMPLEMENTATIONS = (
         "unit_planner",
         UNIT_PLANNER_VERSION,
         "multi_agent_brief.semantic_evaluator.unit_planner",
+    ),
+    (
+        "prompt_assembler",
+        PROMPT_ASSEMBLER_VERSION,
+        "multi_agent_brief.semantic_evaluator.prompts",
     ),
 )
 
@@ -108,9 +120,30 @@ def build_instrument_manifest(
     )
 
 
-def verify_instrument_manifest(manifest: InstrumentManifest) -> bool:
-    payload = canonical_model_payload(manifest, exclude=("instrument_sha256",))
-    return manifest.instrument_sha256 == canonical_sha256(payload)
+def verify_instrument_manifest(
+    manifest: InstrumentManifest | dict[str, Any],
+    config: InstrumentConfig,
+    *,
+    loaded_profile: LoadedProfile | None = None,
+) -> bool:
+    try:
+        strict_manifest = InstrumentManifest.model_validate(
+            manifest.model_dump(mode="json")
+            if isinstance(manifest, InstrumentManifest)
+            else manifest
+        )
+    except (ValidationError, TypeError, ValueError) as exc:
+        raise SemanticEvaluatorError("instrument_manifest_mismatch") from exc
+    payload = canonical_model_payload(
+        strict_manifest,
+        exclude=("instrument_sha256",),
+    )
+    if strict_manifest.instrument_sha256 != canonical_sha256(payload):
+        raise SemanticEvaluatorError("instrument_manifest_mismatch")
+    expected = build_instrument_manifest(config, loaded_profile=loaded_profile)
+    if canonical_json_bytes(strict_manifest) != canonical_json_bytes(expected):
+        raise SemanticEvaluatorError("instrument_manifest_mismatch")
+    return True
 
 
 __all__ = [

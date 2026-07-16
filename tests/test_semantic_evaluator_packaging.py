@@ -36,6 +36,7 @@ from multi_agent_brief.semantic_evaluator.instrument import build_instrument_man
 import multi_agent_brief.semantic_evaluator.instrument as instrument_module
 import multi_agent_brief.semantic_evaluator.normalization as normalization_module
 import multi_agent_brief.semantic_evaluator.parser as parser_module
+import multi_agent_brief.semantic_evaluator.prompts as prompts_module
 from multi_agent_brief.semantic_evaluator.resources import resource_sha256
 from multi_agent_brief.semantic_evaluator.serialization import canonical_json_text
 import multi_agent_brief.semantic_evaluator.unit_planner as unit_planner_module
@@ -55,6 +56,7 @@ module_files = [
         instrument_module,
         normalization_module,
         parser_module,
+        prompts_module,
         unit_planner_module,
         validator_module,
     )

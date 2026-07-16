@@ -56,12 +56,60 @@ class ParseResult:
         return self.response is not None and not self.reason_codes
 
 
+class _ObjectPairs(list[tuple[str, Any]]):
+    """JSON object members before last-member-wins collapse."""
+
+
+def _object_pairs_hook(pairs: list[tuple[str, Any]]) -> _ObjectPairs:
+    return _ObjectPairs(pairs)
+
+
+def _scan_member_occurrences(
+    value: Any,
+) -> tuple[tuple[str, ...], tuple[str, ...], bool]:
+    authority: set[str] = set()
+    security: set[str] = set()
+    duplicate = False
+    stack = [value]
+    while stack:
+        current = stack.pop()
+        if isinstance(current, _ObjectPairs):
+            seen: set[str] = set()
+            for key, item in current:
+                if key in seen:
+                    duplicate = True
+                seen.add(key)
+                normalized = key.strip().casefold()
+                if normalized in FORBIDDEN_AUTHORITY_KEYS:
+                    authority.add(normalized)
+                if normalized in FORBIDDEN_SECURITY_KEYS:
+                    security.add(normalized)
+                stack.append(item)
+        elif isinstance(current, list):
+            stack.extend(current)
+    return tuple(sorted(authority)), tuple(sorted(security)), duplicate
+
+
+def _collapse_object_pairs(value: Any) -> Any:
+    if isinstance(value, _ObjectPairs):
+        return {key: _collapse_object_pairs(item) for key, item in value}
+    if isinstance(value, list):
+        return [_collapse_object_pairs(item) for item in value]
+    return value
+
+
 def find_forbidden_keys(value: Any, forbidden: frozenset[str]) -> tuple[str, ...]:
     found: set[str] = set()
     stack = [value]
     while stack:
         current = stack.pop()
-        if isinstance(current, dict):
+        if isinstance(current, _ObjectPairs):
+            for key, item in current:
+                normalized = key.strip().casefold()
+                if normalized in forbidden:
+                    found.add(normalized)
+                stack.append(item)
+        elif isinstance(current, dict):
             for key, item in current.items():
                 if isinstance(key, str):
                     normalized = key.strip().casefold()
@@ -79,15 +127,22 @@ def parse_dimension_response(raw_body: bytes) -> ParseResult:
     except UnicodeDecodeError:
         return ParseResult(None, None, ("parser_invalid_utf8",))
     try:
-        payload = json.loads(text)
-    except (json.JSONDecodeError, RecursionError):
+        uncollapsed = json.loads(text, object_pairs_hook=_object_pairs_hook)
+    except (json.JSONDecodeError, RecursionError, ValueError):
+        return ParseResult(None, None, ("parser_invalid_json",))
+    try:
+        authority, security, duplicate = _scan_member_occurrences(uncollapsed)
+        payload = _collapse_object_pairs(uncollapsed)
+    except RecursionError:
         return ParseResult(None, None, ("parser_invalid_json",))
     if not isinstance(payload, dict):
         return ParseResult(None, None, ("parser_top_level_not_object",))
-    if find_forbidden_keys(payload, FORBIDDEN_AUTHORITY_KEYS):
-        return ParseResult(None, payload, ("authority_output_forbidden",))
-    if find_forbidden_keys(payload, FORBIDDEN_SECURITY_KEYS):
+    if security:
         return ParseResult(None, payload, ("tool_or_canary_output_forbidden",))
+    if authority:
+        return ParseResult(None, payload, ("authority_output_forbidden",))
+    if duplicate:
+        return ParseResult(None, payload, ("parser_duplicate_member",))
     try:
         response = DimensionResponse.model_validate(payload)
     except ValidationError as exc:

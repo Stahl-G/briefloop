@@ -16,6 +16,11 @@ from multi_agent_brief.semantic_evaluator.contracts import (
     AttemptRef,
     InputBinding,
 )
+from multi_agent_brief.semantic_evaluator.errors import (
+    ADMISSION_REASON_CODES,
+    PARSER_REASON_CODES,
+    VALIDATION_REASON_CODES,
+)
 from multi_agent_brief.semantic_evaluator.profile import (
     FROZEN_PROFILE_SHA256,
     load_profile,
@@ -34,6 +39,7 @@ EXPECTED_IDS = (
     "briefloop.semantic_evaluator.run.v1",
     "briefloop.semantic_evaluator.validation_report.v1",
     "briefloop.semantic_evaluator.event.v1",
+    "briefloop.semantic_evaluator.laj_composition_witness.v1",
     "briefloop.semantic_evaluator.baseline.v1",
     "briefloop.semantic_evaluator.composition.v1",
     "briefloop.semantic_evaluator.presentation.v1",
@@ -42,7 +48,7 @@ EXPECTED_IDS = (
 
 def test_contract_inventory_is_exact_local_and_non_colliding() -> None:
     assert SEMANTIC_EVALUATOR_CONTRACT_IDS == EXPECTED_IDS
-    assert len(SEMANTIC_EVALUATOR_CONTRACT_MODELS) == 14
+    assert len(SEMANTIC_EVALUATOR_CONTRACT_MODELS) == 15
     assert not set(SEMANTIC_EVALUATOR_CONTRACT_IDS) & set(V2_CONTRACT_IDS)
     assert all(
         item.startswith("briefloop.semantic_evaluator.") for item in EXPECTED_IDS
@@ -127,3 +133,18 @@ def test_frozen_profile_contains_nine_dimensions_and_exactly_25_full_entries() -
             assert item.exclusions
             assert item.abstention_conditions
             assert item.o3_handoff_conditions
+
+
+def test_recut_error_vocabulary_is_complete_and_stable() -> None:
+    vocabulary = set(
+        [*ADMISSION_REASON_CODES, *PARSER_REASON_CODES, *VALIDATION_REASON_CODES]
+    )
+    assert {
+        "admission_contract_invalid",
+        "assessment_unit_failure_link_missing",
+        "composition_record_mismatch",
+        "composition_witness_mismatch",
+        "handoff_id_duplicate",
+        "instrument_manifest_mismatch",
+        "parser_duplicate_member",
+    } <= vocabulary

@@ -1,21 +1,29 @@
-"""Independent baseline, additive composition, and advisory presentation."""
+"""Independent baseline, witnessed composition, and advisory presentation."""
 
 from __future__ import annotations
 
 import pytest
 
+from multi_agent_brief.semantic_evaluator.admission import admit_inputs
 from multi_agent_brief.semantic_evaluator.baseline import build_baseline
 from multi_agent_brief.semantic_evaluator.composition import (
     build_presentation,
     compose_actual_laj,
     compose_matched_non_llm,
     verify_additive_baseline,
+    verify_composition_record,
 )
 from multi_agent_brief.semantic_evaluator.contracts import (
+    DIMENSION_RESPONSE_SCHEMA_ID,
+    AttemptRef,
     BoundedRequirement,
-    DuplicateAnnotation,
-    FindingProposal,
-    SemanticAssessmentRun,
+    CompositionRecord,
+    DimensionResponse,
+    FindingDraft,
+    FindingEmittedResult,
+    InstrumentConfig,
+    LajCompositionWitness,
+    NoFindingResult,
 )
 from multi_agent_brief.semantic_evaluator.errors import SemanticEvaluatorError
 from multi_agent_brief.semantic_evaluator.normalization import (
@@ -24,7 +32,15 @@ from multi_agent_brief.semantic_evaluator.normalization import (
     replay_span,
 )
 from multi_agent_brief.semantic_evaluator.profile import load_profile
-from multi_agent_brief.semantic_evaluator.serialization import canonical_json_bytes
+from multi_agent_brief.semantic_evaluator.serialization import (
+    canonical_json_bytes,
+    canonical_sha256,
+    sha256_bytes,
+)
+from multi_agent_brief.semantic_evaluator.validator import (
+    DimensionEvidence,
+    assemble_semantic_assessment_run,
+)
 
 
 REPORT = """# 合成报告
@@ -42,6 +58,14 @@ TODO：补齐合成结论。
 ```text
 未闭合的合成代码块
 """
+
+
+class _Sizer:
+    sizer_id = "fake-sizer"
+    sizer_version = "v1"
+
+    def count_tokens(self, *, system_text: str, user_text: str) -> int:
+        return 10
 
 
 def _case():
@@ -73,77 +97,134 @@ def _case():
     return reader, context, profile, baseline
 
 
-def _run(*, baseline, with_finding: bool) -> SemanticAssessmentRun:
-    finding = None
-    if with_finding:
-        finding = FindingProposal(
-            finding_id="F-000000000001",
-            assessment_unit_id="AU-000000000001",
-            status="proposal",
-            scope_class="O1",
-            dimension_id="cross_section_consistency",
-            severity="major",
-            impact_scope="key_conclusion",
-            report_spans=[baseline.lint_items[0].report_spans[0]],
-            context_requirement_ids=[],
-            observation="报告中的阶段表述需要人工核对。",
-            rationale="两个内部片段可能指向不同阶段。",
-            severity_basis="可能影响关键结论理解。",
-            confidence_basis="artifact_internal_inference",
-            external_premise_disclosure="none",
-            recommended_human_action="inspect_manually",
-            suggested_rewrite=None,
-        )
-    return SemanticAssessmentRun.model_validate(
-        {
-            "schema_version": "briefloop.semantic_evaluator.run.v1",
-            "run_id": "run-baseline",
-            "trial_id": "trial-baseline",
-            "report_sha256": baseline.report_sha256,
-            "bounded_context_sha256": baseline.bounded_context_sha256,
-            "profile_sha256": baseline.profile_sha256,
-            "instrument_sha256": "1" * 64,
-            "assessment_plan_sha256": "2" * 64,
-            "run_status": "incomplete",
-            "assessment_units": [
-                {
-                    "assessment_unit_id": "AU-000000000001",
-                    "dimension_id": "cross_section_consistency",
-                    "sub_aspect_id": "status_consistency",
-                    "disposition": "finding_emitted" if finding else "no_finding",
-                    "finding_ids": [finding.finding_id] if finding else [],
-                    "handoff_ids": [],
-                    "attempt_ref": "attempt-001",
-                },
-                {
-                    "assessment_unit_id": "AU-000000000002",
-                    "dimension_id": "cross_section_consistency",
-                    "sub_aspect_id": "scope_consistency",
-                    "disposition": "abstain_insufficient_context",
-                    "finding_ids": [],
-                    "handoff_ids": [],
-                    "attempt_ref": "attempt-001",
-                },
-            ],
-            "findings": [finding.model_dump(mode="json")] if finding else [],
-            "handoffs": [],
-            "attempt_refs": [
-                {
-                    "attempt_ref": "attempt-001",
-                    "dimension_id": "cross_section_consistency",
-                    "status": "completed",
-                    "reason_code": None,
-                },
-                {
-                    "attempt_ref": "attempt-002",
-                    "dimension_id": "cross_section_consistency",
-                    "status": "failed",
-                    "reason_code": "provider_failed",
-                },
-            ],
-            "event_stream_sha256": "3" * 64,
-        }
+def _admitted_case():
+    reader, context, profile, baseline = _case()
+    report_bytes = REPORT.encode()
+    decision = admit_inputs(
+        report_bytes=report_bytes,
+        declared_report_sha256=sha256_bytes(report_bytes),
+        artifact_id="reader-baseline",
+        bounded_context=context,
+        declared_bounded_context_sha256=context.context_sha256,
+        instrument_config=InstrumentConfig.model_validate(
+            InstrumentConfig.minimal_example
+        ),
+        trial_id="trial-baseline",
+        public_data_attestation=True,
+        private_or_confidential_material=False,
+        prompt_sizer=_Sizer(),
     )
+    assert decision.admitted
+    assert decision.reader.artifact == reader.artifact
+    return decision, context, profile, baseline
+
+
+def _finding_draft(unit, baseline) -> FindingDraft:
+    return FindingDraft(
+        assessment_unit_id=unit.assessment_unit_id,
+        scope_class=unit.scope_class,
+        dimension_id=unit.dimension_id,
+        severity="major",
+        impact_scope="key_conclusion",
+        report_spans=[baseline.lint_items[0].report_spans[0]],
+        context_requirement_ids=[],
+        observation="报告中的阶段表述需要人工核对。",
+        rationale="两个内部片段可能指向不同阶段。",
+        severity_basis="可能影响关键结论理解。",
+        confidence_basis="artifact_internal_inference",
+        external_premise_disclosure="none",
+        recommended_human_action="inspect_manually",
+        suggested_rewrite=None,
+    )
+
+
+def _assembled(*, state: str = "completed", with_finding: bool = False):
+    decision, context, profile, baseline = _admitted_case()
+    plan = decision.assessment_plan
+    evidence: list[DimensionEvidence] = []
+    attempts: list[AttemptRef] = []
+    for ordinal, dimension in enumerate(profile.profile.dimensions):
+        units = [
+            item for item in plan.units if item.dimension_id == dimension.dimension_id
+        ]
+        attempt_ref = f"attempt-{dimension.dimension_id}"
+        if state == "incomplete" and ordinal == len(profile.profile.dimensions) - 1:
+            attempts.append(
+                AttemptRef(
+                    attempt_ref=attempt_ref,
+                    dimension_id=dimension.dimension_id,
+                    status="failed",
+                    reason_code="provider_failed",
+                )
+            )
+            continue
+        unit_results = [
+            NoFindingResult(
+                assessment_unit_id=unit.assessment_unit_id,
+                disposition="no_finding",
+            )
+            for unit in units
+        ]
+        if with_finding and ordinal == 0:
+            unit_results[0] = FindingEmittedResult(
+                assessment_unit_id=units[0].assessment_unit_id,
+                disposition="finding_emitted",
+                findings=[_finding_draft(units[0], baseline)],
+            )
+        response = DimensionResponse(
+            schema_version=DIMENSION_RESPONSE_SCHEMA_ID,
+            trial_id=plan.trial_id,
+            dimension_id=dimension.dimension_id,
+            unit_results=unit_results,
+        )
+        raw = response.model_dump(mode="json")
+        if (
+            state == "validation_failed"
+            and ordinal == len(profile.profile.dimensions) - 1
+        ):
+            raw["trial_id"] = "trial-tampered-raw"
+        if (
+            state == "security_failed"
+            and ordinal == len(profile.profile.dimensions) - 1
+        ):
+            raw["tool_calls"] = [{"name": "synthetic-forbidden-tool"}]
+        evidence.append(
+            DimensionEvidence(
+                response=response,
+                raw_object=raw,
+                expected_dimension_id=dimension.dimension_id,
+                attempt_ref=attempt_ref,
+            )
+        )
+        attempts.append(
+            AttemptRef(
+                attempt_ref=attempt_ref,
+                dimension_id=dimension.dimension_id,
+                status="completed",
+                reason_code=None,
+            )
+        )
+    assembled = assemble_semantic_assessment_run(
+        admission=decision,
+        dimension_evidence=evidence,
+        attempt_refs=attempts,
+    )
+    assert assembled.run.run_status == state
+    return baseline, assembled
+
+
+def _rehash_witness(payload: dict) -> LajCompositionWitness:
+    payload["witness_sha256"] = canonical_sha256(
+        {key: value for key, value in payload.items() if key != "witness_sha256"}
+    )
+    return LajCompositionWitness.model_validate(payload)
+
+
+def _rehash_composition(payload: dict) -> CompositionRecord:
+    payload["composition_sha256"] = canonical_sha256(
+        {key: value for key, value in payload.items() if key != "composition_sha256"}
+    )
+    return CompositionRecord.model_validate(payload)
 
 
 def test_baseline_contains_exact_profile_then_requirement_checklist_order() -> None:
@@ -190,62 +271,150 @@ def test_baseline_build_and_canonical_reread_are_byte_stable() -> None:
     assert canonical_json_bytes(reread) == canonical_json_bytes(first)
 
 
-def test_actual_laj_copies_exact_baseline_and_zero_findings_are_not_reassuring() -> (
-    None
-):
-    _reader, _context, _profile, baseline = _case()
-    run = _run(baseline=baseline, with_finding=False)
+def test_completed_accepted_zero_findings_preserves_exact_baseline() -> None:
+    baseline, assembled = _assembled()
     matched = compose_matched_non_llm(baseline)
-    actual = compose_actual_laj(baseline, run)
+    actual = compose_actual_laj(baseline, assembled.witness)
     assert verify_additive_baseline(matched, actual) is True
     assert canonical_json_bytes(matched.baseline_payload) == canonical_json_bytes(
         actual.baseline_payload
     )
-    presentation = build_presentation(actual, laj_run=run)
-    assert presentation.assessed_unit_count == 2
+    presentation = build_presentation(actual, witness=assembled.witness)
+    assert presentation.assessed_unit_count == 25
     assert presentation.finding_count == 0
-    assert presentation.abstention_count == 1
-    assert presentation.failure_count == 1
+    assert presentation.withheld_finding_count == 0
+    assert presentation.failure_count == 0
     assert presentation.advisory_only is True
     assert "未发现问题" not in presentation.disclaimer
-    assert presentation.disclaimer == (
-        "本次运行未生成候选 finding。该结果不表示报告正确、完整或可交付。"
-        "已评价 2 个 assessment units，其中 1 个弃权，1 个运行失败。"
-    )
+    assert "completed/accepted" in presentation.disclaimer
 
 
-def test_laj_findings_and_duplicate_labels_are_additive_only() -> None:
-    _reader, _context, _profile, baseline = _case()
-    run = _run(baseline=baseline, with_finding=True)
-    annotation = DuplicateAnnotation(
-        baseline_item_id=baseline.checklist_items[0].item_id,
-        finding_id=run.findings[0].finding_id,
-        label="corroborating",
-    )
+def test_completed_accepted_findings_and_labels_are_deterministically_additive() -> (
+    None
+):
+    baseline, assembled = _assembled(with_finding=True)
     matched = compose_matched_non_llm(baseline)
-    actual = compose_actual_laj(
-        baseline,
-        run,
-        duplicate_annotations=[annotation],
-    )
+    actual = compose_actual_laj(baseline, assembled.witness)
     assert verify_additive_baseline(matched, actual) is True
-    assert actual.laj_advice_items == run.findings
-    assert actual.duplicate_annotations == [annotation]
-    assert len(actual.baseline_payload.checklist_items) == len(
-        matched.baseline_payload.checklist_items
+    assert actual.laj_advice_items == assembled.run.findings
+    assert actual.duplicate_annotations
+    assert (
+        actual.duplicate_annotations[0].baseline_item_id
+        == baseline.lint_items[0].item_id
     )
-    presentation = build_presentation(actual, laj_run=run)
+    presentation = build_presentation(actual, witness=assembled.witness)
     assert presentation.finding_count == 1
-    assert presentation.additional_semantic_findings == run.findings
+    assert presentation.withheld_finding_count == 0
+    assert presentation.additional_semantic_findings == assembled.run.findings
 
 
-def test_actual_laj_rejects_different_report_context_or_profile_binding() -> None:
-    _reader, _context, _profile, baseline = _case()
-    run = _run(baseline=baseline, with_finding=False)
-    for field in ("report_sha256", "bounded_context_sha256", "profile_sha256"):
-        changed = run.model_copy(update={field: "f" * 64})
-        with pytest.raises(
-            SemanticEvaluatorError,
-            match="composition_input_binding_mismatch",
-        ):
-            compose_actual_laj(baseline, changed)
+@pytest.mark.parametrize(
+    ("state", "validation_status"),
+    [
+        ("incomplete", "incomplete"),
+        ("validation_failed", "rejected"),
+        ("security_failed", "rejected"),
+    ],
+)
+def test_failure_only_actual_laj_withholds_findings_and_keeps_baseline(
+    state: str,
+    validation_status: str,
+) -> None:
+    baseline, assembled = _assembled(state=state, with_finding=True)
+    matched = compose_matched_non_llm(baseline)
+    actual = compose_actual_laj(baseline, assembled.witness)
+    assert verify_additive_baseline(matched, actual)
+    assert actual.condition == "actual_LAJ"
+    assert actual.laj_run_status == state
+    assert actual.laj_validation_status == validation_status
+    assert actual.laj_advice_items == []
+    assert actual.duplicate_annotations == []
+    presentation = build_presentation(actual, witness=assembled.witness)
+    assert presentation.additional_semantic_findings == []
+    expected_withheld = len(assembled.run.findings)
+    assert presentation.withheld_finding_count == expected_withheld
+    assert presentation.failure_count == 1
+    assert state in presentation.disclaimer
+    assert canonical_json_bytes(actual.baseline_payload) == canonical_json_bytes(
+        matched.baseline_payload
+    )
+
+
+@pytest.mark.parametrize(
+    "mutation",
+    [
+        "reader_report",
+        "context",
+        "profile",
+        "plan",
+        "instrument",
+        "event",
+        "validation",
+        "run_report",
+    ],
+)
+def test_rehashed_witness_relation_substitution_is_rejected(mutation: str) -> None:
+    baseline, assembled = _assembled(with_finding=True)
+    payload = assembled.witness.model_dump(mode="json")
+    if mutation == "reader_report":
+        payload["reader_artifact"]["report_sha256"] = "f" * 64
+    elif mutation == "context":
+        payload["bounded_context"]["context_sha256"] = "f" * 64
+    elif mutation == "profile":
+        payload["assessment_plan"]["profile_sha256"] = "f" * 64
+    elif mutation == "plan":
+        payload["assessment_plan"]["assessment_plan_sha256"] = "f" * 64
+    elif mutation == "instrument":
+        payload["instrument_manifest"]["instrument_sha256"] = "f" * 64
+    elif mutation == "event":
+        payload["events"][0]["sequence"] = 2
+    elif mutation == "validation":
+        payload["validation_report"]["finding_count"] += 1
+    else:
+        payload["run"]["report_sha256"] = "f" * 64
+    forged = _rehash_witness(payload)
+    with pytest.raises(SemanticEvaluatorError, match="composition_witness_mismatch"):
+        compose_actual_laj(baseline, forged)
+
+
+@pytest.mark.parametrize(
+    "mutation",
+    ["advice", "status", "annotation", "baseline"],
+)
+def test_rehashed_composition_advice_or_status_tampering_is_rejected(
+    mutation: str,
+) -> None:
+    baseline, assembled = _assembled(with_finding=True)
+    actual = compose_actual_laj(baseline, assembled.witness)
+    payload = actual.model_dump(mode="json")
+    if mutation == "advice":
+        payload["laj_advice_items"] = []
+        payload["duplicate_annotations"] = []
+    elif mutation == "status":
+        payload["laj_run_status"] = "incomplete"
+        payload["laj_validation_status"] = "incomplete"
+        payload["laj_advice_items"] = []
+        payload["duplicate_annotations"] = []
+    elif mutation == "annotation":
+        payload["duplicate_annotations"][0]["label"] = "duplicate"
+    else:
+        baseline_payload = payload["baseline_payload"]
+        baseline_payload["checklist_items"][0]["text"] = "篡改后的合成检查项。"
+        baseline_payload["baseline_sha256"] = canonical_sha256(
+            {
+                key: value
+                for key, value in baseline_payload.items()
+                if key != "baseline_sha256"
+            }
+        )
+        payload["baseline_sha256"] = baseline_payload["baseline_sha256"]
+    forged = _rehash_composition(payload)
+    with pytest.raises(SemanticEvaluatorError, match="composition_record_mismatch"):
+        verify_composition_record(forged, witness=assembled.witness)
+
+
+def test_matched_baseline_rejects_any_laj_witness() -> None:
+    baseline, assembled = _assembled()
+    matched = compose_matched_non_llm(baseline)
+    with pytest.raises(SemanticEvaluatorError, match="composition_record_mismatch"):
+        build_presentation(matched, witness=assembled.witness)
