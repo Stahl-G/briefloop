@@ -12,6 +12,7 @@ import yaml
 from multi_agent_brief.contracts.v2 import CleanText, StrictModel
 from multi_agent_brief.semantic_evaluator.contracts import (
     BASELINE_SCHEMA_ID,
+    AdmittedReportEvidence,
     BaselinePayload,
     BoundedContext,
     ChecklistItem,
@@ -20,7 +21,11 @@ from multi_agent_brief.semantic_evaluator.contracts import (
     ReaderArtifact,
 )
 from multi_agent_brief.semantic_evaluator.errors import SemanticEvaluatorError
-from multi_agent_brief.semantic_evaluator.normalization import make_span_locator
+from multi_agent_brief.semantic_evaluator.normalization import (
+    make_span_locator,
+    verify_admitted_report_evidence,
+    verify_bounded_context,
+)
 from multi_agent_brief.semantic_evaluator.profile import (
     LoadedProfile,
     load_profile,
@@ -30,7 +35,10 @@ from multi_agent_brief.semantic_evaluator.resources import (
     resource_sha256,
     resource_text,
 )
-from multi_agent_brief.semantic_evaluator.serialization import canonical_sha256
+from multi_agent_brief.semantic_evaluator.serialization import (
+    canonical_json_bytes,
+    canonical_sha256,
+)
 
 
 CHECKLIST_RESOURCE = "structured_checklist_zh_v1.yaml"
@@ -228,10 +236,19 @@ def deterministic_lint(artifact: ReaderArtifact) -> list[LintItem]:
 
 def build_baseline(
     *,
+    report_evidence: AdmittedReportEvidence,
     reader_artifact: ReaderArtifact,
     bounded_context: BoundedContext,
     loaded_profile: LoadedProfile | None = None,
 ) -> BaselinePayload:
+    try:
+        verify_admitted_report_evidence(
+            report_evidence,
+            reader_artifact=reader_artifact,
+        )
+        bounded_context = verify_bounded_context(bounded_context)
+    except SemanticEvaluatorError as exc:
+        raise SemanticEvaluatorError("baseline_input_binding_mismatch") from exc
     profile = loaded_profile or load_profile()
     validate_loaded_profile(profile)
     template = _load_checklist()
@@ -280,10 +297,34 @@ def build_baseline(
     )
 
 
+def verify_baseline_payload(
+    baseline: BaselinePayload,
+    *,
+    report_evidence: AdmittedReportEvidence,
+    reader_artifact: ReaderArtifact,
+    bounded_context: BoundedContext,
+    loaded_profile: LoadedProfile | None = None,
+) -> BaselinePayload:
+    try:
+        strict = BaselinePayload.model_validate(baseline.model_dump(mode="json"))
+        expected = build_baseline(
+            report_evidence=report_evidence,
+            reader_artifact=reader_artifact,
+            bounded_context=bounded_context,
+            loaded_profile=loaded_profile,
+        )
+    except (AttributeError, TypeError, ValueError, SemanticEvaluatorError) as exc:
+        raise SemanticEvaluatorError("baseline_input_binding_mismatch") from exc
+    if canonical_json_bytes(strict) != canonical_json_bytes(expected):
+        raise SemanticEvaluatorError("baseline_input_binding_mismatch")
+    return strict
+
+
 __all__ = [
     "CHECKLIST_RESOURCE",
     "LINT_VERSION",
     "build_baseline",
     "checklist_resource_sha256",
     "deterministic_lint",
+    "verify_baseline_payload",
 ]

@@ -8,6 +8,7 @@ finalize, delivery, or claim-support authority.
 from __future__ import annotations
 
 import hashlib
+from pathlib import PurePath
 from typing import Annotated, ClassVar, Literal, Optional, Union
 
 from pydantic import (
@@ -33,6 +34,7 @@ READER_ARTIFACT_SCHEMA_ID = "briefloop.semantic_evaluator.reader_artifact.v1"
 BOUNDED_CONTEXT_SCHEMA_ID = "briefloop.semantic_evaluator.bounded_context.v1"
 PROFILE_SCHEMA_ID = "briefloop.semantic_evaluator.profile.v1"
 INSTRUMENT_CONFIG_SCHEMA_ID = "briefloop.semantic_evaluator.instrument_config.v1"
+ADMISSION_REQUEST_SCHEMA_ID = "briefloop.semantic_evaluator.admission_request.v1"
 INSTRUMENT_MANIFEST_SCHEMA_ID = "briefloop.semantic_evaluator.instrument_manifest.v1"
 INPUT_BINDING_SCHEMA_ID = "briefloop.semantic_evaluator.input_binding.v1"
 ASSESSMENT_PLAN_SCHEMA_ID = "briefloop.semantic_evaluator.assessment_plan.v1"
@@ -52,6 +54,7 @@ _INSTRUMENT_SCHEMA_IDS = (
     BOUNDED_CONTEXT_SCHEMA_ID,
     PROFILE_SCHEMA_ID,
     INSTRUMENT_CONFIG_SCHEMA_ID,
+    ADMISSION_REQUEST_SCHEMA_ID,
     INSTRUMENT_MANIFEST_SCHEMA_ID,
     INPUT_BINDING_SCHEMA_ID,
     ASSESSMENT_PLAN_SCHEMA_ID,
@@ -71,6 +74,8 @@ AssessmentUnitId = Annotated[str, StringConstraints(pattern=r"^AU-[0-9a-f]{12}$"
 FindingId = Annotated[str, StringConstraints(pattern=r"^F-[0-9a-f]{12}$")]
 HandoffId = Annotated[str, StringConstraints(pattern=r"^H-[0-9a-f]{12}$")]
 CharOffset = Annotated[int, Field(ge=0)]
+HexBytes = Annotated[str, StringConstraints(pattern=r"^(?:[0-9a-f]{2})*$")]
+AbsolutePathText = Annotated[str, StringConstraints(min_length=1)]
 JsonObject = dict[str, JsonValue]
 
 Language = Literal["zh-CN"]
@@ -361,6 +366,69 @@ class InstrumentConfig(StrictModel):
     transport_policy: TransportPolicy
 
 
+class AdmissionRequest(StrictModel):
+    schema_id: ClassVar[str] = ADMISSION_REQUEST_SCHEMA_ID
+    schema_version: Literal[ADMISSION_REQUEST_SCHEMA_ID]
+    artifact_id: ContractId
+    trial_id: ContractId
+    report_bytes_hex: HexBytes
+    declared_report_sha256: Sha256
+    bounded_context: BoundedContext
+    declared_bounded_context_sha256: Sha256
+    instrument_config: InstrumentConfig
+    public_data_attestation: StrictBool
+    private_or_confidential_material: StrictBool
+    archive_root: Optional[AbsolutePathText]
+    workspace_root: Optional[AbsolutePathText]
+
+    @field_validator("archive_root", "workspace_root")
+    @classmethod
+    def validate_absolute_path(cls, value: Optional[str]) -> Optional[str]:
+        if value is not None and not PurePath(value).is_absolute():
+            raise ValueError("path must be absolute")
+        return value
+
+
+class AdmittedReportEvidence(StrictModel):
+    artifact_id: ContractId
+    report_bytes_hex: HexBytes
+    report_sha256: Sha256
+    normalized_text_sha256: Sha256
+    evidence_sha256: Sha256
+
+
+class DimensionAttemptEvidence(StrictModel):
+    attempt_ref: ContractId
+    dimension_id: DimensionId
+    attempt_ordinal: PositiveInt
+    prompt_request_sha256: Sha256
+    status: Literal["completed", "failed"]
+    reason_code: Optional[ContractId]
+    raw_response_bytes_hex: Optional[HexBytes]
+    raw_response_sha256: Optional[Sha256]
+    forbidden_canary_values: list[CleanText]
+    evidence_sha256: Sha256
+
+    @model_validator(mode="after")
+    def validate_attempt_evidence_shape(self) -> "DimensionAttemptEvidence":
+        if self.forbidden_canary_values != sorted(set(self.forbidden_canary_values)):
+            raise ValueError("canary values must be sorted and unique")
+        if self.status == "completed":
+            if (
+                self.reason_code is not None
+                or self.raw_response_bytes_hex is None
+                or self.raw_response_sha256 is None
+            ):
+                raise ValueError("completed evidence requires raw response only")
+        elif (
+            self.reason_code is None
+            or self.raw_response_bytes_hex is not None
+            or self.raw_response_sha256 is not None
+        ):
+            raise ValueError("failed evidence requires one reason only")
+        return self
+
+
 class ImplementationComponent(StrictModel):
     component_id: Literal[
         "parser", "validator", "normalizer", "unit_planner", "prompt_assembler"
@@ -626,6 +694,8 @@ class AssessmentUnitOutcome(StrictModel):
 class AttemptRef(StrictModel):
     attempt_ref: ContractId
     dimension_id: DimensionId
+    attempt_ordinal: PositiveInt
+    prompt_request_sha256: Sha256
     status: Literal["completed", "failed"]
     reason_code: Optional[ContractId]
 
@@ -718,18 +788,24 @@ class AttemptStartedPayload(StrictModel):
     event_type: Literal["attempt_started"]
     dimension_id: DimensionId
     attempt_ref: ContractId
+    attempt_ordinal: PositiveInt
+    prompt_request_sha256: Sha256
 
 
 class AttemptCompletedPayload(StrictModel):
     event_type: Literal["attempt_completed"]
     dimension_id: DimensionId
     attempt_ref: ContractId
+    attempt_ordinal: PositiveInt
+    prompt_request_sha256: Sha256
 
 
 class AttemptFailedPayload(StrictModel):
     event_type: Literal["attempt_failed"]
     dimension_id: DimensionId
     attempt_ref: ContractId
+    attempt_ordinal: PositiveInt
+    prompt_request_sha256: Sha256
     reason_code: ContractId
 
 
@@ -850,10 +926,13 @@ class LajCompositionWitness(StrictModel):
     schema_id: ClassVar[str] = LAJ_COMPOSITION_WITNESS_SCHEMA_ID
     schema_version: Literal[LAJ_COMPOSITION_WITNESS_SCHEMA_ID]
     input_binding: InputBinding
+    report_evidence: AdmittedReportEvidence
     reader_artifact: ReaderArtifact
     bounded_context: BoundedContext
+    instrument_config: InstrumentConfig
     instrument_manifest: InstrumentManifest
     assessment_plan: AssessmentPlan
+    dimension_attempt_evidence: list[DimensionAttemptEvidence] = Field(min_length=1)
     run: SemanticAssessmentRun
     validation_report: ValidationReport
     events: list[SemanticEvaluatorEvent] = Field(min_length=1)
@@ -958,6 +1037,8 @@ class CompositionRecord(StrictModel):
             legal_pairs = {
                 ("completed", "accepted"),
                 ("incomplete", "incomplete"),
+                ("provider_failed", "incomplete"),
+                ("parser_failed", "rejected"),
                 ("validation_failed", "rejected"),
                 ("security_failed", "rejected"),
             }
@@ -1181,6 +1262,20 @@ EvaluatorProfile.minimal_example = EvaluatorProfile.full_example = {
     "dimensions": [_EXAMPLE_DIMENSION],
 }
 InstrumentConfig.minimal_example = InstrumentConfig.full_example = _EXAMPLE_CONFIG
+AdmissionRequest.minimal_example = AdmissionRequest.full_example = {
+    "schema_version": ADMISSION_REQUEST_SCHEMA_ID,
+    "artifact_id": "reader-001",
+    "trial_id": "trial-001",
+    "report_bytes_hex": "23",
+    "declared_report_sha256": _sha256_text("#"),
+    "bounded_context": BoundedContext.minimal_example,
+    "declared_bounded_context_sha256": _ZERO_SHA,
+    "instrument_config": _EXAMPLE_CONFIG,
+    "public_data_attestation": True,
+    "private_or_confidential_material": False,
+    "archive_root": None,
+    "workspace_root": None,
+}
 InstrumentManifest.minimal_example = InstrumentManifest.full_example = {
     "schema_version": INSTRUMENT_MANIFEST_SCHEMA_ID,
     "manifest_id": "manifest-001",
@@ -1303,10 +1398,32 @@ SemanticEvaluatorEvent.minimal_example = SemanticEvaluatorEvent.full_example = {
 LajCompositionWitness.minimal_example = LajCompositionWitness.full_example = {
     "schema_version": LAJ_COMPOSITION_WITNESS_SCHEMA_ID,
     "input_binding": InputBinding.minimal_example,
+    "report_evidence": {
+        "artifact_id": "reader-001",
+        "report_bytes_hex": "23",
+        "report_sha256": _sha256_text("#"),
+        "normalized_text_sha256": _sha256_text("#"),
+        "evidence_sha256": _ZERO_SHA,
+    },
     "reader_artifact": ReaderArtifact.minimal_example,
     "bounded_context": BoundedContext.minimal_example,
+    "instrument_config": _EXAMPLE_CONFIG,
     "instrument_manifest": InstrumentManifest.minimal_example,
     "assessment_plan": AssessmentPlan.minimal_example,
+    "dimension_attempt_evidence": [
+        {
+            "attempt_ref": "attempt-001",
+            "dimension_id": "cross_section_consistency",
+            "attempt_ordinal": 1,
+            "prompt_request_sha256": _ZERO_SHA,
+            "status": "completed",
+            "reason_code": None,
+            "raw_response_bytes_hex": "7b7d",
+            "raw_response_sha256": _sha256_text("{}"),
+            "forbidden_canary_values": [],
+            "evidence_sha256": _ZERO_SHA,
+        }
+    ],
     "run": SemanticAssessmentRun.minimal_example,
     "validation_report": ValidationReport.minimal_example,
     "events": [SemanticEvaluatorEvent.minimal_example],
@@ -1368,6 +1485,7 @@ SEMANTIC_EVALUATOR_CONTRACT_MODELS: tuple[type[StrictModel], ...] = (
     BoundedContext,
     EvaluatorProfile,
     InstrumentConfig,
+    AdmissionRequest,
     InstrumentManifest,
     InputBinding,
     AssessmentPlan,
@@ -1387,6 +1505,7 @@ SEMANTIC_EVALUATOR_CONTRACT_IDS: tuple[str, ...] = tuple(
 
 
 __all__ = [
+    "ADMISSION_REQUEST_SCHEMA_ID",
     "ASSESSMENT_PLAN_SCHEMA_ID",
     "BASELINE_SCHEMA_ID",
     "BOUNDED_CONTEXT_SCHEMA_ID",
@@ -1407,6 +1526,8 @@ __all__ = [
     "AbstainConflictingContextResult",
     "AbstainInsufficientContextResult",
     "AbstainUnableToAssessResult",
+    "AdmissionRequest",
+    "AdmittedReportEvidence",
     "AssessmentPlan",
     "AssessmentUnit",
     "AssessmentUnitId",
@@ -1423,6 +1544,7 @@ __all__ = [
     "DataClass",
     "DecodingConfig",
     "DimensionId",
+    "DimensionAttemptEvidence",
     "DimensionProfile",
     "DimensionResponse",
     "Disposition",

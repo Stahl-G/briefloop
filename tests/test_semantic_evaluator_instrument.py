@@ -77,7 +77,7 @@ def test_manifest_binds_exact_frozen_resources_schemas_and_source_components() -
     assert tuple(manifest.schema_sha256s) == tuple(
         sorted(SEMANTIC_EVALUATOR_CONTRACT_IDS)
     )
-    assert len(manifest.schema_sha256s) == 15
+    assert len(manifest.schema_sha256s) == 16
     assert [item.component_id for item in manifest.implementation_components] == [
         "parser",
         "validator",

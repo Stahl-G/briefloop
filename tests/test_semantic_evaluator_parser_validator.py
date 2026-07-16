@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from dataclasses import replace
 from pathlib import Path
 
 import pytest
@@ -9,16 +10,17 @@ import pytest
 from multi_agent_brief.semantic_evaluator.admission import admit_inputs
 import multi_agent_brief.semantic_evaluator.validator as validator_module
 from multi_agent_brief.semantic_evaluator.contracts import (
+    ADMISSION_REQUEST_SCHEMA_ID,
     DIMENSION_RESPONSE_SCHEMA_ID,
     AbstainConflictingContextResult,
     AbstainInsufficientContextResult,
     AbstainUnableToAssessResult,
-    AttemptRef,
     BoundedRequirement,
     DimensionResponse,
     FindingDraft,
     FindingEmittedResult,
     InstrumentConfig,
+    InstrumentManifest,
     NoFindingResult,
     O3HandoffDraft,
     SpanLocator,
@@ -33,14 +35,15 @@ from multi_agent_brief.semantic_evaluator.parser import parse_dimension_response
 from multi_agent_brief.semantic_evaluator.profile import load_profile
 from multi_agent_brief.semantic_evaluator.serialization import (
     canonical_json_bytes,
+    canonical_sha256,
     sha256_bytes,
 )
 from multi_agent_brief.semantic_evaluator.unit_planner import (
     build_assessment_plan,
 )
 from multi_agent_brief.semantic_evaluator.validator import (
-    DimensionEvidence,
     assemble_semantic_assessment_run,
+    make_dimension_attempt_evidence,
     recompute_event_counts,
     validate_dimension_response,
 )
@@ -78,18 +81,27 @@ def _admitted_case():
         ],
     )
     profile = load_profile()
+    config_payload = InstrumentConfig.minimal_example.copy()
+    config_payload["retry_policy"] = {
+        "max_attempts": 2,
+        "retryable_reason_codes": ["provider_retryable_failure"],
+        "backoff_schedule_ms": [0],
+    }
     decision = admit_inputs(
-        report_bytes=REPORT_BYTES,
-        declared_report_sha256=sha256_bytes(REPORT_BYTES),
-        artifact_id="reader-validator",
-        bounded_context=context,
-        declared_bounded_context_sha256=context.context_sha256,
-        instrument_config=InstrumentConfig.model_validate(
-            InstrumentConfig.minimal_example
-        ),
-        trial_id="trial-validator",
-        public_data_attestation=True,
-        private_or_confidential_material=False,
+        {
+            "schema_version": ADMISSION_REQUEST_SCHEMA_ID,
+            "report_bytes_hex": REPORT_BYTES.hex(),
+            "declared_report_sha256": sha256_bytes(REPORT_BYTES),
+            "artifact_id": "reader-validator",
+            "bounded_context": context,
+            "declared_bounded_context_sha256": context.context_sha256,
+            "instrument_config": config_payload,
+            "trial_id": "trial-validator",
+            "public_data_attestation": True,
+            "private_or_confidential_material": False,
+            "archive_root": None,
+            "workspace_root": None,
+        },
         prompt_sizer=_Sizer(),
     )
     assert decision.admitted
@@ -150,24 +162,43 @@ def _complete_no_finding_validation_case(*, inject_security: bool = False):
         raw = response.model_dump(mode="json")
         if inject_security and ordinal == 0:
             raw["tool_calls"] = [{"name": "forbidden-synthetic-tool"}]
-        attempt_ref = f"attempt-{dimension.dimension_id}"
+        prompt = next(
+            item
+            for item in decision.prompts
+            if item.dimension_id == dimension.dimension_id
+        )
         evidence.append(
-            DimensionEvidence(
-                response=response,
-                raw_object=raw,
-                expected_dimension_id=dimension.dimension_id,
-                attempt_ref=attempt_ref,
-            )
-        )
-        attempts.append(
-            AttemptRef(
-                attempt_ref=attempt_ref,
+            make_dimension_attempt_evidence(
+                trial_id=plan.trial_id,
                 dimension_id=dimension.dimension_id,
+                attempt_ordinal=1,
+                prompt_request_sha256=prompt.request_sha256,
                 status="completed",
-                reason_code=None,
+                raw_response_bytes=canonical_json_bytes(raw),
             )
         )
+        attempts.append(evidence[-1])
     return reader, context, profile, plan, decision, evidence, attempts
+
+
+def _self_consistent_noncurrent_manifest(
+    manifest: InstrumentManifest,
+) -> InstrumentManifest:
+    payload = manifest.model_dump(mode="json")
+    payload["implementation_components"][0]["source_sha256"] = "0" * 64
+    component_identity = {
+        key: value
+        for key, value in payload.items()
+        if key not in {"schema_version", "manifest_id", "instrument_sha256"}
+    }
+    payload["manifest_id"] = f"manifest-{canonical_sha256(component_identity)[:12]}"
+    manifest_payload = {
+        "schema_version": payload["schema_version"],
+        "manifest_id": payload["manifest_id"],
+        **component_identity,
+    }
+    payload["instrument_sha256"] = canonical_sha256(manifest_payload)
+    return InstrumentManifest.model_validate(payload)
 
 
 def test_parser_accepts_one_strict_object_and_never_repairs_wrapped_json() -> None:
@@ -629,6 +660,20 @@ def test_raw_object_and_requested_dimension_are_bound_before_acceptance() -> Non
     )
     assert "run_binding_mismatch" in plan_result.reason_codes
 
+    stale_context = context.model_copy(deep=True)
+    stale_context.requirements[0].text = "stale synthetic mutation"
+    context_result = validate_dimension_response(
+        response,
+        raw_object=response.model_dump(mode="json"),
+        expected_dimension_id="cross_section_consistency",
+        plan=plan,
+        reader_artifact=reader.artifact,
+        bounded_context=stale_context,
+        attempt_ref="attempt-forged-context",
+    )
+    assert "run_binding_mismatch" in context_result.reason_codes
+    assert context_result.accepted_findings == ()
+
 
 def test_synthetic_events_recompute_complete_25_unit_run_counts() -> None:
     _reader, _context, _profile, plan, decision, evidence, attempts = (
@@ -636,8 +681,7 @@ def test_synthetic_events_recompute_complete_25_unit_run_counts() -> None:
     )
     assembled = assemble_semantic_assessment_run(
         admission=decision,
-        dimension_evidence=evidence,
-        attempt_refs=attempts,
+        dimension_attempt_evidence=evidence,
     )
     assert assembled.run.run_status == "completed"
     assert assembled.validation_report.validation_status == "accepted"
@@ -654,8 +698,7 @@ def test_synthetic_events_recompute_complete_25_unit_run_counts() -> None:
     )
     replay = assemble_semantic_assessment_run(
         admission=decision,
-        dimension_evidence=evidence,
-        attempt_refs=attempts,
+        dimension_attempt_evidence=evidence,
     )
     assert replay == assembled
 
@@ -666,8 +709,7 @@ def test_security_failure_has_precedence_and_a_recomputable_event() -> None:
     )
     assembled = assemble_semantic_assessment_run(
         admission=decision,
-        dimension_evidence=evidence,
-        attempt_refs=attempts,
+        dimension_attempt_evidence=evidence,
     )
     assert assembled.run.run_status == "security_failed"
     assert assembled.validation_report.validation_status == "rejected"
@@ -686,23 +728,245 @@ def test_failed_retry_attempt_does_not_turn_a_completed_dimension_into_failure()
     _reader, _context, _profile, _plan, decision, evidence, attempts = (
         _complete_no_finding_validation_case()
     )
+    first = evidence[0]
     retry_history = [
-        AttemptRef(
-            attempt_ref="attempt-retryable-failure",
-            dimension_id="cross_section_consistency",
+        make_dimension_attempt_evidence(
+            trial_id=decision.input_binding.trial_id,
+            dimension_id=first.dimension_id,
+            attempt_ordinal=1,
+            prompt_request_sha256=first.prompt_request_sha256,
             status="failed",
             reason_code="provider_retryable_failure",
         ),
-        *attempts,
+        make_dimension_attempt_evidence(
+            trial_id=decision.input_binding.trial_id,
+            dimension_id=first.dimension_id,
+            attempt_ordinal=2,
+            prompt_request_sha256=first.prompt_request_sha256,
+            status="completed",
+            raw_response_bytes=bytes.fromhex(first.raw_response_bytes_hex),
+        ),
+        *evidence[1:],
     ]
     assembled = assemble_semantic_assessment_run(
         admission=decision,
-        dimension_evidence=evidence,
-        attempt_refs=retry_history,
+        dimension_attempt_evidence=retry_history,
     )
     assert assembled.run.run_status == "completed"
     assert assembled.validation_report.validation_status == "accepted"
     assert recompute_event_counts(assembled.events)["failure_count"] == 0
+
+
+@pytest.mark.parametrize(
+    "mutation",
+    [
+        "gap",
+        "reorder",
+        "duplicate",
+        "non_retryable",
+        "excess",
+        "prompt_sha",
+        "raw_sha",
+        "evidence_sha",
+    ],
+)
+def test_attempt_evidence_topology_and_integrity_fail_closed(mutation: str) -> None:
+    _reader, _context, _profile, _plan, decision, evidence, _attempts = (
+        _complete_no_finding_validation_case()
+    )
+    first = evidence[0]
+    raw = bytes.fromhex(first.raw_response_bytes_hex)
+    if mutation == "gap":
+        candidate = [
+            make_dimension_attempt_evidence(
+                trial_id=decision.input_binding.trial_id,
+                dimension_id=first.dimension_id,
+                attempt_ordinal=2,
+                prompt_request_sha256=first.prompt_request_sha256,
+                status="completed",
+                raw_response_bytes=raw,
+            ),
+            *evidence[1:],
+        ]
+    elif mutation == "reorder":
+        candidate = [evidence[1], evidence[0], *evidence[2:]]
+    elif mutation == "duplicate":
+        candidate = [first, first, *evidence[1:]]
+    elif mutation == "non_retryable":
+        candidate = [
+            make_dimension_attempt_evidence(
+                trial_id=decision.input_binding.trial_id,
+                dimension_id=first.dimension_id,
+                attempt_ordinal=1,
+                prompt_request_sha256=first.prompt_request_sha256,
+                status="failed",
+                reason_code="provider_failed",
+            ),
+            make_dimension_attempt_evidence(
+                trial_id=decision.input_binding.trial_id,
+                dimension_id=first.dimension_id,
+                attempt_ordinal=2,
+                prompt_request_sha256=first.prompt_request_sha256,
+                status="completed",
+                raw_response_bytes=raw,
+            ),
+            *evidence[1:],
+        ]
+    elif mutation == "excess":
+        candidate = [
+            make_dimension_attempt_evidence(
+                trial_id=decision.input_binding.trial_id,
+                dimension_id=first.dimension_id,
+                attempt_ordinal=ordinal,
+                prompt_request_sha256=first.prompt_request_sha256,
+                status="completed" if ordinal == 3 else "failed",
+                raw_response_bytes=raw if ordinal == 3 else None,
+                reason_code=(None if ordinal == 3 else "provider_retryable_failure"),
+            )
+            for ordinal in (1, 2, 3)
+        ] + evidence[1:]
+    elif mutation == "prompt_sha":
+        candidate = [
+            make_dimension_attempt_evidence(
+                trial_id=decision.input_binding.trial_id,
+                dimension_id=first.dimension_id,
+                attempt_ordinal=1,
+                prompt_request_sha256="0" * 64,
+                status="completed",
+                raw_response_bytes=raw,
+            ),
+            *evidence[1:],
+        ]
+    elif mutation == "raw_sha":
+        candidate = [
+            first.model_copy(update={"raw_response_sha256": "0" * 64}),
+            *evidence[1:],
+        ]
+    else:
+        candidate = [
+            first.model_copy(update={"evidence_sha256": "0" * 64}),
+            *evidence[1:],
+        ]
+    with pytest.raises(SemanticEvaluatorError, match="assessment_evidence_mismatch"):
+        assemble_semantic_assessment_run(
+            admission=decision,
+            dimension_attempt_evidence=candidate,
+        )
+
+
+def test_raw_response_rewrite_requires_new_evidence_and_witness_identity() -> None:
+    _reader, _context, _profile, _plan, decision, evidence, _attempts = (
+        _complete_no_finding_validation_case()
+    )
+    original = assemble_semantic_assessment_run(
+        admission=decision,
+        dimension_attempt_evidence=evidence,
+    )
+    first = evidence[0]
+    raw = bytes.fromhex(first.raw_response_bytes_hex)
+    stale = first.model_copy(
+        update={"raw_response_bytes_hex": (b" " + raw + b"\n").hex()}
+    )
+    with pytest.raises(SemanticEvaluatorError, match="assessment_evidence_mismatch"):
+        assemble_semantic_assessment_run(
+            admission=decision,
+            dimension_attempt_evidence=[stale, *evidence[1:]],
+        )
+
+    rederived = make_dimension_attempt_evidence(
+        trial_id=decision.input_binding.trial_id,
+        dimension_id=first.dimension_id,
+        attempt_ordinal=1,
+        prompt_request_sha256=first.prompt_request_sha256,
+        status="completed",
+        raw_response_bytes=b" " + raw + b"\n",
+    )
+    changed = assemble_semantic_assessment_run(
+        admission=decision,
+        dimension_attempt_evidence=[rederived, *evidence[1:]],
+    )
+    assert changed.run == original.run
+    assert changed.validation_report == original.validation_report
+    assert changed.events == original.events
+    assert changed.witness.witness_sha256 != original.witness.witness_sha256
+    assert rederived.evidence_sha256 != first.evidence_sha256
+
+
+@pytest.mark.parametrize(
+    ("raw", "reason"),
+    [
+        (b"not-json", "parser_invalid_json"),
+        (b"[]", "parser_top_level_not_object"),
+        (b"\xff", "parser_invalid_utf8"),
+    ],
+)
+def test_raw_parser_failures_are_derived_from_attempt_bytes(
+    raw: bytes,
+    reason: str,
+) -> None:
+    _reader, _context, _profile, _plan, decision, evidence, _attempts = (
+        _complete_no_finding_validation_case()
+    )
+    first = evidence[0]
+    failed_parse = make_dimension_attempt_evidence(
+        trial_id=decision.input_binding.trial_id,
+        dimension_id=first.dimension_id,
+        attempt_ordinal=1,
+        prompt_request_sha256=first.prompt_request_sha256,
+        status="completed",
+        raw_response_bytes=raw,
+    )
+    assembled = assemble_semantic_assessment_run(
+        admission=decision,
+        dimension_attempt_evidence=[failed_parse, *evidence[1:]],
+    )
+    assert assembled.run.run_status == "parser_failed"
+    assert assembled.validation_report.validation_status == "rejected"
+    assert assembled.validation_report.reason_codes == [reason]
+    assert assembled.run.findings == []
+
+
+def test_partial_and_all_provider_failures_have_distinct_terminal_statuses() -> None:
+    _reader, _context, _profile, _plan, decision, evidence, _attempts = (
+        _complete_no_finding_validation_case()
+    )
+    terminal_failures = [
+        make_dimension_attempt_evidence(
+            trial_id=decision.input_binding.trial_id,
+            dimension_id=item.dimension_id,
+            attempt_ordinal=1,
+            prompt_request_sha256=item.prompt_request_sha256,
+            status="failed",
+            reason_code="provider_failed",
+        )
+        for item in evidence
+    ]
+    partial = assemble_semantic_assessment_run(
+        admission=decision,
+        dimension_attempt_evidence=[*evidence[:-1], terminal_failures[-1]],
+    )
+    assert partial.run.run_status == "incomplete"
+    assert partial.validation_report.validation_status == "incomplete"
+    all_failed = assemble_semantic_assessment_run(
+        admission=decision,
+        dimension_attempt_evidence=terminal_failures,
+    )
+    assert all_failed.run.run_status == "provider_failed"
+    assert all_failed.validation_report.validation_status == "incomplete"
+    assert all_failed.run.findings == []
+
+
+def test_assembly_rejects_self_consistent_noncurrent_manifest_before_evidence() -> None:
+    _reader, _context, _profile, _plan, decision, evidence, _attempts = (
+        _complete_no_finding_validation_case()
+    )
+    noncurrent = _self_consistent_noncurrent_manifest(decision.instrument_manifest)
+    forged = replace(decision, instrument_manifest=noncurrent)
+    with pytest.raises(SemanticEvaluatorError, match="instrument_manifest_mismatch"):
+        assemble_semantic_assessment_run(
+            admission=forged,
+            dimension_attempt_evidence=evidence,
+        )
 
 
 def test_missing_dimension_requires_explicit_terminal_failed_attempt() -> None:
@@ -715,77 +979,79 @@ def test_missing_dimension_requires_explicit_terminal_failed_attempt() -> None:
     ):
         assemble_semantic_assessment_run(
             admission=decision,
-            dimension_evidence=evidence[:-1],
-            attempt_refs=attempts[:-1],
+            dimension_attempt_evidence=evidence[:-1],
         )
 
     first = evidence[0]
-    partial_response = first.response.model_copy(
-        update={"unit_results": first.response.unit_results[:1]}
+    parsed_first = parse_dimension_response(bytes.fromhex(first.raw_response_bytes_hex))
+    partial_response = parsed_first.response.model_copy(
+        update={"unit_results": parsed_first.response.unit_results[:1]}
     )
-    partial = DimensionEvidence(
-        response=partial_response,
-        raw_object=partial_response.model_dump(mode="json"),
-        expected_dimension_id=first.expected_dimension_id,
-        attempt_ref=first.attempt_ref,
+    partial = make_dimension_attempt_evidence(
+        trial_id=decision.input_binding.trial_id,
+        dimension_id=first.dimension_id,
+        attempt_ordinal=1,
+        prompt_request_sha256=first.prompt_request_sha256,
+        status="completed",
+        raw_response_bytes=canonical_json_bytes(partial_response),
     )
-    with pytest.raises(
-        SemanticEvaluatorError,
-        match="assessment_unit_failure_link_missing",
-    ):
-        assemble_semantic_assessment_run(
-            admission=decision,
-            dimension_evidence=[partial, *evidence[1:]],
-            attempt_refs=attempts,
-        )
+    assembled = assemble_semantic_assessment_run(
+        admission=decision,
+        dimension_attempt_evidence=[partial, *evidence[1:]],
+    )
+    assert assembled.run.run_status == "validation_failed"
+    assert "assessment_unit_set_mismatch" in assembled.validation_report.reason_codes
 
 
 def test_assembly_revalidates_evidence_and_rejects_injected_validation_result() -> None:
     reader, context, _profile, plan, decision, evidence, attempts = (
         _complete_no_finding_validation_case()
     )
+    raw = bytes.fromhex(evidence[0].raw_response_bytes_hex)
+    parsed = parse_dimension_response(raw)
     injected = validate_dimension_response(
-        evidence[0].response,
-        raw_object=evidence[0].raw_object,
-        expected_dimension_id=evidence[0].expected_dimension_id,
+        parsed.response,
+        raw_object=parsed.raw_object,
+        expected_dimension_id=evidence[0].dimension_id,
         plan=plan,
         reader_artifact=reader.artifact,
         bounded_context=context,
         attempt_ref=evidence[0].attempt_ref,
     )
-    with pytest.raises(SemanticEvaluatorError, match="run_binding_mismatch"):
+    with pytest.raises(SemanticEvaluatorError, match="assessment_evidence_mismatch"):
         assemble_semantic_assessment_run(
             admission=decision,
-            dimension_evidence=[injected, *evidence[1:]],
-            attempt_refs=attempts,
+            dimension_attempt_evidence=[injected, *evidence[1:]],
         )
 
 
 def test_cross_admission_response_substitution_fails_before_run_witness() -> None:
-    _reader, context, _profile, _plan, _first, evidence, attempts = (
+    _reader, context, _profile, _plan, first_decision, evidence, attempts = (
         _complete_no_finding_validation_case()
     )
     other_report = REPORT_BYTES + "\n不同报告。\n".encode()
     second = admit_inputs(
-        report_bytes=other_report,
-        declared_report_sha256=sha256_bytes(other_report),
-        artifact_id="reader-validator-other",
-        bounded_context=context,
-        declared_bounded_context_sha256=context.context_sha256,
-        instrument_config=InstrumentConfig.model_validate(
-            InstrumentConfig.minimal_example
-        ),
-        trial_id="trial-validator",
-        public_data_attestation=True,
-        private_or_confidential_material=False,
+        {
+            "schema_version": ADMISSION_REQUEST_SCHEMA_ID,
+            "report_bytes_hex": other_report.hex(),
+            "declared_report_sha256": sha256_bytes(other_report),
+            "artifact_id": "reader-validator-other",
+            "bounded_context": context,
+            "declared_bounded_context_sha256": context.context_sha256,
+            "instrument_config": first_decision.instrument_config,
+            "trial_id": "trial-validator",
+            "public_data_attestation": True,
+            "private_or_confidential_material": False,
+            "archive_root": None,
+            "workspace_root": None,
+        },
         prompt_sizer=_Sizer(),
     )
     assert second.admitted
-    with pytest.raises(SemanticEvaluatorError, match="run_binding_mismatch"):
+    with pytest.raises(SemanticEvaluatorError, match="assessment_evidence_mismatch"):
         assemble_semantic_assessment_run(
             admission=second,
-            dimension_evidence=evidence,
-            attempt_refs=attempts,
+            dimension_attempt_evidence=evidence,
         )
 
 
@@ -799,7 +1065,7 @@ def test_global_derived_finding_collision_has_stable_value_free_error(
     units = [
         item
         for item in decision.assessment_plan.units
-        if item.dimension_id == first.expected_dimension_id
+        if item.dimension_id == first.dimension_id
     ]
     span = make_span_locator(
         reader.artifact,
@@ -810,7 +1076,7 @@ def test_global_derived_finding_collision_has_stable_value_free_error(
     response = DimensionResponse(
         schema_version=DIMENSION_RESPONSE_SCHEMA_ID,
         trial_id=decision.assessment_plan.trial_id,
-        dimension_id=first.expected_dimension_id,
+        dimension_id=first.dimension_id,
         unit_results=[
             FindingEmittedResult(
                 assessment_unit_id=units[0].assessment_unit_id,
@@ -828,11 +1094,13 @@ def test_global_derived_finding_collision_has_stable_value_free_error(
             ),
         ],
     )
-    collision = DimensionEvidence(
-        response=response,
-        raw_object=response.model_dump(mode="json"),
-        expected_dimension_id=first.expected_dimension_id,
-        attempt_ref=first.attempt_ref,
+    collision = make_dimension_attempt_evidence(
+        trial_id=decision.input_binding.trial_id,
+        dimension_id=first.dimension_id,
+        attempt_ordinal=1,
+        prompt_request_sha256=first.prompt_request_sha256,
+        status="completed",
+        raw_response_bytes=canonical_json_bytes(response),
     )
     monkeypatch.setattr(
         validator_module,
@@ -842,8 +1110,7 @@ def test_global_derived_finding_collision_has_stable_value_free_error(
     with pytest.raises(SemanticEvaluatorError, match="finding_id_duplicate") as caught:
         assemble_semantic_assessment_run(
             admission=decision,
-            dimension_evidence=[collision, *evidence[1:]],
-            attempt_refs=attempts,
+            dimension_attempt_evidence=[collision, *evidence[1:]],
         )
     assert str(caught.value) == "finding_id_duplicate"
 
@@ -858,7 +1125,7 @@ def test_global_derived_handoff_collision_has_stable_value_free_error(
     units = [
         item
         for item in decision.assessment_plan.units
-        if item.dimension_id == first.expected_dimension_id
+        if item.dimension_id == first.dimension_id
     ]
     span = make_span_locator(
         reader.artifact,
@@ -879,7 +1146,7 @@ def test_global_derived_handoff_collision_has_stable_value_free_error(
     response = DimensionResponse(
         schema_version=DIMENSION_RESPONSE_SCHEMA_ID,
         trial_id=decision.assessment_plan.trial_id,
-        dimension_id=first.expected_dimension_id,
+        dimension_id=first.dimension_id,
         unit_results=[
             AbstainUnableToAssessResult(
                 assessment_unit_id=units[0].assessment_unit_id,
@@ -899,11 +1166,13 @@ def test_global_derived_handoff_collision_has_stable_value_free_error(
             ),
         ],
     )
-    collision = DimensionEvidence(
-        response=response,
-        raw_object=response.model_dump(mode="json"),
-        expected_dimension_id=first.expected_dimension_id,
-        attempt_ref=first.attempt_ref,
+    collision = make_dimension_attempt_evidence(
+        trial_id=decision.input_binding.trial_id,
+        dimension_id=first.dimension_id,
+        attempt_ordinal=1,
+        prompt_request_sha256=first.prompt_request_sha256,
+        status="completed",
+        raw_response_bytes=canonical_json_bytes(response),
     )
     monkeypatch.setattr(
         validator_module,
@@ -913,7 +1182,6 @@ def test_global_derived_handoff_collision_has_stable_value_free_error(
     with pytest.raises(SemanticEvaluatorError, match="handoff_id_duplicate") as caught:
         assemble_semantic_assessment_run(
             admission=decision,
-            dimension_evidence=[collision, *evidence[1:]],
-            attempt_refs=attempts,
+            dimension_attempt_evidence=[collision, *evidence[1:]],
         )
     assert str(caught.value) == "handoff_id_duplicate"

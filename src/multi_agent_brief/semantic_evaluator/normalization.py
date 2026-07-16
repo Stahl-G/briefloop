@@ -9,6 +9,7 @@ from typing import Iterable
 from multi_agent_brief.semantic_evaluator.contracts import (
     BOUNDED_CONTEXT_SCHEMA_ID,
     READER_ARTIFACT_SCHEMA_ID,
+    AdmittedReportEvidence,
     BoundedContext,
     BoundedRequirement,
     DataClass,
@@ -18,6 +19,7 @@ from multi_agent_brief.semantic_evaluator.contracts import (
 )
 from multi_agent_brief.semantic_evaluator.errors import SemanticEvaluatorError
 from multi_agent_brief.semantic_evaluator.serialization import (
+    canonical_json_bytes,
     canonical_model_sha256,
     canonical_sha256,
     normalized_utf8_text,
@@ -250,6 +252,63 @@ def bounded_context_sha256(context: BoundedContext) -> str:
     return canonical_model_sha256(context, exclude=("context_sha256",))
 
 
+def verify_bounded_context(context: BoundedContext) -> BoundedContext:
+    try:
+        strict = BoundedContext.model_validate(context.model_dump(mode="json"))
+    except (AttributeError, TypeError, ValueError) as exc:
+        raise SemanticEvaluatorError("input_sha_mismatch") from exc
+    if canonical_json_bytes(strict) != canonical_json_bytes(
+        context
+    ) or strict.context_sha256 != bounded_context_sha256(strict):
+        raise SemanticEvaluatorError("input_sha_mismatch")
+    return strict
+
+
+def build_admitted_report_evidence(
+    report_bytes: bytes,
+    *,
+    artifact_id: str,
+) -> tuple[AdmittedReportEvidence, NormalizedReader]:
+    if not report_bytes:
+        raise SemanticEvaluatorError("input_missing")
+    reader = normalize_markdown(report_bytes, artifact_id=artifact_id)
+    payload = {
+        "artifact_id": artifact_id,
+        "report_bytes_hex": report_bytes.hex(),
+        "report_sha256": sha256_bytes(report_bytes),
+        "normalized_text_sha256": sha256_text(reader.normalized_text),
+    }
+    evidence = AdmittedReportEvidence.model_validate(
+        {**payload, "evidence_sha256": canonical_sha256(payload)}
+    )
+    return evidence, reader
+
+
+def verify_admitted_report_evidence(
+    evidence: AdmittedReportEvidence,
+    *,
+    reader_artifact: ReaderArtifact | None = None,
+) -> NormalizedReader:
+    try:
+        strict = AdmittedReportEvidence.model_validate(evidence.model_dump(mode="json"))
+        raw = bytes.fromhex(strict.report_bytes_hex)
+    except (AttributeError, TypeError, ValueError) as exc:
+        raise SemanticEvaluatorError("input_sha_mismatch") from exc
+    if raw.hex() != strict.report_bytes_hex:
+        raise SemanticEvaluatorError("input_sha_mismatch")
+    expected, reader = build_admitted_report_evidence(
+        raw,
+        artifact_id=strict.artifact_id,
+    )
+    if canonical_json_bytes(expected) != canonical_json_bytes(strict):
+        raise SemanticEvaluatorError("input_sha_mismatch")
+    if reader_artifact is not None and canonical_json_bytes(
+        reader.artifact
+    ) != canonical_json_bytes(reader_artifact):
+        raise SemanticEvaluatorError("input_sha_mismatch")
+    return reader
+
+
 def freeze_bounded_context(
     *,
     context_id: str,
@@ -263,18 +322,22 @@ def freeze_bounded_context(
         "data_class": data_class,
         "requirements": [item.model_dump(mode="json") for item in requirements],
     }
-    return BoundedContext.model_validate(
+    frozen = BoundedContext.model_validate(
         {**payload, "context_sha256": canonical_sha256(payload)}
     )
+    return verify_bounded_context(frozen)
 
 
 __all__ = [
     "NORMALIZER_VERSION",
     "NormalizedReader",
+    "build_admitted_report_evidence",
     "bounded_context_sha256",
     "freeze_bounded_context",
     "make_span_locator",
     "normalize_markdown",
     "replay_reader_artifact",
     "replay_span",
+    "verify_admitted_report_evidence",
+    "verify_bounded_context",
 ]

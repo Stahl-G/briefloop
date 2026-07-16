@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import inspect
 import json
+from copy import deepcopy
 from pathlib import Path
 
 import pytest
@@ -13,10 +14,14 @@ from multi_agent_brief.semantic_evaluator.admission import (
     archive_root_is_safe,
 )
 from multi_agent_brief.semantic_evaluator.contracts import (
+    ADMISSION_REQUEST_SCHEMA_ID,
+    AdmissionRequest,
     BoundedRequirement,
     InstrumentConfig,
 )
+from multi_agent_brief.semantic_evaluator.errors import SemanticEvaluatorError
 from multi_agent_brief.semantic_evaluator.normalization import freeze_bounded_context
+from multi_agent_brief.semantic_evaluator.profile import load_profile
 from multi_agent_brief.semantic_evaluator.prompts import build_dimension_prompt
 from multi_agent_brief.semantic_evaluator.serialization import sha256_bytes
 
@@ -62,21 +67,33 @@ def _admit(
     sizer=None,
     **overrides,
 ):
-    context = overrides.pop("bounded_context", _context())
+    valid_context = _context()
+    context = overrides.pop("bounded_context", valid_context)
+    dependency_sizer = overrides.pop(
+        "prompt_sizer",
+        sizer if sizer is not None else FakeSizer(),
+    )
+    existing_binding = overrides.pop("existing_binding", None)
     values = {
-        "report_bytes": report,
+        "schema_version": ADMISSION_REQUEST_SCHEMA_ID,
+        "report_bytes_hex": report.hex(),
         "declared_report_sha256": sha256_bytes(report),
         "artifact_id": "reader-synthetic-1",
         "bounded_context": context,
-        "declared_bounded_context_sha256": context.context_sha256,
+        "declared_bounded_context_sha256": valid_context.context_sha256,
         "instrument_config": _config(),
         "trial_id": "trial-synthetic-1",
         "public_data_attestation": True,
         "private_or_confidential_material": False,
-        "prompt_sizer": sizer or FakeSizer(),
+        "archive_root": None,
+        "workspace_root": None,
     }
     values.update(overrides)
-    return admit_inputs(**values)
+    return admit_inputs(
+        values,
+        prompt_sizer=dependency_sizer,
+        existing_binding=existing_binding,
+    )
 
 
 def test_valid_admission_builds_complete_plan_and_all_prompts_before_execution() -> (
@@ -178,6 +195,148 @@ def test_attestations_require_exact_booleans_before_truthiness(
     ]
 
 
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [
+        ("artifact_id", True),
+        ("trial_id", True),
+        ("bounded_context", True),
+        ("instrument_config", True),
+        ("archive_root", Path("/tmp/synthetic")),
+    ],
+)
+def test_typed_admission_rejects_coerced_primitives_without_side_effects(
+    field: str,
+    value: object,
+) -> None:
+    sizer = FakeSizer()
+    decision = _admit("# 合成材料".encode(), sizer=sizer, **{field: value})
+    assert decision.reason_codes == ("admission_contract_invalid",)
+    assert decision.assessment_plan is None
+    assert decision.prompts == ()
+    assert sizer.calls == 0
+
+
+@pytest.mark.parametrize("mutation", ["missing", "extra"])
+def test_request_shape_errors_are_value_free_and_preplan(mutation: str) -> None:
+    payload = deepcopy(AdmissionRequest.minimal_example)
+    secret = "PRIVATE-SYNTHETIC-CANARY"
+    if mutation == "missing":
+        payload.pop("trial_id")
+    else:
+        payload["attacker_extra"] = secret
+    sizer = FakeSizer()
+    decision = admit_inputs(payload, prompt_sizer=sizer)
+    assert decision.reason_codes == ("admission_contract_invalid",)
+    assert secret not in str(decision.violations)
+    assert sizer.calls == 0
+
+
+@pytest.mark.parametrize(
+    ("report_bytes_hex", "reason"),
+    [
+        ("", "input_missing"),
+        ("0", "admission_contract_invalid"),
+        ("AA", "admission_contract_invalid"),
+        ("zz", "admission_contract_invalid"),
+        (b"# bytes are not a JSON string", "admission_contract_invalid"),
+    ],
+)
+def test_report_hex_boundary_is_canonical_and_preplan(
+    report_bytes_hex: object,
+    reason: str,
+) -> None:
+    payload = deepcopy(AdmissionRequest.minimal_example)
+    payload["report_bytes_hex"] = report_bytes_hex
+    sizer = FakeSizer()
+    decision = admit_inputs(payload, prompt_sizer=sizer)
+    assert decision.reason_codes == (reason,)
+    assert decision.assessment_plan is None
+    assert decision.prompts == ()
+    assert sizer.calls == 0
+
+
+@pytest.mark.parametrize("raw", [b"\xff", b"# ok\x00private-synthetic-canary"])
+def test_invalid_utf8_and_nul_are_value_free_and_preplan(raw: bytes) -> None:
+    decision = _admit(raw)
+    assert decision.reason_codes == ("input_not_utf8",)
+    assert decision.violations == ()
+    assert decision.report_evidence is None
+    assert decision.assessment_plan is None
+    assert decision.prompts == ()
+
+
+def test_stale_context_content_hash_blocks_before_sizing() -> None:
+    context = _context().model_copy(deep=True)
+    context.requirements[0].text = "stale synthetic mutation"
+    sizer = FakeSizer()
+    decision = _admit(
+        "# 合成材料".encode(),
+        sizer=sizer,
+        bounded_context=context,
+    )
+    assert decision.reason_codes == ("input_sha_mismatch",)
+    assert decision.input_binding is None
+    assert decision.assessment_plan is None
+    assert decision.prompts == ()
+    assert sizer.calls == 0
+
+
+def test_direct_prompt_assembly_rejects_stale_context_hash() -> None:
+    decision = _admit("# 合成材料".encode())
+    stale = decision.bounded_context.model_copy(deep=True)
+    stale.requirements[0].source_locator = "brief:stale"
+    dimension = load_profile().profile.dimensions[0]
+    with pytest.raises(SemanticEvaluatorError, match="input_sha_mismatch"):
+        build_dimension_prompt(
+            reader_artifact=decision.reader.artifact,
+            normalized_text=decision.reader.normalized_text,
+            bounded_context=stale,
+            dimension=dimension,
+            assessment_plan=decision.assessment_plan,
+        )
+
+
+class _BadSizer(FakeSizer):
+    def __init__(self, result: object = None, *, raises: bool = False) -> None:
+        super().__init__()
+        self.result = result
+        self.raises = raises
+
+    def count_tokens(self, *, system_text: str, user_text: str):
+        self.calls += 1
+        if self.raises:
+            raise RuntimeError("synthetic sizing failure")
+        return self.result
+
+
+@pytest.mark.parametrize(
+    "sizer",
+    [
+        _BadSizer(True),
+        _BadSizer("10"),
+        _BadSizer(-1),
+        _BadSizer(raises=True),
+    ],
+)
+def test_prompt_sizer_failures_do_not_return_partial_prompts(sizer: _BadSizer) -> None:
+    decision = _admit("# 合成材料".encode(), sizer=sizer)
+    assert decision.reason_codes == ("prompt_sizer_unavailable",)
+    assert decision.assessment_plan is None
+    assert decision.prompts == ()
+    assert sizer.calls == 1
+
+
+def test_prompt_sizer_identity_mismatch_is_preplan() -> None:
+    sizer = FakeSizer()
+    sizer.sizer_version = "wrong-version"
+    decision = _admit("# 合成材料".encode(), sizer=sizer)
+    assert decision.reason_codes == ("prompt_sizer_unavailable",)
+    assert decision.assessment_plan is None
+    assert decision.prompts == ()
+    assert sizer.calls == 0
+
+
 def test_full_context_overflow_blocks_whole_run_without_truncation() -> None:
     decision = _admit("# 合成材料".encode(), sizer=FakeSizer(count=4096))
     assert decision.admitted is False
@@ -189,19 +348,19 @@ def test_archive_root_must_be_outside_declared_workspace(tmp_path: Path) -> None
     workspace = tmp_path / "workspace"
     decision = _admit(
         "# 合成材料".encode(),
-        workspace_root=workspace,
-        archive_root=workspace / "output" / "shadow",
+        archive_root=str(workspace / "output" / "shadow"),
+        workspace_root=str(workspace),
     )
     assert decision.reason_codes == ("archive_root_unsafe",)
     safe = _admit(
         "# 合成材料".encode(),
-        workspace_root=workspace,
-        archive_root=tmp_path / "isolated-archive",
+        workspace_root=str(workspace),
+        archive_root=str(tmp_path / "isolated-archive"),
     )
     assert safe.admitted is True
     missing_workspace = _admit(
         "# 合成材料".encode(),
-        archive_root=tmp_path / "isolated-archive",
+        archive_root=str(tmp_path / "isolated-archive"),
     )
     assert missing_workspace.reason_codes == ("archive_root_unsafe",)
 

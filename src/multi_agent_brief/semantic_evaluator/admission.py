@@ -2,26 +2,34 @@
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from dataclasses import dataclass
 import os
 from pathlib import Path
 import stat
-from typing import Optional
+from typing import Any, Optional
+
+from pydantic import ValidationError
 
 from multi_agent_brief.contracts.errors import FieldViolation
 from multi_agent_brief.semantic_evaluator.contracts import (
     INPUT_BINDING_SCHEMA_ID,
+    AdmissionRequest,
+    AdmittedReportEvidence,
     AssessmentPlan,
     BoundedContext,
     InputBinding,
     InstrumentConfig,
     InstrumentManifest,
 )
-from multi_agent_brief.semantic_evaluator.errors import SemanticEvaluatorError
+from multi_agent_brief.semantic_evaluator.errors import (
+    SemanticEvaluatorError,
+    value_free_violations,
+)
 from multi_agent_brief.semantic_evaluator.normalization import (
     NormalizedReader,
-    bounded_context_sha256,
-    normalize_markdown,
+    build_admitted_report_evidence,
+    verify_bounded_context,
 )
 from multi_agent_brief.semantic_evaluator.profile import (
     LoadedProfile,
@@ -36,6 +44,7 @@ from multi_agent_brief.semantic_evaluator.prompts import (
 from multi_agent_brief.semantic_evaluator.serialization import (
     canonical_model_sha256,
     canonical_sha256,
+    normalized_utf8_text,
     sha256_bytes,
 )
 from multi_agent_brief.semantic_evaluator.unit_planner import (
@@ -49,8 +58,10 @@ class AdmissionDecision:
     admitted: bool
     reason_codes: tuple[str, ...]
     violations: tuple[FieldViolation, ...] = ()
+    report_evidence: Optional[AdmittedReportEvidence] = None
     reader: Optional[NormalizedReader] = None
     bounded_context: Optional[BoundedContext] = None
+    instrument_config: Optional[InstrumentConfig] = None
     input_binding: Optional[InputBinding] = None
     instrument_manifest: Optional[InstrumentManifest] = None
     assessment_plan: Optional[AssessmentPlan] = None
@@ -114,7 +125,7 @@ def input_binding_sha256(binding: InputBinding) -> str:
     return canonical_model_sha256(binding, exclude=("input_binding_sha256",))
 
 
-def _build_input_binding(
+def build_input_binding(
     *,
     trial_id: str,
     reader: NormalizedReader,
@@ -151,146 +162,141 @@ def _build_input_binding(
     )
 
 
+def _strict_request(request: AdmissionRequest | Mapping[str, Any]) -> AdmissionRequest:
+    payload: Any
+    if isinstance(request, AdmissionRequest):
+        payload = request.model_dump(mode="json")
+    else:
+        payload = request
+    return AdmissionRequest.model_validate(payload)
+
+
 def admit_inputs(
+    request: AdmissionRequest | Mapping[str, Any],
     *,
-    report_bytes: bytes | None,
-    declared_report_sha256: str,
-    artifact_id: str,
-    bounded_context: BoundedContext,
-    declared_bounded_context_sha256: str,
-    instrument_config: InstrumentConfig,
-    trial_id: str,
-    public_data_attestation: bool,
-    private_or_confidential_material: bool,
     prompt_sizer: PromptSizer | None,
     loaded_profile: LoadedProfile | None = None,
-    archive_root: Path | None = None,
-    workspace_root: Path | None = None,
     existing_binding: InputBinding | None = None,
-    instrument_manifest: InstrumentManifest | None = None,
 ) -> AdmissionDecision:
-    invalid_boolean_fields = tuple(
-        field
-        for field, value in (
-            ("public_data_attestation", public_data_attestation),
-            ("private_or_confidential_material", private_or_confidential_material),
-        )
-        if type(value) is not bool
-    )
-    if invalid_boolean_fields:
+    """Validate one typed request before any plan, prompt, or run side effect."""
+
+    try:
+        admitted_request = _strict_request(request)
+    except ValidationError as exc:
         return _blocked(
             "admission_contract_invalid",
-            violations=tuple(
-                FieldViolation(field=field, error="must be a boolean")
-                for field in invalid_boolean_fields
-            ),
+            violations=value_free_violations(exc),
         )
-    if report_bytes is None or not report_bytes:
-        return _blocked("input_missing")
-    if sha256_bytes(report_bytes) != declared_report_sha256:
-        return _blocked("input_sha_mismatch")
-    expected_context_sha = bounded_context_sha256(bounded_context)
-    if (
-        bounded_context.context_sha256 != expected_context_sha
-        or declared_bounded_context_sha256 != expected_context_sha
-    ):
-        return _blocked("input_sha_mismatch")
-    bounded_context = BoundedContext.model_validate(
-        bounded_context.model_dump(mode="json")
-    )
-    profile = loaded_profile or load_profile()
+    except (AttributeError, TypeError, ValueError):
+        return _blocked("admission_contract_invalid")
+
     try:
-        validate_loaded_profile(profile)
+        report_bytes = bytes.fromhex(admitted_request.report_bytes_hex)
+    except (TypeError, ValueError):
+        return _blocked("admission_contract_invalid")
+    if report_bytes.hex() != admitted_request.report_bytes_hex:
+        return _blocked("admission_contract_invalid")
+    if not report_bytes:
+        return _blocked("input_missing")
+    try:
+        decoded = normalized_utf8_text(report_bytes)
+    except (UnicodeError, ValueError):
+        return _blocked("input_not_utf8")
+    if "\x00" in decoded:
+        return _blocked("input_not_utf8")
+    if sha256_bytes(report_bytes) != admitted_request.declared_report_sha256:
+        return _blocked("input_sha_mismatch")
+    try:
+        context = verify_bounded_context(admitted_request.bounded_context)
     except SemanticEvaluatorError:
-        return _blocked("profile_invalid")
-    if (
-        bounded_context.language != "zh-CN"
-        or profile.profile.language != "zh-CN"
-        or instrument_config.language != "zh-CN"
-    ):
+        return _blocked("input_sha_mismatch")
+    if context.context_sha256 != admitted_request.declared_bounded_context_sha256:
+        return _blocked("input_sha_mismatch")
+    config = InstrumentConfig.model_validate(
+        admitted_request.instrument_config.model_dump(mode="json")
+    )
+    if context.language != "zh-CN" or config.language != "zh-CN":
         return _blocked("unsupported_language")
-    if bounded_context.data_class not in {"public", "synthetic"}:
+    if context.data_class not in {"public", "synthetic"}:
         return _blocked("unsupported_data_class")
-    if not public_data_attestation:
+    if not admitted_request.public_data_attestation:
         return _blocked("public_data_attestation_required")
-    if private_or_confidential_material:
+    if admitted_request.private_or_confidential_material:
         return _blocked("private_material_forbidden")
+
+    archive_root = admitted_request.archive_root
+    workspace_root = admitted_request.workspace_root
     if (archive_root is None) != (workspace_root is None):
         return _blocked("archive_root_unsafe")
     if archive_root is not None and workspace_root is not None:
         if not archive_root_is_safe(
-            archive_root=archive_root, workspace_root=workspace_root
+            archive_root=Path(archive_root),
+            workspace_root=Path(workspace_root),
         ):
             return _blocked("archive_root_unsafe")
     if prompt_sizer is None:
         return _blocked("prompt_sizer_unavailable")
     if (
-        getattr(prompt_sizer, "sizer_id", None)
-        != instrument_config.prompt_sizer.sizer_id
+        getattr(prompt_sizer, "sizer_id", None) != config.prompt_sizer.sizer_id
         or getattr(prompt_sizer, "sizer_version", None)
-        != instrument_config.prompt_sizer.sizer_version
+        != config.prompt_sizer.sizer_version
     ):
         return _blocked("prompt_sizer_unavailable")
+
+    profile = loaded_profile or load_profile()
     try:
-        reader = normalize_markdown(report_bytes, artifact_id=artifact_id)
-    except SemanticEvaluatorError as exc:
-        return _blocked(exc.reason_code)
-    config_sha = canonical_model_sha256(instrument_config)
+        validate_loaded_profile(profile)
+    except (SemanticEvaluatorError, OSError, RuntimeError, ValueError):
+        return _blocked("profile_invalid")
+    if profile.profile.language != "zh-CN":
+        return _blocked("unsupported_language")
     from multi_agent_brief.semantic_evaluator.instrument import (
         build_instrument_manifest,
         verify_instrument_manifest,
     )
 
     try:
-        manifest = (
-            instrument_manifest
-            if instrument_manifest is not None
-            else build_instrument_manifest(
-                instrument_config,
-                loaded_profile=profile,
-            )
-        )
-        verify_instrument_manifest(
-            manifest,
-            instrument_config,
-            loaded_profile=profile,
-        )
-        manifest = InstrumentManifest.model_validate(
-            manifest.model_dump(mode="json")
-            if isinstance(manifest, InstrumentManifest)
-            else manifest
-        )
-    except (SemanticEvaluatorError, OSError, RuntimeError, ValueError):
+        manifest = build_instrument_manifest(config, loaded_profile=profile)
+        verify_instrument_manifest(manifest, config, loaded_profile=profile)
+    except (SemanticEvaluatorError, OSError, RuntimeError, TypeError, ValueError):
         return _blocked("instrument_manifest_mismatch")
-    binding = _build_input_binding(
-        trial_id=trial_id,
+    try:
+        report_evidence, reader = build_admitted_report_evidence(
+            report_bytes,
+            artifact_id=admitted_request.artifact_id,
+        )
+    except SemanticEvaluatorError as exc:
+        return _blocked(exc.reason_code)
+
+    config_sha = canonical_model_sha256(config)
+    binding = build_input_binding(
+        trial_id=admitted_request.trial_id,
         reader=reader,
-        context=bounded_context,
+        context=context,
         profile_sha256=profile.profile_sha256,
         config_sha256=config_sha,
-        public_data_attestation=public_data_attestation,
-        private_or_confidential_material=private_or_confidential_material,
+        public_data_attestation=admitted_request.public_data_attestation,
+        private_or_confidential_material=admitted_request.private_or_confidential_material,
     )
-    if existing_binding is not None and trial_identity_conflicts(
-        existing_binding, binding
-    ):
-        return _blocked("trial_identity_conflict")
-    plan = build_assessment_plan(
-        trial_id=trial_id,
-        report_sha256=reader.artifact.report_sha256,
-        profile=profile.profile,
-        profile_sha256=profile.profile_sha256,
-    )
+    try:
+        plan = build_assessment_plan(
+            trial_id=admitted_request.trial_id,
+            report_sha256=reader.artifact.report_sha256,
+            profile=profile.profile,
+            profile_sha256=profile.profile_sha256,
+        )
+    except (SemanticEvaluatorError, ValidationError, TypeError, ValueError):
+        return _blocked("profile_invalid")
     prompts: list[FrozenDimensionPrompt] = []
     for dimension in profile.profile.dimensions:
-        prompt = build_dimension_prompt(
-            reader_artifact=reader.artifact,
-            normalized_text=reader.normalized_text,
-            bounded_context=bounded_context,
-            dimension=dimension,
-            assessment_plan=plan,
-        )
         try:
+            prompt = build_dimension_prompt(
+                reader_artifact=reader.artifact,
+                normalized_text=reader.normalized_text,
+                bounded_context=context,
+                dimension=dimension,
+                assessment_plan=plan,
+            )
             count = prompt_sizer.count_tokens(
                 system_text=prompt.system_text,
                 user_text=prompt.user_text,
@@ -300,16 +306,23 @@ def admit_inputs(
         if isinstance(count, bool) or not isinstance(count, int) or count < 0:
             return _blocked("prompt_sizer_unavailable")
         if (
-            count + instrument_config.prompt_sizer.reserved_output_tokens
-            > instrument_config.prompt_sizer.max_context_tokens
+            count + config.prompt_sizer.reserved_output_tokens
+            > config.prompt_sizer.max_context_tokens
         ):
             return _blocked("input_too_long_for_full_context_instrument")
         prompts.append(prompt)
+    if existing_binding is not None and trial_identity_conflicts(
+        existing_binding,
+        binding,
+    ):
+        return _blocked("trial_identity_conflict")
     return AdmissionDecision(
         admitted=True,
         reason_codes=(),
+        report_evidence=report_evidence,
         reader=reader,
-        bounded_context=bounded_context,
+        bounded_context=context,
+        instrument_config=config,
         input_binding=binding,
         instrument_manifest=manifest,
         assessment_plan=plan,
@@ -322,5 +335,6 @@ __all__ = [
     "AdmissionDecision",
     "admit_inputs",
     "archive_root_is_safe",
+    "build_input_binding",
     "input_binding_sha256",
 ]

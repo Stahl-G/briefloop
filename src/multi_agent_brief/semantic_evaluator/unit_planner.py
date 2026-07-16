@@ -103,6 +103,19 @@ def derive_run_id(
     )
 
 
+def derive_attempt_ref(
+    *,
+    trial_id: str,
+    dimension_id: str,
+    attempt_ordinal: int,
+    prompt_request_sha256: str,
+) -> str:
+    return _derived_id(
+        "attempt-",
+        [trial_id, dimension_id, attempt_ordinal, prompt_request_sha256],
+    )
+
+
 def assessment_plan_sha256(plan: AssessmentPlan) -> str:
     return canonical_model_sha256(plan, exclude=("assessment_plan_sha256",))
 
@@ -189,6 +202,7 @@ __all__ = [
     "assessment_plan_sha256",
     "build_assessment_plan",
     "derive_assessment_unit_id",
+    "derive_attempt_ref",
     "derive_finding_id",
     "derive_handoff_id",
     "derive_run_id",

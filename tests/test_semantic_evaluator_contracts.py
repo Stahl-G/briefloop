@@ -32,6 +32,7 @@ EXPECTED_IDS = (
     "briefloop.semantic_evaluator.bounded_context.v1",
     "briefloop.semantic_evaluator.profile.v1",
     "briefloop.semantic_evaluator.instrument_config.v1",
+    "briefloop.semantic_evaluator.admission_request.v1",
     "briefloop.semantic_evaluator.instrument_manifest.v1",
     "briefloop.semantic_evaluator.input_binding.v1",
     "briefloop.semantic_evaluator.assessment_plan.v1",
@@ -48,7 +49,7 @@ EXPECTED_IDS = (
 
 def test_contract_inventory_is_exact_local_and_non_colliding() -> None:
     assert SEMANTIC_EVALUATOR_CONTRACT_IDS == EXPECTED_IDS
-    assert len(SEMANTIC_EVALUATOR_CONTRACT_MODELS) == 15
+    assert len(SEMANTIC_EVALUATOR_CONTRACT_MODELS) == 16
     assert not set(SEMANTIC_EVALUATOR_CONTRACT_IDS) & set(V2_CONTRACT_IDS)
     assert all(
         item.startswith("briefloop.semantic_evaluator.") for item in EXPECTED_IDS
@@ -95,12 +96,16 @@ def test_strict_errors_are_value_free_and_do_not_coerce() -> None:
         {
             "attempt_ref": "attempt-invalid-failed",
             "dimension_id": "cross_section_consistency",
+            "attempt_ordinal": 1,
+            "prompt_request_sha256": "0" * 64,
             "status": "failed",
             "reason_code": None,
         },
         {
             "attempt_ref": "attempt-invalid-completed",
             "dimension_id": "cross_section_consistency",
+            "attempt_ordinal": 1,
+            "prompt_request_sha256": "0" * 64,
             "status": "completed",
             "reason_code": "provider_failed",
         },
@@ -142,6 +147,8 @@ def test_recut_error_vocabulary_is_complete_and_stable() -> None:
     assert {
         "admission_contract_invalid",
         "assessment_unit_failure_link_missing",
+        "assessment_evidence_mismatch",
+        "baseline_input_binding_mismatch",
         "composition_record_mismatch",
         "composition_witness_mismatch",
         "handoff_id_duplicate",

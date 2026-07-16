@@ -6,10 +6,12 @@ import pytest
 
 from multi_agent_brief.semantic_evaluator.errors import SemanticEvaluatorError
 from multi_agent_brief.semantic_evaluator.normalization import (
+    build_admitted_report_evidence,
     make_span_locator,
     normalize_markdown,
     replay_reader_artifact,
     replay_span,
+    verify_admitted_report_evidence,
 )
 
 
@@ -54,6 +56,29 @@ def test_raw_report_identity_and_normalized_text_identity_are_separate() -> None
     assert [item.text for item in lf.artifact.blocks] == [
         item.text for item in crlf.artifact.blocks
     ]
+
+
+def test_admitted_report_evidence_retains_exact_bom_newline_and_gap_bytes() -> None:
+    variants = (
+        MARKDOWN_LF.encode(),
+        MARKDOWN_LF.replace("\n", "\r\n").encode(),
+        ("\ufeff" + MARKDOWN_LF).encode(),
+        MARKDOWN_LF.replace("段落一。\n", "段落一。\n\n").encode(),
+    )
+    observed = [
+        build_admitted_report_evidence(raw, artifact_id="reader-exact")
+        for raw in variants
+    ]
+    assert len({evidence.report_sha256 for evidence, _reader in observed}) == 4
+    assert len({evidence.evidence_sha256 for evidence, _reader in observed}) == 4
+    assert observed[0][1].normalized_text == observed[1][1].normalized_text
+    assert observed[0][1].normalized_text == observed[2][1].normalized_text
+    for evidence, reader in observed:
+        replayed = verify_admitted_report_evidence(
+            evidence,
+            reader_artifact=reader.artifact,
+        )
+        assert replayed == reader
 
 
 def test_span_locator_uses_python_code_point_offsets_and_exact_hash_replay() -> None:

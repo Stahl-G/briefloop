@@ -12,7 +12,10 @@ from multi_agent_brief.semantic_evaluator.contracts import (
     DimensionResponse,
     ReaderArtifact,
 )
-from multi_agent_brief.semantic_evaluator.normalization import replay_reader_artifact
+from multi_agent_brief.semantic_evaluator.normalization import (
+    replay_reader_artifact,
+    verify_bounded_context,
+)
 from multi_agent_brief.semantic_evaluator.resources import (
     resource_sha256,
     resource_text,
@@ -71,6 +74,7 @@ def build_dimension_prompt(
     assessment_plan: AssessmentPlan,
 ) -> FrozenDimensionPrompt:
     replay_reader_artifact(reader_artifact, normalized_text)
+    bounded_context = verify_bounded_context(bounded_context)
     validate_frozen_assessment_plan(assessment_plan)
     dimension_units = [
         item
