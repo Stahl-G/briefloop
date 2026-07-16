@@ -2061,7 +2061,9 @@ def resolve_core_replay(
     try:
         receipt = store.load_transaction_receipt(run_id, request_id)
     except Exception as exc:
-        raise CoreRunError("control_store_integrity_invalid") from exc
+        raise ControlStoreCommitOutcomeUnknown(
+            "commit_outcome_unknown"
+        ) from exc
     if receipt is None:
         return None
     try:

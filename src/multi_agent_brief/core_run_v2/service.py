@@ -382,20 +382,22 @@ class CoreRunService:
         except Exception as exc:
             raise CoreRunError("control_store_integrity_invalid") from exc
         finally:
+            remove_revision_zero_store = False
             if store is not None:
-                store.close()
-            if created and database.exists():
-                # A revision-zero database is not a valid initialized run.
                 try:
-                    reopened = SQLiteControlStore.open(database)
-                    try:
-                        initialized = reopened.current_revision > 0
-                    finally:
-                        reopened.close()
+                    # Cleanup is allowed only while the creating connection can
+                    # still positively prove that no transaction committed.
+                    remove_revision_zero_store = (
+                        created and store.current_revision == 0
+                    )
                 except Exception:
-                    initialized = False
-                if not initialized:
-                    _remove_created_store(database)
+                    remove_revision_zero_store = False
+                try:
+                    store.close()
+                except Exception:
+                    remove_revision_zero_store = False
+            if remove_revision_zero_store:
+                _remove_created_store(database)
 
     def _start_invocation(self, request: InvocationStartRequest) -> CoreRunResult:
         fingerprint = canonical_fingerprint(

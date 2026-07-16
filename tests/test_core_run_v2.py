@@ -3491,6 +3491,72 @@ def test_initialize_failure_cleans_revision_zero_or_exactly_replays_commit(
     assert _store_revision(workspace) == 1
 
 
+def test_initialize_unknown_never_deletes_store_when_cleanup_reopen_fails(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    workspace = _workspace(tmp_path)
+    service = CoreRunService(workspace, clock=CLOCK)
+    payload = deepcopy(CoreRunInitializeRequest.minimal_example)
+    payload.update(
+        request_id="REQ-INIT-UNKNOWN-PRESERVE",
+        workspace_id=WORKSPACE_ID,
+        run_id=RUN_ID,
+        input_governance_required=False,
+        workspace_config_sha256=read_workspace_file(
+            workspace,
+            "config.yaml",
+        ).sha256,
+        sources_config_sha256=read_workspace_file(
+            workspace,
+            "sources.yaml",
+        ).sha256,
+    )
+    request = CoreRunInitializeRequest.model_validate(payload, strict=True)
+    original_create = SQLiteControlStore.create
+
+    def fail_after_commit(stage: str) -> None:
+        if stage == "after_commit":
+            raise ControlStoreIntegrityError("injected_after_commit_failure")
+
+    def create_with_failure(path, **kwargs):
+        return original_create(path, **kwargs, _failure_hook=fail_after_commit)
+
+    def fail_cleanup_reopen(*_args, **_kwargs):
+        raise ControlStoreIntegrityError("injected_cleanup_reopen_failure")
+
+    with monkeypatch.context() as patch:
+        patch.setattr(
+            SQLiteControlStore,
+            "create",
+            staticmethod(create_with_failure),
+        )
+        patch.setattr(
+            SQLiteControlStore,
+            "open",
+            staticmethod(fail_cleanup_reopen),
+        )
+        unknown = service.initialize(request)
+
+    assert unknown.to_dict() == {
+        "status": "commit_outcome_unknown",
+        "error_code": "commit_outcome_unknown",
+    }
+    database = workspace / "briefloop.db"
+    blob_root = workspace / "briefloop.db.blobs"
+    assert database.is_file()
+    assert blob_root.is_dir()
+    with SQLiteControlStore.open(database) as store:
+        assert store.current_revision == 1
+        receipt = store.load_transaction_receipt(RUN_ID, request.request_id)
+        assert receipt is not None
+
+    replay = service.initialize(request)
+    assert replay.status == "replayed"
+    assert replay.receipt == receipt
+    assert _store_revision(workspace) == 1
+
+
 def test_generic_stage_completion_cannot_claim_doctor_pass(tmp_path: Path) -> None:
     workspace = _workspace(tmp_path)
     service = _initialize(workspace)
@@ -3766,6 +3832,54 @@ def test_existing_core_receipt_with_failed_domain_replay_stays_unknown(
     assert unknown.to_dict() == {
         "status": "commit_outcome_unknown",
         "error_code": "commit_outcome_unknown",
+    }
+    assert _store_revision(workspace) == before
+
+
+def test_doctor_receipt_lookup_failure_is_unknown_then_exactly_replays(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    workspace = _workspace(tmp_path)
+    service = _initialize(workspace)
+    request = _record(
+        IntegrityCheckRequest,
+        request_id="REQ-DOCTOR-RECEIPT-LOOKUP-UNKNOWN",
+        run_id=RUN_ID,
+        expected_store_revision=_store_revision(workspace),
+    )
+    committed = service.doctor_check(request)
+    assert committed.status == "committed"
+    before = _store_revision(workspace)
+
+    def fail_lookup(*_args, **_kwargs):
+        raise ControlStoreIntegrityError("injected_receipt_lookup_failure")
+
+    with monkeypatch.context() as patch:
+        patch.setattr(
+            SQLiteControlStore,
+            "load_transaction_receipt",
+            fail_lookup,
+        )
+        unknown = service.doctor_check(request)
+
+    assert unknown.to_dict() == {
+        "status": "commit_outcome_unknown",
+        "error_code": "commit_outcome_unknown",
+    }
+    assert _store_revision(workspace) == before
+
+    replay = service.doctor_check(request)
+    assert replay.status == "replayed"
+    assert replay.receipt == committed.receipt
+    assert _store_revision(workspace) == before
+
+    changed = service.doctor_check(
+        request.model_copy(update={"expected_store_revision": before})
+    )
+    assert changed.to_dict() == {
+        "status": "failed_uncommitted",
+        "error_code": "submission_replay_conflict",
     }
     assert _store_revision(workspace) == before
 

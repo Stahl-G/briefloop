@@ -384,7 +384,9 @@ class IntakeService:
         try:
             receipt = store.load_transaction_receipt(run_id, request_id)
         except ControlStoreError as exc:
-            raise IntakeError("control_store_integrity_invalid") from exc
+            raise ControlStoreCommitOutcomeUnknown(
+                "commit_outcome_unknown"
+            ) from exc
         if receipt is None:
             return None
         try:

@@ -881,6 +881,51 @@ def test_existing_intake_receipt_with_failed_readback_stays_unknown(
         assert store.current_revision == 2
 
 
+def test_source_receipt_lookup_failure_is_unknown_then_exactly_replays(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    workspace = tmp_path / "workspace"
+    _seed_workspace(workspace)
+    request_path = _source_request(workspace)
+    request = request_path.relative_to(workspace).as_posix()
+    service = IntakeService(workspace, clock=CLOCK)
+    committed = service.submit_source(request)
+    assert committed.status == "committed"
+
+    def fail_lookup(*_args, **_kwargs):
+        raise ControlStoreIntegrityError("injected_receipt_lookup_failure")
+
+    with monkeypatch.context() as patch:
+        patch.setattr(
+            SQLiteControlStore,
+            "load_transaction_receipt",
+            fail_lookup,
+        )
+        unknown = service.submit_source(request)
+
+    assert unknown.to_dict() == {
+        "status": "commit_outcome_unknown",
+        "error_code": "commit_outcome_unknown",
+    }
+    with SQLiteControlStore.open(workspace / "briefloop.db") as store:
+        assert store.current_revision == 2
+
+    replay = service.submit_source(request)
+    assert replay.status == "replayed"
+    assert replay.receipt == committed.receipt
+
+    content = workspace / "scratch/INV-SOURCE-001/source_content.pdf"
+    content.write_bytes(content.read_bytes() + b"changed")
+    conflict = service.submit_source(request)
+    assert conflict.to_dict() == {
+        "status": "failed_uncommitted",
+        "error_code": "submission_replay_conflict",
+    }
+    with SQLiteControlStore.open(workspace / "briefloop.db") as store:
+        assert store.current_revision == 2
+
+
 def test_intake_commit_sites_share_the_postcommit_observer_boundary() -> None:
     path = ROOT / "src/multi_agent_brief/intake_v2/service.py"
     tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
