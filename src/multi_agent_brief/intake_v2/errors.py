@@ -13,6 +13,7 @@ IntakeStatus = Literal[
     "replayed",
     "rejected_recorded",
     "failed_uncommitted",
+    "commit_outcome_unknown",
 ]
 
 
@@ -39,6 +40,13 @@ class IntakeResult:
             valid = self.receipt is not None and self.error_code is None
         elif self.status == "rejected_recorded":
             valid = self.receipt is not None and self.error_code is not None
+        elif self.status == "commit_outcome_unknown":
+            valid = (
+                self.receipt is None
+                and self.error_code == "commit_outcome_unknown"
+                and self.source_id is None
+                and self.proposal_id is None
+            )
         else:
             valid = self.receipt is None and self.error_code is not None
         if not valid or (self.source_id is not None and self.proposal_id is not None):

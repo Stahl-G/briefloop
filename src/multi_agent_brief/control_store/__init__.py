@@ -5,6 +5,7 @@ typed v2 control DTOs and does not decide workflow legality.
 """
 
 from multi_agent_brief.control_store.errors import (
+    ControlStoreCommitOutcomeUnknown,
     ControlStoreConflict,
     ControlStoreError,
     ControlStoreIntegrityError,
@@ -20,6 +21,7 @@ from multi_agent_brief.control_store.uow import ControlUnitOfWork
 
 
 __all__ = [
+    "ControlStoreCommitOutcomeUnknown",
     "ControlStoreConflict",
     "ControlStoreError",
     "ControlStoreIntegrityError",

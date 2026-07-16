@@ -43,7 +43,7 @@ from multi_agent_brief.quality_gates.state import (
     evaluate_quality_gate_findings_preloaded,
 )
 
-from .errors import CoreRunError, CoreRunResult, core_run_error_code
+from .errors import CoreRunError, CoreRunResult, core_run_failure_result
 from .integrity import RunIntegrityService, materialize_checkout
 from .lineage import classify_current_lineage
 from .policy import derived_id, transaction_type_for
@@ -79,10 +79,7 @@ class GateEvaluationService:
         try:
             return self._evaluate(request)
         except (CoreRunError, ControlStoreError) as exc:
-            return CoreRunResult(
-                status="failed_uncommitted",
-                error_code=core_run_error_code(exc),
-            )
+            return core_run_failure_result(exc)
 
     def _evaluate(self, request: GateCheckRequest) -> CoreRunResult:
         with self._open_store() as store:
@@ -492,8 +489,12 @@ class GateEvaluationService:
             for finding in findings:
                 unit.put_gate_finding(finding)
             unit.append_event(event)
-            receipt = unit.commit()
-            self._verifier.verify(store, request.run_id)
+            receipt = unit.commit(
+                _postcommit_observer=lambda _receipt: self._verifier.verify(
+                    store,
+                    request.run_id,
+                )
+            )
             return CoreRunResult(
                 status="committed",
                 receipt=receipt,

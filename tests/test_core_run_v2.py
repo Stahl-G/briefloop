@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import ast
 from copy import deepcopy
 from dataclasses import replace
 from datetime import datetime, timezone
@@ -31,6 +32,7 @@ from multi_agent_brief.contracts.v2 import (
     StageCompleteRequest,
 )
 from multi_agent_brief.control_store import (
+    ControlStoreCommitOutcomeUnknown,
     ControlStoreIntegrityError,
     SQLiteControlStore,
 )
@@ -43,6 +45,7 @@ from multi_agent_brief.core_run_v2 import (
     ClaimFreezeService,
     CoreRunService,
     GateEvaluationService,
+    RunIntegrityService,
 )
 from multi_agent_brief.core_run_v2.artifacts import _input_classification_bytes
 from multi_agent_brief.core_run_v2.integrity import read_workspace_file
@@ -55,7 +58,7 @@ from multi_agent_brief.core_run_v2.policy import (
     derived_id,
     transaction_type_for,
 )
-from multi_agent_brief.core_run_v2.errors import CoreRunError
+from multi_agent_brief.core_run_v2.errors import CoreRunError, CoreRunResult
 from multi_agent_brief.core_run_v2.verifier import (
     CoreRunDomainVerifier,
     _CORE_EFFECT_BINDING_RULES,
@@ -71,6 +74,7 @@ RUN_ID = "RUN-CORE-V2-001"
 WORKSPACE_ID = "WS-CORE-V2-001"
 NOW = "2026-07-15T12:00:00Z"
 CLOCK = lambda: datetime(2026, 7, 15, 12, 0, tzinfo=timezone.utc)
+ROOT = Path(__file__).parents[1]
 
 
 def _record(model_type, **values):
@@ -1621,9 +1625,12 @@ def test_auditor_completion_requires_report_from_current_audit_proposal(
             "findings": [],
         },
     )
-    stale_gate = GateEvaluationService(workspace, clock=CLOCK).evaluate(
-        _gate_request(workspace, request_id="REQ-GATE-STALE-AUDIT")
+    gate_service = GateEvaluationService(workspace, clock=CLOCK)
+    stale_gate_request = _gate_request(
+        workspace,
+        request_id="REQ-GATE-STALE-AUDIT",
     )
+    stale_gate = gate_service.evaluate(stale_gate_request)
     assert stale_gate.status == "committed", stale_gate.to_dict()
     with SQLiteControlStore.open(workspace / "briefloop.db") as store:
         before = store.load_snapshot(RUN_ID)
@@ -1681,6 +1688,49 @@ def test_auditor_completion_requires_report_from_current_audit_proposal(
         )
     )
     assert promoted.status == "committed", promoted.to_dict()
+
+    with SQLiteControlStore.open(workspace / "briefloop.db") as store:
+        after_promotion = store.load_snapshot(RUN_ID)
+    stage = next(
+        item
+        for item in after_promotion.stage_states
+        if item.stage_id == "auditor"
+    )
+    stale_after_promotion = service.complete_stage(
+        _record(
+            StageCompleteRequest,
+            request_id="REQ-COMPLETE-AUDITOR-STALE-GATE",
+            run_id=RUN_ID,
+            stage_id="auditor",
+            reason="Gate predates the current audit promotion",
+            expected_stage_revision=stage.revision,
+            expected_store_revision=after_promotion.store_revision,
+            expected_artifact_revisions=[
+                {"artifact_id": artifact_id, "revision": revision}
+                for artifact_id, revision in [
+                    ("claim_ledger", 1),
+                    ("audited_brief", 1),
+                    ("audit_report", 2),
+                    ("auditor_quality_gate_report", 1),
+                    ("analyst_draft_snapshot", 1),
+                ]
+            ],
+            expected_gate_evaluation_ids=stale_gate_ids,
+        )
+    )
+    assert stale_after_promotion.to_dict() == {
+        "status": "failed_uncommitted",
+        "error_code": "stage_gate_binding_invalid",
+    }
+    with SQLiteControlStore.open(workspace / "briefloop.db") as store:
+        assert store.load_snapshot(RUN_ID) == after_promotion
+
+    old_gate_replay = gate_service.evaluate(stale_gate_request)
+    assert old_gate_replay.status == "replayed"
+    assert old_gate_replay.receipt == stale_gate.receipt
+    with SQLiteControlStore.open(workspace / "briefloop.db") as store:
+        assert store.load_snapshot(RUN_ID) == after_promotion
+
     gate_request = _gate_request(
         workspace,
         request_id="REQ-GATE-CURRENT-AUDIT",
@@ -1731,6 +1781,44 @@ def test_domain_verifier_rejects_auditor_completion_from_stale_audit_proposal(
                 if item.proposal_id == proposal.proposal_id
                 else item
                 for item in verified.snapshot.accepted_proposals
+            ),
+        )
+        with pytest.raises(
+            CoreRunError,
+            match="control_store_integrity_invalid",
+        ):
+            CoreRunDomainVerifier._verify_stage_chain(
+                store,
+                forged,
+                verified.contracts,
+                verified.binding,
+            )
+
+
+def test_domain_verifier_rejects_completed_auditor_with_gate_before_promotion(
+    tmp_path: Path,
+) -> None:
+    workspace = _workspace(tmp_path)
+    _advance_to_finalize_ready(workspace)
+    with SQLiteControlStore.open(workspace / "briefloop.db") as store:
+        verified = CoreRunDomainVerifier().verify(store, RUN_ID)
+        audit_submission = next(
+            item
+            for item in verified.snapshot.owned_artifact_submissions
+            if item.artifact_id == "audit_report"
+            and item.artifact_revision == 1
+        )
+        forged = replace(
+            verified.snapshot,
+            gate_evaluations=tuple(
+                item.model_copy(
+                    update={
+                        "accepted_transaction_id": (
+                            audit_submission.accepted_transaction_id
+                        )
+                    }
+                )
+                for item in verified.snapshot.gate_evaluations
             ),
         )
         with pytest.raises(
@@ -3378,10 +3466,18 @@ def test_initialize_failure_cleans_revision_zero_or_exactly_replays_commit(
         )
         result = service.initialize(request)
 
-    assert result.to_dict() == {
-        "status": "failed_uncommitted",
-        "error_code": "control_store_integrity_invalid",
-    }
+    expected_result = (
+        {
+            "status": "commit_outcome_unknown",
+            "error_code": "commit_outcome_unknown",
+        }
+        if committed
+        else {
+            "status": "failed_uncommitted",
+            "error_code": "control_store_integrity_invalid",
+        }
+    )
+    assert result.to_dict() == expected_result
     database = workspace / "briefloop.db"
     if not committed:
         assert not database.exists()
@@ -3580,10 +3676,18 @@ def test_doctor_commit_failure_is_typed_and_postcommit_exactly_replays(
         )
         result = service.doctor_check(request)
 
-    assert result.to_dict() == {
-        "status": "failed_uncommitted",
-        "error_code": "control_store_integrity_invalid",
-    }
+    expected_result = (
+        {
+            "status": "commit_outcome_unknown",
+            "error_code": "commit_outcome_unknown",
+        }
+        if committed
+        else {
+            "status": "failed_uncommitted",
+            "error_code": "control_store_integrity_invalid",
+        }
+    )
+    assert result.to_dict() == expected_result
     if not committed:
         assert _store_revision(workspace) == before
         assert _stage(workspace, "doctor").status == "ready"
@@ -3597,6 +3701,239 @@ def test_doctor_commit_failure_is_typed_and_postcommit_exactly_replays(
     assert replay.status == "replayed"
     assert replay.receipt is not None
     assert _store_revision(workspace) == before + 1
+
+
+def test_doctor_postcommit_domain_observer_failure_is_unknown_then_replays(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    workspace = _workspace(tmp_path)
+    service = _initialize(workspace)
+    before = _store_revision(workspace)
+    request = _record(
+        IntegrityCheckRequest,
+        request_id="REQ-DOCTOR-POSTCOMMIT-OBSERVER",
+        run_id=RUN_ID,
+        expected_store_revision=before,
+    )
+    original_verify = service._verifier.verify
+    calls = 0
+
+    def fail_postcommit(store, run_id):
+        nonlocal calls
+        calls += 1
+        if calls == 2:
+            raise CoreRunError("injected_postcommit_domain_failure")
+        return original_verify(store, run_id)
+
+    with monkeypatch.context() as patch:
+        patch.setattr(service._verifier, "verify", fail_postcommit)
+        unknown = service.doctor_check(request)
+
+    assert unknown.to_dict() == {
+        "status": "commit_outcome_unknown",
+        "error_code": "commit_outcome_unknown",
+    }
+    assert _store_revision(workspace) == before + 1
+    replay = CoreRunService(workspace, clock=CLOCK).doctor_check(request)
+    assert replay.status == "replayed"
+    assert _store_revision(workspace) == before + 1
+
+
+def test_existing_core_receipt_with_failed_domain_replay_stays_unknown(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    workspace = _workspace(tmp_path)
+    service = _initialize(workspace)
+    request = _record(
+        IntegrityCheckRequest,
+        request_id="REQ-DOCTOR-REPLAY-VERIFY-UNKNOWN",
+        run_id=RUN_ID,
+        expected_store_revision=_store_revision(workspace),
+    )
+    committed = service.doctor_check(request)
+    assert committed.status == "committed"
+    before = _store_revision(workspace)
+
+    def fail_replay(*_args, **_kwargs):
+        raise CoreRunError("injected_replay_domain_failure")
+
+    with monkeypatch.context() as patch:
+        patch.setattr(CoreRunDomainVerifier, "verify", fail_replay)
+        unknown = service.doctor_check(request)
+
+    assert unknown.to_dict() == {
+        "status": "commit_outcome_unknown",
+        "error_code": "commit_outcome_unknown",
+    }
+    assert _store_revision(workspace) == before
+
+
+def test_every_core_domain_commit_uses_one_postcommit_observer() -> None:
+    production = [
+        "service.py",
+        "artifacts.py",
+        "claims.py",
+        "gates.py",
+        "integrity.py",
+    ]
+    observed: list[tuple[str, int]] = []
+    for filename in production:
+        path = ROOT / "src/multi_agent_brief/core_run_v2" / filename
+        tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+        for node in ast.walk(tree):
+            if not isinstance(node, ast.Call):
+                continue
+            function = node.func
+            if (
+                isinstance(function, ast.Attribute)
+                and function.attr == "commit"
+                and isinstance(function.value, ast.Name)
+                and function.value.id == "unit"
+            ):
+                assert any(
+                    keyword.arg == "_postcommit_observer"
+                    for keyword in node.keywords
+                ), f"{filename}:{node.lineno} bypasses postcommit observation"
+                observed.append((filename, node.lineno))
+    assert {filename for filename, _line in observed} == set(production)
+
+
+def test_commit_outcome_unknown_core_result_is_strictly_value_free() -> None:
+    result = CoreRunResult(
+        status="commit_outcome_unknown",
+        error_code="commit_outcome_unknown",
+    )
+    assert result.exit_code == 1
+    assert result.to_dict() == {
+        "status": "commit_outcome_unknown",
+        "error_code": "commit_outcome_unknown",
+    }
+    with pytest.raises(ValueError, match="invalid core-run result shape"):
+        CoreRunResult(
+            status="commit_outcome_unknown",
+            error_code="commit_outcome_unknown",
+            primary_record_id="must-not-leak",
+        )
+
+
+def test_every_core_public_domain_operation_preserves_unknown_status(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    workspace = _workspace(tmp_path)
+
+    def unknown(*_args, **_kwargs):
+        raise ControlStoreCommitOutcomeUnknown()
+
+    core = CoreRunService(workspace, clock=CLOCK)
+    core_cases = [
+        (
+            "_initialize",
+            core.initialize,
+            CoreRunInitializeRequest.model_validate(
+                CoreRunInitializeRequest.minimal_example,
+                strict=True,
+            ),
+        ),
+        (
+            "_start_invocation",
+            core.start_invocation,
+            InvocationStartRequest.model_validate(
+                InvocationStartRequest.minimal_example,
+                strict=True,
+            ),
+        ),
+        (
+            "_doctor_check",
+            core.doctor_check,
+            IntegrityCheckRequest.model_validate(
+                IntegrityCheckRequest.minimal_example,
+                strict=True,
+            ),
+        ),
+        (
+            "_complete_stage",
+            core.complete_stage,
+            StageCompleteRequest.model_validate(
+                StageCompleteRequest.minimal_example,
+                strict=True,
+            ),
+        ),
+    ]
+    for private_name, public_method, request in core_cases:
+        with monkeypatch.context() as patch:
+            patch.setattr(core, private_name, unknown)
+            result = public_method(request)
+        assert result.to_dict() == {
+            "status": "commit_outcome_unknown",
+            "error_code": "commit_outcome_unknown",
+        }
+
+    artifacts = ArtifactAcceptanceService(workspace, clock=CLOCK)
+    artifact_cases = [
+        (
+            "_submit_owned_artifact",
+            artifacts.submit_owned_artifact,
+            OwnedArtifactSubmitRequest.model_validate(
+                OwnedArtifactSubmitRequest.minimal_example,
+                strict=True,
+            ),
+        ),
+        (
+            "_promote_audit_proposal",
+            artifacts.promote_audit_proposal,
+            AuditPromotionRequest.model_validate(
+                AuditPromotionRequest.minimal_example,
+                strict=True,
+            ),
+        ),
+    ]
+    for private_name, public_method, request in artifact_cases:
+        with monkeypatch.context() as patch:
+            patch.setattr(artifacts, private_name, unknown)
+            result = public_method(request)
+        assert result.to_dict() == {
+            "status": "commit_outcome_unknown",
+            "error_code": "commit_outcome_unknown",
+        }
+
+    claims = ClaimFreezeService(workspace, clock=CLOCK)
+    with monkeypatch.context() as patch:
+        patch.setattr(claims, "_freeze", unknown)
+        claim_result = claims.freeze(
+            ClaimFreezeRequest.model_validate(
+                ClaimFreezeRequest.minimal_example,
+                strict=True,
+            )
+        )
+    assert claim_result.status == "commit_outcome_unknown"
+
+    gates = GateEvaluationService(workspace, clock=CLOCK)
+    with monkeypatch.context() as patch:
+        patch.setattr(gates, "_evaluate", unknown)
+        gate_result = gates.evaluate(
+            GateCheckRequest.model_validate(
+                GateCheckRequest.minimal_example,
+                strict=True,
+            )
+        )
+    assert gate_result.status == "commit_outcome_unknown"
+
+    integrity = RunIntegrityService(workspace, clock=CLOCK)
+    with monkeypatch.context() as patch:
+        patch.setattr(integrity, "_inspect", unknown)
+        integrity_result = integrity.inspect(
+            IntegrityCheckRequest.model_validate(
+                IntegrityCheckRequest.minimal_example,
+                strict=True,
+            )
+        )
+    assert integrity_result == {
+        "status": "commit_outcome_unknown",
+        "error_code": "commit_outcome_unknown",
+    }
 
 
 def test_artifact_commit_failure_leaves_only_unbound_checkout(
@@ -4147,7 +4484,10 @@ def test_forged_core_primary_record_id_is_rejected_before_replay(
         revision = store.current_revision
         with pytest.raises(CoreRunError, match="control_store_integrity_invalid"):
             CoreRunDomainVerifier().verify(store, RUN_ID)
-        with pytest.raises(CoreRunError, match="control_store_integrity_invalid"):
+        with pytest.raises(
+            ControlStoreCommitOutcomeUnknown,
+            match="commit_outcome_unknown",
+        ):
             resolve_core_replay(
                 store,
                 run_id=RUN_ID,

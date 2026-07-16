@@ -16,6 +16,8 @@ from multi_agent_brief.contracts.v2 import (
     WorkspaceRunHead,
 )
 from multi_agent_brief.control_store import SQLiteControlStore
+from multi_agent_brief.intake_v2 import IntakeResult
+from multi_agent_brief.intake_v2.service import IntakeService
 
 
 RUN_ID = "RUN-PR3-CLI-001"
@@ -168,6 +170,41 @@ def test_hidden_intake_cli_commits_source_and_emits_one_json_object(
         assert [item.source_id for item in store.load_snapshot(RUN_ID).sources] == [
             "SRC-001"
         ]
+
+
+def test_hidden_intake_cli_emits_unknown_and_nonzero_without_values(
+    tmp_path: Path,
+    capsys,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    monkeypatch.setattr(
+        IntakeService,
+        "submit_source",
+        lambda _self, _request: IntakeResult(
+            status="commit_outcome_unknown",
+            error_code="commit_outcome_unknown",
+        ),
+    )
+
+    exit_code = main(
+        [
+            "intake-v2",
+            "source",
+            "--workspace",
+            str(workspace),
+            "--request",
+            "scratch/unused.json",
+            "--json",
+        ]
+    )
+
+    assert exit_code == 1
+    assert json.loads(capsys.readouterr().out) == {
+        "status": "commit_outcome_unknown",
+        "error_code": "commit_outcome_unknown",
+    }
 
 
 def test_intake_cli_json_only_workspace_never_creates_sqlite_fallback(

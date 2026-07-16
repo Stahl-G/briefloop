@@ -30,7 +30,7 @@ from multi_agent_brief.intake_v2.errors import IntakeError
 from multi_agent_brief.intake_v2.scratch import ScratchReader, parse_json_object
 from multi_agent_brief.inputs.classifier import classify_input_dir
 
-from .errors import CoreRunError, CoreRunResult, core_run_error_code
+from .errors import CoreRunError, CoreRunResult, core_run_failure_result
 from .integrity import RunIntegrityService, materialize_checkout
 from .lineage import canonical_audit_report_bytes, classify_current_lineage
 from .policy import ARTIFACT_POLICIES, derived_id, transaction_type_for
@@ -69,10 +69,7 @@ class ArtifactAcceptanceService:
         try:
             return self._submit_owned_artifact(request)
         except (CoreRunError, ControlStoreError) as exc:
-            return CoreRunResult(
-                status="failed_uncommitted",
-                error_code=core_run_error_code(exc),
-            )
+            return core_run_failure_result(exc)
 
     def promote_audit_proposal(
         self,
@@ -81,10 +78,7 @@ class ArtifactAcceptanceService:
         try:
             return self._promote_audit_proposal(request)
         except (CoreRunError, ControlStoreError) as exc:
-            return CoreRunResult(
-                status="failed_uncommitted",
-                error_code=core_run_error_code(exc),
-            )
+            return core_run_failure_result(exc)
 
     def _submit_owned_artifact(
         self,
@@ -344,8 +338,12 @@ class ArtifactAcceptanceService:
             unit.put_artifact_revision(revision, content)
             unit.put_owned_artifact_submission(submission)
             unit.append_event(event)
-            receipt = unit.commit()
-            self._verifier.verify(store, request.run_id)
+            receipt = unit.commit(
+                _postcommit_observer=lambda _receipt: self._verifier.verify(
+                    store,
+                    request.run_id,
+                )
+            )
             return CoreRunResult(
                 status="committed",
                 receipt=receipt,
@@ -556,8 +554,12 @@ class ArtifactAcceptanceService:
             unit.put_artifact_revision(revision, content)
             unit.put_owned_artifact_submission(submission)
             unit.append_event(event)
-            receipt = unit.commit()
-            self._verifier.verify(store, request.run_id)
+            receipt = unit.commit(
+                _postcommit_observer=lambda _receipt: self._verifier.verify(
+                    store,
+                    request.run_id,
+                )
+            )
             return CoreRunResult(
                 status="committed",
                 receipt=receipt,

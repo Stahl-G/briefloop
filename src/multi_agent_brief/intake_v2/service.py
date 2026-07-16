@@ -32,6 +32,7 @@ from multi_agent_brief.contracts.v2 import (
     TransactionReceipt,
 )
 from multi_agent_brief.control_store import (
+    ControlStoreCommitOutcomeUnknown,
     ControlStoreSnapshot,
     ControlStoreConflict,
     ControlStoreError,
@@ -85,6 +86,11 @@ class IntakeService:
     def submit_source(self, request_path: str | os.PathLike[str]) -> IntakeResult:
         try:
             return self._submit_source(request_path)
+        except ControlStoreCommitOutcomeUnknown:
+            return IntakeResult(
+                status="commit_outcome_unknown",
+                error_code="commit_outcome_unknown",
+            )
         except IntakeError as exc:
             return IntakeResult(status="failed_uncommitted", error_code=exc.code)
 
@@ -97,6 +103,11 @@ class IntakeService:
             if lane not in INTAKE_LANES or lane == "source":
                 raise IntakeError("intake_request_invalid")
             return self._submit_proposal(INTAKE_LANES[lane], request_path)
+        except ControlStoreCommitOutcomeUnknown:
+            return IntakeResult(
+                status="commit_outcome_unknown",
+                error_code="commit_outcome_unknown",
+            )
         except IntakeError as exc:
             return IntakeResult(status="failed_uncommitted", error_code=exc.code)
 
@@ -378,34 +389,46 @@ class IntakeService:
             return None
         try:
             snapshot = store.load_snapshot(run_id)
-        except ControlStoreError as exc:
-            raise IntakeError("control_store_integrity_invalid") from exc
-        bound_events = [
-            event
-            for event in snapshot.events
-            if event.event_id in receipt.event_ids
-            and event.intake_binding is not None
-            and event.intake_binding.request_id == request_id
-        ]
-        if len(bound_events) != 1:
-            raise IntakeError("control_store_integrity_invalid")
-        binding = cast(IntakeEventBinding, bound_events[0].intake_binding)
-        if binding.request_fingerprint != request_fingerprint:
-            raise IntakeError("submission_replay_conflict")
-        if binding.outcome == "rejected":
+            if snapshot.run_contract_bindings:
+                snapshot = self._verify_core_run(store, run_id)
+            bound_events = [
+                event
+                for event in snapshot.events
+                if event.event_id in receipt.event_ids
+                and event.intake_binding is not None
+                and event.intake_binding.request_id == request_id
+            ]
+            if len(bound_events) != 1:
+                raise IntakeError("control_store_integrity_invalid")
+            binding = cast(IntakeEventBinding, bound_events[0].intake_binding)
+            if binding.request_fingerprint != request_fingerprint:
+                raise IntakeError("submission_replay_conflict")
+            if binding.outcome == "rejected":
+                return IntakeResult(
+                    status="rejected_recorded",
+                    receipt=receipt,
+                    error_code=binding.reason_code,
+                    source_id=binding.source_id,
+                    proposal_id=binding.proposal_id,
+                )
             return IntakeResult(
-                status="rejected_recorded",
+                status="replayed",
                 receipt=receipt,
-                error_code=binding.reason_code,
                 source_id=binding.source_id,
                 proposal_id=binding.proposal_id,
             )
-        return IntakeResult(
-            status="replayed",
-            receipt=receipt,
-            source_id=binding.source_id,
-            proposal_id=binding.proposal_id,
-        )
+        except IntakeError as exc:
+            if exc.code == "submission_replay_conflict":
+                raise
+            raise ControlStoreCommitOutcomeUnknown(
+                "commit_outcome_unknown"
+            ) from exc
+        except ControlStoreCommitOutcomeUnknown:
+            raise
+        except Exception as exc:
+            raise ControlStoreCommitOutcomeUnknown(
+                "commit_outcome_unknown"
+            ) from exc
 
     def _trusted_submission_context(
         self,
@@ -757,13 +780,15 @@ class IntakeService:
             unit.put_artifact_revision(raw_revision, raw_bytes)
         unit.append_event(event)
         unit.put_source(source)
-        receipt = self._commit_uow(unit)
-        post_snapshot = (
-            self._verify_core_run(store, request.run_id)
-            if core_run_bound
-            else None
-        )
-        self._verify_source_readback(store, source, receipt, post_snapshot)
+        def observe(receipt: TransactionReceipt) -> None:
+            post_snapshot = (
+                self._verify_core_run(store, request.run_id)
+                if core_run_bound
+                else None
+            )
+            self._verify_source_readback(store, source, receipt, post_snapshot)
+
+        receipt = self._commit_uow(unit, observe)
         return IntakeResult(
             status="committed",
             receipt=receipt,
@@ -863,13 +888,15 @@ class IntakeService:
                     strict=True,
                 )
             )
-        receipt = self._commit_uow(unit)
-        post_snapshot = (
-            self._verify_core_run(store, request.run_id)
-            if core_run_bound
-            else None
-        )
-        self._verify_proposal_readback(store, accepted, receipt, post_snapshot)
+        def observe(receipt: TransactionReceipt) -> None:
+            post_snapshot = (
+                self._verify_core_run(store, request.run_id)
+                if core_run_bound
+                else None
+            )
+            self._verify_proposal_readback(store, accepted, receipt, post_snapshot)
+
+        receipt = self._commit_uow(unit, observe)
         return IntakeResult(
             status="committed",
             receipt=receipt,
@@ -913,9 +940,11 @@ class IntakeService:
         )
         unit.put_invocation(failed)
         unit.append_event(event)
-        receipt = self._commit_uow(unit)
-        if core_run_bound:
-            self._verify_core_run(store, request.run_id)
+        def observe(_receipt: TransactionReceipt) -> None:
+            if core_run_bound:
+                self._verify_core_run(store, request.run_id)
+
+        receipt = self._commit_uow(unit, observe)
         return IntakeResult(
             status="rejected_recorded",
             receipt=receipt,
@@ -925,9 +954,14 @@ class IntakeService:
         )
 
     @staticmethod
-    def _commit_uow(unit: ControlUnitOfWork) -> TransactionReceipt:
+    def _commit_uow(
+        unit: ControlUnitOfWork,
+        observer: Callable[[TransactionReceipt], None],
+    ) -> TransactionReceipt:
         try:
-            return unit.commit()
+            return unit.commit(_postcommit_observer=observer)
+        except ControlStoreCommitOutcomeUnknown:
+            raise
         except ControlStoreConflict as exc:
             if exc.code == "store_revision_conflict":
                 raise IntakeError("expected_store_revision_conflict") from exc

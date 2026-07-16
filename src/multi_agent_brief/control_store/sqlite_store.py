@@ -45,6 +45,7 @@ from multi_agent_brief.contracts.v2 import (
     WorkspaceRunHead,
 )
 from multi_agent_brief.control_store.errors import (
+    ControlStoreCommitOutcomeUnknown,
     ControlStoreConflict,
     ControlStoreError,
     ControlStoreIntegrityError,
@@ -726,12 +727,22 @@ class SQLiteControlStore:
             except Exception:
                 self._connection.rollback()
                 raise
-            if receipt is None:
-                raise ControlStoreIntegrityError("transaction_receipt_missing")
             # Private test-only boundary for a real process exit after the durable
             # commit but before the caller observes the receipt.
-            self._inject("after_commit")
-            self._verify_committed_blob_bindings(run_id=run_id)
+            try:
+                if receipt is None:
+                    raise ControlStoreIntegrityError("transaction_receipt_missing")
+                self._inject("after_commit")
+                verify_schema(self._connection)
+                self._verify_committed_blob_bindings(run_id=run_id)
+                self._verify_workspace_ledger_graph()
+                self._load_snapshot_in_transaction(run_id)
+            except ControlStoreCommitOutcomeUnknown:
+                raise
+            except Exception as exc:
+                raise ControlStoreCommitOutcomeUnknown(
+                    "commit_outcome_unknown"
+                ) from exc
             return receipt
 
     def _preflight_artifact_subgraph(

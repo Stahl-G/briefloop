@@ -86,6 +86,8 @@ class CurrentGateBatch:
     report_artifact_id: str
     report_artifact_revision: int
     evaluations: tuple[GateEvaluationRecord, ...]
+    owning_transaction_id: str
+    committed_revision: int
 
 
 @dataclass(frozen=True)
@@ -99,6 +101,8 @@ class CurrentAuditPromotion:
     submission: OwnedArtifactSubmissionRecord
     canonical_report_bytes: bytes
     is_current_lineage: bool
+    owning_transaction_id: str
+    committed_revision: int
 
 
 @dataclass(frozen=True)
@@ -386,6 +390,14 @@ def classify_current_audit_promotion(
         and current_brief.artifact_id == brief_revision.artifact_id
         and current_brief.current_revision == brief_revision.revision
     )
+    owning_transaction_id = submission.accepted_transaction_id
+    receipts = [
+        item
+        for item in snapshot.transactions
+        if item.transaction_id == owning_transaction_id
+    ]
+    if len(receipts) != 1:
+        raise CoreRunError("control_store_integrity_invalid")
     return CurrentAuditPromotion(
         proposal_record=proposal_record,
         proposal=proposal,
@@ -394,7 +406,29 @@ def classify_current_audit_promotion(
         submission=submission,
         canonical_report_bytes=expected_report_bytes,
         is_current_lineage=is_current,
+        owning_transaction_id=owning_transaction_id,
+        committed_revision=receipts[0].committed_revision,
     )
+
+
+def require_current_gate_after_audit_promotion(
+    *,
+    audit_promotion: CurrentAuditPromotion,
+    gate_batch: CurrentGateBatch | None,
+) -> CurrentGateBatch:
+    """Require a current Gate batch committed after audit promotion.
+
+    Historical Gate batches remain valid records. Only the current batch whose
+    owning transaction committed strictly after the current byte-exact audit
+    promotion may be consumed by Auditor completion.
+    """
+
+    if (
+        gate_batch is None
+        or gate_batch.committed_revision <= audit_promotion.committed_revision
+    ):
+        raise CoreRunError("stage_gate_binding_invalid")
+    return gate_batch
 
 
 def verify_no_post_seal_records(snapshot: ControlStoreSnapshot) -> None:
@@ -506,11 +540,26 @@ def _current_gate_batch(snapshot: ControlStoreSnapshot) -> CurrentGateBatch | No
     if len(batches) != 1 or {item.gate_id for item in current} != set(GATE_IDS):
         raise CoreRunError("control_store_integrity_invalid")
     batch_id = next(iter(batches))
+    owning_transaction_ids = {
+        item.accepted_transaction_id for item in current
+    }
+    if len(owning_transaction_ids) != 1:
+        raise CoreRunError("control_store_integrity_invalid")
+    owning_transaction_id = next(iter(owning_transaction_ids))
+    receipts = [
+        item
+        for item in snapshot.transactions
+        if item.transaction_id == owning_transaction_id
+    ]
+    if len(receipts) != 1:
+        raise CoreRunError("control_store_integrity_invalid")
     return CurrentGateBatch(
         gate_batch_id=batch_id,
         report_artifact_id=report.artifact_id,
         report_artifact_revision=report.current_revision,
         evaluations=tuple(sorted(current, key=lambda item: item.gate_id)),
+        owning_transaction_id=owning_transaction_id,
+        committed_revision=receipts[0].committed_revision,
     )
 
 
@@ -523,5 +572,6 @@ __all__ = [
     "canonical_audit_report_bytes",
     "classify_current_audit_promotion",
     "classify_current_lineage",
+    "require_current_gate_after_audit_promotion",
     "verify_no_post_seal_records",
 ]

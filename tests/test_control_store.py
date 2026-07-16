@@ -27,6 +27,7 @@ from multi_agent_brief.contracts.v2 import (
     TransactionReceipt,
 )
 from multi_agent_brief.control_store import (
+    ControlStoreCommitOutcomeUnknown,
     ControlStoreConflict,
     ControlStoreIntegrityError,
     ControlStoreSchemaError,
@@ -2331,6 +2332,32 @@ def test_explicit_rollback_closes_uow_without_writing(tmp_path: Path) -> None:
         assert error.value.code == "unit_of_work_not_active"
         assert store.current_revision == 0
         assert _table_count(store, "runs") == 0
+
+
+def test_postcommit_observer_failure_preserves_commit_and_closes_uow(
+    tmp_path: Path,
+) -> None:
+    with _create_store(tmp_path) as store:
+        unit = _stage_all(store)
+
+        def fail_observation(_receipt: TransactionReceipt) -> None:
+            raise RuntimeError("injected read-only postcommit observation failure")
+
+        with pytest.raises(ControlStoreCommitOutcomeUnknown) as error:
+            unit.commit(_postcommit_observer=fail_observation)
+        assert error.value.code == "commit_outcome_unknown"
+        assert store.current_revision == 1
+        assert _table_count(store, "transactions") == 1
+        with pytest.raises(ControlStoreStateError, match="unit_of_work_not_active"):
+            unit.rollback()
+        with pytest.raises(ControlStoreStateError, match="unit_of_work_not_active"):
+            unit.commit()
+
+        replayed = _stage_all(store).commit(
+            _postcommit_observer=lambda _receipt: None
+        )
+        assert replayed.transaction_id == TRANSACTION_ID
+        assert store.current_revision == 1
 
 
 def test_only_merged_control_dtos_are_serializable() -> None:

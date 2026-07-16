@@ -15,6 +15,15 @@ class ControlStoreConflict(ControlStoreError):
     """Optimistic revision, identity, or replay conflict."""
 
 
+class ControlStoreCommitOutcomeUnknown(ControlStoreError):
+    """A durable commit exists but its caller-side observation did not finish."""
+
+    def __init__(self, code: str = "commit_outcome_unknown") -> None:
+        if code != "commit_outcome_unknown":
+            raise ValueError("invalid commit outcome code")
+        super().__init__(code)
+
+
 class ControlStoreIntegrityError(ControlStoreError):
     """The persisted store, a blob, or a relational constraint is invalid."""
 
@@ -28,6 +37,7 @@ class ControlStoreStateError(ControlStoreError):
 
 
 __all__ = [
+    "ControlStoreCommitOutcomeUnknown",
     "ControlStoreConflict",
     "ControlStoreError",
     "ControlStoreIntegrityError",

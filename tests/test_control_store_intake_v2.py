@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import ast
 from datetime import datetime, timezone
 import hashlib
 import json
@@ -17,9 +18,11 @@ from multi_agent_brief.contracts.v2 import (
     WorkspaceRunHead,
 )
 from multi_agent_brief.control_store import (
+    ControlStoreCommitOutcomeUnknown,
     ControlStoreIntegrityError,
     SQLiteControlStore,
 )
+from multi_agent_brief.intake_v2.errors import IntakeError, IntakeResult
 from multi_agent_brief.intake_v2.service import IntakeService
 from multi_agent_brief.intake_v2.policy import (
     SourcePolicyError,
@@ -31,6 +34,7 @@ RUN_ID = "RUN-PR3-001"
 WORKSPACE_ID = "WS-PR3-001"
 NOW = "2026-07-15T12:00:00Z"
 CLOCK = lambda: datetime(2026, 7, 15, 12, 0, tzinfo=timezone.utc)
+ROOT = Path(__file__).parents[1]
 
 
 def _record(model_type, **values):
@@ -760,7 +764,10 @@ def test_post_commit_outcome_unknown_recovers_by_exact_replay(tmp_path: Path) ->
     ).submit_source(request)
     replay = IntakeService(workspace, clock=CLOCK).submit_source(request)
 
-    assert unknown.error_code == "intake_commit_failed"
+    assert unknown.to_dict() == {
+        "status": "commit_outcome_unknown",
+        "error_code": "commit_outcome_unknown",
+    }
     assert replay.status == "replayed"
     assert replay.source_id == "SRC-001"
     with SQLiteControlStore.open(workspace / "briefloop.db") as store:
@@ -768,6 +775,167 @@ def test_post_commit_outcome_unknown_recovers_by_exact_replay(tmp_path: Path) ->
         assert [item.source_id for item in store.load_snapshot(RUN_ID).sources] == [
             "SRC-001"
         ]
+
+
+@pytest.mark.parametrize("outcome", ["accepted_proposal", "rejection"])
+def test_intake_proposal_and_rejection_postcommit_unknown_exactly_replay(
+    tmp_path: Path,
+    outcome: str,
+) -> None:
+    workspace = tmp_path / "workspace"
+    _seed_workspace(workspace)
+    if outcome == "accepted_proposal":
+        source_request = _source_request(workspace).relative_to(workspace).as_posix()
+        source = IntakeService(workspace, clock=CLOCK).submit_source(source_request)
+        assert source.status == "committed"
+        request_path = _candidate_request(workspace, expected_revision=2)
+    else:
+        request_path = _candidate_request(workspace, expected_revision=1)
+    request = request_path.relative_to(workspace).as_posix()
+
+    def fail(stage: str) -> None:
+        if stage == "after_commit":
+            raise ControlStoreIntegrityError("injected_after_commit_failure")
+
+    unknown = IntakeService(
+        workspace,
+        clock=CLOCK,
+        _store_failure_hook=fail,
+    ).submit_proposal("candidate", request)
+    replay = IntakeService(workspace, clock=CLOCK).submit_proposal(
+        "candidate",
+        request,
+    )
+
+    assert unknown.to_dict() == {
+        "status": "commit_outcome_unknown",
+        "error_code": "commit_outcome_unknown",
+    }
+    if outcome == "accepted_proposal":
+        assert replay.status == "replayed"
+        assert replay.proposal_id == "PROP-CANDIDATES-001"
+        expected_revision = 3
+    else:
+        assert replay.status == "rejected_recorded"
+        assert replay.error_code == "source_not_found"
+        expected_revision = 2
+    with SQLiteControlStore.open(workspace / "briefloop.db") as store:
+        assert store.current_revision == expected_revision
+
+
+def test_intake_postcommit_readback_failure_is_unknown_then_replays(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    workspace = tmp_path / "workspace"
+    _seed_workspace(workspace)
+    request = _source_request(workspace).relative_to(workspace).as_posix()
+
+    def fail_readback(*_args, **_kwargs):
+        raise IntakeError("injected_postcommit_readback_failure")
+
+    with monkeypatch.context() as patch:
+        patch.setattr(IntakeService, "_verify_source_readback", fail_readback)
+        unknown = IntakeService(workspace, clock=CLOCK).submit_source(request)
+
+    assert unknown.to_dict() == {
+        "status": "commit_outcome_unknown",
+        "error_code": "commit_outcome_unknown",
+    }
+    replay = IntakeService(workspace, clock=CLOCK).submit_source(request)
+    assert replay.status == "replayed"
+    assert replay.source_id == "SRC-001"
+    with SQLiteControlStore.open(workspace / "briefloop.db") as store:
+        assert store.current_revision == 2
+
+
+def test_existing_intake_receipt_with_failed_readback_stays_unknown(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    workspace = tmp_path / "workspace"
+    _seed_workspace(workspace)
+    request = _source_request(workspace).relative_to(workspace).as_posix()
+    committed = IntakeService(workspace, clock=CLOCK).submit_source(request)
+    assert committed.status == "committed"
+
+    original_load_snapshot = SQLiteControlStore.load_snapshot
+    calls = 0
+
+    def fail_after_receipt(self, run_id):
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            raise ControlStoreIntegrityError("injected_replay_readback_failure")
+        return original_load_snapshot(self, run_id)
+
+    with monkeypatch.context() as patch:
+        patch.setattr(SQLiteControlStore, "load_snapshot", fail_after_receipt)
+        unknown = IntakeService(workspace, clock=CLOCK).submit_source(request)
+
+    assert unknown.to_dict() == {
+        "status": "commit_outcome_unknown",
+        "error_code": "commit_outcome_unknown",
+    }
+    with SQLiteControlStore.open(workspace / "briefloop.db") as store:
+        assert store.current_revision == 2
+
+
+def test_intake_commit_sites_share_the_postcommit_observer_boundary() -> None:
+    path = ROOT / "src/multi_agent_brief/intake_v2/service.py"
+    tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+    calls = [
+        node
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Attribute)
+        and node.func.attr == "_commit_uow"
+    ]
+    assert len(calls) == 3
+    assert all(len(call.args) == 2 for call in calls)
+
+
+def test_commit_outcome_unknown_intake_result_is_strictly_value_free() -> None:
+    result = IntakeResult(
+        status="commit_outcome_unknown",
+        error_code="commit_outcome_unknown",
+    )
+    assert result.exit_code == 1
+    assert result.to_dict() == {
+        "status": "commit_outcome_unknown",
+        "error_code": "commit_outcome_unknown",
+    }
+    with pytest.raises(ValueError, match="invalid intake result shape"):
+        IntakeResult(
+            status="commit_outcome_unknown",
+            error_code="commit_outcome_unknown",
+            source_id="must-not-leak",
+        )
+
+
+def test_both_intake_public_operations_preserve_unknown_status(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    workspace = tmp_path / "workspace"
+    _seed_workspace(workspace)
+    service = IntakeService(workspace, clock=CLOCK)
+
+    def unknown(*_args, **_kwargs):
+        raise ControlStoreCommitOutcomeUnknown()
+
+    with monkeypatch.context() as patch:
+        patch.setattr(service, "_submit_source", unknown)
+        source = service.submit_source("scratch/unused.json")
+    with monkeypatch.context() as patch:
+        patch.setattr(service, "_submit_proposal", unknown)
+        proposal = service.submit_proposal("candidate", "scratch/unused.json")
+
+    for result in (source, proposal):
+        assert result.to_dict() == {
+            "status": "commit_outcome_unknown",
+            "error_code": "commit_outcome_unknown",
+        }
 
 
 def test_stale_store_revision_and_unsafe_scratch_are_zero_write(

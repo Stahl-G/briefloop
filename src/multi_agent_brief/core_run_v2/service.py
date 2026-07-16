@@ -30,7 +30,11 @@ from multi_agent_brief.contracts.v2 import (
     StageTransitionRecord,
     WorkspaceRunHead,
 )
-from multi_agent_brief.control_store import ControlStoreError, SQLiteControlStore
+from multi_agent_brief.control_store import (
+    ControlStoreCommitOutcomeUnknown,
+    ControlStoreError,
+    SQLiteControlStore,
+)
 from multi_agent_brief.control_store.serialization import (
     canonical_fingerprint,
     canonical_json_bytes,
@@ -43,11 +47,12 @@ from multi_agent_brief.orchestrator.runtime_state.contracts_loader import (
 from multi_agent_brief.orchestrator_contract import resolve_repo_workdir
 from multi_agent_brief.sources.doctor import run_doctor
 
-from .errors import CoreRunError, CoreRunResult, core_run_error_code
+from .errors import CoreRunError, CoreRunResult, core_run_failure_result
 from .integrity import RunIntegrityService, read_workspace_file
 from .lineage import (
     classify_current_audit_promotion,
     classify_current_lineage,
+    require_current_gate_after_audit_promotion,
 )
 from .policy import (
     CORE_ARTIFACT_IDS,
@@ -97,37 +102,25 @@ class CoreRunService:
         try:
             return self._initialize(request)
         except (CoreRunError, ControlStoreError) as exc:
-            return CoreRunResult(
-                status="failed_uncommitted",
-                error_code=core_run_error_code(exc),
-            )
+            return core_run_failure_result(exc)
 
     def start_invocation(self, request: InvocationStartRequest) -> CoreRunResult:
         try:
             return self._start_invocation(request)
         except (CoreRunError, ControlStoreError) as exc:
-            return CoreRunResult(
-                status="failed_uncommitted",
-                error_code=core_run_error_code(exc),
-            )
+            return core_run_failure_result(exc)
 
     def doctor_check(self, request: IntegrityCheckRequest) -> CoreRunResult:
         try:
             return self._doctor_check(request)
         except (CoreRunError, ControlStoreError) as exc:
-            return CoreRunResult(
-                status="failed_uncommitted",
-                error_code=core_run_error_code(exc),
-            )
+            return core_run_failure_result(exc)
 
     def complete_stage(self, request: StageCompleteRequest) -> CoreRunResult:
         try:
             return self._complete_stage(request)
         except (CoreRunError, ControlStoreError) as exc:
-            return CoreRunResult(
-                status="failed_uncommitted",
-                error_code=core_run_error_code(exc),
-            )
+            return core_run_failure_result(exc)
 
     def _initialize(self, request: CoreRunInitializeRequest) -> CoreRunResult:
         database = self.workspace / "briefloop.db"
@@ -373,14 +366,18 @@ class CoreRunService:
                 )
             )
             unit.append_event(event)
-            receipt = unit.commit()
-            self._verifier.verify(store, request.run_id)
+            receipt = unit.commit(
+                _postcommit_observer=lambda _receipt: self._verifier.verify(
+                    store,
+                    request.run_id,
+                )
+            )
             return CoreRunResult(
                 status="committed",
                 receipt=receipt,
                 primary_record_id=request.run_id,
             )
-        except CoreRunError:
+        except (CoreRunError, ControlStoreCommitOutcomeUnknown):
             raise
         except Exception as exc:
             raise CoreRunError("control_store_integrity_invalid") from exc
@@ -490,8 +487,12 @@ class CoreRunService:
             )
             unit.put_invocation(invocation)
             unit.append_event(event)
-            receipt = unit.commit()
-            self._verifier.verify(store, request.run_id)
+            receipt = unit.commit(
+                _postcommit_observer=lambda _receipt: self._verifier.verify(
+                    store,
+                    request.run_id,
+                )
+            )
             return CoreRunResult(
                 status="committed",
                 receipt=receipt,
@@ -1003,6 +1004,13 @@ class CoreRunService:
                 or current_gate.report_artifact_revision != gate_report.revision
             ):
                 raise CoreRunError("stage_gate_binding_invalid")
+            try:
+                require_current_gate_after_audit_promotion(
+                    audit_promotion=audit_promotion,
+                    gate_batch=current_gate,
+                )
+            except CoreRunError as exc:
+                raise CoreRunError("stage_gate_binding_invalid") from exc
             if set(REQUIRED_AUDITOR_GATES) - set(evaluations):
                 raise CoreRunError("stage_gate_binding_invalid")
             required = [evaluations[gate_id] for gate_id in REQUIRED_AUDITOR_GATES]
@@ -1282,8 +1290,12 @@ class CoreRunService:
             )
         for event in events:
             unit.append_event(event)
-        receipt = unit.commit()
-        self._verifier.verify(store, verified.snapshot.run.run_id)
+        receipt = unit.commit(
+            _postcommit_observer=lambda _receipt: self._verifier.verify(
+                store,
+                verified.snapshot.run.run_id,
+            )
+        )
         return CoreRunResult(
             status="committed",
             receipt=receipt,

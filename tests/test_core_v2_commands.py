@@ -11,6 +11,7 @@ from multi_agent_brief.cli.init_wizard import create_demo_workspace
 from multi_agent_brief.cli.main import build_parser, main
 from multi_agent_brief.contracts.v2 import CoreRunInitializeRequest
 from multi_agent_brief.control_store import SQLiteControlStore
+from multi_agent_brief.core_run_v2 import CoreRunResult, CoreRunService
 from multi_agent_brief.core_run_v2.service import workspace_input_fingerprints
 
 
@@ -65,6 +66,47 @@ def test_hidden_core_v2_initialize_emits_one_json_result(
     assert snapshot.run_contract_bindings[0].sources_config_sha256 == sources_sha256
     assert not (workspace / "output" / "intermediate" / "runtime_manifest.json").exists()
     assert not (workspace / "output" / "intermediate" / "event_log.jsonl").exists()
+
+
+def test_hidden_core_v2_cli_emits_unknown_and_nonzero_without_values(
+    tmp_path: Path,
+    capsys,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    workspace = tmp_path / "workspace"
+    create_demo_workspace(workspace)
+    request_path = workspace / "scratch" / "cli" / "submit_request.json"
+    request_path.parent.mkdir(parents=True)
+    request_path.write_text(
+        json.dumps(CoreRunInitializeRequest.minimal_example),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(
+        CoreRunService,
+        "initialize",
+        lambda _self, _request: CoreRunResult(
+            status="commit_outcome_unknown",
+            error_code="commit_outcome_unknown",
+        ),
+    )
+
+    exit_code = main(
+        [
+            "core-v2",
+            "initialize",
+            "--workspace",
+            str(workspace),
+            "--request",
+            request_path.relative_to(workspace).as_posix(),
+            "--json",
+        ]
+    )
+
+    assert exit_code == 1
+    assert json.loads(capsys.readouterr().out) == {
+        "status": "commit_outcome_unknown",
+        "error_code": "commit_outcome_unknown",
+    }
 
 
 @pytest.mark.parametrize("filename", ["config.yaml", "sources.yaml"])

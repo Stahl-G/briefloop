@@ -34,7 +34,7 @@ from multi_agent_brief.control_store.serialization import (
 from multi_agent_brief.intake_v2.errors import IntakeError
 from multi_agent_brief.intake_v2.scratch import parse_json_object
 
-from .errors import CoreRunError, CoreRunResult, core_run_error_code
+from .errors import CoreRunError, CoreRunResult, core_run_failure_result
 from .integrity import RunIntegrityService, materialize_checkout
 from .lineage import classify_current_lineage
 from .policy import (
@@ -71,10 +71,7 @@ class ClaimFreezeService:
         try:
             return self._freeze(request)
         except (CoreRunError, ControlStoreError) as exc:
-            return CoreRunResult(
-                status="failed_uncommitted",
-                error_code=core_run_error_code(exc),
-            )
+            return core_run_failure_result(exc)
 
     def _freeze(self, request: ClaimFreezeRequest) -> CoreRunResult:
         with self._open_store() as store:
@@ -415,8 +412,12 @@ class ClaimFreezeService:
                 unit.put_claim_source_binding(binding)
             unit.put_claim_freeze(freeze)
             unit.append_event(event)
-            receipt = unit.commit()
-            self._verifier.verify(store, request.run_id)
+            receipt = unit.commit(
+                _postcommit_observer=lambda _receipt: self._verifier.verify(
+                    store,
+                    request.run_id,
+                )
+            )
             return CoreRunResult(
                 status="committed",
                 receipt=receipt,

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from copy import deepcopy
 from dataclasses import dataclass
-from collections.abc import Hashable
+from collections.abc import Callable, Hashable
 from typing import TYPE_CHECKING, TypeVar, cast
 
 from pydantic import ValidationError
@@ -38,6 +38,7 @@ from multi_agent_brief.contracts.v2 import (
     WorkspaceRunHead,
 )
 from multi_agent_brief.control_store.errors import (
+    ControlStoreCommitOutcomeUnknown,
     ControlStoreConflict,
     ControlStoreIntegrityError,
     ControlStoreStateError,
@@ -507,13 +508,31 @@ class ControlUnitOfWork:
             raise ControlStoreIntegrityError("canonical_payload_invalid")
         return payload
 
-    def commit(self) -> TransactionReceipt:
+    def commit(
+        self,
+        *,
+        _postcommit_observer: Callable[[TransactionReceipt], None] | None = None,
+    ) -> TransactionReceipt:
         self._require_active()
         try:
             receipt = self._store._commit_unit_of_work(self)
+        except ControlStoreCommitOutcomeUnknown:
+            self._state = "outcome_unknown"
+            raise
         except Exception:
             self._state = "rolled_back"
             raise
+        try:
+            if _postcommit_observer is not None:
+                _postcommit_observer(receipt)
+        except ControlStoreCommitOutcomeUnknown:
+            self._state = "outcome_unknown"
+            raise
+        except Exception as exc:
+            self._state = "outcome_unknown"
+            raise ControlStoreCommitOutcomeUnknown(
+                "commit_outcome_unknown"
+            ) from exc
         self._state = "committed"
         return receipt
 

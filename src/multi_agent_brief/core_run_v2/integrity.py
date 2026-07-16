@@ -16,7 +16,11 @@ from multi_agent_brief.contracts.v2 import (
     IntegrityCheckRequest,
     RunIntegrityRecord,
 )
-from multi_agent_brief.control_store import ControlStoreError, SQLiteControlStore
+from multi_agent_brief.control_store import (
+    ControlStoreCommitOutcomeUnknown,
+    ControlStoreError,
+    SQLiteControlStore,
+)
 from multi_agent_brief.control_store.serialization import (
     canonical_fingerprint,
     sha256_hex,
@@ -60,6 +64,11 @@ class RunIntegrityService:
             return self._inspect(request)
         except CoreRunError:
             raise
+        except ControlStoreCommitOutcomeUnknown:
+            return {
+                "status": "commit_outcome_unknown",
+                "error_code": "commit_outcome_unknown",
+            }
         except ControlStoreError as exc:
             raise CoreRunError(core_run_error_code(exc)) from exc
 
@@ -279,8 +288,12 @@ class RunIntegrityService:
         unit.append_event(event)
         unit.append_event(block_event)
         unit.append_run_integrity_record(record)
-        receipt = unit.commit()
-        self._verifier.verify(store, verified.snapshot.run.run_id)
+        receipt = unit.commit(
+            _postcommit_observer=lambda _receipt: self._verifier.verify(
+                store,
+                verified.snapshot.run.run_id,
+            )
+        )
         return CoreRunResult(
             status="blocked",
             receipt=receipt,

@@ -6,10 +6,20 @@ from dataclasses import dataclass
 from typing import Literal
 
 from multi_agent_brief.contracts.v2 import TransactionReceipt
-from multi_agent_brief.control_store import ControlStoreConflict, ControlStoreError
+from multi_agent_brief.control_store import (
+    ControlStoreCommitOutcomeUnknown,
+    ControlStoreConflict,
+    ControlStoreError,
+)
 
 
-CoreRunStatus = Literal["committed", "replayed", "blocked", "failed_uncommitted"]
+CoreRunStatus = Literal[
+    "committed",
+    "replayed",
+    "blocked",
+    "failed_uncommitted",
+    "commit_outcome_unknown",
+]
 
 
 class CoreRunError(RuntimeError):
@@ -25,12 +35,30 @@ def core_run_error_code(error: CoreRunError | ControlStoreError) -> str:
 
     if isinstance(error, CoreRunError):
         return error.code
+    if isinstance(error, ControlStoreCommitOutcomeUnknown):
+        return "commit_outcome_unknown"
     if isinstance(error, ControlStoreConflict):
         if error.code == "store_revision_conflict":
             return "store_revision_conflict"
         if error.code == "transaction_replay_conflict":
             return "submission_replay_conflict"
     return "control_store_integrity_invalid"
+
+
+def core_run_failure_result(
+    error: CoreRunError | ControlStoreError,
+) -> "CoreRunResult":
+    """Preserve the durable-commit boundary in one public result shape."""
+
+    if isinstance(error, ControlStoreCommitOutcomeUnknown):
+        return CoreRunResult(
+            status="commit_outcome_unknown",
+            error_code="commit_outcome_unknown",
+        )
+    return CoreRunResult(
+        status="failed_uncommitted",
+        error_code=core_run_error_code(error),
+    )
 
 
 @dataclass(frozen=True)
@@ -47,6 +75,12 @@ class CoreRunResult:
             valid = self.receipt is not None and self.error_code is None
         elif self.status == "blocked":
             valid = self.receipt is not None and self.error_code is not None
+        elif self.status == "commit_outcome_unknown":
+            valid = (
+                self.receipt is None
+                and self.error_code == "commit_outcome_unknown"
+                and self.primary_record_id is None
+            )
         else:
             valid = self.receipt is None and self.error_code is not None
         if not valid:
@@ -75,4 +109,5 @@ __all__ = [
     "CoreRunResult",
     "CoreRunStatus",
     "core_run_error_code",
+    "core_run_failure_result",
 ]

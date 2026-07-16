@@ -17,7 +17,11 @@ from multi_agent_brief.contracts.v2 import (
     ScreenedCandidatesProposal,
     TransactionReceipt,
 )
-from multi_agent_brief.control_store import ControlStoreSnapshot, SQLiteControlStore
+from multi_agent_brief.control_store import (
+    ControlStoreCommitOutcomeUnknown,
+    ControlStoreSnapshot,
+    SQLiteControlStore,
+)
 from multi_agent_brief.control_store.serialization import (
     canonical_fingerprint,
     canonical_json_bytes,
@@ -34,6 +38,7 @@ from .errors import CoreRunError, CoreRunResult
 from .lineage import (
     classify_current_audit_promotion,
     classify_current_lineage,
+    require_current_gate_after_audit_promotion,
     verify_no_post_seal_records,
 )
 from .policy import (
@@ -1094,6 +1099,15 @@ class CoreRunDomainVerifier:
                 for item in gate_bindings.get(transition.transition_id, [])
             }
             if transition.stage_id == "auditor" and transition.transition_kind == "complete":
+                if audit_promotion is None:
+                    raise CoreRunError("control_store_integrity_invalid")
+                try:
+                    require_current_gate_after_audit_promotion(
+                        audit_promotion=audit_promotion,
+                        gate_batch=lineage.current_gate_batch,
+                    )
+                except CoreRunError as exc:
+                    raise CoreRunError("control_store_integrity_invalid") from exc
                 gate_report = current_revision("auditor_quality_gate_report")
                 required = {
                     (
@@ -2051,49 +2065,55 @@ def resolve_core_replay(
     if receipt is None:
         return None
     try:
-        snapshot = store.load_snapshot(run_id)
-    except Exception as exc:
-        raise CoreRunError("control_store_integrity_invalid") from exc
-    event, binding = _verified_core_receipt_binding(snapshot, receipt)
-    if binding.request_id != request_id:
-        raise CoreRunError("control_store_integrity_invalid")
-    if binding.effect_kind == "integrity_contamination":
-        try:
-            integrity_revision = int(binding.primary_record_id)
-        except ValueError as exc:
-            raise CoreRunError("control_store_integrity_invalid") from exc
-        records = [
-            item
-            for item in snapshot.run_integrity_records
-            if item.integrity_revision == integrity_revision
-        ]
-        if len(records) != 1:
+        snapshot = CoreRunDomainVerifier().verify(store, run_id).snapshot
+        event, binding = _verified_core_receipt_binding(snapshot, receipt)
+        if binding.request_id != request_id:
             raise CoreRunError("control_store_integrity_invalid")
-        record = records[0]
-        if record.request_fingerprint != request_fingerprint:
-            raise CoreRunError("submission_replay_conflict")
-        expected_binding_fingerprint = (
-            _integrity_contamination_binding_fingerprint(
-                request_fingerprint,
-                _integrity_observation_fingerprint(record),
+        if binding.effect_kind == "integrity_contamination":
+            try:
+                integrity_revision = int(binding.primary_record_id)
+            except ValueError as exc:
+                raise CoreRunError("control_store_integrity_invalid") from exc
+            records = [
+                item
+                for item in snapshot.run_integrity_records
+                if item.integrity_revision == integrity_revision
+            ]
+            if len(records) != 1:
+                raise CoreRunError("control_store_integrity_invalid")
+            record = records[0]
+            if record.request_fingerprint != request_fingerprint:
+                raise CoreRunError("submission_replay_conflict")
+            expected_binding_fingerprint = (
+                _integrity_contamination_binding_fingerprint(
+                    request_fingerprint,
+                    _integrity_observation_fingerprint(record),
+                )
             )
-        )
-        if binding.request_fingerprint != expected_binding_fingerprint:
-            raise CoreRunError("control_store_integrity_invalid")
-    elif binding.request_fingerprint != request_fingerprint:
-        raise CoreRunError("submission_replay_conflict")
-    if binding.outcome == "blocked":
+            if binding.request_fingerprint != expected_binding_fingerprint:
+                raise CoreRunError("control_store_integrity_invalid")
+        elif binding.request_fingerprint != request_fingerprint:
+            raise CoreRunError("submission_replay_conflict")
+        if binding.outcome == "blocked":
+            return CoreRunResult(
+                status="blocked",
+                receipt=receipt,
+                error_code=event.reason or "core_run_integrity_blocked",
+                primary_record_id=binding.primary_record_id,
+            )
         return CoreRunResult(
-            status="blocked",
+            status="replayed",
             receipt=receipt,
-            error_code=event.reason or "core_run_integrity_blocked",
             primary_record_id=binding.primary_record_id,
         )
-    return CoreRunResult(
-        status="replayed",
-        receipt=receipt,
-        primary_record_id=binding.primary_record_id,
-    )
+    except CoreRunError as exc:
+        if exc.code == "submission_replay_conflict":
+            raise
+        raise ControlStoreCommitOutcomeUnknown("commit_outcome_unknown") from exc
+    except ControlStoreCommitOutcomeUnknown:
+        raise
+    except Exception as exc:
+        raise ControlStoreCommitOutcomeUnknown("commit_outcome_unknown") from exc
 
 
 __all__ = [
