@@ -9,6 +9,8 @@ from pathlib import Path
 
 import pytest
 
+import multi_agent_brief.semantic_evaluator.admission as admission_module
+import multi_agent_brief.semantic_evaluator.instrument as instrument_module
 from multi_agent_brief.semantic_evaluator.admission import (
     admit_inputs,
     archive_root_is_safe,
@@ -23,7 +25,10 @@ from multi_agent_brief.semantic_evaluator.errors import SemanticEvaluatorError
 from multi_agent_brief.semantic_evaluator.normalization import freeze_bounded_context
 from multi_agent_brief.semantic_evaluator.profile import load_profile
 from multi_agent_brief.semantic_evaluator.prompts import build_dimension_prompt
-from multi_agent_brief.semantic_evaluator.serialization import sha256_bytes
+from multi_agent_brief.semantic_evaluator.serialization import (
+    SourceResolutionError,
+    sha256_bytes,
+)
 
 
 FIXTURE_ROOT = Path(__file__).parent / "fixtures" / "semantic_evaluator"
@@ -74,6 +79,7 @@ def _admit(
         sizer if sizer is not None else FakeSizer(),
     )
     existing_binding = overrides.pop("existing_binding", None)
+    loaded_profile = overrides.pop("loaded_profile", None)
     values = {
         "schema_version": ADMISSION_REQUEST_SCHEMA_ID,
         "report_bytes_hex": report.hex(),
@@ -92,6 +98,7 @@ def _admit(
     return admit_inputs(
         values,
         prompt_sizer=dependency_sizer,
+        loaded_profile=loaded_profile,
         existing_binding=existing_binding,
     )
 
@@ -438,12 +445,135 @@ def test_archive_topology_rejects_symlink_loop_without_raw_exception(
 def test_same_trial_with_different_frozen_binding_is_a_conflict() -> None:
     first = _admit("# 第一份\n".encode())
     second_report = "# 第二份\n".encode()
-    second = _admit(second_report, existing_binding=first.input_binding)
+    sizer = FakeSizer()
+    second = _admit(
+        second_report,
+        sizer=sizer,
+        existing_binding=first.input_binding,
+    )
     assert second.admitted is False
     assert second.reason_codes == ("trial_identity_conflict",)
+    assert sizer.calls == 0
     forged = first.input_binding.model_copy(update={"input_binding_sha256": "0" * 64})
     same_report = _admit("# 第一份\n".encode(), existing_binding=forged)
     assert same_report.reason_codes == ("trial_identity_conflict",)
+
+    exact_replay = _admit(
+        "# 第一份\n".encode(),
+        existing_binding=first.input_binding,
+    )
+    assert exact_replay.admitted is True
+    assert exact_replay.input_binding == first.input_binding
+
+
+def _fail_if_dependency_reaches_planning(*_args, **_kwargs):
+    pytest.fail("malformed optional dependency reached planning or prompt assembly")
+
+
+@pytest.mark.parametrize(
+    "loaded_profile",
+    [{}, False, True, "synthetic-invalid-profile", object()],
+    ids=["empty-mapping", "false", "true", "string", "object"],
+)
+def test_explicit_malformed_loaded_profile_is_typed_and_side_effect_free(
+    loaded_profile,
+    monkeypatch,
+) -> None:
+    sizer = FakeSizer()
+    monkeypatch.setattr(
+        admission_module,
+        "build_assessment_plan",
+        _fail_if_dependency_reaches_planning,
+    )
+    monkeypatch.setattr(
+        admission_module,
+        "build_dimension_prompt",
+        _fail_if_dependency_reaches_planning,
+    )
+    decision = _admit(
+        "# 合成材料\n".encode(),
+        sizer=sizer,
+        loaded_profile=loaded_profile,
+    )
+    assert decision.admitted is False
+    assert decision.reason_codes == ("profile_invalid",)
+    assert decision.assessment_plan is None
+    assert decision.prompts == ()
+    assert sizer.calls == 0
+
+
+@pytest.mark.parametrize(
+    "existing_binding",
+    [{}, False, True, "synthetic-invalid-binding", object()],
+    ids=["empty-mapping", "false", "true", "string", "object"],
+)
+def test_explicit_malformed_existing_binding_is_typed_and_side_effect_free(
+    existing_binding,
+    monkeypatch,
+) -> None:
+    sizer = FakeSizer()
+    monkeypatch.setattr(
+        admission_module,
+        "build_assessment_plan",
+        _fail_if_dependency_reaches_planning,
+    )
+    monkeypatch.setattr(
+        admission_module,
+        "build_dimension_prompt",
+        _fail_if_dependency_reaches_planning,
+    )
+    decision = _admit(
+        "# 合成材料\n".encode(),
+        sizer=sizer,
+        existing_binding=existing_binding,
+    )
+    assert decision.admitted is False
+    assert decision.reason_codes == ("trial_identity_conflict",)
+    assert decision.assessment_plan is None
+    assert decision.prompts == ()
+    assert sizer.calls == 0
+
+
+def test_optional_dependency_precedence_and_explicit_valid_profile() -> None:
+    sizer = FakeSizer()
+    malformed = _admit(
+        "# 合成材料\n".encode(),
+        sizer=sizer,
+        loaded_profile={},
+        existing_binding=object(),
+    )
+    assert malformed.reason_codes == ("profile_invalid",)
+    assert sizer.calls == 0
+
+    valid = _admit(
+        "# 合成材料\n".encode(),
+        loaded_profile=load_profile(),
+    )
+    assert valid.admitted is True
+
+
+def test_current_instrument_source_failure_is_typed_and_value_free(
+    monkeypatch,
+) -> None:
+    hidden_detail = "/private/synthetic-customer/source.py"
+
+    def fail_source_resolution(_module_name: str) -> str:
+        raise SourceResolutionError(hidden_detail)
+
+    monkeypatch.setattr(
+        instrument_module,
+        "source_sha256_for_module",
+        fail_source_resolution,
+    )
+    sizer = FakeSizer()
+    decision = _admit("# 合成材料\n".encode(), sizer=sizer)
+    assert decision.admitted is False
+    assert decision.reason_codes == ("instrument_manifest_mismatch",)
+    assert decision.violations == ()
+    assert decision.assessment_plan is None
+    assert decision.prompts == ()
+    assert hidden_detail not in repr(decision)
+    assert sizer.calls == 0
 
 
 def test_admission_deep_owns_the_exact_bounded_context_witness() -> None:

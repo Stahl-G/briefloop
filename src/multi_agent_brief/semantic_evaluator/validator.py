@@ -55,7 +55,11 @@ from multi_agent_brief.semantic_evaluator.parser import (
     parse_dimension_response,
 )
 from multi_agent_brief.semantic_evaluator.profile import load_profile
-from multi_agent_brief.semantic_evaluator.prompts import build_dimension_prompt
+from multi_agent_brief.semantic_evaluator.prompts import (
+    FrozenDimensionPrompt,
+    build_dimension_prompt,
+    derive_forbidden_canary_values,
+)
 from multi_agent_brief.semantic_evaluator.serialization import (
     canonical_json_bytes,
     canonical_model_payload,
@@ -73,7 +77,7 @@ from multi_agent_brief.semantic_evaluator.unit_planner import (
 )
 
 
-VALIDATOR_VERSION = "dimension_validator_v1"
+VALIDATOR_VERSION = "dimension_validator_v2"
 
 
 @dataclass(frozen=True)
@@ -242,7 +246,6 @@ def validate_dimension_response(
     reader_artifact: ReaderArtifact,
     bounded_context: BoundedContext,
     attempt_ref: str,
-    forbidden_canary_values: Iterable[str] = (),
 ) -> DimensionValidationResult:
     try:
         response = DimensionResponse.model_validate(response.model_dump(mode="json"))
@@ -255,10 +258,16 @@ def validate_dimension_response(
             violations=violations,
         ) from exc
     reasons: set[str] = set()
+    canaries: tuple[str, ...] = ()
     try:
         validate_frozen_assessment_plan(plan)
         bounded_context = verify_bounded_context(bounded_context)
-    except SemanticEvaluatorError:
+        canaries = derive_forbidden_canary_values(
+            assessment_plan_sha256=plan.assessment_plan_sha256,
+            bounded_context_sha256=bounded_context.context_sha256,
+            dimension_id=expected_dimension_id,
+        )
+    except (SemanticEvaluatorError, ValueError):
         reasons.add("run_binding_mismatch")
     if (
         reader_artifact.report_sha256 != plan.report_sha256
@@ -272,7 +281,6 @@ def validate_dimension_response(
         reasons.add("authority_output_forbidden")
     if find_forbidden_keys(raw_object, FORBIDDEN_SECURITY_KEYS):
         reasons.add("tool_or_canary_output_forbidden")
-    canaries = tuple(item for item in forbidden_canary_values if item)
     if canaries and any(
         canary in value
         for value in _all_string_values(raw_object)
@@ -656,33 +664,31 @@ def _global_id_preflight(outcomes: Iterable[AssessmentUnitOutcome]) -> None:
 def make_dimension_attempt_evidence(
     *,
     trial_id: str,
-    dimension_id: str,
+    prompt: FrozenDimensionPrompt,
     attempt_ordinal: int,
-    prompt_request_sha256: str,
     status: str,
     raw_response_bytes: bytes | None = None,
     reason_code: str | None = None,
-    forbidden_canary_values: Iterable[str] = (),
 ) -> DimensionAttemptEvidence:
     attempt_ref = derive_attempt_ref(
         trial_id=trial_id,
-        dimension_id=dimension_id,
+        dimension_id=prompt.dimension_id,
         attempt_ordinal=attempt_ordinal,
-        prompt_request_sha256=prompt_request_sha256,
+        prompt_request_sha256=prompt.request_sha256,
     )
     raw_hex = raw_response_bytes.hex() if raw_response_bytes is not None else None
     payload = {
         "attempt_ref": attempt_ref,
-        "dimension_id": dimension_id,
+        "dimension_id": prompt.dimension_id,
         "attempt_ordinal": attempt_ordinal,
-        "prompt_request_sha256": prompt_request_sha256,
+        "prompt_request_sha256": prompt.request_sha256,
         "status": status,
         "reason_code": reason_code,
         "raw_response_bytes_hex": raw_hex,
         "raw_response_sha256": (
             sha256_bytes(raw_response_bytes) if raw_response_bytes is not None else None
         ),
-        "forbidden_canary_values": sorted(set(forbidden_canary_values)),
+        "forbidden_canary_values": list(prompt.forbidden_canary_values),
     }
     return DimensionAttemptEvidence.model_validate(
         {**payload, "evidence_sha256": canonical_sha256(payload)}
@@ -762,6 +768,13 @@ def _verify_root_bundle(
         ):
             raise
         raise SemanticEvaluatorError(mismatch_reason) from exc
+    except (OSError, RuntimeError):
+        reason = (
+            "instrument_manifest_mismatch"
+            if mismatch_reason == "run_binding_mismatch"
+            else mismatch_reason
+        )
+        raise SemanticEvaluatorError(reason) from None
     except (AttributeError, ValidationError, TypeError, ValueError) as exc:
         raise SemanticEvaluatorError(mismatch_reason) from exc
 
@@ -872,6 +885,8 @@ def _strict_attempt_evidence(
             item.attempt_ref != expected_ref
             or item.prompt_request_sha256
             != prompt_by_dimension[item.dimension_id].request_sha256
+            or tuple(item.forbidden_canary_values)
+            != prompt_by_dimension[item.dimension_id].forbidden_canary_values
             or item.evidence_sha256
             != canonical_model_sha256(item, exclude=("evidence_sha256",))
         ):
@@ -961,7 +976,6 @@ def _derive_projection(
             reader_artifact=roots.reader.artifact,
             bounded_context=roots.bounded_context,
             attempt_ref=terminal.attempt_ref,
-            forbidden_canary_values=terminal.forbidden_canary_values,
         )
         expected_ids = {
             item.assessment_unit_id

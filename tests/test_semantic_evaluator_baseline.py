@@ -41,6 +41,7 @@ from multi_agent_brief.semantic_evaluator.normalization import (
 )
 from multi_agent_brief.semantic_evaluator.profile import load_profile
 from multi_agent_brief.semantic_evaluator.serialization import (
+    SourceResolutionError,
     canonical_json_bytes,
     canonical_sha256,
     sha256_bytes,
@@ -176,9 +177,8 @@ def _assembled(*, state: str = "completed", with_finding: bool = False):
             evidence.append(
                 make_dimension_attempt_evidence(
                     trial_id=plan.trial_id,
-                    dimension_id=dimension.dimension_id,
+                    prompt=prompt,
                     attempt_ordinal=1,
-                    prompt_request_sha256=prompt.request_sha256,
                     status="failed",
                     reason_code="provider_failed",
                 )
@@ -196,6 +196,14 @@ def _assembled(*, state: str = "completed", with_finding: bool = False):
                 assessment_unit_id=units[0].assessment_unit_id,
                 disposition="finding_emitted",
                 findings=[_finding_draft(units[0], baseline)],
+            )
+        if state == "security_failed" and ordinal == 0:
+            finding_payload = _finding_draft(units[0], baseline).model_dump(mode="json")
+            finding_payload["observation"] += f" {prompt.forbidden_canary_values[0]}"
+            unit_results[0] = FindingEmittedResult(
+                assessment_unit_id=units[0].assessment_unit_id,
+                disposition="finding_emitted",
+                findings=[FindingDraft.model_validate(finding_payload)],
             )
         if state == "handoff_only" and ordinal == 0:
             handoff_span = make_span_locator(
@@ -230,11 +238,6 @@ def _assembled(*, state: str = "completed", with_finding: bool = False):
             and ordinal == len(profile.profile.dimensions) - 1
         ):
             raw["trial_id"] = "trial-tampered-raw"
-        if (
-            state == "security_failed"
-            and ordinal == len(profile.profile.dimensions) - 1
-        ):
-            raw["tool_calls"] = [{"name": "synthetic-forbidden-tool"}]
         raw_bytes = (
             b"synthetic malformed provider response"
             if state == "parser_failed"
@@ -244,9 +247,8 @@ def _assembled(*, state: str = "completed", with_finding: bool = False):
         evidence.append(
             make_dimension_attempt_evidence(
                 trial_id=plan.trial_id,
-                dimension_id=dimension.dimension_id,
+                prompt=prompt,
                 attempt_ordinal=1,
-                prompt_request_sha256=prompt.request_sha256,
                 status="completed",
                 raw_response_bytes=raw_bytes,
             )
@@ -575,6 +577,36 @@ def test_installed_component_change_invalidates_existing_witness(
         compose_actual_laj(assembled.witness)
 
 
+def test_source_resolution_failure_is_value_free_for_composition_and_presentation(
+    monkeypatch,
+) -> None:
+    _baseline, assembled = _assembled(with_finding=True)
+    valid_composition = compose_actual_laj(assembled.witness)
+    hidden_detail = "/private/synthetic-customer/source.py"
+
+    def fail_source_resolution(_module_name: str) -> str:
+        raise SourceResolutionError(hidden_detail)
+
+    monkeypatch.setattr(
+        instrument_module,
+        "source_sha256_for_module",
+        fail_source_resolution,
+    )
+    callbacks = (
+        lambda: compose_actual_laj(assembled.witness),
+        lambda: build_presentation(
+            valid_composition,
+            witness=assembled.witness,
+        ),
+    )
+    for callback in callbacks:
+        with pytest.raises(SemanticEvaluatorError) as caught:
+            callback()
+        assert str(caught.value) == "composition_witness_mismatch"
+        assert caught.value.__cause__ is None
+        assert hidden_detail not in str(caught.value)
+
+
 @pytest.mark.parametrize("forged_status", ["policy_blocked", "archive_failed"])
 def test_non_pr_se_1_run_status_cannot_be_forged_into_witness(
     forged_status: str,
@@ -674,6 +706,25 @@ def test_rehashed_witness_relation_substitution_is_rejected(mutation: str) -> No
         payload["validation_report"]["finding_count"] += 1
     else:
         payload["run"]["report_sha256"] = "f" * 64
+    forged = _rehash_witness(payload)
+    with pytest.raises(SemanticEvaluatorError, match="composition_witness_mismatch"):
+        compose_actual_laj(forged)
+
+
+def test_rehashed_witness_cannot_replace_prompt_owned_canary_authority() -> None:
+    _baseline, assembled = _assembled(state="security_failed", with_finding=True)
+    actual = compose_actual_laj(assembled.witness)
+    assert actual.laj_run_status == "security_failed"
+    assert actual.laj_validation_status == "rejected"
+    assert actual.laj_advice_items == []
+
+    payload = assembled.witness.model_dump(mode="json")
+    attempt = payload["dimension_attempt_evidence"][0]
+    assert attempt["forbidden_canary_values"]
+    attempt["forbidden_canary_values"] = []
+    attempt["evidence_sha256"] = canonical_sha256(
+        {key: value for key, value in attempt.items() if key != "evidence_sha256"}
+    )
     forged = _rehash_witness(payload)
     with pytest.raises(SemanticEvaluatorError, match="composition_witness_mismatch"):
         compose_actual_laj(forged)

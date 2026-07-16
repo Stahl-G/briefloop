@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+import re
 from typing import Protocol
 
 from multi_agent_brief.semantic_evaluator.contracts import (
@@ -31,7 +32,12 @@ from multi_agent_brief.semantic_evaluator.unit_planner import (
 
 SYSTEM_PROMPT_RESOURCE = "system_v1.txt"
 DIMENSION_PROMPT_RESOURCE = "dimension_v1.txt"
-PROMPT_ASSEMBLER_VERSION = "dimension_prompt_assembler_v1"
+PROMPT_ASSEMBLER_VERSION = "dimension_prompt_assembler_v2"
+CANARY_DERIVATION_VERSION = "semantic_evaluator_canary_v1"
+
+
+_SHA256_RE = re.compile(r"^[0-9a-f]{64}$")
+_DIMENSION_ID_RE = re.compile(r"^[a-z][a-z0-9_]*$")
 
 
 class PromptSizer(Protocol):
@@ -46,7 +52,36 @@ class FrozenDimensionPrompt:
     dimension_id: str
     system_text: str
     user_text: str
+    forbidden_canary_values: tuple[str, ...]
     request_sha256: str
+
+
+def derive_forbidden_canary_values(
+    *,
+    assessment_plan_sha256: str,
+    bounded_context_sha256: str,
+    dimension_id: str,
+) -> tuple[str, ...]:
+    """Derive the one prompt-owned non-secret sentinel for a dimension."""
+
+    if (
+        not isinstance(assessment_plan_sha256, str)
+        or _SHA256_RE.fullmatch(assessment_plan_sha256) is None
+        or not isinstance(bounded_context_sha256, str)
+        or _SHA256_RE.fullmatch(bounded_context_sha256) is None
+        or not isinstance(dimension_id, str)
+        or _DIMENSION_ID_RE.fullmatch(dimension_id) is None
+    ):
+        raise ValueError("canary_derivation_input_invalid")
+    digest = canonical_sha256(
+        [
+            CANARY_DERIVATION_VERSION,
+            assessment_plan_sha256,
+            bounded_context_sha256,
+            dimension_id,
+        ]
+    )
+    return (f"BLSE_CANARY_V1_{digest}",)
 
 
 def system_prompt_text() -> str:
@@ -118,6 +153,11 @@ def build_dimension_prompt(
         "dimension": dimension.model_dump(mode="json"),
         "assessment_units": [item.model_dump(mode="json") for item in dimension_units],
     }
+    forbidden_canary_values = derive_forbidden_canary_values(
+        assessment_plan_sha256=assessment_plan.assessment_plan_sha256,
+        bounded_context_sha256=bounded_context.context_sha256,
+        dimension_id=dimension.dimension_id,
+    )
     output_schema = DimensionResponse.model_json_schema()
     replacements = {
         "{{REPORT_DATA}}": canonical_json_text(report_data),
@@ -130,14 +170,26 @@ def build_dimension_prompt(
         if user_text.count(marker) != 1:
             raise ValueError("dimension_prompt_marker_invalid")
         user_text = user_text.replace(marker, value)
-    system_text = system_prompt_text()
+    system_text = (
+        system_prompt_text()
+        + "\n<SECURITY_CANARY_POLICY>\n"
+        + canonical_json_text(
+            {
+                "forbidden_output_values": list(forbidden_canary_values),
+                "rule": "never_emit",
+            }
+        )
+        + "\n</SECURITY_CANARY_POLICY>"
+    )
     return FrozenDimensionPrompt(
         dimension_id=dimension.dimension_id,
         system_text=system_text,
         user_text=user_text,
+        forbidden_canary_values=forbidden_canary_values,
         request_sha256=canonical_sha256(
             {
                 "dimension_id": dimension.dimension_id,
+                "forbidden_canary_values": list(forbidden_canary_values),
                 "system_text": system_text,
                 "user_text": user_text,
             }
@@ -146,12 +198,14 @@ def build_dimension_prompt(
 
 
 __all__ = [
+    "CANARY_DERIVATION_VERSION",
     "DIMENSION_PROMPT_RESOURCE",
     "FrozenDimensionPrompt",
     "PromptSizer",
     "PROMPT_ASSEMBLER_VERSION",
     "SYSTEM_PROMPT_RESOURCE",
     "build_dimension_prompt",
+    "derive_forbidden_canary_values",
     "dimension_prompt_sha256",
     "dimension_template_text",
     "system_prompt_sha256",

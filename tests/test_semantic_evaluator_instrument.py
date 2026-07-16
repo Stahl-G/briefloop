@@ -22,6 +22,7 @@ from multi_agent_brief.semantic_evaluator.instrument import (
 from multi_agent_brief.semantic_evaluator.errors import SemanticEvaluatorError
 from multi_agent_brief.semantic_evaluator.profile import LoadedProfile, load_profile
 from multi_agent_brief.semantic_evaluator.prompts import (
+    PROMPT_ASSEMBLER_VERSION,
     dimension_prompt_sha256,
     system_prompt_sha256,
 )
@@ -32,6 +33,7 @@ from multi_agent_brief.semantic_evaluator.serialization import (
     canonical_sha256,
     normalized_source_bytes,
 )
+from multi_agent_brief.semantic_evaluator.validator import VALIDATOR_VERSION
 
 
 SHA256_RE = re.compile(r"^[0-9a-f]{64}$")
@@ -85,6 +87,14 @@ def test_manifest_binds_exact_frozen_resources_schemas_and_source_components() -
         "unit_planner",
         "prompt_assembler",
     ]
+    versions = {
+        item.component_id: item.implementation_version
+        for item in manifest.implementation_components
+    }
+    assert VALIDATOR_VERSION == "dimension_validator_v2"
+    assert PROMPT_ASSEMBLER_VERSION == "dimension_prompt_assembler_v2"
+    assert versions["validator"] == VALIDATOR_VERSION
+    assert versions["prompt_assembler"] == PROMPT_ASSEMBLER_VERSION
     assert all(
         SHA256_RE.fullmatch(item.source_sha256)
         for item in manifest.implementation_components

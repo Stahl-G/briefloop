@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import replace
+import inspect
 from pathlib import Path
 
 import pytest
@@ -31,10 +32,18 @@ from multi_agent_brief.semantic_evaluator.normalization import (
     make_span_locator,
     normalize_markdown,
 )
+import multi_agent_brief.semantic_evaluator.instrument as instrument_module
 from multi_agent_brief.semantic_evaluator.parser import parse_dimension_response
 from multi_agent_brief.semantic_evaluator.profile import load_profile
+from multi_agent_brief.semantic_evaluator.prompts import (
+    CANARY_DERIVATION_VERSION,
+    derive_forbidden_canary_values,
+    system_prompt_text,
+)
 from multi_agent_brief.semantic_evaluator.serialization import (
+    SourceResolutionError,
     canonical_json_bytes,
+    canonical_json_text,
     canonical_sha256,
     sha256_bytes,
 )
@@ -46,6 +55,7 @@ from multi_agent_brief.semantic_evaluator.validator import (
     make_dimension_attempt_evidence,
     recompute_event_counts,
     validate_dimension_response,
+    verify_laj_composition_witness,
 )
 
 
@@ -113,6 +123,10 @@ def _case():
     return reader, context, profile, plan
 
 
+def _prompt_for(decision, dimension_id: str):
+    return next(item for item in decision.prompts if item.dimension_id == dimension_id)
+
+
 def _finding(unit, span, *, requirement_ids=None):
     requirement_ids = requirement_ids or []
     return FindingDraft(
@@ -153,32 +167,73 @@ def _no_finding_response(plan, dimension_id: str) -> DimensionResponse:
     )
 
 
-def _complete_no_finding_validation_case(*, inject_security: bool = False):
+def _complete_no_finding_validation_case(
+    *,
+    inject_security: bool = False,
+    inject_canary: bool = False,
+):
     reader, context, profile, plan, decision = _admitted_case()
     evidence = []
     attempts = []
     for ordinal, dimension in enumerate(profile.profile.dimensions):
+        prompt = _prompt_for(decision, dimension.dimension_id)
         response = _no_finding_response(plan, dimension.dimension_id)
+        if inject_canary and ordinal == 0:
+            units = [
+                item
+                for item in plan.units
+                if item.dimension_id == dimension.dimension_id
+            ]
+            span = make_span_locator(
+                reader.artifact,
+                block_id="B000002",
+                start_char=0,
+                end_char=1,
+            )
+            finding_payload = _finding(units[0], span).model_dump(mode="json")
+            finding_payload["observation"] += f" {prompt.forbidden_canary_values[0]}"
+            response = DimensionResponse(
+                schema_version=DIMENSION_RESPONSE_SCHEMA_ID,
+                trial_id=plan.trial_id,
+                dimension_id=dimension.dimension_id,
+                unit_results=[
+                    FindingEmittedResult(
+                        assessment_unit_id=units[0].assessment_unit_id,
+                        disposition="finding_emitted",
+                        findings=[FindingDraft.model_validate(finding_payload)],
+                    ),
+                    *[
+                        NoFindingResult(
+                            assessment_unit_id=item.assessment_unit_id,
+                            disposition="no_finding",
+                        )
+                        for item in units[1:]
+                    ],
+                ],
+            )
         raw = response.model_dump(mode="json")
         if inject_security and ordinal == 0:
             raw["tool_calls"] = [{"name": "forbidden-synthetic-tool"}]
-        prompt = next(
-            item
-            for item in decision.prompts
-            if item.dimension_id == dimension.dimension_id
-        )
         evidence.append(
             make_dimension_attempt_evidence(
                 trial_id=plan.trial_id,
-                dimension_id=dimension.dimension_id,
+                prompt=prompt,
                 attempt_ordinal=1,
-                prompt_request_sha256=prompt.request_sha256,
                 status="completed",
                 raw_response_bytes=canonical_json_bytes(raw),
             )
         )
         attempts.append(evidence[-1])
     return reader, context, profile, plan, decision, evidence, attempts
+
+
+def _rehash_attempt_canaries(attempt, values: list[str]):
+    payload = attempt.model_dump(mode="json")
+    payload["forbidden_canary_values"] = values
+    payload["evidence_sha256"] = canonical_sha256(
+        {key: value for key, value in payload.items() if key != "evidence_sha256"}
+    )
+    return attempt.model_copy(update=payload)
 
 
 def _self_consistent_noncurrent_manifest(
@@ -225,6 +280,75 @@ def test_parser_classifies_nested_authority_keys_before_generic_extra_failure() 
     parsed = parse_dimension_response(canonical_json_bytes(payload))
     assert parsed.reason_codes == ("authority_output_forbidden",)
     assert parsed.violations == ()
+
+
+def test_prompt_boundary_owns_exact_canary_and_attempt_helper_has_no_legacy_ingress() -> (
+    None
+):
+    _reader, context, _profile, plan, decision = _admitted_case()
+    prompt = _prompt_for(decision, "cross_section_consistency")
+    expected_digest = canonical_sha256(
+        [
+            CANARY_DERIVATION_VERSION,
+            plan.assessment_plan_sha256,
+            context.context_sha256,
+            prompt.dimension_id,
+        ]
+    )
+    expected_canaries = (f"BLSE_CANARY_V1_{expected_digest}",)
+    expected_policy = (
+        "\n<SECURITY_CANARY_POLICY>\n"
+        + canonical_json_text(
+            {
+                "forbidden_output_values": list(expected_canaries),
+                "rule": "never_emit",
+            }
+        )
+        + "\n</SECURITY_CANARY_POLICY>"
+    )
+    assert prompt.forbidden_canary_values == expected_canaries
+    assert prompt.system_text == system_prompt_text() + expected_policy
+    assert prompt.system_text.count(expected_canaries[0]) == 1
+    assert prompt.request_sha256 == canonical_sha256(
+        {
+            "dimension_id": prompt.dimension_id,
+            "forbidden_canary_values": list(expected_canaries),
+            "system_text": prompt.system_text,
+            "user_text": prompt.user_text,
+        }
+    )
+    assert tuple(inspect.signature(make_dimension_attempt_evidence).parameters) == (
+        "trial_id",
+        "prompt",
+        "attempt_ordinal",
+        "status",
+        "raw_response_bytes",
+        "reason_code",
+    )
+
+
+@pytest.mark.parametrize(
+    ("plan_sha", "context_sha", "dimension_id"),
+    [
+        ("0" * 63, "1" * 64, "cross_section_consistency"),
+        ("0" * 64, "1" * 63, "cross_section_consistency"),
+        ("0" * 64, "1" * 64, "Cross-Section"),
+        (object(), "1" * 64, "cross_section_consistency"),
+    ],
+)
+def test_canary_derivation_rejects_malformed_inputs_value_free(
+    plan_sha,
+    context_sha,
+    dimension_id,
+) -> None:
+    with pytest.raises(ValueError) as caught:
+        derive_forbidden_canary_values(
+            assessment_plan_sha256=plan_sha,
+            bounded_context_sha256=context_sha,
+            dimension_id=dimension_id,
+        )
+    assert str(caught.value) == "canary_derivation_input_invalid"
+    assert caught.value.__cause__ is None
 
 
 def test_parser_rejects_duplicate_members_before_collapse_with_security_precedence() -> (
@@ -416,8 +540,13 @@ def test_bad_span_is_rejected_and_canary_value_is_security_failure() -> None:
         unit_results=results,
     )
     raw = response.model_dump(mode="json")
-    raw["unit_results"][0]["findings"][0]["observation"] += " CANARY-SECRET"
-    raw["CANARY-SECRET-AS-KEY"] = "synthetic"
+    canary = derive_forbidden_canary_values(
+        assessment_plan_sha256=plan.assessment_plan_sha256,
+        bounded_context_sha256=context.context_sha256,
+        dimension_id="cross_section_consistency",
+    )[0]
+    raw["unit_results"][0]["findings"][0]["observation"] += f" {canary}"
+    raw[f"{canary}-AS-KEY"] = "synthetic"
     result = validate_dimension_response(
         response,
         raw_object=raw,
@@ -426,7 +555,6 @@ def test_bad_span_is_rejected_and_canary_value_is_security_failure() -> None:
         reader_artifact=reader.artifact,
         bounded_context=context,
         attempt_ref="attempt-invalid",
-        forbidden_canary_values=("CANARY-SECRET",),
     )
     assert "span_excerpt_hash_mismatch" in result.reason_codes
     assert "tool_or_canary_output_forbidden" in result.reason_codes
@@ -722,6 +850,42 @@ def test_security_failure_has_precedence_and_a_recomputable_event() -> None:
     assert recompute_event_counts(assembled.events)["failure_count"] == 1
 
 
+def test_prompt_owned_canary_cannot_be_laundered_by_rehashed_attempt_metadata() -> None:
+    _reader, _context, _profile, _plan, decision, evidence, _attempts = (
+        _complete_no_finding_validation_case(inject_canary=True)
+    )
+    canonical = assemble_semantic_assessment_run(
+        admission=decision,
+        dimension_attempt_evidence=evidence,
+    )
+    assert canonical.run.run_status == "security_failed"
+    assert canonical.validation_report.validation_status == "rejected"
+    assert canonical.validation_report.reason_codes == [
+        "tool_or_canary_output_forbidden"
+    ]
+    assert canonical.run.findings == []
+
+    first = evidence[0]
+    canary = first.forbidden_canary_values[0]
+    synthetic_non_authority = "caller_secret_shaped_value_DO_NOT_LEAK"
+    mutations = {
+        "remove": [],
+        "change": ["BLSE_CANARY_V1_" + "0" * 64],
+        "add": [canary, synthetic_non_authority],
+        "reorder": [synthetic_non_authority, canary],
+        "duplicate": [canary, canary],
+    }
+    for values in mutations.values():
+        forged = _rehash_attempt_canaries(first, values)
+        with pytest.raises(SemanticEvaluatorError) as caught:
+            assemble_semantic_assessment_run(
+                admission=decision,
+                dimension_attempt_evidence=[forged, *evidence[1:]],
+            )
+        assert str(caught.value) == "assessment_evidence_mismatch"
+        assert synthetic_non_authority not in str(caught.value)
+
+
 def test_failed_retry_attempt_does_not_turn_a_completed_dimension_into_failure() -> (
     None
 ):
@@ -729,25 +893,30 @@ def test_failed_retry_attempt_does_not_turn_a_completed_dimension_into_failure()
         _complete_no_finding_validation_case()
     )
     first = evidence[0]
+    prompt = _prompt_for(decision, first.dimension_id)
     retry_history = [
         make_dimension_attempt_evidence(
             trial_id=decision.input_binding.trial_id,
-            dimension_id=first.dimension_id,
+            prompt=prompt,
             attempt_ordinal=1,
-            prompt_request_sha256=first.prompt_request_sha256,
             status="failed",
             reason_code="provider_retryable_failure",
         ),
         make_dimension_attempt_evidence(
             trial_id=decision.input_binding.trial_id,
-            dimension_id=first.dimension_id,
+            prompt=prompt,
             attempt_ordinal=2,
-            prompt_request_sha256=first.prompt_request_sha256,
             status="completed",
             raw_response_bytes=bytes.fromhex(first.raw_response_bytes_hex),
         ),
         *evidence[1:],
     ]
+    assert retry_history[0].forbidden_canary_values == list(
+        prompt.forbidden_canary_values
+    )
+    assert retry_history[1].forbidden_canary_values == list(
+        prompt.forbidden_canary_values
+    )
     assembled = assemble_semantic_assessment_run(
         admission=decision,
         dimension_attempt_evidence=retry_history,
@@ -775,14 +944,14 @@ def test_attempt_evidence_topology_and_integrity_fail_closed(mutation: str) -> N
         _complete_no_finding_validation_case()
     )
     first = evidence[0]
+    prompt = _prompt_for(decision, first.dimension_id)
     raw = bytes.fromhex(first.raw_response_bytes_hex)
     if mutation == "gap":
         candidate = [
             make_dimension_attempt_evidence(
                 trial_id=decision.input_binding.trial_id,
-                dimension_id=first.dimension_id,
+                prompt=prompt,
                 attempt_ordinal=2,
-                prompt_request_sha256=first.prompt_request_sha256,
                 status="completed",
                 raw_response_bytes=raw,
             ),
@@ -796,17 +965,15 @@ def test_attempt_evidence_topology_and_integrity_fail_closed(mutation: str) -> N
         candidate = [
             make_dimension_attempt_evidence(
                 trial_id=decision.input_binding.trial_id,
-                dimension_id=first.dimension_id,
+                prompt=prompt,
                 attempt_ordinal=1,
-                prompt_request_sha256=first.prompt_request_sha256,
                 status="failed",
                 reason_code="provider_failed",
             ),
             make_dimension_attempt_evidence(
                 trial_id=decision.input_binding.trial_id,
-                dimension_id=first.dimension_id,
+                prompt=prompt,
                 attempt_ordinal=2,
-                prompt_request_sha256=first.prompt_request_sha256,
                 status="completed",
                 raw_response_bytes=raw,
             ),
@@ -816,9 +983,8 @@ def test_attempt_evidence_topology_and_integrity_fail_closed(mutation: str) -> N
         candidate = [
             make_dimension_attempt_evidence(
                 trial_id=decision.input_binding.trial_id,
-                dimension_id=first.dimension_id,
+                prompt=prompt,
                 attempt_ordinal=ordinal,
-                prompt_request_sha256=first.prompt_request_sha256,
                 status="completed" if ordinal == 3 else "failed",
                 raw_response_bytes=raw if ordinal == 3 else None,
                 reason_code=(None if ordinal == 3 else "provider_retryable_failure"),
@@ -829,9 +995,8 @@ def test_attempt_evidence_topology_and_integrity_fail_closed(mutation: str) -> N
         candidate = [
             make_dimension_attempt_evidence(
                 trial_id=decision.input_binding.trial_id,
-                dimension_id=first.dimension_id,
+                prompt=replace(prompt, request_sha256="0" * 64),
                 attempt_ordinal=1,
-                prompt_request_sha256="0" * 64,
                 status="completed",
                 raw_response_bytes=raw,
             ),
@@ -875,9 +1040,8 @@ def test_raw_response_rewrite_requires_new_evidence_and_witness_identity() -> No
 
     rederived = make_dimension_attempt_evidence(
         trial_id=decision.input_binding.trial_id,
-        dimension_id=first.dimension_id,
+        prompt=_prompt_for(decision, first.dimension_id),
         attempt_ordinal=1,
-        prompt_request_sha256=first.prompt_request_sha256,
         status="completed",
         raw_response_bytes=b" " + raw + b"\n",
     )
@@ -910,9 +1074,8 @@ def test_raw_parser_failures_are_derived_from_attempt_bytes(
     first = evidence[0]
     failed_parse = make_dimension_attempt_evidence(
         trial_id=decision.input_binding.trial_id,
-        dimension_id=first.dimension_id,
+        prompt=_prompt_for(decision, first.dimension_id),
         attempt_ordinal=1,
-        prompt_request_sha256=first.prompt_request_sha256,
         status="completed",
         raw_response_bytes=raw,
     )
@@ -933,9 +1096,8 @@ def test_partial_and_all_provider_failures_have_distinct_terminal_statuses() -> 
     terminal_failures = [
         make_dimension_attempt_evidence(
             trial_id=decision.input_binding.trial_id,
-            dimension_id=item.dimension_id,
+            prompt=_prompt_for(decision, item.dimension_id),
             attempt_ordinal=1,
-            prompt_request_sha256=item.prompt_request_sha256,
             status="failed",
             reason_code="provider_failed",
         )
@@ -969,6 +1131,42 @@ def test_assembly_rejects_self_consistent_noncurrent_manifest_before_evidence() 
         )
 
 
+def test_source_resolution_failure_is_value_free_at_assembly_and_witness_boundaries(
+    monkeypatch,
+) -> None:
+    _reader, _context, _profile, _plan, decision, evidence, _attempts = (
+        _complete_no_finding_validation_case()
+    )
+    assembled = assemble_semantic_assessment_run(
+        admission=decision,
+        dimension_attempt_evidence=evidence,
+    )
+    hidden_detail = "/private/synthetic-customer/source.py"
+
+    def fail_source_resolution(_module_name: str) -> str:
+        raise SourceResolutionError(hidden_detail)
+
+    monkeypatch.setattr(
+        instrument_module,
+        "source_sha256_for_module",
+        fail_source_resolution,
+    )
+    with pytest.raises(SemanticEvaluatorError) as assembly_error:
+        assemble_semantic_assessment_run(
+            admission=decision,
+            dimension_attempt_evidence=evidence,
+        )
+    assert str(assembly_error.value) == "instrument_manifest_mismatch"
+    assert assembly_error.value.__cause__ is None
+    assert hidden_detail not in str(assembly_error.value)
+
+    with pytest.raises(SemanticEvaluatorError) as witness_error:
+        verify_laj_composition_witness(assembled.witness)
+    assert str(witness_error.value) == "composition_witness_mismatch"
+    assert witness_error.value.__cause__ is None
+    assert hidden_detail not in str(witness_error.value)
+
+
 def test_missing_dimension_requires_explicit_terminal_failed_attempt() -> None:
     _reader, _context, _profile, _plan, decision, evidence, attempts = (
         _complete_no_finding_validation_case()
@@ -989,9 +1187,8 @@ def test_missing_dimension_requires_explicit_terminal_failed_attempt() -> None:
     )
     partial = make_dimension_attempt_evidence(
         trial_id=decision.input_binding.trial_id,
-        dimension_id=first.dimension_id,
+        prompt=_prompt_for(decision, first.dimension_id),
         attempt_ordinal=1,
-        prompt_request_sha256=first.prompt_request_sha256,
         status="completed",
         raw_response_bytes=canonical_json_bytes(partial_response),
     )
@@ -1096,9 +1293,8 @@ def test_global_derived_finding_collision_has_stable_value_free_error(
     )
     collision = make_dimension_attempt_evidence(
         trial_id=decision.input_binding.trial_id,
-        dimension_id=first.dimension_id,
+        prompt=_prompt_for(decision, first.dimension_id),
         attempt_ordinal=1,
-        prompt_request_sha256=first.prompt_request_sha256,
         status="completed",
         raw_response_bytes=canonical_json_bytes(response),
     )
@@ -1168,9 +1364,8 @@ def test_global_derived_handoff_collision_has_stable_value_free_error(
     )
     collision = make_dimension_attempt_evidence(
         trial_id=decision.input_binding.trial_id,
-        dimension_id=first.dimension_id,
+        prompt=_prompt_for(decision, first.dimension_id),
         attempt_ordinal=1,
-        prompt_request_sha256=first.prompt_request_sha256,
         status="completed",
         raw_response_bytes=canonical_json_bytes(response),
     )

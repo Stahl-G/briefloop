@@ -18,6 +18,7 @@ from multi_agent_brief.semantic_evaluator.contracts import (
     AdmittedReportEvidence,
     AssessmentPlan,
     BoundedContext,
+    EvaluatorProfile,
     InputBinding,
     InstrumentConfig,
     InstrumentManifest,
@@ -42,6 +43,7 @@ from multi_agent_brief.semantic_evaluator.prompts import (
     build_dimension_prompt,
 )
 from multi_agent_brief.semantic_evaluator.serialization import (
+    canonical_json_bytes,
     canonical_model_sha256,
     canonical_sha256,
     normalized_utf8_text,
@@ -171,6 +173,70 @@ def _strict_request(request: AdmissionRequest | Mapping[str, Any]) -> AdmissionR
     return AdmissionRequest.model_validate(payload)
 
 
+def _strict_loaded_profile(
+    loaded_profile: LoadedProfile | None,
+) -> LoadedProfile:
+    try:
+        if loaded_profile is None:
+            candidate = load_profile()
+        elif isinstance(loaded_profile, LoadedProfile):
+            candidate = loaded_profile
+        else:
+            raise TypeError("profile_invalid")
+        strict_profile = EvaluatorProfile.model_validate(
+            candidate.profile.model_dump(mode="json")
+        )
+        if not isinstance(candidate.profile_sha256, str):
+            raise TypeError("profile_invalid")
+        strict = LoadedProfile(
+            profile=strict_profile,
+            profile_sha256=candidate.profile_sha256,
+        )
+        validate_loaded_profile(strict)
+        if canonical_json_bytes(strict.profile) != canonical_json_bytes(
+            candidate.profile
+        ):
+            raise ValueError("profile_invalid")
+    except (
+        AttributeError,
+        OSError,
+        RuntimeError,
+        SemanticEvaluatorError,
+        TypeError,
+        ValidationError,
+        ValueError,
+    ):
+        raise SemanticEvaluatorError("profile_invalid") from None
+    return strict
+
+
+def _strict_existing_binding(
+    existing_binding: InputBinding | None,
+) -> InputBinding | None:
+    if existing_binding is None:
+        return None
+    try:
+        if not isinstance(existing_binding, InputBinding):
+            raise TypeError("trial_identity_conflict")
+        strict = InputBinding.model_validate(existing_binding.model_dump(mode="json"))
+        if canonical_json_bytes(strict) != canonical_json_bytes(
+            existing_binding
+        ) or strict.input_binding_sha256 != canonical_model_sha256(
+            strict, exclude=("input_binding_sha256",)
+        ):
+            raise ValueError("trial_identity_conflict")
+    except (
+        AttributeError,
+        OSError,
+        RuntimeError,
+        TypeError,
+        ValidationError,
+        ValueError,
+    ):
+        raise SemanticEvaluatorError("trial_identity_conflict") from None
+    return strict
+
+
 def admit_inputs(
     request: AdmissionRequest | Mapping[str, Any],
     *,
@@ -243,11 +309,14 @@ def admit_inputs(
     ):
         return _blocked("prompt_sizer_unavailable")
 
-    profile = loaded_profile or load_profile()
     try:
-        validate_loaded_profile(profile)
-    except (SemanticEvaluatorError, OSError, RuntimeError, ValueError):
+        profile = _strict_loaded_profile(loaded_profile)
+    except SemanticEvaluatorError:
         return _blocked("profile_invalid")
+    try:
+        strict_existing_binding = _strict_existing_binding(existing_binding)
+    except SemanticEvaluatorError:
+        return _blocked("trial_identity_conflict")
     if profile.profile.language != "zh-CN":
         return _blocked("unsupported_language")
     from multi_agent_brief.semantic_evaluator.instrument import (
@@ -278,6 +347,11 @@ def admit_inputs(
         public_data_attestation=admitted_request.public_data_attestation,
         private_or_confidential_material=admitted_request.private_or_confidential_material,
     )
+    if strict_existing_binding is not None and trial_identity_conflicts(
+        strict_existing_binding,
+        binding,
+    ):
+        return _blocked("trial_identity_conflict")
     try:
         plan = build_assessment_plan(
             trial_id=admitted_request.trial_id,
@@ -311,11 +385,6 @@ def admit_inputs(
         ):
             return _blocked("input_too_long_for_full_context_instrument")
         prompts.append(prompt)
-    if existing_binding is not None and trial_identity_conflicts(
-        existing_binding,
-        binding,
-    ):
-        return _blocked("trial_identity_conflict")
     return AdmissionDecision(
         admitted=True,
         reason_codes=(),

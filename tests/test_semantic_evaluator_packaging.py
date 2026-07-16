@@ -54,6 +54,7 @@ import multi_agent_brief.semantic_evaluator.parser as parser_module
 import multi_agent_brief.semantic_evaluator.prompts as prompts_module
 from multi_agent_brief.semantic_evaluator.resources import resource_sha256
 from multi_agent_brief.semantic_evaluator.serialization import (
+    SourceResolutionError,
     canonical_json_bytes,
     canonical_json_text,
     canonical_sha256,
@@ -115,6 +116,14 @@ decision = admit_inputs(
 )
 if not decision.admitted:
     raise RuntimeError("synthetic parity admission failed")
+
+
+def prompt_for(dimension_id):
+    return next(
+        item for item in decision.prompts if item.dimension_id == dimension_id
+    )
+
+
 attempts = []
 for prompt in decision.prompts:
     units = [
@@ -137,9 +146,8 @@ for prompt in decision.prompts:
     attempts.append(
         make_dimension_attempt_evidence(
             trial_id=decision.input_binding.trial_id,
-            dimension_id=prompt.dimension_id,
+            prompt=prompt,
             attempt_ordinal=1,
-            prompt_request_sha256=prompt.request_sha256,
             status="completed",
             raw_response_bytes=canonical_json_bytes(response),
         )
@@ -169,7 +177,13 @@ def semantic_error_reason(callback):
     return "unexpected_success"
 
 
-def admission_reason(changes, *, prompt_sizer=Sizer(), existing_binding=None):
+def admission_reason(
+    changes,
+    *,
+    prompt_sizer=Sizer(),
+    existing_binding=None,
+    loaded_profile=None,
+):
     candidate = deepcopy(request)
     candidate.update(changes)
     return list(
@@ -177,6 +191,7 @@ def admission_reason(changes, *, prompt_sizer=Sizer(), existing_binding=None):
             candidate,
             prompt_sizer=prompt_sizer,
             existing_binding=existing_binding,
+            loaded_profile=loaded_profile,
         ).reason_codes
     )
 
@@ -184,11 +199,20 @@ def admission_reason(changes, *, prompt_sizer=Sizer(), existing_binding=None):
 tampered_attempt = attempts[0].model_copy(
     update={"evidence_sha256": "0" * 64}
 )
+canary_tamper_payload = attempts[0].model_dump(mode="json")
+canary_tamper_payload["forbidden_canary_values"] = []
+canary_tamper_payload["evidence_sha256"] = canonical_sha256(
+    {
+        key: value
+        for key, value in canary_tamper_payload.items()
+        if key != "evidence_sha256"
+    }
+)
+canary_tampered_attempt = attempts[0].model_copy(update=canary_tamper_payload)
 parser_attempt = make_dimension_attempt_evidence(
     trial_id=decision.input_binding.trial_id,
-    dimension_id=attempts[0].dimension_id,
+    prompt=prompt_for(attempts[0].dimension_id),
     attempt_ordinal=1,
-    prompt_request_sha256=attempts[0].prompt_request_sha256,
     status="completed",
     raw_response_bytes=b"\xff",
 )
@@ -201,9 +225,8 @@ provider_projection = assemble_semantic_assessment_run(
     dimension_attempt_evidence=[
         make_dimension_attempt_evidence(
             trial_id=decision.input_binding.trial_id,
-            dimension_id=item.dimension_id,
+            prompt=prompt_for(item.dimension_id),
             attempt_ordinal=1,
-            prompt_request_sha256=item.prompt_request_sha256,
             status="failed",
             reason_code="provider_failed",
         )
@@ -232,6 +255,25 @@ composition_payload["composition_sha256"] = canonical_sha256(
 )
 forged_composition = CompositionRecord.model_validate(composition_payload)
 different_report = b"# different synthetic parity report\n"
+original_source_hasher = instrument_module.source_sha256_for_module
+
+
+def fail_source_resolution(_module_name):
+    raise SourceResolutionError("/private/synthetic-customer/source.py")
+
+
+instrument_module.source_sha256_for_module = fail_source_resolution
+source_failure_results = {
+    "admission": admission_reason({}),
+    "assembly": semantic_error_reason(
+        lambda: assemble_semantic_assessment_run(
+            admission=decision,
+            dimension_attempt_evidence=attempts,
+        )
+    ),
+    "witness": semantic_error_reason(lambda: compose_actual_laj(assembled.witness)),
+}
+instrument_module.source_sha256_for_module = original_source_hasher
 failure_results = {
     "admission_extra": admission_reason({"unexpected": "synthetic"}),
     "admission_empty": admission_reason({"report_bytes_hex": ""}),
@@ -248,6 +290,8 @@ failure_results = {
     ),
     "admission_archive": admission_reason({"archive_root": "/tmp/synthetic"}),
     "admission_sizer": admission_reason({}, prompt_sizer=None),
+    "admission_profile_invalid": admission_reason({}, loaded_profile={}),
+    "admission_binding_invalid": admission_reason({}, existing_binding=object()),
     "admission_trial_conflict": admission_reason(
         {
             "report_bytes_hex": different_report.hex(),
@@ -259,6 +303,15 @@ failure_results = {
         lambda: assemble_semantic_assessment_run(
             admission=decision,
             dimension_attempt_evidence=[tampered_attempt, *attempts[1:]],
+        )
+    ),
+    "attempt_canary_authority": semantic_error_reason(
+        lambda: assemble_semantic_assessment_run(
+            admission=decision,
+            dimension_attempt_evidence=[
+                canary_tampered_attempt,
+                *attempts[1:],
+            ],
         )
     ),
     "parser_status": parser_projection.run.run_status,
@@ -274,6 +327,7 @@ failure_results = {
             witness=assembled.witness,
         )
     ),
+    "source_failure": source_failure_results,
 }
 wheel_root = Path(os.environ["SEMANTIC_EVALUATOR_WHEEL_ROOT"]).resolve()
 module_files = [
@@ -294,6 +348,16 @@ payload = {
         for model in SEMANTIC_EVALUATOR_CONTRACT_MODELS
     },
     "manifest": build_instrument_manifest(config).model_dump(mode="json"),
+    "prompts": [
+        {
+            "dimension_id": item.dimension_id,
+            "system_text": item.system_text,
+            "user_text": item.user_text,
+            "forbidden_canary_values": list(item.forbidden_canary_values),
+            "request_sha256": item.request_sha256,
+        }
+        for item in decision.prompts
+    ],
     "witness": assembled.witness.model_dump(mode="json"),
     "baseline": baseline.model_dump(mode="json"),
     "matched_composition": matched.model_dump(mode="json"),
