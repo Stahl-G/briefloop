@@ -36,6 +36,7 @@ from multi_agent_brief.contracts.v2 import (
     SourceCommitRequest,
     StageState,
     StageCompleteRequest,
+    TransactionReceipt,
 )
 from multi_agent_brief.control_store import (
     ControlStoreCommitOutcomeUnknown,
@@ -72,6 +73,7 @@ from multi_agent_brief.core_run_v2.recovery import (
     classify_effect_authorization,
 )
 from multi_agent_brief.core_run_v2.verifier import (
+    _AUTHORITATIVE_RECEIPT_RELATION_FAMILIES,
     CoreRunDomainVerifier,
     _CORE_EFFECT_BINDING_RULES,
     _INTAKE_EFFECT_RULES,
@@ -4478,6 +4480,104 @@ def test_core_effect_receipt_binding_table_is_exact() -> None:
         "delivery_attempt": (("delivery_attempted", 1),),
         "delivery_result": None,
     }
+    assert _AUTHORITATIVE_RECEIPT_RELATION_FAMILIES == set(
+        TransactionReceipt.model_fields
+    ) - {
+        "schema_version",
+        "transaction_id",
+        "run_id",
+        "transaction_type",
+        "prior_revision",
+        "committed_revision",
+        "committed_at",
+        "projection_status",
+        "event_ids",
+    }
+    assert {
+        effect: rule.authoritative_relation_families
+        for effect, rule in _CORE_EFFECT_BINDING_RULES.items()
+    } == {
+        "initialize": frozenset(
+            {
+                "artifact_revisions",
+                "artifact_identities",
+                "run_contract_bindings",
+                "stage_transitions",
+                "run_integrity_records",
+            }
+        ),
+        "invocation_start": frozenset(),
+        "owned_artifact_acceptance": frozenset(
+            {"artifact_revisions", "owned_artifact_submissions"}
+        ),
+        "claim_freeze": frozenset(
+            {
+                "artifact_revisions",
+                "claims",
+                "claim_source_bindings",
+                "claim_freezes",
+            }
+        ),
+        "audit_promotion": frozenset(
+            {"artifact_revisions", "owned_artifact_submissions"}
+        ),
+        "gate_evaluation": frozenset(
+            {
+                "artifact_revisions",
+                "artifact_identities",
+                "gate_evaluations",
+                "gate_findings",
+                "gate_artifact_bindings",
+            }
+        ),
+        "stage_transition": frozenset(
+            {"stage_transitions", "stage_artifact_bindings", "stage_gate_bindings"}
+        ),
+        "integrity_contamination": frozenset({"run_integrity_records"}),
+        "repair_start": frozenset({"repair_cycles"}),
+        "artifact_supersession": frozenset(
+            {
+                "artifact_revisions",
+                "owned_artifact_submissions",
+                "artifact_supersessions",
+            }
+        ),
+        "repair_complete": frozenset({"stage_transitions", "repair_completions"}),
+        "recovery_complete": frozenset({"recovery_completions"}),
+        "run_head_transition": frozenset(
+            {
+                "artifact_revisions",
+                "artifact_identities",
+                "run_contract_bindings",
+                "stage_transitions",
+                "run_integrity_records",
+                "run_head_transitions",
+            }
+        ),
+        "finalize_render": frozenset(
+            {"artifact_revisions", "artifact_identities", "finalize_renders"}
+        ),
+        "finalize_complete": frozenset(
+            {
+                "artifact_revisions",
+                "artifact_identities",
+                "stage_transitions",
+                "stage_artifact_bindings",
+                "stage_gate_bindings",
+                "finalizations",
+                "run_archives",
+                "run_archive_artifact_bindings",
+                "package_ready_records",
+                "package_artifact_bindings",
+            }
+        ),
+        "internal_approval": frozenset({"approvals", "approval_package_bindings"}),
+        "delivery_authorization": frozenset({"delivery_authorizations"}),
+        "delivery_attempt": frozenset({"delivery_attempts"}),
+        "delivery_result": frozenset(
+            {"artifact_revisions", "artifact_identities", "delivery_results"}
+        ),
+    }
     assert set(_INTAKE_EFFECT_RULES) == {
         "source_evidence_intake",
         "candidate_claims_intake",
@@ -4485,6 +4585,27 @@ def test_core_effect_receipt_binding_table_is_exact() -> None:
         "claim_drafts_intake",
         "audit_proposal_intake",
         "intake_rejection",
+    }
+    assert {
+        transaction_type: rule.authoritative_relation_families
+        for transaction_type, rule in _INTAKE_EFFECT_RULES.items()
+    } == {
+        "source_evidence_intake": frozenset(
+            {"artifact_revisions", "artifact_identities", "source_ids"}
+        ),
+        "candidate_claims_intake": frozenset(
+            {"artifact_revisions", "artifact_identities", "proposal_ids"}
+        ),
+        "screened_candidates_intake": frozenset(
+            {"artifact_revisions", "artifact_identities", "proposal_ids"}
+        ),
+        "claim_drafts_intake": frozenset(
+            {"artifact_revisions", "artifact_identities", "proposal_ids"}
+        ),
+        "audit_proposal_intake": frozenset(
+            {"artifact_revisions", "artifact_identities", "proposal_ids"}
+        ),
+        "intake_rejection": frozenset(),
     }
 
 

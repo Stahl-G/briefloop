@@ -5,6 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 from multi_agent_brief.contracts.v2 import (
+    DeliveryAttemptRecord,
     DeliveryAuthorizationRecord,
 )
 from multi_agent_brief.control_store.sqlite_store import ControlStoreSnapshot
@@ -105,6 +106,58 @@ def _unique_authorization_tip(
     return tips[0] if len(tips) == 1 else None
 
 
+def _latest_consumed_chain_attempt(
+    snapshot: ControlStoreSnapshot,
+    authorization: DeliveryAuthorizationRecord,
+) -> tuple[bool, DeliveryAttemptRecord | None]:
+    """Return the exact tuple chain's latest one-time authorization consumption."""
+
+    chain = _authorization_chain(
+        snapshot,
+        package_id=authorization.package_id,
+        target=authorization.target,
+        channel=authorization.channel,
+        recipient_fingerprint=authorization.recipient_fingerprint,
+    )
+    if not chain:
+        return True, None
+    tip = _unique_authorization_tip(chain)
+    by_id = {item.authorization_id: item for item in chain}
+    if tip is None or len(by_id) != len(chain):
+        return False, None
+    newest_to_oldest: list[str] = []
+    current: DeliveryAuthorizationRecord | None = tip
+    while current is not None:
+        if current.authorization_id in newest_to_oldest:
+            return False, None
+        newest_to_oldest.append(current.authorization_id)
+        if current.prior_authorization_id is None:
+            current = None
+        else:
+            current = by_id.get(current.prior_authorization_id)
+            if current is None:
+                return False, None
+    if set(newest_to_oldest) != set(by_id):
+        return False, None
+
+    chain_attempts = [
+        item for item in snapshot.delivery_attempts if item.authorization_id in by_id
+    ]
+    consumed_authorizations = [item.authorization_id for item in chain_attempts]
+    if len(consumed_authorizations) != len(set(consumed_authorizations)):
+        return False, None
+    if not chain_attempts:
+        return True, None
+    chain_position = {
+        authorization_id: position
+        for position, authorization_id in enumerate(reversed(newest_to_oldest))
+    }
+    return True, max(
+        chain_attempts,
+        key=lambda item: chain_position[item.authorization_id],
+    )
+
+
 def _approval_policy_complete(
     snapshot: ControlStoreSnapshot,
     *,
@@ -158,8 +211,14 @@ def _authorization_purpose_is_legal(
     snapshot: ControlStoreSnapshot,
     authorization: DeliveryAuthorizationRecord,
 ) -> bool:
+    chain_valid, latest_attempt = _latest_consumed_chain_attempt(
+        snapshot,
+        authorization,
+    )
+    if not chain_valid:
+        return False
     if authorization.purpose == "initial_attempt":
-        return authorization.retry_of_attempt_id is None
+        return authorization.retry_of_attempt_id is None and latest_attempt is None
     if authorization.retry_of_attempt_id is None:
         return False
     attempts = [
@@ -182,11 +241,17 @@ def _authorization_purpose_is_legal(
         return False
     if authorization.purpose == "result_reconciliation":
         return tip.status == "outcome_unknown"
-    return authorization.purpose == "retry_attempt" and tip.status in {
-        "draft_created",
-        "failed",
-        "outcome_unknown",
-    }
+    return (
+        authorization.purpose == "retry_attempt"
+        and latest_attempt is not None
+        and attempt.attempt_id == latest_attempt.attempt_id
+        and tip.status
+        in {
+            "draft_created",
+            "failed",
+            "outcome_unknown",
+        }
+    )
 
 
 def classify_terminal_effect_authorization(

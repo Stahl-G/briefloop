@@ -302,6 +302,45 @@ class _CoreEffectBindingRule:
     primary_event_types: frozenset[str]
     primary_family: str
     receipt_event_counts: tuple[tuple[str, int], ...] | None
+    authoritative_relation_families: frozenset[str]
+
+
+_AUTHORITATIVE_RECEIPT_RELATION_FAMILIES = frozenset(
+    {
+        "artifact_revisions",
+        "artifact_identities",
+        "source_ids",
+        "proposal_ids",
+        "run_contract_bindings",
+        "owned_artifact_submissions",
+        "stage_transitions",
+        "stage_artifact_bindings",
+        "stage_gate_bindings",
+        "claims",
+        "claim_source_bindings",
+        "claim_freezes",
+        "gate_evaluations",
+        "gate_findings",
+        "gate_artifact_bindings",
+        "run_integrity_records",
+        "repair_cycles",
+        "artifact_supersessions",
+        "repair_completions",
+        "recovery_completions",
+        "run_head_transitions",
+        "finalize_renders",
+        "finalizations",
+        "run_archives",
+        "run_archive_artifact_bindings",
+        "package_ready_records",
+        "package_artifact_bindings",
+        "approvals",
+        "approval_package_bindings",
+        "delivery_authorizations",
+        "delivery_attempts",
+        "delivery_results",
+    }
+)
 
 
 _CORE_EFFECT_BINDING_RULES = {
@@ -310,84 +349,138 @@ _CORE_EFFECT_BINDING_RULES = {
         frozenset({"run_initialized"}),
         "run_contract_binding",
         (("run_initialized", 1),),
+        frozenset(
+            {
+                "artifact_revisions",
+                "artifact_identities",
+                "run_contract_bindings",
+                "stage_transitions",
+                "run_integrity_records",
+            }
+        ),
     ),
     "invocation_start": _CoreEffectBindingRule(
         transaction_type_for("invocation_start"),
         frozenset({"role_invocation_started"}),
         "invocation",
         (("role_invocation_started", 1),),
+        frozenset(),
     ),
     "owned_artifact_acceptance": _CoreEffectBindingRule(
         transaction_type_for("owned_artifact_acceptance"),
         frozenset({"owned_artifact_accepted"}),
         "owned_artifact_submission",
         (("owned_artifact_accepted", 1),),
+        frozenset({"artifact_revisions", "owned_artifact_submissions"}),
     ),
     "claim_freeze": _CoreEffectBindingRule(
         transaction_type_for("claim_freeze"),
         frozenset({"claim_ledger_frozen"}),
         "claim_freeze",
         (("claim_ledger_frozen", 1),),
+        frozenset(
+            {
+                "artifact_revisions",
+                "claims",
+                "claim_source_bindings",
+                "claim_freezes",
+            }
+        ),
     ),
     "audit_promotion": _CoreEffectBindingRule(
         transaction_type_for("audit_promotion"),
         frozenset({"audit_proposal_promoted"}),
         "audit_submission",
         (("audit_proposal_promoted", 1),),
+        frozenset({"artifact_revisions", "owned_artifact_submissions"}),
     ),
     "gate_evaluation": _CoreEffectBindingRule(
         transaction_type_for("gate_evaluation"),
         frozenset({"quality_gate_checked"}),
         "gate_batch",
         (("quality_gate_checked", 1),),
+        frozenset(
+            {
+                "artifact_revisions",
+                "artifact_identities",
+                "gate_evaluations",
+                "gate_findings",
+                "gate_artifact_bindings",
+            }
+        ),
     ),
     "stage_transition": _CoreEffectBindingRule(
         transaction_type_for("stage_transition"),
         frozenset({"stage_status_changed", "stage_satisfied_by_topology"}),
         "stage_transition",
         None,
+        frozenset(
+            {"stage_transitions", "stage_artifact_bindings", "stage_gate_bindings"}
+        ),
     ),
     "integrity_contamination": _CoreEffectBindingRule(
         transaction_type_for("integrity_contamination"),
         frozenset({"run_integrity_contaminated"}),
         "run_integrity_record",
         (("run_integrity_contaminated", 1), ("run_blocked", 1)),
+        frozenset({"run_integrity_records"}),
     ),
     "repair_start": _CoreEffectBindingRule(
         transaction_type_for("repair_start"),
         frozenset({"repair_started"}),
         "repair_cycle",
         (("repair_started", 1),),
+        frozenset({"repair_cycles"}),
     ),
     "artifact_supersession": _CoreEffectBindingRule(
         transaction_type_for("artifact_supersession"),
         frozenset({"repair_stage_superseded"}),
         "artifact_supersession",
         (("owned_artifact_accepted", 1), ("repair_stage_superseded", 1)),
+        frozenset(
+            {
+                "artifact_revisions",
+                "owned_artifact_submissions",
+                "artifact_supersessions",
+            }
+        ),
     ),
     "repair_complete": _CoreEffectBindingRule(
         transaction_type_for("repair_complete"),
         frozenset({"repair_completed"}),
         "repair_completion",
         None,
+        frozenset({"stage_transitions", "repair_completions"}),
     ),
     "recovery_complete": _CoreEffectBindingRule(
         transaction_type_for("recovery_complete"),
         frozenset({"decision_recorded"}),
         "recovery_completion",
         (("decision_recorded", 1),),
+        frozenset({"recovery_completions"}),
     ),
     "run_head_transition": _CoreEffectBindingRule(
         transaction_type_for("run_head_transition"),
         frozenset({"run_reset"}),
         "run_head_transition",
         None,
+        frozenset(
+            {
+                "artifact_revisions",
+                "artifact_identities",
+                "run_contract_bindings",
+                "stage_transitions",
+                "run_integrity_records",
+                "run_head_transitions",
+            }
+        ),
     ),
     "finalize_render": _CoreEffectBindingRule(
         transaction_type_for("finalize_render"),
         frozenset({"owned_artifact_accepted"}),
         "finalize_render",
         (("owned_artifact_accepted", 1),),
+        frozenset({"artifact_revisions", "artifact_identities", "finalize_renders"}),
     ),
     "finalize_complete": _CoreEffectBindingRule(
         transaction_type_for("finalize_complete"),
@@ -398,24 +491,41 @@ _CORE_EFFECT_BINDING_RULES = {
             ("run_archived", 1),
             ("decision_recorded", 1),
         ),
+        frozenset(
+            {
+                "artifact_revisions",
+                "artifact_identities",
+                "stage_transitions",
+                "stage_artifact_bindings",
+                "stage_gate_bindings",
+                "finalizations",
+                "run_archives",
+                "run_archive_artifact_bindings",
+                "package_ready_records",
+                "package_artifact_bindings",
+            }
+        ),
     ),
     "internal_approval": _CoreEffectBindingRule(
         transaction_type_for("internal_approval"),
         frozenset({"human_approval_recorded"}),
         "internal_approval",
         (("human_approval_recorded", 1),),
+        frozenset({"approvals", "approval_package_bindings"}),
     ),
     "delivery_authorization": _CoreEffectBindingRule(
         transaction_type_for("delivery_authorization"),
         frozenset({"decision_recorded"}),
         "delivery_authorization",
         (("decision_recorded", 1),),
+        frozenset({"delivery_authorizations"}),
     ),
     "delivery_attempt": _CoreEffectBindingRule(
         transaction_type_for("delivery_attempt"),
         frozenset({"delivery_attempted"}),
         "delivery_attempt",
         (("delivery_attempted", 1),),
+        frozenset({"delivery_attempts"}),
     ),
     "delivery_result": _CoreEffectBindingRule(
         transaction_type_for("delivery_result"),
@@ -430,6 +540,7 @@ _CORE_EFFECT_BINDING_RULES = {
         ),
         "delivery_result",
         None,
+        frozenset({"artifact_revisions", "artifact_identities", "delivery_results"}),
     ),
 }
 
@@ -440,6 +551,7 @@ class _IntakeEffectRule:
     event_type: str
     proposal_kind: str | None
     allowed_stages: frozenset[str]
+    authoritative_relation_families: frozenset[str]
 
 
 _INTAKE_EFFECT_RULES = {
@@ -448,30 +560,35 @@ _INTAKE_EFFECT_RULES = {
         "source_evidence_committed",
         None,
         frozenset({"source-discovery"}),
+        frozenset({"artifact_revisions", "artifact_identities", "source_ids"}),
     ),
     "candidate_claims_intake": _IntakeEffectRule(
         CoreEffect.PROPOSAL_INTAKE,
         "role_proposal_committed",
         "candidate",
         frozenset({"scout"}),
+        frozenset({"artifact_revisions", "artifact_identities", "proposal_ids"}),
     ),
     "screened_candidates_intake": _IntakeEffectRule(
         CoreEffect.PROPOSAL_INTAKE,
         "role_proposal_committed",
         "screened",
         frozenset({"scout", "screener"}),
+        frozenset({"artifact_revisions", "artifact_identities", "proposal_ids"}),
     ),
     "claim_drafts_intake": _IntakeEffectRule(
         CoreEffect.PROPOSAL_INTAKE,
         "role_proposal_committed",
         "claim_drafts",
         frozenset({"claim-ledger"}),
+        frozenset({"artifact_revisions", "artifact_identities", "proposal_ids"}),
     ),
     "audit_proposal_intake": _IntakeEffectRule(
         CoreEffect.PROPOSAL_INTAKE,
         "role_proposal_committed",
         "audit",
         frozenset({"auditor"}),
+        frozenset({"artifact_revisions", "artifact_identities", "proposal_ids"}),
     ),
     "intake_rejection": _IntakeEffectRule(
         CoreEffect.INTAKE_REJECTION,
@@ -486,8 +603,26 @@ _INTAKE_EFFECT_RULES = {
                 "auditor",
             }
         ),
+        frozenset(),
     ),
 }
+
+
+def _verify_authoritative_receipt_relation_families(
+    receipt: TransactionReceipt,
+    allowed: frozenset[str],
+) -> None:
+    """Reject any receipt relation family not owned by its declared effect."""
+
+    present = frozenset(
+        family
+        for family in _AUTHORITATIVE_RECEIPT_RELATION_FAMILIES
+        if getattr(receipt, family)
+    )
+    if not allowed.issubset(_AUTHORITATIVE_RECEIPT_RELATION_FAMILIES) or not (
+        present <= allowed
+    ):
+        raise CoreRunError("control_store_integrity_invalid")
 
 
 def _verified_intake_receipt_effect(
@@ -499,6 +634,10 @@ def _verified_intake_receipt_effect(
     rule = _INTAKE_EFFECT_RULES.get(receipt.transaction_type)
     if rule is None:
         raise CoreRunError("control_store_integrity_invalid")
+    _verify_authoritative_receipt_relation_families(
+        receipt,
+        rule.authoritative_relation_families,
+    )
     events_by_id = {item.event_id: item for item in snapshot.events}
     events = [events_by_id.get(event_id) for event_id in receipt.event_ids]
     if len(events) != 1 or events[0] is None:
@@ -3250,6 +3389,10 @@ def _verified_core_receipt_binding(
         or event.transaction_id != receipt.transaction_id
     ):
         raise CoreRunError("control_store_integrity_invalid")
+    _verify_authoritative_receipt_relation_families(
+        receipt,
+        rule.authoritative_relation_families,
+    )
     _verify_core_receipt_event_set(
         snapshot,
         receipt,

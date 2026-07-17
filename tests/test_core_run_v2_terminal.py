@@ -1181,9 +1181,12 @@ def _commit_delivery_authorization(
     approval_mode: str = "internal_management_review",
     decision: str = "authorize",
     prior_authorization_id: str | None = None,
+    retry_of_attempt_id: str | None = None,
+    purpose: str = "initial_attempt",
     target: str = "local",
     channel: str = "filesystem",
     recipient_fingerprint: str = "d" * 64,
+    verify: bool = True,
 ) -> tuple[TransactionReceipt, str, DeliveryAuthorizationRecord]:
     transaction_id = f"REQ-TERMINAL-AUTHORIZATION-{sequence:03d}"
     authorization_id = f"AUTH-TERMINAL-PERSISTED-{sequence:03d}"
@@ -1195,6 +1198,8 @@ def _commit_delivery_authorization(
             "package_id": package.package_id,
             "prior_authorization_id": prior_authorization_id,
             "approval_mode": approval_mode,
+            "retry_of_attempt_id": retry_of_attempt_id,
+            "purpose": purpose,
             "decision": decision,
             "target": target,
             "channel": channel,
@@ -1213,8 +1218,8 @@ def _commit_delivery_authorization(
             package_id=package.package_id,
             prior_authorization_id=prior_authorization_id,
             approval_mode=approval_mode,
-            retry_of_attempt_id=None,
-            purpose="initial_attempt",
+            retry_of_attempt_id=retry_of_attempt_id,
+            purpose=purpose,
             decision=decision,
             target=target,
             channel=channel,
@@ -1244,12 +1249,12 @@ def _commit_delivery_authorization(
         )
         unit.put_delivery_authorization(authorization)
         unit.append_event(event)
-        receipt = unit.commit(
-            _postcommit_observer=lambda _receipt: CoreRunDomainVerifier().verify(
-                store,
-                run_id,
-            )
+        observer = (
+            (lambda _receipt: CoreRunDomainVerifier().verify(store, run_id))
+            if verify
+            else None
         )
+        receipt = unit.commit(_postcommit_observer=observer)
         assert [item.authorization_id for item in receipt.delivery_authorizations] == [
             authorization_id
         ]
@@ -1262,11 +1267,14 @@ def _commit_delivery_attempt(
     run_id: str,
     clock: object,
     authorization: DeliveryAuthorizationRecord,
+    *,
+    sequence: int = 1,
+    verify: bool = True,
 ) -> tuple[TransactionReceipt, str, DeliveryAttemptRecord]:
-    transaction_id = "REQ-TERMINAL-ATTEMPT-001"
-    attempt_id = "ATTEMPT-TERMINAL-PERSISTED-001"
-    event_id = "EVT-TERMINAL-ATTEMPT-PERSISTED-001"
-    operation_id = "LOCAL-PACKAGE-TERMINAL-001"
+    transaction_id = f"REQ-TERMINAL-ATTEMPT-{sequence:03d}"
+    attempt_id = f"ATTEMPT-TERMINAL-PERSISTED-{sequence:03d}"
+    event_id = f"EVT-TERMINAL-ATTEMPT-PERSISTED-{sequence:03d}"
+    operation_id = f"LOCAL-PACKAGE-TERMINAL-{sequence:03d}"
     connector_fingerprint = "e" * 64
     request_fingerprint = canonical_fingerprint(
         {
@@ -1316,12 +1324,12 @@ def _commit_delivery_attempt(
         )
         unit.put_delivery_attempt(attempt)
         unit.append_event(event)
-        receipt = unit.commit(
-            _postcommit_observer=lambda _receipt: CoreRunDomainVerifier().verify(
-                store,
-                run_id,
-            )
+        observer = (
+            (lambda _receipt: CoreRunDomainVerifier().verify(store, run_id))
+            if verify
+            else None
         )
+        receipt = unit.commit(_postcommit_observer=observer)
         assert [item.attempt_id for item in receipt.delivery_attempts] == [attempt_id]
         assert receipt.event_ids == [event_id]
     return receipt, request_fingerprint, attempt
@@ -1645,7 +1653,7 @@ def test_terminal_authorization_is_recordable_before_approval_but_not_consumable
         sequence=2,
         approval_mode="internal_draft",
         decision="deny",
-        prior_authorization_id=draft_authorization.authorization_id,
+        recipient_fingerprint="f" * 64,
     )
     with SQLiteControlStore.open(
         draft_workspace / "briefloop.db",
@@ -1662,6 +1670,7 @@ def test_terminal_authorization_is_recordable_before_approval_but_not_consumable
         denied_subject = replace(
             draft_subject,
             authorization_id=denied.authorization_id,
+            recipient_fingerprint=denied.recipient_fingerprint,
             attempt_id="ATTEMPT-DENIED-PREFLIGHT-001",
         )
         assert (
@@ -1685,6 +1694,208 @@ def test_terminal_authorization_is_recordable_before_approval_but_not_consumable
             ).decision
             == "deny"
         )
+
+
+def test_real_uow_rejects_undeclared_effect_bearing_relation_family(
+    tmp_path: Path,
+) -> None:
+    workspace, run_id, clock = _finalize_ready_workspace(tmp_path)
+    _render_receipt, _render_fingerprint, render = _commit_finalize_render(
+        workspace,
+        run_id,
+        clock,
+    )
+    _commit_finalize_gate(workspace, run_id, clock, render)
+    _complete_receipt, _complete_fingerprint, package = _commit_finalize_complete(
+        workspace,
+        run_id,
+        clock,
+        render,
+    )
+    transaction_id = "REQ-TERMINAL-UNDECLARED-RELATION-001"
+    authorization_id = "AUTH-TERMINAL-UNDECLARED-RELATION-001"
+    attempt_id = "ATTEMPT-TERMINAL-UNDECLARED-RELATION-001"
+    event_id = "EVT-TERMINAL-UNDECLARED-RELATION-001"
+    request_fingerprint = canonical_fingerprint(
+        {
+            "effect_kind": "delivery_authorization",
+            "authorization_id": authorization_id,
+            "package_id": package.package_id,
+        }
+    )
+    authorization = _record(
+        DeliveryAuthorizationRecord,
+        authorization_id=authorization_id,
+        run_id=run_id,
+        package_id=package.package_id,
+        prior_authorization_id=None,
+        approval_mode="internal_management_review",
+        retry_of_attempt_id=None,
+        purpose="initial_attempt",
+        decision="authorize",
+        target="local",
+        channel="filesystem",
+        recipient_fingerprint="d" * 64,
+        actor_id="HUMAN-TERMINAL-001",
+        reason="Synthetic authorization with an undeclared attempt relation",
+        recorded_at=core_fixture.NOW,
+        authorization_event_id=event_id,
+        accepted_transaction_id=transaction_id,
+        request_fingerprint=request_fingerprint,
+    )
+    attempt = _record(
+        DeliveryAttemptRecord,
+        attempt_id=attempt_id,
+        run_id=run_id,
+        package_id=package.package_id,
+        authorization_id=authorization_id,
+        target=authorization.target,
+        channel=authorization.channel,
+        recipient_fingerprint=authorization.recipient_fingerprint,
+        connector_operation_id="LOCAL-PACKAGE-UNDECLARED-RELATION-001",
+        connector_request_fingerprint="e" * 64,
+        created_at=core_fixture.NOW,
+        attempt_event_id=event_id,
+        accepted_transaction_id=transaction_id,
+        request_fingerprint=request_fingerprint,
+    )
+    event = _terminal_event(
+        event_id=event_id,
+        run_id=run_id,
+        transaction_id=transaction_id,
+        event_type="decision_recorded",
+        reason="delivery authorization with undeclared effect relation",
+        fingerprint=request_fingerprint,
+        effect_kind="delivery_authorization",
+        primary_record_id=authorization_id,
+    )
+    with SQLiteControlStore.open(workspace / "briefloop.db", clock=clock) as store:
+        before = store.load_snapshot(run_id)
+        unit = store.begin(
+            run_id,
+            transaction_id,
+            transaction_type_for("delivery_authorization"),
+            before.store_revision,
+        )
+        unit.put_delivery_authorization(authorization)
+        unit.put_delivery_attempt(attempt)
+        unit.append_event(event)
+        receipt = unit.commit()
+        assert [item.authorization_id for item in receipt.delivery_authorizations] == [
+            authorization_id
+        ]
+        assert [item.attempt_id for item in receipt.delivery_attempts] == [attempt_id]
+        assert store.current_revision == before.store_revision + 1
+        with pytest.raises(CoreRunError) as error:
+            CoreRunDomainVerifier().verify(store, run_id)
+        assert error.value.code == "control_store_integrity_invalid"
+
+
+def test_second_initial_attempt_is_denied_at_both_real_uow_prefixes(
+    tmp_path: Path,
+) -> None:
+    workspace, run_id, clock = _finalize_ready_workspace(tmp_path)
+    _render_receipt, _render_fingerprint, render = _commit_finalize_render(
+        workspace,
+        run_id,
+        clock,
+    )
+    _commit_finalize_gate(workspace, run_id, clock, render)
+    _complete_receipt, _complete_fingerprint, package = _commit_finalize_complete(
+        workspace,
+        run_id,
+        clock,
+        render,
+    )
+    _first_auth_receipt, _first_auth_fingerprint, first_authorization = (
+        _commit_delivery_authorization(
+            workspace,
+            run_id,
+            clock,
+            package,
+            approval_mode="internal_draft",
+        )
+    )
+    _first_attempt_receipt, _first_attempt_fingerprint, first_attempt = (
+        _commit_delivery_attempt(
+            workspace,
+            run_id,
+            clock,
+            first_authorization,
+        )
+    )
+    second_auth_receipt, _second_auth_fingerprint, second_authorization = (
+        _commit_delivery_authorization(
+            workspace,
+            run_id,
+            clock,
+            package,
+            sequence=2,
+            approval_mode="internal_draft",
+            prior_authorization_id=first_authorization.authorization_id,
+            verify=False,
+        )
+    )
+    second_attempt_receipt, _second_attempt_fingerprint, second_attempt = (
+        _commit_delivery_attempt(
+            workspace,
+            run_id,
+            clock,
+            second_authorization,
+            sequence=2,
+            verify=False,
+        )
+    )
+
+    authorization_subject = TerminalEffectSubject(
+        package_id=package.package_id,
+        approval_mode=second_authorization.approval_mode,
+        authorization_id=second_authorization.authorization_id,
+        prior_authorization_id=second_authorization.prior_authorization_id,
+        retry_of_attempt_id=second_authorization.retry_of_attempt_id,
+        purpose=second_authorization.purpose,
+        decision=second_authorization.decision,
+        target=second_authorization.target,
+        channel=second_authorization.channel,
+        recipient_fingerprint=second_authorization.recipient_fingerprint,
+    )
+    attempt_subject = TerminalEffectSubject(
+        package_id=package.package_id,
+        authorization_id=second_authorization.authorization_id,
+        target=second_attempt.target,
+        channel=second_attempt.channel,
+        recipient_fingerprint=second_attempt.recipient_fingerprint,
+        attempt_id=second_attempt.attempt_id,
+        connector_operation_id=second_attempt.connector_operation_id,
+    )
+    with SQLiteControlStore.open(workspace / "briefloop.db", clock=clock) as store:
+        history = store.load_history()
+        authorization_pre = history.snapshot_at_revision(
+            run_id,
+            second_auth_receipt.prior_revision,
+        )
+        attempt_pre = history.snapshot_at_revision(
+            run_id,
+            second_attempt_receipt.prior_revision,
+        )
+        assert first_attempt in authorization_pre.delivery_attempts
+        with pytest.raises(CoreRunError, match="terminal_effect_invalid"):
+            classify_terminal_effect_authorization(
+                authorization_pre,
+                CoreEffect.DELIVERY_AUTHORIZE,
+                authorization_subject,
+            ).require_allowed()
+        with pytest.raises(CoreRunError, match="terminal_effect_invalid"):
+            classify_terminal_effect_authorization(
+                attempt_pre,
+                CoreEffect.DELIVERY_ATTEMPT,
+                attempt_subject,
+            ).require_allowed()
+        revision = store.current_revision
+        with pytest.raises(CoreRunError) as error:
+            CoreRunDomainVerifier().verify(store, run_id)
+        assert error.value.code == "historical_prefix_invalid"
+        assert store.current_revision == revision
 
 
 def test_result_observation_uses_attempt_receipt_not_later_auth_or_approval(
@@ -1720,7 +1931,7 @@ def test_result_observation_uses_attempt_receipt_not_later_auth_or_approval(
         package,
         sequence=2,
         decision="deny",
-        prior_authorization_id=authorization.authorization_id,
+        recipient_fingerprint="f" * 64,
     )
     _commit_internal_approval(
         workspace,
