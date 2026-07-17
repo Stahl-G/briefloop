@@ -5208,7 +5208,7 @@ def test_historical_snapshot_prefix_excludes_future_rows_and_replays_old_request
             )
 
 
-def test_future_legacy_delivery_is_ignored_by_prefix_but_blocks_current_verify(
+def test_unowned_legacy_delivery_blocks_every_historical_prefix_and_replay(
     tmp_path: Path,
 ) -> None:
     workspace = _workspace(tmp_path)
@@ -5272,20 +5272,128 @@ def test_future_legacy_delivery_is_ignored_by_prefix_but_blocks_current_verify(
         unit.commit()
 
         history = store.load_history()
-        CoreRunDomainVerifier().verify_history(history, through_revision=1)
         initialization = history.transactions[0]
-        binding = history.snapshot_at_revision(RUN_ID, 1).run_contract_bindings[0]
-        replay = resolve_core_replay(
-            store,
-            run_id=RUN_ID,
-            request_id=initialization.transaction_id,
-            request_fingerprint=binding.request_fingerprint,
-        )
-        assert replay is not None
-        assert replay.receipt == initialization
+        prefix = history.snapshot_at_revision(RUN_ID, 1)
+        assert not prefix.deliveries
+        binding = prefix.run_contract_bindings[0]
+        with pytest.raises(CoreRunError, match="historical_prefix_invalid"):
+            CoreRunDomainVerifier().verify_history(history, through_revision=1)
+        before_replay = store.current_revision
+        with pytest.raises(CoreRunError, match="historical_prefix_invalid"):
+            resolve_core_replay(
+                store,
+                run_id=RUN_ID,
+                request_id=initialization.transaction_id,
+                request_fingerprint=binding.request_fingerprint,
+            )
+        assert store.current_revision == before_replay
         with pytest.raises(CoreRunError) as error:
             CoreRunDomainVerifier().verify(store, RUN_ID)
         assert error.value.code == "historical_prefix_invalid"
+
+
+def test_exact_replay_rejects_legacy_delivery_hidden_in_core_receipt(
+    tmp_path: Path,
+) -> None:
+    workspace = _workspace(tmp_path)
+    service = _initialize(workspace)
+    checked = service.doctor_check(
+        _record(
+            IntegrityCheckRequest,
+            request_id="REQ-DOCTOR-HIDDEN-DELIVERY",
+            run_id=RUN_ID,
+            expected_store_revision=_store_revision(workspace),
+        )
+    )
+    assert checked.status == "committed", checked.to_dict()
+
+    request_id = "REQ-INVOKE-HIDDEN-LEGACY-DELIVERY"
+    with SQLiteControlStore.open(workspace / "briefloop.db", clock=CLOCK) as store:
+        before = store.load_snapshot(RUN_ID)
+        request = _record(
+            InvocationStartRequest,
+            request_id=request_id,
+            run_id=RUN_ID,
+            stage_id="source-discovery",
+            role_id="source-planner",
+            runtime="operator",
+            expected_store_revision=before.store_revision,
+        )
+        request_fingerprint = canonical_fingerprint(
+            request.model_dump(mode="json", exclude_unset=False)
+        )
+        invocation_id = derived_id("INV", request_id, request_fingerprint)
+        event_id = derived_id("EVT-INVOKE", request_id, request_fingerprint)
+        invocation = _record(
+            Invocation,
+            invocation_id=invocation_id,
+            run_id=RUN_ID,
+            role_id=request.role_id,
+            runtime=request.runtime,
+            status="active",
+            started_at=NOW,
+        )
+        event = _record(
+            EventEnvelope,
+            event_id=event_id,
+            run_id=RUN_ID,
+            event_type="role_invocation_started",
+            created_at=NOW,
+            actor="system",
+            transaction_id=request_id,
+            stage_id=request.stage_id,
+            artifact_id=None,
+            decision="continue",
+            reason="role invocation started",
+            metadata={},
+            core_run_binding=CoreRunEventBinding.model_validate(
+                {
+                    "request_id": request_id,
+                    "request_fingerprint": request_fingerprint,
+                    "effect_kind": "invocation_start",
+                    "primary_record_id": invocation_id,
+                    "outcome": "committed",
+                },
+                strict=True,
+            ),
+        )
+        artifact_revision = before.artifact_revisions[0]
+        hidden_delivery = _record(
+            Delivery,
+            delivery_id="DEL-HIDDEN-CORE-RECEIPT-001",
+            run_id=RUN_ID,
+            artifact_id=artifact_revision.artifact_id,
+            artifact_revision=artifact_revision.revision,
+            approval_id=None,
+            status="succeeded",
+            target="local",
+            channel="hidden-test",
+            created_at=NOW,
+            completed_at=NOW,
+        )
+        unit = store.begin(
+            RUN_ID,
+            request_id,
+            transaction_type_for("invocation_start"),
+            before.store_revision,
+        )
+        unit.put_invocation(invocation)
+        unit.put_delivery(hidden_delivery)
+        unit.append_event(event)
+        receipt = unit.commit()
+        committed_revision = store.current_revision
+        assert receipt.committed_revision == committed_revision
+
+        with pytest.raises(CoreRunError, match="historical_prefix_invalid"):
+            CoreRunDomainVerifier().verify(store, RUN_ID)
+        with pytest.raises(CoreRunError, match="historical_prefix_invalid"):
+            resolve_core_replay(
+                store,
+                run_id=RUN_ID,
+                request_id=request_id,
+                request_fingerprint=request_fingerprint,
+            )
+        assert store.current_revision == committed_revision
 
 
 def test_finalize_render_prefix_is_bound_to_current_audit_promotion_lineage(

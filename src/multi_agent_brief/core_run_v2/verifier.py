@@ -1069,6 +1069,15 @@ def _integrity_contamination_binding_fingerprint(
     )
 
 
+def _require_no_unowned_legacy_deliveries(
+    history: ControlStoreHistory,
+) -> None:
+    """Reject legacy Delivery rows that have no receipt-owned revision."""
+
+    if any(snapshot.deliveries for snapshot in history.snapshots):
+        raise CoreRunError("historical_prefix_invalid")
+
+
 class CoreRunDomainVerifier:
     """Replay business legality from one structurally verified Store snapshot."""
 
@@ -1081,8 +1090,7 @@ class CoreRunDomainVerifier:
             history = store.load_history()
         except Exception as exc:
             raise CoreRunError("control_store_integrity_invalid") from exc
-        if any(snapshot.deliveries for snapshot in history.snapshots):
-            raise CoreRunError("historical_prefix_invalid")
+        _require_no_unowned_legacy_deliveries(history)
         try:
             snapshot = history.snapshot_at_revision(run_id, history.store_revision)
         except Exception as exc:
@@ -1112,6 +1120,7 @@ class CoreRunDomainVerifier:
     ) -> None:
         """Verify every committed receipt prefix without consulting final tips."""
 
+        _require_no_unowned_legacy_deliveries(history)
         limit = history.store_revision if through_revision is None else through_revision
         receipts = [
             item for item in history.transactions if item.committed_revision <= limit
