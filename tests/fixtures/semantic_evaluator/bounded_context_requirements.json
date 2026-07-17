@@ -1,0 +1,20 @@
+[
+  {
+    "requirement_id": "REQ-001",
+    "type": "must_answer",
+    "text": "分别说明当前状态与下一步边界。",
+    "source_locator": "brief:B000001"
+  },
+  {
+    "requirement_id": "REQ-002",
+    "type": "must_not_claim",
+    "text": "不得声称工程候选已经验证有效或获得 GO。",
+    "source_locator": "brief:B000002"
+  },
+  {
+    "requirement_id": "REQ-003",
+    "type": "audience_need",
+    "text": "研究负责人需要看到明确的 HOLD 原因。",
+    "source_locator": "brief:B000003"
+  }
+]
