@@ -56,12 +56,16 @@ from multi_agent_brief.core_run_v2.policy import (
     derived_id,
     transaction_type_for,
 )
+from multi_agent_brief.core_run_v2.recovery import CoreEffect
 from multi_agent_brief.core_run_v2.terminal import (
+    TerminalEffectSubject,
+    classify_terminal_effect_authorization,
     classify_terminal_legality,
     classify_terminal_state,
 )
 from multi_agent_brief.core_run_v2.verifier import (
     CoreRunDomainVerifier,
+    _verified_core_receipt_binding,
     resolve_core_replay,
 )
 from multi_agent_brief.quality_gates.contract import GATE_IDS
@@ -150,7 +154,9 @@ def _commit_finalize_render(
             ],
             reader_clean_status="pass",
             policy_result_fingerprint="a" * 64,
-            run_contract_fingerprint=before.run_contract_bindings[0].contract_fingerprint,
+            run_contract_fingerprint=before.run_contract_bindings[
+                0
+            ].contract_fingerprint,
             created_at=core_fixture.NOW,
             render_event_id=event_id,
             accepted_transaction_id=transaction_id,
@@ -198,9 +204,9 @@ def _commit_finalize_render(
             )
         )
         assert receipt.event_ids == [event_id]
-        assert [(item.artifact_id, item.revision) for item in receipt.artifact_revisions] == [
-            (reader_revision.artifact_id, reader_revision.revision)
-        ]
+        assert [
+            (item.artifact_id, item.revision) for item in receipt.artifact_revisions
+        ] == [(reader_revision.artifact_id, reader_revision.revision)]
         assert [item.render_id for item in receipt.finalize_renders] == [render_id]
     return receipt, request_fingerprint, render
 
@@ -406,9 +412,7 @@ def _commit_finalize_gate(
                 item.blocking_level == "blocking" for item in selected_findings
             )
             status = forced_status or (
-                "fail"
-                if blocking
-                else ("warning" if selected_findings else "pass")
+                "fail" if blocking else ("warning" if selected_findings else "pass")
             )
             evaluations.append(
                 _record(
@@ -435,25 +439,28 @@ def _commit_finalize_gate(
                     request_fingerprint=request_fingerprint,
                 )
             )
-        report_bytes = canonical_json_bytes(
-            {
-                "schema_version": "briefloop.gate_report.v2",
-                "run_id": run_id,
-                "stage_id": "finalize",
-                "gate_batch_id": batch_id,
-                "policy_version": policy_version,
-                "run_contract_fingerprint": verified.binding.contract_fingerprint,
-                "input_artifacts": input_hashes,
-                "evaluations": [
-                    item.model_dump(mode="json", exclude_unset=False)
-                    for item in evaluations
-                ],
-                "findings": [
-                    item.model_dump(mode="json", exclude_unset=False)
-                    for item in findings
-                ],
-            }
-        ) + b"\n"
+        report_bytes = (
+            canonical_json_bytes(
+                {
+                    "schema_version": "briefloop.gate_report.v2",
+                    "run_id": run_id,
+                    "stage_id": "finalize",
+                    "gate_batch_id": batch_id,
+                    "policy_version": policy_version,
+                    "run_contract_fingerprint": verified.binding.contract_fingerprint,
+                    "input_artifacts": input_hashes,
+                    "evaluations": [
+                        item.model_dump(mode="json", exclude_unset=False)
+                        for item in evaluations
+                    ],
+                    "findings": [
+                        item.model_dump(mode="json", exclude_unset=False)
+                        for item in findings
+                    ],
+                }
+            )
+            + b"\n"
+        )
         report_contract = next(
             item
             for item in verified.artifacts
@@ -538,11 +545,8 @@ def _commit_finalize_gate(
             item.evaluation_id for item in evaluations
         }
         assert {
-            (item.evaluation_id, item.finding_id)
-            for item in receipt.gate_findings
-        } == {
-            (item.evaluation_id, item.finding_id) for item in findings
-        }
+            (item.evaluation_id, item.finding_id) for item in receipt.gate_findings
+        } == {(item.evaluation_id, item.finding_id) for item in findings}
         assert {
             (item.evaluation_id, item.position)
             for item in receipt.gate_artifact_bindings
@@ -615,21 +619,24 @@ def _commit_finalize_complete(
             current_revisions.values(),
             key=lambda item: (item.artifact_id, item.revision),
         )
-        archive_bytes = canonical_json_bytes(
-            {
-                "schema_version": "briefloop.core_v2_run_archive.v1",
-                "run_id": run_id,
-                "finalization_id": finalization_id,
-                "artifacts": [
-                    {
-                        "artifact_id": item.artifact_id,
-                        "revision": item.revision,
-                        "sha256": item.sha256,
-                    }
-                    for item in ordered_current
-                ],
-            }
-        ) + b"\n"
+        archive_bytes = (
+            canonical_json_bytes(
+                {
+                    "schema_version": "briefloop.core_v2_run_archive.v1",
+                    "run_id": run_id,
+                    "finalization_id": finalization_id,
+                    "artifacts": [
+                        {
+                            "artifact_id": item.artifact_id,
+                            "revision": item.revision,
+                            "sha256": item.sha256,
+                        }
+                        for item in ordered_current
+                    ],
+                }
+            )
+            + b"\n"
+        )
         archive_revision = _record(
             ArtifactRevision,
             run_id=run_id,
@@ -647,26 +654,29 @@ def _commit_finalize_complete(
             current_revisions[(item.artifact_id, item.revision)]
             for item in render.reader_artifacts
         ]
-        package_bytes = canonical_json_bytes(
-            {
-                "schema_version": "briefloop.core_v2_package_manifest.v1",
-                "run_id": run_id,
-                "finalization_id": finalization_id,
-                "archive": {
-                    "artifact_id": archive_revision.artifact_id,
-                    "revision": archive_revision.revision,
-                    "sha256": archive_revision.sha256,
-                },
-                "reader_artifacts": [
-                    {
-                        "artifact_id": item.artifact_id,
-                        "revision": item.revision,
-                        "sha256": item.sha256,
-                    }
-                    for item in reader_revisions
-                ],
-            }
-        ) + b"\n"
+        package_bytes = (
+            canonical_json_bytes(
+                {
+                    "schema_version": "briefloop.core_v2_package_manifest.v1",
+                    "run_id": run_id,
+                    "finalization_id": finalization_id,
+                    "archive": {
+                        "artifact_id": archive_revision.artifact_id,
+                        "revision": archive_revision.revision,
+                        "sha256": archive_revision.sha256,
+                    },
+                    "reader_artifacts": [
+                        {
+                            "artifact_id": item.artifact_id,
+                            "revision": item.revision,
+                            "sha256": item.sha256,
+                        }
+                        for item in reader_revisions
+                    ],
+                }
+            )
+            + b"\n"
+        )
         package_revision = _record(
             ArtifactRevision,
             run_id=run_id,
@@ -692,7 +702,9 @@ def _commit_finalize_complete(
             result_status="complete",
             result_revision=finalize_state.revision + 1,
             reason="Finalize Gate passed and immutable package was created",
-            run_contract_fingerprint=before.run_contract_bindings[0].contract_fingerprint,
+            run_contract_fingerprint=before.run_contract_bindings[
+                0
+            ].contract_fingerprint,
             actor="system",
             producer_invocation_id=None,
             producer_tool_id="core-v2-finalize-complete",
@@ -778,10 +790,7 @@ def _commit_finalize_complete(
             if item.evaluation_id == first_gate_id
         }
         consumed_revisions.update(
-            {
-                (item.artifact_id, item.revision): item
-                for item in reader_revisions
-            }
+            {(item.artifact_id, item.revision): item for item in reader_revisions}
         )
         transition_inputs = sorted(
             [
@@ -938,29 +947,22 @@ def _commit_finalize_complete(
         assert [
             (item.transition_id, item.position)
             for item in receipt.stage_artifact_bindings
-        ] == [
-            (transition_id, position) for position in range(len(transition_inputs))
-        ]
+        ] == [(transition_id, position) for position in range(len(transition_inputs))]
         assert {
-            (item.transition_id, item.gate_id)
-            for item in receipt.stage_gate_bindings
+            (item.transition_id, item.gate_id) for item in receipt.stage_gate_bindings
         } == {(transition_id, item.gate_id) for item in selected_gates}
         assert [item.archive_id for item in receipt.run_archives] == [archive_id]
         assert [
             (item.archive_id, item.position)
             for item in receipt.run_archive_artifact_bindings
-        ] == [
-            (archive_id, position) for position in range(len(ordered_current))
-        ]
+        ] == [(archive_id, position) for position in range(len(ordered_current))]
         assert [item.package_id for item in receipt.package_ready_records] == [
             package_id
         ]
         assert [
             (item.package_id, item.position)
             for item in receipt.package_artifact_bindings
-        ] == [
-            (package_id, position) for position in range(len(package_members))
-        ]
+        ] == [(package_id, position) for position in range(len(package_members))]
         assert receipt.event_ids == [
             final_event_id,
             archive_event_id,
@@ -1029,6 +1031,54 @@ def test_finalize_complete_persists_exact_membership_and_replays_after_restart(
         assert store.current_revision == revision
 
 
+@pytest.mark.parametrize("blocking", (False, True))
+def test_finalize_gate_event_decision_must_equal_batch_blocking(
+    tmp_path: Path,
+    blocking: bool,
+) -> None:
+    workspace, run_id, clock = _finalize_ready_workspace(tmp_path)
+    _render_receipt, _render_fingerprint, render = _commit_finalize_render(
+        workspace,
+        run_id,
+        clock,
+    )
+    receipt, _fingerprint, _evaluations = _commit_finalize_gate(
+        workspace,
+        run_id,
+        clock,
+        render,
+    )
+    with SQLiteControlStore.open(workspace / "briefloop.db", clock=clock) as store:
+        snapshot = store.load_snapshot(run_id)
+    evaluations = snapshot.gate_evaluations
+    if blocking:
+        first = next(
+            item
+            for item in evaluations
+            if item.accepted_transaction_id == receipt.transaction_id
+        )
+        evaluations = tuple(
+            item.model_copy(update={"status": "fail", "blocking": True})
+            if item.evaluation_id == first.evaluation_id
+            else item
+            for item in evaluations
+        )
+        forged_decision = "continue"
+    else:
+        forged_decision = "block"
+    events = tuple(
+        item.model_copy(update={"decision": forged_decision})
+        if item.event_id in receipt.event_ids
+        else item
+        for item in snapshot.events
+    )
+    with pytest.raises(CoreRunError, match="control_store_integrity_invalid"):
+        _verified_core_receipt_binding(
+            replace(snapshot, gate_evaluations=evaluations, events=events),
+            receipt,
+        )
+
+
 class _InjectedTerminalFailure(RuntimeError):
     pass
 
@@ -1040,16 +1090,18 @@ def _commit_internal_approval(
     package: PackageReadyRecord,
     *,
     fail_before_commit: bool = False,
+    sequence: int = 1,
+    decision: str = "approve",
 ) -> tuple[TransactionReceipt, str, Approval]:
-    transaction_id = "REQ-TERMINAL-APPROVAL-001"
-    approval_id = "APPROVAL-TERMINAL-PERSISTED-001"
-    event_id = "EVT-TERMINAL-APPROVAL-PERSISTED-001"
+    transaction_id = f"REQ-TERMINAL-APPROVAL-{sequence:03d}"
+    approval_id = f"APPROVAL-TERMINAL-PERSISTED-{sequence:03d}"
+    event_id = f"EVT-TERMINAL-APPROVAL-PERSISTED-{sequence:03d}"
     request_fingerprint = canonical_fingerprint(
         {
             "effect_kind": "internal_approval",
             "approval_id": approval_id,
             "package_id": package.package_id,
-            "decision": "approve",
+            "decision": decision,
         }
     )
 
@@ -1069,13 +1121,12 @@ def _commit_internal_approval(
             run_id=run_id,
             mode="internal_management_review",
             role="content_owner",
-            decision="approve",
+            decision=decision,
             reason="Synthetic internal content-owner approval",
             actor_id="HUMAN-TERMINAL-001",
             recorded_at=core_fixture.NOW,
             boundary=(
-                "internal_review_approval_records_only_not_public_release_"
-                "authorization"
+                "internal_review_approval_records_only_not_public_release_authorization"
             ),
             event_id=event_id,
         )
@@ -1125,18 +1176,28 @@ def _commit_delivery_authorization(
     run_id: str,
     clock: object,
     package: PackageReadyRecord,
+    *,
+    sequence: int = 1,
+    approval_mode: str = "internal_management_review",
+    decision: str = "authorize",
+    prior_authorization_id: str | None = None,
+    target: str = "local",
+    channel: str = "filesystem",
+    recipient_fingerprint: str = "d" * 64,
 ) -> tuple[TransactionReceipt, str, DeliveryAuthorizationRecord]:
-    transaction_id = "REQ-TERMINAL-AUTHORIZATION-001"
-    authorization_id = "AUTH-TERMINAL-PERSISTED-001"
-    event_id = "EVT-TERMINAL-AUTHORIZATION-PERSISTED-001"
-    recipient_fingerprint = "d" * 64
+    transaction_id = f"REQ-TERMINAL-AUTHORIZATION-{sequence:03d}"
+    authorization_id = f"AUTH-TERMINAL-PERSISTED-{sequence:03d}"
+    event_id = f"EVT-TERMINAL-AUTHORIZATION-PERSISTED-{sequence:03d}"
     request_fingerprint = canonical_fingerprint(
         {
             "effect_kind": "delivery_authorization",
             "authorization_id": authorization_id,
             "package_id": package.package_id,
-            "target": "local",
-            "channel": "filesystem",
+            "prior_authorization_id": prior_authorization_id,
+            "approval_mode": approval_mode,
+            "decision": decision,
+            "target": target,
+            "channel": channel,
             "recipient_fingerprint": recipient_fingerprint,
         }
     )
@@ -1150,13 +1211,13 @@ def _commit_delivery_authorization(
             authorization_id=authorization_id,
             run_id=run_id,
             package_id=package.package_id,
-            prior_authorization_id=None,
-            approval_mode="internal_management_review",
+            prior_authorization_id=prior_authorization_id,
+            approval_mode=approval_mode,
             retry_of_attempt_id=None,
             purpose="initial_attempt",
-            decision="authorize",
-            target="local",
-            channel="filesystem",
+            decision=decision,
+            target=target,
+            channel=channel,
             recipient_fingerprint=recipient_fingerprint,
             actor_id="HUMAN-TERMINAL-001",
             reason="Authorize deterministic local package preparation",
@@ -1189,9 +1250,9 @@ def _commit_delivery_authorization(
                 run_id,
             )
         )
-        assert [
-            item.authorization_id for item in receipt.delivery_authorizations
-        ] == [authorization_id]
+        assert [item.authorization_id for item in receipt.delivery_authorizations] == [
+            authorization_id
+        ]
         assert receipt.event_ids == [event_id]
     return receipt, request_fingerprint, authorization
 
@@ -1261,9 +1322,7 @@ def _commit_delivery_attempt(
                 run_id,
             )
         )
-        assert [item.attempt_id for item in receipt.delivery_attempts] == [
-            attempt_id
-        ]
+        assert [item.attempt_id for item in receipt.delivery_attempts] == [attempt_id]
         assert receipt.event_ids == [event_id]
     return receipt, request_fingerprint, attempt
 
@@ -1437,6 +1496,405 @@ def test_terminal_effect_chain_rolls_back_replays_and_survives_restart(
             )
         assert error.value.code == "submission_replay_conflict"
         assert store.current_revision == revision
+
+
+def test_terminal_authorization_is_recordable_before_approval_but_not_consumable(
+    tmp_path: Path,
+) -> None:
+    workspace, run_id, clock = _finalize_ready_workspace(tmp_path / "required")
+    _render_receipt, _render_fingerprint, render = _commit_finalize_render(
+        workspace,
+        run_id,
+        clock,
+    )
+    _commit_finalize_gate(workspace, run_id, clock, render)
+    _complete_receipt, _complete_fingerprint, package = _commit_finalize_complete(
+        workspace,
+        run_id,
+        clock,
+        render,
+    )
+    _authorization_receipt, _authorization_fingerprint, authorization = (
+        _commit_delivery_authorization(workspace, run_id, clock, package)
+    )
+    attempt_subject = TerminalEffectSubject(
+        package_id=package.package_id,
+        authorization_id=authorization.authorization_id,
+        target=authorization.target,
+        channel=authorization.channel,
+        recipient_fingerprint=authorization.recipient_fingerprint,
+        attempt_id="ATTEMPT-PREFLIGHT-001",
+        connector_operation_id="CONNECTOR-PREFLIGHT-001",
+    )
+    with SQLiteControlStore.open(workspace / "briefloop.db", clock=clock) as store:
+        pre_approval = CoreRunDomainVerifier().verify(store, run_id).snapshot
+        assert classify_terminal_legality(pre_approval).terminal_state == (
+            "approval_incomplete"
+        )
+        assert (
+            classify_terminal_effect_authorization(
+                pre_approval,
+                CoreEffect.DELIVERY_ATTEMPT,
+                attempt_subject,
+            ).decision
+            == "deny"
+        )
+        revision = store.current_revision
+        assert store.current_revision == revision
+
+    _commit_internal_approval(workspace, run_id, clock, package)
+    _commit_delivery_attempt(workspace, run_id, clock, authorization)
+
+    draft_workspace, draft_run_id, draft_clock = _finalize_ready_workspace(
+        tmp_path / "draft"
+    )
+    _draft_render_receipt, _draft_render_fingerprint, draft_render = (
+        _commit_finalize_render(draft_workspace, draft_run_id, draft_clock)
+    )
+    _commit_finalize_gate(draft_workspace, draft_run_id, draft_clock, draft_render)
+    _draft_complete_receipt, _draft_complete_fingerprint, draft_package = (
+        _commit_finalize_complete(
+            draft_workspace,
+            draft_run_id,
+            draft_clock,
+            draft_render,
+        )
+    )
+    _draft_auth_receipt, _draft_auth_fingerprint, draft_authorization = (
+        _commit_delivery_authorization(
+            draft_workspace,
+            draft_run_id,
+            draft_clock,
+            draft_package,
+            approval_mode="internal_draft",
+        )
+    )
+    draft_subject = TerminalEffectSubject(
+        package_id=draft_package.package_id,
+        authorization_id=draft_authorization.authorization_id,
+        target=draft_authorization.target,
+        channel=draft_authorization.channel,
+        recipient_fingerprint=draft_authorization.recipient_fingerprint,
+        attempt_id="ATTEMPT-DRAFT-PREFLIGHT-001",
+        connector_operation_id="CONNECTOR-DRAFT-PREFLIGHT-001",
+    )
+    with SQLiteControlStore.open(
+        draft_workspace / "briefloop.db",
+        clock=draft_clock,
+    ) as store:
+        draft_snapshot = (
+            CoreRunDomainVerifier()
+            .verify(
+                store,
+                draft_run_id,
+            )
+            .snapshot
+        )
+        draft_legality = classify_terminal_legality(draft_snapshot)
+        assert draft_legality.required_roles == ()
+        assert draft_legality.approval_complete is True
+        assert (
+            classify_terminal_effect_authorization(
+                draft_snapshot,
+                CoreEffect.DELIVERY_ATTEMPT,
+                draft_subject,
+            ).decision
+            == "allow"
+        )
+        assert (
+            classify_terminal_effect_authorization(
+                draft_snapshot,
+                CoreEffect.DELIVERY_ATTEMPT,
+                replace(
+                    draft_subject,
+                    recipient_fingerprint="0" * 64,
+                ),
+            ).decision
+            == "deny"
+        )
+    _draft_attempt_receipt, _draft_attempt_fingerprint, draft_attempt = (
+        _commit_delivery_attempt(
+            draft_workspace,
+            draft_run_id,
+            draft_clock,
+            draft_authorization,
+        )
+    )
+    collision_attempt = draft_attempt.model_copy(
+        update={
+            "attempt_id": "ATTEMPT-UNRELATED-COLLISION-001",
+            "authorization_id": "AUTH-UNRELATED-COLLISION-001",
+        }
+    )
+    assert (
+        classify_terminal_effect_authorization(
+            replace(draft_snapshot, delivery_attempts=(collision_attempt,)),
+            CoreEffect.DELIVERY_ATTEMPT,
+            replace(
+                draft_subject,
+                connector_operation_id=collision_attempt.connector_operation_id,
+            ),
+        ).decision
+        == "deny"
+    )
+    _deny_receipt, _deny_fingerprint, denied = _commit_delivery_authorization(
+        draft_workspace,
+        draft_run_id,
+        draft_clock,
+        draft_package,
+        sequence=2,
+        approval_mode="internal_draft",
+        decision="deny",
+        prior_authorization_id=draft_authorization.authorization_id,
+    )
+    with SQLiteControlStore.open(
+        draft_workspace / "briefloop.db",
+        clock=draft_clock,
+    ) as store:
+        denied_snapshot = (
+            CoreRunDomainVerifier()
+            .verify(
+                store,
+                draft_run_id,
+            )
+            .snapshot
+        )
+        denied_subject = replace(
+            draft_subject,
+            authorization_id=denied.authorization_id,
+            attempt_id="ATTEMPT-DENIED-PREFLIGHT-001",
+        )
+        assert (
+            classify_terminal_effect_authorization(
+                denied_snapshot,
+                CoreEffect.DELIVERY_ATTEMPT,
+                denied_subject,
+            ).decision
+            == "deny"
+        )
+        used_subject = replace(
+            draft_subject,
+            attempt_id="ATTEMPT-REUSE-PREFLIGHT-001",
+            connector_operation_id=draft_attempt.connector_operation_id,
+        )
+        assert (
+            classify_terminal_effect_authorization(
+                denied_snapshot,
+                CoreEffect.DELIVERY_ATTEMPT,
+                used_subject,
+            ).decision
+            == "deny"
+        )
+
+
+def test_result_observation_uses_attempt_receipt_not_later_auth_or_approval(
+    tmp_path: Path,
+) -> None:
+    workspace, run_id, clock = _finalize_ready_workspace(tmp_path)
+    _render_receipt, _render_fingerprint, render = _commit_finalize_render(
+        workspace,
+        run_id,
+        clock,
+    )
+    _commit_finalize_gate(workspace, run_id, clock, render)
+    _complete_receipt, _complete_fingerprint, package = _commit_finalize_complete(
+        workspace,
+        run_id,
+        clock,
+        render,
+    )
+    _commit_internal_approval(workspace, run_id, clock, package)
+    _auth_receipt, _auth_fingerprint, authorization = _commit_delivery_authorization(
+        workspace, run_id, clock, package
+    )
+    _attempt_receipt, _attempt_fingerprint, attempt = _commit_delivery_attempt(
+        workspace,
+        run_id,
+        clock,
+        authorization,
+    )
+    _commit_delivery_authorization(
+        workspace,
+        run_id,
+        clock,
+        package,
+        sequence=2,
+        decision="deny",
+        prior_authorization_id=authorization.authorization_id,
+    )
+    _commit_internal_approval(
+        workspace,
+        run_id,
+        clock,
+        package,
+        sequence=2,
+        decision="reject",
+    )
+    result_receipt, _result_fingerprint, result = _commit_delivery_result(
+        workspace,
+        run_id,
+        clock,
+        package,
+        attempt,
+    )
+    with SQLiteControlStore.open(workspace / "briefloop.db", clock=clock) as store:
+        snapshot = CoreRunDomainVerifier().verify(store, run_id).snapshot
+        assert result in snapshot.delivery_results
+        assert result_receipt.committed_revision == snapshot.store_revision
+
+
+def test_result_reconciliation_consumes_current_exact_authorization_once(
+    tmp_path: Path,
+) -> None:
+    workspace, run_id, clock = _finalize_ready_workspace(tmp_path)
+    _render_receipt, _render_fingerprint, render = _commit_finalize_render(
+        workspace,
+        run_id,
+        clock,
+    )
+    _commit_finalize_gate(workspace, run_id, clock, render)
+    _complete_receipt, _complete_fingerprint, package = _commit_finalize_complete(
+        workspace,
+        run_id,
+        clock,
+        render,
+    )
+    _auth_receipt, _auth_fingerprint, authorization = _commit_delivery_authorization(
+        workspace,
+        run_id,
+        clock,
+        package,
+        approval_mode="internal_draft",
+        target="gmail",
+        channel="email",
+        recipient_fingerprint="a" * 64,
+    )
+    _attempt_receipt, _attempt_fingerprint, attempt = _commit_delivery_attempt(
+        workspace,
+        run_id,
+        clock,
+        authorization,
+    )
+    with SQLiteControlStore.open(workspace / "briefloop.db", clock=clock) as store:
+        snapshot = CoreRunDomainVerifier().verify(store, run_id).snapshot
+
+    unknown = _record(
+        DeliveryResultRecord,
+        result_id="RESULT-RECONCILIATION-UNKNOWN-001",
+        run_id=run_id,
+        attempt_id=attempt.attempt_id,
+        prior_result_id=None,
+        reconciliation_authorization_id=None,
+        status="outcome_unknown",
+        adapter_id="gmail-adapter",
+        adapter_version="V2",
+        connector_operation_id=attempt.connector_operation_id,
+        evidence_sha256="b" * 64,
+        evidence_artifact=None,
+        recorded_at=core_fixture.NOW,
+        result_event_id="EVT-RECONCILIATION-UNKNOWN-001",
+        accepted_transaction_id="REQ-RECONCILIATION-UNKNOWN-001",
+        request_fingerprint="c" * 64,
+    )
+    reconciliation = authorization.model_copy(
+        update={
+            "authorization_id": "AUTH-RECONCILIATION-001",
+            "prior_authorization_id": authorization.authorization_id,
+            "retry_of_attempt_id": attempt.attempt_id,
+            "purpose": "result_reconciliation",
+            "authorization_event_id": "EVT-AUTH-RECONCILIATION-001",
+            "accepted_transaction_id": "REQ-AUTH-RECONCILIATION-001",
+            "request_fingerprint": "d" * 64,
+        }
+    )
+    reconciliation_snapshot = replace(
+        snapshot,
+        delivery_authorizations=(authorization, reconciliation),
+        delivery_results=(unknown,),
+    )
+    retry_subject = TerminalEffectSubject(
+        package_id=package.package_id,
+        approval_mode="internal_draft",
+        authorization_id="AUTH-RETRY-LEGAL-001",
+        prior_authorization_id=authorization.authorization_id,
+        retry_of_attempt_id=attempt.attempt_id,
+        purpose="retry_attempt",
+        decision="authorize",
+        target=authorization.target,
+        channel=authorization.channel,
+        recipient_fingerprint=authorization.recipient_fingerprint,
+    )
+    assert (
+        classify_terminal_effect_authorization(
+            replace(snapshot, delivery_results=(unknown,)),
+            CoreEffect.DELIVERY_AUTHORIZE,
+            retry_subject,
+        ).decision
+        == "allow"
+    )
+    assert (
+        classify_terminal_effect_authorization(
+            replace(snapshot, delivery_results=(unknown,)),
+            CoreEffect.DELIVERY_AUTHORIZE,
+            replace(retry_subject, retry_of_attempt_id="ATTEMPT-WRONG-001"),
+        ).decision
+        == "deny"
+    )
+    subject = TerminalEffectSubject(
+        package_id=package.package_id,
+        attempt_id=attempt.attempt_id,
+        connector_operation_id=attempt.connector_operation_id,
+        prior_result_id=unknown.result_id,
+        reconciliation_authorization_id=reconciliation.authorization_id,
+        result_status="succeeded",
+    )
+    assert (
+        classify_terminal_effect_authorization(
+            reconciliation_snapshot,
+            CoreEffect.DELIVERY_RESULT,
+            subject,
+        ).decision
+        == "allow"
+    )
+    assert (
+        classify_terminal_effect_authorization(
+            reconciliation_snapshot,
+            CoreEffect.DELIVERY_RESULT,
+            replace(subject, attempt_id="ATTEMPT-WRONG-001"),
+        ).decision
+        == "deny"
+    )
+
+    consumed = unknown.model_copy(
+        update={
+            "result_id": "RESULT-RECONCILIATION-CONSUMED-001",
+            "prior_result_id": unknown.result_id,
+            "reconciliation_authorization_id": reconciliation.authorization_id,
+            "status": "succeeded",
+        }
+    )
+    assert (
+        classify_terminal_effect_authorization(
+            replace(reconciliation_snapshot, delivery_results=(unknown, consumed)),
+            CoreEffect.DELIVERY_RESULT,
+            subject,
+        ).decision
+        == "deny"
+    )
+    required_approval = reconciliation.model_copy(
+        update={"approval_mode": "internal_management_review"}
+    )
+    assert (
+        classify_terminal_effect_authorization(
+            replace(
+                reconciliation_snapshot,
+                delivery_authorizations=(authorization, required_approval),
+            ),
+            CoreEffect.DELIVERY_RESULT,
+            subject,
+        ).decision
+        == "deny"
+    )
 
 
 def _initialized_workspace(tmp_path: Path) -> Path:
@@ -1767,9 +2225,7 @@ def _forge_terminal_membership(post: object, target: str, forgery: str):
         forged_bindings = bindings[:-1]
     elif forgery == "substitution":
         forged_bindings = (
-            bindings[0].model_copy(
-                update={"artifact_id": bindings[1].artifact_id}
-            ),
+            bindings[0].model_copy(update={"artifact_id": bindings[1].artifact_id}),
             *bindings[1:],
         )
     elif forgery == "duplicate":
@@ -1819,9 +2275,7 @@ def _forge_terminal_membership(post: object, target: str, forgery: str):
         return replace(
             post,
             package_ready_records=(
-                record.model_copy(
-                    update={"artifact_count": record.artifact_count + 1}
-                ),
+                record.model_copy(update={"artifact_count": record.artifact_count + 1}),
             ),
         )
     elif forgery == "aggregate_hash":
@@ -1829,17 +2283,13 @@ def _forge_terminal_membership(post: object, target: str, forgery: str):
             record = post.run_archives[0]
             return replace(
                 post,
-                run_archives=(
-                    record.model_copy(update={"manifest_sha256": "0" * 64}),
-                ),
+                run_archives=(record.model_copy(update={"manifest_sha256": "0" * 64}),),
             )
         record = post.package_ready_records[0]
         return replace(
             post,
             package_ready_records=(
-                record.model_copy(
-                    update={"package_manifest_sha256": "0" * 64}
-                ),
+                record.model_copy(update={"package_manifest_sha256": "0" * 64}),
             ),
         )
     else:

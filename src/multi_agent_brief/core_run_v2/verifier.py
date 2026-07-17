@@ -54,8 +54,17 @@ from .policy import (
     run_contract_fingerprint,
     transaction_type_for,
 )
-from .recovery import classify_recovery_legality
-from .terminal import classify_terminal_legality
+from .recovery import (
+    CoreEffect,
+    CoreEffectSubject,
+    classify_effect_authorization,
+    classify_recovery_legality,
+)
+from .terminal import (
+    TerminalEffectSubject,
+    classify_terminal_effect_authorization,
+    classify_terminal_legality,
+)
 
 
 @dataclass(frozen=True)
@@ -258,9 +267,7 @@ def classify_human_assisted_analyst_route(
     if active_analyst_role is not None:
         if analyst_status != "ready":
             raise CoreRunError("control_store_integrity_invalid")
-        allowed_family = (
-            "snapshot" if active_analyst_role == "analyst" else "writer"
-        )
+        allowed_family = "snapshot" if active_analyst_role == "analyst" else "writer"
         if route_family not in {"undecided", allowed_family}:
             raise CoreRunError("control_store_integrity_invalid")
     if active_editor:
@@ -427,6 +434,475 @@ _CORE_EFFECT_BINDING_RULES = {
 }
 
 
+@dataclass(frozen=True)
+class _IntakeEffectRule:
+    effect: CoreEffect
+    event_type: str
+    proposal_kind: str | None
+    allowed_stages: frozenset[str]
+
+
+_INTAKE_EFFECT_RULES = {
+    "source_evidence_intake": _IntakeEffectRule(
+        CoreEffect.SOURCE_INTAKE,
+        "source_evidence_committed",
+        None,
+        frozenset({"source-discovery"}),
+    ),
+    "candidate_claims_intake": _IntakeEffectRule(
+        CoreEffect.PROPOSAL_INTAKE,
+        "role_proposal_committed",
+        "candidate",
+        frozenset({"scout"}),
+    ),
+    "screened_candidates_intake": _IntakeEffectRule(
+        CoreEffect.PROPOSAL_INTAKE,
+        "role_proposal_committed",
+        "screened",
+        frozenset({"scout", "screener"}),
+    ),
+    "claim_drafts_intake": _IntakeEffectRule(
+        CoreEffect.PROPOSAL_INTAKE,
+        "role_proposal_committed",
+        "claim_drafts",
+        frozenset({"claim-ledger"}),
+    ),
+    "audit_proposal_intake": _IntakeEffectRule(
+        CoreEffect.PROPOSAL_INTAKE,
+        "role_proposal_committed",
+        "audit",
+        frozenset({"auditor"}),
+    ),
+    "intake_rejection": _IntakeEffectRule(
+        CoreEffect.INTAKE_REJECTION,
+        "intake_rejected",
+        None,
+        frozenset(
+            {
+                "source-discovery",
+                "scout",
+                "screener",
+                "claim-ledger",
+                "auditor",
+            }
+        ),
+    ),
+}
+
+
+def _verified_intake_receipt_effect(
+    snapshot: ControlStoreSnapshot,
+    receipt: TransactionReceipt,
+) -> tuple[CoreEffect, CoreEffectSubject]:
+    """Verify one authoritative PR-3 intake receipt and derive its effect."""
+
+    rule = _INTAKE_EFFECT_RULES.get(receipt.transaction_type)
+    if rule is None:
+        raise CoreRunError("control_store_integrity_invalid")
+    events_by_id = {item.event_id: item for item in snapshot.events}
+    events = [events_by_id.get(event_id) for event_id in receipt.event_ids]
+    if len(events) != 1 or events[0] is None:
+        raise CoreRunError("control_store_integrity_invalid")
+    event = events[0]
+    binding = event.intake_binding
+    if (
+        event.run_id != receipt.run_id
+        or event.transaction_id != receipt.transaction_id
+        or event.event_type != rule.event_type
+        or event.stage_id not in rule.allowed_stages
+        or event.core_run_binding is not None
+        or binding is None
+        or binding.request_id != receipt.transaction_id
+    ):
+        raise CoreRunError("control_store_integrity_invalid")
+    if rule.effect is CoreEffect.INTAKE_REJECTION:
+        if (
+            binding.outcome != "rejected"
+            or binding.reason_code is None
+            or receipt.source_ids
+            or receipt.proposal_ids
+            or receipt.artifact_revisions
+        ):
+            raise CoreRunError("control_store_integrity_invalid")
+        return rule.effect, CoreEffectSubject(stage_id=event.stage_id)
+    if binding.outcome != "committed" or binding.reason_code is not None:
+        raise CoreRunError("control_store_integrity_invalid")
+    if rule.effect is CoreEffect.SOURCE_INTAKE:
+        if binding.source_id is None or binding.proposal_id is not None:
+            raise CoreRunError("control_store_integrity_invalid")
+        records = [
+            item for item in snapshot.sources if item.source_id == binding.source_id
+        ]
+        if len(records) != 1:
+            raise CoreRunError("control_store_integrity_invalid")
+        record = records[0]
+        expected_revisions = {
+            (record.content_artifact_id, record.content_artifact_revision)
+        }
+        if (
+            record.raw_payload_artifact_id is not None
+            and record.raw_payload_artifact_revision is not None
+        ):
+            expected_revisions.add(
+                (
+                    record.raw_payload_artifact_id,
+                    record.raw_payload_artifact_revision,
+                )
+            )
+        if (
+            receipt.source_ids != [record.source_id]
+            or receipt.proposal_ids
+            or record.accepted_transaction_id != receipt.transaction_id
+            or record.acquisition_event_id != event.event_id
+            or record.request_fingerprint != binding.request_fingerprint
+            or record.invocation_id != binding.invocation_id
+            or {
+                (item.artifact_id, item.revision) for item in receipt.artifact_revisions
+            }
+            != expected_revisions
+        ):
+            raise CoreRunError("control_store_integrity_invalid")
+        return (
+            rule.effect,
+            CoreEffectSubject(
+                stage_id=event.stage_id,
+                artifact_id=record.content_artifact_id,
+            ),
+        )
+    if binding.proposal_id is None or binding.source_id is not None:
+        raise CoreRunError("control_store_integrity_invalid")
+    records = [
+        item
+        for item in snapshot.accepted_proposals
+        if item.proposal_id == binding.proposal_id
+    ]
+    if len(records) != 1:
+        raise CoreRunError("control_store_integrity_invalid")
+    record = records[0]
+    if (
+        receipt.proposal_ids != [record.proposal_id]
+        or receipt.source_ids
+        or record.proposal_kind != rule.proposal_kind
+        or record.owner_stage_id != event.stage_id
+        or record.accepted_transaction_id != receipt.transaction_id
+        or record.accepted_event_id != event.event_id
+        or record.request_fingerprint != binding.request_fingerprint
+        or record.invocation_id != binding.invocation_id
+        or [(item.artifact_id, item.revision) for item in receipt.artifact_revisions]
+        != [(record.artifact_id, record.artifact_revision)]
+    ):
+        raise CoreRunError("control_store_integrity_invalid")
+    return (
+        rule.effect,
+        CoreEffectSubject(
+            stage_id=event.stage_id,
+            artifact_id=record.artifact_id,
+        ),
+    )
+
+
+def _receipt_effect_authorization_subject(
+    snapshot: ControlStoreSnapshot,
+    receipt: TransactionReceipt,
+    event: EventEnvelope,
+    binding: CoreRunEventBinding,
+) -> tuple[CoreEffect, CoreEffectSubject, TerminalEffectSubject | None]:
+    """Map one exact receipt primary to its closed semantic effect vocabulary."""
+
+    effect_kind = binding.effect_kind
+    primary_id = binding.primary_record_id
+    stage_subject = CoreEffectSubject(stage_id=event.stage_id)
+    if effect_kind == "initialize":
+        return CoreEffect.INITIALIZE, CoreEffectSubject(), None
+    if effect_kind == "invocation_start":
+        records = [
+            item for item in snapshot.invocations if item.invocation_id == primary_id
+        ]
+        if len(records) != 1 or event.stage_id is None:
+            raise CoreRunError("control_store_integrity_invalid")
+        return CoreEffect.INVOCATION_START, stage_subject, None
+    if effect_kind in {"owned_artifact_acceptance", "audit_promotion"}:
+        records = [
+            item
+            for item in snapshot.owned_artifact_submissions
+            if item.submission_id == primary_id
+        ]
+        if (
+            len(records) != 1
+            or event.stage_id is None
+            or records[0].owner_stage_id != event.stage_id
+        ):
+            raise CoreRunError("control_store_integrity_invalid")
+        effect = (
+            CoreEffect.AUDIT_PROPOSAL_PROMOTE
+            if effect_kind == "audit_promotion"
+            else CoreEffect.OWNED_ARTIFACT_ACCEPT
+        )
+        return (
+            effect,
+            CoreEffectSubject(
+                stage_id=event.stage_id,
+                artifact_id=records[0].artifact_id,
+            ),
+            None,
+        )
+    if effect_kind == "claim_freeze":
+        if event.stage_id != "claim-ledger":
+            raise CoreRunError("control_store_integrity_invalid")
+        return CoreEffect.CLAIM_FREEZE, stage_subject, None
+    if effect_kind == "gate_evaluation":
+        evaluation_ids = {item.evaluation_id for item in receipt.gate_evaluations}
+        records = [
+            item
+            for item in snapshot.gate_evaluations
+            if item.evaluation_id in evaluation_ids
+        ]
+        stage_ids = {item.stage_id for item in records}
+        if (
+            not evaluation_ids
+            or len(records) != len(evaluation_ids)
+            or len(stage_ids) != 1
+            or event.stage_id not in stage_ids
+        ):
+            raise CoreRunError("control_store_integrity_invalid")
+        stage_id = next(iter(stage_ids))
+        if stage_id == "auditor":
+            effect = CoreEffect.GATE_EVALUATE
+        elif stage_id == "finalize":
+            effect = CoreEffect.FINALIZE_GATE
+        else:
+            raise CoreRunError("control_store_integrity_invalid")
+        return effect, CoreEffectSubject(stage_id=stage_id), None
+    if effect_kind == "stage_transition":
+        records = [
+            item
+            for item in snapshot.stage_transitions
+            if item.transition_id == primary_id
+        ]
+        if (
+            len(records) != 1
+            or event.stage_id is None
+            or records[0].stage_id != event.stage_id
+        ):
+            raise CoreRunError("control_store_integrity_invalid")
+        return CoreEffect.STAGE_COMPLETE, stage_subject, None
+    if effect_kind == "integrity_contamination":
+        try:
+            integrity_revision = int(primary_id)
+        except ValueError as exc:
+            raise CoreRunError("control_store_integrity_invalid") from exc
+        records = [
+            item
+            for item in snapshot.run_integrity_records
+            if item.integrity_revision == integrity_revision
+        ]
+        if len(records) != 1:
+            raise CoreRunError("control_store_integrity_invalid")
+        return (
+            CoreEffect.INTEGRITY_CONTAMINATION,
+            CoreEffectSubject(
+                contamination_revision=integrity_revision,
+                artifact_id=records[0].affected_artifact_id,
+            ),
+            None,
+        )
+    if effect_kind == "repair_start":
+        records = [
+            item for item in snapshot.repair_cycles if item.repair_id == primary_id
+        ]
+        if len(records) != 1:
+            raise CoreRunError("control_store_integrity_invalid")
+        return (
+            CoreEffect.REPAIR_START,
+            CoreEffectSubject(
+                contamination_revision=records[0].contamination_revision,
+                stage_id=records[0].owner_stage_id,
+                repair_id=records[0].repair_id,
+            ),
+            None,
+        )
+    if effect_kind == "artifact_supersession":
+        records = [
+            item
+            for item in snapshot.artifact_supersessions
+            if item.supersession_id == primary_id
+        ]
+        if len(records) != 1:
+            raise CoreRunError("control_store_integrity_invalid")
+        record = records[0]
+        effect = (
+            CoreEffect.ARTIFACT_REVERT
+            if record.mode == "revert"
+            else CoreEffect.ARTIFACT_SUPERSEDE
+        )
+        return (
+            effect,
+            CoreEffectSubject(
+                artifact_id=record.successor_artifact.artifact_id,
+                repair_id=record.repair_id,
+            ),
+            None,
+        )
+    if effect_kind == "repair_complete":
+        records = [
+            item
+            for item in snapshot.repair_completions
+            if item.repair_completion_id == primary_id
+        ]
+        if len(records) != 1:
+            raise CoreRunError("control_store_integrity_invalid")
+        return (
+            CoreEffect.REPAIR_COMPLETE,
+            CoreEffectSubject(
+                contamination_revision=records[0].contamination_revision,
+                repair_id=records[0].repair_id,
+                repair_completion_id=records[0].repair_completion_id,
+            ),
+            None,
+        )
+    if effect_kind == "recovery_complete":
+        records = [
+            item
+            for item in snapshot.recovery_completions
+            if item.recovery_id == primary_id
+        ]
+        if len(records) != 1:
+            raise CoreRunError("control_store_integrity_invalid")
+        return (
+            CoreEffect.RECOVERY_COMPLETE,
+            CoreEffectSubject(
+                contamination_revision=records[0].contamination_revision,
+                repair_completion_id=records[0].repair_completion_id,
+            ),
+            None,
+        )
+    if effect_kind == "run_head_transition":
+        return CoreEffect.RUN_RESET, CoreEffectSubject(), None
+    if effect_kind == "finalize_render":
+        records = [
+            item for item in snapshot.finalize_renders if item.render_id == primary_id
+        ]
+        if len(records) != 1 or event.stage_id != "finalize":
+            raise CoreRunError("control_store_integrity_invalid")
+        return CoreEffect.FINALIZE_RENDER, stage_subject, None
+    if effect_kind == "finalize_complete":
+        records = [
+            item
+            for item in snapshot.finalizations
+            if item.finalization_id == primary_id
+        ]
+        transitions = [
+            item
+            for item in snapshot.stage_transitions
+            if len(records) == 1
+            and item.transition_id == records[0].finalize_transition_id
+        ]
+        if (
+            len(records) != 1
+            or len(transitions) != 1
+            or transitions[0].stage_id != "finalize"
+            or event.stage_id != "finalize"
+        ):
+            raise CoreRunError("control_store_integrity_invalid")
+        return CoreEffect.FINALIZE_COMPLETE, stage_subject, None
+    if effect_kind == "internal_approval":
+        records = [
+            item for item in snapshot.approvals if item.approval_id == primary_id
+        ]
+        package_bindings = [
+            item
+            for item in snapshot.approval_package_bindings
+            if item.approval_id == primary_id
+            and item.accepted_transaction_id == receipt.transaction_id
+        ]
+        if len(records) != 1 or len(package_bindings) != 1:
+            raise CoreRunError("control_store_integrity_invalid")
+        record = records[0]
+        return (
+            CoreEffect.INTERNAL_APPROVAL,
+            CoreEffectSubject(),
+            TerminalEffectSubject(
+                package_id=package_bindings[0].package_id,
+                approval_mode=record.mode,
+                approval_role=record.role,
+            ),
+        )
+    if effect_kind == "delivery_authorization":
+        records = [
+            item
+            for item in snapshot.delivery_authorizations
+            if item.authorization_id == primary_id
+        ]
+        if len(records) != 1:
+            raise CoreRunError("control_store_integrity_invalid")
+        record = records[0]
+        return (
+            CoreEffect.DELIVERY_AUTHORIZE,
+            CoreEffectSubject(),
+            TerminalEffectSubject(
+                package_id=record.package_id,
+                approval_mode=record.approval_mode,
+                authorization_id=record.authorization_id,
+                prior_authorization_id=record.prior_authorization_id,
+                retry_of_attempt_id=record.retry_of_attempt_id,
+                purpose=record.purpose,
+                decision=record.decision,
+                target=record.target,
+                channel=record.channel,
+                recipient_fingerprint=record.recipient_fingerprint,
+            ),
+        )
+    if effect_kind == "delivery_attempt":
+        records = [
+            item for item in snapshot.delivery_attempts if item.attempt_id == primary_id
+        ]
+        if len(records) != 1:
+            raise CoreRunError("control_store_integrity_invalid")
+        record = records[0]
+        return (
+            CoreEffect.DELIVERY_ATTEMPT,
+            CoreEffectSubject(),
+            TerminalEffectSubject(
+                package_id=record.package_id,
+                authorization_id=record.authorization_id,
+                target=record.target,
+                channel=record.channel,
+                recipient_fingerprint=record.recipient_fingerprint,
+                attempt_id=record.attempt_id,
+                connector_operation_id=record.connector_operation_id,
+            ),
+        )
+    if effect_kind == "delivery_result":
+        records = [
+            item for item in snapshot.delivery_results if item.result_id == primary_id
+        ]
+        if len(records) != 1:
+            raise CoreRunError("control_store_integrity_invalid")
+        record = records[0]
+        attempts = [
+            item
+            for item in snapshot.delivery_attempts
+            if item.attempt_id == record.attempt_id
+        ]
+        if len(attempts) != 1:
+            raise CoreRunError("control_store_integrity_invalid")
+        return (
+            CoreEffect.DELIVERY_RESULT,
+            CoreEffectSubject(),
+            TerminalEffectSubject(
+                package_id=attempts[0].package_id,
+                attempt_id=record.attempt_id,
+                connector_operation_id=record.connector_operation_id,
+                prior_result_id=record.prior_result_id,
+                reconciliation_authorization_id=(
+                    record.reconciliation_authorization_id
+                ),
+                result_status=record.status,
+            ),
+        )
+    raise CoreRunError("control_store_integrity_invalid")
+
+
 def _integrity_observation_fingerprint(record: Any) -> str:
     return canonical_fingerprint(
         {
@@ -501,9 +977,7 @@ class CoreRunDomainVerifier:
         receipts = [
             item for item in history.transactions if item.committed_revision <= limit
         ]
-        if [item.committed_revision for item in receipts] != list(
-            range(1, limit + 1)
-        ):
+        if [item.committed_revision for item in receipts] != list(range(1, limit + 1)):
             raise CoreRunError("historical_prefix_invalid")
         for receipt in receipts:
             try:
@@ -562,6 +1036,76 @@ class CoreRunDomainVerifier:
         snapshot: ControlStoreSnapshot,
         receipt: TransactionReceipt,
     ) -> None:
+        if receipt.transaction_type in _INTAKE_EFFECT_RULES:
+            if (
+                receipt.committed_revision <= 1
+                or receipt.prior_revision != receipt.committed_revision - 1
+            ):
+                raise CoreRunError("historical_prefix_invalid")
+            effect, subject = _verified_intake_receipt_effect(snapshot, receipt)
+            try:
+                pre = history.snapshot_at_revision(
+                    receipt.run_id,
+                    receipt.committed_revision - 1,
+                )
+            except Exception as exc:
+                raise CoreRunError("historical_prefix_invalid") from exc
+            classify_effect_authorization(pre, effect, subject).require_allowed()
+            recovery = classify_recovery_legality(snapshot)
+            terminal = classify_terminal_legality(snapshot)
+            if recovery.state == "invalid" or terminal.terminal_state == "invalid":
+                raise CoreRunError("historical_prefix_invalid")
+            return
+        if not receipt.transaction_type.startswith("core-v2-"):
+            raise CoreRunError("historical_prefix_invalid")
+        event, binding = _verified_core_receipt_binding(snapshot, receipt)
+        effect, subject, terminal_subject = _receipt_effect_authorization_subject(
+            snapshot,
+            receipt,
+            event,
+            binding,
+        )
+        if effect is CoreEffect.INITIALIZE:
+            if receipt.committed_revision != 1 or receipt.prior_revision != 0:
+                raise CoreRunError("historical_prefix_invalid")
+        else:
+            if (
+                receipt.committed_revision <= 1
+                or receipt.prior_revision != receipt.committed_revision - 1
+            ):
+                raise CoreRunError("historical_prefix_invalid")
+            if effect is CoreEffect.RUN_RESET:
+                self._verify_reset_history(history, snapshot, receipt)
+                transition_id = binding.primary_record_id
+                transitions = [
+                    item
+                    for item in snapshot.run_head_transitions
+                    if item.head_transition_id == transition_id
+                ]
+                if len(transitions) != 1:
+                    raise CoreRunError("reset_history_invalid")
+                pre_run_id = transitions[0].predecessor_run_id
+            else:
+                pre_run_id = receipt.run_id
+            try:
+                pre = history.snapshot_at_revision(
+                    pre_run_id,
+                    receipt.committed_revision - 1,
+                )
+            except Exception as exc:
+                raise CoreRunError("historical_prefix_invalid") from exc
+            classify_effect_authorization(
+                pre,
+                effect,
+                subject,
+            ).require_allowed()
+            if terminal_subject is not None:
+                classify_terminal_effect_authorization(
+                    pre,
+                    effect,
+                    terminal_subject,
+                ).require_allowed()
+
         recovery = classify_recovery_legality(snapshot)
         if recovery.state == "invalid":
             raise CoreRunError("historical_prefix_invalid")
@@ -569,7 +1113,8 @@ class CoreRunDomainVerifier:
         if terminal.terminal_state == "invalid":
             raise CoreRunError("historical_prefix_invalid")
         if receipt.run_head_transitions:
-            self._verify_reset_history(history, snapshot, receipt)
+            if effect is not CoreEffect.RUN_RESET:
+                raise CoreRunError("historical_prefix_invalid")
         if receipt.finalize_renders:
             self._verify_finalize_render_prefix(history, snapshot, receipt)
         if (
@@ -587,10 +1132,7 @@ class CoreRunDomainVerifier:
         post: ControlStoreSnapshot,
         receipt: TransactionReceipt,
     ) -> None:
-        if (
-            receipt.committed_revision <= 1
-            or len(receipt.run_head_transitions) != 1
-        ):
+        if receipt.committed_revision <= 1 or len(receipt.run_head_transitions) != 1:
             raise CoreRunError("reset_history_invalid")
         transition_ref = receipt.run_head_transitions[0]
         transitions = [
@@ -621,7 +1163,9 @@ class CoreRunDomainVerifier:
             or post_head is None
             or post_head.current_run_id != transition.successor_run_id
             or post.run.run_id != transition.successor_run_id
-            or any(item.run_id != transition.successor_run_id for item in post.transactions)
+            or any(
+                item.run_id != transition.successor_run_id for item in post.transactions
+            )
         ):
             raise CoreRunError("reset_history_invalid")
 
@@ -635,7 +1179,9 @@ class CoreRunDomainVerifier:
             raise CoreRunError("historical_prefix_invalid")
         render_ref = receipt.finalize_renders[0]
         renders = [
-            item for item in post.finalize_renders if item.render_id == render_ref.render_id
+            item
+            for item in post.finalize_renders
+            if item.render_id == render_ref.render_id
         ]
         if len(renders) != 1:
             raise CoreRunError("historical_prefix_invalid")
@@ -686,8 +1232,7 @@ class CoreRunDomainVerifier:
             or audit_report.current_revision != render.audit_report.revision
             or any(key not in post_revisions for key in expected_reader_refs)
             or any(
-                key[0] in TERMINAL_INTERNAL_ARTIFACT_IDS
-                for key in expected_reader_refs
+                key[0] in TERMINAL_INTERNAL_ARTIFACT_IDS for key in expected_reader_refs
             )
         ):
             raise CoreRunError("historical_prefix_invalid")
@@ -723,9 +1268,7 @@ class CoreRunDomainVerifier:
         ]
         archives = [item for item in post.run_archives if item.archive_id == archive_id]
         packages = [
-            item
-            for item in post.package_ready_records
-            if item.package_id == package_id
+            item for item in post.package_ready_records if item.package_id == package_id
         ]
         if len(finalizations) != 1 or len(archives) != 1 or len(packages) != 1:
             raise CoreRunError("archive_membership_invalid")
@@ -735,8 +1278,7 @@ class CoreRunDomainVerifier:
         if (
             receipt.transaction_type != transaction_type_for("finalize_complete")
             or [
-                (item.artifact_id, item.revision)
-                for item in receipt.artifact_revisions
+                (item.artifact_id, item.revision) for item in receipt.artifact_revisions
             ]
             != [
                 ("core_v2_run_archive", 1),
@@ -826,7 +1368,9 @@ class CoreRunDomainVerifier:
         archive_bytes = canonical_json_bytes(archive_payload) + b"\n"
 
         renders = [
-            item for item in pre.finalize_renders if item.render_id == finalization.render_id
+            item
+            for item in pre.finalize_renders
+            if item.render_id == finalization.render_id
         ]
         if len(renders) != 1:
             raise CoreRunError("package_membership_invalid")
@@ -865,8 +1409,7 @@ class CoreRunDomainVerifier:
             or package.package_manifest_artifact.artifact_id
             != "core_v2_package_manifest"
             or package.package_manifest_artifact.revision != 1
-            or archive_revision.path
-            != "output/intermediate/core_v2_run_archive.json"
+            or archive_revision.path != "output/intermediate/core_v2_run_archive.json"
             or package_revision.path
             != "output/intermediate/core_v2_package_manifest.json"
             or archive_revision.size_bytes != len(archive_bytes)
@@ -1068,9 +1611,7 @@ class CoreRunDomainVerifier:
         binding: RunContractBinding,
     ) -> None:
         invocation_stages = _invocation_stage_map(snapshot)
-        invocations = {
-            item.invocation_id: item for item in snapshot.invocations
-        }
+        invocations = {item.invocation_id: item for item in snapshot.invocations}
         if set(invocations) != set(invocation_stages):
             raise CoreRunError("control_store_integrity_invalid")
         for invocation in invocations.values():
@@ -1144,19 +1685,20 @@ class CoreRunDomainVerifier:
                     raise CoreRunError("control_store_integrity_invalid")
             else:
                 expected = owned_artifact_owners.get(submission.artifact_id)
-            if expected is None or (
-                submission.owner_stage_id,
-                submission.owner_role_id,
-            ) != expected:
+            if (
+                expected is None
+                or (
+                    submission.owner_stage_id,
+                    submission.owner_role_id,
+                )
+                != expected
+            ):
                 raise CoreRunError("control_store_integrity_invalid")
             if submission.invocation_id is None:
                 repair_owned = any(
-                    item.accepted_transaction_id
-                    == submission.accepted_transaction_id
-                    and item.successor_artifact.artifact_id
-                    == submission.artifact_id
-                    and item.successor_artifact.revision
-                    == submission.artifact_revision
+                    item.accepted_transaction_id == submission.accepted_transaction_id
+                    and item.successor_artifact.artifact_id == submission.artifact_id
+                    and item.successor_artifact.revision == submission.artifact_revision
                     for item in snapshot.artifact_supersessions
                 )
                 if not repair_owned and (
@@ -1183,9 +1725,7 @@ class CoreRunDomainVerifier:
             (item.artifact_id, item.revision): item
             for item in snapshot.artifact_revisions
         }
-        contract_rows = {
-            str(item["artifact_id"]): item for item in contracts.artifacts
-        }
+        contract_rows = {str(item["artifact_id"]): item for item in contracts.artifacts}
         if not set(CORE_ARTIFACT_IDS) <= set(contract_rows):
             raise CoreRunError("control_store_integrity_invalid")
 
@@ -1203,8 +1743,7 @@ class CoreRunDomainVerifier:
             for reference in render.reader_artifacts
         }
         terminal_artifact_ids.update(
-            archive.archive_artifact.artifact_id
-            for archive in snapshot.run_archives
+            archive.archive_artifact.artifact_id for archive in snapshot.run_archives
         )
         terminal_artifact_ids.update(
             package.package_manifest_artifact.artifact_id
@@ -1462,9 +2001,7 @@ class CoreRunDomainVerifier:
             if positions != list(range(len(positions))):
                 raise CoreRunError("control_store_integrity_invalid")
 
-        evaluations = {
-            item.evaluation_id: item for item in snapshot.gate_evaluations
-        }
+        evaluations = {item.evaluation_id: item for item in snapshot.gate_evaluations}
         gate_bindings: dict[str, list[object]] = {}
         for gate_binding in snapshot.stage_gate_bindings:
             transition = transition_by_id.get(gate_binding.transition_id)
@@ -1510,9 +2047,7 @@ class CoreRunDomainVerifier:
 
         def proposal_revision(kind: str):
             proposal = current_proposal(kind)
-            revision = revisions.get(
-                (proposal.artifact_id, proposal.artifact_revision)
-            )
+            revision = revisions.get((proposal.artifact_id, proposal.artifact_revision))
             if revision is None:
                 raise CoreRunError("control_store_integrity_invalid")
             return revision
@@ -1643,9 +2178,7 @@ class CoreRunDomainVerifier:
                             ),
                         )
                     raise CoreRunError("control_store_integrity_invalid")
-                return (
-                    (current_revision("analyst_draft_snapshot"), "produced"),
-                )
+                return ((current_revision("analyst_draft_snapshot"), "produced"),)
             if stage_id == "editor":
                 return (
                     (current_revision("audited_brief"), "produced"),
@@ -1708,8 +2241,7 @@ class CoreRunDomainVerifier:
                     or any(item is None for item in selected_evaluations)
                     or any(
                         item.stage_id != "finalize"
-                        or item.gate_batch_id
-                        != finalization.finalize_gate_batch_id
+                        or item.gate_batch_id != finalization.finalize_gate_batch_id
                         or item.status not in {"pass", "warning"}
                         or item.blocking
                         for item in selected_evaluations
@@ -1755,10 +2287,7 @@ class CoreRunDomainVerifier:
                     or package.package_manifest_artifact.revision
                     != produced[1].revision
                     or set(consumed)
-                    & {
-                        (item.artifact_id, item.revision)
-                        for item in produced
-                    }
+                    & {(item.artifact_id, item.revision) for item in produced}
                 ):
                     raise CoreRunError("control_store_integrity_invalid")
                 return (
@@ -1806,8 +2335,7 @@ class CoreRunDomainVerifier:
                 produced = [
                     revision
                     for revision, usage in expected
-                    if revision.artifact_id == "audited_brief"
-                    and usage == "produced"
+                    if revision.artifact_id == "audited_brief" and usage == "produced"
                 ]
                 consumed = [
                     revision
@@ -1831,8 +2359,7 @@ class CoreRunDomainVerifier:
                     or submissions[0].parent_artifact is None
                     or submissions[0].parent_artifact.artifact_id
                     != consumed[0].artifact_id
-                    or submissions[0].parent_artifact.revision
-                    != consumed[0].revision
+                    or submissions[0].parent_artifact.revision != consumed[0].revision
                 ):
                     raise CoreRunError("control_store_integrity_invalid")
 
@@ -1840,7 +2367,10 @@ class CoreRunDomainVerifier:
                 (item.gate_id, item.evaluation_id)
                 for item in gate_bindings.get(transition.transition_id, [])
             }
-            if transition.stage_id == "auditor" and transition.transition_kind == "complete":
+            if (
+                transition.stage_id == "auditor"
+                and transition.transition_kind == "complete"
+            ):
                 if audit_promotion is None:
                     raise CoreRunError("control_store_integrity_invalid")
                 try:
@@ -1906,8 +2436,7 @@ class CoreRunDomainVerifier:
                     item
                     for item in snapshot.gate_evaluations
                     if item.stage_id == "finalize"
-                    and item.gate_batch_id
-                    == finalization.finalize_gate_batch_id
+                    and item.gate_batch_id == finalization.finalize_gate_batch_id
                 ]
                 report_refs = {
                     (
@@ -1918,9 +2447,7 @@ class CoreRunDomainVerifier:
                 }
                 if len(report_refs) != 1:
                     raise CoreRunError("control_store_integrity_invalid")
-                report_artifact_id, report_revision_number = next(
-                    iter(report_refs)
-                )
+                report_artifact_id, report_revision_number = next(iter(report_refs))
                 report_revision = current_revision(report_artifact_id)
                 expected_gates = {
                     (item.gate_id, item.evaluation_id)
@@ -1935,11 +2462,8 @@ class CoreRunDomainVerifier:
                     report_artifact_id != "finalize_quality_gate_report"
                     or report_revision.revision != report_revision_number
                     or len(expected_gates) != len(finalize_evaluations)
-                    or {item.gate_id for item in complete_batch}
-                    != set(GATE_IDS)
-                    or {
-                        item.evaluation_id for item in complete_batch
-                    }
+                    or {item.gate_id for item in complete_batch} != set(GATE_IDS)
+                    or {item.evaluation_id for item in complete_batch}
                     != set(finalization.finalize_gate_evaluation_ids)
                 ):
                     raise CoreRunError("control_store_integrity_invalid")
@@ -1954,9 +2478,7 @@ class CoreRunDomainVerifier:
             if event.core_run_binding is not None
             and event.core_run_binding.effect_kind == "invocation_start"
         }
-        invocations = {
-            item.invocation_id: item for item in snapshot.invocations
-        }
+        invocations = {item.invocation_id: item for item in snapshot.invocations}
         producer_roles = {
             "source-discovery": {"source-planner"},
             "scout": {"scout"},
@@ -2031,9 +2553,7 @@ class CoreRunDomainVerifier:
                     for item in artifact_bindings.get(transition.transition_id, [])
                 }
                 expected_roles = (
-                    {"writer"}
-                    if bound_ids == {"audited_brief"}
-                    else {"analyst"}
+                    {"writer"} if bound_ids == {"audited_brief"} else {"analyst"}
                 )
                 expected_invocation_stage = "analyst"
             else:
@@ -2048,7 +2568,9 @@ class CoreRunDomainVerifier:
                 != expected_invocation_stage
             ):
                 raise CoreRunError("control_store_integrity_invalid")
-        ready = [stage_id for stage_id in stage_ids if states[stage_id].status == "ready"]
+        ready = [
+            stage_id for stage_id in stage_ids if states[stage_id].status == "ready"
+        ]
         if snapshot.finalizations:
             if ready or any(
                 states[stage_id].status not in {"complete", "skipped"}
@@ -2112,9 +2634,7 @@ class CoreRunDomainVerifier:
         if len(snapshot.claim_freezes) != 1:
             raise CoreRunError("control_store_integrity_invalid")
         freeze = snapshot.claim_freezes[0]
-        proposals = {
-            item.proposal_id: item for item in snapshot.accepted_proposals
-        }
+        proposals = {item.proposal_id: item for item in snapshot.accepted_proposals}
         artifacts = {item.artifact_id: item for item in snapshot.artifacts}
         drafts_record = proposals.get(freeze.claim_drafts_proposal_id)
         screened_record = proposals.get(freeze.screened_proposal_id)
@@ -2138,18 +2658,15 @@ class CoreRunDomainVerifier:
             drafts_record is None
             or drafts_record.proposal_kind != "claim_drafts"
             or drafts_artifact is None
-            or drafts_artifact.current_revision
-            != drafts_record.artifact_revision
+            or drafts_artifact.current_revision != drafts_record.artifact_revision
             or screened_record is None
             or screened_record.proposal_kind != "screened"
             or screened_artifact is None
-            or screened_artifact.current_revision
-            != screened_record.artifact_revision
+            or screened_artifact.current_revision != screened_record.artifact_revision
             or candidate_record is None
             or candidate_record.proposal_kind != "candidate"
             or candidate_artifact is None
-            or candidate_artifact.current_revision
-            != candidate_record.artifact_revision
+            or candidate_artifact.current_revision != candidate_record.artifact_revision
             or drafts_record.parent_proposal_id != screened_record.proposal_id
             or screened_record.parent_proposal_id != candidate_record.proposal_id
             or freeze.run_contract_fingerprint != binding.contract_fingerprint
@@ -2202,9 +2719,7 @@ class CoreRunDomainVerifier:
         candidate_sources = {
             item.candidate_id: item.source_id for item in candidates.candidates
         }
-        decisions = {
-            item.candidate_id: item.decision for item in screened.decisions
-        }
+        decisions = {item.candidate_id: item.decision for item in screened.decisions}
         if set(candidate_sources) != set(decisions):
             raise CoreRunError("control_store_integrity_invalid")
         selected_source_ids = {
@@ -2299,21 +2814,25 @@ class CoreRunDomainVerifier:
                 by_claim.get(claim.claim_id, []),
                 key=lambda item: item.position,  # type: ignore[attr-defined]
             )
-            expected_bindings = [
-                {
-                    "schema_version": source_binding.schema_id,
-                    "run_id": snapshot.run.run_id,
-                    "claim_id": claim.claim_id,
-                    "source_id": source_id,
-                    "position": position,
-                    "citation_role": "primary" if position == 0 else "additional",
-                    "claim_drafts_proposal_id": drafts.proposal_id,
-                    "accepted_transaction_id": freeze.accepted_transaction_id,
-                }
-                for position, (source_binding, source_id) in enumerate(
-                    zip(source_bindings, source_ids)
-                )
-            ] if len(source_bindings) == len(source_ids) else []
+            expected_bindings = (
+                [
+                    {
+                        "schema_version": source_binding.schema_id,
+                        "run_id": snapshot.run.run_id,
+                        "claim_id": claim.claim_id,
+                        "source_id": source_id,
+                        "position": position,
+                        "citation_role": "primary" if position == 0 else "additional",
+                        "claim_drafts_proposal_id": drafts.proposal_id,
+                        "accepted_transaction_id": freeze.accepted_transaction_id,
+                    }
+                    for position, (source_binding, source_id) in enumerate(
+                        zip(source_bindings, source_ids)
+                    )
+                ]
+                if len(source_bindings) == len(source_ids)
+                else []
+            )
             if [
                 item.model_dump(mode="json", exclude_unset=False)
                 for item in source_bindings
@@ -2358,11 +2877,10 @@ class CoreRunDomainVerifier:
             if len(draft_ids) > 1
         ]
         warnings.sort(key=lambda item: item["draft_ids"])
-        if (
-            [item.model_dump(mode="json", exclude_unset=False) for item in freeze.warnings]
-            != warnings
-            or freeze.warning_count != len(warnings)
-        ):
+        if [
+            item.model_dump(mode="json", exclude_unset=False)
+            for item in freeze.warnings
+        ] != warnings or freeze.warning_count != len(warnings):
             raise CoreRunError("control_store_integrity_invalid")
         ledger_bytes = canonical_json_bytes({"claims": ledger_claims}) + b"\n"
         try:
@@ -2377,8 +2895,7 @@ class CoreRunDomainVerifier:
             stored_ledger != ledger_bytes
             or freeze.ledger_sha256 != sha256_hex(ledger_bytes)
             or freeze.claim_drafts_artifact.artifact_id != drafts_record.artifact_id
-            or freeze.claim_drafts_artifact.revision
-            != drafts_record.artifact_revision
+            or freeze.claim_drafts_artifact.revision != drafts_record.artifact_revision
         ):
             raise CoreRunError("control_store_integrity_invalid")
 
@@ -2427,10 +2944,7 @@ class CoreRunDomainVerifier:
                 [],
             ).append(artifact_binding)
         batch_keys = sorted(
-            {
-                (item.stage_id, item.gate_batch_id)
-                for item in evaluations.values()
-            }
+            {(item.stage_id, item.gate_batch_id) for item in evaluations.values()}
         )
         seen_findings: set[tuple[str, str]] = set()
         seen_bindings: set[tuple[str, int]] = set()
@@ -2445,15 +2959,13 @@ class CoreRunDomainVerifier:
                 (
                     item
                     for item in evaluations.values()
-                    if item.stage_id == stage_id
-                    and item.gate_batch_id == batch_id
+                    if item.stage_id == stage_id and item.gate_batch_id == batch_id
                 ),
                 key=lambda item: item.gate_id,
             )
-            if (
-                len(ordered_evaluations) != len(GATE_IDS)
-                or {item.gate_id for item in ordered_evaluations} != set(GATE_IDS)
-            ):
+            if len(ordered_evaluations) != len(GATE_IDS) or {
+                item.gate_id for item in ordered_evaluations
+            } != set(GATE_IDS):
                 raise CoreRunError("control_store_integrity_invalid")
             report_refs = {
                 (item.report_artifact.artifact_id, item.report_artifact.revision)
@@ -2468,17 +2980,13 @@ class CoreRunDomainVerifier:
                 len(report_refs) != 1
                 or {item.stage_id for item in ordered_evaluations} != {stage_id}
                 or len({item.evaluation_event_id for item in ordered_evaluations}) != 1
-                or len(
-                    {item.accepted_transaction_id for item in ordered_evaluations}
-                )
+                or len({item.accepted_transaction_id for item in ordered_evaluations})
                 != 1
-                or len({item.request_fingerprint for item in ordered_evaluations})
-                != 1
+                or len({item.request_fingerprint for item in ordered_evaluations}) != 1
                 or any(
                     item.policy_version != policy_version
                     or item.run_contract_fingerprint != binding.contract_fingerprint
-                    or item.producer_implementation
-                    != "core-v2-preloaded-quality-gates"
+                    or item.producer_implementation != "core-v2-preloaded-quality-gates"
                     or item.producer_version != "1"
                     for item in ordered_evaluations
                 )
@@ -2529,8 +3037,7 @@ class CoreRunDomainVerifier:
                 elif signature != canonical_bindings:
                     raise CoreRunError("control_store_integrity_invalid")
                 seen_bindings.update(
-                    (item.evaluation_id, item.position)
-                    for item in selected_bindings
+                    (item.evaluation_id, item.position) for item in selected_bindings
                 )
             if not canonical_bindings:
                 raise CoreRunError("control_store_integrity_invalid")
@@ -2609,8 +3116,7 @@ class CoreRunDomainVerifier:
                 or report_record is None
                 or report_record.current_revision != report_revision_number
                 or report_revision.producer_kind != "control_tool"
-                or report_revision.producer_id
-                != "core-v2-preloaded-quality-gates"
+                or report_revision.producer_id != "core-v2-preloaded-quality-gates"
                 or report_revision.size_bytes != len(report_bytes)
                 or report_revision.sha256 != sha256_hex(report_bytes)
                 or report_bytes != canonical_json_bytes(expected_report) + b"\n"
@@ -2632,17 +3138,12 @@ class CoreRunDomainVerifier:
             )
             event_id = ordered_evaluations[0].evaluation_event_id
             events = [
-                item
-                for item in batch_snapshot.events
-                if item.event_id == event_id
+                item for item in batch_snapshot.events if item.event_id == event_id
             ]
             if (
-                receipt.transaction_type
-                != transaction_type_for("gate_evaluation")
+                receipt.transaction_type != transaction_type_for("gate_evaluation")
                 or receipt.event_ids != [event_id]
-                or sorted(
-                    item.evaluation_id for item in receipt.gate_evaluations
-                )
+                or sorted(item.evaluation_id for item in receipt.gate_evaluations)
                 != sorted(evaluation_ids)
                 or sorted(
                     (item.evaluation_id, item.finding_id)
@@ -2763,9 +3264,7 @@ def _verified_core_receipt_binding(
     if rule.primary_family == "run_contract_binding":
         refs = [item.run_id for item in receipt.run_contract_bindings]
         records = [
-            item
-            for item in snapshot.run_contract_bindings
-            if item.run_id == primary_id
+            item for item in snapshot.run_contract_bindings if item.run_id == primary_id
         ]
         if (
             refs != [primary_id]
@@ -2807,9 +3306,7 @@ def _verified_core_receipt_binding(
         "owned_artifact_submission",
         "audit_submission",
     }:
-        refs = [
-            item.submission_id for item in receipt.owned_artifact_submissions
-        ]
+        refs = [item.submission_id for item in receipt.owned_artifact_submissions]
         records = [
             item
             for item in snapshot.owned_artifact_submissions
@@ -2901,11 +3398,9 @@ def _verified_core_receipt_binding(
             raise CoreRunError("control_store_integrity_invalid")
         record = records[0]
         observation_fingerprint = _integrity_observation_fingerprint(record)
-        expected_binding_fingerprint = (
-            _integrity_contamination_binding_fingerprint(
-                record.request_fingerprint,
-                observation_fingerprint,
-            )
+        expected_binding_fingerprint = _integrity_contamination_binding_fingerprint(
+            record.request_fingerprint,
+            observation_fingerprint,
         )
         if (
             refs != [integrity_revision]
@@ -3010,7 +3505,9 @@ def _verified_core_receipt_binding(
     elif rule.primary_family == "finalization":
         refs = [item.finalization_id for item in receipt.finalizations]
         records = [
-            item for item in snapshot.finalizations if item.finalization_id == primary_id
+            item
+            for item in snapshot.finalizations
+            if item.finalization_id == primary_id
         ]
         if (
             refs != [primary_id]
@@ -3026,7 +3523,9 @@ def _verified_core_receipt_binding(
             raise CoreRunError("control_store_integrity_invalid")
     elif rule.primary_family == "internal_approval":
         refs = [item.approval_id for item in receipt.approvals]
-        records = [item for item in snapshot.approvals if item.approval_id == primary_id]
+        records = [
+            item for item in snapshot.approvals if item.approval_id == primary_id
+        ]
         bindings = [
             item
             for item in snapshot.approval_package_bindings
@@ -3095,9 +3594,95 @@ def _verify_core_receipt_event_set(
     """Require the receipt's complete event set to match its domain effect."""
 
     actual_counts = Counter(event.event_type for event in events)
+    by_id = {event.event_id: event for event in events}
+    if len(by_id) != len(events) or set(by_id) != set(receipt.event_ids):
+        raise CoreRunError("control_store_integrity_invalid")
     if rule.receipt_event_counts is not None:
         if actual_counts != Counter(dict(rule.receipt_event_counts)):
             raise CoreRunError("control_store_integrity_invalid")
+        if rule.primary_family == "run_integrity_record":
+            records = [
+                item
+                for item in snapshot.run_integrity_records
+                if item.accepted_transaction_id == receipt.transaction_id
+                and item.status == "contaminated"
+            ]
+            if len(records) != 1:
+                raise CoreRunError("control_store_integrity_invalid")
+            record = records[0]
+            expected = {
+                record.first_detected_event_id: "run_integrity_contaminated",
+                derived_id(
+                    "EVT-BLOCK",
+                    receipt.transaction_id,
+                    _integrity_observation_fingerprint(record),
+                ): "run_blocked",
+            }
+            if {
+                event_id: item.event_type for event_id, item in by_id.items()
+            } != expected:
+                raise CoreRunError("control_store_integrity_invalid")
+        elif rule.primary_family == "artifact_supersession":
+            supersessions = [
+                item
+                for item in snapshot.artifact_supersessions
+                if item.accepted_transaction_id == receipt.transaction_id
+            ]
+            submissions = [
+                item
+                for item in snapshot.owned_artifact_submissions
+                if item.accepted_transaction_id == receipt.transaction_id
+            ]
+            if len(supersessions) != 1 or len(submissions) != 1:
+                raise CoreRunError("control_store_integrity_invalid")
+            expected = {
+                supersessions[0].accepted_event_id: "repair_stage_superseded",
+                submissions[0].accepted_event_id: "owned_artifact_accepted",
+            }
+            if {
+                event_id: item.event_type for event_id, item in by_id.items()
+            } != expected:
+                raise CoreRunError("control_store_integrity_invalid")
+        elif rule.primary_family == "finalization":
+            finalizations = [
+                item
+                for item in snapshot.finalizations
+                if item.accepted_transaction_id == receipt.transaction_id
+            ]
+            archives = [
+                item
+                for item in snapshot.run_archives
+                if item.accepted_transaction_id == receipt.transaction_id
+            ]
+            packages = [
+                item
+                for item in snapshot.package_ready_records
+                if item.accepted_transaction_id == receipt.transaction_id
+            ]
+            if len(finalizations) != 1 or len(archives) != 1 or len(packages) != 1:
+                raise CoreRunError("control_store_integrity_invalid")
+            expected = {
+                finalizations[0].finalization_event_id: "stage_status_changed",
+                archives[0].archive_event_id: "run_archived",
+                packages[0].package_event_id: "decision_recorded",
+            }
+            if {
+                event_id: item.event_type for event_id, item in by_id.items()
+            } != expected:
+                raise CoreRunError("control_store_integrity_invalid")
+        elif rule.primary_family == "gate_batch":
+            evaluations = [
+                item
+                for item in snapshot.gate_evaluations
+                if item.accepted_transaction_id == receipt.transaction_id
+            ]
+            if len(events) != 1 or not evaluations:
+                raise CoreRunError("control_store_integrity_invalid")
+            expected_decision = (
+                "block" if any(item.blocking for item in evaluations) else "continue"
+            )
+            if events[0].decision != expected_decision:
+                raise CoreRunError("control_store_integrity_invalid")
         return
     if rule.primary_family == "repair_completion":
         repair_events = [
@@ -3118,6 +3703,11 @@ def _verify_core_receipt_event_set(
             or len(transition_events) != len(transitions)
             or {item.transition_event_id for item in transitions}
             != {item.event_id for item in transition_events}
+            or set(receipt.event_ids)
+            != {
+                *{item.event_id for item in repair_events},
+                *{item.transition_event_id for item in transitions},
+            }
         ):
             raise CoreRunError("control_store_integrity_invalid")
         return
@@ -3135,18 +3725,55 @@ def _verify_core_receipt_event_set(
             for item in snapshot.stage_transitions
             if item.transition_id in transition_ids
         ]
+        contracts = [
+            item
+            for item in snapshot.run_contract_bindings
+            if item.accepted_transaction_id == receipt.transaction_id
+        ]
+        head_transitions = [
+            item
+            for item in snapshot.run_head_transitions
+            if item.accepted_transaction_id == receipt.transaction_id
+        ]
         if (
             len(reset_events) != 1
             or len(initialized_events) != 1
             or len(transitions) != len(transition_ids)
             or len(stage_events) != len(transitions)
+            or len(contracts) != 1
+            or len(head_transitions) != 1
             or {item.transition_event_id for item in transitions}
             != {item.event_id for item in stage_events}
+            or contracts[0].initialization_event_id != initialized_events[0].event_id
+            or head_transitions[0].transition_event_id != reset_events[0].event_id
+            or set(receipt.event_ids)
+            != {
+                reset_events[0].event_id,
+                initialized_events[0].event_id,
+                *{item.transition_event_id for item in transitions},
+            }
         ):
             raise CoreRunError("control_store_integrity_invalid")
         return
     if rule.primary_family == "delivery_result":
-        if len(events) != 1 or events[0].event_type not in rule.primary_event_types:
+        results = [
+            item
+            for item in snapshot.delivery_results
+            if item.accepted_transaction_id == receipt.transaction_id
+        ]
+        expected_event_type = {
+            "bundle_prepared": "delivery_bundle_prepared",
+            "draft_created": "delivery_draft_created",
+            "succeeded": "delivery_succeeded",
+            "failed": "delivery_failed",
+            "outcome_unknown": "decision_recorded",
+        }
+        if (
+            len(events) != 1
+            or len(results) != 1
+            or events[0].event_id != results[0].result_event_id
+            or events[0].event_type != expected_event_type[results[0].status]
+        ):
             raise CoreRunError("control_store_integrity_invalid")
         return
     if rule.primary_family != "stage_transition":
@@ -3174,7 +3801,6 @@ def _verify_core_receipt_event_set(
     )
     if actual_counts != expected_counts:
         raise CoreRunError("control_store_integrity_invalid")
-    by_id = {event.event_id: event for event in events}
     if any(
         by_id[item.transition_event_id].stage_id != item.stage_id
         or by_id[item.transition_event_id].event_type
@@ -3200,9 +3826,7 @@ def resolve_core_replay(
     try:
         receipt = store.load_transaction_receipt(run_id, request_id)
     except Exception as exc:
-        raise ControlStoreCommitOutcomeUnknown(
-            "commit_outcome_unknown"
-        ) from exc
+        raise ControlStoreCommitOutcomeUnknown("commit_outcome_unknown") from exc
     if receipt is None:
         return None
     try:
@@ -3234,11 +3858,9 @@ def resolve_core_replay(
             record = records[0]
             if record.request_fingerprint != request_fingerprint:
                 raise CoreRunError("submission_replay_conflict")
-            expected_binding_fingerprint = (
-                _integrity_contamination_binding_fingerprint(
-                    request_fingerprint,
-                    _integrity_observation_fingerprint(record),
-                )
+            expected_binding_fingerprint = _integrity_contamination_binding_fingerprint(
+                request_fingerprint,
+                _integrity_observation_fingerprint(record),
             )
             if binding.request_fingerprint != expected_binding_fingerprint:
                 raise CoreRunError("control_store_integrity_invalid")

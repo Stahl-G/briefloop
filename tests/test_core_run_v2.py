@@ -67,9 +67,15 @@ from multi_agent_brief.core_run_v2.policy import (
     transaction_type_for,
 )
 from multi_agent_brief.core_run_v2.errors import CoreRunError, CoreRunResult
+from multi_agent_brief.core_run_v2.recovery import (
+    CoreEffect,
+    classify_effect_authorization,
+)
 from multi_agent_brief.core_run_v2.verifier import (
     CoreRunDomainVerifier,
     _CORE_EFFECT_BINDING_RULES,
+    _INTAKE_EFFECT_RULES,
+    _verified_intake_receipt_effect,
     _verified_core_receipt_binding,
     classify_human_assisted_analyst_route,
     resolve_core_replay,
@@ -145,14 +151,12 @@ def _initialize(
         run_id=RUN_ID,
         role_topology=topology,
         input_governance_required=input_governance_required,
-        workspace_config_sha256=read_workspace_file(
-            workspace, "config.yaml"
-        ).sha256,
-        sources_config_sha256=read_workspace_file(
-            workspace, "sources.yaml"
-        ).sha256,
+        workspace_config_sha256=read_workspace_file(workspace, "config.yaml").sha256,
+        sources_config_sha256=read_workspace_file(workspace, "sources.yaml").sha256,
     )
-    result = service.initialize(CoreRunInitializeRequest.model_validate(request, strict=True))
+    result = service.initialize(
+        CoreRunInitializeRequest.model_validate(request, strict=True)
+    )
     assert result.status == "committed", result.to_dict()
     return service
 
@@ -551,11 +555,14 @@ def test_input_governance_accepts_only_recomputed_canonical_tool_bytes(
     )
     assert accepted.status == "committed", accepted.to_dict()
     with SQLiteControlStore.open(workspace / "briefloop.db") as store:
-        assert store.read_artifact_revision_bytes(
-            RUN_ID,
-            "input_classification",
-            1,
-        ) == canonical
+        assert (
+            store.read_artifact_revision_bytes(
+                RUN_ID,
+                "input_classification",
+                1,
+            )
+            == canonical
+        )
     _complete_stage(
         service,
         workspace,
@@ -1226,9 +1233,7 @@ def test_gate_batches_append_and_old_request_exactly_replays(
         expected_report_artifact_revision=1,
     )
     second_request = GateCheckRequest.model_validate(second_values, strict=True)
-    second = service.evaluate(
-        second_request
-    )
+    second = service.evaluate(second_request)
     assert second.status == "committed", second.to_dict()
     assert _store_revision(workspace) == committed_revision + 1
     second_report_bytes = report_path.read_bytes()
@@ -1393,9 +1398,12 @@ def test_audit_intake_rejects_a_non_brief_target_before_acceptance(
         item.proposal_id == "PROP-AUDIT-WRONG-TARGET"
         for item in after.accepted_proposals
     )
-    assert next(
-        item for item in after.artifacts if item.artifact_id == "audit_proposal"
-    ).current_revision == 1
+    assert (
+        next(
+            item for item in after.artifacts if item.artifact_id == "audit_proposal"
+        ).current_revision
+        == 1
+    )
     assert _stage(workspace, "auditor").status == "ready"
     assert _stage(workspace, "finalize").status == "pending"
 
@@ -1463,9 +1471,7 @@ def test_audit_intake_rejects_domain_invalid_bound_snapshot_without_writes(
             "AND name = 'owned_artifact_submissions_no_update'"
         ).fetchone()
         assert trigger_sql is not None
-        store._connection.execute(
-            "DROP TRIGGER owned_artifact_submissions_no_update"
-        )
+        store._connection.execute("DROP TRIGGER owned_artifact_submissions_no_update")
         store._connection.execute(
             "UPDATE owned_artifact_submissions "
             "SET parent_artifact_id = 'claim_ledger', "
@@ -1518,10 +1524,13 @@ def test_audit_intake_rejects_domain_invalid_bound_snapshot_without_writes(
     with SQLiteControlStore.open(database) as store:
         assert store.current_revision == before.store_revision
         assert store.load_snapshot(RUN_ID) == before
-        assert store.load_transaction_receipt(
-            RUN_ID,
-            "REQ-AUDIT-DOMAIN-INVALID",
-        ) is None
+        assert (
+            store.load_transaction_receipt(
+                RUN_ID,
+                "REQ-AUDIT-DOMAIN-INVALID",
+            )
+            is None
+        )
         assert {
             (revision.artifact_id, revision.revision): (
                 store.read_artifact_revision_bytes(
@@ -1645,8 +1654,7 @@ def test_auditor_completion_requires_report_from_current_audit_proposal(
     stale_gate_ids = [
         item.evaluation_id
         for item in before.gate_evaluations
-        if item.report_artifact.revision == 1
-        and item.gate_id in REQUIRED_AUDITOR_GATES
+        if item.report_artifact.revision == 1 and item.gate_id in REQUIRED_AUDITOR_GATES
     ]
     stage = next(item for item in before.stage_states if item.stage_id == "auditor")
     rejected = service.complete_stage(
@@ -1700,9 +1708,7 @@ def test_auditor_completion_requires_report_from_current_audit_proposal(
     with SQLiteControlStore.open(workspace / "briefloop.db") as store:
         after_promotion = store.load_snapshot(RUN_ID)
     stage = next(
-        item
-        for item in after_promotion.stage_states
-        if item.stage_id == "auditor"
+        item for item in after_promotion.stage_states if item.stage_id == "auditor"
     )
     stale_after_promotion = service.complete_stage(
         _record(
@@ -1743,17 +1749,14 @@ def test_auditor_completion_requires_report_from_current_audit_proposal(
         workspace,
         request_id="REQ-GATE-CURRENT-AUDIT",
     ).model_copy(update={"expected_report_artifact_revision": 1})
-    current_gate = GateEvaluationService(workspace, clock=CLOCK).evaluate(
-        gate_request
-    )
+    current_gate = GateEvaluationService(workspace, clock=CLOCK).evaluate(gate_request)
     assert current_gate.status == "committed", current_gate.to_dict()
     with SQLiteControlStore.open(workspace / "briefloop.db") as store:
         current = store.load_snapshot(RUN_ID)
     current_gate_ids = [
         item.evaluation_id
         for item in current.gate_evaluations
-        if item.report_artifact.revision == 2
-        and item.gate_id in REQUIRED_AUDITOR_GATES
+        if item.report_artifact.revision == 2 and item.gate_id in REQUIRED_AUDITOR_GATES
     ]
     _complete_stage(
         service,
@@ -1813,8 +1816,7 @@ def test_domain_verifier_rejects_completed_auditor_with_gate_before_promotion(
         audit_submission = next(
             item
             for item in verified.snapshot.owned_artifact_submissions
-            if item.artifact_id == "audit_report"
-            and item.artifact_revision == 1
+            if item.artifact_id == "audit_report" and item.artifact_revision == 1
         )
         forged = replace(
             verified.snapshot,
@@ -2237,7 +2239,9 @@ def test_human_assisted_analyst_routes_accept_revision_two_before_consumption(
         assert route.route_family == route_family
         assert route.active_analyst_role is None
         assert store.read_artifact_revision_bytes(RUN_ID, artifact_id, 1) == first_bytes
-        assert store.read_artifact_revision_bytes(RUN_ID, artifact_id, 2) == second_bytes
+        assert (
+            store.read_artifact_revision_bytes(RUN_ID, artifact_id, 2) == second_bytes
+        )
 
     _complete_stage(
         service,
@@ -2315,7 +2319,9 @@ def test_human_assisted_editor_accepts_revision_two_before_consumption(
     with SQLiteControlStore.open(workspace / "briefloop.db") as store:
         before_rejections = store.load_snapshot(RUN_ID)
         brief = next(
-            item for item in before_rejections.artifacts if item.artifact_id == "audited_brief"
+            item
+            for item in before_rejections.artifacts
+            if item.artifact_id == "audited_brief"
         )
     canonical_path = workspace / brief.path
     assert canonical_path.read_bytes() == first_bytes
@@ -2380,8 +2386,14 @@ def test_human_assisted_editor_accepts_revision_two_before_consumption(
         assert route.route_family == "snapshot"
         assert route.audited_brief_revision == 2
         assert route.consumed_analyst_snapshot_revision == 1
-        assert store.read_artifact_revision_bytes(RUN_ID, "audited_brief", 1) == first_bytes
-        assert store.read_artifact_revision_bytes(RUN_ID, "audited_brief", 2) == second_bytes
+        assert (
+            store.read_artifact_revision_bytes(RUN_ID, "audited_brief", 1)
+            == first_bytes
+        )
+        assert (
+            store.read_artifact_revision_bytes(RUN_ID, "audited_brief", 2)
+            == second_bytes
+        )
 
     _complete_stage(
         service,
@@ -2402,8 +2414,7 @@ def test_human_assisted_editor_accepts_revision_two_before_consumption(
             if item.transition_id == transition.transition_id
         ]
         assert {
-            (item.artifact_id, item.artifact_revision, item.usage)
-            for item in bindings
+            (item.artifact_id, item.artifact_revision, item.usage) for item in bindings
         } == {
             ("analyst_draft_snapshot", 1, "consumed"),
             ("audited_brief", 2, "produced"),
@@ -2548,8 +2559,7 @@ def test_human_assisted_writer_satisfies_analyst_and_editor(tmp_path: Path) -> N
                     snapshot,
                     owned_artifact_submissions=tuple(
                         forged_writer_submission
-                        if item.submission_id
-                        == writer_submission.submission_id
+                        if item.submission_id == writer_submission.submission_id
                         else item
                         for item in snapshot.owned_artifact_submissions
                     ),
@@ -2946,9 +2956,7 @@ def test_human_assisted_analyst_snapshot_routes_only_to_editor(
             CoreRunError,
             match="control_store_integrity_invalid",
         ):
-            classify_human_assisted_analyst_route(
-                historical_route_snapshot
-            )
+            classify_human_assisted_analyst_route(historical_route_snapshot)
 
 
 @pytest.mark.parametrize(
@@ -2967,17 +2975,22 @@ def test_known_negative_gate_outcome_is_durable_and_blocks_auditor(
 ) -> None:
     workspace = _workspace(tmp_path)
     service = _advance_to_auditor_ready(workspace)
-    direct_report = workspace / "output" / "intermediate" / "auditor_quality_gate_report.json"
+    direct_report = (
+        workspace / "output" / "intermediate" / "auditor_quality_gate_report.json"
+    )
     direct_report.parent.mkdir(parents=True, exist_ok=True)
     direct_report.write_text('{"status":"pass"}', encoding="utf-8")
     with SQLiteControlStore.open(workspace / "briefloop.db") as store:
         before_direct = store.load_snapshot(RUN_ID)
     assert not before_direct.gate_evaluations
-    assert next(
-        item
-        for item in before_direct.artifacts
-        if item.artifact_id == "auditor_quality_gate_report"
-    ).current_revision == 0
+    assert (
+        next(
+            item
+            for item in before_direct.artifacts
+            if item.artifact_id == "auditor_quality_gate_report"
+        ).current_revision
+        == 0
+    )
 
     def known_negative(**_kwargs):
         result: dict[str, object] = {gate_id: [] for gate_id in GATE_IDS}
@@ -2996,8 +3009,7 @@ def test_known_negative_gate_outcome_is_durable_and_blocks_auditor(
         return result
 
     monkeypatch.setattr(
-        "multi_agent_brief.core_run_v2.gates."
-        "evaluate_quality_gate_findings_preloaded",
+        "multi_agent_brief.core_run_v2.gates.evaluate_quality_gate_findings_preloaded",
         known_negative,
     )
     gate_result = GateEvaluationService(workspace, clock=CLOCK).evaluate(
@@ -3122,11 +3134,14 @@ def test_negative_audit_truth_blocks_auditor_without_rewriting_report(
     assert _store_revision(workspace) == before
     assert _stage(workspace, "auditor") == auditor
     with SQLiteControlStore.open(workspace / "briefloop.db") as store:
-        assert store.read_artifact_revision_bytes(
-            RUN_ID,
-            report.artifact_id,
-            report.revision,
-        ) == report_bytes
+        assert (
+            store.read_artifact_revision_bytes(
+                RUN_ID,
+                report.artifact_id,
+                report.revision,
+            )
+            == report_bytes
+        )
 
 
 def test_unexpected_gate_evaluator_failure_is_zero_write(
@@ -3141,8 +3156,7 @@ def test_unexpected_gate_evaluator_failure_is_zero_write(
         raise RuntimeError("injected evaluator failure")
 
     monkeypatch.setattr(
-        "multi_agent_brief.core_run_v2.gates."
-        "evaluate_quality_gate_findings_preloaded",
+        "multi_agent_brief.core_run_v2.gates.evaluate_quality_gate_findings_preloaded",
         explode,
     )
     result = GateEvaluationService(workspace, clock=CLOCK).evaluate(
@@ -3255,12 +3269,8 @@ def test_initialize_replay_is_exact_and_conflict_is_zero_write(
         workspace_id=WORKSPACE_ID,
         run_id=RUN_ID,
         input_governance_required=False,
-        workspace_config_sha256=read_workspace_file(
-            workspace, "config.yaml"
-        ).sha256,
-        sources_config_sha256=read_workspace_file(
-            workspace, "sources.yaml"
-        ).sha256,
+        workspace_config_sha256=read_workspace_file(workspace, "config.yaml").sha256,
+        sources_config_sha256=read_workspace_file(workspace, "sources.yaml").sha256,
     )
     request = CoreRunInitializeRequest.model_validate(payload, strict=True)
     first = service.initialize(request)
@@ -3304,12 +3314,8 @@ def test_new_initialize_rejects_workspace_input_hash_mismatch_without_store(
         workspace_id=WORKSPACE_ID,
         run_id=RUN_ID,
         input_governance_required=False,
-        workspace_config_sha256=read_workspace_file(
-            workspace, "config.yaml"
-        ).sha256,
-        sources_config_sha256=read_workspace_file(
-            workspace, "sources.yaml"
-        ).sha256,
+        workspace_config_sha256=read_workspace_file(workspace, "config.yaml").sha256,
+        sources_config_sha256=read_workspace_file(workspace, "sources.yaml").sha256,
     )
     with (workspace / filename).open("a", encoding="utf-8") as stream:
         stream.write("\n# changed before first initialize\n")
@@ -3341,12 +3347,8 @@ def test_secret_bearing_workspace_input_is_rejected_before_store_creation(
         workspace_id=WORKSPACE_ID,
         run_id=RUN_ID,
         input_governance_required=False,
-        workspace_config_sha256=read_workspace_file(
-            workspace, "config.yaml"
-        ).sha256,
-        sources_config_sha256=read_workspace_file(
-            workspace, "sources.yaml"
-        ).sha256,
+        workspace_config_sha256=read_workspace_file(workspace, "config.yaml").sha256,
+        sources_config_sha256=read_workspace_file(workspace, "sources.yaml").sha256,
     )
     result = CoreRunService(workspace, clock=CLOCK).initialize(
         CoreRunInitializeRequest.model_validate(payload, strict=True)
@@ -3384,12 +3386,8 @@ def test_legacy_json_control_workspace_cannot_become_fresh_v2(
         workspace_id=WORKSPACE_ID,
         run_id=RUN_ID,
         input_governance_required=False,
-        workspace_config_sha256=read_workspace_file(
-            workspace, "config.yaml"
-        ).sha256,
-        sources_config_sha256=read_workspace_file(
-            workspace, "sources.yaml"
-        ).sha256,
+        workspace_config_sha256=read_workspace_file(workspace, "config.yaml").sha256,
+        sources_config_sha256=read_workspace_file(workspace, "sources.yaml").sha256,
     )
     result = CoreRunService(workspace, clock=CLOCK).initialize(
         CoreRunInitializeRequest.model_validate(payload, strict=True)
@@ -3449,12 +3447,8 @@ def test_initialize_failure_cleans_revision_zero_or_exactly_replays_commit(
         workspace_id=WORKSPACE_ID,
         run_id=RUN_ID,
         input_governance_required=False,
-        workspace_config_sha256=read_workspace_file(
-            workspace, "config.yaml"
-        ).sha256,
-        sources_config_sha256=read_workspace_file(
-            workspace, "sources.yaml"
-        ).sha256,
+        workspace_config_sha256=read_workspace_file(workspace, "config.yaml").sha256,
+        sources_config_sha256=read_workspace_file(workspace, "sources.yaml").sha256,
     )
     request = CoreRunInitializeRequest.model_validate(payload, strict=True)
     original_create = SQLiteControlStore.create
@@ -3609,6 +3603,7 @@ def test_doctor_adapter_failure_is_zero_write(
             lambda **_kwargs: [SimpleNamespace(status="ERROR")],
         )
     else:
+
         def fail_doctor(**_kwargs):
             raise RuntimeError("injected deterministic doctor failure")
 
@@ -3915,8 +3910,7 @@ def test_every_core_domain_commit_uses_one_postcommit_observer() -> None:
                 and function.value.id == "unit"
             ):
                 assert any(
-                    keyword.arg == "_postcommit_observer"
-                    for keyword in node.keywords
+                    keyword.arg == "_postcommit_observer" for keyword in node.keywords
                 ), f"{filename}:{node.lineno} bypasses postcommit observation"
                 observed.append((filename, node.lineno))
     assert {filename for filename, _line in observed} == set(production)
@@ -4243,12 +4237,9 @@ def test_claim_freeze_requires_current_drafts_revision_and_exactly_replays(
                 "drafts": [
                     {
                         "draft_id": f"DRAFT-REV{revision}",
-                        "statement": (
-                            "ExampleCo opened a public pilot facility."
-                        ),
+                        "statement": ("ExampleCo opened a public pilot facility."),
                         "evidence_text": (
-                            "ExampleCo opened a public pilot facility on "
-                            "2026-07-14."
+                            "ExampleCo opened a public pilot facility on 2026-07-14."
                         ),
                         "source_ids": ["SRC-001"],
                         "claim_type": "fact",
@@ -4487,6 +4478,93 @@ def test_core_effect_receipt_binding_table_is_exact() -> None:
         "delivery_attempt": (("delivery_attempted", 1),),
         "delivery_result": None,
     }
+    assert set(_INTAKE_EFFECT_RULES) == {
+        "source_evidence_intake",
+        "candidate_claims_intake",
+        "screened_candidates_intake",
+        "claim_drafts_intake",
+        "audit_proposal_intake",
+        "intake_rejection",
+    }
+
+
+def test_pr3_intake_receipts_require_pre_prefix_recovery_authority(
+    tmp_path: Path,
+) -> None:
+    clean_workspace = _workspace(tmp_path / "clean")
+    _advance_to_claim_ledger_ready(clean_workspace)
+    with SQLiteControlStore.open(clean_workspace / "briefloop.db") as store:
+        history = store.load_history()
+        intake_receipts = [
+            item
+            for item in history.transactions
+            if item.transaction_type in _INTAKE_EFFECT_RULES
+            and item.transaction_type != "intake_rejection"
+        ]
+        observed: set[CoreEffect] = set()
+        candidate_effect = None
+        candidate_subject = None
+        for receipt in intake_receipts:
+            post = history.snapshot_at_revision(
+                receipt.run_id,
+                receipt.committed_revision,
+            )
+            effect, subject = _verified_intake_receipt_effect(post, receipt)
+            pre = history.snapshot_at_revision(
+                receipt.run_id,
+                receipt.committed_revision - 1,
+            )
+            assert (
+                classify_effect_authorization(
+                    pre,
+                    effect,
+                    subject,
+                ).decision
+                == "allow"
+            )
+            observed.add(effect)
+            if receipt.transaction_type == "candidate_claims_intake":
+                candidate_effect = effect
+                candidate_subject = subject
+        assert observed == {CoreEffect.SOURCE_INTAKE, CoreEffect.PROPOSAL_INTAKE}
+        assert candidate_effect is CoreEffect.PROPOSAL_INTAKE
+        assert candidate_subject is not None
+
+    blocked_workspace = _workspace(tmp_path / "blocked")
+    service = _advance_to_scout_ready(blocked_workspace)
+    with SQLiteControlStore.open(blocked_workspace / "briefloop.db") as store:
+        before = store.load_snapshot(RUN_ID)
+    candidate = next(
+        item for item in before.artifacts if item.artifact_id == "source_candidates"
+    )
+    (blocked_workspace / candidate.path).write_text(
+        "sources:\n  - MUTATED\n",
+        encoding="utf-8",
+    )
+    blocked = service.start_invocation(
+        _record(
+            InvocationStartRequest,
+            request_id="REQ-BLOCK-PR3-INTAKE",
+            run_id=RUN_ID,
+            stage_id="scout",
+            role_id="scout",
+            runtime="operator",
+            expected_store_revision=before.store_revision,
+        )
+    )
+    assert blocked.status == "blocked"
+    with SQLiteControlStore.open(blocked_workspace / "briefloop.db") as store:
+        blocked_snapshot = store.load_snapshot(RUN_ID)
+        blocked_revision = store.current_revision
+        assert (
+            classify_effect_authorization(
+                blocked_snapshot,
+                candidate_effect,
+                candidate_subject,
+            ).decision
+            == "deny"
+        )
+        assert store.current_revision == blocked_revision
 
 
 def test_pr4a_core_effects_replay_and_reject_extra_unbound_events(
@@ -4499,9 +4577,7 @@ def test_pr4a_core_effects_replay_and_reject_extra_unbound_events(
 
     contaminated_workspace = _workspace(tmp_path / "contaminated")
     contaminated_service = _advance_to_scout_ready(contaminated_workspace)
-    with SQLiteControlStore.open(
-        contaminated_workspace / "briefloop.db"
-    ) as store:
+    with SQLiteControlStore.open(contaminated_workspace / "briefloop.db") as store:
         before_contamination = store.load_snapshot(RUN_ID)
     candidate_path = contaminated_workspace / next(
         item.path
@@ -4521,9 +4597,7 @@ def test_pr4a_core_effects_replay_and_reject_extra_unbound_events(
         )
     )
     assert blocked.status == "blocked", blocked.to_dict()
-    with SQLiteControlStore.open(
-        contaminated_workspace / "briefloop.db"
-    ) as store:
+    with SQLiteControlStore.open(contaminated_workspace / "briefloop.db") as store:
         contaminated_snapshot = store.load_snapshot(RUN_ID)
 
     cases = {}
@@ -4695,9 +4769,7 @@ def test_protected_checkout_mutation_records_contamination_and_blocks_effect(
     )
     assert _stage(workspace, "scout").status == "ready"
     contamination_event = next(
-        item
-        for item in after.events
-        if item.event_type == "run_integrity_contaminated"
+        item for item in after.events if item.event_type == "run_integrity_contaminated"
     )
     assert contamination_event.core_run_binding is not None
     base_request_fingerprint = canonical_fingerprint(
@@ -4710,9 +4782,7 @@ def test_protected_checkout_mutation_records_contamination_and_blocks_effect(
             "run_id": contamination_record.run_id,
             "artifact_id": contamination_record.affected_artifact_id,
             "artifact_revision": contamination_record.affected_artifact_revision,
-            "expected_workspace_path": (
-                contamination_record.expected_workspace_path
-            ),
+            "expected_workspace_path": (contamination_record.expected_workspace_path),
             "expected_sha256": contamination_record.expected_sha256,
             "observed_entry_kind": contamination_record.observed_entry_kind,
             "observed_sha256": contamination_record.observed_sha256,
@@ -4821,9 +4891,7 @@ def test_contamination_replay_binds_request_and_observation_identity(
                 ),
             )
 
-        forged_binding = binding.model_copy(
-            update={"request_fingerprint": "0" * 64}
-        )
+        forged_binding = binding.model_copy(update={"request_fingerprint": "0" * 64})
         forged_events = tuple(
             item.model_copy(update={"core_run_binding": forged_binding})
             if item.event_id == event.event_id
@@ -4972,11 +5040,14 @@ def test_default_core_spine_reaches_finalize_ready(tmp_path: Path) -> None:
     assert late_promotion.error_code == "stage_not_current"
     assert _store_revision(workspace) == completed.store_revision
     with SQLiteControlStore.open(workspace / "briefloop.db") as store:
-        assert store.read_artifact_revision_bytes(
-            RUN_ID,
-            audit_revision.artifact_id,
-            audit_revision.revision,
-        ) == audit_bytes
+        assert (
+            store.read_artifact_revision_bytes(
+                RUN_ID,
+                audit_revision.artifact_id,
+                audit_revision.revision,
+            )
+            == audit_bytes
+        )
 
 
 def test_historical_snapshot_prefix_excludes_future_rows_and_replays_old_request(
@@ -4991,9 +5062,7 @@ def test_historical_snapshot_prefix_excludes_future_rows_and_replays_old_request
         assert prefix.store_revision == 1
         assert not prefix.invocations
         assert not prefix.deliveries
-        assert "candidate_claims" not in {
-            item.artifact_id for item in prefix.artifacts
-        }
+        assert "candidate_claims" not in {item.artifact_id for item in prefix.artifacts}
         assert all(
             item.accepted_transaction_id == initialization.transaction_id
             for item in prefix.run_contract_bindings
@@ -5167,7 +5236,9 @@ def test_finalize_render_prefix_is_bound_to_current_audit_promotion_lineage(
             ],
             reader_clean_status="pass",
             policy_result_fingerprint="a" * 64,
-            run_contract_fingerprint=before.run_contract_bindings[0].contract_fingerprint,
+            run_contract_fingerprint=before.run_contract_bindings[
+                0
+            ].contract_fingerprint,
             created_at=NOW,
             render_event_id=event_id,
             accepted_transaction_id=transaction_id,
@@ -5202,9 +5273,9 @@ def test_finalize_render_prefix_is_bound_to_current_audit_promotion_lineage(
         unit.append_event(event)
         unit.put_finalize_render(render)
         unit.commit()
-        assert CoreRunDomainVerifier().verify(store, RUN_ID).snapshot.finalize_renders == (
-            render,
-        )
+        assert CoreRunDomainVerifier().verify(
+            store, RUN_ID
+        ).snapshot.finalize_renders == (render,)
         wrong_proposal = next(
             item
             for item in before.accepted_proposals
@@ -5278,9 +5349,7 @@ def test_post_seal_graph_rows_fail_closed(
         forged = replace(
             snapshot,
             sources=tuple(
-                item.model_copy(
-                    update={"accepted_transaction_id": transaction_id}
-                )
+                item.model_copy(update={"accepted_transaction_id": transaction_id})
                 if item.source_id == target.source_id
                 else item
                 for item in snapshot.sources
@@ -5300,9 +5369,7 @@ def test_post_seal_graph_rows_fail_closed(
         forged = replace(
             snapshot,
             accepted_proposals=tuple(
-                item.model_copy(
-                    update={"accepted_transaction_id": transaction_id}
-                )
+                item.model_copy(update={"accepted_transaction_id": transaction_id})
                 if item.proposal_id == target.proposal_id
                 else item
                 for item in snapshot.accepted_proposals
@@ -5322,9 +5389,7 @@ def test_post_seal_graph_rows_fail_closed(
         forged = replace(
             snapshot,
             owned_artifact_submissions=tuple(
-                item.model_copy(
-                    update={"accepted_transaction_id": transaction_id}
-                )
+                item.model_copy(update={"accepted_transaction_id": transaction_id})
                 if item.submission_id == target.submission_id
                 else item
                 for item in snapshot.owned_artifact_submissions
@@ -5340,20 +5405,14 @@ def test_post_seal_graph_rows_fail_closed(
         forged = replace(
             snapshot,
             gate_evaluations=tuple(
-                item.model_copy(
-                    update={"accepted_transaction_id": transaction_id}
-                )
+                item.model_copy(update={"accepted_transaction_id": transaction_id})
                 if item.evaluation_id == target.evaluation_id
                 else item
                 for item in snapshot.gate_evaluations
             ),
         )
     else:
-        target = next(
-            item
-            for item in snapshot.invocations
-            if item.role_id == "scout"
-        )
+        target = next(item for item in snapshot.invocations if item.role_id == "scout")
         transaction_id = (
             terminal_transactions["scout"]
             if acceptance_timing == "same_seal"

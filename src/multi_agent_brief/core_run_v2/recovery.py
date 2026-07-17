@@ -23,18 +23,57 @@ class ReopenedArtifactEpoch:
     supersession_id: str
     reopen_transition_id: str
 
+
 class CoreEffect(str, Enum):
-    INVOCATION_START="invocation_start"; OWNED_ARTIFACT_ACCEPT="owned_artifact_accept"; AUDIT_PROPOSAL_PROMOTE="audit_proposal_promote"; CLAIM_FREEZE="claim_freeze"; GATE_EVALUATE="gate_evaluate"; STAGE_COMPLETE="stage_complete"; REPAIR_START="repair_start"; ARTIFACT_SUPERSEDE="artifact_supersede"; ARTIFACT_REVERT="artifact_revert"; REPAIR_COMPLETE="repair_complete"; RECOVERY_COMPLETE="recovery_complete"; RUN_RESET="run_reset"; FINALIZE_RENDER="finalize_render"; FINALIZE_GATE="finalize_gate"; FINALIZE_COMPLETE="finalize_complete"; INTERNAL_APPROVAL="internal_approval"; DELIVERY_AUTHORIZE="delivery_authorize"; DELIVERY_ATTEMPT="delivery_attempt"; DELIVERY_RESULT="delivery_result"
+    INITIALIZE = "initialize"
+    INVOCATION_START = "invocation_start"
+    SOURCE_INTAKE = "source_intake"
+    PROPOSAL_INTAKE = "proposal_intake"
+    INTAKE_REJECTION = "intake_rejection"
+    OWNED_ARTIFACT_ACCEPT = "owned_artifact_accept"
+    AUDIT_PROPOSAL_PROMOTE = "audit_proposal_promote"
+    CLAIM_FREEZE = "claim_freeze"
+    GATE_EVALUATE = "gate_evaluate"
+    STAGE_COMPLETE = "stage_complete"
+    INTEGRITY_CONTAMINATION = "integrity_contamination"
+    REPAIR_START = "repair_start"
+    ARTIFACT_SUPERSEDE = "artifact_supersede"
+    ARTIFACT_REVERT = "artifact_revert"
+    REPAIR_COMPLETE = "repair_complete"
+    RECOVERY_COMPLETE = "recovery_complete"
+    RUN_RESET = "run_reset"
+    FINALIZE_RENDER = "finalize_render"
+    FINALIZE_GATE = "finalize_gate"
+    FINALIZE_COMPLETE = "finalize_complete"
+    INTERNAL_APPROVAL = "internal_approval"
+    DELIVERY_AUTHORIZE = "delivery_authorize"
+    DELIVERY_ATTEMPT = "delivery_attempt"
+    DELIVERY_RESULT = "delivery_result"
+
 
 @dataclass(frozen=True)
 class CoreEffectSubject:
-    contamination_revision: int|None=None; stage_id: str|None=None; artifact_id: str|None=None; repair_id: str|None=None; repair_completion_id: str|None=None
+    contamination_revision: int | None = None
+    stage_id: str | None = None
+    artifact_id: str | None = None
+    repair_id: str | None = None
+    repair_completion_id: str | None = None
+
 
 @dataclass(frozen=True)
 class EffectAuthorization:
-    decision: str; recovery_state: str; contamination_revision: int|None=None; repair_id: str|None=None; repair_completion_id: str|None=None; recovery_id: str|None=None; reopened_epoch: ReopenedArtifactEpoch|None=None; reason_code: str="recovery_effect_allowed"
+    decision: str
+    recovery_state: str
+    contamination_revision: int | None = None
+    repair_id: str | None = None
+    repair_completion_id: str | None = None
+    recovery_id: str | None = None
+    reopened_epoch: ReopenedArtifactEpoch | None = None
+    reason_code: str = "recovery_effect_allowed"
+
     def require_allowed(self) -> "EffectAuthorization":
-        if self.decision != "allow": raise CoreRunError(self.reason_code)
+        if self.decision != "allow":
+            raise CoreRunError(self.reason_code)
         return self
 
 
@@ -63,14 +102,22 @@ def classify_recovery_legality(snapshot: ControlStoreSnapshot) -> RecoveryLegali
         item.transaction_id: item.committed_revision for item in snapshot.transactions
     }
     contaminations = sorted(
-        (item for item in snapshot.run_integrity_records if item.status == "contaminated"),
+        (
+            item
+            for item in snapshot.run_integrity_records
+            if item.status == "contaminated"
+        ),
         key=lambda item: (
             item.integrity_revision,
             tx_revision.get(item.accepted_transaction_id, -1),
         ),
     )
     if not contaminations:
-        if snapshot.repair_cycles or snapshot.repair_completions or snapshot.recovery_completions:
+        if (
+            snapshot.repair_cycles
+            or snapshot.repair_completions
+            or snapshot.recovery_completions
+        ):
             return RecoveryLegality("invalid")
         return RecoveryLegality("not_required")
     if len({item.integrity_revision for item in contaminations}) != len(contaminations):
@@ -84,9 +131,9 @@ def classify_recovery_legality(snapshot: ControlStoreSnapshot) -> RecoveryLegali
         completions_by_repair.setdefault(completion.repair_id, []).append(completion)
     recoveries_by_completion: dict[str, list[RecoveryCompletionRecord]] = {}
     for recovery in snapshot.recovery_completions:
-        recoveries_by_completion.setdefault(
-            recovery.repair_completion_id, []
-        ).append(recovery)
+        recoveries_by_completion.setdefault(recovery.repair_completion_id, []).append(
+            recovery
+        )
 
     epochs: list[RecoveryLegality] = []
     contamination_ids = {item.integrity_revision for item in contaminations}
@@ -118,15 +165,13 @@ def classify_recovery_legality(snapshot: ControlStoreSnapshot) -> RecoveryLegali
             )
             continue
         completion = completions[0]
-        if (
-            completion.contamination_revision != contamination.integrity_revision
-            or set(completion.supersession_ids)
-            != {
-                item.supersession_id
-                for item in snapshot.artifact_supersessions
-                if item.repair_id == repair.repair_id
-            }
-        ):
+        if completion.contamination_revision != contamination.integrity_revision or set(
+            completion.supersession_ids
+        ) != {
+            item.supersession_id
+            for item in snapshot.artifact_supersessions
+            if item.repair_id == repair.repair_id
+        }:
             return RecoveryLegality("invalid")
         recoveries = recoveries_by_completion.get(completion.repair_completion_id, [])
         if len(recoveries) > 1:
@@ -184,7 +229,10 @@ def classify_recovery_legality(snapshot: ControlStoreSnapshot) -> RecoveryLegali
     known_completions = {
         item.repair_completion_id for item in snapshot.repair_completions
     }
-    if set(completions_by_repair) - known_repairs or set(recoveries_by_completion) - known_completions:
+    if (
+        set(completions_by_repair) - known_repairs
+        or set(recoveries_by_completion) - known_completions
+    ):
         return RecoveryLegality("invalid")
     latest = epochs[-1]
     if latest.state == "recovered_current":
@@ -240,16 +288,13 @@ def _required_recovery_relations(
             and tx_revision.get(item.accepted_transaction_id, -1) > completion_revision
             and (
                 cutoff_revision is None
-                or tx_revision.get(item.accepted_transaction_id, -1)
-                < cutoff_revision
+                or tx_revision.get(item.accepted_transaction_id, -1) < cutoff_revision
             )
         ]
         if not later:
             return ((), ())
         current = max(later, key=lambda item: tx_revision[item.accepted_transaction_id])
-        if (
-            current.result_status not in {"complete", "skipped"}
-        ):
+        if current.result_status not in {"complete", "skipped"}:
             return None
         selected.append(current)
     transition_ids = tuple(sorted(item.transition_id for item in selected))
@@ -261,8 +306,7 @@ def _required_recovery_relations(
             if item.transition_id in selected_by_id
             and (
                 cutoff_revision is None
-                or tx_revision.get(item.accepted_transaction_id, -1)
-                < cutoff_revision
+                or tx_revision.get(item.accepted_transaction_id, -1) < cutoff_revision
             )
         )
     )
@@ -297,31 +341,160 @@ def recovery_stage_rerun_permitted(
     ]
     return len(reopened) == 1
 
-def classify_effect_authorization(snapshot: ControlStoreSnapshot, effect: CoreEffect, subject: CoreEffectSubject=CoreEffectSubject()) -> EffectAuthorization:
-    legality=classify_recovery_legality(snapshot)
-    common={"recovery_state":legality.state,"contamination_revision":legality.latest_contamination_revision,"repair_id":legality.repair_id,"repair_completion_id":legality.repair_completion_id,"recovery_id":legality.recovery_id}
-    if effect is CoreEffect.RUN_RESET: return EffectAuthorization("allow", **common)
-    if legality.state=="invalid": return EffectAuthorization("invalid",reason_code="recovery_state_invalid",**common)
-    if legality.state in {"not_required","recovered_current"}:
-        if effect in {CoreEffect.REPAIR_START,CoreEffect.ARTIFACT_SUPERSEDE,CoreEffect.ARTIFACT_REVERT,CoreEffect.REPAIR_COMPLETE,CoreEffect.RECOVERY_COMPLETE}: return EffectAuthorization("deny",reason_code="recovery_state_invalid",**common)
-        return EffectAuthorization("allow",**common)
-    if legality.state=="blocked":
-        allowed=effect is CoreEffect.REPAIR_START and subject.contamination_revision==legality.latest_contamination_revision
-        return EffectAuthorization("allow" if allowed else "deny",reason_code="recovery_effect_allowed" if allowed else "recovery_state_invalid",**common)
-    if legality.state=="active_repair":
-        allowed=effect in {CoreEffect.ARTIFACT_SUPERSEDE,CoreEffect.ARTIFACT_REVERT,CoreEffect.REPAIR_COMPLETE} and subject.repair_id==legality.repair_id
-        return EffectAuthorization("allow" if allowed else "deny",reason_code="recovery_effect_allowed" if allowed else "recovery_state_invalid",**common)
-    if legality.state!="rerun_required" or legality.repair_completion_id is None: return EffectAuthorization("invalid",reason_code="recovery_state_invalid",**common)
+
+def classify_effect_authorization(
+    snapshot: ControlStoreSnapshot,
+    effect: CoreEffect,
+    subject: CoreEffectSubject = CoreEffectSubject(),
+) -> EffectAuthorization:
+    """Authorize one proposed effect from the immutable state before it."""
+
+    legality = classify_recovery_legality(snapshot)
+    common = {
+        "recovery_state": legality.state,
+        "contamination_revision": legality.latest_contamination_revision,
+        "repair_id": legality.repair_id,
+        "repair_completion_id": legality.repair_completion_id,
+        "recovery_id": legality.recovery_id,
+    }
+    # Reset is the explicit escape hatch. Integrity contamination is the
+    # fail-closed observation effect and must remain recordable even when all
+    # ordinary consumption is blocked. Initialization is authorized only by
+    # the verifier's revision-zero genesis rule, never by an existing prefix.
+    if effect in {
+        CoreEffect.RUN_RESET,
+        CoreEffect.INTEGRITY_CONTAMINATION,
+        CoreEffect.INTAKE_REJECTION,
+    }:
+        return EffectAuthorization("allow", **common)
+    if effect is CoreEffect.INITIALIZE:
+        return EffectAuthorization(
+            "deny",
+            reason_code="recovery_state_invalid",
+            **common,
+        )
+    if legality.state == "invalid":
+        return EffectAuthorization(
+            "invalid",
+            reason_code="recovery_state_invalid",
+            **common,
+        )
+    recovery_only = {
+        CoreEffect.REPAIR_START,
+        CoreEffect.ARTIFACT_SUPERSEDE,
+        CoreEffect.ARTIFACT_REVERT,
+        CoreEffect.REPAIR_COMPLETE,
+        CoreEffect.RECOVERY_COMPLETE,
+    }
+    if legality.state in {"not_required", "recovered_current"}:
+        if effect in recovery_only:
+            return EffectAuthorization(
+                "deny",
+                reason_code="recovery_state_invalid",
+                **common,
+            )
+        return EffectAuthorization("allow", **common)
+    if legality.state == "blocked":
+        allowed = (
+            effect is CoreEffect.REPAIR_START
+            and subject.contamination_revision == legality.latest_contamination_revision
+        )
+        return EffectAuthorization(
+            "allow" if allowed else "deny",
+            reason_code=(
+                "recovery_effect_allowed" if allowed else "recovery_state_invalid"
+            ),
+            **common,
+        )
+    if legality.state == "active_repair":
+        allowed = (
+            effect
+            in {
+                CoreEffect.ARTIFACT_SUPERSEDE,
+                CoreEffect.ARTIFACT_REVERT,
+                CoreEffect.REPAIR_COMPLETE,
+            }
+            and subject.repair_id == legality.repair_id
+        )
+        return EffectAuthorization(
+            "allow" if allowed else "deny",
+            reason_code=(
+                "recovery_effect_allowed" if allowed else "recovery_state_invalid"
+            ),
+            **common,
+        )
+    if legality.state != "rerun_required" or legality.repair_completion_id is None:
+        return EffectAuthorization(
+            "invalid",
+            reason_code="recovery_state_invalid",
+            **common,
+        )
     if effect is CoreEffect.RECOVERY_COMPLETE:
-        allowed=subject.repair_completion_id==legality.repair_completion_id
-        return EffectAuthorization("allow" if allowed else "deny",reason_code="recovery_effect_allowed" if allowed else "recovery_state_invalid",**common)
-    completion=next((x for x in snapshot.repair_completions if x.repair_completion_id==legality.repair_completion_id),None)
-    if completion is None: return EffectAuthorization("invalid",reason_code="recovery_state_invalid",**common)
-    reopens=[x for x in snapshot.stage_transitions if x.transition_id in completion.reopened_transition_ids and x.transition_kind=="repair_reopen" and x.stage_id==subject.stage_id]
-    allowed=effect in {CoreEffect.INVOCATION_START,CoreEffect.OWNED_ARTIFACT_ACCEPT,CoreEffect.AUDIT_PROPOSAL_PROMOTE,CoreEffect.GATE_EVALUATE,CoreEffect.STAGE_COMPLETE,CoreEffect.FINALIZE_GATE} and len(reopens)==1
-    supersessions=[x for x in snapshot.artifact_supersessions if x.supersession_id in completion.supersession_ids]
-    epoch=ReopenedArtifactEpoch(completion.repair_completion_id,supersessions[0].supersession_id,reopens[0].transition_id) if allowed and supersessions else None
-    return EffectAuthorization("allow" if allowed else "deny",reopened_epoch=epoch,reason_code="recovery_effect_allowed" if allowed else "recovery_state_invalid",**common)
+        allowed = subject.repair_completion_id == legality.repair_completion_id
+        return EffectAuthorization(
+            "allow" if allowed else "deny",
+            reason_code=(
+                "recovery_effect_allowed" if allowed else "recovery_state_invalid"
+            ),
+            **common,
+        )
+    completion = next(
+        (
+            item
+            for item in snapshot.repair_completions
+            if item.repair_completion_id == legality.repair_completion_id
+        ),
+        None,
+    )
+    if completion is None:
+        return EffectAuthorization(
+            "invalid",
+            reason_code="recovery_state_invalid",
+            **common,
+        )
+    reopens = [
+        item
+        for item in snapshot.stage_transitions
+        if item.transition_id in completion.reopened_transition_ids
+        and item.transition_kind == "repair_reopen"
+        and item.stage_id == subject.stage_id
+    ]
+    allowed = (
+        effect
+        in {
+            CoreEffect.INVOCATION_START,
+            CoreEffect.SOURCE_INTAKE,
+            CoreEffect.PROPOSAL_INTAKE,
+            CoreEffect.OWNED_ARTIFACT_ACCEPT,
+            CoreEffect.AUDIT_PROPOSAL_PROMOTE,
+            CoreEffect.GATE_EVALUATE,
+            CoreEffect.STAGE_COMPLETE,
+            CoreEffect.FINALIZE_GATE,
+        }
+        and len(reopens) == 1
+    )
+    supersessions = [
+        item
+        for item in snapshot.artifact_supersessions
+        if item.supersession_id in completion.supersession_ids
+    ]
+    epoch = (
+        ReopenedArtifactEpoch(
+            completion.repair_completion_id,
+            supersessions[0].supersession_id,
+            reopens[0].transition_id,
+        )
+        if allowed and supersessions
+        else None
+    )
+    return EffectAuthorization(
+        "allow" if allowed else "deny",
+        reopened_epoch=epoch,
+        reason_code=(
+            "recovery_effect_allowed" if allowed else "recovery_state_invalid"
+        ),
+        **common,
+    )
 
 
 def require_reopened_artifact_epoch(
@@ -371,10 +544,14 @@ def require_reopened_artifact_epoch(
     stage_transitions = [
         item for item in snapshot.stage_transitions if item.stage_id == stage_id
     ]
-    if not stage_transitions or max(
-        stage_transitions,
-        key=lambda item: transactions.get(item.accepted_transaction_id, -1),
-    ).transition_id != reopen.transition_id:
+    if (
+        not stage_transitions
+        or max(
+            stage_transitions,
+            key=lambda item: transactions.get(item.accepted_transaction_id, -1),
+        ).transition_id
+        != reopen.transition_id
+    ):
         raise CoreRunError("artifact_revision_conflict")
     states = [item for item in snapshot.stage_states if item.stage_id == stage_id]
     if (
@@ -433,8 +610,6 @@ def require_reopened_artifact_epoch(
         supersession_id=supersession.supersession_id,
         reopen_transition_id=reopen.transition_id,
     )
-
-
 
 
 __all__ = [
