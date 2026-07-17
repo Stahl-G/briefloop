@@ -67,20 +67,26 @@ def canonical_model_sha256(
 
 
 def normalized_utf8_text(value: bytes) -> str:
+    text: str | None = None
     try:
         text = value.decode("utf-8")
-    except UnicodeDecodeError as exc:
-        raise CanonicalSerializationError("invalid_utf8") from exc
+    except UnicodeDecodeError:
+        pass
+    if text is None:
+        raise CanonicalSerializationError("invalid_utf8") from None
     if text.startswith("\ufeff"):
         text = text[1:]
     return text.replace("\r\n", "\n").replace("\r", "\n")
 
 
 def normalized_source_bytes(value: bytes) -> bytes:
+    text: str | None = None
     try:
         text = value.decode("utf-8")
-    except UnicodeDecodeError as exc:
-        raise CanonicalSerializationError("invalid_utf8") from exc
+    except UnicodeDecodeError:
+        pass
+    if text is None:
+        raise CanonicalSerializationError("invalid_utf8") from None
     return text.replace("\r\n", "\n").replace("\r", "\n").encode("utf-8")
 
 

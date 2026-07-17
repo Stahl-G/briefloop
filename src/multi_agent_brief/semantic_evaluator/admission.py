@@ -189,6 +189,8 @@ def _strict_existing_binding(
 ) -> InputBinding | None:
     if existing_binding is None:
         return None
+    strict: InputBinding | None = None
+    invalid = False
     try:
         if not isinstance(existing_binding, InputBinding):
             raise TypeError("trial_identity_conflict")
@@ -199,14 +201,9 @@ def _strict_existing_binding(
             strict, exclude=("input_binding_sha256",)
         ):
             raise ValueError("trial_identity_conflict")
-    except (
-        AttributeError,
-        OSError,
-        RuntimeError,
-        TypeError,
-        ValidationError,
-        ValueError,
-    ):
+    except Exception:
+        invalid = True
+    if invalid or strict is None:
         raise SemanticEvaluatorError("trial_identity_conflict") from None
     return strict
 

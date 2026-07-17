@@ -1327,6 +1327,44 @@ def test_public_manifest_mutation_cannot_rewrite_retained_snapshot_authority() -
     assert raised.value.__context__ is None
 
 
+def test_malformed_public_manifest_is_value_free_across_assembly_and_replay() -> None:
+    _reader, _context, _profile, _plan, decision, evidence, _attempts = (
+        _complete_no_finding_validation_case()
+    )
+    hidden_detail = "PRIVATE-SYNTHETIC-CANARY-DO-NOT-RENDER"
+    decision.instrument_manifest.schema_sha256s["unexpected_private"] = hidden_detail
+    with pytest.raises(SemanticEvaluatorError) as assembly_error:
+        assemble_semantic_assessment_run(
+            admission=decision,
+            dimension_attempt_evidence=evidence,
+        )
+    assert assembly_error.value.reason_code == "instrument_manifest_mismatch"
+    assert assembly_error.value.__cause__ is None
+    assert assembly_error.value.__context__ is None
+    assert hidden_detail not in repr(assembly_error.value)
+
+    _reader, _context, _profile, _plan, fresh, evidence, _attempts = (
+        _complete_no_finding_validation_case()
+    )
+    assembled = assemble_semantic_assessment_run(
+        admission=fresh,
+        dimension_attempt_evidence=evidence,
+    )
+    assembled.witness.instrument_manifest.schema_sha256s["unexpected_private"] = (
+        hidden_detail
+    )
+    assembled.witness.witness_sha256 = canonical_model_sha256(
+        assembled.witness,
+        exclude=("witness_sha256",),
+    )
+    with pytest.raises(SemanticEvaluatorError) as replay_error:
+        verify_laj_composition_witness(assembled.witness)
+    assert replay_error.value.reason_code == "composition_witness_mismatch"
+    assert replay_error.value.__cause__ is None
+    assert replay_error.value.__context__ is None
+    assert hidden_detail not in repr(replay_error.value)
+
+
 @pytest.mark.parametrize("failure_site", ["profile", "component", "prompt"])
 def test_source_resolution_failure_is_value_free_at_assembly_and_witness_boundaries(
     monkeypatch,

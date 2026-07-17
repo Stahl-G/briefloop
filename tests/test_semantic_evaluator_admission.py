@@ -805,6 +805,44 @@ def test_explicit_malformed_existing_binding_is_typed_and_side_effect_free(
     assert sizer.calls == 0
 
 
+@pytest.mark.parametrize("error_type", [OSError, RuntimeError, KeyError])
+def test_existing_binding_dump_exceptions_are_typed_and_side_effect_free(
+    error_type: type[Exception],
+    monkeypatch,
+) -> None:
+    first = _admit("# 第一份\n".encode())
+    hidden_detail = "/private/synthetic-existing-binding"
+
+    class MalformedBinding(type(first.input_binding)):
+        def model_dump(self, *_args, **_kwargs):
+            raise error_type(hidden_detail)
+
+    malformed = MalformedBinding.model_validate(
+        first.input_binding.model_dump(mode="json")
+    )
+    sizer = FakeSizer()
+    monkeypatch.setattr(
+        admission_module,
+        "build_assessment_plan",
+        _fail_if_dependency_reaches_planning,
+    )
+    monkeypatch.setattr(
+        admission_module,
+        "build_dimension_prompt",
+        _fail_if_dependency_reaches_planning,
+    )
+    decision = _admit(
+        "# 第一份\n".encode(),
+        sizer=sizer,
+        existing_binding=malformed,
+    )
+    assert decision.reason_codes == ("trial_identity_conflict",)
+    assert decision.assessment_plan is None
+    assert decision.prompts == ()
+    assert hidden_detail not in repr(decision)
+    assert sizer.calls == 0
+
+
 def test_optional_dependency_precedence_and_explicit_valid_profile() -> None:
     sizer = FakeSizer()
     malformed = _admit(

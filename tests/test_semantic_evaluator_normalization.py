@@ -105,6 +105,24 @@ def test_invalid_utf8_and_nul_fail_closed(raw: bytes) -> None:
     assert caught.value.reason_code == "input_not_utf8"
 
 
+def test_invalid_utf8_errors_retain_no_raw_report_bytes() -> None:
+    hidden_detail = b"PRIVATE-SYNTHETIC-CANARY-DO-NOT-RENDER"
+    raw = hidden_detail + b"\xffTAIL"
+    for operation in (
+        lambda: normalize_markdown(raw, artifact_id="reader-invalid-value-free"),
+        lambda: build_admitted_report_evidence(
+            raw,
+            artifact_id="reader-invalid-value-free",
+        ),
+    ):
+        with pytest.raises(SemanticEvaluatorError) as caught:
+            operation()
+        assert caught.value.reason_code == "input_not_utf8"
+        assert caught.value.__cause__ is None
+        assert caught.value.__context__ is None
+        assert hidden_detail.decode() not in repr(caught.value)
+
+
 def test_normalization_is_deterministic_and_does_not_reflow_text() -> None:
     first = normalize_markdown(MARKDOWN_LF.encode(), artifact_id="reader-stable")
     second = normalize_markdown(MARKDOWN_LF.encode(), artifact_id="reader-stable")

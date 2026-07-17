@@ -712,6 +712,7 @@ def _verify_root_bundle(
     instrument_snapshot: Any | None = None,
     include_baseline: bool = False,
 ) -> _ReplayRoots:
+    root_failure_reason: str | None = None
     try:
         strict_report = AdmittedReportEvidence.model_validate(
             report_evidence.model_dump(mode="json")
@@ -725,26 +726,33 @@ def _verify_root_bundle(
             instrument_config.model_dump(mode="json")
         )
         binding = InputBinding.model_validate(input_binding.model_dump(mode="json"))
+        plan = AssessmentPlan.model_validate(assessment_plan.model_dump(mode="json"))
+    except SemanticEvaluatorError as exc:
+        root_failure_reason = (
+            "instrument_manifest_mismatch"
+            if mismatch_reason == "run_binding_mismatch"
+            and exc.reason_code == "instrument_manifest_mismatch"
+            else mismatch_reason
+        )
+    except Exception:
+        root_failure_reason = mismatch_reason
+    if root_failure_reason is not None:
+        raise SemanticEvaluatorError(root_failure_reason) from None
+
+    manifest_failed = False
+    try:
         manifest = InstrumentManifest.model_validate(
             instrument_manifest.model_dump(mode="json")
         )
-        plan = AssessmentPlan.model_validate(assessment_plan.model_dump(mode="json"))
-    except SemanticEvaluatorError as exc:
-        if (
-            mismatch_reason == "run_binding_mismatch"
-            and exc.reason_code == "instrument_manifest_mismatch"
-        ):
-            raise
-        raise SemanticEvaluatorError(mismatch_reason) from exc
-    except (
-        AttributeError,
-        OSError,
-        RuntimeError,
-        ValidationError,
-        TypeError,
-        ValueError,
-    ) as exc:
-        raise SemanticEvaluatorError(mismatch_reason) from exc
+    except Exception:
+        manifest_failed = True
+    if manifest_failed:
+        reason = (
+            "instrument_manifest_mismatch"
+            if mismatch_reason == "run_binding_mismatch"
+            else mismatch_reason
+        )
+        raise SemanticEvaluatorError(reason) from None
 
     acquisition_failure_reason: str | None = None
     try:
@@ -789,6 +797,7 @@ def _verify_root_bundle(
     if acquisition_failure_reason is not None:
         raise SemanticEvaluatorError(acquisition_failure_reason) from None
 
+    replay_failed = False
     try:
         expected_binding = build_input_binding(
             trial_id=binding.trial_id,
@@ -805,16 +814,10 @@ def _verify_root_bundle(
             profile=loaded_profile.profile,
             profile_sha256=loaded_profile.profile_sha256,
         )
-    except (
-        AttributeError,
-        OSError,
-        RuntimeError,
-        SemanticEvaluatorError,
-        ValidationError,
-        TypeError,
-        ValueError,
-    ) as exc:
-        raise SemanticEvaluatorError(mismatch_reason) from exc
+    except Exception:
+        replay_failed = True
+    if replay_failed:
+        raise SemanticEvaluatorError(mismatch_reason) from None
 
     try:
         expected_prompts = tuple(
@@ -1231,6 +1234,7 @@ def _verify_laj_composition_witness_with_roots(
     instrument_snapshot: Any | None = None,
     include_baseline: bool = False,
 ) -> tuple[LajCompositionWitness, _ReplayRoots]:
+    verification_failed = False
     try:
         strict = LajCompositionWitness.model_validate(witness.model_dump(mode="json"))
         if canonical_json_bytes(strict) != canonical_json_bytes(
@@ -1269,12 +1273,10 @@ def _verify_laj_composition_witness_with_roots(
             [item.model_dump(mode="json") for item in strict.events]
         ):
             raise SemanticEvaluatorError("composition_witness_mismatch")
-    except SemanticEvaluatorError as exc:
-        if exc.reason_code == "composition_witness_mismatch":
-            raise
-        raise SemanticEvaluatorError("composition_witness_mismatch") from exc
-    except (AttributeError, ValidationError, TypeError, ValueError) as exc:
-        raise SemanticEvaluatorError("composition_witness_mismatch") from exc
+    except Exception:
+        verification_failed = True
+    if verification_failed:
+        raise SemanticEvaluatorError("composition_witness_mismatch") from None
     return strict, roots
 
 

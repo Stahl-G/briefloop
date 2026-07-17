@@ -187,6 +187,26 @@ def test_old_four_component_manifest_has_no_compatibility_path() -> None:
         verify_instrument_manifest(payload, config)
 
 
+@pytest.mark.parametrize("mutation", ["missing", "extra", "malformed"])
+def test_malformed_manifest_errors_retain_no_caller_values(mutation: str) -> None:
+    config = _config()
+    payload = build_instrument_manifest(config).model_dump(mode="json")
+    hidden_detail = "PRIVATE-SYNTHETIC-CANARY-DO-NOT-RENDER"
+    if mutation == "missing":
+        payload.pop("provider_id")
+        payload["unexpected_private"] = hidden_detail
+    elif mutation == "extra":
+        payload["unexpected_private"] = hidden_detail
+    else:
+        payload["implementation_components"] = hidden_detail
+    with pytest.raises(SemanticEvaluatorError) as caught:
+        verify_instrument_manifest(payload, config)
+    assert caught.value.reason_code == "instrument_manifest_mismatch"
+    assert caught.value.__cause__ is None
+    assert caught.value.__context__ is None
+    assert hidden_detail not in repr(caught.value)
+
+
 def test_explicit_unavailable_model_version_is_bound_not_inferred() -> None:
     manifest = build_instrument_manifest(_config(model_version="unavailable"))
     assert manifest.model_version == "unavailable"

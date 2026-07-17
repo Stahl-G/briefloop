@@ -86,10 +86,13 @@ def _closing_fence(line: _Line, opener: str) -> bool:
 
 
 def normalize_markdown(markdown_bytes: bytes, *, artifact_id: str) -> NormalizedReader:
+    text: str | None = None
     try:
         text = normalized_utf8_text(markdown_bytes)
-    except ValueError as exc:
-        raise SemanticEvaluatorError("input_not_utf8") from exc
+    except ValueError:
+        pass
+    if text is None:
+        raise SemanticEvaluatorError("input_not_utf8") from None
     if "\x00" in text:
         raise SemanticEvaluatorError("input_not_utf8")
     lines = _lines_with_offsets(text)

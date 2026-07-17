@@ -5,8 +5,6 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any
 
-from pydantic import ValidationError
-
 from multi_agent_brief.semantic_evaluator.contracts import (
     INSTRUMENT_MANIFEST_SCHEMA_ID,
     SEMANTIC_EVALUATOR_CONTRACT_MODELS,
@@ -169,14 +167,17 @@ def verify_instrument_manifest(
     loaded_profile: LoadedProfile | None = None,
     _snapshot: _InstrumentSnapshot | None = None,
 ) -> bool:
+    strict_manifest: InstrumentManifest | None = None
     try:
         strict_manifest = InstrumentManifest.model_validate(
             manifest.model_dump(mode="json")
             if isinstance(manifest, InstrumentManifest)
             else manifest
         )
-    except (ValidationError, TypeError, ValueError) as exc:
-        raise SemanticEvaluatorError("instrument_manifest_mismatch") from exc
+    except Exception:
+        pass
+    if strict_manifest is None:
+        raise SemanticEvaluatorError("instrument_manifest_mismatch") from None
     payload = canonical_model_payload(
         strict_manifest,
         exclude=("instrument_sha256",),
