@@ -1,5 +1,8 @@
 """Complete assessment universe and deterministic identity tests."""
 
+import pytest
+
+from multi_agent_brief.semantic_evaluator.errors import SemanticEvaluatorError
 from multi_agent_brief.semantic_evaluator.profile import (
     EXPECTED_PROFILE_INVENTORY,
     load_profile,
@@ -78,3 +81,19 @@ def test_plan_and_run_identities_are_deterministic_and_binding_sensitive() -> No
         assessment_plan_sha256=first.assessment_plan_sha256,
         instrument_sha256="3" * 64,
     )
+
+
+def test_plan_builder_rejects_malformed_identity_value_free() -> None:
+    loaded = load_profile()
+    hidden_detail = "PRIVATE SYNTHETIC TRIAL VALUE"
+    with pytest.raises(SemanticEvaluatorError) as caught:
+        build_assessment_plan(
+            trial_id=hidden_detail,
+            report_sha256="0" * 64,
+            profile=loaded.profile,
+            profile_sha256=loaded.profile_sha256,
+        )
+    assert caught.value.reason_code == "assessment_plan_invalid"
+    assert caught.value.__cause__ is None
+    assert caught.value.__context__ is None
+    assert hidden_detail not in repr(caught.value)

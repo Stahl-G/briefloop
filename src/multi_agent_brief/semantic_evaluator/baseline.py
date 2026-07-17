@@ -202,7 +202,7 @@ def deterministic_lint(artifact: ReaderArtifact) -> list[LintItem]:
     ]
 
 
-def build_baseline(
+def _build_baseline(
     *,
     report_evidence: AdmittedReportEvidence,
     reader_artifact: ReaderArtifact,
@@ -274,6 +274,37 @@ def build_baseline(
     )
 
 
+def build_baseline(
+    *,
+    report_evidence: AdmittedReportEvidence,
+    reader_artifact: ReaderArtifact,
+    bounded_context: BoundedContext,
+    loaded_profile: LoadedProfile | None = None,
+    _resource_snapshot: EvaluatorResourceSnapshot | None = None,
+) -> BaselinePayload:
+    result: BaselinePayload | None = None
+    try:
+        result = _build_baseline(
+            report_evidence=report_evidence,
+            reader_artifact=reader_artifact,
+            bounded_context=bounded_context,
+            loaded_profile=loaded_profile,
+            _resource_snapshot=_resource_snapshot,
+        )
+    except (
+        AttributeError,
+        EvaluatorResourceError,
+        KeyError,
+        TypeError,
+        ValueError,
+        SemanticEvaluatorError,
+    ):
+        pass
+    if result is None:
+        raise SemanticEvaluatorError("baseline_input_binding_mismatch") from None
+    return result
+
+
 def verify_baseline_payload(
     baseline: BaselinePayload,
     *,
@@ -282,6 +313,7 @@ def verify_baseline_payload(
     bounded_context: BoundedContext,
     loaded_profile: LoadedProfile | None = None,
 ) -> BaselinePayload:
+    verified: BaselinePayload | None = None
     try:
         resources = acquire_resource_snapshot(
             loaded_profile=loaded_profile,
@@ -294,17 +326,20 @@ def verify_baseline_payload(
             bounded_context=bounded_context,
             _resource_snapshot=resources,
         )
+        if canonical_json_bytes(strict) == canonical_json_bytes(expected):
+            verified = strict
     except (
         AttributeError,
         EvaluatorResourceError,
+        KeyError,
         TypeError,
         ValueError,
         SemanticEvaluatorError,
-    ) as exc:
-        raise SemanticEvaluatorError("baseline_input_binding_mismatch") from exc
-    if canonical_json_bytes(strict) != canonical_json_bytes(expected):
-        raise SemanticEvaluatorError("baseline_input_binding_mismatch")
-    return strict
+    ):
+        pass
+    if verified is None:
+        raise SemanticEvaluatorError("baseline_input_binding_mismatch") from None
+    return verified
 
 
 __all__ = [

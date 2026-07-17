@@ -85,7 +85,7 @@ def _closing_fence(line: _Line, opener: str) -> bool:
     return set(marks) == {opener[0]} and len(marks) >= len(opener)
 
 
-def normalize_markdown(markdown_bytes: bytes, *, artifact_id: str) -> NormalizedReader:
+def _normalize_markdown(markdown_bytes: bytes, *, artifact_id: str) -> NormalizedReader:
     text: str | None = None
     try:
         text = normalized_utf8_text(markdown_bytes)
@@ -195,6 +195,20 @@ def normalize_markdown(markdown_bytes: bytes, *, artifact_id: str) -> Normalized
     return NormalizedReader(normalized_text=text, artifact=artifact)
 
 
+def normalize_markdown(markdown_bytes: bytes, *, artifact_id: str) -> NormalizedReader:
+    result: NormalizedReader | None = None
+    failure_reason: str | None = None
+    try:
+        result = _normalize_markdown(markdown_bytes, artifact_id=artifact_id)
+    except SemanticEvaluatorError as exc:
+        failure_reason = exc.reason_code
+    except (AttributeError, KeyError, TypeError, ValueError):
+        failure_reason = "input_sha_mismatch"
+    if result is None:
+        raise SemanticEvaluatorError(failure_reason or "input_sha_mismatch") from None
+    return result
+
+
 def replay_reader_artifact(artifact: ReaderArtifact, normalized_text: str) -> None:
     if artifact.normalized_text_sha256 != sha256_text(normalized_text):
         raise SemanticEvaluatorError("input_sha_mismatch")
@@ -270,7 +284,7 @@ def verify_bounded_context(context: BoundedContext) -> BoundedContext:
     return strict
 
 
-def build_admitted_report_evidence(
+def _build_admitted_report_evidence(
     report_bytes: bytes,
     *,
     artifact_id: str,
@@ -288,6 +302,27 @@ def build_admitted_report_evidence(
         {**payload, "evidence_sha256": canonical_sha256(payload)}
     )
     return evidence, reader
+
+
+def build_admitted_report_evidence(
+    report_bytes: bytes,
+    *,
+    artifact_id: str,
+) -> tuple[AdmittedReportEvidence, NormalizedReader]:
+    result: tuple[AdmittedReportEvidence, NormalizedReader] | None = None
+    failure_reason: str | None = None
+    try:
+        result = _build_admitted_report_evidence(
+            report_bytes,
+            artifact_id=artifact_id,
+        )
+    except SemanticEvaluatorError as exc:
+        failure_reason = exc.reason_code
+    except (AttributeError, KeyError, TypeError, ValueError):
+        failure_reason = "input_sha_mismatch"
+    if result is None:
+        raise SemanticEvaluatorError(failure_reason or "input_sha_mismatch") from None
+    return result
 
 
 def verify_admitted_report_evidence(
@@ -322,7 +357,7 @@ def verify_admitted_report_evidence(
     return reader
 
 
-def freeze_bounded_context(
+def _freeze_bounded_context(
     *,
     context_id: str,
     data_class: DataClass,
@@ -339,6 +374,29 @@ def freeze_bounded_context(
         {**payload, "context_sha256": canonical_sha256(payload)}
     )
     return verify_bounded_context(frozen)
+
+
+def freeze_bounded_context(
+    *,
+    context_id: str,
+    data_class: DataClass,
+    requirements: Iterable[BoundedRequirement],
+) -> BoundedContext:
+    result: BoundedContext | None = None
+    failure_reason: str | None = None
+    try:
+        result = _freeze_bounded_context(
+            context_id=context_id,
+            data_class=data_class,
+            requirements=requirements,
+        )
+    except SemanticEvaluatorError as exc:
+        failure_reason = exc.reason_code
+    except (AttributeError, KeyError, TypeError, ValueError):
+        failure_reason = "input_sha_mismatch"
+    if result is None:
+        raise SemanticEvaluatorError(failure_reason or "input_sha_mismatch") from None
+    return result
 
 
 __all__ = [

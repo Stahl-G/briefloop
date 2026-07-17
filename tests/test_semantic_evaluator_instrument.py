@@ -207,6 +207,25 @@ def test_malformed_manifest_errors_retain_no_caller_values(mutation: str) -> Non
     assert hidden_detail not in repr(caught.value)
 
 
+def test_malformed_instrument_config_is_rejected_value_free_at_public_boundaries() -> (
+    None
+):
+    config = _config()
+    manifest = build_instrument_manifest(config)
+    hidden_detail = "PRIVATE SYNTHETIC CONFIG VALUE"
+    malformed = config.model_copy(update={"provider_id": hidden_detail})
+    for operation in (
+        lambda: build_instrument_manifest(malformed),
+        lambda: verify_instrument_manifest(manifest, malformed),
+    ):
+        with pytest.raises(SemanticEvaluatorError) as caught:
+            operation()
+        assert caught.value.reason_code == "instrument_manifest_mismatch"
+        assert caught.value.__cause__ is None
+        assert caught.value.__context__ is None
+        assert hidden_detail not in repr(caught.value)
+
+
 def test_explicit_unavailable_model_version_is_bound_not_inferred() -> None:
     manifest = build_instrument_manifest(_config(model_version="unavailable"))
     assert manifest.model_version == "unavailable"

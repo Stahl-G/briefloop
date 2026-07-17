@@ -421,6 +421,23 @@ def test_baseline_build_and_canonical_reread_are_byte_stable() -> None:
     assert canonical_json_bytes(reread) == canonical_json_bytes(first)
 
 
+def test_baseline_verifier_rejects_malformed_copy_value_free() -> None:
+    decision, context, _profile, baseline = _admitted_case()
+    hidden_detail = "PRIVATE SYNTHETIC BASELINE VALUE"
+    malformed = baseline.model_copy(update={"checklist_id": hidden_detail})
+    with pytest.raises(SemanticEvaluatorError) as caught:
+        verify_baseline_payload(
+            malformed,
+            report_evidence=decision.report_evidence,
+            reader_artifact=decision.reader.artifact,
+            bounded_context=context,
+        )
+    assert caught.value.reason_code == "baseline_input_binding_mismatch"
+    assert caught.value.__cause__ is None
+    assert caught.value.__context__ is None
+    assert hidden_detail not in repr(caught.value)
+
+
 def test_completed_accepted_zero_findings_preserves_exact_baseline() -> None:
     baseline, assembled = _assembled()
     matched = _matched(assembled.witness)
@@ -437,6 +454,107 @@ def test_completed_accepted_zero_findings_preserves_exact_baseline() -> None:
     assert presentation.advisory_only is True
     assert "未发现问题" not in presentation.disclaimer
     assert "completed/accepted" in presentation.disclaimer
+
+
+def test_additive_baseline_rejects_identically_malformed_embedded_payloads() -> None:
+    _baseline, assembled = _assembled()
+    matched = _matched(assembled.witness)
+    actual = compose_actual_laj(assembled.witness)
+    malformed_baseline = matched.baseline_payload.model_copy(
+        update={"checklist_id": "PRIVATE SYNTHETIC BASELINE VALUE"}
+    )
+    malformed_matched = matched.model_copy(
+        update={"baseline_payload": malformed_baseline}
+    )
+    malformed_actual = actual.model_copy(
+        update={"baseline_payload": malformed_baseline}
+    )
+    assert verify_additive_baseline(malformed_matched, malformed_actual) is False
+
+
+def test_composition_boundaries_reject_malformed_typed_copies_value_free() -> None:
+    _baseline, assembled = _assembled()
+    matched = _matched(assembled.witness)
+    hidden_detail = "PRIVATE SYNTHETIC COMPOSITION VALUE"
+    malformed = matched.model_copy(update={"condition": hidden_detail})
+    operations = (
+        lambda: verify_composition_record(
+            malformed,
+            report_evidence=assembled.witness.report_evidence,
+            reader_artifact=assembled.witness.reader_artifact,
+            bounded_context=assembled.witness.bounded_context,
+        ),
+        lambda: build_presentation(
+            malformed,
+            report_evidence=assembled.witness.report_evidence,
+            reader_artifact=assembled.witness.reader_artifact,
+            bounded_context=assembled.witness.bounded_context,
+        ),
+    )
+    for operation in operations:
+        with pytest.raises(SemanticEvaluatorError) as caught:
+            operation()
+        assert caught.value.reason_code == "composition_record_mismatch"
+        assert caught.value.__cause__ is None
+        assert caught.value.__context__ is None
+        assert hidden_detail not in repr(caught.value)
+
+
+def test_matched_composition_rejects_malformed_context_value_free() -> None:
+    _baseline, assembled = _assembled()
+    hidden_detail = "PRIVATE SYNTHETIC REQUIREMENT VALUE"
+    context = assembled.witness.bounded_context
+    malformed_requirement = context.requirements[0].model_copy(
+        update={"type": hidden_detail}
+    )
+    malformed_context = context.model_copy(
+        update={"requirements": [malformed_requirement, *context.requirements[1:]]}
+    )
+    with pytest.raises(SemanticEvaluatorError) as caught:
+        compose_matched_non_llm(
+            report_evidence=assembled.witness.report_evidence,
+            reader_artifact=assembled.witness.reader_artifact,
+            bounded_context=malformed_context,
+        )
+    assert caught.value.reason_code == "composition_record_mismatch"
+    assert caught.value.__cause__ is None
+    assert caught.value.__context__ is None
+    assert hidden_detail not in repr(caught.value)
+
+
+def test_public_event_and_attempt_builders_reject_invalid_values_value_free() -> None:
+    decision, _context, _profile, _baseline = _admitted_case()
+    prompt = decision.prompts[0]
+    hidden_detail = "PRIVATE SYNTHETIC STATUS VALUE"
+    operations = (
+        (
+            "event_sequence_invalid",
+            lambda: make_semantic_evaluator_event(
+                sequence=1,
+                run_id="run-synthetic",
+                trial_id=decision.input_binding.trial_id,
+                event_type=hidden_detail,
+                payload={},
+            ),
+        ),
+        (
+            "assessment_evidence_mismatch",
+            lambda: make_dimension_attempt_evidence(
+                trial_id=decision.input_binding.trial_id,
+                prompt=prompt,
+                attempt_ordinal=1,
+                status=hidden_detail,
+                raw_response_bytes=b"{}",
+            ),
+        ),
+    )
+    for reason, operation in operations:
+        with pytest.raises(SemanticEvaluatorError) as caught:
+            operation()
+        assert caught.value.reason_code == reason
+        assert caught.value.__cause__ is None
+        assert caught.value.__context__ is None
+        assert hidden_detail not in repr(caught.value)
 
 
 def test_completed_accepted_findings_and_labels_are_deterministically_additive() -> (

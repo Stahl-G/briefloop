@@ -79,16 +79,23 @@ def build_instrument_manifest(
     *,
     loaded_profile: LoadedProfile | None = None,
 ) -> InstrumentManifest:
-    resource_failed = False
+    snapshot: _InstrumentSnapshot | None = None
+    failure_reason: str | None = None
     try:
         snapshot = _acquire_instrument_snapshot(
             config,
             loaded_profile=loaded_profile,
         )
+    except SemanticEvaluatorError as exc:
+        failure_reason = exc.reason_code
     except EvaluatorResourceError:
-        resource_failed = True
-    if resource_failed:
-        raise SemanticEvaluatorError("instrument_manifest_mismatch") from None
+        failure_reason = "instrument_manifest_mismatch"
+    except (AttributeError, KeyError, TypeError, ValueError):
+        failure_reason = "instrument_manifest_mismatch"
+    if snapshot is None:
+        raise SemanticEvaluatorError(
+            failure_reason or "instrument_manifest_mismatch"
+        ) from None
     return snapshot.manifest
 
 
@@ -184,7 +191,8 @@ def verify_instrument_manifest(
     )
     if strict_manifest.instrument_sha256 != canonical_sha256(payload):
         raise SemanticEvaluatorError("instrument_manifest_mismatch")
-    resource_failed = False
+    expected: InstrumentManifest | None = None
+    failure_reason: str | None = None
     try:
         expected = (
             _snapshot
@@ -193,10 +201,16 @@ def verify_instrument_manifest(
                 loaded_profile=loaded_profile,
             )
         ).manifest
+    except SemanticEvaluatorError as exc:
+        failure_reason = exc.reason_code
     except EvaluatorResourceError:
-        resource_failed = True
-    if resource_failed:
-        raise SemanticEvaluatorError("instrument_manifest_mismatch") from None
+        failure_reason = "instrument_manifest_mismatch"
+    except (AttributeError, KeyError, TypeError, ValueError):
+        failure_reason = "instrument_manifest_mismatch"
+    if expected is None:
+        raise SemanticEvaluatorError(
+            failure_reason or "instrument_manifest_mismatch"
+        ) from None
     if canonical_json_bytes(strict_manifest) != canonical_json_bytes(expected):
         raise SemanticEvaluatorError("instrument_manifest_mismatch")
     return True

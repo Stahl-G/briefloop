@@ -55,15 +55,19 @@ def _derive_baseline(
     resource_snapshot: EvaluatorResourceSnapshot,
     mismatch_reason: str,
 ) -> BaselinePayload:
+    baseline: BaselinePayload | None = None
     try:
-        return build_baseline(
+        baseline = build_baseline(
             report_evidence=report_evidence,
             reader_artifact=reader_artifact,
             bounded_context=bounded_context,
             _resource_snapshot=resource_snapshot,
         )
-    except SemanticEvaluatorError as exc:
-        raise SemanticEvaluatorError(mismatch_reason) from exc
+    except SemanticEvaluatorError:
+        pass
+    if baseline is None:
+        raise SemanticEvaluatorError(mismatch_reason) from None
+    return baseline
 
 
 def _compose_matched_with_resources(
@@ -104,16 +108,30 @@ def compose_matched_non_llm(
     reader_artifact: ReaderArtifact,
     bounded_context: BoundedContext,
 ) -> CompositionRecord:
+    result: CompositionRecord | None = None
     try:
         resources = acquire_resource_snapshot(include_baseline=True)
     except EvaluatorResourceError:
+        resources = None
+    if resources is not None:
+        try:
+            result = _compose_matched_with_resources(
+                report_evidence=report_evidence,
+                reader_artifact=reader_artifact,
+                bounded_context=bounded_context,
+                resource_snapshot=resources,
+            )
+        except (
+            AttributeError,
+            KeyError,
+            TypeError,
+            ValueError,
+            SemanticEvaluatorError,
+        ):
+            pass
+    if result is None:
         raise SemanticEvaluatorError("composition_record_mismatch") from None
-    return _compose_matched_with_resources(
-        report_evidence=report_evidence,
-        reader_artifact=reader_artifact,
-        bounded_context=bounded_context,
-        resource_snapshot=resources,
-    )
+    return result
 
 
 def _derive_duplicate_annotations(
@@ -209,20 +227,26 @@ def _verify_composition_record_with_context(
     reader_artifact: ReaderArtifact | None = None,
     bounded_context: BoundedContext | None = None,
 ) -> tuple[CompositionRecord, LajCompositionWitness | None]:
+    strict: CompositionRecord | None = None
+    exact = False
     try:
         strict = CompositionRecord.model_validate(composition.model_dump(mode="json"))
-    except (AttributeError, TypeError, ValueError) as exc:
-        raise SemanticEvaluatorError("composition_record_mismatch") from exc
-    if canonical_json_bytes(strict) != canonical_json_bytes(composition):
-        raise SemanticEvaluatorError("composition_record_mismatch")
+        exact = canonical_json_bytes(strict) == canonical_json_bytes(composition)
+    except (AttributeError, KeyError, TypeError, ValueError):
+        pass
+    if strict is None or not exact:
+        raise SemanticEvaluatorError("composition_record_mismatch") from None
     if strict.condition == "matched_non_LLM":
         if witness is not None or any(
             item is None for item in (report_evidence, reader_artifact, bounded_context)
         ):
             raise SemanticEvaluatorError("composition_record_mismatch")
+        resources: EvaluatorResourceSnapshot | None = None
         try:
             resources = acquire_resource_snapshot(include_baseline=True)
         except EvaluatorResourceError:
+            pass
+        if resources is None:
             raise SemanticEvaluatorError("composition_record_mismatch") from None
         expected = _compose_matched_with_resources(
             report_evidence=report_evidence,
@@ -272,12 +296,32 @@ def verify_additive_baseline(
     matched: CompositionRecord,
     actual: CompositionRecord,
 ) -> bool:
+    strict_records: list[CompositionRecord] = []
+    try:
+        for record in (matched, actual):
+            strict = CompositionRecord.model_validate(record.model_dump(mode="json"))
+            if canonical_json_bytes(strict) != canonical_json_bytes(record):
+                return False
+            if strict.composition_sha256 != canonical_model_sha256(
+                strict,
+                exclude=("composition_sha256",),
+            ):
+                return False
+            if strict.baseline_payload.baseline_sha256 != canonical_model_sha256(
+                strict.baseline_payload,
+                exclude=("baseline_sha256",),
+            ):
+                return False
+            strict_records.append(strict)
+    except (AttributeError, KeyError, TypeError, ValueError):
+        return False
+    strict_matched, strict_actual = strict_records
     return (
-        matched.condition == "matched_non_LLM"
-        and actual.condition == "actual_LAJ"
-        and matched.baseline_sha256 == actual.baseline_sha256
-        and canonical_json_bytes(matched.baseline_payload)
-        == canonical_json_bytes(actual.baseline_payload)
+        strict_matched.condition == "matched_non_LLM"
+        and strict_actual.condition == "actual_LAJ"
+        and strict_matched.baseline_sha256 == strict_actual.baseline_sha256
+        and canonical_json_bytes(strict_matched.baseline_payload)
+        == canonical_json_bytes(strict_actual.baseline_payload)
     )
 
 
@@ -304,14 +348,14 @@ def build_presentation(
     reader_artifact: ReaderArtifact | None = None,
     bounded_context: BoundedContext | None = None,
 ) -> PresentationRecord:
-    _strict_composition, verified_witness = _verify_composition_record_with_context(
+    strict_composition, verified_witness = _verify_composition_record_with_context(
         composition,
         witness=witness,
         report_evidence=report_evidence,
         reader_artifact=reader_artifact,
         bounded_context=bounded_context,
     )
-    if composition.condition == "actual_LAJ":
+    if strict_composition.condition == "actual_LAJ":
         if verified_witness is None:
             raise SemanticEvaluatorError("composition_witness_mismatch")
         run = verified_witness.run
@@ -339,7 +383,7 @@ def build_presentation(
         run_status = None
         validation_status = None
         failure_reasons = []
-    finding_count = len(composition.laj_advice_items)
+    finding_count = len(strict_composition.laj_advice_items)
     if finding_count == 0:
         disclaimer = (
             f"{NO_FINDING_DISCLAIMER}状态：{run_status or 'matched_non_LLM'}/"
@@ -350,7 +394,7 @@ def build_presentation(
     else:
         disclaimer = ADVISORY_DISCLAIMER
     identity = [
-        composition.composition_sha256,
+        strict_composition.composition_sha256,
         witness_sha,
         assessed,
         abstentions,
@@ -360,19 +404,19 @@ def build_presentation(
     payload = {
         "schema_version": PRESENTATION_SCHEMA_ID,
         "presentation_id": f"presentation-{canonical_sha256(identity)[:12]}",
-        "condition": composition.condition,
-        "composition_sha256": composition.composition_sha256,
-        "baseline_sha256": composition.baseline_sha256,
+        "condition": strict_composition.condition,
+        "composition_sha256": strict_composition.composition_sha256,
+        "baseline_sha256": strict_composition.baseline_sha256,
         "baseline_items": [
             item.model_dump(mode="json")
-            for item in composition.baseline_payload.checklist_items
+            for item in strict_composition.baseline_payload.checklist_items
         ],
         "baseline_lint_items": [
             item.model_dump(mode="json")
-            for item in composition.baseline_payload.lint_items
+            for item in strict_composition.baseline_payload.lint_items
         ],
         "additional_semantic_findings": [
-            item.model_dump(mode="json") for item in composition.laj_advice_items
+            item.model_dump(mode="json") for item in strict_composition.laj_advice_items
         ],
         "laj_witness_sha256": witness_sha,
         "laj_run_status": run_status,

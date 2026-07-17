@@ -45,7 +45,7 @@ def derive_assessment_unit_id(
     )
 
 
-def build_assessment_plan(
+def _build_assessment_plan(
     *,
     trial_id: str,
     report_sha256: str,
@@ -97,6 +97,28 @@ def build_assessment_plan(
         ),
     )
     return plan
+
+
+def build_assessment_plan(
+    *,
+    trial_id: str,
+    report_sha256: str,
+    profile: EvaluatorProfile,
+    profile_sha256: str,
+) -> AssessmentPlan:
+    result: AssessmentPlan | None = None
+    try:
+        result = _build_assessment_plan(
+            trial_id=trial_id,
+            report_sha256=report_sha256,
+            profile=profile,
+            profile_sha256=profile_sha256,
+        )
+    except (AttributeError, KeyError, TypeError, ValueError, SemanticEvaluatorError):
+        pass
+    if result is None:
+        raise SemanticEvaluatorError("assessment_plan_invalid") from None
+    return result
 
 
 def derive_run_id(

@@ -161,6 +161,38 @@ def test_exported_replay_errors_retain_no_serialized_caller_values() -> None:
         assert hidden_detail not in repr(caught.value)
 
 
+def test_exported_normalization_builders_reject_malformed_values_value_free() -> None:
+    hidden_detail = "PRIVATE SYNTHETIC EXPORTED VALUE"
+    requirement = BoundedRequirement(
+        requirement_id="REQ-VALUE-FREE-BUILDER",
+        type="must_answer",
+        text="说明合成状态。",
+        source_locator="brief:value-free-builder",
+    )
+    operations = (
+        lambda: normalize_markdown(
+            MARKDOWN_LF.encode(),
+            artifact_id=hidden_detail,
+        ),
+        lambda: build_admitted_report_evidence(
+            MARKDOWN_LF.encode(),
+            artifact_id=hidden_detail,
+        ),
+        lambda: freeze_bounded_context(
+            context_id="context-value-free-builder",
+            data_class="synthetic",
+            requirements=[requirement.model_copy(update={"type": hidden_detail})],
+        ),
+    )
+    for operation in operations:
+        with pytest.raises(SemanticEvaluatorError) as caught:
+            operation()
+        assert caught.value.reason_code == "input_sha_mismatch"
+        assert caught.value.__cause__ is None
+        assert caught.value.__context__ is None
+        assert hidden_detail not in repr(caught.value)
+
+
 def test_normalization_is_deterministic_and_does_not_reflow_text() -> None:
     first = normalize_markdown(MARKDOWN_LF.encode(), artifact_id="reader-stable")
     second = normalize_markdown(MARKDOWN_LF.encode(), artifact_id="reader-stable")

@@ -398,18 +398,25 @@ def make_semantic_evaluator_event(
     event_type: str,
     payload: dict[str, Any],
 ) -> SemanticEvaluatorEvent:
-    event_id = f"event-{canonical_sha256([run_id, trial_id, sequence, event_type, payload])[:12]}"
-    return SemanticEvaluatorEvent.model_validate(
-        {
-            "schema_version": EVENT_SCHEMA_ID,
-            "event_id": event_id,
-            "sequence": sequence,
-            "run_id": run_id,
-            "trial_id": trial_id,
-            "event_type": event_type,
-            "payload": {"event_type": event_type, **payload},
-        }
-    )
+    result: SemanticEvaluatorEvent | None = None
+    try:
+        event_id = f"event-{canonical_sha256([run_id, trial_id, sequence, event_type, payload])[:12]}"
+        result = SemanticEvaluatorEvent.model_validate(
+            {
+                "schema_version": EVENT_SCHEMA_ID,
+                "event_id": event_id,
+                "sequence": sequence,
+                "run_id": run_id,
+                "trial_id": trial_id,
+                "event_type": event_type,
+                "payload": {"event_type": event_type, **payload},
+            }
+        )
+    except (AttributeError, KeyError, TypeError, ValueError, SemanticEvaluatorError):
+        pass
+    if result is None:
+        raise SemanticEvaluatorError("event_sequence_invalid") from None
+    return result
 
 
 def build_validation_events(
@@ -675,29 +682,38 @@ def make_dimension_attempt_evidence(
     raw_response_bytes: bytes | None = None,
     reason_code: str | None = None,
 ) -> DimensionAttemptEvidence:
-    attempt_ref = derive_attempt_ref(
-        trial_id=trial_id,
-        dimension_id=prompt.dimension_id,
-        attempt_ordinal=attempt_ordinal,
-        prompt_request_sha256=prompt.request_sha256,
-    )
-    raw_hex = raw_response_bytes.hex() if raw_response_bytes is not None else None
-    payload = {
-        "attempt_ref": attempt_ref,
-        "dimension_id": prompt.dimension_id,
-        "attempt_ordinal": attempt_ordinal,
-        "prompt_request_sha256": prompt.request_sha256,
-        "status": status,
-        "reason_code": reason_code,
-        "raw_response_bytes_hex": raw_hex,
-        "raw_response_sha256": (
-            sha256_bytes(raw_response_bytes) if raw_response_bytes is not None else None
-        ),
-        "forbidden_canary_values": list(prompt.forbidden_canary_values),
-    }
-    return DimensionAttemptEvidence.model_validate(
-        {**payload, "evidence_sha256": canonical_sha256(payload)}
-    )
+    result: DimensionAttemptEvidence | None = None
+    try:
+        attempt_ref = derive_attempt_ref(
+            trial_id=trial_id,
+            dimension_id=prompt.dimension_id,
+            attempt_ordinal=attempt_ordinal,
+            prompt_request_sha256=prompt.request_sha256,
+        )
+        raw_hex = raw_response_bytes.hex() if raw_response_bytes is not None else None
+        payload = {
+            "attempt_ref": attempt_ref,
+            "dimension_id": prompt.dimension_id,
+            "attempt_ordinal": attempt_ordinal,
+            "prompt_request_sha256": prompt.request_sha256,
+            "status": status,
+            "reason_code": reason_code,
+            "raw_response_bytes_hex": raw_hex,
+            "raw_response_sha256": (
+                sha256_bytes(raw_response_bytes)
+                if raw_response_bytes is not None
+                else None
+            ),
+            "forbidden_canary_values": list(prompt.forbidden_canary_values),
+        }
+        result = DimensionAttemptEvidence.model_validate(
+            {**payload, "evidence_sha256": canonical_sha256(payload)}
+        )
+    except (AttributeError, KeyError, TypeError, ValueError, SemanticEvaluatorError):
+        pass
+    if result is None:
+        raise SemanticEvaluatorError("assessment_evidence_mismatch") from None
+    return result
 
 
 def _verify_root_bundle(
