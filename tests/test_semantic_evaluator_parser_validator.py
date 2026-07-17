@@ -1365,6 +1365,42 @@ def test_malformed_public_manifest_is_value_free_across_assembly_and_replay() ->
     assert hidden_detail not in repr(replay_error.value)
 
 
+def test_untrusted_attempt_and_response_errors_retain_no_caller_values() -> None:
+    reader, context, _profile, plan, decision, evidence, _attempts = (
+        _complete_no_finding_validation_case()
+    )
+    hidden_detail = "PRIVATE-SYNTHETIC-EXPORTED-VALUE"
+    malformed_attempt = evidence[0].model_copy(
+        update={"raw_response_bytes_hex": hidden_detail}
+    )
+    with pytest.raises(SemanticEvaluatorError) as assembly_error:
+        assemble_semantic_assessment_run(
+            admission=decision,
+            dimension_attempt_evidence=[malformed_attempt, *evidence[1:]],
+        )
+    assert assembly_error.value.reason_code == "assessment_evidence_mismatch"
+    assert assembly_error.value.__cause__ is None
+    assert assembly_error.value.__context__ is None
+    assert hidden_detail not in repr(assembly_error.value)
+
+    response = _no_finding_response(plan, "cross_section_consistency")
+    malformed_response = response.model_copy(update={"dimension_id": hidden_detail})
+    with pytest.raises(SemanticEvaluatorError) as response_error:
+        validate_dimension_response(
+            malformed_response,
+            raw_object=malformed_response.model_dump(mode="json"),
+            expected_dimension_id="cross_section_consistency",
+            plan=plan,
+            reader_artifact=reader.artifact,
+            bounded_context=context,
+            attempt_ref="attempt-value-free-response",
+        )
+    assert response_error.value.reason_code == "raw_response_binding_mismatch"
+    assert response_error.value.__cause__ is None
+    assert response_error.value.__context__ is None
+    assert hidden_detail not in repr(response_error.value)
+
+
 @pytest.mark.parametrize("failure_site", ["profile", "component", "prompt"])
 def test_source_resolution_failure_is_value_free_at_assembly_and_witness_boundaries(
     monkeypatch,

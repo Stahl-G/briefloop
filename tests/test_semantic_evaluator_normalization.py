@@ -4,14 +4,17 @@ from __future__ import annotations
 
 import pytest
 
+from multi_agent_brief.semantic_evaluator.contracts import BoundedRequirement
 from multi_agent_brief.semantic_evaluator.errors import SemanticEvaluatorError
 from multi_agent_brief.semantic_evaluator.normalization import (
     build_admitted_report_evidence,
+    freeze_bounded_context,
     make_span_locator,
     normalize_markdown,
     replay_reader_artifact,
     replay_span,
     verify_admitted_report_evidence,
+    verify_bounded_context,
 )
 
 
@@ -121,6 +124,41 @@ def test_invalid_utf8_errors_retain_no_raw_report_bytes() -> None:
         assert caught.value.__cause__ is None
         assert caught.value.__context__ is None
         assert hidden_detail.decode() not in repr(caught.value)
+
+
+def test_exported_replay_errors_retain_no_serialized_caller_values() -> None:
+    hidden_detail = "PRIVATE-SYNTHETIC-EXPORTED-VALUE"
+    evidence, _reader = build_admitted_report_evidence(
+        MARKDOWN_LF.encode(),
+        artifact_id="reader-value-free-replay",
+    )
+    context = freeze_bounded_context(
+        context_id="context-value-free-replay",
+        data_class="synthetic",
+        requirements=[
+            BoundedRequirement(
+                requirement_id="REQ-VALUE-FREE",
+                type="must_answer",
+                text="说明合成状态。",
+                source_locator="brief:value-free",
+            )
+        ],
+    )
+    operations = (
+        lambda: verify_admitted_report_evidence(
+            evidence.model_copy(update={"report_bytes_hex": hidden_detail})
+        ),
+        lambda: verify_bounded_context(
+            context.model_copy(update={"context_sha256": hidden_detail})
+        ),
+    )
+    for operation in operations:
+        with pytest.raises(SemanticEvaluatorError) as caught:
+            operation()
+        assert caught.value.reason_code == "input_sha_mismatch"
+        assert caught.value.__cause__ is None
+        assert caught.value.__context__ is None
+        assert hidden_detail not in repr(caught.value)
 
 
 def test_normalization_is_deterministic_and_does_not_reflow_text() -> None:

@@ -248,16 +248,19 @@ def validate_dimension_response(
     attempt_ref: str,
     _loaded_profile: Any | None = None,
 ) -> DimensionValidationResult:
+    response_invalid = False
+    violations = ()
     try:
         response = DimensionResponse.model_validate(response.model_dump(mode="json"))
-    except (AttributeError, ValidationError, ValueError) as exc:
-        violations = (
-            value_free_violations(exc) if isinstance(exc, ValidationError) else ()
-        )
+    except Exception as exc:
+        if isinstance(exc, ValidationError):
+            violations = value_free_violations(exc)
+        response_invalid = True
+    if response_invalid:
         raise SemanticEvaluatorError(
             "raw_response_binding_mismatch",
             violations=violations,
-        ) from exc
+        ) from None
     reasons: set[str] = set()
     canaries: tuple[str, ...] = ()
     try:
@@ -917,14 +920,19 @@ def _strict_attempt_evidence(
     *,
     roots: _ReplayRoots,
 ) -> tuple[DimensionAttemptEvidence, ...]:
+    observed: tuple[DimensionAttemptEvidence, ...] = ()
+    strict: tuple[DimensionAttemptEvidence, ...] = ()
+    evidence_invalid = False
     try:
         observed = tuple(evidence)
         strict = tuple(
             DimensionAttemptEvidence.model_validate(item.model_dump(mode="json"))
             for item in observed
         )
-    except (AttributeError, ValidationError, TypeError, ValueError) as exc:
-        raise SemanticEvaluatorError("assessment_evidence_mismatch") from exc
+    except Exception:
+        evidence_invalid = True
+    if evidence_invalid:
+        raise SemanticEvaluatorError("assessment_evidence_mismatch") from None
     if not strict or any(
         canonical_json_bytes(left) != canonical_json_bytes(right)
         for left, right in zip(strict, observed)
@@ -957,10 +965,13 @@ def _strict_attempt_evidence(
         ):
             raise SemanticEvaluatorError("assessment_evidence_mismatch")
         if item.status == "completed":
+            raw: bytes | None = None
             try:
                 raw = bytes.fromhex(item.raw_response_bytes_hex or "")
-            except ValueError as exc:
-                raise SemanticEvaluatorError("assessment_evidence_mismatch") from exc
+            except ValueError:
+                pass
+            if raw is None:
+                raise SemanticEvaluatorError("assessment_evidence_mismatch") from None
             if (
                 raw.hex() != item.raw_response_bytes_hex
                 or sha256_bytes(raw) != item.raw_response_sha256

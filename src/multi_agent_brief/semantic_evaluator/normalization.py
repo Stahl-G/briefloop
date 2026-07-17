@@ -256,14 +256,17 @@ def bounded_context_sha256(context: BoundedContext) -> str:
 
 
 def verify_bounded_context(context: BoundedContext) -> BoundedContext:
+    strict: BoundedContext | None = None
+    exact = False
     try:
         strict = BoundedContext.model_validate(context.model_dump(mode="json"))
-    except (AttributeError, TypeError, ValueError) as exc:
-        raise SemanticEvaluatorError("input_sha_mismatch") from exc
-    if canonical_json_bytes(strict) != canonical_json_bytes(
-        context
-    ) or strict.context_sha256 != bounded_context_sha256(strict):
-        raise SemanticEvaluatorError("input_sha_mismatch")
+        exact = canonical_json_bytes(strict) == canonical_json_bytes(
+            context
+        ) and strict.context_sha256 == bounded_context_sha256(strict)
+    except Exception:
+        pass
+    if strict is None or not exact:
+        raise SemanticEvaluatorError("input_sha_mismatch") from None
     return strict
 
 
@@ -292,23 +295,30 @@ def verify_admitted_report_evidence(
     *,
     reader_artifact: ReaderArtifact | None = None,
 ) -> NormalizedReader:
+    strict: AdmittedReportEvidence | None = None
+    raw: bytes | None = None
     try:
         strict = AdmittedReportEvidence.model_validate(evidence.model_dump(mode="json"))
         raw = bytes.fromhex(strict.report_bytes_hex)
-    except (AttributeError, TypeError, ValueError) as exc:
-        raise SemanticEvaluatorError("input_sha_mismatch") from exc
-    if raw.hex() != strict.report_bytes_hex:
-        raise SemanticEvaluatorError("input_sha_mismatch")
+    except Exception:
+        pass
+    if strict is None or raw is None or raw.hex() != strict.report_bytes_hex:
+        raise SemanticEvaluatorError("input_sha_mismatch") from None
     expected, reader = build_admitted_report_evidence(
         raw,
         artifact_id=strict.artifact_id,
     )
-    if canonical_json_bytes(expected) != canonical_json_bytes(strict):
-        raise SemanticEvaluatorError("input_sha_mismatch")
-    if reader_artifact is not None and canonical_json_bytes(
-        reader.artifact
-    ) != canonical_json_bytes(reader_artifact):
-        raise SemanticEvaluatorError("input_sha_mismatch")
+    exact = False
+    try:
+        exact = canonical_json_bytes(expected) == canonical_json_bytes(strict) and (
+            reader_artifact is None
+            or canonical_json_bytes(reader.artifact)
+            == canonical_json_bytes(reader_artifact)
+        )
+    except Exception:
+        pass
+    if not exact:
+        raise SemanticEvaluatorError("input_sha_mismatch") from None
     return reader
 
 
