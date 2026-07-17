@@ -18,12 +18,18 @@ EVALUATOR_ROOT = SRC_ROOT / "semantic_evaluator"
 
 EXPECTED_PACKAGE_FILES = {
     "__init__.py",
+    "adapter.py",
+    "adapters/__init__.py",
+    "adapters/openai_responses.py",
+    "adapters/synthetic_fixture.py",
     "admission.py",
+    "archive.py",
     "baseline.py",
     "baselines/structured_checklist_zh_v1.yaml",
     "composition.py",
     "contracts.py",
     "errors.py",
+    "fixtures/synthetic_shadow_v1/manifest.json",
     "instrument.py",
     "normalization.py",
     "parser.py",
@@ -33,8 +39,11 @@ EXPECTED_PACKAGE_FILES = {
     "prompts/dimension_v1.txt",
     "prompts/system_v1.txt",
     "resources.py",
+    "runner.py",
     "serialization.py",
+    "shadow_contracts.py",
     "snapshot.py",
+    "prompt_sizer.py",
     "unit_planner.py",
     "validator.py",
 }
@@ -82,17 +91,13 @@ def _matches_owner(module: str, owner: str) -> bool:
     return module == owner or module.startswith(f"{owner}.")
 
 
-def test_pr_se_1_package_inventory_is_exact_and_contains_no_pr_se_2_modules() -> None:
+def test_pr_se_2_package_inventory_is_exact_and_has_no_unfrozen_modules() -> None:
     actual = {
         path.relative_to(EVALUATOR_ROOT).as_posix()
         for path in EVALUATOR_ROOT.rglob("*")
         if path.is_file() and "__pycache__" not in path.parts
     }
     assert actual == EXPECTED_PACKAGE_FILES
-    assert not (EVALUATOR_ROOT / "adapter.py").exists()
-    assert not (EVALUATOR_ROOT / "adapters").exists()
-    assert not (EVALUATOR_ROOT / "runner.py").exists()
-    assert not (EVALUATOR_ROOT / "archive.py").exists()
     assert not (EVALUATOR_ROOT / "presentation.py").exists()
 
 
@@ -126,7 +131,7 @@ def test_evaluator_never_imports_forbidden_authority_owners() -> None:
     assert offenders == {}
 
 
-def test_pr_se_1_has_no_provider_network_or_process_dependency() -> None:
+def test_only_frozen_live_adapter_imports_one_provider_sdk() -> None:
     offenders = {}
     for path in EVALUATOR_ROOT.rglob("*.py"):
         matched = sorted(
@@ -139,10 +144,14 @@ def test_pr_se_1_has_no_provider_network_or_process_dependency() -> None:
         )
         if matched:
             offenders[path.relative_to(REPO_ROOT).as_posix()] = matched
-    assert offenders == {}
+    assert offenders == {
+        "src/multi_agent_brief/semantic_evaluator/adapters/openai_responses.py": [
+            "openai"
+        ]
+    }
 
 
-def test_evaluator_has_no_persistent_write_or_normal_effect_calls() -> None:
+def test_only_shadow_archive_owns_persistent_write_calls() -> None:
     write_methods = {
         "mkdir",
         "rename",
@@ -163,11 +172,16 @@ def test_evaluator_has_no_persistent_write_or_normal_effect_calls() -> None:
         )
         if calls:
             offenders[path.relative_to(REPO_ROOT).as_posix()] = calls
-    assert offenders == {}
+    assert offenders == {
+        "src/multi_agent_brief/semantic_evaluator/archive.py": ["mkdir"]
+    }
 
 
 def test_prompt_execution_path_cannot_observe_baseline_or_composition() -> None:
     execution_modules = (
+        "adapter.py",
+        "adapters/openai_responses.py",
+        "adapters/synthetic_fixture.py",
         "admission.py",
         "instrument.py",
         "parser.py",

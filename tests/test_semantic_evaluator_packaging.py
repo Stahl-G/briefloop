@@ -19,6 +19,8 @@ RESOURCE_PATHS = (
 WHEEL_RESOURCE_NAMES = {
     f"multi_agent_brief/semantic_evaluator/{'/'.join(parts)}"
     for parts in RESOURCE_PATHS
+} | {
+    "multi_agent_brief/semantic_evaluator/fixtures/synthetic_shadow_v1/manifest.json"
 }
 
 WHEEL_PROBE = r"""
@@ -573,7 +575,7 @@ def test_source_probe_is_byte_identical_under_python_optimization() -> None:
     assert _source_probe(optimized=False) == _source_probe(optimized=True)
 
 
-def test_wheel_contains_all_resources_and_matches_source_identity(
+def test_non_editable_wheel_synthetic_cli_matches_source(
     tmp_path: Path,
 ) -> None:
     wheel_dir = tmp_path / "wheel"
@@ -629,3 +631,70 @@ def test_wheel_contains_all_resources_and_matches_source_identity(
         assert probe.returncode == 0, probe.stdout + probe.stderr
         wheel_identity = json.loads(probe.stdout.splitlines()[-1])
         assert wheel_identity == source_identity
+
+    fixture_root = REPO_ROOT / "tests" / "fixtures" / "semantic_evaluator_shadow"
+
+    def run_shadow_cli(*, pythonpath: Path, archive_root: Path):
+        argv = [
+            "experiments",
+            "laj",
+            "shadow-run",
+            "--report",
+            str(fixture_root / "report.md"),
+            "--bounded-context",
+            str(fixture_root / "bounded_context.json"),
+            "--profile",
+            "research_design_report_zh_v1",
+            "--instrument",
+            str(fixture_root / "instrument.json"),
+            "--trial-id",
+            "trial-wheel-shadow-parity-v1",
+            "--archive-root",
+            str(archive_root),
+            "--json",
+        ]
+        script = (
+            "import json; from multi_agent_brief.cli.main import main; "
+            f"raise SystemExit(main(json.loads({json.dumps(json.dumps(argv))})))"
+        )
+        command_env = os.environ.copy()
+        command_env["PYTHONPATH"] = str(pythonpath)
+        command_env["PYTHONPYCACHEPREFIX"] = str(tmp_path / "shadow-pycache")
+        completed = subprocess.run(
+            [sys.executable, "-c", script],
+            cwd=tmp_path,
+            env=command_env,
+            check=False,
+            capture_output=True,
+            text=True,
+        )
+        assert completed.returncode == 0, completed.stdout + completed.stderr
+        payload = json.loads(completed.stdout)
+        assert payload["ok"] is True
+        assert payload["qualification_eligible"] is False
+        return payload, Path(payload["archive_path"])
+
+    source_result, source_archive = run_shadow_cli(
+        pythonpath=REPO_ROOT / "src",
+        archive_root=tmp_path / "source-shadow-archive",
+    )
+    wheel_result, wheel_archive = run_shadow_cli(
+        pythonpath=extract_root,
+        archive_root=tmp_path / "wheel-shadow-archive",
+    )
+    for key in (
+        "ok",
+        "replayed",
+        "archive_complete",
+        "run_status",
+        "validation_status",
+        "reason_codes",
+        "qualification_eligible",
+    ):
+        assert source_result[key] == wheel_result[key]
+    assert (source_archive / "request.json").read_bytes() == (
+        wheel_archive / "request.json"
+    ).read_bytes()
+    assert (source_archive / "execution_manifest.json").read_bytes() == (
+        wheel_archive / "execution_manifest.json"
+    ).read_bytes()

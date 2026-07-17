@@ -47,6 +47,10 @@ dev = [
   "setuptools>=68",
   "wheel",
 ]
+semantic-evaluator-openai = [
+  "openai>=2,<3",
+  "tiktoken>=0.9,<1",
+]
 
 [project.scripts]
 multi-agent-brief = "multi_agent_brief.cli.main:main"
@@ -68,6 +72,7 @@ multi_agent_brief = [
   "semantic_evaluator/profiles/*.yaml",
   "semantic_evaluator/prompts/*.txt",
   "semantic_evaluator/baselines/*.yaml",
+  "semantic_evaluator/fixtures/synthetic_shadow_v1/*.json",
   "configs/*.yaml",
   "configs/policy_packs/*.yaml",
   "configs/policy_profiles/*.yaml",

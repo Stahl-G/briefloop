@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import importlib
 import json
 from typing import Any
 
@@ -25,6 +26,27 @@ def register(subparsers: argparse._SubParsersAction) -> None:
         help="Validate experimental harness metadata without running workflow stages.",
     )
     experiments_sub = parser.add_subparsers(dest="experiments_action", required=True)
+
+    laj = experiments_sub.add_parser(
+        "laj",
+        help="Experimental offline-shadow Semantic Evaluator tools (not shipped).",
+    )
+    laj_sub = laj.add_subparsers(dest="experiment_laj_action", required=True)
+    shadow_run = laj_sub.add_parser(
+        "shadow-run",
+        help="Run or exactly replay one public/synthetic advisory shadow trial.",
+    )
+    shadow_run.add_argument("--report", required=True)
+    shadow_run.add_argument("--bounded-context", required=True)
+    shadow_run.add_argument(
+        "--profile",
+        required=True,
+        choices=("research_design_report_zh_v1",),
+    )
+    shadow_run.add_argument("--instrument", required=True)
+    shadow_run.add_argument("--trial-id", required=True)
+    shadow_run.add_argument("--archive-root", required=True)
+    shadow_run.add_argument("--json", action="store_true")
 
     exp080 = experiments_sub.add_parser(
         "080",
@@ -149,6 +171,37 @@ def register(subparsers: argparse._SubParsersAction) -> None:
 
 
 def handle(args: argparse.Namespace) -> int:
+    if args.experiments_action == "laj":
+        if args.experiment_laj_action != "shadow-run":
+            return 1
+        runner = importlib.import_module(
+            "multi_agent_brief.semantic_evaluator.runner"
+        )
+        result = runner.run_shadow(
+            report=args.report,
+            bounded_context=args.bounded_context,
+            profile=args.profile,
+            instrument=args.instrument,
+            trial_id=args.trial_id,
+            archive_root=args.archive_root,
+        )
+        payload = result.to_dict()
+        if getattr(args, "json", False):
+            print(json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True))
+        else:
+            print("Experimental / Offline shadow / Advisory only")
+            print(f"ok: {payload['ok']}")
+            print(f"replayed: {payload['replayed']}")
+            print(f"archive_complete: {payload['archive_complete']}")
+            if payload["receipt_id"] is not None:
+                print(f"receipt_id: {payload['receipt_id']}")
+            if payload["run_status"] is not None:
+                print(f"run_status: {payload['run_status']}")
+            if payload["validation_status"] is not None:
+                print(f"validation_status: {payload['validation_status']}")
+            if payload["reason_codes"]:
+                print(f"reason_codes: {','.join(payload['reason_codes'])}")
+        return 0 if result.ok else 1
     if args.experiments_action != "080":
         return 1
     if args.experiment_080_action == "validate-case":
