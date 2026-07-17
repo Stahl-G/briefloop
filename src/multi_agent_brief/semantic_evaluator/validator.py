@@ -5,8 +5,9 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any, Iterable
 
-from pydantic import ValidationError
+from pydantic import TypeAdapter, ValidationError
 
+from multi_agent_brief.contracts.v2 import ContractId
 from multi_agent_brief.semantic_evaluator.contracts import (
     EVENT_SCHEMA_ID,
     LAJ_COMPOSITION_WITNESS_SCHEMA_ID,
@@ -56,16 +57,17 @@ from multi_agent_brief.semantic_evaluator.parser import (
 )
 from multi_agent_brief.semantic_evaluator.prompts import (
     FrozenDimensionPrompt,
+    _strict_frozen_dimension_prompt,
     build_dimension_prompt,
     derive_forbidden_canary_values,
 )
 from multi_agent_brief.semantic_evaluator.resources import EvaluatorResourceError
 from multi_agent_brief.semantic_evaluator.serialization import (
     canonical_json_bytes,
-    canonical_model_payload,
     canonical_model_sha256,
     canonical_sha256,
     sha256_bytes,
+    strict_model_payload,
 )
 from multi_agent_brief.semantic_evaluator.unit_planner import (
     build_assessment_plan,
@@ -78,6 +80,7 @@ from multi_agent_brief.semantic_evaluator.unit_planner import (
 
 
 VALIDATOR_VERSION = "dimension_validator_v3"
+_CONTRACT_ID_ADAPTER = TypeAdapter(ContractId)
 
 
 @dataclass(frozen=True)
@@ -196,13 +199,13 @@ def _validate_finding(
 
 def _canonical_finding(draft: FindingDraft, *, ordinal: int) -> FindingProposal:
     try:
-        strict_draft = FindingDraft.model_validate(draft.model_dump(mode="json"))
+        strict_draft = FindingDraft.model_validate(strict_model_payload(draft))
     except ValidationError as exc:
         raise SemanticEvaluatorError(
             "raw_response_binding_mismatch",
             violations=value_free_violations(exc),
         ) from exc
-    identity = strict_draft.model_dump(mode="json")
+    identity = strict_draft.model_dump(mode="json", warnings="error")
     return FindingProposal.model_validate(
         {
             **identity,
@@ -218,13 +221,13 @@ def _canonical_finding(draft: FindingDraft, *, ordinal: int) -> FindingProposal:
 
 def _canonical_handoff(draft: O3HandoffDraft, *, ordinal: int) -> O3Handoff:
     try:
-        strict_draft = O3HandoffDraft.model_validate(draft.model_dump(mode="json"))
+        strict_draft = O3HandoffDraft.model_validate(strict_model_payload(draft))
     except ValidationError as exc:
         raise SemanticEvaluatorError(
             "raw_response_binding_mismatch",
             violations=value_free_violations(exc),
         ) from exc
-    identity = strict_draft.model_dump(mode="json")
+    identity = strict_draft.model_dump(mode="json", warnings="error")
     return O3Handoff.model_validate(
         {
             **identity,
@@ -251,7 +254,7 @@ def validate_dimension_response(
     response_invalid = False
     violations = ()
     try:
-        response = DimensionResponse.model_validate(response.model_dump(mode="json"))
+        response = DimensionResponse.model_validate(strict_model_payload(response))
     except Exception as exc:
         if isinstance(exc, ValidationError):
             violations = value_free_violations(exc)
@@ -261,6 +264,30 @@ def validate_dimension_response(
             "raw_response_binding_mismatch",
             violations=violations,
         ) from None
+    roots_invalid = False
+    try:
+        strict_plan = AssessmentPlan.model_validate(strict_model_payload(plan))
+        strict_reader = ReaderArtifact.model_validate(
+            strict_model_payload(reader_artifact)
+        )
+        strict_context = BoundedContext.model_validate(
+            strict_model_payload(bounded_context)
+        )
+        roots_invalid = any(
+            canonical_json_bytes(strict) != canonical_json_bytes(observed)
+            for strict, observed in (
+                (strict_plan, plan),
+                (strict_reader, reader_artifact),
+                (strict_context, bounded_context),
+            )
+        )
+    except (AttributeError, KeyError, TypeError, ValueError):
+        roots_invalid = True
+    if roots_invalid:
+        raise SemanticEvaluatorError("run_binding_mismatch") from None
+    plan = strict_plan
+    reader_artifact = strict_reader
+    bounded_context = strict_context
     reasons: set[str] = set()
     canaries: tuple[str, ...] = ()
     try:
@@ -400,7 +427,12 @@ def make_semantic_evaluator_event(
 ) -> SemanticEvaluatorEvent:
     result: SemanticEvaluatorEvent | None = None
     try:
-        event_id = f"event-{canonical_sha256([run_id, trial_id, sequence, event_type, payload])[:12]}"
+        payload_data = dict(payload)
+        if "event_type" in payload_data:
+            if payload_data.pop("event_type") != event_type:
+                raise ValueError("event_type_mismatch")
+        typed_payload = {"event_type": event_type, **payload_data}
+        event_id = f"event-{canonical_sha256([run_id, trial_id, sequence, event_type, typed_payload])[:12]}"
         result = SemanticEvaluatorEvent.model_validate(
             {
                 "schema_version": EVENT_SCHEMA_ID,
@@ -409,7 +441,7 @@ def make_semantic_evaluator_event(
                 "run_id": run_id,
                 "trial_id": trial_id,
                 "event_type": event_type,
-                "payload": {"event_type": event_type, **payload},
+                "payload": typed_payload,
             }
         )
     except (AttributeError, KeyError, TypeError, ValueError, SemanticEvaluatorError):
@@ -684,18 +716,24 @@ def make_dimension_attempt_evidence(
 ) -> DimensionAttemptEvidence:
     result: DimensionAttemptEvidence | None = None
     try:
+        if type(trial_id) is not str:
+            raise TypeError("trial_id_invalid")
+        strict_trial_id = _CONTRACT_ID_ADAPTER.validate_python(trial_id, strict=True)
+        strict_prompt = _strict_frozen_dimension_prompt(prompt)
+        if raw_response_bytes is not None and type(raw_response_bytes) is not bytes:
+            raise TypeError("raw_response_invalid")
         attempt_ref = derive_attempt_ref(
-            trial_id=trial_id,
-            dimension_id=prompt.dimension_id,
+            trial_id=strict_trial_id,
+            dimension_id=strict_prompt.dimension_id,
             attempt_ordinal=attempt_ordinal,
-            prompt_request_sha256=prompt.request_sha256,
+            prompt_request_sha256=strict_prompt.request_sha256,
         )
         raw_hex = raw_response_bytes.hex() if raw_response_bytes is not None else None
         payload = {
             "attempt_ref": attempt_ref,
-            "dimension_id": prompt.dimension_id,
+            "dimension_id": strict_prompt.dimension_id,
             "attempt_ordinal": attempt_ordinal,
-            "prompt_request_sha256": prompt.request_sha256,
+            "prompt_request_sha256": strict_prompt.request_sha256,
             "status": status,
             "reason_code": reason_code,
             "raw_response_bytes_hex": raw_hex,
@@ -704,7 +742,7 @@ def make_dimension_attempt_evidence(
                 if raw_response_bytes is not None
                 else None
             ),
-            "forbidden_canary_values": list(prompt.forbidden_canary_values),
+            "forbidden_canary_values": list(strict_prompt.forbidden_canary_values),
         }
         result = DimensionAttemptEvidence.model_validate(
             {**payload, "evidence_sha256": canonical_sha256(payload)}
@@ -734,7 +772,7 @@ def _verify_root_bundle(
     root_failure_reason: str | None = None
     try:
         strict_report = AdmittedReportEvidence.model_validate(
-            report_evidence.model_dump(mode="json")
+            strict_model_payload(report_evidence)
         )
         reader = verify_admitted_report_evidence(
             strict_report,
@@ -742,10 +780,10 @@ def _verify_root_bundle(
         )
         context = verify_bounded_context(bounded_context)
         config = InstrumentConfig.model_validate(
-            instrument_config.model_dump(mode="json")
+            strict_model_payload(instrument_config)
         )
-        binding = InputBinding.model_validate(input_binding.model_dump(mode="json"))
-        plan = AssessmentPlan.model_validate(assessment_plan.model_dump(mode="json"))
+        binding = InputBinding.model_validate(strict_model_payload(input_binding))
+        plan = AssessmentPlan.model_validate(strict_model_payload(assessment_plan))
     except SemanticEvaluatorError as exc:
         root_failure_reason = (
             "instrument_manifest_mismatch"
@@ -761,7 +799,7 @@ def _verify_root_bundle(
     manifest_failed = False
     try:
         manifest = InstrumentManifest.model_validate(
-            instrument_manifest.model_dump(mode="json")
+            strict_model_payload(instrument_manifest)
         )
     except Exception:
         manifest_failed = True
@@ -942,7 +980,7 @@ def _strict_attempt_evidence(
     try:
         observed = tuple(evidence)
         strict = tuple(
-            DimensionAttemptEvidence.model_validate(item.model_dump(mode="json"))
+            DimensionAttemptEvidence.model_validate(strict_model_payload(item))
             for item in observed
         )
     except Exception:
@@ -1205,19 +1243,36 @@ def _build_witness(
 ) -> LajCompositionWitness:
     payload = {
         "schema_version": LAJ_COMPOSITION_WITNESS_SCHEMA_ID,
-        "input_binding": roots.input_binding.model_dump(mode="json"),
-        "report_evidence": roots.report_evidence.model_dump(mode="json"),
-        "reader_artifact": roots.reader.artifact.model_dump(mode="json"),
-        "bounded_context": roots.bounded_context.model_dump(mode="json"),
-        "instrument_config": roots.instrument_config.model_dump(mode="json"),
-        "instrument_manifest": roots.instrument_manifest.model_dump(mode="json"),
-        "assessment_plan": roots.assessment_plan.model_dump(mode="json"),
+        "input_binding": roots.input_binding.model_dump(mode="json", warnings="error"),
+        "report_evidence": roots.report_evidence.model_dump(
+            mode="json", warnings="error"
+        ),
+        "reader_artifact": roots.reader.artifact.model_dump(
+            mode="json", warnings="error"
+        ),
+        "bounded_context": roots.bounded_context.model_dump(
+            mode="json", warnings="error"
+        ),
+        "instrument_config": roots.instrument_config.model_dump(
+            mode="json", warnings="error"
+        ),
+        "instrument_manifest": roots.instrument_manifest.model_dump(
+            mode="json", warnings="error"
+        ),
+        "assessment_plan": roots.assessment_plan.model_dump(
+            mode="json", warnings="error"
+        ),
         "dimension_attempt_evidence": [
-            item.model_dump(mode="json") for item in dimension_attempt_evidence
+            item.model_dump(mode="json", warnings="error")
+            for item in dimension_attempt_evidence
         ],
-        "run": projection.run.model_dump(mode="json"),
-        "validation_report": projection.validation_report.model_dump(mode="json"),
-        "events": [item.model_dump(mode="json") for item in projection.events],
+        "run": projection.run.model_dump(mode="json", warnings="error"),
+        "validation_report": projection.validation_report.model_dump(
+            mode="json", warnings="error"
+        ),
+        "events": [
+            item.model_dump(mode="json", warnings="error") for item in projection.events
+        ],
     }
     return LajCompositionWitness.model_validate(
         {**payload, "witness_sha256": canonical_sha256(payload)}
@@ -1263,7 +1318,7 @@ def _verify_laj_composition_witness_with_roots(
 ) -> tuple[LajCompositionWitness, _ReplayRoots]:
     verification_failed = False
     try:
-        strict = LajCompositionWitness.model_validate(witness.model_dump(mode="json"))
+        strict = LajCompositionWitness.model_validate(strict_model_payload(witness))
         if canonical_json_bytes(strict) != canonical_json_bytes(
             witness
         ) or strict.witness_sha256 != canonical_model_sha256(
@@ -1295,9 +1350,12 @@ def _verify_laj_composition_witness_with_roots(
                 (projection.validation_report, strict.validation_report),
             )
         ) or canonical_json_bytes(
-            [item.model_dump(mode="json") for item in projection.events]
+            [
+                item.model_dump(mode="json", warnings="error")
+                for item in projection.events
+            ]
         ) != canonical_json_bytes(
-            [item.model_dump(mode="json") for item in strict.events]
+            [item.model_dump(mode="json", warnings="error") for item in strict.events]
         ):
             raise SemanticEvaluatorError("composition_witness_mismatch")
     except Exception:

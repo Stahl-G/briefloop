@@ -23,6 +23,7 @@ from multi_agent_brief.semantic_evaluator.normalization import (
 )
 from multi_agent_brief.semantic_evaluator.profile import (
     LoadedProfile,
+    strict_loaded_profile_copy,
 )
 from multi_agent_brief.semantic_evaluator.resources import (
     EvaluatorResourceError,
@@ -31,6 +32,7 @@ from multi_agent_brief.semantic_evaluator.resources import (
 from multi_agent_brief.semantic_evaluator.serialization import (
     canonical_json_bytes,
     canonical_sha256,
+    strict_model_payload,
 )
 from multi_agent_brief.semantic_evaluator.snapshot import (
     CHECKLIST_RESOURCE,
@@ -264,9 +266,12 @@ def _build_baseline(
         "profile_sha256": profile.profile_sha256,
         "checklist_id": "structured_checklist_zh_v1",
         "lint_id": LINT_VERSION,
-        "checklist_items": [item.model_dump(mode="json") for item in checklist_items],
+        "checklist_items": [
+            item.model_dump(mode="json", warnings="error") for item in checklist_items
+        ],
         "lint_items": [
-            item.model_dump(mode="json") for item in deterministic_lint(reader_artifact)
+            item.model_dump(mode="json", warnings="error")
+            for item in deterministic_lint(reader_artifact)
         ],
     }
     return BaselinePayload.model_validate(
@@ -282,13 +287,22 @@ def build_baseline(
     loaded_profile: LoadedProfile | None = None,
     _resource_snapshot: EvaluatorResourceSnapshot | None = None,
 ) -> BaselinePayload:
+    strict_profile: LoadedProfile | None = None
+    profile_invalid = False
+    if loaded_profile is not None:
+        try:
+            strict_profile = strict_loaded_profile_copy(loaded_profile)
+        except SemanticEvaluatorError:
+            profile_invalid = True
+    if profile_invalid:
+        raise SemanticEvaluatorError("profile_invalid") from None
     result: BaselinePayload | None = None
     try:
         result = _build_baseline(
             report_evidence=report_evidence,
             reader_artifact=reader_artifact,
             bounded_context=bounded_context,
-            loaded_profile=loaded_profile,
+            loaded_profile=strict_profile,
             _resource_snapshot=_resource_snapshot,
         )
     except (
@@ -313,13 +327,22 @@ def verify_baseline_payload(
     bounded_context: BoundedContext,
     loaded_profile: LoadedProfile | None = None,
 ) -> BaselinePayload:
+    strict_profile: LoadedProfile | None = None
+    profile_invalid = False
+    if loaded_profile is not None:
+        try:
+            strict_profile = strict_loaded_profile_copy(loaded_profile)
+        except SemanticEvaluatorError:
+            profile_invalid = True
+    if profile_invalid:
+        raise SemanticEvaluatorError("profile_invalid") from None
     verified: BaselinePayload | None = None
     try:
         resources = acquire_resource_snapshot(
-            loaded_profile=loaded_profile,
+            loaded_profile=strict_profile,
             include_baseline=True,
         )
-        strict = BaselinePayload.model_validate(baseline.model_dump(mode="json"))
+        strict = BaselinePayload.model_validate(strict_model_payload(baseline))
         expected = build_baseline(
             report_evidence=report_evidence,
             reader_artifact=reader_artifact,

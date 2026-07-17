@@ -5,6 +5,7 @@ from __future__ import annotations
 from copy import deepcopy
 from dataclasses import replace
 import re
+import warnings
 
 import pytest
 
@@ -224,6 +225,51 @@ def test_malformed_instrument_config_is_rejected_value_free_at_public_boundaries
         assert caught.value.__cause__ is None
         assert caught.value.__context__ is None
         assert hidden_detail not in repr(caught.value)
+
+
+@pytest.mark.parametrize(
+    "mutation",
+    ["schema", "identity", "decoding", "retry_exact_int"],
+)
+def test_nested_or_unprojected_malformed_config_never_enters_manifest(
+    mutation: str,
+) -> None:
+    config = _config()
+    manifest = build_instrument_manifest(config)
+    hidden_detail = "PRIVATE SYNTHETIC CONFIG VALUE"
+    if mutation == "schema":
+        malformed = config.model_copy(update={"schema_version": hidden_detail})
+    elif mutation == "identity":
+        malformed = config.model_copy(update={"instrument_config_id": hidden_detail})
+    elif mutation == "decoding":
+        malformed = config.model_copy(
+            update={
+                "decoding": config.decoding.model_copy(
+                    update={"temperature": hidden_detail}
+                )
+            }
+        )
+    else:
+        malformed = config.model_copy(
+            update={
+                "retry_policy": config.retry_policy.model_copy(
+                    update={"max_attempts": True}
+                )
+            }
+        )
+    with warnings.catch_warnings(record=True) as seen:
+        warnings.simplefilter("always")
+        for operation in (
+            lambda: build_instrument_manifest(malformed),
+            lambda: verify_instrument_manifest(manifest, malformed),
+        ):
+            with pytest.raises(SemanticEvaluatorError) as caught:
+                operation()
+            assert caught.value.reason_code == "instrument_manifest_mismatch"
+            assert caught.value.__cause__ is None
+            assert caught.value.__context__ is None
+            assert hidden_detail not in repr(caught.value)
+    assert not seen
 
 
 def test_explicit_unavailable_model_version_is_bound_not_inferred() -> None:

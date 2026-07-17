@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import warnings
+
 import pytest
 
 from multi_agent_brief.semantic_evaluator.contracts import BoundedRequirement
@@ -152,13 +154,16 @@ def test_exported_replay_errors_retain_no_serialized_caller_values() -> None:
             context.model_copy(update={"context_sha256": hidden_detail})
         ),
     )
-    for operation in operations:
-        with pytest.raises(SemanticEvaluatorError) as caught:
-            operation()
-        assert caught.value.reason_code == "input_sha_mismatch"
-        assert caught.value.__cause__ is None
-        assert caught.value.__context__ is None
-        assert hidden_detail not in repr(caught.value)
+    with warnings.catch_warnings(record=True) as seen:
+        warnings.simplefilter("always")
+        for operation in operations:
+            with pytest.raises(SemanticEvaluatorError) as caught:
+                operation()
+            assert caught.value.reason_code == "input_sha_mismatch"
+            assert caught.value.__cause__ is None
+            assert caught.value.__context__ is None
+            assert hidden_detail not in repr(caught.value)
+    assert not seen
 
 
 def test_exported_normalization_builders_reject_malformed_values_value_free() -> None:

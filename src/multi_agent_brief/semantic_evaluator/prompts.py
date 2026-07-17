@@ -6,9 +6,13 @@ from dataclasses import dataclass
 import re
 from typing import Protocol
 
+from pydantic import TypeAdapter
+
+from multi_agent_brief.contracts.v2 import ContractId
 from multi_agent_brief.semantic_evaluator.contracts import (
     AssessmentPlan,
     BoundedContext,
+    DimensionId,
     DimensionProfile,
     DimensionResponse,
     ReaderArtifact,
@@ -44,6 +48,8 @@ CANARY_DERIVATION_VERSION = "semantic_evaluator_canary_v1"
 
 _SHA256_RE = re.compile(r"^[0-9a-f]{64}$")
 _DIMENSION_ID_RE = re.compile(r"^[a-z][a-z0-9_]*$")
+_CONTRACT_ID_ADAPTER = TypeAdapter(ContractId)
+_DIMENSION_ID_ADAPTER = TypeAdapter(DimensionId)
 
 
 class PromptSizer(Protocol):
@@ -60,6 +66,62 @@ class FrozenDimensionPrompt:
     user_text: str
     forbidden_canary_values: tuple[str, ...]
     request_sha256: str
+
+
+def _prompt_request_sha256(prompt: FrozenDimensionPrompt) -> str:
+    return canonical_sha256(
+        {
+            "dimension_id": prompt.dimension_id,
+            "forbidden_canary_values": list(prompt.forbidden_canary_values),
+            "system_text": prompt.system_text,
+            "user_text": prompt.user_text,
+        }
+    )
+
+
+def _strict_frozen_dimension_prompt(
+    prompt: FrozenDimensionPrompt,
+) -> FrozenDimensionPrompt:
+    strict: FrozenDimensionPrompt | None = None
+    try:
+        if not isinstance(prompt, FrozenDimensionPrompt):
+            raise TypeError("prompt_invalid")
+        if any(
+            type(value) is not str
+            for value in (
+                prompt.dimension_id,
+                prompt.system_text,
+                prompt.user_text,
+                prompt.request_sha256,
+            )
+        ):
+            raise TypeError("prompt_invalid")
+        dimension_id = _DIMENSION_ID_ADAPTER.validate_python(prompt.dimension_id)
+        if type(prompt.forbidden_canary_values) is not tuple:
+            raise TypeError("prompt_invalid")
+        canaries = tuple(prompt.forbidden_canary_values)
+        if (
+            not canaries
+            or any(type(item) is not str or not item for item in canaries)
+            or canaries != tuple(sorted(set(canaries)))
+            or _SHA256_RE.fullmatch(prompt.request_sha256) is None
+        ):
+            raise ValueError("prompt_invalid")
+        _CONTRACT_ID_ADAPTER.validate_python(prompt.request_sha256)
+        strict = FrozenDimensionPrompt(
+            dimension_id=dimension_id,
+            system_text=prompt.system_text,
+            user_text=prompt.user_text,
+            forbidden_canary_values=canaries,
+            request_sha256=prompt.request_sha256,
+        )
+        if strict.request_sha256 != _prompt_request_sha256(strict):
+            raise ValueError("prompt_invalid")
+    except (AttributeError, TypeError, ValueError):
+        strict = None
+    if strict is None:
+        raise SemanticEvaluatorError("assessment_evidence_mismatch") from None
+    return strict
 
 
 def derive_forbidden_canary_values(
@@ -144,7 +206,7 @@ def build_dimension_prompt(
     ):
         raise ValueError("dimension_prompt_plan_binding_invalid")
     report_data = {
-        "artifact": reader_artifact.model_dump(mode="json"),
+        "artifact": reader_artifact.model_dump(mode="json", warnings="error"),
         "normalized_text": normalized_text,
     }
     if dimension.scope_class == "O1":
@@ -161,7 +223,7 @@ def build_dimension_prompt(
             "language": bounded_context.language,
             "data_class": bounded_context.data_class,
             "requirements": [
-                item.model_dump(mode="json")
+                item.model_dump(mode="json", warnings="error")
                 for item in bounded_context.requirements
                 if item.type in allowed
             ],
@@ -170,8 +232,10 @@ def build_dimension_prompt(
         "trial_id": assessment_plan.trial_id,
         "profile_sha256": assessment_plan.profile_sha256,
         "assessment_plan_sha256": assessment_plan.assessment_plan_sha256,
-        "dimension": dimension.model_dump(mode="json"),
-        "assessment_units": [item.model_dump(mode="json") for item in dimension_units],
+        "dimension": dimension.model_dump(mode="json", warnings="error"),
+        "assessment_units": [
+            item.model_dump(mode="json", warnings="error") for item in dimension_units
+        ],
     }
     forbidden_canary_values = derive_forbidden_canary_values(
         assessment_plan_sha256=assessment_plan.assessment_plan_sha256,
@@ -201,19 +265,19 @@ def build_dimension_prompt(
         )
         + "\n</SECURITY_CANARY_POLICY>"
     )
-    return FrozenDimensionPrompt(
+    prompt = FrozenDimensionPrompt(
         dimension_id=dimension.dimension_id,
         system_text=system_text,
         user_text=user_text,
         forbidden_canary_values=forbidden_canary_values,
-        request_sha256=canonical_sha256(
-            {
-                "dimension_id": dimension.dimension_id,
-                "forbidden_canary_values": list(forbidden_canary_values),
-                "system_text": system_text,
-                "user_text": user_text,
-            }
-        ),
+        request_sha256="0" * 64,
+    )
+    return FrozenDimensionPrompt(
+        dimension_id=prompt.dimension_id,
+        system_text=prompt.system_text,
+        user_text=prompt.user_text,
+        forbidden_canary_values=prompt.forbidden_canary_values,
+        request_sha256=_prompt_request_sha256(prompt),
     )
 
 

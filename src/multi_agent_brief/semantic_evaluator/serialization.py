@@ -24,6 +24,22 @@ def canonical_model_payload(
         mode="json",
         exclude=set(exclude),
         exclude_unset=False,
+        warnings="error",
+    )
+
+
+def strict_model_payload(
+    model: BaseModel,
+    *,
+    exclude: Iterable[str] = (),
+) -> dict[str, Any]:
+    """Preserve caller runtime types before strict model reconstruction."""
+
+    return model.model_dump(
+        mode="python",
+        exclude=set(exclude),
+        exclude_unset=False,
+        warnings="error",
     )
 
 
@@ -143,4 +159,5 @@ __all__ = [
     "sha256_bytes",
     "sha256_text",
     "source_sha256_for_module",
+    "strict_model_payload",
 ]

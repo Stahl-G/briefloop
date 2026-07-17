@@ -39,7 +39,7 @@ from multi_agent_brief.semantic_evaluator.normalization import (
     make_span_locator,
     replay_span,
 )
-from multi_agent_brief.semantic_evaluator.profile import load_profile
+from multi_agent_brief.semantic_evaluator.profile import LoadedProfile, load_profile
 import multi_agent_brief.semantic_evaluator.profile as profile_module
 import multi_agent_brief.semantic_evaluator.snapshot as snapshot_module
 from multi_agent_brief.semantic_evaluator.resources import EvaluatorResourceError
@@ -438,11 +438,40 @@ def test_baseline_verifier_rejects_malformed_copy_value_free() -> None:
     assert hidden_detail not in repr(caught.value)
 
 
+def test_baseline_apis_preserve_explicit_profile_invalid_precedence() -> None:
+    decision, context, profile, baseline = _admitted_case()
+    malformed = LoadedProfile(
+        profile=profile.profile,
+        profile_sha256="0" * 64,
+    )
+    operations = (
+        lambda: build_baseline(
+            report_evidence=decision.report_evidence,
+            reader_artifact=decision.reader.artifact,
+            bounded_context=context,
+            loaded_profile=malformed,
+        ),
+        lambda: verify_baseline_payload(
+            baseline,
+            report_evidence=decision.report_evidence,
+            reader_artifact=decision.reader.artifact,
+            bounded_context=context,
+            loaded_profile=malformed,
+        ),
+    )
+    for operation in operations:
+        with pytest.raises(SemanticEvaluatorError) as caught:
+            operation()
+        assert caught.value.reason_code == "profile_invalid"
+        assert caught.value.__cause__ is None
+        assert caught.value.__context__ is None
+
+
 def test_completed_accepted_zero_findings_preserves_exact_baseline() -> None:
     baseline, assembled = _assembled()
     matched = _matched(assembled.witness)
     actual = compose_actual_laj(assembled.witness)
-    assert verify_additive_baseline(matched, actual) is True
+    assert verify_additive_baseline(matched, actual, witness=assembled.witness) is True
     assert canonical_json_bytes(matched.baseline_payload) == canonical_json_bytes(
         actual.baseline_payload
     )
@@ -469,7 +498,56 @@ def test_additive_baseline_rejects_identically_malformed_embedded_payloads() -> 
     malformed_actual = actual.model_copy(
         update={"baseline_payload": malformed_baseline}
     )
-    assert verify_additive_baseline(malformed_matched, malformed_actual) is False
+    assert (
+        verify_additive_baseline(
+            malformed_matched,
+            malformed_actual,
+            witness=assembled.witness,
+        )
+        is False
+    )
+
+
+def test_additive_baseline_replays_roots_after_fully_rehashed_mutation() -> None:
+    _baseline, assembled = _assembled()
+    matched = _matched(assembled.witness)
+    actual = compose_actual_laj(assembled.witness)
+
+    def mutate(record: CompositionRecord) -> CompositionRecord:
+        payload = record.model_dump(mode="json")
+        baseline_payload = payload["baseline_payload"]
+        baseline_payload["checklist_items"][0]["text"] = (
+            "Synthetic caller-authored replacement baseline item."
+        )
+        baseline_payload["baseline_sha256"] = canonical_sha256(
+            {
+                key: value
+                for key, value in baseline_payload.items()
+                if key != "baseline_sha256"
+            }
+        )
+        payload["baseline_sha256"] = baseline_payload["baseline_sha256"]
+        return _rehash_composition(payload)
+
+    forged_matched = mutate(matched)
+    forged_actual = mutate(actual)
+    assert (
+        verify_additive_baseline(
+            forged_matched,
+            forged_actual,
+            witness=assembled.witness,
+        )
+        is False
+    )
+    with pytest.raises(SemanticEvaluatorError, match="composition_record_mismatch"):
+        verify_composition_record(
+            forged_matched,
+            report_evidence=assembled.witness.report_evidence,
+            reader_artifact=assembled.witness.reader_artifact,
+            bounded_context=assembled.witness.bounded_context,
+        )
+    with pytest.raises(SemanticEvaluatorError, match="composition_record_mismatch"):
+        verify_composition_record(forged_actual, witness=assembled.witness)
 
 
 def test_composition_boundaries_reject_malformed_typed_copies_value_free() -> None:
@@ -563,7 +641,7 @@ def test_completed_accepted_findings_and_labels_are_deterministically_additive()
     baseline, assembled = _assembled(with_finding=True)
     matched = _matched(assembled.witness)
     actual = compose_actual_laj(assembled.witness)
-    assert verify_additive_baseline(matched, actual) is True
+    assert verify_additive_baseline(matched, actual, witness=assembled.witness) is True
     assert actual.laj_advice_items == assembled.run.findings
     assert actual.duplicate_annotations
     assert (
@@ -594,7 +672,7 @@ def test_failure_only_actual_laj_withholds_findings_and_keeps_baseline(
     baseline, assembled = _assembled(state=state, with_finding=True)
     matched = _matched(assembled.witness)
     actual = compose_actual_laj(assembled.witness)
-    assert verify_additive_baseline(matched, actual)
+    assert verify_additive_baseline(matched, actual, witness=assembled.witness)
     assert actual.condition == "actual_LAJ"
     assert actual.laj_run_status == state
     assert actual.laj_validation_status == validation_status

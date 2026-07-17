@@ -25,6 +25,7 @@ from multi_agent_brief.semantic_evaluator.serialization import (
     normalized_utf8_text,
     sha256_bytes,
     sha256_text,
+    strict_model_payload,
 )
 
 
@@ -273,7 +274,7 @@ def verify_bounded_context(context: BoundedContext) -> BoundedContext:
     strict: BoundedContext | None = None
     exact = False
     try:
-        strict = BoundedContext.model_validate(context.model_dump(mode="json"))
+        strict = BoundedContext.model_validate(strict_model_payload(context))
         exact = canonical_json_bytes(strict) == canonical_json_bytes(
             context
         ) and strict.context_sha256 == bounded_context_sha256(strict)
@@ -333,7 +334,7 @@ def verify_admitted_report_evidence(
     strict: AdmittedReportEvidence | None = None
     raw: bytes | None = None
     try:
-        strict = AdmittedReportEvidence.model_validate(evidence.model_dump(mode="json"))
+        strict = AdmittedReportEvidence.model_validate(strict_model_payload(evidence))
         raw = bytes.fromhex(strict.report_bytes_hex)
     except Exception:
         pass
@@ -368,7 +369,7 @@ def _freeze_bounded_context(
         "context_id": context_id,
         "language": "zh-CN",
         "data_class": data_class,
-        "requirements": [item.model_dump(mode="json") for item in requirements],
+        "requirements": [strict_model_payload(item) for item in requirements],
     }
     frozen = BoundedContext.model_validate(
         {**payload, "context_sha256": canonical_sha256(payload)}

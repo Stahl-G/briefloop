@@ -22,6 +22,7 @@ from multi_agent_brief.semantic_evaluator.serialization import (
     canonical_json_bytes,
     canonical_model_sha256,
     canonical_sha256,
+    strict_model_payload,
 )
 from multi_agent_brief.semantic_evaluator.snapshot import (
     EvaluatorResourceSnapshot,
@@ -90,7 +91,7 @@ def _compose_matched_with_resources(
             "condition": "matched_non_LLM",
             "baseline_schema_id": BASELINE_SCHEMA_ID,
             "baseline_sha256": baseline.baseline_sha256,
-            "baseline_payload": baseline.model_dump(mode="json"),
+            "baseline_payload": baseline.model_dump(mode="json", warnings="error"),
             "laj_witness_sha256": None,
             "laj_run_sha256": None,
             "laj_run_status": None,
@@ -194,15 +195,17 @@ def _compose_actual_verified(
             "condition": "actual_LAJ",
             "baseline_schema_id": BASELINE_SCHEMA_ID,
             "baseline_sha256": baseline.baseline_sha256,
-            "baseline_payload": baseline.model_dump(mode="json"),
+            "baseline_payload": baseline.model_dump(mode="json", warnings="error"),
             "laj_witness_sha256": witness.witness_sha256,
             "laj_run_sha256": canonical_model_sha256(run),
             "laj_run_status": run.run_status,
             "laj_validation_status": report.validation_status,
             "laj_reason_codes": list(report.reason_codes),
-            "laj_advice_items": [item.model_dump(mode="json") for item in advice],
+            "laj_advice_items": [
+                item.model_dump(mode="json", warnings="error") for item in advice
+            ],
             "duplicate_annotations": [
-                item.model_dump(mode="json") for item in annotations
+                item.model_dump(mode="json", warnings="error") for item in annotations
             ],
         }
     )
@@ -230,7 +233,7 @@ def _verify_composition_record_with_context(
     strict: CompositionRecord | None = None
     exact = False
     try:
-        strict = CompositionRecord.model_validate(composition.model_dump(mode="json"))
+        strict = CompositionRecord.model_validate(strict_model_payload(composition))
         exact = canonical_json_bytes(strict) == canonical_json_bytes(composition)
     except (AttributeError, KeyError, TypeError, ValueError):
         pass
@@ -295,34 +298,46 @@ def verify_composition_record(
 def verify_additive_baseline(
     matched: CompositionRecord,
     actual: CompositionRecord,
+    *,
+    witness: LajCompositionWitness,
 ) -> bool:
-    strict_records: list[CompositionRecord] = []
+    verified = False
     try:
-        for record in (matched, actual):
-            strict = CompositionRecord.model_validate(record.model_dump(mode="json"))
-            if canonical_json_bytes(strict) != canonical_json_bytes(record):
-                return False
-            if strict.composition_sha256 != canonical_model_sha256(
-                strict,
-                exclude=("composition_sha256",),
-            ):
-                return False
-            if strict.baseline_payload.baseline_sha256 != canonical_model_sha256(
-                strict.baseline_payload,
-                exclude=("baseline_sha256",),
-            ):
-                return False
-            strict_records.append(strict)
-    except (AttributeError, KeyError, TypeError, ValueError):
-        return False
-    strict_matched, strict_actual = strict_records
-    return (
-        strict_matched.condition == "matched_non_LLM"
-        and strict_actual.condition == "actual_LAJ"
-        and strict_matched.baseline_sha256 == strict_actual.baseline_sha256
-        and canonical_json_bytes(strict_matched.baseline_payload)
-        == canonical_json_bytes(strict_actual.baseline_payload)
-    )
+        strict_matched = CompositionRecord.model_validate(strict_model_payload(matched))
+        strict_actual = CompositionRecord.model_validate(strict_model_payload(actual))
+        verified_witness, roots = _verify_laj_composition_witness_with_roots(
+            witness,
+            include_baseline=True,
+        )
+        expected_matched = _compose_matched_with_resources(
+            report_evidence=verified_witness.report_evidence,
+            reader_artifact=verified_witness.reader_artifact,
+            bounded_context=verified_witness.bounded_context,
+            resource_snapshot=roots.instrument_snapshot.resources,
+        )
+        expected_actual = _compose_actual_verified(
+            verified_witness,
+            resource_snapshot=roots.instrument_snapshot.resources,
+        )
+        verified = all(
+            canonical_json_bytes(left) == canonical_json_bytes(right)
+            for left, right in (
+                (strict_matched, matched),
+                (strict_actual, actual),
+                (strict_matched, expected_matched),
+                (strict_actual, expected_actual),
+                (strict_matched.baseline_payload, strict_actual.baseline_payload),
+            )
+        )
+    except (
+        AttributeError,
+        KeyError,
+        TypeError,
+        ValueError,
+        SemanticEvaluatorError,
+    ):
+        pass
+    return verified
 
 
 def _failure_count(witness: LajCompositionWitness) -> int:
@@ -408,15 +423,16 @@ def build_presentation(
         "composition_sha256": strict_composition.composition_sha256,
         "baseline_sha256": strict_composition.baseline_sha256,
         "baseline_items": [
-            item.model_dump(mode="json")
+            item.model_dump(mode="json", warnings="error")
             for item in strict_composition.baseline_payload.checklist_items
         ],
         "baseline_lint_items": [
-            item.model_dump(mode="json")
+            item.model_dump(mode="json", warnings="error")
             for item in strict_composition.baseline_payload.lint_items
         ],
         "additional_semantic_findings": [
-            item.model_dump(mode="json") for item in strict_composition.laj_advice_items
+            item.model_dump(mode="json", warnings="error")
+            for item in strict_composition.laj_advice_items
         ],
         "laj_witness_sha256": witness_sha,
         "laj_run_status": run_status,

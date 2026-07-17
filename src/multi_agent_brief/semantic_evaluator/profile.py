@@ -10,7 +10,10 @@ import yaml
 from multi_agent_brief.semantic_evaluator.contracts import EvaluatorProfile
 from multi_agent_brief.semantic_evaluator.errors import SemanticEvaluatorError
 from multi_agent_brief.semantic_evaluator.resources import resource_text
-from multi_agent_brief.semantic_evaluator.serialization import canonical_model_sha256
+from multi_agent_brief.semantic_evaluator.serialization import (
+    canonical_model_sha256,
+    strict_model_payload,
+)
 
 
 PROFILE_ID = "research_design_report_zh_v1"
@@ -133,9 +136,7 @@ def strict_loaded_profile_copy(loaded: LoadedProfile) -> LoadedProfile:
     try:
         if not isinstance(loaded, LoadedProfile):
             raise TypeError("profile_invalid")
-        profile = EvaluatorProfile.model_validate(
-            loaded.profile.model_dump(mode="json")
-        )
+        profile = EvaluatorProfile.model_validate(strict_model_payload(loaded.profile))
         if type(loaded.profile_sha256) is not str:
             raise TypeError("profile_invalid")
         strict = LoadedProfile(

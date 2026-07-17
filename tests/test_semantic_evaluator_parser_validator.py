@@ -5,6 +5,7 @@ from __future__ import annotations
 from dataclasses import replace
 import inspect
 from pathlib import Path
+import warnings
 
 import pytest
 
@@ -875,6 +876,103 @@ def test_raw_object_and_requested_dimension_are_bound_before_acceptance() -> Non
     assert context_result.accepted_findings == ()
 
 
+@pytest.mark.parametrize("mutation", ["reader", "plan", "context"])
+def test_validation_roots_are_strictly_copied_before_use(mutation: str) -> None:
+    reader, context, _profile, plan = _case()
+    response = _no_finding_response(plan, "cross_section_consistency")
+    hidden_detail = "PRIVATE SYNTHETIC VALIDATION ROOT VALUE"
+    candidate_reader = reader.artifact
+    candidate_plan = plan
+    candidate_context = context
+    if mutation == "reader":
+        candidate_reader = reader.artifact.model_copy(update={"blocks": hidden_detail})
+    elif mutation == "plan":
+        candidate_plan = plan.model_copy(update={"units": hidden_detail})
+    else:
+        candidate_context = context.model_copy(update={"requirements": hidden_detail})
+    with warnings.catch_warnings(record=True) as seen:
+        warnings.simplefilter("always")
+        with pytest.raises(SemanticEvaluatorError) as caught:
+            validate_dimension_response(
+                response,
+                raw_object=response.model_dump(mode="json"),
+                expected_dimension_id="cross_section_consistency",
+                plan=candidate_plan,
+                reader_artifact=candidate_reader,
+                bounded_context=candidate_context,
+                attempt_ref="attempt-strict-roots",
+            )
+    assert caught.value.reason_code == "run_binding_mismatch"
+    assert caught.value.__cause__ is None
+    assert caught.value.__context__ is None
+    assert hidden_detail not in repr(caught.value)
+    assert not seen
+
+
+@pytest.mark.parametrize("mutation", ["system_text", "user_text", "trial_id"])
+def test_attempt_builder_replays_prompt_and_trial_identity(mutation: str) -> None:
+    _reader, _context, _profile, _plan, decision, evidence, _attempts = (
+        _complete_no_finding_validation_case()
+    )
+    prompt = _prompt_for(decision, evidence[0].dimension_id)
+    hidden_detail = "PRIVATE SYNTHETIC ATTEMPT VALUE"
+    trial_id = decision.input_binding.trial_id
+    if mutation == "system_text":
+        prompt = replace(prompt, system_text=prompt.system_text + hidden_detail)
+    elif mutation == "user_text":
+        prompt = replace(prompt, user_text=prompt.user_text + hidden_detail)
+    else:
+        trial_id = hidden_detail
+    with warnings.catch_warnings(record=True) as seen:
+        warnings.simplefilter("always")
+        with pytest.raises(SemanticEvaluatorError) as caught:
+            make_dimension_attempt_evidence(
+                trial_id=trial_id,
+                prompt=prompt,
+                attempt_ordinal=1,
+                status="completed",
+                raw_response_bytes=b"{}",
+            )
+    assert caught.value.reason_code == "assessment_evidence_mismatch"
+    assert caught.value.__cause__ is None
+    assert caught.value.__context__ is None
+    assert hidden_detail not in repr(caught.value)
+    assert not seen
+
+
+def test_event_identity_uses_the_final_canonical_payload() -> None:
+    payload = {
+        "assessment_plan_sha256": "0" * 64,
+        "planned_unit_count": 25,
+    }
+    event = validator_module.make_semantic_evaluator_event(
+        sequence=1,
+        run_id="run-event-identity",
+        trial_id="trial-event-identity",
+        event_type="assessment_plan_created",
+        payload=payload,
+    )
+    redundant = validator_module.make_semantic_evaluator_event(
+        sequence=1,
+        run_id="run-event-identity",
+        trial_id="trial-event-identity",
+        event_type="assessment_plan_created",
+        payload={"event_type": "assessment_plan_created", **payload},
+    )
+    assert redundant == event
+    with pytest.raises(SemanticEvaluatorError) as caught:
+        validator_module.make_semantic_evaluator_event(
+            sequence=1,
+            run_id="run-event-identity",
+            trial_id="trial-event-identity",
+            event_type="assessment_plan_created",
+            payload={"event_type": "run_completed", **payload},
+        )
+    assert caught.value.reason_code == "event_sequence_invalid"
+    assert caught.value.__cause__ is None
+    assert caught.value.__context__ is None
+
+
 def test_synthetic_events_recompute_complete_25_unit_run_counts() -> None:
     _reader, _context, _profile, plan, decision, evidence, attempts = (
         _complete_no_finding_validation_case()
@@ -1169,16 +1267,18 @@ def test_attempt_evidence_topology_and_integrity_fail_closed(mutation: str) -> N
             for ordinal in (1, 2, 3)
         ] + evidence[1:]
     elif mutation == "prompt_sha":
-        candidate = [
+        with pytest.raises(SemanticEvaluatorError) as caught:
             make_dimension_attempt_evidence(
                 trial_id=decision.input_binding.trial_id,
                 prompt=replace(prompt, request_sha256="0" * 64),
                 attempt_ordinal=1,
                 status="completed",
                 raw_response_bytes=raw,
-            ),
-            *evidence[1:],
-        ]
+            )
+        assert caught.value.reason_code == "assessment_evidence_mismatch"
+        assert caught.value.__cause__ is None
+        assert caught.value.__context__ is None
+        return
     elif mutation == "raw_sha":
         candidate = [
             first.model_copy(update={"raw_response_sha256": "0" * 64}),

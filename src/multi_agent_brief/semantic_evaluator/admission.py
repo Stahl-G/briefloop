@@ -47,6 +47,7 @@ from multi_agent_brief.semantic_evaluator.serialization import (
     canonical_sha256,
     normalized_utf8_text,
     sha256_bytes,
+    strict_model_payload,
 )
 from multi_agent_brief.semantic_evaluator.resources import EvaluatorResourceError
 from multi_agent_brief.semantic_evaluator.unit_planner import (
@@ -168,7 +169,7 @@ def build_input_binding(
 def _strict_request(request: AdmissionRequest | Mapping[str, Any]) -> AdmissionRequest:
     payload: Any
     if isinstance(request, AdmissionRequest):
-        payload = request.model_dump(mode="json")
+        payload = strict_model_payload(request)
     else:
         payload = request
     return AdmissionRequest.model_validate(payload)
@@ -194,7 +195,7 @@ def _strict_existing_binding(
     try:
         if not isinstance(existing_binding, InputBinding):
             raise TypeError("trial_identity_conflict")
-        strict = InputBinding.model_validate(existing_binding.model_dump(mode="json"))
+        strict = InputBinding.model_validate(strict_model_payload(existing_binding))
         if canonical_json_bytes(strict) != canonical_json_bytes(
             existing_binding
         ) or strict.input_binding_sha256 != canonical_model_sha256(
@@ -250,7 +251,7 @@ def admit_inputs(
     if context.context_sha256 != admitted_request.declared_bounded_context_sha256:
         return _blocked("input_sha_mismatch")
     config = InstrumentConfig.model_validate(
-        admitted_request.instrument_config.model_dump(mode="json")
+        strict_model_payload(admitted_request.instrument_config)
     )
     if context.language != "zh-CN" or config.language != "zh-CN":
         return _blocked("unsupported_language")
@@ -391,7 +392,7 @@ def admit_inputs(
         instrument_config=config,
         input_binding=binding,
         instrument_manifest=InstrumentManifest.model_validate(
-            manifest.model_dump(mode="json")
+            strict_model_payload(manifest)
         ),
         assessment_plan=plan,
         prompts=tuple(prompts),

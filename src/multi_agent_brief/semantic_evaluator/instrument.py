@@ -29,6 +29,7 @@ from multi_agent_brief.semantic_evaluator.serialization import (
     canonical_sha256,
     schema_sha256,
     source_sha256_for_module,
+    strict_model_payload,
 )
 from multi_agent_brief.semantic_evaluator.snapshot import (
     EvaluatorResourceSnapshot,
@@ -107,12 +108,26 @@ def _acquire_instrument_snapshot(
 ) -> _InstrumentSnapshot:
     """Acquire and bind one current package snapshot without boundary relabeling."""
 
+    config = _strict_instrument_config(config)
     resources = acquire_resource_snapshot(
         loaded_profile=loaded_profile,
         include_baseline=include_baseline,
     )
     manifest = _build_instrument_manifest_from_resources(config, resources)
     return _InstrumentSnapshot(resources=resources, manifest=manifest)
+
+
+def _strict_instrument_config(config: InstrumentConfig) -> InstrumentConfig:
+    strict: InstrumentConfig | None = None
+    exact = False
+    try:
+        strict = InstrumentConfig.model_validate(strict_model_payload(config))
+        exact = canonical_json_bytes(strict) == canonical_json_bytes(config)
+    except (AttributeError, KeyError, TypeError, ValueError):
+        pass
+    if strict is None or not exact:
+        raise SemanticEvaluatorError("instrument_manifest_mismatch") from None
+    return strict
 
 
 def _build_instrument_manifest_from_resources(
@@ -132,7 +147,7 @@ def _build_instrument_manifest_from_resources(
             component_id=component_id,
             implementation_version=version,
             source_sha256=source_sha256_for_module(module_name),
-        ).model_dump(mode="json")
+        ).model_dump(mode="json", warnings="error")
         for component_id, version, module_name in _IMPLEMENTATIONS
     ]
     config_sha = canonical_model_sha256(config)
@@ -155,7 +170,9 @@ def _build_instrument_manifest_from_resources(
         "language": config.language,
         "max_context_tokens": config.prompt_sizer.max_context_tokens,
         "reserved_output_tokens": config.prompt_sizer.reserved_output_tokens,
-        "transport_policy": config.transport_policy.model_dump(mode="json"),
+        "transport_policy": config.transport_policy.model_dump(
+            mode="json", warnings="error"
+        ),
     }
     payload = {
         "schema_version": INSTRUMENT_MANIFEST_SCHEMA_ID,
@@ -177,7 +194,7 @@ def verify_instrument_manifest(
     strict_manifest: InstrumentManifest | None = None
     try:
         strict_manifest = InstrumentManifest.model_validate(
-            manifest.model_dump(mode="json")
+            strict_model_payload(manifest)
             if isinstance(manifest, InstrumentManifest)
             else manifest
         )

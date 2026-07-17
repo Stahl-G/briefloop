@@ -6,6 +6,7 @@ import inspect
 import json
 from copy import deepcopy
 from pathlib import Path
+import warnings
 
 import pytest
 
@@ -288,6 +289,27 @@ def test_request_shape_errors_are_value_free_and_preplan(mutation: str) -> None:
     assert decision.reason_codes == ("admission_contract_invalid",)
     assert secret not in str(decision.violations)
     assert sizer.calls == 0
+
+
+def test_structurally_malformed_typed_request_emits_no_caller_value_warning() -> None:
+    request = AdmissionRequest.model_validate(
+        deepcopy(AdmissionRequest.minimal_example)
+    )
+    hidden_detail = "PRIVATE SYNTHETIC ADMISSION VALUE"
+    malformed_context = request.bounded_context.model_copy(
+        update={"requirements": hidden_detail}
+    )
+    malformed = request.model_copy(update={"bounded_context": malformed_context})
+    sizer = FakeSizer()
+    with warnings.catch_warnings(record=True) as seen:
+        warnings.simplefilter("always")
+        decision = admit_inputs(malformed, prompt_sizer=sizer)
+    assert decision.reason_codes == ("admission_contract_invalid",)
+    assert decision.assessment_plan is None
+    assert decision.prompts == ()
+    assert sizer.calls == 0
+    assert hidden_detail not in str(decision.violations)
+    assert not seen
 
 
 @pytest.mark.parametrize(
