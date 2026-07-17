@@ -13,22 +13,37 @@ from multi_agent_brief.contracts.v2 import (
     AcceptedProposalRecord,
     AcceptedSourceRecord,
     Approval,
+    ApprovalPackageBinding,
     ArtifactRecord,
     ArtifactRevision,
     ClaimFreezeRecord,
     ClaimRecord,
     ClaimSourceBinding,
     Delivery,
+    DeliveryAttemptRecord,
+    DeliveryAuthorizationRecord,
+    DeliveryResultRecord,
     EventEnvelope,
     GateArtifactBinding,
     GateEvaluationRecord,
     GateFindingRecord,
+    FinalizationRecord,
+    FinalizeRenderRecord,
     Invocation,
     OwnedArtifactSubmissionRecord,
     ProposalSourceBinding,
+    PackageArtifactBinding,
+    PackageReadyRecord,
+    RecoveryCompletionRecord,
+    RepairCompletionRecord,
+    RepairCycleRecord,
+    ArtifactSupersessionRecord,
     RunContractBinding,
     RunIdentity,
     RunIntegrityRecord,
+    RunArchiveArtifactBinding,
+    RunArchiveRecord,
+    RunHeadTransitionRecord,
     StageArtifactBinding,
     StageGateBinding,
     StageState,
@@ -124,6 +139,21 @@ class ControlUnitOfWork:
             tuple[str, int], GateArtifactBinding
         ] = {}
         self._run_integrity_records: dict[int, RunIntegrityRecord] = {}
+        self._repair_cycles: dict[str, RepairCycleRecord] = {}
+        self._artifact_supersessions: dict[str, ArtifactSupersessionRecord] = {}
+        self._repair_completions: dict[str, RepairCompletionRecord] = {}
+        self._recovery_completions: dict[str, RecoveryCompletionRecord] = {}
+        self._run_head_transitions: dict[str, RunHeadTransitionRecord] = {}
+        self._finalize_renders: dict[str, FinalizeRenderRecord] = {}
+        self._finalizations: dict[str, FinalizationRecord] = {}
+        self._run_archives: dict[str, RunArchiveRecord] = {}
+        self._run_archive_artifact_bindings: dict[tuple[str, int], RunArchiveArtifactBinding] = {}
+        self._package_ready_records: dict[str, PackageReadyRecord] = {}
+        self._package_artifact_bindings: dict[tuple[str, int], PackageArtifactBinding] = {}
+        self._approval_package_bindings: dict[tuple[str, str], ApprovalPackageBinding] = {}
+        self._delivery_authorizations: dict[str, DeliveryAuthorizationRecord] = {}
+        self._delivery_attempts: dict[str, DeliveryAttemptRecord] = {}
+        self._delivery_results: dict[str, DeliveryResultRecord] = {}
         self._state = "active"
 
     @property
@@ -383,6 +413,82 @@ class ControlUnitOfWork:
             snapshot,
         )
 
+    def put_repair_cycle(self, record: RepairCycleRecord) -> None:
+        snapshot = self._snapshot_record(record, RepairCycleRecord)
+        self._require_run(snapshot)
+        self._put_unique(self._repair_cycles, snapshot.repair_id, snapshot)
+
+    def put_artifact_supersession(self, record: ArtifactSupersessionRecord) -> None:
+        snapshot = self._snapshot_record(record, ArtifactSupersessionRecord)
+        self._require_run(snapshot)
+        self._put_unique(self._artifact_supersessions, snapshot.supersession_id, snapshot)
+
+    def put_repair_completion(self, record: RepairCompletionRecord) -> None:
+        snapshot = self._snapshot_record(record, RepairCompletionRecord)
+        self._require_run(snapshot)
+        self._put_unique(self._repair_completions, snapshot.repair_completion_id, snapshot)
+
+    def put_recovery_completion(self, record: RecoveryCompletionRecord) -> None:
+        snapshot = self._snapshot_record(record, RecoveryCompletionRecord)
+        self._require_run(snapshot)
+        self._put_unique(self._recovery_completions, snapshot.recovery_id, snapshot)
+
+    def put_run_head_transition(self, record: RunHeadTransitionRecord) -> None:
+        snapshot = self._snapshot_record(record, RunHeadTransitionRecord)
+        if snapshot.workspace_id != self._store.workspace_id or snapshot.successor_run_id != self.run_id:
+            raise ControlStoreConflict("control_record_run_mismatch")
+        self._put_unique(self._run_head_transitions, snapshot.head_transition_id, snapshot)
+
+    def put_finalize_render(self, record: FinalizeRenderRecord) -> None:
+        snapshot = self._snapshot_record(record, FinalizeRenderRecord)
+        self._require_run(snapshot)
+        self._put_unique(self._finalize_renders, snapshot.render_id, snapshot)
+
+    def put_finalization(self, record: FinalizationRecord) -> None:
+        snapshot = self._snapshot_record(record, FinalizationRecord)
+        self._require_run(snapshot)
+        self._put_unique(self._finalizations, snapshot.finalization_id, snapshot)
+
+    def put_run_archive(self, record: RunArchiveRecord) -> None:
+        snapshot = self._snapshot_record(record, RunArchiveRecord)
+        self._require_run(snapshot)
+        self._put_unique(self._run_archives, snapshot.archive_id, snapshot)
+
+    def put_run_archive_artifact_binding(self, record: RunArchiveArtifactBinding) -> None:
+        snapshot = self._snapshot_record(record, RunArchiveArtifactBinding)
+        self._require_run(snapshot)
+        self._put_unique(self._run_archive_artifact_bindings, (snapshot.archive_id, snapshot.position), snapshot)
+
+    def put_package_ready(self, record: PackageReadyRecord) -> None:
+        snapshot = self._snapshot_record(record, PackageReadyRecord)
+        self._require_run(snapshot)
+        self._put_unique(self._package_ready_records, snapshot.package_id, snapshot)
+
+    def put_package_artifact_binding(self, record: PackageArtifactBinding) -> None:
+        snapshot = self._snapshot_record(record, PackageArtifactBinding)
+        self._require_run(snapshot)
+        self._put_unique(self._package_artifact_bindings, (snapshot.package_id, snapshot.position), snapshot)
+
+    def put_approval_package_binding(self, record: ApprovalPackageBinding) -> None:
+        snapshot = self._snapshot_record(record, ApprovalPackageBinding)
+        self._require_run(snapshot)
+        self._put_unique(self._approval_package_bindings, (snapshot.approval_id, snapshot.package_id), snapshot)
+
+    def put_delivery_authorization(self, record: DeliveryAuthorizationRecord) -> None:
+        snapshot = self._snapshot_record(record, DeliveryAuthorizationRecord)
+        self._require_run(snapshot)
+        self._put_unique(self._delivery_authorizations, snapshot.authorization_id, snapshot)
+
+    def put_delivery_attempt(self, record: DeliveryAttemptRecord) -> None:
+        snapshot = self._snapshot_record(record, DeliveryAttemptRecord)
+        self._require_run(snapshot)
+        self._put_unique(self._delivery_attempts, snapshot.attempt_id, snapshot)
+
+    def put_delivery_result(self, record: DeliveryResultRecord) -> None:
+        snapshot = self._snapshot_record(record, DeliveryResultRecord)
+        self._require_run(snapshot)
+        self._put_unique(self._delivery_results, snapshot.result_id, snapshot)
+
     def _put_unique(
         self,
         collection: dict[Hashable, object],
@@ -498,6 +604,21 @@ class ControlUnitOfWork:
                 self._record_payload(self._run_integrity_records[key])
                 for key in sorted(self._run_integrity_records)
             ],
+            "repair_cycles": [self._record_payload(self._repair_cycles[key]) for key in sorted(self._repair_cycles)],
+            "artifact_supersessions": [self._record_payload(self._artifact_supersessions[key]) for key in sorted(self._artifact_supersessions)],
+            "repair_completions": [self._record_payload(self._repair_completions[key]) for key in sorted(self._repair_completions)],
+            "recovery_completions": [self._record_payload(self._recovery_completions[key]) for key in sorted(self._recovery_completions)],
+            "run_head_transitions": [self._record_payload(self._run_head_transitions[key]) for key in sorted(self._run_head_transitions)],
+            "finalize_renders": [self._record_payload(self._finalize_renders[key]) for key in sorted(self._finalize_renders)],
+            "finalizations": [self._record_payload(self._finalizations[key]) for key in sorted(self._finalizations)],
+            "run_archives": [self._record_payload(self._run_archives[key]) for key in sorted(self._run_archives)],
+            "run_archive_artifact_bindings": [self._record_payload(self._run_archive_artifact_bindings[key]) for key in sorted(self._run_archive_artifact_bindings)],
+            "package_ready_records": [self._record_payload(self._package_ready_records[key]) for key in sorted(self._package_ready_records)],
+            "package_artifact_bindings": [self._record_payload(self._package_artifact_bindings[key]) for key in sorted(self._package_artifact_bindings)],
+            "approval_package_bindings": [self._record_payload(self._approval_package_bindings[key]) for key in sorted(self._approval_package_bindings)],
+            "delivery_authorizations": [self._record_payload(self._delivery_authorizations[key]) for key in sorted(self._delivery_authorizations)],
+            "delivery_attempts": [self._record_payload(self._delivery_attempts[key]) for key in sorted(self._delivery_attempts)],
+            "delivery_results": [self._record_payload(self._delivery_results[key]) for key in sorted(self._delivery_results)],
         }
         return canonical_fingerprint(payload)
 

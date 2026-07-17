@@ -51,6 +51,7 @@ def test_non_editable_wheel_runs_complete_dormant_core_spine(
         from contextlib import redirect_stdout
         from copy import deepcopy
         import hashlib
+        from importlib import resources
         import io
         import json
         from pathlib import Path
@@ -78,6 +79,11 @@ def test_non_editable_wheel_runs_complete_dormant_core_spine(
         workspace = Path(sys.argv[1])
         installed = Path(sys.argv[2]).resolve()
         assert Path(multi_agent_brief.__file__).resolve().is_relative_to(installed)
+        migration_0004 = resources.files(
+            "multi_agent_brief.control_store"
+        ).joinpath("migrations", "0004.sql")
+        assert migration_0004.is_file()
+        assert "PRAGMA user_version=4;" in migration_0004.read_text(encoding="utf-8")
         create_demo_workspace(workspace)
         run_id = "RUN-WHEEL-CORE-V2-001"
         workspace_id = "WS-WHEEL-CORE-V2-001"

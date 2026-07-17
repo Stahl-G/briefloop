@@ -4936,6 +4936,45 @@ def test_default_core_spine_reaches_finalize_ready(tmp_path: Path) -> None:
         ) == audit_bytes
 
 
+def test_historical_snapshot_prefix_excludes_future_rows_and_replays_old_request(
+    tmp_path: Path,
+) -> None:
+    workspace = _workspace(tmp_path)
+    _advance_to_claim_ledger_ready(workspace)
+    with SQLiteControlStore.open(workspace / "briefloop.db") as store:
+        history = store.load_history()
+        initialization = history.transactions[0]
+        prefix = history.snapshot_at_revision(RUN_ID, initialization.committed_revision)
+        assert prefix.store_revision == 1
+        assert not prefix.invocations
+        assert not prefix.deliveries
+        assert "candidate_claims" not in {
+            item.artifact_id for item in prefix.artifacts
+        }
+        assert all(
+            item.accepted_transaction_id == initialization.transaction_id
+            for item in prefix.run_contract_bindings
+        )
+        CoreRunDomainVerifier().verify_history(history)
+        binding = prefix.run_contract_bindings[0]
+        replay = resolve_core_replay(
+            store,
+            run_id=RUN_ID,
+            request_id=initialization.transaction_id,
+            request_fingerprint=binding.request_fingerprint,
+        )
+        assert replay is not None
+        assert replay.status == "replayed"
+        assert replay.receipt == initialization
+        with pytest.raises(CoreRunError, match="submission_replay_conflict"):
+            resolve_core_replay(
+                store,
+                run_id=RUN_ID,
+                request_id=initialization.transaction_id,
+                request_fingerprint="f" * 64,
+            )
+
+
 @pytest.mark.parametrize(
     "record_kind",
     ["source", "invocation", "proposal", "submission", "gate"],

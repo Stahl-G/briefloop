@@ -445,6 +445,17 @@ class CoreRunEventBinding(StrictModel):
         "gate_evaluation",
         "stage_transition",
         "integrity_contamination",
+        "repair_start",
+        "artifact_supersession",
+        "repair_complete",
+        "recovery_complete",
+        "run_head_transition",
+        "finalize_render",
+        "finalize_complete",
+        "internal_approval",
+        "delivery_authorization",
+        "delivery_attempt",
+        "delivery_result",
     ]
     primary_record_id: ContractId
     outcome: Literal["committed", "blocked"]
@@ -865,6 +876,34 @@ class EventEnvelope(StrictModel):
                     "stage_satisfied_by_topology",
                 },
                 "integrity_contamination": {"run_integrity_contaminated"},
+                "repair_start": {"repair_started"},
+                "artifact_supersession": {
+                    "repair_stage_superseded",
+                    "owned_artifact_accepted",
+                },
+                "repair_complete": {"repair_completed", "stage_status_changed"},
+                "recovery_complete": {"decision_recorded"},
+                "run_head_transition": {
+                    "run_reset",
+                    "run_initialized",
+                    "stage_status_changed",
+                },
+                "finalize_render": {"owned_artifact_accepted"},
+                "finalize_complete": {
+                    "stage_status_changed",
+                    "run_archived",
+                    "decision_recorded",
+                },
+                "internal_approval": {"human_approval_recorded"},
+                "delivery_authorization": {"decision_recorded"},
+                "delivery_attempt": {"delivery_attempted"},
+                "delivery_result": {
+                    "delivery_bundle_prepared",
+                    "delivery_draft_created",
+                    "delivery_succeeded",
+                    "delivery_failed",
+                    "decision_recorded",
+                },
             }
             binding = self.core_run_binding
             if (
@@ -1276,7 +1315,7 @@ class StageTransitionRecord(StrictModel):
     run_id: ContractId
     stage_id: ContractId
     transition_kind: Literal[
-        "initialize", "activate", "complete", "satisfied_by_topology"
+        "initialize", "activate", "complete", "satisfied_by_topology", "repair_reopen"
     ]
     requested_decision: Optional[Literal["continue"]] = None
     prior_status: Optional[Literal["pending", "ready", "complete", "blocked", "skipped"]] = None
@@ -1416,7 +1455,7 @@ class GateEvaluationRecord(StrictModel):
     evaluation_id: ContractId
     gate_batch_id: ContractId
     run_id: ContractId
-    stage_id: Literal["auditor"]
+    stage_id: Literal["auditor", "finalize"]
     gate_id: GateId
     policy_version: ContractId
     run_contract_fingerprint: Sha256
@@ -1453,7 +1492,14 @@ class GateArtifactBinding(StrictModel):
     artifact_id: ContractId
     artifact_revision: PositiveInt
     artifact_sha256: Sha256
-    usage: Literal["brief", "ledger", "analyst_snapshot", "screened_candidates"]
+    usage: Literal[
+        "brief",
+        "ledger",
+        "analyst_snapshot",
+        "screened_candidates",
+        "reader_artifact",
+        "audit_report",
+    ]
     accepted_transaction_id: ContractId
 
 
@@ -1463,7 +1509,7 @@ class GateCheckRequest(StrictModel):
     schema_version: Literal["briefloop.gate_check_request.v2"]
     request_id: ContractId
     run_id: ContractId
-    stage_id: Literal["auditor"]
+    stage_id: Literal["auditor", "finalize"]
     expected_store_revision: NonNegativeInt
     expected_report_artifact_revision: NonNegativeInt
     expected_input_artifacts: list[ArtifactRevisionReference]
@@ -1557,6 +1603,526 @@ class IntegrityCheckRequest(StrictModel):
     expected_store_revision: NonNegativeInt
 
 
+class RepairCycleRecord(StrictModel):
+    schema_id = "briefloop.repair_cycle_record.v2"
+
+    schema_version: Literal["briefloop.repair_cycle_record.v2"]
+    repair_id: ContractId
+    run_id: ContractId
+    contamination_revision: PositiveInt
+    owner_stage_id: ContractId
+    permitted_artifact_ids: list[ContractId] = Field(min_length=1)
+    reason_code: ContractId
+    started_at: IsoDateTime
+    start_event_id: ContractId
+    accepted_transaction_id: ContractId
+    request_fingerprint: Sha256
+
+    @model_validator(mode="after")
+    def scope_is_canonical(self) -> "RepairCycleRecord":
+        if self.permitted_artifact_ids != sorted(set(self.permitted_artifact_ids)):
+            raise ValueError("repair artifact scope must be sorted and unique")
+        return self
+
+
+class ArtifactSupersessionRecord(StrictModel):
+    schema_id = "briefloop.artifact_supersession_record.v2"
+
+    schema_version: Literal["briefloop.artifact_supersession_record.v2"]
+    supersession_id: ContractId
+    run_id: ContractId
+    repair_id: ContractId
+    mode: Literal["repair", "supersede", "revert"]
+    prior_artifact: ArtifactRevisionReference
+    successor_artifact: ArtifactRevisionReference
+    reason_code: ContractId
+    created_at: IsoDateTime
+    accepted_event_id: ContractId
+    accepted_transaction_id: ContractId
+    request_fingerprint: Sha256
+
+    @model_validator(mode="after")
+    def revision_advances_once(self) -> "ArtifactSupersessionRecord":
+        if self.prior_artifact.artifact_id != self.successor_artifact.artifact_id:
+            raise ValueError("supersession must retain artifact identity")
+        if self.successor_artifact.revision != self.prior_artifact.revision + 1:
+            raise ValueError("supersession revision must advance once")
+        return self
+
+
+class RepairCompletionRecord(StrictModel):
+    schema_id = "briefloop.repair_completion_record.v2"
+
+    schema_version: Literal["briefloop.repair_completion_record.v2"]
+    repair_completion_id: ContractId
+    run_id: ContractId
+    repair_id: ContractId
+    contamination_revision: PositiveInt
+    supersession_ids: list[ContractId] = Field(min_length=1)
+    reopened_transition_ids: list[ContractId] = Field(min_length=1)
+    completed_at: IsoDateTime
+    completion_event_id: ContractId
+    accepted_transaction_id: ContractId
+    request_fingerprint: Sha256
+
+    @model_validator(mode="after")
+    def relations_are_unique(self) -> "RepairCompletionRecord":
+        for values in (self.supersession_ids, self.reopened_transition_ids):
+            if len(values) != len(set(values)):
+                raise ValueError("duplicate repair completion relation")
+        return self
+
+
+class RecoveryCompletionRecord(StrictModel):
+    schema_id = "briefloop.recovery_completion_record.v2"
+
+    schema_version: Literal["briefloop.recovery_completion_record.v2"]
+    recovery_id: ContractId
+    run_id: ContractId
+    repair_completion_id: ContractId
+    contamination_revision: PositiveInt
+    supersession_ids: list[ContractId] = Field(min_length=1)
+    rerun_transition_ids: list[ContractId] = Field(min_length=1)
+    gate_evaluation_ids: list[ContractId] = Field(default_factory=list)
+    disposition: Literal["recovered_non_reference"]
+    completed_at: IsoDateTime
+    completion_event_id: ContractId
+    accepted_transaction_id: ContractId
+    request_fingerprint: Sha256
+
+    @model_validator(mode="after")
+    def relations_are_unique(self) -> "RecoveryCompletionRecord":
+        for values in (
+            self.supersession_ids,
+            self.rerun_transition_ids,
+            self.gate_evaluation_ids,
+        ):
+            if len(values) != len(set(values)):
+                raise ValueError("duplicate recovery completion relation")
+        return self
+
+
+class RunHeadTransitionRecord(StrictModel):
+    schema_id = "briefloop.run_head_transition_record.v2"
+
+    schema_version: Literal["briefloop.run_head_transition_record.v2"]
+    head_transition_id: ContractId
+    workspace_id: ContractId
+    predecessor_run_id: ContractId
+    successor_run_id: ContractId
+    prior_workspace_revision: NonNegativeInt
+    successor_workspace_revision: PositiveInt
+    reason_code: Literal["run_reset"]
+    successor_disposition: Literal["non_reference"]
+    created_at: IsoDateTime
+    transition_event_id: ContractId
+    accepted_transaction_id: ContractId
+    request_fingerprint: Sha256
+
+    @model_validator(mode="after")
+    def head_transition_advances_once(self) -> "RunHeadTransitionRecord":
+        if self.predecessor_run_id == self.successor_run_id:
+            raise ValueError("reset successor must be a distinct run")
+        if self.successor_workspace_revision != self.prior_workspace_revision + 1:
+            raise ValueError("workspace revision must advance once")
+        return self
+
+
+class FinalizeRenderRecord(StrictModel):
+    schema_id = "briefloop.finalize_render_record.v2"
+
+    schema_version: Literal["briefloop.finalize_render_record.v2"]
+    render_id: ContractId
+    run_id: ContractId
+    audit_proposal_id: ContractId
+    audited_brief: ArtifactRevisionReference
+    audit_report: ArtifactRevisionReference
+    reader_artifacts: list[ArtifactRevisionReference] = Field(min_length=1)
+    reader_clean_status: Literal["pass"]
+    policy_result_fingerprint: Sha256
+    run_contract_fingerprint: Sha256
+    created_at: IsoDateTime
+    render_event_id: ContractId
+    accepted_transaction_id: ContractId
+    request_fingerprint: Sha256
+
+    @model_validator(mode="after")
+    def reader_artifacts_are_unique(self) -> "FinalizeRenderRecord":
+        keys = [(item.artifact_id, item.revision) for item in self.reader_artifacts]
+        if len(keys) != len(set(keys)):
+            raise ValueError("duplicate reader artifact revision")
+        return self
+
+
+class FinalizationRecord(StrictModel):
+    schema_id = "briefloop.finalization_record.v2"
+
+    schema_version: Literal["briefloop.finalization_record.v2"]
+    finalization_id: ContractId
+    run_id: ContractId
+    render_id: ContractId
+    finalize_transition_id: ContractId
+    finalize_gate_batch_id: ContractId
+    finalize_gate_evaluation_ids: list[ContractId] = Field(min_length=1)
+    recovery_id: Optional[ContractId] = None
+    integrity_revision: PositiveInt
+    finalized_at: IsoDateTime
+    finalization_event_id: ContractId
+    accepted_transaction_id: ContractId
+    request_fingerprint: Sha256
+
+    @field_validator("finalize_gate_evaluation_ids")
+    @classmethod
+    def gate_ids_are_unique(cls, value: list[str]) -> list[str]:
+        if len(value) != len(set(value)):
+            raise ValueError("duplicate finalize Gate evaluation")
+        return value
+
+
+class RunArchiveRecord(StrictModel):
+    schema_id = "briefloop.run_archive_record.v2"
+
+    schema_version: Literal["briefloop.run_archive_record.v2"]
+    archive_id: ContractId
+    run_id: ContractId
+    finalization_id: ContractId
+    archive_artifact: ArtifactRevisionReference
+    manifest_sha256: Sha256
+    included_count: PositiveInt
+    created_at: IsoDateTime
+    archive_event_id: ContractId
+    accepted_transaction_id: ContractId
+    request_fingerprint: Sha256
+
+
+class RunArchiveArtifactBinding(StrictModel):
+    schema_id = "briefloop.run_archive_artifact_binding.v2"
+
+    schema_version: Literal["briefloop.run_archive_artifact_binding.v2"]
+    run_id: ContractId
+    archive_id: ContractId
+    position: NonNegativeInt
+    artifact_id: ContractId
+    artifact_revision: PositiveInt
+    artifact_sha256: Sha256
+    usage: Literal["control", "evidence", "workflow", "reader", "gate"]
+    accepted_transaction_id: ContractId
+
+
+class PackageReadyRecord(StrictModel):
+    schema_id = "briefloop.package_ready_record.v2"
+
+    schema_version: Literal["briefloop.package_ready_record.v2"]
+    package_id: ContractId
+    run_id: ContractId
+    finalization_id: ContractId
+    archive_id: ContractId
+    package_manifest_artifact: ArtifactRevisionReference
+    package_manifest_sha256: Sha256
+    artifact_count: PositiveInt
+    created_at: IsoDateTime
+    package_event_id: ContractId
+    accepted_transaction_id: ContractId
+    request_fingerprint: Sha256
+
+
+class PackageArtifactBinding(StrictModel):
+    schema_id = "briefloop.package_artifact_binding.v2"
+
+    schema_version: Literal["briefloop.package_artifact_binding.v2"]
+    run_id: ContractId
+    package_id: ContractId
+    position: NonNegativeInt
+    artifact_id: ContractId
+    artifact_revision: PositiveInt
+    artifact_sha256: Sha256
+    usage: Literal["reader", "archive", "manifest"]
+    accepted_transaction_id: ContractId
+
+
+class ApprovalPackageBinding(StrictModel):
+    schema_id = "briefloop.approval_package_binding.v2"
+
+    schema_version: Literal["briefloop.approval_package_binding.v2"]
+    run_id: ContractId
+    approval_id: ContractId
+    package_id: ContractId
+    accepted_transaction_id: ContractId
+
+
+class DeliveryAuthorizationRecord(StrictModel):
+    schema_id = "briefloop.delivery_authorization_record.v2"
+
+    schema_version: Literal["briefloop.delivery_authorization_record.v2"]
+    authorization_id: ContractId
+    run_id: ContractId
+    package_id: ContractId
+    prior_authorization_id: Optional[ContractId] = None
+    approval_mode: Literal[
+        "internal_draft",
+        "internal_management_review",
+        "research_review",
+        "ir_draft",
+        "formal_release_candidate",
+    ]
+    retry_of_attempt_id: Optional[ContractId] = None
+    purpose: Literal["initial_attempt", "retry_attempt", "result_reconciliation"]
+    decision: Literal["authorize", "deny"]
+    target: Literal["local", "feishu", "gmail"]
+    channel: CleanText
+    recipient_fingerprint: Sha256
+    actor_id: ContractId
+    reason: ApprovalReason
+    recorded_at: IsoDateTime
+    authorization_event_id: ContractId
+    accepted_transaction_id: ContractId
+    request_fingerprint: Sha256
+
+
+class DeliveryAttemptRecord(StrictModel):
+    schema_id = "briefloop.delivery_attempt_record.v2"
+
+    schema_version: Literal["briefloop.delivery_attempt_record.v2"]
+    attempt_id: ContractId
+    run_id: ContractId
+    package_id: ContractId
+    authorization_id: ContractId
+    target: Literal["local", "feishu", "gmail"]
+    channel: CleanText
+    recipient_fingerprint: Sha256
+    connector_operation_id: ContractId
+    connector_request_fingerprint: Sha256
+    created_at: IsoDateTime
+    attempt_event_id: ContractId
+    accepted_transaction_id: ContractId
+    request_fingerprint: Sha256
+
+
+class DeliveryResultRecord(StrictModel):
+    schema_id = "briefloop.delivery_result_record.v2"
+
+    schema_version: Literal["briefloop.delivery_result_record.v2"]
+    result_id: ContractId
+    run_id: ContractId
+    attempt_id: ContractId
+    prior_result_id: Optional[ContractId] = None
+    reconciliation_authorization_id: Optional[ContractId] = None
+    status: Literal[
+        "bundle_prepared", "draft_created", "succeeded", "failed", "outcome_unknown"
+    ]
+    adapter_id: ContractId
+    adapter_version: ContractId
+    connector_operation_id: ContractId
+    evidence_sha256: Sha256
+    evidence_artifact: Optional[ArtifactRevisionReference] = None
+    recorded_at: IsoDateTime
+    result_event_id: ContractId
+    accepted_transaction_id: ContractId
+    request_fingerprint: Sha256
+
+
+class RepairStartRequest(StrictModel):
+    schema_id = "briefloop.repair_start_request.v2"
+    schema_version: Literal["briefloop.repair_start_request.v2"]
+    request_id: ContractId
+    run_id: ContractId
+    contamination_revision: PositiveInt
+    owner_stage_id: ContractId
+    permitted_artifact_ids: list[ContractId] = Field(min_length=1)
+    reason_code: ContractId
+    expected_store_revision: NonNegativeInt
+
+
+class ArtifactSupersedeRequest(StrictModel):
+    schema_id = "briefloop.artifact_supersede_request.v2"
+    schema_version: Literal["briefloop.artifact_supersede_request.v2"]
+    request_id: ContractId
+    run_id: ContractId
+    repair_id: ContractId
+    prior_artifact: ArtifactRevisionReference
+    input_path: ScratchInputPath
+    expected_input_sha256: Sha256
+    expected_current_revision: PositiveInt
+    mode: Literal["repair", "supersede"]
+    reason_code: ContractId
+    expected_store_revision: NonNegativeInt
+
+
+class ArtifactRevertRequest(StrictModel):
+    schema_id = "briefloop.artifact_revert_request.v2"
+    schema_version: Literal["briefloop.artifact_revert_request.v2"]
+    request_id: ContractId
+    run_id: ContractId
+    repair_id: ContractId
+    current_artifact: ArtifactRevisionReference
+    historical_source: ArtifactRevisionReference
+    expected_current_revision: PositiveInt
+    mode: Literal["revert"]
+    reason_code: ContractId
+    expected_store_revision: NonNegativeInt
+
+
+class RepairCompleteRequest(StrictModel):
+    schema_id = "briefloop.repair_complete_request.v2"
+    schema_version: Literal["briefloop.repair_complete_request.v2"]
+    request_id: ContractId
+    run_id: ContractId
+    repair_id: ContractId
+    supersession_ids: list[ContractId] = Field(min_length=1)
+    expected_stage_revisions: dict[ContractId, NonNegativeInt]
+    expected_store_revision: NonNegativeInt
+
+
+class RecoveryCompleteRequest(StrictModel):
+    schema_id = "briefloop.recovery_complete_request.v2"
+    schema_version: Literal["briefloop.recovery_complete_request.v2"]
+    request_id: ContractId
+    run_id: ContractId
+    repair_completion_id: ContractId
+    contamination_revision: PositiveInt
+    rerun_transition_ids: list[ContractId] = Field(min_length=1)
+    gate_evaluation_ids: list[ContractId] = Field(default_factory=list)
+    expected_store_revision: NonNegativeInt
+
+
+class RunResetRequest(StrictModel):
+    schema_id = "briefloop.run_reset_request.v2"
+    schema_version: Literal["briefloop.run_reset_request.v2"]
+    request_id: ContractId
+    predecessor_run_id: ContractId
+    successor_run_id: ContractId
+    workspace_id: ContractId
+    runtime: RuntimeName
+    expected_head_run_id: ContractId
+    expected_store_revision: NonNegativeInt
+    expected_workspace_revision: NonNegativeInt
+    run_direction: RunDirection
+    workspace_config_sha256: Sha256
+    sources_config_sha256: Sha256
+    role_topology: RoleTopology
+    gate_strictness: dict[GateId, bool]
+    input_governance_required: bool
+
+
+class FinalizeRenderRequest(StrictModel):
+    schema_id = "briefloop.finalize_render_request.v2"
+    schema_version: Literal["briefloop.finalize_render_request.v2"]
+    request_id: ContractId
+    run_id: ContractId
+    audit_proposal_id: ContractId
+    expected_audited_brief: ArtifactRevisionReference
+    expected_audit_report: ArtifactRevisionReference
+    reader_scratch_inputs: dict[ContractId, ScratchInputPath]
+    expected_reader_sha256: dict[ContractId, Sha256]
+    expected_reader_revisions: dict[ContractId, NonNegativeInt]
+    expected_store_revision: NonNegativeInt
+
+    @model_validator(mode="after")
+    def reader_maps_are_exact(self) -> "FinalizeRenderRequest":
+        keys = set(self.reader_scratch_inputs)
+        if keys != set(self.expected_reader_sha256) or keys != set(
+            self.expected_reader_revisions
+        ):
+            raise ValueError("reader input, hash and revision maps must match")
+        return self
+
+
+class FinalizeCompleteRequest(StrictModel):
+    schema_id = "briefloop.finalize_complete_request.v2"
+    schema_version: Literal["briefloop.finalize_complete_request.v2"]
+    request_id: ContractId
+    run_id: ContractId
+    render_id: ContractId
+    expected_finalize_stage_revision: NonNegativeInt
+    gate_evaluation_ids: list[ContractId] = Field(min_length=1)
+    recovery_id: Optional[ContractId] = None
+    expected_store_revision: NonNegativeInt
+
+
+class InternalApprovalRequest(StrictModel):
+    schema_id = "briefloop.internal_approval_request.v2"
+    schema_version: Literal["briefloop.internal_approval_request.v2"]
+    request_id: ContractId
+    run_id: ContractId
+    package_id: ContractId
+    approval_id: ContractId
+    mode: Literal[
+        "internal_draft",
+        "internal_management_review",
+        "research_review",
+        "ir_draft",
+        "formal_release_candidate",
+    ]
+    role: Literal[
+        "content_owner",
+        "evidence_reviewer",
+        "ir_owner",
+        "legal_or_compliance_reviewer",
+    ]
+    decision: Literal["approve", "reject", "request_changes"]
+    reason: ApprovalReason
+    actor_id: ContractId
+    expected_store_revision: NonNegativeInt
+
+
+class DeliveryAuthorizationRequest(StrictModel):
+    schema_id = "briefloop.delivery_authorization_request.v2"
+    schema_version: Literal["briefloop.delivery_authorization_request.v2"]
+    request_id: ContractId
+    run_id: ContractId
+    package_id: ContractId
+    prior_authorization_id: Optional[ContractId] = None
+    approval_mode: Literal[
+        "internal_draft",
+        "internal_management_review",
+        "research_review",
+        "ir_draft",
+        "formal_release_candidate",
+    ]
+    retry_of_attempt_id: Optional[ContractId] = None
+    purpose: Literal["initial_attempt", "retry_attempt", "result_reconciliation"]
+    decision: Literal["authorize", "deny"]
+    target: Literal["local", "feishu", "gmail"]
+    channel: CleanText
+    recipient_fingerprint: Sha256
+    actor_id: ContractId
+    reason: ApprovalReason
+    expected_store_revision: NonNegativeInt
+
+
+class DeliveryAttemptRequest(StrictModel):
+    schema_id = "briefloop.delivery_attempt_request.v2"
+    schema_version: Literal["briefloop.delivery_attempt_request.v2"]
+    request_id: ContractId
+    run_id: ContractId
+    package_id: ContractId
+    authorization_id: ContractId
+    connector_operation_id: ContractId
+    connector_request_fingerprint: Sha256
+    expected_store_revision: NonNegativeInt
+
+
+class DeliveryResultRequest(StrictModel):
+    schema_id = "briefloop.delivery_result_request.v2"
+    schema_version: Literal["briefloop.delivery_result_request.v2"]
+    request_id: ContractId
+    run_id: ContractId
+    attempt_id: ContractId
+    prior_result_id: Optional[ContractId] = None
+    observation_input_path: Optional[ScratchInputPath] = None
+    expected_observation_sha256: Optional[Sha256] = None
+    reconciliation_authorization_id: Optional[ContractId] = None
+    expected_store_revision: NonNegativeInt
+
+    @model_validator(mode="after")
+    def observation_hash_is_exact(self) -> "DeliveryResultRequest":
+        if (self.observation_input_path is None) != (
+            self.expected_observation_sha256 is None
+        ):
+            raise ValueError("observation path and expected hash must be paired")
+        return self
+
+
 class RunContractBindingReference(StrictModel):
     run_id: ContractId
 
@@ -1610,6 +2176,73 @@ class RunIntegrityReference(StrictModel):
     integrity_revision: PositiveInt
 
 
+class RepairCycleReference(StrictModel):
+    repair_id: ContractId
+
+
+class ArtifactSupersessionReference(StrictModel):
+    supersession_id: ContractId
+
+
+class RepairCompletionReference(StrictModel):
+    repair_completion_id: ContractId
+
+
+class RecoveryCompletionReference(StrictModel):
+    recovery_id: ContractId
+
+
+class RunHeadTransitionReference(StrictModel):
+    head_transition_id: ContractId
+
+
+class FinalizeRenderReference(StrictModel):
+    render_id: ContractId
+
+
+class FinalizationReference(StrictModel):
+    finalization_id: ContractId
+
+
+class RunArchiveReference(StrictModel):
+    archive_id: ContractId
+
+
+class RunArchiveArtifactBindingReference(StrictModel):
+    archive_id: ContractId
+    position: NonNegativeInt
+
+
+class PackageReadyReference(StrictModel):
+    package_id: ContractId
+
+
+class PackageArtifactBindingReference(StrictModel):
+    package_id: ContractId
+    position: NonNegativeInt
+
+
+class ApprovalReference(StrictModel):
+    approval_id: ContractId
+
+
+class ApprovalPackageBindingReference(StrictModel):
+    approval_id: ContractId
+    package_id: ContractId
+
+
+class DeliveryAuthorizationReference(StrictModel):
+    authorization_id: ContractId
+
+
+class DeliveryAttemptReference(StrictModel):
+    attempt_id: ContractId
+
+
+class DeliveryResultReference(StrictModel):
+    result_id: ContractId
+
+
 class TransactionReceipt(StrictModel):
     schema_id = "briefloop.transaction_receipt.v2"
 
@@ -1637,6 +2270,22 @@ class TransactionReceipt(StrictModel):
     gate_findings: list[GateFindingReference] = Field(default_factory=list)
     gate_artifact_bindings: list[GateArtifactBindingReference] = Field(default_factory=list)
     run_integrity_records: list[RunIntegrityReference] = Field(default_factory=list)
+    repair_cycles: list[RepairCycleReference] = Field(default_factory=list)
+    artifact_supersessions: list[ArtifactSupersessionReference] = Field(default_factory=list)
+    repair_completions: list[RepairCompletionReference] = Field(default_factory=list)
+    recovery_completions: list[RecoveryCompletionReference] = Field(default_factory=list)
+    run_head_transitions: list[RunHeadTransitionReference] = Field(default_factory=list)
+    finalize_renders: list[FinalizeRenderReference] = Field(default_factory=list)
+    finalizations: list[FinalizationReference] = Field(default_factory=list)
+    run_archives: list[RunArchiveReference] = Field(default_factory=list)
+    run_archive_artifact_bindings: list[RunArchiveArtifactBindingReference] = Field(default_factory=list)
+    package_ready_records: list[PackageReadyReference] = Field(default_factory=list)
+    package_artifact_bindings: list[PackageArtifactBindingReference] = Field(default_factory=list)
+    approvals: list[ApprovalReference] = Field(default_factory=list)
+    approval_package_bindings: list[ApprovalPackageBindingReference] = Field(default_factory=list)
+    delivery_authorizations: list[DeliveryAuthorizationReference] = Field(default_factory=list)
+    delivery_attempts: list[DeliveryAttemptReference] = Field(default_factory=list)
+    delivery_results: list[DeliveryResultReference] = Field(default_factory=list)
 
     @model_validator(mode="after")
     def revision_advances(self) -> "TransactionReceipt":
@@ -1666,6 +2315,22 @@ class TransactionReceipt(StrictModel):
             self.gate_findings,
             self.gate_artifact_bindings,
             self.run_integrity_records,
+            self.repair_cycles,
+            self.artifact_supersessions,
+            self.repair_completions,
+            self.recovery_completions,
+            self.run_head_transitions,
+            self.finalize_renders,
+            self.finalizations,
+            self.run_archives,
+            self.run_archive_artifact_bindings,
+            self.package_ready_records,
+            self.package_artifact_bindings,
+            self.approvals,
+            self.approval_package_bindings,
+            self.delivery_authorizations,
+            self.delivery_attempts,
+            self.delivery_results,
         )
         for values in relation_lists:
             keys = [item.model_dump_json() for item in values]
@@ -2466,6 +3131,214 @@ IntegrityCheckRequest.minimal_example = {
 }
 IntegrityCheckRequest.full_example = deepcopy(IntegrityCheckRequest.minimal_example)
 
+_AR1 = {"artifact_id": "audited_brief", "revision": 1}
+_AR2 = {"artifact_id": "audit_report", "revision": 1}
+_READER = {"artifact_id": "reader_brief", "revision": 1}
+
+RepairCycleRecord.minimal_example = {
+    "schema_version": RepairCycleRecord.schema_id, "repair_id": "REPAIR-001",
+    "run_id": _RUN, "contamination_revision": 2, "owner_stage_id": "editor",
+    "permitted_artifact_ids": ["audited_brief"], "reason_code": "artifact_drift",
+    "started_at": _NOW, "start_event_id": "EVT-REPAIR-001",
+    "accepted_transaction_id": "REQ-REPAIR-001", "request_fingerprint": _SHA_A,
+}
+ArtifactSupersessionRecord.minimal_example = {
+    "schema_version": ArtifactSupersessionRecord.schema_id,
+    "supersession_id": "SUPERSEDE-001", "run_id": _RUN, "repair_id": "REPAIR-001",
+    "mode": "repair", "prior_artifact": _AR1,
+    "successor_artifact": {"artifact_id": "audited_brief", "revision": 2},
+    "reason_code": "repair_replacement", "created_at": _NOW,
+    "accepted_event_id": "EVT-SUPERSEDE-001", "accepted_transaction_id": "REQ-SUPERSEDE-001",
+    "request_fingerprint": _SHA_A,
+}
+RepairCompletionRecord.minimal_example = {
+    "schema_version": RepairCompletionRecord.schema_id, "repair_completion_id": "REPAIR-DONE-001",
+    "run_id": _RUN, "repair_id": "REPAIR-001", "contamination_revision": 2,
+    "supersession_ids": ["SUPERSEDE-001"], "reopened_transition_ids": ["TRANS-REOPEN-001"],
+    "completed_at": _NOW, "completion_event_id": "EVT-REPAIR-DONE-001",
+    "accepted_transaction_id": "REQ-REPAIR-DONE-001", "request_fingerprint": _SHA_A,
+}
+RecoveryCompletionRecord.minimal_example = {
+    "schema_version": RecoveryCompletionRecord.schema_id, "recovery_id": "RECOVERY-001",
+    "run_id": _RUN, "repair_completion_id": "REPAIR-DONE-001", "contamination_revision": 2,
+    "supersession_ids": ["SUPERSEDE-001"], "rerun_transition_ids": ["TRANS-RERUN-001"],
+    "gate_evaluation_ids": [], "disposition": "recovered_non_reference", "completed_at": _NOW,
+    "completion_event_id": "EVT-RECOVERY-001", "accepted_transaction_id": "REQ-RECOVERY-001",
+    "request_fingerprint": _SHA_A,
+}
+RunHeadTransitionRecord.minimal_example = {
+    "schema_version": RunHeadTransitionRecord.schema_id, "head_transition_id": "HEAD-TRANS-001",
+    "workspace_id": "WS-001", "predecessor_run_id": _RUN,
+    "successor_run_id": "RUN-20260714-002", "prior_workspace_revision": 14,
+    "successor_workspace_revision": 15, "reason_code": "run_reset",
+    "successor_disposition": "non_reference", "created_at": _NOW,
+    "transition_event_id": "EVT-RESET-001", "accepted_transaction_id": "REQ-RESET-001",
+    "request_fingerprint": _SHA_A,
+}
+FinalizeRenderRecord.minimal_example = {
+    "schema_version": FinalizeRenderRecord.schema_id, "render_id": "RENDER-001", "run_id": _RUN,
+    "audit_proposal_id": "PROP-AUDIT-001", "audited_brief": _AR1, "audit_report": _AR2,
+    "reader_artifacts": [_READER], "reader_clean_status": "pass",
+    "policy_result_fingerprint": _SHA_A, "run_contract_fingerprint": _SHA_B,
+    "created_at": _NOW, "render_event_id": "EVT-RENDER-001",
+    "accepted_transaction_id": "REQ-RENDER-001", "request_fingerprint": _SHA_A,
+}
+FinalizationRecord.minimal_example = {
+    "schema_version": FinalizationRecord.schema_id, "finalization_id": "FINAL-001", "run_id": _RUN,
+    "render_id": "RENDER-001", "finalize_transition_id": "TRANS-FINAL-001",
+    "finalize_gate_batch_id": "GATE-BATCH-FINAL-001",
+    "finalize_gate_evaluation_ids": ["GATE-FINAL-001"], "recovery_id": None,
+    "integrity_revision": 1, "finalized_at": _NOW, "finalization_event_id": "EVT-FINAL-001",
+    "accepted_transaction_id": "REQ-FINAL-001", "request_fingerprint": _SHA_A,
+}
+RunArchiveRecord.minimal_example = {
+    "schema_version": RunArchiveRecord.schema_id, "archive_id": "ARCHIVE-001", "run_id": _RUN,
+    "finalization_id": "FINAL-001", "archive_artifact": {"artifact_id": "run_archive", "revision": 1},
+    "manifest_sha256": _SHA_A, "included_count": 1, "created_at": _NOW,
+    "archive_event_id": "EVT-ARCHIVE-001", "accepted_transaction_id": "REQ-FINAL-001",
+    "request_fingerprint": _SHA_A,
+}
+RunArchiveArtifactBinding.minimal_example = {
+    "schema_version": RunArchiveArtifactBinding.schema_id, "run_id": _RUN, "archive_id": "ARCHIVE-001",
+    "position": 0, "artifact_id": "audited_brief", "artifact_revision": 1,
+    "artifact_sha256": _SHA_A, "usage": "workflow", "accepted_transaction_id": "REQ-FINAL-001",
+}
+PackageReadyRecord.minimal_example = {
+    "schema_version": PackageReadyRecord.schema_id, "package_id": "PACKAGE-001", "run_id": _RUN,
+    "finalization_id": "FINAL-001", "archive_id": "ARCHIVE-001",
+    "package_manifest_artifact": {"artifact_id": "package_manifest", "revision": 1},
+    "package_manifest_sha256": _SHA_A, "artifact_count": 2, "created_at": _NOW,
+    "package_event_id": "EVT-PACKAGE-001", "accepted_transaction_id": "REQ-FINAL-001",
+    "request_fingerprint": _SHA_A,
+}
+PackageArtifactBinding.minimal_example = {
+    "schema_version": PackageArtifactBinding.schema_id, "run_id": _RUN, "package_id": "PACKAGE-001",
+    "position": 0, "artifact_id": "reader_brief", "artifact_revision": 1,
+    "artifact_sha256": _SHA_A, "usage": "reader", "accepted_transaction_id": "REQ-FINAL-001",
+}
+ApprovalPackageBinding.minimal_example = {
+    "schema_version": ApprovalPackageBinding.schema_id, "run_id": _RUN,
+    "approval_id": "APPROVAL-001", "package_id": "PACKAGE-001",
+    "accepted_transaction_id": "REQ-APPROVAL-001",
+}
+DeliveryAuthorizationRecord.minimal_example = {
+    "schema_version": DeliveryAuthorizationRecord.schema_id, "authorization_id": "AUTH-001", "run_id": _RUN,
+    "package_id": "PACKAGE-001", "prior_authorization_id": None,
+    "approval_mode": "internal_draft", "retry_of_attempt_id": None, "purpose": "initial_attempt",
+    "decision": "authorize",
+    "target": "local", "channel": "filesystem", "recipient_fingerprint": _SHA_A,
+    "actor_id": "HUMAN-001", "reason": "Approved local package preparation",
+    "recorded_at": _NOW, "authorization_event_id": "EVT-AUTH-001",
+    "accepted_transaction_id": "REQ-AUTH-001", "request_fingerprint": _SHA_A,
+}
+DeliveryAttemptRecord.minimal_example = {
+    "schema_version": DeliveryAttemptRecord.schema_id, "attempt_id": "ATTEMPT-001", "run_id": _RUN,
+    "package_id": "PACKAGE-001", "authorization_id": "AUTH-001", "target": "local",
+    "channel": "filesystem", "recipient_fingerprint": _SHA_A,
+    "connector_operation_id": "OP-001", "connector_request_fingerprint": _SHA_B,
+    "created_at": _NOW, "attempt_event_id": "EVT-ATTEMPT-001",
+    "accepted_transaction_id": "REQ-ATTEMPT-001", "request_fingerprint": _SHA_A,
+}
+DeliveryResultRecord.minimal_example = {
+    "schema_version": DeliveryResultRecord.schema_id, "result_id": "RESULT-001", "run_id": _RUN,
+    "attempt_id": "ATTEMPT-001", "prior_result_id": None, "reconciliation_authorization_id": None, "status": "bundle_prepared",
+    "adapter_id": "local-adapter", "adapter_version": "V1", "connector_operation_id": "OP-001",
+    "evidence_sha256": _SHA_A, "evidence_artifact": None, "recorded_at": _NOW,
+    "result_event_id": "EVT-RESULT-001", "accepted_transaction_id": "REQ-RESULT-001",
+    "request_fingerprint": _SHA_A,
+}
+
+RepairStartRequest.minimal_example = {
+    "schema_version": RepairStartRequest.schema_id, "request_id": "REQ-REPAIR-001", "run_id": _RUN,
+    "contamination_revision": 2, "owner_stage_id": "editor",
+    "permitted_artifact_ids": ["audited_brief"], "reason_code": "artifact_drift",
+    "expected_store_revision": 14,
+}
+ArtifactSupersedeRequest.minimal_example = {
+    "schema_version": ArtifactSupersedeRequest.schema_id, "request_id": "REQ-SUPERSEDE-001", "run_id": _RUN,
+    "repair_id": "REPAIR-001", "prior_artifact": _AR1,
+    "input_path": "scratch/INV-REPAIR-001/audited_brief.md", "expected_input_sha256": _SHA_A,
+    "expected_current_revision": 1,
+    "mode": "repair", "reason_code": "repair_replacement", "expected_store_revision": 14,
+}
+ArtifactRevertRequest.minimal_example = {
+    "schema_version": ArtifactRevertRequest.schema_id, "request_id": "REQ-REVERT-001", "run_id": _RUN,
+    "repair_id": "REPAIR-001", "current_artifact": {"artifact_id": "audited_brief", "revision": 2},
+    "historical_source": _AR1, "expected_current_revision": 2, "mode": "revert",
+    "reason_code": "explicit_revert", "expected_store_revision": 15,
+}
+RepairCompleteRequest.minimal_example = {
+    "schema_version": RepairCompleteRequest.schema_id, "request_id": "REQ-REPAIR-DONE-001", "run_id": _RUN,
+    "repair_id": "REPAIR-001", "supersession_ids": ["SUPERSEDE-001"],
+    "expected_stage_revisions": {"editor": 2}, "expected_store_revision": 16,
+}
+RecoveryCompleteRequest.minimal_example = {
+    "schema_version": RecoveryCompleteRequest.schema_id, "request_id": "REQ-RECOVERY-001", "run_id": _RUN,
+    "repair_completion_id": "REPAIR-DONE-001", "contamination_revision": 2,
+    "rerun_transition_ids": ["TRANS-RERUN-001"], "gate_evaluation_ids": [], "expected_store_revision": 18,
+}
+RunResetRequest.minimal_example = {
+    "schema_version": RunResetRequest.schema_id, "request_id": "REQ-RESET-001",
+    "predecessor_run_id": _RUN, "successor_run_id": "RUN-20260714-002", "workspace_id": "WS-001",
+    "runtime": "operator", "expected_head_run_id": _RUN, "expected_store_revision": 14,
+    "expected_workspace_revision": 1,
+    "run_direction": deepcopy(CoreRunInitializeRequest.minimal_example["run_direction"]),
+    "workspace_config_sha256": _SHA_A, "sources_config_sha256": _SHA_B,
+    "role_topology": "default", "gate_strictness": {key: True for key in GATE_ID_VALUES},
+    "input_governance_required": False,
+}
+FinalizeRenderRequest.minimal_example = {
+    "schema_version": FinalizeRenderRequest.schema_id, "request_id": "REQ-RENDER-001", "run_id": _RUN,
+    "audit_proposal_id": "PROP-AUDIT-001", "expected_audited_brief": _AR1,
+    "expected_audit_report": _AR2, "reader_scratch_inputs": {"reader_brief": "scratch/INV-FINAL-001/brief.md"},
+    "expected_reader_sha256": {"reader_brief": _SHA_A},
+    "expected_reader_revisions": {"reader_brief": 0}, "expected_store_revision": 20,
+}
+FinalizeCompleteRequest.minimal_example = {
+    "schema_version": FinalizeCompleteRequest.schema_id, "request_id": "REQ-FINAL-001", "run_id": _RUN,
+    "render_id": "RENDER-001", "expected_finalize_stage_revision": 0,
+    "gate_evaluation_ids": ["GATE-FINAL-001"], "recovery_id": None, "expected_store_revision": 22,
+}
+InternalApprovalRequest.minimal_example = {
+    "schema_version": InternalApprovalRequest.schema_id, "request_id": "REQ-APPROVAL-001", "run_id": _RUN,
+    "package_id": "PACKAGE-001", "approval_id": "APPROVAL-001", "mode": "internal_management_review",
+    "role": "content_owner", "decision": "approve", "reason": "Approved for internal management review",
+    "actor_id": "HUMAN-001", "expected_store_revision": 23,
+}
+DeliveryAuthorizationRequest.minimal_example = {
+    "schema_version": DeliveryAuthorizationRequest.schema_id, "request_id": "REQ-AUTH-001", "run_id": _RUN,
+    "package_id": "PACKAGE-001", "prior_authorization_id": None,
+    "approval_mode": "internal_draft", "retry_of_attempt_id": None, "purpose": "initial_attempt",
+    "decision": "authorize",
+    "target": "local", "channel": "filesystem", "recipient_fingerprint": _SHA_A,
+    "actor_id": "HUMAN-001", "reason": "Approved local package preparation", "expected_store_revision": 24,
+}
+DeliveryAttemptRequest.minimal_example = {
+    "schema_version": DeliveryAttemptRequest.schema_id, "request_id": "REQ-ATTEMPT-001", "run_id": _RUN,
+    "package_id": "PACKAGE-001", "authorization_id": "AUTH-001", "connector_operation_id": "OP-001",
+    "connector_request_fingerprint": _SHA_B, "expected_store_revision": 25,
+}
+DeliveryResultRequest.minimal_example = {
+    "schema_version": DeliveryResultRequest.schema_id, "request_id": "REQ-RESULT-001", "run_id": _RUN,
+    "attempt_id": "ATTEMPT-001", "prior_result_id": None,
+    "observation_input_path": None, "expected_observation_sha256": None,
+    "reconciliation_authorization_id": None,
+    "expected_store_revision": 26,
+}
+
+for _model in (
+    RepairCycleRecord, ArtifactSupersessionRecord, RepairCompletionRecord,
+    RecoveryCompletionRecord, RunHeadTransitionRecord, FinalizeRenderRecord,
+    FinalizationRecord, RunArchiveRecord, RunArchiveArtifactBinding,
+    PackageReadyRecord, PackageArtifactBinding, ApprovalPackageBinding,
+    DeliveryAuthorizationRecord, DeliveryAttemptRecord, DeliveryResultRecord,
+    RepairStartRequest, ArtifactSupersedeRequest, ArtifactRevertRequest,
+    RepairCompleteRequest, RecoveryCompleteRequest, RunResetRequest,
+    FinalizeRenderRequest, FinalizeCompleteRequest, InternalApprovalRequest,
+    DeliveryAuthorizationRequest, DeliveryAttemptRequest, DeliveryResultRequest,
+):
+    _model.full_example = deepcopy(_model.minimal_example)
+
 
 V2_CONTRACT_MODELS: tuple[type[StrictModel], ...] = (
     SourceProposal,
@@ -2510,6 +3383,33 @@ V2_CONTRACT_MODELS: tuple[type[StrictModel], ...] = (
     AuditReportArtifact,
     RunIntegrityRecord,
     IntegrityCheckRequest,
+    RepairCycleRecord,
+    ArtifactSupersessionRecord,
+    RepairCompletionRecord,
+    RecoveryCompletionRecord,
+    RunHeadTransitionRecord,
+    FinalizeRenderRecord,
+    FinalizationRecord,
+    RunArchiveRecord,
+    RunArchiveArtifactBinding,
+    PackageReadyRecord,
+    PackageArtifactBinding,
+    ApprovalPackageBinding,
+    DeliveryAuthorizationRecord,
+    DeliveryAttemptRecord,
+    DeliveryResultRecord,
+    RepairStartRequest,
+    ArtifactSupersedeRequest,
+    ArtifactRevertRequest,
+    RepairCompleteRequest,
+    RecoveryCompleteRequest,
+    RunResetRequest,
+    FinalizeRenderRequest,
+    FinalizeCompleteRequest,
+    InternalApprovalRequest,
+    DeliveryAuthorizationRequest,
+    DeliveryAttemptRequest,
+    DeliveryResultRequest,
 )
 
 V2_CONTRACT_IDS: tuple[str, ...] = tuple(
@@ -2618,6 +3518,13 @@ __all__ = [
     "AcceptedProposalRecord",
     "AcceptedSourceRecord",
     "Approval",
+    "ApprovalPackageBinding",
+    "ApprovalPackageBindingReference",
+    "ApprovalReference",
+    "ArtifactRevertRequest",
+    "ArtifactSupersedeRequest",
+    "ArtifactSupersessionRecord",
+    "ArtifactSupersessionReference",
     "ArtifactRecord",
     "ArtifactRevision",
     "ArtifactRevisionReference",
@@ -2635,13 +3542,29 @@ __all__ = [
     "CoreRunEventBinding",
     "CoreRunInitializeRequest",
     "Delivery",
+    "DeliveryAttemptRecord",
+    "DeliveryAttemptReference",
+    "DeliveryAttemptRequest",
+    "DeliveryAuthorizationRecord",
+    "DeliveryAuthorizationReference",
+    "DeliveryAuthorizationRequest",
+    "DeliveryResultRecord",
+    "DeliveryResultReference",
+    "DeliveryResultRequest",
     "EventEnvelope",
     "GATE_ID_VALUES",
     "GateArtifactBinding",
     "GateCheckRequest",
     "GateEvaluationRecord",
     "GateFindingRecord",
+    "FinalizeCompleteRequest",
+    "FinalizeRenderRecord",
+    "FinalizeRenderReference",
+    "FinalizeRenderRequest",
+    "FinalizationRecord",
+    "FinalizationReference",
     "IntegrityCheckRequest",
+    "InternalApprovalRequest",
     "IntakeEventBinding",
     "Invocation",
     "InvocationStartRequest",
@@ -2650,10 +3573,30 @@ __all__ = [
     "OwnedArtifactSubmissionRecord",
     "OwnedArtifactSubmitRequest",
     "ProposalSourceBinding",
+    "PackageArtifactBinding",
+    "PackageArtifactBindingReference",
+    "PackageReadyRecord",
+    "PackageReadyReference",
+    "RecoveryCompleteRequest",
+    "RecoveryCompletionRecord",
+    "RecoveryCompletionReference",
+    "RepairCompleteRequest",
+    "RepairCompletionRecord",
+    "RepairCompletionReference",
+    "RepairCycleRecord",
+    "RepairCycleReference",
+    "RepairStartRequest",
+    "RunArchiveArtifactBinding",
+    "RunArchiveArtifactBindingReference",
+    "RunArchiveRecord",
+    "RunArchiveReference",
     "RunContractBinding",
     "RunDirection",
     "RunIdentity",
     "RunIntegrityRecord",
+    "RunHeadTransitionRecord",
+    "RunHeadTransitionReference",
+    "RunResetRequest",
     "ScreenedCandidatesProposal",
     "SOURCE_ACQUISITION_METHODS",
     "SOURCE_ELIGIBILITY_REASONS",

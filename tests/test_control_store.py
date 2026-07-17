@@ -340,6 +340,22 @@ def _forged_receipt(
                 {"artifact_id": artifact_id, "revision": revision}
                 for artifact_id, revision in artifact_revisions
             ],
+            "repair_cycles": [],
+            "artifact_supersessions": [],
+            "repair_completions": [],
+            "recovery_completions": [],
+            "run_head_transitions": [],
+            "finalize_renders": [],
+            "finalizations": [],
+            "run_archives": [],
+            "run_archive_artifact_bindings": [],
+            "package_ready_records": [],
+            "package_artifact_bindings": [],
+            "approvals": [],
+            "approval_package_bindings": [],
+            "delivery_authorizations": [],
+            "delivery_attempts": [],
+            "delivery_results": [],
         }
     )
     return TransactionReceipt.model_validate(values)
@@ -1034,12 +1050,50 @@ def test_schema_settings_and_exact_table_universe(tmp_path: Path) -> None:
         "transaction_gate_findings",
         "transaction_gate_artifact_bindings",
         "transaction_run_integrity_records",
+        "repair_cycles",
+        "artifact_supersessions",
+        "repair_completions",
+        "repair_completion_supersessions",
+        "repair_completion_transitions",
+        "recovery_completions",
+        "recovery_supersessions",
+        "recovery_stage_transitions",
+        "recovery_gate_evaluations",
+        "run_head_transitions",
+        "finalize_renders",
+        "finalize_render_artifacts",
+        "finalizations",
+        "finalization_gate_evaluations",
+        "run_archives",
+        "run_archive_artifact_bindings",
+        "package_ready_records",
+        "package_artifact_bindings",
+        "approval_package_bindings",
+        "delivery_authorizations",
+        "delivery_attempts",
+        "delivery_results",
+        "transaction_repair_cycles",
+        "transaction_artifact_supersessions",
+        "transaction_repair_completions",
+        "transaction_recovery_completions",
+        "transaction_run_head_transitions",
+        "transaction_finalize_renders",
+        "transaction_finalizations",
+        "transaction_run_archives",
+        "transaction_run_archive_artifact_bindings",
+        "transaction_package_ready_records",
+        "transaction_package_artifact_bindings",
+        "transaction_approvals",
+        "transaction_approval_package_bindings",
+        "transaction_delivery_authorizations",
+        "transaction_delivery_attempts",
+        "transaction_delivery_results",
     }
     with _create_store(tmp_path) as store:
         assert store._connection.execute("PRAGMA foreign_keys").fetchone()[0] == 1
         assert store._connection.execute("PRAGMA journal_mode").fetchone()[0] == "wal"
         assert store._connection.execute("PRAGMA synchronous").fetchone()[0] == 2
-        assert store._connection.execute("PRAGMA user_version").fetchone()[0] == 3
+        assert store._connection.execute("PRAGMA user_version").fetchone()[0] == 4
         tables = {
             row[0]
             for row in store._connection.execute(
@@ -2002,9 +2056,24 @@ def test_load_snapshot_keeps_one_sqlite_read_revision_across_external_commit(
     original_loader = primary._load_for_run
     committed = False
 
-    def load_and_commit(model_type, table, run_id, order_by, columns):
+    def load_and_commit(
+        model_type,
+        table,
+        run_id,
+        order_by,
+        columns,
+        *,
+        run_column="run_id",
+    ):
         nonlocal committed
-        values = original_loader(model_type, table, run_id, order_by, columns)
+        values = original_loader(
+            model_type,
+            table,
+            run_id,
+            order_by,
+            columns,
+            run_column=run_column,
+        )
         if model_type is StageState and not committed:
             committed = True
             update = secondary.begin(
@@ -2122,7 +2191,7 @@ def test_future_schema_fails_closed(tmp_path: Path) -> None:
     store = _create_store(tmp_path)
     store.close()
     connection = sqlite3.connect(tmp_path / "control.db")
-    connection.execute("PRAGMA user_version = 4")
+    connection.execute("PRAGMA user_version = 5")
     connection.close()
     with pytest.raises(ControlStoreSchemaError) as error:
         SQLiteControlStore.open(tmp_path / "control.db")
@@ -2396,6 +2465,14 @@ def test_migration_resource_matches_packaged_source_text() -> None:
         "0003.sql",
     )
     assert packaged_3.read_text(encoding="utf-8") == migration_3.read_text(
+        encoding="utf-8"
+    )
+    migration_4 = source.with_name("0004.sql")
+    packaged_4 = resources.files("multi_agent_brief.control_store").joinpath(
+        "migrations",
+        "0004.sql",
+    )
+    assert packaged_4.read_text(encoding="utf-8") == migration_4.read_text(
         encoding="utf-8"
     )
 

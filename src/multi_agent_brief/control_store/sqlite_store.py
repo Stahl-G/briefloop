@@ -2,14 +2,16 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import datetime, timezone
+import json
 import os
 from pathlib import Path
 import sqlite3
 import stat
 import threading
-from typing import TYPE_CHECKING, Callable, Iterable, TypeVar, cast
+from types import MappingProxyType
+from typing import TYPE_CHECKING, Callable, Iterable, Mapping, TypeVar, cast
 from uuid import uuid4
 
 from pydantic import TypeAdapter, ValidationError
@@ -18,6 +20,7 @@ from multi_agent_brief.contracts.v2 import (
     AcceptedProposalRecord,
     AcceptedSourceRecord,
     Approval,
+    ApprovalPackageBinding,
     ArtifactRecord,
     ArtifactRevision,
     ArtifactRevisionReference,
@@ -26,16 +29,30 @@ from multi_agent_brief.contracts.v2 import (
     ClaimSourceBinding,
     ContractId,
     Delivery,
+    DeliveryAttemptRecord,
+    DeliveryAuthorizationRecord,
+    DeliveryResultRecord,
     EventEnvelope,
     GateArtifactBinding,
     GateEvaluationRecord,
     GateFindingRecord,
+    FinalizationRecord,
+    FinalizeRenderRecord,
     Invocation,
     OwnedArtifactSubmissionRecord,
     ProposalSourceBinding,
+    PackageArtifactBinding,
+    PackageReadyRecord,
+    RecoveryCompletionRecord,
+    RepairCompletionRecord,
+    RepairCycleRecord,
+    ArtifactSupersessionRecord,
     RunContractBinding,
     RunIdentity,
     RunIntegrityRecord,
+    RunArchiveArtifactBinding,
+    RunArchiveRecord,
+    RunHeadTransitionRecord,
     StageArtifactBinding,
     StageGateBinding,
     StageState,
@@ -85,6 +102,21 @@ _EXTENDED_RECORD_MODELS = (
     GateFindingRecord,
     GateArtifactBinding,
     RunIntegrityRecord,
+    RepairCycleRecord,
+    ArtifactSupersessionRecord,
+    RepairCompletionRecord,
+    RecoveryCompletionRecord,
+    RunHeadTransitionRecord,
+    FinalizeRenderRecord,
+    FinalizationRecord,
+    RunArchiveRecord,
+    RunArchiveArtifactBinding,
+    PackageReadyRecord,
+    PackageArtifactBinding,
+    ApprovalPackageBinding,
+    DeliveryAuthorizationRecord,
+    DeliveryAttemptRecord,
+    DeliveryResultRecord,
 )
 
 
@@ -288,7 +320,445 @@ class ControlStoreSnapshot:
     gate_findings: tuple[GateFindingRecord, ...]
     gate_artifact_bindings: tuple[GateArtifactBinding, ...]
     run_integrity_records: tuple[RunIntegrityRecord, ...]
+    repair_cycles: tuple[RepairCycleRecord, ...]
+    artifact_supersessions: tuple[ArtifactSupersessionRecord, ...]
+    repair_completions: tuple[RepairCompletionRecord, ...]
+    recovery_completions: tuple[RecoveryCompletionRecord, ...]
+    run_head_transitions: tuple[RunHeadTransitionRecord, ...]
+    finalize_renders: tuple[FinalizeRenderRecord, ...]
+    finalizations: tuple[FinalizationRecord, ...]
+    run_archives: tuple[RunArchiveRecord, ...]
+    run_archive_artifact_bindings: tuple[RunArchiveArtifactBinding, ...]
+    package_ready_records: tuple[PackageReadyRecord, ...]
+    package_artifact_bindings: tuple[PackageArtifactBinding, ...]
+    approval_package_bindings: tuple[ApprovalPackageBinding, ...]
+    delivery_authorizations: tuple[DeliveryAuthorizationRecord, ...]
+    delivery_attempts: tuple[DeliveryAttemptRecord, ...]
+    delivery_results: tuple[DeliveryResultRecord, ...]
     transactions: tuple[TransactionReceipt, ...]
+
+
+@dataclass(frozen=True)
+class ControlStoreHistory:
+    """One verified SQLite read snapshot with pure as-of projections."""
+
+    workspace_id: str
+    store_revision: int
+    snapshots: tuple[ControlStoreSnapshot, ...]
+    artifact_contents: Mapping[tuple[str, str, int], bytes]
+    initial_artifact_ids: Mapping[str, frozenset[str]]
+
+    @property
+    def transactions(self) -> tuple[TransactionReceipt, ...]:
+        return tuple(
+            sorted(
+                (
+                    receipt
+                    for snapshot in self.snapshots
+                    for receipt in snapshot.transactions
+                ),
+                key=lambda item: item.committed_revision,
+            )
+        )
+
+    def read_artifact_revision_bytes(
+        self,
+        run_id: str,
+        artifact_id: str,
+        revision: int,
+    ) -> bytes:
+        try:
+            return self.artifact_contents[(run_id, artifact_id, revision)]
+        except KeyError as exc:
+            raise ControlStoreStateError("artifact_revision_not_found") from exc
+
+    def snapshot_at_revision(
+        self,
+        run_id: str,
+        committed_revision: int,
+    ) -> ControlStoreSnapshot:
+        """Project one run strictly from receipt-owned rows through a revision."""
+
+        if (
+            type(committed_revision) is not int
+            or committed_revision < 1
+            or committed_revision > self.store_revision
+        ):
+            raise ControlStoreStateError("store_revision_not_found")
+        full = next(
+            (item for item in self.snapshots if item.run.run_id == run_id),
+            None,
+        )
+        if full is None:
+            raise ControlStoreStateError("run_not_found")
+        transactions = tuple(
+            item
+            for item in full.transactions
+            if item.committed_revision <= committed_revision
+        )
+        if not transactions:
+            raise ControlStoreStateError("run_not_found_at_revision")
+        def relation_keys(name: str, fields: tuple[str, ...]) -> set[tuple[object, ...]]:
+            return {
+                tuple(getattr(reference, field) for field in fields)
+                for receipt in transactions
+                for reference in getattr(receipt, name)
+            }
+
+        event_ids = {
+            event_id for receipt in transactions for event_id in receipt.event_ids
+        }
+        revision_keys = relation_keys(
+            "artifact_revisions", ("artifact_id", "revision")
+        )
+        source_ids = {
+            source_id for receipt in transactions for source_id in receipt.source_ids
+        }
+        proposal_ids = {
+            proposal_id
+            for receipt in transactions
+            for proposal_id in receipt.proposal_ids
+        }
+
+        artifact_revisions = tuple(
+            item
+            for item in full.artifact_revisions
+            if (item.artifact_id, item.revision) in revision_keys
+        )
+        revisions_by_artifact: dict[str, list[ArtifactRevision]] = {}
+        for revision in artifact_revisions:
+            revisions_by_artifact.setdefault(revision.artifact_id, []).append(revision)
+        artifacts: list[ArtifactRecord] = []
+        initial_artifacts = self.initial_artifact_ids.get(run_id, frozenset())
+        for artifact in full.artifacts:
+            revisions = revisions_by_artifact.get(artifact.artifact_id, [])
+            if artifact.artifact_id not in initial_artifacts and not revisions:
+                continue
+            if revisions:
+                latest = max(revisions, key=lambda item: item.revision)
+                artifacts.append(
+                    ArtifactRecord.model_validate(
+                        {
+                            **artifact.model_dump(mode="json", exclude_unset=False),
+                            "current_revision": latest.revision,
+                            "status": "valid",
+                            "path": latest.path,
+                        },
+                        strict=True,
+                    )
+                )
+            else:
+                artifacts.append(
+                    ArtifactRecord.model_validate(
+                        {
+                            **artifact.model_dump(mode="json", exclude_unset=False),
+                            "current_revision": 0,
+                            "status": "expected",
+                        },
+                        strict=True,
+                    )
+                )
+
+        events = tuple(item for item in full.events if item.event_id in event_ids)
+        stage_transitions = tuple(
+            item
+            for item in full.stage_transitions
+            if (item.transition_id,)
+            in relation_keys("stage_transitions", ("transition_id",))
+        )
+        latest_stage: dict[str, StageTransitionRecord] = {}
+        for transition in stage_transitions:
+            prior = latest_stage.get(transition.stage_id)
+            if prior is None or transition.result_revision > prior.result_revision:
+                latest_stage[transition.stage_id] = transition
+        stage_states = tuple(
+            StageState.model_validate(
+                {
+                    "schema_version": StageState.schema_id,
+                    "run_id": run_id,
+                    "stage_id": transition.stage_id,
+                    "status": transition.result_status,
+                    "revision": transition.result_revision,
+                    "updated_at": transition.created_at,
+                },
+                strict=True,
+            )
+            for transition in sorted(latest_stage.values(), key=lambda item: item.stage_id)
+        )
+
+        sources = tuple(item for item in full.sources if item.source_id in source_ids)
+        accepted_proposals = tuple(
+            item for item in full.accepted_proposals if item.proposal_id in proposal_ids
+        )
+        owned_artifact_submissions = tuple(
+            item
+            for item in full.owned_artifact_submissions
+            if (item.submission_id,)
+            in relation_keys("owned_artifact_submissions", ("submission_id",))
+        )
+        global_revision = {
+            (receipt.run_id, receipt.transaction_id): receipt.committed_revision
+            for receipt in self.transactions
+        }
+        completion_by_invocation: dict[str, tuple[int, str]] = {}
+        for record in (*sources, *accepted_proposals, *owned_artifact_submissions):
+            invocation_id = getattr(record, "invocation_id", None)
+            created_at = getattr(record, "created_at", None)
+            accepted_transaction_id = getattr(record, "accepted_transaction_id", None)
+            owner_revision = global_revision.get((run_id, accepted_transaction_id))
+            if (
+                invocation_id is not None
+                and created_at is not None
+                and owner_revision is not None
+            ):
+                candidate = (owner_revision, created_at)
+                prior = completion_by_invocation.get(invocation_id)
+                if prior is None or candidate < prior:
+                    completion_by_invocation[invocation_id] = candidate
+        invocation_starts = {
+            event.core_run_binding.primary_record_id: event
+            for event in events
+            if event.core_run_binding is not None
+            and event.core_run_binding.effect_kind == "invocation_start"
+        }
+        rejections: dict[str, tuple[int, EventEnvelope]] = {}
+        for event in events:
+            if event.intake_binding is None or event.intake_binding.outcome != "rejected":
+                continue
+            owner_revision = global_revision.get((run_id, event.transaction_id))
+            if owner_revision is None:
+                continue
+            invocation_id = event.intake_binding.invocation_id
+            candidate = (owner_revision, event)
+            prior = rejections.get(invocation_id)
+            if prior is None or candidate[0] < prior[0]:
+                rejections[invocation_id] = candidate
+        invocations: list[Invocation] = []
+        for invocation_id, start in sorted(invocation_starts.items()):
+            source = next(
+                item for item in full.invocations if item.invocation_id == invocation_id
+            )
+            payload = source.model_dump(mode="json", exclude_unset=False)
+            if invocation_id in completion_by_invocation:
+                payload.update(
+                    status="completed",
+                    completed_at=completion_by_invocation[invocation_id][1],
+                    failure_reason=None,
+                )
+            elif invocation_id in rejections:
+                rejected = rejections[invocation_id][1]
+                payload.update(
+                    status="failed",
+                    completed_at=rejected.created_at,
+                    failure_reason=rejected.intake_binding.reason_code,
+                )
+            else:
+                payload.update(status="active", completed_at=None, failure_reason=None)
+            payload["started_at"] = start.created_at
+            invocations.append(Invocation.model_validate(payload, strict=True))
+
+        def selected(name: str, fields: tuple[str, ...], rows: tuple[object, ...]):
+            keys = relation_keys(name, fields)
+            return tuple(
+                row
+                for row in rows
+                if tuple(getattr(row, field) for field in fields) in keys
+            )
+
+        run_contract_bindings = selected(
+            "run_contract_bindings", ("run_id",), full.run_contract_bindings
+        )
+        stage_artifact_bindings = selected(
+            "stage_artifact_bindings",
+            ("transition_id", "position"),
+            full.stage_artifact_bindings,
+        )
+        stage_gate_bindings = selected(
+            "stage_gate_bindings",
+            ("transition_id", "gate_id"),
+            full.stage_gate_bindings,
+        )
+        claims = selected("claims", ("claim_id",), full.claims)
+        claim_source_bindings = selected(
+            "claim_source_bindings",
+            ("claim_id", "source_id"),
+            full.claim_source_bindings,
+        )
+        claim_freezes = selected("claim_freezes", ("freeze_id",), full.claim_freezes)
+        gate_evaluations = selected(
+            "gate_evaluations", ("evaluation_id",), full.gate_evaluations
+        )
+        gate_findings = selected(
+            "gate_findings",
+            ("evaluation_id", "finding_id"),
+            full.gate_findings,
+        )
+        gate_artifact_bindings = selected(
+            "gate_artifact_bindings",
+            ("evaluation_id", "position"),
+            full.gate_artifact_bindings,
+        )
+        run_integrity_records = selected(
+            "run_integrity_records",
+            ("integrity_revision",),
+            full.run_integrity_records,
+        )
+        repair_cycles = selected("repair_cycles", ("repair_id",), full.repair_cycles)
+        artifact_supersessions = selected(
+            "artifact_supersessions",
+            ("supersession_id",),
+            full.artifact_supersessions,
+        )
+        repair_completions = selected(
+            "repair_completions",
+            ("repair_completion_id",),
+            full.repair_completions,
+        )
+        recovery_completions = selected(
+            "recovery_completions", ("recovery_id",), full.recovery_completions
+        )
+        run_head_transitions = selected(
+            "run_head_transitions",
+            ("head_transition_id",),
+            full.run_head_transitions,
+        )
+        finalize_renders = selected(
+            "finalize_renders", ("render_id",), full.finalize_renders
+        )
+        finalizations = selected(
+            "finalizations", ("finalization_id",), full.finalizations
+        )
+        run_archives = selected("run_archives", ("archive_id",), full.run_archives)
+        run_archive_artifact_bindings = selected(
+            "run_archive_artifact_bindings",
+            ("archive_id", "position"),
+            full.run_archive_artifact_bindings,
+        )
+        package_ready_records = selected(
+            "package_ready_records", ("package_id",), full.package_ready_records
+        )
+        package_artifact_bindings = selected(
+            "package_artifact_bindings",
+            ("package_id", "position"),
+            full.package_artifact_bindings,
+        )
+        approvals = selected("approvals", ("approval_id",), full.approvals)
+        approval_package_bindings = selected(
+            "approval_package_bindings",
+            ("approval_id", "package_id"),
+            full.approval_package_bindings,
+        )
+        delivery_authorizations = selected(
+            "delivery_authorizations",
+            ("authorization_id",),
+            full.delivery_authorizations,
+        )
+        delivery_attempts = selected(
+            "delivery_attempts", ("attempt_id",), full.delivery_attempts
+        )
+        delivery_results = selected(
+            "delivery_results", ("result_id",), full.delivery_results
+        )
+        workspace_run_head = self._workspace_head_at_revision(committed_revision)
+        proposal_source_bindings = tuple(
+            item
+            for item in full.proposal_source_bindings
+            if item.proposal_id in proposal_ids
+        )
+        return replace(
+            full,
+            store_revision=committed_revision,
+            workspace_run_head=workspace_run_head,
+            stage_states=stage_states,
+            invocations=tuple(invocations),
+            artifacts=tuple(artifacts),
+            artifact_revisions=artifact_revisions,
+            events=events,
+            approvals=approvals,
+            deliveries=(),
+            sources=sources,
+            accepted_proposals=accepted_proposals,
+            proposal_source_bindings=proposal_source_bindings,
+            run_contract_bindings=run_contract_bindings,
+            owned_artifact_submissions=owned_artifact_submissions,
+            stage_transitions=stage_transitions,
+            stage_artifact_bindings=stage_artifact_bindings,
+            stage_gate_bindings=stage_gate_bindings,
+            claims=claims,
+            claim_source_bindings=claim_source_bindings,
+            claim_freezes=claim_freezes,
+            gate_evaluations=gate_evaluations,
+            gate_findings=gate_findings,
+            gate_artifact_bindings=gate_artifact_bindings,
+            run_integrity_records=run_integrity_records,
+            repair_cycles=repair_cycles,
+            artifact_supersessions=artifact_supersessions,
+            repair_completions=repair_completions,
+            recovery_completions=recovery_completions,
+            run_head_transitions=run_head_transitions,
+            finalize_renders=finalize_renders,
+            finalizations=finalizations,
+            run_archives=run_archives,
+            run_archive_artifact_bindings=run_archive_artifact_bindings,
+            package_ready_records=package_ready_records,
+            package_artifact_bindings=package_artifact_bindings,
+            approval_package_bindings=approval_package_bindings,
+            delivery_authorizations=delivery_authorizations,
+            delivery_attempts=delivery_attempts,
+            delivery_results=delivery_results,
+            transactions=transactions,
+        )
+
+    def _workspace_head_at_revision(self, committed_revision: int) -> WorkspaceRunHead:
+        receipts = self.transactions
+        initial_candidates = sorted(
+            (
+                (receipt.committed_revision, snapshot, receipt)
+                for snapshot in self.snapshots
+                for receipt in snapshot.transactions
+                if receipt.transaction_type == "core-v2-initialize"
+            ),
+            key=lambda item: item[0],
+        )
+        initial = None if not initial_candidates else initial_candidates[0]
+        if initial is None or initial[0] > committed_revision:
+            raise ControlStoreStateError("workspace_head_not_found_at_revision")
+        current_run_id = initial[1].run.run_id
+        updated_at = initial[1].run.created_at
+        revision_by_transaction = {
+            (item.run_id, item.transaction_id): item.committed_revision
+            for item in receipts
+        }
+        transitions = sorted(
+            (
+                transition
+                for snapshot in self.snapshots
+                for transition in snapshot.run_head_transitions
+                if (
+                    revision_by_transaction.get(
+                        (transition.successor_run_id, transition.accepted_transaction_id)
+                    )
+                    is not None
+                    and revision_by_transaction[
+                        (transition.successor_run_id, transition.accepted_transaction_id)
+                    ]
+                    <= committed_revision
+                )
+            ),
+            key=lambda item: item.successor_workspace_revision,
+        )
+        for transition in transitions:
+            current_run_id = transition.successor_run_id
+            updated_at = transition.created_at
+        return WorkspaceRunHead.model_validate(
+            {
+                "schema_version": WorkspaceRunHead.schema_id,
+                "workspace_id": self.workspace_id,
+                "current_run_id": current_run_id,
+                "updated_at": updated_at,
+            },
+            strict=True,
+        )
 
 
 @dataclass(frozen=True)
@@ -626,6 +1096,7 @@ class SQLiteControlStore:
             self._preflight_artifact_subgraph(uow, run_id)
             self._preflight_intake_subgraph(uow, run_id)
             self._preflight_core_run_subgraph(uow, run_id)
+            self._preflight_pr4b_subgraph(uow, run_id)
             self._inject("before_blob_write")
             for position, item in enumerate(uow._artifact_revisions, start=1):
                 self._inject(f"before_blob_write:{position}")
@@ -698,6 +1169,7 @@ class SQLiteControlStore:
                 self._insert_run_integrity_records(
                     uow._run_integrity_records.values()
                 )
+                self._insert_pr4b_records(uow)
                 self._insert_transaction_relations(receipt)
                 self._inject("after_records")
                 self._inject("before_commit")
@@ -1136,6 +1608,88 @@ class SQLiteControlStore:
             ):
                 raise ControlStoreConflict("relational_integrity_conflict")
 
+    def _preflight_pr4b_subgraph(self, uow: "ControlUnitOfWork", run_id: str) -> None:
+        """Validate structural ownership only; domain legality stays in services."""
+
+        staged_events = {event.event_id for event in uow._events}
+        records: tuple[StrictModel, ...] = (
+            *uow._repair_cycles.values(),
+            *uow._artifact_supersessions.values(),
+            *uow._repair_completions.values(),
+            *uow._recovery_completions.values(),
+            *uow._finalize_renders.values(),
+            *uow._finalizations.values(),
+            *uow._run_archives.values(),
+            *uow._run_archive_artifact_bindings.values(),
+            *uow._package_ready_records.values(),
+            *uow._package_artifact_bindings.values(),
+            *uow._approval_package_bindings.values(),
+            *uow._delivery_authorizations.values(),
+            *uow._delivery_attempts.values(),
+            *uow._delivery_results.values(),
+        )
+        for record in records:
+            if getattr(record, "run_id", None) != run_id or getattr(
+                record, "accepted_transaction_id", None
+            ) != uow.transaction_id:
+                raise ControlStoreConflict("relational_integrity_conflict")
+        for transition in uow._run_head_transitions.values():
+            if (
+                transition.successor_run_id != run_id
+                or transition.accepted_transaction_id != uow.transaction_id
+                or transition.workspace_id != self.workspace_id
+            ):
+                raise ControlStoreConflict("relational_integrity_conflict")
+            current = self.load_workspace_run_head()
+            if (
+                current is None
+                or current.current_run_id != transition.predecessor_run_id
+                or transition.prior_workspace_revision != uow.expected_revision
+                or uow._run is None
+                or uow._workspace_run_head is None
+            ):
+                raise ControlStoreConflict("workspace_run_head_conflict")
+        event_fields = (
+            (uow._repair_cycles.values(), "start_event_id"),
+            (uow._artifact_supersessions.values(), "accepted_event_id"),
+            (uow._repair_completions.values(), "completion_event_id"),
+            (uow._recovery_completions.values(), "completion_event_id"),
+            (uow._run_head_transitions.values(), "transition_event_id"),
+            (uow._finalize_renders.values(), "render_event_id"),
+            (uow._finalizations.values(), "finalization_event_id"),
+            (uow._run_archives.values(), "archive_event_id"),
+            (uow._package_ready_records.values(), "package_event_id"),
+            (uow._delivery_authorizations.values(), "authorization_event_id"),
+            (uow._delivery_attempts.values(), "attempt_event_id"),
+            (uow._delivery_results.values(), "result_event_id"),
+        )
+        for values, field in event_fields:
+            for record in values:
+                if getattr(record, field) not in staged_events:
+                    raise ControlStoreConflict("relational_integrity_conflict")
+        for completion in uow._repair_completions.values():
+            if set(completion.supersession_ids) != set(uow._artifact_supersessions) and not all(
+                self._connection.execute(
+                    "SELECT 1 FROM artifact_supersessions WHERE run_id=? AND supersession_id=?",
+                    (run_id, item),
+                ).fetchone()
+                for item in completion.supersession_ids
+            ):
+                raise ControlStoreConflict("relational_integrity_conflict")
+            if len(completion.reopened_transition_ids) != len(set(completion.reopened_transition_ids)):
+                raise ControlStoreConflict("relational_integrity_conflict")
+        for render in uow._finalize_renders.values():
+            if not render.reader_artifacts:
+                raise ControlStoreConflict("relational_integrity_conflict")
+        for archive in uow._run_archives.values():
+            bindings = [item for item in uow._run_archive_artifact_bindings.values() if item.archive_id == archive.archive_id]
+            if len(bindings) != archive.included_count or sorted(item.position for item in bindings) != list(range(len(bindings))):
+                raise ControlStoreConflict("relational_integrity_conflict")
+        for package in uow._package_ready_records.values():
+            bindings = [item for item in uow._package_artifact_bindings.values() if item.package_id == package.package_id]
+            if len(bindings) != package.artifact_count or sorted(item.position for item in bindings) != list(range(len(bindings))):
+                raise ControlStoreConflict("relational_integrity_conflict")
+
     def _build_receipt(
         self,
         uow: "ControlUnitOfWork",
@@ -1215,6 +1769,31 @@ class SQLiteControlStore:
                         {"integrity_revision": key}
                         for key in sorted(uow._run_integrity_records)
                     ],
+                    "repair_cycles": [{"repair_id": key} for key in sorted(uow._repair_cycles)],
+                    "artifact_supersessions": [{"supersession_id": key} for key in sorted(uow._artifact_supersessions)],
+                    "repair_completions": [{"repair_completion_id": key} for key in sorted(uow._repair_completions)],
+                    "recovery_completions": [{"recovery_id": key} for key in sorted(uow._recovery_completions)],
+                    "run_head_transitions": [{"head_transition_id": key} for key in sorted(uow._run_head_transitions)],
+                    "finalize_renders": [{"render_id": key} for key in sorted(uow._finalize_renders)],
+                    "finalizations": [{"finalization_id": key} for key in sorted(uow._finalizations)],
+                    "run_archives": [{"archive_id": key} for key in sorted(uow._run_archives)],
+                    "run_archive_artifact_bindings": [
+                        {"archive_id": key[0], "position": key[1]}
+                        for key in sorted(uow._run_archive_artifact_bindings)
+                    ],
+                    "package_ready_records": [{"package_id": key} for key in sorted(uow._package_ready_records)],
+                    "package_artifact_bindings": [
+                        {"package_id": key[0], "position": key[1]}
+                        for key in sorted(uow._package_artifact_bindings)
+                    ],
+                    "approvals": [{"approval_id": key} for key in sorted(uow._approvals)],
+                    "approval_package_bindings": [
+                        {"approval_id": key[0], "package_id": key[1]}
+                        for key in sorted(uow._approval_package_bindings)
+                    ],
+                    "delivery_authorizations": [{"authorization_id": key} for key in sorted(uow._delivery_authorizations)],
+                    "delivery_attempts": [{"attempt_id": key} for key in sorted(uow._delivery_attempts)],
+                    "delivery_results": [{"result_id": key} for key in sorted(uow._delivery_results)],
                 }
             )
         except ValueError as exc:
@@ -2018,6 +2597,119 @@ class SQLiteControlStore:
                 ),
             )
 
+    def _insert_pr4b_records(self, uow: "ControlUnitOfWork") -> None:
+        for record in uow._repair_cycles.values():
+            self._connection.execute(
+                "INSERT INTO repair_cycles VALUES (?,?,?,?,?,?,?,?,?,?,?)",
+                (record.run_id, record.repair_id, record.schema_version, record.contamination_revision,
+                 record.owner_stage_id, record.reason_code, record.started_at, record.start_event_id,
+                 record.accepted_transaction_id, record.request_fingerprint, _canonical_record_text(record)),
+            )
+        for record in uow._artifact_supersessions.values():
+            self._connection.execute(
+                "INSERT INTO artifact_supersessions VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                (record.run_id, record.supersession_id, record.repair_id, record.mode, record.schema_version,
+                 record.prior_artifact.artifact_id, record.prior_artifact.revision, record.successor_artifact.revision,
+                 record.reason_code, record.created_at, record.accepted_event_id, record.accepted_transaction_id,
+                 record.request_fingerprint, _canonical_record_text(record)),
+            )
+        for record in uow._repair_completions.values():
+            self._connection.execute(
+                "INSERT INTO repair_completions VALUES (?,?,?,?,?,?,?,?,?,?)",
+                (record.run_id, record.repair_completion_id, record.repair_id, record.schema_version,
+                 record.contamination_revision, record.completed_at, record.completion_event_id,
+                 record.accepted_transaction_id, record.request_fingerprint, _canonical_record_text(record)),
+            )
+            for position, value in enumerate(record.supersession_ids):
+                self._connection.execute("INSERT INTO repair_completion_supersessions VALUES (?,?,?,?)", (record.run_id, record.repair_completion_id, position, value))
+            for position, value in enumerate(record.reopened_transition_ids):
+                self._connection.execute("INSERT INTO repair_completion_transitions VALUES (?,?,?,?)", (record.run_id, record.repair_completion_id, position, value))
+        for record in uow._recovery_completions.values():
+            self._connection.execute(
+                "INSERT INTO recovery_completions VALUES (?,?,?,?,?,?,?,?,?,?,?)",
+                (record.run_id, record.recovery_id, record.repair_completion_id, record.schema_version,
+                 record.contamination_revision, record.disposition, record.completed_at, record.completion_event_id,
+                 record.accepted_transaction_id, record.request_fingerprint, _canonical_record_text(record)),
+            )
+            for table, values in (
+                ("recovery_supersessions", record.supersession_ids),
+                ("recovery_stage_transitions", record.rerun_transition_ids),
+                ("recovery_gate_evaluations", record.gate_evaluation_ids),
+            ):
+                for position, value in enumerate(values):
+                    self._connection.execute(f"INSERT INTO {table} VALUES (?,?,?,?)", (record.run_id, record.recovery_id, position, value))
+        for record in uow._run_head_transitions.values():
+            self._connection.execute(
+                "INSERT INTO run_head_transitions VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                (record.workspace_id, record.head_transition_id, record.successor_run_id, record.predecessor_run_id,
+                 record.schema_version, record.prior_workspace_revision, record.successor_workspace_revision,
+                 record.reason_code, record.successor_disposition, record.created_at, record.transition_event_id,
+                 record.accepted_transaction_id, record.request_fingerprint, _canonical_record_text(record)),
+            )
+        for record in uow._finalize_renders.values():
+            self._connection.execute(
+                "INSERT INTO finalize_renders VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                (record.run_id, record.render_id, record.schema_version, record.audit_proposal_id,
+                 record.audited_brief.artifact_id, record.audited_brief.revision,
+                 record.audit_report.artifact_id, record.audit_report.revision, record.reader_clean_status,
+                 record.policy_result_fingerprint, record.run_contract_fingerprint, record.created_at,
+                 record.render_event_id, record.accepted_transaction_id, record.request_fingerprint,
+                 _canonical_record_text(record)),
+            )
+            revisions = {
+                (item.record.artifact_id, item.record.revision): item
+                for item in uow._artifact_revisions
+            }
+            for position, reference in enumerate(record.reader_artifacts):
+                revision = revisions.get((reference.artifact_id, reference.revision))
+                if revision is None:
+                    row = self._connection.execute("SELECT sha256 FROM artifact_revisions WHERE run_id=? AND artifact_id=? AND revision=?", (record.run_id, reference.artifact_id, reference.revision)).fetchone()
+                    if row is None:
+                        raise ControlStoreConflict("relational_integrity_conflict")
+                    digest = str(row[0])
+                else:
+                    digest = revision.record.sha256
+                self._connection.execute("INSERT INTO finalize_render_artifacts VALUES (?,?,?,?,?,?)", (record.run_id, record.render_id, position, reference.artifact_id, reference.revision, digest))
+        for record in uow._finalizations.values():
+            self._connection.execute(
+                "INSERT INTO finalizations VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                (record.run_id, record.finalization_id, record.schema_version, record.render_id,
+                 record.finalize_transition_id, record.finalize_gate_batch_id, record.recovery_id,
+                 record.integrity_revision, record.finalized_at, record.finalization_event_id,
+                 record.accepted_transaction_id, record.request_fingerprint, _canonical_record_text(record)),
+            )
+            for position, value in enumerate(record.finalize_gate_evaluation_ids):
+                self._connection.execute("INSERT INTO finalization_gate_evaluations VALUES (?,?,?,?)", (record.run_id, record.finalization_id, position, value))
+        for record in uow._run_archives.values():
+            self._connection.execute(
+                "INSERT INTO run_archives VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                (record.run_id, record.archive_id, record.schema_version, record.finalization_id,
+                 record.archive_artifact.artifact_id, record.archive_artifact.revision, record.manifest_sha256,
+                 record.included_count, record.created_at, record.archive_event_id, record.accepted_transaction_id,
+                 record.request_fingerprint, _canonical_record_text(record)),
+            )
+        for record in uow._run_archive_artifact_bindings.values():
+            self._connection.execute("INSERT INTO run_archive_artifact_bindings VALUES (?,?,?,?,?,?,?,?,?,?)", (record.run_id, record.archive_id, record.position, record.schema_version, record.artifact_id, record.artifact_revision, record.artifact_sha256, record.usage, record.accepted_transaction_id, _canonical_record_text(record)))
+        for record in uow._package_ready_records.values():
+            self._connection.execute(
+                "INSERT INTO package_ready_records VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                (record.run_id, record.package_id, record.schema_version, record.finalization_id, record.archive_id,
+                 record.package_manifest_artifact.artifact_id, record.package_manifest_artifact.revision,
+                 record.package_manifest_sha256, record.artifact_count, record.created_at, record.package_event_id,
+                 record.accepted_transaction_id, record.request_fingerprint, _canonical_record_text(record)),
+            )
+        for record in uow._package_artifact_bindings.values():
+            self._connection.execute("INSERT INTO package_artifact_bindings VALUES (?,?,?,?,?,?,?,?,?,?)", (record.run_id, record.package_id, record.position, record.schema_version, record.artifact_id, record.artifact_revision, record.artifact_sha256, record.usage, record.accepted_transaction_id, _canonical_record_text(record)))
+        for record in uow._approval_package_bindings.values():
+            self._connection.execute("INSERT INTO approval_package_bindings VALUES (?,?,?,?,?,?)", (record.run_id, record.approval_id, record.package_id, record.schema_version, record.accepted_transaction_id, _canonical_record_text(record)))
+        for record in uow._delivery_authorizations.values():
+            self._connection.execute("INSERT INTO delivery_authorizations VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)", (record.run_id, record.authorization_id, record.schema_version, record.package_id, record.prior_authorization_id, record.approval_mode, record.retry_of_attempt_id, record.purpose, record.decision, record.target, record.channel, record.recipient_fingerprint, record.actor_id, record.recorded_at, record.authorization_event_id, record.accepted_transaction_id, record.request_fingerprint, _canonical_record_text(record)))
+        for record in uow._delivery_attempts.values():
+            self._connection.execute("INSERT INTO delivery_attempts VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)", (record.run_id, record.attempt_id, record.schema_version, record.package_id, record.authorization_id, record.target, record.channel, record.recipient_fingerprint, record.connector_operation_id, record.connector_request_fingerprint, record.created_at, record.attempt_event_id, record.accepted_transaction_id, record.request_fingerprint, _canonical_record_text(record)))
+        for record in uow._delivery_results.values():
+            evidence = record.evidence_artifact
+            self._connection.execute("INSERT INTO delivery_results VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)", (record.run_id, record.result_id, record.schema_version, record.attempt_id, record.prior_result_id, record.reconciliation_authorization_id, record.status, record.adapter_id, record.adapter_version, record.connector_operation_id, record.evidence_sha256, evidence.artifact_id if evidence else None, evidence.revision if evidence else None, record.recorded_at, record.result_event_id, record.accepted_transaction_id, record.request_fingerprint, _canonical_record_text(record)))
+
     def _insert_transaction_relations(self, receipt: TransactionReceipt) -> None:
         for position, event_id in enumerate(receipt.event_ids):
             self._connection.execute(
@@ -2236,6 +2928,41 @@ class SQLiteControlStore:
                     reference.integrity_revision,
                 ),
             )
+        simple_relations = (
+            ("transaction_repair_cycles", receipt.repair_cycles, "repair_id"),
+            ("transaction_artifact_supersessions", receipt.artifact_supersessions, "supersession_id"),
+            ("transaction_repair_completions", receipt.repair_completions, "repair_completion_id"),
+            ("transaction_recovery_completions", receipt.recovery_completions, "recovery_id"),
+            ("transaction_run_head_transitions", receipt.run_head_transitions, "head_transition_id"),
+            ("transaction_finalize_renders", receipt.finalize_renders, "render_id"),
+            ("transaction_finalizations", receipt.finalizations, "finalization_id"),
+            ("transaction_run_archives", receipt.run_archives, "archive_id"),
+            ("transaction_package_ready_records", receipt.package_ready_records, "package_id"),
+            ("transaction_approvals", receipt.approvals, "approval_id"),
+            ("transaction_delivery_authorizations", receipt.delivery_authorizations, "authorization_id"),
+            ("transaction_delivery_attempts", receipt.delivery_attempts, "attempt_id"),
+            ("transaction_delivery_results", receipt.delivery_results, "result_id"),
+        )
+        for table, references, field in simple_relations:
+            for position, reference in enumerate(references):
+                self._connection.execute(
+                    f"INSERT INTO {table} VALUES (?,?,?,?)",
+                    (receipt.run_id, receipt.transaction_id, position, getattr(reference, field)),
+                )
+        for table, references, identity_field in (
+            ("transaction_run_archive_artifact_bindings", receipt.run_archive_artifact_bindings, "archive_id"),
+            ("transaction_package_artifact_bindings", receipt.package_artifact_bindings, "package_id"),
+        ):
+            for position, reference in enumerate(references):
+                self._connection.execute(
+                    f"INSERT INTO {table} VALUES (?,?,?,?,?)",
+                    (receipt.run_id, receipt.transaction_id, position, getattr(reference, identity_field), reference.position),
+                )
+        for position, reference in enumerate(receipt.approval_package_bindings):
+            self._connection.execute(
+                "INSERT INTO transaction_approval_package_bindings VALUES (?,?,?,?,?)",
+                (receipt.run_id, receipt.transaction_id, position, reference.approval_id, reference.package_id),
+            )
 
     def _blob_relpath(self, sha256: str) -> str:
         return f"sha256/{sha256[:2]}/{sha256}"
@@ -2400,6 +3127,100 @@ class SQLiteControlStore:
                 snapshot = self._load_snapshot_in_transaction(run_id)
                 self._connection.commit()
                 return snapshot
+            except sqlite3.Error as exc:
+                self._connection.rollback()
+                raise ControlStoreIntegrityError("sqlite_read_failed") from exc
+            except Exception:
+                self._connection.rollback()
+                raise
+
+    def load_history(self) -> ControlStoreHistory:
+        """Load every run and committed blob through one SQLite read snapshot."""
+
+        with self._lock:
+            self._require_open()
+            try:
+                self._connection.execute("BEGIN")
+                verify_schema(self._connection)
+                self._verify_committed_blob_bindings()
+                self._verify_workspace_ledger_graph()
+                run_ids = tuple(
+                    str(row[0])
+                    for row in self._connection.execute(
+                        "SELECT run_id FROM runs ORDER BY run_id"
+                    ).fetchall()
+                )
+                snapshots = tuple(
+                    self._load_snapshot_in_transaction(run_id) for run_id in run_ids
+                )
+                contents: dict[tuple[str, str, int], bytes] = {}
+                for snapshot in snapshots:
+                    for revision in snapshot.artifact_revisions:
+                        path = self._blob_path(revision.sha256)
+                        self._verify_blob(revision, path)
+                        try:
+                            contents[
+                                (
+                                    revision.run_id,
+                                    revision.artifact_id,
+                                    revision.revision,
+                                )
+                            ] = path.read_bytes()
+                        except OSError as exc:
+                            raise ControlStoreIntegrityError("blob_read_failed") from exc
+                initial_artifact_ids: dict[str, frozenset[str]] = {}
+                for snapshot in snapshots:
+                    if len(snapshot.run_contract_bindings) != 1:
+                        initial_artifact_ids[snapshot.run.run_id] = frozenset()
+                        continue
+                    binding = snapshot.run_contract_bindings[0]
+                    try:
+                        contract_bytes = contents[
+                            (
+                                snapshot.run.run_id,
+                                binding.artifact_contracts_artifact.artifact_id,
+                                binding.artifact_contracts_artifact.revision,
+                            )
+                        ]
+                        payload = json.loads(contract_bytes)
+                        artifact_rows = payload["artifacts"]
+                        records = {
+                            item.artifact_id: item for item in snapshot.artifacts
+                        }
+                        contract_ids = {
+                            str(item["artifact_id"])
+                            for item in artifact_rows
+                            if (
+                                str(item["artifact_id"]) in records
+                                and records[str(item["artifact_id"])].path
+                                == item["path"]
+                                and records[str(item["artifact_id"])].format
+                                == item["format"]
+                                and records[str(item["artifact_id"])].required
+                                is item["required"]
+                            )
+                        }
+                    except (KeyError, TypeError, ValueError, json.JSONDecodeError) as exc:
+                        raise ControlStoreIntegrityError(
+                            "snapshot_history_invalid"
+                        ) from exc
+                    initial_artifact_ids[snapshot.run.run_id] = frozenset(
+                        {
+                            *contract_ids,
+                            binding.stage_specs_artifact.artifact_id,
+                            binding.artifact_contracts_artifact.artifact_id,
+                            binding.policy_pack_artifact.artifact_id,
+                        }
+                    )
+                history = ControlStoreHistory(
+                    workspace_id=self.workspace_id,
+                    store_revision=self.current_revision,
+                    snapshots=snapshots,
+                    artifact_contents=MappingProxyType(contents),
+                    initial_artifact_ids=MappingProxyType(initial_artifact_ids),
+                )
+                self._connection.commit()
+                return history
             except sqlite3.Error as exc:
                 self._connection.rollback()
                 raise ControlStoreIntegrityError("sqlite_read_failed") from exc
@@ -3031,13 +3852,27 @@ class SQLiteControlStore:
                     "request_fingerprint": "request_fingerprint",
                 },
             ),
+            repair_cycles=self._load_for_run(RepairCycleRecord, "repair_cycles", run_id, "started_at, repair_id", {"run_id":"run_id","repair_id":"repair_id","schema_version":"schema_version","contamination_revision":"contamination_revision","owner_stage_id":"owner_stage_id","reason_code":"reason_code","started_at":"started_at","start_event_id":"start_event_id","accepted_transaction_id":"accepted_transaction_id","request_fingerprint":"request_fingerprint"}),
+            artifact_supersessions=self._load_for_run(ArtifactSupersessionRecord, "artifact_supersessions", run_id, "created_at, supersession_id", {"run_id":"run_id","supersession_id":"supersession_id","repair_id":"repair_id","schema_version":"schema_version","mode":"mode","artifact_id":"prior_artifact.artifact_id","prior_revision":"prior_artifact.revision","successor_revision":"successor_artifact.revision","reason_code":"reason_code","created_at":"created_at","accepted_event_id":"accepted_event_id","accepted_transaction_id":"accepted_transaction_id","request_fingerprint":"request_fingerprint"}),
+            repair_completions=self._load_for_run(RepairCompletionRecord, "repair_completions", run_id, "completed_at, repair_completion_id", {"run_id":"run_id","repair_completion_id":"repair_completion_id","repair_id":"repair_id","schema_version":"schema_version","contamination_revision":"contamination_revision","completed_at":"completed_at","completion_event_id":"completion_event_id","accepted_transaction_id":"accepted_transaction_id","request_fingerprint":"request_fingerprint"}),
+            recovery_completions=self._load_for_run(RecoveryCompletionRecord, "recovery_completions", run_id, "completed_at, recovery_id", {"run_id":"run_id","recovery_id":"recovery_id","repair_completion_id":"repair_completion_id","schema_version":"schema_version","contamination_revision":"contamination_revision","disposition":"disposition","completed_at":"completed_at","completion_event_id":"completion_event_id","accepted_transaction_id":"accepted_transaction_id","request_fingerprint":"request_fingerprint"}),
+            run_head_transitions=self._load_for_run(RunHeadTransitionRecord, "run_head_transitions", run_id, "created_at, head_transition_id", {"successor_run_id":"successor_run_id","head_transition_id":"head_transition_id","workspace_id":"workspace_id","predecessor_run_id":"predecessor_run_id","schema_version":"schema_version","prior_workspace_revision":"prior_workspace_revision","successor_workspace_revision":"successor_workspace_revision","reason_code":"reason_code","successor_disposition":"successor_disposition","created_at":"created_at","transition_event_id":"transition_event_id","accepted_transaction_id":"accepted_transaction_id","request_fingerprint":"request_fingerprint"}, run_column="successor_run_id"),
+            finalize_renders=self._load_for_run(FinalizeRenderRecord, "finalize_renders", run_id, "created_at, render_id", {"run_id":"run_id","render_id":"render_id","schema_version":"schema_version","audit_proposal_id":"audit_proposal_id","audited_brief_artifact_id":"audited_brief.artifact_id","audited_brief_revision":"audited_brief.revision","audit_report_artifact_id":"audit_report.artifact_id","audit_report_revision":"audit_report.revision","reader_clean_status":"reader_clean_status","policy_result_fingerprint":"policy_result_fingerprint","run_contract_fingerprint":"run_contract_fingerprint","created_at":"created_at","render_event_id":"render_event_id","accepted_transaction_id":"accepted_transaction_id","request_fingerprint":"request_fingerprint"}),
+            finalizations=self._load_for_run(FinalizationRecord, "finalizations", run_id, "finalized_at, finalization_id", {"run_id":"run_id","finalization_id":"finalization_id","schema_version":"schema_version","render_id":"render_id","finalize_transition_id":"finalize_transition_id","finalize_gate_batch_id":"finalize_gate_batch_id","recovery_id":"recovery_id","integrity_revision":"integrity_revision","finalized_at":"finalized_at","finalization_event_id":"finalization_event_id","accepted_transaction_id":"accepted_transaction_id","request_fingerprint":"request_fingerprint"}),
+            run_archives=self._load_for_run(RunArchiveRecord, "run_archives", run_id, "created_at, archive_id", {"run_id":"run_id","archive_id":"archive_id","schema_version":"schema_version","finalization_id":"finalization_id","archive_artifact_id":"archive_artifact.artifact_id","archive_artifact_revision":"archive_artifact.revision","manifest_sha256":"manifest_sha256","included_count":"included_count","created_at":"created_at","archive_event_id":"archive_event_id","accepted_transaction_id":"accepted_transaction_id","request_fingerprint":"request_fingerprint"}),
+            run_archive_artifact_bindings=self._load_for_run(RunArchiveArtifactBinding, "run_archive_artifact_bindings", run_id, "archive_id, position", {"run_id":"run_id","archive_id":"archive_id","position":"position","schema_version":"schema_version","artifact_id":"artifact_id","artifact_revision":"artifact_revision","artifact_sha256":"artifact_sha256","usage":"usage","accepted_transaction_id":"accepted_transaction_id"}),
+            package_ready_records=self._load_for_run(PackageReadyRecord, "package_ready_records", run_id, "created_at, package_id", {"run_id":"run_id","package_id":"package_id","schema_version":"schema_version","finalization_id":"finalization_id","archive_id":"archive_id","package_manifest_artifact_id":"package_manifest_artifact.artifact_id","package_manifest_revision":"package_manifest_artifact.revision","package_manifest_sha256":"package_manifest_sha256","artifact_count":"artifact_count","created_at":"created_at","package_event_id":"package_event_id","accepted_transaction_id":"accepted_transaction_id","request_fingerprint":"request_fingerprint"}),
+            package_artifact_bindings=self._load_for_run(PackageArtifactBinding, "package_artifact_bindings", run_id, "package_id, position", {"run_id":"run_id","package_id":"package_id","position":"position","schema_version":"schema_version","artifact_id":"artifact_id","artifact_revision":"artifact_revision","artifact_sha256":"artifact_sha256","usage":"usage","accepted_transaction_id":"accepted_transaction_id"}),
+            approval_package_bindings=self._load_for_run(ApprovalPackageBinding, "approval_package_bindings", run_id, "approval_id, package_id", {"run_id":"run_id","approval_id":"approval_id","package_id":"package_id","schema_version":"schema_version","accepted_transaction_id":"accepted_transaction_id"}),
+            delivery_authorizations=self._load_for_run(DeliveryAuthorizationRecord, "delivery_authorizations", run_id, "recorded_at, authorization_id", {"run_id":"run_id","authorization_id":"authorization_id","schema_version":"schema_version","package_id":"package_id","prior_authorization_id":"prior_authorization_id","approval_mode":"approval_mode","retry_of_attempt_id":"retry_of_attempt_id","purpose":"purpose","decision":"decision","target":"target","channel":"channel","recipient_fingerprint":"recipient_fingerprint","actor_id":"actor_id","recorded_at":"recorded_at","authorization_event_id":"authorization_event_id","accepted_transaction_id":"accepted_transaction_id","request_fingerprint":"request_fingerprint"}),
+            delivery_attempts=self._load_for_run(DeliveryAttemptRecord, "delivery_attempts", run_id, "created_at, attempt_id", {"run_id":"run_id","attempt_id":"attempt_id","schema_version":"schema_version","package_id":"package_id","authorization_id":"authorization_id","target":"target","channel":"channel","recipient_fingerprint":"recipient_fingerprint","connector_operation_id":"connector_operation_id","connector_request_fingerprint":"connector_request_fingerprint","created_at":"created_at","attempt_event_id":"attempt_event_id","accepted_transaction_id":"accepted_transaction_id","request_fingerprint":"request_fingerprint"}),
+            delivery_results=self._load_for_run(DeliveryResultRecord, "delivery_results", run_id, "recorded_at, result_id", {"run_id":"run_id","result_id":"result_id","schema_version":"schema_version","attempt_id":"attempt_id","prior_result_id":"prior_result_id","reconciliation_authorization_id":"reconciliation_authorization_id","status":"status","adapter_id":"adapter_id","adapter_version":"adapter_version","connector_operation_id":"connector_operation_id","evidence_sha256":"evidence_sha256","evidence_artifact_id":"evidence_artifact.artifact_id","evidence_artifact_revision":"evidence_artifact.revision","recorded_at":"recorded_at","result_event_id":"result_event_id","accepted_transaction_id":"accepted_transaction_id","request_fingerprint":"request_fingerprint"}),
             transactions=self._load_transactions(run_id),
         )
         self._verify_core_snapshot_structure(snapshot)
         return snapshot
 
-    @staticmethod
-    def _verify_core_snapshot_structure(snapshot: ControlStoreSnapshot) -> None:
+    def _verify_core_snapshot_structure(self, snapshot: ControlStoreSnapshot) -> None:
         """Verify PR-4A relation closure without interpreting domain policy."""
 
         core_rows_exist = any(
@@ -3054,6 +3889,21 @@ class SQLiteControlStore:
                 snapshot.gate_findings,
                 snapshot.gate_artifact_bindings,
                 snapshot.run_integrity_records,
+                snapshot.repair_cycles,
+                snapshot.artifact_supersessions,
+                snapshot.repair_completions,
+                snapshot.recovery_completions,
+                snapshot.run_head_transitions,
+                snapshot.finalize_renders,
+                snapshot.finalizations,
+                snapshot.run_archives,
+                snapshot.run_archive_artifact_bindings,
+                snapshot.package_ready_records,
+                snapshot.package_artifact_bindings,
+                snapshot.approval_package_bindings,
+                snapshot.delivery_authorizations,
+                snapshot.delivery_attempts,
+                snapshot.delivery_results,
             )
         )
         if not snapshot.run_contract_bindings:
@@ -3072,7 +3922,6 @@ class SQLiteControlStore:
             or binding.runtime != snapshot.run.runtime
             or head is None
             or head.workspace_id != snapshot.workspace_id
-            or head.current_run_id != snapshot.run.run_id
         ):
             raise ControlStoreIntegrityError("core_run_relation_invalid")
 
@@ -3099,6 +3948,8 @@ class SQLiteControlStore:
         )
         if binding.contract_fingerprint != expected_fingerprint:
             raise ControlStoreIntegrityError("core_run_relation_invalid")
+
+        self._verify_pr4b_snapshot_relations(snapshot)
 
         receipts = {
             item.transaction_id: item for item in snapshot.transactions
@@ -3129,20 +3980,41 @@ class SQLiteControlStore:
         if (
             initialization is None
             or initialization.run_id != snapshot.run.run_id
-            or initialization.transaction_type != "core-v2-initialize"
+            or initialization.transaction_type
+            not in {"core-v2-initialize", "core-v2-run-reset"}
             or [item.run_id for item in initialization.run_contract_bindings]
             != [snapshot.run.run_id]
             or binding.initialization_event_id not in initialization.event_ids
+            or (
+                initialization.transaction_type == "core-v2-run-reset"
+                and len(initialization.run_head_transitions) != 1
+            )
+            or (
+                initialization.transaction_type == "core-v2-initialize"
+                and initialization.run_head_transitions
+            )
         ):
             raise ControlStoreIntegrityError("core_run_relation_invalid")
         init_event = events.get(binding.initialization_event_id)
         if (
             init_event is None
             or init_event.transaction_id != initialization.transaction_id
-            or init_event.core_run_binding is None
-            or init_event.core_run_binding.effect_kind != "initialize"
-            or init_event.core_run_binding.primary_record_id
-            != snapshot.run.run_id
+            or (
+                initialization.transaction_type == "core-v2-initialize"
+                and (
+                    init_event.core_run_binding is None
+                    or init_event.core_run_binding.effect_kind != "initialize"
+                    or init_event.core_run_binding.primary_record_id
+                    != snapshot.run.run_id
+                )
+            )
+            or (
+                initialization.transaction_type == "core-v2-run-reset"
+                and (
+                    init_event.event_type != "run_initialized"
+                    or init_event.core_run_binding is not None
+                )
+            )
         ):
             raise ControlStoreIntegrityError("core_run_relation_invalid")
         receipt_revision_refs = {
@@ -3327,6 +4199,35 @@ class SQLiteControlStore:
                 evaluation.report_artifact.revision,
                 evaluation.accepted_transaction_id,
             )
+        for render in snapshot.finalize_renders:
+            for reference in render.reader_artifacts:
+                add_producer(
+                    reference.artifact_id,
+                    reference.revision,
+                    render.accepted_transaction_id,
+                )
+        for archive in snapshot.run_archives:
+            add_producer(
+                archive.archive_artifact.artifact_id,
+                archive.archive_artifact.revision,
+                archive.accepted_transaction_id,
+            )
+        for package in snapshot.package_ready_records:
+            add_producer(
+                package.package_manifest_artifact.artifact_id,
+                package.package_manifest_artifact.revision,
+                package.accepted_transaction_id,
+            )
+        for result in snapshot.delivery_results:
+            if (
+                result.status != "bundle_prepared"
+                and result.evidence_artifact is not None
+            ):
+                add_producer(
+                    result.evidence_artifact.artifact_id,
+                    result.evidence_artifact.revision,
+                    result.accepted_transaction_id,
+                )
         revisions_by_artifact: dict[str, list[ArtifactRevision]] = {}
         for revision in snapshot.artifact_revisions:
             revisions_by_artifact.setdefault(revision.artifact_id, []).append(
@@ -3519,6 +4420,52 @@ class SQLiteControlStore:
             ):
                 raise ControlStoreIntegrityError("core_run_relation_invalid")
 
+    def _verify_pr4b_snapshot_relations(self, snapshot: ControlStoreSnapshot) -> None:
+        """Match list-valued PR-4B payload fields to their relation rows."""
+
+        def values(table: str, owner_column: str, owner_id: str, value_column: str) -> tuple[str, ...]:
+            rows = self._connection.execute(
+                f"SELECT position, {value_column} FROM {table} "
+                f"WHERE run_id=? AND {owner_column}=? ORDER BY position",
+                (snapshot.run.run_id, owner_id),
+            ).fetchall()
+            if [row[0] for row in rows] != list(range(len(rows))):
+                raise ControlStoreIntegrityError("core_run_relation_invalid")
+            return tuple(str(row[1]) for row in rows)
+
+        for record in snapshot.repair_completions:
+            if values("repair_completion_supersessions", "repair_completion_id", record.repair_completion_id, "supersession_id") != tuple(record.supersession_ids):
+                raise ControlStoreIntegrityError("core_run_relation_invalid")
+            if values("repair_completion_transitions", "repair_completion_id", record.repair_completion_id, "transition_id") != tuple(record.reopened_transition_ids):
+                raise ControlStoreIntegrityError("core_run_relation_invalid")
+        for record in snapshot.recovery_completions:
+            for table, column, expected in (
+                ("recovery_supersessions", "supersession_id", record.supersession_ids),
+                ("recovery_stage_transitions", "transition_id", record.rerun_transition_ids),
+                ("recovery_gate_evaluations", "evaluation_id", record.gate_evaluation_ids),
+            ):
+                if values(table, "recovery_id", record.recovery_id, column) != tuple(expected):
+                    raise ControlStoreIntegrityError("core_run_relation_invalid")
+        revision_digests = {
+            (item.artifact_id, item.revision): item.sha256
+            for item in snapshot.artifact_revisions
+        }
+        for record in snapshot.finalize_renders:
+            rows = self._connection.execute(
+                "SELECT position,artifact_id,artifact_revision,artifact_sha256 "
+                "FROM finalize_render_artifacts WHERE run_id=? AND render_id=? ORDER BY position",
+                (record.run_id, record.render_id),
+            ).fetchall()
+            expected = tuple((item.artifact_id, item.revision) for item in record.reader_artifacts)
+            actual = tuple((str(row[1]), int(row[2])) for row in rows)
+            if [row[0] for row in rows] != list(range(len(rows))) or actual != expected:
+                raise ControlStoreIntegrityError("core_run_relation_invalid")
+            if any(revision_digests.get((str(row[1]), int(row[2]))) != str(row[3]) for row in rows):
+                raise ControlStoreIntegrityError("core_run_relation_invalid")
+        for record in snapshot.finalizations:
+            if values("finalization_gate_evaluations", "finalization_id", record.finalization_id, "evaluation_id") != tuple(record.finalize_gate_evaluation_ids):
+                raise ControlStoreIntegrityError("core_run_relation_invalid")
+
     def _load_workspace_run_head_in_transaction(self) -> WorkspaceRunHead | None:
         rows = self._connection.execute(
             "SELECT * FROM workspace_run_heads WHERE workspace_id = ?",
@@ -3546,10 +4493,12 @@ class SQLiteControlStore:
         run_id: str,
         order_by: str,
         columns: dict[str, str],
+        *,
+        run_column: str = "run_id",
     ) -> tuple[_ModelT, ...]:
         # Table and ordering values are closed internal constants above.
         rows = self._connection.execute(
-            f"SELECT * FROM {table} WHERE run_id = ? ORDER BY {order_by}",
+            f"SELECT * FROM {table} WHERE {run_column} = ? ORDER BY {order_by}",
             (run_id,),
         ).fetchall()
         return tuple(self._decode_checked(model_type, row, columns) for row in rows)
@@ -3847,6 +4796,22 @@ class SQLiteControlStore:
                     for item in receipt.run_integrity_records
                 ),
             ),
+            ("transaction_repair_cycles", ("repair_id",), tuple((item.repair_id,) for item in receipt.repair_cycles)),
+            ("transaction_artifact_supersessions", ("supersession_id",), tuple((item.supersession_id,) for item in receipt.artifact_supersessions)),
+            ("transaction_repair_completions", ("repair_completion_id",), tuple((item.repair_completion_id,) for item in receipt.repair_completions)),
+            ("transaction_recovery_completions", ("recovery_id",), tuple((item.recovery_id,) for item in receipt.recovery_completions)),
+            ("transaction_run_head_transitions", ("head_transition_id",), tuple((item.head_transition_id,) for item in receipt.run_head_transitions)),
+            ("transaction_finalize_renders", ("render_id",), tuple((item.render_id,) for item in receipt.finalize_renders)),
+            ("transaction_finalizations", ("finalization_id",), tuple((item.finalization_id,) for item in receipt.finalizations)),
+            ("transaction_run_archives", ("archive_id",), tuple((item.archive_id,) for item in receipt.run_archives)),
+            ("transaction_run_archive_artifact_bindings", ("archive_id", "binding_position"), tuple((item.archive_id, item.position) for item in receipt.run_archive_artifact_bindings)),
+            ("transaction_package_ready_records", ("package_id",), tuple((item.package_id,) for item in receipt.package_ready_records)),
+            ("transaction_package_artifact_bindings", ("package_id", "binding_position"), tuple((item.package_id, item.position) for item in receipt.package_artifact_bindings)),
+            ("transaction_approvals", ("approval_id",), tuple((item.approval_id,) for item in receipt.approvals)),
+            ("transaction_approval_package_bindings", ("approval_id", "package_id"), tuple((item.approval_id, item.package_id) for item in receipt.approval_package_bindings)),
+            ("transaction_delivery_authorizations", ("authorization_id",), tuple((item.authorization_id,) for item in receipt.delivery_authorizations)),
+            ("transaction_delivery_attempts", ("attempt_id",), tuple((item.attempt_id,) for item in receipt.delivery_attempts)),
+            ("transaction_delivery_results", ("result_id",), tuple((item.result_id,) for item in receipt.delivery_results)),
         )
         for table, columns, expected in specs:
             selected = ", ".join(("position", *columns))
@@ -4045,7 +5010,88 @@ class SQLiteControlStore:
                 invalid()
         if set(binding_source_ids) - set(proposal_source_ids):
             invalid()
+        self._verify_run_head_transition_chain()
         self._verify_core_relation_coverage()
+        self._verify_pr4b_relation_coverage()
+
+    def _verify_run_head_transition_chain(self) -> None:
+        """Verify that reset transitions form one acyclic chain ending at head."""
+
+        run_ids = {
+            str(row[0])
+            for row in self._connection.execute(
+                "SELECT run_id FROM runs WHERE workspace_id=?",
+                (self.workspace_id,),
+            ).fetchall()
+        }
+        head = self._load_workspace_run_head_in_transaction()
+        if not run_ids:
+            if head is not None:
+                raise ControlStoreIntegrityError("transaction_ledger_integrity_invalid")
+            return
+        rows = self._connection.execute(
+            "SELECT * FROM run_head_transitions WHERE workspace_id=? "
+            "ORDER BY successor_workspace_revision, head_transition_id",
+            (self.workspace_id,),
+        ).fetchall()
+        if head is None:
+            if rows:
+                raise ControlStoreIntegrityError("transaction_ledger_integrity_invalid")
+            return
+        if head.current_run_id not in run_ids:
+            raise ControlStoreIntegrityError("transaction_ledger_integrity_invalid")
+        if not rows:
+            if len(run_ids) != 1 or head.current_run_id not in run_ids:
+                raise ControlStoreIntegrityError("transaction_ledger_integrity_invalid")
+            return
+        transitions = [
+            self._decode_checked(
+                RunHeadTransitionRecord,
+                row,
+                {
+                    "workspace_id": "workspace_id",
+                    "head_transition_id": "head_transition_id",
+                    "successor_run_id": "successor_run_id",
+                    "predecessor_run_id": "predecessor_run_id",
+                    "schema_version": "schema_version",
+                    "prior_workspace_revision": "prior_workspace_revision",
+                    "successor_workspace_revision": "successor_workspace_revision",
+                    "reason_code": "reason_code",
+                    "successor_disposition": "successor_disposition",
+                    "created_at": "created_at",
+                    "transition_event_id": "transition_event_id",
+                    "accepted_transaction_id": "accepted_transaction_id",
+                    "request_fingerprint": "request_fingerprint",
+                },
+            )
+            for row in rows
+        ]
+        initial = transitions[0].predecessor_run_id
+        if initial is None or initial not in run_ids or len(transitions) + 1 != len(run_ids):
+            raise ControlStoreIntegrityError("transaction_ledger_integrity_invalid")
+        seen = {initial}
+        current = initial
+        for transition in transitions:
+            transaction = self._connection.execute(
+                "SELECT run_id,prior_revision,committed_revision FROM transactions "
+                "WHERE run_id=? AND transaction_id=?",
+                (transition.successor_run_id, transition.accepted_transaction_id),
+            ).fetchone()
+            if (
+                transition.predecessor_run_id != current
+                or transition.successor_run_id in seen
+                or transition.successor_run_id not in run_ids
+                or transition.successor_workspace_revision != transition.prior_workspace_revision + 1
+                or transaction is None
+                or str(transaction[0]) != transition.successor_run_id
+                or int(transaction[1]) != transition.prior_workspace_revision
+                or int(transaction[2]) != transition.successor_workspace_revision
+            ):
+                raise ControlStoreIntegrityError("transaction_ledger_integrity_invalid")
+            seen.add(transition.successor_run_id)
+            current = transition.successor_run_id
+        if seen != run_ids or current != head.current_run_id:
+            raise ControlStoreIntegrityError("transaction_ledger_integrity_invalid")
 
     def _verify_core_relation_coverage(self) -> None:
         """Prove every PR-4A append-only row has exactly one receipt owner."""
@@ -4177,6 +5223,63 @@ class SQLiteControlStore:
                 raise ControlStoreIntegrityError(
                     "transaction_ledger_integrity_invalid"
                 )
+
+    def _verify_pr4b_relation_coverage(self) -> None:
+        """Prove every PR-4B authoritative row has one receipt owner."""
+
+        specs = (
+            ("transaction_repair_cycles", ("repair_id",), "repair_cycles", "run_id", ("repair_id",)),
+            ("transaction_artifact_supersessions", ("supersession_id",), "artifact_supersessions", "run_id", ("supersession_id",)),
+            ("transaction_repair_completions", ("repair_completion_id",), "repair_completions", "run_id", ("repair_completion_id",)),
+            ("transaction_recovery_completions", ("recovery_id",), "recovery_completions", "run_id", ("recovery_id",)),
+            ("transaction_run_head_transitions", ("head_transition_id",), "run_head_transitions", "successor_run_id", ("head_transition_id",)),
+            ("transaction_finalize_renders", ("render_id",), "finalize_renders", "run_id", ("render_id",)),
+            ("transaction_finalizations", ("finalization_id",), "finalizations", "run_id", ("finalization_id",)),
+            ("transaction_run_archives", ("archive_id",), "run_archives", "run_id", ("archive_id",)),
+            ("transaction_run_archive_artifact_bindings", ("archive_id", "binding_position"), "run_archive_artifact_bindings", "run_id", ("archive_id", "position")),
+            ("transaction_package_ready_records", ("package_id",), "package_ready_records", "run_id", ("package_id",)),
+            ("transaction_package_artifact_bindings", ("package_id", "binding_position"), "package_artifact_bindings", "run_id", ("package_id", "position")),
+            ("transaction_approval_package_bindings", ("approval_id", "package_id"), "approval_package_bindings", "run_id", ("approval_id", "package_id")),
+            ("transaction_delivery_authorizations", ("authorization_id",), "delivery_authorizations", "run_id", ("authorization_id",)),
+            ("transaction_delivery_attempts", ("attempt_id",), "delivery_attempts", "run_id", ("attempt_id",)),
+            ("transaction_delivery_results", ("result_id",), "delivery_results", "run_id", ("result_id",)),
+        )
+        for relation_table, relation_ids, domain_table, domain_run, domain_ids in specs:
+            relation_columns = ", ".join(("run_id", "transaction_id", *relation_ids))
+            owners: dict[tuple[object, ...], str] = {}
+            for row in self._connection.execute(f"SELECT {relation_columns} FROM {relation_table}").fetchall():
+                key = (row[0], *(row[index + 2] for index in range(len(relation_ids))))
+                if key in owners:
+                    raise ControlStoreIntegrityError("transaction_ledger_integrity_invalid")
+                owners[key] = str(row[1])
+
+            domain_columns = ", ".join((domain_run, *domain_ids, "accepted_transaction_id"))
+            domain_keys: set[tuple[object, ...]] = set()
+            for row in self._connection.execute(f"SELECT {domain_columns} FROM {domain_table}").fetchall():
+                key = tuple(row[index] for index in range(len(domain_ids) + 1))
+                owner = str(row[len(domain_ids) + 1])
+                if key in domain_keys or owners.get(key) != owner:
+                    raise ControlStoreIntegrityError("transaction_ledger_integrity_invalid")
+                domain_keys.add(key)
+            if domain_keys != set(owners):
+                raise ControlStoreIntegrityError("transaction_ledger_integrity_invalid")
+
+        approval_relations = self._connection.execute(
+            "SELECT run_id,transaction_id,approval_id FROM transaction_approvals"
+        ).fetchall()
+        approval_owners = {(row[0], row[2]): str(row[1]) for row in approval_relations}
+        if len(approval_owners) != len(approval_relations):
+            raise ControlStoreIntegrityError("transaction_ledger_integrity_invalid")
+        approval_rows = self._connection.execute(
+            "SELECT approvals.run_id,approvals.approval_id,events.transaction_id "
+            "FROM approvals JOIN events ON events.run_id=approvals.run_id "
+            "AND events.event_id=approvals.event_id"
+        ).fetchall()
+        approval_keys = {(row[0], row[1]) for row in approval_rows}
+        if approval_keys != set(approval_owners) or any(
+            approval_owners[(row[0], row[1])] != str(row[2]) for row in approval_rows
+        ):
+            raise ControlStoreIntegrityError("transaction_ledger_integrity_invalid")
 
     def _verify_source_graph_record(self, source: AcceptedSourceRecord) -> None:
         content_revision = self._artifact_revision_for(

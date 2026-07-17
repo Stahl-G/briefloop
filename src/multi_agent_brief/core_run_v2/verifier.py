@@ -22,6 +22,7 @@ from multi_agent_brief.control_store import (
     ControlStoreSnapshot,
     SQLiteControlStore,
 )
+from multi_agent_brief.control_store.sqlite_store import ControlStoreHistory
 from multi_agent_brief.control_store.serialization import (
     canonical_fingerprint,
     canonical_json_bytes,
@@ -46,11 +47,15 @@ from .policy import (
     CORE_ARTIFACT_IDS,
     INTERNAL_CONTRACT_ARTIFACT_IDS,
     REQUIRED_AUDITOR_GATES,
+    TERMINAL_INTERNAL_ARTIFACT_IDS,
+    archive_artifact_usage,
     derived_id,
     normalize_text,
     run_contract_fingerprint,
     transaction_type_for,
 )
+from .recovery import classify_recovery_legality
+from .terminal import classify_terminal_legality
 
 
 @dataclass(frozen=True)
@@ -66,6 +71,29 @@ class VerifiedCoreRun:
     @property
     def artifacts(self) -> tuple[dict[str, Any], ...]:
         return self.contracts.artifacts
+
+
+@dataclass(frozen=True)
+class _AsOfArtifactReader:
+    history: ControlStoreHistory
+    snapshot: ControlStoreSnapshot
+
+    def read_artifact_revision_bytes(
+        self,
+        run_id: str,
+        artifact_id: str,
+        revision: int,
+    ) -> bytes:
+        if run_id != self.snapshot.run.run_id or not any(
+            item.artifact_id == artifact_id and item.revision == revision
+            for item in self.snapshot.artifact_revisions
+        ):
+            raise CoreRunError("historical_prefix_invalid")
+        return self.history.read_artifact_revision_bytes(
+            run_id,
+            artifact_id,
+            revision,
+        )
 
 
 HumanAssistedRouteFamily = Literal["undecided", "snapshot", "writer"]
@@ -318,6 +346,84 @@ _CORE_EFFECT_BINDING_RULES = {
         "run_integrity_record",
         (("run_integrity_contaminated", 1), ("run_blocked", 1)),
     ),
+    "repair_start": _CoreEffectBindingRule(
+        transaction_type_for("repair_start"),
+        frozenset({"repair_started"}),
+        "repair_cycle",
+        (("repair_started", 1),),
+    ),
+    "artifact_supersession": _CoreEffectBindingRule(
+        transaction_type_for("artifact_supersession"),
+        frozenset({"repair_stage_superseded"}),
+        "artifact_supersession",
+        (("owned_artifact_accepted", 1), ("repair_stage_superseded", 1)),
+    ),
+    "repair_complete": _CoreEffectBindingRule(
+        transaction_type_for("repair_complete"),
+        frozenset({"repair_completed"}),
+        "repair_completion",
+        None,
+    ),
+    "recovery_complete": _CoreEffectBindingRule(
+        transaction_type_for("recovery_complete"),
+        frozenset({"decision_recorded"}),
+        "recovery_completion",
+        (("decision_recorded", 1),),
+    ),
+    "run_head_transition": _CoreEffectBindingRule(
+        transaction_type_for("run_head_transition"),
+        frozenset({"run_reset"}),
+        "run_head_transition",
+        None,
+    ),
+    "finalize_render": _CoreEffectBindingRule(
+        transaction_type_for("finalize_render"),
+        frozenset({"owned_artifact_accepted"}),
+        "finalize_render",
+        (("owned_artifact_accepted", 1),),
+    ),
+    "finalize_complete": _CoreEffectBindingRule(
+        transaction_type_for("finalize_complete"),
+        frozenset({"stage_status_changed"}),
+        "finalization",
+        (
+            ("stage_status_changed", 1),
+            ("run_archived", 1),
+            ("decision_recorded", 1),
+        ),
+    ),
+    "internal_approval": _CoreEffectBindingRule(
+        transaction_type_for("internal_approval"),
+        frozenset({"human_approval_recorded"}),
+        "internal_approval",
+        (("human_approval_recorded", 1),),
+    ),
+    "delivery_authorization": _CoreEffectBindingRule(
+        transaction_type_for("delivery_authorization"),
+        frozenset({"decision_recorded"}),
+        "delivery_authorization",
+        (("decision_recorded", 1),),
+    ),
+    "delivery_attempt": _CoreEffectBindingRule(
+        transaction_type_for("delivery_attempt"),
+        frozenset({"delivery_attempted"}),
+        "delivery_attempt",
+        (("delivery_attempted", 1),),
+    ),
+    "delivery_result": _CoreEffectBindingRule(
+        transaction_type_for("delivery_result"),
+        frozenset(
+            {
+                "delivery_bundle_prepared",
+                "delivery_draft_created",
+                "delivery_succeeded",
+                "delivery_failed",
+                "decision_recorded",
+            }
+        ),
+        "delivery_result",
+        None,
+    ),
 }
 
 
@@ -357,7 +463,12 @@ class CoreRunDomainVerifier:
         run_id: str,
     ) -> VerifiedCoreRun:
         try:
-            snapshot = store.load_snapshot(run_id)
+            history = store.load_history()
+        except Exception as exc:
+            raise CoreRunError("control_store_integrity_invalid") from exc
+        self.verify_history(history)
+        try:
+            snapshot = history.snapshot_at_revision(run_id, history.store_revision)
         except Exception as exc:
             raise CoreRunError("control_store_integrity_invalid") from exc
         if len(snapshot.run_contract_bindings) != 1:
@@ -373,26 +484,474 @@ class CoreRunDomainVerifier:
             or binding.runtime != snapshot.run.runtime
         ):
             raise CoreRunError("core_run_head_mismatch")
-        contracts = self._load_contracts(store, binding)
+        return self._verify_snapshot(history, snapshot)
+
+    def verify_history(
+        self,
+        history: ControlStoreHistory,
+        *,
+        through_revision: int | None = None,
+    ) -> None:
+        """Verify every committed receipt prefix without consulting final tips."""
+
+        limit = history.store_revision if through_revision is None else through_revision
+        receipts = [
+            item for item in history.transactions if item.committed_revision <= limit
+        ]
+        if any(snapshot.deliveries for snapshot in history.snapshots):
+            raise CoreRunError("historical_prefix_invalid")
+        if [item.committed_revision for item in receipts] != list(
+            range(1, limit + 1)
+        ):
+            raise CoreRunError("historical_prefix_invalid")
+        for receipt in receipts:
+            try:
+                snapshot = history.snapshot_at_revision(
+                    receipt.run_id,
+                    receipt.committed_revision,
+                )
+                self._verify_snapshot(history, snapshot)
+                self._verify_historical_pr4b_prefix(history, snapshot, receipt)
+            except CoreRunError as exc:
+                if exc.code in {
+                    "reset_history_invalid",
+                    "archive_membership_invalid",
+                    "package_membership_invalid",
+                }:
+                    raise
+                raise CoreRunError("historical_prefix_invalid") from exc
+            except Exception as exc:
+                raise CoreRunError("historical_prefix_invalid") from exc
+
+    def _verify_snapshot(
+        self,
+        history: ControlStoreHistory,
+        snapshot: ControlStoreSnapshot,
+    ) -> VerifiedCoreRun:
+        if len(snapshot.run_contract_bindings) != 1:
+            raise CoreRunError("core_run_not_initialized")
+        binding = snapshot.run_contract_bindings[0]
+        if (
+            binding.run_id != snapshot.run.run_id
+            or binding.workspace_id != snapshot.run.workspace_id
+            or binding.runtime != snapshot.run.runtime
+        ):
+            raise CoreRunError("control_store_integrity_invalid")
+        reader = _AsOfArtifactReader(history, snapshot)
+        contracts = self._load_contracts(reader, binding)
         self._verify_contract_fingerprint(binding)
         self._verify_receipt_bindings(snapshot)
         self._verify_invocation_ownership(snapshot, binding)
         classify_current_lineage(snapshot)
         verify_no_post_seal_records(snapshot)
         self._verify_artifact_graph(snapshot, contracts, binding)
-        self._verify_stage_chain(store, snapshot, contracts, binding)
+        self._verify_stage_chain(reader, snapshot, contracts, binding)
         self._verify_integrity_chain(snapshot)
-        self._verify_claim_chain(store, snapshot, binding)
-        self._verify_gate_chain(store, snapshot, binding, contracts)
+        self._verify_claim_chain(reader, snapshot, binding)
+        self._verify_gate_chain(reader, snapshot, binding, contracts)
         return VerifiedCoreRun(
             snapshot=snapshot,
             binding=binding,
             contracts=contracts,
         )
 
+    def _verify_historical_pr4b_prefix(
+        self,
+        history: ControlStoreHistory,
+        snapshot: ControlStoreSnapshot,
+        receipt: TransactionReceipt,
+    ) -> None:
+        recovery = classify_recovery_legality(snapshot)
+        if recovery.state == "invalid":
+            raise CoreRunError("historical_prefix_invalid")
+        terminal = classify_terminal_legality(snapshot)
+        if terminal.terminal_state == "invalid":
+            raise CoreRunError("historical_prefix_invalid")
+        if receipt.run_head_transitions:
+            self._verify_reset_history(history, snapshot, receipt)
+        if receipt.finalize_renders:
+            self._verify_finalize_render_prefix(history, snapshot, receipt)
+        if (
+            receipt.finalizations
+            or receipt.run_archives
+            or receipt.package_ready_records
+            or receipt.run_archive_artifact_bindings
+            or receipt.package_artifact_bindings
+        ):
+            self._verify_archive_package_reconstruction(history, snapshot, receipt)
+
+    @staticmethod
+    def _verify_reset_history(
+        history: ControlStoreHistory,
+        post: ControlStoreSnapshot,
+        receipt: TransactionReceipt,
+    ) -> None:
+        if (
+            receipt.committed_revision <= 1
+            or len(receipt.run_head_transitions) != 1
+        ):
+            raise CoreRunError("reset_history_invalid")
+        transition_ref = receipt.run_head_transitions[0]
+        transitions = [
+            item
+            for item in post.run_head_transitions
+            if item.head_transition_id == transition_ref.head_transition_id
+        ]
+        if len(transitions) != 1:
+            raise CoreRunError("reset_history_invalid")
+        transition = transitions[0]
+        try:
+            pre = history.snapshot_at_revision(
+                transition.predecessor_run_id,
+                receipt.committed_revision - 1,
+            )
+        except Exception as exc:
+            raise CoreRunError("reset_history_invalid") from exc
+        pre_head = pre.workspace_run_head
+        post_head = post.workspace_run_head
+        if (
+            receipt.transaction_type != transaction_type_for("run_head_transition")
+            or receipt.run_id != transition.successor_run_id
+            or transition.accepted_transaction_id != receipt.transaction_id
+            or transition.prior_workspace_revision != receipt.prior_revision
+            or transition.successor_workspace_revision != receipt.committed_revision
+            or pre_head is None
+            or pre_head.current_run_id != transition.predecessor_run_id
+            or post_head is None
+            or post_head.current_run_id != transition.successor_run_id
+            or post.run.run_id != transition.successor_run_id
+            or any(item.run_id != transition.successor_run_id for item in post.transactions)
+        ):
+            raise CoreRunError("reset_history_invalid")
+
+    @staticmethod
+    def _verify_finalize_render_prefix(
+        history: ControlStoreHistory,
+        post: ControlStoreSnapshot,
+        receipt: TransactionReceipt,
+    ) -> None:
+        if receipt.committed_revision <= 1 or len(receipt.finalize_renders) != 1:
+            raise CoreRunError("historical_prefix_invalid")
+        render_ref = receipt.finalize_renders[0]
+        renders = [
+            item for item in post.finalize_renders if item.render_id == render_ref.render_id
+        ]
+        if len(renders) != 1:
+            raise CoreRunError("historical_prefix_invalid")
+        render = renders[0]
+        try:
+            pre = history.snapshot_at_revision(
+                receipt.run_id,
+                receipt.committed_revision - 1,
+            )
+        except Exception as exc:
+            raise CoreRunError("historical_prefix_invalid") from exc
+        pre_artifacts = {item.artifact_id: item for item in pre.artifacts}
+        post_revisions = {
+            (item.artifact_id, item.revision): item for item in post.artifact_revisions
+        }
+        expected_reader_refs = [
+            (item.artifact_id, item.revision) for item in render.reader_artifacts
+        ]
+        receipt_refs = [
+            (item.artifact_id, item.revision) for item in receipt.artifact_revisions
+        ]
+        audited = pre_artifacts.get(render.audited_brief.artifact_id)
+        audit_report = pre_artifacts.get(render.audit_report.artifact_id)
+        if (
+            receipt.transaction_type != transaction_type_for("finalize_render")
+            or expected_reader_refs != receipt_refs
+            or audited is None
+            or audited.current_revision != render.audited_brief.revision
+            or audit_report is None
+            or audit_report.current_revision != render.audit_report.revision
+            or any(key not in post_revisions for key in expected_reader_refs)
+            or any(
+                key[0] in TERMINAL_INTERNAL_ARTIFACT_IDS
+                for key in expected_reader_refs
+            )
+        ):
+            raise CoreRunError("historical_prefix_invalid")
+
+    @staticmethod
+    def _verify_archive_package_reconstruction(
+        history: ControlStoreHistory,
+        post: ControlStoreSnapshot,
+        receipt: TransactionReceipt,
+    ) -> None:
+        if receipt.committed_revision <= 1:
+            raise CoreRunError("archive_membership_invalid")
+        try:
+            pre = history.snapshot_at_revision(
+                receipt.run_id,
+                receipt.committed_revision - 1,
+            )
+        except Exception as exc:
+            raise CoreRunError("archive_membership_invalid") from exc
+        if (
+            len(receipt.finalizations) != 1
+            or len(receipt.run_archives) != 1
+            or len(receipt.package_ready_records) != 1
+        ):
+            raise CoreRunError("archive_membership_invalid")
+        finalization_id = receipt.finalizations[0].finalization_id
+        archive_id = receipt.run_archives[0].archive_id
+        package_id = receipt.package_ready_records[0].package_id
+        finalizations = [
+            item
+            for item in post.finalizations
+            if item.finalization_id == finalization_id
+        ]
+        archives = [item for item in post.run_archives if item.archive_id == archive_id]
+        packages = [
+            item
+            for item in post.package_ready_records
+            if item.package_id == package_id
+        ]
+        if len(finalizations) != 1 or len(archives) != 1 or len(packages) != 1:
+            raise CoreRunError("archive_membership_invalid")
+        finalization = finalizations[0]
+        archive = archives[0]
+        package = packages[0]
+        if (
+            receipt.transaction_type != transaction_type_for("finalize_complete")
+            or [
+                (item.artifact_id, item.revision)
+                for item in receipt.artifact_revisions
+            ]
+            != [
+                ("core_v2_run_archive", 1),
+                ("core_v2_package_manifest", 1),
+            ]
+            or archive.finalization_id != finalization.finalization_id
+            or package.finalization_id != finalization.finalization_id
+            or package.archive_id != archive.archive_id
+            or any(
+                item.accepted_transaction_id != receipt.transaction_id
+                for item in (finalization, archive, package)
+            )
+        ):
+            raise CoreRunError("archive_membership_invalid")
+
+        pre_revisions = {
+            (item.artifact_id, item.revision): item for item in pre.artifact_revisions
+        }
+        archive_members = []
+        for artifact in sorted(pre.artifacts, key=lambda item: item.artifact_id):
+            if (
+                artifact.current_revision <= 0
+                or artifact.artifact_id in TERMINAL_INTERNAL_ARTIFACT_IDS
+            ):
+                continue
+            revision = pre_revisions.get(
+                (artifact.artifact_id, artifact.current_revision)
+            )
+            if revision is None:
+                raise CoreRunError("archive_membership_invalid")
+            archive_members.append(revision)
+        actual_archive_bindings = sorted(
+            (
+                item
+                for item in post.run_archive_artifact_bindings
+                if item.archive_id == archive.archive_id
+            ),
+            key=lambda item: item.position,
+        )
+        expected_archive_rows = [
+            (
+                receipt.run_id,
+                position,
+                revision.artifact_id,
+                revision.revision,
+                revision.sha256,
+                archive_artifact_usage(revision.artifact_id),
+                receipt.transaction_id,
+            )
+            for position, revision in enumerate(archive_members)
+        ]
+        actual_archive_rows = [
+            (
+                item.run_id,
+                item.position,
+                item.artifact_id,
+                item.artifact_revision,
+                item.artifact_sha256,
+                item.usage,
+                item.accepted_transaction_id,
+            )
+            for item in actual_archive_bindings
+        ]
+        if (
+            archive.included_count != len(archive_members)
+            or actual_archive_rows != expected_archive_rows
+            or [
+                (item.archive_id, item.position)
+                for item in receipt.run_archive_artifact_bindings
+            ]
+            != [(archive.archive_id, index) for index in range(len(archive_members))]
+        ):
+            raise CoreRunError("archive_membership_invalid")
+        archive_payload = {
+            "schema_version": "briefloop.core_v2_run_archive.v1",
+            "run_id": receipt.run_id,
+            "finalization_id": finalization.finalization_id,
+            "artifacts": [
+                {
+                    "artifact_id": item.artifact_id,
+                    "revision": item.revision,
+                    "sha256": item.sha256,
+                }
+                for item in archive_members
+            ],
+        }
+        archive_bytes = canonical_json_bytes(archive_payload) + b"\n"
+
+        renders = [
+            item for item in pre.finalize_renders if item.render_id == finalization.render_id
+        ]
+        if len(renders) != 1:
+            raise CoreRunError("package_membership_invalid")
+        render = renders[0]
+        pre_artifacts = {item.artifact_id: item for item in pre.artifacts}
+        reader_revisions = []
+        for reference in render.reader_artifacts:
+            artifact = pre_artifacts.get(reference.artifact_id)
+            revision = pre_revisions.get((reference.artifact_id, reference.revision))
+            if (
+                artifact is None
+                or artifact.current_revision != reference.revision
+                or revision is None
+                or reference.artifact_id in TERMINAL_INTERNAL_ARTIFACT_IDS
+            ):
+                raise CoreRunError("package_membership_invalid")
+            reader_revisions.append(revision)
+
+        post_revisions = {
+            (item.artifact_id, item.revision): item for item in post.artifact_revisions
+        }
+        archive_revision = post_revisions.get(
+            (archive.archive_artifact.artifact_id, archive.archive_artifact.revision)
+        )
+        package_revision = post_revisions.get(
+            (
+                package.package_manifest_artifact.artifact_id,
+                package.package_manifest_artifact.revision,
+            )
+        )
+        if (
+            archive_revision is None
+            or package_revision is None
+            or archive.archive_artifact.artifact_id != "core_v2_run_archive"
+            or archive.archive_artifact.revision != 1
+            or package.package_manifest_artifact.artifact_id
+            != "core_v2_package_manifest"
+            or package.package_manifest_artifact.revision != 1
+            or archive_revision.path
+            != "output/intermediate/core_v2_run_archive.json"
+            or package_revision.path
+            != "output/intermediate/core_v2_package_manifest.json"
+            or archive_revision.size_bytes != len(archive_bytes)
+            or archive_revision.sha256 != sha256_hex(archive_bytes)
+            or archive.manifest_sha256 != archive_revision.sha256
+            or archive_revision.producer_kind != "control_tool"
+            or archive_revision.producer_id != "core-v2-finalize-complete"
+            or package_revision.producer_kind != "control_tool"
+            or package_revision.producer_id != "core-v2-finalize-complete"
+        ):
+            raise CoreRunError("archive_membership_invalid")
+        reader_payload = [
+            {
+                "artifact_id": item.artifact_id,
+                "revision": item.revision,
+                "sha256": item.sha256,
+            }
+            for item in reader_revisions
+        ]
+        package_payload = {
+            "schema_version": "briefloop.core_v2_package_manifest.v1",
+            "run_id": receipt.run_id,
+            "finalization_id": finalization.finalization_id,
+            "archive": {
+                "artifact_id": archive_revision.artifact_id,
+                "revision": archive_revision.revision,
+                "sha256": archive_revision.sha256,
+            },
+            "reader_artifacts": reader_payload,
+        }
+        package_bytes = canonical_json_bytes(package_payload) + b"\n"
+        expected_package_members = [
+            *[(item, "reader") for item in reader_revisions],
+            (archive_revision, "archive"),
+            (package_revision, "manifest"),
+        ]
+        actual_package_bindings = sorted(
+            (
+                item
+                for item in post.package_artifact_bindings
+                if item.package_id == package.package_id
+            ),
+            key=lambda item: item.position,
+        )
+        expected_package_rows = [
+            (
+                receipt.run_id,
+                position,
+                revision.artifact_id,
+                revision.revision,
+                revision.sha256,
+                usage,
+                receipt.transaction_id,
+            )
+            for position, (revision, usage) in enumerate(expected_package_members)
+        ]
+        actual_package_rows = [
+            (
+                item.run_id,
+                item.position,
+                item.artifact_id,
+                item.artifact_revision,
+                item.artifact_sha256,
+                item.usage,
+                item.accepted_transaction_id,
+            )
+            for item in actual_package_bindings
+        ]
+        if (
+            package.artifact_count != len(reader_revisions) + 2
+            or actual_package_rows != expected_package_rows
+            or [
+                (item.package_id, item.position)
+                for item in receipt.package_artifact_bindings
+            ]
+            != [
+                (package.package_id, index)
+                for index in range(len(expected_package_members))
+            ]
+            or package_revision.size_bytes != len(package_bytes)
+            or package_revision.sha256 != sha256_hex(package_bytes)
+            or package.package_manifest_sha256 != package_revision.sha256
+        ):
+            raise CoreRunError("package_membership_invalid")
+        reader = _AsOfArtifactReader(history, post)
+        if (
+            reader.read_artifact_revision_bytes(
+                receipt.run_id,
+                archive_revision.artifact_id,
+                archive_revision.revision,
+            )
+            != archive_bytes
+            or reader.read_artifact_revision_bytes(
+                receipt.run_id,
+                package_revision.artifact_id,
+                package_revision.revision,
+            )
+            != package_bytes
+        ):
+            raise CoreRunError("package_membership_invalid")
+
     @staticmethod
     def _load_contracts(
-        store: SQLiteControlStore,
+        store: SQLiteControlStore | _AsOfArtifactReader,
         binding: RunContractBinding,
     ) -> ValidatedRuntimeContractPayloads:
         try:
@@ -572,7 +1131,16 @@ class CoreRunDomainVerifier:
             ) != expected:
                 raise CoreRunError("control_store_integrity_invalid")
             if submission.invocation_id is None:
-                if (
+                repair_owned = any(
+                    item.accepted_transaction_id
+                    == submission.accepted_transaction_id
+                    and item.successor_artifact.artifact_id
+                    == submission.artifact_id
+                    and item.successor_artifact.revision
+                    == submission.artifact_revision
+                    for item in snapshot.artifact_supersessions
+                )
+                if not repair_owned and (
                     submission.artifact_id != "input_classification"
                     or submission.producer_tool_id != "input-governance-v2"
                 ):
@@ -610,11 +1178,35 @@ class CoreRunDomainVerifier:
         proposal_artifact_ids = {
             item.artifact_id for item in snapshot.accepted_proposals
         }
+        terminal_artifact_ids = {
+            reference.artifact_id
+            for render in snapshot.finalize_renders
+            for reference in render.reader_artifacts
+        }
+        terminal_artifact_ids.update(
+            archive.archive_artifact.artifact_id
+            for archive in snapshot.run_archives
+        )
+        terminal_artifact_ids.update(
+            package.package_manifest_artifact.artifact_id
+            for package in snapshot.package_ready_records
+        )
+        terminal_artifact_ids.update(
+            evaluation.report_artifact.artifact_id
+            for evaluation in snapshot.gate_evaluations
+            if evaluation.stage_id == "finalize"
+        )
+        terminal_artifact_ids.update(
+            result.evidence_artifact.artifact_id
+            for result in snapshot.delivery_results
+            if result.evidence_artifact is not None
+        )
         expected_ids = (
             set(CORE_ARTIFACT_IDS)
             | set(INTERNAL_CONTRACT_ARTIFACT_IDS)
             | source_artifact_ids
             | proposal_artifact_ids
+            | terminal_artifact_ids
         )
         if set(artifacts) != expected_ids:
             raise CoreRunError("control_store_integrity_invalid")
@@ -722,6 +1314,39 @@ class CoreRunDomainVerifier:
                 evaluation.report_artifact.revision,
                 ("control_tool", "core-v2-preloaded-quality-gates"),
             )
+        for render in snapshot.finalize_renders:
+            for reference in render.reader_artifacts:
+                bind_producer(
+                    reference.artifact_id,
+                    reference.revision,
+                    ("control_tool", "core-v2-finalize-render"),
+                )
+        for archive in snapshot.run_archives:
+            bind_producer(
+                archive.archive_artifact.artifact_id,
+                archive.archive_artifact.revision,
+                ("control_tool", "core-v2-finalize-complete"),
+            )
+        for package in snapshot.package_ready_records:
+            bind_producer(
+                package.package_manifest_artifact.artifact_id,
+                package.package_manifest_artifact.revision,
+                ("control_tool", "core-v2-finalize-complete"),
+            )
+        for result in snapshot.delivery_results:
+            if (
+                result.evidence_artifact is not None
+                and result.evidence_artifact.artifact_id
+                not in {
+                    item.package_manifest_artifact.artifact_id
+                    for item in snapshot.package_ready_records
+                }
+            ):
+                bind_producer(
+                    result.evidence_artifact.artifact_id,
+                    result.evidence_artifact.revision,
+                    ("control_tool", "core-v2-delivery-result"),
+                )
 
         if set(revisions) != set(expected_producers):
             raise CoreRunError("control_store_integrity_invalid")
@@ -1992,6 +2617,172 @@ def _verified_core_receipt_binding(
             or fingerprint != expected_binding_fingerprint
         ):
             raise CoreRunError("control_store_integrity_invalid")
+    elif rule.primary_family == "repair_cycle":
+        refs = [item.repair_id for item in receipt.repair_cycles]
+        records = [
+            item for item in snapshot.repair_cycles if item.repair_id == primary_id
+        ]
+        if (
+            refs != [primary_id]
+            or len(records) != 1
+            or records[0].accepted_transaction_id != transaction_id
+            or records[0].request_fingerprint != fingerprint
+            or records[0].start_event_id != event.event_id
+        ):
+            raise CoreRunError("control_store_integrity_invalid")
+    elif rule.primary_family == "artifact_supersession":
+        refs = [item.supersession_id for item in receipt.artifact_supersessions]
+        records = [
+            item
+            for item in snapshot.artifact_supersessions
+            if item.supersession_id == primary_id
+        ]
+        if (
+            refs != [primary_id]
+            or len(records) != 1
+            or records[0].accepted_transaction_id != transaction_id
+            or records[0].request_fingerprint != fingerprint
+            or records[0].accepted_event_id != event.event_id
+            or len(receipt.owned_artifact_submissions) != 1
+            or len(receipt.artifact_revisions) != 1
+        ):
+            raise CoreRunError("control_store_integrity_invalid")
+    elif rule.primary_family == "repair_completion":
+        refs = [item.repair_completion_id for item in receipt.repair_completions]
+        records = [
+            item
+            for item in snapshot.repair_completions
+            if item.repair_completion_id == primary_id
+        ]
+        if (
+            refs != [primary_id]
+            or len(records) != 1
+            or records[0].accepted_transaction_id != transaction_id
+            or records[0].request_fingerprint != fingerprint
+            or records[0].completion_event_id != event.event_id
+            or sorted(item.transition_id for item in receipt.stage_transitions)
+            != sorted(records[0].reopened_transition_ids)
+        ):
+            raise CoreRunError("control_store_integrity_invalid")
+    elif rule.primary_family == "recovery_completion":
+        refs = [item.recovery_id for item in receipt.recovery_completions]
+        records = [
+            item
+            for item in snapshot.recovery_completions
+            if item.recovery_id == primary_id
+        ]
+        if (
+            refs != [primary_id]
+            or len(records) != 1
+            or records[0].accepted_transaction_id != transaction_id
+            or records[0].request_fingerprint != fingerprint
+            or records[0].completion_event_id != event.event_id
+        ):
+            raise CoreRunError("control_store_integrity_invalid")
+    elif rule.primary_family == "run_head_transition":
+        refs = [item.head_transition_id for item in receipt.run_head_transitions]
+        records = [
+            item
+            for item in snapshot.run_head_transitions
+            if item.head_transition_id == primary_id
+        ]
+        if (
+            refs != [primary_id]
+            or len(records) != 1
+            or records[0].accepted_transaction_id != transaction_id
+            or records[0].request_fingerprint != fingerprint
+            or records[0].transition_event_id != event.event_id
+            or records[0].successor_run_id != snapshot.run.run_id
+        ):
+            raise CoreRunError("control_store_integrity_invalid")
+    elif rule.primary_family == "finalize_render":
+        refs = [item.render_id for item in receipt.finalize_renders]
+        records = [
+            item for item in snapshot.finalize_renders if item.render_id == primary_id
+        ]
+        if (
+            refs != [primary_id]
+            or len(records) != 1
+            or records[0].accepted_transaction_id != transaction_id
+            or records[0].request_fingerprint != fingerprint
+            or records[0].render_event_id != event.event_id
+            or len(receipt.artifact_revisions) != len(records[0].reader_artifacts)
+        ):
+            raise CoreRunError("control_store_integrity_invalid")
+    elif rule.primary_family == "finalization":
+        refs = [item.finalization_id for item in receipt.finalizations]
+        records = [
+            item for item in snapshot.finalizations if item.finalization_id == primary_id
+        ]
+        if (
+            refs != [primary_id]
+            or len(records) != 1
+            or records[0].accepted_transaction_id != transaction_id
+            or records[0].request_fingerprint != fingerprint
+            or records[0].finalization_event_id != event.event_id
+            or [item.transition_id for item in receipt.stage_transitions]
+            != [records[0].finalize_transition_id]
+            or len(receipt.run_archives) != 1
+            or len(receipt.package_ready_records) != 1
+        ):
+            raise CoreRunError("control_store_integrity_invalid")
+    elif rule.primary_family == "internal_approval":
+        refs = [item.approval_id for item in receipt.approvals]
+        records = [item for item in snapshot.approvals if item.approval_id == primary_id]
+        bindings = [
+            item
+            for item in snapshot.approval_package_bindings
+            if item.approval_id == primary_id
+        ]
+        if (
+            refs != [primary_id]
+            or len(records) != 1
+            or len(bindings) != 1
+            or records[0].event_id != event.event_id
+            or bindings[0].accepted_transaction_id != transaction_id
+        ):
+            raise CoreRunError("control_store_integrity_invalid")
+    elif rule.primary_family == "delivery_authorization":
+        refs = [item.authorization_id for item in receipt.delivery_authorizations]
+        records = [
+            item
+            for item in snapshot.delivery_authorizations
+            if item.authorization_id == primary_id
+        ]
+        if (
+            refs != [primary_id]
+            or len(records) != 1
+            or records[0].accepted_transaction_id != transaction_id
+            or records[0].request_fingerprint != fingerprint
+            or records[0].authorization_event_id != event.event_id
+        ):
+            raise CoreRunError("control_store_integrity_invalid")
+    elif rule.primary_family == "delivery_attempt":
+        refs = [item.attempt_id for item in receipt.delivery_attempts]
+        records = [
+            item for item in snapshot.delivery_attempts if item.attempt_id == primary_id
+        ]
+        if (
+            refs != [primary_id]
+            or len(records) != 1
+            or records[0].accepted_transaction_id != transaction_id
+            or records[0].request_fingerprint != fingerprint
+            or records[0].attempt_event_id != event.event_id
+        ):
+            raise CoreRunError("control_store_integrity_invalid")
+    elif rule.primary_family == "delivery_result":
+        refs = [item.result_id for item in receipt.delivery_results]
+        records = [
+            item for item in snapshot.delivery_results if item.result_id == primary_id
+        ]
+        if (
+            refs != [primary_id]
+            or len(records) != 1
+            or records[0].accepted_transaction_id != transaction_id
+            or records[0].request_fingerprint != fingerprint
+            or records[0].result_event_id != event.event_id
+        ):
+            raise CoreRunError("control_store_integrity_invalid")
     else:  # pragma: no cover - the frozen table exhausts this branch.
         raise CoreRunError("control_store_integrity_invalid")
     return event, binding
@@ -2008,6 +2799,56 @@ def _verify_core_receipt_event_set(
     actual_counts = Counter(event.event_type for event in events)
     if rule.receipt_event_counts is not None:
         if actual_counts != Counter(dict(rule.receipt_event_counts)):
+            raise CoreRunError("control_store_integrity_invalid")
+        return
+    if rule.primary_family == "repair_completion":
+        repair_events = [
+            item for item in events if item.event_type == "repair_completed"
+        ]
+        transition_events = [
+            item for item in events if item.event_type == "stage_status_changed"
+        ]
+        transition_ids = [item.transition_id for item in receipt.stage_transitions]
+        transitions = [
+            item
+            for item in snapshot.stage_transitions
+            if item.transition_id in transition_ids
+        ]
+        if (
+            len(repair_events) != 1
+            or len(transitions) != len(transition_ids)
+            or len(transition_events) != len(transitions)
+            or {item.transition_event_id for item in transitions}
+            != {item.event_id for item in transition_events}
+        ):
+            raise CoreRunError("control_store_integrity_invalid")
+        return
+    if rule.primary_family == "run_head_transition":
+        reset_events = [item for item in events if item.event_type == "run_reset"]
+        initialized_events = [
+            item for item in events if item.event_type == "run_initialized"
+        ]
+        stage_events = [
+            item for item in events if item.event_type == "stage_status_changed"
+        ]
+        transition_ids = [item.transition_id for item in receipt.stage_transitions]
+        transitions = [
+            item
+            for item in snapshot.stage_transitions
+            if item.transition_id in transition_ids
+        ]
+        if (
+            len(reset_events) != 1
+            or len(initialized_events) != 1
+            or len(transitions) != len(transition_ids)
+            or len(stage_events) != len(transitions)
+            or {item.transition_event_id for item in transitions}
+            != {item.event_id for item in stage_events}
+        ):
+            raise CoreRunError("control_store_integrity_invalid")
+        return
+    if rule.primary_family == "delivery_result":
+        if len(events) != 1 or events[0].event_type not in rule.primary_event_types:
             raise CoreRunError("control_store_integrity_invalid")
         return
     if rule.primary_family != "stage_transition":
@@ -2067,7 +2908,16 @@ def resolve_core_replay(
     if receipt is None:
         return None
     try:
-        snapshot = CoreRunDomainVerifier().verify(store, run_id).snapshot
+        history = store.load_history()
+        verifier = CoreRunDomainVerifier()
+        verifier.verify_history(
+            history,
+            through_revision=receipt.committed_revision,
+        )
+        snapshot = history.snapshot_at_revision(
+            run_id,
+            receipt.committed_revision,
+        )
         event, binding = _verified_core_receipt_binding(snapshot, receipt)
         if binding.request_id != request_id:
             raise CoreRunError("control_store_integrity_invalid")
@@ -2109,7 +2959,13 @@ def resolve_core_replay(
             primary_record_id=binding.primary_record_id,
         )
     except CoreRunError as exc:
-        if exc.code == "submission_replay_conflict":
+        if exc.code in {
+            "submission_replay_conflict",
+            "historical_prefix_invalid",
+            "reset_history_invalid",
+            "archive_membership_invalid",
+            "package_membership_invalid",
+        }:
             raise
         raise ControlStoreCommitOutcomeUnknown("commit_outcome_unknown") from exc
     except ControlStoreCommitOutcomeUnknown:
