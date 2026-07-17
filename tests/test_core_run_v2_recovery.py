@@ -3,6 +3,8 @@ from __future__ import annotations
 from copy import deepcopy
 from dataclasses import replace
 from datetime import datetime, timezone
+import hashlib
+import json
 from pathlib import Path
 
 import pytest
@@ -49,6 +51,7 @@ from multi_agent_brief.core_run_v2.verifier import (
     _verified_core_receipt_binding,
     resolve_core_replay,
 )
+from multi_agent_brief.intake_v2.service import IntakeService
 
 RUN_ID = "RUN-RECOVERY-PREFIX-001"
 NOW = "2026-07-17T00:00:00Z"
@@ -961,6 +964,102 @@ def test_clean_historical_prefix_has_no_recovery_authority(tmp_path: Path) -> No
         ).decision
         == "deny"
     )
+
+
+def test_old_run_intake_after_reset_fails_closed_without_store_write(
+    tmp_path: Path,
+) -> None:
+    workspace = _initialized_workspace(tmp_path)
+    successor_run_id = "RUN-RECOVERY-PREFIX-002"
+    with SQLiteControlStore.open(workspace / "briefloop.db", clock=CLOCK) as store:
+        _reset_run(
+            store,
+            predecessor_run_id=RUN_ID,
+            successor_run_id=successor_run_id,
+            sequence=1,
+        )
+        before_revision = store.current_revision
+        before = store.load_snapshot(RUN_ID)
+
+    invocation_id = "INV-RECOVERY-OLD-RUN-SOURCE-001"
+    scratch = workspace / "scratch" / invocation_id
+    scratch.mkdir(parents=True)
+    content = b"Synthetic old-run source bytes.\n"
+    content_path = scratch / "source_content.txt"
+    content_path.write_bytes(content)
+    proposal_path = scratch / "source_proposal.json"
+    proposal_path.write_text(
+        json.dumps(
+            {
+                "schema_version": "briefloop.source_proposal.v2",
+                "proposal_id": "PROP-RECOVERY-OLD-RUN-001",
+                "run_id": RUN_ID,
+                "source_id": "SRC-RECOVERY-OLD-RUN-001",
+                "origin_type": "uploaded_file",
+                "acquisition_method": "manual_upload",
+                "material_kind": "uploaded_file",
+                "locator": {
+                    "kind": "file",
+                    "path": f"scratch/{invocation_id}/source_content.txt",
+                },
+                "title": "Synthetic old-run source",
+                "retrieved_at": NOW,
+                "source_category": "regulator",
+                "retrieval_source_type": "local_file",
+                "underlying_evidence_type": "filing",
+                "content_sha256": hashlib.sha256(content).hexdigest(),
+                "content_media_type": "text/plain",
+            },
+            sort_keys=True,
+            separators=(",", ":"),
+        )
+    )
+    request_path = scratch / "submit_request.json"
+    request_path.write_text(
+        json.dumps(
+            {
+                "schema_version": "briefloop.source_commit_request.v2",
+                "request_id": "REQ-RECOVERY-OLD-RUN-SOURCE-001",
+                "run_id": RUN_ID,
+                "invocation_id": invocation_id,
+                "proposal_path": f"scratch/{invocation_id}/source_proposal.json",
+                "content_path": f"scratch/{invocation_id}/source_content.txt",
+                "raw_payload_path": None,
+                "expected_store_revision": before_revision,
+            },
+            sort_keys=True,
+            separators=(",", ":"),
+        )
+    )
+
+    result = IntakeService(workspace, clock=CLOCK).submit_source(
+        request_path.relative_to(workspace).as_posix()
+    )
+
+    assert result.to_dict() == {
+        "status": "failed_uncommitted",
+        "error_code": "control_store_integrity_invalid",
+    }
+    with SQLiteControlStore.open(workspace / "briefloop.db", clock=CLOCK) as store:
+        after = store.load_snapshot(RUN_ID)
+        assert store.current_revision == before_revision == 2
+        assert after.sources == before.sources
+        assert after.accepted_proposals == before.accepted_proposals
+        assert after.artifacts == before.artifacts
+        assert after.artifact_revisions == before.artifact_revisions
+        assert store.load_workspace_run_head().current_run_id == successor_run_id
+        history = store.load_history()
+        CoreRunDomainVerifier().verify_history(history)
+        successor = CoreRunDomainVerifier().verify(store, successor_run_id).snapshot
+        assert [
+            (
+                item.predecessor_run_id,
+                item.successor_run_id,
+                item.prior_workspace_revision,
+                item.successor_workspace_revision,
+            )
+            for item in successor.run_head_transitions
+        ] == [(RUN_ID, successor_run_id, 1, 2)]
 
 
 def test_blocked_recovery_denies_terminal_spine_effects_without_writes(
