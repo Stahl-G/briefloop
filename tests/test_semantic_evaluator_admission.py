@@ -12,6 +12,7 @@ import pytest
 import multi_agent_brief.semantic_evaluator.admission as admission_module
 import multi_agent_brief.semantic_evaluator.instrument as instrument_module
 import multi_agent_brief.semantic_evaluator.profile as profile_module
+import multi_agent_brief.semantic_evaluator.prompts as prompts_module
 import multi_agent_brief.semantic_evaluator.snapshot as snapshot_module
 from multi_agent_brief.semantic_evaluator.admission import (
     admit_inputs,
@@ -354,6 +355,37 @@ def test_direct_prompt_assembly_rejects_stale_context_hash() -> None:
         )
 
 
+def test_direct_prompt_assembly_translates_package_resource_failure(
+    monkeypatch,
+) -> None:
+    decision = _admit("# 合成材料".encode())
+    acquisition_calls = 0
+
+    def fail_resource_acquisition():
+        nonlocal acquisition_calls
+        acquisition_calls += 1
+        raise EvaluatorResourceError("evaluator_resource_unavailable")
+
+    monkeypatch.setattr(
+        prompts_module,
+        "acquire_resource_snapshot",
+        fail_resource_acquisition,
+    )
+    dimension = load_profile().profile.dimensions[0]
+    with pytest.raises(SemanticEvaluatorError) as raised:
+        build_dimension_prompt(
+            reader_artifact=decision.reader.artifact,
+            normalized_text=decision.reader.normalized_text,
+            bounded_context=decision.bounded_context,
+            dimension=dimension,
+            assessment_plan=decision.assessment_plan,
+        )
+    assert raised.value.reason_code == "instrument_manifest_mismatch"
+    assert raised.value.__cause__ is None
+    assert raised.value.__context__ is None
+    assert acquisition_calls == 1
+
+
 class _BadSizer(FakeSizer):
     def __init__(self, result: object = None, *, raises: bool = False) -> None:
         super().__init__()
@@ -672,6 +704,73 @@ def test_malformed_loaded_profile_instance_is_never_a_source_failure(
     assert decision.assessment_plan is None
     assert decision.prompts == ()
     assert sizer.calls == 0
+
+
+@pytest.mark.parametrize("failure_surface", ["profile_access", "profile_dump"])
+@pytest.mark.parametrize("error_type", [OSError, RuntimeError, KeyError])
+def test_explicit_loaded_profile_exceptions_are_value_free_and_preplan(
+    failure_surface: str,
+    error_type: type[Exception],
+    monkeypatch,
+) -> None:
+    current = load_profile()
+    hidden_detail = "/private/synthetic-customer/profile"
+    if failure_surface == "profile_access":
+
+        class MalformedLoadedProfile(LoadedProfile):
+            def __getattribute__(self, name):
+                if name == "profile":
+                    raise error_type(hidden_detail)
+                return super().__getattribute__(name)
+
+        malformed = MalformedLoadedProfile(
+            profile=current.profile,
+            profile_sha256=current.profile_sha256,
+        )
+    else:
+        profile_type = type(current.profile)
+
+        class MalformedProfile(profile_type):
+            def model_dump(self, *_args, **_kwargs):
+                raise error_type(hidden_detail)
+
+        malformed = LoadedProfile(
+            profile=MalformedProfile.model_validate(
+                current.profile.model_dump(mode="json")
+            ),
+            profile_sha256=current.profile_sha256,
+        )
+    sizer = FakeSizer()
+    monkeypatch.setattr(
+        admission_module,
+        "build_assessment_plan",
+        _fail_if_dependency_reaches_planning,
+    )
+    monkeypatch.setattr(
+        admission_module,
+        "build_dimension_prompt",
+        _fail_if_dependency_reaches_planning,
+    )
+    decision = _admit(
+        "# 合成材料\n".encode(),
+        sizer=sizer,
+        loaded_profile=malformed,
+    )
+    assert decision.reason_codes == ("profile_invalid",)
+    assert decision.assessment_plan is None
+    assert decision.prompts == ()
+    assert hidden_detail not in repr(decision)
+    assert sizer.calls == 0
+
+    with pytest.raises(SemanticEvaluatorError) as raised:
+        instrument_module.build_instrument_manifest(
+            _config(),
+            loaded_profile=malformed,
+        )
+    assert raised.value.reason_code == "profile_invalid"
+    assert raised.value.__cause__ is None
+    assert raised.value.__context__ is None
+    assert hidden_detail not in repr(raised.value)
 
 
 @pytest.mark.parametrize(

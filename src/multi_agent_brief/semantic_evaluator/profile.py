@@ -128,6 +128,8 @@ def validate_loaded_profile(loaded: LoadedProfile) -> None:
 def strict_loaded_profile_copy(loaded: LoadedProfile) -> LoadedProfile:
     """Detach and strictly revalidate a caller- or package-supplied profile."""
 
+    strict: LoadedProfile | None = None
+    invalid = False
     try:
         if not isinstance(loaded, LoadedProfile):
             raise TypeError("profile_invalid")
@@ -141,13 +143,9 @@ def strict_loaded_profile_copy(loaded: LoadedProfile) -> LoadedProfile:
             profile_sha256=loaded.profile_sha256,
         )
         validate_loaded_profile(strict)
-    except (
-        AttributeError,
-        SemanticEvaluatorError,
-        TypeError,
-        ValidationError,
-        ValueError,
-    ):
+    except Exception:
+        invalid = True
+    if invalid or strict is None:
         raise SemanticEvaluatorError("profile_invalid") from None
     return strict
 

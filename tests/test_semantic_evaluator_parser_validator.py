@@ -46,6 +46,7 @@ from multi_agent_brief.semantic_evaluator.resources import EvaluatorResourceErro
 from multi_agent_brief.semantic_evaluator.serialization import (
     canonical_json_bytes,
     canonical_json_text,
+    canonical_model_sha256,
     canonical_sha256,
     sha256_bytes,
 )
@@ -1305,6 +1306,25 @@ def test_assembly_rejects_self_consistent_noncurrent_manifest_before_evidence() 
             admission=forged,
             dimension_attempt_evidence=evidence,
         )
+
+
+def test_public_manifest_mutation_cannot_rewrite_retained_snapshot_authority() -> None:
+    _reader, _context, _profile, _plan, decision, evidence, _attempts = (
+        _complete_no_finding_validation_case()
+    )
+    decision.instrument_manifest.provider_id = "forged-provider"
+    decision.instrument_manifest.instrument_sha256 = canonical_model_sha256(
+        decision.instrument_manifest,
+        exclude=("instrument_sha256",),
+    )
+    with pytest.raises(SemanticEvaluatorError) as raised:
+        assemble_semantic_assessment_run(
+            admission=decision,
+            dimension_attempt_evidence=evidence,
+        )
+    assert raised.value.reason_code == "instrument_manifest_mismatch"
+    assert raised.value.__cause__ is None
+    assert raised.value.__context__ is None
 
 
 @pytest.mark.parametrize("failure_site", ["profile", "component", "prompt"])

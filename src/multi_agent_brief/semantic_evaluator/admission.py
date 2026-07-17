@@ -393,7 +393,9 @@ def admit_inputs(
         bounded_context=context,
         instrument_config=config,
         input_binding=binding,
-        instrument_manifest=manifest,
+        instrument_manifest=InstrumentManifest.model_validate(
+            manifest.model_dump(mode="json")
+        ),
         assessment_plan=plan,
         prompts=tuple(prompts),
         prompt_request_sha256s=tuple(item.request_sha256 for item in prompts),

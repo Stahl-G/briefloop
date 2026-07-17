@@ -17,7 +17,9 @@ from multi_agent_brief.semantic_evaluator.normalization import (
     replay_reader_artifact,
     verify_bounded_context,
 )
+from multi_agent_brief.semantic_evaluator.errors import SemanticEvaluatorError
 from multi_agent_brief.semantic_evaluator.resources import (
+    EvaluatorResourceError,
     resource_sha256,
     resource_text,
 )
@@ -113,7 +115,16 @@ def build_dimension_prompt(
     assessment_plan: AssessmentPlan,
     _resource_snapshot: EvaluatorResourceSnapshot | None = None,
 ) -> FrozenDimensionPrompt:
-    resources = _resource_snapshot or acquire_resource_snapshot()
+    resource_failed = False
+    if _resource_snapshot is None:
+        try:
+            resources = acquire_resource_snapshot()
+        except EvaluatorResourceError:
+            resource_failed = True
+    else:
+        resources = _resource_snapshot
+    if resource_failed:
+        raise SemanticEvaluatorError("instrument_manifest_mismatch") from None
     replay_reader_artifact(reader_artifact, normalized_text)
     bounded_context = verify_bounded_context(bounded_context)
     validate_frozen_assessment_plan(
