@@ -466,7 +466,8 @@ class CoreRunDomainVerifier:
             history = store.load_history()
         except Exception as exc:
             raise CoreRunError("control_store_integrity_invalid") from exc
-        self.verify_history(history)
+        if any(snapshot.deliveries for snapshot in history.snapshots):
+            raise CoreRunError("historical_prefix_invalid")
         try:
             snapshot = history.snapshot_at_revision(run_id, history.store_revision)
         except Exception as exc:
@@ -484,7 +485,9 @@ class CoreRunDomainVerifier:
             or binding.runtime != snapshot.run.runtime
         ):
             raise CoreRunError("core_run_head_mismatch")
-        return self._verify_snapshot(history, snapshot)
+        verified = self._verify_snapshot(history, snapshot)
+        self.verify_history(history)
+        return verified
 
     def verify_history(
         self,
@@ -498,8 +501,6 @@ class CoreRunDomainVerifier:
         receipts = [
             item for item in history.transactions if item.committed_revision <= limit
         ]
-        if any(snapshot.deliveries for snapshot in history.snapshots):
-            raise CoreRunError("historical_prefix_invalid")
         if [item.committed_revision for item in receipts] != list(
             range(1, limit + 1)
         ):
@@ -647,6 +648,11 @@ class CoreRunDomainVerifier:
         except Exception as exc:
             raise CoreRunError("historical_prefix_invalid") from exc
         pre_artifacts = {item.artifact_id: item for item in pre.artifacts}
+        reader = _AsOfArtifactReader(history, pre)
+        promotion = classify_current_audit_promotion(
+            pre,
+            reader.read_artifact_revision_bytes,
+        )
         post_revisions = {
             (item.artifact_id, item.revision): item for item in post.artifact_revisions
         }
@@ -661,6 +667,19 @@ class CoreRunDomainVerifier:
         if (
             receipt.transaction_type != transaction_type_for("finalize_render")
             or expected_reader_refs != receipt_refs
+            or promotion is None
+            or not promotion.is_current_lineage
+            or promotion.proposal_record.proposal_id != render.audit_proposal_id
+            or (
+                promotion.brief_revision.artifact_id,
+                promotion.brief_revision.revision,
+            )
+            != (render.audited_brief.artifact_id, render.audited_brief.revision)
+            or (
+                promotion.report_revision.artifact_id,
+                promotion.report_revision.revision,
+            )
+            != (render.audit_report.artifact_id, render.audit_report.revision)
             or audited is None
             or audited.current_revision != render.audited_brief.revision
             or audit_report is None
@@ -1452,11 +1471,11 @@ class CoreRunDomainVerifier:
             evaluation = evaluations.get(gate_binding.evaluation_id)
             if (
                 transition is None
-                or transition.stage_id != "auditor"
+                or transition.stage_id not in {"auditor", "finalize"}
                 or transition.transition_kind != "complete"
                 or evaluation is None
                 or evaluation.gate_id != gate_binding.gate_id
-                or evaluation.stage_id != "auditor"
+                or evaluation.stage_id != transition.stage_id
                 or gate_binding.accepted_transaction_id
                 != transition.accepted_transaction_id
             ):
@@ -1648,6 +1667,104 @@ class CoreRunDomainVerifier:
                         (current_revision("analyst_draft_snapshot"), "consumed")
                     )
                 return tuple(selected)
+            if stage_id == "finalize":
+                finalizations = [
+                    item
+                    for item in snapshot.finalizations
+                    if item.finalize_transition_id == transition.transition_id
+                    and item.accepted_transaction_id
+                    == transition.accepted_transaction_id
+                ]
+                if len(finalizations) != 1:
+                    raise CoreRunError("control_store_integrity_invalid")
+                finalization = finalizations[0]
+                renders = [
+                    item
+                    for item in snapshot.finalize_renders
+                    if item.render_id == finalization.render_id
+                ]
+                archives = [
+                    item
+                    for item in snapshot.run_archives
+                    if item.finalization_id == finalization.finalization_id
+                    and item.accepted_transaction_id
+                    == transition.accepted_transaction_id
+                ]
+                packages = [
+                    item
+                    for item in snapshot.package_ready_records
+                    if item.finalization_id == finalization.finalization_id
+                    and item.accepted_transaction_id
+                    == transition.accepted_transaction_id
+                ]
+                selected_evaluations = [
+                    evaluations.get(evaluation_id)
+                    for evaluation_id in finalization.finalize_gate_evaluation_ids
+                ]
+                if (
+                    len(renders) != 1
+                    or len(archives) != 1
+                    or len(packages) != 1
+                    or any(item is None for item in selected_evaluations)
+                    or any(
+                        item.stage_id != "finalize"
+                        or item.gate_batch_id
+                        != finalization.finalize_gate_batch_id
+                        or item.status not in {"pass", "warning"}
+                        or item.blocking
+                        for item in selected_evaluations
+                        if item is not None
+                    )
+                ):
+                    raise CoreRunError("control_store_integrity_invalid")
+
+                consumed: dict[tuple[str, int], object] = {}
+
+                def bind_current_consumed(artifact_id: str, revision_number: int):
+                    revision = revisions.get((artifact_id, revision_number))
+                    artifact = artifacts.get(artifact_id)
+                    if (
+                        revision is None
+                        or artifact is None
+                        or artifact.current_revision != revision_number
+                    ):
+                        raise CoreRunError("control_store_integrity_invalid")
+                    consumed[(artifact_id, revision_number)] = revision
+
+                render = renders[0]
+                for reference in render.reader_artifacts:
+                    bind_current_consumed(reference.artifact_id, reference.revision)
+                selected_ids = set(finalization.finalize_gate_evaluation_ids)
+                for gate_input in snapshot.gate_artifact_bindings:
+                    if gate_input.evaluation_id in selected_ids:
+                        bind_current_consumed(
+                            gate_input.artifact_id,
+                            gate_input.artifact_revision,
+                        )
+                if not consumed:
+                    raise CoreRunError("control_store_integrity_invalid")
+
+                archive = archives[0]
+                package = packages[0]
+                produced = (
+                    current_revision(archive.archive_artifact.artifact_id),
+                    current_revision(package.package_manifest_artifact.artifact_id),
+                )
+                if (
+                    archive.archive_artifact.revision != produced[0].revision
+                    or package.package_manifest_artifact.revision
+                    != produced[1].revision
+                    or set(consumed)
+                    & {
+                        (item.artifact_id, item.revision)
+                        for item in produced
+                    }
+                ):
+                    raise CoreRunError("control_store_integrity_invalid")
+                return (
+                    *((item, "consumed") for item in consumed.values()),
+                    *((item, "produced") for item in produced),
+                )
             raise CoreRunError("control_store_integrity_invalid")
 
         for transition in snapshot.stage_transitions:
@@ -1765,6 +1882,67 @@ class CoreRunDomainVerifier:
                     )
                 ):
                     raise CoreRunError("control_store_integrity_invalid")
+            elif (
+                transition.stage_id == "finalize"
+                and transition.transition_kind == "complete"
+            ):
+                finalizations = [
+                    item
+                    for item in snapshot.finalizations
+                    if item.finalize_transition_id == transition.transition_id
+                    and item.accepted_transaction_id
+                    == transition.accepted_transaction_id
+                ]
+                if len(finalizations) != 1:
+                    raise CoreRunError("control_store_integrity_invalid")
+                finalization = finalizations[0]
+                finalize_evaluations = [
+                    evaluations.get(evaluation_id)
+                    for evaluation_id in finalization.finalize_gate_evaluation_ids
+                ]
+                if any(item is None for item in finalize_evaluations):
+                    raise CoreRunError("control_store_integrity_invalid")
+                complete_batch = [
+                    item
+                    for item in snapshot.gate_evaluations
+                    if item.stage_id == "finalize"
+                    and item.gate_batch_id
+                    == finalization.finalize_gate_batch_id
+                ]
+                report_refs = {
+                    (
+                        item.report_artifact.artifact_id,
+                        item.report_artifact.revision,
+                    )
+                    for item in complete_batch
+                }
+                if len(report_refs) != 1:
+                    raise CoreRunError("control_store_integrity_invalid")
+                report_artifact_id, report_revision_number = next(
+                    iter(report_refs)
+                )
+                report_revision = current_revision(report_artifact_id)
+                expected_gates = {
+                    (item.gate_id, item.evaluation_id)
+                    for item in finalize_evaluations
+                    if item is not None
+                    and item.stage_id == "finalize"
+                    and item.gate_batch_id == finalization.finalize_gate_batch_id
+                    and item.status in {"pass", "warning"}
+                    and not item.blocking
+                }
+                if (
+                    report_artifact_id != "finalize_quality_gate_report"
+                    or report_revision.revision != report_revision_number
+                    or len(expected_gates) != len(finalize_evaluations)
+                    or {item.gate_id for item in complete_batch}
+                    != set(GATE_IDS)
+                    or {
+                        item.evaluation_id for item in complete_batch
+                    }
+                    != set(finalization.finalize_gate_evaluation_ids)
+                ):
+                    raise CoreRunError("control_store_integrity_invalid")
             else:
                 expected_gates = set()
             if actual_gates != expected_gates:
@@ -1823,6 +2001,16 @@ class CoreRunDomainVerifier:
                     raise CoreRunError("control_store_integrity_invalid")
                 continue
             if (
+                transition.stage_id == "finalize"
+                and transition.transition_kind == "complete"
+            ):
+                if (
+                    transition.producer_invocation_id is not None
+                    or transition.producer_tool_id != "core-v2-finalize-complete"
+                ):
+                    raise CoreRunError("control_store_integrity_invalid")
+                continue
+            if (
                 transition.transition_kind == "satisfied_by_topology"
                 and transition.stage_id == "screener"
             ):
@@ -1861,18 +2049,25 @@ class CoreRunDomainVerifier:
             ):
                 raise CoreRunError("control_store_integrity_invalid")
         ready = [stage_id for stage_id in stage_ids if states[stage_id].status == "ready"]
-        if len(ready) != 1:
-            raise CoreRunError("control_store_integrity_invalid")
-        first_unfinished = next(
-            (
-                stage_id
+        if snapshot.finalizations:
+            if ready or any(
+                states[stage_id].status not in {"complete", "skipped"}
                 for stage_id in stage_ids
-                if states[stage_id].status not in {"complete", "skipped"}
-            ),
-            None,
-        )
-        if ready[0] != first_unfinished:
-            raise CoreRunError("control_store_integrity_invalid")
+            ):
+                raise CoreRunError("control_store_integrity_invalid")
+        else:
+            if len(ready) != 1:
+                raise CoreRunError("control_store_integrity_invalid")
+            first_unfinished = next(
+                (
+                    stage_id
+                    for stage_id in stage_ids
+                    if states[stage_id].status not in {"complete", "skipped"}
+                ),
+                None,
+            )
+            if ready[0] != first_unfinished:
+                raise CoreRunError("control_store_integrity_invalid")
 
         expected_initial_artifacts = set(CORE_ARTIFACT_IDS)
         if not expected_initial_artifacts <= {
@@ -2189,7 +2384,7 @@ class CoreRunDomainVerifier:
 
     @staticmethod
     def _verify_gate_chain(
-        store: SQLiteControlStore,
+        store: _AsOfArtifactReader,
         snapshot: ControlStoreSnapshot,
         binding: RunContractBinding,
         contracts: ValidatedRuntimeContractPayloads,
@@ -2231,18 +2426,27 @@ class CoreRunDomainVerifier:
                 artifact_binding.evaluation_id,
                 [],
             ).append(artifact_binding)
-        batch_ids = sorted({item.gate_batch_id for item in evaluations.values()})
+        batch_keys = sorted(
+            {
+                (item.stage_id, item.gate_batch_id)
+                for item in evaluations.values()
+            }
+        )
         seen_findings: set[tuple[str, str]] = set()
         seen_bindings: set[tuple[str, int]] = set()
-        report_revisions: list[int] = []
+        report_revisions: dict[str, list[int]] = {
+            "auditor": [],
+            "finalize": [],
+        }
         from .gates import _gate_finding_record, _replay_gate_outcomes
 
-        for batch_id in batch_ids:
+        for stage_id, batch_id in batch_keys:
             ordered_evaluations = sorted(
                 (
                     item
                     for item in evaluations.values()
-                    if item.gate_batch_id == batch_id
+                    if item.stage_id == stage_id
+                    and item.gate_batch_id == batch_id
                 ),
                 key=lambda item: item.gate_id,
             )
@@ -2255,8 +2459,14 @@ class CoreRunDomainVerifier:
                 (item.report_artifact.artifact_id, item.report_artifact.revision)
                 for item in ordered_evaluations
             }
+            expected_report_artifact = (
+                "auditor_quality_gate_report"
+                if stage_id == "auditor"
+                else "finalize_quality_gate_report"
+            )
             if (
                 len(report_refs) != 1
+                or {item.stage_id for item in ordered_evaluations} != {stage_id}
                 or len({item.evaluation_event_id for item in ordered_evaluations}) != 1
                 or len(
                     {item.accepted_transaction_id for item in ordered_evaluations}
@@ -2326,17 +2536,35 @@ class CoreRunDomainVerifier:
                 raise CoreRunError("control_store_integrity_invalid")
 
             report_artifact_id, report_revision_number = next(iter(report_refs))
-            report_revisions.append(report_revision_number)
+            transaction_id = ordered_evaluations[0].accepted_transaction_id
+            receipts = [
+                item
+                for item in snapshot.transactions
+                if item.transaction_id == transaction_id
+            ]
+            if len(receipts) != 1:
+                raise CoreRunError("control_store_integrity_invalid")
+            receipt = receipts[0]
             try:
-                report_bytes = store.read_artifact_revision_bytes(
+                batch_snapshot = store.history.snapshot_at_revision(
+                    snapshot.run.run_id,
+                    receipt.committed_revision,
+                )
+            except Exception as exc:
+                raise CoreRunError("control_store_integrity_invalid") from exc
+            batch_reader = _AsOfArtifactReader(store.history, batch_snapshot)
+            report_revisions[stage_id].append(report_revision_number)
+            try:
+                report_bytes = batch_reader.read_artifact_revision_bytes(
                     snapshot.run.run_id,
                     report_artifact_id,
                     report_revision_number,
                 )
                 replayed = _replay_gate_outcomes(
-                    store,
-                    snapshot,
+                    batch_reader,
+                    batch_snapshot,
                     binding,
+                    stage_id=stage_id,
                     stages=tuple(dict(item) for item in contracts.stages),
                     artifacts=tuple(dict(item) for item in contracts.artifacts),
                     artifact_bindings=first_bindings,  # type: ignore[arg-type]
@@ -2346,7 +2574,7 @@ class CoreRunDomainVerifier:
             expected_report = {
                 "schema_version": "briefloop.gate_report.v2",
                 "run_id": snapshot.run.run_id,
-                "stage_id": "auditor",
+                "stage_id": stage_id,
                 "gate_batch_id": batch_id,
                 "policy_version": policy_version,
                 "run_contract_fingerprint": binding.contract_fingerprint,
@@ -2368,7 +2596,74 @@ class CoreRunDomainVerifier:
                     for item in ordered_findings
                 ],
             }
-            if report_bytes != canonical_json_bytes(expected_report) + b"\n":
+            report_revision = revisions.get(
+                (report_artifact_id, report_revision_number)
+            )
+            batch_artifacts = {
+                item.artifact_id: item for item in batch_snapshot.artifacts
+            }
+            report_record = batch_artifacts.get(report_artifact_id)
+            if (
+                report_artifact_id != expected_report_artifact
+                or report_revision is None
+                or report_record is None
+                or report_record.current_revision != report_revision_number
+                or report_revision.producer_kind != "control_tool"
+                or report_revision.producer_id
+                != "core-v2-preloaded-quality-gates"
+                or report_revision.size_bytes != len(report_bytes)
+                or report_revision.sha256 != sha256_hex(report_bytes)
+                or report_bytes != canonical_json_bytes(expected_report) + b"\n"
+            ):
+                raise CoreRunError("control_store_integrity_invalid")
+
+            evaluation_ids = [item.evaluation_id for item in ordered_evaluations]
+            finding_refs = sorted(
+                (
+                    finding.evaluation_id,
+                    finding.finding_id,
+                )
+                for finding in ordered_findings
+            )
+            binding_refs = sorted(
+                (item.evaluation_id, item.position)
+                for item in snapshot.gate_artifact_bindings
+                if item.evaluation_id in set(evaluation_ids)
+            )
+            event_id = ordered_evaluations[0].evaluation_event_id
+            events = [
+                item
+                for item in batch_snapshot.events
+                if item.event_id == event_id
+            ]
+            if (
+                receipt.transaction_type
+                != transaction_type_for("gate_evaluation")
+                or receipt.event_ids != [event_id]
+                or sorted(
+                    item.evaluation_id for item in receipt.gate_evaluations
+                )
+                != sorted(evaluation_ids)
+                or sorted(
+                    (item.evaluation_id, item.finding_id)
+                    for item in receipt.gate_findings
+                )
+                != finding_refs
+                or sorted(
+                    (item.evaluation_id, item.position)
+                    for item in receipt.gate_artifact_bindings
+                )
+                != binding_refs
+                or [
+                    (item.artifact_id, item.revision)
+                    for item in receipt.artifact_revisions
+                ]
+                != [(report_artifact_id, report_revision_number)]
+                or len(events) != 1
+                or events[0].stage_id != stage_id
+                or events[0].artifact_id != report_artifact_id
+                or events[0].transaction_id != transaction_id
+            ):
                 raise CoreRunError("control_store_integrity_invalid")
             for evaluation in ordered_evaluations:
                 forced_status, raw_findings = replayed[evaluation.gate_id]
@@ -2413,7 +2708,10 @@ class CoreRunDomainVerifier:
                 (item.evaluation_id, item.position)
                 for item in snapshot.gate_artifact_bindings
             }
-            or sorted(report_revisions) != list(range(1, len(batch_ids) + 1))
+            or any(
+                sorted(values) != list(range(1, len(values) + 1))
+                for values in report_revisions.values()
+            )
         ):
             raise CoreRunError("control_store_integrity_invalid")
 

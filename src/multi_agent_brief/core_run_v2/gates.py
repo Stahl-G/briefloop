@@ -5,7 +5,7 @@ from __future__ import annotations
 from datetime import datetime, timezone
 import os
 from pathlib import Path
-from typing import Callable, TypeVar
+from typing import Callable, Literal, TypeVar
 
 from pydantic import ValidationError
 
@@ -45,7 +45,7 @@ from multi_agent_brief.quality_gates.state import (
 
 from .errors import CoreRunError, CoreRunResult, core_run_failure_result
 from .integrity import RunIntegrityService, materialize_checkout
-from .lineage import classify_current_lineage
+from .lineage import classify_current_audit_promotion, classify_current_lineage
 from .policy import derived_id, transaction_type_for
 from .verifier import CoreRunDomainVerifier, resolve_core_replay
 
@@ -312,6 +312,8 @@ class GateEvaluationService:
                         report_date=direction.report_date,
                         max_source_age_days=direction.max_source_age_days,
                         strict=False,
+                        reader_facing_mode=False,
+                        target_artifact="audited_brief",
                         stages=list(verified.stages),
                         artifacts=list(verified.artifacts),
                         gate_stage_id="auditor",
@@ -576,9 +578,10 @@ def _replay_gate_outcomes(
     snapshot: ControlStoreSnapshot,
     binding: RunContractBinding,
     *,
+    stage_id: Literal["auditor", "finalize"],
     stages: tuple[dict[str, object], ...],
     artifacts: tuple[dict[str, object], ...],
-    artifact_bindings: tuple[GateArtifactBinding, ...] | None = None,
+    artifact_bindings: tuple[GateArtifactBinding, ...],
 ) -> dict[str, tuple[str | None, list[dict[str, object]]]]:
     """Replay the sole preloaded Gate evaluator from exact Store revisions."""
 
@@ -597,59 +600,151 @@ def _replay_gate_outcomes(
             raise CoreRunError("control_store_integrity_invalid")
         return revision
 
-    exact = {
-        (item.artifact_id, item.usage): revisions.get(
-            (item.artifact_id, item.artifact_revision)
-        )
-        for item in (artifact_bindings or ())
-    }
-
-    def selected_revision(artifact_id: str, usage: str) -> ArtifactRevision:
-        if artifact_bindings is None:
-            return current_revision(artifact_id)
-        revision = exact.get((artifact_id, usage))
-        if revision is None:
+    if stage_id not in {"auditor", "finalize"} or not artifact_bindings:
+        raise CoreRunError("gate_input_binding_invalid")
+    binding_keys = [
+        (item.artifact_id, item.artifact_revision, item.usage)
+        for item in artifact_bindings
+    ]
+    if (
+        [item.position for item in artifact_bindings]
+        != list(range(len(artifact_bindings)))
+        or len(binding_keys) != len(set(binding_keys))
+    ):
+        raise CoreRunError("gate_input_binding_invalid")
+    bound_revisions: list[tuple[ArtifactRevision, str]] = []
+    for item in artifact_bindings:
+        revision = revisions.get((item.artifact_id, item.artifact_revision))
+        record = artifact_records.get(item.artifact_id)
+        if (
+            item.run_id != snapshot.run.run_id
+            or revision is None
+            or record is None
+            or record.current_revision != item.artifact_revision
+            or revision.sha256 != item.artifact_sha256
+        ):
             raise CoreRunError("gate_input_binding_invalid")
-        return revision
+        bound_revisions.append((revision, item.usage))
 
-    ledger_revision = selected_revision("claim_ledger", "ledger")
-    brief_revision = selected_revision("audited_brief", "brief")
-    analyst_revision = None
-    if artifact_bindings is None:
-        if artifact_records["analyst_draft_snapshot"].current_revision:
-            analyst_revision = current_revision("analyst_draft_snapshot")
-    else:
-        analyst_revision = exact.get(
-            ("analyst_draft_snapshot", "analyst_snapshot")
-        )
-    screened_revision_number = (
-        artifact_records["screened_candidates"].current_revision
-        if artifact_bindings is None
-        else selected_revision(
-            "screened_candidates", "screened_candidates"
-        ).revision
+    candidate_artifact = current_revision("candidate_claims")
+    screened_artifact = current_revision("screened_candidates")
+    candidate_record = _one_proposal(
+        snapshot.accepted_proposals,
+        "candidate",
+        current_revision=candidate_artifact.revision,
     )
     screened_record = _one_proposal(
         snapshot.accepted_proposals,
         "screened",
-        current_revision=screened_revision_number,
+        current_revision=screened_artifact.revision,
     )
-    candidate_record = next(
-        (
-            item
-            for item in snapshot.accepted_proposals
-            if item.proposal_id == screened_record.parent_proposal_id
-            and item.proposal_kind == "candidate"
-        ),
-        None,
-    )
-    if candidate_record is None or (
-        artifact_bindings is not None
-        and selected_revision(
-            "candidate_claims", "screened_candidates"
-        ).revision
-        != candidate_record.artifact_revision
+    if (
+        screened_record.parent_proposal_id != candidate_record.proposal_id
+        or candidate_record.artifact_id != candidate_artifact.artifact_id
+        or candidate_record.artifact_revision != candidate_artifact.revision
+        or screened_record.artifact_id != screened_artifact.artifact_id
+        or screened_record.artifact_revision != screened_artifact.revision
     ):
+        raise CoreRunError("gate_input_binding_invalid")
+
+    analyst_revision: ArtifactRevision | None = None
+    render = None
+    if stage_id == "auditor":
+        ledger_revision = current_revision("claim_ledger")
+        brief_revision = current_revision("audited_brief")
+        analyst_record = artifact_records.get("analyst_draft_snapshot")
+        if analyst_record is not None and analyst_record.current_revision:
+            analyst_revision = current_revision("analyst_draft_snapshot")
+        expected = [
+            (ledger_revision, "ledger"),
+            (brief_revision, "brief"),
+        ]
+        if analyst_revision is not None:
+            expected.append((analyst_revision, "analyst_snapshot"))
+        expected.extend(
+            (
+                (screened_artifact, "screened_candidates"),
+                (candidate_artifact, "screened_candidates"),
+            )
+        )
+        reader_facing_mode = False
+        target_artifact = "audited_brief"
+        gate_artifact_id = "auditor_quality_gate_report"
+    else:
+        promotion = classify_current_audit_promotion(
+            snapshot,
+            store.read_artifact_revision_bytes,
+        )
+        current_renders = []
+        for candidate_render in snapshot.finalize_renders:
+            if (
+                promotion is None
+                or not promotion.is_current_lineage
+                or candidate_render.run_contract_fingerprint
+                != binding.contract_fingerprint
+                or candidate_render.audit_proposal_id
+                != promotion.proposal_record.proposal_id
+                or (
+                    candidate_render.audited_brief.artifact_id,
+                    candidate_render.audited_brief.revision,
+                )
+                != (
+                    promotion.brief_revision.artifact_id,
+                    promotion.brief_revision.revision,
+                )
+                or (
+                    candidate_render.audit_report.artifact_id,
+                    candidate_render.audit_report.revision,
+                )
+                != (
+                    promotion.report_revision.artifact_id,
+                    promotion.report_revision.revision,
+                )
+            ):
+                continue
+            reader_revisions = []
+            for reference in candidate_render.reader_artifacts:
+                record = artifact_records.get(reference.artifact_id)
+                revision = revisions.get((reference.artifact_id, reference.revision))
+                if (
+                    record is None
+                    or record.current_revision != reference.revision
+                    or revision is None
+                ):
+                    break
+                reader_revisions.append(revision)
+            else:
+                current_renders.append((candidate_render, reader_revisions))
+        if len(current_renders) != 1:
+            raise CoreRunError("gate_input_binding_invalid")
+        render, reader_revisions = current_renders[0]
+        primary_readers = [
+            item for item in reader_revisions if item.artifact_id == "reader_brief"
+        ]
+        if len(primary_readers) != 1:
+            raise CoreRunError("gate_input_binding_invalid")
+        brief_revision = primary_readers[0]
+        ledger_revision = current_revision("claim_ledger")
+        expected = [
+            (candidate_artifact, "screened_candidates"),
+            (screened_artifact, "screened_candidates"),
+            *((item, "reader_artifact") for item in reader_revisions),
+            (promotion.report_revision, "audit_report"),
+            (ledger_revision, "ledger"),
+        ]
+        reader_facing_mode = True
+        target_artifact = "reader_brief"
+        gate_artifact_id = "finalize_quality_gate_report"
+
+    expected_signature = [
+        (item.artifact_id, item.revision, item.sha256, usage)
+        for item, usage in expected
+    ]
+    actual_signature = [
+        (item.artifact_id, item.revision, item.sha256, usage)
+        for item, usage in bound_revisions
+    ]
+    if actual_signature != expected_signature:
         raise CoreRunError("gate_input_binding_invalid")
     try:
         ledger = _claim_ledger(
@@ -696,10 +791,12 @@ def _replay_gate_outcomes(
             report_date=direction.report_date,
             max_source_age_days=direction.max_source_age_days,
             strict=False,
+            reader_facing_mode=reader_facing_mode,
+            target_artifact=target_artifact,
             stages=list(stages),
             artifacts=list(artifacts),
-            gate_stage_id="auditor",
-            gate_artifact_id="auditor_quality_gate_report",
+            gate_stage_id=stage_id,
+            gate_artifact_id=gate_artifact_id,
             policy_gate_adapter={
                 "status": "applied",
                 "gate_policy": {
@@ -714,6 +811,7 @@ def _replay_gate_outcomes(
                 screened,
                 ledger,
                 markdown,
+                reader_facing_mode=reader_facing_mode,
             ),
             atomic_graph_payload=None,
         )
@@ -721,11 +819,18 @@ def _replay_gate_outcomes(
         raise
     except (ControlStoreError, IntakeError, UnicodeDecodeError, ValidationError) as exc:
         raise CoreRunError("gate_input_binding_invalid") from exc
-    return _classify_gate_outcomes(raw)
+    return _classify_gate_outcomes(
+        raw,
+        stage_id=stage_id,
+        gate_artifact_id=gate_artifact_id,
+    )
 
 
 def _classify_gate_outcomes(
     raw: object,
+    *,
+    stage_id: Literal["auditor", "finalize"] = "auditor",
+    gate_artifact_id: str = "auditor_quality_gate_report",
 ) -> dict[str, tuple[str | None, list[dict[str, object]]]]:
     """Convert evaluator availability into explicit durable Gate outcomes."""
 
@@ -742,7 +847,15 @@ def _classify_gate_outcomes(
             )
             outcomes[gate_id] = (
                 status,
-                [_negative_gate_finding(gate_id, status, reason)],
+                [
+                    _negative_gate_finding(
+                        gate_id,
+                        status,
+                        reason,
+                        stage_id=stage_id,
+                        gate_artifact_id=gate_artifact_id,
+                    )
+                ],
             )
             continue
         values = mapping[gate_id]
@@ -759,6 +872,8 @@ def _classify_gate_outcomes(
                         gate_id,
                         "invalid",
                         "The deterministic Gate evaluator returned an invalid result.",
+                        stage_id=stage_id,
+                        gate_artifact_id=gate_artifact_id,
                     )
                 ],
             )
@@ -792,14 +907,17 @@ def _negative_gate_finding(
     gate_id: str,
     status: str,
     description: str,
+    *,
+    stage_id: Literal["auditor", "finalize"] = "auditor",
+    gate_artifact_id: str = "auditor_quality_gate_report",
 ) -> dict[str, object]:
     return {
         "finding_type": f"gate_evaluator_{status}",
         "severity": "high",
         "blocking_level": "blocking",
-        "repair_owner": "auditor",
-        "stage_id": "auditor",
-        "artifact_id": "auditor_quality_gate_report",
+        "repair_owner": stage_id,
+        "stage_id": stage_id,
+        "artifact_id": gate_artifact_id,
         "description": description,
         "recommendation": "Inspect the deterministic Gate input and evaluator.",
         "category": "gate_evaluator",
@@ -843,6 +961,8 @@ def _coverage_projection(
     screened: ScreenedCandidatesProposal,
     ledger: ClaimLedger,
     markdown: str,
+    *,
+    reader_facing_mode: bool = False,
 ) -> dict[str, object]:
     by_id = {item.candidate_id: item for item in candidates.candidates}
     selected: list[dict[str, object]] = []
@@ -879,7 +999,10 @@ def _coverage_projection(
         }
         if not matches:
             missing_ledger.append(trace)
-        elif not any(item.claim_id in cited for item in matches):
+        elif (
+            not reader_facing_mode
+            and not any(item.claim_id in cited for item in matches)
+        ):
             missing_brief.append(
                 {
                     **trace,
@@ -890,7 +1013,7 @@ def _coverage_projection(
     return {
         "status": "checked",
         "semantic_boundary": "deterministic_selected_candidate_continuity_only",
-        "reader_facing_mode": False,
+        "reader_facing_mode": reader_facing_mode,
         "selected_count": len(selected),
         "high_priority_selected_count": len(high),
         "missing_from_ledger_count": len(missing_ledger),

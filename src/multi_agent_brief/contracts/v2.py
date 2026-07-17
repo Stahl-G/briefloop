@@ -773,6 +773,11 @@ class StageState(StrictModel):
     updated_at: IsoDateTime
 
 
+ArtifactFormat = Literal[
+    "json", "yaml", "markdown", "html", "docx", "pdf", "text", "binary"
+]
+
+
 class ArtifactRecord(StrictModel):
     schema_id = "briefloop.artifact_record.v2"
 
@@ -785,9 +790,19 @@ class ArtifactRecord(StrictModel):
     ]
     required: bool
     path: WorkspacePath
-    format: Literal[
-        "json", "yaml", "markdown", "html", "docx", "pdf", "text", "binary"
-    ]
+    format: ArtifactFormat
+
+
+class ArtifactIdentityRecord(StrictModel):
+    schema_id = "briefloop.artifact_identity_record.v2"
+
+    schema_version: Literal["briefloop.artifact_identity_record.v2"]
+    run_id: ContractId
+    artifact_id: ContractId
+    required: bool
+    initial_path: WorkspacePath
+    format: ArtifactFormat
+    accepted_transaction_id: ContractId
 
 
 class ArtifactRevision(StrictModel):
@@ -1018,6 +1033,10 @@ class Delivery(StrictModel):
 class ArtifactRevisionReference(StrictModel):
     artifact_id: ContractId
     revision: PositiveInt
+
+
+class ArtifactIdentityReference(StrictModel):
+    artifact_id: ContractId
 
 
 class RunDirection(StrictModel):
@@ -2256,6 +2275,7 @@ class TransactionReceipt(StrictModel):
     projection_status: Literal["current", "stale"]
     event_ids: list[ContractId] = Field(default_factory=list)
     artifact_revisions: list[ArtifactRevisionReference] = Field(default_factory=list)
+    artifact_identities: list[ArtifactIdentityReference] = Field(default_factory=list)
     source_ids: list[ContractId] = Field(default_factory=list)
     proposal_ids: list[ContractId] = Field(default_factory=list)
     run_contract_bindings: list[RunContractBindingReference] = Field(default_factory=list)
@@ -2298,6 +2318,9 @@ class TransactionReceipt(StrictModel):
         ]
         if len(artifact_keys) != len(set(artifact_keys)):
             raise ValueError("duplicate artifact revision identity")
+        identity_keys = [item.artifact_id for item in self.artifact_identities]
+        if len(identity_keys) != len(set(identity_keys)):
+            raise ValueError("duplicate artifact identity")
         if len(self.source_ids) != len(set(self.source_ids)):
             raise ValueError("duplicate source identity")
         if len(self.proposal_ids) != len(set(self.proposal_ids)):
@@ -2625,6 +2648,19 @@ ArtifactRecord.full_example = {
     "status": "valid",
 }
 
+ArtifactIdentityRecord.minimal_example = {
+    "schema_version": ArtifactIdentityRecord.schema_id,
+    "run_id": _RUN,
+    "artifact_id": "candidate_claims",
+    "required": True,
+    "initial_path": "output/intermediate/candidate_claims.json",
+    "format": "json",
+    "accepted_transaction_id": "TX-001",
+}
+ArtifactIdentityRecord.full_example = deepcopy(
+    ArtifactIdentityRecord.minimal_example
+)
+
 ArtifactRevision.minimal_example = {
     "schema_version": ArtifactRevision.schema_id,
     "run_id": _RUN,
@@ -2727,6 +2763,7 @@ TransactionReceipt.full_example = {
     **TransactionReceipt.minimal_example,
     "event_ids": ["EVT-001"],
     "artifact_revisions": [{"artifact_id": "candidate_claims", "revision": 1}],
+    "artifact_identities": [{"artifact_id": "candidate_claims"}],
     "proposal_ids": ["PROP-CANDIDATES-001"],
 }
 
@@ -3355,6 +3392,7 @@ V2_CONTRACT_MODELS: tuple[type[StrictModel], ...] = (
     RunIdentity,
     StageState,
     ArtifactRecord,
+    ArtifactIdentityRecord,
     ArtifactRevision,
     EventEnvelope,
     Invocation,
@@ -3522,6 +3560,9 @@ __all__ = [
     "ApprovalPackageBindingReference",
     "ApprovalReference",
     "ArtifactRevertRequest",
+    "ArtifactFormat",
+    "ArtifactIdentityRecord",
+    "ArtifactIdentityReference",
     "ArtifactSupersedeRequest",
     "ArtifactSupersessionRecord",
     "ArtifactSupersessionReference",

@@ -8,8 +8,11 @@ from types import MappingProxyType
 from typing import get_args
 
 import pytest
+from pydantic import ValidationError
 
 from multi_agent_brief.contracts import (
+    ArtifactIdentityRecord,
+    ArtifactIdentityReference,
     ContractError,
     LEGACY_READ_ONLY_CONTRACTS,
     SchemaRegistry,
@@ -46,6 +49,7 @@ EXPECTED_V2_CONTRACT_IDS = (
     "briefloop.run_identity.v2",
     "briefloop.stage_state.v2",
     "briefloop.artifact_record.v2",
+    "briefloop.artifact_identity_record.v2",
     "briefloop.artifact_revision.v2",
     "briefloop.event_envelope.v2",
     "briefloop.invocation.v2",
@@ -106,8 +110,8 @@ EXPECTED_V2_CONTRACT_IDS = (
 
 def test_v2_contract_inventory_is_exact_and_uses_existing_registry() -> None:
     assert V2_CONTRACT_IDS == EXPECTED_V2_CONTRACT_IDS
-    assert len(V2_CONTRACT_MODELS) == 69
-    assert len(set(V2_CONTRACT_IDS)) == 69
+    assert len(V2_CONTRACT_MODELS) == 70
+    assert len(set(V2_CONTRACT_IDS)) == 70
     for contract_id, model in zip(V2_CONTRACT_IDS, V2_CONTRACT_MODELS):
         assert SchemaRegistry.get(contract_id) is model
 
@@ -331,12 +335,53 @@ def test_source_proposal_has_no_generic_metadata_escape_hatch() -> None:
     ] == [("metadata", "extra field is not permitted")]
 
 
-def test_receipt_source_and_proposal_relations_are_unique() -> None:
+def test_receipt_identity_source_and_proposal_relations_are_unique() -> None:
     contract_id = "briefloop.transaction_receipt.v2"
     payload = SchemaRegistry.example(contract_id, "minimal")
     for field in ("source_ids", "proposal_ids"):
         invalid = {**payload, field: ["IDENTITY-001", "IDENTITY-001"]}
         assert SchemaRegistry.validate(contract_id, invalid)
+    invalid = {
+        **payload,
+        "artifact_identities": [
+            {"artifact_id": "artifact-a"},
+            {"artifact_id": "artifact-a"},
+        ],
+    }
+    assert SchemaRegistry.validate(contract_id, invalid)
+
+
+def test_artifact_identity_record_and_reference_are_exact_strict_contracts() -> None:
+    payload = SchemaRegistry.example(ArtifactIdentityRecord.schema_id, "minimal")
+    assert ArtifactIdentityRecord.model_validate(payload, strict=True)
+    for field in payload:
+        invalid = dict(payload)
+        invalid.pop(field)
+        with pytest.raises(ValidationError):
+            ArtifactIdentityRecord.model_validate(invalid, strict=True)
+    for field, value in (
+        ("required", 1),
+        ("initial_path", "/absolute/path.json"),
+        ("format", "md"),
+        ("accepted_transaction_id", 7),
+    ):
+        with pytest.raises(ValidationError):
+            ArtifactIdentityRecord.model_validate(
+                {**payload, field: value},
+                strict=True,
+            )
+    with pytest.raises(ValidationError):
+        ArtifactIdentityRecord.model_validate(
+            {**payload, "media_type": "application/json"},
+            strict=True,
+        )
+    assert ArtifactIdentityReference.model_validate(
+        {"artifact_id": "artifact-a"},
+        strict=True,
+    ).artifact_id == "artifact-a"
+    for invalid in ({}, {"artifact_id": 1}, {"artifact_id": "artifact-a", "x": 1}):
+        with pytest.raises(ValidationError):
+            ArtifactIdentityReference.model_validate(invalid, strict=True)
 
 
 def test_control_dto_vocabularies_match_current_authority_values() -> None:
@@ -526,6 +571,9 @@ def test_control_dto_examples_cover_required_revision_and_identity_bindings() ->
     assert receipt["committed_revision"] > receipt["prior_revision"]
     assert receipt["artifact_revisions"] == [
         {"artifact_id": "candidate_claims", "revision": 1}
+    ]
+    assert receipt["artifact_identities"] == [
+        {"artifact_id": "candidate_claims"}
     ]
 
 

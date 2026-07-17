@@ -2251,6 +2251,8 @@ def evaluate_quality_gate_findings_preloaded(
     report_date: str,
     max_source_age_days: int | None,
     strict: bool,
+    reader_facing_mode: bool,
+    target_artifact: str,
     stages: list[dict[str, Any]],
     artifacts: list[dict[str, Any]],
     gate_stage_id: str,
@@ -2274,7 +2276,7 @@ def evaluate_quality_gate_findings_preloaded(
         report_date=report_date,
         max_source_age_days=max_source_age_days,
         strict=strict,
-        reader_facing_mode=False,
+        reader_facing_mode=reader_facing_mode,
         stages=stages,
         artifacts=artifacts,
         policy_gate_adapter=policy_gate_adapter,
@@ -2284,7 +2286,7 @@ def evaluate_quality_gate_findings_preloaded(
     atomic_projection = project_atomic_reader_text(
         graph_payload=atomic_graph_payload,
         target_text=markdown,
-        target_artifact="audited_brief",
+        target_artifact=target_artifact,
     )
     gate_findings["material_fact"].extend(
         _atomic_reader_projection_findings(
@@ -2292,7 +2294,7 @@ def evaluate_quality_gate_findings_preloaded(
             start_idx=len(gate_findings["material_fact"]) + 1,
             stages=stages,
             artifacts=artifacts,
-            reader_facing_mode=False,
+            reader_facing_mode=reader_facing_mode,
         )
     )
     for gate_id in sorted(GATE_IDS):

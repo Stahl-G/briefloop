@@ -49,6 +49,62 @@ INSERT INTO gate_artifact_bindings SELECT * FROM gate_artifact_bindings_v3;
 DROP TABLE gate_artifact_bindings_v3;
 PRAGMA legacy_alter_table=OFF;
 
+CREATE TRIGGER stage_transitions_no_update BEFORE UPDATE ON stage_transitions BEGIN SELECT RAISE(ABORT,'append_only'); END;
+CREATE TRIGGER stage_transitions_no_delete BEFORE DELETE ON stage_transitions BEGIN SELECT RAISE(ABORT,'append_only'); END;
+CREATE TRIGGER gate_evaluations_no_update BEFORE UPDATE ON gate_evaluations BEGIN SELECT RAISE(ABORT,'append_only'); END;
+CREATE TRIGGER gate_evaluations_no_delete BEFORE DELETE ON gate_evaluations BEGIN SELECT RAISE(ABORT,'append_only'); END;
+CREATE TRIGGER gate_artifact_bindings_no_update BEFORE UPDATE ON gate_artifact_bindings BEGIN SELECT RAISE(ABORT,'append_only'); END;
+CREATE TRIGGER gate_artifact_bindings_no_delete BEFORE DELETE ON gate_artifact_bindings BEGIN SELECT RAISE(ABORT,'append_only'); END;
+
+CREATE TABLE artifact_identities (
+  run_id TEXT NOT NULL CHECK(typeof(run_id)='text' AND length(run_id)>0),
+  artifact_id TEXT NOT NULL CHECK(typeof(artifact_id)='text' AND length(artifact_id)>0),
+  schema_version TEXT NOT NULL CHECK(schema_version='briefloop.artifact_identity_record.v2'),
+  required INTEGER NOT NULL CHECK(typeof(required)='integer' AND required IN (0,1)),
+  initial_path TEXT NOT NULL CHECK(typeof(initial_path)='text' AND length(initial_path)>0),
+  format TEXT NOT NULL CHECK(typeof(format)='text' AND format IN ('json','yaml','markdown','html','docx','pdf','text','binary')),
+  accepted_transaction_id TEXT NOT NULL CHECK(typeof(accepted_transaction_id)='text' AND length(accepted_transaction_id)>0),
+  payload_json TEXT NOT NULL CHECK(typeof(payload_json)='text'),
+  PRIMARY KEY(run_id,artifact_id),
+  UNIQUE(run_id,artifact_id,accepted_transaction_id),
+  FOREIGN KEY(run_id) REFERENCES runs(run_id) ON UPDATE RESTRICT ON DELETE RESTRICT DEFERRABLE INITIALLY DEFERRED,
+  FOREIGN KEY(run_id,artifact_id) REFERENCES artifacts(run_id,artifact_id) ON UPDATE RESTRICT ON DELETE RESTRICT DEFERRABLE INITIALLY DEFERRED,
+  FOREIGN KEY(run_id,accepted_transaction_id) REFERENCES transactions(run_id,transaction_id) ON UPDATE RESTRICT ON DELETE RESTRICT DEFERRABLE INITIALLY DEFERRED
+);
+CREATE TABLE transaction_artifact_identities (
+  run_id TEXT NOT NULL CHECK(typeof(run_id)='text' AND length(run_id)>0),
+  transaction_id TEXT NOT NULL CHECK(typeof(transaction_id)='text' AND length(transaction_id)>0),
+  position INTEGER NOT NULL CHECK(typeof(position)='integer' AND position>=0),
+  artifact_id TEXT NOT NULL CHECK(typeof(artifact_id)='text' AND length(artifact_id)>0),
+  PRIMARY KEY(run_id,transaction_id,position),
+  UNIQUE(run_id,artifact_id),
+  FOREIGN KEY(run_id,transaction_id) REFERENCES transactions(run_id,transaction_id) ON UPDATE RESTRICT ON DELETE RESTRICT DEFERRABLE INITIALLY DEFERRED,
+  FOREIGN KEY(run_id,artifact_id,transaction_id) REFERENCES artifact_identities(run_id,artifact_id,accepted_transaction_id) ON UPDATE RESTRICT ON DELETE RESTRICT DEFERRABLE INITIALLY DEFERRED
+);
+CREATE TRIGGER artifact_identities_no_update BEFORE UPDATE ON artifact_identities BEGIN SELECT RAISE(ABORT,'append_only'); END;
+CREATE TRIGGER artifact_identities_no_delete BEFORE DELETE ON artifact_identities BEGIN SELECT RAISE(ABORT,'append_only'); END;
+CREATE TRIGGER transaction_artifact_identities_no_update BEFORE UPDATE ON transaction_artifact_identities BEGIN SELECT RAISE(ABORT,'append_only'); END;
+CREATE TRIGGER transaction_artifact_identities_no_delete BEFORE DELETE ON transaction_artifact_identities BEGIN SELECT RAISE(ABORT,'append_only'); END;
+CREATE TRIGGER artifact_identities_match_artifact_before_insert
+BEFORE INSERT ON artifact_identities
+WHEN NOT EXISTS (
+  SELECT 1 FROM artifacts
+  WHERE run_id=NEW.run_id AND artifact_id=NEW.artifact_id
+    AND required=NEW.required AND format=NEW.format AND path=NEW.initial_path
+)
+BEGIN SELECT RAISE(ABORT,'artifact_identity_mismatch'); END;
+CREATE TRIGGER artifacts_identity_fields_match_before_update
+BEFORE UPDATE OF required,format ON artifacts
+WHEN EXISTS (
+  SELECT 1 FROM artifact_identities
+  WHERE run_id=NEW.run_id AND artifact_id=NEW.artifact_id
+) AND NOT EXISTS (
+  SELECT 1 FROM artifact_identities
+  WHERE run_id=NEW.run_id AND artifact_id=NEW.artifact_id
+    AND required=NEW.required AND format=NEW.format
+)
+BEGIN SELECT RAISE(ABORT,'artifact_identity_mismatch'); END;
+
 CREATE TABLE repair_cycles (
   run_id TEXT NOT NULL,repair_id TEXT NOT NULL,schema_version TEXT NOT NULL CHECK(schema_version='briefloop.repair_cycle_record.v2'),
   contamination_revision INTEGER NOT NULL,owner_stage_id TEXT NOT NULL,reason_code TEXT NOT NULL,started_at TEXT NOT NULL,

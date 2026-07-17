@@ -26,6 +26,8 @@ from multi_agent_brief.contracts.migrations import migrate_claim_v1_to_v2
 from multi_agent_brief.contracts.v2 import (
     Approval,
     ApprovalPackageBinding,
+    ArtifactIdentityRecord,
+    ArtifactIdentityReference,
     ArtifactRevertRequest,
     ArtifactSupersedeRequest,
     ArtifactSupersessionRecord,
@@ -117,6 +119,8 @@ __all__ = [
     "SourceItemContract",
     "Approval",
     "ApprovalPackageBinding",
+    "ArtifactIdentityRecord",
+    "ArtifactIdentityReference",
     "ArtifactRevertRequest",
     "ArtifactSupersedeRequest",
     "ArtifactSupersessionRecord",

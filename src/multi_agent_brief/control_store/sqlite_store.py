@@ -4,7 +4,6 @@ from __future__ import annotations
 
 from dataclasses import dataclass, replace
 from datetime import datetime, timezone
-import json
 import os
 from pathlib import Path
 import sqlite3
@@ -21,6 +20,8 @@ from multi_agent_brief.contracts.v2 import (
     AcceptedSourceRecord,
     Approval,
     ApprovalPackageBinding,
+    ArtifactIdentityRecord,
+    ArtifactIdentityReference,
     ArtifactRecord,
     ArtifactRevision,
     ArtifactRevisionReference,
@@ -87,6 +88,7 @@ _FailureHook = Callable[[str], None]
 _CONTRACT_ID_ADAPTER = TypeAdapter(ContractId)
 _EXTENDED_RECORD_MODELS = (
     WorkspaceRunHead,
+    ArtifactIdentityRecord,
     AcceptedSourceRecord,
     AcceptedProposalRecord,
     ProposalSourceBinding,
@@ -301,6 +303,7 @@ class ControlStoreSnapshot:
     stage_states: tuple[StageState, ...]
     invocations: tuple[Invocation, ...]
     artifacts: tuple[ArtifactRecord, ...]
+    artifact_identities: tuple[ArtifactIdentityRecord, ...]
     artifact_revisions: tuple[ArtifactRevision, ...]
     events: tuple[EventEnvelope, ...]
     approvals: tuple[Approval, ...]
@@ -346,7 +349,6 @@ class ControlStoreHistory:
     store_revision: int
     snapshots: tuple[ControlStoreSnapshot, ...]
     artifact_contents: Mapping[tuple[str, str, int], bytes]
-    initial_artifact_ids: Mapping[str, frozenset[str]]
 
     @property
     def transactions(self) -> tuple[TransactionReceipt, ...]:
@@ -411,6 +413,11 @@ class ControlStoreHistory:
         revision_keys = relation_keys(
             "artifact_revisions", ("artifact_id", "revision")
         )
+        identity_ids = {
+            reference.artifact_id
+            for receipt in transactions
+            for reference in receipt.artifact_identities
+        }
         source_ids = {
             source_id for receipt in transactions for source_id in receipt.source_ids
         }
@@ -420,6 +427,13 @@ class ControlStoreHistory:
             for proposal_id in receipt.proposal_ids
         }
 
+        artifact_identities = tuple(
+            item
+            for item in full.artifact_identities
+            if item.artifact_id in identity_ids
+        )
+        if {item.artifact_id for item in artifact_identities} != identity_ids:
+            raise ControlStoreIntegrityError("snapshot_history_invalid")
         artifact_revisions = tuple(
             item
             for item in full.artifact_revisions
@@ -428,21 +442,33 @@ class ControlStoreHistory:
         revisions_by_artifact: dict[str, list[ArtifactRevision]] = {}
         for revision in artifact_revisions:
             revisions_by_artifact.setdefault(revision.artifact_id, []).append(revision)
+        if set(revisions_by_artifact) - identity_ids:
+            raise ControlStoreIntegrityError("snapshot_history_invalid")
         artifacts: list[ArtifactRecord] = []
-        initial_artifacts = self.initial_artifact_ids.get(run_id, frozenset())
-        for artifact in full.artifacts:
-            revisions = revisions_by_artifact.get(artifact.artifact_id, [])
-            if artifact.artifact_id not in initial_artifacts and not revisions:
-                continue
+        for identity in sorted(
+            artifact_identities, key=lambda item: item.artifact_id
+        ):
+            revisions = sorted(
+                revisions_by_artifact.get(identity.artifact_id, []),
+                key=lambda item: item.revision,
+            )
+            if [item.revision for item in revisions] != list(
+                range(1, len(revisions) + 1)
+            ):
+                raise ControlStoreIntegrityError("snapshot_history_invalid")
             if revisions:
-                latest = max(revisions, key=lambda item: item.revision)
+                latest = revisions[-1]
                 artifacts.append(
                     ArtifactRecord.model_validate(
                         {
-                            **artifact.model_dump(mode="json", exclude_unset=False),
+                            "schema_version": ArtifactRecord.schema_id,
+                            "run_id": run_id,
+                            "artifact_id": identity.artifact_id,
                             "current_revision": latest.revision,
                             "status": "valid",
                             "path": latest.path,
+                            "required": identity.required,
+                            "format": identity.format,
                         },
                         strict=True,
                     )
@@ -451,9 +477,14 @@ class ControlStoreHistory:
                 artifacts.append(
                     ArtifactRecord.model_validate(
                         {
-                            **artifact.model_dump(mode="json", exclude_unset=False),
+                            "schema_version": ArtifactRecord.schema_id,
+                            "run_id": run_id,
+                            "artifact_id": identity.artifact_id,
                             "current_revision": 0,
                             "status": "expected",
+                            "path": identity.initial_path,
+                            "required": identity.required,
+                            "format": identity.format,
                         },
                         strict=True,
                     )
@@ -672,6 +703,7 @@ class ControlStoreHistory:
             stage_states=stage_states,
             invocations=tuple(invocations),
             artifacts=tuple(artifacts),
+            artifact_identities=artifact_identities,
             artifact_revisions=artifact_revisions,
             events=events,
             approvals=approvals,
@@ -1093,7 +1125,11 @@ class SQLiteControlStore:
                 ).fetchone()
                 if existing_run is None:
                     raise ControlStoreConflict("run_not_found")
-            self._preflight_artifact_subgraph(uow, run_id)
+            new_artifact_identities = self._preflight_artifact_subgraph(
+                uow,
+                run_id,
+                transaction_id,
+            )
             self._preflight_intake_subgraph(uow, run_id)
             self._preflight_core_run_subgraph(uow, run_id)
             self._preflight_pr4b_subgraph(uow, run_id)
@@ -1124,11 +1160,19 @@ class SQLiteControlStore:
                 locked_revision = self._workspace_revision_in_transaction()
                 if locked_revision != expected_revision:
                     raise ControlStoreConflict("store_revision_conflict")
+                locked_artifact_identities = self._preflight_artifact_subgraph(
+                    uow,
+                    run_id,
+                    transaction_id,
+                )
+                if locked_artifact_identities != new_artifact_identities:
+                    raise ControlStoreConflict("relational_integrity_conflict")
                 committed_revision = locked_revision + 1
                 receipt = self._build_receipt(
                     uow,
                     identity,
                     committed_revision,
+                    locked_artifact_identities,
                 )
                 self._insert_run(uow._run)
                 self._insert_transaction(receipt, self.workspace_id, fingerprint)
@@ -1136,6 +1180,7 @@ class SQLiteControlStore:
                 self._upsert_stage_states(uow._stage_states.values())
                 self._upsert_invocations(uow._invocations.values())
                 self._upsert_artifacts(uow._artifacts.values())
+                self._insert_artifact_identities(locked_artifact_identities)
                 self._insert_artifact_revisions(uow._artifact_revisions)
                 self._insert_events(uow._events)
                 self._insert_approvals(uow._approvals.values())
@@ -1221,7 +1266,8 @@ class SQLiteControlStore:
         self,
         uow: "ControlUnitOfWork",
         run_id: str,
-    ) -> None:
+        transaction_id: str,
+    ) -> tuple[ArtifactIdentityRecord, ...]:
         """Reject deterministically unbound blob records before file writes."""
 
         staged_artifact_ids = set(uow._artifacts)
@@ -1249,20 +1295,95 @@ class SQLiteControlStore:
                 # Exact transaction replay returned before this preflight. Any
                 # remaining revision-key collision belongs to different intent.
                 raise ControlStoreConflict("relational_integrity_conflict")
+        new_identities: list[ArtifactIdentityRecord] = []
+        staged_revisions = {
+            (item.record.artifact_id, item.record.revision): item.record
+            for item in uow._artifact_revisions
+        }
         for record in uow._artifacts.values():
+            artifact_row = self._connection.execute(
+                "SELECT * FROM artifacts WHERE run_id = ? AND artifact_id = ?",
+                (run_id, record.artifact_id),
+            ).fetchone()
+            identity_row = self._connection.execute(
+                """
+                SELECT * FROM artifact_identities
+                WHERE run_id = ? AND artifact_id = ?
+                """,
+                (run_id, record.artifact_id),
+            ).fetchone()
+            if (artifact_row is None) != (identity_row is None):
+                raise ControlStoreIntegrityError(
+                    "transaction_ledger_integrity_invalid"
+                )
+            if artifact_row is None:
+                identity = ArtifactIdentityRecord.model_validate(
+                    {
+                        "schema_version": ArtifactIdentityRecord.schema_id,
+                        "run_id": record.run_id,
+                        "artifact_id": record.artifact_id,
+                        "required": record.required,
+                        "initial_path": record.path,
+                        "format": record.format,
+                        "accepted_transaction_id": transaction_id,
+                    },
+                    strict=True,
+                )
+                new_identities.append(identity)
+            else:
+                existing_artifact = self._decode_artifact_record_row(artifact_row)
+                existing_identity = self._decode_artifact_identity_row(identity_row)
+                if (
+                    existing_artifact.required != existing_identity.required
+                    or existing_artifact.format != existing_identity.format
+                    or record.required != existing_identity.required
+                    or record.format != existing_identity.format
+                ):
+                    raise ControlStoreConflict("relational_integrity_conflict")
+                if record.current_revision == 0 and (
+                    record.path != existing_identity.initial_path
+                ):
+                    raise ControlStoreConflict("relational_integrity_conflict")
+
             if record.current_revision == 0:
+                if any(
+                    artifact_id == record.artifact_id
+                    for artifact_id, _revision in staged_revision_keys
+                ):
+                    raise ControlStoreConflict("relational_integrity_conflict")
                 continue
             key = (record.artifact_id, record.current_revision)
-            if key in staged_revision_keys:
-                continue
-            if self._connection.execute(
-                """
-                SELECT 1 FROM artifact_revisions
-                WHERE run_id = ? AND artifact_id = ? AND revision = ?
-                """,
-                (run_id, record.artifact_id, record.current_revision),
-            ).fetchone() is None:
+            revision_record = staged_revisions.get(key)
+            if revision_record is None:
+                revision_row = self._connection.execute(
+                    """
+                    SELECT * FROM artifact_revisions
+                    WHERE run_id = ? AND artifact_id = ? AND revision = ?
+                    """,
+                    (run_id, record.artifact_id, record.current_revision),
+                ).fetchone()
+                if revision_row is None:
+                    raise ControlStoreConflict("relational_integrity_conflict")
+                revision_record = self._decode_checked(
+                    ArtifactRevision,
+                    revision_row,
+                    {
+                        "run_id": "run_id",
+                        "artifact_id": "artifact_id",
+                        "revision": "revision",
+                        "schema_version": "schema_version",
+                        "path": "path",
+                        "sha256": "sha256",
+                        "size_bytes": "size_bytes",
+                        "frozen": "frozen",
+                        "producer_kind": "producer_kind",
+                        "producer_id": "producer_id",
+                        "created_at": "created_at",
+                    },
+                )
+            if record.path != revision_record.path:
                 raise ControlStoreConflict("relational_integrity_conflict")
+        return tuple(sorted(new_identities, key=lambda item: item.artifact_id))
 
     def _workspace_revision_in_transaction(self) -> int:
         row = self._connection.execute(
@@ -1695,6 +1816,7 @@ class SQLiteControlStore:
         uow: "ControlUnitOfWork",
         identity: "_TransactionIdentity",
         committed_revision: int,
+        artifact_identities: tuple[ArtifactIdentityRecord, ...],
     ) -> TransactionReceipt:
         timestamp = self._clock()
         if not isinstance(timestamp, datetime) or timestamp.tzinfo is None:
@@ -1718,6 +1840,10 @@ class SQLiteControlStore:
                             "revision": item.record.revision,
                         }
                         for item in uow._artifact_revisions
+                    ],
+                    "artifact_identities": [
+                        {"artifact_id": item.artifact_id}
+                        for item in artifact_identities
                     ],
                     "source_ids": list(uow._sources),
                     "proposal_ids": list(uow._accepted_proposals),
@@ -1963,6 +2089,32 @@ class SQLiteControlStore:
                     _canonical_record_text(record),
                 ),
             )
+
+    def _insert_artifact_identities(
+        self,
+        records: Iterable[ArtifactIdentityRecord],
+    ) -> None:
+        for position, record in enumerate(records, start=1):
+            self._inject(f"before_artifact_identity_insert:{position}")
+            self._connection.execute(
+                """
+                INSERT INTO artifact_identities(
+                    run_id, artifact_id, schema_version, required,
+                    initial_path, format, accepted_transaction_id, payload_json
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    record.run_id,
+                    record.artifact_id,
+                    record.schema_version,
+                    int(record.required),
+                    record.initial_path,
+                    record.format,
+                    record.accepted_transaction_id,
+                    _canonical_record_text(record),
+                ),
+            )
+            self._inject(f"after_artifact_identity_insert:{position}")
 
     def _insert_artifact_revisions(
         self,
@@ -2735,6 +2887,20 @@ class SQLiteControlStore:
                     reference.revision,
                 ),
             )
+        for position, reference in enumerate(receipt.artifact_identities):
+            self._connection.execute(
+                """
+                INSERT INTO transaction_artifact_identities(
+                    run_id, transaction_id, position, artifact_id
+                ) VALUES (?, ?, ?, ?)
+                """,
+                (
+                    receipt.run_id,
+                    receipt.transaction_id,
+                    position,
+                    reference.artifact_id,
+                ),
+            )
         for position, source_id in enumerate(receipt.source_ids):
             self._connection.execute(
                 """
@@ -3168,56 +3334,11 @@ class SQLiteControlStore:
                             ] = path.read_bytes()
                         except OSError as exc:
                             raise ControlStoreIntegrityError("blob_read_failed") from exc
-                initial_artifact_ids: dict[str, frozenset[str]] = {}
-                for snapshot in snapshots:
-                    if len(snapshot.run_contract_bindings) != 1:
-                        initial_artifact_ids[snapshot.run.run_id] = frozenset()
-                        continue
-                    binding = snapshot.run_contract_bindings[0]
-                    try:
-                        contract_bytes = contents[
-                            (
-                                snapshot.run.run_id,
-                                binding.artifact_contracts_artifact.artifact_id,
-                                binding.artifact_contracts_artifact.revision,
-                            )
-                        ]
-                        payload = json.loads(contract_bytes)
-                        artifact_rows = payload["artifacts"]
-                        records = {
-                            item.artifact_id: item for item in snapshot.artifacts
-                        }
-                        contract_ids = {
-                            str(item["artifact_id"])
-                            for item in artifact_rows
-                            if (
-                                str(item["artifact_id"]) in records
-                                and records[str(item["artifact_id"])].path
-                                == item["path"]
-                                and records[str(item["artifact_id"])].format
-                                == item["format"]
-                                and records[str(item["artifact_id"])].required
-                                is item["required"]
-                            )
-                        }
-                    except (KeyError, TypeError, ValueError, json.JSONDecodeError) as exc:
-                        raise ControlStoreIntegrityError(
-                            "snapshot_history_invalid"
-                        ) from exc
-                    initial_artifact_ids[snapshot.run.run_id] = frozenset(
-                        {
-                            *contract_ids,
-                            binding.stage_specs_artifact.artifact_id,
-                            binding.artifact_contracts_artifact.artifact_id,
-                            binding.policy_pack_artifact.artifact_id,
-                        }
-                    )
                 history = ControlStoreHistory(
                     workspace_id=self.workspace_id,
                     store_revision=self.current_revision,
                     snapshots=snapshots,
                     artifact_contents=MappingProxyType(contents),
-                    initial_artifact_ids=MappingProxyType(initial_artifact_ids),
                 )
                 self._connection.commit()
                 return history
@@ -3441,6 +3562,21 @@ class SQLiteControlStore:
                     "required": "required",
                     "path": "path",
                     "format": "format",
+                },
+            ),
+            artifact_identities=self._load_for_run(
+                ArtifactIdentityRecord,
+                "artifact_identities",
+                run_id,
+                "artifact_id",
+                {
+                    "run_id": "run_id",
+                    "artifact_id": "artifact_id",
+                    "schema_version": "schema_version",
+                    "required": "required",
+                    "initial_path": "initial_path",
+                    "format": "format",
+                    "accepted_transaction_id": "accepted_transaction_id",
                 },
             ),
             artifact_revisions=self._load_for_run(
@@ -4537,6 +4673,40 @@ class SQLiteControlStore:
                 raise ControlStoreIntegrityError("stored_payload_identity_mismatch")
         return model
 
+    def _decode_artifact_record_row(self, row: sqlite3.Row) -> ArtifactRecord:
+        return self._decode_checked(
+            ArtifactRecord,
+            row,
+            {
+                "run_id": "run_id",
+                "artifact_id": "artifact_id",
+                "schema_version": "schema_version",
+                "current_revision": "current_revision",
+                "status": "status",
+                "required": "required",
+                "path": "path",
+                "format": "format",
+            },
+        )
+
+    def _decode_artifact_identity_row(
+        self,
+        row: sqlite3.Row,
+    ) -> ArtifactIdentityRecord:
+        return self._decode_checked(
+            ArtifactIdentityRecord,
+            row,
+            {
+                "run_id": "run_id",
+                "artifact_id": "artifact_id",
+                "schema_version": "schema_version",
+                "required": "required",
+                "initial_path": "initial_path",
+                "format": "format",
+                "accepted_transaction_id": "accepted_transaction_id",
+            },
+        )
+
     def _decode_source_row(self, row: sqlite3.Row) -> AcceptedSourceRecord:
         return self._decode_checked(
             AcceptedSourceRecord,
@@ -4641,6 +4811,7 @@ class SQLiteControlStore:
     ) -> tuple[
         tuple[str, ...],
         tuple[ArtifactRevisionReference, ...],
+        tuple[ArtifactIdentityReference, ...],
         tuple[str, ...],
         tuple[str, ...],
     ]:
@@ -4655,6 +4826,14 @@ class SQLiteControlStore:
             """
             SELECT position, artifact_id, revision
             FROM transaction_artifact_revisions
+            WHERE run_id = ? AND transaction_id = ? ORDER BY position
+            """,
+            (receipt.run_id, receipt.transaction_id),
+        ).fetchall()
+        identity_rows = self._connection.execute(
+            """
+            SELECT position, artifact_id
+            FROM transaction_artifact_identities
             WHERE run_id = ? AND transaction_id = ? ORDER BY position
             """,
             (receipt.run_id, receipt.transaction_id),
@@ -4676,6 +4855,8 @@ class SQLiteControlStore:
         if [row[0] for row in event_rows] != list(range(len(event_rows))) or [
             row[0] for row in revision_rows
         ] != list(range(len(revision_rows))) or [
+            row[0] for row in identity_rows
+        ] != list(range(len(identity_rows))) or [
             row[0] for row in source_rows
         ] != list(range(len(source_rows))) or [
             row[0] for row in proposal_rows
@@ -4689,19 +4870,27 @@ class SQLiteControlStore:
                 )
                 for row in revision_rows
             )
+            identity_refs = tuple(
+                ArtifactIdentityReference.model_validate(
+                    {"artifact_id": row[1]},
+                    strict=True,
+                )
+                for row in identity_rows
+            )
         except ValidationError as exc:
             raise ControlStoreIntegrityError("transaction_relation_mismatch") from exc
         source_ids = tuple(str(row[1]) for row in source_rows)
         proposal_ids = tuple(str(row[1]) for row in proposal_rows)
-        return event_ids, revision_refs, source_ids, proposal_ids
+        return event_ids, revision_refs, identity_refs, source_ids, proposal_ids
 
     def _verify_transaction_relations(self, receipt: TransactionReceipt) -> None:
-        event_ids, revision_refs, source_ids, proposal_ids = (
+        event_ids, revision_refs, identity_refs, source_ids, proposal_ids = (
             self._transaction_relation_values(receipt)
         )
         if (
             list(event_ids) != receipt.event_ids
             or list(revision_refs) != receipt.artifact_revisions
+            or list(identity_refs) != receipt.artifact_identities
             or list(source_ids) != receipt.source_ids
             or list(proposal_ids) != receipt.proposal_ids
         ):
@@ -4844,6 +5033,7 @@ class SQLiteControlStore:
 
         event_owners: dict[tuple[str, str], str] = {}
         revision_owners: dict[tuple[str, str, int], str] = {}
+        identity_owners: dict[tuple[str, str], str] = {}
         source_owners: dict[tuple[str, str], str] = {}
         proposal_owners: dict[tuple[str, str], str] = {}
         for expected_revision, row in enumerate(transaction_rows, start=1):
@@ -4854,16 +5044,21 @@ class SQLiteControlStore:
                 or receipt.committed_revision != expected_revision
             ):
                 invalid()
-            event_ids, revision_refs, source_ids, proposal_ids = (
+            event_ids, revision_refs, identity_refs, source_ids, proposal_ids = (
                 self._transaction_relation_values(receipt)
             )
             if (
                 list(event_ids) != receipt.event_ids
                 or list(revision_refs) != receipt.artifact_revisions
+                or list(identity_refs) != receipt.artifact_identities
                 or list(source_ids) != receipt.source_ids
                 or list(proposal_ids) != receipt.proposal_ids
             ):
                 raise ControlStoreIntegrityError("transaction_relation_mismatch")
+            if [item.artifact_id for item in identity_refs] != sorted(
+                item.artifact_id for item in identity_refs
+            ):
+                invalid()
             self._verify_core_transaction_relations(receipt)
             for event_id in event_ids:
                 key = (receipt.run_id, event_id)
@@ -4875,6 +5070,11 @@ class SQLiteControlStore:
                 if key in revision_owners:
                     invalid()
                 revision_owners[key] = receipt.transaction_id
+            for reference in identity_refs:
+                key = (receipt.run_id, reference.artifact_id)
+                if key in identity_owners:
+                    invalid()
+                identity_owners[key] = receipt.transaction_id
             for source_id in source_ids:
                 key = (receipt.run_id, source_id)
                 if key in source_owners:
@@ -4918,6 +5118,9 @@ class SQLiteControlStore:
             invalid()
 
         revision_keys: set[tuple[str, str, int]] = set()
+        revisions_by_artifact: dict[
+            tuple[str, str], list[ArtifactRevision]
+        ] = {}
         for row in self._connection.execute(
             """
             SELECT * FROM artifact_revisions
@@ -4945,7 +5148,78 @@ class SQLiteControlStore:
             if key not in revision_owners or key in revision_keys:
                 invalid()
             revision_keys.add(key)
+            revisions_by_artifact.setdefault(
+                (revision.run_id, revision.artifact_id), []
+            ).append(revision)
         if revision_keys != set(revision_owners):
+            invalid()
+
+        identity_keys: set[tuple[str, str]] = set()
+        identities: dict[tuple[str, str], ArtifactIdentityRecord] = {}
+        for row in self._connection.execute(
+            "SELECT * FROM artifact_identities ORDER BY run_id, artifact_id"
+        ).fetchall():
+            try:
+                identity = self._decode_artifact_identity_row(row)
+            except ControlStoreIntegrityError:
+                invalid()
+            key = (identity.run_id, identity.artifact_id)
+            owner = identity_owners.get(key)
+            if (
+                owner is None
+                or owner != identity.accepted_transaction_id
+                or key in identity_keys
+            ):
+                invalid()
+            identity_keys.add(key)
+            identities[key] = identity
+        if identity_keys != set(identity_owners):
+            invalid()
+
+        artifact_keys: set[tuple[str, str]] = set()
+        for row in self._connection.execute(
+            "SELECT * FROM artifacts ORDER BY run_id, artifact_id"
+        ).fetchall():
+            try:
+                artifact = self._decode_artifact_record_row(row)
+            except ControlStoreIntegrityError:
+                invalid()
+            key = (artifact.run_id, artifact.artifact_id)
+            identity = identities.get(key)
+            if identity is None or key in artifact_keys:
+                invalid()
+            revisions = sorted(
+                revisions_by_artifact.get(key, []),
+                key=lambda item: item.revision,
+            )
+            if [item.revision for item in revisions] != list(
+                range(1, len(revisions) + 1)
+            ):
+                invalid()
+            if (
+                artifact.required != identity.required
+                or artifact.format != identity.format
+            ):
+                invalid()
+            if not revisions:
+                if (
+                    artifact.current_revision != 0
+                    or artifact.status != "expected"
+                    or artifact.path != identity.initial_path
+                ):
+                    invalid()
+            else:
+                latest = revisions[-1]
+                if (
+                    artifact.current_revision != latest.revision
+                    or artifact.status != "valid"
+                    or artifact.path != latest.path
+                ):
+                    invalid()
+            artifact_keys.add(key)
+        if artifact_keys != identity_keys:
+            invalid()
+        if set(revisions_by_artifact) - identity_keys:
             invalid()
 
         source_keys: set[tuple[str, str]] = set()
