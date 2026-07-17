@@ -7,6 +7,7 @@ from dataclasses import dataclass
 from multi_agent_brief.contracts.v2 import (
     DeliveryAttemptRecord,
     DeliveryAuthorizationRecord,
+    DeliveryResultRecord,
 )
 from multi_agent_brief.control_store.sqlite_store import ControlStoreSnapshot
 from multi_agent_brief.product.release_approval import RELEASE_MODES
@@ -74,99 +75,290 @@ class TerminalEffectAuthorization:
         return self
 
 
-def _authorization_chain(
+@dataclass(frozen=True)
+class _TerminalApproval:
+    valid: bool
+    required_roles: tuple[str, ...] = ()
+    latest_decisions: tuple[tuple[str, str], ...] = ()
+    complete: bool = False
+
+
+@dataclass(frozen=True)
+class _TerminalTupleClassification:
+    """The sole private terminal authority for one exact delivery tuple."""
+
+    package_id: str
+    target: str
+    channel: str
+    recipient_fingerprint: str
+    valid: bool
+    authorizations: tuple[DeliveryAuthorizationRecord, ...] = ()
+    current_authorization: DeliveryAuthorizationRecord | None = None
+    ordered_attempts: tuple[DeliveryAttemptRecord, ...] = ()
+    result_tips: tuple[tuple[str, DeliveryResultRecord | None], ...] = ()
+    consumed_reconciliation_authorizations: tuple[str, ...] = ()
+    approvals_by_mode: tuple[tuple[str, _TerminalApproval], ...] = ()
+
+    @property
+    def latest_consumed_attempt(self) -> DeliveryAttemptRecord | None:
+        return self.ordered_attempts[-1] if self.ordered_attempts else None
+
+    def authorization(
+        self, authorization_id: str | None
+    ) -> DeliveryAuthorizationRecord | None:
+        return next(
+            (
+                item
+                for item in self.authorizations
+                if item.authorization_id == authorization_id
+            ),
+            None,
+        )
+
+    def attempt_for_authorization(
+        self, authorization_id: str | None
+    ) -> DeliveryAttemptRecord | None:
+        return next(
+            (
+                item
+                for item in self.ordered_attempts
+                if item.authorization_id == authorization_id
+            ),
+            None,
+        )
+
+    def result_tip(self, attempt_id: str | None) -> DeliveryResultRecord | None:
+        return next(
+            (tip for item_id, tip in self.result_tips if item_id == attempt_id),
+            None,
+        )
+
+    def approval(self, mode: str) -> _TerminalApproval:
+        return next(
+            (
+                approval
+                for item_mode, approval in self.approvals_by_mode
+                if item_mode == mode
+            ),
+            _TerminalApproval(False),
+        )
+
+    def authorization_can_record(
+        self, authorization: DeliveryAuthorizationRecord
+    ) -> bool:
+        """Check candidate authorization semantics against this immutable prefix."""
+
+        if not self.valid:
+            return False
+        latest_attempt = self.latest_consumed_attempt
+        if authorization.purpose == "initial_attempt":
+            return authorization.retry_of_attempt_id is None and latest_attempt is None
+        if authorization.retry_of_attempt_id is None or latest_attempt is None:
+            return False
+        if authorization.retry_of_attempt_id != latest_attempt.attempt_id:
+            return False
+        tip = self.result_tip(latest_attempt.attempt_id)
+        if tip is None:
+            return False
+        if authorization.purpose == "result_reconciliation":
+            return tip.status == "outcome_unknown"
+        return authorization.purpose == "retry_attempt" and tip.status in {
+            "draft_created",
+            "failed",
+            "outcome_unknown",
+        }
+
+
+def _terminal_tuple(
     snapshot: ControlStoreSnapshot,
     *,
     package_id: str,
     target: str,
     channel: str,
     recipient_fingerprint: str,
-) -> list[DeliveryAuthorizationRecord]:
-    return [
+) -> _TerminalTupleClassification:
+    """Classify one exact tuple once; all terminal consumers share this view."""
+
+    chain = tuple(
         item
         for item in snapshot.delivery_authorizations
         if item.package_id == package_id
         and item.target == target
         and item.channel == channel
         and item.recipient_fingerprint == recipient_fingerprint
-    ]
-
-
-def _unique_authorization_tip(
-    chain: list[DeliveryAuthorizationRecord],
-) -> DeliveryAuthorizationRecord | None:
+    )
+    by_id = {item.authorization_id: item for item in chain}
+    if len(by_id) != len(chain):
+        return _TerminalTupleClassification(
+            package_id, target, channel, recipient_fingerprint, False
+        )
     if not chain:
-        return None
+        return _TerminalTupleClassification(
+            package_id, target, channel, recipient_fingerprint, True
+        )
     referenced = {
         item.prior_authorization_id
         for item in chain
         if item.prior_authorization_id is not None
     }
     tips = [item for item in chain if item.authorization_id not in referenced]
-    return tips[0] if len(tips) == 1 else None
-
-
-def _latest_consumed_chain_attempt(
-    snapshot: ControlStoreSnapshot,
-    authorization: DeliveryAuthorizationRecord,
-) -> tuple[bool, DeliveryAttemptRecord | None]:
-    """Return the exact tuple chain's latest one-time authorization consumption."""
-
-    chain = _authorization_chain(
-        snapshot,
-        package_id=authorization.package_id,
-        target=authorization.target,
-        channel=authorization.channel,
-        recipient_fingerprint=authorization.recipient_fingerprint,
-    )
-    if not chain:
-        return True, None
-    tip = _unique_authorization_tip(chain)
-    by_id = {item.authorization_id: item for item in chain}
-    if tip is None or len(by_id) != len(chain):
-        return False, None
-    newest_to_oldest: list[str] = []
-    current: DeliveryAuthorizationRecord | None = tip
+    if len(tips) != 1:
+        return _TerminalTupleClassification(
+            package_id, target, channel, recipient_fingerprint, False
+        )
+    newest_to_oldest: list[DeliveryAuthorizationRecord] = []
+    current: DeliveryAuthorizationRecord | None = tips[0]
     while current is not None:
-        if current.authorization_id in newest_to_oldest:
-            return False, None
-        newest_to_oldest.append(current.authorization_id)
-        if current.prior_authorization_id is None:
-            current = None
-        else:
-            current = by_id.get(current.prior_authorization_id)
-            if current is None:
-                return False, None
-    if set(newest_to_oldest) != set(by_id):
-        return False, None
-
-    chain_attempts = [
+        if current in newest_to_oldest:
+            return _TerminalTupleClassification(
+                package_id, target, channel, recipient_fingerprint, False
+            )
+        newest_to_oldest.append(current)
+        current = (
+            None
+            if current.prior_authorization_id is None
+            else by_id.get(current.prior_authorization_id)
+        )
+        if current is None and newest_to_oldest[-1].prior_authorization_id is not None:
+            return _TerminalTupleClassification(
+                package_id, target, channel, recipient_fingerprint, False
+            )
+    if {item.authorization_id for item in newest_to_oldest} != set(by_id):
+        return _TerminalTupleClassification(
+            package_id, target, channel, recipient_fingerprint, False
+        )
+    authorizations = tuple(reversed(newest_to_oldest))
+    position = {
+        item.authorization_id: index for index, item in enumerate(authorizations)
+    }
+    attempts = [
         item for item in snapshot.delivery_attempts if item.authorization_id in by_id
     ]
-    consumed_authorizations = [item.authorization_id for item in chain_attempts]
-    if len(consumed_authorizations) != len(set(consumed_authorizations)):
-        return False, None
-    if not chain_attempts:
-        return True, None
-    chain_position = {
-        authorization_id: position
-        for position, authorization_id in enumerate(reversed(newest_to_oldest))
-    }
-    return True, max(
-        chain_attempts,
-        key=lambda item: chain_position[item.authorization_id],
+    attempts_by_authorization: dict[str, DeliveryAttemptRecord] = {}
+    for attempt in attempts:
+        authorization = by_id[attempt.authorization_id]
+        if (
+            attempt.authorization_id in attempts_by_authorization
+            or authorization.purpose not in {"initial_attempt", "retry_attempt"}
+            or attempt.package_id != package_id
+            or attempt.target != target
+            or attempt.channel != channel
+            or attempt.recipient_fingerprint != recipient_fingerprint
+        ):
+            return _TerminalTupleClassification(
+                package_id, target, channel, recipient_fingerprint, False
+            )
+        attempts_by_authorization[attempt.authorization_id] = attempt
+    ordered_attempts = tuple(
+        sorted(attempts, key=lambda item: position[item.authorization_id])
+    )
+    result_tips: list[tuple[str, DeliveryResultRecord | None]] = []
+    consumed_reconciliations: list[str] = []
+    for attempt in ordered_attempts:
+        results = tuple(
+            item
+            for item in snapshot.delivery_results
+            if item.attempt_id == attempt.attempt_id
+        )
+        by_result_id = {item.result_id: item for item in results}
+        referenced_results = {
+            item.prior_result_id for item in results if item.prior_result_id is not None
+        }
+        tips_for_attempt = [
+            item for item in results if item.result_id not in referenced_results
+        ]
+        if len(by_result_id) != len(results) or len(tips_for_attempt) != (
+            1 if results else 0
+        ):
+            return _TerminalTupleClassification(
+                package_id, target, channel, recipient_fingerprint, False
+            )
+        tip = tips_for_attempt[0] if tips_for_attempt else None
+        if tip is not None:
+            tip_to_root: list[str] = []
+            current_result: DeliveryResultRecord | None = tip
+            while current_result is not None:
+                if current_result.result_id in tip_to_root:
+                    return _TerminalTupleClassification(
+                        package_id, target, channel, recipient_fingerprint, False
+                    )
+                tip_to_root.append(current_result.result_id)
+                current_result = (
+                    None
+                    if current_result.prior_result_id is None
+                    else by_result_id.get(current_result.prior_result_id)
+                )
+                if (
+                    current_result is None
+                    and by_result_id[tip_to_root[-1]].prior_result_id is not None
+                ):
+                    return _TerminalTupleClassification(
+                        package_id, target, channel, recipient_fingerprint, False
+                    )
+            if set(tip_to_root) != set(by_result_id):
+                return _TerminalTupleClassification(
+                    package_id, target, channel, recipient_fingerprint, False
+                )
+        for result in results:
+            if result.connector_operation_id != attempt.connector_operation_id:
+                return _TerminalTupleClassification(
+                    package_id, target, channel, recipient_fingerprint, False
+                )
+            if (
+                result.prior_result_id is not None
+                and result.prior_result_id not in by_result_id
+            ):
+                return _TerminalTupleClassification(
+                    package_id, target, channel, recipient_fingerprint, False
+                )
+            if result.reconciliation_authorization_id is not None:
+                reconciliation = by_id.get(result.reconciliation_authorization_id)
+                if (
+                    reconciliation is None
+                    or reconciliation.purpose != "result_reconciliation"
+                    or reconciliation.retry_of_attempt_id != attempt.attempt_id
+                    or result.reconciliation_authorization_id
+                    in consumed_reconciliations
+                ):
+                    return _TerminalTupleClassification(
+                        package_id, target, channel, recipient_fingerprint, False
+                    )
+                consumed_reconciliations.append(result.reconciliation_authorization_id)
+        result_tips.append((attempt.attempt_id, tip))
+    return _TerminalTupleClassification(
+        package_id,
+        target,
+        channel,
+        recipient_fingerprint,
+        True,
+        authorizations,
+        authorizations[-1],
+        ordered_attempts,
+        tuple(result_tips),
+        tuple(consumed_reconciliations),
+        tuple(
+            (
+                mode,
+                _approval_policy_details(
+                    snapshot,
+                    package_id=package_id,
+                    approval_mode=mode,
+                ),
+            )
+            for mode in {item.approval_mode for item in authorizations}
+        ),
     )
 
 
-def _approval_policy_complete(
+def _approval_policy_details(
     snapshot: ControlStoreSnapshot,
     *,
     package_id: str,
     approval_mode: str,
-) -> tuple[bool, bool]:
+) -> _TerminalApproval:
     config = RELEASE_MODES.get(approval_mode)
     if config is None:
-        return False, False
+        return _TerminalApproval(False)
     required_roles = tuple(config["required_roles"])
     approvals = {item.approval_id: item for item in snapshot.approvals}
     tx_revision = {
@@ -178,80 +370,23 @@ def _approval_policy_complete(
             continue
         approval = approvals.get(binding.approval_id)
         if approval is None:
-            return False, False
+            return _TerminalApproval(False)
         if approval.mode != approval_mode:
             continue
         if approval.role not in required_roles:
-            return False, False
+            return _TerminalApproval(False)
         revision = tx_revision.get(binding.accepted_transaction_id)
         if revision is None:
-            return False, False
+            return _TerminalApproval(False)
         if revision > latest.get(approval.role, (-1, ""))[0]:
             latest[approval.role] = (revision, approval.decision)
     complete = all(
         role in latest and latest[role][1] == "approve" for role in required_roles
     )
-    return True, complete
-
-
-def _unique_result_tip(snapshot: ControlStoreSnapshot, attempt_id: str):
-    results = [
-        item for item in snapshot.delivery_results if item.attempt_id == attempt_id
-    ]
-    if not results:
-        return None
-    referenced = {
-        item.prior_result_id for item in results if item.prior_result_id is not None
-    }
-    tips = [item for item in results if item.result_id not in referenced]
-    return tips[0] if len(tips) == 1 else None
-
-
-def _authorization_purpose_is_legal(
-    snapshot: ControlStoreSnapshot,
-    authorization: DeliveryAuthorizationRecord,
-) -> bool:
-    chain_valid, latest_attempt = _latest_consumed_chain_attempt(
-        snapshot,
-        authorization,
+    decisions = tuple(
+        (role, latest[role][1]) for role in required_roles if role in latest
     )
-    if not chain_valid:
-        return False
-    if authorization.purpose == "initial_attempt":
-        return authorization.retry_of_attempt_id is None and latest_attempt is None
-    if authorization.retry_of_attempt_id is None:
-        return False
-    attempts = [
-        item
-        for item in snapshot.delivery_attempts
-        if item.attempt_id == authorization.retry_of_attempt_id
-    ]
-    if len(attempts) != 1:
-        return False
-    attempt = attempts[0]
-    if (
-        attempt.package_id != authorization.package_id
-        or attempt.target != authorization.target
-        or attempt.channel != authorization.channel
-        or attempt.recipient_fingerprint != authorization.recipient_fingerprint
-    ):
-        return False
-    tip = _unique_result_tip(snapshot, attempt.attempt_id)
-    if tip is None:
-        return False
-    if authorization.purpose == "result_reconciliation":
-        return tip.status == "outcome_unknown"
-    return (
-        authorization.purpose == "retry_attempt"
-        and latest_attempt is not None
-        and attempt.attempt_id == latest_attempt.attempt_id
-        and tip.status
-        in {
-            "draft_created",
-            "failed",
-            "outcome_unknown",
-        }
-    )
+    return _TerminalApproval(True, required_roles, decisions, complete)
 
 
 def classify_terminal_effect_authorization(
@@ -298,16 +433,17 @@ def classify_terminal_effect_authorization(
             for item in snapshot.delivery_authorizations
         ):
             return deny()
-        chain = _authorization_chain(
+        tuple_state = _terminal_tuple(
             snapshot,
             package_id=subject.package_id or "",
             target=subject.target or "",
             channel=subject.channel or "",
             recipient_fingerprint=subject.recipient_fingerprint or "",
         )
-        tip = _unique_authorization_tip(chain)
-        if (chain and tip is None) or subject.prior_authorization_id != (
-            tip.authorization_id if tip is not None else None
+        if not tuple_state.valid or subject.prior_authorization_id != (
+            tuple_state.current_authorization.authorization_id
+            if tuple_state.current_authorization is not None
+            else None
         ):
             return deny()
         candidate = DeliveryAuthorizationRecord.model_construct(
@@ -320,9 +456,7 @@ def classify_terminal_effect_authorization(
             channel=subject.channel,
             recipient_fingerprint=subject.recipient_fingerprint,
         )
-        return (
-            allow() if _authorization_purpose_is_legal(snapshot, candidate) else deny()
-        )
+        return allow() if tuple_state.authorization_can_record(candidate) else deny()
     if effect is CoreEffect.DELIVERY_ATTEMPT:
         authorizations = [
             item
@@ -332,28 +466,23 @@ def classify_terminal_effect_authorization(
         if len(authorizations) != 1:
             return deny()
         authorization = authorizations[0]
-        chain = _authorization_chain(
+        tuple_state = _terminal_tuple(
             snapshot,
             package_id=authorization.package_id,
             target=authorization.target,
             channel=authorization.channel,
             recipient_fingerprint=authorization.recipient_fingerprint,
         )
-        tip = _unique_authorization_tip(chain)
-        policy_valid, approval_complete = _approval_policy_complete(
-            snapshot,
-            package_id=authorization.package_id,
-            approval_mode=authorization.approval_mode,
-        )
+        approval = tuple_state.approval(authorization.approval_mode)
         exact = (
             subject.package_id == authorization.package_id
             and subject.target == authorization.target
             and subject.channel == authorization.channel
             and subject.recipient_fingerprint == authorization.recipient_fingerprint
         )
-        unused = not any(
-            item.authorization_id == authorization.authorization_id
-            for item in snapshot.delivery_attempts
+        unused = (
+            tuple_state.attempt_for_authorization(authorization.authorization_id)
+            is None
         )
         unique_operation = not any(
             item.connector_operation_id == subject.connector_operation_id
@@ -362,13 +491,13 @@ def classify_terminal_effect_authorization(
         legal = (
             subject.attempt_id is not None
             and subject.connector_operation_id is not None
-            and tip is not None
-            and tip.authorization_id == authorization.authorization_id
+            and tuple_state.valid
+            and tuple_state.current_authorization == authorization
             and authorization.decision == "authorize"
             and authorization.purpose in {"initial_attempt", "retry_attempt"}
-            and _authorization_purpose_is_legal(snapshot, authorization)
-            and policy_valid
-            and approval_complete
+            and tuple_state.authorization_can_record(authorization)
+            and approval.valid
+            and approval.complete
             and exact
             and unused
             and unique_operation
@@ -385,45 +514,32 @@ def classify_terminal_effect_authorization(
         return deny()
     attempt = attempts[0]
     if (
-        subject.connector_operation_id != attempt.connector_operation_id
+        subject.package_id != attempt.package_id
+        or subject.connector_operation_id != attempt.connector_operation_id
         or (attempt.target == "local" and subject.result_status != "bundle_prepared")
         or (attempt.target != "local" and subject.result_status == "bundle_prepared")
     ):
         return deny()
-    results = [
-        item
-        for item in snapshot.delivery_results
-        if item.attempt_id == attempt.attempt_id
-    ]
-    if subject.reconciliation_authorization_id is None:
-        return allow() if not results and subject.prior_result_id is None else deny()
-    tip = _unique_result_tip(snapshot, attempt.attempt_id)
-    authorizations = [
-        item
-        for item in snapshot.delivery_authorizations
-        if item.authorization_id == subject.reconciliation_authorization_id
-    ]
-    if len(authorizations) != 1 or tip is None:
+    tuple_state = _terminal_tuple(
+        snapshot,
+        package_id=attempt.package_id,
+        target=attempt.target,
+        channel=attempt.channel,
+        recipient_fingerprint=attempt.recipient_fingerprint,
+    )
+    if not tuple_state.valid:
         return deny()
-    authorization = authorizations[0]
-    chain = _authorization_chain(
-        snapshot,
-        package_id=authorization.package_id,
-        target=authorization.target,
-        channel=authorization.channel,
-        recipient_fingerprint=authorization.recipient_fingerprint,
-    )
-    auth_tip = _unique_authorization_tip(chain)
-    policy_valid, approval_complete = _approval_policy_complete(
-        snapshot,
-        package_id=authorization.package_id,
-        approval_mode=authorization.approval_mode,
-    )
+    tip = tuple_state.result_tip(attempt.attempt_id)
+    if subject.reconciliation_authorization_id is None:
+        return allow() if tip is None and subject.prior_result_id is None else deny()
+    authorization = tuple_state.authorization(subject.reconciliation_authorization_id)
+    if authorization is None or tip is None:
+        return deny()
+    approval = tuple_state.approval(authorization.approval_mode)
     legal = (
         subject.prior_result_id == tip.result_id
         and tip.status == "outcome_unknown"
-        and auth_tip is not None
-        and auth_tip.authorization_id == authorization.authorization_id
+        and tuple_state.current_authorization == authorization
         and authorization.decision == "authorize"
         and authorization.purpose == "result_reconciliation"
         and authorization.retry_of_attempt_id == attempt.attempt_id
@@ -431,12 +547,10 @@ def classify_terminal_effect_authorization(
         and authorization.target == attempt.target
         and authorization.channel == attempt.channel
         and authorization.recipient_fingerprint == attempt.recipient_fingerprint
-        and policy_valid
-        and approval_complete
-        and not any(
-            item.reconciliation_authorization_id == authorization.authorization_id
-            for item in snapshot.delivery_results
-        )
+        and approval.valid
+        and approval.complete
+        and authorization.authorization_id
+        not in tuple_state.consumed_reconciliation_authorizations
     )
     return allow() if legal else deny()
 
@@ -480,27 +594,31 @@ def classify_terminal_legality(
     if len(snapshot.package_ready_records) != 1:
         return TerminalLegality("invalid")
     package = snapshot.package_ready_records[0]
-    authorizations = [
+    authorizations = tuple(
         item
         for item in snapshot.delivery_authorizations
         if item.package_id == package.package_id
-    ]
-    chains: dict[tuple[str, str, str], list[DeliveryAuthorizationRecord]] = {}
-    for item in authorizations:
-        chains.setdefault(
-            (item.target, item.channel, item.recipient_fingerprint), []
-        ).append(item)
-    auth_tips: list[DeliveryAuthorizationRecord] = []
-    for chain in chains.values():
-        referenced_auth = {
-            item.prior_authorization_id
-            for item in chain
-            if item.prior_authorization_id is not None
-        }
-        tips = [item for item in chain if item.authorization_id not in referenced_auth]
-        if len(tips) != 1:
+    )
+    tuples: list[_TerminalTupleClassification] = []
+    for target, channel, recipient_fingerprint in {
+        (item.target, item.channel, item.recipient_fingerprint)
+        for item in authorizations
+    }:
+        tuple_state = _terminal_tuple(
+            snapshot,
+            package_id=package.package_id,
+            target=target,
+            channel=channel,
+            recipient_fingerprint=recipient_fingerprint,
+        )
+        if not tuple_state.valid:
             return TerminalLegality("invalid", package_id=package.package_id)
-        auth_tips.extend(tips)
+        tuples.append(tuple_state)
+    auth_tips = [
+        item.current_authorization
+        for item in tuples
+        if item.current_authorization is not None
+    ]
     tx_revision = {
         item.transaction_id: item.committed_revision for item in snapshot.transactions
     }
@@ -526,78 +644,36 @@ def classify_terminal_legality(
             package_id=package.package_id,
             next_effects=("approval", "authorization"),
         )
-    required_roles = tuple(RELEASE_MODES[selected.approval_mode]["required_roles"])
-    approvals = {item.approval_id: item for item in snapshot.approvals}
-    latest: dict[str, tuple[int, str]] = {}
-    for binding in snapshot.approval_package_bindings:
-        approval = approvals.get(binding.approval_id)
-        if (
-            approval is None
-            or binding.package_id != package.package_id
-            or approval.mode != selected.approval_mode
-        ):
-            continue
-        if approval.role not in required_roles:
-            return TerminalLegality("invalid", package_id=package.package_id)
-        revision = tx_revision.get(binding.accepted_transaction_id, -1)
-        if revision > latest.get(approval.role, (-1, ""))[0]:
-            latest[approval.role] = (revision, approval.decision)
-    latest_decisions = tuple(
-        (role, latest[role][1]) for role in required_roles if role in latest
+    tuple_state = next(
+        (
+            item
+            for item in tuples
+            if item.authorization(selected.authorization_id) is not None
+        ),
+        None,
     )
-    approval_complete = all(
-        role in latest and latest[role][1] == "approve" for role in required_roles
-    )
-    is_current = any(
-        item.authorization_id == selected.authorization_id for item in auth_tips
-    )
-    attempts = [
-        item
-        for item in snapshot.delivery_attempts
-        if item.authorization_id == selected.authorization_id
-    ]
-    if len(attempts) > 1:
+    if tuple_state is None:
         return TerminalLegality("invalid", package_id=package.package_id)
-    if not attempts and selected.retry_of_attempt_id is not None:
-        referenced_attempts = [
-            item
-            for item in snapshot.delivery_attempts
-            if item.attempt_id == selected.retry_of_attempt_id
-        ]
-        if len(referenced_attempts) != 1:
+    approval = tuple_state.approval(selected.approval_mode)
+    if not approval.valid:
+        return TerminalLegality("invalid", package_id=package.package_id)
+    required_roles = approval.required_roles
+    latest_decisions = approval.latest_decisions
+    approval_complete = approval.complete
+    is_current = tuple_state.current_authorization == selected
+    attempt = tuple_state.attempt_for_authorization(selected.authorization_id)
+    if attempt is None and selected.purpose == "result_reconciliation":
+        attempt = next(
+            (
+                item
+                for item in tuple_state.ordered_attempts
+                if item.attempt_id == selected.retry_of_attempt_id
+            ),
+            None,
+        )
+        if attempt is None:
             return TerminalLegality("invalid", package_id=package.package_id)
-        referenced_results = [
-            item
-            for item in snapshot.delivery_results
-            if item.attempt_id == selected.retry_of_attempt_id
-        ]
-        referenced_result_ids = {
-            item.prior_result_id
-            for item in referenced_results
-            if item.prior_result_id is not None
-        }
-        referenced_tips = [
-            item
-            for item in referenced_results
-            if item.result_id not in referenced_result_ids
-        ]
-        if len(referenced_tips) != 1:
-            return TerminalLegality("invalid", package_id=package.package_id)
-        if selected.purpose == "result_reconciliation":
-            if referenced_tips[0].status != "outcome_unknown" and not (
-                len(referenced_results) > 1
-                and referenced_tips[0].reconciliation_authorization_id
-                == selected.authorization_id
-            ):
-                return TerminalLegality("invalid", package_id=package.package_id)
-            attempts = referenced_attempts
-        elif referenced_tips[0].status not in {
-            "draft_created",
-            "failed",
-            "outcome_unknown",
-        }:
-            return TerminalLegality("invalid", package_id=package.package_id)
-    if not attempts:
+    if attempt is None:
         state = (
             "package_ready"
             if approval_complete and is_current and selected.decision == "authorize"
@@ -617,13 +693,8 @@ def classify_terminal_legality(
             terminal_state=state,
             package_id=package.package_id,
         )
-    attempt = attempts[0]
-    results = [
-        item
-        for item in snapshot.delivery_results
-        if item.attempt_id == attempt.attempt_id
-    ]
-    if not results:
+    tip = tuple_state.result_tip(attempt.attempt_id)
+    if tip is None:
         state = "attempt_pending"
         return TerminalLegality(
             "package_ready",
@@ -638,13 +709,6 @@ def classify_terminal_legality(
             terminal_state=state,
             package_id=package.package_id,
         )
-    referenced_results = {
-        item.prior_result_id for item in results if item.prior_result_id is not None
-    }
-    tips = [item for item in results if item.result_id not in referenced_results]
-    if len(tips) != 1:
-        return TerminalLegality("invalid", package_id=package.package_id)
-    tip = tips[0]
     state = {
         "bundle_prepared": "package_ready",
         "draft_created": "draft_created",

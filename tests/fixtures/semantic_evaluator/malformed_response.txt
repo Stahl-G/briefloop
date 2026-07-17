@@ -1,0 +1,3 @@
+```json
+{"schema_version":"briefloop.semantic_evaluator.dimension_response.v1"}
+```

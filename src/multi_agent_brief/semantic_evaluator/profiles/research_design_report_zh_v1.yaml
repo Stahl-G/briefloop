@@ -1,0 +1,319 @@
+schema_version: briefloop.semantic_evaluator.profile.v1
+profile_id: research_design_report_zh_v1
+report_type: research_design_report
+language: zh-CN
+allowed_scope_classes: [O1, O2]
+dimensions:
+  - dimension_id: cross_section_consistency
+    scope_class: O1
+    definition: 在同一实体、时间、范围和定义下，报告中的多个陈述不能互相冲突。
+    positive_criterion: 同一对象和阶段的状态、数字范围与结论能够同时成立。
+    exclusions: &o1_exclusions
+      - 不判断外部事实是否真实。
+      - 不判断来源是否支持陈述。
+      - 不把纯风格偏好当作语义问题。
+    severity_rubric: &severity_rubric
+      severe: 若问题成立，会直接反转关键结论、阶段裁决或不可逆决定。
+      major: 若问题成立，会显著误导范围、决策或主要建议。
+      minor: 若问题成立，只影响局部理解且不改变主要决定。
+    abstention_conditions: &o1_abstention
+      - 仅凭报告内部无法确定被比较陈述是否具有相同实体、时间或范围。
+      - 合法判断需要报告之外的事实前提。
+    o3_handoff_conditions: &o3_handoff
+      - 需要打开来源、检查外部事实、时效性或专业真实性。
+      - 需要判断来源是否在语义上支持某个 claim。
+    eligible_requirement_types: &o1_types []
+    sub_aspects:
+      - sub_aspect_id: status_consistency
+        definition: 检查报告内同一阶段或对象的状态标签是否互相一致。
+        positive_criterion: 状态表、摘要、正文和结论对同一状态使用可同时成立的表述。
+        exclusions: *o1_exclusions
+        severity_rubric: *severity_rubric
+        abstention_conditions: *o1_abstention
+        o3_handoff_conditions: *o3_handoff
+        eligible_requirement_types: *o1_types
+      - sub_aspect_id: numerical_scope_consistency
+        definition: 检查报告内部数字的单位、分母、期间和适用范围是否稳定。
+        positive_criterion: 相互比较的数字明确共享或区分单位、分母、期间与范围。
+        exclusions: *o1_exclusions
+        severity_rubric: *severity_rubric
+        abstention_conditions: *o1_abstention
+        o3_handoff_conditions: *o3_handoff
+        eligible_requirement_types: *o1_types
+      - sub_aspect_id: conclusion_body_consistency
+        definition: 检查结论是否与正文中明确陈述的状态和限制一致。
+        positive_criterion: 结论不反转或越过正文自己的状态与限制。
+        exclusions: *o1_exclusions
+        severity_rubric: *severity_rubric
+        abstention_conditions: *o1_abstention
+        o3_handoff_conditions: *o3_handoff
+        eligible_requirement_types: *o1_types
+
+  - dimension_id: scope_definition_stability
+    scope_class: O1
+    definition: 对象、单位、时间、构念或适用范围不得发生未声明变化。
+    positive_criterion: 报告明确声明所有范围变化，并在比较和结论中保持定义稳定。
+    exclusions: *o1_exclusions
+    severity_rubric: *severity_rubric
+    abstention_conditions: *o1_abstention
+    o3_handoff_conditions: *o3_handoff
+    eligible_requirement_types: *o1_types
+    sub_aspects:
+      - sub_aspect_id: entity_scope_stability
+        definition: 检查实体、样本、产品或群体范围是否被静默扩大或缩小。
+        positive_criterion: 实体范围变化被明确说明且不被当作同一范围比较。
+        exclusions: *o1_exclusions
+        severity_rubric: *severity_rubric
+        abstention_conditions: *o1_abstention
+        o3_handoff_conditions: *o3_handoff
+        eligible_requirement_types: *o1_types
+      - sub_aspect_id: temporal_scope_stability
+        definition: 检查时间窗口、观察期或状态时点是否被静默改变。
+        positive_criterion: 时间范围在相互关联的陈述中保持明确和一致。
+        exclusions: *o1_exclusions
+        severity_rubric: *severity_rubric
+        abstention_conditions: *o1_abstention
+        o3_handoff_conditions: *o3_handoff
+        eligible_requirement_types: *o1_types
+      - sub_aspect_id: unit_construct_stability
+        definition: 检查度量单位、分母或构念定义是否发生未声明变化。
+        positive_criterion: 单位、分母和构念定义在推理链中保持稳定或明确区分。
+        exclusions: *o1_exclusions
+        severity_rubric: *severity_rubric
+        abstention_conditions: *o1_abstention
+        o3_handoff_conditions: *o3_handoff
+        eligible_requirement_types: *o1_types
+
+  - dimension_id: reasoning_continuity
+    scope_class: O1
+    definition: 报告自己的前提必须足以支撑报告自己的结论，不得跳过必要推理桥梁。
+    positive_criterion: 结论可由报告明确给出的前提、限制和中间推理连续推出。
+    exclusions: *o1_exclusions
+    severity_rubric: *severity_rubric
+    abstention_conditions: *o1_abstention
+    o3_handoff_conditions: *o3_handoff
+    eligible_requirement_types: *o1_types
+    sub_aspects:
+      - sub_aspect_id: premise_conclusion_continuity
+        definition: 检查结论是否超出报告自身明确前提能够支持的范围。
+        positive_criterion: 每个关键结论都有报告内部可识别的必要前提。
+        exclusions: *o1_exclusions
+        severity_rubric: *severity_rubric
+        abstention_conditions: *o1_abstention
+        o3_handoff_conditions: *o3_handoff
+        eligible_requirement_types: *o1_types
+      - sub_aspect_id: causal_bridge_continuity
+        definition: 检查因果或机制性结论是否缺少报告内部必要的桥接说明。
+        positive_criterion: 因果或机制性表述明确给出中间关系或保持为有限推断。
+        exclusions: *o1_exclusions
+        severity_rubric: *severity_rubric
+        abstention_conditions: *o1_abstention
+        o3_handoff_conditions: *o3_handoff
+        eligible_requirement_types: *o1_types
+      - sub_aspect_id: qualification_preservation
+        definition: 检查前文限定条件在后续摘要、结论和建议中是否被保留。
+        positive_criterion: 关键限定词在推理链和结论中持续可见。
+        exclusions: *o1_exclusions
+        severity_rubric: *severity_rubric
+        abstention_conditions: *o1_abstention
+        o3_handoff_conditions: *o3_handoff
+        eligible_requirement_types: *o1_types
+
+  - dimension_id: uncertainty_calibration
+    scope_class: O1
+    definition: 确定性措辞必须与报告自身记录的证据状态、限制、分歧和缺口一致。
+    positive_criterion: 措辞强度不会越过报告内部明确呈现的不确定性边界。
+    exclusions: *o1_exclusions
+    severity_rubric: *severity_rubric
+    abstention_conditions: *o1_abstention
+    o3_handoff_conditions: *o3_handoff
+    eligible_requirement_types: *o1_types
+    sub_aspects:
+      - sub_aspect_id: evidence_state_wording_alignment
+        definition: 检查结论措辞是否与报告内部标注的证据状态一致。
+        positive_criterion: 未验证、初步或有限证据不会被写成已证实或可靠。
+        exclusions: *o1_exclusions
+        severity_rubric: *severity_rubric
+        abstention_conditions: *o1_abstention
+        o3_handoff_conditions: *o3_handoff
+        eligible_requirement_types: *o1_types
+      - sub_aspect_id: limitation_wording_alignment
+        definition: 检查报告的限制是否在相关结论的措辞强度中得到体现。
+        positive_criterion: 结论保留会改变解释范围的关键限制。
+        exclusions: *o1_exclusions
+        severity_rubric: *severity_rubric
+        abstention_conditions: *o1_abstention
+        o3_handoff_conditions: *o3_handoff
+        eligible_requirement_types: *o1_types
+      - sub_aspect_id: disagreement_wording_alignment
+        definition: 检查报告内部记录的分歧是否被结论错误抹平。
+        positive_criterion: 存在实质分歧时，结论不伪装为完全一致或确定。
+        exclusions: *o1_exclusions
+        severity_rubric: *severity_rubric
+        abstention_conditions: *o1_abstention
+        o3_handoff_conditions: *o3_handoff
+        eligible_requirement_types: *o1_types
+
+  - dimension_id: summary_body_alignment
+    scope_class: O1
+    definition: 标题、摘要、状态表和结论必须与正文的实质内容一致。
+    positive_criterion: 面向快速阅读的表层不会改变正文中的状态、范围或结论。
+    exclusions: *o1_exclusions
+    severity_rubric: *severity_rubric
+    abstention_conditions: *o1_abstention
+    o3_handoff_conditions: *o3_handoff
+    eligible_requirement_types: *o1_types
+    sub_aspects:
+      - sub_aspect_id: title_body_alignment
+        definition: 检查标题是否准确反映正文的对象、状态和范围。
+        positive_criterion: 标题不夸大、反转或遗漏会改变理解的正文限定。
+        exclusions: *o1_exclusions
+        severity_rubric: *severity_rubric
+        abstention_conditions: *o1_abstention
+        o3_handoff_conditions: *o3_handoff
+        eligible_requirement_types: *o1_types
+      - sub_aspect_id: summary_body_alignment
+        definition: 检查摘要是否与正文的关键状态、限制和结论一致。
+        positive_criterion: 摘要保留会改变读者决定的正文信息。
+        exclusions: *o1_exclusions
+        severity_rubric: *severity_rubric
+        abstention_conditions: *o1_abstention
+        o3_handoff_conditions: *o3_handoff
+        eligible_requirement_types: *o1_types
+      - sub_aspect_id: status_table_body_alignment
+        definition: 检查状态表或结构化状态块是否与正文一致。
+        positive_criterion: 状态表和正文对同一项目给出可同时成立的裁决。
+        exclusions: *o1_exclusions
+        severity_rubric: *severity_rubric
+        abstention_conditions: *o1_abstention
+        o3_handoff_conditions: *o3_handoff
+        eligible_requirement_types: *o1_types
+
+  - dimension_id: recommendation_constraint_consistency
+    scope_class: O1
+    definition: 建议不得违反报告自己声明的前提、状态、限制或其他建议。
+    positive_criterion: 每项建议与报告内明确的前提、状态和相互约束一致。
+    exclusions: *o1_exclusions
+    severity_rubric: *severity_rubric
+    abstention_conditions: *o1_abstention
+    o3_handoff_conditions: *o3_handoff
+    eligible_requirement_types: *o1_types
+    sub_aspects:
+      - sub_aspect_id: recommendation_precondition_consistency
+        definition: 检查建议是否满足报告自身声明的启动前提。
+        positive_criterion: 建议仅在报告声明的必要前提满足时被提出。
+        exclusions: *o1_exclusions
+        severity_rubric: *severity_rubric
+        abstention_conditions: *o1_abstention
+        o3_handoff_conditions: *o3_handoff
+        eligible_requirement_types: *o1_types
+      - sub_aspect_id: recommendation_status_consistency
+        definition: 检查建议是否与报告内部当前阶段状态一致。
+        positive_criterion: HOLD、未验证或受阻状态不会同时导出立即推进建议。
+        exclusions: *o1_exclusions
+        severity_rubric: *severity_rubric
+        abstention_conditions: *o1_abstention
+        o3_handoff_conditions: *o3_handoff
+        eligible_requirement_types: *o1_types
+      - sub_aspect_id: recommendation_mutual_consistency
+        definition: 检查多项建议之间是否存在未解释的相互冲突。
+        positive_criterion: 多项建议可以并行成立，或明确说明先后与条件关系。
+        exclusions: *o1_exclusions
+        severity_rubric: *severity_rubric
+        abstention_conditions: *o1_abstention
+        o3_handoff_conditions: *o3_handoff
+        eligible_requirement_types: *o1_types
+
+  - dimension_id: brief_requirement_coverage
+    scope_class: O2
+    definition: 报告必须实质回答冻结的 must-answer 要求并包含 must-include 内容。
+    positive_criterion: 每个适用要求都能绑定到报告中实质回应它的内容。
+    exclusions: &o2_exclusions
+      - Bounded context 只作为任务约束，不作为外部事实证据。
+      - 不判断报告之外的事实或来源支持。
+      - 不因措辞风格差异认定要求缺失。
+    severity_rubric: *severity_rubric
+    abstention_conditions: &o2_abstention
+      - 冻结 requirement 本身存在无法消除的冲突或歧义。
+      - 仅凭报告和 bounded context 无法判断是否覆盖。
+    o3_handoff_conditions: *o3_handoff
+    eligible_requirement_types: [must_answer, must_include]
+    sub_aspects:
+      - sub_aspect_id: must_answer_coverage
+        definition: 检查报告是否实质回答每个适用的 must-answer 要求。
+        positive_criterion: 报告中存在可定位且足以回应要求的内容。
+        exclusions: *o2_exclusions
+        severity_rubric: *severity_rubric
+        abstention_conditions: *o2_abstention
+        o3_handoff_conditions: *o3_handoff
+        eligible_requirement_types: [must_answer]
+      - sub_aspect_id: must_include_coverage
+        definition: 检查报告是否包含每个适用的 must-include 内容。
+        positive_criterion: 要求的内容在报告中明确且可定位。
+        exclusions: *o2_exclusions
+        severity_rubric: *severity_rubric
+        abstention_conditions: *o2_abstention
+        o3_handoff_conditions: *o3_handoff
+        eligible_requirement_types: [must_include]
+
+  - dimension_id: audience_decision_fit
+    scope_class: O2
+    definition: 报告必须为冻结的目标读者提供约定的决策信息。
+    positive_criterion: 目标读者的明确需求和用途在报告中得到可定位的实质支持。
+    exclusions: *o2_exclusions
+    severity_rubric: *severity_rubric
+    abstention_conditions: *o2_abstention
+    o3_handoff_conditions: *o3_handoff
+    eligible_requirement_types: [audience_need, decision_use]
+    sub_aspects:
+      - sub_aspect_id: audience_need_coverage
+        definition: 检查报告是否覆盖冻结的目标读者信息需求。
+        positive_criterion: 每个适用读者需求都有清晰且可定位的回应。
+        exclusions: *o2_exclusions
+        severity_rubric: *severity_rubric
+        abstention_conditions: *o2_abstention
+        o3_handoff_conditions: *o3_handoff
+        eligible_requirement_types: [audience_need]
+      - sub_aspect_id: decision_use_coverage
+        definition: 检查报告是否提供冻结决策用途所需的信息。
+        positive_criterion: 报告明确提供或标示该决策用途需要的状态、范围和限制。
+        exclusions: *o2_exclusions
+        severity_rubric: *severity_rubric
+        abstention_conditions: *o2_abstention
+        o3_handoff_conditions: *o3_handoff
+        eligible_requirement_types: [decision_use]
+
+  - dimension_id: explicit_scope_constraint_compliance
+    scope_class: O2
+    definition: 报告不得违反冻结的 must-not-claim、scope-included 或 scope-excluded 约束。
+    positive_criterion: 报告的声明和覆盖范围与所有适用的显式范围约束一致。
+    exclusions: *o2_exclusions
+    severity_rubric: *severity_rubric
+    abstention_conditions: *o2_abstention
+    o3_handoff_conditions: *o3_handoff
+    eligible_requirement_types: [must_not_claim, scope_included, scope_excluded]
+    sub_aspects:
+      - sub_aspect_id: must_not_claim_compliance
+        definition: 检查报告是否作出冻结约束明确禁止的声明。
+        positive_criterion: 报告不包含与适用 must-not-claim 约束冲突的表述。
+        exclusions: *o2_exclusions
+        severity_rubric: *severity_rubric
+        abstention_conditions: *o2_abstention
+        o3_handoff_conditions: *o3_handoff
+        eligible_requirement_types: [must_not_claim]
+      - sub_aspect_id: scope_included_compliance
+        definition: 检查报告是否覆盖冻结为 included 的范围。
+        positive_criterion: 每个适用 included 范围都在报告中被明确处理。
+        exclusions: *o2_exclusions
+        severity_rubric: *severity_rubric
+        abstention_conditions: *o2_abstention
+        o3_handoff_conditions: *o3_handoff
+        eligible_requirement_types: [scope_included]
+      - sub_aspect_id: scope_excluded_compliance
+        definition: 检查报告是否越过冻结为 excluded 的范围。
+        positive_criterion: 报告不把 excluded 范围写入结论、建议或覆盖声明。
+        exclusions: *o2_exclusions
+        severity_rubric: *severity_rubric
+        abstention_conditions: *o2_abstention
+        o3_handoff_conditions: *o3_handoff
+        eligible_requirement_types: [scope_excluded]

@@ -1341,16 +1341,22 @@ def _commit_delivery_result(
     clock: object,
     package: PackageReadyRecord,
     attempt: DeliveryAttemptRecord,
+    *,
+    sequence: int = 1,
+    status: str = "bundle_prepared",
+    prior_result_id: str | None = None,
+    reconciliation_authorization_id: str | None = None,
+    verify: bool = True,
 ) -> tuple[TransactionReceipt, str, DeliveryResultRecord]:
-    transaction_id = "REQ-TERMINAL-RESULT-001"
-    result_id = "DELIVERY-RESULT-TERMINAL-PERSISTED-001"
-    event_id = "EVT-TERMINAL-RESULT-PERSISTED-001"
+    transaction_id = f"REQ-TERMINAL-RESULT-{sequence:03d}"
+    result_id = f"DELIVERY-RESULT-TERMINAL-PERSISTED-{sequence:03d}"
+    event_id = f"EVT-TERMINAL-RESULT-PERSISTED-{sequence:03d}"
     request_fingerprint = canonical_fingerprint(
         {
             "effect_kind": "delivery_result",
             "result_id": result_id,
             "attempt_id": attempt.attempt_id,
-            "status": "bundle_prepared",
+            "status": status,
             "evidence_sha256": package.package_manifest_sha256,
         }
     )
@@ -1364,14 +1370,24 @@ def _commit_delivery_result(
             result_id=result_id,
             run_id=run_id,
             attempt_id=attempt.attempt_id,
-            prior_result_id=None,
-            reconciliation_authorization_id=None,
-            status="bundle_prepared",
-            adapter_id="briefloop-local-package",
+            prior_result_id=prior_result_id,
+            reconciliation_authorization_id=reconciliation_authorization_id,
+            status=status,
+            adapter_id=(
+                "briefloop-local-package"
+                if attempt.target == "local"
+                else "terminal-test-adapter"
+            ),
             adapter_version="V2",
             connector_operation_id=attempt.connector_operation_id,
-            evidence_sha256=package.package_manifest_sha256,
-            evidence_artifact=package.package_manifest_artifact,
+            evidence_sha256=(
+                package.package_manifest_sha256
+                if attempt.target == "local"
+                else "f" * 64
+            ),
+            evidence_artifact=(
+                package.package_manifest_artifact if attempt.target == "local" else None
+            ),
             recorded_at=core_fixture.NOW,
             result_event_id=event_id,
             accepted_transaction_id=transaction_id,
@@ -1381,8 +1397,18 @@ def _commit_delivery_result(
             event_id=event_id,
             run_id=run_id,
             transaction_id=transaction_id,
-            event_type="delivery_bundle_prepared",
-            artifact_id=package.package_manifest_artifact.artifact_id,
+            event_type={
+                "bundle_prepared": "delivery_bundle_prepared",
+                "draft_created": "delivery_draft_created",
+                "succeeded": "delivery_succeeded",
+                "failed": "delivery_failed",
+                "outcome_unknown": "decision_recorded",
+            }[status],
+            artifact_id=(
+                package.package_manifest_artifact.artifact_id
+                if attempt.target == "local"
+                else None
+            ),
             reason="typed local package observation recorded",
             fingerprint=request_fingerprint,
             effect_kind="delivery_result",
@@ -1396,15 +1422,68 @@ def _commit_delivery_result(
         )
         unit.put_delivery_result(result)
         unit.append_event(event)
-        receipt = unit.commit(
-            _postcommit_observer=lambda _receipt: CoreRunDomainVerifier().verify(
-                store,
-                run_id,
-            )
+        observer = (
+            (lambda _receipt: CoreRunDomainVerifier().verify(store, run_id))
+            if verify
+            else None
         )
+        receipt = unit.commit(_postcommit_observer=observer)
         assert [item.result_id for item in receipt.delivery_results] == [result_id]
         assert receipt.event_ids == [event_id]
     return receipt, request_fingerprint, result
+
+
+def _external_unknown_branch(
+    tmp_path: Path,
+) -> tuple[
+    Path,
+    str,
+    object,
+    PackageReadyRecord,
+    DeliveryAuthorizationRecord,
+    DeliveryAttemptRecord,
+    DeliveryResultRecord,
+]:
+    workspace, run_id, clock = _finalize_ready_workspace(tmp_path)
+    _render_receipt, _render_fingerprint, render = _commit_finalize_render(
+        workspace,
+        run_id,
+        clock,
+    )
+    _commit_finalize_gate(workspace, run_id, clock, render)
+    _complete_receipt, _complete_fingerprint, package = _commit_finalize_complete(
+        workspace,
+        run_id,
+        clock,
+        render,
+    )
+    _authorization_receipt, _authorization_fingerprint, authorization = (
+        _commit_delivery_authorization(
+            workspace,
+            run_id,
+            clock,
+            package,
+            approval_mode="internal_draft",
+            target="gmail",
+            channel="email",
+            recipient_fingerprint="a" * 64,
+        )
+    )
+    _attempt_receipt, _attempt_fingerprint, attempt = _commit_delivery_attempt(
+        workspace,
+        run_id,
+        clock,
+        authorization,
+    )
+    _result_receipt, _result_fingerprint, unknown = _commit_delivery_result(
+        workspace,
+        run_id,
+        clock,
+        package,
+        attempt,
+        status="outcome_unknown",
+    )
+    return workspace, run_id, clock, package, authorization, attempt, unknown
 
 
 def test_terminal_effect_chain_rolls_back_replays_and_survives_restart(
@@ -2103,6 +2182,370 @@ def test_result_reconciliation_consumes_current_exact_authorization_once(
             ),
             CoreEffect.DELIVERY_RESULT,
             subject,
+        ).decision
+        == "deny"
+    )
+
+
+def test_real_uow_retry_consumption_closes_older_reconciliation_branch(
+    tmp_path: Path,
+) -> None:
+    (
+        workspace,
+        run_id,
+        clock,
+        package,
+        initial,
+        first_attempt,
+        unknown,
+    ) = _external_unknown_branch(tmp_path)
+    _reconciliation_receipt, _reconciliation_fingerprint, reconciliation = (
+        _commit_delivery_authorization(
+            workspace,
+            run_id,
+            clock,
+            package,
+            sequence=2,
+            approval_mode="internal_draft",
+            prior_authorization_id=initial.authorization_id,
+            retry_of_attempt_id=first_attempt.attempt_id,
+            purpose="result_reconciliation",
+            target=initial.target,
+            channel=initial.channel,
+            recipient_fingerprint=initial.recipient_fingerprint,
+        )
+    )
+    _retry_receipt, _retry_fingerprint, retry = _commit_delivery_authorization(
+        workspace,
+        run_id,
+        clock,
+        package,
+        sequence=3,
+        approval_mode="internal_draft",
+        prior_authorization_id=reconciliation.authorization_id,
+        retry_of_attempt_id=first_attempt.attempt_id,
+        purpose="retry_attempt",
+        target=initial.target,
+        channel=initial.channel,
+        recipient_fingerprint=initial.recipient_fingerprint,
+    )
+    _retry_attempt_receipt, _retry_attempt_fingerprint, _retry_attempt = (
+        _commit_delivery_attempt(workspace, run_id, clock, retry, sequence=2)
+    )
+
+    bad_authorization_receipt, _fingerprint, bad_authorization = (
+        _commit_delivery_authorization(
+            workspace,
+            run_id,
+            clock,
+            package,
+            sequence=4,
+            approval_mode="internal_draft",
+            prior_authorization_id=retry.authorization_id,
+            retry_of_attempt_id=first_attempt.attempt_id,
+            purpose="result_reconciliation",
+            target=initial.target,
+            channel=initial.channel,
+            recipient_fingerprint=initial.recipient_fingerprint,
+            verify=False,
+        )
+    )
+    bad_result_receipt, _fingerprint, bad_result = _commit_delivery_result(
+        workspace,
+        run_id,
+        clock,
+        package,
+        first_attempt,
+        sequence=2,
+        status="succeeded",
+        prior_result_id=unknown.result_id,
+        reconciliation_authorization_id=reconciliation.authorization_id,
+        verify=False,
+    )
+    with SQLiteControlStore.open(workspace / "briefloop.db", clock=clock) as store:
+        history = store.load_history()
+        authorization_prefix = history.snapshot_at_revision(
+            run_id, bad_authorization_receipt.prior_revision
+        )
+        result_prefix = history.snapshot_at_revision(
+            run_id, bad_result_receipt.prior_revision
+        )
+        assert (
+            classify_terminal_effect_authorization(
+                authorization_prefix,
+                CoreEffect.DELIVERY_AUTHORIZE,
+                TerminalEffectSubject(
+                    package_id=bad_authorization.package_id,
+                    approval_mode=bad_authorization.approval_mode,
+                    authorization_id=bad_authorization.authorization_id,
+                    prior_authorization_id=bad_authorization.prior_authorization_id,
+                    retry_of_attempt_id=bad_authorization.retry_of_attempt_id,
+                    purpose=bad_authorization.purpose,
+                    decision=bad_authorization.decision,
+                    target=bad_authorization.target,
+                    channel=bad_authorization.channel,
+                    recipient_fingerprint=bad_authorization.recipient_fingerprint,
+                ),
+            ).decision
+            == "deny"
+        )
+        assert (
+            classify_terminal_effect_authorization(
+                result_prefix,
+                CoreEffect.DELIVERY_RESULT,
+                TerminalEffectSubject(
+                    package_id=first_attempt.package_id,
+                    attempt_id=first_attempt.attempt_id,
+                    connector_operation_id=first_attempt.connector_operation_id,
+                    prior_result_id=bad_result.prior_result_id,
+                    reconciliation_authorization_id=(
+                        bad_result.reconciliation_authorization_id
+                    ),
+                    result_status=bad_result.status,
+                ),
+            ).decision
+            == "deny"
+        )
+        with pytest.raises(CoreRunError, match="historical_prefix_invalid"):
+            CoreRunDomainVerifier().verify(store, run_id)
+
+
+def test_real_uow_reconciliation_consumption_closes_older_retry_branch(
+    tmp_path: Path,
+) -> None:
+    (
+        workspace,
+        run_id,
+        clock,
+        package,
+        initial,
+        first_attempt,
+        unknown,
+    ) = _external_unknown_branch(tmp_path)
+    _retry_receipt, _retry_fingerprint, retry = _commit_delivery_authorization(
+        workspace,
+        run_id,
+        clock,
+        package,
+        sequence=2,
+        approval_mode="internal_draft",
+        prior_authorization_id=initial.authorization_id,
+        retry_of_attempt_id=first_attempt.attempt_id,
+        purpose="retry_attempt",
+        target=initial.target,
+        channel=initial.channel,
+        recipient_fingerprint=initial.recipient_fingerprint,
+    )
+    _reconciliation_receipt, _reconciliation_fingerprint, reconciliation = (
+        _commit_delivery_authorization(
+            workspace,
+            run_id,
+            clock,
+            package,
+            sequence=3,
+            approval_mode="internal_draft",
+            prior_authorization_id=retry.authorization_id,
+            retry_of_attempt_id=first_attempt.attempt_id,
+            purpose="result_reconciliation",
+            target=initial.target,
+            channel=initial.channel,
+            recipient_fingerprint=initial.recipient_fingerprint,
+        )
+    )
+    _commit_delivery_result(
+        workspace,
+        run_id,
+        clock,
+        package,
+        first_attempt,
+        sequence=2,
+        status="succeeded",
+        prior_result_id=unknown.result_id,
+        reconciliation_authorization_id=reconciliation.authorization_id,
+    )
+
+    bad_authorization_receipt, _fingerprint, bad_authorization = (
+        _commit_delivery_authorization(
+            workspace,
+            run_id,
+            clock,
+            package,
+            sequence=4,
+            approval_mode="internal_draft",
+            prior_authorization_id=reconciliation.authorization_id,
+            retry_of_attempt_id=first_attempt.attempt_id,
+            purpose="retry_attempt",
+            target=initial.target,
+            channel=initial.channel,
+            recipient_fingerprint=initial.recipient_fingerprint,
+            verify=False,
+        )
+    )
+    bad_attempt_receipt, _fingerprint, bad_attempt = _commit_delivery_attempt(
+        workspace,
+        run_id,
+        clock,
+        retry,
+        sequence=2,
+        verify=False,
+    )
+    with SQLiteControlStore.open(workspace / "briefloop.db", clock=clock) as store:
+        history = store.load_history()
+        authorization_prefix = history.snapshot_at_revision(
+            run_id, bad_authorization_receipt.prior_revision
+        )
+        attempt_prefix = history.snapshot_at_revision(
+            run_id, bad_attempt_receipt.prior_revision
+        )
+        assert (
+            classify_terminal_effect_authorization(
+                authorization_prefix,
+                CoreEffect.DELIVERY_AUTHORIZE,
+                TerminalEffectSubject(
+                    package_id=bad_authorization.package_id,
+                    approval_mode=bad_authorization.approval_mode,
+                    authorization_id=bad_authorization.authorization_id,
+                    prior_authorization_id=bad_authorization.prior_authorization_id,
+                    retry_of_attempt_id=bad_authorization.retry_of_attempt_id,
+                    purpose=bad_authorization.purpose,
+                    decision=bad_authorization.decision,
+                    target=bad_authorization.target,
+                    channel=bad_authorization.channel,
+                    recipient_fingerprint=bad_authorization.recipient_fingerprint,
+                ),
+            ).decision
+            == "deny"
+        )
+        assert (
+            classify_terminal_effect_authorization(
+                attempt_prefix,
+                CoreEffect.DELIVERY_ATTEMPT,
+                TerminalEffectSubject(
+                    package_id=bad_attempt.package_id,
+                    authorization_id=bad_attempt.authorization_id,
+                    target=bad_attempt.target,
+                    channel=bad_attempt.channel,
+                    recipient_fingerprint=bad_attempt.recipient_fingerprint,
+                    attempt_id=bad_attempt.attempt_id,
+                    connector_operation_id=bad_attempt.connector_operation_id,
+                ),
+            ).decision
+            == "deny"
+        )
+        with pytest.raises(CoreRunError, match="historical_prefix_invalid"):
+            CoreRunDomainVerifier().verify(store, run_id)
+
+
+def test_real_uow_current_reservation_allows_retry_or_reconciliation_only(
+    tmp_path: Path,
+) -> None:
+    (
+        workspace,
+        run_id,
+        clock,
+        package,
+        initial,
+        first_attempt,
+        _unknown,
+    ) = _external_unknown_branch(tmp_path / "retry")
+    _retry_receipt, _retry_fingerprint, retry = _commit_delivery_authorization(
+        workspace,
+        run_id,
+        clock,
+        package,
+        sequence=2,
+        approval_mode="internal_draft",
+        prior_authorization_id=initial.authorization_id,
+        retry_of_attempt_id=first_attempt.attempt_id,
+        purpose="retry_attempt",
+        target=initial.target,
+        channel=initial.channel,
+        recipient_fingerprint=initial.recipient_fingerprint,
+    )
+    _commit_delivery_attempt(workspace, run_id, clock, retry, sequence=2)
+
+    (
+        reconciliation_workspace,
+        reconciliation_run_id,
+        reconciliation_clock,
+        reconciliation_package,
+        reconciliation_initial,
+        reconciliation_attempt,
+        reconciliation_unknown,
+    ) = _external_unknown_branch(tmp_path / "reconciliation")
+    _reconciliation_receipt, _reconciliation_fingerprint, reconciliation = (
+        _commit_delivery_authorization(
+            reconciliation_workspace,
+            reconciliation_run_id,
+            reconciliation_clock,
+            reconciliation_package,
+            sequence=2,
+            approval_mode="internal_draft",
+            prior_authorization_id=reconciliation_initial.authorization_id,
+            retry_of_attempt_id=reconciliation_attempt.attempt_id,
+            purpose="result_reconciliation",
+            target=reconciliation_initial.target,
+            channel=reconciliation_initial.channel,
+            recipient_fingerprint=reconciliation_initial.recipient_fingerprint,
+        )
+    )
+    _commit_delivery_result(
+        reconciliation_workspace,
+        reconciliation_run_id,
+        reconciliation_clock,
+        reconciliation_package,
+        reconciliation_attempt,
+        sequence=2,
+        status="succeeded",
+        prior_result_id=reconciliation_unknown.result_id,
+        reconciliation_authorization_id=reconciliation.authorization_id,
+    )
+
+
+def test_terminal_classifier_rejects_disconnected_cyclic_result_subgraph(
+    tmp_path: Path,
+) -> None:
+    (
+        workspace,
+        run_id,
+        clock,
+        _package,
+        _initial,
+        attempt,
+        unknown,
+    ) = _external_unknown_branch(tmp_path)
+    cycle_left = unknown.model_copy(
+        update={
+            "result_id": "RESULT-DISCONNECTED-CYCLE-LEFT-001",
+            "prior_result_id": "RESULT-DISCONNECTED-CYCLE-RIGHT-001",
+        }
+    )
+    cycle_right = unknown.model_copy(
+        update={
+            "result_id": "RESULT-DISCONNECTED-CYCLE-RIGHT-001",
+            "prior_result_id": cycle_left.result_id,
+        }
+    )
+    with SQLiteControlStore.open(
+        workspace / "briefloop.db",
+        clock=clock,
+    ) as store:
+        snapshot = store.load_snapshot(run_id)
+    malformed = replace(
+        snapshot,
+        delivery_results=(unknown, cycle_left, cycle_right),
+    )
+    assert classify_terminal_legality(malformed).terminal_state == "invalid"
+    assert (
+        classify_terminal_effect_authorization(
+            malformed,
+            CoreEffect.DELIVERY_RESULT,
+            TerminalEffectSubject(
+                package_id=attempt.package_id,
+                attempt_id=attempt.attempt_id,
+                connector_operation_id=attempt.connector_operation_id,
+                result_status="succeeded",
+            ),
         ).decision
         == "deny"
     )
