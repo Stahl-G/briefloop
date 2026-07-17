@@ -112,7 +112,13 @@ resource_paths = (
     ("prompts", "dimension_v1.txt"),
     ("baselines", "structured_checklist_zh_v1.yaml"),
 )
-config = InstrumentConfig.model_validate(InstrumentConfig.minimal_example)
+config_payload = deepcopy(InstrumentConfig.minimal_example)
+config_payload["retry_policy"] = {
+    "max_attempts": 2,
+    "retryable_reason_codes": ["provider_retryable_failure"],
+    "backoff_schedule_ms": [0],
+}
+config = InstrumentConfig.model_validate(config_payload)
 report = "# 合成 wheel parity 报告\n\n当前状态为 HOLD。\n".encode()
 context = freeze_bounded_context(
     context_id="context-wheel-parity",
@@ -228,6 +234,16 @@ def admission_reason(
 
 tampered_attempt = attempts[0].model_copy(
     update={"evidence_sha256": "0" * 64}
+)
+extra_config = config.model_copy(
+    update={"unknown_extra": "PRIVATE_SYNTHETIC_CONFIG_EXTRA"}
+)
+nested_extra_config = config.model_copy(
+    update={
+        "retry_policy": config.retry_policy.model_copy(
+            update={"unknown_extra": "PRIVATE_SYNTHETIC_RETRY_EXTRA"}
+        )
+    }
 )
 canary_tamper_payload = attempts[0].model_dump(mode="json")
 canary_tamper_payload["forbidden_canary_values"] = []
@@ -400,6 +416,36 @@ failure_results = {
             dimension_attempt_evidence=[tampered_attempt, *attempts[1:]],
         )
     ),
+    "attempt_unknown_reason": semantic_error_reason(
+        lambda: make_dimension_attempt_evidence(
+            trial_id=decision.input_binding.trial_id,
+            prompt=prompt_for(attempts[0].dimension_id),
+            attempt_ordinal=1,
+            status="failed",
+            reason_code="PRIVATE_SYNTHETIC_CALLER_REASON",
+        )
+    ),
+    "attempt_retry_not_exhausted": semantic_error_reason(
+        lambda: assemble_semantic_assessment_run(
+            admission=decision,
+            dimension_attempt_evidence=[
+                make_dimension_attempt_evidence(
+                    trial_id=decision.input_binding.trial_id,
+                    prompt=prompt_for(attempts[0].dimension_id),
+                    attempt_ordinal=1,
+                    status="failed",
+                    reason_code="provider_retryable_failure",
+                ),
+                *attempts[1:],
+            ],
+        )
+    ),
+    "instrument_top_extra": semantic_error_reason(
+        lambda: build_instrument_manifest(extra_config)
+    ),
+    "instrument_nested_extra": semantic_error_reason(
+        lambda: build_instrument_manifest(nested_extra_config)
+    ),
     "attempt_canary_authority": semantic_error_reason(
         lambda: assemble_semantic_assessment_run(
             admission=decision,
@@ -566,14 +612,20 @@ def test_wheel_contains_all_resources_and_matches_source_identity(
     env = os.environ.copy()
     env["PYTHONPATH"] = str(extract_root)
     env["SEMANTIC_EVALUATOR_WHEEL_ROOT"] = str(extract_root)
-    probe = subprocess.run(
-        [sys.executable, "-c", WHEEL_PROBE],
-        cwd=tmp_path,
-        env=env,
-        check=False,
-        capture_output=True,
-        text=True,
-    )
-    assert probe.returncode == 0, probe.stdout + probe.stderr
-    wheel_identity = json.loads(probe.stdout.splitlines()[-1])
-    assert wheel_identity == _source_identity()
+    source_identity = _source_identity()
+    for optimized in (False, True):
+        command = [sys.executable]
+        if optimized:
+            command.append("-O")
+        command.extend(["-c", WHEEL_PROBE])
+        probe = subprocess.run(
+            command,
+            cwd=tmp_path,
+            env=env,
+            check=False,
+            capture_output=True,
+            text=True,
+        )
+        assert probe.returncode == 0, probe.stdout + probe.stderr
+        wheel_identity = json.loads(probe.stdout.splitlines()[-1])
+        assert wheel_identity == source_identity

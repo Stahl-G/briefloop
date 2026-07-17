@@ -15,6 +15,7 @@ from multi_agent_brief.semantic_evaluator.contracts import (
     SEMANTIC_EVALUATOR_CONTRACT_MODELS,
     AttemptRef,
     InputBinding,
+    RetryPolicy,
 )
 from multi_agent_brief.semantic_evaluator.errors import (
     ADMISSION_REASON_CODES,
@@ -114,6 +115,32 @@ def test_strict_errors_are_value_free_and_do_not_coerce() -> None:
 def test_attempt_status_and_reason_are_single_consistent_record(payload) -> None:
     with pytest.raises(ValidationError):
         AttemptRef.model_validate(payload)
+
+
+def test_attempt_failure_reason_vocabulary_is_frozen_in_contracts() -> None:
+    retry_policy = {
+        "max_attempts": 2,
+        "retryable_reason_codes": ["provider_retryable_failure"],
+        "backoff_schedule_ms": [0],
+    }
+    assert RetryPolicy.model_validate(retry_policy).retryable_reason_codes == [
+        "provider_retryable_failure"
+    ]
+    retry_policy["retryable_reason_codes"] = ["PRIVATE_SYNTHETIC_CALLER_REASON"]
+    with pytest.raises(ValidationError):
+        RetryPolicy.model_validate(retry_policy)
+
+    with pytest.raises(ValidationError):
+        AttemptRef.model_validate(
+            {
+                "attempt_ref": "attempt-invalid-reason",
+                "dimension_id": "cross_section_consistency",
+                "attempt_ordinal": 1,
+                "prompt_request_sha256": "0" * 64,
+                "status": "failed",
+                "reason_code": "PRIVATE_SYNTHETIC_CALLER_REASON",
+            }
+        )
 
 
 def test_frozen_profile_contains_nine_dimensions_and_exactly_25_full_entries() -> None:

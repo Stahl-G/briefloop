@@ -119,6 +119,10 @@ RunStatus = Literal[
     "security_failed",
     "archive_failed",
 ]
+AttemptFailureReasonCode = Literal[
+    "provider_failed",
+    "provider_retryable_failure",
+]
 Severity = Literal["severe", "major", "minor"]
 ImpactScope = Literal[
     "key_conclusion", "decision", "scope", "recommendation", "supporting_text"
@@ -319,7 +323,7 @@ class DecodingConfig(StrictModel):
 
 class RetryPolicy(StrictModel):
     max_attempts: PositiveInt
-    retryable_reason_codes: list[ContractId]
+    retryable_reason_codes: list[AttemptFailureReasonCode]
     backoff_schedule_ms: list[NonNegativeInt]
 
     @model_validator(mode="after")
@@ -403,7 +407,7 @@ class DimensionAttemptEvidence(StrictModel):
     attempt_ordinal: PositiveInt
     prompt_request_sha256: Sha256
     status: Literal["completed", "failed"]
-    reason_code: Optional[ContractId]
+    reason_code: Optional[AttemptFailureReasonCode]
     raw_response_bytes_hex: Optional[HexBytes]
     raw_response_sha256: Optional[Sha256]
     forbidden_canary_values: list[CleanText]
@@ -697,7 +701,7 @@ class AttemptRef(StrictModel):
     attempt_ordinal: PositiveInt
     prompt_request_sha256: Sha256
     status: Literal["completed", "failed"]
-    reason_code: Optional[ContractId]
+    reason_code: Optional[AttemptFailureReasonCode]
 
     @model_validator(mode="after")
     def validate_status_reason(self) -> "AttemptRef":
@@ -806,7 +810,7 @@ class AttemptFailedPayload(StrictModel):
     attempt_ref: ContractId
     attempt_ordinal: PositiveInt
     prompt_request_sha256: Sha256
-    reason_code: ContractId
+    reason_code: AttemptFailureReasonCode
 
 
 class DimensionParsedPayload(StrictModel):
@@ -1532,6 +1536,7 @@ __all__ = [
     "AssessmentUnit",
     "AssessmentUnitId",
     "AssessmentUnitOutcome",
+    "AttemptFailureReasonCode",
     "AttemptRef",
     "BaselinePayload",
     "BlockId",

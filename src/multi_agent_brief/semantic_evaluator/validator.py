@@ -1052,6 +1052,13 @@ def _strict_attempt_evidence(
                 or prior.reason_code not in policy.retryable_reason_codes
             ):
                 raise SemanticEvaluatorError("assessment_evidence_mismatch")
+        terminal = attempts[-1]
+        if (
+            terminal.status == "failed"
+            and terminal.reason_code in policy.retryable_reason_codes
+            and len(attempts) != policy.max_attempts
+        ):
+            raise SemanticEvaluatorError("assessment_evidence_mismatch")
     return strict
 
 

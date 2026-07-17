@@ -1201,6 +1201,65 @@ def test_failed_retry_attempt_does_not_turn_a_completed_dimension_into_failure()
     assert recompute_event_counts(assembled.events)["failure_count"] == 0
 
 
+def test_attempt_failure_reason_vocabulary_is_fixed_and_value_free() -> None:
+    _reader, _context, _profile, plan, decision, evidence, _attempts = (
+        _complete_no_finding_validation_case()
+    )
+    prompt = _prompt_for(decision, evidence[0].dimension_id)
+    hidden_detail = "PRIVATE_SYNTHETIC_CALLER_REASON"
+    with warnings.catch_warnings(record=True) as seen:
+        warnings.simplefilter("always")
+        with pytest.raises(SemanticEvaluatorError) as caught:
+            make_dimension_attempt_evidence(
+                trial_id=plan.trial_id,
+                prompt=prompt,
+                attempt_ordinal=1,
+                status="failed",
+                reason_code=hidden_detail,
+            )
+    assert caught.value.reason_code == "assessment_evidence_mismatch"
+    assert caught.value.__cause__ is None
+    assert caught.value.__context__ is None
+    assert hidden_detail not in repr(caught.value)
+    assert not seen
+
+
+def test_retryable_terminal_failure_requires_retry_exhaustion() -> None:
+    _reader, _context, _profile, plan, decision, evidence, _attempts = (
+        _complete_no_finding_validation_case()
+    )
+    prompt = _prompt_for(decision, evidence[0].dimension_id)
+    first_failure = make_dimension_attempt_evidence(
+        trial_id=plan.trial_id,
+        prompt=prompt,
+        attempt_ordinal=1,
+        status="failed",
+        reason_code="provider_retryable_failure",
+    )
+    with pytest.raises(SemanticEvaluatorError) as caught:
+        assemble_semantic_assessment_run(
+            admission=decision,
+            dimension_attempt_evidence=[first_failure, *evidence[1:]],
+        )
+    assert caught.value.reason_code == "assessment_evidence_mismatch"
+    assert caught.value.__cause__ is None
+    assert caught.value.__context__ is None
+
+    exhausted = make_dimension_attempt_evidence(
+        trial_id=plan.trial_id,
+        prompt=prompt,
+        attempt_ordinal=2,
+        status="failed",
+        reason_code="provider_retryable_failure",
+    )
+    assembled = assemble_semantic_assessment_run(
+        admission=decision,
+        dimension_attempt_evidence=[first_failure, exhausted, *evidence[1:]],
+    )
+    assert assembled.run.run_status == "incomplete"
+    assert assembled.validation_report.reason_codes == ["provider_retryable_failure"]
+
+
 @pytest.mark.parametrize(
     "mutation",
     [

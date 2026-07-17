@@ -15,11 +15,48 @@ class CanonicalSerializationError(ValueError):
     pass
 
 
+def _validate_declared_model_state(value: Any, *, seen: set[int] | None = None) -> None:
+    """Reject undeclared Pydantic instance state before any projection drops it."""
+
+    if seen is None:
+        seen = set()
+    if isinstance(value, BaseModel):
+        identity = id(value)
+        if identity in seen:
+            return
+        seen.add(identity)
+        declared = set(type(value).model_fields)
+        state = vars(value)
+        extra = getattr(value, "__pydantic_extra__", None)
+        if set(state).difference(declared) or extra:
+            raise CanonicalSerializationError("typed_model_state_invalid")
+        for field_name in declared:
+            if field_name in state:
+                _validate_declared_model_state(state[field_name], seen=seen)
+        return
+    if isinstance(value, dict):
+        identity = id(value)
+        if identity in seen:
+            return
+        seen.add(identity)
+        for item in value.values():
+            _validate_declared_model_state(item, seen=seen)
+        return
+    if isinstance(value, (list, tuple, set, frozenset)):
+        identity = id(value)
+        if identity in seen:
+            return
+        seen.add(identity)
+        for item in value:
+            _validate_declared_model_state(item, seen=seen)
+
+
 def canonical_model_payload(
     model: BaseModel,
     *,
     exclude: Iterable[str] = (),
 ) -> dict[str, Any]:
+    _validate_declared_model_state(model)
     return model.model_dump(
         mode="json",
         exclude=set(exclude),
@@ -35,6 +72,7 @@ def strict_model_payload(
 ) -> dict[str, Any]:
     """Preserve caller runtime types before strict model reconstruction."""
 
+    _validate_declared_model_state(model)
     return model.model_dump(
         mode="python",
         exclude=set(exclude),

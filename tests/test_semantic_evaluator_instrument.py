@@ -229,7 +229,14 @@ def test_malformed_instrument_config_is_rejected_value_free_at_public_boundaries
 
 @pytest.mark.parametrize(
     "mutation",
-    ["schema", "identity", "decoding", "retry_exact_int"],
+    [
+        "schema",
+        "identity",
+        "decoding",
+        "retry_exact_int",
+        "top_extra",
+        "nested_extra",
+    ],
 )
 def test_nested_or_unprojected_malformed_config_never_enters_manifest(
     mutation: str,
@@ -249,11 +256,21 @@ def test_nested_or_unprojected_malformed_config_never_enters_manifest(
                 )
             }
         )
-    else:
+    elif mutation == "retry_exact_int":
         malformed = config.model_copy(
             update={
                 "retry_policy": config.retry_policy.model_copy(
                     update={"max_attempts": True}
+                )
+            }
+        )
+    elif mutation == "top_extra":
+        malformed = config.model_copy(update={"unknown_extra": hidden_detail})
+    else:
+        malformed = config.model_copy(
+            update={
+                "retry_policy": config.retry_policy.model_copy(
+                    update={"unknown_extra": hidden_detail}
                 )
             }
         )

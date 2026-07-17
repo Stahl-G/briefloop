@@ -1,5 +1,7 @@
 """Complete assessment universe and deterministic identity tests."""
 
+import warnings
+
 import pytest
 
 from multi_agent_brief.semantic_evaluator.errors import SemanticEvaluatorError
@@ -97,3 +99,38 @@ def test_plan_builder_rejects_malformed_identity_value_free() -> None:
     assert caught.value.__cause__ is None
     assert caught.value.__context__ is None
     assert hidden_detail not in repr(caught.value)
+
+
+@pytest.mark.parametrize("mutation", ["profile_extra", "nested_extra"])
+def test_plan_builder_rejects_undeclared_typed_profile_state(
+    mutation: str,
+) -> None:
+    loaded = load_profile()
+    hidden_detail = "PRIVATE SYNTHETIC PROFILE EXTRA"
+    if mutation == "profile_extra":
+        malformed = loaded.profile.model_copy(update={"unknown_extra": hidden_detail})
+    else:
+        dimension = loaded.profile.dimensions[0]
+        sub_aspect = dimension.sub_aspects[0].model_copy(
+            update={"unknown_extra": hidden_detail}
+        )
+        malformed_dimension = dimension.model_copy(
+            update={"sub_aspects": [sub_aspect, *dimension.sub_aspects[1:]]}
+        )
+        malformed = loaded.profile.model_copy(
+            update={"dimensions": [malformed_dimension, *loaded.profile.dimensions[1:]]}
+        )
+    with warnings.catch_warnings(record=True) as seen:
+        warnings.simplefilter("always")
+        with pytest.raises(SemanticEvaluatorError) as caught:
+            build_assessment_plan(
+                trial_id="trial-001",
+                report_sha256="0" * 64,
+                profile=malformed,
+                profile_sha256=loaded.profile_sha256,
+            )
+    assert caught.value.reason_code == "assessment_plan_invalid"
+    assert caught.value.__cause__ is None
+    assert caught.value.__context__ is None
+    assert hidden_detail not in repr(caught.value)
+    assert not seen
