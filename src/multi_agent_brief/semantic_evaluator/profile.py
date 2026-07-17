@@ -125,6 +125,33 @@ def validate_loaded_profile(loaded: LoadedProfile) -> None:
         raise SemanticEvaluatorError("profile_invalid")
 
 
+def strict_loaded_profile_copy(loaded: LoadedProfile) -> LoadedProfile:
+    """Detach and strictly revalidate a caller- or package-supplied profile."""
+
+    try:
+        if not isinstance(loaded, LoadedProfile):
+            raise TypeError("profile_invalid")
+        profile = EvaluatorProfile.model_validate(
+            loaded.profile.model_dump(mode="json")
+        )
+        if type(loaded.profile_sha256) is not str:
+            raise TypeError("profile_invalid")
+        strict = LoadedProfile(
+            profile=profile,
+            profile_sha256=loaded.profile_sha256,
+        )
+        validate_loaded_profile(strict)
+    except (
+        AttributeError,
+        SemanticEvaluatorError,
+        TypeError,
+        ValidationError,
+        ValueError,
+    ):
+        raise SemanticEvaluatorError("profile_invalid") from None
+    return strict
+
+
 def load_profile(profile_id: str = PROFILE_ID) -> LoadedProfile:
     if profile_id != PROFILE_ID:
         raise SemanticEvaluatorError("profile_invalid")
@@ -153,6 +180,7 @@ __all__ = [
     "LoadedProfile",
     "PROFILE_ID",
     "load_profile",
+    "strict_loaded_profile_copy",
     "validate_exact_profile",
     "validate_loaded_profile",
 ]

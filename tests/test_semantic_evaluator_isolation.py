@@ -34,6 +34,7 @@ EXPECTED_PACKAGE_FILES = {
     "prompts/system_v1.txt",
     "resources.py",
     "serialization.py",
+    "snapshot.py",
     "unit_planner.py",
     "validator.py",
 }

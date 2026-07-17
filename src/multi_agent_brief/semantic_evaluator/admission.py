@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 import os
 from pathlib import Path
 import stat
@@ -18,7 +18,6 @@ from multi_agent_brief.semantic_evaluator.contracts import (
     AdmittedReportEvidence,
     AssessmentPlan,
     BoundedContext,
-    EvaluatorProfile,
     InputBinding,
     InstrumentConfig,
     InstrumentManifest,
@@ -35,8 +34,7 @@ from multi_agent_brief.semantic_evaluator.normalization import (
 )
 from multi_agent_brief.semantic_evaluator.profile import (
     LoadedProfile,
-    load_profile,
-    validate_loaded_profile,
+    strict_loaded_profile_copy,
 )
 from multi_agent_brief.semantic_evaluator.prompts import (
     FrozenDimensionPrompt,
@@ -50,6 +48,7 @@ from multi_agent_brief.semantic_evaluator.serialization import (
     normalized_utf8_text,
     sha256_bytes,
 )
+from multi_agent_brief.semantic_evaluator.resources import EvaluatorResourceError
 from multi_agent_brief.semantic_evaluator.unit_planner import (
     build_assessment_plan,
     trial_identity_conflicts,
@@ -70,6 +69,7 @@ class AdmissionDecision:
     assessment_plan: Optional[AssessmentPlan] = None
     prompts: tuple[FrozenDimensionPrompt, ...] = ()
     prompt_request_sha256s: tuple[str, ...] = ()
+    _instrument_snapshot: Any = field(default=None, repr=False, compare=False)
 
 
 def _blocked(
@@ -176,46 +176,12 @@ def _strict_request(request: AdmissionRequest | Mapping[str, Any]) -> AdmissionR
 
 def _strict_loaded_profile(
     loaded_profile: LoadedProfile | None,
-) -> LoadedProfile:
-    failure_reason: str | None = None
-    try:
-        if loaded_profile is None:
-            candidate = load_profile()
-        elif isinstance(loaded_profile, LoadedProfile):
-            candidate = loaded_profile
-        else:
-            raise TypeError("profile_invalid")
-        strict_profile = EvaluatorProfile.model_validate(
-            candidate.profile.model_dump(mode="json")
-        )
-        if not isinstance(candidate.profile_sha256, str):
-            raise TypeError("profile_invalid")
-        strict = LoadedProfile(
-            profile=strict_profile,
-            profile_sha256=candidate.profile_sha256,
-        )
-        validate_loaded_profile(strict)
-        if canonical_json_bytes(strict.profile) != canonical_json_bytes(
-            candidate.profile
-        ):
-            raise ValueError("profile_invalid")
-    except (
-        AttributeError,
-        OSError,
-        RuntimeError,
-        SemanticEvaluatorError,
-        TypeError,
-        ValidationError,
-        ValueError,
-    ) as exc:
-        failure_reason = (
-            "instrument_manifest_mismatch"
-            if _is_current_instrument_source_failure(exc)
-            else "profile_invalid"
-        )
-    if failure_reason is not None:
-        raise SemanticEvaluatorError(failure_reason)
-    return strict
+) -> LoadedProfile | None:
+    if loaded_profile is None:
+        return None
+    if not isinstance(loaded_profile, LoadedProfile):
+        raise SemanticEvaluatorError("profile_invalid")
+    return strict_loaded_profile_copy(loaded_profile)
 
 
 def _strict_existing_binding(
@@ -324,25 +290,36 @@ def admit_inputs(
         return _blocked("prompt_sizer_unavailable")
 
     try:
-        profile = _strict_loaded_profile(loaded_profile)
+        explicit_profile = _strict_loaded_profile(loaded_profile)
     except SemanticEvaluatorError as exc:
         return _blocked(exc.reason_code)
     try:
         strict_existing_binding = _strict_existing_binding(existing_binding)
     except SemanticEvaluatorError:
         return _blocked("trial_identity_conflict")
-    if profile.profile.language != "zh-CN":
-        return _blocked("unsupported_language")
     from multi_agent_brief.semantic_evaluator.instrument import (
-        build_instrument_manifest,
+        _acquire_instrument_snapshot,
         verify_instrument_manifest,
     )
 
     try:
-        manifest = build_instrument_manifest(config, loaded_profile=profile)
-        verify_instrument_manifest(manifest, config, loaded_profile=profile)
-    except (SemanticEvaluatorError, OSError, RuntimeError, TypeError, ValueError):
+        instrument_snapshot = _acquire_instrument_snapshot(
+            config,
+            loaded_profile=explicit_profile,
+        )
+        manifest = instrument_snapshot.manifest
+        verify_instrument_manifest(
+            manifest,
+            config,
+            _snapshot=instrument_snapshot,
+        )
+    except EvaluatorResourceError:
         return _blocked("instrument_manifest_mismatch")
+    except SemanticEvaluatorError as exc:
+        return _blocked(exc.reason_code)
+    profile = instrument_snapshot.resources.loaded_profile
+    if profile.profile.language != "zh-CN":
+        return _blocked("unsupported_language")
     try:
         report_evidence, reader = build_admitted_report_evidence(
             report_bytes,
@@ -384,6 +361,7 @@ def admit_inputs(
                 bounded_context=context,
                 dimension=dimension,
                 assessment_plan=plan,
+                _resource_snapshot=instrument_snapshot.resources,
             )
         except Exception as exc:
             reason = (
@@ -399,7 +377,7 @@ def admit_inputs(
             )
         except Exception:
             return _blocked("prompt_sizer_unavailable")
-        if isinstance(count, bool) or not isinstance(count, int) or count < 0:
+        if type(count) is not int or count < 0:
             return _blocked("prompt_sizer_unavailable")
         if (
             count + config.prompt_sizer.reserved_output_tokens
@@ -419,6 +397,7 @@ def admit_inputs(
         assessment_plan=plan,
         prompts=tuple(prompts),
         prompt_request_sha256s=tuple(item.request_sha256 for item in prompts),
+        _instrument_snapshot=instrument_snapshot,
     )
 
 

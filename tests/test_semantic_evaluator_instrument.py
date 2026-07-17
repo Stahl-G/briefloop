@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from copy import deepcopy
+from dataclasses import replace
 import re
 
 import pytest
@@ -33,7 +34,9 @@ from multi_agent_brief.semantic_evaluator.serialization import (
     canonical_model_sha256,
     canonical_sha256,
     normalized_source_bytes,
+    source_sha256_for_module,
 )
+from multi_agent_brief.semantic_evaluator.resources import EvaluatorResourceError
 from multi_agent_brief.semantic_evaluator.validator import VALIDATOR_VERSION
 
 
@@ -68,6 +71,14 @@ def test_source_hash_normalization_changes_only_newline_encoding() -> None:
     assert normalized_source_bytes(b"\xef\xbb\xbfline\n") != (
         normalized_source_bytes(b"line\n")
     )
+
+
+def test_source_resolution_failure_uses_one_value_free_package_marker() -> None:
+    with pytest.raises(EvaluatorResourceError) as caught:
+        source_sha256_for_module("synthetic_missing.semantic_evaluator_component")
+    assert str(caught.value) == "evaluator_source_unavailable"
+    assert caught.value.__cause__ is None
+    assert caught.value.__context__ is None
 
 
 def test_manifest_binds_exact_frozen_resources_schemas_and_source_components() -> None:
@@ -116,7 +127,20 @@ def test_each_representative_bound_component_change_rotates_instrument_hash(
     assert decoding_changed.instrument_sha256 != original.instrument_sha256
     assert model_changed.instrument_sha256 != original.instrument_sha256
 
-    monkeypatch.setattr(instrument, "dimension_prompt_sha256", lambda: "f" * 64)
+    original_acquirer = instrument.acquire_resource_snapshot
+
+    def changed_prompt_resource(**kwargs):
+        resources = original_acquirer(**kwargs)
+        return replace(
+            resources,
+            prompts=replace(resources.prompts, dimension_sha256="f" * 64),
+        )
+
+    monkeypatch.setattr(
+        instrument,
+        "acquire_resource_snapshot",
+        changed_prompt_resource,
+    )
     prompt_changed = build_instrument_manifest(_config())
     assert prompt_changed.dimension_prompt_sha256 == "f" * 64
     assert prompt_changed.instrument_sha256 != original.instrument_sha256

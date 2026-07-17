@@ -13,7 +13,9 @@ from multi_agent_brief.semantic_evaluator.contracts import (
 )
 from multi_agent_brief.semantic_evaluator.errors import SemanticEvaluatorError
 from multi_agent_brief.semantic_evaluator.profile import (
+    LoadedProfile,
     load_profile,
+    strict_loaded_profile_copy,
     validate_exact_profile,
 )
 from multi_agent_brief.semantic_evaluator.serialization import (
@@ -87,7 +89,13 @@ def build_assessment_plan(
     plan = AssessmentPlan.model_validate(
         {**payload, "assessment_plan_sha256": canonical_sha256(payload)}
     )
-    validate_frozen_assessment_plan(plan)
+    validate_frozen_assessment_plan(
+        plan,
+        loaded_profile=LoadedProfile(
+            profile=profile,
+            profile_sha256=profile_sha256,
+        ),
+    )
     return plan
 
 
@@ -120,8 +128,12 @@ def assessment_plan_sha256(plan: AssessmentPlan) -> str:
     return canonical_model_sha256(plan, exclude=("assessment_plan_sha256",))
 
 
-def validate_frozen_assessment_plan(plan: AssessmentPlan) -> None:
-    loaded = load_profile()
+def validate_frozen_assessment_plan(
+    plan: AssessmentPlan,
+    *,
+    loaded_profile: LoadedProfile | None = None,
+) -> None:
+    loaded = strict_loaded_profile_copy(loaded_profile or load_profile())
     if (
         plan.profile_sha256 != loaded.profile_sha256
         or plan.plan_id

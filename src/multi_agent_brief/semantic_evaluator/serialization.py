@@ -15,10 +15,6 @@ class CanonicalSerializationError(ValueError):
     pass
 
 
-class SourceResolutionError(RuntimeError):
-    pass
-
-
 def canonical_model_payload(
     model: BaseModel,
     *,
@@ -89,15 +85,37 @@ def normalized_source_bytes(value: bytes) -> bytes:
 
 
 def source_sha256_for_module(module_name: str) -> str:
-    spec = importlib.util.find_spec(module_name)
-    if spec is None or spec.origin is None or spec.origin in {"built-in", "frozen"}:
-        raise SourceResolutionError("source_module_unavailable")
+    from multi_agent_brief.semantic_evaluator.resources import (
+        EvaluatorResourceError,
+    )
+
+    resolution_failed = False
+    try:
+        spec = importlib.util.find_spec(module_name)
+    except (ImportError, AttributeError, ValueError):
+        resolution_failed = True
+        spec = None
+    if (
+        resolution_failed
+        or spec is None
+        or spec.origin is None
+        or spec.origin
+        in {
+            "built-in",
+            "frozen",
+        }
+    ):
+        raise EvaluatorResourceError("evaluator_source_unavailable") from None
     path = Path(spec.origin)
+    read_failed = False
     try:
         source = path.read_bytes()
-    except OSError as exc:
-        raise SourceResolutionError("source_bytes_unavailable") from exc
-    return sha256_bytes(normalized_source_bytes(source))
+        normalized = normalized_source_bytes(source)
+    except (OSError, CanonicalSerializationError):
+        read_failed = True
+    if read_failed:
+        raise EvaluatorResourceError("evaluator_source_unavailable") from None
+    return sha256_bytes(normalized)
 
 
 def schema_sha256(model: type[BaseModel]) -> str:
@@ -108,7 +126,6 @@ def schema_sha256(model: type[BaseModel]) -> str:
 
 __all__ = [
     "CanonicalSerializationError",
-    "SourceResolutionError",
     "canonical_json_bytes",
     "canonical_json_text",
     "canonical_model_payload",

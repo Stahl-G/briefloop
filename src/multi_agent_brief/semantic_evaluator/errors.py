@@ -8,7 +8,7 @@ from typing import Iterable
 from pydantic import ValidationError
 
 from multi_agent_brief.contracts.errors import FieldViolation, pydantic_error_violations
-from multi_agent_brief.semantic_evaluator.serialization import SourceResolutionError
+from multi_agent_brief.semantic_evaluator.resources import EvaluatorResourceError
 
 
 ADMISSION_REASON_CODES = (
@@ -94,18 +94,9 @@ class SemanticEvaluatorError(Exception):
 
 
 def _is_current_instrument_source_failure(error: BaseException) -> bool:
-    """Recognize only explicit current-source failures without exposing values."""
+    """Recognize only the direct package-owned resource marker."""
 
-    current: BaseException | None = error
-    seen: set[int] = set()
-    for _ in range(16):
-        if current is None or id(current) in seen:
-            return False
-        seen.add(id(current))
-        if isinstance(current, (SourceResolutionError, OSError)):
-            return True
-        current = current.__cause__
-    return False
+    return isinstance(error, EvaluatorResourceError)
 
 
 def value_free_violations(error: ValidationError) -> tuple[FieldViolation, ...]:

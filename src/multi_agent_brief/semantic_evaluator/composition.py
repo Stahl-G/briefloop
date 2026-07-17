@@ -17,13 +17,18 @@ from multi_agent_brief.semantic_evaluator.contracts import (
     ReaderArtifact,
 )
 from multi_agent_brief.semantic_evaluator.errors import SemanticEvaluatorError
+from multi_agent_brief.semantic_evaluator.resources import EvaluatorResourceError
 from multi_agent_brief.semantic_evaluator.serialization import (
     canonical_json_bytes,
     canonical_model_sha256,
     canonical_sha256,
 )
+from multi_agent_brief.semantic_evaluator.snapshot import (
+    EvaluatorResourceSnapshot,
+    acquire_resource_snapshot,
+)
 from multi_agent_brief.semantic_evaluator.validator import (
-    verify_laj_composition_witness,
+    _verify_laj_composition_witness_with_roots,
 )
 
 
@@ -47,27 +52,33 @@ def _derive_baseline(
     report_evidence: AdmittedReportEvidence,
     reader_artifact: ReaderArtifact,
     bounded_context: BoundedContext,
+    resource_snapshot: EvaluatorResourceSnapshot,
+    mismatch_reason: str,
 ) -> BaselinePayload:
     try:
         return build_baseline(
             report_evidence=report_evidence,
             reader_artifact=reader_artifact,
             bounded_context=bounded_context,
+            _resource_snapshot=resource_snapshot,
         )
     except SemanticEvaluatorError as exc:
-        raise SemanticEvaluatorError("composition_record_mismatch") from exc
+        raise SemanticEvaluatorError(mismatch_reason) from exc
 
 
-def compose_matched_non_llm(
+def _compose_matched_with_resources(
     *,
     report_evidence: AdmittedReportEvidence,
     reader_artifact: ReaderArtifact,
     bounded_context: BoundedContext,
+    resource_snapshot: EvaluatorResourceSnapshot,
 ) -> CompositionRecord:
     baseline = _derive_baseline(
         report_evidence=report_evidence,
         reader_artifact=reader_artifact,
         bounded_context=bounded_context,
+        resource_snapshot=resource_snapshot,
+        mismatch_reason="composition_record_mismatch",
     )
     return _finalize_composition(
         {
@@ -84,6 +95,24 @@ def compose_matched_non_llm(
             "laj_advice_items": [],
             "duplicate_annotations": [],
         }
+    )
+
+
+def compose_matched_non_llm(
+    *,
+    report_evidence: AdmittedReportEvidence,
+    reader_artifact: ReaderArtifact,
+    bounded_context: BoundedContext,
+) -> CompositionRecord:
+    try:
+        resources = acquire_resource_snapshot(include_baseline=True)
+    except EvaluatorResourceError:
+        raise SemanticEvaluatorError("composition_record_mismatch") from None
+    return _compose_matched_with_resources(
+        report_evidence=report_evidence,
+        reader_artifact=reader_artifact,
+        bounded_context=bounded_context,
+        resource_snapshot=resources,
     )
 
 
@@ -116,11 +145,17 @@ def _derive_duplicate_annotations(
     )
 
 
-def _compose_actual_verified(witness: LajCompositionWitness) -> CompositionRecord:
+def _compose_actual_verified(
+    witness: LajCompositionWitness,
+    *,
+    resource_snapshot: EvaluatorResourceSnapshot,
+) -> CompositionRecord:
     baseline = _derive_baseline(
         report_evidence=witness.report_evidence,
         reader_artifact=witness.reader_artifact,
         bounded_context=witness.bounded_context,
+        resource_snapshot=resource_snapshot,
+        mismatch_reason="composition_witness_mismatch",
     )
     run = witness.run
     report = witness.validation_report
@@ -156,18 +191,24 @@ def _compose_actual_verified(witness: LajCompositionWitness) -> CompositionRecor
 
 
 def compose_actual_laj(witness: LajCompositionWitness) -> CompositionRecord:
-    verified = verify_laj_composition_witness(witness)
-    return _compose_actual_verified(verified)
+    verified, roots = _verify_laj_composition_witness_with_roots(
+        witness,
+        include_baseline=True,
+    )
+    return _compose_actual_verified(
+        verified,
+        resource_snapshot=roots.instrument_snapshot.resources,
+    )
 
 
-def verify_composition_record(
+def _verify_composition_record_with_context(
     composition: CompositionRecord,
     *,
     witness: LajCompositionWitness | None = None,
     report_evidence: AdmittedReportEvidence | None = None,
     reader_artifact: ReaderArtifact | None = None,
     bounded_context: BoundedContext | None = None,
-) -> bool:
+) -> tuple[CompositionRecord, LajCompositionWitness | None]:
     try:
         strict = CompositionRecord.model_validate(composition.model_dump(mode="json"))
     except (AttributeError, TypeError, ValueError) as exc:
@@ -179,21 +220,51 @@ def verify_composition_record(
             item is None for item in (report_evidence, reader_artifact, bounded_context)
         ):
             raise SemanticEvaluatorError("composition_record_mismatch")
-        expected = compose_matched_non_llm(
+        try:
+            resources = acquire_resource_snapshot(include_baseline=True)
+        except EvaluatorResourceError:
+            raise SemanticEvaluatorError("composition_record_mismatch") from None
+        expected = _compose_matched_with_resources(
             report_evidence=report_evidence,
             reader_artifact=reader_artifact,
             bounded_context=bounded_context,
+            resource_snapshot=resources,
         )
+        verified_witness = None
     else:
         if witness is None or any(
             item is not None
             for item in (report_evidence, reader_artifact, bounded_context)
         ):
             raise SemanticEvaluatorError("composition_record_mismatch")
-        verified = verify_laj_composition_witness(witness)
-        expected = _compose_actual_verified(verified)
+        verified_witness, roots = _verify_laj_composition_witness_with_roots(
+            witness,
+            include_baseline=True,
+        )
+        expected = _compose_actual_verified(
+            verified_witness,
+            resource_snapshot=roots.instrument_snapshot.resources,
+        )
     if canonical_json_bytes(expected) != canonical_json_bytes(strict):
         raise SemanticEvaluatorError("composition_record_mismatch")
+    return strict, verified_witness
+
+
+def verify_composition_record(
+    composition: CompositionRecord,
+    *,
+    witness: LajCompositionWitness | None = None,
+    report_evidence: AdmittedReportEvidence | None = None,
+    reader_artifact: ReaderArtifact | None = None,
+    bounded_context: BoundedContext | None = None,
+) -> bool:
+    _verify_composition_record_with_context(
+        composition,
+        witness=witness,
+        report_evidence=report_evidence,
+        reader_artifact=reader_artifact,
+        bounded_context=bounded_context,
+    )
     return True
 
 
@@ -233,7 +304,7 @@ def build_presentation(
     reader_artifact: ReaderArtifact | None = None,
     bounded_context: BoundedContext | None = None,
 ) -> PresentationRecord:
-    verify_composition_record(
+    _strict_composition, verified_witness = _verify_composition_record_with_context(
         composition,
         witness=witness,
         report_evidence=report_evidence,
@@ -241,22 +312,21 @@ def build_presentation(
         bounded_context=bounded_context,
     )
     if composition.condition == "actual_LAJ":
-        if witness is None:
+        if verified_witness is None:
             raise SemanticEvaluatorError("composition_witness_mismatch")
-        verified = verify_laj_composition_witness(witness)
-        run = verified.run
-        report = verified.validation_report
+        run = verified_witness.run
+        report = verified_witness.validation_report
         assessed = len(run.assessment_units)
         abstentions = sum(
             item.disposition.startswith("abstain_") for item in run.assessment_units
         )
-        failures = _failure_count(verified)
+        failures = _failure_count(verified_witness)
         withheld = (
             0
             if run.run_status == "completed" and report.validation_status == "accepted"
             else len(run.findings)
         )
-        witness_sha = verified.witness_sha256
+        witness_sha = verified_witness.witness_sha256
         run_status = run.run_status
         validation_status = report.validation_status
         failure_reasons = list(report.reason_codes)

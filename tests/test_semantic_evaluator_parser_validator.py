@@ -36,14 +36,14 @@ import multi_agent_brief.semantic_evaluator.instrument as instrument_module
 from multi_agent_brief.semantic_evaluator.parser import parse_dimension_response
 import multi_agent_brief.semantic_evaluator.profile as profile_module
 from multi_agent_brief.semantic_evaluator.profile import load_profile
-import multi_agent_brief.semantic_evaluator.prompts as prompts_module
+import multi_agent_brief.semantic_evaluator.snapshot as snapshot_module
 from multi_agent_brief.semantic_evaluator.prompts import (
     CANARY_DERIVATION_VERSION,
     derive_forbidden_canary_values,
     system_prompt_text,
 )
+from multi_agent_brief.semantic_evaluator.resources import EvaluatorResourceError
 from multi_agent_brief.semantic_evaluator.serialization import (
-    SourceResolutionError,
     canonical_json_bytes,
     canonical_json_text,
     canonical_sha256,
@@ -1330,7 +1330,7 @@ def test_source_resolution_failure_is_value_free_at_assembly_and_witness_boundar
     elif failure_site == "component":
 
         def fail_source_resolution(_module_name: str) -> str:
-            raise SourceResolutionError(hidden_detail)
+            raise EvaluatorResourceError("evaluator_source_unavailable")
 
         monkeypatch.setattr(
             instrument_module,
@@ -1339,23 +1339,19 @@ def test_source_resolution_failure_is_value_free_at_assembly_and_witness_boundar
         )
     else:
 
-        def fail_prompt_resource() -> str:
-            raise FileNotFoundError(hidden_detail)
+        def fail_prompt_resource(*_parts: str) -> str:
+            raise EvaluatorResourceError("evaluator_resource_unavailable")
 
         monkeypatch.setattr(
-            prompts_module,
-            "system_prompt_text",
+            snapshot_module,
+            "resource_text",
             fail_prompt_resource,
         )
-    with pytest.raises(SemanticEvaluatorError) as assembly_error:
-        assemble_semantic_assessment_run(
-            admission=decision,
-            dimension_attempt_evidence=evidence,
-        )
-    assert str(assembly_error.value) == "instrument_manifest_mismatch"
-    assert assembly_error.value.__cause__ is None
-    assert assembly_error.value.__context__ is None
-    assert hidden_detail not in str(assembly_error.value)
+    replayed = assemble_semantic_assessment_run(
+        admission=decision,
+        dimension_attempt_evidence=evidence,
+    )
+    assert replayed == assembled
 
     with pytest.raises(SemanticEvaluatorError) as witness_error:
         verify_laj_composition_witness(assembled.witness)

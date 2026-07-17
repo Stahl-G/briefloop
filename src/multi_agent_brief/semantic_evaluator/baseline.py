@@ -6,17 +6,12 @@ import re
 import unicodedata
 from typing import Any
 
-from pydantic import Field, ValidationError
-import yaml
-
-from multi_agent_brief.contracts.v2 import CleanText, StrictModel
 from multi_agent_brief.semantic_evaluator.contracts import (
     BASELINE_SCHEMA_ID,
     AdmittedReportEvidence,
     BaselinePayload,
     BoundedContext,
     ChecklistItem,
-    DimensionId,
     LintItem,
     ReaderArtifact,
 )
@@ -28,20 +23,22 @@ from multi_agent_brief.semantic_evaluator.normalization import (
 )
 from multi_agent_brief.semantic_evaluator.profile import (
     LoadedProfile,
-    load_profile,
-    validate_loaded_profile,
 )
 from multi_agent_brief.semantic_evaluator.resources import (
+    EvaluatorResourceError,
     resource_sha256,
-    resource_text,
 )
 from multi_agent_brief.semantic_evaluator.serialization import (
     canonical_json_bytes,
     canonical_sha256,
 )
+from multi_agent_brief.semantic_evaluator.snapshot import (
+    CHECKLIST_RESOURCE,
+    EvaluatorResourceSnapshot,
+    acquire_resource_snapshot,
+)
 
 
-CHECKLIST_RESOURCE = "structured_checklist_zh_v1.yaml"
 LINT_VERSION = "deterministic_lint_v1"
 
 _PLACEHOLDER_RE = re.compile(
@@ -55,37 +52,8 @@ _LINK_RE = re.compile(r"\[[^\]\n]+\]\((?P<destination>[^)\n]*)\)")
 _LINK_OPEN_RE = re.compile(r"\[[^\]\n]+\]\(")
 
 
-class ChecklistTemplateItem(StrictModel):
-    dimension_id: DimensionId
-    text: CleanText
-
-
-class ChecklistTemplate(StrictModel):
-    checklist_id: str
-    language: str
-    items: list[ChecklistTemplateItem] = Field(min_length=1)
-
-
 def checklist_resource_sha256() -> str:
     return resource_sha256("baselines", CHECKLIST_RESOURCE)
-
-
-def _load_checklist() -> ChecklistTemplate:
-    try:
-        payload = yaml.safe_load(resource_text("baselines", CHECKLIST_RESOURCE))
-        template = ChecklistTemplate.model_validate(payload)
-    except (OSError, ValueError, yaml.YAMLError, ValidationError) as exc:
-        raise SemanticEvaluatorError("baseline_invalid") from exc
-    profile = load_profile().profile
-    expected = [item.dimension_id for item in profile.dimensions]
-    if (
-        template.checklist_id != "structured_checklist_zh_v1"
-        or template.language != "zh-CN"
-    ):
-        raise SemanticEvaluatorError("baseline_invalid")
-    if [item.dimension_id for item in template.items] != expected:
-        raise SemanticEvaluatorError("baseline_invalid")
-    return template
 
 
 def _lint_id(rule_id: str, block_id: str, start: int, end: int, ordinal: int) -> str:
@@ -240,6 +208,7 @@ def build_baseline(
     reader_artifact: ReaderArtifact,
     bounded_context: BoundedContext,
     loaded_profile: LoadedProfile | None = None,
+    _resource_snapshot: EvaluatorResourceSnapshot | None = None,
 ) -> BaselinePayload:
     try:
         verify_admitted_report_evidence(
@@ -249,9 +218,17 @@ def build_baseline(
         bounded_context = verify_bounded_context(bounded_context)
     except SemanticEvaluatorError as exc:
         raise SemanticEvaluatorError("baseline_input_binding_mismatch") from exc
-    profile = loaded_profile or load_profile()
-    validate_loaded_profile(profile)
-    template = _load_checklist()
+    try:
+        resources = _resource_snapshot or acquire_resource_snapshot(
+            loaded_profile=loaded_profile,
+            include_baseline=True,
+        )
+    except EvaluatorResourceError:
+        raise SemanticEvaluatorError("baseline_input_binding_mismatch") from None
+    profile = resources.loaded_profile
+    template = resources.checklist
+    if template is None:
+        raise SemanticEvaluatorError("baseline_input_binding_mismatch")
     checklist_items: list[ChecklistItem] = []
     for item in template.items:
         ordinal = len(checklist_items)
@@ -281,7 +258,7 @@ def build_baseline(
         )
     payload: dict[str, Any] = {
         "schema_version": BASELINE_SCHEMA_ID,
-        "baseline_id": f"baseline-{canonical_sha256([reader_artifact.report_sha256, bounded_context.context_sha256, profile.profile_sha256, checklist_resource_sha256(), LINT_VERSION])[:12]}",
+        "baseline_id": f"baseline-{canonical_sha256([reader_artifact.report_sha256, bounded_context.context_sha256, profile.profile_sha256, template.sha256, LINT_VERSION])[:12]}",
         "report_sha256": reader_artifact.report_sha256,
         "bounded_context_sha256": bounded_context.context_sha256,
         "profile_sha256": profile.profile_sha256,
@@ -306,14 +283,24 @@ def verify_baseline_payload(
     loaded_profile: LoadedProfile | None = None,
 ) -> BaselinePayload:
     try:
+        resources = acquire_resource_snapshot(
+            loaded_profile=loaded_profile,
+            include_baseline=True,
+        )
         strict = BaselinePayload.model_validate(baseline.model_dump(mode="json"))
         expected = build_baseline(
             report_evidence=report_evidence,
             reader_artifact=reader_artifact,
             bounded_context=bounded_context,
-            loaded_profile=loaded_profile,
+            _resource_snapshot=resources,
         )
-    except (AttributeError, TypeError, ValueError, SemanticEvaluatorError) as exc:
+    except (
+        AttributeError,
+        EvaluatorResourceError,
+        TypeError,
+        ValueError,
+        SemanticEvaluatorError,
+    ) as exc:
         raise SemanticEvaluatorError("baseline_input_binding_mismatch") from exc
     if canonical_json_bytes(strict) != canonical_json_bytes(expected):
         raise SemanticEvaluatorError("baseline_input_binding_mismatch")

@@ -25,13 +25,17 @@ from multi_agent_brief.semantic_evaluator.serialization import (
     canonical_json_text,
     canonical_sha256,
 )
+from multi_agent_brief.semantic_evaluator.snapshot import (
+    DIMENSION_PROMPT_RESOURCE,
+    SYSTEM_PROMPT_RESOURCE,
+    EvaluatorResourceSnapshot,
+    acquire_resource_snapshot,
+)
 from multi_agent_brief.semantic_evaluator.unit_planner import (
     validate_frozen_assessment_plan,
 )
 
 
-SYSTEM_PROMPT_RESOURCE = "system_v1.txt"
-DIMENSION_PROMPT_RESOURCE = "dimension_v1.txt"
 PROMPT_ASSEMBLER_VERSION = "dimension_prompt_assembler_v2"
 CANARY_DERIVATION_VERSION = "semantic_evaluator_canary_v1"
 
@@ -107,10 +111,15 @@ def build_dimension_prompt(
     bounded_context: BoundedContext,
     dimension: DimensionProfile,
     assessment_plan: AssessmentPlan,
+    _resource_snapshot: EvaluatorResourceSnapshot | None = None,
 ) -> FrozenDimensionPrompt:
+    resources = _resource_snapshot or acquire_resource_snapshot()
     replay_reader_artifact(reader_artifact, normalized_text)
     bounded_context = verify_bounded_context(bounded_context)
-    validate_frozen_assessment_plan(assessment_plan)
+    validate_frozen_assessment_plan(
+        assessment_plan,
+        loaded_profile=resources.loaded_profile,
+    )
     dimension_units = [
         item
         for item in assessment_plan.units
@@ -165,13 +174,13 @@ def build_dimension_prompt(
         "{{CURRENT_RUBRIC}}": canonical_json_text(rubric_data),
         "{{OUTPUT_SCHEMA}}": canonical_json_text(output_schema),
     }
-    user_text = dimension_template_text()
+    user_text = resources.prompts.dimension_template_text
     for marker, value in replacements.items():
         if user_text.count(marker) != 1:
             raise ValueError("dimension_prompt_marker_invalid")
         user_text = user_text.replace(marker, value)
     system_text = (
-        system_prompt_text()
+        resources.prompts.system_text
         + "\n<SECURITY_CANARY_POLICY>\n"
         + canonical_json_text(
             {

@@ -53,9 +53,12 @@ import multi_agent_brief.semantic_evaluator.normalization as normalization_modul
 import multi_agent_brief.semantic_evaluator.parser as parser_module
 import multi_agent_brief.semantic_evaluator.profile as profile_module
 import multi_agent_brief.semantic_evaluator.prompts as prompts_module
-from multi_agent_brief.semantic_evaluator.resources import resource_sha256
+import multi_agent_brief.semantic_evaluator.snapshot as snapshot_module
+from multi_agent_brief.semantic_evaluator.resources import (
+    EvaluatorResourceError,
+    resource_sha256,
+)
 from multi_agent_brief.semantic_evaluator.serialization import (
-    SourceResolutionError,
     canonical_json_bytes,
     canonical_json_text,
     canonical_sha256,
@@ -301,11 +304,11 @@ forged_composition = CompositionRecord.model_validate(composition_payload)
 different_report = b"# different synthetic parity report\n"
 original_source_hasher = instrument_module.source_sha256_for_module
 original_profile_resource = profile_module.resource_text
-original_prompt_resource = prompts_module.system_prompt_text
+original_prompt_resource = snapshot_module.resource_text
 
 
 def fail_source_resolution(_module_name):
-    raise SourceResolutionError("/private/synthetic-customer/source.py")
+    raise EvaluatorResourceError("evaluator_source_unavailable")
 
 
 instrument_module.source_sha256_for_module = fail_source_resolution
@@ -340,11 +343,11 @@ profile_source_failure = {
 profile_module.resource_text = original_profile_resource
 
 
-def fail_prompt_resource():
-    raise FileNotFoundError("/private/synthetic-customer/system_v1.txt")
+def fail_prompt_resource(*_parts):
+    raise EvaluatorResourceError("evaluator_resource_unavailable")
 
 
-prompts_module.system_prompt_text = fail_prompt_resource
+snapshot_module.resource_text = fail_prompt_resource
 prompt_source_failure = {
     "admission": admission_reason({}),
     "assembly": semantic_error_reason(
@@ -355,7 +358,7 @@ prompt_source_failure = {
     ),
     "witness": semantic_error_reason(lambda: compose_actual_laj(assembled.witness)),
 }
-prompts_module.system_prompt_text = original_prompt_resource
+snapshot_module.resource_text = original_prompt_resource
 
 identity_failures = {}
 for property_name in ("sizer_id", "sizer_version"):
@@ -445,6 +448,7 @@ module_files = [
         parser_module,
         profile_module,
         prompts_module,
+        snapshot_module,
         unit_planner_module,
         validator_module,
     )

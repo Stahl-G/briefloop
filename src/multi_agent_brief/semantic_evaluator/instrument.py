@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 from typing import Any
 
 from pydantic import ValidationError
@@ -17,15 +18,12 @@ from multi_agent_brief.semantic_evaluator.normalization import NORMALIZER_VERSIO
 from multi_agent_brief.semantic_evaluator.parser import PARSER_VERSION
 from multi_agent_brief.semantic_evaluator.profile import (
     LoadedProfile,
-    load_profile,
-    validate_loaded_profile,
 )
 from multi_agent_brief.semantic_evaluator.prompts import (
     PROMPT_ASSEMBLER_VERSION,
-    dimension_prompt_sha256,
-    system_prompt_sha256,
 )
 from multi_agent_brief.semantic_evaluator.errors import SemanticEvaluatorError
+from multi_agent_brief.semantic_evaluator.resources import EvaluatorResourceError
 from multi_agent_brief.semantic_evaluator.serialization import (
     canonical_json_bytes,
     canonical_model_payload,
@@ -33,6 +31,10 @@ from multi_agent_brief.semantic_evaluator.serialization import (
     canonical_sha256,
     schema_sha256,
     source_sha256_for_module,
+)
+from multi_agent_brief.semantic_evaluator.snapshot import (
+    EvaluatorResourceSnapshot,
+    acquire_resource_snapshot,
 )
 from multi_agent_brief.semantic_evaluator.unit_planner import UNIT_PLANNER_VERSION
 from multi_agent_brief.semantic_evaluator.validator import VALIDATOR_VERSION
@@ -66,13 +68,53 @@ _IMPLEMENTATIONS = (
 )
 
 
+@dataclass(frozen=True)
+class _InstrumentSnapshot:
+    """One detached current instrument/resource view for one operation."""
+
+    resources: EvaluatorResourceSnapshot
+    manifest: InstrumentManifest
+
+
 def build_instrument_manifest(
     config: InstrumentConfig,
     *,
     loaded_profile: LoadedProfile | None = None,
 ) -> InstrumentManifest:
-    profile = loaded_profile or load_profile()
-    validate_loaded_profile(profile)
+    resource_failed = False
+    try:
+        snapshot = _acquire_instrument_snapshot(
+            config,
+            loaded_profile=loaded_profile,
+        )
+    except EvaluatorResourceError:
+        resource_failed = True
+    if resource_failed:
+        raise SemanticEvaluatorError("instrument_manifest_mismatch") from None
+    return snapshot.manifest
+
+
+def _acquire_instrument_snapshot(
+    config: InstrumentConfig,
+    *,
+    loaded_profile: LoadedProfile | None = None,
+    include_baseline: bool = False,
+) -> _InstrumentSnapshot:
+    """Acquire and bind one current package snapshot without boundary relabeling."""
+
+    resources = acquire_resource_snapshot(
+        loaded_profile=loaded_profile,
+        include_baseline=include_baseline,
+    )
+    manifest = _build_instrument_manifest_from_resources(config, resources)
+    return _InstrumentSnapshot(resources=resources, manifest=manifest)
+
+
+def _build_instrument_manifest_from_resources(
+    config: InstrumentConfig,
+    resources: EvaluatorResourceSnapshot,
+) -> InstrumentManifest:
+    profile = resources.loaded_profile
     schema_hashes = {
         model.schema_id: schema_sha256(model)
         for model in sorted(
@@ -93,8 +135,8 @@ def build_instrument_manifest(
         "frozen_design_sha256": FROZEN_DESIGN_SHA256,
         "freeze_manifest_sha256": FREEZE_MANIFEST_SHA256,
         "profile_sha256": profile.profile_sha256,
-        "system_prompt_sha256": system_prompt_sha256(),
-        "dimension_prompt_sha256": dimension_prompt_sha256(),
+        "system_prompt_sha256": resources.prompts.system_sha256,
+        "dimension_prompt_sha256": resources.prompts.dimension_sha256,
         "schema_sha256s": schema_hashes,
         "implementation_components": components,
         "retry_policy_sha256": canonical_model_sha256(config.retry_policy),
@@ -125,6 +167,7 @@ def verify_instrument_manifest(
     config: InstrumentConfig,
     *,
     loaded_profile: LoadedProfile | None = None,
+    _snapshot: _InstrumentSnapshot | None = None,
 ) -> bool:
     try:
         strict_manifest = InstrumentManifest.model_validate(
@@ -140,7 +183,19 @@ def verify_instrument_manifest(
     )
     if strict_manifest.instrument_sha256 != canonical_sha256(payload):
         raise SemanticEvaluatorError("instrument_manifest_mismatch")
-    expected = build_instrument_manifest(config, loaded_profile=loaded_profile)
+    resource_failed = False
+    try:
+        expected = (
+            _snapshot
+            or _acquire_instrument_snapshot(
+                config,
+                loaded_profile=loaded_profile,
+            )
+        ).manifest
+    except EvaluatorResourceError:
+        resource_failed = True
+    if resource_failed:
+        raise SemanticEvaluatorError("instrument_manifest_mismatch") from None
     if canonical_json_bytes(strict_manifest) != canonical_json_bytes(expected):
         raise SemanticEvaluatorError("instrument_manifest_mismatch")
     return True

@@ -12,7 +12,7 @@ import pytest
 import multi_agent_brief.semantic_evaluator.admission as admission_module
 import multi_agent_brief.semantic_evaluator.instrument as instrument_module
 import multi_agent_brief.semantic_evaluator.profile as profile_module
-import multi_agent_brief.semantic_evaluator.prompts as prompts_module
+import multi_agent_brief.semantic_evaluator.snapshot as snapshot_module
 from multi_agent_brief.semantic_evaluator.admission import (
     admit_inputs,
     archive_root_is_safe,
@@ -28,12 +28,10 @@ from multi_agent_brief.semantic_evaluator.errors import (
     _is_current_instrument_source_failure,
 )
 from multi_agent_brief.semantic_evaluator.normalization import freeze_bounded_context
-from multi_agent_brief.semantic_evaluator.profile import load_profile
+from multi_agent_brief.semantic_evaluator.profile import LoadedProfile, load_profile
 from multi_agent_brief.semantic_evaluator.prompts import build_dimension_prompt
-from multi_agent_brief.semantic_evaluator.serialization import (
-    SourceResolutionError,
-    sha256_bytes,
-)
+from multi_agent_brief.semantic_evaluator.resources import EvaluatorResourceError
+from multi_agent_brief.semantic_evaluator.serialization import sha256_bytes
 
 
 FIXTURE_ROOT = Path(__file__).parent / "fixtures" / "semantic_evaluator"
@@ -155,6 +153,53 @@ def test_valid_admission_builds_complete_plan_and_all_prompts_before_execution()
     assert all(item.assessment_unit_id in o1.user_text for item in o1_units)
     assert other_unit.assessment_unit_id not in o1.user_text
     assert "baseline" not in inspect.signature(build_dimension_prompt).parameters
+
+
+def test_admission_acquires_each_current_instrument_input_once(monkeypatch) -> None:
+    calls: dict[str, int] = {
+        "profile": 0,
+        "system_prompt": 0,
+        "dimension_prompt": 0,
+        "checklist": 0,
+        "component_source": 0,
+    }
+    original_profile_resource = profile_module.resource_text
+    original_snapshot_resource = snapshot_module.resource_text
+    original_source_hasher = instrument_module.source_sha256_for_module
+
+    def counted_profile(*parts: str) -> str:
+        calls["profile"] += 1
+        return original_profile_resource(*parts)
+
+    def counted_snapshot(*parts: str) -> str:
+        key = {
+            ("prompts", "system_v1.txt"): "system_prompt",
+            ("prompts", "dimension_v1.txt"): "dimension_prompt",
+            ("baselines", "structured_checklist_zh_v1.yaml"): "checklist",
+        }[parts]
+        calls[key] += 1
+        return original_snapshot_resource(*parts)
+
+    def counted_source(module_name: str) -> str:
+        calls["component_source"] += 1
+        return original_source_hasher(module_name)
+
+    monkeypatch.setattr(profile_module, "resource_text", counted_profile)
+    monkeypatch.setattr(snapshot_module, "resource_text", counted_snapshot)
+    monkeypatch.setattr(
+        instrument_module,
+        "source_sha256_for_module",
+        counted_source,
+    )
+    decision = _admit("# 合成单次快照\n".encode())
+    assert decision.admitted is True
+    assert calls == {
+        "profile": 1,
+        "system_prompt": 1,
+        "dimension_prompt": 1,
+        "checklist": 0,
+        "component_source": 5,
+    }
 
 
 def test_wrong_sha_blocks_before_plan_or_prompt_surface() -> None:
@@ -328,6 +373,14 @@ class _OSErrorSizer(FakeSizer):
         raise OSError("/private/synthetic-customer/sizer")
 
 
+class _HostileInt(int):
+    def __lt__(self, _other):
+        raise RuntimeError("synthetic hidden token comparison")
+
+    def __add__(self, _other):
+        raise RuntimeError("synthetic hidden token arithmetic")
+
+
 class _ExplodingIdentitySizer:
     def __init__(self, failing_property: str) -> None:
         self.failing_property = failing_property
@@ -360,6 +413,7 @@ class _ExplodingIdentitySizer:
         _BadSizer(True),
         _BadSizer("10"),
         _BadSizer(-1),
+        _BadSizer(_HostileInt(10)),
         _BadSizer(raises=True),
         _OSErrorSizer(),
     ],
@@ -416,13 +470,8 @@ def test_prompt_sizer_identity_snapshot_is_one_read_and_zero_effect(
 ) -> None:
     sizer = _ExplodingIdentitySizer(failing_property)
     monkeypatch.setattr(
-        admission_module,
-        "load_profile",
-        _fail_if_dependency_reaches_planning,
-    )
-    monkeypatch.setattr(
         instrument_module,
-        "build_instrument_manifest",
+        "acquire_resource_snapshot",
         _fail_if_dependency_reaches_planning,
     )
     monkeypatch.setattr(
@@ -603,6 +652,28 @@ def test_explicit_malformed_loaded_profile_is_typed_and_side_effect_free(
     assert sizer.calls == 0
 
 
+@pytest.mark.parametrize("mutation", ["hash", "profile"])
+def test_malformed_loaded_profile_instance_is_never_a_source_failure(
+    mutation: str,
+) -> None:
+    current = load_profile()
+    malformed = (
+        LoadedProfile(profile=current.profile, profile_sha256="0" * 64)
+        if mutation == "hash"
+        else LoadedProfile(profile=object(), profile_sha256=current.profile_sha256)
+    )
+    sizer = FakeSizer()
+    decision = _admit(
+        "# 合成材料\n".encode(),
+        sizer=sizer,
+        loaded_profile=malformed,
+    )
+    assert decision.reason_codes == ("profile_invalid",)
+    assert decision.assessment_plan is None
+    assert decision.prompts == ()
+    assert sizer.calls == 0
+
+
 @pytest.mark.parametrize(
     "existing_binding",
     [{}, False, True, "synthetic-invalid-binding", object()],
@@ -669,7 +740,7 @@ def test_current_instrument_source_failure_is_typed_and_value_free(
     elif failure_site == "component":
 
         def fail_source_resolution(_module_name: str) -> str:
-            raise SourceResolutionError(hidden_detail)
+            raise EvaluatorResourceError("evaluator_source_unavailable")
 
         monkeypatch.setattr(
             instrument_module,
@@ -678,12 +749,12 @@ def test_current_instrument_source_failure_is_typed_and_value_free(
         )
     else:
 
-        def fail_prompt_resource() -> str:
-            raise FileNotFoundError(hidden_detail)
+        def fail_prompt_resource(*_parts: str) -> str:
+            raise EvaluatorResourceError("evaluator_resource_unavailable")
 
         monkeypatch.setattr(
-            prompts_module,
-            "system_prompt_text",
+            snapshot_module,
+            "resource_text",
             fail_prompt_resource,
         )
     sizer = FakeSizer()
@@ -698,23 +769,19 @@ def test_current_instrument_source_failure_is_typed_and_value_free(
 
 
 def test_current_source_classifier_is_causal_bounded_and_non_laundering() -> None:
-    source_failure = OSError("/private/synthetic-customer/source.py")
+    source_failure = EvaluatorResourceError("evaluator_source_unavailable")
+    assert _is_current_instrument_source_failure(source_failure) is True
+
+    unrelated_source = OSError("/private/synthetic-customer/source.py")
     wrapped = SemanticEvaluatorError("profile_invalid")
-    wrapped.__cause__ = source_failure
-    assert _is_current_instrument_source_failure(wrapped) is True
+    wrapped.__cause__ = unrelated_source
+    assert _is_current_instrument_source_failure(wrapped) is False
     assert _is_current_instrument_source_failure(RuntimeError("synthetic")) is False
     assert _is_current_instrument_source_failure(AttributeError("synthetic")) is False
 
-    cycle = RuntimeError("synthetic-cycle")
-    cycle.__cause__ = cycle
-    assert _is_current_instrument_source_failure(cycle) is False
-
-    root = OSError("/private/synthetic-customer/deep-source.py")
-    for _ in range(17):
-        outer = RuntimeError("synthetic-wrapper")
-        outer.__cause__ = root
-        root = outer
-    assert _is_current_instrument_source_failure(root) is False
+    marker_wrapped = RuntimeError("synthetic-wrapper")
+    marker_wrapped.__cause__ = source_failure
+    assert _is_current_instrument_source_failure(marker_wrapped) is False
 
 
 def test_unrelated_prompt_and_sizer_failures_are_not_source_laundered(
@@ -722,10 +789,10 @@ def test_unrelated_prompt_and_sizer_failures_are_not_source_laundered(
 ) -> None:
     hidden_detail = "/private/synthetic-customer/not-a-source-failure"
 
-    def fail_prompt_build() -> str:
+    def fail_prompt_build(**_kwargs) -> str:
         raise RuntimeError(hidden_detail)
 
-    monkeypatch.setattr(prompts_module, "system_prompt_text", fail_prompt_build)
+    monkeypatch.setattr(admission_module, "build_dimension_prompt", fail_prompt_build)
     prompt_sizer = FakeSizer()
     prompt_decision = _admit("# 合成材料\n".encode(), sizer=prompt_sizer)
     assert prompt_decision.reason_codes == ("prompt_sizer_unavailable",)

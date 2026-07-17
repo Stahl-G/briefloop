@@ -38,7 +38,6 @@ from multi_agent_brief.semantic_evaluator.contracts import (
 )
 from multi_agent_brief.semantic_evaluator.errors import (
     SemanticEvaluatorError,
-    _is_current_instrument_source_failure,
     value_free_violations,
 )
 from multi_agent_brief.semantic_evaluator.normalization import (
@@ -55,12 +54,12 @@ from multi_agent_brief.semantic_evaluator.parser import (
     find_forbidden_keys,
     parse_dimension_response,
 )
-from multi_agent_brief.semantic_evaluator.profile import load_profile
 from multi_agent_brief.semantic_evaluator.prompts import (
     FrozenDimensionPrompt,
     build_dimension_prompt,
     derive_forbidden_canary_values,
 )
+from multi_agent_brief.semantic_evaluator.resources import EvaluatorResourceError
 from multi_agent_brief.semantic_evaluator.serialization import (
     canonical_json_bytes,
     canonical_model_payload,
@@ -247,6 +246,7 @@ def validate_dimension_response(
     reader_artifact: ReaderArtifact,
     bounded_context: BoundedContext,
     attempt_ref: str,
+    _loaded_profile: Any | None = None,
 ) -> DimensionValidationResult:
     try:
         response = DimensionResponse.model_validate(response.model_dump(mode="json"))
@@ -261,7 +261,7 @@ def validate_dimension_response(
     reasons: set[str] = set()
     canaries: tuple[str, ...] = ()
     try:
-        validate_frozen_assessment_plan(plan)
+        validate_frozen_assessment_plan(plan, loaded_profile=_loaded_profile)
         bounded_context = verify_bounded_context(bounded_context)
         canaries = derive_forbidden_canary_values(
             assessment_plan_sha256=plan.assessment_plan_sha256,
@@ -639,6 +639,7 @@ class _ReplayRoots:
     instrument_manifest: InstrumentManifest
     assessment_plan: AssessmentPlan
     prompts: tuple[Any, ...]
+    instrument_snapshot: Any
 
 
 @dataclass(frozen=True)
@@ -708,6 +709,8 @@ def _verify_root_bundle(
     retained_prompts: Iterable[Any] | None,
     retained_prompt_hashes: Iterable[str] | None,
     mismatch_reason: str,
+    instrument_snapshot: Any | None = None,
+    include_baseline: bool = False,
 ) -> _ReplayRoots:
     try:
         strict_report = AdmittedReportEvidence.model_validate(
@@ -743,38 +746,48 @@ def _verify_root_bundle(
     ) as exc:
         raise SemanticEvaluatorError(mismatch_reason) from exc
 
-    source_failure_reason: str | None = None
+    acquisition_failure_reason: str | None = None
     try:
-        loaded_profile = load_profile()
         from multi_agent_brief.semantic_evaluator.instrument import (
+            _InstrumentSnapshot,
+            _acquire_instrument_snapshot,
             verify_instrument_manifest,
         )
         from multi_agent_brief.semantic_evaluator.admission import build_input_binding
 
+        snapshot = (
+            _acquire_instrument_snapshot(
+                config,
+                include_baseline=include_baseline,
+            )
+            if instrument_snapshot is None
+            else instrument_snapshot
+        )
+        if not isinstance(snapshot, _InstrumentSnapshot):
+            raise SemanticEvaluatorError(mismatch_reason)
         verify_instrument_manifest(
             manifest,
             config,
-            loaded_profile=loaded_profile,
+            _snapshot=snapshot,
+        )
+        loaded_profile = snapshot.resources.loaded_profile
+    except EvaluatorResourceError:
+        acquisition_failure_reason = (
+            "instrument_manifest_mismatch"
+            if mismatch_reason == "run_binding_mismatch"
+            else mismatch_reason
         )
     except SemanticEvaluatorError as exc:
-        source_failure_reason = (
+        acquisition_failure_reason = (
             "instrument_manifest_mismatch"
             if mismatch_reason == "run_binding_mismatch"
-            and (
-                exc.reason_code == "instrument_manifest_mismatch"
-                or _is_current_instrument_source_failure(exc)
-            )
+            and exc.reason_code == "instrument_manifest_mismatch"
             else mismatch_reason
         )
-    except Exception as exc:
-        source_failure_reason = (
-            "instrument_manifest_mismatch"
-            if mismatch_reason == "run_binding_mismatch"
-            and _is_current_instrument_source_failure(exc)
-            else mismatch_reason
-        )
-    if source_failure_reason is not None:
-        raise SemanticEvaluatorError(source_failure_reason)
+    except (AttributeError, TypeError, ValueError):
+        acquisition_failure_reason = mismatch_reason
+    if acquisition_failure_reason is not None:
+        raise SemanticEvaluatorError(acquisition_failure_reason) from None
 
     try:
         expected_binding = build_input_binding(
@@ -803,7 +816,6 @@ def _verify_root_bundle(
     ) as exc:
         raise SemanticEvaluatorError(mismatch_reason) from exc
 
-    source_failure_reason = None
     try:
         expected_prompts = tuple(
             build_dimension_prompt(
@@ -812,28 +824,19 @@ def _verify_root_bundle(
                 bounded_context=context,
                 dimension=dimension,
                 assessment_plan=expected_plan,
+                _resource_snapshot=snapshot.resources,
             )
             for dimension in loaded_profile.profile.dimensions
         )
-    except SemanticEvaluatorError as exc:
-        source_failure_reason = (
+    except EvaluatorResourceError:
+        reason = (
             "instrument_manifest_mismatch"
             if mismatch_reason == "run_binding_mismatch"
-            and (
-                exc.reason_code == "instrument_manifest_mismatch"
-                or _is_current_instrument_source_failure(exc)
-            )
             else mismatch_reason
         )
-    except Exception as exc:
-        source_failure_reason = (
-            "instrument_manifest_mismatch"
-            if mismatch_reason == "run_binding_mismatch"
-            and _is_current_instrument_source_failure(exc)
-            else mismatch_reason
-        )
-    if source_failure_reason is not None:
-        raise SemanticEvaluatorError(source_failure_reason)
+        raise SemanticEvaluatorError(reason) from None
+    except (AttributeError, SemanticEvaluatorError, TypeError, ValueError):
+        raise SemanticEvaluatorError(mismatch_reason) from None
 
     exact_pairs = (
         (strict_report, report_evidence),
@@ -871,6 +874,7 @@ def _verify_root_bundle(
         instrument_manifest=manifest,
         assessment_plan=plan,
         prompts=expected_prompts,
+        instrument_snapshot=snapshot,
     )
 
 
@@ -901,6 +905,7 @@ def _require_admission(admission: Any) -> _ReplayRoots:
         retained_prompts=admission.prompts,
         retained_prompt_hashes=admission.prompt_request_sha256s,
         mismatch_reason="run_binding_mismatch",
+        instrument_snapshot=admission._instrument_snapshot,
     )
 
 
@@ -1052,6 +1057,7 @@ def _derive_projection(
                 reader_artifact=roots.reader.artifact,
                 bounded_context=roots.bounded_context,
                 attempt_ref=terminal.attempt_ref,
+                _loaded_profile=(roots.instrument_snapshot.resources.loaded_profile),
             )
             expected_ids = {
                 item.assessment_unit_id
@@ -1207,7 +1213,10 @@ def assemble_semantic_assessment_run(
         dimension_attempt_evidence=evidence,
         projection=projection,
     )
-    verified = verify_laj_composition_witness(witness)
+    verified, _verified_roots = _verify_laj_composition_witness_with_roots(
+        witness,
+        instrument_snapshot=roots.instrument_snapshot,
+    )
     return AssembledRun(
         run=projection.run,
         validation_report=projection.validation_report,
@@ -1216,9 +1225,12 @@ def assemble_semantic_assessment_run(
     )
 
 
-def verify_laj_composition_witness(
+def _verify_laj_composition_witness_with_roots(
     witness: LajCompositionWitness,
-) -> LajCompositionWitness:
+    *,
+    instrument_snapshot: Any | None = None,
+    include_baseline: bool = False,
+) -> tuple[LajCompositionWitness, _ReplayRoots]:
     try:
         strict = LajCompositionWitness.model_validate(witness.model_dump(mode="json"))
         if canonical_json_bytes(strict) != canonical_json_bytes(
@@ -1238,6 +1250,8 @@ def verify_laj_composition_witness(
             retained_prompts=None,
             retained_prompt_hashes=None,
             mismatch_reason="composition_witness_mismatch",
+            instrument_snapshot=instrument_snapshot,
+            include_baseline=include_baseline,
         )
         projection = _derive_projection(
             roots=roots,
@@ -1261,6 +1275,13 @@ def verify_laj_composition_witness(
         raise SemanticEvaluatorError("composition_witness_mismatch") from exc
     except (AttributeError, ValidationError, TypeError, ValueError) as exc:
         raise SemanticEvaluatorError("composition_witness_mismatch") from exc
+    return strict, roots
+
+
+def verify_laj_composition_witness(
+    witness: LajCompositionWitness,
+) -> LajCompositionWitness:
+    strict, _roots = _verify_laj_composition_witness_with_roots(witness)
     return strict
 
 

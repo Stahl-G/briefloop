@@ -41,9 +41,9 @@ from multi_agent_brief.semantic_evaluator.normalization import (
 )
 from multi_agent_brief.semantic_evaluator.profile import load_profile
 import multi_agent_brief.semantic_evaluator.profile as profile_module
-import multi_agent_brief.semantic_evaluator.prompts as prompts_module
+import multi_agent_brief.semantic_evaluator.snapshot as snapshot_module
+from multi_agent_brief.semantic_evaluator.resources import EvaluatorResourceError
 from multi_agent_brief.semantic_evaluator.serialization import (
-    SourceResolutionError,
     canonical_json_bytes,
     canonical_sha256,
     sha256_bytes,
@@ -602,6 +602,56 @@ def test_installed_component_change_invalidates_existing_witness(
         compose_actual_laj(assembled.witness)
 
 
+def test_actual_composition_acquires_one_complete_resource_snapshot(
+    monkeypatch,
+) -> None:
+    _baseline, assembled = _assembled(with_finding=True)
+    calls: dict[str, int] = {
+        "profile": 0,
+        "system_prompt": 0,
+        "dimension_prompt": 0,
+        "checklist": 0,
+        "component_source": 0,
+    }
+    original_profile_resource = profile_module.resource_text
+    original_snapshot_resource = snapshot_module.resource_text
+    original_source_hasher = instrument_module.source_sha256_for_module
+
+    def counted_profile(*parts: str) -> str:
+        calls["profile"] += 1
+        return original_profile_resource(*parts)
+
+    def counted_snapshot(*parts: str) -> str:
+        key = {
+            ("prompts", "system_v1.txt"): "system_prompt",
+            ("prompts", "dimension_v1.txt"): "dimension_prompt",
+            ("baselines", "structured_checklist_zh_v1.yaml"): "checklist",
+        }[parts]
+        calls[key] += 1
+        return original_snapshot_resource(*parts)
+
+    def counted_source(module_name: str) -> str:
+        calls["component_source"] += 1
+        return original_source_hasher(module_name)
+
+    monkeypatch.setattr(profile_module, "resource_text", counted_profile)
+    monkeypatch.setattr(snapshot_module, "resource_text", counted_snapshot)
+    monkeypatch.setattr(
+        instrument_module,
+        "source_sha256_for_module",
+        counted_source,
+    )
+    composition = compose_actual_laj(assembled.witness)
+    assert composition.condition == "actual_LAJ"
+    assert calls == {
+        "profile": 1,
+        "system_prompt": 1,
+        "dimension_prompt": 1,
+        "checklist": 1,
+        "component_source": 5,
+    }
+
+
 @pytest.mark.parametrize("failure_site", ["profile", "component", "prompt"])
 def test_source_resolution_failure_is_value_free_for_composition_and_presentation(
     monkeypatch,
@@ -620,7 +670,7 @@ def test_source_resolution_failure_is_value_free_for_composition_and_presentatio
     elif failure_site == "component":
 
         def fail_source_resolution(_module_name: str) -> str:
-            raise SourceResolutionError(hidden_detail)
+            raise EvaluatorResourceError("evaluator_source_unavailable")
 
         monkeypatch.setattr(
             instrument_module,
@@ -629,12 +679,12 @@ def test_source_resolution_failure_is_value_free_for_composition_and_presentatio
         )
     else:
 
-        def fail_prompt_resource() -> str:
-            raise FileNotFoundError(hidden_detail)
+        def fail_prompt_resource(*_parts: str) -> str:
+            raise EvaluatorResourceError("evaluator_resource_unavailable")
 
         monkeypatch.setattr(
-            prompts_module,
-            "system_prompt_text",
+            snapshot_module,
+            "resource_text",
             fail_prompt_resource,
         )
     callbacks = (

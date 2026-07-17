@@ -5,12 +5,17 @@ from __future__ import annotations
 from importlib.resources import files
 
 from multi_agent_brief.semantic_evaluator.serialization import (
+    CanonicalSerializationError,
     normalized_utf8_text,
     sha256_bytes,
 )
 
 
 RESOURCE_ROOTS = ("profiles", "prompts", "baselines")
+
+
+class EvaluatorResourceError(RuntimeError):
+    """Value-free marker owned only by packaged evaluator resource loaders."""
 
 
 def _validate_parts(parts: tuple[str, ...]) -> None:
@@ -24,15 +29,28 @@ def _validate_parts(parts: tuple[str, ...]) -> None:
 
 def resource_bytes(*parts: str) -> bytes:
     _validate_parts(parts)
-    resource = files("multi_agent_brief.semantic_evaluator").joinpath(*parts)
+    read_failed = False
     try:
-        return resource.read_bytes()
-    except OSError as exc:
-        raise FileNotFoundError("evaluator_resource_unavailable") from exc
+        resource = files("multi_agent_brief.semantic_evaluator").joinpath(*parts)
+        content = resource.read_bytes()
+    except OSError:
+        read_failed = True
+    if read_failed:
+        raise EvaluatorResourceError("evaluator_resource_unavailable") from None
+    return content
 
 
 def resource_text(*parts: str) -> str:
-    return normalized_utf8_text(resource_bytes(*parts))
+    decode_failed = False
+    try:
+        text = normalized_utf8_text(resource_bytes(*parts))
+    except EvaluatorResourceError:
+        raise
+    except CanonicalSerializationError:
+        decode_failed = True
+    if decode_failed:
+        raise EvaluatorResourceError("evaluator_resource_unavailable") from None
+    return text
 
 
 def resource_sha256(*parts: str) -> str:
@@ -40,6 +58,7 @@ def resource_sha256(*parts: str) -> str:
 
 
 __all__ = [
+    "EvaluatorResourceError",
     "RESOURCE_ROOTS",
     "resource_bytes",
     "resource_sha256",
