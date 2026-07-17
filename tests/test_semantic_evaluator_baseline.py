@@ -40,6 +40,8 @@ from multi_agent_brief.semantic_evaluator.normalization import (
     replay_span,
 )
 from multi_agent_brief.semantic_evaluator.profile import load_profile
+import multi_agent_brief.semantic_evaluator.profile as profile_module
+import multi_agent_brief.semantic_evaluator.prompts as prompts_module
 from multi_agent_brief.semantic_evaluator.serialization import (
     SourceResolutionError,
     canonical_json_bytes,
@@ -491,6 +493,29 @@ def test_failure_only_actual_laj_withholds_findings_and_keeps_baseline(
     )
 
 
+def test_security_witness_replay_composition_and_presentation_stay_empty() -> None:
+    _baseline, assembled = _assembled(state="security_failed", with_finding=True)
+    assert assembled.run.assessment_units == []
+    assert assembled.run.findings == []
+    assert assembled.run.handoffs == []
+    assert assembled.validation_report.reason_codes == [
+        "tool_or_canary_output_forbidden"
+    ]
+    event_types = [item.event_type for item in assembled.events]
+    assert event_types.count("security_failure_recorded") == 1
+    assert event_types[-1] == "run_incomplete"
+    assert "finding_accepted" not in event_types
+    assert "o3_handoff_recorded" not in event_types
+
+    actual = compose_actual_laj(assembled.witness)
+    assert actual.laj_advice_items == []
+    assert actual.laj_reason_codes == ["tool_or_canary_output_forbidden"]
+    presentation = build_presentation(actual, witness=assembled.witness)
+    assert presentation.additional_semantic_findings == []
+    assert presentation.finding_count == 0
+    assert presentation.withheld_finding_count == 0
+
+
 def test_completed_handoff_only_run_has_no_advice_or_reassurance() -> None:
     _baseline, assembled = _assembled(state="handoff_only")
     assert assembled.run.run_status == "completed"
@@ -577,21 +602,41 @@ def test_installed_component_change_invalidates_existing_witness(
         compose_actual_laj(assembled.witness)
 
 
+@pytest.mark.parametrize("failure_site", ["profile", "component", "prompt"])
 def test_source_resolution_failure_is_value_free_for_composition_and_presentation(
     monkeypatch,
+    failure_site: str,
 ) -> None:
     _baseline, assembled = _assembled(with_finding=True)
     valid_composition = compose_actual_laj(assembled.witness)
     hidden_detail = "/private/synthetic-customer/source.py"
 
-    def fail_source_resolution(_module_name: str) -> str:
-        raise SourceResolutionError(hidden_detail)
+    if failure_site == "profile":
 
-    monkeypatch.setattr(
-        instrument_module,
-        "source_sha256_for_module",
-        fail_source_resolution,
-    )
+        def fail_profile_resource(*_args) -> str:
+            raise OSError(hidden_detail)
+
+        monkeypatch.setattr(profile_module, "resource_text", fail_profile_resource)
+    elif failure_site == "component":
+
+        def fail_source_resolution(_module_name: str) -> str:
+            raise SourceResolutionError(hidden_detail)
+
+        monkeypatch.setattr(
+            instrument_module,
+            "source_sha256_for_module",
+            fail_source_resolution,
+        )
+    else:
+
+        def fail_prompt_resource() -> str:
+            raise FileNotFoundError(hidden_detail)
+
+        monkeypatch.setattr(
+            prompts_module,
+            "system_prompt_text",
+            fail_prompt_resource,
+        )
     callbacks = (
         lambda: compose_actual_laj(assembled.witness),
         lambda: build_presentation(
@@ -604,6 +649,7 @@ def test_source_resolution_failure_is_value_free_for_composition_and_presentatio
             callback()
         assert str(caught.value) == "composition_witness_mismatch"
         assert caught.value.__cause__ is None
+        assert caught.value.__context__ is None
         assert hidden_detail not in str(caught.value)
 
 

@@ -38,6 +38,7 @@ from multi_agent_brief.semantic_evaluator.contracts import (
 )
 from multi_agent_brief.semantic_evaluator.errors import (
     SemanticEvaluatorError,
+    _is_current_instrument_source_failure,
     value_free_violations,
 )
 from multi_agent_brief.semantic_evaluator.normalization import (
@@ -77,7 +78,7 @@ from multi_agent_brief.semantic_evaluator.unit_planner import (
 )
 
 
-VALIDATOR_VERSION = "dimension_validator_v2"
+VALIDATOR_VERSION = "dimension_validator_v3"
 
 
 @dataclass(frozen=True)
@@ -725,6 +726,25 @@ def _verify_root_bundle(
             instrument_manifest.model_dump(mode="json")
         )
         plan = AssessmentPlan.model_validate(assessment_plan.model_dump(mode="json"))
+    except SemanticEvaluatorError as exc:
+        if (
+            mismatch_reason == "run_binding_mismatch"
+            and exc.reason_code == "instrument_manifest_mismatch"
+        ):
+            raise
+        raise SemanticEvaluatorError(mismatch_reason) from exc
+    except (
+        AttributeError,
+        OSError,
+        RuntimeError,
+        ValidationError,
+        TypeError,
+        ValueError,
+    ) as exc:
+        raise SemanticEvaluatorError(mismatch_reason) from exc
+
+    source_failure_reason: str | None = None
+    try:
         loaded_profile = load_profile()
         from multi_agent_brief.semantic_evaluator.instrument import (
             verify_instrument_manifest,
@@ -736,6 +756,27 @@ def _verify_root_bundle(
             config,
             loaded_profile=loaded_profile,
         )
+    except SemanticEvaluatorError as exc:
+        source_failure_reason = (
+            "instrument_manifest_mismatch"
+            if mismatch_reason == "run_binding_mismatch"
+            and (
+                exc.reason_code == "instrument_manifest_mismatch"
+                or _is_current_instrument_source_failure(exc)
+            )
+            else mismatch_reason
+        )
+    except Exception as exc:
+        source_failure_reason = (
+            "instrument_manifest_mismatch"
+            if mismatch_reason == "run_binding_mismatch"
+            and _is_current_instrument_source_failure(exc)
+            else mismatch_reason
+        )
+    if source_failure_reason is not None:
+        raise SemanticEvaluatorError(source_failure_reason)
+
+    try:
         expected_binding = build_input_binding(
             trial_id=binding.trial_id,
             reader=reader,
@@ -751,6 +792,19 @@ def _verify_root_bundle(
             profile=loaded_profile.profile,
             profile_sha256=loaded_profile.profile_sha256,
         )
+    except (
+        AttributeError,
+        OSError,
+        RuntimeError,
+        SemanticEvaluatorError,
+        ValidationError,
+        TypeError,
+        ValueError,
+    ) as exc:
+        raise SemanticEvaluatorError(mismatch_reason) from exc
+
+    source_failure_reason = None
+    try:
         expected_prompts = tuple(
             build_dimension_prompt(
                 reader_artifact=reader.artifact,
@@ -762,21 +816,24 @@ def _verify_root_bundle(
             for dimension in loaded_profile.profile.dimensions
         )
     except SemanticEvaluatorError as exc:
-        if (
-            mismatch_reason == "run_binding_mismatch"
-            and exc.reason_code == "instrument_manifest_mismatch"
-        ):
-            raise
-        raise SemanticEvaluatorError(mismatch_reason) from exc
-    except (OSError, RuntimeError):
-        reason = (
+        source_failure_reason = (
             "instrument_manifest_mismatch"
             if mismatch_reason == "run_binding_mismatch"
+            and (
+                exc.reason_code == "instrument_manifest_mismatch"
+                or _is_current_instrument_source_failure(exc)
+            )
             else mismatch_reason
         )
-        raise SemanticEvaluatorError(reason) from None
-    except (AttributeError, ValidationError, TypeError, ValueError) as exc:
-        raise SemanticEvaluatorError(mismatch_reason) from exc
+    except Exception as exc:
+        source_failure_reason = (
+            "instrument_manifest_mismatch"
+            if mismatch_reason == "run_binding_mismatch"
+            and _is_current_instrument_source_failure(exc)
+            else mismatch_reason
+        )
+    if source_failure_reason is not None:
+        raise SemanticEvaluatorError(source_failure_reason)
 
     exact_pairs = (
         (strict_report, report_evidence),
@@ -955,8 +1012,7 @@ def _derive_projection(
     for item in evidence:
         terminal_by_dimension[item.dimension_id] = item
 
-    results: list[DimensionValidationResult] = []
-    parser_reasons: set[str] = set()
+    parsed_by_dimension: dict[str, Any] = {}
     terminal_failure_reasons: set[str] = set()
     for prompt in roots.prompts:
         terminal = terminal_by_dimension[prompt.dimension_id]
@@ -964,28 +1020,48 @@ def _derive_projection(
             terminal_failure_reasons.add(terminal.reason_code or "provider_failed")
             continue
         raw = bytes.fromhex(terminal.raw_response_bytes_hex or "")
-        parsed = parse_dimension_response(raw)
-        if not parsed.ok:
-            parser_reasons.update(parsed.reason_codes)
-            continue
-        result = validate_dimension_response(
-            parsed.response,
-            raw_object=parsed.raw_object,
-            expected_dimension_id=prompt.dimension_id,
-            plan=roots.assessment_plan,
-            reader_artifact=roots.reader.artifact,
-            bounded_context=roots.bounded_context,
-            attempt_ref=terminal.attempt_ref,
+        parsed_by_dimension[prompt.dimension_id] = parse_dimension_response(
+            raw,
+            forbidden_canary_values=prompt.forbidden_canary_values,
         )
-        expected_ids = {
-            item.assessment_unit_id
-            for item in roots.assessment_plan.units
-            if item.dimension_id == prompt.dimension_id
-        }
-        observed_ids = {item.assessment_unit_id for item in result.unit_outcomes}
-        if observed_ids != expected_ids and not result.reason_codes:
-            raise SemanticEvaluatorError("assessment_unit_failure_link_missing")
-        results.append(result)
+
+    security_failure = any(
+        "tool_or_canary_output_forbidden" in parsed.reason_codes
+        for parsed in parsed_by_dimension.values()
+    )
+    results: list[DimensionValidationResult] = []
+    parser_reasons: set[str]
+    if security_failure:
+        parser_reasons = {"tool_or_canary_output_forbidden"}
+        terminal_failure_reasons.clear()
+    else:
+        parser_reasons = set()
+        for prompt in roots.prompts:
+            terminal = terminal_by_dimension[prompt.dimension_id]
+            if terminal.status == "failed":
+                continue
+            parsed = parsed_by_dimension[prompt.dimension_id]
+            if not parsed.ok:
+                parser_reasons.update(parsed.reason_codes)
+                continue
+            result = validate_dimension_response(
+                parsed.response,
+                raw_object=parsed.raw_object,
+                expected_dimension_id=prompt.dimension_id,
+                plan=roots.assessment_plan,
+                reader_artifact=roots.reader.artifact,
+                bounded_context=roots.bounded_context,
+                attempt_ref=terminal.attempt_ref,
+            )
+            expected_ids = {
+                item.assessment_unit_id
+                for item in roots.assessment_plan.units
+                if item.dimension_id == prompt.dimension_id
+            }
+            observed_ids = {item.assessment_unit_id for item in result.unit_outcomes}
+            if observed_ids != expected_ids and not result.reason_codes:
+                raise SemanticEvaluatorError("assessment_unit_failure_link_missing")
+            results.append(result)
 
     outcomes = [item for result in results for item in result.unit_outcomes]
     findings = [item for result in results for item in result.accepted_findings]
@@ -998,7 +1074,6 @@ def _derive_projection(
     reason_codes = set(validation_reasons)
     reason_codes.update(parser_reasons)
     reason_codes.update(terminal_failure_reasons)
-    security_failure = "tool_or_canary_output_forbidden" in reason_codes
     non_security_parser = bool(parser_reasons - {"tool_or_canary_output_forbidden"})
     terminal_failure_count = sum(
         item.status == "failed" for item in terminal_by_dimension.values()

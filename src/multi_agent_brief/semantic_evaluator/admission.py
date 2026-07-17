@@ -25,6 +25,7 @@ from multi_agent_brief.semantic_evaluator.contracts import (
 )
 from multi_agent_brief.semantic_evaluator.errors import (
     SemanticEvaluatorError,
+    _is_current_instrument_source_failure,
     value_free_violations,
 )
 from multi_agent_brief.semantic_evaluator.normalization import (
@@ -176,6 +177,7 @@ def _strict_request(request: AdmissionRequest | Mapping[str, Any]) -> AdmissionR
 def _strict_loaded_profile(
     loaded_profile: LoadedProfile | None,
 ) -> LoadedProfile:
+    failure_reason: str | None = None
     try:
         if loaded_profile is None:
             candidate = load_profile()
@@ -205,8 +207,14 @@ def _strict_loaded_profile(
         TypeError,
         ValidationError,
         ValueError,
-    ):
-        raise SemanticEvaluatorError("profile_invalid") from None
+    ) as exc:
+        failure_reason = (
+            "instrument_manifest_mismatch"
+            if _is_current_instrument_source_failure(exc)
+            else "profile_invalid"
+        )
+    if failure_reason is not None:
+        raise SemanticEvaluatorError(failure_reason)
     return strict
 
 
@@ -302,17 +310,23 @@ def admit_inputs(
             return _blocked("archive_root_unsafe")
     if prompt_sizer is None:
         return _blocked("prompt_sizer_unavailable")
+    try:
+        sizer_id = prompt_sizer.sizer_id
+        sizer_version = prompt_sizer.sizer_version
+    except Exception:
+        return _blocked("prompt_sizer_unavailable")
     if (
-        getattr(prompt_sizer, "sizer_id", None) != config.prompt_sizer.sizer_id
-        or getattr(prompt_sizer, "sizer_version", None)
-        != config.prompt_sizer.sizer_version
+        type(sizer_id) is not str
+        or type(sizer_version) is not str
+        or sizer_id != config.prompt_sizer.sizer_id
+        or sizer_version != config.prompt_sizer.sizer_version
     ):
         return _blocked("prompt_sizer_unavailable")
 
     try:
         profile = _strict_loaded_profile(loaded_profile)
-    except SemanticEvaluatorError:
-        return _blocked("profile_invalid")
+    except SemanticEvaluatorError as exc:
+        return _blocked(exc.reason_code)
     try:
         strict_existing_binding = _strict_existing_binding(existing_binding)
     except SemanticEvaluatorError:
@@ -371,6 +385,14 @@ def admit_inputs(
                 dimension=dimension,
                 assessment_plan=plan,
             )
+        except Exception as exc:
+            reason = (
+                "instrument_manifest_mismatch"
+                if _is_current_instrument_source_failure(exc)
+                else "prompt_sizer_unavailable"
+            )
+            return _blocked(reason)
+        try:
             count = prompt_sizer.count_tokens(
                 system_text=prompt.system_text,
                 user_text=prompt.user_text,

@@ -34,7 +34,9 @@ from multi_agent_brief.semantic_evaluator.normalization import (
 )
 import multi_agent_brief.semantic_evaluator.instrument as instrument_module
 from multi_agent_brief.semantic_evaluator.parser import parse_dimension_response
+import multi_agent_brief.semantic_evaluator.profile as profile_module
 from multi_agent_brief.semantic_evaluator.profile import load_profile
+import multi_agent_brief.semantic_evaluator.prompts as prompts_module
 from multi_agent_brief.semantic_evaluator.prompts import (
     CANARY_DERIVATION_VERSION,
     derive_forbidden_canary_values,
@@ -61,6 +63,11 @@ from multi_agent_brief.semantic_evaluator.validator import (
 
 FIXTURE_ROOT = Path(__file__).parent / "fixtures" / "semantic_evaluator"
 REPORT_BYTES = "# 合成报告\n\n当前状态为 HOLD。\n\n结论写为 READY。\n".encode()
+PARSER_CANARIES = derive_forbidden_canary_values(
+    assessment_plan_sha256="0" * 64,
+    bounded_context_sha256="1" * 64,
+    dimension_id="synthetic_parser_probe",
+)
 
 
 class _Sizer:
@@ -69,6 +76,17 @@ class _Sizer:
 
     def count_tokens(self, *, system_text: str, user_text: str) -> int:
         return 10
+
+
+def _parse(raw_body: bytes):
+    return parse_dimension_response(
+        raw_body,
+        forbidden_canary_values=PARSER_CANARIES,
+    )
+
+
+def _fail_if_semantic_validation_runs(*_args, **_kwargs):
+    pytest.fail("security preflight reached semantic validation")
 
 
 def _admitted_case():
@@ -259,16 +277,14 @@ def _self_consistent_noncurrent_manifest(
 def test_parser_accepts_one_strict_object_and_never_repairs_wrapped_json() -> None:
     _reader, _context, _profile, plan = _case()
     response = _no_finding_response(plan, "cross_section_consistency")
-    parsed = parse_dimension_response(canonical_json_bytes(response))
+    parsed = _parse(canonical_json_bytes(response))
     assert parsed.ok is True
     assert parsed.response == response
     wrapped = b"```json\n" + canonical_json_bytes(response) + b"\n```"
-    assert parse_dimension_response(wrapped).reason_codes == ("parser_invalid_json",)
+    assert _parse(wrapped).reason_codes == ("parser_invalid_json",)
     malformed = (FIXTURE_ROOT / "malformed_response.txt").read_bytes()
-    assert parse_dimension_response(malformed).reason_codes == ("parser_invalid_json",)
-    assert parse_dimension_response(b"[]").reason_codes == (
-        "parser_top_level_not_object",
-    )
+    assert _parse(malformed).reason_codes == ("parser_invalid_json",)
+    assert _parse(b"[]").reason_codes == ("parser_top_level_not_object",)
 
 
 def test_parser_classifies_nested_authority_keys_before_generic_extra_failure() -> None:
@@ -277,7 +293,7 @@ def test_parser_classifies_nested_authority_keys_before_generic_extra_failure() 
         mode="json"
     )
     payload["metadata"] = {"nested": {"PASS": True}}
-    parsed = parse_dimension_response(canonical_json_bytes(payload))
+    parsed = _parse(canonical_json_bytes(payload))
     assert parsed.reason_codes == ("authority_output_forbidden",)
     assert parsed.violations == ()
 
@@ -351,6 +367,65 @@ def test_canary_derivation_rejects_malformed_inputs_value_free(
     assert caught.value.__cause__ is None
 
 
+def test_raw_canary_preflight_has_security_precedence_and_backslash_parity() -> None:
+    canary = PARSER_CANARIES[0]
+    literal = canary.encode("ascii")
+    escaped = "".join(f"\\u00{ord(char):02x}" for char in canary).encode()
+    midpoint = len(canary) // 2
+    mixed = canary[:midpoint].encode() + b"".join(
+        f"\\u00{ord(char):02X}".encode() for char in canary[midpoint:]
+    )
+    security_rows = {
+        "literal-value": b'{"value":"' + literal + b'"}',
+        "extra-key": b'{"' + literal + b'":true}',
+        "duplicate-member": b'{"value":null,"value":"' + literal + b'"}',
+        "schema-invalid": b'{"schema_version":"' + literal + b'"}',
+        "malformed-tail": b'{"value":"' + literal + b'"} trailing',
+        "truncated": b'{"value":"' + literal,
+        "invalid-utf8": b"\xff" + literal,
+        "fully-escaped": b'{"value":"' + escaped + b'"}',
+        "mixed": b'{"value":"' + mixed + b'"}',
+    }
+    for raw in security_rows.values():
+        result = _parse(raw)
+        assert result.reason_codes == ("tool_or_canary_output_forbidden",)
+        assert result.response is None
+        assert result.violations == ()
+
+    even_backslash = "".join(f"\\\\u00{ord(char):02x}" for char in canary).encode()
+    assert _parse(b'{"value":"' + even_backslash + b'"}').reason_codes == (
+        "parser_schema_invalid",
+    )
+
+
+def test_parser_requires_one_valid_prompt_owned_canary_tuple_value_free() -> None:
+    raw = b'{"synthetic":"input"}'
+    with pytest.raises(TypeError) as omitted:
+        parse_dimension_response(raw)  # type: ignore[call-arg]
+    assert PARSER_CANARIES[0] not in str(omitted.value)
+
+    second = derive_forbidden_canary_values(
+        assessment_plan_sha256="2" * 64,
+        bounded_context_sha256="3" * 64,
+        dimension_id="synthetic_parser_probe",
+    )[0]
+    malformed_values = (
+        (),
+        (PARSER_CANARIES[0], PARSER_CANARIES[0]),
+        (second, PARSER_CANARIES[0]),
+        ("synthetic-invalid-canary",),
+        (object(),),
+    )
+    for values in malformed_values:
+        result = parse_dimension_response(
+            raw,
+            forbidden_canary_values=values,  # type: ignore[arg-type]
+        )
+        assert result.reason_codes == ("parser_schema_invalid",)
+        assert result.violations == ()
+        assert PARSER_CANARIES[0] not in repr(result)
+
+
 def test_parser_rejects_duplicate_members_before_collapse_with_security_precedence() -> (
     None
 ):
@@ -358,7 +433,7 @@ def test_parser_rejects_duplicate_members_before_collapse_with_security_preceden
     response = _no_finding_response(plan, "cross_section_consistency")
     text = canonical_json_bytes(response).decode("utf-8")
     top_level_duplicate = text[:-1] + f',"trial_id":"{plan.trial_id}"}}'
-    assert parse_dimension_response(top_level_duplicate.encode()).reason_codes == (
+    assert _parse(top_level_duplicate.encode()).reason_codes == (
         "parser_duplicate_member",
     )
     unit_id = response.unit_results[0].assessment_unit_id
@@ -367,17 +442,13 @@ def test_parser_rejects_duplicate_members_before_collapse_with_security_preceden
         f'"assessment_unit_id":"{unit_id}","assessment_unit_id":"{unit_id}"',
         1,
     )
-    assert parse_dimension_response(nested_duplicate.encode()).reason_codes == (
+    assert _parse(nested_duplicate.encode()).reason_codes == (
         "parser_duplicate_member",
     )
     authority = b'{"pass":false,"pass":true}'
-    assert parse_dimension_response(authority).reason_codes == (
-        "authority_output_forbidden",
-    )
+    assert _parse(authority).reason_codes == ("authority_output_forbidden",)
     security = b'{"pass":false,"tool_calls":[],"pass":true}'
-    assert parse_dimension_response(security).reason_codes == (
-        "tool_or_canary_output_forbidden",
-    )
+    assert _parse(security).reason_codes == ("tool_or_canary_output_forbidden",)
 
 
 def test_provider_supplied_finding_or_handoff_ids_are_schema_invalid() -> None:
@@ -414,9 +485,9 @@ def test_provider_supplied_finding_or_handoff_ids_are_schema_invalid() -> None:
     finding_payload["unit_results"][0]["findings"][0].update(
         {"finding_id": "F-000000000001", "status": "proposal"}
     )
-    assert parse_dimension_response(
-        canonical_json_bytes(finding_payload)
-    ).reason_codes == ("parser_schema_invalid",)
+    assert _parse(canonical_json_bytes(finding_payload)).reason_codes == (
+        "parser_schema_invalid",
+    )
 
     handoff = O3HandoffDraft(
         assessment_unit_id=units[0].assessment_unit_id,
@@ -447,9 +518,9 @@ def test_provider_supplied_finding_or_handoff_ids_are_schema_invalid() -> None:
     )
     handoff_payload = handoff_response.model_dump(mode="json")
     handoff_payload["unit_results"][0]["handoffs"][0]["handoff_id"] = "H-000000000001"
-    assert parse_dimension_response(
-        canonical_json_bytes(handoff_payload)
-    ).reason_codes == ("parser_schema_invalid",)
+    assert _parse(canonical_json_bytes(handoff_payload)).reason_codes == (
+        "parser_schema_invalid",
+    )
 
 
 def test_valid_o1_finding_replays_span_and_preserves_explicit_dispositions() -> None:
@@ -850,6 +921,111 @@ def test_security_failure_has_precedence_and_a_recomputable_event() -> None:
     assert recompute_event_counts(assembled.events)["failure_count"] == 1
 
 
+def test_security_in_one_dimension_erases_another_dimensions_valid_finding(
+    monkeypatch,
+) -> None:
+    reader, _context, _profile, plan, decision, evidence, _attempts = (
+        _complete_no_finding_validation_case()
+    )
+    security_prompt = _prompt_for(decision, evidence[0].dimension_id)
+    security_attempt = make_dimension_attempt_evidence(
+        trial_id=decision.input_binding.trial_id,
+        prompt=security_prompt,
+        attempt_ordinal=1,
+        status="completed",
+        raw_response_bytes=(
+            b'{"value":"'
+            + security_prompt.forbidden_canary_values[0].encode("ascii")
+            + b'"}\xff'
+        ),
+    )
+    finding_prompt = _prompt_for(decision, evidence[1].dimension_id)
+    units = [
+        item for item in plan.units if item.dimension_id == finding_prompt.dimension_id
+    ]
+    span = make_span_locator(
+        reader.artifact,
+        block_id="B000002",
+        start_char=0,
+        end_char=1,
+    )
+    finding_response = DimensionResponse(
+        schema_version=DIMENSION_RESPONSE_SCHEMA_ID,
+        trial_id=plan.trial_id,
+        dimension_id=finding_prompt.dimension_id,
+        unit_results=[
+            FindingEmittedResult(
+                assessment_unit_id=units[0].assessment_unit_id,
+                disposition="finding_emitted",
+                findings=[_finding(units[0], span)],
+            ),
+            *[
+                NoFindingResult(
+                    assessment_unit_id=item.assessment_unit_id,
+                    disposition="no_finding",
+                )
+                for item in units[1:]
+            ],
+        ],
+    )
+    finding_attempt = make_dimension_attempt_evidence(
+        trial_id=decision.input_binding.trial_id,
+        prompt=finding_prompt,
+        attempt_ordinal=1,
+        status="completed",
+        raw_response_bytes=canonical_json_bytes(finding_response),
+    )
+    parser_calls = 0
+    real_parser = validator_module.parse_dimension_response
+
+    def record_parser(raw_body, *, forbidden_canary_values):
+        nonlocal parser_calls
+        parser_calls += 1
+        return real_parser(
+            raw_body,
+            forbidden_canary_values=forbidden_canary_values,
+        )
+
+    monkeypatch.setattr(validator_module, "parse_dimension_response", record_parser)
+    monkeypatch.setattr(
+        validator_module,
+        "validate_dimension_response",
+        _fail_if_semantic_validation_runs,
+    )
+    assembled = assemble_semantic_assessment_run(
+        admission=decision,
+        dimension_attempt_evidence=[
+            security_attempt,
+            finding_attempt,
+            *evidence[2:],
+        ],
+    )
+    # Assembly derives once and its mandatory witness verification replays once.
+    assert parser_calls == 2 * len(decision.prompts)
+    assert assembled.run.run_status == "security_failed"
+    assert assembled.run.assessment_units == []
+    assert assembled.run.findings == []
+    assert assembled.run.handoffs == []
+    assert assembled.validation_report.validation_status == "rejected"
+    assert assembled.validation_report.reason_codes == [
+        "tool_or_canary_output_forbidden"
+    ]
+    assert assembled.validation_report.accepted_finding_ids == []
+    assert assembled.validation_report.finding_count == 0
+    assert assembled.validation_report.handoff_count == 0
+    event_types = [item.event_type for item in assembled.events]
+    assert event_types.count("security_failure_recorded") == 1
+    assert event_types[-1] == "run_incomplete"
+    assert not {
+        "dimension_parsed",
+        "unit_disposition_recorded",
+        "finding_accepted",
+        "finding_rejected",
+        "o3_handoff_recorded",
+    }.intersection(event_types)
+    assert verify_laj_composition_witness(assembled.witness) == assembled.witness
+
+
 def test_prompt_owned_canary_cannot_be_laundered_by_rehashed_attempt_metadata() -> None:
     _reader, _context, _profile, _plan, decision, evidence, _attempts = (
         _complete_no_finding_validation_case(inject_canary=True)
@@ -1131,8 +1307,10 @@ def test_assembly_rejects_self_consistent_noncurrent_manifest_before_evidence() 
         )
 
 
+@pytest.mark.parametrize("failure_site", ["profile", "component", "prompt"])
 def test_source_resolution_failure_is_value_free_at_assembly_and_witness_boundaries(
     monkeypatch,
+    failure_site: str,
 ) -> None:
     _reader, _context, _profile, _plan, decision, evidence, _attempts = (
         _complete_no_finding_validation_case()
@@ -1143,14 +1321,32 @@ def test_source_resolution_failure_is_value_free_at_assembly_and_witness_boundar
     )
     hidden_detail = "/private/synthetic-customer/source.py"
 
-    def fail_source_resolution(_module_name: str) -> str:
-        raise SourceResolutionError(hidden_detail)
+    if failure_site == "profile":
 
-    monkeypatch.setattr(
-        instrument_module,
-        "source_sha256_for_module",
-        fail_source_resolution,
-    )
+        def fail_profile_resource(*_args) -> str:
+            raise OSError(hidden_detail)
+
+        monkeypatch.setattr(profile_module, "resource_text", fail_profile_resource)
+    elif failure_site == "component":
+
+        def fail_source_resolution(_module_name: str) -> str:
+            raise SourceResolutionError(hidden_detail)
+
+        monkeypatch.setattr(
+            instrument_module,
+            "source_sha256_for_module",
+            fail_source_resolution,
+        )
+    else:
+
+        def fail_prompt_resource() -> str:
+            raise FileNotFoundError(hidden_detail)
+
+        monkeypatch.setattr(
+            prompts_module,
+            "system_prompt_text",
+            fail_prompt_resource,
+        )
     with pytest.raises(SemanticEvaluatorError) as assembly_error:
         assemble_semantic_assessment_run(
             admission=decision,
@@ -1158,12 +1354,14 @@ def test_source_resolution_failure_is_value_free_at_assembly_and_witness_boundar
         )
     assert str(assembly_error.value) == "instrument_manifest_mismatch"
     assert assembly_error.value.__cause__ is None
+    assert assembly_error.value.__context__ is None
     assert hidden_detail not in str(assembly_error.value)
 
     with pytest.raises(SemanticEvaluatorError) as witness_error:
         verify_laj_composition_witness(assembled.witness)
     assert str(witness_error.value) == "composition_witness_mismatch"
     assert witness_error.value.__cause__ is None
+    assert witness_error.value.__context__ is None
     assert hidden_detail not in str(witness_error.value)
 
 
@@ -1181,7 +1379,10 @@ def test_missing_dimension_requires_explicit_terminal_failed_attempt() -> None:
         )
 
     first = evidence[0]
-    parsed_first = parse_dimension_response(bytes.fromhex(first.raw_response_bytes_hex))
+    parsed_first = parse_dimension_response(
+        bytes.fromhex(first.raw_response_bytes_hex),
+        forbidden_canary_values=tuple(first.forbidden_canary_values),
+    )
     partial_response = parsed_first.response.model_copy(
         update={"unit_results": parsed_first.response.unit_results[:1]}
     )
@@ -1205,7 +1406,10 @@ def test_assembly_revalidates_evidence_and_rejects_injected_validation_result() 
         _complete_no_finding_validation_case()
     )
     raw = bytes.fromhex(evidence[0].raw_response_bytes_hex)
-    parsed = parse_dimension_response(raw)
+    parsed = parse_dimension_response(
+        raw,
+        forbidden_canary_values=tuple(evidence[0].forbidden_canary_values),
+    )
     injected = validate_dimension_response(
         parsed.response,
         raw_object=parsed.raw_object,

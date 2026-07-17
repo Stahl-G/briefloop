@@ -8,6 +8,7 @@ from typing import Iterable
 from pydantic import ValidationError
 
 from multi_agent_brief.contracts.errors import FieldViolation, pydantic_error_violations
+from multi_agent_brief.semantic_evaluator.serialization import SourceResolutionError
 
 
 ADMISSION_REASON_CODES = (
@@ -90,6 +91,21 @@ class SemanticEvaluatorError(Exception):
         self.reason_code = reason_code
         self.violations = tuple(violations)
         super().__init__(reason_code)
+
+
+def _is_current_instrument_source_failure(error: BaseException) -> bool:
+    """Recognize only explicit current-source failures without exposing values."""
+
+    current: BaseException | None = error
+    seen: set[int] = set()
+    for _ in range(16):
+        if current is None or id(current) in seen:
+            return False
+        seen.add(id(current))
+        if isinstance(current, (SourceResolutionError, OSError)):
+            return True
+        current = current.__cause__
+    return False
 
 
 def value_free_violations(error: ValidationError) -> tuple[FieldViolation, ...]:

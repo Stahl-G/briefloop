@@ -51,6 +51,7 @@ import multi_agent_brief.semantic_evaluator.instrument as instrument_module
 from multi_agent_brief.semantic_evaluator.normalization import freeze_bounded_context
 import multi_agent_brief.semantic_evaluator.normalization as normalization_module
 import multi_agent_brief.semantic_evaluator.parser as parser_module
+import multi_agent_brief.semantic_evaluator.profile as profile_module
 import multi_agent_brief.semantic_evaluator.prompts as prompts_module
 from multi_agent_brief.semantic_evaluator.resources import resource_sha256
 from multi_agent_brief.semantic_evaluator.serialization import (
@@ -74,6 +75,32 @@ class Sizer:
     sizer_version = "v1"
 
     def count_tokens(self, *, system_text, user_text):
+        return 10
+
+
+class ExplodingIdentitySizer:
+    def __init__(self, failing_property):
+        self.failing_property = failing_property
+        self.id_reads = 0
+        self.version_reads = 0
+        self.calls = 0
+
+    @property
+    def sizer_id(self):
+        self.id_reads += 1
+        if self.failing_property == "sizer_id":
+            raise RuntimeError("synthetic hidden identity")
+        return "fake-sizer"
+
+    @property
+    def sizer_version(self):
+        self.version_reads += 1
+        if self.failing_property == "sizer_version":
+            raise RuntimeError("synthetic hidden identity")
+        return "v1"
+
+    def count_tokens(self, *, system_text, user_text):
+        self.calls += 1
         return 10
 
 resource_paths = (
@@ -220,6 +247,23 @@ parser_projection = assemble_semantic_assessment_run(
     admission=decision,
     dimension_attempt_evidence=[parser_attempt, *attempts[1:]],
 )
+security_prompt = prompt_for(attempts[0].dimension_id)
+security_canary = security_prompt.forbidden_canary_values[0]
+escaped_canary = "".join(
+    f"\\u00{ord(character):02x}" for character in security_canary
+).encode()
+security_attempt = make_dimension_attempt_evidence(
+    trial_id=decision.input_binding.trial_id,
+    prompt=security_prompt,
+    attempt_ordinal=1,
+    status="completed",
+    raw_response_bytes=b'{"value":"' + escaped_canary + b'"} trailing',
+)
+security_projection = assemble_semantic_assessment_run(
+    admission=decision,
+    dimension_attempt_evidence=[security_attempt, *attempts[1:]],
+)
+security_composition = compose_actual_laj(security_projection.witness)
 provider_projection = assemble_semantic_assessment_run(
     admission=decision,
     dimension_attempt_evidence=[
@@ -256,6 +300,8 @@ composition_payload["composition_sha256"] = canonical_sha256(
 forged_composition = CompositionRecord.model_validate(composition_payload)
 different_report = b"# different synthetic parity report\n"
 original_source_hasher = instrument_module.source_sha256_for_module
+original_profile_resource = profile_module.resource_text
+original_prompt_resource = prompts_module.system_prompt_text
 
 
 def fail_source_resolution(_module_name):
@@ -263,7 +309,7 @@ def fail_source_resolution(_module_name):
 
 
 instrument_module.source_sha256_for_module = fail_source_resolution
-source_failure_results = {
+component_source_failure = {
     "admission": admission_reason({}),
     "assembly": semantic_error_reason(
         lambda: assemble_semantic_assessment_run(
@@ -274,6 +320,52 @@ source_failure_results = {
     "witness": semantic_error_reason(lambda: compose_actual_laj(assembled.witness)),
 }
 instrument_module.source_sha256_for_module = original_source_hasher
+
+
+def fail_profile_resource(*_args):
+    raise OSError("/private/synthetic-customer/profile.yaml")
+
+
+profile_module.resource_text = fail_profile_resource
+profile_source_failure = {
+    "admission": admission_reason({}),
+    "assembly": semantic_error_reason(
+        lambda: assemble_semantic_assessment_run(
+            admission=decision,
+            dimension_attempt_evidence=attempts,
+        )
+    ),
+    "witness": semantic_error_reason(lambda: compose_actual_laj(assembled.witness)),
+}
+profile_module.resource_text = original_profile_resource
+
+
+def fail_prompt_resource():
+    raise FileNotFoundError("/private/synthetic-customer/system_v1.txt")
+
+
+prompts_module.system_prompt_text = fail_prompt_resource
+prompt_source_failure = {
+    "admission": admission_reason({}),
+    "assembly": semantic_error_reason(
+        lambda: assemble_semantic_assessment_run(
+            admission=decision,
+            dimension_attempt_evidence=attempts,
+        )
+    ),
+    "witness": semantic_error_reason(lambda: compose_actual_laj(assembled.witness)),
+}
+prompts_module.system_prompt_text = original_prompt_resource
+
+identity_failures = {}
+for property_name in ("sizer_id", "sizer_version"):
+    exploding_sizer = ExplodingIdentitySizer(property_name)
+    identity_failures[property_name] = {
+        "reason": admission_reason({}, prompt_sizer=exploding_sizer),
+        "id_reads": exploding_sizer.id_reads,
+        "version_reads": exploding_sizer.version_reads,
+        "count_calls": exploding_sizer.calls,
+    }
 failure_results = {
     "admission_extra": admission_reason({"unexpected": "synthetic"}),
     "admission_empty": admission_reason({"report_bytes_hex": ""}),
@@ -316,6 +408,16 @@ failure_results = {
     ),
     "parser_status": parser_projection.run.run_status,
     "parser_reasons": parser_projection.validation_report.reason_codes,
+    "security": {
+        "run_status": security_projection.run.run_status,
+        "validation_status": security_projection.validation_report.validation_status,
+        "reasons": security_projection.validation_report.reason_codes,
+        "unit_count": len(security_projection.run.assessment_units),
+        "finding_count": len(security_projection.run.findings),
+        "handoff_count": len(security_projection.run.handoffs),
+        "advice_count": len(security_composition.laj_advice_items),
+        "event_types": [item.event_type for item in security_projection.events],
+    },
     "provider_status": provider_projection.run.run_status,
     "provider_validation": provider_projection.validation_report.validation_status,
     "witness_relation": semantic_error_reason(
@@ -327,7 +429,12 @@ failure_results = {
             witness=assembled.witness,
         )
     ),
-    "source_failure": source_failure_results,
+    "source_failure": {
+        "profile": profile_source_failure,
+        "component": component_source_failure,
+        "prompt": prompt_source_failure,
+    },
+    "identity_failures": identity_failures,
 }
 wheel_root = Path(os.environ["SEMANTIC_EVALUATOR_WHEEL_ROOT"]).resolve()
 module_files = [
@@ -336,6 +443,7 @@ module_files = [
         instrument_module,
         normalization_module,
         parser_module,
+        profile_module,
         prompts_module,
         unit_planner_module,
         validator_module,

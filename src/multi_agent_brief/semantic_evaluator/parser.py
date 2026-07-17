@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 import json
+import re
 from typing import Any, Optional
 
 from pydantic import ValidationError
@@ -13,7 +14,10 @@ from multi_agent_brief.semantic_evaluator.contracts import DimensionResponse, Js
 from multi_agent_brief.semantic_evaluator.errors import value_free_violations
 
 
-PARSER_VERSION = "strict_dimension_json_v1"
+PARSER_VERSION = "strict_dimension_json_v2"
+
+_CANARY_RE = re.compile(r"^BLSE_CANARY_V1_[0-9a-f]{64}$")
+_HEX_BYTES = frozenset(b"0123456789abcdefABCDEF")
 
 FORBIDDEN_AUTHORITY_KEYS = frozenset(
     {
@@ -121,7 +125,63 @@ def find_forbidden_keys(value: Any, forbidden: frozenset[str]) -> tuple[str, ...
     return tuple(sorted(found))
 
 
-def parse_dimension_response(raw_body: bytes) -> ParseResult:
+def _strict_canary_bytes(values: tuple[str, ...]) -> tuple[bytes, ...] | None:
+    if (
+        type(values) is not tuple
+        or len(values) != 1
+        or type(values[0]) is not str
+        or _CANARY_RE.fullmatch(values[0]) is None
+    ):
+        return None
+    return (values[0].encode("ascii"),)
+
+
+def _security_scan_bytes(raw_body: bytes, canaries: tuple[bytes, ...]) -> bool:
+    """Recognize literal/JSON-unicode sentinel bytes without parsing JSON."""
+
+    normalized = bytearray()
+    index = 0
+    size = len(raw_body)
+    while index < size:
+        current = raw_body[index]
+        if current != 0x5C:
+            normalized.append(current)
+            index += 1
+            continue
+
+        run_start = index
+        while index < size and raw_body[index] == 0x5C:
+            index += 1
+        run_length = index - run_start
+        normalized.extend(b"\xff" * (run_length // 2))
+        if run_length % 2 == 0:
+            continue
+
+        if (
+            index + 5 <= size
+            and raw_body[index] == ord("u")
+            and raw_body[index + 1 : index + 3] == b"00"
+            and raw_body[index + 3] in _HEX_BYTES
+            and raw_body[index + 4] in _HEX_BYTES
+        ):
+            normalized.append(int(raw_body[index + 3 : index + 5], 16))
+            index += 5
+        else:
+            normalized.append(0xFF)
+
+    return any(canary in normalized for canary in canaries)
+
+
+def parse_dimension_response(
+    raw_body: bytes,
+    *,
+    forbidden_canary_values: tuple[str, ...],
+) -> ParseResult:
+    canaries = _strict_canary_bytes(forbidden_canary_values)
+    if canaries is None:
+        return ParseResult(None, None, ("parser_schema_invalid",))
+    if _security_scan_bytes(raw_body, canaries):
+        return ParseResult(None, None, ("tool_or_canary_output_forbidden",))
     try:
         text = raw_body.decode("utf-8")
     except UnicodeDecodeError:

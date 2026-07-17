@@ -11,6 +11,8 @@ import pytest
 
 import multi_agent_brief.semantic_evaluator.admission as admission_module
 import multi_agent_brief.semantic_evaluator.instrument as instrument_module
+import multi_agent_brief.semantic_evaluator.profile as profile_module
+import multi_agent_brief.semantic_evaluator.prompts as prompts_module
 from multi_agent_brief.semantic_evaluator.admission import (
     admit_inputs,
     archive_root_is_safe,
@@ -21,7 +23,10 @@ from multi_agent_brief.semantic_evaluator.contracts import (
     BoundedRequirement,
     InstrumentConfig,
 )
-from multi_agent_brief.semantic_evaluator.errors import SemanticEvaluatorError
+from multi_agent_brief.semantic_evaluator.errors import (
+    SemanticEvaluatorError,
+    _is_current_instrument_source_failure,
+)
 from multi_agent_brief.semantic_evaluator.normalization import freeze_bounded_context
 from multi_agent_brief.semantic_evaluator.profile import load_profile
 from multi_agent_brief.semantic_evaluator.prompts import build_dimension_prompt
@@ -317,6 +322,38 @@ class _BadSizer(FakeSizer):
         return self.result
 
 
+class _OSErrorSizer(FakeSizer):
+    def count_tokens(self, *, system_text: str, user_text: str) -> int:
+        self.calls += 1
+        raise OSError("/private/synthetic-customer/sizer")
+
+
+class _ExplodingIdentitySizer:
+    def __init__(self, failing_property: str) -> None:
+        self.failing_property = failing_property
+        self.id_reads = 0
+        self.version_reads = 0
+        self.calls = 0
+
+    @property
+    def sizer_id(self) -> str:
+        self.id_reads += 1
+        if self.failing_property == "sizer_id":
+            raise RuntimeError("synthetic hidden sizer identity")
+        return "fake-sizer"
+
+    @property
+    def sizer_version(self) -> str:
+        self.version_reads += 1
+        if self.failing_property == "sizer_version":
+            raise RuntimeError("synthetic hidden sizer identity")
+        return "v1"
+
+    def count_tokens(self, *, system_text: str, user_text: str) -> int:
+        self.calls += 1
+        return 10
+
+
 @pytest.mark.parametrize(
     "sizer",
     [
@@ -324,6 +361,7 @@ class _BadSizer(FakeSizer):
         _BadSizer("10"),
         _BadSizer(-1),
         _BadSizer(raises=True),
+        _OSErrorSizer(),
     ],
 )
 def test_prompt_sizer_failures_do_not_return_partial_prompts(sizer: _BadSizer) -> None:
@@ -342,6 +380,69 @@ def test_prompt_sizer_identity_mismatch_is_preplan() -> None:
     assert decision.assessment_plan is None
     assert decision.prompts == ()
     assert sizer.calls == 0
+
+
+def test_prompt_sizer_missing_and_malformed_identity_are_preplan() -> None:
+    malformed_sizers = (
+        object(),
+        type(
+            "MalformedIdentitySizer",
+            (),
+            {
+                "sizer_id": True,
+                "sizer_version": "v1",
+                "count_tokens": lambda *_args, **_kwargs: pytest.fail(
+                    "malformed identity reached count_tokens"
+                ),
+            },
+        )(),
+    )
+    for sizer in malformed_sizers:
+        decision = _admit("# 合成材料\n".encode(), sizer=sizer)
+        assert decision.reason_codes == ("prompt_sizer_unavailable",)
+        assert decision.assessment_plan is None
+        assert decision.prompts == ()
+
+
+@pytest.mark.parametrize(
+    ("failing_property", "expected_id_reads", "expected_version_reads"),
+    [("sizer_id", 1, 0), ("sizer_version", 1, 1)],
+)
+def test_prompt_sizer_identity_snapshot_is_one_read_and_zero_effect(
+    failing_property: str,
+    expected_id_reads: int,
+    expected_version_reads: int,
+    monkeypatch,
+) -> None:
+    sizer = _ExplodingIdentitySizer(failing_property)
+    monkeypatch.setattr(
+        admission_module,
+        "load_profile",
+        _fail_if_dependency_reaches_planning,
+    )
+    monkeypatch.setattr(
+        instrument_module,
+        "build_instrument_manifest",
+        _fail_if_dependency_reaches_planning,
+    )
+    monkeypatch.setattr(
+        admission_module,
+        "build_assessment_plan",
+        _fail_if_dependency_reaches_planning,
+    )
+    monkeypatch.setattr(
+        admission_module,
+        "build_dimension_prompt",
+        _fail_if_dependency_reaches_planning,
+    )
+    decision = _admit("# 合成材料\n".encode(), sizer=sizer)
+    assert decision.reason_codes == ("prompt_sizer_unavailable",)
+    assert decision.assessment_plan is None
+    assert decision.prompts == ()
+    assert sizer.id_reads == expected_id_reads
+    assert sizer.version_reads == expected_version_reads
+    assert sizer.calls == 0
+    assert "synthetic hidden" not in repr(decision)
 
 
 def test_full_context_overflow_blocks_whole_run_without_truncation() -> None:
@@ -552,19 +653,39 @@ def test_optional_dependency_precedence_and_explicit_valid_profile() -> None:
     assert valid.admitted is True
 
 
+@pytest.mark.parametrize("failure_site", ["profile", "component", "prompt"])
 def test_current_instrument_source_failure_is_typed_and_value_free(
     monkeypatch,
+    failure_site: str,
 ) -> None:
     hidden_detail = "/private/synthetic-customer/source.py"
 
-    def fail_source_resolution(_module_name: str) -> str:
-        raise SourceResolutionError(hidden_detail)
+    if failure_site == "profile":
 
-    monkeypatch.setattr(
-        instrument_module,
-        "source_sha256_for_module",
-        fail_source_resolution,
-    )
+        def fail_profile_resource(*_args) -> str:
+            raise OSError(hidden_detail)
+
+        monkeypatch.setattr(profile_module, "resource_text", fail_profile_resource)
+    elif failure_site == "component":
+
+        def fail_source_resolution(_module_name: str) -> str:
+            raise SourceResolutionError(hidden_detail)
+
+        monkeypatch.setattr(
+            instrument_module,
+            "source_sha256_for_module",
+            fail_source_resolution,
+        )
+    else:
+
+        def fail_prompt_resource() -> str:
+            raise FileNotFoundError(hidden_detail)
+
+        monkeypatch.setattr(
+            prompts_module,
+            "system_prompt_text",
+            fail_prompt_resource,
+        )
     sizer = FakeSizer()
     decision = _admit("# 合成材料\n".encode(), sizer=sizer)
     assert decision.admitted is False
@@ -574,6 +695,48 @@ def test_current_instrument_source_failure_is_typed_and_value_free(
     assert decision.prompts == ()
     assert hidden_detail not in repr(decision)
     assert sizer.calls == 0
+
+
+def test_current_source_classifier_is_causal_bounded_and_non_laundering() -> None:
+    source_failure = OSError("/private/synthetic-customer/source.py")
+    wrapped = SemanticEvaluatorError("profile_invalid")
+    wrapped.__cause__ = source_failure
+    assert _is_current_instrument_source_failure(wrapped) is True
+    assert _is_current_instrument_source_failure(RuntimeError("synthetic")) is False
+    assert _is_current_instrument_source_failure(AttributeError("synthetic")) is False
+
+    cycle = RuntimeError("synthetic-cycle")
+    cycle.__cause__ = cycle
+    assert _is_current_instrument_source_failure(cycle) is False
+
+    root = OSError("/private/synthetic-customer/deep-source.py")
+    for _ in range(17):
+        outer = RuntimeError("synthetic-wrapper")
+        outer.__cause__ = root
+        root = outer
+    assert _is_current_instrument_source_failure(root) is False
+
+
+def test_unrelated_prompt_and_sizer_failures_are_not_source_laundered(
+    monkeypatch,
+) -> None:
+    hidden_detail = "/private/synthetic-customer/not-a-source-failure"
+
+    def fail_prompt_build() -> str:
+        raise RuntimeError(hidden_detail)
+
+    monkeypatch.setattr(prompts_module, "system_prompt_text", fail_prompt_build)
+    prompt_sizer = FakeSizer()
+    prompt_decision = _admit("# 合成材料\n".encode(), sizer=prompt_sizer)
+    assert prompt_decision.reason_codes == ("prompt_sizer_unavailable",)
+    assert hidden_detail not in repr(prompt_decision)
+    assert prompt_sizer.calls == 0
+
+    monkeypatch.undo()
+    runtime_sizer = _BadSizer(raises=True)
+    sizer_decision = _admit("# 合成材料\n".encode(), sizer=runtime_sizer)
+    assert sizer_decision.reason_codes == ("prompt_sizer_unavailable",)
+    assert runtime_sizer.calls == 1
 
 
 def test_admission_deep_owns_the_exact_bounded_context_witness() -> None:

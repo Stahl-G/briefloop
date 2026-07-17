@@ -20,6 +20,7 @@ from multi_agent_brief.semantic_evaluator.instrument import (
     verify_instrument_manifest,
 )
 from multi_agent_brief.semantic_evaluator.errors import SemanticEvaluatorError
+from multi_agent_brief.semantic_evaluator.parser import PARSER_VERSION
 from multi_agent_brief.semantic_evaluator.profile import LoadedProfile, load_profile
 from multi_agent_brief.semantic_evaluator.prompts import (
     PROMPT_ASSEMBLER_VERSION,
@@ -91,9 +92,11 @@ def test_manifest_binds_exact_frozen_resources_schemas_and_source_components() -
         item.component_id: item.implementation_version
         for item in manifest.implementation_components
     }
-    assert VALIDATOR_VERSION == "dimension_validator_v2"
+    assert PARSER_VERSION == "strict_dimension_json_v2"
+    assert VALIDATOR_VERSION == "dimension_validator_v3"
     assert PROMPT_ASSEMBLER_VERSION == "dimension_prompt_assembler_v2"
     assert versions["validator"] == VALIDATOR_VERSION
+    assert versions["parser"] == PARSER_VERSION
     assert versions["prompt_assembler"] == PROMPT_ASSEMBLER_VERSION
     assert all(
         SHA256_RE.fullmatch(item.source_sha256)
