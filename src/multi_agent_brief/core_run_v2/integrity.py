@@ -42,6 +42,32 @@ from .verifier import (
 _Clock = Callable[[], datetime]
 
 
+def retained_member_parent(
+    workspace: Path,
+    canonical_path: str,
+) -> tuple[Path, str]:
+    """Return one lexical parent only when every component is a real directory."""
+
+    path = PurePosixPath(canonical_path)
+    if path.is_absolute() or any(part in {"", ".", ".."} for part in path.parts):
+        raise CoreRunError("checkout_topology_invalid")
+    try:
+        root = workspace.resolve(strict=True)
+        cursor = root
+        for part in path.parts[:-1]:
+            candidate = cursor / part
+            info = candidate.lstat()
+            if stat.S_ISLNK(info.st_mode) or not stat.S_ISDIR(info.st_mode):
+                raise CoreRunError("checkout_topology_invalid")
+            cursor = candidate
+        cursor.relative_to(root)
+    except CoreRunError:
+        raise
+    except (OSError, RuntimeError, ValueError) as exc:
+        raise CoreRunError("checkout_topology_invalid") from exc
+    return cursor, path.name
+
+
 def verify_protected_working_checkout(
     workspace: Path,
     revision_members: tuple[CheckoutRevisionMember, ...],
@@ -50,14 +76,11 @@ def verify_protected_working_checkout(
 ) -> None:
     """Compare cooperative files with immutable revision truth, never vice versa."""
 
-    root = workspace.resolve(strict=True)
     expected_paths = {item.canonical_path for item in revision_members}
     for item in revision_members:
-        path = PurePosixPath(item.canonical_path)
-        parent = root.joinpath(*path.parts[:-1]).resolve(strict=True)
-        parent.relative_to(root)
+        parent, leaf = retained_member_parent(workspace, item.canonical_path)
         with open_retained_parent(parent, profile) as retained:
-            observed = retained.observe(path.name)
+            observed = retained.observe(leaf)
             if (
                 observed.kind != "blob"
                 or observed.sha256 != item.blob_sha256
@@ -69,11 +92,11 @@ def verify_protected_working_checkout(
             continue
         if changed.canonical_path in expected_paths:
             raise CoreRunError("checkout_publication_journal_invalid")
-        path = PurePosixPath(changed.canonical_path)
-        parent = root.joinpath(*path.parts[:-1]).resolve(strict=True)
-        parent.relative_to(root)
+        parent, leaf = retained_member_parent(
+            workspace, changed.canonical_path
+        )
         with open_retained_parent(parent, profile) as retained:
-            if retained.observe(path.name).kind != "absent":
+            if retained.observe(leaf).kind != "absent":
                 raise CoreRunError("checkout_projection_conflict")
 
 

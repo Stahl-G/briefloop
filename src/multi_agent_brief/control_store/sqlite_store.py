@@ -809,14 +809,10 @@ class ControlStoreHistory:
             receipt_checkout_bindings=receipt_checkout_bindings,
             checkout_publication_intents=checkout_publication_intents,
             checkout_publication_members=checkout_publication_members,
-            checkout_publication_acks=tuple(
-                item for item in full.checkout_publication_acks
-                if item.identity.checkout_revision_id in intent_revision_ids
-            ),
-            checkout_publication_cleanup_observations=tuple(
-                item for item in full.checkout_publication_cleanup_observations
-                if item.identity.checkout_revision_id in intent_revision_ids
-            ),
+            # Ack and cleanup rows are postcommit recovery metadata without a
+            # receipt-owned revision. They never enter historical prefixes.
+            checkout_publication_acks=(),
+            checkout_publication_cleanup_observations=(),
             transactions=transactions,
         )
 
@@ -1237,8 +1233,11 @@ class SQLiteControlStore:
                         (record.cleanup_observation_id,),
                     ).fetchone()
                     if row is not None:
-                        if _decode_record(
+                        existing = _decode_record(
                             CheckoutPublicationCleanupObservation, str(row[0])
+                        )
+                        if existing.model_copy(
+                            update={"appended_at": record.appended_at}
                         ) != record:
                             raise ControlStoreIntegrityError(
                                 "checkout_publication_journal_invalid"
@@ -2183,6 +2182,17 @@ class SQLiteControlStore:
             or binding.post_run_id != revision.run_id
         ):
             raise ControlStoreConflict("relational_integrity_conflict")
+        if (
+            binding.workspace_id != self.workspace_id
+            or binding.run_id != run_id
+            or binding.transaction_id != uow.transaction_id
+            or binding.post_run_id != revision.run_id
+            or binding.post_checkout_revision_id
+            != revision.checkout_revision_id
+            or binding.pre_checkout_revision_id
+            != revision.parent_checkout_revision_id
+        ):
+            raise ControlStoreConflict("relational_integrity_conflict")
         available = {
             (item.record.artifact_id, item.record.revision): item.record
             for item in uow._artifact_revisions
@@ -2233,14 +2243,15 @@ class SQLiteControlStore:
             raise ControlStoreConflict("relational_integrity_conflict") from exc
         if rebuilt_record != revision or rebuilt_members != revision_members:
             raise ControlStoreConflict("relational_integrity_conflict")
-        if intent is None:
-            if publication_members:
-                raise ControlStoreConflict("relational_integrity_conflict")
-            return
         pre_record: CheckoutRevisionRecord | None = None
         pre_members: tuple[CheckoutRevisionMember, ...] = ()
         if binding.pre_checkout_revision_id is not None:
-            pre_snapshot = self.load_snapshot(binding.pre_run_id)
+            try:
+                pre_snapshot = self.load_snapshot(binding.pre_run_id)
+            except ControlStoreError as exc:
+                raise ControlStoreConflict(
+                    "relational_integrity_conflict"
+                ) from exc
             pre_records = tuple(
                 item
                 for item in pre_snapshot.checkout_revisions
@@ -2260,6 +2271,10 @@ class SQLiteControlStore:
                 )
             )
             pre_record = pre_records[0]
+        if intent is None:
+            if publication_members:
+                raise ControlStoreConflict("relational_integrity_conflict")
+            return
         if (
             intent.identity.workspace_id != self.workspace_id
             or intent.identity.run_id != run_id
@@ -4592,9 +4607,35 @@ class SQLiteControlStore:
         bindings = {item.transaction_id: item for item in snapshot.receipt_checkout_bindings}
         for transaction_id, binding in bindings.items():
             receipt = receipts.get(transaction_id)
+            post = revisions.get(binding.post_checkout_revision_id)
+            pre_exists = binding.pre_checkout_revision_id is None
+            if binding.pre_checkout_revision_id is not None:
+                row = self._connection.execute(
+                    """
+                    SELECT payload_json FROM checkout_revisions
+                    WHERE workspace_id=? AND run_id=?
+                      AND checkout_revision_id=?
+                    """,
+                    (
+                        self.workspace_id,
+                        binding.pre_run_id,
+                        binding.pre_checkout_revision_id,
+                    ),
+                ).fetchone()
+                pre_exists = row is not None
             if (
                 receipt is None
-                or binding.post_checkout_revision_id not in revisions
+                or post is None
+                or binding.workspace_id != self.workspace_id
+                or binding.run_id != snapshot.run.run_id
+                or binding.transaction_id != transaction_id
+                or binding.post_run_id != snapshot.run.run_id
+                or post.run_id != binding.post_run_id
+                or post.workspace_id != binding.workspace_id
+                or post.creator_transaction_id != transaction_id
+                or post.parent_checkout_revision_id
+                != binding.pre_checkout_revision_id
+                or not pre_exists
                 or not any(
                     item.transaction_id == transaction_id
                     for item in receipt.receipt_checkout_bindings

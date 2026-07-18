@@ -13,6 +13,7 @@ from multi_agent_brief.contracts.v2 import (
     ArtifactRecord,
     ArtifactRevision,
     CheckoutPublicationAck,
+    CheckoutPublicationCleanupObservation,
     PublicationIdentityV1,
     ReceiptCheckoutBinding,
     RunIdentity,
@@ -72,6 +73,9 @@ def commit_checkout(
     parent: BuiltCheckoutRevision | None,
     publish: bool,
     publication_member_patch: dict[str, object] | None = None,
+    binding_patch: dict[str, object] | None = None,
+    parent_checkout_revision_id_override: str | None = None,
+    transaction_type: str = "core-v2-test",
 ) -> tuple[BuiltCheckoutRevision, PublicationIdentityV1 | None]:
     current = tuple(item[0] for item in revisions)
     built = build_checkout_revision(
@@ -79,10 +83,12 @@ def commit_checkout(
         transaction_id=transaction_id, created_at=NOW,
         artifact_revisions=current,
         parent_checkout_revision_id=(
-            None if parent is None else parent.record.checkout_revision_id
+            parent_checkout_revision_id_override
+            if parent_checkout_revision_id_override is not None
+            else (None if parent is None else parent.record.checkout_revision_id)
         ),
     )
-    unit = store.begin("run-001", transaction_id, "core-v2-test", expected_revision)
+    unit = store.begin("run-001", transaction_id, transaction_type, expected_revision)
     if expected_revision == 0:
         unit.put_run(model(
             RunIdentity, run_id="run-001", workspace_id="workspace-001",
@@ -107,6 +113,8 @@ def commit_checkout(
         ), post_run_id="run-001",
         post_checkout_revision_id=built.record.checkout_revision_id,
     )
+    if binding_patch is not None:
+        binding = binding.model_copy(update=binding_patch)
     unit.put_receipt_checkout_binding(binding)
     identity = None
     if publish:
@@ -227,6 +235,42 @@ def test_store_rejects_ack_values_not_equal_to_reconstructed_delta(checkout) -> 
     ):
         store.append_checkout_publication_acks((bad,))
     assert store.current_revision == 1
+
+
+@pytest.mark.parametrize(
+    "binding_patch,parent_override",
+    [
+        ({"pre_checkout_revision_id": None}, None),
+        ({"pre_checkout_revision_id": "crv_" + "e" * 64}, None),
+        ({}, "crv_" + "d" * 64),
+        ({"pre_run_id": "run-other"}, None),
+    ],
+    ids=["pre-null", "pre-different", "pre-missing", "pre-cross-run"],
+)
+def test_child_binding_forgery_rolls_back_without_intent(
+    checkout,
+    binding_patch: dict[str, object],
+    parent_override: str | None,
+) -> None:
+    workspace, store = checkout
+    old, new = b"old\n", b"new\n"
+    prior, _ = commit_checkout(
+        store, workspace, transaction_id="tx-binding-root", expected_revision=0,
+        revisions=((artifact_revision(old), old),), parent=None, publish=False,
+        transaction_type="core-v2-initialize",
+    )
+    before = store.current_revision
+    with pytest.raises(ControlStoreConflict, match="relational_integrity_conflict"):
+        commit_checkout(
+            store, workspace, transaction_id="tx-binding-child",
+            expected_revision=before,
+            revisions=((artifact_revision(new, revision=2), new),),
+            parent=prior, publish=False,
+            binding_patch=binding_patch,
+            parent_checkout_revision_id_override=parent_override,
+        )
+    assert store.current_revision == before
+    assert len(store.load_snapshot("run-001").checkout_revisions) == 1
 
 
 @pytest.mark.skipif(sys.platform not in {"darwin", "linux"}, reason="POSIX publication")
@@ -355,6 +399,103 @@ def test_acked_fast_path_detects_drift_without_republication(checkout) -> None:
     )
     assert target.read_bytes() == b"drift\n"
     assert store.load_snapshot("run-001").checkout_publication_acks == before_acks
+
+
+@pytest.mark.skipif(sys.platform not in {"darwin", "linux"}, reason="POSIX publication")
+def test_unchanged_member_symlink_parent_blocks_complete_ack(checkout) -> None:
+    workspace, store = checkout
+    old, new, unchanged = b"old\n", b"new\n", b"same\n"
+    prior, _ = commit_checkout(
+        store, workspace, transaction_id="tx-symlink-root", expected_revision=0,
+        revisions=(
+            (artifact_revision(old, artifact_id="changed"), old),
+            (
+                artifact_revision(
+                    unchanged, artifact_id="unchanged", path="other/same.md"
+                ),
+                unchanged,
+            ),
+        ),
+        parent=None, publish=False,
+    )
+    (workspace / "output/brief.md").write_bytes(old)
+    outside = workspace.parent / "outside"
+    outside.mkdir()
+    (outside / "same.md").write_bytes(unchanged)
+    (workspace / "other").symlink_to(outside, target_is_directory=True)
+    _current, identity = commit_checkout(
+        store, workspace, transaction_id="tx-symlink-child", expected_revision=1,
+        revisions=(
+            (artifact_revision(new, revision=2, artifact_id="changed"), new),
+            (
+                artifact_revision(
+                    unchanged,
+                    revision=2,
+                    artifact_id="unchanged",
+                    path="other/same.md",
+                ),
+                unchanged,
+            ),
+        ),
+        parent=prior, publish=True,
+    )
+    assert identity is not None
+    result = CheckoutPublicationEngine(workspace, store).publish(identity)
+    assert result == result.__class__(
+        "commit_outcome_unknown", "checkout_topology_invalid"
+    )
+    assert store.load_snapshot("run-001").checkout_publication_acks == ()
+
+
+@pytest.mark.skipif(sys.platform not in {"darwin", "linux"}, reason="POSIX publication")
+def test_historical_prefix_excludes_recovery_metadata_and_cleanup_is_semantic_idempotent(
+    checkout,
+) -> None:
+    workspace, store = checkout
+    old, new = b"old\n", b"new\n"
+    prior, _ = commit_checkout(
+        store, workspace, transaction_id="tx-history-root", expected_revision=0,
+        revisions=((artifact_revision(old), old),), parent=None, publish=False,
+        transaction_type="core-v2-initialize",
+    )
+    (workspace / "output/brief.md").write_bytes(old)
+    _current, identity = commit_checkout(
+        store, workspace, transaction_id="tx-history-child", expected_revision=1,
+        revisions=((artifact_revision(new, revision=2), new),),
+        parent=prior, publish=True,
+    )
+    assert identity is not None
+    assert CheckoutPublicationEngine(workspace, store).publish(identity).status == "published"
+    current = store.load_snapshot("run-001")
+    assert current.checkout_publication_acks
+    assert current.checkout_publication_cleanup_observations
+    prefix = store.load_history().snapshot_at_revision("run-001", 2)
+    assert prefix.checkout_publication_acks == ()
+    assert prefix.checkout_publication_cleanup_observations == ()
+
+    first = current.checkout_publication_cleanup_observations[0]
+    repeated = first.model_copy(update={"appended_at": "2026-07-19T00:00:00Z"})
+    store.append_checkout_cleanup_observations((repeated,))
+    after = store.load_snapshot("run-001")
+    assert after.checkout_publication_cleanup_observations == (
+        *current.checkout_publication_cleanup_observations,
+    )
+    drifted = CheckoutPublicationCleanupObservation.model_validate(
+        {
+            **first.model_dump(mode="json"),
+            "reason_code": "checkout_projection_cleanup_conflict",
+            "appended_at": "2026-07-20T00:00:00Z",
+        },
+        strict=True,
+    )
+    with pytest.raises(
+        ControlStoreIntegrityError,
+        match="checkout_publication_journal_invalid",
+    ):
+        store.append_checkout_cleanup_observations((drifted,))
+    assert store.load_snapshot("run-001").checkout_publication_cleanup_observations == (
+        *current.checkout_publication_cleanup_observations,
+    )
 
 
 @pytest.mark.skipif(sys.platform not in {"darwin", "linux"}, reason="POSIX publication")

@@ -5,7 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import datetime, timezone
 import hashlib
-from pathlib import Path, PurePosixPath
+from pathlib import Path
 from typing import Callable
 
 from multi_agent_brief.contracts.v2 import (
@@ -20,6 +20,7 @@ from multi_agent_brief.control_store import ControlStoreError, SQLiteControlStor
 from multi_agent_brief.control_store.serialization import canonical_json_bytes
 
 from .errors import CoreRunError
+from .integrity import retained_member_parent, verify_protected_working_checkout
 from .publication_platform import (
     CapabilityProfile,
     LeafObservation,
@@ -48,25 +49,6 @@ def _invoke(hook: Hook | None, name: str, identity: PublicationIdentityV1, ordin
         hook(name, identity, ordinal)
 
 
-def _member_parent(workspace: Path, canonical_path: str) -> tuple[Path, str]:
-    pure = PurePosixPath(canonical_path)
-    if pure.is_absolute() or any(part in {"", ".", ".."} for part in pure.parts):
-        raise CoreRunError("checkout_topology_invalid")
-    root = workspace.resolve(strict=True)
-    parent = root.joinpath(*pure.parts[:-1])
-    try:
-        resolved_parent = parent.resolve(strict=True)
-        resolved_parent.relative_to(root)
-    except (OSError, RuntimeError, ValueError) as exc:
-        raise CoreRunError("checkout_topology_invalid") from exc
-    cursor = root
-    for part in pure.parts[:-1]:
-        cursor = cursor / part
-        if cursor.is_symlink():
-            raise CoreRunError("checkout_topology_invalid")
-    return resolved_parent, pure.name
-
-
 def preflight_publication(
     workspace: Path,
     members: tuple[CheckoutPublicationMember, ...],
@@ -77,7 +59,7 @@ def preflight_publication(
         raise CoreRunError("checkout_publication_journal_invalid")
     profiles: dict[str, CapabilityProfile] = {}
     for member in members:
-        parent, _leaf = _member_parent(workspace, member.canonical_path)
+        parent, _leaf = retained_member_parent(workspace, member.canonical_path)
         profile = probe_publication_capability(parent)
         profiles[str(parent)] = profile
     values = tuple(profiles.values())
@@ -176,7 +158,9 @@ class CheckoutPublicationEngine:
         profiles: list[CapabilityProfile] = []
         seen: set[Path] = set()
         for member in members:
-            parent, _leaf = _member_parent(self.workspace, member.canonical_path)
+            parent, _leaf = retained_member_parent(
+                self.workspace, member.canonical_path
+            )
             if parent not in seen:
                 # Recovery revalidates the same exact capability contract but
                 # does not require or consume a new business transaction.
@@ -190,7 +174,9 @@ class CheckoutPublicationEngine:
         self, member: CheckoutPublicationMember, profile: CapabilityProfile
     ) -> None:
         identity = member.identity
-        parent_path, canonical_leaf = _member_parent(self.workspace, member.canonical_path)
+        parent_path, canonical_leaf = retained_member_parent(
+            self.workspace, member.canonical_path
+        )
         with open_retained_parent(parent_path, profile) as parent:
             canonical = parent.observe(canonical_leaf)
             temp = parent.observe(member.temporary_basename)
@@ -287,7 +273,9 @@ class CheckoutPublicationEngine:
     def _attest_member(
         self, member: CheckoutPublicationMember, profile: CapabilityProfile
     ) -> None:
-        parent_path, canonical_leaf = _member_parent(self.workspace, member.canonical_path)
+        parent_path, canonical_leaf = retained_member_parent(
+            self.workspace, member.canonical_path
+        )
         with open_retained_parent(parent_path, profile) as parent:
             if member.post_kind == "blob":
                 _invoke(self.hook, "before_canonical_post_flush", member.identity, member.ordinal)
@@ -313,8 +301,6 @@ class CheckoutPublicationEngine:
             item for item in snapshot.checkout_revision_members
             if item.checkout_revision_id == intent.post_checkout_revision_id
         )
-        from .integrity import verify_protected_working_checkout
-
         verify_protected_working_checkout(
             self.workspace, post_members, changed, profile
         )
@@ -328,7 +314,9 @@ class CheckoutPublicationEngine:
         warnings: list[str] = []
         now = _now()
         for member in members:
-            parent_path, _leaf = _member_parent(self.workspace, member.canonical_path)
+            parent_path, _leaf = retained_member_parent(
+                self.workspace, member.canonical_path
+            )
             with open_retained_parent(parent_path) as parent:
                 for role, basename, expected_kind, expected_hash, expected_size in (
                     ("temp", member.temporary_basename, member.post_kind, member.post_sha256, member.post_size),
