@@ -443,6 +443,8 @@ def classify_provider_outcome_v4(
         )
         if any(fact.state != "present_valid" for fact in required):
             return _failed_outcome("provider_boundary_invalid")
+        if typed_facts.http_status.state != "absent":
+            return _failed_outcome("provider_boundary_invalid")
         status_bytes = typed_facts.status.utf8_bytes
         if status_bytes == b"incomplete":
             return _failed_outcome("provider_incomplete")
@@ -450,6 +452,8 @@ def classify_provider_outcome_v4(
             return _failed_outcome("provider_failed")
         if status_bytes != b"completed":
             return _failed_outcome("provider_boundary_invalid")
+        if typed_facts.transport_kind != "response":
+            return _failed_outcome("provider_failed")
         if typed_facts.output.state != "present_valid":
             return _failed_outcome("provider_boundary_invalid")
         if typed_facts.model_identity.utf8_bytes != expected_model_version_utf8:
@@ -465,6 +469,11 @@ def classify_provider_outcome_v4(
     if any(fact.state != "absent" for fact in absent_response_facts):
         return _failed_outcome("provider_boundary_invalid")
     if typed_facts.provider_identity.state not in {"absent", "present_valid"}:
+        return _failed_outcome("provider_boundary_invalid")
+    if (
+        typed_facts.transport_kind != "http_error"
+        and typed_facts.http_status.state != "absent"
+    ):
         return _failed_outcome("provider_boundary_invalid")
     if typed_facts.transport_kind in {"timeout", "connection"}:
         return _failed_outcome("provider_retryable_failure")
@@ -528,6 +537,13 @@ class FrozenProviderRequestV4:
         if self.seed is not None:
             raise TypeError("shadow_request_invalid")
 
+    def projection_bytes(self) -> bytes:
+        from multi_agent_brief.semantic_evaluator.serialization import (
+            canonical_json_bytes,
+        )
+
+        return canonical_json_bytes(asdict(self))
+
 
 @dataclass(frozen=True)
 class RawProviderAttemptV4:
@@ -539,9 +555,15 @@ class RawProviderAttemptV4:
     input_tokens: int | None
     output_tokens: int | None
     total_tokens: int | None
+    sdk_projection_bytes: bytes | None = None
 
     def __post_init__(self) -> None:
         if type(self.request_projection_bytes) is not bytes:
+            raise TypeError("shadow_adapter_unavailable")
+        if (
+            self.sdk_projection_bytes is not None
+            and type(self.sdk_projection_bytes) is not bytes
+        ):
             raise TypeError("shadow_adapter_unavailable")
         if self.outcome.output_eligible != (type(self.extracted_output) is bytes):
             raise TypeError("shadow_adapter_unavailable")
@@ -617,6 +639,11 @@ def _validate_taxonomy_totality() -> None:
 
 _validate_taxonomy_totality()
 
+# Internal lifecycle names intentionally point at the single v4 authority.
+FrozenProviderRequest = FrozenProviderRequestV4
+RawProviderAttempt = RawProviderAttemptV4
+SemanticEvaluatorAdapter = SemanticEvaluatorAdapterV4
+
 
 __all__ = [
     "ADAPTER_PROTOCOL_VERSION",
@@ -627,6 +654,7 @@ __all__ = [
     "ExternalTextInvalidCode",
     "ExternalTextObservation",
     "FrozenProviderRequestV4",
+    "FrozenProviderRequest",
     "HttpStatusFactV4",
     "HttpStatusInvalidCode",
     "KernelAttemptFailureReason",
@@ -635,8 +663,10 @@ __all__ = [
     "ProviderShadowReason",
     "ProviderTransportKind",
     "RawProviderAttemptV4",
+    "RawProviderAttempt",
     "ResponseEnvelopeFactV4",
     "SemanticEvaluatorAdapterV4",
+    "SemanticEvaluatorAdapter",
     "absent_external_text_fact_v4",
     "capture_external_text_v4",
     "capture_http_status_v4",

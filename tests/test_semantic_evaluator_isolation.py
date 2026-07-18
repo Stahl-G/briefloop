@@ -18,22 +18,31 @@ EVALUATOR_ROOT = SRC_ROOT / "semantic_evaluator"
 
 EXPECTED_PACKAGE_FILES = {
     "__init__.py",
+    "adapter.py",
+    "adapters/__init__.py",
+    "adapters/openai_responses.py",
+    "adapters/synthetic_fixture.py",
     "admission.py",
+    "archive.py",
     "baseline.py",
     "baselines/structured_checklist_zh_v1.yaml",
     "composition.py",
     "contracts.py",
     "errors.py",
+    "fixtures/synthetic_shadow_v1/manifest.json",
     "instrument.py",
     "normalization.py",
     "parser.py",
     "profile.py",
+    "prompt_sizer.py",
     "profiles/research_design_report_zh_v1.yaml",
     "prompts.py",
     "prompts/dimension_v1.txt",
     "prompts/system_v1.txt",
     "resources.py",
+    "runner.py",
     "serialization.py",
+    "shadow_contracts.py",
     "snapshot.py",
     "unit_planner.py",
     "validator.py",
@@ -63,6 +72,11 @@ FORBIDDEN_PROVIDER_OR_NETWORK_IMPORTS = (
     "urllib.request",
 )
 
+EXPERIMENT_ENTRYPOINT = SRC_ROOT / "cli" / "experiments_commands.py"
+NETWORK_IMPORT_ALLOWLIST = {
+    "adapters/openai_responses.py": {"openai"},
+}
+
 
 def _tree(path: Path) -> ast.Module:
     return ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
@@ -82,17 +96,13 @@ def _matches_owner(module: str, owner: str) -> bool:
     return module == owner or module.startswith(f"{owner}.")
 
 
-def test_pr_se_1_package_inventory_is_exact_and_contains_no_pr_se_2_modules() -> None:
+def test_se2r_15_package_inventory_is_exact_for_isolated_mu_laj_1() -> None:
     actual = {
         path.relative_to(EVALUATOR_ROOT).as_posix()
         for path in EVALUATOR_ROOT.rglob("*")
         if path.is_file() and "__pycache__" not in path.parts
     }
     assert actual == EXPECTED_PACKAGE_FILES
-    assert not (EVALUATOR_ROOT / "adapter.py").exists()
-    assert not (EVALUATOR_ROOT / "adapters").exists()
-    assert not (EVALUATOR_ROOT / "runner.py").exists()
-    assert not (EVALUATOR_ROOT / "archive.py").exists()
     assert not (EVALUATOR_ROOT / "presentation.py").exists()
 
 
@@ -100,6 +110,8 @@ def test_no_normal_workflow_module_imports_semantic_evaluator() -> None:
     offenders = {}
     for path in SRC_ROOT.rglob("*.py"):
         if EVALUATOR_ROOT in path.parents:
+            continue
+        if path == EXPERIMENT_ENTRYPOINT:
             continue
         matched = sorted(
             module
@@ -126,23 +138,25 @@ def test_evaluator_never_imports_forbidden_authority_owners() -> None:
     assert offenders == {}
 
 
-def test_pr_se_1_has_no_provider_network_or_process_dependency() -> None:
+def test_se2r_15_only_live_adapter_may_import_provider_or_network_code() -> None:
     offenders = {}
     for path in EVALUATOR_ROOT.rglob("*.py"):
-        matched = sorted(
+        matched = {
             module
             for module in _imports(path)
             if any(
                 _matches_owner(module, owner)
                 for owner in FORBIDDEN_PROVIDER_OR_NETWORK_IMPORTS
             )
-        )
-        if matched:
-            offenders[path.relative_to(REPO_ROOT).as_posix()] = matched
+        }
+        relative = path.relative_to(EVALUATOR_ROOT).as_posix()
+        unexpected = sorted(matched - NETWORK_IMPORT_ALLOWLIST.get(relative, set()))
+        if unexpected:
+            offenders[path.relative_to(REPO_ROOT).as_posix()] = unexpected
     assert offenders == {}
 
 
-def test_evaluator_has_no_persistent_write_or_normal_effect_calls() -> None:
+def test_se2r_15_archive_is_the_only_evaluator_persistent_writer() -> None:
     write_methods = {
         "mkdir",
         "rename",
@@ -161,8 +175,33 @@ def test_evaluator_has_no_persistent_write_or_normal_effect_calls() -> None:
                 and node.func.attr in write_methods
             }
         )
-        if calls:
+        if calls and path.name != "archive.py":
             offenders[path.relative_to(REPO_ROOT).as_posix()] = calls
+    assert offenders == {}
+
+    archive_calls = {
+        node.func.attr
+        for node in ast.walk(_tree(EVALUATOR_ROOT / "archive.py"))
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Attribute)
+        and node.func.attr in write_methods
+    }
+    assert {"mkdir"} <= archive_calls
+
+
+def test_se2r_15_experiment_entrypoint_is_not_imported_by_normal_runtime() -> None:
+    experiment_module = "multi_agent_brief.cli.experiments_commands"
+    offenders = {}
+    for path in SRC_ROOT.rglob("*.py"):
+        if path == EXPERIMENT_ENTRYPOINT:
+            continue
+        matched = sorted(
+            module
+            for module in _imports(path)
+            if _matches_owner(module, experiment_module)
+        )
+        if matched:
+            offenders[path.relative_to(REPO_ROOT).as_posix()] = matched
     assert offenders == {}
 
 

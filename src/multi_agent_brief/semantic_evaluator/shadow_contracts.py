@@ -2,11 +2,20 @@
 
 from __future__ import annotations
 
-from typing import ClassVar, Literal
+from pathlib import PurePosixPath
+from typing import Annotated, ClassVar, Literal
 
-from pydantic import Field, StrictBool, StrictInt, StrictStr, model_validator
+from pydantic import (
+    Field,
+    StrictBool,
+    StrictInt,
+    StrictStr,
+    StringConstraints,
+    model_validator,
+)
 
 from multi_agent_brief.contracts.v2 import (
+    CleanText,
     ContractId,
     IsoDateTime,
     NonNegativeInt,
@@ -30,7 +39,11 @@ from multi_agent_brief.semantic_evaluator.adapter import (
     classify_provider_outcome_v4,
     make_provider_boundary_facts_v4,
 )
-from multi_agent_brief.semantic_evaluator.serialization import canonical_model_sha256
+from multi_agent_brief.semantic_evaluator.contracts import RunStatus
+from multi_agent_brief.semantic_evaluator.serialization import (
+    canonical_model_sha256,
+    canonical_sha256,
+)
 
 
 SHADOW_EXECUTION_POLICY_SCHEMA_ID = (
@@ -57,6 +70,29 @@ SHADOW_SCHEMA_IDS = (
 )
 
 AdapterIdV4 = Literal["openai_responses_v4", "synthetic_fixture_v4"]
+SHADOW_TIMEOUT_SECONDS = 60
+ValidationStatusV4 = Literal["accepted", "rejected", "incomplete"]
+RelativeArchivePathV4 = Annotated[
+    str,
+    StringConstraints(
+        min_length=1,
+        max_length=300,
+        pattern=r"^[A-Za-z0-9][A-Za-z0-9._/-]*$",
+    ),
+]
+
+
+def _validate_relative_archive_path(value: str) -> None:
+    path = PurePosixPath(value)
+    if (
+        path.is_absolute()
+        or not path.parts
+        or any(part in {"", ".", ".."} for part in path.parts)
+        or str(path) != value
+        or "//" in value
+        or "\\" in value
+    ):
+        raise ValueError("archive member path is not canonical")
 
 
 def _safe_model_hash(model: StrictModel, *, exclude: tuple[str, ...]) -> str:
@@ -309,12 +345,181 @@ class ShadowExecutionPolicyV4(StrictModel):
         return self
 
 
+class ShadowExecutionManifestV4(StrictModel):
+    schema_id: ClassVar[str] = SHADOW_EXECUTION_MANIFEST_SCHEMA_ID
+    schema_version: Literal["briefloop.semantic_evaluator.shadow_execution_manifest.v4"]
+    execution_manifest_id: ContractId
+    instrument_sha256: Sha256
+    execution_policy_sha256: Sha256
+    adapter_id: AdapterIdV4
+    adapter_version: ContractId
+    adapter_source_sha256: Sha256
+    runner_version: ContractId
+    runner_source_sha256: Sha256
+    archive_version: ContractId
+    archive_source_sha256: Sha256
+    shadow_schema_sha256s: dict[ContractId, Sha256]
+    provider_sdk_name: ContractId
+    provider_sdk_version: CleanText
+    prompt_sizer_id: ContractId
+    prompt_sizer_version: ContractId
+    tokenizer_package: ContractId
+    tokenizer_version: CleanText
+    tokenizer_encoding: ContractId
+    python_major_minor: ContractId
+    qualification_eligible: StrictBool
+    execution_sha256: Sha256
+
+    @model_validator(mode="after")
+    def validate_inventory_and_hash(self) -> "ShadowExecutionManifestV4":
+        if list(self.shadow_schema_sha256s) != sorted(SHADOW_SCHEMA_IDS):
+            raise ValueError("shadow schema hashes must be complete and sorted")
+        if self.execution_sha256 != _safe_model_hash(
+            self, exclude=("execution_sha256",)
+        ):
+            raise ValueError("execution manifest hash mismatch")
+        return self
+
+
+class ShadowRunRequestV4(StrictModel):
+    schema_id: ClassVar[str] = SHADOW_RUN_REQUEST_SCHEMA_ID
+    schema_version: Literal["briefloop.semantic_evaluator.shadow_run_request.v4"]
+    trial_id: ContractId
+    artifact_id: ContractId
+    report_sha256: Sha256
+    bounded_context_sha256: Sha256
+    input_binding_sha256: Sha256
+    instrument_sha256: Sha256
+    assessment_plan_sha256: Sha256
+    ordered_prompt_request_sha256s: list[Sha256] = Field(min_length=9, max_length=9)
+    execution_sha256: Sha256
+    provider_id: ContractId
+    model_id: ContractId
+    expected_model_version_utf8_hex: StrictStr
+    shadow_request_sha256: Sha256
+
+    @model_validator(mode="after")
+    def validate_request_hash(self) -> "ShadowRunRequestV4":
+        if len(set(self.ordered_prompt_request_sha256s)) != len(
+            self.ordered_prompt_request_sha256s
+        ):
+            raise ValueError("prompt request hashes must be unique")
+        try:
+            expected = bytes.fromhex(self.expected_model_version_utf8_hex)
+            expected.decode("utf-8", errors="strict")
+        except (ValueError, UnicodeDecodeError):
+            raise ValueError("expected model identity encoding mismatch") from None
+        if not expected:
+            raise ValueError("expected model identity encoding mismatch")
+        if self.shadow_request_sha256 != _safe_model_hash(
+            self, exclude=("shadow_request_sha256",)
+        ):
+            raise ValueError("shadow request hash mismatch")
+        return self
+
+
+class ArchiveMemberV4(StrictModel):
+    path: RelativeArchivePathV4
+    size_bytes: NonNegativeInt
+    sha256: Sha256
+
+    @model_validator(mode="after")
+    def validate_path(self) -> "ArchiveMemberV4":
+        _validate_relative_archive_path(self.path)
+        return self
+
+
+class ShadowArchiveManifestV4(StrictModel):
+    schema_id: ClassVar[str] = SHADOW_ARCHIVE_MANIFEST_SCHEMA_ID
+    schema_version: Literal["briefloop.semantic_evaluator.shadow_archive_manifest.v4"]
+    archive_id: ContractId
+    shadow_request_sha256: Sha256
+    instrument_sha256: Sha256
+    execution_sha256: Sha256
+    trial_id: ContractId
+    run_status: RunStatus
+    validation_status: ValidationStatusV4
+    payload_members: list[ArchiveMemberV4] = Field(min_length=1)
+    payload_file_count: PositiveInt
+    aggregate_payload_sha256: Sha256
+    archive_manifest_sha256: Sha256
+
+    @model_validator(mode="after")
+    def validate_inventory_and_hash(self) -> "ShadowArchiveManifestV4":
+        paths = [item.path for item in self.payload_members]
+        if paths != sorted(paths) or len(paths) != len(set(paths)):
+            raise ValueError("archive payload inventory must be sorted and unique")
+        if self.payload_file_count != len(self.payload_members):
+            raise ValueError("archive payload count mismatch")
+        expected_aggregate = canonical_sha256(
+            [
+                item.model_dump(mode="json", warnings="error")
+                for item in self.payload_members
+            ]
+        )
+        if self.aggregate_payload_sha256 != expected_aggregate:
+            raise ValueError("archive aggregate hash mismatch")
+        if self.archive_manifest_sha256 != _safe_model_hash(
+            self, exclude=("archive_manifest_sha256",)
+        ):
+            raise ValueError("archive manifest hash mismatch")
+        return self
+
+
+class ShadowRunReceiptV4(StrictModel):
+    schema_id: ClassVar[str] = SHADOW_RUN_RECEIPT_SCHEMA_ID
+    schema_version: Literal["briefloop.semantic_evaluator.shadow_run_receipt.v4"]
+    receipt_id: ContractId
+    archive_id: ContractId
+    shadow_request_sha256: Sha256
+    instrument_sha256: Sha256
+    execution_sha256: Sha256
+    run_id: ContractId
+    trial_id: ContractId
+    run_status: RunStatus
+    validation_status: ValidationStatusV4
+    archive_status: Literal["complete"]
+    archive_manifest_sha256: Sha256
+    qualification_eligible: StrictBool
+    created_at: IsoDateTime
+    receipt_sha256: Sha256
+
+    @model_validator(mode="after")
+    def validate_receipt_hash(self) -> "ShadowRunReceiptV4":
+        if self.receipt_sha256 != _safe_model_hash(self, exclude=("receipt_sha256",)):
+            raise ValueError("shadow receipt hash mismatch")
+        return self
+
+
+SHADOW_CONTRACT_MODELS_V4: tuple[type[StrictModel], ...] = (
+    ProviderBoundaryFactsRecordV4,
+    ShadowExecutionPolicyV4,
+    ShadowExecutionManifestV4,
+    ShadowRunRequestV4,
+    ProviderAttemptRecordV4,
+    ShadowArchiveManifestV4,
+    ShadowRunReceiptV4,
+)
+
+# The runner/archive use these package-local names; there is no predecessor reader.
+ProviderAttemptRecord = ProviderAttemptRecordV4
+ShadowExecutionManifest = ShadowExecutionManifestV4
+ShadowExecutionPolicy = ShadowExecutionPolicyV4
+ShadowRunRequest = ShadowRunRequestV4
+ArchiveMember = ArchiveMemberV4
+ShadowArchiveManifest = ShadowArchiveManifestV4
+ShadowRunReceipt = ShadowRunReceiptV4
+SHADOW_CONTRACT_MODELS = SHADOW_CONTRACT_MODELS_V4
+
+
 __all__ = [
     "AdapterIdV4",
+    "ArchiveMemberV4",
     "ExternalTextFactRecordV4",
     "HttpStatusFactRecordV4",
     "PROVIDER_ATTEMPT_SCHEMA_ID",
     "ProviderAttemptRecordV4",
+    "ProviderAttemptRecord",
     "ProviderBoundaryFactsRecordV4",
     "ResponseEnvelopeFactRecordV4",
     "SHADOW_ARCHIVE_MANIFEST_SCHEMA_ID",
@@ -323,5 +528,13 @@ __all__ = [
     "SHADOW_RUN_RECEIPT_SCHEMA_ID",
     "SHADOW_RUN_REQUEST_SCHEMA_ID",
     "SHADOW_SCHEMA_IDS",
+    "SHADOW_CONTRACT_MODELS_V4",
+    "SHADOW_CONTRACT_MODELS",
+    "SHADOW_TIMEOUT_SECONDS",
+    "ShadowArchiveManifestV4",
+    "ShadowExecutionManifestV4",
     "ShadowExecutionPolicyV4",
+    "ShadowRunReceiptV4",
+    "ShadowRunRequestV4",
+    "ValidationStatusV4",
 ]

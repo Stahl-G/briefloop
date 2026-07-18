@@ -15,6 +15,7 @@ RESOURCE_PATHS = (
     ("prompts", "system_v1.txt"),
     ("prompts", "dimension_v1.txt"),
     ("baselines", "structured_checklist_zh_v1.yaml"),
+    ("fixtures", "synthetic_shadow_v1", "manifest.json"),
 )
 WHEEL_RESOURCE_NAMES = {
     f"multi_agent_brief/semantic_evaluator/{'/'.join(parts)}"
@@ -48,6 +49,16 @@ from multi_agent_brief.semantic_evaluator.contracts import (
 from multi_agent_brief.semantic_evaluator.errors import SemanticEvaluatorError
 from multi_agent_brief.semantic_evaluator.instrument import build_instrument_manifest
 import multi_agent_brief.semantic_evaluator.instrument as instrument_module
+import multi_agent_brief.semantic_evaluator.adapter as shadow_adapter_module
+import multi_agent_brief.semantic_evaluator.archive as shadow_archive_module
+import multi_agent_brief.semantic_evaluator.runner as shadow_runner_module
+import multi_agent_brief.semantic_evaluator.shadow_contracts as shadow_contracts_module
+from multi_agent_brief.semantic_evaluator.adapters.synthetic_fixture import (
+    SYNTHETIC_ADAPTER_ID,
+    SYNTHETIC_ADAPTER_VERSION,
+    SYNTHETIC_PROVIDER_ID,
+    _load_fixture_manifest,
+)
 from multi_agent_brief.semantic_evaluator.normalization import freeze_bounded_context
 import multi_agent_brief.semantic_evaluator.normalization as normalization_module
 import multi_agent_brief.semantic_evaluator.parser as parser_module
@@ -71,6 +82,9 @@ from multi_agent_brief.semantic_evaluator.validator import (
     make_dimension_attempt_evidence,
 )
 import multi_agent_brief.semantic_evaluator.validator as validator_module
+from multi_agent_brief.semantic_evaluator.shadow_contracts import (
+    SHADOW_CONTRACT_MODELS_V4,
+)
 
 
 class Sizer:
@@ -497,6 +511,10 @@ module_files = [
         snapshot_module,
         unit_planner_module,
         validator_module,
+        shadow_adapter_module,
+        shadow_archive_module,
+        shadow_contracts_module,
+        shadow_runner_module,
     )
 ]
 payload = {
@@ -504,6 +522,21 @@ payload = {
     "schema_hashes": {
         model.schema_id: schema_sha256(model)
         for model in SEMANTIC_EVALUATOR_CONTRACT_MODELS
+    },
+    "shadow_schema_ids": [
+        model.schema_id for model in SHADOW_CONTRACT_MODELS_V4
+    ],
+    "shadow_schema_hashes": {
+        model.schema_id: canonical_sha256(model.model_json_schema())
+        for model in SHADOW_CONTRACT_MODELS_V4
+    },
+    "shadow_runtime_identity": {
+        "adapter_id": SYNTHETIC_ADAPTER_ID,
+        "adapter_version": SYNTHETIC_ADAPTER_VERSION,
+        "provider_id": SYNTHETIC_PROVIDER_ID,
+        "fixture_identity": _load_fixture_manifest(),
+        "archive_version": shadow_archive_module.ARCHIVE_VERSION,
+        "runner_version": shadow_runner_module.RUNNER_VERSION,
     },
     "manifest": build_instrument_manifest(config).model_dump(mode="json"),
     "prompts": [
@@ -569,11 +602,11 @@ def _source_probe(*, optimized: bool) -> str:
     return probe.stdout.splitlines()[-1]
 
 
-def test_source_probe_is_byte_identical_under_python_optimization() -> None:
+def test_se2r_14_source_probe_is_byte_identical_under_python_optimization() -> None:
     assert _source_probe(optimized=False) == _source_probe(optimized=True)
 
 
-def test_wheel_contains_all_resources_and_matches_source_identity(
+def test_se2r_14_wheel_contains_all_resources_and_matches_source_identity(
     tmp_path: Path,
 ) -> None:
     wheel_dir = tmp_path / "wheel"
