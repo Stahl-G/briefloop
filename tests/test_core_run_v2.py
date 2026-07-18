@@ -33,6 +33,7 @@ from multi_agent_brief.contracts.v2 import (
     Invocation,
     InvocationStartRequest,
     OwnedArtifactSubmitRequest,
+    ReceiptCheckoutBinding,
     SourceCommitRequest,
     StageState,
     StageCompleteRequest,
@@ -40,6 +41,7 @@ from multi_agent_brief.contracts.v2 import (
 )
 from multi_agent_brief.control_store import (
     ControlStoreCommitOutcomeUnknown,
+    ControlStoreConflict,
     ControlStoreIntegrityError,
     SQLiteControlStore,
 )
@@ -56,6 +58,7 @@ from multi_agent_brief.core_run_v2 import (
     RunIntegrityService,
 )
 from multi_agent_brief.core_run_v2.artifacts import _input_classification_bytes
+from multi_agent_brief.core_run_v2.checkout import build_checkout_revision
 from multi_agent_brief.core_run_v2.integrity import read_workspace_file
 from multi_agent_brief.core_run_v2.lineage import (
     classify_current_audit_promotion,
@@ -90,6 +93,77 @@ RUN_ID = "RUN-CORE-V2-001"
 WORKSPACE_ID = "WS-CORE-V2-001"
 NOW = "2026-07-15T12:00:00Z"
 CLOCK = lambda: datetime(2026, 7, 15, 12, 0, tzinfo=timezone.utc)
+
+
+def _require_supported_working_projection() -> None:
+    if sys.platform == "win32":
+        pytest.skip("working-checkout publication is precommit unsupported on Windows")
+
+
+def _commit_core_fixture(store: SQLiteControlStore, unit, *, observer=None):
+    """Commit an intentionally forged core receipt with a valid checkout edge."""
+
+    snapshot = store.load_snapshot(unit.run_id)
+    current = {
+        (item.artifact_id, item.revision): item
+        for item in snapshot.artifact_revisions
+    }
+    selected = {
+        artifact.artifact_id: current[(artifact.artifact_id, artifact.current_revision)]
+        for artifact in snapshot.artifacts
+        if artifact.current_revision > 0
+        and not current[(artifact.artifact_id, artifact.current_revision)].path.startswith(
+            "briefloop.db.blobs/"
+        )
+    }
+    selected.update(
+        {
+            item.record.artifact_id: item.record
+            for item in unit._artifact_revisions
+            if not item.record.path.startswith("briefloop.db.blobs/")
+        }
+    )
+    committed = {
+        receipt.transaction_id: receipt.committed_revision
+        for receipt in snapshot.transactions
+    }
+    current_checkout_binding = max(
+        snapshot.receipt_checkout_bindings,
+        key=lambda item: committed[item.transaction_id],
+        default=None,
+    )
+    pre_checkout_revision_id = (
+        None
+        if current_checkout_binding is None
+        else current_checkout_binding.post_checkout_revision_id
+    )
+    checkout = build_checkout_revision(
+        workspace_id=snapshot.workspace_id,
+        run_id=unit.run_id,
+        transaction_id=unit.transaction_id,
+        created_at=CLOCK(),
+        artifact_revisions=selected.values(),
+        parent_checkout_revision_id=pre_checkout_revision_id,
+    )
+    unit.put_checkout_revision(checkout.record)
+    for member in checkout.members:
+        unit.put_checkout_revision_member(member)
+    unit.put_receipt_checkout_binding(
+        ReceiptCheckoutBinding.model_validate(
+            {
+                "schema_version": ReceiptCheckoutBinding.schema_id,
+                "workspace_id": snapshot.workspace_id,
+                "run_id": unit.run_id,
+                "transaction_id": unit.transaction_id,
+                "pre_run_id": unit.run_id,
+                "pre_checkout_revision_id": pre_checkout_revision_id,
+                "post_run_id": unit.run_id,
+                "post_checkout_revision_id": checkout.record.checkout_revision_id,
+            },
+            strict=True,
+        )
+    )
+    return unit.commit(_postcommit_observer=observer)
 ROOT = Path(__file__).parents[1]
 
 
@@ -98,6 +172,20 @@ def _record(model_type, **values):
         {"schema_version": model_type.schema_id, **values},
         strict=True,
     )
+
+
+def _bind_init_payload(payload: dict[str, object]) -> dict[str, object]:
+    binding = dict(payload["runtime_adapter_binding"])  # type: ignore[arg-type]
+    binding["run_id"] = payload["run_id"]
+    binding["runtime"] = payload["runtime"]
+    topology = str(payload["role_topology"])
+    supported = set(binding["supported_role_topologies"])  # type: ignore[arg-type]
+    supported.add(topology)
+    binding["supported_role_topologies"] = sorted(supported)
+    binding.pop("binding_fingerprint", None)
+    binding["binding_fingerprint"] = canonical_fingerprint(binding)
+    payload["runtime_adapter_binding"] = binding
+    return payload
 
 
 def _write_json(path: Path, payload: dict[str, object]) -> bytes:
@@ -157,10 +245,36 @@ def _initialize(
         sources_config_sha256=read_workspace_file(workspace, "sources.yaml").sha256,
     )
     result = service.initialize(
-        CoreRunInitializeRequest.model_validate(request, strict=True)
+        CoreRunInitializeRequest.model_validate(_bind_init_payload(request), strict=True)
     )
     assert result.status == "committed", result.to_dict()
     return service
+
+
+def test_initialize_normalizes_web_search_configure_later_source_plan(
+    tmp_path: Path,
+) -> None:
+    workspace = _workspace(tmp_path)
+    (workspace / "sources.yaml").write_text(
+        "source_strategy:\n"
+        "  profile: conservative\n"
+        "  enabled_providers: [manual, web_search]\n"
+        "manual:\n"
+        "  enabled: true\n"
+        "  sources: []\n"
+        "web_search:\n"
+        "  enabled: true\n"
+        "  mode: configure_later\n",
+        encoding="utf-8",
+    )
+    _initialize(workspace)
+    with SQLiteControlStore.open(workspace / "briefloop.db") as store:
+        verified = CoreRunDomainVerifier().verify(store, RUN_ID)
+    assert verified.source_plan.web_search_mode == "configure_later"
+    assert [(item.route_id, item.route_kind, item.execution_owner) for item in verified.source_plan.routes] == [
+        ("manual", "manual", "human"),
+        ("web-search", "disabled", "human"),
+    ]
 
 
 def _start_invocation(
@@ -216,6 +330,7 @@ def _complete_stage(
 
 
 def _submit_source(workspace: Path, invocation_id: str) -> None:
+    _require_supported_working_projection()
     scratch = workspace / "scratch" / invocation_id
     content = b"ExampleCo opened a public pilot facility on 2026-07-14.\n"
     content_path = scratch / "source_content.txt"
@@ -281,6 +396,7 @@ def _submit_proposal(
     payload: dict[str, object],
     expected_artifact_revision: int = 0,
 ) -> None:
+    _require_supported_working_projection()
     scratch = workspace / "scratch" / invocation_id
     proposal_path = scratch / f"{artifact_id}.json"
     _write_json(proposal_path, payload)
@@ -310,6 +426,7 @@ def _advance_to_scout_ready(
     *,
     topology: str = "default",
 ) -> CoreRunService:
+    _require_supported_working_projection()
     service = _initialize(workspace, topology=topology)
     doctor = service.doctor_check(
         _record(
@@ -442,6 +559,7 @@ def test_bound_intake_verifies_domain_before_and_after_commit(
 
 
 def _advance_to_input_governance_ready(workspace: Path) -> CoreRunService:
+    _require_supported_working_projection()
     service = _initialize(workspace, input_governance_required=True)
     doctor = service.doctor_check(
         _record(
@@ -609,15 +727,31 @@ def test_input_classification_exact_replay_precedes_current_input_scan(
     assert replay.primary_record_id == first.primary_record_id
     assert _store_revision(workspace) == committed_revision
 
+    candidate.unlink()
+    replay_without_scratch = service.submit_owned_artifact(request)
+    assert replay_without_scratch.status == "replayed"
+    assert replay_without_scratch.receipt == first.receipt
+    candidate.write_bytes(original_content)
+
     candidate.write_bytes(_input_classification_bytes(workspace))
-    conflict = service.submit_owned_artifact(request)
+    replay_after_scratch_change = service.submit_owned_artifact(request)
+    assert replay_after_scratch_change.status == "replayed"
+    assert replay_after_scratch_change.receipt == first.receipt
+    assert _store_revision(workspace) == committed_revision
+
+    candidate.write_bytes(original_content)
+    changed_request = _record(
+        OwnedArtifactSubmitRequest,
+        **{
+            **request.model_dump(mode="python", exclude_unset=False),
+            "expected_artifact_revision": 1,
+        },
+    )
+    conflict = service.submit_owned_artifact(changed_request)
     assert conflict.to_dict() == {
         "status": "failed_uncommitted",
         "error_code": "submission_replay_conflict",
     }
-    assert _store_revision(workspace) == committed_revision
-
-    candidate.write_bytes(original_content)
     stale = service.submit_owned_artifact(
         _record(
             OwnedArtifactSubmitRequest,
@@ -664,6 +798,63 @@ def test_input_classification_identity_is_workspace_relative_and_selector_stable
         var_alias = Path(str(workspace).removeprefix("/private"))
         assert var_alias.is_dir()
         assert _input_classification_bytes(var_alias) == canonical
+
+
+@pytest.mark.skipif(sys.platform != "win32", reason="Windows publication contract")
+def test_windows_artifact_publication_is_rejected_before_store_commit(
+    tmp_path: Path,
+) -> None:
+    workspace = _workspace(tmp_path)
+    service = _initialize(workspace)
+    doctor = service.doctor_check(
+        _record(
+            IntegrityCheckRequest,
+            request_id="REQ-DOCTOR-WINDOWS-PUBLICATION",
+            run_id=RUN_ID,
+            expected_store_revision=_store_revision(workspace),
+        )
+    )
+    assert doctor.status == "committed", doctor.to_dict()
+    invocation_id = _start_invocation(
+        service,
+        workspace,
+        request_id="REQ-INVOKE-WINDOWS-PUBLICATION",
+        stage_id="source-discovery",
+        role_id="source-planner",
+    )
+    scratch = workspace / "scratch" / invocation_id / "source_candidates.yaml"
+    scratch.parent.mkdir(parents=True, exist_ok=True)
+    scratch.write_text("sources:\n  - SRC-001\n", encoding="utf-8")
+    before = _store_revision(workspace)
+    with SQLiteControlStore.open(workspace / "briefloop.db") as store:
+        before_snapshot = store.load_snapshot(RUN_ID)
+
+    result = ArtifactAcceptanceService(workspace, clock=CLOCK).submit_owned_artifact(
+        _record(
+            OwnedArtifactSubmitRequest,
+            request_id="REQ-ARTIFACT-WINDOWS-PUBLICATION",
+            run_id=RUN_ID,
+            artifact_id="source_candidates",
+            invocation_id=invocation_id,
+            producer_tool_id=None,
+            input_path=scratch.relative_to(workspace).as_posix(),
+            expected_store_revision=before,
+            expected_artifact_revision=0,
+            expected_parent_artifact=None,
+        )
+    )
+
+    assert result.to_dict() == {
+        "status": "failed_uncommitted",
+        "error_code": "checkout_publication_unsupported",
+    }
+    assert _store_revision(workspace) == before
+    with SQLiteControlStore.open(workspace / "briefloop.db") as store:
+        snapshot = store.load_snapshot(RUN_ID)
+    assert snapshot.artifacts == before_snapshot.artifacts
+    assert snapshot.artifact_revisions == before_snapshot.artifact_revisions
+    assert snapshot.checkout_revisions == before_snapshot.checkout_revisions
+    assert scratch.read_text(encoding="utf-8") == "sources:\n  - SRC-001\n"
 
 
 def _candidate_payload() -> dict[str, object]:
@@ -1274,9 +1465,8 @@ def test_gate_batches_append_and_old_request_exactly_replays(
     assert report_path.read_bytes() == second_report_bytes
 
 
-def test_gate_rejects_finalize_stage_before_store_or_checkout_access(
+def test_gate_rejects_finalize_stage_before_render_without_writes(
     tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     workspace = _workspace(tmp_path)
     _advance_to_auditor_ready(workspace)
@@ -1310,17 +1500,11 @@ def test_gate_rejects_finalize_stage_before_store_or_checkout_access(
         and "briefloop.db.blobs" not in path.parts
     }
 
-    service = GateEvaluationService(workspace, clock=CLOCK)
-
-    def unexpected_store_access() -> SQLiteControlStore:
-        raise AssertionError("finalize Gate request reached the Store")
-
-    monkeypatch.setattr(service, "_open_store", unexpected_store_access)
-    result = service.evaluate(request)
+    result = GateEvaluationService(workspace, clock=CLOCK).evaluate(request)
 
     assert result.to_dict() == {
         "status": "failed_uncommitted",
-        "error_code": "core_run_request_invalid",
+        "error_code": "stage_not_current",
     }
     assert result.receipt is None
     assert result.primary_record_id is None
@@ -2215,7 +2399,7 @@ def test_human_assisted_pending_analyst_rejects_route_reservation_replay(
         )
         unit.put_invocation(invocation)
         unit.append_event(event)
-        unit.commit()
+        _commit_core_fixture(store, unit)
         with pytest.raises(
             CoreRunError,
             match="control_store_integrity_invalid",
@@ -2232,6 +2416,7 @@ def _submit_human_assisted_draft(
     revision: int,
     parent: dict[str, object] | None = None,
 ) -> bytes:
+    _require_supported_working_projection()
     content = (
         f"# {artifact_id} revision {revision}\n\n"
         "ExampleCo opened a public pilot facility. [src:CL-0001]\n"
@@ -3282,7 +3467,7 @@ def test_gate_commit_failure_rolls_back_complete_negative_or_positive_batch(
     assert snapshot.gate_findings == ()
     assert snapshot.gate_artifact_bindings == ()
     assert report.current_revision == 0
-    assert (workspace / report.path).is_file()
+    assert not (workspace / report.path).exists()
 
 
 def test_direct_legacy_control_files_have_zero_run_truth_effect(
@@ -3347,7 +3532,9 @@ def test_initialize_replay_is_exact_and_conflict_is_zero_write(
         workspace_config_sha256=read_workspace_file(workspace, "config.yaml").sha256,
         sources_config_sha256=read_workspace_file(workspace, "sources.yaml").sha256,
     )
-    request = CoreRunInitializeRequest.model_validate(payload, strict=True)
+    request = CoreRunInitializeRequest.model_validate(
+        _bind_init_payload(payload), strict=True
+    )
     first = service.initialize(request)
     assert first.status == "committed"
     revision = _store_revision(workspace)
@@ -3396,7 +3583,7 @@ def test_new_initialize_rejects_workspace_input_hash_mismatch_without_store(
         stream.write("\n# changed before first initialize\n")
 
     result = CoreRunService(workspace, clock=CLOCK).initialize(
-        CoreRunInitializeRequest.model_validate(payload, strict=True)
+        CoreRunInitializeRequest.model_validate(_bind_init_payload(payload), strict=True)
     )
 
     assert result.to_dict() == {
@@ -3426,7 +3613,7 @@ def test_secret_bearing_workspace_input_is_rejected_before_store_creation(
         sources_config_sha256=read_workspace_file(workspace, "sources.yaml").sha256,
     )
     result = CoreRunService(workspace, clock=CLOCK).initialize(
-        CoreRunInitializeRequest.model_validate(payload, strict=True)
+        CoreRunInitializeRequest.model_validate(_bind_init_payload(payload), strict=True)
     )
 
     assert result.to_dict() == {
@@ -3465,12 +3652,12 @@ def test_legacy_json_control_workspace_cannot_become_fresh_v2(
         sources_config_sha256=read_workspace_file(workspace, "sources.yaml").sha256,
     )
     result = CoreRunService(workspace, clock=CLOCK).initialize(
-        CoreRunInitializeRequest.model_validate(payload, strict=True)
+        CoreRunInitializeRequest.model_validate(_bind_init_payload(payload), strict=True)
     )
 
     assert result.to_dict() == {
         "status": "failed_uncommitted",
-        "error_code": "unsupported_schema_version",
+        "error_code": "legacy_workspace_unsupported",
     }
     assert not (workspace / "briefloop.db").exists()
     assert marker.read_text(encoding="utf-8") == '{"legacy":true}'
@@ -3525,7 +3712,9 @@ def test_initialize_failure_cleans_revision_zero_or_exactly_replays_commit(
         workspace_config_sha256=read_workspace_file(workspace, "config.yaml").sha256,
         sources_config_sha256=read_workspace_file(workspace, "sources.yaml").sha256,
     )
-    request = CoreRunInitializeRequest.model_validate(payload, strict=True)
+    request = CoreRunInitializeRequest.model_validate(
+        _bind_init_payload(payload), strict=True
+    )
     original_create = SQLiteControlStore.create
 
     def fail(stage: str) -> None:
@@ -3589,7 +3778,9 @@ def test_initialize_unknown_never_deletes_store_when_cleanup_reopen_fails(
             "sources.yaml",
         ).sha256,
     )
-    request = CoreRunInitializeRequest.model_validate(payload, strict=True)
+    request = CoreRunInitializeRequest.model_validate(
+        _bind_init_payload(payload), strict=True
+    )
     original_create = SQLiteControlStore.create
 
     def fail_after_commit(stage: str) -> None:
@@ -3710,6 +3901,7 @@ def test_source_discovery_requires_candidates_and_eligible_source(
     tmp_path: Path,
     only: str,
 ) -> None:
+    _require_supported_working_projection()
     workspace = _workspace(tmp_path)
     service = _initialize(workspace)
     checked = service.doctor_check(
@@ -4183,7 +4375,8 @@ def test_artifact_commit_failure_leaves_only_unbound_checkout(
         item.accepted_transaction_id == "REQ-ARTIFACT-ROLLBACK"
         for item in snapshot.owned_artifact_submissions
     )
-    assert (workspace / artifact.path).read_bytes() == content
+    assert not (workspace / artifact.path).exists()
+    assert scratch.read_bytes() == content
     analyst = _stage(workspace, "analyst")
     blocked = core.complete_stage(
         _record(
@@ -4279,7 +4472,7 @@ def test_claim_commit_failure_rolls_back_claims_bindings_freeze_and_ledger(
     assert snapshot.claim_source_bindings == ()
     assert snapshot.claim_freezes == ()
     assert ledger.current_revision == 0
-    assert (workspace / ledger.path).is_file()
+    assert not (workspace / ledger.path).exists()
 
 
 def test_claim_freeze_requires_current_drafts_revision_and_exactly_replays(
@@ -4621,7 +4814,9 @@ def test_core_effect_receipt_binding_table_is_exact() -> None:
             }
         ),
         "repair_complete": frozenset({"stage_transitions", "repair_completions"}),
-        "recovery_complete": frozenset({"recovery_completions"}),
+        "recovery_complete": frozenset(
+            {"recovery_completions", "run_integrity_records"}
+        ),
         "run_head_transition": frozenset(
             {
                 "artifact_revisions",
@@ -5458,7 +5653,7 @@ def test_exact_replay_rejects_legacy_delivery_hidden_in_core_receipt(
         unit.put_invocation(invocation)
         unit.put_delivery(hidden_delivery)
         unit.append_event(event)
-        receipt = unit.commit()
+        receipt = _commit_core_fixture(store, unit)
         committed_revision = store.current_revision
         assert receipt.committed_revision == committed_revision
 
@@ -5579,7 +5774,7 @@ def test_finalize_render_prefix_is_bound_to_current_audit_promotion_lineage(
         unit.put_artifact_revision(reader_revision, reader_bytes)
         unit.append_event(event)
         unit.put_finalize_render(render)
-        unit.commit()
+        _commit_core_fixture(store, unit)
         assert CoreRunDomainVerifier().verify(
             store, RUN_ID
         ).snapshot.finalize_renders == (render,)
@@ -5843,6 +6038,42 @@ def test_store_rejects_missing_core_receipt_reverse_relation(tmp_path: Path) -> 
         with pytest.raises(ControlStoreIntegrityError) as exc_info:
             store.load_snapshot(RUN_ID)
     assert exc_info.value.code == "transaction_relation_mismatch"
+
+
+def test_core_receipt_requires_exact_checkout_binding_in_store_and_verifier(
+    tmp_path: Path,
+) -> None:
+    workspace = _workspace(tmp_path)
+    _initialize(workspace)
+    with SQLiteControlStore.open(workspace / "briefloop.db") as store:
+        before = store.current_revision
+        unit = store.begin(
+            RUN_ID,
+            "REQ-MISSING-CHECKOUT-BINDING",
+            transaction_type_for("internal_approval"),
+            before,
+        )
+        with pytest.raises(ControlStoreConflict, match="relational_integrity_conflict"):
+            unit.commit()
+        assert store.current_revision == before
+
+        history = store.load_history()
+        snapshot = history.snapshot_at_revision(RUN_ID, history.store_revision)
+        initialization = snapshot.transactions[0]
+        forged = replace(
+            snapshot,
+            transactions=(
+                initialization.model_copy(
+                    update={
+                        "checkout_revisions": [],
+                        "receipt_checkout_bindings": [],
+                    }
+                ),
+                *snapshot.transactions[1:],
+            ),
+        )
+        with pytest.raises(CoreRunError, match="checkout_revision_invalid"):
+            CoreRunDomainVerifier()._verify_snapshot(history, forged)
 
 
 def test_domain_verifier_never_uses_publication_metadata_as_business_authority() -> None:

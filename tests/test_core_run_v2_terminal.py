@@ -19,11 +19,18 @@ from multi_agent_brief.contracts.v2 import (
     CoreRunInitializeRequest,
     CoreRunEventBinding,
     DeliveryAttemptRecord,
+    DeliveryAttemptRequest,
     DeliveryAuthorizationRecord,
+    DeliveryAuthorizationRequest,
     DeliveryResultRecord,
+    DeliveryResultRequest,
     EventEnvelope,
+    FinalizeCompleteRequest,
+    FinalizeRenderRequest,
+    InternalApprovalRequest,
     FinalizationRecord,
     FinalizeRenderRecord,
+    GateCheckRequest,
     GateArtifactBinding,
     GateEvaluationRecord,
     PackageArtifactBinding,
@@ -43,11 +50,13 @@ from multi_agent_brief.control_store.serialization import (
     canonical_json_bytes,
     sha256_hex,
 )
-from multi_agent_brief.core_run_v2 import CoreRunService
+from multi_agent_brief.core_run_v2 import CoreRunService, CoreRunTerminalService
 from multi_agent_brief.core_run_v2.errors import CoreRunError
 from multi_agent_brief.core_run_v2.integrity import read_workspace_file
 from multi_agent_brief.core_run_v2.lineage import classify_current_audit_promotion
+from multi_agent_brief.core_run_v2.next_action import classify_core_run_next_action
 from multi_agent_brief.core_run_v2.gates import (
+    GateEvaluationService,
     _gate_finding_record,
     _replay_gate_outcomes,
 )
@@ -73,6 +82,14 @@ from multi_agent_brief.quality_gates.contract import GATE_IDS
 RUN_ID = "RUN-TERMINAL-PREFIX-001"
 
 
+def _commit_core_fixture(store: SQLiteControlStore, unit, *, observer=None):
+    return core_fixture._commit_core_fixture(
+        store,
+        unit,
+        observer=observer,
+    )
+
+
 def _finalize_ready_workspace(tmp_path: Path) -> tuple[Path, str, object]:
     workspace = core_fixture._workspace(tmp_path)
     core_fixture._advance_to_finalize_ready(workspace)
@@ -85,130 +102,64 @@ def _commit_finalize_render(
     clock: object,
 ) -> tuple[TransactionReceipt, str, FinalizeRenderRecord]:
     transaction_id = "REQ-TERMINAL-RENDER-001"
-    render_id = "RENDER-TERMINAL-PERSISTED-001"
-    event_id = "EVT-TERMINAL-RENDER-PERSISTED-001"
     reader_bytes = (
         b"# ExampleCo reader brief\n\n## Executive Summary\n\n"
         b"ExampleCo opened a public pilot facility on 2026-07-14.\n"
     )
-    reader_digest = sha256_hex(reader_bytes)
-    request_fingerprint = canonical_fingerprint(
-        {
-            "effect_kind": "finalize_render",
-            "render_id": render_id,
-            "reader_sha256": reader_digest,
-        }
-    )
+    scratch = workspace / "scratch" / "terminal-render-helper"
+    scratch.mkdir(parents=True, exist_ok=True)
+    (scratch / "brief.md").write_bytes(reader_bytes)
     with SQLiteControlStore.open(
         workspace / "briefloop.db",
         clock=clock,
     ) as store:
-        before = store.load_snapshot(run_id)
+        verified = CoreRunDomainVerifier().verify(store, run_id)
         promotion = classify_current_audit_promotion(
-            before,
+            verified.snapshot,
             store.read_artifact_revision_bytes,
         )
         assert promotion is not None
         assert promotion.is_current_lineage
-        reader_artifact = _record(
-            ArtifactRecord,
-            run_id=run_id,
-            artifact_id="reader_brief",
-            current_revision=1,
-            status="valid",
-            required=True,
-            path="output/brief.md",
-            format="markdown",
-        )
-        reader_revision = _record(
-            ArtifactRevision,
-            run_id=run_id,
-            artifact_id=reader_artifact.artifact_id,
-            revision=1,
-            path=reader_artifact.path,
-            sha256=reader_digest,
-            size_bytes=len(reader_bytes),
-            frozen=True,
-            producer_kind="control_tool",
-            producer_id="core-v2-finalize-render",
-            created_at=core_fixture.NOW,
-        )
-        render = _record(
-            FinalizeRenderRecord,
-            render_id=render_id,
-            run_id=run_id,
-            audit_proposal_id=promotion.proposal_record.proposal_id,
-            audited_brief={
+        expected_store_revision = verified.snapshot.store_revision
+    request = FinalizeRenderRequest.model_validate(
+        {
+            "schema_version": FinalizeRenderRequest.schema_id,
+            "request_id": transaction_id,
+            "run_id": run_id,
+            "audit_proposal_id": promotion.proposal_record.proposal_id,
+            "expected_audited_brief": {
                 "artifact_id": promotion.brief_revision.artifact_id,
                 "revision": promotion.brief_revision.revision,
             },
-            audit_report={
+            "expected_audit_report": {
                 "artifact_id": promotion.report_revision.artifact_id,
                 "revision": promotion.report_revision.revision,
             },
-            reader_artifacts=[
-                {
-                    "artifact_id": reader_revision.artifact_id,
-                    "revision": reader_revision.revision,
-                }
-            ],
-            reader_clean_status="pass",
-            policy_result_fingerprint="a" * 64,
-            run_contract_fingerprint=before.run_contract_bindings[
-                0
-            ].contract_fingerprint,
-            created_at=core_fixture.NOW,
-            render_event_id=event_id,
-            accepted_transaction_id=transaction_id,
-            request_fingerprint=request_fingerprint,
+            "reader_scratch_inputs": {
+                "reader_brief": "scratch/terminal-render-helper/brief.md"
+            },
+            "expected_reader_sha256": {"reader_brief": sha256_hex(reader_bytes)},
+            "expected_reader_revisions": {"reader_brief": 0},
+            "expected_store_revision": expected_store_revision,
+        },
+        strict=True,
+    )
+    request_fingerprint = canonical_fingerprint(
+        request.model_dump(mode="json", exclude_unset=False)
+    )
+    result = CoreRunTerminalService(workspace, clock=clock).accept_finalize_render(
+        request
+    )
+    assert (result.status, result.error_code) == ("committed", None)
+    assert result.receipt is not None
+    with SQLiteControlStore.open(workspace / "briefloop.db", clock=clock) as store:
+        snapshot = store.load_snapshot(run_id)
+        render = next(
+            item
+            for item in snapshot.finalize_renders
+            if item.render_id == result.primary_record_id
         )
-        event = _record(
-            EventEnvelope,
-            event_id=event_id,
-            run_id=run_id,
-            event_type="owned_artifact_accepted",
-            created_at=core_fixture.NOW,
-            actor="system",
-            transaction_id=transaction_id,
-            stage_id="finalize",
-            artifact_id=reader_artifact.artifact_id,
-            decision="continue",
-            reason="deterministic reader render accepted",
-            metadata={},
-            intake_binding=None,
-            core_run_binding=CoreRunEventBinding.model_validate(
-                {
-                    "request_id": transaction_id,
-                    "request_fingerprint": request_fingerprint,
-                    "effect_kind": "finalize_render",
-                    "primary_record_id": render_id,
-                    "outcome": "committed",
-                },
-                strict=True,
-            ),
-        )
-        unit = store.begin(
-            run_id,
-            transaction_id,
-            transaction_type_for("finalize_render"),
-            before.store_revision,
-        )
-        unit.put_artifact(reader_artifact)
-        unit.put_artifact_revision(reader_revision, reader_bytes)
-        unit.append_event(event)
-        unit.put_finalize_render(render)
-        receipt = unit.commit(
-            _postcommit_observer=lambda _receipt: CoreRunDomainVerifier().verify(
-                store,
-                run_id,
-            )
-        )
-        assert receipt.event_ids == [event_id]
-        assert [
-            (item.artifact_id, item.revision) for item in receipt.artifact_revisions
-        ] == [(reader_revision.artifact_id, reader_revision.revision)]
-        assert [item.render_id for item in receipt.finalize_renders] == [render_id]
-    return receipt, request_fingerprint, render
+    return result.receipt, request_fingerprint, render
 
 
 def test_finalize_render_persists_replays_conflicts_and_survives_restart(
@@ -244,6 +195,415 @@ def test_finalize_render_persists_replays_conflicts_and_survives_restart(
             )
         assert error.value.code == "submission_replay_conflict"
         assert store.current_revision == revision
+
+
+@pytest.mark.parametrize("case", ("existing_artifact_id", "missing_scratch"))
+def test_finalize_render_rejects_non_reader_or_unreadable_scratch_without_writes(
+    tmp_path: Path,
+    case: str,
+) -> None:
+    workspace, run_id, clock = _finalize_ready_workspace(tmp_path)
+    scratch = workspace / "scratch" / "terminal-render-invalid"
+    scratch.mkdir(parents=True)
+    reader_bytes = b"# Reader-safe synthetic brief\n"
+    (scratch / "brief.md").write_bytes(reader_bytes)
+    with SQLiteControlStore.open(workspace / "briefloop.db", clock=clock) as store:
+        verified = CoreRunDomainVerifier().verify(store, run_id)
+        promotion = classify_current_audit_promotion(
+            verified.snapshot,
+            store.read_artifact_revision_bytes,
+        )
+        assert promotion is not None
+        before_revision = verified.snapshot.store_revision
+        claim_ledger = next(
+            item
+            for item in verified.snapshot.artifact_revisions
+            if item.artifact_id == "claim_ledger"
+            and item.revision
+            == next(
+                artifact.current_revision
+                for artifact in verified.snapshot.artifacts
+                if artifact.artifact_id == "claim_ledger"
+            )
+        )
+        claim_ledger_bytes = store.read_artifact_revision_bytes(
+            run_id,
+            claim_ledger.artifact_id,
+            claim_ledger.revision,
+        )
+
+    artifact_id = "claim_ledger" if case == "existing_artifact_id" else "reader_brief"
+    input_path = (
+        "scratch/terminal-render-invalid/brief.md"
+        if case == "existing_artifact_id"
+        else "scratch/terminal-render-invalid/missing.md"
+    )
+    request = FinalizeRenderRequest.model_validate(
+        {
+            "schema_version": FinalizeRenderRequest.schema_id,
+            "request_id": f"REQ-TERMINAL-RENDER-INVALID-{case.upper()}",
+            "run_id": run_id,
+            "audit_proposal_id": promotion.proposal_record.proposal_id,
+            "expected_audited_brief": {
+                "artifact_id": promotion.brief_revision.artifact_id,
+                "revision": promotion.brief_revision.revision,
+            },
+            "expected_audit_report": {
+                "artifact_id": promotion.report_revision.artifact_id,
+                "revision": promotion.report_revision.revision,
+            },
+            "reader_scratch_inputs": {artifact_id: input_path},
+            "expected_reader_sha256": {artifact_id: sha256_hex(reader_bytes)},
+            "expected_reader_revisions": {artifact_id: 0},
+            "expected_store_revision": before_revision,
+        },
+        strict=True,
+    )
+    result = CoreRunTerminalService(workspace, clock=clock).accept_finalize_render(
+        request
+    )
+    assert (result.status, result.error_code) == (
+        "failed_uncommitted",
+        "finalize_input_invalid",
+    )
+    with SQLiteControlStore.open(workspace / "briefloop.db", clock=clock) as store:
+        snapshot = store.load_snapshot(run_id)
+        assert snapshot.store_revision == before_revision
+        assert not snapshot.finalize_renders
+        assert (
+            store.read_artifact_revision_bytes(
+                run_id,
+                claim_ledger.artifact_id,
+                claim_ledger.revision,
+            )
+            == claim_ledger_bytes
+        )
+
+
+def test_terminal_service_owns_finalize_render_and_complete(tmp_path: Path) -> None:
+    workspace, run_id, clock = _finalize_ready_workspace(tmp_path)
+    service = CoreRunTerminalService(workspace, clock=clock)
+    scratch = workspace / "scratch" / "terminal-render-service"
+    scratch.mkdir(parents=True)
+    reader_bytes = (
+        b"# ExampleCo reader brief\n\n## Executive Summary\n\n"
+        b"ExampleCo opened a public pilot facility on 2026-07-14.\n"
+    )
+    (scratch / "brief.md").write_bytes(reader_bytes)
+    with SQLiteControlStore.open(workspace / "briefloop.db", clock=clock) as store:
+        verified = CoreRunDomainVerifier().verify(store, run_id)
+        promotion = classify_current_audit_promotion(
+            verified.snapshot, store.read_artifact_revision_bytes
+        )
+        assert promotion is not None
+        before_revision = verified.snapshot.store_revision
+    render_request = FinalizeRenderRequest.model_validate(
+        {
+            "schema_version": FinalizeRenderRequest.schema_id,
+            "request_id": "REQ-TERMINAL-SERVICE-RENDER-001",
+            "run_id": run_id,
+            "audit_proposal_id": promotion.proposal_record.proposal_id,
+            "expected_audited_brief": {
+                "artifact_id": promotion.brief_revision.artifact_id,
+                "revision": promotion.brief_revision.revision,
+            },
+            "expected_audit_report": {
+                "artifact_id": promotion.report_revision.artifact_id,
+                "revision": promotion.report_revision.revision,
+            },
+            "reader_scratch_inputs": {
+                "reader_brief": "scratch/terminal-render-service/brief.md"
+            },
+            "expected_reader_sha256": {"reader_brief": sha256_hex(reader_bytes)},
+            "expected_reader_revisions": {"reader_brief": 0},
+            "expected_store_revision": before_revision,
+        },
+        strict=True,
+    )
+    render_result = service.accept_finalize_render(render_request)
+    assert (render_result.status, render_result.error_code) == ("committed", None)
+    assert service.accept_finalize_render(render_request).status == "replayed"
+    with SQLiteControlStore.open(workspace / "briefloop.db", clock=clock) as store:
+        snapshot = store.load_snapshot(run_id)
+        render = next(item for item in snapshot.finalize_renders if item.render_id == render_result.primary_record_id)
+    _gate_receipt, _gate_fingerprint, evaluations = _commit_finalize_gate(
+        workspace, run_id, clock, render
+    )
+    with SQLiteControlStore.open(workspace / "briefloop.db", clock=clock) as store:
+        snapshot = store.load_snapshot(run_id)
+        finalize_stage = next(item for item in snapshot.stage_states if item.stage_id == "finalize")
+    complete_request = FinalizeCompleteRequest.model_validate(
+        {
+            "schema_version": FinalizeCompleteRequest.schema_id,
+            "request_id": "REQ-TERMINAL-SERVICE-COMPLETE-001",
+            "run_id": run_id,
+            "render_id": render.render_id,
+            "expected_finalize_stage_revision": finalize_stage.revision,
+            "gate_evaluation_ids": sorted(item.evaluation_id for item in evaluations),
+            "recovery_id": None,
+            "expected_store_revision": snapshot.store_revision,
+        },
+        strict=True,
+    )
+    complete = service.complete_finalize(complete_request)
+    assert (complete.status, complete.error_code) == ("committed", None)
+    assert service.complete_finalize(complete_request).status == "replayed"
+    with SQLiteControlStore.open(workspace / "briefloop.db", clock=clock) as store:
+        verified = CoreRunDomainVerifier().verify(store, run_id)
+        package = verified.snapshot.package_ready_records[0]
+    approval_request = InternalApprovalRequest.model_validate(
+        {
+            "schema_version": InternalApprovalRequest.schema_id,
+            "request_id": "REQ-TERMINAL-SERVICE-APPROVAL-001",
+            "run_id": run_id,
+            "package_id": package.package_id,
+            "approval_id": "APPROVAL-TERMINAL-SERVICE-001",
+            "mode": "internal_management_review",
+            "role": "content_owner",
+            "decision": "approve",
+            "reason": "review completed",
+            "actor_id": "human-reviewer",
+            "expected_store_revision": verified.snapshot.store_revision,
+        },
+        strict=True,
+    )
+    approval = service.record_internal_approval(approval_request)
+    assert approval.status == "committed"
+    with SQLiteControlStore.open(workspace / "briefloop.db", clock=clock) as store:
+        verified = CoreRunDomainVerifier().verify(store, run_id)
+        next_action = classify_core_run_next_action(verified)
+    assert (next_action.action_kind, next_action.effect_kind) == (
+        "human_decision",
+        "delivery_authorization",
+    )
+    recipient = "a" * 64
+    authorization_request = DeliveryAuthorizationRequest.model_validate(
+        {
+            "schema_version": DeliveryAuthorizationRequest.schema_id,
+            "request_id": "REQ-TERMINAL-SERVICE-AUTH-001",
+            "run_id": run_id,
+            "package_id": package.package_id,
+            "prior_authorization_id": None,
+            "approval_mode": "internal_management_review",
+            "retry_of_attempt_id": None,
+            "purpose": "initial_attempt",
+            "decision": "authorize",
+            "target": "local",
+            "channel": "local_bundle",
+            "recipient_fingerprint": recipient,
+            "actor_id": "human-reviewer",
+            "reason": "approved local bundle",
+            "expected_store_revision": verified.snapshot.store_revision,
+        },
+        strict=True,
+    )
+    authorization = service.authorize_delivery(authorization_request)
+    assert (authorization.status, authorization.error_code) == ("committed", None)
+    with SQLiteControlStore.open(workspace / "briefloop.db", clock=clock) as store:
+        verified = CoreRunDomainVerifier().verify(store, run_id)
+        next_action = classify_core_run_next_action(verified)
+    assert (next_action.action_kind, next_action.effect_kind) == (
+        "deterministic",
+        "delivery_attempt",
+    )
+    connector_fingerprint = "b" * 64
+    attempt_request = DeliveryAttemptRequest.model_validate(
+        {
+            "schema_version": DeliveryAttemptRequest.schema_id,
+            "request_id": "REQ-TERMINAL-SERVICE-ATTEMPT-001",
+            "run_id": run_id,
+            "package_id": package.package_id,
+            "authorization_id": authorization.primary_record_id,
+            "connector_operation_id": "CONNECTOR-TERMINAL-SERVICE-001",
+            "connector_request_fingerprint": connector_fingerprint,
+            "expected_store_revision": verified.snapshot.store_revision,
+        },
+        strict=True,
+    )
+    attempt = service.record_delivery_attempt(attempt_request)
+    assert (attempt.status, attempt.error_code) == ("committed", None)
+    with SQLiteControlStore.open(workspace / "briefloop.db", clock=clock) as store:
+        verified = CoreRunDomainVerifier().verify(store, run_id)
+    missing_result_request = DeliveryResultRequest.model_validate(
+        {
+            "schema_version": DeliveryResultRequest.schema_id,
+            "request_id": "REQ-TERMINAL-SERVICE-RESULT-MISSING-SCRATCH",
+            "run_id": run_id,
+            "attempt_id": attempt.primary_record_id,
+            "prior_result_id": None,
+            "observation_input_path": (
+                "scratch/terminal-render-service/missing-delivery-result.json"
+            ),
+            "expected_observation_sha256": "0" * 64,
+            "reconciliation_authorization_id": None,
+            "expected_store_revision": verified.snapshot.store_revision,
+        },
+        strict=True,
+    )
+    missing_result = service.record_delivery_result(missing_result_request)
+    assert (missing_result.status, missing_result.error_code) == (
+        "failed_uncommitted",
+        "delivery_result_invalid",
+    )
+    with SQLiteControlStore.open(workspace / "briefloop.db", clock=clock) as store:
+        assert store.current_revision == verified.snapshot.store_revision
+    observation_payload = {
+        "schema_version": "briefloop.delivery_result_observation.v2",
+        "attempt_id": attempt.primary_record_id,
+        "adapter_id": verified.runtime_adapter.adapter_id,
+        "adapter_version": verified.runtime_adapter.adapter_version,
+        "connector_operation_id": "CONNECTOR-TERMINAL-SERVICE-001",
+        "status": "bundle_prepared",
+        "evidence_sha256": "c" * 64,
+        "diagnostic_code": "bundle_prepared",
+        "connector_request_fingerprint": connector_fingerprint,
+    }
+    forged_observation = canonical_json_bytes(
+        {**observation_payload, "adapter_id": "forged-runtime-adapter"}
+    )
+    (scratch / "delivery_result.json").write_bytes(forged_observation)
+    forged_request = DeliveryResultRequest.model_validate(
+        {
+            "schema_version": DeliveryResultRequest.schema_id,
+            "request_id": "REQ-TERMINAL-SERVICE-RESULT-FORGED-ADAPTER",
+            "run_id": run_id,
+            "attempt_id": attempt.primary_record_id,
+            "prior_result_id": None,
+            "observation_input_path": (
+                "scratch/terminal-render-service/delivery_result.json"
+            ),
+            "expected_observation_sha256": sha256_hex(forged_observation),
+            "reconciliation_authorization_id": None,
+            "expected_store_revision": verified.snapshot.store_revision,
+        },
+        strict=True,
+    )
+    rejected = service.record_delivery_result(forged_request)
+    assert (rejected.status, rejected.error_code) == (
+        "failed_uncommitted",
+        "delivery_result_invalid",
+    )
+    with SQLiteControlStore.open(workspace / "briefloop.db", clock=clock) as store:
+        assert store.current_revision == verified.snapshot.store_revision
+
+    observation = canonical_json_bytes(observation_payload)
+    (scratch / "delivery_result.json").write_bytes(observation)
+    result_request = DeliveryResultRequest.model_validate(
+        {
+            "schema_version": DeliveryResultRequest.schema_id,
+            "request_id": "REQ-TERMINAL-SERVICE-RESULT-001",
+            "run_id": run_id,
+            "attempt_id": attempt.primary_record_id,
+            "prior_result_id": None,
+            "observation_input_path": "scratch/terminal-render-service/delivery_result.json",
+            "expected_observation_sha256": sha256_hex(observation),
+            "reconciliation_authorization_id": None,
+            "expected_store_revision": verified.snapshot.store_revision,
+        },
+        strict=True,
+    )
+    result = service.record_delivery_result(result_request)
+    assert (result.status, result.error_code) == ("committed", None)
+    with SQLiteControlStore.open(workspace / "briefloop.db", clock=clock) as store:
+        committed_revision = store.current_revision
+    replayed_result = service.record_delivery_result(result_request)
+    assert replayed_result.status == "replayed"
+    assert replayed_result.receipt == result.receipt
+    with SQLiteControlStore.open(workspace / "briefloop.db", clock=clock) as store:
+        assert store.current_revision == committed_revision
+
+
+def test_finalize_render_records_contamination_before_requested_effect(
+    tmp_path: Path,
+) -> None:
+    workspace, run_id, clock = _finalize_ready_workspace(tmp_path)
+    service = CoreRunTerminalService(workspace, clock=clock)
+    scratch = workspace / "scratch" / "terminal-render-tamper"
+    scratch.mkdir(parents=True)
+    reader_bytes = b"# Reader-safe synthetic brief\n"
+    (scratch / "brief.md").write_bytes(reader_bytes)
+    with SQLiteControlStore.open(workspace / "briefloop.db", clock=clock) as store:
+        verified = CoreRunDomainVerifier().verify(store, run_id)
+        promotion = classify_current_audit_promotion(
+            verified.snapshot,
+            store.read_artifact_revision_bytes,
+        )
+        assert promotion is not None
+        before_revision = verified.snapshot.store_revision
+        protected = promotion.report_revision
+    (workspace / protected.path).write_bytes(b"tampered audit report\n")
+    request = FinalizeRenderRequest.model_validate(
+        {
+            "schema_version": FinalizeRenderRequest.schema_id,
+            "request_id": "REQ-TERMINAL-RENDER-TAMPER-001",
+            "run_id": run_id,
+            "audit_proposal_id": promotion.proposal_record.proposal_id,
+            "expected_audited_brief": {
+                "artifact_id": promotion.brief_revision.artifact_id,
+                "revision": promotion.brief_revision.revision,
+            },
+            "expected_audit_report": {
+                "artifact_id": promotion.report_revision.artifact_id,
+                "revision": promotion.report_revision.revision,
+            },
+            "reader_scratch_inputs": {
+                "reader_brief": "scratch/terminal-render-tamper/brief.md"
+            },
+            "expected_reader_sha256": {"reader_brief": sha256_hex(reader_bytes)},
+            "expected_reader_revisions": {"reader_brief": 0},
+            "expected_store_revision": before_revision,
+        },
+        strict=True,
+    )
+    result = service.accept_finalize_render(request)
+    assert result.status == "blocked"
+    with SQLiteControlStore.open(workspace / "briefloop.db", clock=clock) as store:
+        snapshot = store.load_snapshot(run_id)
+    assert not snapshot.finalize_renders
+    assert snapshot.run_integrity_records[-1].status == "contaminated"
+
+
+def test_finalize_complete_records_contamination_before_requested_effect(
+    tmp_path: Path,
+) -> None:
+    workspace, run_id, clock = _finalize_ready_workspace(tmp_path)
+    _receipt, _fingerprint, render = _commit_finalize_render(workspace, run_id, clock)
+    _commit_finalize_gate(workspace, run_id, clock, render)
+    with SQLiteControlStore.open(workspace / "briefloop.db", clock=clock) as store:
+        snapshot = store.load_snapshot(run_id)
+        stage = next(item for item in snapshot.stage_states if item.stage_id == "finalize")
+        reader = next(
+            item
+            for item in snapshot.artifact_revisions
+            if item.artifact_id == render.reader_artifacts[0].artifact_id
+            and item.revision == render.reader_artifacts[0].revision
+        )
+        gate_ids = sorted(
+            item.evaluation_id
+            for item in snapshot.gate_evaluations
+            if item.stage_id == "finalize"
+        )
+        before_revision = snapshot.store_revision
+    (workspace / reader.path).write_bytes(b"tampered reader brief\n")
+    request = FinalizeCompleteRequest.model_validate(
+        {
+            "schema_version": FinalizeCompleteRequest.schema_id,
+            "request_id": "REQ-TERMINAL-COMPLETE-TAMPER-001",
+            "run_id": run_id,
+            "render_id": render.render_id,
+            "expected_finalize_stage_revision": stage.revision,
+            "gate_evaluation_ids": gate_ids,
+            "recovery_id": None,
+            "expected_store_revision": before_revision,
+        },
+        strict=True,
+    )
+    result = CoreRunTerminalService(workspace, clock=clock).complete_finalize(request)
+    assert result.status == "blocked"
+    with SQLiteControlStore.open(workspace / "briefloop.db", clock=clock) as store:
+        snapshot = store.load_snapshot(run_id)
+    assert not snapshot.finalizations
+    assert snapshot.run_integrity_records[-1].status == "contaminated"
 
 
 def _terminal_event(
@@ -308,8 +668,10 @@ def _commit_finalize_gate(
     run_id: str,
     clock: object,
     render: FinalizeRenderRecord,
+    *,
+    sequence: int = 1,
 ) -> tuple[TransactionReceipt, str, tuple[GateEvaluationRecord, ...]]:
-    transaction_id = "REQ-TERMINAL-FINALIZE-GATE-001"
+    transaction_id = f"REQ-TERMINAL-FINALIZE-GATE-{sequence:03d}"
     with SQLiteControlStore.open(
         workspace / "briefloop.db",
         clock=clock,
@@ -352,214 +714,101 @@ def _commit_finalize_gate(
             }
             for item, usage in assessed
         ]
-        request_fingerprint = canonical_fingerprint(
-            {
-                "effect_kind": "gate_evaluation",
-                "stage_id": "finalize",
-                "input_artifacts": input_hashes,
-                "contract_fingerprint": verified.binding.contract_fingerprint,
-                "evaluator": "core-v2-preloaded-quality-gates",
-                "evaluator_version": "1",
-            }
+        expected_store_revision = before.store_revision
+        expected_report_revision = (
+            artifacts["finalize_quality_gate_report"].current_revision
+            if "finalize_quality_gate_report" in artifacts
+            else 0
         )
-        batch_id = derived_id("GATE-BATCH", transaction_id, request_fingerprint)
-        event_id = derived_id("EVT-GATES", transaction_id, request_fingerprint)
-        template_bindings = tuple(
-            _record(
-                GateArtifactBinding,
-                run_id=run_id,
-                evaluation_id="GATE-TERMINAL-TEMPLATE",
-                position=position,
-                artifact_id=revision.artifact_id,
-                artifact_revision=revision.revision,
-                artifact_sha256=revision.sha256,
-                usage=usage,
-                accepted_transaction_id=transaction_id,
-            )
-            for position, (revision, usage) in enumerate(assessed)
-        )
-        gate_outcomes = _replay_gate_outcomes(
-            store,
-            before,
-            verified.binding,
-            stage_id="finalize",
-            stages=tuple(dict(item) for item in verified.stages),
-            artifacts=tuple(dict(item) for item in verified.artifacts),
-            artifact_bindings=template_bindings,
-        )
-        policy_version = (
-            f"{verified.binding.policy_pack_name}:"
-            f"{verified.binding.policy_pack_sha256[:16]}"
-        )
-        evaluations: list[GateEvaluationRecord] = []
-        findings = []
-        for gate_id in sorted(GATE_IDS):
-            forced_status, raw_findings = gate_outcomes[gate_id]
-            evaluation_id = derived_id("GATE", batch_id, gate_id)
-            selected_findings = [
-                _gate_finding_record(
-                    run_id=run_id,
-                    evaluation_id=evaluation_id,
-                    gate_id=gate_id,
-                    position=position,
-                    raw=raw,
-                    accepted_transaction_id=transaction_id,
-                )
-                for position, raw in enumerate(raw_findings, start=1)
-            ]
-            findings.extend(selected_findings)
-            blocking = any(
-                item.blocking_level == "blocking" for item in selected_findings
-            )
-            status = forced_status or (
-                "fail" if blocking else ("warning" if selected_findings else "pass")
-            )
-            evaluations.append(
-                _record(
-                    GateEvaluationRecord,
-                    evaluation_id=evaluation_id,
-                    gate_batch_id=batch_id,
-                    run_id=run_id,
-                    stage_id="finalize",
-                    gate_id=gate_id,
-                    policy_version=policy_version,
-                    run_contract_fingerprint=verified.binding.contract_fingerprint,
-                    status=status,
-                    blocking=blocking,
-                    finding_ids=[item.finding_id for item in selected_findings],
-                    checked_at=core_fixture.NOW,
-                    producer_implementation="core-v2-preloaded-quality-gates",
-                    producer_version="1",
-                    report_artifact={
-                        "artifact_id": "finalize_quality_gate_report",
-                        "revision": 1,
-                    },
-                    evaluation_event_id=event_id,
-                    accepted_transaction_id=transaction_id,
-                    request_fingerprint=request_fingerprint,
-                )
-            )
-        report_bytes = (
-            canonical_json_bytes(
-                {
-                    "schema_version": "briefloop.gate_report.v2",
-                    "run_id": run_id,
-                    "stage_id": "finalize",
-                    "gate_batch_id": batch_id,
-                    "policy_version": policy_version,
-                    "run_contract_fingerprint": verified.binding.contract_fingerprint,
-                    "input_artifacts": input_hashes,
-                    "evaluations": [
-                        item.model_dump(mode="json", exclude_unset=False)
-                        for item in evaluations
-                    ],
-                    "findings": [
-                        item.model_dump(mode="json", exclude_unset=False)
-                        for item in findings
-                    ],
-                }
-            )
-            + b"\n"
-        )
-        report_contract = next(
+    request = _record(
+        GateCheckRequest,
+        request_id=transaction_id,
+        run_id=run_id,
+        stage_id="finalize",
+        expected_store_revision=expected_store_revision,
+        expected_report_artifact_revision=expected_report_revision,
+        expected_input_artifacts=[
+            {"artifact_id": item.artifact_id, "revision": item.revision}
+            for item, _usage in assessed
+        ],
+    )
+    result = GateEvaluationService(workspace, clock=clock).evaluate(request)
+    assert result.status == "committed", result.to_dict()
+    assert result.receipt is not None
+    with SQLiteControlStore.open(
+        workspace / "briefloop.db",
+        clock=clock,
+    ) as store:
+        evaluations = tuple(
             item
-            for item in verified.artifacts
-            if item["artifact_id"] == "finalize_quality_gate_report"
+            for item in store.load_snapshot(run_id).gate_evaluations
+            if item.gate_batch_id == result.primary_record_id
         )
-        report_record = _record(
-            ArtifactRecord,
-            run_id=run_id,
-            artifact_id="finalize_quality_gate_report",
-            current_revision=1,
-            status="valid",
-            required=bool(report_contract["required"]),
-            path=str(report_contract["path"]),
-            format=str(report_contract["format"]),
+    return (
+        result.receipt,
+        canonical_fingerprint(request.model_dump(mode="json", exclude_unset=False)),
+        evaluations,
+    )
+
+
+def test_finalize_complete_rejects_stale_gate_batch_before_commit(
+    tmp_path: Path,
+) -> None:
+    workspace, run_id, clock = _finalize_ready_workspace(tmp_path)
+    _render_receipt, _render_fingerprint, render = _commit_finalize_render(
+        workspace,
+        run_id,
+        clock,
+    )
+    _first_receipt, _first_fingerprint, first_evaluations = _commit_finalize_gate(
+        workspace,
+        run_id,
+        clock,
+        render,
+        sequence=1,
+    )
+    _second_receipt, _second_fingerprint, second_evaluations = _commit_finalize_gate(
+        workspace,
+        run_id,
+        clock,
+        render,
+        sequence=2,
+    )
+    assert {item.report_artifact.revision for item in first_evaluations} == {1}
+    assert {item.report_artifact.revision for item in second_evaluations} == {2}
+
+    with SQLiteControlStore.open(workspace / "briefloop.db", clock=clock) as store:
+        snapshot = store.load_snapshot(run_id)
+        finalize_stage = next(
+            item for item in snapshot.stage_states if item.stage_id == "finalize"
         )
-        report_revision = _record(
-            ArtifactRevision,
-            run_id=run_id,
-            artifact_id=report_record.artifact_id,
-            revision=1,
-            path=report_record.path,
-            sha256=sha256_hex(report_bytes),
-            size_bytes=len(report_bytes),
-            frozen=True,
-            producer_kind="control_tool",
-            producer_id="core-v2-preloaded-quality-gates",
-            created_at=core_fixture.NOW,
-        )
-        event = _record(
-            EventEnvelope,
-            event_id=event_id,
-            run_id=run_id,
-            event_type="quality_gate_checked",
-            created_at=core_fixture.NOW,
-            actor="system",
-            transaction_id=transaction_id,
-            stage_id="finalize",
-            artifact_id=report_record.artifact_id,
-            decision=(
-                "block" if any(item.blocking for item in evaluations) else "continue"
+        before_revision = snapshot.store_revision
+    request = FinalizeCompleteRequest.model_validate(
+        {
+            "schema_version": FinalizeCompleteRequest.schema_id,
+            "request_id": "REQ-TERMINAL-STALE-FINALIZE-GATE-001",
+            "run_id": run_id,
+            "render_id": render.render_id,
+            "expected_finalize_stage_revision": finalize_stage.revision,
+            "gate_evaluation_ids": sorted(
+                item.evaluation_id for item in first_evaluations
             ),
-            reason="preloaded deterministic Finalize Gate batch evaluated",
-            metadata={},
-            intake_binding=None,
-            core_run_binding=CoreRunEventBinding.model_validate(
-                {
-                    "request_id": transaction_id,
-                    "request_fingerprint": request_fingerprint,
-                    "effect_kind": "gate_evaluation",
-                    "primary_record_id": batch_id,
-                    "outcome": "committed",
-                },
-                strict=True,
-            ),
-        )
-        unit = store.begin(
-            run_id,
-            transaction_id,
-            transaction_type_for("gate_evaluation"),
-            before.store_revision,
-        )
-        unit.put_artifact(report_record)
-        unit.put_artifact_revision(report_revision, report_bytes)
-        for evaluation in evaluations:
-            unit.put_gate_evaluation(evaluation)
-            for template in template_bindings:
-                unit.put_gate_artifact_binding(
-                    template.model_copy(
-                        update={"evaluation_id": evaluation.evaluation_id}
-                    )
-                )
-        for finding in findings:
-            unit.put_gate_finding(finding)
-        unit.append_event(event)
-        receipt = unit.commit(
-            _postcommit_observer=lambda _receipt: CoreRunDomainVerifier().verify(
-                store,
-                run_id,
-            )
-        )
-        assert set(item.evaluation_id for item in receipt.gate_evaluations) == {
-            item.evaluation_id for item in evaluations
-        }
-        assert {
-            (item.evaluation_id, item.finding_id) for item in receipt.gate_findings
-        } == {(item.evaluation_id, item.finding_id) for item in findings}
-        assert {
-            (item.evaluation_id, item.position)
-            for item in receipt.gate_artifact_bindings
-        } == {
-            (evaluation.evaluation_id, position)
-            for evaluation in evaluations
-            for position in range(len(assessed))
-        }
-        assert receipt.event_ids == [event_id]
-        assert [
-            (item.artifact_id, item.revision) for item in receipt.artifact_revisions
-        ] == [(report_revision.artifact_id, report_revision.revision)]
-    return receipt, request_fingerprint, tuple(evaluations)
+            "recovery_id": None,
+            "expected_store_revision": before_revision,
+        },
+        strict=True,
+    )
+    result = CoreRunTerminalService(workspace, clock=clock).complete_finalize(request)
+    assert (result.status, result.error_code) == (
+        "failed_uncommitted",
+        "finalize_gate_blocked",
+    )
+    with SQLiteControlStore.open(workspace / "briefloop.db", clock=clock) as store:
+        snapshot = store.load_snapshot(run_id)
+        assert snapshot.store_revision == before_revision
+        assert not snapshot.finalizations
+        assert not snapshot.run_archives
+        assert not snapshot.package_ready_records
 
 
 def _commit_finalize_complete(
@@ -932,11 +1181,10 @@ def _commit_finalize_complete(
             ),
         ):
             unit.append_event(event)
-        receipt = unit.commit(
-            _postcommit_observer=lambda _receipt: CoreRunDomainVerifier().verify(
-                store,
-                run_id,
-            )
+        receipt = _commit_core_fixture(
+            store,
+            unit,
+            observer=lambda _receipt: CoreRunDomainVerifier().verify(store, run_id),
         )
         assert [item.finalization_id for item in receipt.finalizations] == [
             finalization_id
@@ -969,6 +1217,63 @@ def _commit_finalize_complete(
             package_event_id,
         ]
     return receipt, request_fingerprint, package
+
+
+def test_terminal_approval_integrity_preflight_blocks_before_business_effect(
+    tmp_path: Path,
+) -> None:
+    workspace, run_id, clock = _finalize_ready_workspace(tmp_path)
+    _render_receipt, _render_fingerprint, render = _commit_finalize_render(
+        workspace,
+        run_id,
+        clock,
+    )
+    _commit_finalize_gate(workspace, run_id, clock, render)
+    _complete_receipt, _complete_fingerprint, package = _commit_finalize_complete(
+        workspace,
+        run_id,
+        clock,
+        render,
+    )
+    with SQLiteControlStore.open(workspace / "briefloop.db", clock=clock) as store:
+        verified = CoreRunDomainVerifier().verify(store, run_id)
+        reader = next(
+            item
+            for item in verified.snapshot.artifact_revisions
+            if item.artifact_id == render.reader_artifacts[0].artifact_id
+            and item.revision == render.reader_artifacts[0].revision
+        )
+        before_revision = verified.snapshot.store_revision
+    (workspace / reader.path).write_bytes(b"tampered after package ready\n")
+
+    request = InternalApprovalRequest.model_validate(
+        {
+            "schema_version": InternalApprovalRequest.schema_id,
+            "request_id": "REQ-TERMINAL-APPROVAL-CONTAMINATED-001",
+            "run_id": run_id,
+            "package_id": package.package_id,
+            "approval_id": "APPROVAL-TERMINAL-CONTAMINATED-001",
+            "mode": "internal_management_review",
+            "role": "content_owner",
+            "decision": "approve",
+            "reason": "must not survive integrity preflight",
+            "actor_id": "human-reviewer",
+            "expected_store_revision": before_revision,
+        },
+        strict=True,
+    )
+    result = CoreRunTerminalService(workspace, clock=clock).record_internal_approval(
+        request
+    )
+    assert (result.status, result.error_code) == (
+        "blocked",
+        "frozen_artifact_contaminated",
+    )
+    with SQLiteControlStore.open(workspace / "briefloop.db", clock=clock) as store:
+        snapshot = store.load_snapshot(run_id)
+        assert not snapshot.approvals
+        assert snapshot.store_revision == before_revision + 1
+        assert snapshot.run_integrity_records[-1].status == "contaminated"
 
 
 def test_finalize_complete_persists_exact_membership_and_replays_after_restart(
@@ -1156,11 +1461,10 @@ def _commit_internal_approval(
         unit.put_approval(approval)
         unit.put_approval_package_binding(binding)
         unit.append_event(event)
-        receipt = unit.commit(
-            _postcommit_observer=lambda _receipt: CoreRunDomainVerifier().verify(
-                store,
-                run_id,
-            )
+        receipt = _commit_core_fixture(
+            store,
+            unit,
+            observer=lambda _receipt: CoreRunDomainVerifier().verify(store, run_id),
         )
         assert [item.approval_id for item in receipt.approvals] == [approval_id]
         assert [
@@ -1254,7 +1558,7 @@ def _commit_delivery_authorization(
             if verify
             else None
         )
-        receipt = unit.commit(_postcommit_observer=observer)
+        receipt = _commit_core_fixture(store, unit, observer=observer)
         assert [item.authorization_id for item in receipt.delivery_authorizations] == [
             authorization_id
         ]
@@ -1329,7 +1633,7 @@ def _commit_delivery_attempt(
             if verify
             else None
         )
-        receipt = unit.commit(_postcommit_observer=observer)
+        receipt = _commit_core_fixture(store, unit, observer=observer)
         assert [item.attempt_id for item in receipt.delivery_attempts] == [attempt_id]
         assert receipt.event_ids == [event_id]
     return receipt, request_fingerprint, attempt
@@ -1427,7 +1731,7 @@ def _commit_delivery_result(
             if verify
             else None
         )
-        receipt = unit.commit(_postcommit_observer=observer)
+        receipt = _commit_core_fixture(store, unit, observer=observer)
         assert [item.result_id for item in receipt.delivery_results] == [result_id]
         assert receipt.event_ids == [event_id]
     return receipt, request_fingerprint, result
@@ -1484,6 +1788,18 @@ def _external_unknown_branch(
         status="outcome_unknown",
     )
     return workspace, run_id, clock, package, authorization, attempt, unknown
+
+
+def test_next_action_routes_unknown_delivery_to_reconciliation(tmp_path: Path) -> None:
+    workspace, run_id, clock, *_rest = _external_unknown_branch(tmp_path)
+    with SQLiteControlStore.open(workspace / "briefloop.db", clock=clock) as store:
+        action = classify_core_run_next_action(
+            CoreRunDomainVerifier().verify(store, run_id)
+        )
+    assert (action.action_kind, action.effect_kind) == (
+        "human_decision",
+        "delivery_reconciliation",
+    )
 
 
 def test_terminal_effect_chain_rolls_back_replays_and_survives_restart(
@@ -1859,7 +2175,7 @@ def test_real_uow_rejects_undeclared_effect_bearing_relation_family(
         unit.put_delivery_authorization(authorization)
         unit.put_delivery_attempt(attempt)
         unit.append_event(event)
-        receipt = unit.commit()
+        receipt = _commit_core_fixture(store, unit)
         assert [item.authorization_id for item in receipt.delivery_authorizations] == [
             authorization_id
         ]
@@ -2562,6 +2878,11 @@ def _initialized_workspace(tmp_path: Path) -> Path:
         workspace_config_sha256=read_workspace_file(workspace, "config.yaml").sha256,
         sources_config_sha256=read_workspace_file(workspace, "sources.yaml").sha256,
     )
+    adapter = dict(request["runtime_adapter_binding"])
+    adapter["run_id"] = RUN_ID
+    adapter.pop("binding_fingerprint", None)
+    adapter["binding_fingerprint"] = canonical_fingerprint(adapter)
+    request["runtime_adapter_binding"] = adapter
     result = CoreRunService(
         workspace,
         clock=lambda: datetime(2026, 7, 17, tzinfo=timezone.utc),

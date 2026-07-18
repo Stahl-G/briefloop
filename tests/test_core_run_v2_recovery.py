@@ -6,25 +6,36 @@ from datetime import datetime, timezone
 import hashlib
 import json
 from pathlib import Path
+import sys
 
 import pytest
 
 from multi_agent_brief.cli.init_wizard import create_demo_workspace
 from multi_agent_brief.contracts.v2 import (
     ArtifactRecord,
+    ArtifactRevertRequest,
     ArtifactRevision,
+    ArtifactSupersedeRequest,
     ArtifactSupersessionRecord,
     ArtifactSupersessionReference,
     CoreRunInitializeRequest,
     CoreRunEventBinding,
     EventEnvelope,
+    IntegrityCheckRequest,
+    InvocationStartRequest,
+    OwnedArtifactSubmitRequest,
     OwnedArtifactSubmissionRecord,
+    ReceiptCheckoutBinding,
     RecoveryCompletionRecord,
+    RecoveryCompleteRequest,
     RepairCompletionRecord,
+    RepairCompleteRequest,
     RepairCycleRecord,
+    RepairStartRequest,
     RunIntegrityRecord,
     RunHeadTransitionRecord,
     RunIdentity,
+    RunResetRequest,
     StageState,
     StageTransitionRecord,
     TransactionReceipt,
@@ -36,12 +47,29 @@ from multi_agent_brief.control_store import (
 )
 from multi_agent_brief.control_store.serialization import (
     canonical_fingerprint,
+    canonical_json_bytes,
     sha256_hex,
 )
-from multi_agent_brief.core_run_v2 import CoreRunService
+from multi_agent_brief.core_run_v2 import (
+    ArtifactAcceptanceService,
+    CoreRunRecoveryService,
+    CoreRunService,
+)
+from multi_agent_brief.core_run_v2.checkout import (
+    build_checkout_revision,
+    prepare_cross_run_checkout_effect,
+    stage_checkout_effect,
+)
 from multi_agent_brief.core_run_v2.errors import CoreRunError
-from multi_agent_brief.core_run_v2.integrity import read_workspace_file
-from multi_agent_brief.core_run_v2.policy import derived_id, transaction_type_for
+from multi_agent_brief.core_run_v2.integrity import (
+    RunIntegrityService,
+    read_workspace_file,
+)
+from multi_agent_brief.core_run_v2.policy import (
+    derived_id,
+    run_contract_fingerprint,
+    transaction_type_for,
+)
 from multi_agent_brief.core_run_v2.recovery import (
     CoreEffect,
     CoreEffectSubject,
@@ -60,6 +88,70 @@ NOW = "2026-07-17T00:00:00Z"
 CLOCK = lambda: datetime(2026, 7, 17, tzinfo=timezone.utc)
 
 
+def _commit_core_fixture(store: SQLiteControlStore, unit):
+    snapshot = store.load_snapshot(unit.run_id)
+    current = {
+        (item.artifact_id, item.revision): item
+        for item in snapshot.artifact_revisions
+    }
+    selected = {
+        artifact.artifact_id: current[(artifact.artifact_id, artifact.current_revision)]
+        for artifact in snapshot.artifacts
+        if artifact.current_revision > 0
+        and not current[(artifact.artifact_id, artifact.current_revision)].path.startswith(
+            "briefloop.db.blobs/"
+        )
+    }
+    selected.update(
+        {
+            item.record.artifact_id: item.record
+            for item in unit._artifact_revisions
+            if not item.record.path.startswith("briefloop.db.blobs/")
+        }
+    )
+    committed = {
+        receipt.transaction_id: receipt.committed_revision
+        for receipt in snapshot.transactions
+    }
+    current_checkout_binding = max(
+        snapshot.receipt_checkout_bindings,
+        key=lambda item: committed[item.transaction_id],
+        default=None,
+    )
+    pre_checkout_revision_id = (
+        None
+        if current_checkout_binding is None
+        else current_checkout_binding.post_checkout_revision_id
+    )
+    checkout = build_checkout_revision(
+        workspace_id=snapshot.workspace_id,
+        run_id=unit.run_id,
+        transaction_id=unit.transaction_id,
+        created_at=CLOCK(),
+        artifact_revisions=selected.values(),
+        parent_checkout_revision_id=pre_checkout_revision_id,
+    )
+    unit.put_checkout_revision(checkout.record)
+    for member in checkout.members:
+        unit.put_checkout_revision_member(member)
+    unit.put_receipt_checkout_binding(
+        ReceiptCheckoutBinding.model_validate(
+            {
+                "schema_version": ReceiptCheckoutBinding.schema_id,
+                "workspace_id": snapshot.workspace_id,
+                "run_id": unit.run_id,
+                "transaction_id": unit.transaction_id,
+                "pre_run_id": unit.run_id,
+                "pre_checkout_revision_id": pre_checkout_revision_id,
+                "post_run_id": unit.run_id,
+                "post_checkout_revision_id": checkout.record.checkout_revision_id,
+            },
+            strict=True,
+        )
+    )
+    return unit.commit()
+
+
 def _initialized_workspace(tmp_path: Path) -> Path:
     workspace = tmp_path / "workspace"
     create_demo_workspace(workspace)
@@ -72,6 +164,11 @@ def _initialized_workspace(tmp_path: Path) -> Path:
         workspace_config_sha256=read_workspace_file(workspace, "config.yaml").sha256,
         sources_config_sha256=read_workspace_file(workspace, "sources.yaml").sha256,
     )
+    adapter = dict(request["runtime_adapter_binding"])
+    adapter["run_id"] = RUN_ID
+    adapter.pop("binding_fingerprint", None)
+    adapter["binding_fingerprint"] = canonical_fingerprint(adapter)
+    request["runtime_adapter_binding"] = adapter
     result = CoreRunService(
         workspace,
         clock=lambda: datetime(2026, 7, 17, tzinfo=timezone.utc),
@@ -221,7 +318,7 @@ def _accept_input_classification(store: SQLiteControlStore) -> None:
             ),
         )
     )
-    unit.commit()
+    _commit_core_fixture(store, unit)
 
 
 def _record_contamination(store: SQLiteControlStore) -> str:
@@ -314,7 +411,7 @@ def _record_contamination(store: SQLiteControlStore) -> str:
             reason="run blocked by durable contamination",
         )
     )
-    unit.commit()
+    _commit_core_fixture(store, unit)
     return base_fingerprint
 
 
@@ -365,7 +462,7 @@ def _start_repair(store: SQLiteControlStore) -> tuple[str, str]:
             ),
         )
     )
-    unit.commit()
+    _commit_core_fixture(store, unit)
     return transaction_id, request_fingerprint
 
 
@@ -500,7 +597,7 @@ def _supersede_input_classification(
             ),
         )
     )
-    unit.commit()
+    _commit_core_fixture(store, unit)
     return transaction_id, request_fingerprint
 
 
@@ -532,7 +629,7 @@ def _complete_repair(store: SQLiteControlStore) -> tuple[str, str]:
         requested_decision=None,
         prior_status=prior.status,
         prior_revision=prior.revision,
-        result_status="pending",
+        result_status="ready",
         result_revision=prior.revision + 1,
         reason="repair reopens the artifact owner stage",
         run_contract_fingerprint=contract.contract_fingerprint,
@@ -606,7 +703,7 @@ def _complete_repair(store: SQLiteControlStore) -> tuple[str, str]:
             ),
         )
     )
-    unit.commit()
+    _commit_core_fixture(store, unit)
     return transaction_id, request_fingerprint
 
 
@@ -686,7 +783,7 @@ def _complete_reopened_stage(store: SQLiteControlStore) -> str:
             ),
         )
     )
-    unit.commit()
+    _commit_core_fixture(store, unit)
     return transition_id
 
 
@@ -726,6 +823,29 @@ def _complete_recovery(store: SQLiteControlStore) -> tuple[str, str]:
         snapshot.store_revision,
     )
     unit.put_recovery_completion(recovery)
+    unit.append_run_integrity_record(
+        _record(
+            RunIntegrityRecord,
+            run_id=RUN_ID,
+            integrity_revision=snapshot.run_integrity_records[-1].integrity_revision
+            + 1,
+            status="clean",
+            prior_integrity_revision=snapshot.run_integrity_records[
+                -1
+            ].integrity_revision,
+            affected_artifact_id=None,
+            affected_artifact_revision=None,
+            expected_workspace_path=None,
+            expected_sha256=None,
+            observed_entry_kind=None,
+            observed_sha256=None,
+            reason_code=None,
+            first_detected_at=None,
+            first_detected_event_id=None,
+            accepted_transaction_id=transaction_id,
+            request_fingerprint=request_fingerprint,
+        )
+    )
     unit.append_event(
         _event(
             event_id=event_id,
@@ -741,7 +861,7 @@ def _complete_recovery(store: SQLiteControlStore) -> tuple[str, str]:
             ),
         )
     )
-    unit.commit()
+    _commit_core_fixture(store, unit)
     return transaction_id, request_fingerprint
 
 
@@ -771,13 +891,62 @@ def _reset_run(
             "prior_workspace_revision": prior_revision,
         }
     )
-    contract = predecessor.run_contract_bindings[0].model_copy(
+    predecessor_contract = predecessor.run_contract_bindings[0]
+    adapter_ref = predecessor_contract.runtime_adapter_artifact
+    source_ref = predecessor_contract.runtime_source_plan_artifact
+    adapter_payload = json.loads(
+        store.read_artifact_revision_bytes(
+            predecessor_run_id, adapter_ref.artifact_id, adapter_ref.revision
+        )
+    )
+    adapter_payload["run_id"] = successor_run_id
+    adapter_payload.pop("binding_fingerprint", None)
+    adapter_payload["binding_fingerprint"] = canonical_fingerprint(adapter_payload)
+    adapter_bytes = canonical_json_bytes(adapter_payload)
+    source_payload = json.loads(
+        store.read_artifact_revision_bytes(
+            predecessor_run_id, source_ref.artifact_id, source_ref.revision
+        )
+    )
+    source_payload["run_id"] = successor_run_id
+    source_payload.pop("source_plan_fingerprint", None)
+    source_payload["source_plan_fingerprint"] = canonical_fingerprint(source_payload)
+    source_bytes = canonical_json_bytes(source_payload)
+    contract = predecessor_contract.model_copy(
         update={
             "run_id": successor_run_id,
+            "runtime_adapter_sha256": sha256_hex(adapter_bytes),
+            "runtime_adapter_fingerprint": adapter_payload["binding_fingerprint"],
+            "runtime_source_plan_sha256": sha256_hex(source_bytes),
+            "runtime_source_plan_fingerprint": source_payload["source_plan_fingerprint"],
             "created_at": NOW,
             "initialization_event_id": initialized_event_id,
             "accepted_transaction_id": transaction_id,
             "request_fingerprint": request_fingerprint,
+        }
+    )
+    contract = contract.model_copy(
+        update={
+            "contract_fingerprint": run_contract_fingerprint(
+                runtime=contract.runtime,
+                stage_specs_schema=contract.stage_specs_schema,
+                stage_specs_sha256=contract.stage_specs_sha256,
+                artifact_contracts_schema=contract.artifact_contracts_schema,
+                artifact_contracts_sha256=contract.artifact_contracts_sha256,
+                policy_pack_schema=contract.policy_pack_schema,
+                policy_pack_name=contract.policy_pack_name,
+                policy_pack_sha256=contract.policy_pack_sha256,
+                runtime_adapter_sha256=contract.runtime_adapter_sha256,
+                runtime_adapter_fingerprint=contract.runtime_adapter_fingerprint,
+                runtime_source_plan_sha256=contract.runtime_source_plan_sha256,
+                runtime_source_plan_fingerprint=contract.runtime_source_plan_fingerprint,
+                run_direction=contract.run_direction.model_dump(mode="json"),
+                workspace_config_sha256=contract.workspace_config_sha256,
+                sources_config_sha256=contract.sources_config_sha256,
+                role_topology=contract.role_topology,
+                gate_strictness=contract.gate_strictness,
+                input_governance_required=contract.input_governance_required,
+            )
         }
     )
     head_transition = _record(
@@ -833,8 +1002,24 @@ def _reset_run(
                 artifact.artifact_id,
                 revision_number,
             )
+            if (artifact.artifact_id, revision_number) == (
+                adapter_ref.artifact_id,
+                adapter_ref.revision,
+            ):
+                content = adapter_bytes
+            elif (artifact.artifact_id, revision_number) == (
+                source_ref.artifact_id,
+                source_ref.revision,
+            ):
+                content = source_bytes
             unit.put_artifact_revision(
-                revision.model_copy(update={"run_id": successor_run_id}),
+                revision.model_copy(
+                    update={
+                        "run_id": successor_run_id,
+                        "sha256": sha256_hex(content),
+                        "size_bytes": len(content),
+                    }
+                ),
                 content,
             )
 
@@ -938,6 +1123,16 @@ def _reset_run(
                 primary_record_id=transition_id,
             ),
         ).model_copy(update={"run_id": successor_run_id})
+    )
+    stage_checkout_effect(
+        unit,
+        prepare_cross_run_checkout_effect(
+            workspace=store.path.parent,
+            snapshot=predecessor,
+            successor_run_id=successor_run_id,
+            transaction_id=transaction_id,
+            created_at=CLOCK(),
+        ),
     )
     unit.commit()
     return transaction_id, request_fingerprint
@@ -1308,6 +1503,36 @@ def test_repair_start_is_receipt_bound_replayable_and_restart_safe(
         assert reopened.current_revision == revision
 
 
+def test_typed_recovery_service_starts_one_repair_after_exact_replay_probe(
+    tmp_path: Path,
+) -> None:
+    workspace = _initialized_workspace(tmp_path)
+    with SQLiteControlStore.open(workspace / "briefloop.db", clock=CLOCK) as store:
+        _accept_input_classification(store)
+        _record_contamination(store)
+        before = store.current_revision
+    request = _record(
+        RepairStartRequest,
+        request_id="REQ-TYPED-REPAIR-START-001",
+        run_id=RUN_ID,
+        contamination_revision=2,
+        owner_stage_id="input-governance",
+        permitted_artifact_ids=["input_classification"],
+        reason_code="frozen_artifact_contaminated",
+        expected_store_revision=before,
+    )
+    service = CoreRunRecoveryService(workspace, clock=CLOCK)
+    first = service.start_repair(request)
+    assert first.status == "committed", first.to_dict()
+    replay = service.start_repair(request)
+    assert replay.status == "replayed"
+    assert replay.receipt == first.receipt
+    with SQLiteControlStore.open(workspace / "briefloop.db", clock=CLOCK) as store:
+        assert store.current_revision == before + 1
+        snapshot = store.load_snapshot(RUN_ID)
+        assert classify_recovery_legality(snapshot).state == "active_repair"
+        assert len(snapshot.receipt_checkout_bindings) >= 2
+
 def test_active_repair_authorization_is_bounded_by_canonical_artifact_scope(
     tmp_path: Path,
 ) -> None:
@@ -1537,11 +1762,16 @@ def test_repair_supersession_completion_and_recovery_are_exact_receipts(
         assert [item.recovery_id for item in recovery_receipt.recovery_completions] == [
             "RECOVERY-COMPLETION-001"
         ]
+        assert [
+            item.integrity_revision for item in recovery_receipt.run_integrity_records
+        ] == [3]
         assert recovery_receipt.event_ids == ["EVT-RECOVERY-COMPLETE-001"]
 
         legality = classify_recovery_legality(snapshot)
         assert legality.state == "recovered_current"
+        assert snapshot.run_integrity_records[-1].status == "clean"
         assert legality.permitted_artifact_ids == ("input_classification",)
+
         assert legality.required_rerun_transition_ids == (rerun_transition_id,)
         CoreRunDomainVerifier().verify(store, RUN_ID)
 
@@ -1556,17 +1786,17 @@ def test_repair_supersession_completion_and_recovery_are_exact_receipts(
 
         # R16: a later repair may carry a different finite scope, but the
         # receipt-N projection keeps the original repair's exact authority.
-        later_contamination = snapshot.run_integrity_records[-1].model_copy(
+        later_contamination = snapshot.run_integrity_records[-2].model_copy(
             update={
-                "integrity_revision": 3,
-                "prior_integrity_revision": 2,
+                "integrity_revision": 4,
+                "prior_integrity_revision": 3,
                 "accepted_transaction_id": recovery_request[0],
             }
         )
         later_repair = snapshot.repair_cycles[0].model_copy(
             update={
                 "repair_id": "REPAIR-RECOVERY-LATER-001",
-                "contamination_revision": 3,
+                "contamination_revision": 4,
                 "permitted_artifact_ids": ["audited_brief"],
                 "accepted_transaction_id": recovery_request[0],
             }
@@ -1615,6 +1845,294 @@ def test_repair_supersession_completion_and_recovery_are_exact_receipts(
         assert reopened.current_revision == revision
 
 
+def test_recovered_clean_integrity_chain_and_receipt_tamper_fail_closed(
+    tmp_path: Path,
+) -> None:
+    workspace = _initialized_workspace(tmp_path)
+    with SQLiteControlStore.open(workspace / "briefloop.db", clock=CLOCK) as store:
+        _accept_input_classification(store)
+        _record_contamination(store)
+        _start_repair(store)
+        _supersede_input_classification(store)
+        _complete_repair(store)
+        _complete_reopened_stage(store)
+        recovery_request = _complete_recovery(store)
+        snapshot = store.load_snapshot(RUN_ID)
+
+    receipt = next(
+        item
+        for item in snapshot.transactions
+        if item.transaction_id == recovery_request[0]
+    )
+    initial, contaminated, recovered = snapshot.run_integrity_records
+    forged_snapshots = (
+        replace(snapshot, recovery_completions=()),
+        replace(
+            snapshot,
+            run_integrity_records=(
+                initial,
+                contaminated.model_copy(
+                    update={
+                        "status": "clean",
+                        "affected_artifact_id": None,
+                        "affected_artifact_revision": None,
+                        "expected_workspace_path": None,
+                        "expected_sha256": None,
+                        "observed_entry_kind": None,
+                        "observed_sha256": None,
+                        "reason_code": None,
+                        "first_detected_at": None,
+                        "first_detected_event_id": None,
+                    }
+                ),
+                recovered,
+            ),
+        ),
+        replace(
+            snapshot,
+            run_integrity_records=(
+                initial,
+                contaminated,
+                recovered.model_copy(update={"prior_integrity_revision": 1}),
+            ),
+        ),
+        replace(
+            snapshot,
+            run_integrity_records=(
+                initial,
+                contaminated,
+                recovered.model_copy(
+                    update={"accepted_transaction_id": "REQ-FORGED-RECOVERY-001"}
+                ),
+            ),
+        ),
+        replace(
+            snapshot,
+            run_integrity_records=(
+                initial,
+                contaminated,
+                recovered.model_copy(update={"request_fingerprint": "f" * 64}),
+            ),
+        ),
+    )
+    for forged in forged_snapshots:
+        with pytest.raises(CoreRunError, match="control_store_integrity_invalid"):
+            CoreRunDomainVerifier._verify_integrity_chain(forged)
+
+    store_forgeries = (
+        replace(
+            snapshot,
+            run_integrity_records=(
+                initial,
+                contaminated.model_copy(update={"status": "clean"}),
+                recovered,
+            ),
+        ),
+        replace(
+            snapshot,
+            run_integrity_records=(
+                initial,
+                contaminated,
+                recovered.model_copy(update={"status": "contaminated"}),
+            ),
+        ),
+        replace(
+            snapshot,
+            run_integrity_records=(
+                initial,
+                contaminated,
+                recovered.model_copy(update={"prior_integrity_revision": 1}),
+            ),
+        ),
+    )
+    with SQLiteControlStore.open(workspace / "briefloop.db", clock=CLOCK) as store:
+        for forged in store_forgeries:
+            with pytest.raises(
+                ControlStoreIntegrityError,
+                match="core_run_relation_invalid",
+            ):
+                store._verify_core_snapshot_structure(forged)
+
+    for forged_receipt in (
+        receipt.model_copy(update={"run_integrity_records": []}),
+        receipt.model_copy(
+            update={
+                "run_integrity_records": [
+                    *receipt.run_integrity_records,
+                    *receipt.run_integrity_records,
+                ]
+            }
+        ),
+    ):
+        with pytest.raises(CoreRunError, match="control_store_integrity_invalid"):
+            _verified_core_receipt_binding(snapshot, forged_receipt)
+
+
+def test_recovery_service_owns_supersession_repair_and_recovery_transactions(
+    tmp_path: Path,
+) -> None:
+    workspace = _initialized_workspace(tmp_path)
+    database = workspace / "briefloop.db"
+    with SQLiteControlStore.open(database, clock=CLOCK) as store:
+        _accept_input_classification(store)
+        _record_contamination(store)
+        contaminated = store.load_snapshot(RUN_ID)
+    service = CoreRunRecoveryService(workspace, clock=CLOCK)
+    start_request = RepairStartRequest.model_validate(
+        {
+            "schema_version": RepairStartRequest.schema_id,
+            "request_id": "REQ-RECOVERY-SERVICE-START-002",
+            "run_id": RUN_ID,
+            "contamination_revision": 2,
+            "owner_stage_id": "input-governance",
+            "permitted_artifact_ids": ["input_classification"],
+            "reason_code": "workspace_artifact_changed",
+            "expected_store_revision": contaminated.store_revision,
+        },
+        strict=True,
+    )
+    start = service.start_repair(start_request)
+    assert start.status == "committed"
+    scratch = workspace / "scratch" / "repair-service"
+    scratch.mkdir(parents=True)
+    content = b'{"classification":"repaired-service"}\n'
+    (scratch / "input.json").write_bytes(content)
+    with SQLiteControlStore.open(database, clock=CLOCK) as store:
+        active = store.load_snapshot(RUN_ID)
+        prior = next(item for item in active.artifacts if item.artifact_id == "input_classification")
+        prior_revision = next(
+            item
+            for item in active.artifact_revisions
+            if item.artifact_id == prior.artifact_id
+            and item.revision == prior.current_revision
+        )
+    (workspace / prior_revision.path).parent.mkdir(parents=True, exist_ok=True)
+    (workspace / prior_revision.path).write_bytes(content)
+    supersede_request = ArtifactSupersedeRequest.model_validate(
+        {
+            "schema_version": ArtifactSupersedeRequest.schema_id,
+            "request_id": "REQ-RECOVERY-SERVICE-SUPERSEDE-001",
+            "run_id": RUN_ID,
+            "repair_id": start.primary_record_id,
+            "prior_artifact": {"artifact_id": prior.artifact_id, "revision": prior.current_revision},
+            "input_path": "scratch/repair-service/input.json",
+            "expected_input_sha256": sha256_hex(content),
+            "expected_current_revision": prior.current_revision,
+            "mode": "repair",
+            "reason_code": "frozen_artifact_repaired",
+            "expected_store_revision": active.store_revision,
+        },
+        strict=True,
+    )
+    supersede = service.supersede_artifact(supersede_request)
+    if sys.platform == "win32":
+        assert supersede.to_dict() == {
+            "status": "failed_uncommitted",
+            "error_code": "checkout_publication_unsupported",
+        }
+        with SQLiteControlStore.open(database, clock=CLOCK) as store:
+            unsupported = store.load_snapshot(RUN_ID)
+        assert unsupported.store_revision == active.store_revision
+        assert unsupported.transactions == active.transactions
+        assert unsupported.artifact_supersessions == active.artifact_supersessions
+        assert unsupported.artifact_revisions == active.artifact_revisions
+        return
+    assert supersede.status == "committed"
+    with SQLiteControlStore.open(database, clock=CLOCK) as store:
+        repaired = store.load_snapshot(RUN_ID)
+        stage = next(item for item in repaired.stage_states if item.stage_id == "input-governance")
+    repair_request = RepairCompleteRequest.model_validate(
+        {
+            "schema_version": RepairCompleteRequest.schema_id,
+            "request_id": "REQ-RECOVERY-SERVICE-COMPLETE-001",
+            "run_id": RUN_ID,
+            "repair_id": start.primary_record_id,
+            "supersession_ids": [supersede.primary_record_id],
+            "expected_stage_revisions": {stage.stage_id: stage.revision},
+            "expected_store_revision": repaired.store_revision,
+        },
+        strict=True,
+    )
+    repair_complete = service.complete_repair(repair_request)
+    assert repair_complete.status == "committed"
+    with SQLiteControlStore.open(database, clock=CLOCK) as store:
+        rerun_transition_id = _complete_reopened_stage(store)
+        rerun = store.load_snapshot(RUN_ID)
+    recovery_request = RecoveryCompleteRequest.model_validate(
+        {
+            "schema_version": RecoveryCompleteRequest.schema_id,
+            "request_id": "REQ-RECOVERY-SERVICE-RECOVER-001",
+            "run_id": RUN_ID,
+            "repair_completion_id": repair_complete.primary_record_id,
+            "contamination_revision": 2,
+            "rerun_transition_ids": [rerun_transition_id],
+            "gate_evaluation_ids": [],
+            "expected_store_revision": rerun.store_revision,
+        },
+        strict=True,
+    )
+    recovery = service.complete_recovery(recovery_request)
+    assert recovery.status == "committed"
+    replay = service.complete_recovery(recovery_request)
+    assert replay.status == "replayed"
+    assert replay.receipt == recovery.receipt
+    with SQLiteControlStore.open(database, clock=CLOCK) as store:
+        verified = CoreRunDomainVerifier().verify(store, RUN_ID)
+        assert verified.snapshot.run_integrity_records[-1].status == "clean"
+        revision = verified.snapshot.store_revision
+        blocked = RunIntegrityService(workspace, clock=CLOCK).require_clean(
+            store,
+            verified,
+            request_id="REQ-RECOVERY-SERVICE-NEXT-EFFECT-001",
+            request_fingerprint=canonical_fingerprint(
+                {"effect_kind": "next_normal_effect"}
+            ),
+            expected_store_revision=revision,
+        )
+        assert blocked is None
+        assert store.current_revision == revision
+
+
+def test_recovery_complete_failure_rolls_back_clean_successor_and_receipt(
+    tmp_path: Path,
+) -> None:
+    workspace = _initialized_workspace(tmp_path)
+    database = workspace / "briefloop.db"
+    with SQLiteControlStore.open(database, clock=CLOCK) as store:
+        _accept_input_classification(store)
+        _record_contamination(store)
+        _start_repair(store)
+        _supersede_input_classification(store)
+        _complete_repair(store)
+        _complete_reopened_stage(store)
+        before = store.load_snapshot(RUN_ID)
+
+    def fail(stage: str) -> None:
+        if stage == "before_commit":
+            raise ControlStoreIntegrityError("injected_core_run_failure")
+
+    with SQLiteControlStore.open(
+        database,
+        clock=CLOCK,
+        _failure_hook=fail,
+    ) as store:
+        with pytest.raises(
+            ControlStoreIntegrityError,
+            match="injected_core_run_failure",
+        ):
+            _complete_recovery(store)
+
+    with SQLiteControlStore.open(database, clock=CLOCK) as store:
+        after = store.load_snapshot(RUN_ID)
+        assert after.store_revision == before.store_revision
+        assert after.run_integrity_records == before.run_integrity_records
+        assert after.recovery_completions == before.recovery_completions
+        assert all(
+            item.transaction_id != "REQ-RECOVERY-COMPLETE-001"
+            for item in after.transactions
+        )
+
+
 def test_repair_start_before_commit_failure_rolls_back_every_relation(
     tmp_path: Path,
 ) -> None:
@@ -1651,6 +2169,242 @@ def test_repair_start_before_commit_failure_rolls_back_every_relation(
         assert all(
             item.transaction_id != "REQ-RECOVERY-REPAIR-START-001"
             for item in snapshot.events
+        )
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="requires working-checkout publication")
+def test_recovery_service_reset_is_cross_run_and_historical_replay_safe(
+    tmp_path: Path,
+) -> None:
+    workspace = _initialized_workspace(tmp_path)
+    database = workspace / "briefloop.db"
+    service = CoreRunRecoveryService(workspace, clock=CLOCK)
+    doctor = CoreRunService(workspace, clock=CLOCK).doctor_check(
+        IntegrityCheckRequest.model_validate(
+            {
+                "schema_version": IntegrityCheckRequest.schema_id,
+                "request_id": "REQ-RECOVERY-RESET-DOCTOR-001",
+                "run_id": RUN_ID,
+                "expected_store_revision": 1,
+            },
+            strict=True,
+        )
+    )
+    assert doctor.status == "committed"
+    with SQLiteControlStore.open(database, clock=CLOCK) as store:
+        before_invocation = store.load_snapshot(RUN_ID)
+    invocation = CoreRunService(workspace, clock=CLOCK).start_invocation(
+        _record(
+            InvocationStartRequest,
+            request_id="REQ-RECOVERY-RESET-PLANNER-001",
+            run_id=RUN_ID,
+            stage_id="source-discovery",
+            role_id="source-planner",
+            runtime="operator",
+            expected_store_revision=before_invocation.store_revision,
+        )
+    )
+    assert invocation.status == "committed", invocation.to_dict()
+    candidates = workspace / "scratch" / invocation.primary_record_id / "source_candidates.yaml"
+    candidates.parent.mkdir(parents=True, exist_ok=True)
+    candidates.write_text("sources:\n  - SRC-RESET-001\n", encoding="utf-8")
+    with SQLiteControlStore.open(database, clock=CLOCK) as store:
+        before_artifact = store.load_snapshot(RUN_ID)
+    accepted = ArtifactAcceptanceService(workspace, clock=CLOCK).submit_owned_artifact(
+        _record(
+            OwnedArtifactSubmitRequest,
+            request_id="REQ-RECOVERY-RESET-SOURCES-001",
+            run_id=RUN_ID,
+            artifact_id="source_candidates",
+            invocation_id=invocation.primary_record_id,
+            producer_tool_id=None,
+            input_path=candidates.relative_to(workspace).as_posix(),
+            expected_store_revision=before_artifact.store_revision,
+            expected_artifact_revision=0,
+            expected_parent_artifact=None,
+        )
+    )
+    assert accepted.status == "committed", accepted.to_dict()
+    with SQLiteControlStore.open(database, clock=CLOCK) as store:
+        predecessor = store.load_snapshot(RUN_ID)
+        predecessor_artifact = next(
+            item
+            for item in predecessor.artifacts
+            if item.artifact_id == "source_candidates"
+        )
+    predecessor_projection = workspace / predecessor_artifact.path
+    assert predecessor_projection.is_file()
+
+    def request_for(predecessor: str, successor: str, request_id: str) -> RunResetRequest:
+        with SQLiteControlStore.open(database, clock=CLOCK) as store:
+            snapshot = store.load_snapshot(predecessor)
+            binding = snapshot.run_contract_bindings[0]
+        return RunResetRequest.model_validate(
+            {
+                "schema_version": RunResetRequest.schema_id,
+                "request_id": request_id,
+                "predecessor_run_id": predecessor,
+                "successor_run_id": successor,
+                "workspace_id": snapshot.workspace_id,
+                "runtime": snapshot.run.runtime,
+                "expected_head_run_id": predecessor,
+                "expected_store_revision": snapshot.store_revision,
+                "expected_workspace_revision": snapshot.store_revision,
+                "run_direction": binding.run_direction.model_dump(mode="json"),
+                "workspace_config_sha256": binding.workspace_config_sha256,
+                "sources_config_sha256": binding.sources_config_sha256,
+                "role_topology": binding.role_topology,
+                "gate_strictness": binding.gate_strictness,
+                "input_governance_required": binding.input_governance_required,
+            },
+            strict=True,
+        )
+
+    first_request = request_for(RUN_ID, "RUN-RECOVERY-SERVICE-RESET-002", "REQ-RECOVERY-SERVICE-RESET-001")
+    first = service.reset_run(first_request)
+    assert first.status == "committed", first.to_dict()
+    assert not predecessor_projection.exists()
+    successor_run_id = "RUN-RECOVERY-SERVICE-RESET-002"
+    with SQLiteControlStore.open(database, clock=CLOCK) as store:
+        successor = store.load_snapshot(successor_run_id)
+    successor_doctor = CoreRunService(workspace, clock=CLOCK).doctor_check(
+        _record(
+            IntegrityCheckRequest,
+            request_id="REQ-RECOVERY-RESET-DOCTOR-002",
+            run_id=successor_run_id,
+            expected_store_revision=successor.store_revision,
+        )
+    )
+    assert successor_doctor.status == "committed", successor_doctor.to_dict()
+    with SQLiteControlStore.open(database, clock=CLOCK) as store:
+        successor = store.load_snapshot(successor_run_id)
+    successor_invocation = CoreRunService(
+        workspace, clock=CLOCK
+    ).start_invocation(
+        _record(
+            InvocationStartRequest,
+            request_id="REQ-RECOVERY-RESET-PLANNER-002",
+            run_id=successor_run_id,
+            stage_id="source-discovery",
+            role_id="source-planner",
+            runtime="operator",
+            expected_store_revision=successor.store_revision,
+        )
+    )
+    assert successor_invocation.status == "committed", (
+        successor_invocation.to_dict()
+    )
+    successor_candidates = (
+        workspace
+        / "scratch"
+        / successor_invocation.primary_record_id
+        / "source_candidates.yaml"
+    )
+    successor_candidates.parent.mkdir(parents=True, exist_ok=True)
+    successor_candidates.write_text(
+        "sources:\n  - SRC-RESET-002\n", encoding="utf-8"
+    )
+    with SQLiteControlStore.open(database, clock=CLOCK) as store:
+        successor = store.load_snapshot(successor_run_id)
+    successor_accepted = ArtifactAcceptanceService(
+        workspace, clock=CLOCK
+    ).submit_owned_artifact(
+        _record(
+            OwnedArtifactSubmitRequest,
+            request_id="REQ-RECOVERY-RESET-SOURCES-002",
+            run_id=successor_run_id,
+            artifact_id="source_candidates",
+            invocation_id=successor_invocation.primary_record_id,
+            producer_tool_id=None,
+            input_path=successor_candidates.relative_to(workspace).as_posix(),
+            expected_store_revision=successor.store_revision,
+            expected_artifact_revision=0,
+            expected_parent_artifact=None,
+        )
+    )
+    assert successor_accepted.status == "committed", (
+        successor_accepted.to_dict()
+    )
+    assert predecessor_projection.read_text(encoding="utf-8") == (
+        "sources:\n  - SRC-RESET-002\n"
+    )
+    second_request = request_for(
+        successor_run_id,
+        "RUN-RECOVERY-SERVICE-RESET-003",
+        "REQ-RECOVERY-SERVICE-RESET-002",
+    )
+    second = service.reset_run(second_request)
+    assert second.status == "committed"
+    assert not predecessor_projection.exists()
+    (workspace / "sources.yaml").write_text("not: [valid\n", encoding="utf-8")
+    replay = service.reset_run(first_request)
+    assert replay.status == "replayed"
+    assert replay.receipt == first.receipt
+    with SQLiteControlStore.open(database, clock=CLOCK) as store:
+        latest = store.load_snapshot("RUN-RECOVERY-SERVICE-RESET-003")
+        first_snapshot = store.load_snapshot("RUN-RECOVERY-SERVICE-RESET-002")
+    assert latest.workspace_run_head.current_run_id == "RUN-RECOVERY-SERVICE-RESET-003"
+    first_binding = first_snapshot.receipt_checkout_bindings[-1]
+    assert first_binding.pre_run_id == RUN_ID
+    assert first_binding.post_run_id == "RUN-RECOVERY-SERVICE-RESET-002"
+    assert first_binding.pre_checkout_revision_id == first_binding.post_checkout_revision_id or first_binding.pre_checkout_revision_id is not None
+    assert next(
+        item for item in first_snapshot.stage_states if item.stage_id == "doctor"
+    ).status == "complete"
+
+
+def test_reset_rejects_unsupported_runtime_topology_before_store_write(
+    tmp_path: Path,
+) -> None:
+    workspace = _initialized_workspace(tmp_path)
+    database = workspace / "briefloop.db"
+    successor_run_id = "RUN-RECOVERY-UNSUPPORTED-TOPOLOGY-002"
+    request_id = "REQ-RECOVERY-UNSUPPORTED-TOPOLOGY-001"
+    with SQLiteControlStore.open(database, clock=CLOCK) as store:
+        before = store.load_snapshot(RUN_ID)
+        binding = before.run_contract_bindings[0]
+        adapter_reference = binding.runtime_adapter_artifact
+        adapter_payload = json.loads(
+            store.read_artifact_revision_bytes(
+                RUN_ID,
+                adapter_reference.artifact_id,
+                adapter_reference.revision,
+            )
+        )
+        assert "human_assisted" not in adapter_payload["supported_role_topologies"]
+
+    request = RunResetRequest.model_validate(
+        {
+            "schema_version": RunResetRequest.schema_id,
+            "request_id": request_id,
+            "predecessor_run_id": RUN_ID,
+            "successor_run_id": successor_run_id,
+            "workspace_id": before.workspace_id,
+            "runtime": before.run.runtime,
+            "expected_head_run_id": RUN_ID,
+            "expected_store_revision": before.store_revision,
+            "expected_workspace_revision": before.store_revision,
+            "run_direction": binding.run_direction.model_dump(mode="json"),
+            "workspace_config_sha256": binding.workspace_config_sha256,
+            "sources_config_sha256": binding.sources_config_sha256,
+            "role_topology": "human_assisted",
+            "gate_strictness": binding.gate_strictness,
+            "input_governance_required": binding.input_governance_required,
+        },
+        strict=True,
+    )
+    result = CoreRunRecoveryService(workspace, clock=CLOCK).reset_run(request)
+
+    assert result.status == "failed_uncommitted"
+    assert result.error_code == "runtime_adapter_binding_invalid"
+    with SQLiteControlStore.open(database, clock=CLOCK) as store:
+        after = store.load_snapshot(RUN_ID)
+        history = store.load_history()
+        assert store.current_revision == before.store_revision
+        assert after.workspace_run_head == before.workspace_run_head
+        assert all(item.transaction_id != request_id for item in after.transactions)
+        assert all(
+            item.run.run_id != successor_run_id for item in history.snapshots
         )
 
 

@@ -11,11 +11,20 @@ from multi_agent_brief.cli.init_wizard import create_demo_workspace
 from multi_agent_brief.cli.main import build_parser, main
 from multi_agent_brief.contracts.v2 import CoreRunInitializeRequest
 from multi_agent_brief.control_store import SQLiteControlStore
+from multi_agent_brief.control_store.serialization import canonical_fingerprint
 from multi_agent_brief.core_run_v2 import CoreRunResult, CoreRunService
 from multi_agent_brief.core_run_v2.service import workspace_input_fingerprints
 
 
 ROOT = Path(__file__).parents[1]
+
+
+def _bind_runtime_adapter(payload: dict[str, object]) -> None:
+    adapter = dict(payload["runtime_adapter_binding"])
+    adapter["run_id"] = payload["run_id"]
+    adapter.pop("binding_fingerprint", None)
+    adapter["binding_fingerprint"] = canonical_fingerprint(adapter)
+    payload["runtime_adapter_binding"] = adapter
 
 
 def test_hidden_core_v2_initialize_emits_one_json_result(
@@ -35,6 +44,7 @@ def test_hidden_core_v2_initialize_emits_one_json_result(
         workspace_config_sha256="0" * 64,
         sources_config_sha256="0" * 64,
     )
+    _bind_runtime_adapter(payload)
     request_path.write_text(json.dumps(payload), encoding="utf-8")
 
     exit_code = main(
@@ -129,6 +139,7 @@ def test_hidden_core_v2_initialize_replay_uses_verified_binding_hashes(
         workspace_config_sha256="caller-value-is-ignored",
         sources_config_sha256="caller-value-is-ignored",
     )
+    _bind_runtime_adapter(payload)
     request_path.write_text(json.dumps(payload), encoding="utf-8")
     command = [
         "core-v2",
@@ -188,6 +199,7 @@ def test_hidden_core_v2_initialize_semantic_conflict_is_zero_write(
         workspace_id="WS-CLI-INIT-CONFLICT",
         input_governance_required=False,
     )
+    _bind_runtime_adapter(payload)
     request_path.write_text(json.dumps(payload), encoding="utf-8")
     command = [
         "core-v2",

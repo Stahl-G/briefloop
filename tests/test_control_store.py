@@ -22,6 +22,7 @@ from multi_agent_brief.contracts.v2 import (
     Delivery,
     EventEnvelope,
     Invocation,
+    ReceiptCheckoutBinding,
     RunIdentity,
     SourceProposal,
     StageState,
@@ -38,6 +39,7 @@ from multi_agent_brief.control_store import (
 )
 from multi_agent_brief.control_store.schema import migration_sql
 from multi_agent_brief.control_store.serialization import canonical_model_text
+from multi_agent_brief.core_run_v2.checkout import build_checkout_revision
 
 
 RUN_ID = "RUN-20260715-001"
@@ -1251,6 +1253,34 @@ def test_artifact_identity_is_inception_owned_and_history_is_revision_exact(
             )
             unit.put_artifact(records.artifact)
             unit.put_artifact_revision(records.revision, BLOB)
+            checkout = build_checkout_revision(
+                workspace_id=WORKSPACE_ID,
+                run_id=RUN_ID,
+                transaction_id=TRANSACTION_ID,
+                created_at=datetime.fromisoformat(NOW),
+                artifact_revisions=(records.revision,),
+                parent_checkout_revision_id=None,
+            )
+            unit.put_checkout_revision(checkout.record)
+            for member in checkout.members:
+                unit.put_checkout_revision_member(member)
+            unit.put_receipt_checkout_binding(
+                ReceiptCheckoutBinding.model_validate(
+                    {
+                        "schema_version": ReceiptCheckoutBinding.schema_id,
+                        "workspace_id": WORKSPACE_ID,
+                        "run_id": RUN_ID,
+                        "transaction_id": TRANSACTION_ID,
+                        "pre_run_id": RUN_ID,
+                        "pre_checkout_revision_id": None,
+                        "post_run_id": RUN_ID,
+                        "post_checkout_revision_id": (
+                            checkout.record.checkout_revision_id
+                        ),
+                    },
+                    strict=True,
+                )
+            )
             return unit
 
         first = stage_first().commit()

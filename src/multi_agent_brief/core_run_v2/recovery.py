@@ -3,14 +3,45 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from datetime import datetime, timezone
 from enum import Enum
+import os
+from pathlib import Path
+from typing import Callable
 
 from multi_agent_brief.contracts.v2 import (
+    ArtifactRecord,
+    ArtifactRevertRequest,
+    ArtifactRevision,
+    ArtifactSupersedeRequest,
+    ArtifactSupersessionRecord,
+    ArtifactRevisionReference,
+    OwnedArtifactSubmissionRecord,
     RecoveryCompletionRecord,
+    RecoveryCompleteRequest,
     RepairCompletionRecord,
+    RepairCompleteRequest,
     RepairCycleRecord,
+    RepairStartRequest,
+    RunHeadTransitionRecord,
+    RunIdentity,
+    RunIntegrityRecord,
+    RunResetRequest,
+    CoreRunEventBinding,
+    EventEnvelope,
+    StageState,
+    StageTransitionRecord,
+    WorkspaceRunHead,
+)
+from multi_agent_brief.control_store import ControlStoreError, SQLiteControlStore
+from multi_agent_brief.control_store.serialization import (
+    canonical_fingerprint,
+    canonical_json_bytes,
+    sha256_hex,
 )
 from multi_agent_brief.control_store.sqlite_store import ControlStoreSnapshot
+from multi_agent_brief.intake_v2.errors import IntakeError
+from multi_agent_brief.intake_v2.scratch import ScratchReader
 
 from .errors import CoreRunError
 
@@ -637,7 +668,1161 @@ def require_reopened_artifact_epoch(
     )
 
 
+_Clock = Callable[[], datetime]
+
+
+class CoreRunRecoveryService:
+    """Typed deterministic recovery transactions over one verified snapshot."""
+
+    def __init__(
+        self,
+        workspace: str | os.PathLike[str],
+        *,
+        clock: _Clock | None = None,
+    ) -> None:
+        try:
+            self.workspace = Path(workspace).expanduser().resolve(strict=True)
+            if not self.workspace.is_dir():
+                raise ValueError
+        except (OSError, RuntimeError, TypeError, ValueError) as exc:
+            raise CoreRunError("core_run_request_invalid") from exc
+        try:
+            self._reader = ScratchReader(self.workspace)
+        except IntakeError as exc:
+            raise CoreRunError("core_run_request_invalid") from exc
+        self._clock = clock or (lambda: datetime.now(timezone.utc))
+
+    def start_repair(self, request: RepairStartRequest):
+        from .errors import core_run_failure_result
+
+        try:
+            return self._start_repair(request)
+        except (CoreRunError, ControlStoreError) as exc:
+            return core_run_failure_result(exc)
+
+    def supersede_artifact(self, request: ArtifactSupersedeRequest):
+        from .errors import core_run_failure_result
+
+        try:
+            return self._supersede_artifact(request)
+        except (CoreRunError, ControlStoreError) as exc:
+            return core_run_failure_result(exc)
+
+    def revert_artifact(self, request: ArtifactRevertRequest):
+        from .errors import core_run_failure_result
+
+        try:
+            return self._revert_artifact(request)
+        except (CoreRunError, ControlStoreError) as exc:
+            return core_run_failure_result(exc)
+
+    def complete_repair(self, request: RepairCompleteRequest):
+        from .errors import core_run_failure_result
+
+        try:
+            return self._complete_repair(request)
+        except (CoreRunError, ControlStoreError) as exc:
+            return core_run_failure_result(exc)
+
+    def complete_recovery(self, request: RecoveryCompleteRequest):
+        from .errors import core_run_failure_result
+
+        try:
+            return self._complete_recovery(request)
+        except (CoreRunError, ControlStoreError) as exc:
+            return core_run_failure_result(exc)
+
+    def reset_run(self, request: RunResetRequest):
+        from .errors import core_run_failure_result
+
+        try:
+            return self._reset_run(request)
+        except (CoreRunError, ControlStoreError) as exc:
+            return core_run_failure_result(exc)
+
+    def _start_repair(self, request: RepairStartRequest):
+        from .checkout import prepare_checkout_effect, stage_checkout_effect
+        from .errors import CoreRunResult
+        from .policy import derived_id, transaction_type_for
+        from .verifier import CoreRunDomainVerifier, resolve_core_replay
+
+        fingerprint = canonical_fingerprint(
+            request.model_dump(mode="json", exclude_unset=False)
+        )
+        with SQLiteControlStore.open(
+            self.workspace / "briefloop.db",
+            clock=self._clock,
+        ) as store:
+            replay = resolve_core_replay(
+                store,
+                run_id=request.run_id,
+                request_id=request.request_id,
+                request_fingerprint=fingerprint,
+            )
+            if replay is not None:
+                return replay
+            verifier = CoreRunDomainVerifier()
+            verified = verifier.verify(store, request.run_id)
+            if verified.snapshot.store_revision != request.expected_store_revision:
+                raise CoreRunError("store_revision_conflict")
+            legality = classify_recovery_legality(verified.snapshot)
+            if (
+                legality.state != "blocked"
+                or legality.latest_contamination_revision
+                != request.contamination_revision
+            ):
+                raise CoreRunError("repair_scope_invalid")
+            contamination = next(
+                (
+                    item
+                    for item in verified.snapshot.run_integrity_records
+                    if item.integrity_revision == request.contamination_revision
+                    and item.status == "contaminated"
+                ),
+                None,
+            )
+            if (
+                contamination is None
+                or contamination.affected_artifact_id
+                not in request.permitted_artifact_ids
+                or request.permitted_artifact_ids
+                != sorted(set(request.permitted_artifact_ids))
+            ):
+                raise CoreRunError("repair_scope_invalid")
+            classify_effect_authorization(
+                verified.snapshot,
+                CoreEffect.REPAIR_START,
+                CoreEffectSubject(
+                    contamination_revision=request.contamination_revision,
+                    stage_id=request.owner_stage_id,
+                ),
+            ).require_allowed()
+            now = self._now()
+            repair_id = derived_id("REPAIR", request.request_id, fingerprint)
+            event_id = derived_id("EVT-REPAIR", request.request_id, fingerprint)
+            record = RepairCycleRecord.model_validate(
+                {
+                    "schema_version": RepairCycleRecord.schema_id,
+                    "repair_id": repair_id,
+                    "run_id": request.run_id,
+                    "contamination_revision": request.contamination_revision,
+                    "owner_stage_id": request.owner_stage_id,
+                    "permitted_artifact_ids": request.permitted_artifact_ids,
+                    "reason_code": request.reason_code,
+                    "started_at": now,
+                    "start_event_id": event_id,
+                    "accepted_transaction_id": request.request_id,
+                    "request_fingerprint": fingerprint,
+                },
+                strict=True,
+            )
+            event = EventEnvelope.model_validate(
+                {
+                    "schema_version": EventEnvelope.schema_id,
+                    "event_id": event_id,
+                    "run_id": request.run_id,
+                    "event_type": "repair_started",
+                    "created_at": now,
+                    "actor": "system",
+                    "transaction_id": request.request_id,
+                    "stage_id": request.owner_stage_id,
+                    "decision": "continue",
+                    "reason": "repair scope accepted",
+                    "metadata": {},
+                    "core_run_binding": CoreRunEventBinding(
+                        request_id=request.request_id,
+                        request_fingerprint=fingerprint,
+                        effect_kind="repair_start",
+                        primary_record_id=repair_id,
+                        outcome="committed",
+                    ),
+                },
+                strict=True,
+            )
+            checkout = prepare_checkout_effect(
+                workspace=self.workspace,
+                snapshot=verified.snapshot,
+                transaction_id=request.request_id,
+                created_at=self._clock(),
+            )
+            unit = store.begin(
+                request.run_id,
+                request.request_id,
+                transaction_type_for("repair_start"),
+                request.expected_store_revision,
+            )
+            unit.put_repair_cycle(record)
+            unit.append_event(event)
+            stage_checkout_effect(unit, checkout)
+            receipt = unit.commit(
+                _postcommit_observer=lambda _receipt: verifier.verify(
+                    store,
+                    request.run_id,
+                )
+            )
+            return CoreRunResult(
+                status="committed",
+                receipt=receipt,
+                primary_record_id=repair_id,
+            )
+
+    def _supersede_artifact(self, request: ArtifactSupersedeRequest):
+        fingerprint = canonical_fingerprint(
+            request.model_dump(mode="json", exclude_unset=False)
+        )
+        with SQLiteControlStore.open(
+            self.workspace / "briefloop.db", clock=self._clock
+        ) as store:
+            replay = self._replay(store, request.run_id, request.request_id, fingerprint)
+            if replay is not None:
+                return replay
+            try:
+                content = self._reader.read(request.input_path)
+            except IntakeError as exc:
+                raise CoreRunError("repair_scope_invalid") from exc
+            if sha256_hex(content) != request.expected_input_sha256:
+                raise CoreRunError("repair_scope_invalid")
+            return self._write_supersession(
+                store=store,
+                request=request,
+                fingerprint=fingerprint,
+                content=content,
+                source=None,
+            )
+
+    def _revert_artifact(self, request: ArtifactRevertRequest):
+        fingerprint = canonical_fingerprint(
+            request.model_dump(mode="json", exclude_unset=False)
+        )
+        with SQLiteControlStore.open(
+            self.workspace / "briefloop.db", clock=self._clock
+        ) as store:
+            replay = self._replay(store, request.run_id, request.request_id, fingerprint)
+            if replay is not None:
+                return replay
+            verified = self._verified_current(
+                store, request.run_id, request.expected_store_revision
+            )
+            source = self._exact_revision(
+                verified.snapshot, request.historical_source
+            )
+            try:
+                content = store.read_artifact_revision_bytes(
+                    request.run_id, source.artifact_id, source.revision
+                )
+            except ControlStoreError as exc:
+                raise CoreRunError("repair_history_invalid") from exc
+            return self._write_supersession(
+                store=store,
+                request=request,
+                fingerprint=fingerprint,
+                content=content,
+                source=source,
+                verified=verified,
+            )
+
+    def _write_supersession(
+        self,
+        *,
+        store,
+        request,
+        fingerprint: str,
+        content: bytes,
+        source: ArtifactRevision | None,
+        verified=None,
+    ):
+        from .checkout import (
+            prepare_checkout_effect,
+            publish_checkout_effect,
+            stage_checkout_effect,
+        )
+        from .errors import CoreRunResult
+        from .policy import derived_id, transaction_type_for
+        from .verifier import CoreRunDomainVerifier
+
+        verified = verified or self._verified_current(
+            store, request.run_id, request.expected_store_revision
+        )
+        prior_ref = (
+            request.prior_artifact
+            if isinstance(request, ArtifactSupersedeRequest)
+            else request.current_artifact
+        )
+        if (
+            prior_ref.revision != request.expected_current_revision
+            or source is not None
+            and source.revision >= prior_ref.revision
+        ):
+            raise CoreRunError("repair_history_invalid")
+        prior = self._exact_revision(verified.snapshot, prior_ref)
+        artifact = next(
+            (
+                item
+                for item in verified.snapshot.artifacts
+                if item.artifact_id == prior.artifact_id
+            ),
+            None,
+        )
+        if artifact is None or artifact.current_revision != prior.revision:
+            raise CoreRunError("repair_history_invalid")
+        authorization = classify_effect_authorization(
+            verified.snapshot,
+            CoreEffect.ARTIFACT_REVERT if source is not None else CoreEffect.ARTIFACT_SUPERSEDE,
+            CoreEffectSubject(repair_id=request.repair_id, artifact_id=artifact.artifact_id),
+        ).require_allowed()
+        if authorization.repair_id != request.repair_id:
+            raise CoreRunError("repair_scope_invalid")
+        repair = next(
+            (item for item in verified.snapshot.repair_cycles if item.repair_id == request.repair_id),
+            None,
+        )
+        if repair is None or artifact.artifact_id not in repair.permitted_artifact_ids:
+            raise CoreRunError("repair_scope_invalid")
+        now = self._now()
+        digest = sha256_hex(content)
+        successor_number = prior.revision + 1
+        supersession_id = derived_id("SUPERSESSION", request.request_id, fingerprint)
+        event_id = derived_id("EVT-SUPERSESSION", request.request_id, fingerprint)
+        owned_event_id = derived_id("EVT-REPAIR-ARTIFACT", request.request_id, fingerprint)
+        submission_id = derived_id("SUBMISSION-REPAIR", request.request_id, digest)
+        updated = ArtifactRecord.model_validate(
+            {**artifact.model_dump(mode="json", exclude_unset=False), "current_revision": successor_number, "status": "valid"},
+            strict=True,
+        )
+        successor = ArtifactRevision.model_validate(
+            {
+                "schema_version": ArtifactRevision.schema_id,
+                "run_id": request.run_id,
+                "artifact_id": artifact.artifact_id,
+                "revision": successor_number,
+                "path": artifact.path,
+                "sha256": digest,
+                "size_bytes": len(content),
+                "frozen": True,
+                "producer_kind": "control_tool",
+                "producer_id": "python_tool",
+                "created_at": now,
+            },
+            strict=True,
+        )
+        submission = OwnedArtifactSubmissionRecord.model_validate(
+            {
+                "schema_version": OwnedArtifactSubmissionRecord.schema_id,
+                "submission_id": submission_id,
+                "run_id": request.run_id,
+                "artifact_id": artifact.artifact_id,
+                "artifact_revision": successor_number,
+                "artifact_sha256": digest,
+                "owner_stage_id": repair.owner_stage_id,
+                "owner_role_id": "python_tool",
+                "run_contract_fingerprint": verified.binding.contract_fingerprint,
+                "invocation_id": None,
+                "producer_tool_id": "repair-control-v2",
+                "parent_artifact": prior_ref,
+                "source_proposal_id": None,
+                "canonical_workspace_path": artifact.path,
+                "request_fingerprint": fingerprint,
+                "accepted_event_id": owned_event_id,
+                "accepted_transaction_id": request.request_id,
+                "created_at": now,
+            },
+            strict=True,
+        )
+        relation = ArtifactSupersessionRecord.model_validate(
+            {
+                "schema_version": ArtifactSupersessionRecord.schema_id,
+                "supersession_id": supersession_id,
+                "run_id": request.run_id,
+                "repair_id": request.repair_id,
+                "mode": request.mode,
+                "prior_artifact": prior_ref,
+                "successor_artifact": {"artifact_id": artifact.artifact_id, "revision": successor_number},
+                "reason_code": request.reason_code,
+                "created_at": now,
+                "accepted_event_id": event_id,
+                "accepted_transaction_id": request.request_id,
+                "request_fingerprint": fingerprint,
+            },
+            strict=True,
+        )
+        checkout = prepare_checkout_effect(
+            workspace=self.workspace,
+            snapshot=verified.snapshot,
+            transaction_id=request.request_id,
+            created_at=self._clock(),
+            additional_revisions=(successor,),
+        )
+        unit = store.begin(
+            request.run_id,
+            request.request_id,
+            transaction_type_for("artifact_supersession"),
+            request.expected_store_revision,
+        )
+        unit.put_artifact(updated)
+        unit.put_artifact_revision(successor, content)
+        unit.put_owned_artifact_submission(submission)
+        unit.put_artifact_supersession(relation)
+        unit.append_event(self._event(owned_event_id, request, fingerprint, "owned_artifact_accepted", submission_id, repair.owner_stage_id, artifact.artifact_id, bind=False))
+        unit.append_event(self._event(event_id, request, fingerprint, "repair_stage_superseded", supersession_id, repair.owner_stage_id, artifact.artifact_id))
+        stage_checkout_effect(unit, checkout)
+        verifier = CoreRunDomainVerifier()
+        receipt = unit.commit(
+            _postcommit_observer=lambda _receipt: verifier.verify(store, request.run_id)
+        )
+        published, _warnings = publish_checkout_effect(
+            workspace=self.workspace, store=store, prepared=checkout
+        )
+        if not published:
+            return CoreRunResult(status="commit_outcome_unknown", error_code="commit_outcome_unknown")
+        return CoreRunResult(status="committed", receipt=receipt, primary_record_id=supersession_id)
+
+    def _complete_repair(self, request: RepairCompleteRequest):
+        from .checkout import prepare_checkout_effect, stage_checkout_effect
+        from .errors import CoreRunResult
+        from .policy import derived_id, transaction_type_for
+        from .verifier import CoreRunDomainVerifier
+
+        fingerprint = canonical_fingerprint(
+            request.model_dump(mode="json", exclude_unset=False)
+        )
+        with SQLiteControlStore.open(
+            self.workspace / "briefloop.db", clock=self._clock
+        ) as store:
+            replay = self._replay(store, request.run_id, request.request_id, fingerprint)
+            if replay is not None:
+                return replay
+            verified = self._verified_current(
+                store, request.run_id, request.expected_store_revision
+            )
+            legality = classify_recovery_legality(verified.snapshot)
+            classify_effect_authorization(
+                verified.snapshot,
+                CoreEffect.REPAIR_COMPLETE,
+                CoreEffectSubject(repair_id=request.repair_id),
+            ).require_allowed()
+            supersessions = sorted(
+                (
+                    item
+                    for item in verified.snapshot.artifact_supersessions
+                    if item.repair_id == request.repair_id
+                ),
+                key=lambda item: item.supersession_id,
+            )
+            if (
+                legality.repair_id != request.repair_id
+                or not supersessions
+                or request.supersession_ids != sorted(set(request.supersession_ids))
+                or request.supersession_ids
+                != [item.supersession_id for item in supersessions]
+            ):
+                raise CoreRunError("repair_history_invalid")
+            owner_stages = sorted(
+                {
+                    submission.owner_stage_id
+                    for relation in supersessions
+                    for submission in verified.snapshot.owned_artifact_submissions
+                    if submission.artifact_id == relation.successor_artifact.artifact_id
+                    and submission.artifact_revision == relation.successor_artifact.revision
+                }
+            )
+            if not owner_stages or sorted(request.expected_stage_revisions) != owner_stages:
+                raise CoreRunError("repair_history_invalid")
+            stages = {
+                item.stage_id: item
+                for item in verified.snapshot.stage_states
+                if item.stage_id in owner_stages
+            }
+            if any(
+                stage_id not in stages
+                or stages[stage_id].revision != request.expected_stage_revisions[stage_id]
+                for stage_id in owner_stages
+            ):
+                raise CoreRunError("repair_history_invalid")
+            now = self._now()
+            completion_id = derived_id("REPAIR-COMPLETION", request.request_id, fingerprint)
+            completion_event_id = derived_id("EVT-REPAIR-COMPLETE", request.request_id, fingerprint)
+            transitions: list[StageTransitionRecord] = []
+            for stage_id in owner_stages:
+                prior = stages[stage_id]
+                transition_id = derived_id(
+                    "TRANSITION-REPAIR-REOPEN", request.request_id, stage_id
+                )
+                event_id = derived_id("EVT-REPAIR-REOPEN", request.request_id, stage_id)
+                transitions.append(
+                    StageTransitionRecord.model_validate(
+                        {
+                            "schema_version": StageTransitionRecord.schema_id,
+                            "transition_id": transition_id,
+                            "run_id": request.run_id,
+                            "stage_id": stage_id,
+                            "transition_kind": "repair_reopen",
+                            "requested_decision": None,
+                            "prior_status": prior.status,
+                            "prior_revision": prior.revision,
+                            "result_status": "ready",
+                            "result_revision": prior.revision + 1,
+                            "reason": "repair reopens artifact owner stage",
+                            "run_contract_fingerprint": verified.binding.contract_fingerprint,
+                            "actor": "system",
+                            "producer_invocation_id": None,
+                            "producer_tool_id": None,
+                            "producer_result_status": None,
+                            "producer_result_fingerprint": None,
+                            "producer_implementation": None,
+                            "producer_version": None,
+                            "topology": None,
+                            "satisfaction_source_kind": None,
+                            "satisfied_by_id": None,
+                            "created_at": now,
+                            "transition_event_id": event_id,
+                            "accepted_transaction_id": request.request_id,
+                            "request_fingerprint": fingerprint,
+                        },
+                        strict=True,
+                    )
+                )
+            completion = RepairCompletionRecord.model_validate(
+                {
+                    "schema_version": RepairCompletionRecord.schema_id,
+                    "repair_completion_id": completion_id,
+                    "run_id": request.run_id,
+                    "repair_id": request.repair_id,
+                    "contamination_revision": legality.latest_contamination_revision,
+                    "supersession_ids": request.supersession_ids,
+                    "reopened_transition_ids": [item.transition_id for item in transitions],
+                    "completed_at": now,
+                    "completion_event_id": completion_event_id,
+                    "accepted_transaction_id": request.request_id,
+                    "request_fingerprint": fingerprint,
+                },
+                strict=True,
+            )
+            checkout = prepare_checkout_effect(
+                workspace=self.workspace,
+                snapshot=verified.snapshot,
+                transaction_id=request.request_id,
+                created_at=self._clock(),
+            )
+            unit = store.begin(
+                request.run_id,
+                request.request_id,
+                transaction_type_for("repair_complete"),
+                request.expected_store_revision,
+            )
+            for transition in transitions:
+                unit.put_stage_state(
+                    StageState.model_validate(
+                        {
+                            "schema_version": StageState.schema_id,
+                            "run_id": request.run_id,
+                            "stage_id": transition.stage_id,
+                            "status": transition.result_status,
+                            "revision": transition.result_revision,
+                            "updated_at": now,
+                        },
+                        strict=True,
+                    )
+                )
+                unit.append_stage_transition(transition)
+                unit.append_event(
+                    self._event(
+                        transition.transition_event_id,
+                        request,
+                        fingerprint,
+                        "stage_status_changed",
+                        transition.transition_id,
+                        transition.stage_id,
+                        bind=False,
+                    )
+                )
+            unit.put_repair_completion(completion)
+            unit.append_event(
+                self._event(
+                    completion_event_id,
+                    request,
+                    fingerprint,
+                    "repair_completed",
+                    completion_id,
+                    owner_stages[0],
+                )
+            )
+            stage_checkout_effect(unit, checkout)
+            verifier = CoreRunDomainVerifier()
+            receipt = unit.commit(
+                _postcommit_observer=lambda _receipt: verifier.verify(store, request.run_id)
+            )
+            return CoreRunResult(status="committed", receipt=receipt, primary_record_id=completion_id)
+
+    def _complete_recovery(self, request: RecoveryCompleteRequest):
+        from .checkout import prepare_checkout_effect, stage_checkout_effect
+        from .errors import CoreRunResult
+        from .policy import derived_id, transaction_type_for
+        from .verifier import CoreRunDomainVerifier
+
+        fingerprint = canonical_fingerprint(
+            request.model_dump(mode="json", exclude_unset=False)
+        )
+        with SQLiteControlStore.open(
+            self.workspace / "briefloop.db", clock=self._clock
+        ) as store:
+            replay = self._replay(store, request.run_id, request.request_id, fingerprint)
+            if replay is not None:
+                return replay
+            verified = self._verified_current(store, request.run_id, request.expected_store_revision)
+            legality = classify_recovery_legality(verified.snapshot)
+            latest_integrity = verified.snapshot.run_integrity_records[-1]
+            classify_effect_authorization(
+                verified.snapshot,
+                CoreEffect.RECOVERY_COMPLETE,
+                CoreEffectSubject(repair_completion_id=request.repair_completion_id),
+            ).require_allowed()
+            if (
+                legality.state != "rerun_required"
+                or latest_integrity.status != "contaminated"
+                or latest_integrity.integrity_revision
+                != request.contamination_revision
+                or legality.repair_completion_id != request.repair_completion_id
+                or legality.latest_contamination_revision != request.contamination_revision
+                or request.rerun_transition_ids != sorted(set(request.rerun_transition_ids))
+                or request.gate_evaluation_ids != sorted(set(request.gate_evaluation_ids))
+                or request.rerun_transition_ids != list(legality.required_rerun_transition_ids)
+                or request.gate_evaluation_ids != list(legality.required_gate_evaluation_ids)
+            ):
+                raise CoreRunError("repair_history_invalid")
+            completion = next(
+                item
+                for item in verified.snapshot.repair_completions
+                if item.repair_completion_id == request.repair_completion_id
+            )
+            now = self._now()
+            recovery_id = derived_id("RECOVERY", request.request_id, fingerprint)
+            event_id = derived_id("EVT-RECOVERY", request.request_id, fingerprint)
+            recovery = RecoveryCompletionRecord.model_validate(
+                {
+                    "schema_version": RecoveryCompletionRecord.schema_id,
+                    "recovery_id": recovery_id,
+                    "run_id": request.run_id,
+                    "repair_completion_id": request.repair_completion_id,
+                    "contamination_revision": request.contamination_revision,
+                    "supersession_ids": completion.supersession_ids,
+                    "rerun_transition_ids": request.rerun_transition_ids,
+                    "gate_evaluation_ids": request.gate_evaluation_ids,
+                    "disposition": "recovered_non_reference",
+                    "completed_at": now,
+                    "completion_event_id": event_id,
+                    "accepted_transaction_id": request.request_id,
+                    "request_fingerprint": fingerprint,
+                },
+                strict=True,
+            )
+            clean_integrity = RunIntegrityRecord.model_validate(
+                {
+                    "schema_version": RunIntegrityRecord.schema_id,
+                    "run_id": request.run_id,
+                    "integrity_revision": latest_integrity.integrity_revision + 1,
+                    "status": "clean",
+                    "prior_integrity_revision": latest_integrity.integrity_revision,
+                    "affected_artifact_id": None,
+                    "affected_artifact_revision": None,
+                    "expected_workspace_path": None,
+                    "expected_sha256": None,
+                    "observed_entry_kind": None,
+                    "observed_sha256": None,
+                    "reason_code": None,
+                    "first_detected_at": None,
+                    "first_detected_event_id": None,
+                    "accepted_transaction_id": request.request_id,
+                    "request_fingerprint": fingerprint,
+                },
+                strict=True,
+            )
+            checkout = prepare_checkout_effect(
+                workspace=self.workspace,
+                snapshot=verified.snapshot,
+                transaction_id=request.request_id,
+                created_at=self._clock(),
+            )
+            unit = store.begin(
+                request.run_id,
+                request.request_id,
+                transaction_type_for("recovery_complete"),
+                request.expected_store_revision,
+            )
+            unit.put_recovery_completion(recovery)
+            unit.append_run_integrity_record(clean_integrity)
+            unit.append_event(
+                self._event(event_id, request, fingerprint, "decision_recorded", recovery_id)
+            )
+            stage_checkout_effect(unit, checkout)
+            verifier = CoreRunDomainVerifier()
+            receipt = unit.commit(
+                _postcommit_observer=lambda _receipt: verifier.verify(store, request.run_id)
+            )
+            return CoreRunResult(status="committed", receipt=receipt, primary_record_id=recovery_id)
+
+    def _reset_run(self, request: RunResetRequest):
+        from .checkout import (
+            prepare_cross_run_checkout_effect,
+            publish_checkout_effect,
+            stage_checkout_effect,
+        )
+        from .errors import CoreRunResult
+        from .policy import (
+            CORE_ARTIFACT_IDS,
+            INTERNAL_CONTRACT_ARTIFACT_IDS,
+            blob_workspace_path,
+            derived_id,
+            run_contract_fingerprint,
+            transaction_type_for,
+        )
+        from .service import (
+            _artifact_pair,
+            _derive_runtime_source_plan,
+            workspace_input_fingerprints,
+        )
+        from .verifier import CoreRunDomainVerifier
+
+        fingerprint = canonical_fingerprint(
+            request.model_dump(mode="json", exclude_unset=False)
+        )
+        with SQLiteControlStore.open(
+            self.workspace / "briefloop.db", clock=self._clock
+        ) as store:
+            replay = self._replay(
+                store,
+                request.successor_run_id,
+                request.request_id,
+                fingerprint,
+            )
+            if replay is not None:
+                return replay
+            (
+                workspace_config_sha256,
+                sources_config_sha256,
+                sources_content,
+            ) = workspace_input_fingerprints(
+                self.workspace,
+                include_sources_content=True,
+            )
+            if (
+                workspace_config_sha256 != request.workspace_config_sha256
+                or sources_config_sha256 != request.sources_config_sha256
+            ):
+                raise CoreRunError("core_run_contract_mismatch")
+            verified = self._verified_current(
+                store,
+                request.predecessor_run_id,
+                request.expected_store_revision,
+            )
+            if (
+                request.role_topology
+                not in verified.runtime_adapter.supported_role_topologies
+            ):
+                raise CoreRunError("runtime_adapter_binding_invalid")
+            snapshot = verified.snapshot
+            head = snapshot.workspace_run_head
+            if (
+                request.predecessor_run_id == request.successor_run_id
+                or request.workspace_id != snapshot.workspace_id
+                or request.runtime != snapshot.run.runtime
+                or head is None
+                or head.current_run_id != request.expected_head_run_id
+                or head.current_run_id != request.predecessor_run_id
+                or request.expected_workspace_revision != snapshot.store_revision
+            ):
+                raise CoreRunError("repair_history_invalid")
+            classify_effect_authorization(snapshot, CoreEffect.RUN_RESET).require_allowed()
+            now = self._now()
+            adapter_payload = verified.runtime_adapter.model_dump(
+                mode="json", exclude_unset=False
+            )
+            adapter_payload.update(run_id=request.successor_run_id)
+            adapter_payload.pop("binding_fingerprint", None)
+            adapter_payload["binding_fingerprint"] = canonical_fingerprint(adapter_payload)
+            adapter_bytes = canonical_json_bytes(adapter_payload)
+            source_plan = _derive_runtime_source_plan(
+                sources_content,
+                run_id=request.successor_run_id,
+                sources_config_sha256=sources_config_sha256,
+            )
+            source_payload = source_plan.model_dump(
+                mode="json", exclude_unset=False
+            )
+            source_bytes = canonical_json_bytes(source_payload)
+            frozen_payloads = (
+                store.read_artifact_revision_bytes(
+                    request.predecessor_run_id,
+                    verified.binding.stage_specs_artifact.artifact_id,
+                    verified.binding.stage_specs_artifact.revision,
+                ),
+                store.read_artifact_revision_bytes(
+                    request.predecessor_run_id,
+                    verified.binding.artifact_contracts_artifact.artifact_id,
+                    verified.binding.artifact_contracts_artifact.revision,
+                ),
+                store.read_artifact_revision_bytes(
+                    request.predecessor_run_id,
+                    verified.binding.policy_pack_artifact.artifact_id,
+                    verified.binding.policy_pack_artifact.revision,
+                ),
+                adapter_bytes,
+                source_bytes,
+            )
+            contract_artifacts = [
+                _artifact_pair(
+                    run_id=request.successor_run_id,
+                    artifact_id=artifact_id,
+                    revision=1,
+                    path=blob_workspace_path(sha256_hex(content)),
+                    artifact_format="json",
+                    content=content,
+                    producer_kind="control_tool",
+                    producer_id="core-v2-initializer",
+                    created_at=now,
+                    required=True,
+                )
+                + (content,)
+                for artifact_id, content in zip(
+                    INTERNAL_CONTRACT_ARTIFACT_IDS,
+                    frozen_payloads,
+                )
+            ]
+            contract_values = verified.binding.model_dump(
+                mode="json", exclude_unset=False
+            )
+            contract_values.update(
+                run_id=request.successor_run_id,
+                run_direction=request.run_direction.model_dump(mode="json"),
+                workspace_config_sha256=workspace_config_sha256,
+                sources_config_sha256=sources_config_sha256,
+                role_topology=request.role_topology,
+                gate_strictness=request.gate_strictness,
+                input_governance_required=request.input_governance_required,
+                runtime_adapter_sha256=sha256_hex(adapter_bytes),
+                runtime_adapter_fingerprint=adapter_payload["binding_fingerprint"],
+                runtime_source_plan_sha256=sha256_hex(source_bytes),
+                runtime_source_plan_fingerprint=source_plan.source_plan_fingerprint,
+                created_at=now,
+                accepted_transaction_id=request.request_id,
+                request_fingerprint=fingerprint,
+            )
+            initialized_event_id = derived_id("EVT-RESET-INIT", request.request_id, fingerprint)
+            contract_values["initialization_event_id"] = initialized_event_id
+            contract_values["contract_fingerprint"] = run_contract_fingerprint(
+                runtime=request.runtime,
+                stage_specs_schema=verified.binding.stage_specs_schema,
+                stage_specs_sha256=verified.binding.stage_specs_sha256,
+                artifact_contracts_schema=verified.binding.artifact_contracts_schema,
+                artifact_contracts_sha256=verified.binding.artifact_contracts_sha256,
+                policy_pack_schema=verified.binding.policy_pack_schema,
+                policy_pack_name=verified.binding.policy_pack_name,
+                policy_pack_sha256=verified.binding.policy_pack_sha256,
+                runtime_adapter_sha256=contract_values["runtime_adapter_sha256"],
+                runtime_adapter_fingerprint=contract_values["runtime_adapter_fingerprint"],
+                runtime_source_plan_sha256=contract_values["runtime_source_plan_sha256"],
+                runtime_source_plan_fingerprint=contract_values["runtime_source_plan_fingerprint"],
+                run_direction=request.run_direction.model_dump(mode="json"),
+                workspace_config_sha256=workspace_config_sha256,
+                sources_config_sha256=sources_config_sha256,
+                role_topology=request.role_topology,
+                gate_strictness=request.gate_strictness,
+                input_governance_required=request.input_governance_required,
+            )
+            contract = type(verified.binding).model_validate(contract_values, strict=True)
+            transition_id = derived_id("HEAD-RESET", request.request_id, fingerprint)
+            reset_event_id = derived_id("EVT-RESET", request.request_id, fingerprint)
+            transition = RunHeadTransitionRecord.model_validate(
+                {
+                    "schema_version": RunHeadTransitionRecord.schema_id,
+                    "head_transition_id": transition_id,
+                    "workspace_id": request.workspace_id,
+                    "predecessor_run_id": request.predecessor_run_id,
+                    "successor_run_id": request.successor_run_id,
+                    "prior_workspace_revision": request.expected_workspace_revision,
+                    "successor_workspace_revision": request.expected_workspace_revision + 1,
+                    "reason_code": "run_reset",
+                    "successor_disposition": "non_reference",
+                    "created_at": now,
+                    "transition_event_id": reset_event_id,
+                    "accepted_transaction_id": request.request_id,
+                    "request_fingerprint": fingerprint,
+                },
+                strict=True,
+            )
+            checkout = prepare_cross_run_checkout_effect(
+                workspace=self.workspace,
+                snapshot=snapshot,
+                successor_run_id=request.successor_run_id,
+                transaction_id=request.request_id,
+                created_at=self._clock(),
+            )
+            unit = store.begin(
+                request.successor_run_id,
+                request.request_id,
+                transaction_type_for("run_head_transition"),
+                request.expected_store_revision,
+            )
+            unit.put_run(
+                RunIdentity.model_validate(
+                    {
+                        "schema_version": RunIdentity.schema_id,
+                        "run_id": request.successor_run_id,
+                        "workspace_id": request.workspace_id,
+                        "runtime": request.runtime,
+                        "created_at": now,
+                    },
+                    strict=True,
+                )
+            )
+            unit.put_workspace_run_head(
+                WorkspaceRunHead.model_validate(
+                    {
+                        "schema_version": WorkspaceRunHead.schema_id,
+                        "workspace_id": request.workspace_id,
+                        "current_run_id": request.successor_run_id,
+                        "updated_at": now,
+                    },
+                    strict=True,
+                )
+            )
+            unit.put_run_contract_binding(contract)
+            for artifact, revision, content in contract_artifacts:
+                unit.put_artifact(artifact)
+                unit.put_artifact_revision(revision, content)
+            artifact_contracts = {
+                str(item["artifact_id"]): item for item in verified.artifacts
+            }
+            for artifact_id in CORE_ARTIFACT_IDS:
+                row = artifact_contracts[artifact_id]
+                unit.put_artifact(
+                    ArtifactRecord.model_validate(
+                        {
+                            "schema_version": ArtifactRecord.schema_id,
+                            "run_id": request.successor_run_id,
+                            "artifact_id": artifact_id,
+                            "current_revision": 0,
+                            "status": "expected",
+                            "required": bool(row["required"]),
+                            "path": row["path"],
+                            "format": row["format"],
+                        },
+                        strict=True,
+                    )
+                )
+            for position, stage_contract in enumerate(verified.stages):
+                stage_id = str(stage_contract["stage_id"])
+                status = "ready" if position == 0 else "pending"
+                event_id = derived_id("EVT-RESET-STAGE", request.request_id, stage_id)
+                stage_transition_id = derived_id("TRANSITION-RESET", request.request_id, stage_id)
+                unit.put_stage_state(
+                    StageState.model_validate(
+                        {
+                            "schema_version": StageState.schema_id,
+                            "run_id": request.successor_run_id,
+                            "stage_id": stage_id,
+                            "status": status,
+                            "revision": 0,
+                            "updated_at": now,
+                        },
+                        strict=True,
+                    )
+                )
+                unit.append_stage_transition(
+                    StageTransitionRecord.model_validate(
+                        {
+                            "schema_version": StageTransitionRecord.schema_id,
+                            "transition_id": stage_transition_id,
+                            "run_id": request.successor_run_id,
+                            "stage_id": stage_id,
+                            "transition_kind": "initialize",
+                            "requested_decision": None,
+                            "prior_status": None,
+                            "prior_revision": None,
+                            "result_status": status,
+                            "result_revision": 0,
+                            "reason": "reset successor stage initialized",
+                            "run_contract_fingerprint": contract.contract_fingerprint,
+                            "actor": "system",
+                            "producer_invocation_id": None,
+                            "producer_tool_id": None,
+                            "producer_result_status": None,
+                            "producer_result_fingerprint": None,
+                            "producer_implementation": None,
+                            "producer_version": None,
+                            "topology": None,
+                            "satisfaction_source_kind": None,
+                            "satisfied_by_id": None,
+                            "created_at": now,
+                            "transition_event_id": event_id,
+                            "accepted_transaction_id": request.request_id,
+                            "request_fingerprint": fingerprint,
+                        },
+                        strict=True,
+                    )
+                )
+                unit.append_event(
+                    self._reset_event(
+                        event_id,
+                        request,
+                        fingerprint,
+                        "stage_status_changed",
+                        stage_id,
+                        None,
+                        bind=False,
+                    )
+                )
+            unit.append_run_integrity_record(
+                RunIntegrityRecord.model_validate(
+                    {
+                        "schema_version": RunIntegrityRecord.schema_id,
+                        "run_id": request.successor_run_id,
+                        "integrity_revision": 1,
+                        "status": "clean",
+                        "prior_integrity_revision": None,
+                        "affected_artifact_id": None,
+                        "affected_artifact_revision": None,
+                        "expected_workspace_path": None,
+                        "expected_sha256": None,
+                        "observed_entry_kind": None,
+                        "observed_sha256": None,
+                        "reason_code": None,
+                        "first_detected_at": None,
+                        "first_detected_event_id": None,
+                        "accepted_transaction_id": request.request_id,
+                        "request_fingerprint": fingerprint,
+                    },
+                    strict=True,
+                )
+            )
+            unit.put_run_head_transition(transition)
+            unit.append_event(self._reset_event(initialized_event_id, request, fingerprint, "run_initialized", "doctor", None, bind=False))
+            unit.append_event(self._reset_event(reset_event_id, request, fingerprint, "run_reset", None, transition_id, bind=True))
+            stage_checkout_effect(unit, checkout)
+            verifier = CoreRunDomainVerifier()
+            receipt = unit.commit(
+                _postcommit_observer=lambda _receipt: verifier.verify(store, request.successor_run_id)
+            )
+            published, _warnings = publish_checkout_effect(
+                workspace=self.workspace,
+                store=store,
+                prepared=checkout,
+            )
+            if not published:
+                return CoreRunResult(
+                    status="commit_outcome_unknown",
+                    error_code="commit_outcome_unknown",
+                )
+            return CoreRunResult(status="committed", receipt=receipt, primary_record_id=transition_id)
+
+    def _reset_event(self, event_id, request, fingerprint, event_type, stage_id, primary_id, *, bind):
+        return EventEnvelope.model_validate(
+            {
+                "schema_version": EventEnvelope.schema_id,
+                "event_id": event_id,
+                "run_id": request.successor_run_id,
+                "event_type": event_type,
+                "created_at": self._now(),
+                "actor": "system",
+                "transaction_id": request.request_id,
+                "stage_id": stage_id,
+                "decision": "continue",
+                "reason": event_type.replace("_", " "),
+                "metadata": {},
+                "core_run_binding": CoreRunEventBinding(
+                    request_id=request.request_id,
+                    request_fingerprint=fingerprint,
+                    effect_kind="run_head_transition",
+                    primary_record_id=primary_id,
+                    outcome="committed",
+                ) if bind else None,
+            },
+            strict=True,
+        )
+
+    @staticmethod
+    def _exact_revision(snapshot, reference: ArtifactRevisionReference) -> ArtifactRevision:
+        matches = [
+            item
+            for item in snapshot.artifact_revisions
+            if item.artifact_id == reference.artifact_id and item.revision == reference.revision
+        ]
+        if len(matches) != 1:
+            raise CoreRunError("repair_history_invalid")
+        return matches[0]
+
+    @staticmethod
+    def _replay(store, run_id: str, request_id: str, fingerprint: str):
+        from .verifier import resolve_core_replay
+
+        return resolve_core_replay(
+            store,
+            run_id=run_id,
+            request_id=request_id,
+            request_fingerprint=fingerprint,
+        )
+
+    @staticmethod
+    def _verified_current(store, run_id: str, expected_store_revision: int):
+        from .verifier import CoreRunDomainVerifier
+
+        verified = CoreRunDomainVerifier().verify(store, run_id)
+        if verified.snapshot.store_revision != expected_store_revision:
+            raise CoreRunError("store_revision_conflict")
+        return verified
+
+    def _event(
+        self,
+        event_id: str,
+        request,
+        fingerprint: str,
+        event_type: str,
+        primary_record_id: str,
+        stage_id: str | None = None,
+        artifact_id: str | None = None,
+        bind: bool = True,
+    ) -> EventEnvelope:
+        return EventEnvelope.model_validate(
+            {
+                "schema_version": EventEnvelope.schema_id,
+                "event_id": event_id,
+                "run_id": request.run_id,
+                "event_type": event_type,
+                "created_at": self._now(),
+                "actor": "system",
+                "transaction_id": request.request_id,
+                "stage_id": stage_id,
+                "artifact_id": artifact_id,
+                "decision": "continue",
+                "reason": event_type.replace("_", " "),
+                "metadata": {},
+                "core_run_binding": (
+                    CoreRunEventBinding(
+                        request_id=request.request_id,
+                        request_fingerprint=fingerprint,
+                        effect_kind={
+                            "repair_stage_superseded": "artifact_supersession",
+                            "repair_completed": "repair_complete",
+                            "decision_recorded": "recovery_complete",
+                        }.get(event_type, event_type),
+                        primary_record_id=primary_record_id,
+                        outcome="committed",
+                    )
+                    if bind
+                    else None
+                ),
+            },
+            strict=True,
+        )
+
+    def _now(self) -> str:
+        value = self._clock()
+        if not isinstance(value, datetime) or value.tzinfo is None:
+            raise CoreRunError("core_run_request_invalid")
+        return value.astimezone(timezone.utc).isoformat().replace("+00:00", "Z")
+
+
 __all__ = [
+    "CoreRunRecoveryService",
     "CoreEffect",
     "CoreEffectSubject",
     "EffectAuthorization",

@@ -29,6 +29,7 @@ from multi_agent_brief.control_store.serialization import (
 )
 
 from .errors import CoreRunError, CoreRunResult, core_run_error_code
+from .checkout import prepare_checkout_effect, stage_checkout_effect
 from .publication_platform import CapabilityProfile, open_retained_parent
 from .policy import derived_id, transaction_type_for
 from .verifier import (
@@ -211,6 +212,7 @@ class RunIntegrityService:
         additional_revisions: Iterable[ArtifactRevision] = (),
     ) -> tuple[ArtifactRevision, CheckoutObservation] | None:
         protected_keys = protected_revision_keys(verified)
+        protected_keys.update(current_checkout_revision_keys(verified))
         revisions = {
             (item.artifact_id, item.revision): item
             for item in verified.snapshot.artifact_revisions
@@ -349,6 +351,13 @@ class RunIntegrityService:
         unit.append_event(event)
         unit.append_event(block_event)
         unit.append_run_integrity_record(record)
+        checkout = prepare_checkout_effect(
+            workspace=self.workspace,
+            snapshot=verified.snapshot,
+            transaction_id=request_id,
+            created_at=self._clock(),
+        )
+        stage_checkout_effect(unit, checkout)
         receipt = unit.commit(
             _postcommit_observer=lambda _receipt: self._verifier.verify(
                 store,
@@ -479,6 +488,28 @@ def protected_revision_keys(
             (freeze.ledger_artifact.artifact_id, freeze.ledger_artifact.revision)
         )
     return keys
+
+
+def current_checkout_revision_keys(
+    verified: VerifiedCoreRun,
+) -> set[tuple[str, int]]:
+    """Return the complete receipt-bound current working projection."""
+
+    receipt_revisions = {
+        item.transaction_id: item.committed_revision
+        for item in verified.snapshot.transactions
+    }
+    if not verified.snapshot.receipt_checkout_bindings:
+        return set()
+    current = max(
+        verified.snapshot.receipt_checkout_bindings,
+        key=lambda item: receipt_revisions.get(item.transaction_id, -1),
+    )
+    return {
+        (item.artifact_id, item.artifact_revision)
+        for item in verified.snapshot.checkout_revision_members
+        if item.checkout_revision_id == current.post_checkout_revision_id
+    }
 
 
 def _workspace_root(workspace: str | os.PathLike[str]) -> Path:

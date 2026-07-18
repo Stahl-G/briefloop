@@ -57,6 +57,10 @@ EXPECTED_V2_CONTRACT_IDS = (
     "briefloop.delivery.v2",
     "briefloop.transaction_receipt.v2",
     "briefloop.run_direction.v2",
+    "briefloop.runtime_adapter_binding.v2",
+    "briefloop.runtime_source_route_binding.v2",
+    "briefloop.runtime_source_plan_binding.v2",
+    "briefloop.core_run_next_action.v2",
     "briefloop.core_run_initialize_request.v2",
     "briefloop.run_contract_binding.v2",
     "briefloop.invocation_start_request.v2",
@@ -93,6 +97,7 @@ EXPECTED_V2_CONTRACT_IDS = (
     "briefloop.delivery_authorization_record.v2",
     "briefloop.delivery_attempt_record.v2",
     "briefloop.delivery_result_record.v2",
+    "briefloop.delivery_result_observation.v2",
     "briefloop.repair_start_request.v2",
     "briefloop.artifact_supersede_request.v2",
     "briefloop.artifact_revert_request.v2",
@@ -118,8 +123,8 @@ EXPECTED_V2_CONTRACT_IDS = (
 
 def test_v2_contract_inventory_is_exact_and_uses_existing_registry() -> None:
     assert V2_CONTRACT_IDS == EXPECTED_V2_CONTRACT_IDS
-    assert len(V2_CONTRACT_MODELS) == 78
-    assert len(set(V2_CONTRACT_IDS)) == 78
+    assert len(V2_CONTRACT_MODELS) == 83
+    assert len(set(V2_CONTRACT_IDS)) == 83
     for contract_id, model in zip(V2_CONTRACT_IDS, V2_CONTRACT_MODELS):
         assert SchemaRegistry.get(contract_id) is model
 
@@ -564,6 +569,29 @@ def test_transaction_receipt_requires_revision_advance() -> None:
         (item.field, item.error)
         for item in SchemaRegistry.validate(contract_id, payload)
     ] == [("$", "is invalid")]
+
+
+def test_run_integrity_contract_distinguishes_initial_and_recovered_clean() -> None:
+    contract_id = "briefloop.run_integrity_record.v2"
+    initial = SchemaRegistry.example(contract_id, "minimal")
+    assert SchemaRegistry.validate(contract_id, initial) == []
+
+    recovered = {
+        **initial,
+        "integrity_revision": 3,
+        "prior_integrity_revision": 2,
+    }
+    assert SchemaRegistry.validate(contract_id, recovered) == []
+
+    for invalid in (
+        {**recovered, "prior_integrity_revision": 1},
+        {**recovered, "reason_code": "frozen_artifact_contaminated"},
+        {**initial, "integrity_revision": 2},
+    ):
+        assert [
+            (item.field, item.error)
+            for item in SchemaRegistry.validate(contract_id, invalid)
+        ] == [("$", "is invalid")]
 
 
 def test_control_dto_examples_cover_required_revision_and_identity_bindings() -> None:

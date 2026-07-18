@@ -23,6 +23,10 @@ from multi_agent_brief.contracts.v2 import (
     RunContractBinding,
     RunIdentity,
     RunIntegrityRecord,
+    RuntimeAdapterBinding,
+    RuntimeSourcePlanBinding,
+    RuntimeSourceRouteBinding,
+    ReceiptCheckoutBinding,
     StageArtifactBinding,
     StageCompleteRequest,
     StageGateBinding,
@@ -48,6 +52,11 @@ from multi_agent_brief.orchestrator_contract import resolve_repo_workdir
 from multi_agent_brief.sources.doctor import run_doctor
 
 from .errors import CoreRunError, CoreRunResult, core_run_failure_result
+from .checkout import (
+    build_checkout_revision,
+    prepare_checkout_effect,
+    stage_checkout_effect,
+)
 from .integrity import RunIntegrityService, read_workspace_file
 from .lineage import (
     classify_current_audit_promotion,
@@ -129,40 +138,9 @@ class CoreRunService:
             and not database.is_symlink()
             and _legacy_control_state_present(self.workspace)
         ):
-            raise CoreRunError("unsupported_schema_version")
-        contracts = self._load_contracts()
-        stage_bytes = canonical_json_bytes(contracts.stage_specs)
-        artifact_bytes = canonical_json_bytes(contracts.artifact_contracts)
-        policy_bytes = canonical_json_bytes(contracts.policy_pack)
-        stage_hash = sha256_hex(stage_bytes)
-        artifact_hash = sha256_hex(artifact_bytes)
-        policy_hash = sha256_hex(policy_bytes)
-        fingerprint = run_contract_fingerprint(
-            runtime=request.runtime,
-            stage_specs_schema=str(contracts.stage_specs["schema_version"]),
-            stage_specs_sha256=stage_hash,
-            artifact_contracts_schema=str(
-                contracts.artifact_contracts["schema_version"]
-            ),
-            artifact_contracts_sha256=artifact_hash,
-            policy_pack_schema=str(contracts.policy_pack["schema_version"]),
-            policy_pack_name=str(contracts.policy_pack["policy_pack"]["name"]),
-            policy_pack_sha256=policy_hash,
-            run_direction=request.run_direction.model_dump(
-                mode="json",
-                exclude_unset=False,
-            ),
-            workspace_config_sha256=request.workspace_config_sha256,
-            sources_config_sha256=request.sources_config_sha256,
-            role_topology=request.role_topology,
-            gate_strictness=request.gate_strictness,
-            input_governance_required=request.input_governance_required,
-        )
+            raise CoreRunError("legacy_workspace_unsupported")
         request_fingerprint = canonical_fingerprint(
-            {
-                "request": request.model_dump(mode="json", exclude_unset=False),
-                "contract_fingerprint": fingerprint,
-            }
+            request.model_dump(mode="json", exclude_unset=False)
         )
         if database.exists() or database.is_symlink():
             with self._open_store() as existing:
@@ -175,14 +153,67 @@ class CoreRunService:
                 if replay is not None:
                     return replay
             raise CoreRunError("core_run_head_mismatch")
-
-        config_sha256, sources_sha256 = workspace_input_fingerprints(self.workspace)
+        adapter = request.runtime_adapter_binding
+        if (
+            adapter.run_id != request.run_id
+            or adapter.runtime != request.runtime
+            or request.role_topology not in adapter.supported_role_topologies
+        ):
+            raise CoreRunError("runtime_adapter_binding_invalid")
+        config_sha256, sources_sha256, sources_content = workspace_input_fingerprints(
+            self.workspace,
+            include_sources_content=True,
+        )
         if (
             config_sha256 != request.workspace_config_sha256
             or sources_sha256 != request.sources_config_sha256
         ):
             raise CoreRunError("core_run_contract_mismatch")
-
+        source_plan = _derive_runtime_source_plan(
+            sources_content,
+            run_id=request.run_id,
+            sources_config_sha256=request.sources_config_sha256,
+        )
+        contracts = self._load_contracts()
+        stage_bytes = canonical_json_bytes(contracts.stage_specs)
+        artifact_bytes = canonical_json_bytes(contracts.artifact_contracts)
+        policy_bytes = canonical_json_bytes(contracts.policy_pack)
+        stage_hash = sha256_hex(stage_bytes)
+        artifact_hash = sha256_hex(artifact_bytes)
+        policy_hash = sha256_hex(policy_bytes)
+        adapter_bytes = canonical_json_bytes(
+            adapter.model_dump(mode="json", exclude_unset=False)
+        )
+        source_plan_bytes = canonical_json_bytes(
+            source_plan.model_dump(mode="json", exclude_unset=False)
+        )
+        adapter_hash = sha256_hex(adapter_bytes)
+        source_plan_hash = sha256_hex(source_plan_bytes)
+        fingerprint = run_contract_fingerprint(
+            runtime=request.runtime,
+            stage_specs_schema=str(contracts.stage_specs["schema_version"]),
+            stage_specs_sha256=stage_hash,
+            artifact_contracts_schema=str(
+                contracts.artifact_contracts["schema_version"]
+            ),
+            artifact_contracts_sha256=artifact_hash,
+            policy_pack_schema=str(contracts.policy_pack["schema_version"]),
+            policy_pack_name=str(contracts.policy_pack["policy_pack"]["name"]),
+            policy_pack_sha256=policy_hash,
+            runtime_adapter_sha256=adapter_hash,
+            runtime_adapter_fingerprint=adapter.binding_fingerprint,
+            runtime_source_plan_sha256=source_plan_hash,
+            runtime_source_plan_fingerprint=source_plan.source_plan_fingerprint,
+            run_direction=request.run_direction.model_dump(
+                mode="json",
+                exclude_unset=False,
+            ),
+            workspace_config_sha256=request.workspace_config_sha256,
+            sources_config_sha256=request.sources_config_sha256,
+            role_topology=request.role_topology,
+            gate_strictness=request.gate_strictness,
+            input_governance_required=request.input_governance_required,
+        )
         created = False
         store: SQLiteControlStore | None = None
         try:
@@ -216,7 +247,13 @@ class CoreRunService:
             contract_artifacts: list[tuple[ArtifactRecord, ArtifactRevision, bytes]] = []
             for artifact_id, payload in zip(
                 INTERNAL_CONTRACT_ARTIFACT_IDS,
-                (stage_bytes, artifact_bytes, policy_bytes),
+                (
+                    stage_bytes,
+                    artifact_bytes,
+                    policy_bytes,
+                    adapter_bytes,
+                    source_plan_bytes,
+                ),
             ):
                 contract_artifacts.append(
                     _artifact_pair(
@@ -260,6 +297,18 @@ class CoreRunService:
                         "revision": 1,
                     },
                     "policy_pack_sha256": policy_hash,
+                    "runtime_adapter_artifact": {
+                        "artifact_id": INTERNAL_CONTRACT_ARTIFACT_IDS[3],
+                        "revision": 1,
+                    },
+                    "runtime_adapter_sha256": adapter_hash,
+                    "runtime_adapter_fingerprint": adapter.binding_fingerprint,
+                    "runtime_source_plan_artifact": {
+                        "artifact_id": INTERNAL_CONTRACT_ARTIFACT_IDS[4],
+                        "revision": 1,
+                    },
+                    "runtime_source_plan_sha256": source_plan_hash,
+                    "runtime_source_plan_fingerprint": source_plan.source_plan_fingerprint,
                     "run_direction": request.run_direction.model_dump(
                         mode="json",
                         exclude_unset=False,
@@ -366,6 +415,30 @@ class CoreRunService:
                 )
             )
             unit.append_event(event)
+            checkout = build_checkout_revision(
+                workspace_id=request.workspace_id,
+                run_id=request.run_id,
+                transaction_id=request.request_id,
+                created_at=self._clock(),
+                artifact_revisions=(),
+                parent_checkout_revision_id=None,
+            )
+            unit.put_checkout_revision(checkout.record)
+            unit.put_receipt_checkout_binding(
+                ReceiptCheckoutBinding.model_validate(
+                    {
+                        "schema_version": ReceiptCheckoutBinding.schema_id,
+                        "workspace_id": request.workspace_id,
+                        "run_id": request.run_id,
+                        "transaction_id": request.request_id,
+                        "pre_run_id": request.run_id,
+                        "pre_checkout_revision_id": None,
+                        "post_run_id": request.run_id,
+                        "post_checkout_revision_id": checkout.record.checkout_revision_id,
+                    },
+                    strict=True,
+                )
+            )
             receipt = unit.commit(
                 _postcommit_observer=lambda _receipt: self._verifier.verify(
                     store,
@@ -489,6 +562,13 @@ class CoreRunService:
             )
             unit.put_invocation(invocation)
             unit.append_event(event)
+            checkout = prepare_checkout_effect(
+                workspace=self.workspace,
+                snapshot=verified.snapshot,
+                transaction_id=request.request_id,
+                created_at=self._clock(),
+            )
+            stage_checkout_effect(unit, checkout)
             receipt = unit.commit(
                 _postcommit_observer=lambda _receipt: self._verifier.verify(
                     store,
@@ -502,6 +582,18 @@ class CoreRunService:
             )
 
     def _doctor_check(self, request: IntegrityCheckRequest) -> CoreRunResult:
+        fingerprint = canonical_fingerprint(
+            request.model_dump(mode="json", exclude_unset=False)
+        )
+        with self._open_store() as replay_store:
+            replay = resolve_core_replay(
+                replay_store,
+                run_id=request.run_id,
+                request_id=request.request_id,
+                request_fingerprint=fingerprint,
+            )
+            if replay is not None:
+                return replay
         contracts = self._load_contracts()
         contract_hashes = (
             sha256_hex(canonical_json_bytes(contracts.stage_specs)),
@@ -529,21 +621,7 @@ class CoreRunService:
                 "sources_config_sha256": sources_sha256,
             }
         )
-        fingerprint = canonical_fingerprint(
-            {
-                "request": request.model_dump(mode="json", exclude_unset=False),
-                "doctor_result_fingerprint": result_fingerprint,
-            }
-        )
         with self._open_store() as store:
-            replay = resolve_core_replay(
-                store,
-                run_id=request.run_id,
-                request_id=request.request_id,
-                request_fingerprint=fingerprint,
-            )
-            if replay is not None:
-                return replay
             verified = self._verifier.verify(store, request.run_id)
             self._require_store_revision(verified, request.expected_store_revision)
             binding = verified.binding
@@ -577,7 +655,16 @@ class CoreRunService:
         if request.stage_id == "doctor":
             raise CoreRunError("stage_decision_not_supported")
         request_base = request.model_dump(mode="json", exclude_unset=False)
+        fingerprint = canonical_fingerprint(request_base)
         with self._open_store() as store:
+            replay = resolve_core_replay(
+                store,
+                run_id=request.run_id,
+                request_id=request.request_id,
+                request_fingerprint=fingerprint,
+            )
+            if replay is not None:
+                return replay
             verified = self._verifier.verify(store, request.run_id)
             lineage = classify_current_lineage(verified.snapshot)
             (
@@ -592,26 +679,6 @@ class CoreRunService:
                     request.stage_id,
                 )
             )
-            fingerprint = canonical_fingerprint(
-                {
-                    "request": request_base,
-                    "derived_artifacts": [
-                        (item.artifact_id, item.revision, item.sha256, usage)
-                        for item, usage in required_revisions
-                    ],
-                    "derived_gates": list(gate_ids),
-                    "producer_invocation_id": producer_invocation_id,
-                    "producer_tool_id": producer_tool_id,
-                }
-            )
-            replay = resolve_core_replay(
-                store,
-                run_id=request.run_id,
-                request_id=request.request_id,
-                request_fingerprint=fingerprint,
-            )
-            if replay is not None:
-                return replay
             self._require_store_revision(verified, request.expected_store_revision)
             state = _stage_state(verified, request.stage_id)
             if lineage.active_invocations_by_stage.get(request.stage_id):
@@ -1292,6 +1359,13 @@ class CoreRunService:
             )
         for event in events:
             unit.append_event(event)
+        checkout = prepare_checkout_effect(
+            workspace=self.workspace,
+            snapshot=verified.snapshot,
+            transaction_id=request_id,
+            created_at=self._clock(),
+        )
+        stage_checkout_effect(unit, checkout)
         receipt = unit.commit(
             _postcommit_observer=lambda _receipt: self._verifier.verify(
                 store,
@@ -1410,7 +1484,11 @@ _LEGACY_CONTROL_PATHS = (
 )
 
 
-def workspace_input_fingerprints(workspace: Path) -> tuple[str, str]:
+def workspace_input_fingerprints(
+    workspace: Path,
+    *,
+    include_sources_content: bool = False,
+) -> tuple[str, str] | tuple[str, str, bytes]:
     """Return exact hashes only after both workspace inputs are secret-free."""
 
     root = _workspace_root(workspace)
@@ -1427,6 +1505,8 @@ def workspace_input_fingerprints(workspace: Path) -> tuple[str, str]:
         raise CoreRunError("core_run_contract_mismatch")
     _require_non_secret_mapping(config.content)
     _require_non_secret_mapping(sources.content)
+    if include_sources_content:
+        return config.sha256, sources.sha256, sources.content
     return config.sha256, sources.sha256
 
 
@@ -1596,6 +1676,136 @@ def _remove_created_store(database: Path) -> None:
     blob_root = database.with_name(f"{database.name}.blobs")
     if blob_root.exists() and not blob_root.is_symlink():
         shutil.rmtree(blob_root)
+
+
+def _derive_runtime_source_plan(
+    sources_content: bytes,
+    *,
+    run_id: str,
+    sources_config_sha256: str,
+) -> RuntimeSourcePlanBinding:
+    """Derive the only safe source routing projection from exact YAML bytes."""
+
+    try:
+        raw = yaml.safe_load(sources_content.decode("utf-8"))
+    except (UnicodeDecodeError, yaml.YAMLError) as exc:
+        raise CoreRunError("runtime_source_plan_invalid") from exc
+    if type(raw) is not dict or sha256_hex(sources_content) != sources_config_sha256:
+        raise CoreRunError("runtime_source_plan_invalid")
+    _require_non_secret_mapping(sources_content)
+
+    strategy = raw.get("source_strategy", {})
+    if type(strategy) is not dict:
+        raise CoreRunError("runtime_source_plan_invalid")
+    enabled = strategy.get("enabled_providers", [])
+    if type(enabled) is not list or any(type(item) is not str for item in enabled):
+        raise CoreRunError("runtime_source_plan_invalid")
+    enabled_ids = sorted(
+        {"web-search" if item == "web_search" else item for item in enabled}
+    )
+
+    web = raw.get("web_search", {})
+    if type(web) is not dict:
+        raise CoreRunError("runtime_source_plan_invalid")
+    web_enabled = web.get("enabled", False)
+    if type(web_enabled) is not bool:
+        raise CoreRunError("runtime_source_plan_invalid")
+    raw_mode = web.get("mode", "external_api" if web_enabled else "disabled")
+    if raw_mode not in {
+        "manual",
+        "disabled",
+        "configure_later",
+        "external_api",
+        "runtime_tool",
+        "cached_package",
+    }:
+        raise CoreRunError("runtime_source_plan_invalid")
+    mode = str(raw_mode)
+    backend_value = web.get("backend") if mode == "external_api" else None
+    if mode == "external_api" and web_enabled and type(backend_value) is not str:
+        raise CoreRunError("runtime_source_plan_invalid")
+    backend = str(backend_value) if type(backend_value) is str else None
+
+    route_kinds = {
+        "manual": ("manual", "human"),
+        "local_file": ("local_file", "human"),
+        "rss": ("rss", "specialist"),
+        "api": ("external_api", "deterministic"),
+        "runtime_tool": ("runtime_tool", "specialist"),
+        "cached_package": ("cached_package", "deterministic"),
+    }
+    routes: list[RuntimeSourceRouteBinding] = []
+    for route_id in enabled_ids:
+        if route_id == "web-search":
+            if mode == "configure_later":
+                route_kind, owner, provider_id = "disabled", "human", None
+            elif mode == "manual":
+                route_kind, owner, provider_id = "manual", "human", None
+            elif mode == "disabled":
+                route_kind, owner, provider_id = "disabled", "human", None
+            else:
+                route_kind = mode
+                owner = "specialist" if mode == "runtime_tool" else "deterministic"
+                provider_id = backend if mode == "external_api" else "runtime-tool"
+            route_payload = {
+                "schema_version": RuntimeSourceRouteBinding.schema_id,
+                "route_id": route_id,
+                "route_kind": route_kind,
+                "provider_id": provider_id,
+                "execution_owner": owner,
+                "required": False,
+            }
+            route_payload["route_fingerprint"] = canonical_fingerprint(route_payload)
+            routes.append(
+                RuntimeSourceRouteBinding.model_validate(route_payload, strict=True)
+            )
+            continue
+        if route_id not in route_kinds:
+            raise CoreRunError("runtime_source_plan_invalid")
+        route_kind, owner = route_kinds[route_id]
+        route_payload: dict[str, object] = {
+            "schema_version": RuntimeSourceRouteBinding.schema_id,
+            "route_id": route_id,
+            "route_kind": route_kind,
+            "provider_id": route_id if route_kind in {"external_api", "runtime_tool"} else None,
+            "execution_owner": owner,
+            "required": False,
+        }
+        route_payload["route_fingerprint"] = canonical_fingerprint(route_payload)
+        routes.append(RuntimeSourceRouteBinding.model_validate(route_payload, strict=True))
+    if web_enabled and mode != "disabled" and "web-search" not in enabled_ids:
+        if mode == "configure_later":
+            route_kind, owner, provider_id = "disabled", "human", None
+        elif mode == "manual":
+            route_kind, owner, provider_id = "manual", "human", None
+        else:
+            route_kind = mode
+            owner = "specialist" if mode == "runtime_tool" else "deterministic"
+            provider_id = backend if mode == "external_api" else "runtime-tool"
+        route_payload = {
+            "schema_version": RuntimeSourceRouteBinding.schema_id,
+            "route_id": "web-search",
+            "route_kind": route_kind,
+            "provider_id": provider_id,
+            "execution_owner": owner,
+            "required": False,
+        }
+        route_payload["route_fingerprint"] = canonical_fingerprint(route_payload)
+        routes.append(RuntimeSourceRouteBinding.model_validate(route_payload, strict=True))
+    routes.sort(key=lambda item: item.route_id)
+    payload: dict[str, object] = {
+        "schema_version": RuntimeSourcePlanBinding.schema_id,
+        "run_id": run_id,
+        "sources_config_sha256": sources_config_sha256,
+        "web_search_mode": mode,
+        "search_backend": backend,
+        "routes": [item.model_dump(mode="json", exclude_unset=False) for item in routes],
+    }
+    payload["source_plan_fingerprint"] = canonical_fingerprint(payload)
+    try:
+        return RuntimeSourcePlanBinding.model_validate(payload, strict=True)
+    except (TypeError, ValueError) as exc:
+        raise CoreRunError("runtime_source_plan_invalid") from exc
 
 
 __all__ = ["CoreRunService", "workspace_input_fingerprints"]

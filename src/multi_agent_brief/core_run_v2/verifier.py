@@ -14,6 +14,8 @@ from multi_agent_brief.contracts.v2 import (
     EventEnvelope,
     InvocationStartRequest,
     RunContractBinding,
+    RuntimeAdapterBinding,
+    RuntimeSourcePlanBinding,
     ScreenedCandidatesProposal,
     TransactionReceipt,
 )
@@ -72,6 +74,8 @@ class VerifiedCoreRun:
     snapshot: ControlStoreSnapshot
     binding: RunContractBinding
     contracts: ValidatedRuntimeContractPayloads
+    runtime_adapter: RuntimeAdapterBinding
+    source_plan: RuntimeSourcePlanBinding
 
     @property
     def stages(self) -> tuple[dict[str, Any], ...]:
@@ -457,7 +461,7 @@ _CORE_EFFECT_BINDING_RULES = {
         frozenset({"decision_recorded"}),
         "recovery_completion",
         (("decision_recorded", 1),),
-        frozenset({"recovery_completions"}),
+        frozenset({"recovery_completions", "run_integrity_records"}),
     ),
     "run_head_transition": _CoreEffectBindingRule(
         transaction_type_for("run_head_transition"),
@@ -1161,7 +1165,7 @@ class CoreRunDomainVerifier:
         ):
             raise CoreRunError("control_store_integrity_invalid")
         reader = _AsOfArtifactReader(history, snapshot)
-        contracts = self._load_contracts(reader, binding)
+        contracts, runtime_adapter, source_plan = self._load_contracts(reader, binding)
         self._verify_contract_fingerprint(binding)
         self._verify_receipt_bindings(snapshot)
         self._verify_checkout_revisions(history, snapshot)
@@ -1177,6 +1181,8 @@ class CoreRunDomainVerifier:
             snapshot=snapshot,
             binding=binding,
             contracts=contracts,
+            runtime_adapter=runtime_adapter,
+            source_plan=source_plan,
         )
 
     @staticmethod
@@ -1186,14 +1192,19 @@ class CoreRunDomainVerifier:
     ) -> None:
         """Recompute immutable checkout truth without consulting working paths."""
 
+        core_receipts = tuple(
+            receipt
+            for receipt in snapshot.transactions
+            if receipt.transaction_type.startswith("core-v2-")
+        )
         graph = (
             snapshot.checkout_revisions,
             snapshot.checkout_revision_members,
             snapshot.receipt_checkout_bindings,
         )
-        if not any(graph):
-            # Dormant transition: PR-4B0 receipts remain valid until PR-4B2
-            # requires a binding on every lifecycle effect.
+        if core_receipts and not any(graph):
+            raise CoreRunError("checkout_revision_invalid")
+        if not core_receipts and not any(graph):
             return
         if not (
             snapshot.checkout_revisions and snapshot.receipt_checkout_bindings
@@ -1247,15 +1258,16 @@ class CoreRunDomainVerifier:
         binding_by_transaction = {
             item.transaction_id: item for item in snapshot.receipt_checkout_bindings
         }
-        for receipt in snapshot.transactions:
+        for receipt in core_receipts:
             references = receipt.receipt_checkout_bindings
-            if not references:
-                continue
             binding = binding_by_transaction.get(receipt.transaction_id)
             if (
                 len(references) != 1
+                or len(receipt.checkout_revisions) != 1
                 or binding is None
                 or references[0].transaction_id != receipt.transaction_id
+                or receipt.checkout_revisions[0].checkout_revision_id
+                != binding.post_checkout_revision_id
                 or binding.post_run_id != receipt.run_id
             ):
                 raise CoreRunError("checkout_revision_invalid")
@@ -1750,7 +1762,11 @@ class CoreRunDomainVerifier:
     def _load_contracts(
         store: SQLiteControlStore | _AsOfArtifactReader,
         binding: RunContractBinding,
-    ) -> ValidatedRuntimeContractPayloads:
+    ) -> tuple[
+        ValidatedRuntimeContractPayloads,
+        RuntimeAdapterBinding,
+        RuntimeSourcePlanBinding,
+    ]:
         try:
             stage_bytes = store.read_artifact_revision_bytes(
                 binding.run_id,
@@ -1767,15 +1783,37 @@ class CoreRunDomainVerifier:
                 binding.policy_pack_artifact.artifact_id,
                 binding.policy_pack_artifact.revision,
             )
+            adapter_bytes = store.read_artifact_revision_bytes(
+                binding.run_id,
+                binding.runtime_adapter_artifact.artifact_id,
+                binding.runtime_adapter_artifact.revision,
+            )
+            source_plan_bytes = store.read_artifact_revision_bytes(
+                binding.run_id,
+                binding.runtime_source_plan_artifact.artifact_id,
+                binding.runtime_source_plan_artifact.revision,
+            )
             if (
                 sha256_hex(stage_bytes) != binding.stage_specs_sha256
                 or sha256_hex(artifact_bytes) != binding.artifact_contracts_sha256
                 or sha256_hex(policy_bytes) != binding.policy_pack_sha256
+                or sha256_hex(adapter_bytes) != binding.runtime_adapter_sha256
+                or sha256_hex(source_plan_bytes) != binding.runtime_source_plan_sha256
             ):
                 raise CoreRunError("core_run_contract_mismatch")
             stage_payload = parse_json_object(stage_bytes)
             artifact_payload = parse_json_object(artifact_bytes)
             policy_payload = parse_json_object(policy_bytes)
+            adapter_payload = parse_json_object(adapter_bytes)
+            source_plan_payload = parse_json_object(source_plan_bytes)
+            runtime_adapter = RuntimeAdapterBinding.model_validate(
+                adapter_payload,
+                strict=True,
+            )
+            source_plan = RuntimeSourcePlanBinding.model_validate(
+                source_plan_payload,
+                strict=True,
+            )
             contracts = validate_runtime_contract_payloads(
                 stage_payload,
                 artifact_payload,
@@ -1792,9 +1830,19 @@ class CoreRunDomainVerifier:
             or policy_payload.get("schema_version") != binding.policy_pack_schema
             or policy_payload.get("policy_pack", {}).get("name")
             != binding.policy_pack_name
+            or runtime_adapter.run_id != binding.run_id
+            or runtime_adapter.runtime != binding.runtime
+            or runtime_adapter.binding_fingerprint
+            != binding.runtime_adapter_fingerprint
+            or binding.role_topology
+            not in runtime_adapter.supported_role_topologies
+            or source_plan.run_id != binding.run_id
+            or source_plan.sources_config_sha256 != binding.sources_config_sha256
+            or source_plan.source_plan_fingerprint
+            != binding.runtime_source_plan_fingerprint
         ):
             raise CoreRunError("core_run_contract_mismatch")
-        return contracts
+        return contracts, runtime_adapter, source_plan
 
     @staticmethod
     def _verify_contract_fingerprint(binding: RunContractBinding) -> None:
@@ -1807,6 +1855,10 @@ class CoreRunDomainVerifier:
             policy_pack_schema=binding.policy_pack_schema,
             policy_pack_name=binding.policy_pack_name,
             policy_pack_sha256=binding.policy_pack_sha256,
+            runtime_adapter_sha256=binding.runtime_adapter_sha256,
+            runtime_adapter_fingerprint=binding.runtime_adapter_fingerprint,
+            runtime_source_plan_sha256=binding.runtime_source_plan_sha256,
+            runtime_source_plan_fingerprint=binding.runtime_source_plan_fingerprint,
             run_direction=binding.run_direction.model_dump(
                 mode="json",
                 exclude_unset=False,
@@ -2026,6 +2078,14 @@ class CoreRunDomainVerifier:
             binding.policy_pack_artifact.artifact_id: (
                 binding.policy_pack_artifact.revision,
                 binding.policy_pack_sha256,
+            ),
+            binding.runtime_adapter_artifact.artifact_id: (
+                binding.runtime_adapter_artifact.revision,
+                binding.runtime_adapter_sha256,
+            ),
+            binding.runtime_source_plan_artifact.artifact_id: (
+                binding.runtime_source_plan_artifact.revision,
+                binding.runtime_source_plan_sha256,
             ),
         }
         if set(contract_refs) != set(INTERNAL_CONTRACT_ARTIFACT_IDS):
@@ -2733,6 +2793,17 @@ class CoreRunDomainVerifier:
                 ):
                     raise CoreRunError("control_store_integrity_invalid")
                 continue
+            if transition.transition_kind == "repair_reopen":
+                if (
+                    transition.producer_invocation_id is not None
+                    or transition.producer_tool_id is not None
+                    or transition.producer_result_status is not None
+                    or transition.producer_result_fingerprint is not None
+                    or transition.producer_implementation is not None
+                    or transition.producer_version is not None
+                ):
+                    raise CoreRunError("control_store_integrity_invalid")
+                continue
             if transition.stage_id == "doctor":
                 if (
                     transition.producer_invocation_id is not None
@@ -2813,18 +2884,56 @@ class CoreRunDomainVerifier:
             ):
                 raise CoreRunError("control_store_integrity_invalid")
         else:
-            if len(ready) != 1:
-                raise CoreRunError("control_store_integrity_invalid")
-            first_unfinished = next(
-                (
-                    stage_id
-                    for stage_id in stage_ids
-                    if states[stage_id].status not in {"complete", "skipped"}
-                ),
-                None,
-            )
-            if ready[0] != first_unfinished:
-                raise CoreRunError("control_store_integrity_invalid")
+            recovery = classify_recovery_legality(snapshot)
+            if recovery.state == "rerun_required" and recovery.repair_id is not None:
+                repairs = [
+                    item
+                    for item in snapshot.repair_cycles
+                    if item.repair_id == recovery.repair_id
+                ]
+                if len(repairs) != 1:
+                    raise CoreRunError("control_store_integrity_invalid")
+                owner_stage_id = repairs[0].owner_stage_id
+                ordinary_ready = [
+                    stage_id for stage_id in ready if stage_id != owner_stage_id
+                ]
+                first_ordinary_unfinished = next(
+                    (
+                        stage_id
+                        for stage_id in stage_ids
+                        if stage_id != owner_stage_id
+                        and states[stage_id].status not in {"complete", "skipped"}
+                    ),
+                    None,
+                )
+                rerun_recorded = bool(recovery.required_rerun_transition_ids)
+                owner_state = states[owner_stage_id].status
+                if rerun_recorded:
+                    owner_state_valid = owner_state in {"complete", "skipped"}
+                else:
+                    owner_state_valid = owner_state == "ready"
+                if (
+                    not owner_state_valid
+                    or len(ordinary_ready) > 1
+                    or (
+                        ordinary_ready
+                        and ordinary_ready[0] != first_ordinary_unfinished
+                    )
+                ):
+                    raise CoreRunError("control_store_integrity_invalid")
+            else:
+                if len(ready) != 1:
+                    raise CoreRunError("control_store_integrity_invalid")
+                first_unfinished = next(
+                    (
+                        stage_id
+                        for stage_id in stage_ids
+                        if states[stage_id].status not in {"complete", "skipped"}
+                    ),
+                    None,
+                )
+                if ready[0] != first_unfinished:
+                    raise CoreRunError("control_store_integrity_invalid")
 
         expected_initial_artifacts = set(CORE_ARTIFACT_IDS)
         if not expected_initial_artifacts <= {
@@ -2847,14 +2956,48 @@ class CoreRunDomainVerifier:
         )
         if not rows or rows[0].status != "clean" or rows[0].integrity_revision != 1:
             raise CoreRunError("control_store_integrity_invalid")
-        contaminated = False
+        contaminated_revision: int | None = None
+        recoveries_by_transaction = {
+            item.accepted_transaction_id: item
+            for item in snapshot.recovery_completions
+        }
         for revision, row in enumerate(rows, start=1):
-            if row.integrity_revision != revision:
+            expected_prior = None if revision == 1 else revision - 1
+            if (
+                row.integrity_revision != revision
+                or row.prior_integrity_revision != expected_prior
+            ):
                 raise CoreRunError("control_store_integrity_invalid")
             if row.status == "contaminated":
-                contaminated = True
-            elif contaminated:
+                if contaminated_revision is not None:
+                    raise CoreRunError("control_store_integrity_invalid")
+                contaminated_revision = row.integrity_revision
+                continue
+            if revision == 1:
+                continue
+            recovery = recoveries_by_transaction.get(row.accepted_transaction_id)
+            if (
+                contaminated_revision is None
+                or recovery is None
+                or recovery.contamination_revision != contaminated_revision
+                or recovery.request_fingerprint != row.request_fingerprint
+                or any(
+                    value is not None
+                    for value in (
+                        row.affected_artifact_id,
+                        row.affected_artifact_revision,
+                        row.expected_workspace_path,
+                        row.expected_sha256,
+                        row.observed_entry_kind,
+                        row.observed_sha256,
+                        row.reason_code,
+                        row.first_detected_at,
+                        row.first_detected_event_id,
+                    )
+                )
+            ):
                 raise CoreRunError("control_store_integrity_invalid")
+            contaminated_revision = None
 
     @staticmethod
     def _verify_claim_chain(
@@ -3703,12 +3846,25 @@ def _verified_core_receipt_binding(
             for item in snapshot.recovery_completions
             if item.recovery_id == primary_id
         ]
+        clean_records = [
+            item
+            for item in snapshot.run_integrity_records
+            if item.accepted_transaction_id == transaction_id
+        ]
         if (
             refs != [primary_id]
             or len(records) != 1
             or records[0].accepted_transaction_id != transaction_id
             or records[0].request_fingerprint != fingerprint
             or records[0].completion_event_id != event.event_id
+            or len(receipt.run_integrity_records) != 1
+            or len(clean_records) != 1
+            or receipt.run_integrity_records[0].integrity_revision
+            != clean_records[0].integrity_revision
+            or clean_records[0].status != "clean"
+            or clean_records[0].prior_integrity_revision
+            != records[0].contamination_revision
+            or clean_records[0].request_fingerprint != fingerprint
         ):
             raise CoreRunError("control_store_integrity_invalid")
     elif rule.primary_family == "run_head_transition":
@@ -4106,17 +4262,21 @@ def resolve_core_replay(
         elif binding.request_fingerprint != request_fingerprint:
             raise CoreRunError("submission_replay_conflict")
         if binding.outcome == "blocked":
-            return CoreRunResult(
+            replay = CoreRunResult(
                 status="blocked",
                 receipt=receipt,
                 error_code=event.reason or "core_run_integrity_blocked",
                 primary_record_id=binding.primary_record_id,
             )
-        return CoreRunResult(
-            status="replayed",
-            receipt=receipt,
-            primary_record_id=binding.primary_record_id,
-        )
+        else:
+            replay = CoreRunResult(
+                status="replayed",
+                receipt=receipt,
+                primary_record_id=binding.primary_record_id,
+            )
+        from .checkout import recover_checkout_replay
+
+        return recover_checkout_replay(store=store, replay=replay)
     except CoreRunError as exc:
         if exc.code in {
             "submission_replay_conflict",
