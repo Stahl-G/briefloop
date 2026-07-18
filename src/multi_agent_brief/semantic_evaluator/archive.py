@@ -131,6 +131,7 @@ class VerifiedShadowArchive:
     archive_manifest: ShadowArchiveManifest
     receipt: ShadowRunReceipt
     witness: LajCompositionWitness
+    presentation: PresentationRecord
     reason_codes: tuple[str, ...]
 
     @property
@@ -1031,6 +1032,7 @@ def verify_shadow_archive(
         archive_manifest=manifest,
         receipt=receipt,
         witness=witness,
+        presentation=presentation_actual,
         reason_codes=tuple(sorted(reasons)),
     )
 

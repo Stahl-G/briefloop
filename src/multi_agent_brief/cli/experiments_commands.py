@@ -29,7 +29,7 @@ def register(subparsers: argparse._SubParsersAction) -> None:
 
     laj = experiments_sub.add_parser(
         "laj",
-        help="Experimental offline-shadow Semantic Evaluator tools (not shipped).",
+        help="Experimental offline-shadow Semantic Evaluator tools.",
     )
     laj_sub = laj.add_subparsers(dest="experiment_laj_action", required=True)
     shadow_run = laj_sub.add_parser(
@@ -43,6 +43,14 @@ def register(subparsers: argparse._SubParsersAction) -> None:
     shadow_run.add_argument("--trial-id", required=True)
     shadow_run.add_argument("--archive-root", required=True)
     shadow_run.add_argument("--json", action="store_true")
+    present = laj_sub.add_parser(
+        "present",
+        help="Render one verified shadow archive as advisory JSON, Markdown, and HTML.",
+    )
+    present.add_argument("--archive", required=True)
+    present.add_argument("--output-dir", required=True)
+    present.add_argument("--expected-report-sha256")
+    present.add_argument("--json", action="store_true")
 
     exp080 = experiments_sub.add_parser(
         "080",
@@ -412,6 +420,8 @@ def handle(args: argparse.Namespace) -> int:
 
 
 def _handle_laj(args: argparse.Namespace) -> int:
+    if args.experiment_laj_action == "present":
+        return _handle_laj_present(args)
     if args.experiment_laj_action != "shadow-run":
         return 1
     try:
@@ -428,6 +438,44 @@ def _handle_laj(args: argparse.Namespace) -> int:
     except Exception:
         payload = _shadow_failure_payload()
     _print_shadow_result(payload, json_output=getattr(args, "json", False))
+    return 0 if payload["ok"] else 1
+
+
+def _handle_laj_present(args: argparse.Namespace) -> int:
+    try:
+        reader = importlib.import_module("multi_agent_brief.semantic_evaluator.reader")
+        result = reader.write_laj_reader_artifacts(
+            archive_path=args.archive,
+            output_dir=args.output_dir,
+            expected_report_sha256=args.expected_report_sha256,
+        )
+        payload = {
+            "advisory_only": True,
+            "finding_count": result.view.finding_count,
+            "ok": True,
+            "output_files": list(reader.LAJ_READER_FILENAMES),
+            "runtime_authority": False,
+            "status": result.view.status,
+            "view_sha256": result.view.view_sha256,
+        }
+    except Exception:
+        payload = {
+            "advisory_only": True,
+            "finding_count": 0,
+            "ok": False,
+            "output_files": [],
+            "runtime_authority": False,
+            "status": "unavailable",
+            "view_sha256": None,
+        }
+    if getattr(args, "json", False):
+        print(json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True))
+    else:
+        print("Experimental / Offline shadow / Advisory only")
+        print(f"rendered: {payload['ok']}")
+        print(f"status: {payload['status']}")
+        print(f"finding_count: {payload['finding_count']}")
+        print("runtime_authority: none")
     return 0 if payload["ok"] else 1
 
 
