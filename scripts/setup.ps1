@@ -15,7 +15,7 @@ function Test-PythonCandidate {
     )
 
     try {
-        $version = & $Candidate.File @($Candidate.Args) -c "import sys; print(f'{sys.version_info.major}.{sys.version_info.minor}.{sys.version_info.micro}'); raise SystemExit(0 if sys.version_info >= (3, 9) else 1)" 2>$null
+        $version = & $Candidate.File @($Candidate.Args) -c "import sys; print(f'{sys.version_info.major}.{sys.version_info.minor}.{sys.version_info.micro}'); raise SystemExit(0 if sys.version_info >= (3, 12) else 1)" 2>$null
         if ($LASTEXITCODE -eq 0 -and $version) {
             return $version.Trim()
         }
@@ -95,7 +95,7 @@ $pythonInfo = Find-Python
 
 if (-not $pythonInfo) {
     Write-Host ""
-    Write-Host "ERROR: Python 3.9+ was not found." -ForegroundColor Red
+    Write-Host "ERROR: Python 3.12+ was not found." -ForegroundColor Red
     Write-Host ""
     Write-Host "PowerShell may be resolving 'python' to the Microsoft Store placeholder." -ForegroundColor Yellow
     Write-Host "Install real Python, then reopen PowerShell:" -ForegroundColor Yellow

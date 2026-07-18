@@ -8,11 +8,11 @@ cd "$(dirname "$0")/.."
 
 echo "=== BriefLoop setup ==="
 
-# Find Python 3.9+: try python3, python
+# Find Python 3.12+: try python3, python
 PYTHON=""
 for cmd in python3 python; do
     if command -v "$cmd" >/dev/null 2>&1; then
-        if "$cmd" -c 'import sys; raise SystemExit(0 if sys.version_info >= (3, 9) else 1)' >/dev/null 2>&1; then
+        if "$cmd" -c 'import sys; raise SystemExit(0 if sys.version_info >= (3, 12) else 1)' >/dev/null 2>&1; then
             PYTHON="$cmd"
             break
         fi
@@ -20,7 +20,7 @@ for cmd in python3 python; do
 done
 
 if [ -z "$PYTHON" ]; then
-    echo "ERROR: Python 3.9+ not found."
+    echo "ERROR: Python 3.12+ not found."
     echo ""
     echo "Install Python from https://www.python.org/downloads/"
     echo "Or on macOS: brew install python@3.12"
@@ -64,7 +64,7 @@ if ! "$VENV_PYTHON" -c "import multi_agent_brief" >/dev/null 2>&1; then
     echo ""
     echo "Possible causes:"
     echo "  - macOS iCloud Drive marking .pth files as hidden"
-    echo "  - Python version incompatibility (need 3.9+)"
+    echo "  - Python version incompatibility (need 3.12+)"
     echo "  - Corrupted virtual environment"
     echo ""
     echo "Try:"

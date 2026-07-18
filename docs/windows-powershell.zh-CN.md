@@ -6,7 +6,7 @@
 
 - Windows 10 / Windows 11
 - Windows PowerShell 5.1 或 PowerShell 7
-- Python 3.9+
+- Python 3.12+
 - Git for Windows
 
 PowerShell 是 Windows 默认推荐路径。WSL 是可选高级路径，不是必需条件。CMD 不是主要支持目标。
@@ -40,7 +40,7 @@ briefloop version
 `scripts/setup.ps1` 会：
 
 - 搜索 `py -3`、`py`、`python`、`python3` 和常见安装路径
-- 严格检查 Python 3.9+
+- 严格检查 Python 3.12+
 - 创建 `.venv`
 - 安装 `.[dev]`
 - 验证 `python -m multi_agent_brief.cli.main version`
