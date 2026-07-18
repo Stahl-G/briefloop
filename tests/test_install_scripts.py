@@ -187,9 +187,12 @@ def test_install_ps1_reuses_venv_that_meets_the_floor(tmp_path: Path) -> None:
     venv_dir = prefix / "venv"
     subprocess.run([sys.executable, "-m", "venv", str(venv_dir)], check=True)
     if os.name != "nt":
-        # install.ps1 probes Scripts\python.exe literally; on POSIX pwsh that
-        # is a single filename containing a backslash.
-        (venv_dir / "Scripts\\python.exe").symlink_to(venv_dir / "bin" / "python")
+        # PowerShell's filesystem provider treats the backslash in
+        # Scripts\python.exe as a path separator even on POSIX. Mirror the
+        # Windows venv layout while reusing the real POSIX venv interpreter.
+        scripts_dir = venv_dir / "Scripts"
+        scripts_dir.mkdir()
+        (scripts_dir / "python.exe").symlink_to(venv_dir / "bin" / "python")
 
     output = _run_install_ps1_dry(prefix)
 
