@@ -71,6 +71,7 @@ multi_agent_brief = [
   "semantic_evaluator/prompts/*.txt",
   "semantic_evaluator/baselines/*.yaml",
   "semantic_evaluator/fixtures/synthetic_shadow_v1/*.json",
+  "semantic_evaluator/fixtures/synthetic_shadow_v1/*.md",
   "configs/*.yaml",
   "configs/policy_packs/*.yaml",
   "configs/policy_profiles/*.yaml",

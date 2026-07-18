@@ -63,6 +63,21 @@ def _present_argv(*, json_output: bool = True) -> list[str]:
     return values
 
 
+def _demo_argv(*, json_output: bool = True) -> list[str]:
+    values = [
+        "experiments",
+        "laj",
+        "demo",
+        "--archive-root",
+        "/private/output/archive",
+        "--output-dir",
+        "/private/output/laj-advisory-demo",
+    ]
+    if json_output:
+        values.append("--json")
+    return values
+
+
 def _fake_runner(monkeypatch, *, result: _Result | None = None) -> list[dict]:
     calls: list[dict] = []
 
@@ -89,6 +104,84 @@ def test_shadow_cli_is_registered_only_below_experiments_laj() -> None:
     assert present.command == "experiments"
     assert present.experiments_action == "laj"
     assert present.experiment_laj_action == "present"
+
+    demo = build_parser().parse_args(_demo_argv())
+    assert demo.command == "experiments"
+    assert demo.experiments_action == "laj"
+    assert demo.experiment_laj_action == "demo"
+
+
+def test_demo_cli_projects_synthetic_nonqualifying_result(monkeypatch, capsys) -> None:
+    result = SimpleNamespace(
+        archive_complete=True,
+        execution_origin="synthetic_fixture",
+        finding_count=0,
+        ok=True,
+        output_files=("laj.html", "laj.json", "laj.md"),
+        presentation_available=True,
+        qualification_class="synthetic_demo_only",
+        reader_status="available",
+        reason_codes=(),
+        receipt_id="receipt-demo",
+        replayed=False,
+        view_sha256="2" * 64,
+    )
+    calls: list[dict[str, object]] = []
+
+    def run_public_safe_laj_demo(**kwargs):
+        calls.append(kwargs)
+        return result
+
+    monkeypatch.setattr(
+        experiments_commands.importlib,
+        "import_module",
+        lambda _name: SimpleNamespace(
+            run_public_safe_laj_demo=run_public_safe_laj_demo
+        ),
+    )
+    assert main(_demo_argv()) == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload == {
+        "advisory_only": True,
+        "archive_complete": True,
+        "execution_origin": "synthetic_fixture",
+        "finding_count": 0,
+        "ok": True,
+        "output_files": ["laj.html", "laj.json", "laj.md"],
+        "presentation_available": True,
+        "qualification_class": "synthetic_demo_only",
+        "qualification_eligible": False,
+        "reader_status": "available",
+        "reason_codes": [],
+        "receipt_id": "receipt-demo",
+        "replayed": False,
+        "runtime_authority": False,
+        "view_sha256": "2" * 64,
+    }
+    assert calls == [
+        {
+            "archive_root": "/private/output/archive",
+            "output_dir": "/private/output/laj-advisory-demo",
+        }
+    ]
+    assert "/private" not in json.dumps(payload)
+
+
+def test_demo_cli_failure_is_value_free(monkeypatch, capsys) -> None:
+    secret = "PRIVATE_DEMO_FAILURE_9201"
+
+    def fail_import(_name: str):
+        raise RuntimeError(secret)
+
+    monkeypatch.setattr(experiments_commands.importlib, "import_module", fail_import)
+    assert main(_demo_argv()) == 1
+    captured = capsys.readouterr()
+    payload = json.loads(captured.out)
+    assert payload["reason_codes"] == ["shadow_adapter_unavailable"]
+    assert payload["qualification_eligible"] is False
+    assert payload["runtime_authority"] is False
+    assert secret not in captured.out + captured.err
+    assert "/private" not in captured.out + captured.err
 
 
 def test_shadow_cli_emits_fixed_json_without_paths_or_provider_material(
