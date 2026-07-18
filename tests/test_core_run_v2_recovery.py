@@ -21,6 +21,8 @@ from multi_agent_brief.contracts.v2 import (
     CoreRunEventBinding,
     EventEnvelope,
     IntegrityCheckRequest,
+    InvocationStartRequest,
+    OwnedArtifactSubmitRequest,
     OwnedArtifactSubmissionRecord,
     RecoveryCompletionRecord,
     RecoveryCompleteRequest,
@@ -46,7 +48,11 @@ from multi_agent_brief.control_store.serialization import (
     canonical_json_bytes,
     sha256_hex,
 )
-from multi_agent_brief.core_run_v2 import CoreRunRecoveryService, CoreRunService
+from multi_agent_brief.core_run_v2 import (
+    ArtifactAcceptanceService,
+    CoreRunRecoveryService,
+    CoreRunService,
+)
 from multi_agent_brief.core_run_v2.checkout import (
     prepare_checkout_effect,
     prepare_cross_run_checkout_effect,
@@ -1052,6 +1058,7 @@ def _reset_run(
     stage_checkout_effect(
         unit,
         prepare_cross_run_checkout_effect(
+            workspace=store.path.parent,
             snapshot=predecessor,
             successor_run_id=successor_run_id,
             transaction_id=transaction_id,
@@ -1921,6 +1928,49 @@ def test_recovery_service_reset_is_cross_run_and_historical_replay_safe(
         )
     )
     assert doctor.status == "committed"
+    with SQLiteControlStore.open(database, clock=CLOCK) as store:
+        before_invocation = store.load_snapshot(RUN_ID)
+    invocation = CoreRunService(workspace, clock=CLOCK).start_invocation(
+        _record(
+            InvocationStartRequest,
+            request_id="REQ-RECOVERY-RESET-PLANNER-001",
+            run_id=RUN_ID,
+            stage_id="source-discovery",
+            role_id="source-planner",
+            runtime="operator",
+            expected_store_revision=before_invocation.store_revision,
+        )
+    )
+    assert invocation.status == "committed", invocation.to_dict()
+    candidates = workspace / "scratch" / invocation.primary_record_id / "source_candidates.yaml"
+    candidates.parent.mkdir(parents=True, exist_ok=True)
+    candidates.write_text("sources:\n  - SRC-RESET-001\n", encoding="utf-8")
+    with SQLiteControlStore.open(database, clock=CLOCK) as store:
+        before_artifact = store.load_snapshot(RUN_ID)
+    accepted = ArtifactAcceptanceService(workspace, clock=CLOCK).submit_owned_artifact(
+        _record(
+            OwnedArtifactSubmitRequest,
+            request_id="REQ-RECOVERY-RESET-SOURCES-001",
+            run_id=RUN_ID,
+            artifact_id="source_candidates",
+            invocation_id=invocation.primary_record_id,
+            producer_tool_id=None,
+            input_path=candidates.relative_to(workspace).as_posix(),
+            expected_store_revision=before_artifact.store_revision,
+            expected_artifact_revision=0,
+            expected_parent_artifact=None,
+        )
+    )
+    assert accepted.status == "committed", accepted.to_dict()
+    with SQLiteControlStore.open(database, clock=CLOCK) as store:
+        predecessor = store.load_snapshot(RUN_ID)
+        predecessor_artifact = next(
+            item
+            for item in predecessor.artifacts
+            if item.artifact_id == "source_candidates"
+        )
+    predecessor_projection = workspace / predecessor_artifact.path
+    assert predecessor_projection.is_file()
 
     def request_for(predecessor: str, successor: str, request_id: str) -> RunResetRequest:
         with SQLiteControlStore.open(database, clock=CLOCK) as store:
@@ -1949,14 +1999,80 @@ def test_recovery_service_reset_is_cross_run_and_historical_replay_safe(
 
     first_request = request_for(RUN_ID, "RUN-RECOVERY-SERVICE-RESET-002", "REQ-RECOVERY-SERVICE-RESET-001")
     first = service.reset_run(first_request)
-    assert first.status == "committed"
+    assert first.status == "committed", first.to_dict()
+    assert not predecessor_projection.exists()
+    successor_run_id = "RUN-RECOVERY-SERVICE-RESET-002"
+    with SQLiteControlStore.open(database, clock=CLOCK) as store:
+        successor = store.load_snapshot(successor_run_id)
+    successor_doctor = CoreRunService(workspace, clock=CLOCK).doctor_check(
+        _record(
+            IntegrityCheckRequest,
+            request_id="REQ-RECOVERY-RESET-DOCTOR-002",
+            run_id=successor_run_id,
+            expected_store_revision=successor.store_revision,
+        )
+    )
+    assert successor_doctor.status == "committed", successor_doctor.to_dict()
+    with SQLiteControlStore.open(database, clock=CLOCK) as store:
+        successor = store.load_snapshot(successor_run_id)
+    successor_invocation = CoreRunService(
+        workspace, clock=CLOCK
+    ).start_invocation(
+        _record(
+            InvocationStartRequest,
+            request_id="REQ-RECOVERY-RESET-PLANNER-002",
+            run_id=successor_run_id,
+            stage_id="source-discovery",
+            role_id="source-planner",
+            runtime="operator",
+            expected_store_revision=successor.store_revision,
+        )
+    )
+    assert successor_invocation.status == "committed", (
+        successor_invocation.to_dict()
+    )
+    successor_candidates = (
+        workspace
+        / "scratch"
+        / successor_invocation.primary_record_id
+        / "source_candidates.yaml"
+    )
+    successor_candidates.parent.mkdir(parents=True, exist_ok=True)
+    successor_candidates.write_text(
+        "sources:\n  - SRC-RESET-002\n", encoding="utf-8"
+    )
+    with SQLiteControlStore.open(database, clock=CLOCK) as store:
+        successor = store.load_snapshot(successor_run_id)
+    successor_accepted = ArtifactAcceptanceService(
+        workspace, clock=CLOCK
+    ).submit_owned_artifact(
+        _record(
+            OwnedArtifactSubmitRequest,
+            request_id="REQ-RECOVERY-RESET-SOURCES-002",
+            run_id=successor_run_id,
+            artifact_id="source_candidates",
+            invocation_id=successor_invocation.primary_record_id,
+            producer_tool_id=None,
+            input_path=successor_candidates.relative_to(workspace).as_posix(),
+            expected_store_revision=successor.store_revision,
+            expected_artifact_revision=0,
+            expected_parent_artifact=None,
+        )
+    )
+    assert successor_accepted.status == "committed", (
+        successor_accepted.to_dict()
+    )
+    assert predecessor_projection.read_text(encoding="utf-8") == (
+        "sources:\n  - SRC-RESET-002\n"
+    )
     second_request = request_for(
-        "RUN-RECOVERY-SERVICE-RESET-002",
+        successor_run_id,
         "RUN-RECOVERY-SERVICE-RESET-003",
         "REQ-RECOVERY-SERVICE-RESET-002",
     )
     second = service.reset_run(second_request)
     assert second.status == "committed"
+    assert not predecessor_projection.exists()
     (workspace / "sources.yaml").write_text("not: [valid\n", encoding="utf-8")
     replay = service.reset_run(first_request)
     assert replay.status == "replayed"
@@ -1971,7 +2087,7 @@ def test_recovery_service_reset_is_cross_run_and_historical_replay_safe(
     assert first_binding.pre_checkout_revision_id == first_binding.post_checkout_revision_id or first_binding.pre_checkout_revision_id is not None
     assert next(
         item for item in first_snapshot.stage_states if item.stage_id == "doctor"
-    ).status == "ready"
+    ).status == "complete"
 
 
 def test_sequential_resets_verify_each_as_of_prefix_and_replay_first_reset(

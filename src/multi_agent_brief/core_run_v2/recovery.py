@@ -1335,7 +1335,11 @@ class CoreRunRecoveryService:
             return CoreRunResult(status="committed", receipt=receipt, primary_record_id=recovery_id)
 
     def _reset_run(self, request: RunResetRequest):
-        from .checkout import prepare_cross_run_checkout_effect, stage_checkout_effect
+        from .checkout import (
+            prepare_cross_run_checkout_effect,
+            publish_checkout_effect,
+            stage_checkout_effect,
+        )
         from .errors import CoreRunResult
         from .policy import (
             CORE_ARTIFACT_IDS,
@@ -1515,6 +1519,7 @@ class CoreRunRecoveryService:
                 strict=True,
             )
             checkout = prepare_cross_run_checkout_effect(
+                workspace=self.workspace,
                 snapshot=snapshot,
                 successor_run_id=request.successor_run_id,
                 transaction_id=request.request_id,
@@ -1666,6 +1671,16 @@ class CoreRunRecoveryService:
             receipt = unit.commit(
                 _postcommit_observer=lambda _receipt: verifier.verify(store, request.successor_run_id)
             )
+            published, _warnings = publish_checkout_effect(
+                workspace=self.workspace,
+                store=store,
+                prepared=checkout,
+            )
+            if not published:
+                return CoreRunResult(
+                    status="commit_outcome_unknown",
+                    error_code="commit_outcome_unknown",
+                )
             return CoreRunResult(status="committed", receipt=receipt, primary_record_id=transition_id)
 
     def _reset_event(self, event_id, request, fingerprint, event_type, stage_id, primary_id, *, bind):

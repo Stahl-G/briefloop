@@ -256,12 +256,15 @@ def prepare_checkout_effect(
 
 def prepare_cross_run_checkout_effect(
     *,
+    workspace: "Path",
     snapshot: ControlStoreSnapshot,
     successor_run_id: str,
     transaction_id: str,
     created_at: datetime,
 ) -> PreparedCheckoutEffect:
     """Build the reset successor child from the exact predecessor checkout."""
+
+    from .publication import preflight_publication
 
     pre = _current_checkout(snapshot)
     if pre is None:
@@ -287,7 +290,36 @@ def prepare_cross_run_checkout_effect(
         },
         strict=True,
     )
-    return PreparedCheckoutEffect(pre, post, binding, None, None, ())
+    if not pre.members:
+        return PreparedCheckoutEffect(pre, post, binding, None, None, ())
+    if sys.platform == "win32":
+        raise CoreRunError("checkout_publication_unsupported")
+    identity = PublicationIdentityV1.model_validate(
+        {
+            "schema_version": PUBLICATION_IDENTITY_SCHEMA,
+            "workspace_id": snapshot.workspace_id,
+            "run_id": successor_run_id,
+            "transaction_id": transaction_id,
+            "checkout_revision_id": post.record.checkout_revision_id,
+        },
+        strict=True,
+    )
+    provisional_intent, provisional_members = build_publication_intent(
+        identity=identity,
+        pre=pre,
+        post=post,
+        capability_profile_sha256="0" * 64,
+    )
+    if not provisional_members:
+        return PreparedCheckoutEffect(pre, post, binding, None, None, ())
+    profile = preflight_publication(Path(workspace), provisional_members)
+    intent, members = build_publication_intent(
+        identity=identity,
+        pre=pre,
+        post=post,
+        capability_profile_sha256=profile.sha256,
+    )
+    return PreparedCheckoutEffect(pre, post, binding, identity, intent, members)
 
 
 def _ensure_projection_parent(workspace: Path, canonical_path: str) -> None:

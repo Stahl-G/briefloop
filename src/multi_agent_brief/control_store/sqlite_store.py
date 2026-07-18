@@ -4726,6 +4726,16 @@ class SQLiteControlStore:
                 else built_revisions.get(binding.pre_checkout_revision_id)
             )
             if (
+                pre_structure is None
+                and binding is not None
+                and binding.pre_checkout_revision_id is not None
+                and binding.pre_run_id != snapshot.run.run_id
+            ):
+                pre_structure = self._load_checkout_structure_in_transaction(
+                    binding.pre_run_id,
+                    binding.pre_checkout_revision_id,
+                )
+            if (
                 intent.publication_identity_sha256
                 != _publication_identity_digest(intent.identity)
                 or binding is None
@@ -4822,6 +4832,109 @@ class SQLiteControlStore:
                 )
             ):
                 raise ControlStoreIntegrityError("checkout_publication_journal_invalid")
+
+    def _load_checkout_structure_in_transaction(
+        self,
+        run_id: str,
+        checkout_revision_id: str,
+    ) -> tuple[CheckoutRevisionRecord, tuple[CheckoutRevisionMember, ...]]:
+        """Rebuild one cross-run publication preimage on this connection."""
+
+        records = tuple(
+            item
+            for item in self._load_for_run(
+                CheckoutRevisionRecord,
+                "checkout_revisions",
+                run_id,
+                "created_at, checkout_revision_id",
+                {
+                    "checkout_revision_id": "checkout_revision_id",
+                    "workspace_id": "workspace_id",
+                    "run_id": "run_id",
+                    "parent_checkout_revision_id": "parent_checkout_revision_id",
+                    "schema_version": "schema_version",
+                    "manifest_sha256": "manifest_sha256",
+                    "tree_sha256": "tree_sha256",
+                    "member_count": "member_count",
+                    "created_at": "created_at",
+                    "creator_transaction_id": "creator_transaction_id",
+                },
+            )
+            if item.checkout_revision_id == checkout_revision_id
+        )
+        if len(records) != 1:
+            raise ControlStoreIntegrityError("checkout_publication_journal_invalid")
+        members = tuple(
+            item
+            for item in self._load_for_run(
+                CheckoutRevisionMember,
+                "checkout_revision_members",
+                run_id,
+                "checkout_revision_id, ordinal",
+                {
+                    "checkout_revision_id": "checkout_revision_id",
+                    "ordinal": "ordinal",
+                    "workspace_id": "workspace_id",
+                    "run_id": "run_id",
+                    "schema_version": "schema_version",
+                    "canonical_path": "canonical_path",
+                    "artifact_id": "artifact_id",
+                    "artifact_revision": "artifact_revision",
+                    "blob_sha256": "blob_sha256",
+                    "byte_size": "byte_size",
+                },
+            )
+            if item.checkout_revision_id == checkout_revision_id
+        )
+        artifact_revisions = {
+            (item.artifact_id, item.revision): item
+            for item in self._load_for_run(
+                ArtifactRevision,
+                "artifact_revisions",
+                run_id,
+                "artifact_id, revision",
+                {
+                    "run_id": "run_id",
+                    "artifact_id": "artifact_id",
+                    "revision": "revision",
+                    "schema_version": "schema_version",
+                    "path": "path",
+                    "sha256": "sha256",
+                    "size_bytes": "size_bytes",
+                    "frozen": "frozen",
+                    "producer_kind": "producer_kind",
+                    "producer_id": "producer_id",
+                    "created_at": "created_at",
+                },
+            )
+        }
+        try:
+            rebuilt_record, rebuilt_members, _manifest_bytes = (
+                _build_checkout_revision_structure(
+                    workspace_id=records[0].workspace_id,
+                    run_id=run_id,
+                    transaction_id=records[0].creator_transaction_id,
+                    created_at=datetime.fromisoformat(
+                        records[0].created_at.replace("Z", "+00:00")
+                    ),
+                    artifact_revisions=tuple(
+                        artifact_revisions[
+                            (item.artifact_id, item.artifact_revision)
+                        ]
+                        for item in members
+                    ),
+                    parent_checkout_revision_id=(
+                        records[0].parent_checkout_revision_id
+                    ),
+                )
+            )
+        except (KeyError, _CheckoutStructureError, ValueError) as exc:
+            raise ControlStoreIntegrityError(
+                "checkout_publication_journal_invalid"
+            ) from exc
+        if rebuilt_record != records[0] or rebuilt_members != members:
+            raise ControlStoreIntegrityError("checkout_publication_journal_invalid")
+        return rebuilt_record, rebuilt_members
 
     def _verify_core_snapshot_structure(self, snapshot: ControlStoreSnapshot) -> None:
         """Verify PR-4A relation closure without interpreting domain policy."""
