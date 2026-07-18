@@ -486,6 +486,20 @@ def protected_revision_keys(
         keys.add(
             (freeze.ledger_artifact.artifact_id, freeze.ledger_artifact.revision)
         )
+    receipt_revisions = {
+        item.transaction_id: item.committed_revision
+        for item in verified.snapshot.transactions
+    }
+    if verified.snapshot.receipt_checkout_bindings:
+        current = max(
+            verified.snapshot.receipt_checkout_bindings,
+            key=lambda item: receipt_revisions.get(item.transaction_id, -1),
+        )
+        keys.update(
+            (item.artifact_id, item.artifact_revision)
+            for item in verified.snapshot.checkout_revision_members
+            if item.checkout_revision_id == current.post_checkout_revision_id
+        )
     return keys
 
 

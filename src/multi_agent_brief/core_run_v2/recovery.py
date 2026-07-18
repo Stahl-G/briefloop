@@ -1159,7 +1159,7 @@ class CoreRunRecoveryService:
                             "requested_decision": None,
                             "prior_status": prior.status,
                             "prior_revision": prior.revision,
-                            "result_status": "pending",
+                            "result_status": "ready",
                             "result_revision": prior.revision + 1,
                             "reason": "repair reopens artifact owner stage",
                             "run_contract_fingerprint": verified.binding.contract_fingerprint,
@@ -1337,7 +1337,19 @@ class CoreRunRecoveryService:
     def _reset_run(self, request: RunResetRequest):
         from .checkout import prepare_cross_run_checkout_effect, stage_checkout_effect
         from .errors import CoreRunResult
-        from .policy import derived_id, run_contract_fingerprint, transaction_type_for
+        from .policy import (
+            CORE_ARTIFACT_IDS,
+            INTERNAL_CONTRACT_ARTIFACT_IDS,
+            blob_workspace_path,
+            derived_id,
+            run_contract_fingerprint,
+            transaction_type_for,
+        )
+        from .service import (
+            _artifact_pair,
+            _derive_runtime_source_plan,
+            workspace_input_fingerprints,
+        )
         from .verifier import CoreRunDomainVerifier
 
         fingerprint = canonical_fingerprint(
@@ -1354,6 +1366,19 @@ class CoreRunRecoveryService:
             )
             if replay is not None:
                 return replay
+            (
+                workspace_config_sha256,
+                sources_config_sha256,
+                sources_content,
+            ) = workspace_input_fingerprints(
+                self.workspace,
+                include_sources_content=True,
+            )
+            if (
+                workspace_config_sha256 != request.workspace_config_sha256
+                or sources_config_sha256 != request.sources_config_sha256
+            ):
+                raise CoreRunError("core_run_contract_mismatch")
             verified = self._verified_current(
                 store,
                 request.predecessor_run_id,
@@ -1380,57 +1405,68 @@ class CoreRunRecoveryService:
             adapter_payload.pop("binding_fingerprint", None)
             adapter_payload["binding_fingerprint"] = canonical_fingerprint(adapter_payload)
             adapter_bytes = canonical_json_bytes(adapter_payload)
-            source_payload = verified.source_plan.model_dump(
+            source_plan = _derive_runtime_source_plan(
+                sources_content,
+                run_id=request.successor_run_id,
+                sources_config_sha256=sources_config_sha256,
+            )
+            source_payload = source_plan.model_dump(
                 mode="json", exclude_unset=False
             )
-            source_payload.update(
-                run_id=request.successor_run_id,
-                sources_config_sha256=request.sources_config_sha256,
-            )
-            source_payload.pop("source_plan_fingerprint", None)
-            source_payload["source_plan_fingerprint"] = canonical_fingerprint(source_payload)
             source_bytes = canonical_json_bytes(source_payload)
-            revisions = {
-                (item.artifact_id, item.revision): item
-                for item in snapshot.artifact_revisions
-            }
-            adapter_ref = verified.binding.runtime_adapter_artifact
-            source_ref = verified.binding.runtime_source_plan_artifact
-            successor_revisions: dict[tuple[str, int], ArtifactRevision] = {}
-            successor_bytes: dict[tuple[str, int], bytes] = {}
-            for key, revision in revisions.items():
-                content = store.read_artifact_revision_bytes(
-                    request.predecessor_run_id, revision.artifact_id, revision.revision
+            frozen_payloads = (
+                store.read_artifact_revision_bytes(
+                    request.predecessor_run_id,
+                    verified.binding.stage_specs_artifact.artifact_id,
+                    verified.binding.stage_specs_artifact.revision,
+                ),
+                store.read_artifact_revision_bytes(
+                    request.predecessor_run_id,
+                    verified.binding.artifact_contracts_artifact.artifact_id,
+                    verified.binding.artifact_contracts_artifact.revision,
+                ),
+                store.read_artifact_revision_bytes(
+                    request.predecessor_run_id,
+                    verified.binding.policy_pack_artifact.artifact_id,
+                    verified.binding.policy_pack_artifact.revision,
+                ),
+                adapter_bytes,
+                source_bytes,
+            )
+            contract_artifacts = [
+                _artifact_pair(
+                    run_id=request.successor_run_id,
+                    artifact_id=artifact_id,
+                    revision=1,
+                    path=blob_workspace_path(sha256_hex(content)),
+                    artifact_format="json",
+                    content=content,
+                    producer_kind="control_tool",
+                    producer_id="core-v2-initializer",
+                    created_at=now,
+                    required=True,
                 )
-                if key == (adapter_ref.artifact_id, adapter_ref.revision):
-                    content = adapter_bytes
-                elif key == (source_ref.artifact_id, source_ref.revision):
-                    content = source_bytes
-                successor = revision.model_copy(
-                    update={
-                        "run_id": request.successor_run_id,
-                        "sha256": sha256_hex(content),
-                        "size_bytes": len(content),
-                        "created_at": now,
-                    }
+                + (content,)
+                for artifact_id, content in zip(
+                    INTERNAL_CONTRACT_ARTIFACT_IDS,
+                    frozen_payloads,
                 )
-                successor_revisions[key] = successor
-                successor_bytes[key] = content
+            ]
             contract_values = verified.binding.model_dump(
                 mode="json", exclude_unset=False
             )
             contract_values.update(
                 run_id=request.successor_run_id,
                 run_direction=request.run_direction.model_dump(mode="json"),
-                workspace_config_sha256=request.workspace_config_sha256,
-                sources_config_sha256=request.sources_config_sha256,
+                workspace_config_sha256=workspace_config_sha256,
+                sources_config_sha256=sources_config_sha256,
                 role_topology=request.role_topology,
                 gate_strictness=request.gate_strictness,
                 input_governance_required=request.input_governance_required,
                 runtime_adapter_sha256=sha256_hex(adapter_bytes),
                 runtime_adapter_fingerprint=adapter_payload["binding_fingerprint"],
                 runtime_source_plan_sha256=sha256_hex(source_bytes),
-                runtime_source_plan_fingerprint=source_payload["source_plan_fingerprint"],
+                runtime_source_plan_fingerprint=source_plan.source_plan_fingerprint,
                 created_at=now,
                 accepted_transaction_id=request.request_id,
                 request_fingerprint=fingerprint,
@@ -1451,8 +1487,8 @@ class CoreRunRecoveryService:
                 runtime_source_plan_sha256=contract_values["runtime_source_plan_sha256"],
                 runtime_source_plan_fingerprint=contract_values["runtime_source_plan_fingerprint"],
                 run_direction=request.run_direction.model_dump(mode="json"),
-                workspace_config_sha256=request.workspace_config_sha256,
-                sources_config_sha256=request.sources_config_sha256,
+                workspace_config_sha256=workspace_config_sha256,
+                sources_config_sha256=sources_config_sha256,
                 role_topology=request.role_topology,
                 gate_strictness=request.gate_strictness,
                 input_governance_required=request.input_governance_required,
@@ -1514,18 +1550,46 @@ class CoreRunRecoveryService:
                 )
             )
             unit.put_run_contract_binding(contract)
-            for artifact in snapshot.artifacts:
-                unit.put_artifact(artifact.model_copy(update={"run_id": request.successor_run_id}))
-                for revision_number in range(1, artifact.current_revision + 1):
-                    key = (artifact.artifact_id, revision_number)
-                    unit.put_artifact_revision(
-                        successor_revisions[key], successor_bytes[key]
+            for artifact, revision, content in contract_artifacts:
+                unit.put_artifact(artifact)
+                unit.put_artifact_revision(revision, content)
+            artifact_contracts = {
+                str(item["artifact_id"]): item for item in verified.artifacts
+            }
+            for artifact_id in CORE_ARTIFACT_IDS:
+                row = artifact_contracts[artifact_id]
+                unit.put_artifact(
+                    ArtifactRecord.model_validate(
+                        {
+                            "schema_version": ArtifactRecord.schema_id,
+                            "run_id": request.successor_run_id,
+                            "artifact_id": artifact_id,
+                            "current_revision": 0,
+                            "status": "expected",
+                            "required": bool(row["required"]),
+                            "path": row["path"],
+                            "format": row["format"],
+                        },
+                        strict=True,
                     )
-            for stage in snapshot.stage_states:
-                event_id = derived_id("EVT-RESET-STAGE", request.request_id, stage.stage_id)
-                stage_transition_id = derived_id("TRANSITION-RESET", request.request_id, stage.stage_id)
+                )
+            for position, stage_contract in enumerate(verified.stages):
+                stage_id = str(stage_contract["stage_id"])
+                status = "ready" if position == 0 else "pending"
+                event_id = derived_id("EVT-RESET-STAGE", request.request_id, stage_id)
+                stage_transition_id = derived_id("TRANSITION-RESET", request.request_id, stage_id)
                 unit.put_stage_state(
-                    stage.model_copy(update={"run_id": request.successor_run_id, "revision": 0, "updated_at": now})
+                    StageState.model_validate(
+                        {
+                            "schema_version": StageState.schema_id,
+                            "run_id": request.successor_run_id,
+                            "stage_id": stage_id,
+                            "status": status,
+                            "revision": 0,
+                            "updated_at": now,
+                        },
+                        strict=True,
+                    )
                 )
                 unit.append_stage_transition(
                     StageTransitionRecord.model_validate(
@@ -1533,12 +1597,12 @@ class CoreRunRecoveryService:
                             "schema_version": StageTransitionRecord.schema_id,
                             "transition_id": stage_transition_id,
                             "run_id": request.successor_run_id,
-                            "stage_id": stage.stage_id,
+                            "stage_id": stage_id,
                             "transition_kind": "initialize",
                             "requested_decision": None,
                             "prior_status": None,
                             "prior_revision": None,
-                            "result_status": stage.status,
+                            "result_status": status,
                             "result_revision": 0,
                             "reason": "reset successor stage initialized",
                             "run_contract_fingerprint": contract.contract_fingerprint,
@@ -1560,7 +1624,17 @@ class CoreRunRecoveryService:
                         strict=True,
                     )
                 )
-                unit.append_event(self._reset_event(event_id, request, fingerprint, "stage_status_changed", stage.stage_id, None, bind=False))
+                unit.append_event(
+                    self._reset_event(
+                        event_id,
+                        request,
+                        fingerprint,
+                        "stage_status_changed",
+                        stage_id,
+                        None,
+                        bind=False,
+                    )
+                )
             unit.append_run_integrity_record(
                 RunIntegrityRecord.model_validate(
                     {

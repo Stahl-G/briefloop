@@ -40,6 +40,7 @@ from multi_agent_brief.contracts.v2 import (
 )
 from multi_agent_brief.control_store import (
     ControlStoreCommitOutcomeUnknown,
+    ControlStoreConflict,
     ControlStoreIntegrityError,
     SQLiteControlStore,
 )
@@ -56,6 +57,10 @@ from multi_agent_brief.core_run_v2 import (
     RunIntegrityService,
 )
 from multi_agent_brief.core_run_v2.artifacts import _input_classification_bytes
+from multi_agent_brief.core_run_v2.checkout import (
+    prepare_checkout_effect,
+    stage_checkout_effect,
+)
 from multi_agent_brief.core_run_v2.integrity import read_workspace_file
 from multi_agent_brief.core_run_v2.lineage import (
     classify_current_audit_promotion,
@@ -90,6 +95,20 @@ RUN_ID = "RUN-CORE-V2-001"
 WORKSPACE_ID = "WS-CORE-V2-001"
 NOW = "2026-07-15T12:00:00Z"
 CLOCK = lambda: datetime(2026, 7, 15, 12, 0, tzinfo=timezone.utc)
+
+
+def _commit_core_fixture(store: SQLiteControlStore, unit):
+    """Commit an intentionally forged core receipt with a valid checkout edge."""
+
+    checkout = prepare_checkout_effect(
+        workspace=store.path.parent,
+        snapshot=store.load_snapshot(unit.run_id),
+        transaction_id=unit.transaction_id,
+        created_at=CLOCK(),
+        additional_revisions=tuple(item.record for item in unit._artifact_revisions),
+    )
+    stage_checkout_effect(unit, checkout)
+    return unit.commit()
 ROOT = Path(__file__).parents[1]
 
 
@@ -175,6 +194,32 @@ def _initialize(
     )
     assert result.status == "committed", result.to_dict()
     return service
+
+
+def test_initialize_normalizes_web_search_configure_later_source_plan(
+    tmp_path: Path,
+) -> None:
+    workspace = _workspace(tmp_path)
+    (workspace / "sources.yaml").write_text(
+        "source_strategy:\n"
+        "  profile: conservative\n"
+        "  enabled_providers: [manual, web_search]\n"
+        "manual:\n"
+        "  enabled: true\n"
+        "  sources: []\n"
+        "web_search:\n"
+        "  enabled: true\n"
+        "  mode: configure_later\n",
+        encoding="utf-8",
+    )
+    _initialize(workspace)
+    with SQLiteControlStore.open(workspace / "briefloop.db") as store:
+        verified = CoreRunDomainVerifier().verify(store, RUN_ID)
+    assert verified.source_plan.web_search_mode == "configure_later"
+    assert [(item.route_id, item.route_kind, item.execution_owner) for item in verified.source_plan.routes] == [
+        ("manual", "manual", "human"),
+        ("web-search", "disabled", "human"),
+    ]
 
 
 def _start_invocation(
@@ -623,15 +668,31 @@ def test_input_classification_exact_replay_precedes_current_input_scan(
     assert replay.primary_record_id == first.primary_record_id
     assert _store_revision(workspace) == committed_revision
 
+    candidate.unlink()
+    replay_without_scratch = service.submit_owned_artifact(request)
+    assert replay_without_scratch.status == "replayed"
+    assert replay_without_scratch.receipt == first.receipt
+    candidate.write_bytes(original_content)
+
     candidate.write_bytes(_input_classification_bytes(workspace))
-    conflict = service.submit_owned_artifact(request)
+    replay_after_scratch_change = service.submit_owned_artifact(request)
+    assert replay_after_scratch_change.status == "replayed"
+    assert replay_after_scratch_change.receipt == first.receipt
+    assert _store_revision(workspace) == committed_revision
+
+    candidate.write_bytes(original_content)
+    changed_request = _record(
+        OwnedArtifactSubmitRequest,
+        **{
+            **request.model_dump(mode="python", exclude_unset=False),
+            "expected_artifact_revision": 1,
+        },
+    )
+    conflict = service.submit_owned_artifact(changed_request)
     assert conflict.to_dict() == {
         "status": "failed_uncommitted",
         "error_code": "submission_replay_conflict",
     }
-    assert _store_revision(workspace) == committed_revision
-
-    candidate.write_bytes(original_content)
     stale = service.submit_owned_artifact(
         _record(
             OwnedArtifactSubmitRequest,
@@ -1288,9 +1349,8 @@ def test_gate_batches_append_and_old_request_exactly_replays(
     assert report_path.read_bytes() == second_report_bytes
 
 
-def test_gate_rejects_finalize_stage_before_store_or_checkout_access(
+def test_gate_rejects_finalize_stage_before_render_without_writes(
     tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     workspace = _workspace(tmp_path)
     _advance_to_auditor_ready(workspace)
@@ -1324,17 +1384,11 @@ def test_gate_rejects_finalize_stage_before_store_or_checkout_access(
         and "briefloop.db.blobs" not in path.parts
     }
 
-    service = GateEvaluationService(workspace, clock=CLOCK)
-
-    def unexpected_store_access() -> SQLiteControlStore:
-        raise AssertionError("finalize Gate request reached the Store")
-
-    monkeypatch.setattr(service, "_open_store", unexpected_store_access)
-    result = service.evaluate(request)
+    result = GateEvaluationService(workspace, clock=CLOCK).evaluate(request)
 
     assert result.to_dict() == {
         "status": "failed_uncommitted",
-        "error_code": "core_run_request_invalid",
+        "error_code": "stage_not_current",
     }
     assert result.receipt is None
     assert result.primary_record_id is None
@@ -2229,7 +2283,7 @@ def test_human_assisted_pending_analyst_rejects_route_reservation_replay(
         )
         unit.put_invocation(invocation)
         unit.append_event(event)
-        unit.commit()
+        _commit_core_fixture(store, unit)
         with pytest.raises(
             CoreRunError,
             match="control_store_integrity_invalid",
@@ -5479,7 +5533,7 @@ def test_exact_replay_rejects_legacy_delivery_hidden_in_core_receipt(
         unit.put_invocation(invocation)
         unit.put_delivery(hidden_delivery)
         unit.append_event(event)
-        receipt = unit.commit()
+        receipt = _commit_core_fixture(store, unit)
         committed_revision = store.current_revision
         assert receipt.committed_revision == committed_revision
 
@@ -5600,7 +5654,7 @@ def test_finalize_render_prefix_is_bound_to_current_audit_promotion_lineage(
         unit.put_artifact_revision(reader_revision, reader_bytes)
         unit.append_event(event)
         unit.put_finalize_render(render)
-        unit.commit()
+        _commit_core_fixture(store, unit)
         assert CoreRunDomainVerifier().verify(
             store, RUN_ID
         ).snapshot.finalize_renders == (render,)
@@ -5864,6 +5918,42 @@ def test_store_rejects_missing_core_receipt_reverse_relation(tmp_path: Path) -> 
         with pytest.raises(ControlStoreIntegrityError) as exc_info:
             store.load_snapshot(RUN_ID)
     assert exc_info.value.code == "transaction_relation_mismatch"
+
+
+def test_core_receipt_requires_exact_checkout_binding_in_store_and_verifier(
+    tmp_path: Path,
+) -> None:
+    workspace = _workspace(tmp_path)
+    _initialize(workspace)
+    with SQLiteControlStore.open(workspace / "briefloop.db") as store:
+        before = store.current_revision
+        unit = store.begin(
+            RUN_ID,
+            "REQ-MISSING-CHECKOUT-BINDING",
+            transaction_type_for("internal_approval"),
+            before,
+        )
+        with pytest.raises(ControlStoreConflict, match="relational_integrity_conflict"):
+            unit.commit()
+        assert store.current_revision == before
+
+        history = store.load_history()
+        snapshot = history.snapshot_at_revision(RUN_ID, history.store_revision)
+        initialization = snapshot.transactions[0]
+        forged = replace(
+            snapshot,
+            transactions=(
+                initialization.model_copy(
+                    update={
+                        "checkout_revisions": [],
+                        "receipt_checkout_bindings": [],
+                    }
+                ),
+                *snapshot.transactions[1:],
+            ),
+        )
+        with pytest.raises(CoreRunError, match="checkout_revision_invalid"):
+            CoreRunDomainVerifier()._verify_snapshot(history, forged)
 
 
 def test_domain_verifier_never_uses_publication_metadata_as_business_authority() -> None:

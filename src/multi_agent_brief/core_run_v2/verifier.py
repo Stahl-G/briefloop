@@ -1192,14 +1192,19 @@ class CoreRunDomainVerifier:
     ) -> None:
         """Recompute immutable checkout truth without consulting working paths."""
 
+        core_receipts = tuple(
+            receipt
+            for receipt in snapshot.transactions
+            if receipt.transaction_type.startswith("core-v2-")
+        )
         graph = (
             snapshot.checkout_revisions,
             snapshot.checkout_revision_members,
             snapshot.receipt_checkout_bindings,
         )
-        if not any(graph):
-            # Dormant transition: PR-4B0 receipts remain valid until PR-4B2
-            # requires a binding on every lifecycle effect.
+        if core_receipts and not any(graph):
+            raise CoreRunError("checkout_revision_invalid")
+        if not core_receipts and not any(graph):
             return
         if not (
             snapshot.checkout_revisions and snapshot.receipt_checkout_bindings
@@ -1253,15 +1258,16 @@ class CoreRunDomainVerifier:
         binding_by_transaction = {
             item.transaction_id: item for item in snapshot.receipt_checkout_bindings
         }
-        for receipt in snapshot.transactions:
+        for receipt in core_receipts:
             references = receipt.receipt_checkout_bindings
-            if not references:
-                continue
             binding = binding_by_transaction.get(receipt.transaction_id)
             if (
                 len(references) != 1
+                or len(receipt.checkout_revisions) != 1
                 or binding is None
                 or references[0].transaction_id != receipt.transaction_id
+                or receipt.checkout_revisions[0].checkout_revision_id
+                != binding.post_checkout_revision_id
                 or binding.post_run_id != receipt.run_id
             ):
                 raise CoreRunError("checkout_revision_invalid")
@@ -2787,6 +2793,17 @@ class CoreRunDomainVerifier:
                 ):
                     raise CoreRunError("control_store_integrity_invalid")
                 continue
+            if transition.transition_kind == "repair_reopen":
+                if (
+                    transition.producer_invocation_id is not None
+                    or transition.producer_tool_id is not None
+                    or transition.producer_result_status is not None
+                    or transition.producer_result_fingerprint is not None
+                    or transition.producer_implementation is not None
+                    or transition.producer_version is not None
+                ):
+                    raise CoreRunError("control_store_integrity_invalid")
+                continue
             if transition.stage_id == "doctor":
                 if (
                     transition.producer_invocation_id is not None
@@ -2867,18 +2884,56 @@ class CoreRunDomainVerifier:
             ):
                 raise CoreRunError("control_store_integrity_invalid")
         else:
-            if len(ready) != 1:
-                raise CoreRunError("control_store_integrity_invalid")
-            first_unfinished = next(
-                (
-                    stage_id
-                    for stage_id in stage_ids
-                    if states[stage_id].status not in {"complete", "skipped"}
-                ),
-                None,
-            )
-            if ready[0] != first_unfinished:
-                raise CoreRunError("control_store_integrity_invalid")
+            recovery = classify_recovery_legality(snapshot)
+            if recovery.state == "rerun_required" and recovery.repair_id is not None:
+                repairs = [
+                    item
+                    for item in snapshot.repair_cycles
+                    if item.repair_id == recovery.repair_id
+                ]
+                if len(repairs) != 1:
+                    raise CoreRunError("control_store_integrity_invalid")
+                owner_stage_id = repairs[0].owner_stage_id
+                ordinary_ready = [
+                    stage_id for stage_id in ready if stage_id != owner_stage_id
+                ]
+                first_ordinary_unfinished = next(
+                    (
+                        stage_id
+                        for stage_id in stage_ids
+                        if stage_id != owner_stage_id
+                        and states[stage_id].status not in {"complete", "skipped"}
+                    ),
+                    None,
+                )
+                rerun_recorded = bool(recovery.required_rerun_transition_ids)
+                owner_state = states[owner_stage_id].status
+                if rerun_recorded:
+                    owner_state_valid = owner_state in {"complete", "skipped"}
+                else:
+                    owner_state_valid = owner_state == "ready"
+                if (
+                    not owner_state_valid
+                    or len(ordinary_ready) > 1
+                    or (
+                        ordinary_ready
+                        and ordinary_ready[0] != first_ordinary_unfinished
+                    )
+                ):
+                    raise CoreRunError("control_store_integrity_invalid")
+            else:
+                if len(ready) != 1:
+                    raise CoreRunError("control_store_integrity_invalid")
+                first_unfinished = next(
+                    (
+                        stage_id
+                        for stage_id in stage_ids
+                        if states[stage_id].status not in {"complete", "skipped"}
+                    ),
+                    None,
+                )
+                if ready[0] != first_unfinished:
+                    raise CoreRunError("control_store_integrity_invalid")
 
         expected_initial_artifacts = set(CORE_ARTIFACT_IDS)
         if not expected_initial_artifacts <= {

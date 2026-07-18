@@ -92,15 +92,8 @@ class ArtifactAcceptanceService:
         policy = ARTIFACT_POLICIES.get(request.artifact_id)
         if policy is None:
             raise CoreRunError("artifact_owner_mismatch")
-        try:
-            content = self._reader.read(request.input_path)
-        except IntakeError as exc:
-            raise CoreRunError("artifact_input_unsafe") from exc
         fingerprint = canonical_fingerprint(
-            {
-                "request": request.model_dump(mode="json", exclude_unset=False),
-                "input_sha256": sha256_hex(content),
-            }
+            request.model_dump(mode="json", exclude_unset=False)
         )
         with self._open_store() as store:
             replay = resolve_core_replay(
@@ -111,6 +104,10 @@ class ArtifactAcceptanceService:
             )
             if replay is not None:
                 return replay
+            try:
+                content = self._reader.read(request.input_path)
+            except IntakeError as exc:
+                raise CoreRunError("artifact_input_unsafe") from exc
             if PurePosixPath(request.input_path).suffix != policy.input_suffix:
                 raise CoreRunError("artifact_input_unsafe")
             if request.artifact_id == "input_classification":

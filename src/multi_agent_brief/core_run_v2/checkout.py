@@ -266,22 +266,12 @@ def prepare_cross_run_checkout_effect(
     pre = _current_checkout(snapshot)
     if pre is None:
         raise CoreRunError("checkout_revision_invalid")
-    revisions = {
-        (item.artifact_id, item.revision): item
-        for item in snapshot.artifact_revisions
-    }
-    selected = [
-        revisions[(item.artifact_id, item.artifact_revision)].model_copy(
-            update={"run_id": successor_run_id}
-        )
-        for item in pre.members
-    ]
     post = build_checkout_revision(
         workspace_id=snapshot.workspace_id,
         run_id=successor_run_id,
         transaction_id=transaction_id,
         created_at=created_at,
-        artifact_revisions=selected,
+        artifact_revisions=(),
         parent_checkout_revision_id=pre.record.checkout_revision_id,
     )
     binding = ReceiptCheckoutBinding.model_validate(

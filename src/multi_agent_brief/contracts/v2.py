@@ -1223,7 +1223,12 @@ class RuntimeSourcePlanBinding(StrictModel):
     run_id: ContractId
     sources_config_sha256: Sha256
     web_search_mode: Literal[
-        "manual", "disabled", "external_api", "runtime_tool", "cached_package"
+        "manual",
+        "disabled",
+        "configure_later",
+        "external_api",
+        "runtime_tool",
+        "cached_package",
     ]
     search_backend: Optional[ContractId] = None
     routes: list[RuntimeSourceRouteBinding]

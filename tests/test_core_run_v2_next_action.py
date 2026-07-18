@@ -37,6 +37,49 @@ def test_next_action_delegation_and_active_invocation_precedence(tmp_path) -> No
     assert reserved.stage_id == "scout"
 
 
+def test_next_action_selects_stage_complete_after_current_proposals(tmp_path) -> None:
+    workspace = core_fixture._workspace(tmp_path)
+    service = core_fixture._advance_to_scout_ready(workspace)
+    scout = core_fixture._start_invocation(
+        service,
+        workspace,
+        request_id="REQ-NEXT-ACTION-SCOUT-CANDIDATE",
+        stage_id="scout",
+        role_id="scout",
+    )
+    core_fixture._submit_proposal(
+        workspace,
+        lane="candidate",
+        invocation_id=scout,
+        request_id="REQ-NEXT-ACTION-CANDIDATE",
+        artifact_id="candidate_claims",
+        payload=core_fixture._candidate_payload(),
+    )
+    screening = core_fixture._start_invocation(
+        service,
+        workspace,
+        request_id="REQ-NEXT-ACTION-SCOUT-SCREENED",
+        stage_id="scout",
+        role_id="scout",
+    )
+    core_fixture._submit_proposal(
+        workspace,
+        lane="screened",
+        invocation_id=screening,
+        request_id="REQ-NEXT-ACTION-SCREENED",
+        artifact_id="screened_candidates",
+        payload=core_fixture._screened_payload(),
+    )
+    action = classify_core_run_next_action(
+        _verified(workspace, core_fixture.RUN_ID)
+    )
+    assert (action.action_kind, action.effect_kind, action.stage_id) == (
+        "deterministic",
+        "stage_complete",
+        "scout",
+    )
+
+
 def test_next_action_recovery_precedes_normal_workflow(tmp_path) -> None:
     workspace = recovery_fixture._initialized_workspace(tmp_path)
     with SQLiteControlStore.open(
@@ -49,6 +92,33 @@ def test_next_action_recovery_precedes_normal_workflow(tmp_path) -> None:
     )
     assert action.action_kind == "deterministic"
     assert action.effect_kind == "repair_start"
+
+
+def test_next_action_routes_repair_rerun_before_recovery_complete(tmp_path) -> None:
+    workspace = recovery_fixture._initialized_workspace(tmp_path)
+    with SQLiteControlStore.open(
+        workspace / "briefloop.db", clock=recovery_fixture.CLOCK
+    ) as store:
+        recovery_fixture._accept_input_classification(store)
+        recovery_fixture._record_contamination(store)
+        recovery_fixture._start_repair(store)
+        recovery_fixture._supersede_input_classification(store)
+        recovery_fixture._complete_repair(store)
+    rerun = classify_core_run_next_action(
+        _verified(workspace, recovery_fixture.RUN_ID)
+    )
+    assert (rerun.effect_kind, rerun.stage_id) == (
+        "stage_complete",
+        "input-governance",
+    )
+    with SQLiteControlStore.open(
+        workspace / "briefloop.db", clock=recovery_fixture.CLOCK
+    ) as store:
+        recovery_fixture._complete_reopened_stage(store)
+    complete = classify_core_run_next_action(
+        _verified(workspace, recovery_fixture.RUN_ID)
+    )
+    assert complete.effect_kind == "recovery_complete"
 
 
 def test_next_action_finalize_is_pure_and_fingerprint_stable(tmp_path) -> None:

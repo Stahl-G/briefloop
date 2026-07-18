@@ -700,6 +700,44 @@ def classify_terminal_legality(
             key=lambda item: tx_revision.get(item.accepted_transaction_id, -1),
         )
     if selected is None:
+        observed_modes = sorted(
+            {
+                approval.mode
+                for approval in snapshot.approvals
+                if any(
+                    binding.approval_id == approval.approval_id
+                    and binding.package_id == package.package_id
+                    for binding in snapshot.approval_package_bindings
+                )
+            }
+        )
+        if len(observed_modes) > 1:
+            return TerminalLegality("invalid", package_id=package.package_id)
+        if observed_modes:
+            mode = observed_modes[0]
+            approval = _approval_policy_details(
+                snapshot,
+                package_id=package.package_id,
+                approval_mode=mode,
+            )
+            if not approval.valid:
+                return TerminalLegality("invalid", package_id=package.package_id)
+            return TerminalLegality(
+                "package_ready",
+                mode,
+                approval.required_roles,
+                approval.latest_decisions,
+                approval.complete,
+                next_effects=("delivery_authorization",)
+                if approval.complete
+                else ("approval",),
+                terminal_state=(
+                    "authorization_missing_or_denied"
+                    if approval.complete
+                    else "approval_incomplete"
+                ),
+                package_id=package.package_id,
+            )
         return TerminalLegality(
             "package_ready",
             terminal_state="package_ready",
@@ -829,6 +867,9 @@ class CoreRunTerminalService:
             raise CoreRunError("core_run_request_invalid") from exc
         self._clock = clock or (lambda: datetime.now(timezone.utc))
         self._scratch = ScratchReader(self.workspace)
+        from .integrity import RunIntegrityService
+
+        self._integrity = RunIntegrityService(self.workspace, clock=self._clock)
 
     def record_internal_approval(self, request: InternalApprovalRequest):
         return self._public(self._record_internal_approval, request)
@@ -995,6 +1036,15 @@ class CoreRunTerminalService:
                 CoreEffect.FINALIZE_RENDER,
                 TerminalEffectSubject(),
             ).require_allowed()
+            blocked = self._integrity.require_clean(
+                store,
+                verified,
+                request_id=request.request_id,
+                request_fingerprint=fingerprint,
+                expected_store_revision=request.expected_store_revision,
+            )
+            if blocked is not None:
+                return blocked
             promotion = classify_current_audit_promotion(
                 verified.snapshot, store.read_artifact_revision_bytes
             )
@@ -1249,6 +1299,15 @@ class CoreRunTerminalService:
                 CoreEffect.FINALIZE_COMPLETE,
                 TerminalEffectSubject(),
             ).require_allowed()
+            blocked = self._integrity.require_clean(
+                store,
+                verified,
+                request_id=request.request_id,
+                request_fingerprint=fingerprint,
+                expected_store_revision=request.expected_store_revision,
+            )
+            if blocked is not None:
+                return blocked
             snapshot = verified.snapshot
             renders = [item for item in snapshot.finalize_renders if item.render_id == request.render_id]
             stage = next((item for item in snapshot.stage_states if item.stage_id == "finalize"), None)
@@ -1586,6 +1645,9 @@ class CoreRunTerminalService:
             if (
                 attempt is None
                 or observation.attempt_id != attempt.attempt_id
+                or observation.adapter_id != verified.runtime_adapter.adapter_id
+                or observation.adapter_version
+                != verified.runtime_adapter.adapter_version
                 or observation.connector_operation_id != attempt.connector_operation_id
                 or observation.connector_request_fingerprint != attempt.connector_request_fingerprint
             ):

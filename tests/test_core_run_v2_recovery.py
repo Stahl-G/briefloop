@@ -20,6 +20,7 @@ from multi_agent_brief.contracts.v2 import (
     CoreRunInitializeRequest,
     CoreRunEventBinding,
     EventEnvelope,
+    IntegrityCheckRequest,
     OwnedArtifactSubmissionRecord,
     RecoveryCompletionRecord,
     RecoveryCompleteRequest,
@@ -46,6 +47,12 @@ from multi_agent_brief.control_store.serialization import (
     sha256_hex,
 )
 from multi_agent_brief.core_run_v2 import CoreRunRecoveryService, CoreRunService
+from multi_agent_brief.core_run_v2.checkout import (
+    prepare_checkout_effect,
+    prepare_cross_run_checkout_effect,
+    publish_checkout_effect,
+    stage_checkout_effect,
+)
 from multi_agent_brief.core_run_v2.errors import CoreRunError
 from multi_agent_brief.core_run_v2.integrity import read_workspace_file
 from multi_agent_brief.core_run_v2.policy import (
@@ -69,6 +76,28 @@ from multi_agent_brief.intake_v2.service import IntakeService
 RUN_ID = "RUN-RECOVERY-PREFIX-001"
 NOW = "2026-07-17T00:00:00Z"
 CLOCK = lambda: datetime(2026, 7, 17, tzinfo=timezone.utc)
+
+
+def _commit_core_fixture(store: SQLiteControlStore, unit):
+    snapshot = store.load_snapshot(unit.run_id)
+    checkout = prepare_checkout_effect(
+        workspace=store.path.parent,
+        snapshot=snapshot,
+        transaction_id=unit.transaction_id,
+        created_at=CLOCK(),
+        additional_revisions=tuple(
+            item.record for item in unit._artifact_revisions
+        ),
+    )
+    stage_checkout_effect(unit, checkout)
+    receipt = unit.commit()
+    published, _warnings = publish_checkout_effect(
+        workspace=store.path.parent,
+        store=store,
+        prepared=checkout,
+    )
+    assert published
+    return receipt
 
 
 def _initialized_workspace(tmp_path: Path) -> Path:
@@ -237,7 +266,7 @@ def _accept_input_classification(store: SQLiteControlStore) -> None:
             ),
         )
     )
-    unit.commit()
+    _commit_core_fixture(store, unit)
 
 
 def _record_contamination(store: SQLiteControlStore) -> str:
@@ -330,7 +359,7 @@ def _record_contamination(store: SQLiteControlStore) -> str:
             reason="run blocked by durable contamination",
         )
     )
-    unit.commit()
+    _commit_core_fixture(store, unit)
     return base_fingerprint
 
 
@@ -381,7 +410,7 @@ def _start_repair(store: SQLiteControlStore) -> tuple[str, str]:
             ),
         )
     )
-    unit.commit()
+    _commit_core_fixture(store, unit)
     return transaction_id, request_fingerprint
 
 
@@ -516,7 +545,7 @@ def _supersede_input_classification(
             ),
         )
     )
-    unit.commit()
+    _commit_core_fixture(store, unit)
     return transaction_id, request_fingerprint
 
 
@@ -548,7 +577,7 @@ def _complete_repair(store: SQLiteControlStore) -> tuple[str, str]:
         requested_decision=None,
         prior_status=prior.status,
         prior_revision=prior.revision,
-        result_status="pending",
+        result_status="ready",
         result_revision=prior.revision + 1,
         reason="repair reopens the artifact owner stage",
         run_contract_fingerprint=contract.contract_fingerprint,
@@ -622,7 +651,7 @@ def _complete_repair(store: SQLiteControlStore) -> tuple[str, str]:
             ),
         )
     )
-    unit.commit()
+    _commit_core_fixture(store, unit)
     return transaction_id, request_fingerprint
 
 
@@ -702,7 +731,7 @@ def _complete_reopened_stage(store: SQLiteControlStore) -> str:
             ),
         )
     )
-    unit.commit()
+    _commit_core_fixture(store, unit)
     return transition_id
 
 
@@ -757,7 +786,7 @@ def _complete_recovery(store: SQLiteControlStore) -> tuple[str, str]:
             ),
         )
     )
-    unit.commit()
+    _commit_core_fixture(store, unit)
     return transaction_id, request_fingerprint
 
 
@@ -1019,6 +1048,15 @@ def _reset_run(
                 primary_record_id=transition_id,
             ),
         ).model_copy(update={"run_id": successor_run_id})
+    )
+    stage_checkout_effect(
+        unit,
+        prepare_cross_run_checkout_effect(
+            snapshot=predecessor,
+            successor_run_id=successor_run_id,
+            transaction_id=transaction_id,
+            created_at=CLOCK(),
+        ),
     )
     unit.commit()
     return transaction_id, request_fingerprint
@@ -1871,6 +1909,18 @@ def test_recovery_service_reset_is_cross_run_and_historical_replay_safe(
     workspace = _initialized_workspace(tmp_path)
     database = workspace / "briefloop.db"
     service = CoreRunRecoveryService(workspace, clock=CLOCK)
+    doctor = CoreRunService(workspace, clock=CLOCK).doctor_check(
+        IntegrityCheckRequest.model_validate(
+            {
+                "schema_version": IntegrityCheckRequest.schema_id,
+                "request_id": "REQ-RECOVERY-RESET-DOCTOR-001",
+                "run_id": RUN_ID,
+                "expected_store_revision": 1,
+            },
+            strict=True,
+        )
+    )
+    assert doctor.status == "committed"
 
     def request_for(predecessor: str, successor: str, request_id: str) -> RunResetRequest:
         with SQLiteControlStore.open(database, clock=CLOCK) as store:
@@ -1907,6 +1957,7 @@ def test_recovery_service_reset_is_cross_run_and_historical_replay_safe(
     )
     second = service.reset_run(second_request)
     assert second.status == "committed"
+    (workspace / "sources.yaml").write_text("not: [valid\n", encoding="utf-8")
     replay = service.reset_run(first_request)
     assert replay.status == "replayed"
     assert replay.receipt == first.receipt
@@ -1918,6 +1969,9 @@ def test_recovery_service_reset_is_cross_run_and_historical_replay_safe(
     assert first_binding.pre_run_id == RUN_ID
     assert first_binding.post_run_id == "RUN-RECOVERY-SERVICE-RESET-002"
     assert first_binding.pre_checkout_revision_id == first_binding.post_checkout_revision_id or first_binding.pre_checkout_revision_id is not None
+    assert next(
+        item for item in first_snapshot.stage_states if item.stage_id == "doctor"
+    ).status == "ready"
 
 
 def test_sequential_resets_verify_each_as_of_prefix_and_replay_first_reset(

@@ -2215,7 +2215,10 @@ class SQLiteControlStore:
         binding = uow._receipt_checkout_binding
         intent = uow._checkout_publication_intent
         publication_members = tuple(uow._checkout_publication_members.values())
+        requires_checkout = uow.transaction_type.startswith("core-v2-")
         if not any((revisions, members, binding, intent, publication_members)):
+            if requires_checkout:
+                raise ControlStoreConflict("relational_integrity_conflict")
             return
         if len(revisions) != 1 or binding is None:
             raise ControlStoreConflict("relational_integrity_conflict")

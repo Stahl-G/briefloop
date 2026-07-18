@@ -169,7 +169,11 @@ class CoreRunService:
             or sources_sha256 != request.sources_config_sha256
         ):
             raise CoreRunError("core_run_contract_mismatch")
-        source_plan = _derive_runtime_source_plan(sources_content, request)
+        source_plan = _derive_runtime_source_plan(
+            sources_content,
+            run_id=request.run_id,
+            sources_config_sha256=request.sources_config_sha256,
+        )
         contracts = self._load_contracts()
         stage_bytes = canonical_json_bytes(contracts.stage_specs)
         artifact_bytes = canonical_json_bytes(contracts.artifact_contracts)
@@ -1676,7 +1680,9 @@ def _remove_created_store(database: Path) -> None:
 
 def _derive_runtime_source_plan(
     sources_content: bytes,
-    request: CoreRunInitializeRequest,
+    *,
+    run_id: str,
+    sources_config_sha256: str,
 ) -> RuntimeSourcePlanBinding:
     """Derive the only safe source routing projection from exact YAML bytes."""
 
@@ -1684,7 +1690,7 @@ def _derive_runtime_source_plan(
         raw = yaml.safe_load(sources_content.decode("utf-8"))
     except (UnicodeDecodeError, yaml.YAMLError) as exc:
         raise CoreRunError("runtime_source_plan_invalid") from exc
-    if type(raw) is not dict or sha256_hex(sources_content) != request.sources_config_sha256:
+    if type(raw) is not dict or sha256_hex(sources_content) != sources_config_sha256:
         raise CoreRunError("runtime_source_plan_invalid")
     _require_non_secret_mapping(sources_content)
 
@@ -1694,7 +1700,9 @@ def _derive_runtime_source_plan(
     enabled = strategy.get("enabled_providers", [])
     if type(enabled) is not list or any(type(item) is not str for item in enabled):
         raise CoreRunError("runtime_source_plan_invalid")
-    enabled_ids = sorted(set(enabled))
+    enabled_ids = sorted(
+        {"web-search" if item == "web_search" else item for item in enabled}
+    )
 
     web = raw.get("web_search", {})
     if type(web) is not dict:
@@ -1706,6 +1714,7 @@ def _derive_runtime_source_plan(
     if raw_mode not in {
         "manual",
         "disabled",
+        "configure_later",
         "external_api",
         "runtime_tool",
         "cached_package",
@@ -1727,6 +1736,30 @@ def _derive_runtime_source_plan(
     }
     routes: list[RuntimeSourceRouteBinding] = []
     for route_id in enabled_ids:
+        if route_id == "web-search":
+            if mode == "configure_later":
+                route_kind, owner, provider_id = "disabled", "human", None
+            elif mode == "manual":
+                route_kind, owner, provider_id = "manual", "human", None
+            elif mode == "disabled":
+                route_kind, owner, provider_id = "disabled", "human", None
+            else:
+                route_kind = mode
+                owner = "specialist" if mode == "runtime_tool" else "deterministic"
+                provider_id = backend if mode == "external_api" else "runtime-tool"
+            route_payload = {
+                "schema_version": RuntimeSourceRouteBinding.schema_id,
+                "route_id": route_id,
+                "route_kind": route_kind,
+                "provider_id": provider_id,
+                "execution_owner": owner,
+                "required": False,
+            }
+            route_payload["route_fingerprint"] = canonical_fingerprint(route_payload)
+            routes.append(
+                RuntimeSourceRouteBinding.model_validate(route_payload, strict=True)
+            )
+            continue
         if route_id not in route_kinds:
             raise CoreRunError("runtime_source_plan_invalid")
         route_kind, owner = route_kinds[route_id]
@@ -1741,12 +1774,19 @@ def _derive_runtime_source_plan(
         route_payload["route_fingerprint"] = canonical_fingerprint(route_payload)
         routes.append(RuntimeSourceRouteBinding.model_validate(route_payload, strict=True))
     if web_enabled and mode != "disabled" and "web-search" not in enabled_ids:
-        owner = "specialist" if mode == "runtime_tool" else "deterministic"
+        if mode == "configure_later":
+            route_kind, owner, provider_id = "disabled", "human", None
+        elif mode == "manual":
+            route_kind, owner, provider_id = "manual", "human", None
+        else:
+            route_kind = mode
+            owner = "specialist" if mode == "runtime_tool" else "deterministic"
+            provider_id = backend if mode == "external_api" else "runtime-tool"
         route_payload = {
             "schema_version": RuntimeSourceRouteBinding.schema_id,
             "route_id": "web-search",
-            "route_kind": mode,
-            "provider_id": backend if mode == "external_api" else "runtime-tool",
+            "route_kind": route_kind,
+            "provider_id": provider_id,
             "execution_owner": owner,
             "required": False,
         }
@@ -1755,8 +1795,8 @@ def _derive_runtime_source_plan(
     routes.sort(key=lambda item: item.route_id)
     payload: dict[str, object] = {
         "schema_version": RuntimeSourcePlanBinding.schema_id,
-        "run_id": request.run_id,
-        "sources_config_sha256": request.sources_config_sha256,
+        "run_id": run_id,
+        "sources_config_sha256": sources_config_sha256,
         "web_search_mode": mode,
         "search_backend": backend,
         "routes": [item.model_dump(mode="json", exclude_unset=False) for item in routes],
