@@ -19,6 +19,10 @@ from multi_agent_brief.contracts.v2 import (
     ClaimFreezeRecord,
     ClaimRecord,
     ClaimSourceBinding,
+    CheckoutPublicationIntent,
+    CheckoutPublicationMember,
+    CheckoutRevisionMember,
+    CheckoutRevisionRecord,
     Delivery,
     DeliveryAttemptRecord,
     DeliveryAuthorizationRecord,
@@ -37,6 +41,7 @@ from multi_agent_brief.contracts.v2 import (
     RecoveryCompletionRecord,
     RepairCompletionRecord,
     RepairCycleRecord,
+    ReceiptCheckoutBinding,
     ArtifactSupersessionRecord,
     RunContractBinding,
     RunIdentity,
@@ -154,6 +159,15 @@ class ControlUnitOfWork:
         self._delivery_authorizations: dict[str, DeliveryAuthorizationRecord] = {}
         self._delivery_attempts: dict[str, DeliveryAttemptRecord] = {}
         self._delivery_results: dict[str, DeliveryResultRecord] = {}
+        self._checkout_revisions: dict[str, CheckoutRevisionRecord] = {}
+        self._checkout_revision_members: dict[
+            tuple[str, int], CheckoutRevisionMember
+        ] = {}
+        self._receipt_checkout_binding: ReceiptCheckoutBinding | None = None
+        self._checkout_publication_intent: CheckoutPublicationIntent | None = None
+        self._checkout_publication_members: dict[
+            int, CheckoutPublicationMember
+        ] = {}
         self._state = "active"
 
     @property
@@ -489,6 +503,64 @@ class ControlUnitOfWork:
         self._require_run(snapshot)
         self._put_unique(self._delivery_results, snapshot.result_id, snapshot)
 
+    def put_checkout_revision(self, record: CheckoutRevisionRecord) -> None:
+        snapshot = self._snapshot_record(record, CheckoutRevisionRecord)
+        self._require_run(snapshot)
+        if snapshot.workspace_id != self._store.workspace_id:
+            raise ControlStoreConflict("control_record_workspace_mismatch")
+        self._put_unique(
+            self._checkout_revisions, snapshot.checkout_revision_id, snapshot
+        )
+
+    def put_checkout_revision_member(self, record: CheckoutRevisionMember) -> None:
+        snapshot = self._snapshot_record(record, CheckoutRevisionMember)
+        self._require_run(snapshot)
+        if snapshot.workspace_id != self._store.workspace_id:
+            raise ControlStoreConflict("control_record_workspace_mismatch")
+        self._put_unique(
+            self._checkout_revision_members,
+            (snapshot.checkout_revision_id, snapshot.ordinal),
+            snapshot,
+        )
+
+    def put_receipt_checkout_binding(self, record: ReceiptCheckoutBinding) -> None:
+        snapshot = self._snapshot_record(record, ReceiptCheckoutBinding)
+        self._require_run(snapshot)
+        if (
+            snapshot.workspace_id != self._store.workspace_id
+            or snapshot.transaction_id != self.transaction_id
+            or self._receipt_checkout_binding is not None
+        ):
+            raise ControlStoreConflict("relational_integrity_conflict")
+        self._receipt_checkout_binding = snapshot
+
+    def put_checkout_publication_intent(
+        self, record: CheckoutPublicationIntent
+    ) -> None:
+        snapshot = self._snapshot_record(record, CheckoutPublicationIntent)
+        if (
+            snapshot.identity.workspace_id != self._store.workspace_id
+            or snapshot.identity.run_id != self.run_id
+            or snapshot.identity.transaction_id != self.transaction_id
+            or self._checkout_publication_intent is not None
+        ):
+            raise ControlStoreConflict("relational_integrity_conflict")
+        self._checkout_publication_intent = snapshot
+
+    def put_checkout_publication_member(
+        self, record: CheckoutPublicationMember
+    ) -> None:
+        snapshot = self._snapshot_record(record, CheckoutPublicationMember)
+        if (
+            snapshot.identity.workspace_id != self._store.workspace_id
+            or snapshot.identity.run_id != self.run_id
+            or snapshot.identity.transaction_id != self.transaction_id
+        ):
+            raise ControlStoreConflict("relational_integrity_conflict")
+        self._put_unique(
+            self._checkout_publication_members, snapshot.ordinal, snapshot
+        )
+
     def _put_unique(
         self,
         collection: dict[Hashable, object],
@@ -619,6 +691,26 @@ class ControlUnitOfWork:
             "delivery_authorizations": [self._record_payload(self._delivery_authorizations[key]) for key in sorted(self._delivery_authorizations)],
             "delivery_attempts": [self._record_payload(self._delivery_attempts[key]) for key in sorted(self._delivery_attempts)],
             "delivery_results": [self._record_payload(self._delivery_results[key]) for key in sorted(self._delivery_results)],
+            "checkout_revisions": [
+                self._record_payload(self._checkout_revisions[key])
+                for key in sorted(self._checkout_revisions)
+            ],
+            "checkout_revision_members": [
+                self._record_payload(self._checkout_revision_members[key])
+                for key in sorted(self._checkout_revision_members)
+            ],
+            "receipt_checkout_binding": (
+                self._record_payload(self._receipt_checkout_binding)
+                if self._receipt_checkout_binding is not None else None
+            ),
+            "checkout_publication_intent": (
+                self._record_payload(self._checkout_publication_intent)
+                if self._checkout_publication_intent is not None else None
+            ),
+            "checkout_publication_members": [
+                self._record_payload(self._checkout_publication_members[key])
+                for key in sorted(self._checkout_publication_members)
+            ],
         }
         return canonical_fingerprint(payload)
 

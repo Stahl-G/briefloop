@@ -11,6 +11,8 @@ from typing import Callable, Iterable
 
 from multi_agent_brief.contracts.v2 import (
     ArtifactRevision,
+    CheckoutPublicationMember,
+    CheckoutRevisionMember,
     CoreRunEventBinding,
     EventEnvelope,
     IntegrityCheckRequest,
@@ -27,6 +29,7 @@ from multi_agent_brief.control_store.serialization import (
 )
 
 from .errors import CoreRunError, CoreRunResult, core_run_error_code
+from .publication_platform import CapabilityProfile, open_retained_parent
 from .policy import derived_id, transaction_type_for
 from .verifier import (
     CoreRunDomainVerifier,
@@ -37,6 +40,41 @@ from .verifier import (
 
 
 _Clock = Callable[[], datetime]
+
+
+def verify_protected_working_checkout(
+    workspace: Path,
+    revision_members: tuple[CheckoutRevisionMember, ...],
+    changed_members: tuple[CheckoutPublicationMember, ...],
+    profile: CapabilityProfile,
+) -> None:
+    """Compare cooperative files with immutable revision truth, never vice versa."""
+
+    root = workspace.resolve(strict=True)
+    expected_paths = {item.canonical_path for item in revision_members}
+    for item in revision_members:
+        path = PurePosixPath(item.canonical_path)
+        parent = root.joinpath(*path.parts[:-1]).resolve(strict=True)
+        parent.relative_to(root)
+        with open_retained_parent(parent, profile) as retained:
+            observed = retained.observe(path.name)
+            if (
+                observed.kind != "blob"
+                or observed.sha256 != item.blob_sha256
+                or observed.size != item.byte_size
+            ):
+                raise CoreRunError("checkout_projection_conflict")
+    for changed in changed_members:
+        if changed.post_kind != "absent":
+            continue
+        if changed.canonical_path in expected_paths:
+            raise CoreRunError("checkout_publication_journal_invalid")
+        path = PurePosixPath(changed.canonical_path)
+        parent = root.joinpath(*path.parts[:-1]).resolve(strict=True)
+        parent.relative_to(root)
+        with open_retained_parent(parent, profile) as retained:
+            if retained.observe(path.name).kind != "absent":
+                raise CoreRunError("checkout_projection_conflict")
 
 
 @dataclass(frozen=True)

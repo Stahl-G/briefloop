@@ -2142,6 +2142,177 @@ class DeliveryResultRequest(StrictModel):
         return self
 
 
+CheckoutRevisionId = Annotated[
+    str,
+    StringConstraints(pattern=r"^crv_[0-9a-f]{64}$"),
+]
+PublicationKind = Literal["absent", "blob"]
+
+
+class CheckoutRevisionRecord(StrictModel):
+    """Immutable receipt-owned identity of one protected checkout tree."""
+
+    schema_id = "briefloop.checkout_revision.v2"
+    schema_version: Literal["briefloop.checkout_revision.v2"]
+    checkout_revision_id: CheckoutRevisionId
+    workspace_id: ContractId
+    run_id: ContractId
+    parent_checkout_revision_id: Optional[CheckoutRevisionId] = None
+    manifest_sha256: Sha256
+    tree_sha256: Sha256
+    member_count: NonNegativeInt
+    created_at: IsoDateTime
+    creator_transaction_id: ContractId
+
+
+class CheckoutRevisionMember(StrictModel):
+    schema_id = "briefloop.checkout_revision_member.v2"
+    schema_version: Literal["briefloop.checkout_revision_member.v2"]
+    checkout_revision_id: CheckoutRevisionId
+    ordinal: NonNegativeInt
+    workspace_id: ContractId
+    run_id: ContractId
+    canonical_path: WorkspacePath
+    artifact_id: ContractId
+    artifact_revision: PositiveInt
+    blob_sha256: Sha256
+    byte_size: NonNegativeInt
+
+
+class ReceiptCheckoutBinding(StrictModel):
+    schema_id = "briefloop.receipt_checkout_binding.v2"
+    schema_version: Literal["briefloop.receipt_checkout_binding.v2"]
+    workspace_id: ContractId
+    run_id: ContractId
+    transaction_id: ContractId
+    pre_run_id: ContractId
+    pre_checkout_revision_id: Optional[CheckoutRevisionId] = None
+    post_run_id: ContractId
+    post_checkout_revision_id: CheckoutRevisionId
+
+
+class PublicationIdentityV1(StrictModel):
+    schema_id = "briefloop.publication_identity.v1"
+    schema_version: Literal["briefloop-publication-identity/v1"]
+    workspace_id: ContractId
+    run_id: ContractId
+    transaction_id: ContractId
+    checkout_revision_id: CheckoutRevisionId
+
+
+class CheckoutPublicationIntent(StrictModel):
+    schema_id = "briefloop.checkout_publication_intent.v2"
+    schema_version: Literal["briefloop.checkout_publication_intent.v2"]
+    identity: PublicationIdentityV1
+    publication_identity_sha256: Sha256
+    pre_checkout_revision_id: Optional[CheckoutRevisionId] = None
+    post_checkout_revision_id: CheckoutRevisionId
+    post_manifest_sha256: Sha256
+    post_tree_sha256: Sha256
+    changed_member_count: PositiveInt
+    capability_profile_sha256: Sha256
+
+
+class CheckoutPublicationMember(StrictModel):
+    schema_id = "briefloop.checkout_publication_member.v2"
+    schema_version: Literal["briefloop.checkout_publication_member.v2"]
+    identity: PublicationIdentityV1
+    ordinal: NonNegativeInt
+    canonical_path: WorkspacePath
+    temporary_basename: CleanText
+    claim_basename: CleanText
+    pre_kind: PublicationKind
+    pre_sha256: Optional[Sha256] = None
+    pre_size: Optional[NonNegativeInt] = None
+    post_kind: PublicationKind
+    post_sha256: Optional[Sha256] = None
+    post_size: Optional[NonNegativeInt] = None
+
+    @model_validator(mode="after")
+    def kinds_match_values(self) -> "CheckoutPublicationMember":
+        for kind, digest, size in (
+            (self.pre_kind, self.pre_sha256, self.pre_size),
+            (self.post_kind, self.post_sha256, self.post_size),
+        ):
+            if kind == "absent" and (digest is not None or size is not None):
+                raise ValueError("absent publication member cannot carry blob values")
+            if kind == "blob" and (digest is None or size is None):
+                raise ValueError("blob publication member requires exact values")
+        if self.pre_kind == self.post_kind == "absent":
+            raise ValueError("unchanged absent member is not publishable")
+        return self
+
+
+class CheckoutPublicationAck(StrictModel):
+    schema_id = "briefloop.checkout_publication_ack.v2"
+    schema_version: Literal["briefloop.checkout_publication_ack.v2"]
+    identity: PublicationIdentityV1
+    ordinal: NonNegativeInt
+    publication_identity_sha256: Sha256
+    capability_profile_sha256: Sha256
+    post_kind: PublicationKind
+    post_sha256: Optional[Sha256] = None
+    post_size: Optional[NonNegativeInt] = None
+    verification: Literal["post_verified_durable"]
+    cleanup_policy: Literal["retain_residue_v1"]
+    appended_at: IsoDateTime
+
+    @model_validator(mode="after")
+    def post_matches_kind(self) -> "CheckoutPublicationAck":
+        if self.post_kind == "absent" and (
+            self.post_sha256 is not None or self.post_size is not None
+        ):
+            raise ValueError("absent ack cannot carry blob values")
+        if self.post_kind == "blob" and (
+            self.post_sha256 is None or self.post_size is None
+        ):
+            raise ValueError("blob ack requires exact values")
+        return self
+
+
+class CheckoutPublicationCleanupObservation(StrictModel):
+    schema_id = "briefloop.checkout_publication_cleanup_observation.v2"
+    schema_version: Literal[
+        "briefloop.checkout_publication_cleanup_observation.v2"
+    ]
+    cleanup_observation_id: Sha256
+    identity: PublicationIdentityV1
+    ordinal: NonNegativeInt
+    auxiliary_role: Literal["temp", "claim"]
+    reason_code: Literal[
+        "checkout_projection_cleanup_retained",
+        "checkout_projection_cleanup_conflict",
+        "checkout_projection_cleanup_io_warning",
+    ]
+    expected_kind: PublicationKind
+    expected_sha256: Optional[Sha256] = None
+    expected_size: Optional[NonNegativeInt] = None
+    observed_kind: Literal["absent", "blob", "unsafe", "unreadable"]
+    observed_sha256: Optional[Sha256] = None
+    observed_size: Optional[NonNegativeInt] = None
+    appended_at: IsoDateTime
+
+    @model_validator(mode="after")
+    def blob_values_match_kinds(self) -> "CheckoutPublicationCleanupObservation":
+        if self.expected_kind == "absent" and (
+            self.expected_sha256 is not None or self.expected_size is not None
+        ):
+            raise ValueError("absent expected residue cannot carry blob values")
+        if self.expected_kind == "blob" and (
+            self.expected_sha256 is None or self.expected_size is None
+        ):
+            raise ValueError("blob expected residue requires exact values")
+        if self.observed_kind != "blob" and (
+            self.observed_sha256 is not None or self.observed_size is not None
+        ):
+            raise ValueError("non-blob observed residue cannot carry blob values")
+        if self.observed_kind == "blob" and (
+            self.observed_sha256 is None or self.observed_size is None
+        ):
+            raise ValueError("blob observed residue requires exact values")
+        return self
+
+
 class RunContractBindingReference(StrictModel):
     run_id: ContractId
 
@@ -2262,6 +2433,18 @@ class DeliveryResultReference(StrictModel):
     result_id: ContractId
 
 
+class CheckoutRevisionReference(StrictModel):
+    checkout_revision_id: CheckoutRevisionId
+
+
+class ReceiptCheckoutBindingReference(StrictModel):
+    transaction_id: ContractId
+
+
+class CheckoutPublicationIntentReference(StrictModel):
+    checkout_revision_id: CheckoutRevisionId
+
+
 class TransactionReceipt(StrictModel):
     schema_id = "briefloop.transaction_receipt.v2"
 
@@ -2306,6 +2489,13 @@ class TransactionReceipt(StrictModel):
     delivery_authorizations: list[DeliveryAuthorizationReference] = Field(default_factory=list)
     delivery_attempts: list[DeliveryAttemptReference] = Field(default_factory=list)
     delivery_results: list[DeliveryResultReference] = Field(default_factory=list)
+    checkout_revisions: list[CheckoutRevisionReference] = Field(default_factory=list)
+    receipt_checkout_bindings: list[ReceiptCheckoutBindingReference] = Field(
+        default_factory=list
+    )
+    checkout_publication_intents: list[
+        CheckoutPublicationIntentReference
+    ] = Field(default_factory=list)
 
     @model_validator(mode="after")
     def revision_advances(self) -> "TransactionReceipt":
@@ -2354,6 +2544,9 @@ class TransactionReceipt(StrictModel):
             self.delivery_authorizations,
             self.delivery_attempts,
             self.delivery_results,
+            self.checkout_revisions,
+            self.receipt_checkout_bindings,
+            self.checkout_publication_intents,
         )
         for values in relation_lists:
             keys = [item.model_dump_json() for item in values]
@@ -3376,6 +3569,83 @@ for _model in (
 ):
     _model.full_example = deepcopy(_model.minimal_example)
 
+_CHECKOUT_REVISION_EXAMPLE = "crv_" + "a" * 64
+_PUBLICATION_IDENTITY_EXAMPLE = {
+    "schema_version": "briefloop-publication-identity/v1",
+    "workspace_id": "WS-001",
+    "run_id": _RUN,
+    "transaction_id": "TXN-001",
+    "checkout_revision_id": _CHECKOUT_REVISION_EXAMPLE,
+}
+CheckoutRevisionRecord.minimal_example = {
+    "schema_version": CheckoutRevisionRecord.schema_id,
+    "checkout_revision_id": _CHECKOUT_REVISION_EXAMPLE,
+    "workspace_id": "WS-001", "run_id": _RUN,
+    "parent_checkout_revision_id": None,
+    "manifest_sha256": _SHA_B, "tree_sha256": "a" * 64,
+    "member_count": 1, "created_at": _NOW,
+    "creator_transaction_id": "TXN-001",
+}
+CheckoutRevisionMember.minimal_example = {
+    "schema_version": CheckoutRevisionMember.schema_id,
+    "checkout_revision_id": _CHECKOUT_REVISION_EXAMPLE, "ordinal": 0,
+    "workspace_id": "WS-001", "run_id": _RUN,
+    "canonical_path": "output/brief.md", "artifact_id": "reader_brief",
+    "artifact_revision": 1, "blob_sha256": _SHA_A, "byte_size": 4,
+}
+ReceiptCheckoutBinding.minimal_example = {
+    "schema_version": ReceiptCheckoutBinding.schema_id,
+    "workspace_id": "WS-001", "run_id": _RUN, "transaction_id": "TXN-001",
+    "pre_run_id": _RUN, "pre_checkout_revision_id": None,
+    "post_run_id": _RUN,
+    "post_checkout_revision_id": _CHECKOUT_REVISION_EXAMPLE,
+}
+PublicationIdentityV1.minimal_example = deepcopy(_PUBLICATION_IDENTITY_EXAMPLE)
+CheckoutPublicationIntent.minimal_example = {
+    "schema_version": CheckoutPublicationIntent.schema_id,
+    "identity": deepcopy(_PUBLICATION_IDENTITY_EXAMPLE),
+    "publication_identity_sha256": "d" * 64,
+    "pre_checkout_revision_id": None,
+    "post_checkout_revision_id": _CHECKOUT_REVISION_EXAMPLE,
+    "post_manifest_sha256": _SHA_B, "post_tree_sha256": "a" * 64,
+    "changed_member_count": 1, "capability_profile_sha256": "e" * 64,
+}
+CheckoutPublicationMember.minimal_example = {
+    "schema_version": CheckoutPublicationMember.schema_id,
+    "identity": deepcopy(_PUBLICATION_IDENTITY_EXAMPLE), "ordinal": 0,
+    "canonical_path": "output/brief.md",
+    "temporary_basename": ".briefloop-pub-v1-" + "d" * 64 + "-00000000-tmp",
+    "claim_basename": ".briefloop-pub-v1-" + "d" * 64 + "-00000000-claim",
+    "pre_kind": "absent", "pre_sha256": None, "pre_size": None,
+    "post_kind": "blob", "post_sha256": _SHA_A, "post_size": 4,
+}
+CheckoutPublicationAck.minimal_example = {
+    "schema_version": CheckoutPublicationAck.schema_id,
+    "identity": deepcopy(_PUBLICATION_IDENTITY_EXAMPLE), "ordinal": 0,
+    "publication_identity_sha256": "d" * 64,
+    "capability_profile_sha256": "e" * 64,
+    "post_kind": "blob", "post_sha256": _SHA_A, "post_size": 4,
+    "verification": "post_verified_durable", "cleanup_policy": "retain_residue_v1",
+    "appended_at": _NOW,
+}
+CheckoutPublicationCleanupObservation.minimal_example = {
+    "schema_version": CheckoutPublicationCleanupObservation.schema_id,
+    "cleanup_observation_id": "f" * 64,
+    "identity": deepcopy(_PUBLICATION_IDENTITY_EXAMPLE), "ordinal": 0,
+    "auxiliary_role": "temp",
+    "reason_code": "checkout_projection_cleanup_retained",
+    "expected_kind": "blob", "expected_sha256": _SHA_A, "expected_size": 4,
+    "observed_kind": "blob", "observed_sha256": _SHA_A, "observed_size": 4,
+    "appended_at": _NOW,
+}
+for _model in (
+    CheckoutRevisionRecord, CheckoutRevisionMember, ReceiptCheckoutBinding,
+    PublicationIdentityV1, CheckoutPublicationIntent,
+    CheckoutPublicationMember, CheckoutPublicationAck,
+    CheckoutPublicationCleanupObservation,
+):
+    _model.full_example = deepcopy(_model.minimal_example)
+
 
 V2_CONTRACT_MODELS: tuple[type[StrictModel], ...] = (
     SourceProposal,
@@ -3448,6 +3718,14 @@ V2_CONTRACT_MODELS: tuple[type[StrictModel], ...] = (
     DeliveryAuthorizationRequest,
     DeliveryAttemptRequest,
     DeliveryResultRequest,
+    CheckoutRevisionRecord,
+    CheckoutRevisionMember,
+    ReceiptCheckoutBinding,
+    PublicationIdentityV1,
+    CheckoutPublicationIntent,
+    CheckoutPublicationMember,
+    CheckoutPublicationAck,
+    CheckoutPublicationCleanupObservation,
 )
 
 V2_CONTRACT_IDS: tuple[str, ...] = tuple(
@@ -3579,6 +3857,13 @@ __all__ = [
     "ClaimRecord",
     "ClaimSourceBinding",
     "ClaimDraftsProposal",
+    "CheckoutPublicationAck",
+    "CheckoutPublicationCleanupObservation",
+    "CheckoutPublicationIntent",
+    "CheckoutPublicationMember",
+    "CheckoutRevisionId",
+    "CheckoutRevisionMember",
+    "CheckoutRevisionRecord",
     "ContractReadResult",
     "CoreRunEventBinding",
     "CoreRunInitializeRequest",
@@ -3618,6 +3903,7 @@ __all__ = [
     "PackageArtifactBindingReference",
     "PackageReadyRecord",
     "PackageReadyReference",
+    "PublicationIdentityV1",
     "RecoveryCompleteRequest",
     "RecoveryCompletionRecord",
     "RecoveryCompletionReference",
@@ -3627,6 +3913,7 @@ __all__ = [
     "RepairCycleRecord",
     "RepairCycleReference",
     "RepairStartRequest",
+    "ReceiptCheckoutBinding",
     "RunArchiveArtifactBinding",
     "RunArchiveArtifactBindingReference",
     "RunArchiveRecord",
