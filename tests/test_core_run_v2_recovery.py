@@ -14,6 +14,7 @@ from multi_agent_brief.contracts.v2 import (
     ArtifactRecord,
     ArtifactRevision,
     ArtifactSupersessionRecord,
+    ArtifactSupersessionReference,
     CoreRunInitializeRequest,
     CoreRunEventBinding,
     EventEnvelope,
@@ -43,6 +44,7 @@ from multi_agent_brief.core_run_v2.integrity import read_workspace_file
 from multi_agent_brief.core_run_v2.policy import derived_id, transaction_type_for
 from multi_agent_brief.core_run_v2.recovery import (
     CoreEffect,
+    CoreEffectSubject,
     classify_effect_authorization,
     classify_recovery_legality,
 )
@@ -966,6 +968,58 @@ def test_clean_historical_prefix_has_no_recovery_authority(tmp_path: Path) -> No
     )
 
 
+def test_no_contamination_orphan_supersession_invalidates_live_and_history(
+    tmp_path: Path,
+) -> None:
+    """A supersession can never hide behind the clean-state fast path."""
+
+    workspace = _initialized_workspace(tmp_path)
+    with SQLiteControlStore.open(workspace / "briefloop.db", clock=CLOCK) as store:
+        history = store.load_history()
+        snapshot = history.snapshots[0]
+        revision = store.current_revision
+
+    orphan = _record(
+        ArtifactSupersessionRecord,
+        supersession_id="SUPERSESSION-RECOVERY-ORPHAN-001",
+        run_id=RUN_ID,
+        repair_id="REPAIR-RECOVERY-MISSING-001",
+        mode="repair",
+        prior_artifact={"artifact_id": "input_classification", "revision": 1},
+        successor_artifact={"artifact_id": "input_classification", "revision": 2},
+        reason_code="forged_orphan_supersession",
+        created_at=NOW,
+        accepted_event_id="EVT-RECOVERY-ORPHAN-001",
+        accepted_transaction_id=snapshot.transactions[0].transaction_id,
+        request_fingerprint="a" * 64,
+    )
+    relation = ArtifactSupersessionReference.model_validate(
+        {"supersession_id": orphan.supersession_id},
+        strict=True,
+    )
+    receipt = snapshot.transactions[0].model_copy(
+        update={"artifact_supersessions": [relation]}
+    )
+    forged_snapshot = replace(
+        snapshot,
+        artifact_supersessions=(orphan,),
+        transactions=(receipt,),
+    )
+    forged_history = replace(history, snapshots=(forged_snapshot,))
+
+    legality = classify_recovery_legality(forged_snapshot)
+    assert legality.state == "invalid"
+    authorization = classify_effect_authorization(
+        forged_snapshot,
+        CoreEffect.FINALIZE_RENDER,
+    )
+    assert authorization.decision == "invalid"
+    assert authorization.reason_code == "recovery_state_invalid"
+    with pytest.raises(CoreRunError, match="historical_prefix_invalid"):
+        CoreRunDomainVerifier().verify_history(forged_history)
+    assert history.store_revision == revision
+
+
 def test_old_run_intake_after_reset_fails_closed_without_store_write(
     tmp_path: Path,
 ) -> None:
@@ -1128,6 +1182,181 @@ def test_repair_start_is_receipt_bound_replayable_and_restart_safe(
         assert reopened.current_revision == revision
 
 
+def test_active_repair_authorization_is_bounded_by_canonical_artifact_scope(
+    tmp_path: Path,
+) -> None:
+    """R01-R05/R17: repair identity alone never authorizes an artifact effect."""
+
+    workspace = _initialized_workspace(tmp_path)
+    with SQLiteControlStore.open(workspace / "briefloop.db", clock=CLOCK) as store:
+        _accept_input_classification(store)
+        _record_contamination(store)
+        _start_repair(store)
+        snapshot = store.load_snapshot(RUN_ID)
+        revision = store.current_revision
+
+        legality = classify_recovery_legality(snapshot)
+        assert legality.state == "active_repair"
+        assert legality.permitted_artifact_ids == ("input_classification",)
+
+        exact = CoreEffectSubject(
+            repair_id="REPAIR-RECOVERY-001",
+            artifact_id="input_classification",
+        )
+        for effect in (
+            CoreEffect.ARTIFACT_SUPERSEDE,
+            CoreEffect.ARTIFACT_REVERT,
+        ):
+            authorization = classify_effect_authorization(snapshot, effect, exact)
+            assert authorization.decision == "allow"
+            assert authorization.reason_code == "recovery_effect_allowed"
+
+        denied = (
+            CoreEffectSubject(
+                repair_id="REPAIR-RECOVERY-001",
+                artifact_id="audited_brief",
+            ),
+            CoreEffectSubject(repair_id="REPAIR-RECOVERY-001"),
+            CoreEffectSubject(
+                repair_id="REPAIR-RECOVERY-MISSING-001",
+                artifact_id="input_classification",
+            ),
+            CoreEffectSubject(artifact_id="input_classification"),
+        )
+        for subject in denied:
+            for effect in (
+                CoreEffect.ARTIFACT_SUPERSEDE,
+                CoreEffect.ARTIFACT_REVERT,
+            ):
+                authorization = classify_effect_authorization(
+                    snapshot,
+                    effect,
+                    subject,
+                )
+                assert authorization.decision == "deny"
+                assert authorization.reason_code == "recovery_state_invalid"
+        assert store.current_revision == revision
+
+
+@pytest.mark.parametrize(
+    "mutation",
+    (
+        "unknown_repair",
+        "cross_repair_scope",
+        "cross_artifact",
+        "out_of_scope_artifact",
+    ),
+)
+def test_supersession_history_requires_one_repair_and_one_permitted_artifact(
+    tmp_path: Path,
+    mutation: str,
+) -> None:
+    """R06-R09: real UoW history fails closed on forged scope relations."""
+
+    workspace = _initialized_workspace(tmp_path)
+    with SQLiteControlStore.open(workspace / "briefloop.db", clock=CLOCK) as store:
+        _accept_input_classification(store)
+        _record_contamination(store)
+        _start_repair(store)
+        _supersede_input_classification(store)
+        history = store.load_history()
+
+    snapshot = history.snapshots[0]
+    repair = snapshot.repair_cycles[0]
+    supersession = snapshot.artifact_supersessions[0]
+    if mutation == "unknown_repair":
+        forged_repair = repair
+        forged_supersession = supersession.model_copy(
+            update={"repair_id": "REPAIR-RECOVERY-MISSING-001"}
+        )
+    elif mutation == "cross_repair_scope":
+        forged_repair = repair.model_copy(
+            update={
+                "repair_id": "REPAIR-RECOVERY-OTHER-001",
+                "permitted_artifact_ids": ["audited_brief"],
+            }
+        )
+        forged_supersession = supersession.model_copy(
+            update={"repair_id": forged_repair.repair_id}
+        )
+    elif mutation == "cross_artifact":
+        forged_repair = repair
+        forged_supersession = supersession.model_copy(
+            update={
+                "prior_artifact": supersession.prior_artifact.model_copy(
+                    update={"artifact_id": "audited_brief"}
+                )
+            }
+        )
+    else:
+        forged_repair = repair
+        out_of_scope = supersession.prior_artifact.model_copy(
+            update={"artifact_id": "audited_brief"}
+        )
+        forged_supersession = supersession.model_copy(
+            update={
+                "prior_artifact": out_of_scope,
+                "successor_artifact": supersession.successor_artifact.model_copy(
+                    update={"artifact_id": "audited_brief"}
+                ),
+            }
+        )
+
+    forged_snapshot = replace(
+        snapshot,
+        repair_cycles=(forged_repair,),
+        artifact_supersessions=(forged_supersession,),
+    )
+    forged_history = replace(history, snapshots=(forged_snapshot,))
+    assert classify_recovery_legality(forged_snapshot).state == "invalid"
+    with pytest.raises(CoreRunError, match="historical_prefix_invalid"):
+        CoreRunDomainVerifier().verify_history(forged_history)
+
+
+def test_repair_completion_cannot_hide_out_of_scope_supersession(
+    tmp_path: Path,
+) -> None:
+    """R10-R11: completion consumes the same finite scope classifier."""
+
+    workspace = _initialized_workspace(tmp_path)
+    with SQLiteControlStore.open(workspace / "briefloop.db", clock=CLOCK) as store:
+        _accept_input_classification(store)
+        _record_contamination(store)
+        _start_repair(store)
+        _supersede_input_classification(store)
+        completion_request = _complete_repair(store)
+        history = store.load_history()
+        revision = store.current_revision
+
+    snapshot = history.snapshots[0]
+    assert classify_recovery_legality(snapshot).state == "rerun_required"
+    completion_receipt = next(
+        item
+        for item in snapshot.transactions
+        if item.transaction_id == completion_request[0]
+    )
+    forged_repair = snapshot.repair_cycles[0].model_copy(
+        update={"permitted_artifact_ids": ["audited_brief"]}
+    )
+    forged_snapshot = replace(snapshot, repair_cycles=(forged_repair,))
+    forged_history = replace(history, snapshots=(forged_snapshot,))
+    pre_completion = forged_history.snapshot_at_revision(
+        RUN_ID,
+        completion_receipt.committed_revision - 1,
+    )
+    authorization = classify_effect_authorization(
+        pre_completion,
+        CoreEffect.REPAIR_COMPLETE,
+        CoreEffectSubject(repair_id="REPAIR-RECOVERY-001"),
+    )
+    assert authorization.decision == "invalid"
+    assert authorization.reason_code == "recovery_state_invalid"
+    assert classify_recovery_legality(forged_snapshot).state == "invalid"
+    with pytest.raises(CoreRunError, match="historical_prefix_invalid"):
+        CoreRunDomainVerifier().verify_history(forged_history)
+    assert history.store_revision == revision
+
+
 def test_repair_supersession_completion_and_recovery_are_exact_receipts(
     tmp_path: Path,
 ) -> None:
@@ -1186,8 +1415,50 @@ def test_repair_supersession_completion_and_recovery_are_exact_receipts(
 
         legality = classify_recovery_legality(snapshot)
         assert legality.state == "recovered_current"
+        assert legality.permitted_artifact_ids == ("input_classification",)
         assert legality.required_rerun_transition_ids == (rerun_transition_id,)
         CoreRunDomainVerifier().verify(store, RUN_ID)
+
+        repair_receipt = receipts[repair_request[0]]
+        repair_prefix = store.load_history().snapshot_at_revision(
+            RUN_ID,
+            repair_receipt.committed_revision,
+        )
+        assert classify_recovery_legality(repair_prefix).permitted_artifact_ids == (
+            "input_classification",
+        )
+
+        # R16: a later repair may carry a different finite scope, but the
+        # receipt-N projection keeps the original repair's exact authority.
+        later_contamination = snapshot.run_integrity_records[-1].model_copy(
+            update={
+                "integrity_revision": 3,
+                "prior_integrity_revision": 2,
+                "accepted_transaction_id": recovery_request[0],
+            }
+        )
+        later_repair = snapshot.repair_cycles[0].model_copy(
+            update={
+                "repair_id": "REPAIR-RECOVERY-LATER-001",
+                "contamination_revision": 3,
+                "permitted_artifact_ids": ["audited_brief"],
+                "accepted_transaction_id": recovery_request[0],
+            }
+        )
+        later_snapshot = replace(
+            snapshot,
+            run_integrity_records=(
+                *snapshot.run_integrity_records,
+                later_contamination,
+            ),
+            repair_cycles=(*snapshot.repair_cycles, later_repair),
+        )
+        assert classify_recovery_legality(later_snapshot).permitted_artifact_ids == (
+            "audited_brief",
+        )
+        assert classify_recovery_legality(repair_prefix).permitted_artifact_ids == (
+            "input_classification",
+        )
 
     with SQLiteControlStore.open(database, clock=CLOCK) as reopened:
         for request_id, fingerprint, primary_id in effect_requests:

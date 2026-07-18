@@ -84,6 +84,7 @@ class RecoveryLegality:
     state: str
     latest_contamination_revision: int | None = None
     repair_id: str | None = None
+    permitted_artifact_ids: tuple[str, ...] = ()
     repair_completion_id: str | None = None
     recovery_id: str | None = None
     required_rerun_transition_ids: tuple[str, ...] = ()
@@ -101,6 +102,21 @@ def classify_recovery_legality(snapshot: ControlStoreSnapshot) -> RecoveryLegali
     tx_revision = {
         item.transaction_id: item.committed_revision for item in snapshot.transactions
     }
+    repairs_by_epoch: dict[int, list[RepairCycleRecord]] = {}
+    repairs_by_id: dict[str, list[RepairCycleRecord]] = {}
+    for repair in snapshot.repair_cycles:
+        repairs_by_epoch.setdefault(repair.contamination_revision, []).append(repair)
+        repairs_by_id.setdefault(repair.repair_id, []).append(repair)
+    for supersession in snapshot.artifact_supersessions:
+        repairs = repairs_by_id.get(supersession.repair_id, [])
+        artifact_id = supersession.prior_artifact.artifact_id
+        if (
+            len(repairs) != 1
+            or artifact_id != supersession.successor_artifact.artifact_id
+            or artifact_id not in repairs[0].permitted_artifact_ids
+        ):
+            return RecoveryLegality("invalid")
+
     contaminations = sorted(
         (
             item
@@ -123,9 +139,6 @@ def classify_recovery_legality(snapshot: ControlStoreSnapshot) -> RecoveryLegali
     if len({item.integrity_revision for item in contaminations}) != len(contaminations):
         return RecoveryLegality("invalid")
 
-    repairs_by_epoch: dict[int, list[RepairCycleRecord]] = {}
-    for repair in snapshot.repair_cycles:
-        repairs_by_epoch.setdefault(repair.contamination_revision, []).append(repair)
     completions_by_repair: dict[str, list[RepairCompletionRecord]] = {}
     for completion in snapshot.repair_completions:
         completions_by_repair.setdefault(completion.repair_id, []).append(completion)
@@ -161,6 +174,7 @@ def classify_recovery_legality(snapshot: ControlStoreSnapshot) -> RecoveryLegali
                     "active_repair",
                     latest_contamination_revision=contamination.integrity_revision,
                     repair_id=repair.repair_id,
+                    permitted_artifact_ids=tuple(repair.permitted_artifact_ids),
                 )
             )
             continue
@@ -196,6 +210,7 @@ def classify_recovery_legality(snapshot: ControlStoreSnapshot) -> RecoveryLegali
                     "rerun_required",
                     latest_contamination_revision=contamination.integrity_revision,
                     repair_id=repair.repair_id,
+                    permitted_artifact_ids=tuple(repair.permitted_artifact_ids),
                     repair_completion_id=completion.repair_completion_id,
                     required_rerun_transition_ids=rerun_ids,
                     required_gate_evaluation_ids=gate_ids,
@@ -217,6 +232,7 @@ def classify_recovery_legality(snapshot: ControlStoreSnapshot) -> RecoveryLegali
                 "recovered_current",
                 latest_contamination_revision=contamination.integrity_revision,
                 repair_id=repair.repair_id,
+                permitted_artifact_ids=tuple(repair.permitted_artifact_ids),
                 repair_completion_id=completion.repair_completion_id,
                 recovery_id=recovery.recovery_id,
                 required_rerun_transition_ids=rerun_ids,
@@ -407,14 +423,17 @@ def classify_effect_authorization(
             **common,
         )
     if legality.state == "active_repair":
-        allowed = (
-            effect
-            in {
-                CoreEffect.ARTIFACT_SUPERSEDE,
-                CoreEffect.ARTIFACT_REVERT,
-                CoreEffect.REPAIR_COMPLETE,
-            }
-            and subject.repair_id == legality.repair_id
+        allowed = subject.repair_id == legality.repair_id and (
+            effect is CoreEffect.REPAIR_COMPLETE
+            or (
+                effect
+                in {
+                    CoreEffect.ARTIFACT_SUPERSEDE,
+                    CoreEffect.ARTIFACT_REVERT,
+                }
+                and subject.artifact_id is not None
+                and subject.artifact_id in legality.permitted_artifact_ids
+            )
         )
         return EffectAuthorization(
             "allow" if allowed else "deny",
