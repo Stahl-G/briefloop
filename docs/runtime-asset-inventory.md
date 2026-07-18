@@ -44,7 +44,7 @@ new workflow contract.
 
 | Install mode | CLI commands | Packaged contracts/eval cases | Source runtime assets | Workspace runtime kit |
 |---|---|---|---|---|
-| Source clone + editable install | Supported | Supported | Available | `multi-agent-brief runtime install --workspace <ws> --runtime opencode\|claude\|codex\|all` copies assets into the workspace. |
+| Source clone + editable install | Supported | Supported | Available | `briefloop runtime install --workspace <ws> --runtime opencode\|claude\|codex\|all` copies assets into the workspace. |
 | Wheel / sdist install | Supported | Supported | Not included | Source-clone-only unless `--repo-workdir` points to a source clone. |
 | PyPI install | Experimental | Supported when package data is present | Not included | Source-clone-only unless `--repo-workdir` points to a source clone. |
 | curl / PowerShell installer | Experimental CLI-only | Supported when installed package includes package data | Not included | Source-clone-only unless a source clone is also available. |
@@ -56,14 +56,14 @@ new workflow contract.
 
 ## Workspace Runtime Kit
 
-`multi-agent-brief runtime install` creates workspace-local runtime assets for
+`briefloop runtime install` creates workspace-local runtime assets for
 Claude Code, OpenCode, and Codex:
 
 ```bash
-multi-agent-brief runtime install --workspace <workspace> --runtime opencode
-multi-agent-brief runtime install --workspace <workspace> --runtime claude
-multi-agent-brief runtime install --workspace <workspace> --runtime codex
-multi-agent-brief runtime install --workspace <workspace> --runtime all
+briefloop runtime install --workspace <workspace> --runtime opencode
+briefloop runtime install --workspace <workspace> --runtime claude
+briefloop runtime install --workspace <workspace> --runtime codex
+briefloop runtime install --workspace <workspace> --runtime all
 ```
 
 The kit copies runtime-discoverable commands, agents, and a small

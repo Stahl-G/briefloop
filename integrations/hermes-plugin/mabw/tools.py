@@ -29,7 +29,12 @@ def _json(data: dict[str, Any]) -> str:
 
 
 def _mabw_bin() -> str:
-    return os.environ.get("MABW_BIN") or os.environ.get("MULTI_AGENT_BRIEF_BIN") or "multi-agent-brief"
+    return (
+        os.environ.get("BRIEFLOOP_BIN")
+        or os.environ.get("MABW_BIN")
+        or os.environ.get("MULTI_AGENT_BRIEF_BIN")
+        or "briefloop"
+    )
 
 
 def _resolve_workspace(raw: str) -> Path:
@@ -171,7 +176,10 @@ def _find_repo_root() -> Path | None:
         expanded = Path(d).expanduser()
         if expanded.is_dir():
             for child in sorted(expanded.iterdir()):
-                if child.is_dir() and "multi-agent-brief" in child.name.lower():
+                if child.is_dir() and (
+                    "briefloop" in child.name.lower()
+                    or "multi-agent-brief" in child.name.lower()
+                ):
                     candidates.append(child.resolve())
     seen = set()
     for start in candidates:
@@ -241,10 +249,13 @@ def env_doctor(_args: dict, **kwargs) -> str:
     if found_bin is None and repo_root is not None:
         # Try venv path
         for bindir in (repo_root / ".venv" / "bin", repo_root / ".venv" / "Scripts"):
-            candidate = bindir / "multi-agent-brief"
-            if candidate.exists():
-                found_bin = str(candidate)
-                report["mabw_bin"] = found_bin
+            for command_name in ("briefloop", "multi-agent-brief"):
+                candidate = bindir / command_name
+                if candidate.exists():
+                    found_bin = str(candidate)
+                    report["mabw_bin"] = found_bin
+                    break
+            if found_bin is not None:
                 break
     elif found_bin:
         report["mabw_bin"] = found_bin
@@ -272,7 +283,7 @@ def env_doctor(_args: dict, **kwargs) -> str:
     # 6. Next action
     if not report["repo_found"]:
         report["next_action"] = "clone_repo"
-        report["hint"] = "Clone https://github.com/Stahl-G/multi-agent-brief-workflow.git first."
+        report["hint"] = "Clone https://github.com/Stahl-G/briefloop.git first."
     elif not report["venv_found"]:
         report["next_action"] = "run_setup"
         report["hint"] = "Run bash scripts/setup.sh from the repo root."
@@ -281,7 +292,7 @@ def env_doctor(_args: dict, **kwargs) -> str:
         report["hint"] = "Activate the venv: source .venv/bin/activate (or Scripts\\activate on Windows)."
     elif not report["plugin_enabled"]:
         report["next_action"] = "install_plugin"
-        report["hint"] = "Run multi-agent-brief hermes install-plugin."
+        report["hint"] = "Run briefloop hermes install-plugin."
     elif report["workspace_found"]:
         report["next_action"] = "run_existing_workspace"
         report["hint"] = "Use mabw_run_handoff with the first existing workspace."
@@ -368,8 +379,8 @@ def run_handoff(args: dict, **kwargs) -> str:
             ),
         })
 
-        if shutil.which(_mabw_bin()) is None and _mabw_bin() == "multi-agent-brief":
-            result["hint"] = "multi-agent-brief is not on PATH. Install MABW or set MABW_BIN."
+        if shutil.which(_mabw_bin()) is None:
+            result["hint"] = "briefloop is not on PATH. Install BriefLoop or set BRIEFLOOP_BIN."
 
         return _json(result)
     except Exception as exc:

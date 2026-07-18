@@ -506,7 +506,7 @@ def _control_quality_gates(*, current_stage: str | None, files: dict[str, bool])
     )
     if current_stage == "finalize":
         execution_hint = (
-            "multi-agent-brief gates check --workspace <workspace> "
+            "briefloop gates check --workspace <workspace> "
             "--stage finalize --brief <workspace>/output/brief.md"
         )
         inputs = ["output/brief.md", "output/intermediate/claim_ledger.json"]
@@ -515,7 +515,7 @@ def _control_quality_gates(*, current_stage: str | None, files: dict[str, bool])
             "output/intermediate/quality_gate_report.json",
         ]
     else:
-        execution_hint = "multi-agent-brief gates check --workspace <workspace> --stage auditor"
+        execution_hint = "briefloop gates check --workspace <workspace> --stage auditor"
         inputs = ["output/intermediate/audited_brief.md", "output/intermediate/claim_ledger.json"]
         outputs = [
             "output/intermediate/gates/auditor_quality_gate_report.json",
@@ -553,7 +553,7 @@ def _control_feedback(*, files: dict[str, bool]) -> dict[str, Any]:
         requires_human_approval=False,
         reason=reason,
         execution_type="cli",
-        execution_hint="multi-agent-brief feedback show --workspace <workspace> --json",
+        execution_hint="briefloop feedback show --workspace <workspace> --json",
         inputs=["output/intermediate/feedback_issues.json"],
         outputs=["output/intermediate/repair_plan.json"],
         selection_required=recommendation == "required",
@@ -574,7 +574,7 @@ def _control_analysis_blocks(*, text: str, files: dict[str, bool]) -> dict[str, 
             else "Analysis blocks can be used when the claim ledger is ready."
         ),
         execution_type="cli",
-        execution_hint="multi-agent-brief analysis-blocks --ledger <workspace>/output/intermediate/claim_ledger.json --output <workspace>/output/intermediate/analysis_blocks.json",
+        execution_hint="briefloop analysis-blocks --ledger <workspace>/output/intermediate/claim_ledger.json --output <workspace>/output/intermediate/analysis_blocks.json",
         inputs=["output/intermediate/claim_ledger.json"],
         outputs=["output/intermediate/analysis_blocks.json"],
     )
@@ -612,7 +612,7 @@ def _control_limitation_hygiene(*, text: str, claim_text: str) -> dict[str, Any]
             else "Limitation hygiene is available for uncertainty-heavy briefs."
         ),
         execution_type="cli",
-        execution_hint="multi-agent-brief limitation-hygiene --ledger <workspace>/output/intermediate/claim_ledger.json --output <workspace>/output/intermediate/limitation_hygiene_report.json",
+        execution_hint="briefloop limitation-hygiene --ledger <workspace>/output/intermediate/claim_ledger.json --output <workspace>/output/intermediate/limitation_hygiene_report.json",
         inputs=["output/intermediate/claim_ledger.json"],
         outputs=["output/intermediate/limitation_hygiene_report.json"],
     )
@@ -669,7 +669,7 @@ def _control_provenance(*, current_stage: str | None, files: dict[str, bool]) ->
             else "Provenance projection is available after runtime and audit/control files exist."
         ),
         execution_type="cli",
-        execution_hint="multi-agent-brief provenance build --workspace <workspace>",
+        execution_hint="briefloop provenance build --workspace <workspace>",
         inputs=[
             "output/intermediate/runtime_manifest.json",
             "output/intermediate/artifact_registry.json",

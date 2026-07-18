@@ -69,7 +69,7 @@ IDs, evidence span IDs, atom IDs, source paths, raw excerpts, or local files.
 
 For dogfood tests, use public-safe or synthetic workspaces with a present Atomic
 Claim Graph, Evidence Span Registry, and Claim-Support Matrix. Inspect
-`multi-agent-brief status --workspace <workspace>` and quality-gate reports to
+`briefloop status --workspace <workspace>` and quality-gate reports to
 confirm projection behavior.
 
 Do not use dogfood runs to claim:

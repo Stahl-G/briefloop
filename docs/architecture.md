@@ -31,7 +31,7 @@ Hermes uses `delegate_task` native child pipelines: scout → screener → claim
 
 ### OpenCode / Codex
 
-`multi-agent-brief run --workspace <path> --runtime opencode|codex` generates `agent_handoff.md`, executed by platform slash commands and subagent configs.
+`briefloop run --workspace <path> --runtime opencode|codex` generates `agent_handoff.md`, executed by platform slash commands and subagent configs.
 
 ## Input Governance
 
@@ -44,7 +44,7 @@ Four convention directories under `input/`:
 | `input/instructions/` | Task requirements | ❌ |
 | `input/context/` | Background reference | ❌ |
 
-`multi-agent-brief inputs extract --config <path>` converts supported PDF/DOCX/PPTX/XLSX/image inputs to adjacent `.mineru.md` files with MinerU. `multi-agent-brief inputs classify --config <path>` then auto-classifies the original and extracted files and produces `input_classification.json`. Scout is constrained to only extract claims from `input/sources/` and `input/` root (backward compatible). Extracted Markdown under `input/context/`, `input/instructions/`, or `input/feedback/` remains non-evidence. ManualProvider blocks non-evidence directories at the code level.
+`briefloop inputs extract --config <path>` converts supported PDF/DOCX/PPTX/XLSX/image inputs to adjacent `.mineru.md` files with MinerU. `briefloop inputs classify --config <path>` then auto-classifies the original and extracted files and produces `input_classification.json`. Scout is constrained to only extract claims from `input/sources/` and `input/` root (backward compatible). Extracted Markdown under `input/context/`, `input/instructions/`, or `input/feedback/` remains non-evidence. ManualProvider blocks non-evidence directories at the code level.
 
 ## Role Responsibilities
 
@@ -74,7 +74,7 @@ Checks citation support, source freshness, number accuracy, investment advice la
 
 ### Formatter / finalize
 
-`multi-agent-brief finalize` generates reader-facing output from `audited_brief.md`, stripping `[src:<claim_id>]` markers, rendering Markdown/DOCX.
+`briefloop finalize` generates reader-facing output from `audited_brief.md`, stripping `[src:<claim_id>]` markers, rendering Markdown/DOCX.
 
 ## Quality Gates
 

@@ -8,7 +8,7 @@ names.
 
 ## Red Lines
 
-- Do not turn `multi-agent-brief run` into a Python brief generator.
+- Do not turn `briefloop run` into a Python brief generator.
 - Do not let Python auto-repair prose or claim the repair is semantically complete.
 - Do not let `finalize` stand in for quality gates.
 - Do not treat feedback text as claim evidence.

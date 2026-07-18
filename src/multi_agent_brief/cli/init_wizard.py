@@ -235,8 +235,8 @@ PDF, DOCX, PPTX, XLSX, and image inputs are supported through MinerU extraction.
 Place the original file in the correct subfolder first, then run:
 
 ```bash
-multi-agent-brief inputs extract --config config.yaml
-multi-agent-brief inputs classify --config config.yaml
+briefloop inputs extract --config config.yaml
+briefloop inputs classify --config config.yaml
 ```
 
 The extraction command writes an adjacent `.mineru.md` file. Directory role is
@@ -282,8 +282,8 @@ INPUT_README_ZH = """# 输入文件夹
 PDF、DOCX、PPTX、XLSX 和图片输入通过 MinerU 抽取支持。请先把原始文件放到正确子目录，再运行：
 
 ```bash
-multi-agent-brief inputs extract --config config.yaml
-multi-agent-brief inputs classify --config config.yaml
+briefloop inputs extract --config config.yaml
+briefloop inputs classify --config config.yaml
 ```
 
 抽取命令会在原文件旁边写入 `.mineru.md`。目录角色保持不变：
@@ -1163,7 +1163,7 @@ def _build_llm_decide_sources(profile: InitProfile) -> dict[str, Any]:
             "tickers": [],
             "filing_types": ["10-K", "10-Q", "8-K"],
             "xbrl": True,
-            "note": "Disabled by default. Enable via 'multi-agent-brief sources decide --merge' after reviewing source_candidates.yaml filing_sources.",
+            "note": "Disabled by default. Enable via 'briefloop sources decide --merge' after reviewing source_candidates.yaml filing_sources.",
         },
     }
 

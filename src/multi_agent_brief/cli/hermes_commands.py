@@ -211,7 +211,7 @@ def _hermes_skill(args: argparse.Namespace) -> int:
     output.write_text(render_hermes_skill(), encoding="utf-8")
     print(f"[hermes] Wrote Hermes skill: {output}")
     print(
-        "[hint] Run 'multi-agent-brief hermes install-skill' to install to"
+        "[hint] Run 'briefloop hermes install-skill' to install to"
         " a Hermes-discoverable directory."
     )
     return 0
@@ -237,7 +237,7 @@ def _hermes_cron_plan(args: argparse.Namespace) -> int:
         )
         print(f"[hermes] Wrote cron plan Markdown: {md_path}")
     print(
-        "[hint] Run 'multi-agent-brief hermes cron-commands"
+        "[hint] Run 'briefloop hermes cron-commands"
         " --config <workspace>/config.yaml' to print install commands."
     )
     return 0
@@ -294,7 +294,7 @@ def _hermes_install_skill(args: argparse.Namespace) -> int:
         "[hermes] Next: generate a run prompt for your workspace:"
     )
     print(
-        "  multi-agent-brief hermes prompt"
+        "  briefloop hermes prompt"
         " --config <workspace>/config.yaml"
     )
     print(

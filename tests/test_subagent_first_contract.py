@@ -142,9 +142,9 @@ def test_generate_brief_commands_lock_source_metadata_contract():
 
 def test_agents_md_uses_standard_entry_path():
     text = Path("AGENTS.md").read_text(encoding="utf-8")
-    assert "multi-agent-brief onboard" in text
-    assert "multi-agent-brief init <workspace> --from-onboarding onboarding.json" in text
-    assert "multi-agent-brief run --workspace <workspace>" in text
+    assert "briefloop onboard" in text
+    assert "briefloop init <workspace> --from-onboarding onboarding.json" in text
+    assert "briefloop run --workspace <workspace>" in text
 
 
 def test_claude_generate_brief_command_uses_orchestrator_contract():

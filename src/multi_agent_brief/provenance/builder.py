@@ -235,7 +235,7 @@ def show_provenance_workspace(*, workspace: str | Path) -> dict[str, Any]:
     path = provenance_graph_path(ws)
     if not path.exists():
         raise ProvenanceError(
-            "provenance_graph.json not found. Run `multi-agent-brief provenance build --workspace <ws>` first.",
+            "provenance_graph.json not found. Run `briefloop provenance build --workspace <ws>` first.",
             details={"path": str(path)},
         )
     graph = read_json_object(path, label="provenance graph")
@@ -261,7 +261,7 @@ def validate_provenance_workspace(
     path = provenance_graph_path(ws)
     if not path.exists():
         raise ProvenanceError(
-            "provenance_graph.json not found. Run `multi-agent-brief provenance build --workspace <ws>` first.",
+            "provenance_graph.json not found. Run `briefloop provenance build --workspace <ws>` first.",
             details={"path": str(path)},
         )
     graph = read_json_object(path, label="provenance graph")
@@ -300,7 +300,7 @@ def _load_required_state(workspace: Path, *, source_files: list[dict[str, Any]])
     missing = [name for name, path in paths.items() if not path.exists()]
     if missing:
         raise ProvenanceError(
-            "Runtime state is missing. Run `multi-agent-brief run --workspace <ws> "
+            "Runtime state is missing. Run `briefloop run --workspace <ws> "
             f"--runtime {RUNTIME_CLI_CHOICE_PLACEHOLDER}` first.",
             details={"missing_state_files": missing},
         )

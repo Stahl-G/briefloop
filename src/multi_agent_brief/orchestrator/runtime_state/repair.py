@@ -125,18 +125,18 @@ def _active_repair_blocking_error(
     return RuntimeStateError(
         "An owner-stage repair transaction is active. Complete it before advancing workflow state.\n\n"
         "Run:\n"
-        f'  multi-agent-brief repair complete --workspace {workspace_arg} --reason "<reason>"\n\n'
+        f'  briefloop repair complete --workspace {workspace_arg} --reason "<reason>"\n\n'
         "Or inspect:\n"
-        f"  multi-agent-brief repair route --workspace {workspace_arg} --json\n"
-        f"  multi-agent-brief state check --workspace {workspace_arg} --strict",
+        f"  briefloop repair route --workspace {workspace_arg} --json\n"
+        f"  briefloop state check --workspace {workspace_arg} --strict",
         details={
             "active_repair": active,
             "repair_owner": owner,
             "transaction_id": transaction_id,
             "allowed_commands": [
-                f"multi-agent-brief repair route --workspace {workspace_arg} --json",
-                f'multi-agent-brief repair complete --workspace {workspace_arg} --reason "<reason>" --json',
-                f"multi-agent-brief state check --workspace {workspace_arg} --strict --json",
+                f"briefloop repair route --workspace {workspace_arg} --json",
+                f'briefloop repair complete --workspace {workspace_arg} --reason "<reason>" --json',
+                f"briefloop state check --workspace {workspace_arg} --strict --json",
             ],
             "blocked_commands": [
                 "state stage-complete",
@@ -202,12 +202,12 @@ def _delegate_repair_transaction_required_error(
             decision=decision,
             repair_route=scoped_route,
             required_commands=[
-                f"multi-agent-brief gates show --workspace {workspace} --json",
+                f"briefloop gates show --workspace {workspace} --json",
                 (
-                    f"multi-agent-brief repair start --workspace {workspace} "
+                    f"briefloop repair start --workspace {workspace} "
                     f"--gate-stage {stage_id} --gate-artifact {gate_artifact_id} --json"
                 ),
-                f'multi-agent-brief repair complete --workspace {workspace} --reason "<reason>" --json',
+                f'briefloop repair complete --workspace {workspace} --reason "<reason>" --json',
             ],
             repair_steps=[
                 "Current gate has an owner-stage repair route.",
@@ -228,9 +228,9 @@ def _delegate_repair_transaction_required_error(
                 decision=decision,
                 repair_route=workspace_route,
                 required_commands=[
-                    f"multi-agent-brief repair route --workspace {workspace} --json",
-                    f"multi-agent-brief repair start --workspace {workspace} {selector} --json",
-                    f'multi-agent-brief repair complete --workspace {workspace} --reason "<reason>" --json',
+                    f"briefloop repair route --workspace {workspace} --json",
+                    f"briefloop repair start --workspace {workspace} {selector} --json",
+                    f'briefloop repair complete --workspace {workspace} --reason "<reason>" --json',
                 ],
                 repair_steps=[
                     "Workspace-wide non-gate repair route is available.",
@@ -249,7 +249,7 @@ def _delegate_repair_transaction_required_error(
         decision=decision,
         repair_route=repair_route,
         required_commands=[
-            f"multi-agent-brief gates show --workspace {workspace} --json",
+            f"briefloop gates show --workspace {workspace} --json",
         ],
         repair_steps=[
             "delegate_repair cannot be recorded through state decide.",
@@ -270,7 +270,7 @@ def _repair_transaction_required_error(
 ) -> RuntimeStateError:
     return RuntimeStateError(
         (
-            "Decision 'delegate_repair' requires `multi-agent-brief repair start`; "
+            "Decision 'delegate_repair' requires `briefloop repair start`; "
             "`state decide` cannot authorize owner-stage artifact edits."
         ),
         details={

@@ -1,6 +1,6 @@
 # Conversational Onboarding
 
-`multi-agent-brief` supports conversational onboarding so that normal users never need to edit YAML, JSON, schemas, or CLI flags.
+BriefLoop supports conversational onboarding so that normal users never need to edit YAML, JSON, schemas, or CLI flags.
 
 ## How it works
 
@@ -8,7 +8,7 @@
 plain-language user intent
 → agent asks at most 4 business questions
 → agent creates onboarding.json
-→ CLI runs multi-agent-brief init --from-onboarding onboarding.json
+→ CLI runs briefloop init --from-onboarding onboarding.json
 → workspace is created
 ```
 
@@ -38,7 +38,7 @@ The project itself owns the initialization protocol. Claude Code, Codex, OpenCod
 Then the agent creates `onboarding.json` internally and runs:
 
 ```bash
-multi-agent-brief init --from-onboarding onboarding.json
+briefloop init --from-onboarding onboarding.json
 ```
 
 ## What the agent creates internally
@@ -123,8 +123,8 @@ online search.
 ## CLI usage
 
 ```bash
-multi-agent-brief init --from-onboarding onboarding.json
-multi-agent-brief init my-workspace --from-onboarding onboarding.json --force
+briefloop init --from-onboarding onboarding.json
+briefloop init my-workspace --from-onboarding onboarding.json --force
 ```
 
 Path priority:

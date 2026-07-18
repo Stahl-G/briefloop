@@ -6,9 +6,9 @@ Hermes tools + one slash command:
 
 - `mabw_env_doctor` — inspect local MABW/Hermes readiness
 - `mabw_create_onboarding` — write `onboarding.json` from chat-collected answers
-- `mabw_init_workspace` — `multi-agent-brief init --from-onboarding`
-- `mabw_run_handoff` — `multi-agent-brief run --workspace --runtime hermes`
-- `/mabw <workspace>` — print the workflow path
+- `mabw_init_workspace` — `briefloop init --from-onboarding`
+- `mabw_run_handoff` — `briefloop run --workspace --runtime hermes`
+- The legacy `/mabw <workspace>` plugin command remains for existing Hermes setups.
 
 ## Installed Skills
 
@@ -45,7 +45,8 @@ rm -rf ~/.hermes/plugins/mabw && cp -R integrations/hermes-plugin/mabw ~/.hermes
 
 ## Requirements
 
-- `multi-agent-brief` on PATH, or `MABW_BIN=/path/to/multi-agent-brief`
+- `briefloop` on PATH, or `BRIEFLOOP_BIN=/path/to/briefloop`; `MABW_BIN` and
+  `MULTI_AGENT_BRIEF_BIN` remain supported compatibility overrides.
 - Hermes with plugin support
 
 ## Use in Hermes

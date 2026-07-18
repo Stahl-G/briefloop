@@ -2723,10 +2723,10 @@ def _blocking_repair_guidance(
     if is_owner_stage_repair:
         required_commands.extend([
             (
-                f"multi-agent-brief repair start --workspace {workspace} "
+                f"briefloop repair start --workspace {workspace} "
                 f"--gate-stage {gate_stage_id} --gate-artifact {gate_artifact_id} --json"
             ),
-            f"multi-agent-brief repair complete --workspace {workspace} --reason \"<reason>\" --json",
+            f"briefloop repair complete --workspace {workspace} --reason \"<reason>\" --json",
         ])
         repair_steps = [
             "Current gate has an owner-stage repair route. Scoped repair start is handled by the repair transaction.",
@@ -2737,8 +2737,8 @@ def _blocking_repair_guidance(
         ]
     elif repair_route.get("ok") and route_kind == "human_review":
         required_commands.extend([
-            f"multi-agent-brief state decide --workspace {workspace} --stage <stage> --decision request_human_review --reason \"<reason>\" --json",
-            f"multi-agent-brief state decide --workspace {workspace} --stage <stage> --decision block_run --reason \"<reason>\" --json",
+            f"briefloop state decide --workspace {workspace} --stage <stage> --decision request_human_review --reason \"<reason>\" --json",
+            f"briefloop state decide --workspace {workspace} --stage <stage> --decision block_run --reason \"<reason>\" --json",
         ])
         repair_steps = [
             "This blocking gate requires human review before deterministic repair can proceed.",
@@ -2746,8 +2746,8 @@ def _blocking_repair_guidance(
         ]
     else:
         required_commands.extend([
-            f"multi-agent-brief state decide --workspace {workspace} --stage <stage> --decision request_human_review --reason \"<reason>\" --json",
-            f"multi-agent-brief state decide --workspace {workspace} --stage <stage> --decision block_run --reason \"<reason>\" --json",
+            f"briefloop state decide --workspace {workspace} --stage <stage> --decision request_human_review --reason \"<reason>\" --json",
+            f"briefloop state decide --workspace {workspace} --stage <stage> --decision block_run --reason \"<reason>\" --json",
         ])
         repair_steps = [
             "No deterministic owner-stage repair route is available.",
@@ -2838,8 +2838,8 @@ def _legacy_quality_gate_materialization_guidance(
 ) -> dict[str, Any]:
     return {
         "required_commands": [
-            f"multi-agent-brief gates check --workspace {workspace} --stage {gate_stage_id} --json",
-            f"multi-agent-brief gates show --workspace {workspace} --json",
+            f"briefloop gates check --workspace {workspace} --stage {gate_stage_id} --json",
+            f"briefloop gates show --workspace {workspace} --json",
         ],
         "repair_steps": [
             "Legacy quality_gate_report.json has blocking findings, but no current-stage scoped gate report is available.",

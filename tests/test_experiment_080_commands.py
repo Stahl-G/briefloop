@@ -2625,7 +2625,7 @@ def test_experiments_080_auditable_brief_target_blocks_finalize_complete(tmp_pat
     payload = json.loads(capsys.readouterr().out)
     assert payload["error_code"] == "E_ASSESSMENT_TARGET_COMPLETE"
     assert payload["details"]["target_complete"] is True
-    assert "multi-agent-brief finalize" in payload["details"]["forbidden_downstream_actions"]
+    assert "briefloop finalize" in payload["details"]["forbidden_downstream_actions"]
     events = (ws / "output" / "intermediate" / "event_log.jsonl").read_text(encoding="utf-8").splitlines()
     assert not any("finalize_completed" in line for line in events)
 

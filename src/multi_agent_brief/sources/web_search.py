@@ -220,7 +220,7 @@ class WebSearchProvider(SourceProvider):
             else:
                 raise RuntimeError(
                     "web_search has no search_tasks configured and no "
-                    "keywords provided.  Run 'multi-agent-brief sources decide "
+                    "keywords provided.  Run 'briefloop sources decide "
                     "--config <workspace>/config.yaml' to discover sources, or "
                     "add search_tasks manually in sources.yaml."
                 )

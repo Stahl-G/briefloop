@@ -254,11 +254,11 @@ def handle_features_capability(args: argparse.Namespace) -> int:
         print()
 
     print(
-        "Run 'multi-agent-brief features --info <id>' for details on any"
+        "Run 'briefloop features --info <id>' for details on any"
         " feature."
     )
     print(
-        "Run 'multi-agent-brief features <workspace>' to check status"
+        "Run 'briefloop features <workspace>' to check status"
         " against a workspace."
     )
     return 0
@@ -537,7 +537,7 @@ def handle_setup(args: argparse.Namespace) -> int:
             f"\n[setup] {changes_made} change(s) applied to {workspace}"
         )
         print(
-            "[hint] Run 'multi-agent-brief doctor"
+            "[hint] Run 'briefloop doctor"
             " --config <workspace>/config.yaml' to verify."
         )
     else:

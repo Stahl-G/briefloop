@@ -16,20 +16,20 @@ It is a human-governed memory mechanism, not autonomous learning, retrieval memo
 ## Command Lifecycle
 
 ```bash
-multi-agent-brief improve propose --workspace <ws> \
+briefloop improve propose --workspace <ws> \
   --guidance "Lead with the decision-relevant number when evidence supports it." \
   --category audience_mismatch \
   --scope brief \
   --source-summary "Operator-created audience guidance proposal."
 
-multi-agent-brief improve list --workspace <ws>
-multi-agent-brief improve show --workspace <ws> --entry-id AG-0001
-multi-agent-brief improve approve --workspace <ws> --entry-id AG-0001 --by <operator>
-multi-agent-brief improve reject --workspace <ws> --entry-id AG-0001 --by <operator> --reason "..."
-multi-agent-brief improve revert --workspace <ws> --entry-id AG-0001 --by <operator> --reason "..."
-multi-agent-brief improve stats --workspace <ws>
-multi-agent-brief improve validate --workspace <ws>
-multi-agent-brief improve rebuild --workspace <ws>
+briefloop improve list --workspace <ws>
+briefloop improve show --workspace <ws> --entry-id AG-0001
+briefloop improve approve --workspace <ws> --entry-id AG-0001 --by <operator>
+briefloop improve reject --workspace <ws> --entry-id AG-0001 --by <operator> --reason "..."
+briefloop improve revert --workspace <ws> --entry-id AG-0001 --by <operator> --reason "..."
+briefloop improve stats --workspace <ws>
+briefloop improve validate --workspace <ws>
+briefloop improve rebuild --workspace <ws>
 ```
 
 `improve rebuild` only writes `improvement/memory.md`. It does not create runtime state, write `output/intermediate/`, update handoff, or append events.
