@@ -29,6 +29,12 @@ from multi_agent_brief.product.support_wording import validate_support_wording_p
 from multi_agent_brief.product.template_conformance import validate_report_template_conformance_payload
 from multi_agent_brief.product.trajectory_regulation import validate_trajectory_regulation_payload
 from multi_agent_brief.contracts.semantic_assessment_status import SEMANTIC_ASSESSMENT_REPORT_STATUSES
+from multi_agent_brief.semantic_evaluator.reader import (
+    LajReaderView,
+    bind_laj_reader_view_to_report,
+    build_empty_laj_reader_view,
+    load_laj_reader_view,
+)
 
 QUALITY_PANEL_SCHEMA_VERSION = "briefloop.quality_panel.v1"
 QUALITY_PANEL_BOUNDARY = "product_quality_panel_projection_only_not_gate_or_release_authority"
@@ -97,6 +103,13 @@ _QUALITY_PANEL_HTML_LABELS = {
     "support_wording": ("Support wording", "支持措辞"),
     "semantic_support": ("Semantic support proposals", "语义支持提案"),
     "semantic_support_proposals": ("Semantic support proposals", "语义支持提案"),
+    "laj_advisory": ("Experimental AI Assessment", "实验性 AI 复盘"),
+    "laj_status": ("Assessment status", "复盘状态"),
+    "laj_assessed_units": ("Assessed units", "已评估单元"),
+    "laj_findings": ("Candidate findings", "候选发现"),
+    "laj_abstentions": ("Abstentions", "弃权单元"),
+    "laj_model": ("Model", "模型"),
+    "laj_report_sha256": ("Bound report SHA-256", "绑定报告 SHA-256"),
     "recommended_actions": ("Recommended actions", "建议动作"),
     "recommended_next_actions": ("Recommended Next Actions", "建议下一步"),
     "control_integrity": ("Control Integrity", "控制完整性"),
@@ -188,6 +201,8 @@ _QUALITY_PANEL_STATUS_LEVELS = {
     "missing_input": "missing",
     "not_ready": "missing",
     "unavailable": "missing",
+    "abstained": "missing",
+    "available": "info",
     "unknown": "missing",
     "none": "missing",
     "projection_only": "info",
@@ -225,6 +240,8 @@ _QUALITY_PANEL_HTML_VALUES_ZH = {
     "missing_input": "缺少输入",
     "not_ready": "未就绪",
     "unavailable": "不可用",
+    "abstained": "已弃权",
+    "available": "可查看",
     "unknown": "未知",
     "none": "无",
     "projection_only": "仅投影，不改运行状态",
@@ -290,10 +307,61 @@ def quality_panel_html_path(workspace: str | Path) -> Path:
     return Path(workspace).expanduser().resolve() / _INTERMEDIATE / "quality_panel.html"
 
 
+def _laj_advisory_projection(
+    workspace: Path,
+    laj_view_path: str | Path | None,
+) -> dict[str, Any] | None:
+    if laj_view_path is None:
+        return None
+    source = Path(laj_view_path).expanduser()
+    try:
+        source_present = source.is_file()
+    except OSError:
+        source_present = False
+    if not source_present:
+        view = build_empty_laj_reader_view(
+            status="not_available",
+            reason_code="laj_reader_view_not_available",
+        )
+        return view.model_dump(mode="json", warnings="error")
+    try:
+        view = load_laj_reader_view(source)
+    except Exception:
+        view = build_empty_laj_reader_view(
+            status="invalid",
+            reason_code="laj_reader_view_invalid",
+        )
+        return view.model_dump(mode="json", warnings="error")
+
+    reader_target = workspace / "output" / "brief.md"
+    try:
+        target_available = reader_target.is_file() and not reader_target.is_symlink()
+    except OSError:
+        target_available = False
+    if not target_available:
+        view = build_empty_laj_reader_view(
+            status="not_available",
+            reason_code="laj_reader_target_not_available",
+        )
+    else:
+        try:
+            view = bind_laj_reader_view_to_report(
+                view,
+                expected_report_sha256=_sha256_file(reader_target),
+            )
+        except Exception:
+            view = build_empty_laj_reader_view(
+                status="invalid",
+                reason_code="laj_reader_view_invalid",
+            )
+    return view.model_dump(mode="json", warnings="error")
+
+
 def build_quality_panel(
     workspace: str | Path,
     *,
     generated_at: str | None = None,
+    laj_view_path: str | Path | None = None,
 ) -> dict[str, Any]:
     """Build a read-only machine-readable quality projection."""
 
@@ -338,6 +406,7 @@ def build_quality_panel(
         else {}
     )
     semantic_support = _semantic_support_summary(workspace_status)
+    laj_advisory = _laj_advisory_projection(ws, laj_view_path)
     finalize_report = _read_json_mapping(ws / _INTERMEDIATE / "finalize_report.json") or {}
     closeout = quality_panel_closeout_projection(
         workspace=ws,
@@ -397,6 +466,7 @@ def build_quality_panel(
         "report_template_conformance": report_template_conformance,
         "support_wording": support_wording,
         "semantic_support": semantic_support,
+        "laj_advisory": laj_advisory,
         "quality_panel_closeout": closeout,
         "recommended_actions": recommended_actions,
         "non_goals": [
@@ -415,6 +485,7 @@ def write_quality_panel(
     workspace: str | Path,
     output_path: str | Path | None = None,
     generated_at: str | None = None,
+    laj_view_path: str | Path | None = None,
 ) -> dict[str, Any]:
     ws = Path(workspace).expanduser().resolve()
     target = Path(output_path).expanduser() if output_path else quality_panel_path(ws)
@@ -425,7 +496,11 @@ def write_quality_panel(
         target.relative_to(ws)
     except ValueError as exc:
         raise ValueError("quality_panel output must stay inside the workspace.") from exc
-    payload = build_quality_panel(ws, generated_at=generated_at)
+    payload = build_quality_panel(
+        ws,
+        generated_at=generated_at,
+        laj_view_path=laj_view_path,
+    )
     _write_json_atomic(target, payload)
     return payload
 
@@ -462,6 +537,8 @@ def render_quality_summary(
     support_wording = support_wording if isinstance(support_wording, Mapping) else {}
     semantic_support = panel_payload.get("semantic_support")
     semantic_support = semantic_support if isinstance(semantic_support, Mapping) else {}
+    laj_advisory = panel_payload.get("laj_advisory")
+    laj_advisory = laj_advisory if isinstance(laj_advisory, Mapping) else None
     closeout = panel_payload.get("quality_panel_closeout")
     closeout = closeout if isinstance(closeout, Mapping) else {}
     actions = panel_payload.get("recommended_actions")
@@ -547,17 +624,39 @@ def render_quality_summary(
         f"{_inline_mapping(semantic_support.get('calibration_label_counts'))}",
         "- Semantic support human adjudication required: "
         f"`{_intish(semantic_support.get('requires_human_adjudication_count'))}`",
-        "",
-        "## Quality Closeout And Bundle Separation",
-        "",
-        f"- Quality closeout status: `{_text(closeout.get('status')) or 'unknown'}`",
-        f"- Closeout command: `{_text(closeout.get('command')) or 'unknown'}`",
-        f"- Audit bundle: `{_text(closeout.get('audit_bundle')) or 'unknown'}`",
-        f"- Delivery bundle: `{_text(closeout.get('delivery_bundle')) or 'unknown'}`",
-        "",
-        "## Recommended Next Actions",
-        "",
     ])
+    if laj_advisory is not None:
+        binding = laj_advisory.get("binding")
+        binding = binding if isinstance(binding, Mapping) else {}
+        lines.extend(
+            [
+                "",
+                "## Experimental AI Assessment",
+                "",
+                "> Advisory only. Not a Gate, delivery decision, or proof of correctness.",
+                "",
+                f"- Status: `{_text(laj_advisory.get('status')) or 'unknown'}`",
+                f"- Assessed units: `{_intish(laj_advisory.get('assessed_unit_count'))}`",
+                f"- Candidate findings: `{_intish(laj_advisory.get('finding_count'))}`",
+                f"- Abstentions: `{_intish(laj_advisory.get('abstention_count'))}`",
+                f"- Model: `{_text(binding.get('model_id')) or 'not_available'}`",
+                f"- Bound report SHA-256: `{_text(binding.get('report_sha256')) or 'not_available'}`",
+            ]
+        )
+    lines.extend(
+        [
+            "",
+            "## Quality Closeout And Bundle Separation",
+            "",
+            f"- Quality closeout status: `{_text(closeout.get('status')) or 'unknown'}`",
+            f"- Closeout command: `{_text(closeout.get('command')) or 'unknown'}`",
+            f"- Audit bundle: `{_text(closeout.get('audit_bundle')) or 'unknown'}`",
+            f"- Delivery bundle: `{_text(closeout.get('delivery_bundle')) or 'unknown'}`",
+            "",
+            "## Recommended Next Actions",
+            "",
+        ]
+    )
     _extend_bullets(lines, _quality_summary_action_items(actions))
     text = "\n".join(lines).rstrip() + "\n"
     reason = validate_quality_summary_markdown(text)
@@ -629,6 +728,8 @@ def render_quality_panel_html(
     support_wording = support_wording if isinstance(support_wording, Mapping) else {}
     semantic_support = panel_payload.get("semantic_support")
     semantic_support = semantic_support if isinstance(semantic_support, Mapping) else {}
+    laj_advisory = panel_payload.get("laj_advisory")
+    laj_advisory = laj_advisory if isinstance(laj_advisory, Mapping) else None
     closeout = panel_payload.get("quality_panel_closeout")
     closeout = closeout if isinstance(closeout, Mapping) else {}
     actions = panel_payload.get("recommended_actions")
@@ -850,6 +951,7 @@ def render_quality_panel_html(
                     ("delivery_bundle", _text(closeout.get("delivery_bundle")) or "unknown", "status"),
                 ],
             ),
+            _html_laj_advisory(laj_advisory),
             _html_actions(actions),
         ]
     )
@@ -978,6 +1080,14 @@ def validate_quality_panel_payload(payload: Any) -> str | None:
         semantic_support_error = _validate_semantic_support_payload(semantic_support)
         if semantic_support_error:
             return f"quality_panel_schema_error:semantic_support:{semantic_support_error}"
+    laj_advisory = payload.get("laj_advisory")
+    if laj_advisory is not None:
+        if not isinstance(laj_advisory, dict):
+            return "quality_panel_schema_error:laj_advisory"
+        try:
+            LajReaderView.model_validate(laj_advisory)
+        except Exception:
+            return "quality_panel_schema_error:laj_advisory:reader_view_invalid"
     closeout = payload.get("quality_panel_closeout")
     if closeout is not None:
         if not isinstance(closeout, dict):
@@ -1784,6 +1894,69 @@ def _html_section(section_id: str, title_key: str, rows: list[tuple[str, Any, st
     )
 
 
+def _html_laj_advisory(laj_advisory: Mapping[str, Any] | None) -> str:
+    if laj_advisory is None:
+        return ""
+    binding = laj_advisory.get("binding")
+    binding = binding if isinstance(binding, Mapping) else {}
+    findings = laj_advisory.get("findings")
+    findings = findings if isinstance(findings, list) else []
+    rows = _html_section(
+        "laj-advisory-facts",
+        "laj_advisory",
+        [
+            ("laj_status", _text(laj_advisory.get("status")) or "unknown", "status"),
+            ("laj_assessed_units", _intish(laj_advisory.get("assessed_unit_count")), "count_neutral"),
+            ("laj_findings", _intish(laj_advisory.get("finding_count")), "count_neutral"),
+            ("laj_abstentions", _intish(laj_advisory.get("abstention_count")), "count_neutral"),
+            ("laj_model", _text(binding.get("model_id")) or "not_available", "text"),
+            ("laj_report_sha256", _text(binding.get("report_sha256")) or "not_available", "code"),
+        ],
+    )
+    cards: list[str] = []
+    if _text(laj_advisory.get("status")) == "available":
+        for finding in findings:
+            if not isinstance(finding, Mapping):
+                continue
+            spans = finding.get("report_spans")
+            spans = spans if isinstance(spans, list) else []
+            span_text = ", ".join(
+                f"{_text(span.get('block_id'))}:{_intish(span.get('start_char'))}-{_intish(span.get('end_char'))}"
+                for span in spans
+                if isinstance(span, Mapping)
+            )
+            cards.append(
+                "<article class=\"laj-finding\">"
+                f"<p class=\"eyebrow\">{_html(_text(finding.get('dimension_id')) or 'unknown')} · "
+                f"{_html(_text(finding.get('severity')) or 'unknown')}</p>"
+                f"<h3>{_html(_text(finding.get('observation')))}</h3>"
+                f"<p>{_html(_text(finding.get('rationale')))}</p>"
+                f"<p><strong>Severity basis:</strong> {_html(_text(finding.get('severity_basis')))}</p>"
+                f"<p><strong>Recommended human action:</strong> "
+                f"{_html(_text(finding.get('recommended_human_action')))}</p>"
+                f"<p class=\"muted\"><strong>Bound spans:</strong> {_html(span_text or 'not_available')}</p>"
+                "</article>"
+            )
+    if not cards:
+        cards.append(
+            "<p class=\"empty-state\">"
+            "<span class=\"lang-en\" lang=\"en\">No displayable advisory finding is available.</span>"
+            "<span class=\"lang-zh\" lang=\"zh-CN\">当前没有可展示的实验性建议。</span>"
+            "</p>"
+        )
+    return (
+        "<section class=\"laj-zone\" data-section=\"laj-advisory\">"
+        "<div class=\"laj-boundary\">"
+        "<strong>Experimental AI assessment · Advisory only</strong>"
+        "<span>Not a Gate, delivery decision, or proof of correctness.</span>"
+        "</div>"
+        f"{rows}"
+        "<div class=\"laj-findings\">"
+        + "".join(cards)
+        + "</div></section>"
+    )
+
+
 def _html_actions(actions: list[Any]) -> str:
     items = []
     for action in actions:
@@ -2070,6 +2243,36 @@ def _quality_panel_css() -> str:
     .metric.level-info { background: var(--info-bg); color: var(--info-fg); border-color: var(--info-line); }
     .metric.level-zero { background: #eef2f6; color: var(--muted); }
     .panel-section { padding: 20px; margin-bottom: 16px; }
+    .laj-zone {
+      margin-bottom: 16px;
+      padding: 16px;
+      border: 1px solid #d9d6fe;
+      border-radius: 10px;
+      background: #f9f8ff;
+    }
+    .laj-zone .panel-section { margin-bottom: 12px; }
+    .laj-boundary {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px 18px;
+      margin-bottom: 12px;
+      padding: 12px 14px;
+      border-left: 4px solid #6938ef;
+      background: #f4f3ff;
+      color: #53389e;
+    }
+    .laj-boundary span { color: var(--muted); }
+    .laj-findings { display: grid; gap: 10px; }
+    .laj-finding, .empty-state {
+      margin: 0;
+      padding: 16px;
+      border: 1px solid #d9d6fe;
+      border-radius: 8px;
+      background: var(--panel);
+    }
+    .laj-finding h3 { margin: 0 0 8px; font-size: 16px; }
+    .laj-finding p { margin: 7px 0; }
+    .muted, .empty-state { color: var(--muted); }
     table { width: 100%; border-collapse: collapse; }
     th, td { padding: 10px 0; border-top: 1px solid #eaecf0; text-align: left; vertical-align: top; }
     th { width: 36%; color: var(--muted); font-weight: 650; padding-right: 16px; }

@@ -223,7 +223,11 @@ compact human-readable `output/intermediate/quality_summary.md` from a valid
 panel. Static Quality Panel HTML can render
 `output/intermediate/quality_panel.html` from the same valid panel with inline
 CSS and no external assets or frontend runtime. `quality summarize` can write
-these artifacts together, and bundle projection can include them in audit
+these artifacts together. With explicit `--laj-view <laj.json>`, it can render
+a strict, current-report-bound LAJ result as an experimental advisory-only
+section; it does not call the evaluator, and absent, invalid, stale, failed, or
+abstained LAJ does not change the panel overall status, blockers, recommended
+authoritative actions, gates, or delivery truth. Bundle projection can include them in audit
 bundles while keeping them out of reader-facing delivery bundles. These are
 product-quality projections only: they do not run gates, replace gate reports,
 create a quality score, decide release eligibility, approve delivery, prove
