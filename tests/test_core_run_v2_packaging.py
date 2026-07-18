@@ -250,20 +250,53 @@ def test_non_editable_wheel_runs_complete_dormant_core_spine(
         candidates = workspace / "scratch" / planner / "source_candidates.yaml"
         candidates.parent.mkdir(parents=True, exist_ok=True)
         candidates.write_text("sources:\n  - SRC-WHEEL-001\n", encoding="utf-8")
+        source_candidates_request = record(
+            OwnedArtifactSubmitRequest,
+            request_id="REQ-WHEEL-ARTIFACT-SOURCES",
+            run_id=run_id,
+            artifact_id="source_candidates",
+            invocation_id=planner,
+            producer_tool_id=None,
+            input_path=candidates.relative_to(workspace).as_posix(),
+            expected_store_revision=revision(),
+            expected_artifact_revision=0,
+            expected_parent_artifact=None,
+        )
+        if sys.platform == "win32":
+            before_publication = snapshot()
+            unsupported = core(
+                "artifact-submit",
+                source_candidates_request,
+                scope=planner,
+                expected="failed_uncommitted",
+            )
+            assert unsupported["error_code"] == "checkout_publication_unsupported"
+            after_publication = snapshot()
+            assert after_publication.store_revision == before_publication.store_revision
+            assert len(after_publication.transactions) == len(
+                before_publication.transactions
+            )
+            assert next(
+                item
+                for item in after_publication.artifacts
+                if item.artifact_id == "source_candidates"
+            ).current_revision == 0
+            assert all(
+                item.artifact_id != "source_candidates"
+                for item in after_publication.artifact_revisions
+            )
+            print(json.dumps({
+                "package_imported": True,
+                "publication_error": unsupported["error_code"],
+                "store_revision_unchanged": (
+                    after_publication.store_revision
+                    == before_publication.store_revision
+                ),
+            }, sort_keys=True))
+            raise SystemExit(0)
         core(
             "artifact-submit",
-            record(
-                OwnedArtifactSubmitRequest,
-                request_id="REQ-WHEEL-ARTIFACT-SOURCES",
-                run_id=run_id,
-                artifact_id="source_candidates",
-                invocation_id=planner,
-                producer_tool_id=None,
-                input_path=candidates.relative_to(workspace).as_posix(),
-                expected_store_revision=revision(),
-                expected_artifact_revision=0,
-                expected_parent_artifact=None,
-            ),
+            source_candidates_request,
             scope=planner,
         )
 
@@ -718,9 +751,16 @@ def test_non_editable_wheel_runs_complete_dormant_core_spine(
         text=True,
     )
     assert run.returncode == 0, run.stdout + run.stderr
-    assert run.stdout == (
-        '{"auditor": "complete", "claim_count": 1, '
-        '"contamination_blocked": true, "finalize": "ready", '
-        '"gate_count": 6, "legacy_file_zero_truth": true, '
-        '"receipt_count": 28}\n'
-    )
+    if sys.platform == "win32":
+        assert run.stdout == (
+            '{"package_imported": true, '
+            '"publication_error": "checkout_publication_unsupported", '
+            '"store_revision_unchanged": true}\n'
+        )
+    else:
+        assert run.stdout == (
+            '{"auditor": "complete", "claim_count": 1, '
+            '"contamination_blocked": true, "finalize": "ready", '
+            '"gate_count": 6, "legacy_file_zero_truth": true, '
+            '"receipt_count": 28}\n'
+        )
