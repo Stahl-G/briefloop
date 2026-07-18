@@ -97,6 +97,12 @@ FORBIDDEN_PATTERNS = [
     ("mabw_name", re.compile(r"(?<![\w./-])mabw(?![\w-])", re.IGNORECASE)),
 ]
 
+# The Hermes runtime owns one plugin-only compatibility command. It creates a
+# chat-to-onboarding session and is not a public shell CLI alias or product name.
+CLASSIFIED_HERMES_PLUGIN_COMMAND = (
+    "4. For a new Hermes brief, run the Hermes plugin command `/mabw new`."
+)
+
 FORBIDDEN_NAMING_AUTHORITY_PATTERNS = [
     (
         "implementation_lineage_alias",
@@ -191,6 +197,12 @@ class Finding:
 def _line_findings(path: Path, line_no: int, line: str) -> list[Finding]:
     findings: list[Finding] = []
     for kind, pattern in FORBIDDEN_PATTERNS:
+        if (
+            kind == "slash_mabw"
+            and path.name == "HERMES.md"
+            and line.strip() == CLASSIFIED_HERMES_PLUGIN_COMMAND
+        ):
+            continue
         for match in pattern.finditer(line):
             sample = line.strip()
             findings.append(Finding(path=path, line=line_no, kind=kind, sample=sample))

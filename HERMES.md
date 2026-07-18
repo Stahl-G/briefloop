@@ -8,7 +8,8 @@ Hermes-specific runtime path:
 2. Install the Hermes plugin:
    `briefloop hermes install-plugin`
 3. **Always run `mabw_env_doctor` FIRST.** Follow `next_action` in the result. Never assume the environment is ready.
-4. For a new brief: `briefloop new` — then collect onboarding fields in chat, then call tools:
+4. For a new Hermes brief, run the Hermes plugin command `/mabw new`.
+   It is a plugin compatibility command, not the `briefloop new` ReportPack initializer. Then collect onboarding fields in chat and call tools:
    `mabw_create_onboarding` → `mabw_init_workspace` → `mabw_run_handoff`.
 5. For an existing workspace: `briefloop run --workspace <workspace> --runtime hermes` — env check + handoff in one step.
 6. To resume: `briefloop run --workspace <workspace> --runtime hermes`.

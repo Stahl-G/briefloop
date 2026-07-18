@@ -185,6 +185,30 @@ def test_active_runtime_primary_cli_surface_is_ratchet_locked() -> None:
     assert expected <= set(module.TARGET_FILES)
 
 
+def test_hermes_new_brief_flow_uses_only_the_classified_plugin_command(tmp_path) -> None:
+    module = _load_module()
+    target = tmp_path / "HERMES.md"
+    target.write_text(
+        module.CLASSIFIED_HERMES_PLUGIN_COMMAND + "\n",
+        encoding="utf-8",
+    )
+
+    assert module.scan_file(target) == []
+
+    target.write_text(
+        "4. For a new Hermes brief, run `/mabw run <workspace>`.\n",
+        encoding="utf-8",
+    )
+    assert [finding.kind for finding in module.scan_file(target)] == ["slash_mabw"]
+
+
+def test_hermes_new_brief_flow_does_not_route_to_reportpack_new() -> None:
+    text = (ROOT / "HERMES.md").read_text(encoding="utf-8")
+
+    assert "Hermes plugin command `/mabw new`" in text
+    assert "not the `briefloop new` ReportPack initializer" in text
+
+
 def test_legacy_hermes_plugin_primary_cli_surface_is_ratchet_locked() -> None:
     module = _load_module()
 
