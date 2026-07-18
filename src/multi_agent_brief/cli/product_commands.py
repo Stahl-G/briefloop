@@ -195,6 +195,13 @@ def register_quality(subparsers: argparse._SubParsersAction) -> None:
         help="Write Quality Panel JSON, Markdown, and static HTML projection artifacts.",
     )
     summarize_parser.add_argument("--workspace", required=True, help="Path to workspace directory.")
+    summarize_parser.add_argument(
+        "--laj-view",
+        help=(
+            "Optional standalone laj.json to display as an experimental, "
+            "advisory-only Quality Panel section."
+        ),
+    )
     summarize_parser.add_argument("--json", action="store_true", help="Emit machine-readable JSON.")
 
 
@@ -356,7 +363,10 @@ def handle_quality(args: argparse.Namespace) -> int:
     workspace = Path(args.workspace).expanduser().resolve()
     try:
         _require_existing_briefloop_workspace(workspace)
-        panel = write_quality_panel(workspace=workspace)
+        panel = write_quality_panel(
+            workspace=workspace,
+            laj_view_path=getattr(args, "laj_view", None),
+        )
         summary = write_quality_summary(workspace=workspace, panel_payload=panel)
         html = write_quality_panel_html(workspace=workspace, panel_payload=panel)
     except (QualityPanelError, OSError, ValueError, json.JSONDecodeError) as exc:
@@ -378,6 +388,11 @@ def handle_quality(args: argparse.Namespace) -> int:
         "quality_panel_html": html["path"],
         "quality_panel_html_sha256": html["sha256"],
         "overall_status": panel.get("overall_status"),
+        "laj_advisory_status": (
+            panel.get("laj_advisory", {}).get("status")
+            if isinstance(panel.get("laj_advisory"), dict)
+            else "not_requested"
+        ),
         "recommended_actions": panel.get("recommended_actions", []),
         "boundary": "quality_projection_only_not_gate_or_release_authority",
         "non_claims": [

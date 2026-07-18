@@ -36,6 +36,11 @@ from multi_agent_brief.product.quality_panel import (
     write_quality_panel_html,
     write_quality_summary,
 )
+from multi_agent_brief.semantic_evaluator.reader import (
+    LAJ_READER_BOUNDARY,
+    LajReaderView,
+)
+from multi_agent_brief.semantic_evaluator.serialization import canonical_sha256
 from tests.helpers import initialized_workspace_writer
 
 
@@ -59,6 +64,75 @@ def _sha256_file(path: Path) -> str:
 def _sha256_json(payload: object) -> str:
     raw = json.dumps(payload, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
     return hashlib.sha256(raw.encode("utf-8")).hexdigest()
+
+
+def _write_laj_reader_view(path: Path, *, report_sha256: str) -> LajReaderView:
+    finding = {
+        "assessment_unit_id": "AU-000000000001",
+        "scope_class": "O1",
+        "dimension_id": "cross_section_consistency",
+        "severity": "major",
+        "impact_scope": "supporting_text",
+        "report_spans": [
+            {
+                "report_sha256": report_sha256,
+                "block_id": "B000001",
+                "start_char": 0,
+                "end_char": 5,
+                "excerpt_sha256": "2" * 64,
+            }
+        ],
+        "context_requirement_ids": [],
+        "observation": "<script>alert(1)</script> needs human review.",
+        "rationale": "The section does not reconcile its own stated values.",
+        "severity_basis": "The inconsistency changes the reader interpretation.",
+        "confidence_basis": "direct_single_span",
+        "external_premise_disclosure": "none",
+        "recommended_human_action": "inspect_manually",
+        "suggested_rewrite": None,
+        "finding_id": "F-000000000001",
+        "status": "proposal",
+    }
+    payload = {
+        "schema_version": "briefloop.semantic_evaluator.reader_view.v1",
+        "status": "available",
+        "boundary": LAJ_READER_BOUNDARY,
+        "advisory_only": True,
+        "shadow_only": True,
+        "runtime_authority": False,
+        "authority_effect": "none",
+        "archive_verified": True,
+        "binding": {
+            "artifact_id": "reader-test",
+            "report_sha256": report_sha256,
+            "trial_id": "trial-reader-test",
+            "shadow_receipt_id": "receipt-reader-test",
+            "instrument_sha256": "3" * 64,
+            "execution_sha256": "4" * 64,
+            "execution_origin": "synthetic_fixture",
+            "model_id": "synthetic-fixture-v4",
+            "model_version": "synthetic-fixture-v4",
+            "archive_manifest_sha256": "5" * 64,
+            "presentation_sha256": "6" * 64,
+        },
+        "run_status": "completed",
+        "validation_status": "accepted",
+        "reason_codes": [],
+        "assessed_unit_count": 1,
+        "finding_count": 1,
+        "withheld_finding_count": 0,
+        "abstention_count": 0,
+        "findings": [finding],
+        "disclaimer": "Experimental advisory finding.",
+    }
+    view = LajReaderView.model_validate(
+        {**payload, "view_sha256": canonical_sha256(payload)}
+    )
+    path.write_text(
+        json.dumps(view.model_dump(mode="json"), ensure_ascii=False, sort_keys=True),
+        encoding="utf-8",
+    )
+    return view
 
 
 def _write_source_evidence_pack(ws: Path) -> None:
@@ -526,6 +600,143 @@ def test_quality_panel_builds_incomplete_projection_without_writing(tmp_path: Pa
     assert payload["recommended_actions"][0]["action"] == "materialize_durable_source_evidence"
     assert not quality_panel_path(ws).exists()
     assert validate_quality_panel_payload(payload) is None
+
+
+def test_quality_panel_renders_bound_laj_as_advisory_without_authority_effect(
+    tmp_path: Path,
+) -> None:
+    ws = _workspace(tmp_path)
+    reader_target = ws / "output" / "brief.md"
+    reader_target.parent.mkdir(parents=True, exist_ok=True)
+    reader_target.write_text("# Final reader brief\n\nBound public-safe text.\n", encoding="utf-8")
+    laj_path = tmp_path / "laj.json"
+    _write_laj_reader_view(laj_path, report_sha256=_sha256_file(reader_target))
+
+    base = build_quality_panel(ws, generated_at="2026-07-18T00:00:00Z")
+    panel = build_quality_panel(
+        ws,
+        generated_at="2026-07-18T00:00:00Z",
+        laj_view_path=laj_path,
+    )
+
+    for field in (
+        "overall_status",
+        "control_integrity",
+        "gates",
+        "delivery",
+        "recommended_actions",
+    ):
+        assert panel[field] == base[field]
+    laj = panel["laj_advisory"]
+    assert laj["status"] == "available"
+    assert laj["advisory_only"] is True
+    assert laj["runtime_authority"] is False
+    assert laj["authority_effect"] == "none"
+    assert laj["finding_count"] == 1
+    assert validate_quality_panel_payload(panel) is None
+
+    html = render_quality_panel_html(panel, quality_panel_sha256="7" * 64)
+    markdown = render_quality_summary(panel, quality_panel_sha256="7" * 64)
+    assert 'data-section="laj-advisory"' in html
+    assert "Experimental AI assessment · Advisory only" in html
+    assert "Not a Gate, delivery decision, or proof of correctness" in html
+    assert "&lt;script&gt;alert(1)&lt;/script&gt; needs human review." in html
+    assert "<script>alert(1)</script>" not in html
+    assert "## Experimental AI Assessment" in markdown
+    assert validate_quality_panel_html(html) is None
+    assert validate_quality_summary_markdown(markdown) is None
+
+
+@pytest.mark.parametrize(
+    ("view_state", "expected_status"),
+    (("missing", "not_available"), ("malformed", "invalid"), ("stale", "stale")),
+)
+def test_laj_failure_states_never_change_quality_panel_authority(
+    tmp_path: Path,
+    view_state: str,
+    expected_status: str,
+) -> None:
+    ws = _workspace(tmp_path)
+    reader_target = ws / "output" / "brief.md"
+    reader_target.parent.mkdir(parents=True, exist_ok=True)
+    reader_target.write_text("# Final reader brief\n", encoding="utf-8")
+    laj_path = tmp_path / "laj.json"
+    if view_state == "malformed":
+        laj_path.write_bytes(b"{not-json")
+    elif view_state == "stale":
+        _write_laj_reader_view(laj_path, report_sha256="0" * 64)
+
+    base = build_quality_panel(ws, generated_at="2026-07-18T00:00:00Z")
+    panel = build_quality_panel(
+        ws,
+        generated_at="2026-07-18T00:00:00Z",
+        laj_view_path=laj_path,
+    )
+
+    assert panel["laj_advisory"]["status"] == expected_status
+    assert panel["laj_advisory"]["findings"] == []
+    assert panel["laj_advisory"]["finding_count"] == 0
+    assert panel["overall_status"] == base["overall_status"]
+    assert panel["gates"] == base["gates"]
+    assert panel["delivery"] == base["delivery"]
+    assert panel["recommended_actions"] == base["recommended_actions"]
+    assert validate_quality_panel_payload(panel) is None
+
+
+def test_quality_panel_rejects_forged_laj_authority_field(tmp_path: Path) -> None:
+    ws = _workspace(tmp_path)
+    reader_target = ws / "output" / "brief.md"
+    reader_target.parent.mkdir(parents=True, exist_ok=True)
+    reader_target.write_text("# Final reader brief\n", encoding="utf-8")
+    laj_path = tmp_path / "laj.json"
+    _write_laj_reader_view(laj_path, report_sha256=_sha256_file(reader_target))
+    panel = build_quality_panel(ws, laj_view_path=laj_path)
+    forged = json.loads(json.dumps(panel))
+    forged["laj_advisory"]["gate_decision"] = "pass"
+
+    assert validate_quality_panel_payload(forged) == (
+        "quality_panel_schema_error:laj_advisory:reader_view_invalid"
+    )
+
+
+def test_cross_report_laj_span_fails_closed_without_authority_effect(
+    tmp_path: Path,
+) -> None:
+    ws = _workspace(tmp_path)
+    reader_target = ws / "output" / "brief.md"
+    reader_target.parent.mkdir(parents=True, exist_ok=True)
+    reader_target.write_text("# Final reader brief\n", encoding="utf-8")
+    laj_path = tmp_path / "laj.json"
+    view = _write_laj_reader_view(
+        laj_path,
+        report_sha256=_sha256_file(reader_target),
+    )
+    cross_bound = view.model_dump(mode="json", exclude={"view_sha256"})
+    cross_bound["findings"][0]["report_spans"][0]["report_sha256"] = "9" * 64
+    cross_bound["view_sha256"] = canonical_sha256(cross_bound)
+    laj_path.write_text(
+        json.dumps(cross_bound, ensure_ascii=False, sort_keys=True),
+        encoding="utf-8",
+    )
+
+    base = build_quality_panel(ws, generated_at="2026-07-18T00:00:00Z")
+    panel = build_quality_panel(
+        ws,
+        generated_at="2026-07-18T00:00:00Z",
+        laj_view_path=laj_path,
+    )
+
+    assert panel["laj_advisory"]["status"] == "invalid"
+    assert panel["laj_advisory"]["findings"] == []
+    assert panel["laj_advisory"]["finding_count"] == 0
+    for field in (
+        "overall_status",
+        "control_integrity",
+        "gates",
+        "delivery",
+        "recommended_actions",
+    ):
+        assert panel[field] == base[field]
 
 
 def test_status_recommends_quality_closeout_after_finalize_report_pass(tmp_path: Path) -> None:
@@ -1105,6 +1316,7 @@ def test_quality_summarize_cli_writes_panel_and_summary_json(tmp_path: Path, cap
     assert payload["quality_summary"] == "output/intermediate/quality_summary.md"
     assert payload["quality_panel_html"] == "output/intermediate/quality_panel.html"
     assert payload["boundary"] == "quality_projection_only_not_gate_or_release_authority"
+    assert payload["laj_advisory_status"] == "not_requested"
     assert "not_release_authorization" in payload["non_claims"]
     assert quality_panel_path(ws).exists()
     assert quality_summary_path(ws).exists()
@@ -1116,6 +1328,38 @@ def test_quality_summarize_cli_writes_panel_and_summary_json(tmp_path: Path, cap
     assert registry["artifacts"]["quality_panel"]["status"] == "valid"
     assert registry["artifacts"]["quality_summary"]["status"] == "valid"
     assert registry["artifacts"]["quality_panel_html"]["status"] == "valid"
+
+
+def test_quality_summarize_cli_accepts_explicit_bound_laj_view(
+    tmp_path: Path,
+    capsys,
+) -> None:
+    ws = _workspace(tmp_path)
+    reader_target = ws / "output" / "brief.md"
+    reader_target.parent.mkdir(parents=True, exist_ok=True)
+    reader_target.write_text("# Final reader brief\n", encoding="utf-8")
+    laj_path = tmp_path / "laj.json"
+    _write_laj_reader_view(laj_path, report_sha256=_sha256_file(reader_target))
+    capsys.readouterr()
+
+    assert main(
+        [
+            "quality",
+            "summarize",
+            "--workspace",
+            str(ws),
+            "--laj-view",
+            str(laj_path),
+            "--json",
+        ]
+    ) == 0
+    payload = json.loads(capsys.readouterr().out)
+
+    assert payload["laj_advisory_status"] == "available"
+    panel = _json(quality_panel_path(ws))
+    assert panel["laj_advisory"]["status"] == "available"
+    assert panel["overall_status"] in {"incomplete", "warning", "pass", "block"}
+    assert validate_quality_panel_payload(panel) is None
 
 
 def test_quality_summarize_cli_human_output_keeps_projection_boundary(tmp_path: Path, capsys) -> None:

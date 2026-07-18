@@ -13,7 +13,9 @@ from multi_agent_brief.semantic_evaluator.archive import verify_shadow_archive
 from multi_agent_brief.semantic_evaluator.reader import (
     LAJ_READER_BOUNDARY,
     LajReaderView,
+    bind_laj_reader_view_to_report,
     build_laj_reader_view,
+    load_laj_reader_view,
     render_laj_reader_html,
     render_laj_reader_markdown,
     write_laj_reader_artifacts,
@@ -110,6 +112,36 @@ def test_missing_tampered_and_stale_archives_never_display_findings(
     assert invalid.binding is None
     assert invalid.findings == []
     assert invalid.finding_count == 0
+
+
+def test_strict_reader_view_load_and_current_report_binding_fail_closed(
+    tmp_path: Path,
+) -> None:
+    archive = _archive(tmp_path)
+    view = build_laj_reader_view(archive)
+    path = tmp_path / "laj.json"
+    path.write_text(
+        json.dumps(view.model_dump(mode="json"), ensure_ascii=False, sort_keys=True),
+        encoding="utf-8",
+    )
+
+    loaded = load_laj_reader_view(path)
+    assert loaded == view
+    assert loaded.binding is not None
+    stale = bind_laj_reader_view_to_report(
+        loaded,
+        expected_report_sha256="0" * 64,
+    )
+    assert stale.status == "stale"
+    assert stale.findings == []
+    assert stale.finding_count == 0
+    assert stale.withheld_finding_count == loaded.withheld_finding_count + loaded.finding_count
+    assert "report_binding_stale" in stale.reason_codes
+
+    path.write_bytes(b"{not-json")
+    with pytest.raises(SemanticEvaluatorError) as caught:
+        load_laj_reader_view(path)
+    assert caught.value.reason_code == "laj_reader_view_invalid"
 
 
 def test_complete_provider_failure_is_bound_unavailable_and_has_zero_advice(
