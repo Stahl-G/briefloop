@@ -118,7 +118,11 @@ def commit_checkout(
     unit.put_receipt_checkout_binding(binding)
     identity = None
     if publish:
-        profile = capability_profile(workspace / "output")
+        profile_sha256 = (
+            capability_profile(workspace / "output").sha256
+            if sys.platform in {"darwin", "linux"}
+            else "0" * 64
+        )
         identity = PublicationIdentityV1.model_validate(
             {
                 "schema_version": "briefloop-publication-identity/v1",
@@ -129,7 +133,7 @@ def commit_checkout(
         )
         intent, changed = build_publication_intent(
             identity=identity, pre=parent, post=built,
-            capability_profile_sha256=profile.sha256,
+            capability_profile_sha256=profile_sha256,
         )
         unit.put_checkout_publication_intent(intent)
         for member in changed:
