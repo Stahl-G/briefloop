@@ -611,12 +611,12 @@ def raise_if_auditable_target_complete_blocks_downstream(
         )
         next_allowed_commands = [
             (
-                "multi-agent-brief experiments 080 register-run --case <case_dir> "
+                "briefloop experiments 080 register-run --case <case_dir> "
                 f"--condition {projection.get('condition') or '<condition>'} "
                 f"--workspace {workspace_arg} --output <run_record.json>"
             ),
             (
-                "multi-agent-brief experiments 080 score-run --case <case_dir> "
+                "briefloop experiments 080 score-run --case <case_dir> "
                 "--run-record <run_record.json> --output <scorecard.json>"
             ),
         ]
@@ -626,9 +626,9 @@ def raise_if_auditable_target_complete_blocks_downstream(
             "assessment target; finalize/delivery actions are blocked until target controls pass."
         )
         next_allowed_commands = [
-            f"multi-agent-brief status --workspace {workspace_arg} --json",
-            f"multi-agent-brief state check --workspace {workspace_arg} --strict --json",
-            f"multi-agent-brief repair route --workspace {workspace_arg} --json",
+            f"briefloop status --workspace {workspace_arg} --json",
+            f"briefloop state check --workspace {workspace_arg} --strict --json",
+            f"briefloop repair route --workspace {workspace_arg} --json",
         ]
     raise RuntimeStateError(
         message,
@@ -639,9 +639,9 @@ def raise_if_auditable_target_complete_blocks_downstream(
             "reasons": projection.get("reasons") or [],
             "next_allowed_commands": next_allowed_commands,
             "forbidden_downstream_actions": [
-                "multi-agent-brief finalize",
-                "multi-agent-brief state finalize-complete",
-                "multi-agent-brief deliver",
+                "briefloop finalize",
+                "briefloop state finalize-complete",
+                "briefloop deliver",
             ],
             "projection": projection,
         },

@@ -1,11 +1,11 @@
-"""Tool schemas for the Hermes MABW plugin."""
+"""Tool schemas for the legacy Hermes plugin that operates BriefLoop."""
 
 MABW_CREATE_ONBOARDING = {
     "name": "mabw_create_onboarding",
     "description": (
-        "Create onboarding.json for a Multi-Agent Brief Workflow workspace "
+        "Create onboarding.json for a BriefLoop workspace "
         "from brief profile answers collected in chat. Use this before initializing "
-        "a real MABW workspace in Hermes."
+        "a real BriefLoop workspace in Hermes."
     ),
     "parameters": {
         "type": "object",
@@ -50,8 +50,8 @@ MABW_CREATE_ONBOARDING = {
 MABW_INIT_WORKSPACE = {
     "name": "mabw_init_workspace",
     "description": (
-        "Initialize a MABW workspace from onboarding.json by running "
-        "multi-agent-brief init <workspace> --from-onboarding <file>."
+        "Initialize a BriefLoop workspace from onboarding.json by running "
+        "briefloop init <workspace> --from-onboarding <file>."
     ),
     "parameters": {
         "type": "object",
@@ -72,9 +72,9 @@ MABW_INIT_WORKSPACE = {
 MABW_ENV_DOCTOR = {
     "name": "mabw_env_doctor",
     "description": (
-        "Check the MABW environment: source repo, plugin status, binary path, "
-        "venv status, and workspace presence. Run this FIRST before any other MABW tool "
-        "to confirm the environment is ready. Hermes should never assume mabw is installed "
+        "Check the BriefLoop environment: source repo, plugin status, binary path, "
+        "venv status, and workspace presence. Run this FIRST before any other plugin tool "
+        "to confirm the environment is ready. Hermes should never assume BriefLoop is installed "
         "or guess the next step — run this tool and follow next_action."
     ),
     "parameters": {
@@ -87,7 +87,7 @@ MABW_ENV_DOCTOR = {
 MABW_RUN_HANDOFF = {
     "name": "mabw_run_handoff",
     "description": (
-        "Run the MABW runtime handoff launcher for an initialized workspace. "
+        "Run the BriefLoop runtime handoff launcher for an initialized workspace. "
         "Use this after workspace initialization to create agent_handoff.md, "
         "agent_handoff.json, and runtime state control files."
     ),
@@ -96,7 +96,7 @@ MABW_RUN_HANDOFF = {
         "properties": {
             "workspace": {
                 "type": "string",
-                "description": "Initialized MABW workspace directory.",
+                "description": "Initialized BriefLoop workspace directory.",
             },
         },
         "required": ["workspace"],

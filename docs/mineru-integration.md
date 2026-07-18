@@ -21,8 +21,8 @@ then input governance decides whether the extracted Markdown is evidence,
 context, instructions, or feedback.
 
 ```bash
-multi-agent-brief inputs extract --config <workspace>/config.yaml
-multi-agent-brief inputs classify --config <workspace>/config.yaml
+briefloop inputs extract --config <workspace>/config.yaml
+briefloop inputs classify --config <workspace>/config.yaml
 ```
 
 Example:
@@ -81,7 +81,7 @@ mineru:
 
 ## How Source Provider Mode Works
 
-1. `multi-agent-brief doctor` checks that `mineru` is available in PATH.
+1. `briefloop doctor` checks that `mineru` is available in PATH.
 2. When collecting sources, each configured path is parsed via `mineru -p <path> -o <output_dir> -b <backend>`.
 3. The generated `.md` and `.json` files are read and converted into `SourceItem` entries.
 4. These entries enter the normal brief pipeline alongside other sources.

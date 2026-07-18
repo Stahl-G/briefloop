@@ -282,7 +282,7 @@ def _load_handoff_runtime_state(workspace: str | Path) -> tuple[Path, dict[str, 
     workflow = _read_json_if_exists(paths["workflow_state"])
     if manifest is None or workflow is None:
         raise RuntimeStateError(
-            "Runtime state is not initialized. Run `multi-agent-brief state init "
+            "Runtime state is not initialized. Run `briefloop state init "
             "--workspace <workspace> "
             f"--runtime {RUNTIME_CLI_CHOICE_PLACEHOLDER}` first.",
             details={"workspace": str(ws)},

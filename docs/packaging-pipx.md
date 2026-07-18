@@ -61,8 +61,8 @@ remain an additive user-facing entrypoint.
    /tmp/briefloop-wheel-smoke/bin/python -m pip install dist/*.whl
    /tmp/briefloop-wheel-smoke/bin/briefloop version
    /tmp/briefloop-wheel-smoke/bin/multi-agent-brief version
-   /tmp/briefloop-wheel-smoke/bin/multi-agent-brief init /tmp/briefloop-wheel-ws --demo --force
-   /tmp/briefloop-wheel-smoke/bin/multi-agent-brief run --workspace /tmp/briefloop-wheel-ws --runtime operator --skip-doctor
+   /tmp/briefloop-wheel-smoke/bin/briefloop init /tmp/briefloop-wheel-ws --demo --force
+   /tmp/briefloop-wheel-smoke/bin/briefloop run --workspace /tmp/briefloop-wheel-ws --runtime operator --skip-doctor
    ```
 
 5. Publish only after the tag/release and package metadata agree.

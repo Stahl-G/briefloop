@@ -31,7 +31,7 @@ Hermes 使用 `delegate_task` 原生子代理管线：scout → screener → cla
 
 ### OpenCode / Codex
 
-通过 `multi-agent-brief run --workspace <path> --runtime opencode|codex` 生成 `agent_handoff.md`，由对应平台的斜杠命令和子智能体配置执行。
+通过 `briefloop run --workspace <path> --runtime opencode|codex` 生成 `agent_handoff.md`，由对应平台的斜杠命令和子智能体配置执行。
 
 ## 输入治理
 
@@ -44,7 +44,7 @@ Hermes 使用 `delegate_task` 原生子代理管线：scout → screener → cla
 | `input/instructions/` | 任务要求 | ❌ |
 | `input/context/` | 背景参考 | ❌ |
 
-`multi-agent-brief inputs extract --config <path>` 会用 MinerU 把受支持的 PDF/DOCX/PPTX/XLSX/图片输入转换为相邻的 `.mineru.md` 文件。随后 `multi-agent-brief inputs classify --config <path>` 自动分类原始文件和抽取文件，并产出 `input_classification.json`。Scout 被约束只从 `input/sources/` 和 `input/` 根目录（向后兼容）提取声明。`input/context/`、`input/instructions/`、`input/feedback/` 下抽取出的 Markdown 仍然是非证据材料。ManualProvider 代码层阻止非证据目录作为 source。
+`briefloop inputs extract --config <path>` 会用 MinerU 把受支持的 PDF/DOCX/PPTX/XLSX/图片输入转换为相邻的 `.mineru.md` 文件。随后 `briefloop inputs classify --config <path>` 自动分类原始文件和抽取文件，并产出 `input_classification.json`。Scout 被约束只从 `input/sources/` 和 `input/` 根目录（向后兼容）提取声明。`input/context/`、`input/instructions/`、`input/feedback/` 下抽取出的 Markdown 仍然是非证据材料。ManualProvider 代码层阻止非证据目录作为 source。
 
 ## 各角色职责
 
@@ -74,7 +74,7 @@ Hermes 使用 `delegate_task` 原生子代理管线：scout → screener → cla
 
 ### 定稿器（Formatter / finalize）
 
-`multi-agent-brief finalize` 从 `audited_brief.md` 生成 reader-facing 输出，剥离 `[src:<claim_id>]`，渲染 Markdown/DOCX。
+`briefloop finalize` 从 `audited_brief.md` 生成 reader-facing 输出，剥离 `[src:<claim_id>]`，渲染 Markdown/DOCX。
 
 ## 质量门禁（Quality Gate）
 

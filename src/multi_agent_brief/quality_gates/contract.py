@@ -548,7 +548,7 @@ def current_stage_quality_gate_blocking_reasons(
             rel_path = paths[key].relative_to(Path(workspace).expanduser().resolve()).as_posix()
             return [
                 f"Current stage '{current_stage}' requires {rel_path} before continuing. "
-                f"Run multi-agent-brief gates check --stage {current_stage} or request human review."
+                f"Run briefloop gates check --stage {current_stage} or request human review."
             ]
         return []
 

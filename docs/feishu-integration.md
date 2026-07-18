@@ -1,6 +1,6 @@
 # Feishu/Lark Integration
 
-`multi-agent-brief` supports bidirectional integration with Feishu (飞书)
+BriefLoop supports bidirectional integration with Feishu (飞书)
 through the official [lark-cli](https://github.com/larksuite/cli) tool.
 
 ## Prerequisites
@@ -76,6 +76,6 @@ result = connector.deliver(artifact, target)
 ## Security Notes
 
 - Tokens and credentials are stored in lark-cli's OS keychain, not in config files.
-- The `lark-cli auth` session is managed separately from multi-agent-brief.
+- The `lark-cli auth` session is managed separately from BriefLoop.
 - All lark-cli commands run as subprocesses with timeouts.
 - No network calls are made from Python — lark-cli handles all API communication.

@@ -275,7 +275,7 @@ If a workspace path is provided, use that path instead.
 First create or refresh the runtime handoff/control context:
 
 ```bash
-multi-agent-brief run --workspace <workspace> --runtime {runtime} --skip-doctor
+briefloop run --workspace <workspace> --runtime {runtime} --skip-doctor
 ```
 
 Then read:
@@ -295,21 +295,21 @@ Python as tools, validators, audit helpers, and renderers; Python is not the
 brief-generation runtime.
 
 Selection is not execution. If you enable a control with
-`multi-agent-brief controls select`, explicitly run the corresponding command
+`briefloop controls select`, explicitly run the corresponding command
 afterward when appropriate.
 
 Before finalize, run gates/state review:
 
 ```bash
-multi-agent-brief gates check --workspace <workspace> --stage auditor
-multi-agent-brief state check --workspace <workspace> --strict
+briefloop gates check --workspace <workspace> --stage auditor
+briefloop state check --workspace <workspace> --strict
 ```
 
 Only finalize after audit, gates, and state review pass:
 
 ```bash
-multi-agent-brief finalize --config <workspace>/config.yaml
-multi-agent-brief gates check --workspace <workspace> --stage finalize --brief <workspace>/output/brief.md
+briefloop finalize --config <workspace>/config.yaml
+briefloop gates check --workspace <workspace> --stage finalize --brief <workspace>/output/brief.md
 ```
 """)
 
@@ -325,7 +325,7 @@ Codex writer flow:
   existing output/control state, workflow_state, and recommended next action.
 - Do not launch the interactive terminal onboarding wizard inside Codex chat.
   Collect onboarding fields in one batch, write onboarding.json, show the values,
-  then run `multi-agent-brief init --from-onboarding`.
+  then run `briefloop init --from-onboarding`.
 - Before initializing into an existing directory, check for
   `output/intermediate/runtime_manifest.json`, `workflow_state.json`,
   `artifact_registry.json`, `event_log.jsonl`, and `output/runs/`. If present,
@@ -355,7 +355,7 @@ description: Workspace-local MABW runtime contract for {runtime_label}.
 This skill is installed into the business workspace so the runtime can operate
 without reading the MABW source repository.
 
-Start by running `multi-agent-brief run --workspace <workspace> --runtime {runtime} --skip-doctor`,
+Start by running `briefloop run --workspace <workspace> --runtime {runtime} --skip-doctor`,
 then read the handoff files under `output/intermediate/`.
 
 References:
@@ -402,7 +402,7 @@ def _opencode_jsonc_text() -> str:
 def _runtime_workflow_reference(*, runtime: str) -> str:
     return f"""# Runtime Workflow
 
-Use `multi-agent-brief run --workspace <workspace> --runtime {runtime}` as the handoff launcher.
+Use `briefloop run --workspace <workspace> --runtime {runtime}` as the handoff launcher.
 The Orchestrator reads handoff/control files and delegates external roles:
 scout, screener, claim-ledger, analyst, editor, auditor, and formatter.
 

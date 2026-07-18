@@ -6,7 +6,7 @@ workflow:
     - stage_id: doctor
       owner: python_tool
       category: environment_readiness
-      command: multi-agent-brief doctor --config <workspace>/config.yaml
+      command: briefloop doctor --config <workspace>/config.yaml
       consumes:
         - config
         - sources_config
@@ -19,7 +19,7 @@ workflow:
     - stage_id: source-discovery
       owner: python_tool_or_source_planner
       category: source_governance
-      command: multi-agent-brief sources decide --config <workspace>/config.yaml
+      command: briefloop sources decide --config <workspace>/config.yaml
       consumes:
         - config
         - sources_config
@@ -36,7 +36,7 @@ workflow:
     - stage_id: input-governance
       owner: python_tool
       category: input_governance
-      command: multi-agent-brief inputs extract --config <workspace>/config.yaml (when non-text inputs exist); multi-agent-brief inputs classify --config <workspace>/config.yaml
+      command: briefloop inputs extract --config <workspace>/config.yaml (when non-text inputs exist); briefloop inputs classify --config <workspace>/config.yaml
       consumes:
         - workspace_input
       produces:
@@ -166,7 +166,7 @@ workflow:
     - stage_id: finalize
       owner: python_tool
       category: reader_output
-      command: multi-agent-brief finalize --config <workspace>/config.yaml
+      command: briefloop finalize --config <workspace>/config.yaml
       consumes:
         - audited_brief
         - audit_report

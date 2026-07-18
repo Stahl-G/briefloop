@@ -30,7 +30,7 @@ v0.11.0 产品基线前不优先重建完整分布式 multi-agent runtime。Pyth
 
 ### v0.5.7
 
-- `multi-agent-brief run` 已改为 运行交接单 launcher，而不是 Python brief generator。
+- `briefloop run` 已改为 运行交接单 launcher，而不是 Python brief generator。
 - 标准流程转为由外部 subagents 完成来源抽取、筛选、事实账本、起草、编辑、审计和格式化。
 - Hermes 成为 primary runtime path，支持定时和 delegated brief workflow。
 - Input governance 已区分 evidence、feedback、instructions 和 context。
@@ -116,7 +116,7 @@ v0.11.0 产品基线前不优先重建完整分布式 multi-agent runtime。Pyth
 - 在进入 v0.7 improvement-proposal 工作前，先稳定 install/runtime asset parity。
 - Package install 包含 Python CLI、packaged 契约、policy packs 和 packaged public-safe eval fixtures。
 - `.agents/`、`.claude/`、`.codex/`、`.opencode/` 和 `integrations/hermes-plugin/` 等 runtime source directories 明确为 source-clone-only，除非复制到 workspace。
-- `multi-agent-brief runtime install --workspace <workspace> --runtime opencode|claude|codex|all` 可以从 source clone 安装 workspace-local OpenCode/Claude Code runtime kits 和 Experimental Codex custom-agent assets。
+- `briefloop runtime install --workspace <workspace> --runtime opencode|claude|codex|all` 可以从 source clone 安装 workspace-local OpenCode/Claude Code runtime kits 和 Experimental Codex custom-agent assets。
 - v0.6.9 不新增 FrictionStore、improvement proposal commands、policy-pack authoring 或自动 workflow execution。
 
 ### v0.7.0
@@ -268,7 +268,7 @@ Non-goals:
 
 - 新增 ReportSpec 和 ReportPack 契约，让 BriefLoop 知道正在生产哪类报告。
 - 引入初始 report packs，例如 `market_weekly`、`management_monthly`，以及后续 `evidence_extract`。
-- 改善 zero-config workspace 创建，同时保留 `multi-agent-brief` 作为稳定 engine CLI，保留 `briefloop` 作为 shell alias，保留 `/briefloop` 作为 writer command，保留 `/mabw` 作为兼容 writer command。
+- 改善 zero-config workspace 创建，同时保留 `briefloop` 作为公开 CLI，保留 `multi-agent-brief` 作为兼容入口，保留 `/briefloop` 作为 writer command，保留 `/mabw` 作为兼容 writer command。
 - 把 reader-facing delivery bundle 和 audit/control bundle 分成 export/projection 层，但不静默移动或删除现有控制 artifacts。
 - 本地文件和简单来源配置继续是一等路径；大范围 connector 和 UI 工作放到后面。
 - 为内部 review workflow 增加 release modes 和 human approval records，但不声称外部发布授权。

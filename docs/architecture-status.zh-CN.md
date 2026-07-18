@@ -2,13 +2,14 @@
 
 本页用于区分当前实现状态和 roadmap 目标。按 roadmap 做开发前，先读这里。
 
-公开命名说明：BriefLoop 是 v0.9 兼容期以来的公开项目名。MABW 仍是实现血统和兼容面，
-包括 `multi-agent-brief`、`briefloop` shell alias、`/briefloop`、`/mabw`、
-Python package/module 路径、artifact 名称、workspace 格式和实验 ID。本页描述当前已实现 runtime 能力，不代表 breaking rename。
+命名口径：BriefLoop 是当前唯一的项目和产品名，旧项目缩写已退役。
+`multi-agent-brief`、`/mabw`、`multi_agent_brief`、`mabw.*`、`MABW-080`
+等字面兼容和历史标识只保留在现有命令、schema、workspace 或归档实验需要的地方，
+不是实现血统别名。本页描述当前已实现 runtime 能力，不代表 breaking rename。
 
 ## 权限边界和信息来源
 
-- `multi-agent-brief run` / `briefloop run` 是 runtime handoff launcher，不是
+- `briefloop run` 是 runtime handoff launcher，不是
   Python 全流程简报生成器。它生成 handoff 和控制面文件，让外部 agent runtime
   按角色执行。
 - Runtime identity 由唯一初始化事务显式写入：专用 adapter 固定注入 canonical
@@ -30,7 +31,7 @@ Python package/module 路径、artifact 名称、workspace 格式和实验 ID。
 ## 已实现的公开基线
 
 - 标准用户路径是 subagent-first。
-- `multi-agent-brief run` 生成 运行交接单 artifacts，而不是自己生成完整 brief。
+- `briefloop run` 生成 运行交接单 artifacts，而不是自己生成完整 brief。
 - 运行交接单 会初始化最小 runtime state 和 artifact registry control files。
 - Feedback issues 和 bounded repair plans 可以被结构化、校验和记录，但不会自动执行 repair。
 - 默认 role topology 允许 Scout 同时完成发现和筛选，同时保持 `candidate_claims.json` 与 `screened_candidates.json` 作为独立 artifacts；strict topology 仍可保留独立 Screener。
@@ -52,7 +53,7 @@ Python package/module 路径、artifact 名称、workspace 格式和实验 ID。
 - Workspace-local audience taste profiles 可以冻结为 per-run snapshots，并通过 handoff 暴露为 runtime context。
 - 司乐师 控制台 可以给出 deterministic control recommendations，并记录 enable/defer/reject selections；selection 不会自动执行对应 control。
 - Finalize 会把 reader delivery bundle 写入 `output/delivery/`，并把来源附录追加到交付 Markdown/DOCX 末尾；`output/source_appendix.md` 继续作为 audit/control copy 保留。Reader-facing appendix 可以展示安全的 source identity 和 taxonomy labels；`output/source_appendix_trace.md` 可以承载内部 claim/source/span IDs、source paths、source byte hashes 和 metadata completeness warnings 供 audit review。交付产物不得暴露内部 claim IDs、source IDs、evidence text、本地路径或 file URL。
-- Runtime asset availability 已显式区分：package install 包含 契约 configs 和 public-safe eval fixtures；`.agents/`、`.claude/`、`.opencode/`、`.codex/` 以及 Hermes plugin 文件属于 source-clone-only，除非通过 `multi-agent-brief runtime install` 复制到 workspace。
+- Runtime asset availability 已显式区分：package install 包含 契约 configs 和 public-safe eval fixtures；`.agents/`、`.claude/`、`.opencode/`、`.codex/` 以及 Hermes plugin 文件属于 source-clone-only，除非通过 `briefloop runtime install` 复制到 workspace。
 - Improvement Ledger lifecycle 可以把人工撰写、人工批准的读者偏好保存在 `improvement/ledger.jsonl`，将 approved 且可物化的 entries 投影到 `improvement/memory.md`，在每次 run 冻结为 `output/intermediate/improvement_memory_snapshot.md`，并且只通过 handoff 暴露 frozen snapshot。
 - Packaged public-safe evaluation cases 已覆盖 Improvement Memory 控制行为：未批准 entry 不物化，已批准 guidance 会冻结，reverted entry 会从下一次 snapshot 中移除。
 - 实验性 Atomic Claim Graph 控制可以校验可选
@@ -122,7 +123,7 @@ Python package/module 路径、artifact 名称、workspace 格式和实验 ID。
   `source_category` 和 `underlying_evidence_type` metadata；这是 taxonomy
   normalization，不是 trust scoring、source-policy gate 或 semantic support
   judgment。
-  `briefloop extract` / `multi-agent-brief extract` 可以在
+  `briefloop extract` 可以在
   `evidence_extract` workspace 中登记显式 extraction scope，并把本地 source
   files 复制到 `input/sources/evidence_extract/`。它还会在
   `output/intermediate/evidence_extract_source_lock.json` 写入确定性的 source

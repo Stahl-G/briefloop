@@ -163,25 +163,25 @@ def test_plugin_reference_mentions_feedback_controls():
 
     reference_text = reference.read_text(encoding="utf-8")
     artifact_text = artifact_contract.read_text(encoding="utf-8")
-    assert "multi-agent-brief feedback ingest" in reference_text
+    assert "briefloop feedback ingest" in reference_text
     assert "feedback resolve" in reference_text
     assert "feedback show --json" in reference_text
     assert "do not execute repair" in reference_text
-    assert "multi-agent-brief gates check" in reference_text
-    assert "multi-agent-brief state check --workspace <workspace> --strict" in reference_text
-    assert "multi-agent-brief state stage-complete --workspace <workspace> --stage auditor" in reference_text
-    assert "multi-agent-brief state finalize-complete --workspace <workspace>" in reference_text
+    assert "briefloop gates check" in reference_text
+    assert "briefloop state check --workspace <workspace> --strict" in reference_text
+    assert "briefloop state stage-complete --workspace <workspace> --stage auditor" in reference_text
+    assert "briefloop state finalize-complete --workspace <workspace>" in reference_text
     assert "finalize` only renders reader-facing outputs" in reference_text
     assert "gates show --json" in reference_text
     assert "do not live-fetch" in reference_text
-    assert "multi-agent-brief provenance build" in reference_text
+    assert "briefloop provenance build" in reference_text
     assert "provenance show --json" in reference_text
     assert "not semantic truth verification" in reference_text
     assert "audience_profile_snapshot.md" in reference_text
     assert "runtime context only" in reference_text
     assert "do not treat `audience_profile.md` as source evidence" in reference_text
     assert "orchestrator_control_switchboard.json" in reference_text
-    assert "multi-agent-brief controls select" in reference_text
+    assert "briefloop controls select" in reference_text
     assert "Selection is not execution" in reference_text
     assert "feedback_issues.json" in artifact_text
     assert "repair_plan.json" in artifact_text
@@ -193,6 +193,23 @@ def test_plugin_reference_mentions_feedback_controls():
     assert "orchestrator_control_switchboard.json" in artifact_text
     assert "control_selections.json" in artifact_text
     assert "not workflow artifacts" in artifact_text
+
+
+def test_plugin_prefers_public_cli_and_keeps_legacy_override(monkeypatch):
+    for name in ("BRIEFLOOP_BIN", "MABW_BIN", "MULTI_AGENT_BRIEF_BIN"):
+        monkeypatch.delenv(name, raising=False)
+    assert tools._mabw_bin() == "briefloop"
+
+    monkeypatch.setenv("MABW_BIN", "legacy-briefloop")
+    assert tools._mabw_bin() == "legacy-briefloop"
+
+
+def test_plugin_readme_marks_mabw_command_as_legacy_and_uses_public_cli():
+    text = (ROOT / "README.md").read_text(encoding="utf-8")
+
+    assert "`briefloop init --from-onboarding`" in text
+    assert "`briefloop run --workspace --runtime hermes`" in text
+    assert "legacy `/mabw <workspace>`" in text
 
 
 def test_plugin_delegated_workflow_matches_stage_specs():
@@ -217,7 +234,7 @@ def test_run_handoff_passes_detected_repo_workdir(monkeypatch, tmp_path):
         return {"ok": True, "returncode": 0, "stdout": "", "stderr": "", "command": cmd}
 
     monkeypatch.setattr(tools, "_find_repo_root", lambda: repo_root)
-    monkeypatch.setattr(tools, "_mabw_bin", lambda: "multi-agent-brief")
+    monkeypatch.setattr(tools, "_mabw_bin", lambda: "briefloop")
     monkeypatch.setattr(tools, "_run", fake_run)
 
     result = json.loads(tools.run_handoff({"workspace": str(workspace), "runtime": "hermes"}))
@@ -248,6 +265,7 @@ def test_run_handoff_passes_detected_repo_workdir(monkeypatch, tmp_path):
     assert "orchestrator_control_switchboard.json" in result["next"]
     assert "selection is not execution" in result["next"]
     assert captured["cwd"] == str(repo_root)
+    assert captured["cmd"][0] == "briefloop"
     assert "--repo-workdir" in captured["cmd"]
     repo_arg = captured["cmd"].index("--repo-workdir") + 1
     assert captured["cmd"][repo_arg] == str(repo_root)

@@ -42,7 +42,7 @@ Core Python-only control files include `workflow_state.json`,
 | Artifact or surface | Class | Current writer | Notes |
 |---|---|---|---|
 | `output/intermediate/claim_drafts.json` | `agent_owned_draft` | Claim Ledger role or operator | Freeze input only; draft entries must not carry claim IDs. |
-| `output/intermediate/claim_ledger.json` | `python_promoted_authoritative` | `multi-agent-brief state freeze-claim-ledger` | Python assigns deterministic claim IDs and records freeze metadata. |
+| `output/intermediate/claim_ledger.json` | `python_promoted_authoritative` | `briefloop state freeze-claim-ledger` | Python assigns deterministic claim IDs and records freeze metadata. |
 | `output/intermediate/workflow_state.json` | `python_only_control` | Runtime-state transactions | Never hand-edit; use `state check`, `state decide`, `stage-complete`, `finalize-complete`, or repair transactions. |
 | `output/intermediate/artifact_registry.json` | `python_only_control` | `state check` / runtime transactions | Hash/status registry; direct edits break auditability. |
 | `output/intermediate/runtime_manifest.json` | `python_only_control` | Runtime initialization/control commands | Run identity and runtime metadata, not a role draft. |

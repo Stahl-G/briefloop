@@ -275,7 +275,7 @@ def test_inputs_classify_records_skipped_files(tmp_path: Path):
     assert "annotated_output.docx" in skipped_names
     assert skipped_names["annotated_output.docx"]["reason"] == "needs_document_extraction"
     assert skipped_names["annotated_output.docx"]["suggested_role"] == "feedback"
-    assert skipped_names["annotated_output.docx"]["extract_with"] == "multi-agent-brief inputs extract"
+    assert skipped_names["annotated_output.docx"]["extract_with"] == "briefloop inputs extract"
     assert skipped_names["screenshot.jpg"]["reason"] == "needs_document_extraction"
     assert skipped_names["screenshot.jpg"]["suggested_role"] == "feedback"
 

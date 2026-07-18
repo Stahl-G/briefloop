@@ -37,8 +37,8 @@ Use after screened_candidates.json exists, whether default Scout or strict Scree
 - Local-file or packaged sources may omit `source_url` only when `source_path` plus `source_title` or `source_name` and `source_category` are preserved.
 - Merge overlapping candidates only when traceability remains clear; otherwise keep separate drafts.
 - Keep language strength aligned with evidence strength.
-- Do not write `output/intermediate/claim_ledger.json`; Python creates it with `multi-agent-brief state freeze-claim-ledger`.
+- Do not write `output/intermediate/claim_ledger.json`; Python creates it with `briefloop state freeze-claim-ledger`.
 
 ## Handoff
 
-Return after `claim_drafts.json` exists. The Orchestrator must run `multi-agent-brief state freeze-claim-ledger --workspace <workspace>` before `state stage-complete --stage claim-ledger`.
+Return after `claim_drafts.json` exists. The Orchestrator must run `briefloop state freeze-claim-ledger --workspace <workspace>` before `state stage-complete --stage claim-ledger`.

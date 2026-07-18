@@ -178,7 +178,7 @@ ARCHIVE=$CASE/seed_archive/mabw-20260618T000000Z-solarseed0001/manifest.json
 ### 1. Validate The Case
 
 ```bash
-multi-agent-brief experiments 080 validate-case "$CASE"
+briefloop experiments 080 validate-case "$CASE"
 ```
 
 This is read-only. It validates `case_manifest.json`,
@@ -195,9 +195,9 @@ Use a seed/template workspace with the same report objective, audience, source
 policy, report date, freshness window, and output style for all conditions:
 
 ```bash
-multi-agent-brief init ./080-baseline --from-onboarding onboarding.json
-multi-agent-brief init ./080-memory --from-onboarding onboarding.json
-multi-agent-brief init ./080-prompt-only --from-onboarding onboarding.json
+briefloop init ./080-baseline --from-onboarding onboarding.json
+briefloop init ./080-memory --from-onboarding onboarding.json
+briefloop init ./080-prompt-only --from-onboarding onboarding.json
 ```
 
 For `baseline` and `prompt_only`, the workspace must not contain Improvement
@@ -207,21 +207,21 @@ operator must prepare approved Improvement Memory before running fast-rerun.
 ### 3. Scaffold Each Condition
 
 ```bash
-multi-agent-brief experiments 080 scaffold-condition \
+briefloop experiments 080 scaffold-condition \
   --case "$CASE" \
   --condition baseline \
   --workspace ./080-baseline \
   --runtime operator \
   --archive "$ARCHIVE"
 
-multi-agent-brief experiments 080 scaffold-condition \
+briefloop experiments 080 scaffold-condition \
   --case "$CASE" \
   --condition memory \
   --workspace ./080-memory \
   --runtime operator \
   --archive "$ARCHIVE"
 
-multi-agent-brief experiments 080 scaffold-condition \
+briefloop experiments 080 scaffold-condition \
   --case "$CASE" \
   --condition prompt_only \
   --workspace ./080-prompt-only \
@@ -246,9 +246,9 @@ After reading `experiment/080/operator_instructions.md`, run each condition
 from Analyst onward:
 
 ```bash
-multi-agent-brief run --workspace ./080-baseline --runtime operator --recipe fast-rerun --skip-doctor
-multi-agent-brief run --workspace ./080-memory --runtime operator --recipe fast-rerun --skip-doctor
-multi-agent-brief run --workspace ./080-prompt-only --runtime operator --recipe fast-rerun --skip-doctor
+briefloop run --workspace ./080-baseline --runtime operator --recipe fast-rerun --skip-doctor
+briefloop run --workspace ./080-memory --runtime operator --recipe fast-rerun --skip-doctor
+briefloop run --workspace ./080-prompt-only --runtime operator --recipe fast-rerun --skip-doctor
 ```
 
 Complete the normal downstream workflow for each condition. Source-discovery,
@@ -272,7 +272,7 @@ output/intermediate/gates/auditor_quality_gate_report.json
 ```
 
 ```bash
-multi-agent-brief experiments 080 register-run \
+briefloop experiments 080 register-run \
   --case "$CASE" \
   --condition baseline \
   --workspace ./080-baseline \
@@ -289,7 +289,7 @@ non-reference-eligible.
 ### 6. Build Deterministic Scorecard Drafts
 
 ```bash
-multi-agent-brief experiments 080 score-run \
+briefloop experiments 080 score-run \
   --case "$CASE" \
   --run-record "$CASE/run_records/baseline.run_record.json" \
   --output "$CASE/scorecards/baseline.scorecard.json"
@@ -319,7 +319,7 @@ For formal auditable-brief assessment, export a condition-blind, hash-bound
 pack after scorecard drafts are ready:
 
 ```bash
-multi-agent-brief experiments 080 export-blind-pack \
+briefloop experiments 080 export-blind-pack \
   --case "$CASE" \
   --scorecard "$CASE/scorecards/baseline.scorecard.json" \
   --scorecard "$CASE/scorecards/memory.scorecard.json" \
@@ -354,7 +354,7 @@ experiments/080/cases/solar_public_001/assessments/assessment.template.json
 Then import it:
 
 ```bash
-multi-agent-brief experiments 080 import-assessment \
+briefloop experiments 080 import-assessment \
   --scorecard "$CASE/scorecards/baseline.scorecard.json" \
   --assessment "$CASE/assessments/baseline.assessment.json" \
   --output "$CASE/scorecards/baseline.assessed_scorecard.json"
@@ -365,7 +365,7 @@ For blind assessment import, the assessment file references `blind_item_id` and
 pack and reveal mapping:
 
 ```bash
-multi-agent-brief experiments 080 import-assessment \
+briefloop experiments 080 import-assessment \
   --blind-pack "$CASE/blind_assessment_pack/blind_pack.json" \
   --reveal-mapping "$CASE/blind_assessment_pack/reveal_mapping.json" \
   --assessment "$CASE/assessments/BI-A.assessment.json" \
@@ -399,7 +399,7 @@ Guidance scores use:
 ### 9. Summarize The Case
 
 ```bash
-multi-agent-brief experiments 080 summarize \
+briefloop experiments 080 summarize \
   --case "$CASE" \
   --scorecard "$CASE/scorecards/baseline.assessed_scorecard.json" \
   --scorecard "$CASE/scorecards/memory.assessed_scorecard.json" \

@@ -31,9 +31,18 @@ TARGET_FILES = [
     "docs/windows-powershell.md",
     "docs/windows-powershell.zh-CN.md",
     "CLAUDE.md",
+    "HERMES.md",
     "scripts/setup.sh",
     "scripts/setup.ps1",
+    "scripts/ci/smoke_packaged_topology_handoff.py",
+    ".agents/skills/brief-onboarding/SKILL.md",
+    ".agents/skills/claim-ledger/SKILL.md",
+    ".agents/skills/orchestrator/SKILL.md",
     ".agents/skills/briefloop-workbuddy/SKILL.md",
+    "integrations/hermes-plugin/mabw/schemas.py",
+    "integrations/hermes-plugin/mabw/skills/mabw-workflow/SKILL.md",
+    "integrations/hermes-plugin/mabw/skills/mabw-workflow/references/artifact-contract.md",
+    "integrations/hermes-plugin/mabw/skills/mabw-workflow/references/delegated-workflow.md",
     "integrations/workbuddy/briefloop/SKILL.md",
     ".claude/commands/briefloop.md",
     ".opencode/commands/briefloop.md",
@@ -42,6 +51,18 @@ TARGET_FILES = [
     "examples/reference-workspaces/industry-weekly-demo/artifacts/quality_summary.md",
     "examples/reference-workspaces/industry-weekly-demo/artifacts/source_appendix.md",
 ]
+
+# The supported Hermes plugin retains `mabw_*` tool and `/mabw` compatibility
+# identifiers. These paths still must not teach the compatibility shell CLI as
+# their primary deterministic command.
+PRIMARY_CLI_FILES = [
+    "integrations/hermes-plugin/README.md",
+    "integrations/hermes-plugin/mabw/__init__.py",
+]
+
+FORBIDDEN_PRIMARY_CLI_PATTERN = re.compile(
+    r"(?<![\w.-])multi-agent-brief(?![\w-])"
+)
 
 NAMING_AUTHORITY_FILES = [
     "docs/briefloop-naming.md",
@@ -75,6 +96,12 @@ FORBIDDEN_PATTERNS = [
     ("multi_agent_brief_cli", re.compile(r"(?<![\w.-])multi-agent-brief(?![\w-])")),
     ("mabw_name", re.compile(r"(?<![\w./-])mabw(?![\w-])", re.IGNORECASE)),
 ]
+
+# The Hermes runtime owns one plugin-only compatibility command. It creates a
+# chat-to-onboarding session and is not a public shell CLI alias or product name.
+CLASSIFIED_HERMES_PLUGIN_COMMAND = (
+    "4. For a new Hermes brief, run the Hermes plugin command `/mabw new`."
+)
 
 FORBIDDEN_NAMING_AUTHORITY_PATTERNS = [
     (
@@ -170,6 +197,12 @@ class Finding:
 def _line_findings(path: Path, line_no: int, line: str) -> list[Finding]:
     findings: list[Finding] = []
     for kind, pattern in FORBIDDEN_PATTERNS:
+        if (
+            kind == "slash_mabw"
+            and path.name == "HERMES.md"
+            and line.strip() == CLASSIFIED_HERMES_PLUGIN_COMMAND
+        ):
+            continue
         for match in pattern.finditer(line):
             sample = line.strip()
             findings.append(Finding(path=path, line=line_no, kind=kind, sample=sample))
@@ -205,6 +238,34 @@ def scan_file(path: Path) -> list[Finding]:
     findings: list[Finding] = []
     for line_no, line in enumerate(text.splitlines(), start=1):
         findings.extend(_line_findings(path, line_no, line))
+    return findings
+
+
+def scan_primary_cli_file(path: Path) -> list[Finding]:
+    """Reject compatibility CLI instructions without rejecting plugin API names."""
+    try:
+        text = path.read_text(encoding="utf-8")
+    except FileNotFoundError:
+        return [
+            Finding(
+                path=path,
+                line=1,
+                kind="missing_primary_cli_target",
+                sample="configured primary CLI target file is missing",
+            )
+        ]
+
+    findings: list[Finding] = []
+    for line_no, line in enumerate(text.splitlines(), start=1):
+        if FORBIDDEN_PRIMARY_CLI_PATTERN.search(line):
+            findings.append(
+                Finding(
+                    path=path,
+                    line=line_no,
+                    kind="compatibility_cli_in_primary_path",
+                    sample=line.strip(),
+                )
+            )
     return findings
 
 
@@ -331,6 +392,8 @@ def scan(paths: list[Path] | None = None, *, root: Path = ROOT) -> list[Finding]
     for path in target_paths:
         findings.extend(scan_file(path))
     if paths is None:
+        for rel_path in PRIMARY_CLI_FILES:
+            findings.extend(scan_primary_cli_file(root / rel_path))
         for rel_path in NAMING_AUTHORITY_FILES:
             findings.extend(scan_naming_authority_file(root / rel_path))
         for rel_path in NAMING_CONSUMER_FILES:

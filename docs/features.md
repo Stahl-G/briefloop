@@ -21,13 +21,13 @@ marks them supported.
 
 | Function | What it does | Status | Entry points |
 |---|---|---|---|
-| Workspace onboarding | Collects brief purpose, audience, cadence, source mode, and output preferences before creating a workspace | Always on | `multi-agent-brief onboard`, `multi-agent-brief init --from-onboarding` |
+| Workspace onboarding | Collects brief purpose, audience, cadence, source mode, and output preferences before creating a workspace | Always on | `briefloop onboard`, `briefloop init --from-onboarding` |
 | Product workspace skeleton | Creates a conservative local-first workspace and `report_spec.yaml` from a supported baseline ReportPack | Supported baseline | `briefloop new industry-weekly <workspace>`, `briefloop new management-monthly <workspace>`, `briefloop new document-review <workspace>` |
 | Claude writer command | Gives writers a five-verb interface for normal work | Optional, first-class writer path | `/briefloop new`, `/briefloop run`, `/briefloop status`, `/briefloop feedback`, `/briefloop deliver`; `/mabw` remains a compatibility alias |
-| Runtime handoff | Builds the runtime handoff for the external orchestrator and subagents | Always on | `multi-agent-brief run --workspace <workspace> --runtime operator` |
-| Status view | Shows current stage, blockers, artifacts, timing buckets, and next safe actions | Always on | `/briefloop status`, `multi-agent-brief status` |
-| Delivery bundle | Produces reader-facing Markdown and DOCX outputs after finalize checks | Always on | `/briefloop deliver`, `multi-agent-brief finalize`, `state finalize-complete` |
-| Delivery/audit bundle projection | Writes a manifest that separates reader delivery artifacts from audit/control artifacts by hash | Experimental | `multi-agent-brief packs bundle --workspace <workspace>` |
+| Runtime handoff | Builds the runtime handoff for the external orchestrator and subagents | Always on | `briefloop run --workspace <workspace> --runtime operator` |
+| Status view | Shows current stage, blockers, artifacts, timing buckets, and next safe actions | Always on | `/briefloop status`, `briefloop status` |
+| Delivery bundle | Produces reader-facing Markdown and DOCX outputs after finalize checks | Always on | `/briefloop deliver`, `briefloop finalize`, `state finalize-complete` |
+| Delivery/audit bundle projection | Writes a manifest that separates reader delivery artifacts from audit/control artifacts by hash | Experimental | `briefloop packs bundle --workspace <workspace>` |
 
 ## Source And Input Collection
 
@@ -113,12 +113,12 @@ Use these commands when you want the machine-readable feature catalog rather
 than this product-facing map:
 
 ```bash
-multi-agent-brief features
-multi-agent-brief features --info <feature-id>
-multi-agent-brief features --json
-multi-agent-brief recommend --text "Track competitors and SEC filings"
-multi-agent-brief setup <workspace>
-multi-agent-brief doctor
+briefloop features
+briefloop features --info <feature-id>
+briefloop features --json
+briefloop recommend --text "Track competitors and SEC filings"
+briefloop setup <workspace>
+briefloop doctor
 ```
 
 ## Not Functions

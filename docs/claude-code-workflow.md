@@ -18,13 +18,13 @@ External subagents
 
 The Python CLI keeps deterministic, testable support functions in code:
 
-- `multi-agent-brief init` — create a workspace
-- `multi-agent-brief sources decide` — resolve `llm_decide` source policy
-- `multi-agent-brief doctor` — check configuration and source health
-- `multi-agent-brief inputs extract` — convert supported PDF/DOCX/image inputs to adjacent `.mineru.md` files with MinerU
-- `multi-agent-brief inputs classify` — classify evidence and instruction inputs
-- `multi-agent-brief audit` — run deterministic audit checks where applicable
-- `multi-agent-brief finalize` — render reader-facing Markdown and DOCX from `audited_brief.md`
+- `briefloop init` — create a workspace
+- `briefloop sources decide` — resolve `llm_decide` source policy
+- `briefloop doctor` — check configuration and source health
+- `briefloop inputs extract` — convert supported PDF/DOCX/image inputs to adjacent `.mineru.md` files with MinerU
+- `briefloop inputs classify` — classify evidence and instruction inputs
+- `briefloop audit` — run deterministic audit checks where applicable
+- `briefloop finalize` — render reader-facing Markdown and DOCX from `audited_brief.md`
 
 These commands are tools. They provide contracts, validation, and rendering for
 the subagent workflow.

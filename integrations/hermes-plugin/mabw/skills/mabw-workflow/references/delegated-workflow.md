@@ -15,7 +15,7 @@ runtime context only; do not treat `audience_profile.md` as source evidence,
 an artifact contract, a gate, or a provenance proof.
 
 Read `output/intermediate/orchestrator_control_switchboard.json` after handoff.
-Record enable, defer, or reject selections with `multi-agent-brief controls select`.
+Record enable, defer, or reject selections with `briefloop controls select`.
 Selection is not execution; selected controls still require an explicit CLI,
 subagent, or human action.
 
@@ -57,34 +57,34 @@ Each step should check the expected artifact path before selecting the next deci
 After `audit_report.json` exists, run quality gates and refresh runtime state before selecting the finalize path:
 
 ```bash
-multi-agent-brief controls select --workspace <workspace> --control quality_gates --selection enable --reason "Use quality gates before finalize."
-multi-agent-brief gates check --workspace <workspace>
-multi-agent-brief state check --workspace <workspace> --strict
-multi-agent-brief state stage-complete --workspace <workspace> --stage auditor --reason "Audit and quality gates passed."
+briefloop controls select --workspace <workspace> --control quality_gates --selection enable --reason "Use quality gates before finalize."
+briefloop gates check --workspace <workspace>
+briefloop state check --workspace <workspace> --strict
+briefloop state stage-complete --workspace <workspace> --stage auditor --reason "Audit and quality gates passed."
 ```
 
-If `state check` reports blocking quality gate findings, choose `delegate_repair`, `request_human_review`, or `block_run` instead of finalizing. `multi-agent-brief finalize` only renders reader-facing outputs; it is not a quality-gate executor.
+If `state check` reports blocking quality gate findings, choose `delegate_repair`, `request_human_review`, or `block_run` instead of finalizing. `briefloop finalize` only renders reader-facing outputs; it is not a quality-gate executor.
 
 Finalize is transactional: proceed only when `finalize_report.json` reports
 `delivery_promotion: "promoted"`; otherwise stop and route repair. After
 promotion, run:
 
 ```bash
-multi-agent-brief gates check --workspace <workspace> --stage finalize --brief <workspace>/output/brief.md
-multi-agent-brief state finalize-complete --workspace <workspace> --reason "Reader-facing artifacts passed finalize checks."
-multi-agent-brief workbuddy diagnose --workspace <workspace> --json
+briefloop gates check --workspace <workspace> --stage finalize --brief <workspace>/output/brief.md
+briefloop state finalize-complete --workspace <workspace> --reason "Reader-facing artifacts passed finalize checks."
+briefloop workbuddy diagnose --workspace <workspace> --json
 ```
 
 Do not report delivery unless diagnose shows `delivery_truth.valid=true`.
 
-If audit findings or human feedback exist, use `multi-agent-brief feedback ingest`, `feedback plan`, `feedback resolve`, `feedback show --json`, and `feedback validate` to structure issues and create a bounded repair plan. These commands do not execute repair or edit brief artifacts.
+If audit findings or human feedback exist, use `briefloop feedback ingest`, `feedback plan`, `feedback resolve`, `feedback show --json`, and `feedback validate` to structure issues and create a bounded repair plan. These commands do not execute repair or edit brief artifacts.
 
 Repair best practice: repeated repair is a warning sign, not progress by itself. Repeated retry/repair budgets are enforced by `workflow_state.json.next_allowed_decisions` after `state check` or `state decide`; when trajectory regulation narrows decisions, use only `request_human_review` or `block_run`. If the proposed repair would touch more than two sections, narrow the scope before delegating repair or request human review. Trajectory regulation narrows operator decisions only; it does not execute repair, run gates, approve delivery, or perform agent work.
 
-When material-fact, freshness, or target-relevance gates are required, use `multi-agent-brief gates check`, `gates show --json`, and `gates validate` to create and inspect `output/intermediate/quality_gate_report.json`. Gate checks may block unsafe current-stage continue/finalize decisions, but repair ownership is still routed explicitly by the Orchestrator. Gate checks do not live-fetch sources, execute repair, or automatically create feedback issues; route failed gates into feedback explicitly when repair planning is needed.
+When material-fact, freshness, or target-relevance gates are required, use `briefloop gates check`, `gates show --json`, and `gates validate` to create and inspect `output/intermediate/quality_gate_report.json`. Gate checks may block unsafe current-stage continue/finalize decisions, but repair ownership is still routed explicitly by the Orchestrator. Gate checks do not live-fetch sources, execute repair, or automatically create feedback issues; route failed gates into feedback explicitly when repair planning is needed.
 
 ## Optional Provenance Projection
 
-After runtime state exists, use `multi-agent-brief provenance build`, `provenance show --json`, and `provenance validate` when an audit/debug view of run, stage, event, artifact, claim, source-reference, feedback, repair, and gate-finding connections is useful. This writes `output/intermediate/provenance_graph.json`.
+After runtime state exists, use `briefloop provenance build`, `provenance show --json`, and `provenance validate` when an audit/debug view of run, stage, event, artifact, claim, source-reference, feedback, repair, and gate-finding connections is useful. This writes `output/intermediate/provenance_graph.json`.
 
 Provenance projection is derived from existing control files. It is not semantic truth verification, not workflow replay, not repair execution, and not required before `finalize`.

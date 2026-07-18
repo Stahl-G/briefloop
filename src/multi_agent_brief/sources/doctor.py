@@ -105,7 +105,7 @@ def run_doctor(
             if any("requires env var" in error for error in validation_errors):
                 results.append(CheckResult(
                     "ERROR",
-                    "  Prefer importing private keys with `multi-agent-brief secrets import "
+                    "  Prefer importing private keys with `briefloop secrets import "
                     "--workspace <workspace> --from ~/.env --keys <KEY>`.",
                 ))
                 results.append(CheckResult("ERROR", "  Copy .env.example to .env, fill in your key, then re-run with the key available."))
@@ -143,7 +143,7 @@ def run_doctor(
                     if api_key_env:
                         results.append(CheckResult(
                             "ERROR",
-                            "  Import it with: multi-agent-brief secrets import "
+                            "  Import it with: briefloop secrets import "
                             f"--workspace {p.parent} --from ~/.env --keys {api_key_env}",
                         ))
                     results.append(CheckResult("ERROR", "  Copy .env.example to .env, fill in your key, then re-run with the key available."))

@@ -148,7 +148,7 @@ def import_workspace_secrets(
 def _require_existing_workspace(workspace: Path) -> None:
     if not workspace.exists():
         raise SecretImportError(
-            f"workspace not found: {workspace}. Run briefloop new or multi-agent-brief init first."
+            f"workspace not found: {workspace}. Run briefloop new or briefloop init first."
         )
     if not workspace.is_dir():
         raise SecretImportError(f"workspace path is not a directory: {workspace}")

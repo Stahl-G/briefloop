@@ -704,10 +704,10 @@ def test_real_gate_check_blocks_current_auditor_but_keeps_repair_target(tmp_path
     assert "output/intermediate/audit_report.json" in payload["repair_route"]["blocked_direct_edits"]
     assert payload["required_commands"] == [
         (
-            f"multi-agent-brief repair start --workspace {ws.resolve()} "
+            f"briefloop repair start --workspace {ws.resolve()} "
             "--gate-stage auditor --gate-artifact auditor_quality_gate_report --json"
         ),
-        f"multi-agent-brief repair complete --workspace {ws.resolve()} --reason \"<reason>\" --json",
+        f"briefloop repair complete --workspace {ws.resolve()} --reason \"<reason>\" --json",
     ]
     assert payload["repair_steps"] == [
         "Current gate has an owner-stage repair route. Scoped repair start is handled by the repair transaction.",
@@ -716,7 +716,7 @@ def test_real_gate_check_blocks_current_auditor_but_keeps_repair_target(tmp_path
         "Run repair complete after the owner edits.",
         "Rerun downstream stages from repair_route.must_rerun_from.",
     ]
-    assert f"multi-agent-brief repair route --workspace {ws.resolve()} --json" not in payload["required_commands"]
+    assert f"briefloop repair route --workspace {ws.resolve()} --json" not in payload["required_commands"]
     assert payload["repair_warnings"] == [
         "Do not edit frozen artifacts directly.",
         "Direct edits will mark the run contaminated and non-reference-eligible.",
@@ -740,10 +740,10 @@ def test_real_gate_check_blocks_current_auditor_but_keeps_repair_target(tmp_path
     output = capsys.readouterr().out
     assert "[gates show] required_commands:" in output
     assert (
-        f"multi-agent-brief repair start --workspace {ws.resolve()} "
+        f"briefloop repair start --workspace {ws.resolve()} "
         "--gate-stage auditor --gate-artifact auditor_quality_gate_report --json"
     ) in output
-    assert f"multi-agent-brief repair start --workspace {ws.resolve()} --json" not in output
+    assert f"briefloop repair start --workspace {ws.resolve()} --json" not in output
     assert "[gates show] repair_warnings:" in output
     assert "Do not edit frozen artifacts directly." in output
     assert "Direct edits will mark the run contaminated and non-reference-eligible." in output
@@ -854,7 +854,7 @@ def test_quality_gate_guidance_does_not_start_human_review_route(tmp_path, repai
     assert guidance["repair_route"]["repair_owner"] == "none"
     assert guidance["repair_route"]["recommended_action"] == "request_human_review_for_blocking_gate"
     commands = guidance["required_commands"]
-    assert f"multi-agent-brief repair route --workspace {ws.resolve()} --json" not in commands
+    assert f"briefloop repair route --workspace {ws.resolve()} --json" not in commands
     assert not any(" repair start " in command for command in commands)
     assert not any(" repair complete " in command for command in commands)
     assert any(" request_human_review " in command for command in commands)
@@ -912,16 +912,16 @@ def test_quality_gate_guidance_uses_current_gate_route_for_scoped_start(tmp_path
     assert guidance["repair_route"]["source"]["kind"] == "finalize_quality_gate_report"
     assert guidance["repair_route"]["source"]["finding_id"] == "QG_CURRENT_EDITOR_001"
     commands = guidance["required_commands"]
-    assert f"multi-agent-brief repair route --workspace {ws.resolve()} --json" not in commands
+    assert f"briefloop repair route --workspace {ws.resolve()} --json" not in commands
     assert any(
         command
         == (
-            f"multi-agent-brief repair start --workspace {ws.resolve()} "
+            f"briefloop repair start --workspace {ws.resolve()} "
             "--gate-stage finalize --gate-artifact finalize_quality_gate_report --json"
         )
         for command in commands
     )
-    assert f"multi-agent-brief repair start --workspace {ws.resolve()} --json" not in commands
+    assert f"briefloop repair start --workspace {ws.resolve()} --json" not in commands
 
 
 def test_quality_gate_guidance_does_not_route_stale_downstream_blocker(tmp_path):
@@ -1072,8 +1072,8 @@ def test_quality_gate_guidance_materializes_legacy_current_gate_blocker(tmp_path
 
     commands = guidance["required_commands"]
     assert commands == [
-        f"multi-agent-brief gates check --workspace {ws.resolve()} --stage auditor --json",
-        f"multi-agent-brief gates show --workspace {ws.resolve()} --json",
+        f"briefloop gates check --workspace {ws.resolve()} --stage auditor --json",
+        f"briefloop gates show --workspace {ws.resolve()} --json",
     ]
     assert guidance["repair_route"]["route_kind"] == "none"
     assert guidance["repair_route"]["source"]["legacy_projection"] == "quality_gate_report"
@@ -1137,7 +1137,7 @@ def test_quality_gate_guidance_uses_workflow_scope_for_scoped_start_command(tmp_
     assert seen["gate_artifact_id"] == "finalize_quality_gate_report"
     commands = guidance["required_commands"]
     assert (
-        f"multi-agent-brief repair start --workspace {ws.resolve()} "
+        f"briefloop repair start --workspace {ws.resolve()} "
         "--gate-stage finalize --gate-artifact finalize_quality_gate_report --json"
     ) in commands
     assert not any("--gate-stage auditor --gate-artifact auditor_quality_gate_report" in command for command in commands)

@@ -500,7 +500,7 @@ def _load_delivery_bundle(workspace: Path) -> DeliveryBundle:
     report_path = workspace / "output" / "intermediate" / "finalize_report.json"
     if not report_path.exists():
         raise DeliverCommandError(
-            "Delivery bundle is missing. Run: multi-agent-brief finalize --config <workspace>/config.yaml",
+            "Delivery bundle is missing. Run: briefloop finalize --config <workspace>/config.yaml",
             error_code=E_DELIVERY_BUNDLE_MISSING,
         )
     try:
@@ -536,7 +536,7 @@ def _load_delivery_bundle(workspace: Path) -> DeliveryBundle:
     raw_artifacts = report.get("delivery_artifacts")
     if not isinstance(raw_artifacts, list) or not raw_artifacts:
         raise DeliverCommandError(
-            "Delivery bundle is missing delivery_artifacts. Run: multi-agent-brief finalize --config <workspace>/config.yaml",
+            "Delivery bundle is missing delivery_artifacts. Run: briefloop finalize --config <workspace>/config.yaml",
             error_code=E_DELIVERY_BUNDLE_MISSING,
         )
     raw_hashes = report.get("delivery_artifact_sha256")
@@ -818,7 +818,7 @@ def _delivery_run_id(workspace: Path) -> str:
     if not paths["runtime_manifest"].exists() or not paths["workflow_state"].exists():
         raise DeliverCommandError(
             "Runtime state is not initialized; deliver will not create a new run trace. "
-            "Run `multi-agent-brief run --workspace <workspace> "
+            "Run `briefloop run --workspace <workspace> "
             f"--runtime {RUNTIME_CLI_CHOICE_PLACEHOLDER}` first.",
             error_code=E_DELIVERY_RUNTIME_MISSING,
             extra={"runtime_error_code": E_RUNTIME_STATE_NOT_INITIALIZED},
@@ -896,7 +896,7 @@ def _preflight_run_integrity_for_delivery(
     message = first_reason.get("message") or first_reason.get("reason_code") or "run integrity is not clean"
     raise DeliverCommandError(
         "Delivery blocked because run integrity is not clean. "
-        f"Run `multi-agent-brief status --workspace <workspace>` and resolve: {message}",
+        f"Run `briefloop status --workspace <workspace>` and resolve: {message}",
         error_code=E_DELIVERY_RUN_INTEGRITY_BLOCKED,
         target=target,
         channel=channel,

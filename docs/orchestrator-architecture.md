@@ -76,7 +76,7 @@ packs, and packaged public-safe eval fixtures. Source runtime directories such
 as `.agents/`, `.claude/`, `.codex/`, `.opencode/`, and
 `integrations/hermes-plugin/` are source-clone-only.
 
-Use `multi-agent-brief runtime install --workspace <workspace> --runtime opencode|claude|codex|all`
+Use `briefloop runtime install --workspace <workspace> --runtime opencode|claude|codex|all`
 from a source clone to copy workspace-local OpenCode/Claude Code/Codex commands
 or custom agents plus skills into the business workspace. The installed
 workspace kit lets a runtime operate from the workspace without reading the MABW
@@ -84,7 +84,7 @@ source repo.
 
 ## Reader-Facing Source Appendix
 
-`multi-agent-brief finalize` writes the reader delivery bundle under `output/delivery/`. When `source_appendix` is configured, or when older configs request the legacy `source_map` output format, the source appendix is appended to delivery Markdown/DOCX and `output/source_appendix.md` is retained as an audit/control copy.
+`briefloop finalize` writes the reader delivery bundle under `output/delivery/`. When `source_appendix` is configured, or when older configs request the legacy `source_map` output format, the source appendix is appended to delivery Markdown/DOCX and `output/source_appendix.md` is retained as an audit/control copy.
 
 - The appendix is generated only from claims actually cited in `output/intermediate/audited_brief.md`.
 - Reader-facing output must not expose raw `claim_id`, `source_id`, evidence text, local paths, or `file://` URLs.
@@ -102,7 +102,7 @@ v0.6.6 creates workspace-local `audience_profile.md` during init and freezes it 
 
 ## Orchestrator Control Switchboard
 
-v0.6.7 creates `output/intermediate/orchestrator_control_switchboard.json` during runtime handoff and records explicit Orchestrator selections in `output/intermediate/control_selections.json` only when `multi-agent-brief controls select` is called.
+v0.6.7 creates `output/intermediate/orchestrator_control_switchboard.json` during runtime handoff and records explicit Orchestrator selections in `output/intermediate/control_selections.json` only when `briefloop controls select` is called.
 
 - The switchboard separates available controls, deterministic recommendations, Orchestrator selections, and execution.
 - Selection is not execution: choosing `enable` records intent but does not run quality gates, feedback planning, provenance projection, source discovery, repair, or subagents.
@@ -114,7 +114,7 @@ v0.6.7 creates `output/intermediate/orchestrator_control_switchboard.json` durin
 v0.6.5 can build `output/intermediate/provenance_graph.json` from existing runtime state, artifact registry, event log, Claim Ledger, feedback, repair, and quality gate files. This graph is an audit/debug projection:
 
 - It preserves artifact identity, producer stage or role, consumer stage or role, and validation summaries as graph metadata.
-- It is created only by `multi-agent-brief provenance build`.
+- It is created only by `briefloop provenance build`.
 - It does not initialize runtime state or execute workflow stages.
 - It records citation and control relationships, not semantic proof.
 - It does not block `state check`, `state decide`, or `finalize` by default.

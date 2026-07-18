@@ -325,7 +325,7 @@ def _claim_ledger_freeze_reasons(
     freeze = manifest.get("claim_ledger_freeze")
     if not isinstance(freeze, dict):
         return [
-            "Claim Ledger has not been frozen. Run `multi-agent-brief state freeze-claim-ledger --workspace <workspace>`."
+            "Claim Ledger has not been frozen. Run `briefloop state freeze-claim-ledger --workspace <workspace>`."
         ]
     reasons: list[str] = []
     schema_version = freeze.get("schema_version")
