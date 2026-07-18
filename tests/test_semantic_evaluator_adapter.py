@@ -22,6 +22,9 @@ from multi_agent_brief.semantic_evaluator.adapters.openai_responses import (
     project_openai_response_bytes_v4,
     synthetic_openai_response_bytes_v4,
 )
+from multi_agent_brief.semantic_evaluator.adapters.synthetic_fixture import (
+    project_synthetic_response_bytes_v4,
+)
 
 
 EXPECTED_MODEL = b"gpt-test-2026-07-18"
@@ -287,7 +290,7 @@ def test_se2r_04_completed_rejects_unknown_output_item_type() -> None:
 @pytest.mark.parametrize(
     ("raw", "status_code", "expected_reason", "retry_eligible"),
     [
-        (b"", 429, "provider_retryable_failure", True),
+        (b"", 429, "provider_boundary_invalid", False),
         (
             synthetic_openai_response_bytes_v4(
                 status="completed",
@@ -331,6 +334,56 @@ def test_se2r_03_status_error_body_presence_controls_retry_without_output(
     assert attempt.outcome.shadow_reason == expected_reason
     assert attempt.outcome.retry_eligible is retry_eligible
     assert attempt.extracted_output is None
+    assert attempt.facts.envelope.state != "absent"
+
+
+@pytest.mark.parametrize("content", [None, "", 500, object()])
+def test_se2r_03_status_error_unreadable_body_is_terminal(content: object) -> None:
+    class FakeStatusError(Exception):
+        pass
+
+    error = FakeStatusError()
+    error.status_code = 500  # type: ignore[attr-defined]
+    error.response = SimpleNamespace(content=content)  # type: ignore[attr-defined]
+
+    class Create:
+        def create(self, **_kwargs):
+            raise error
+
+    adapter = object.__new__(OpenAIResponsesAdapterV4)
+    adapter._openai = SimpleNamespace(
+        APITimeoutError=type("FakeTimeout", (Exception,), {}),
+        APIConnectionError=type("FakeConnection", (Exception,), {}),
+        APIStatusError=FakeStatusError,
+    )
+    adapter._client = SimpleNamespace(
+        responses=SimpleNamespace(with_raw_response=Create())
+    )
+    attempt = adapter.invoke(_openai_request())
+    assert attempt.facts.envelope.state == "present_invalid"
+    assert attempt.outcome.shadow_reason == "provider_boundary_invalid"
+    assert attempt.outcome.retry_eligible is False
+
+
+@pytest.mark.parametrize("constant", [b"NaN", b"Infinity", b"-Infinity"])
+def test_se2r_04_nonfinite_json_constants_are_invalid(constant: bytes) -> None:
+    openai_raw = (
+        b'{"id":"resp-public","ignored":'
+        + constant
+        + b',"model":"gpt-test-2026-07-18","output":['
+        b'{"content":[{"text":"ok","type":"output_text"}],"type":"message"}],'
+        b'"status":"completed"}'
+    )
+    synthetic_raw = (
+        b'{"id":"resp-public","ignored":'
+        + constant
+        + b',"model":"synthetic-fixture-v4","output_text":"{}",'
+        b'"provider":"synthetic_fixture","status":"completed"}'
+    )
+    openai_projection = project_openai_response_bytes_v4(openai_raw)
+    synthetic_projection = project_synthetic_response_bytes_v4(synthetic_raw)
+    assert openai_projection.envelope_invalid_code == "envelope_json_invalid"
+    assert synthetic_projection.envelope_invalid_code == "envelope_json_invalid"
 
 
 def test_se2r_04_openai_raw_duplicate_status_is_terminal() -> None:

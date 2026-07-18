@@ -8,16 +8,29 @@ from types import SimpleNamespace
 
 import pytest
 
+from multi_agent_brief.semantic_evaluator import archive as archive_module
+from multi_agent_brief.semantic_evaluator.adapter import FrozenProviderRequestV4
 from multi_agent_brief.semantic_evaluator.archive import (
+    _recomputed_facts,
     _validate_attempt_reachability,
     verify_shadow_archive,
 )
+from multi_agent_brief.semantic_evaluator.adapters.openai_responses import (
+    OPENAI_ADAPTER_ID,
+    OPENAI_PROVIDER_ID,
+    OpenAIResponsesAdapterV4,
+    synthetic_openai_response_bytes_v4,
+)
 from multi_agent_brief.semantic_evaluator.errors import SemanticEvaluatorError
-from multi_agent_brief.semantic_evaluator.runner import run_shadow
+from multi_agent_brief.semantic_evaluator.runner import _attempt_record, run_shadow
 from multi_agent_brief.semantic_evaluator.serialization import (
     canonical_json_bytes,
     canonical_sha256,
     sha256_bytes,
+)
+from multi_agent_brief.semantic_evaluator.shadow_contracts import (
+    ProviderAttemptRecordV4,
+    ProviderBoundaryFactsRecordV4,
 )
 
 
@@ -120,6 +133,54 @@ def test_se2r_12_complete_archive_replays_before_adapter_access(
     assert Path(replay.archive_path or "") == archive
 
 
+def test_archive_publication_failure_before_atomic_commit_is_retryable(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    archive_root = tmp_path / "archives"
+    archive_root.mkdir()
+    invocation = {
+        "report": _FIXTURES / "report.md",
+        "bounded_context": _FIXTURES / "bounded_context.json",
+        "profile": "research_design_report_zh_v1",
+        "instrument": _FIXTURES / "instrument.json",
+        "trial_id": "trial-atomic-retry-v4",
+        "archive_root": archive_root,
+        "clock": lambda: "2027-07-18T00:00:00Z",
+    }
+    real_rename = archive_module.os.rename
+
+    def fail_commit(_source, _destination):
+        raise OSError("injected")
+
+    monkeypatch.setattr(archive_module.os, "rename", fail_commit)
+    failed = run_shadow(**invocation)
+    assert failed.reason_codes == ("shadow_archive_publish_failed",)
+    assert not list(
+        (archive_root / "semantic-evaluator" / "v0.1" / "trials").glob("trial-*")
+    )
+
+    monkeypatch.setattr(archive_module.os, "rename", real_rename)
+    retry = run_shadow(**invocation)
+    assert retry.ok is True
+    assert retry.archive_complete is True
+
+
+def test_atomic_publish_accepts_same_request_cooperative_winner(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    real_rename = archive_module.os.rename
+
+    def winner(source, destination):
+        real_rename(source, destination)
+        raise FileExistsError
+
+    monkeypatch.setattr(archive_module.os, "rename", winner)
+    archive, _root = _run(tmp_path, trial_id="trial-cooperative-winner-v4")
+    assert (archive / "COMPLETE").is_file()
+
+
 def test_se2r_10_rehashed_raw_tamper_fails_inner_fact_recomputation(
     tmp_path: Path,
 ) -> None:
@@ -200,3 +261,72 @@ def test_se2r_09_retryable_attempt_can_reach_contiguous_success() -> None:
         )
         == ()
     )
+
+
+def test_se2r_10_typed_transport_cannot_override_retained_provenance() -> None:
+    request = FrozenProviderRequestV4(
+        trial_id="trial-public",
+        dimension_id="dimension-1",
+        attempt_ordinal=1,
+        system_text="system",
+        user_text="user",
+        prompt_request_sha256="1" * 64,
+        adapter_id=OPENAI_ADAPTER_ID,
+        provider_id=OPENAI_PROVIDER_ID,
+        model_id="gpt-test",
+        expected_model_version="gpt-test-2026-07-18",
+        temperature=0.0,
+        top_p=1.0,
+        max_output_tokens=100,
+        seed=None,
+        timeout_seconds=60,
+    )
+    raw = synthetic_openai_response_bytes_v4(
+        status="completed",
+        response_id="resp-public",
+        model=request.expected_model_version,
+        output_text='{"findings":[]}',
+    )
+    attempt = object.__new__(OpenAIResponsesAdapterV4)._attempt_from_response(
+        request=request,
+        raw=raw,
+        sdk_response=None,
+        transport_kind="http_error",
+        transport_http_status=500,
+        transport_http_present=True,
+    )
+    record = _attempt_record(
+        provider_request=request,
+        attempt_ref="attempt:dimension-1:1",
+        raw=attempt,
+        started_at="2027-07-18T00:00:00Z",
+        completed_at="2027-07-18T00:00:01Z",
+    )
+    forged = record.model_dump(mode="json", warnings="error")
+    facts = forged["facts"]
+    assert isinstance(facts, dict)
+    facts["transport_kind"] = "response"
+    facts["boundary_facts_sha256"] = canonical_sha256(
+        {key: value for key, value in facts.items() if key != "boundary_facts_sha256"}
+    )
+    forged.update(
+        {
+            "attempt_status": "completed",
+            "shadow_reason": None,
+            "kernel_reason": None,
+            "retry_eligible": False,
+            "output_eligible": True,
+            "extracted_output_sha256": sha256_bytes(b'{"findings":[]}'),
+        }
+    )
+    forged["attempt_record_sha256"] = canonical_sha256(
+        {key: value for key, value in forged.items() if key != "attempt_record_sha256"}
+    )
+    forged_record = ProviderAttemptRecordV4.model_validate(forged)
+    recomputed = _recomputed_facts(
+        record=forged_record,
+        response_raw=raw,
+        sdk_projection_raw=attempt.sdk_projection_bytes,
+    )
+    assert recomputed.transport_kind == "http_error"
+    assert ProviderBoundaryFactsRecordV4.from_runtime(recomputed) != forged_record.facts

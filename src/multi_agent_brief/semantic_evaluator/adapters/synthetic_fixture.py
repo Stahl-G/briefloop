@@ -48,6 +48,10 @@ def _strict_object(pairs: list[tuple[str, object]]) -> dict[str, object]:
     return value
 
 
+def _reject_json_constant(_value: str) -> object:
+    raise ValueError
+
+
 @dataclass(frozen=True)
 class SyntheticRawProjectionV4:
     envelope_valid: bool
@@ -79,7 +83,9 @@ def project_synthetic_response_bytes_v4(raw: bytes) -> SyntheticRawProjectionV4:
         )
     try:
         value = json.loads(
-            raw.decode("utf-8", errors="strict"), object_pairs_hook=_strict_object
+            raw.decode("utf-8", errors="strict"),
+            object_pairs_hook=_strict_object,
+            parse_constant=_reject_json_constant,
         )
     except UnicodeDecodeError:
         return SyntheticRawProjectionV4(

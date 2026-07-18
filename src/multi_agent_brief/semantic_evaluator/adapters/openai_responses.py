@@ -28,6 +28,7 @@ _STATUS_VALUES = frozenset(
     {"completed", "failed", "in_progress", "cancelled", "queued", "incomplete"}
 )
 _SDK_READ_FAILED = object()
+_MISSING = object()
 
 
 class _DuplicateMember(ValueError):
@@ -41,6 +42,10 @@ def _strict_object(pairs: list[tuple[str, object]]) -> dict[str, object]:
             raise _DuplicateMember
         value[key] = item
     return value
+
+
+def _reject_json_constant(_value: str) -> object:
+    raise ValueError
 
 
 @dataclass(frozen=True)
@@ -137,7 +142,11 @@ def project_openai_response_bytes_v4(raw: bytes) -> OpenAIRawProjectionV4:
             False, "envelope_utf8_invalid", absent, absent, absent, absent
         )
     try:
-        value = json.loads(text, object_pairs_hook=_strict_object)
+        value = json.loads(
+            text,
+            object_pairs_hook=_strict_object,
+            parse_constant=_reject_json_constant,
+        )
     except _DuplicateMember:
         return OpenAIRawProjectionV4(
             False, "envelope_duplicate_member", absent, absent, absent, absent
@@ -183,6 +192,30 @@ def _raw_bytes(value: object) -> bytes | None:
     return content if type(content) is bytes else None
 
 
+@dataclass(frozen=True)
+class _StatusErrorBody:
+    state: str
+    raw: bytes | None
+
+
+def _status_error_body(value: object) -> _StatusErrorBody:
+    try:
+        response = getattr(value, "http_response", _MISSING)
+        if response is _MISSING or response is None:
+            response = getattr(value, "response", _MISSING)
+    except Exception:
+        return _StatusErrorBody("invalid", None)
+    if response is _MISSING or response is None:
+        return _StatusErrorBody("absent", None)
+    try:
+        content = getattr(response, "content", _MISSING)
+    except Exception:
+        return _StatusErrorBody("invalid", None)
+    if type(content) is not bytes:
+        return _StatusErrorBody("invalid", None)
+    return _StatusErrorBody("present", content)
+
+
 def _usage(value: object, name: str) -> int | None:
     try:
         usage = getattr(value, "usage", None)
@@ -192,7 +225,14 @@ def _usage(value: object, name: str) -> int | None:
     return item if type(item) is int and item >= 0 else None
 
 
-def _sdk_projection_bytes(value: object | None) -> bytes:
+def _sdk_projection_bytes(
+    value: object | None,
+    *,
+    transport_kind: str,
+    http_status: object = None,
+    http_present: bool = False,
+    body_state: str,
+) -> bytes:
     fields = {
         "status": capture_external_text_v4(
             (_safe_attr(value, "status"),)
@@ -216,7 +256,17 @@ def _sdk_projection_bytes(value: object | None) -> bytes:
             else (ExternalTextObservation(False),)
         ),
     }
-    return canonical_json_bytes({name: asdict(fact) for name, fact in fields.items()})
+    return canonical_json_bytes(
+        {
+            "body_state": body_state,
+            "http_status": asdict(
+                capture_http_status_v4(http_status, present=http_present)
+            ),
+            **{name: asdict(fact) for name, fact in fields.items()},
+            "schema_version": "briefloop.semantic_evaluator.openai_sdk_projection.v4",
+            "transport_kind": transport_kind,
+        }
+    )
 
 
 class OpenAIResponsesAdapterV4:
@@ -247,6 +297,8 @@ class OpenAIResponsesAdapterV4:
         raw: bytes,
         sdk_response: object | None,
         transport_kind: str = "response",
+        transport_http_status: object = None,
+        transport_http_present: bool = False,
     ) -> RawProviderAttemptV4:
         projection = project_openai_response_bytes_v4(raw)
         envelope = capture_response_envelope_v4(
@@ -330,7 +382,64 @@ class OpenAIResponsesAdapterV4:
             total_tokens=_usage(sdk_response, "total_tokens")
             if sdk_response is not None
             else None,
-            sdk_projection_bytes=_sdk_projection_bytes(sdk_response),
+            sdk_projection_bytes=_sdk_projection_bytes(
+                sdk_response,
+                transport_kind=transport_kind,
+                http_status=transport_http_status,
+                http_present=transport_http_present,
+                body_state="present",
+            ),
+        )
+
+    def _invalid_status_error_attempt(
+        self,
+        *,
+        request: FrozenProviderRequestV4,
+        http_status: object,
+    ) -> RawProviderAttemptV4:
+        absent = _absent_text()
+        raw = b""
+        facts = make_provider_boundary_facts_v4(
+            envelope=capture_response_envelope_v4(
+                raw,
+                present=True,
+                invalid_code="envelope_projection_failed",
+            ),
+            status=absent,
+            response_id=absent,
+            provider_identity=capture_external_text_v4(
+                (
+                    ExternalTextObservation(True, request.provider_id),
+                    ExternalTextObservation(True, OPENAI_PROVIDER_ID),
+                )
+            ),
+            model_identity=absent,
+            output=absent,
+            http_status=capture_http_status_v4(None, present=False),
+            transport_kind="http_error",
+        )
+        outcome = classify_provider_outcome_v4(
+            facts,
+            expected_model_version_utf8=request.expected_model_version.encode(
+                "utf-8", errors="strict"
+            ),
+        )
+        return RawProviderAttemptV4(
+            facts=facts,
+            outcome=outcome,
+            request_projection_bytes=request.projection_bytes(),
+            raw_transport_response=raw,
+            extracted_output=None,
+            input_tokens=None,
+            output_tokens=None,
+            total_tokens=None,
+            sdk_projection_bytes=_sdk_projection_bytes(
+                None,
+                transport_kind="http_error",
+                http_status=http_status,
+                http_present=True,
+                body_state="invalid",
+            ),
         )
 
     def _transport_attempt(
@@ -371,7 +480,13 @@ class OpenAIResponsesAdapterV4:
             input_tokens=None,
             output_tokens=None,
             total_tokens=None,
-            sdk_projection_bytes=_sdk_projection_bytes(None),
+            sdk_projection_bytes=_sdk_projection_bytes(
+                None,
+                transport_kind=kind,
+                http_status=http_status,
+                http_present=http_present,
+                body_state="absent",
+            ),
         )
 
     def invoke(self, request: FrozenProviderRequestV4) -> RawProviderAttemptV4:
@@ -401,15 +516,22 @@ class OpenAIResponsesAdapterV4:
         except self._openai.APIConnectionError:
             return self._transport_attempt(request=request, kind="connection")
         except self._openai.APIStatusError as error:
-            raw = _raw_bytes(error)
-            if raw:
+            body = _status_error_body(error)
+            status = getattr(error, "status_code", None)
+            if body.state == "present":
                 return self._attempt_from_response(
                     request=request,
-                    raw=raw,
+                    raw=body.raw or b"",
                     sdk_response=None,
                     transport_kind="http_error",
+                    transport_http_status=status,
+                    transport_http_present=True,
                 )
-            status = getattr(error, "status_code", None)
+            if body.state == "invalid":
+                return self._invalid_status_error_attempt(
+                    request=request,
+                    http_status=status,
+                )
             return self._transport_attempt(
                 request=request,
                 kind="http_error",

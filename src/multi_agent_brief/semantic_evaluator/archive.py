@@ -65,6 +65,7 @@ from multi_agent_brief.semantic_evaluator.shadow_contracts import (
     SHADOW_TIMEOUT_SECONDS,
     ArchiveMember,
     ExternalTextFactRecordV4,
+    HttpStatusFactRecordV4,
     ProviderAttemptRecord,
     ProviderBoundaryFactsRecordV4,
     ShadowArchiveManifest,
@@ -138,7 +139,11 @@ def _strict_json_bytes(raw: bytes) -> Any:
 
     try:
         text = raw.decode("utf-8")
-        value = json.loads(text, object_pairs_hook=pairs_hook)
+        value = json.loads(
+            text,
+            object_pairs_hook=pairs_hook,
+            parse_constant=lambda _value: (_ for _ in ()).throw(ValueError()),
+        )
     except (UnicodeError, json.JSONDecodeError, RecursionError, ValueError):
         raise SemanticEvaluatorError("shadow_archive_invalid") from None
     if duplicates:
@@ -271,24 +276,68 @@ def _provider_fact(*observations: ExternalTextObservation):
     return capture_external_text_v4(tuple(observations))
 
 
-def _parse_sdk_projection(raw: bytes) -> dict[str, ExternalTextFactRecordV4]:
+@dataclass(frozen=True)
+class _OpenAISdkProjection:
+    status: ExternalTextFactRecordV4
+    response_id: ExternalTextFactRecordV4
+    model_identity: ExternalTextFactRecordV4
+    output: ExternalTextFactRecordV4
+    transport_kind: str
+    http_status: HttpStatusFactRecordV4
+    body_state: str
+
+
+def _parse_sdk_projection(raw: bytes) -> _OpenAISdkProjection:
     value = _strict_json_bytes(raw)
-    required = {"status", "response_id", "model_identity", "output"}
+    required = {
+        "body_state",
+        "http_status",
+        "model_identity",
+        "output",
+        "response_id",
+        "schema_version",
+        "status",
+        "transport_kind",
+    }
     if type(value) is not dict or set(value) != required:
         raise SemanticEvaluatorError("shadow_archive_invalid")
-    result: dict[str, ExternalTextFactRecordV4] = {}
     try:
-        for name in sorted(required):
-            item = value[name]
-            if type(item) is not dict:
-                raise ValueError
-            result[name] = ExternalTextFactRecordV4.model_validate(item)
+        if (
+            value["schema_version"]
+            != "briefloop.semantic_evaluator.openai_sdk_projection.v4"
+            or value["transport_kind"]
+            not in {"response", "timeout", "connection", "http_error", "adapter_error"}
+            or value["body_state"] not in {"absent", "present", "invalid"}
+        ):
+            raise ValueError
+        text_facts = {
+            name: ExternalTextFactRecordV4.model_validate(value[name])
+            for name in ("status", "response_id", "model_identity", "output")
+        }
+        http_status = HttpStatusFactRecordV4.model_validate(value["http_status"])
     except Exception:
         raise SemanticEvaluatorError("shadow_archive_invalid") from None
+    result = _OpenAISdkProjection(
+        status=text_facts["status"],
+        response_id=text_facts["response_id"],
+        model_identity=text_facts["model_identity"],
+        output=text_facts["output"],
+        transport_kind=value["transport_kind"],
+        http_status=http_status,
+        body_state=value["body_state"],
+    )
     expected = canonical_json_bytes(
         {
-            name: result[name].model_dump(mode="json", warnings="error")
-            for name in ("status", "response_id", "model_identity", "output")
+            "body_state": result.body_state,
+            "http_status": result.http_status.model_dump(mode="json", warnings="error"),
+            "model_identity": result.model_identity.model_dump(
+                mode="json", warnings="error"
+            ),
+            "output": result.output.model_dump(mode="json", warnings="error"),
+            "response_id": result.response_id.model_dump(mode="json", warnings="error"),
+            "schema_version": "briefloop.semantic_evaluator.openai_sdk_projection.v4",
+            "status": result.status.model_dump(mode="json", warnings="error"),
+            "transport_kind": result.transport_kind,
         }
     )
     if raw != expected:
@@ -345,14 +394,30 @@ def _recomputed_facts(
         else None
     )
     if response_raw is None:
-        if (
-            record.facts.envelope.state != "absent"
-            or sdk_projection is None
-            and record.adapter_id == "openai_responses_v4"
-            or sdk_projection is not None
-            and any(item.state != "absent" for item in sdk_projection.values())
-        ):
+        if record.facts.envelope.state != "absent":
             raise SemanticEvaluatorError("shadow_archive_invalid")
+        if record.adapter_id == "openai_responses_v4":
+            if (
+                sdk_projection is None
+                or sdk_projection.body_state != "absent"
+                or any(
+                    item.state != "absent"
+                    for item in (
+                        sdk_projection.status,
+                        sdk_projection.response_id,
+                        sdk_projection.model_identity,
+                        sdk_projection.output,
+                    )
+                )
+            ):
+                raise SemanticEvaluatorError("shadow_archive_invalid")
+            transport_kind = sdk_projection.transport_kind
+            http_status = sdk_projection.http_status.to_runtime()
+        else:
+            if sdk_projection is not None:
+                raise SemanticEvaluatorError("shadow_archive_invalid")
+            transport_kind = record.facts.transport_kind
+            http_status = record.facts.http_status.to_runtime()
         provider = _provider_fact(
             ExternalTextObservation(True, record.provider_id),
             ExternalTextObservation(
@@ -372,25 +437,42 @@ def _recomputed_facts(
             # A body-less transport's HTTP status and recognized transport class
             # are necessarily typed adapter evidence.  They remain hash-bound and
             # are consumed only by the sole classifier.
-            http_status=record.facts.http_status.to_runtime(),
-            transport_kind=record.facts.transport_kind,
+            http_status=http_status,
+            transport_kind=transport_kind,  # type: ignore[arg-type]
         )
 
     if record.facts.envelope.state == "absent":
         raise SemanticEvaluatorError("shadow_archive_invalid")
     if record.adapter_id == "openai_responses_v4":
         projection = project_openai_response_bytes_v4(response_raw)
-        if sdk_projection is None:
+        if sdk_projection is None or sdk_projection.body_state not in {
+            "present",
+            "invalid",
+        }:
             raise SemanticEvaluatorError("shadow_archive_invalid")
         provider = _provider_fact(
             ExternalTextObservation(True, record.provider_id),
             ExternalTextObservation(True, OPENAI_PROVIDER_ID),
         )
-        sdk_is_absent = all(item.state == "absent" for item in sdk_projection.values())
-        if projection.envelope_valid and not sdk_is_absent:
+        sdk_is_absent = all(
+            item.state == "absent"
+            for item in (
+                sdk_projection.status,
+                sdk_projection.response_id,
+                sdk_projection.model_identity,
+                sdk_projection.output,
+            )
+        )
+        if sdk_projection.body_state == "invalid":
+            status = absent
+            response_id = absent
+            model = absent
+            output = absent
+            envelope_invalid_code = "envelope_projection_failed"
+        elif projection.envelope_valid and not sdk_is_absent:
             status = _reconcile_raw_and_sdk(
                 projection.status,
-                sdk_projection["status"],
+                sdk_projection.status,
                 allowed_values=frozenset(
                     {
                         "completed",
@@ -403,21 +485,25 @@ def _recomputed_facts(
                 ),
             )
             response_id = _reconcile_raw_and_sdk(
-                projection.response_id, sdk_projection["response_id"]
+                projection.response_id, sdk_projection.response_id
             )
             model = _reconcile_raw_and_sdk(
-                projection.model_identity, sdk_projection["model_identity"]
+                projection.model_identity, sdk_projection.model_identity
             )
             output = (
-                _reconcile_raw_and_sdk(projection.output, sdk_projection["output"])
+                _reconcile_raw_and_sdk(projection.output, sdk_projection.output)
                 if projection.output.state == "present_valid"
                 else projection.output
             )
+            envelope_invalid_code = projection.envelope_invalid_code
         else:
             status = projection.status
             response_id = projection.response_id
             model = projection.model_identity
             output = projection.output
+            envelope_invalid_code = projection.envelope_invalid_code
+        transport_kind = sdk_projection.transport_kind
+        http_status = capture_http_status_v4(None, present=False)
     elif record.adapter_id == "synthetic_fixture_v4":
         if sdk_projection_raw is not None:
             raise SemanticEvaluatorError("shadow_archive_invalid")
@@ -440,13 +526,16 @@ def _recomputed_facts(
         response_id = projection.response_id
         model = projection.model_identity
         output = projection.output
+        envelope_invalid_code = projection.envelope_invalid_code
+        transport_kind = "response"
+        http_status = capture_http_status_v4(None, present=False)
     else:
         raise SemanticEvaluatorError("shadow_archive_invalid")
     return make_provider_boundary_facts_v4(
         envelope=capture_response_envelope_v4(
             response_raw,
             present=True,
-            invalid_code=projection.envelope_invalid_code,  # type: ignore[arg-type]
+            invalid_code=envelope_invalid_code,  # type: ignore[arg-type]
         ),
         status=status,
         response_id=response_id,
@@ -456,8 +545,8 @@ def _recomputed_facts(
         # A response body precludes transport retry.  The archived typed HTTP
         # observation is still recomputed as absent on the normal response path;
         # a status-error body remains terminal through the present envelope.
-        http_status=record.facts.http_status.to_runtime(),
-        transport_kind=record.facts.transport_kind,
+        http_status=http_status,
+        transport_kind=transport_kind,  # type: ignore[arg-type]
     )
 
 
@@ -1118,7 +1207,6 @@ def publish_shadow_archive(
         stage = Path(tempfile.mkdtemp(prefix=".staging-", dir=parent))
     except OSError:
         raise SemanticEvaluatorError("shadow_archive_publish_failed") from None
-    claimed = False
     try:
         for relative, raw in sorted(payloads.items()):
             candidate = PurePosixPath(relative)
@@ -1158,31 +1246,21 @@ def publish_shadow_archive(
             expected_execution=execution_manifest,
         )
         try:
-            final_path.mkdir()
-            claimed = True
-        except FileExistsError:
+            os.rename(stage, final_path)
+        except OSError:
+            try:
+                final_path.lstat()
+            except FileNotFoundError:
+                raise SemanticEvaluatorError("shadow_archive_publish_failed") from None
+            except OSError:
+                raise SemanticEvaluatorError("shadow_archive_publish_failed") from None
             return _resolve_publish_winner(
                 final_path,
                 request=request,
                 execution_manifest=execution_manifest,
             )
-        except OSError:
-            raise SemanticEvaluatorError("shadow_archive_publish_failed") from None
-        for relative in sorted(
-            set(payloads) | {"archive_manifest.json", "receipt.json"}
-        ):
-            _write_exclusive(final_path / relative, _read_regular(stage / relative))
-        # Recompute every published byte before making the completion claim.
-        staged_complete = _read_regular(stage / "COMPLETE")
-        files, _directories = _all_tree_entries(final_path)
-        if files != set(payloads) | {"archive_manifest.json", "receipt.json"}:
-            raise SemanticEvaluatorError("shadow_archive_publish_failed")
-        for relative in files:
-            if _read_regular(final_path / relative) != _read_regular(stage / relative):
-                raise SemanticEvaluatorError("shadow_archive_publish_failed")
-        _write_exclusive(final_path / "COMPLETE", staged_complete)
         try:
-            directory_fd = os.open(final_path, os.O_RDONLY)
+            directory_fd = os.open(parent, os.O_RDONLY)
             try:
                 os.fsync(directory_fd)
             finally:
@@ -1194,9 +1272,7 @@ def publish_shadow_archive(
             expected_request=request,
             expected_execution=execution_manifest,
         )
-    except SemanticEvaluatorError as exc:
-        if claimed and exc.reason_code == "shadow_archive_invalid":
-            raise SemanticEvaluatorError("shadow_archive_publish_failed") from None
+    except SemanticEvaluatorError:
         raise
     finally:
         try:
