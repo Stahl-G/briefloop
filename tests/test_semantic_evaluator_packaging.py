@@ -16,6 +16,9 @@ RESOURCE_PATHS = (
     ("prompts", "dimension_v1.txt"),
     ("baselines", "structured_checklist_zh_v1.yaml"),
     ("fixtures", "synthetic_shadow_v1", "manifest.json"),
+    ("fixtures", "synthetic_shadow_v1", "bounded_context.json"),
+    ("fixtures", "synthetic_shadow_v1", "instrument.json"),
+    ("fixtures", "synthetic_shadow_v1", "report.md"),
 )
 WHEEL_RESOURCE_NAMES = {
     f"multi_agent_brief/semantic_evaluator/{'/'.join(parts)}"

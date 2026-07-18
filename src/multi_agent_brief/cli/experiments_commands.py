@@ -55,6 +55,17 @@ def register(subparsers: argparse._SubParsersAction) -> None:
     )
     present.add_argument("--expected-report-sha256")
     present.add_argument("--json", action="store_true")
+    demo = laj_sub.add_parser(
+        "demo",
+        help="Run the packaged synthetic LAJ trial and render standalone advisory artifacts.",
+    )
+    demo.add_argument("--archive-root", required=True)
+    demo.add_argument(
+        "--output-dir",
+        required=True,
+        help="New standalone directory named laj-advisory-<label>, outside every BriefLoop workspace and archive.",
+    )
+    demo.add_argument("--json", action="store_true")
 
     exp080 = experiments_sub.add_parser(
         "080",
@@ -424,6 +435,8 @@ def handle(args: argparse.Namespace) -> int:
 
 
 def _handle_laj(args: argparse.Namespace) -> int:
+    if args.experiment_laj_action == "demo":
+        return _handle_laj_demo(args)
     if args.experiment_laj_action == "present":
         return _handle_laj_present(args)
     if args.experiment_laj_action != "shadow-run":
@@ -442,6 +455,61 @@ def _handle_laj(args: argparse.Namespace) -> int:
     except Exception:
         payload = _shadow_failure_payload()
     _print_shadow_result(payload, json_output=getattr(args, "json", False))
+    return 0 if payload["ok"] else 1
+
+
+def _handle_laj_demo(args: argparse.Namespace) -> int:
+    try:
+        demo = importlib.import_module("multi_agent_brief.semantic_evaluator.demo")
+        result = demo.run_public_safe_laj_demo(
+            archive_root=args.archive_root,
+            output_dir=args.output_dir,
+        )
+        payload = {
+            "advisory_only": True,
+            "archive_complete": result.archive_complete,
+            "execution_origin": result.execution_origin,
+            "finding_count": result.finding_count,
+            "ok": result.ok,
+            "output_files": list(result.output_files),
+            "presentation_available": result.presentation_available,
+            "qualification_class": result.qualification_class,
+            "qualification_eligible": False,
+            "reader_status": result.reader_status,
+            "reason_codes": list(result.reason_codes),
+            "receipt_id": result.receipt_id,
+            "replayed": result.replayed,
+            "runtime_authority": False,
+            "view_sha256": result.view_sha256,
+        }
+    except Exception:
+        payload = {
+            "advisory_only": True,
+            "archive_complete": False,
+            "execution_origin": None,
+            "finding_count": 0,
+            "ok": False,
+            "output_files": [],
+            "presentation_available": False,
+            "qualification_class": "synthetic_demo_only",
+            "qualification_eligible": False,
+            "reader_status": "unavailable",
+            "reason_codes": ["shadow_adapter_unavailable"],
+            "receipt_id": None,
+            "replayed": False,
+            "runtime_authority": False,
+            "view_sha256": None,
+        }
+    if getattr(args, "json", False):
+        print(json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True))
+    else:
+        print("Experimental / Synthetic demo / Advisory only")
+        print(f"ok: {payload['ok']}")
+        print(f"archive_complete: {payload['archive_complete']}")
+        print(f"presentation_available: {payload['presentation_available']}")
+        print(f"reader_status: {payload['reader_status']}")
+        print("qualification_eligible: false")
+        print("runtime_authority: none")
     return 0 if payload["ok"] else 1
 
 
