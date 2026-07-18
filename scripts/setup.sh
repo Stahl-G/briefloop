@@ -2,17 +2,36 @@
 # Setup script for multi-agent-brief-workflow
 # Run this after cloning to get a working environment.
 # Windows users: use scripts\setup.ps1 instead.
+# Pass --dry-run to print the planned actions without executing them.
 set -euo pipefail
+
+DRY_RUN=0
+for arg in "$@"; do
+    case "$arg" in
+        --dry-run) DRY_RUN=1 ;;
+        *) echo "Unknown option: $arg" >&2; exit 2 ;;
+    esac
+done
+
+run() {
+    if [ "$DRY_RUN" -eq 1 ]; then
+        echo "+ $*"
+    else
+        "$@"
+    fi
+}
 
 cd "$(dirname "$0")/.."
 
 echo "=== BriefLoop setup ==="
 
-# Find Python 3.9+: try python3, python
+# Find Python 3.12+: try python3, python, then versioned binaries.
+# The versioned probe list is capped at 3.14; extend it when newer
+# interpreters land (unversioned python3 wins whenever it meets the floor).
 PYTHON=""
-for cmd in python3 python; do
+for cmd in python3 python python3.14 python3.13 python3.12; do
     if command -v "$cmd" >/dev/null 2>&1; then
-        if "$cmd" -c 'import sys; raise SystemExit(0 if sys.version_info >= (3, 9) else 1)' >/dev/null 2>&1; then
+        if "$cmd" -c 'import sys; raise SystemExit(0 if sys.version_info >= (3, 12) else 1)' >/dev/null 2>&1; then
             PYTHON="$cmd"
             break
         fi
@@ -20,11 +39,13 @@ for cmd in python3 python; do
 done
 
 if [ -z "$PYTHON" ]; then
-    echo "ERROR: Python 3.9+ not found."
+    echo "ERROR: Python 3.12+ not found."
     echo ""
-    echo "Install Python from https://www.python.org/downloads/"
-    echo "Or on macOS: brew install python@3.12"
-    echo "Or on Ubuntu: sudo apt install python3 python3-venv"
+    echo "Install Python 3.12+ from https://www.python.org/downloads/"
+    echo "Or on macOS: brew install python"
+    echo "   (python@3.12 is keg-only; if you use it, run: brew link python@3.12)"
+    echo "Or on Ubuntu 24.04+: sudo apt install python3 python3-venv"
+    echo "Or on older Ubuntu:  sudo apt install python3.12 python3.12-venv (deadsnakes PPA)"
     exit 1
 fi
 
@@ -33,9 +54,19 @@ echo "[1/4] Found Python: $PYTHON ($($PYTHON --version 2>&1))"
 # 1. Create venv if missing
 if [ ! -d ".venv" ]; then
     echo "[2/4] Creating virtual environment..."
-    $PYTHON -m venv .venv
-else
+    run "$PYTHON" -m venv .venv
+elif [ -x ".venv/bin/python" ] && .venv/bin/python -c 'import sys; raise SystemExit(0 if sys.version_info >= (3, 12) else 1)' >/dev/null 2>&1; then
     echo "[2/4] Virtual environment already exists."
+else
+    echo "[2/4] Recreating virtual environment (existing one is broken or below the Python 3.12 floor)..."
+    run rm -rf .venv
+    run "$PYTHON" -m venv .venv
+fi
+
+if [ "$DRY_RUN" -eq 1 ]; then
+    echo "[3/4] (dry-run) would install the package into .venv"
+    echo "[4/4] (dry-run) would verify the installation"
+    exit 0
 fi
 
 # 2. Activate
@@ -64,7 +95,7 @@ if ! "$VENV_PYTHON" -c "import multi_agent_brief" >/dev/null 2>&1; then
     echo ""
     echo "Possible causes:"
     echo "  - macOS iCloud Drive marking .pth files as hidden"
-    echo "  - Python version incompatibility (need 3.9+)"
+    echo "  - Python version incompatibility (need 3.12+)"
     echo "  - Corrupted virtual environment"
     echo ""
     echo "Try:"

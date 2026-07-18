@@ -15,7 +15,7 @@ function Test-PythonCandidate {
     )
 
     try {
-        $version = & $Candidate.File @($Candidate.Args) -c "import sys; print(f'{sys.version_info.major}.{sys.version_info.minor}.{sys.version_info.micro}'); raise SystemExit(0 if sys.version_info >= (3, 9) else 1)" 2>$null
+        $version = & $Candidate.File @($Candidate.Args) -c "import sys; print(f'{sys.version_info.major}.{sys.version_info.minor}.{sys.version_info.micro}'); raise SystemExit(0 if sys.version_info >= (3, 12) else 1)" 2>$null
         if ($LASTEXITCODE -eq 0 -and $version) {
             return $version.Trim()
         }
@@ -95,7 +95,7 @@ $pythonInfo = Find-Python
 
 if (-not $pythonInfo) {
     Write-Host ""
-    Write-Host "ERROR: Python 3.9+ was not found." -ForegroundColor Red
+    Write-Host "ERROR: Python 3.12+ was not found." -ForegroundColor Red
     Write-Host ""
     Write-Host "PowerShell may be resolving 'python' to the Microsoft Store placeholder." -ForegroundColor Yellow
     Write-Host "Install real Python, then reopen PowerShell:" -ForegroundColor Yellow
@@ -120,7 +120,18 @@ if (-not (Test-Path $venvDir)) {
     Write-Host "[2/4] Creating virtual environment..." -ForegroundColor Yellow
     & $python.File @($python.Args) -m venv $venvDir
 } else {
-    Write-Host "[2/4] Virtual environment already exists." -ForegroundColor Green
+    $venvOk = $false
+    if (Test-Path $venvPython) {
+        & $venvPython -c "import sys; raise SystemExit(0 if sys.version_info >= (3, 12) else 1)" 2>$null
+        $venvOk = ($LASTEXITCODE -eq 0)
+    }
+    if ($venvOk) {
+        Write-Host "[2/4] Virtual environment already exists." -ForegroundColor Green
+    } else {
+        Write-Host "[2/4] Recreating virtual environment (existing one is broken or below the Python 3.12 floor)..." -ForegroundColor Yellow
+        Remove-Item -Recurse -Force -Path $venvDir
+        & $python.File @($python.Args) -m venv $venvDir
+    }
 }
 
 if (-not (Test-Path $venvPython)) {

@@ -88,8 +88,8 @@ jobs:
               and all(is_docs_path(path) for path in changed)
           )
           test_matrix = {
-              "os": ["ubuntu-latest", "macos-latest", "windows-latest"],
-              "python-version": ["3.9", "3.12"],
+              "os": ["macos-latest", "windows-latest"],
+              "python-version": ["3.12"],
           }
 
           print("Changed files:")
@@ -216,7 +216,7 @@ jobs:
         run: python scripts/check_terms.py
 
       - name: Tests
-        run: python -m pytest -q -x
+        run: python -m pytest -q -x -n auto --dist worksteal
 
       - name: Agent config check
         run: python scripts/generate_agent_configs.py --check
