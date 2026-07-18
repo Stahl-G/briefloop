@@ -25,6 +25,7 @@ from multi_agent_brief.contracts.v2 import (
     InvocationStartRequest,
     OwnedArtifactSubmitRequest,
     OwnedArtifactSubmissionRecord,
+    ReceiptCheckoutBinding,
     RecoveryCompletionRecord,
     RecoveryCompleteRequest,
     RepairCompletionRecord,
@@ -55,9 +56,8 @@ from multi_agent_brief.core_run_v2 import (
     CoreRunService,
 )
 from multi_agent_brief.core_run_v2.checkout import (
-    prepare_checkout_effect,
+    build_checkout_revision,
     prepare_cross_run_checkout_effect,
-    publish_checkout_effect,
     stage_checkout_effect,
 )
 from multi_agent_brief.core_run_v2.errors import CoreRunError
@@ -87,24 +87,66 @@ CLOCK = lambda: datetime(2026, 7, 17, tzinfo=timezone.utc)
 
 def _commit_core_fixture(store: SQLiteControlStore, unit):
     snapshot = store.load_snapshot(unit.run_id)
-    checkout = prepare_checkout_effect(
-        workspace=store.path.parent,
-        snapshot=snapshot,
+    current = {
+        (item.artifact_id, item.revision): item
+        for item in snapshot.artifact_revisions
+    }
+    selected = {
+        artifact.artifact_id: current[(artifact.artifact_id, artifact.current_revision)]
+        for artifact in snapshot.artifacts
+        if artifact.current_revision > 0
+        and not current[(artifact.artifact_id, artifact.current_revision)].path.startswith(
+            "briefloop.db.blobs/"
+        )
+    }
+    selected.update(
+        {
+            item.record.artifact_id: item.record
+            for item in unit._artifact_revisions
+            if not item.record.path.startswith("briefloop.db.blobs/")
+        }
+    )
+    committed = {
+        receipt.transaction_id: receipt.committed_revision
+        for receipt in snapshot.transactions
+    }
+    current_checkout_binding = max(
+        snapshot.receipt_checkout_bindings,
+        key=lambda item: committed[item.transaction_id],
+        default=None,
+    )
+    pre_checkout_revision_id = (
+        None
+        if current_checkout_binding is None
+        else current_checkout_binding.post_checkout_revision_id
+    )
+    checkout = build_checkout_revision(
+        workspace_id=snapshot.workspace_id,
+        run_id=unit.run_id,
         transaction_id=unit.transaction_id,
         created_at=CLOCK(),
-        additional_revisions=tuple(
-            item.record for item in unit._artifact_revisions
-        ),
+        artifact_revisions=selected.values(),
+        parent_checkout_revision_id=pre_checkout_revision_id,
     )
-    stage_checkout_effect(unit, checkout)
-    receipt = unit.commit()
-    published, _warnings = publish_checkout_effect(
-        workspace=store.path.parent,
-        store=store,
-        prepared=checkout,
+    unit.put_checkout_revision(checkout.record)
+    for member in checkout.members:
+        unit.put_checkout_revision_member(member)
+    unit.put_receipt_checkout_binding(
+        ReceiptCheckoutBinding.model_validate(
+            {
+                "schema_version": ReceiptCheckoutBinding.schema_id,
+                "workspace_id": snapshot.workspace_id,
+                "run_id": unit.run_id,
+                "transaction_id": unit.transaction_id,
+                "pre_run_id": unit.run_id,
+                "pre_checkout_revision_id": pre_checkout_revision_id,
+                "post_run_id": unit.run_id,
+                "post_checkout_revision_id": checkout.record.checkout_revision_id,
+            },
+            strict=True,
+        )
     )
-    assert published
-    return receipt
+    return unit.commit()
 
 
 def _initialized_workspace(tmp_path: Path) -> Path:

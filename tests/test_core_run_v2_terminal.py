@@ -51,11 +51,6 @@ from multi_agent_brief.control_store.serialization import (
     sha256_hex,
 )
 from multi_agent_brief.core_run_v2 import CoreRunService, CoreRunTerminalService
-from multi_agent_brief.core_run_v2.checkout import (
-    prepare_checkout_effect,
-    publish_checkout_effect,
-    stage_checkout_effect,
-)
 from multi_agent_brief.core_run_v2.errors import CoreRunError
 from multi_agent_brief.core_run_v2.integrity import read_workspace_file
 from multi_agent_brief.core_run_v2.lineage import classify_current_audit_promotion
@@ -88,22 +83,11 @@ RUN_ID = "RUN-TERMINAL-PREFIX-001"
 
 
 def _commit_core_fixture(store: SQLiteControlStore, unit, *, observer=None):
-    checkout = prepare_checkout_effect(
-        workspace=store.path.parent,
-        snapshot=store.load_snapshot(unit.run_id),
-        transaction_id=unit.transaction_id,
-        created_at=core_fixture.CLOCK(),
-        additional_revisions=tuple(item.record for item in unit._artifact_revisions),
+    return core_fixture._commit_core_fixture(
+        store,
+        unit,
+        observer=observer,
     )
-    stage_checkout_effect(unit, checkout)
-    receipt = unit.commit(_postcommit_observer=observer)
-    published, _warnings = publish_checkout_effect(
-        workspace=store.path.parent,
-        store=store,
-        prepared=checkout,
-    )
-    assert published
-    return receipt
 
 
 def _finalize_ready_workspace(tmp_path: Path) -> tuple[Path, str, object]:
