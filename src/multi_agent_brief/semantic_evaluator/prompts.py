@@ -42,7 +42,7 @@ from multi_agent_brief.semantic_evaluator.unit_planner import (
 )
 
 
-PROMPT_ASSEMBLER_VERSION = "dimension_prompt_assembler_v2"
+PROMPT_ASSEMBLER_VERSION = "dimension_prompt_assembler_v3"
 CANARY_DERIVATION_VERSION = "semantic_evaluator_canary_v1"
 
 
@@ -208,6 +208,20 @@ def build_dimension_prompt(
     report_data = {
         "artifact": reader_artifact.model_dump(mode="json", warnings="error"),
         "normalized_text": normalized_text,
+        "span_locator_contract": {
+            "offset_basis": "block_text_zero_based_half_open",
+            "artifact_block_start_end_usage": "normalized_text_inventory_only",
+            "full_block_candidates": [
+                {
+                    "block_id": block.block_id,
+                    "end_char": len(block.text),
+                    "excerpt_sha256": block.text_sha256,
+                    "report_sha256": reader_artifact.report_sha256,
+                    "start_char": 0,
+                }
+                for block in reader_artifact.blocks
+            ],
+        },
     }
     if dimension.scope_class == "O1":
         context_data = {

@@ -106,7 +106,7 @@ def test_manifest_binds_exact_frozen_resources_schemas_and_source_components() -
     }
     assert PARSER_VERSION == "strict_dimension_json_v2"
     assert VALIDATOR_VERSION == "dimension_validator_v3"
-    assert PROMPT_ASSEMBLER_VERSION == "dimension_prompt_assembler_v2"
+    assert PROMPT_ASSEMBLER_VERSION == "dimension_prompt_assembler_v3"
     assert versions["validator"] == VALIDATOR_VERSION
     assert versions["parser"] == PARSER_VERSION
     assert versions["prompt_assembler"] == PROMPT_ASSEMBLER_VERSION
