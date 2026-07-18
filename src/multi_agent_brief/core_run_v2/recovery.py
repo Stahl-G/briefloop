@@ -1270,6 +1270,7 @@ class CoreRunRecoveryService:
                 return replay
             verified = self._verified_current(store, request.run_id, request.expected_store_revision)
             legality = classify_recovery_legality(verified.snapshot)
+            latest_integrity = verified.snapshot.run_integrity_records[-1]
             classify_effect_authorization(
                 verified.snapshot,
                 CoreEffect.RECOVERY_COMPLETE,
@@ -1277,6 +1278,9 @@ class CoreRunRecoveryService:
             ).require_allowed()
             if (
                 legality.state != "rerun_required"
+                or latest_integrity.status != "contaminated"
+                or latest_integrity.integrity_revision
+                != request.contamination_revision
                 or legality.repair_completion_id != request.repair_completion_id
                 or legality.latest_contamination_revision != request.contamination_revision
                 or request.rerun_transition_ids != sorted(set(request.rerun_transition_ids))
@@ -1311,6 +1315,27 @@ class CoreRunRecoveryService:
                 },
                 strict=True,
             )
+            clean_integrity = RunIntegrityRecord.model_validate(
+                {
+                    "schema_version": RunIntegrityRecord.schema_id,
+                    "run_id": request.run_id,
+                    "integrity_revision": latest_integrity.integrity_revision + 1,
+                    "status": "clean",
+                    "prior_integrity_revision": latest_integrity.integrity_revision,
+                    "affected_artifact_id": None,
+                    "affected_artifact_revision": None,
+                    "expected_workspace_path": None,
+                    "expected_sha256": None,
+                    "observed_entry_kind": None,
+                    "observed_sha256": None,
+                    "reason_code": None,
+                    "first_detected_at": None,
+                    "first_detected_event_id": None,
+                    "accepted_transaction_id": request.request_id,
+                    "request_fingerprint": fingerprint,
+                },
+                strict=True,
+            )
             checkout = prepare_checkout_effect(
                 workspace=self.workspace,
                 snapshot=verified.snapshot,
@@ -1324,6 +1349,7 @@ class CoreRunRecoveryService:
                 request.expected_store_revision,
             )
             unit.put_recovery_completion(recovery)
+            unit.append_run_integrity_record(clean_integrity)
             unit.append_event(
                 self._event(event_id, request, fingerprint, "decision_recorded", recovery_id)
             )

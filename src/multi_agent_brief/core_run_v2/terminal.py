@@ -42,6 +42,7 @@ from multi_agent_brief.control_store.serialization import (
     canonical_json_bytes,
     sha256_hex,
 )
+from multi_agent_brief.intake_v2.errors import IntakeError
 from multi_agent_brief.intake_v2.scratch import ScratchReader, parse_json_object
 from multi_agent_brief.control_store.sqlite_store import ControlStoreSnapshot
 from multi_agent_brief.product.release_approval import RELEASE_MODES
@@ -922,6 +923,20 @@ class CoreRunTerminalService:
         if verified.snapshot.store_revision != request.expected_store_revision:
             store.close()
             raise CoreRunError("store_revision_conflict")
+        try:
+            blocked = self._integrity.require_clean(
+                store,
+                verified,
+                request_id=request.request_id,
+                request_fingerprint=fingerprint,
+                expected_store_revision=request.expected_store_revision,
+            )
+        except (CoreRunError, ControlStoreError):
+            store.close()
+            raise
+        if blocked is not None:
+            store.close()
+            return None, None, fingerprint, blocked
         return store, (verifier, verified), fingerprint, None
 
     def _record_internal_approval(self, request: InternalApprovalRequest):
@@ -1036,15 +1051,6 @@ class CoreRunTerminalService:
                 CoreEffect.FINALIZE_RENDER,
                 TerminalEffectSubject(),
             ).require_allowed()
-            blocked = self._integrity.require_clean(
-                store,
-                verified,
-                request_id=request.request_id,
-                request_fingerprint=fingerprint,
-                expected_store_revision=request.expected_store_revision,
-            )
-            if blocked is not None:
-                return blocked
             promotion = classify_current_audit_promotion(
                 verified.snapshot, store.read_artifact_revision_bytes
             )
@@ -1064,6 +1070,8 @@ class CoreRunTerminalService:
                 raise CoreRunError("finalize_input_invalid")
             artifacts = {item.artifact_id: item for item in verified.snapshot.artifacts}
             contracts = {str(item["artifact_id"]): item for item in verified.artifacts}
+            if set(request.reader_scratch_inputs) != {"reader_brief"}:
+                raise CoreRunError("finalize_input_invalid")
             rows: list[tuple[ArtifactRecord, ArtifactRevision, bytes]] = []
             residue_fingerprints: list[dict[str, object]] = []
             now = self._now()
@@ -1073,7 +1081,13 @@ class CoreRunTerminalService:
                     if sha256_hex(content) != request.expected_reader_sha256[artifact_id]:
                         raise CoreRunError("finalize_input_invalid")
                     text = content.decode("utf-8")
-                except (OSError, RuntimeError, UnicodeError, ValueError) as exc:
+                except (
+                    IntakeError,
+                    OSError,
+                    RuntimeError,
+                    UnicodeError,
+                    ValueError,
+                ) as exc:
                     raise CoreRunError("finalize_input_invalid") from exc
                 residue = detect_reader_residue(text, artifact_id)
                 if residue.status != "pass":
@@ -1299,15 +1313,6 @@ class CoreRunTerminalService:
                 CoreEffect.FINALIZE_COMPLETE,
                 TerminalEffectSubject(),
             ).require_allowed()
-            blocked = self._integrity.require_clean(
-                store,
-                verified,
-                request_id=request.request_id,
-                request_fingerprint=fingerprint,
-                expected_store_revision=request.expected_store_revision,
-            )
-            if blocked is not None:
-                return blocked
             snapshot = verified.snapshot
             renders = [item for item in snapshot.finalize_renders if item.render_id == request.render_id]
             stage = next((item for item in snapshot.stage_states if item.stage_id == "finalize"), None)
@@ -1639,7 +1644,13 @@ class CoreRunTerminalService:
                 observation = DeliveryResultObservation.model_validate(
                     parse_json_object(observation_bytes), strict=True
                 )
-            except (OSError, RuntimeError, ValidationError, ValueError) as exc:
+            except (
+                IntakeError,
+                OSError,
+                RuntimeError,
+                ValidationError,
+                ValueError,
+            ) as exc:
                 raise CoreRunError("delivery_result_invalid") from exc
             attempt = next((item for item in verified.snapshot.delivery_attempts if item.attempt_id == request.attempt_id), None)
             if (

@@ -571,6 +571,29 @@ def test_transaction_receipt_requires_revision_advance() -> None:
     ] == [("$", "is invalid")]
 
 
+def test_run_integrity_contract_distinguishes_initial_and_recovered_clean() -> None:
+    contract_id = "briefloop.run_integrity_record.v2"
+    initial = SchemaRegistry.example(contract_id, "minimal")
+    assert SchemaRegistry.validate(contract_id, initial) == []
+
+    recovered = {
+        **initial,
+        "integrity_revision": 3,
+        "prior_integrity_revision": 2,
+    }
+    assert SchemaRegistry.validate(contract_id, recovered) == []
+
+    for invalid in (
+        {**recovered, "prior_integrity_revision": 1},
+        {**recovered, "reason_code": "frozen_artifact_contaminated"},
+        {**initial, "integrity_revision": 2},
+    ):
+        assert [
+            (item.field, item.error)
+            for item in SchemaRegistry.validate(contract_id, invalid)
+        ] == [("$", "is invalid")]
+
+
 def test_control_dto_examples_cover_required_revision_and_identity_bindings() -> None:
     revision = SchemaRegistry.example("briefloop.artifact_revision.v2", "minimal")
     assert revision["path"].startswith("output/artifacts/")

@@ -461,7 +461,7 @@ _CORE_EFFECT_BINDING_RULES = {
         frozenset({"decision_recorded"}),
         "recovery_completion",
         (("decision_recorded", 1),),
-        frozenset({"recovery_completions"}),
+        frozenset({"recovery_completions", "run_integrity_records"}),
     ),
     "run_head_transition": _CoreEffectBindingRule(
         transaction_type_for("run_head_transition"),
@@ -2956,14 +2956,48 @@ class CoreRunDomainVerifier:
         )
         if not rows or rows[0].status != "clean" or rows[0].integrity_revision != 1:
             raise CoreRunError("control_store_integrity_invalid")
-        contaminated = False
+        contaminated_revision: int | None = None
+        recoveries_by_transaction = {
+            item.accepted_transaction_id: item
+            for item in snapshot.recovery_completions
+        }
         for revision, row in enumerate(rows, start=1):
-            if row.integrity_revision != revision:
+            expected_prior = None if revision == 1 else revision - 1
+            if (
+                row.integrity_revision != revision
+                or row.prior_integrity_revision != expected_prior
+            ):
                 raise CoreRunError("control_store_integrity_invalid")
             if row.status == "contaminated":
-                contaminated = True
-            elif contaminated:
+                if contaminated_revision is not None:
+                    raise CoreRunError("control_store_integrity_invalid")
+                contaminated_revision = row.integrity_revision
+                continue
+            if revision == 1:
+                continue
+            recovery = recoveries_by_transaction.get(row.accepted_transaction_id)
+            if (
+                contaminated_revision is None
+                or recovery is None
+                or recovery.contamination_revision != contaminated_revision
+                or recovery.request_fingerprint != row.request_fingerprint
+                or any(
+                    value is not None
+                    for value in (
+                        row.affected_artifact_id,
+                        row.affected_artifact_revision,
+                        row.expected_workspace_path,
+                        row.expected_sha256,
+                        row.observed_entry_kind,
+                        row.observed_sha256,
+                        row.reason_code,
+                        row.first_detected_at,
+                        row.first_detected_event_id,
+                    )
+                )
+            ):
                 raise CoreRunError("control_store_integrity_invalid")
+            contaminated_revision = None
 
     @staticmethod
     def _verify_claim_chain(
@@ -3812,12 +3846,25 @@ def _verified_core_receipt_binding(
             for item in snapshot.recovery_completions
             if item.recovery_id == primary_id
         ]
+        clean_records = [
+            item
+            for item in snapshot.run_integrity_records
+            if item.accepted_transaction_id == transaction_id
+        ]
         if (
             refs != [primary_id]
             or len(records) != 1
             or records[0].accepted_transaction_id != transaction_id
             or records[0].request_fingerprint != fingerprint
             or records[0].completion_event_id != event.event_id
+            or len(receipt.run_integrity_records) != 1
+            or len(clean_records) != 1
+            or receipt.run_integrity_records[0].integrity_revision
+            != clean_records[0].integrity_revision
+            or clean_records[0].status != "clean"
+            or clean_records[0].prior_integrity_revision
+            != records[0].contamination_revision
+            or clean_records[0].request_fingerprint != fingerprint
         ):
             raise CoreRunError("control_store_integrity_invalid")
     elif rule.primary_family == "run_head_transition":

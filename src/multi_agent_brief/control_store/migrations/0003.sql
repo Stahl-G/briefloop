@@ -264,7 +264,29 @@ CREATE TABLE run_integrity_records (
     request_fingerprint TEXT NOT NULL,
     payload_json TEXT NOT NULL CHECK(typeof(payload_json) = 'text'),
     PRIMARY KEY(run_id, integrity_revision),
-    CHECK((status = 'clean' AND integrity_revision = 1 AND prior_integrity_revision IS NULL AND affected_artifact_id IS NULL) OR (status = 'contaminated' AND prior_integrity_revision IS NOT NULL AND integrity_revision = prior_integrity_revision + 1 AND affected_artifact_id IS NOT NULL)),
+    CHECK(
+      (
+        status = 'clean'
+        AND (
+          (integrity_revision = 1 AND prior_integrity_revision IS NULL)
+          OR (integrity_revision > 1 AND prior_integrity_revision = integrity_revision - 1)
+        )
+        AND affected_artifact_id IS NULL
+        AND affected_artifact_revision IS NULL
+        AND expected_workspace_path IS NULL
+        AND expected_sha256 IS NULL
+        AND observed_entry_kind IS NULL
+        AND observed_sha256 IS NULL
+        AND reason_code IS NULL
+        AND first_detected_event_id IS NULL
+      )
+      OR (
+        status = 'contaminated'
+        AND prior_integrity_revision IS NOT NULL
+        AND integrity_revision = prior_integrity_revision + 1
+        AND affected_artifact_id IS NOT NULL
+      )
+    ),
     FOREIGN KEY(run_id, affected_artifact_id, affected_artifact_revision) REFERENCES artifact_revisions(run_id, artifact_id, revision) DEFERRABLE INITIALLY DEFERRED,
     FOREIGN KEY(run_id, first_detected_event_id) REFERENCES events(run_id, event_id) DEFERRABLE INITIALLY DEFERRED,
     FOREIGN KEY(run_id, accepted_transaction_id) REFERENCES transactions(run_id, transaction_id) DEFERRABLE INITIALLY DEFERRED

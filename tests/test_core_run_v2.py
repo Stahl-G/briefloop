@@ -4814,7 +4814,9 @@ def test_core_effect_receipt_binding_table_is_exact() -> None:
             }
         ),
         "repair_complete": frozenset({"stage_transitions", "repair_completions"}),
-        "recovery_complete": frozenset({"recovery_completions"}),
+        "recovery_complete": frozenset(
+            {"recovery_completions", "run_integrity_records"}
+        ),
         "run_head_transition": frozenset(
             {
                 "artifact_revisions",

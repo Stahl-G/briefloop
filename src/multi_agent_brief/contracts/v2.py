@@ -1777,8 +1777,17 @@ class RunIntegrityRecord(StrictModel):
             self.first_detected_event_id,
         )
         if self.status == "clean":
-            if self.integrity_revision != 1 or self.prior_integrity_revision is not None:
-                raise ValueError("clean integrity is the initial revision")
+            if (self.integrity_revision == 1) != (
+                self.prior_integrity_revision is None
+            ):
+                raise ValueError(
+                    "initial clean integrity has no predecessor; recovered clean integrity does"
+                )
+            if (
+                self.integrity_revision > 1
+                and self.prior_integrity_revision != self.integrity_revision - 1
+            ):
+                raise ValueError("recovered clean integrity must extend the prior revision")
             if any(item is not None for item in contamination) or self.observed_sha256 is not None:
                 raise ValueError("clean integrity cannot carry contamination data")
         else:

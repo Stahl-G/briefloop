@@ -5163,14 +5163,17 @@ class SQLiteControlStore:
             != [1]
         ):
             raise ControlStoreIntegrityError("core_run_relation_invalid")
-        contaminated = False
+        prior_status: str | None = None
         for position, record in enumerate(integrity_rows, start=1):
-            if record.integrity_revision != position:
+            expected_prior = None if position == 1 else position - 1
+            if (
+                record.integrity_revision != position
+                or record.prior_integrity_revision != expected_prior
+                or (position == 1 and record.status != "clean")
+                or (prior_status is not None and record.status == prior_status)
+            ):
                 raise ControlStoreIntegrityError("core_run_relation_invalid")
-            if record.status == "contaminated":
-                contaminated = True
-            elif contaminated:
-                raise ControlStoreIntegrityError("core_run_relation_invalid")
+            prior_status = record.status
 
         invocation_events: dict[str, list[EventEnvelope]] = {}
         for event in snapshot.events:

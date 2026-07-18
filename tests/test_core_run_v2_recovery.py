@@ -61,7 +61,10 @@ from multi_agent_brief.core_run_v2.checkout import (
     stage_checkout_effect,
 )
 from multi_agent_brief.core_run_v2.errors import CoreRunError
-from multi_agent_brief.core_run_v2.integrity import read_workspace_file
+from multi_agent_brief.core_run_v2.integrity import (
+    RunIntegrityService,
+    read_workspace_file,
+)
 from multi_agent_brief.core_run_v2.policy import (
     derived_id,
     run_contract_fingerprint,
@@ -820,6 +823,29 @@ def _complete_recovery(store: SQLiteControlStore) -> tuple[str, str]:
         snapshot.store_revision,
     )
     unit.put_recovery_completion(recovery)
+    unit.append_run_integrity_record(
+        _record(
+            RunIntegrityRecord,
+            run_id=RUN_ID,
+            integrity_revision=snapshot.run_integrity_records[-1].integrity_revision
+            + 1,
+            status="clean",
+            prior_integrity_revision=snapshot.run_integrity_records[
+                -1
+            ].integrity_revision,
+            affected_artifact_id=None,
+            affected_artifact_revision=None,
+            expected_workspace_path=None,
+            expected_sha256=None,
+            observed_entry_kind=None,
+            observed_sha256=None,
+            reason_code=None,
+            first_detected_at=None,
+            first_detected_event_id=None,
+            accepted_transaction_id=transaction_id,
+            request_fingerprint=request_fingerprint,
+        )
+    )
     unit.append_event(
         _event(
             event_id=event_id,
@@ -1736,12 +1762,15 @@ def test_repair_supersession_completion_and_recovery_are_exact_receipts(
         assert [item.recovery_id for item in recovery_receipt.recovery_completions] == [
             "RECOVERY-COMPLETION-001"
         ]
+        assert [
+            item.integrity_revision for item in recovery_receipt.run_integrity_records
+        ] == [3]
         assert recovery_receipt.event_ids == ["EVT-RECOVERY-COMPLETE-001"]
 
         legality = classify_recovery_legality(snapshot)
         assert legality.state == "recovered_current"
+        assert snapshot.run_integrity_records[-1].status == "clean"
         assert legality.permitted_artifact_ids == ("input_classification",)
-
 
         assert legality.required_rerun_transition_ids == (rerun_transition_id,)
         CoreRunDomainVerifier().verify(store, RUN_ID)
@@ -1757,17 +1786,17 @@ def test_repair_supersession_completion_and_recovery_are_exact_receipts(
 
         # R16: a later repair may carry a different finite scope, but the
         # receipt-N projection keeps the original repair's exact authority.
-        later_contamination = snapshot.run_integrity_records[-1].model_copy(
+        later_contamination = snapshot.run_integrity_records[-2].model_copy(
             update={
-                "integrity_revision": 3,
-                "prior_integrity_revision": 2,
+                "integrity_revision": 4,
+                "prior_integrity_revision": 3,
                 "accepted_transaction_id": recovery_request[0],
             }
         )
         later_repair = snapshot.repair_cycles[0].model_copy(
             update={
                 "repair_id": "REPAIR-RECOVERY-LATER-001",
-                "contamination_revision": 3,
+                "contamination_revision": 4,
                 "permitted_artifact_ids": ["audited_brief"],
                 "accepted_transaction_id": recovery_request[0],
             }
@@ -1814,6 +1843,129 @@ def test_repair_supersession_completion_and_recovery_are_exact_receipts(
                 request_fingerprint="e" * 64,
             )
         assert reopened.current_revision == revision
+
+
+def test_recovered_clean_integrity_chain_and_receipt_tamper_fail_closed(
+    tmp_path: Path,
+) -> None:
+    workspace = _initialized_workspace(tmp_path)
+    with SQLiteControlStore.open(workspace / "briefloop.db", clock=CLOCK) as store:
+        _accept_input_classification(store)
+        _record_contamination(store)
+        _start_repair(store)
+        _supersede_input_classification(store)
+        _complete_repair(store)
+        _complete_reopened_stage(store)
+        recovery_request = _complete_recovery(store)
+        snapshot = store.load_snapshot(RUN_ID)
+
+    receipt = next(
+        item
+        for item in snapshot.transactions
+        if item.transaction_id == recovery_request[0]
+    )
+    initial, contaminated, recovered = snapshot.run_integrity_records
+    forged_snapshots = (
+        replace(snapshot, recovery_completions=()),
+        replace(
+            snapshot,
+            run_integrity_records=(
+                initial,
+                contaminated.model_copy(
+                    update={
+                        "status": "clean",
+                        "affected_artifact_id": None,
+                        "affected_artifact_revision": None,
+                        "expected_workspace_path": None,
+                        "expected_sha256": None,
+                        "observed_entry_kind": None,
+                        "observed_sha256": None,
+                        "reason_code": None,
+                        "first_detected_at": None,
+                        "first_detected_event_id": None,
+                    }
+                ),
+                recovered,
+            ),
+        ),
+        replace(
+            snapshot,
+            run_integrity_records=(
+                initial,
+                contaminated,
+                recovered.model_copy(update={"prior_integrity_revision": 1}),
+            ),
+        ),
+        replace(
+            snapshot,
+            run_integrity_records=(
+                initial,
+                contaminated,
+                recovered.model_copy(
+                    update={"accepted_transaction_id": "REQ-FORGED-RECOVERY-001"}
+                ),
+            ),
+        ),
+        replace(
+            snapshot,
+            run_integrity_records=(
+                initial,
+                contaminated,
+                recovered.model_copy(update={"request_fingerprint": "f" * 64}),
+            ),
+        ),
+    )
+    for forged in forged_snapshots:
+        with pytest.raises(CoreRunError, match="control_store_integrity_invalid"):
+            CoreRunDomainVerifier._verify_integrity_chain(forged)
+
+    store_forgeries = (
+        replace(
+            snapshot,
+            run_integrity_records=(
+                initial,
+                contaminated.model_copy(update={"status": "clean"}),
+                recovered,
+            ),
+        ),
+        replace(
+            snapshot,
+            run_integrity_records=(
+                initial,
+                contaminated,
+                recovered.model_copy(update={"status": "contaminated"}),
+            ),
+        ),
+        replace(
+            snapshot,
+            run_integrity_records=(
+                initial,
+                contaminated,
+                recovered.model_copy(update={"prior_integrity_revision": 1}),
+            ),
+        ),
+    )
+    with SQLiteControlStore.open(workspace / "briefloop.db", clock=CLOCK) as store:
+        for forged in store_forgeries:
+            with pytest.raises(
+                ControlStoreIntegrityError,
+                match="core_run_relation_invalid",
+            ):
+                store._verify_core_snapshot_structure(forged)
+
+    for forged_receipt in (
+        receipt.model_copy(update={"run_integrity_records": []}),
+        receipt.model_copy(
+            update={
+                "run_integrity_records": [
+                    *receipt.run_integrity_records,
+                    *receipt.run_integrity_records,
+                ]
+            }
+        ),
+    ):
+        with pytest.raises(CoreRunError, match="control_store_integrity_invalid"):
+            _verified_core_receipt_binding(snapshot, forged_receipt)
 
 
 def test_recovery_service_owns_supersession_repair_and_recovery_transactions(
@@ -1924,6 +2076,61 @@ def test_recovery_service_owns_supersession_repair_and_recovery_transactions(
     replay = service.complete_recovery(recovery_request)
     assert replay.status == "replayed"
     assert replay.receipt == recovery.receipt
+    with SQLiteControlStore.open(database, clock=CLOCK) as store:
+        verified = CoreRunDomainVerifier().verify(store, RUN_ID)
+        assert verified.snapshot.run_integrity_records[-1].status == "clean"
+        revision = verified.snapshot.store_revision
+        blocked = RunIntegrityService(workspace, clock=CLOCK).require_clean(
+            store,
+            verified,
+            request_id="REQ-RECOVERY-SERVICE-NEXT-EFFECT-001",
+            request_fingerprint=canonical_fingerprint(
+                {"effect_kind": "next_normal_effect"}
+            ),
+            expected_store_revision=revision,
+        )
+        assert blocked is None
+        assert store.current_revision == revision
+
+
+def test_recovery_complete_failure_rolls_back_clean_successor_and_receipt(
+    tmp_path: Path,
+) -> None:
+    workspace = _initialized_workspace(tmp_path)
+    database = workspace / "briefloop.db"
+    with SQLiteControlStore.open(database, clock=CLOCK) as store:
+        _accept_input_classification(store)
+        _record_contamination(store)
+        _start_repair(store)
+        _supersede_input_classification(store)
+        _complete_repair(store)
+        _complete_reopened_stage(store)
+        before = store.load_snapshot(RUN_ID)
+
+    def fail(stage: str) -> None:
+        if stage == "before_commit":
+            raise ControlStoreIntegrityError("injected_core_run_failure")
+
+    with SQLiteControlStore.open(
+        database,
+        clock=CLOCK,
+        _failure_hook=fail,
+    ) as store:
+        with pytest.raises(
+            ControlStoreIntegrityError,
+            match="injected_core_run_failure",
+        ):
+            _complete_recovery(store)
+
+    with SQLiteControlStore.open(database, clock=CLOCK) as store:
+        after = store.load_snapshot(RUN_ID)
+        assert after.store_revision == before.store_revision
+        assert after.run_integrity_records == before.run_integrity_records
+        assert after.recovery_completions == before.recovery_completions
+        assert all(
+            item.transaction_id != "REQ-RECOVERY-COMPLETE-001"
+            for item in after.transactions
+        )
 
 
 def test_repair_start_before_commit_failure_rolls_back_every_relation(
