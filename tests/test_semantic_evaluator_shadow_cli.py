@@ -48,6 +48,21 @@ def _argv(*, json_output: bool = True) -> list[str]:
     return values
 
 
+def _present_argv(*, json_output: bool = True) -> list[str]:
+    values = [
+        "experiments",
+        "laj",
+        "present",
+        "--archive",
+        "/private/input/archive",
+        "--output-dir",
+        "/private/output/reader",
+    ]
+    if json_output:
+        values.append("--json")
+    return values
+
+
 def _fake_runner(monkeypatch, *, result: _Result | None = None) -> list[dict]:
     calls: list[dict] = []
 
@@ -69,6 +84,11 @@ def test_shadow_cli_is_registered_only_below_experiments_laj() -> None:
     assert args.command == "experiments"
     assert args.experiments_action == "laj"
     assert args.experiment_laj_action == "shadow-run"
+
+    present = build_parser().parse_args(_present_argv())
+    assert present.command == "experiments"
+    assert present.experiments_action == "laj"
+    assert present.experiment_laj_action == "present"
 
 
 def test_shadow_cli_emits_fixed_json_without_paths_or_provider_material(
@@ -165,3 +185,70 @@ def test_shadow_cli_real_runner_rejects_missing_input_without_echo(capsys) -> No
     assert hidden not in captured.out + captured.err
     assert "/tmp" not in captured.out + captured.err
     assert "Traceback" not in captured.out + captured.err
+
+
+def test_present_cli_projects_fixed_paths_and_advisory_boundary(
+    monkeypatch,
+    capsys,
+) -> None:
+    view = SimpleNamespace(
+        finding_count=2,
+        status="available",
+        view_sha256="1" * 64,
+    )
+    result = SimpleNamespace(view=view)
+    calls: list[dict[str, object]] = []
+
+    def write_laj_reader_artifacts(**kwargs):
+        calls.append(kwargs)
+        return result
+
+    module = SimpleNamespace(
+        LAJ_READER_FILENAMES=("laj.html", "laj.json", "laj.md"),
+        write_laj_reader_artifacts=write_laj_reader_artifacts,
+    )
+    monkeypatch.setattr(
+        experiments_commands.importlib,
+        "import_module",
+        lambda _name: module,
+    )
+    assert main(_present_argv()) == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload == {
+        "advisory_only": True,
+        "finding_count": 2,
+        "ok": True,
+        "output_files": ["laj.html", "laj.json", "laj.md"],
+        "runtime_authority": False,
+        "status": "available",
+        "view_sha256": "1" * 64,
+    }
+    assert calls == [
+        {
+            "archive_path": "/private/input/archive",
+            "output_dir": "/private/output/reader",
+            "expected_report_sha256": None,
+        }
+    ]
+
+
+def test_present_cli_failure_is_value_free(monkeypatch, capsys) -> None:
+    secret = "PRIVATE_ARCHIVE_PATH_48291"
+
+    def fail_import(_name: str):
+        raise RuntimeError(secret)
+
+    monkeypatch.setattr(experiments_commands.importlib, "import_module", fail_import)
+    assert main(_present_argv()) == 1
+    captured = capsys.readouterr()
+    assert json.loads(captured.out) == {
+        "advisory_only": True,
+        "finding_count": 0,
+        "ok": False,
+        "output_files": [],
+        "runtime_authority": False,
+        "status": "unavailable",
+        "view_sha256": None,
+    }
+    assert secret not in captured.out + captured.err
+    assert "/private" not in captured.out + captured.err

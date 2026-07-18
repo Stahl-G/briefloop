@@ -41,6 +41,7 @@ EXPECTED_PACKAGE_FILES = {
     "prompts/dimension_v1.txt",
     "prompts/system_v1.txt",
     "resources.py",
+    "reader.py",
     "runner.py",
     "serialization.py",
     "shadow_contracts.py",
@@ -98,14 +99,14 @@ def _matches_owner(module: str, owner: str) -> bool:
     return module == owner or module.startswith(f"{owner}.")
 
 
-def test_se2r_15_package_inventory_is_exact_for_isolated_mu_laj_1() -> None:
+def test_package_inventory_is_exact_for_isolated_offline_shadow_laj() -> None:
     actual = {
         path.relative_to(EVALUATOR_ROOT).as_posix()
         for path in EVALUATOR_ROOT.rglob("*")
         if path.is_file() and "__pycache__" not in path.parts
     }
     assert actual == EXPECTED_PACKAGE_FILES
-    assert not (EVALUATOR_ROOT / "presentation.py").exists()
+    assert not (EVALUATOR_ROOT / "product_bridge.py").exists()
 
 
 def test_no_normal_workflow_module_imports_semantic_evaluator() -> None:
@@ -158,7 +159,7 @@ def test_se2r_15_only_live_adapter_may_import_provider_or_network_code() -> None
     assert offenders == {}
 
 
-def test_se2r_15_archive_is_the_only_evaluator_persistent_writer() -> None:
+def test_only_archive_and_standalone_reader_are_persistent_writers() -> None:
     write_methods = {
         "mkdir",
         "rename",
@@ -177,7 +178,7 @@ def test_se2r_15_archive_is_the_only_evaluator_persistent_writer() -> None:
                 and node.func.attr in write_methods
             }
         )
-        if calls and path.name != "archive.py":
+        if calls and path.name not in {"archive.py", "reader.py"}:
             offenders[path.relative_to(REPO_ROOT).as_posix()] = calls
     assert offenders == {}
 
@@ -189,6 +190,15 @@ def test_se2r_15_archive_is_the_only_evaluator_persistent_writer() -> None:
         and node.func.attr in write_methods
     }
     assert {"mkdir"} <= archive_calls
+
+    reader_calls = {
+        node.func.attr
+        for node in ast.walk(_tree(EVALUATOR_ROOT / "reader.py"))
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Attribute)
+        and node.func.attr in write_methods
+    }
+    assert reader_calls == {"write_bytes"}
 
 
 def test_se2r_15_experiment_entrypoint_is_not_imported_by_normal_runtime() -> None:
