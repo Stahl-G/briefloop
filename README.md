@@ -302,7 +302,9 @@ Current main entrypoints:
 - experimental WorkBuddy / CodeBuddy guide: [docs/workbuddy.md](docs/workbuddy.md)
 - experimental offline-shadow LAJ: `briefloop experiments laj shadow-run` and
   `briefloop experiments laj present` for public/synthetic advisory evaluation
-  and standalone JSON/Markdown/HTML presentation only
+  and standalone JSON/Markdown/HTML presentation; an explicitly supplied
+  current-report-bound `laj.json` may be displayed read-only with
+  `briefloop quality summarize --laj-view <laj.json>`
 
 v0.12.1 carries forward the v0.12.0 product baseline and adds:
 
@@ -329,9 +331,11 @@ operator-runtime, and semantic-support auditor hardening line includes:
 - durable source evidence pack materialization and source taxonomy normalization
 - internal release-mode approval records
 - Quality Panel JSON / Markdown / HTML projections and audit-bundle integration
-- standalone experimental LAJ JSON / Markdown / HTML second-opinion artifacts;
+- standalone experimental LAJ JSON / Markdown / HTML second-opinion artifacts
+  and an optional read-only Quality Panel section for an explicit bound view;
   they do not affect workflow status, gates, finalization, delivery, repair,
-  approval, or next-action authority, and evaluator efficacy is not measured
+  approval, recommended authoritative actions, or next-action authority, and
+  evaluator efficacy is not measured
 - reader-quality warning/projection surfaces for template conformance,
   materiality selection, support-calibrated wording, citation profiles,
   coverage/omission, and scoped final-abstract diagnostics

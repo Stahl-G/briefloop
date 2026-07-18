@@ -75,7 +75,10 @@ page describes implemented runtime capability, not a breaking deep rename.
 - Experimental offline-shadow LAJ tools can execute or exactly replay one
   public/synthetic Semantic Evaluator trial and deterministically render its
   verified archive as standalone JSON, Markdown, and static HTML. These files
-  are visibly advisory second-opinion artifacts only. Missing, malformed,
+  are visibly advisory second-opinion artifacts only. An explicitly supplied,
+  strict `laj.json` can also appear as a separated read-only section in the
+  deterministic Quality Panel when it matches the current `output/brief.md`;
+  Quality Panel generation never calls the evaluator. Missing, malformed,
   failed, stale, or abstained LAJ never changes workflow status, gates,
   finalization, delivery, repair, approval, contamination, reference
   eligibility, or next-action authority; evaluator usefulness and efficacy are

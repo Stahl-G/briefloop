@@ -9,6 +9,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from html import escape
+import json
 import os
 from pathlib import Path
 import re
@@ -111,6 +112,14 @@ class LajReaderView(StrictModel):
             raise ValueError("reader finding count mismatch")
         if self.status != "available" and self.findings:
             raise ValueError("non-available reader views cannot display findings")
+        if self.findings and self.binding is None:
+            raise ValueError("reader findings require an exact report binding")
+        if self.binding is not None and any(
+            span.report_sha256 != self.binding.report_sha256
+            for finding in self.findings
+            for span in finding.report_spans
+        ):
+            raise ValueError("reader finding span report binding mismatch")
         if self.archive_verified:
             if (
                 self.binding is None
@@ -178,6 +187,62 @@ def _empty_view(*, status: ReaderStatus, reason_code: str) -> LajReaderView:
             "Gate, finalization, delivery, repair, approval, or next-action effect."
         ),
     }
+    return _finalize_view(payload)
+
+
+def build_empty_laj_reader_view(
+    *,
+    status: Literal["invalid", "not_available", "unavailable"],
+    reason_code: str,
+) -> LajReaderView:
+    """Build a value-free, zero-advice reader state for a failed consumer ingress."""
+
+    return _empty_view(status=status, reason_code=reason_code)
+
+
+def load_laj_reader_view(path: str | Path) -> LajReaderView:
+    """Load one strict, hash-bound reader view without exposing path or parse details."""
+
+    try:
+        raw = Path(path).read_bytes()
+        payload = json.loads(raw.decode("utf-8"))
+        return LajReaderView.model_validate(payload)
+    except Exception:
+        raise SemanticEvaluatorError("laj_reader_view_invalid") from None
+
+
+def bind_laj_reader_view_to_report(
+    view: LajReaderView,
+    *,
+    expected_report_sha256: str,
+) -> LajReaderView:
+    """Fail a displayable view closed when it is not bound to the current reader bytes."""
+
+    try:
+        expected_sha = _SHA256.validate_python(expected_report_sha256)
+    except Exception:
+        raise SemanticEvaluatorError("shadow_request_invalid") from None
+    if view.binding is None or view.binding.report_sha256 == expected_sha:
+        return view
+    payload = view.model_dump(
+        mode="json",
+        exclude={"view_sha256"},
+        warnings="error",
+    )
+    payload.update(
+        {
+            "status": "stale",
+            "reason_codes": sorted(set([*view.reason_codes, "report_binding_stale"])),
+            "finding_count": 0,
+            "withheld_finding_count": view.withheld_finding_count + view.finding_count,
+            "findings": [],
+            "disclaimer": (
+                "Experimental advisory assessment is unavailable, invalid, stale, or "
+                "abstained. No workflow, Gate, finalization, delivery, repair, approval, "
+                "or next-action effect."
+            ),
+        }
+    )
     return _finalize_view(payload)
 
 
@@ -534,7 +599,10 @@ __all__ = [
     "LajReaderArtifacts",
     "LajReaderBinding",
     "LajReaderView",
+    "bind_laj_reader_view_to_report",
+    "build_empty_laj_reader_view",
     "build_laj_reader_view",
+    "load_laj_reader_view",
     "render_laj_reader_html",
     "render_laj_reader_json",
     "render_laj_reader_markdown",
