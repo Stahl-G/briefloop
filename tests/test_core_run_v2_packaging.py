@@ -74,6 +74,7 @@ def test_non_editable_wheel_runs_complete_dormant_core_spine(
             StageCompleteRequest,
         )
         from multi_agent_brief.control_store import SQLiteControlStore
+        from multi_agent_brief.control_store.serialization import canonical_fingerprint
         from multi_agent_brief.core_run_v2.checkout import build_checkout_revision
         from multi_agent_brief.core_run_v2.publication import CheckoutPublicationEngine
         from multi_agent_brief.core_run_v2.policy import REQUIRED_AUDITOR_GATES
@@ -219,6 +220,13 @@ def test_non_editable_wheel_runs_complete_dormant_core_spine(
             role_topology="default",
             input_governance_required=False,
         )
+        runtime_adapter = dict(initialize["runtime_adapter_binding"])
+        runtime_adapter["run_id"] = run_id
+        runtime_adapter.pop("binding_fingerprint", None)
+        runtime_adapter["binding_fingerprint"] = canonical_fingerprint(
+            runtime_adapter
+        )
+        initialize["runtime_adapter_binding"] = runtime_adapter
         call(
             "core-v2",
             "initialize",
