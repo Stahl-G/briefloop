@@ -26,6 +26,7 @@ class CLIProxyResponsesAdapterV1(OpenAIResponsesAdapterV4):
     provider_id = CLIPROXY_PROVIDER_ID
     qualification_eligible = False
     base_url = CLIPROXY_BASE_URL
+    require_direct_transport = True
 
 
 __all__ = [

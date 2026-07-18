@@ -24,6 +24,7 @@ from multi_agent_brief.semantic_evaluator.serialization import canonical_json_by
 OPENAI_ADAPTER_ID = "openai_responses_v4"
 OPENAI_PROVIDER_ID = "openai_responses"
 OPENAI_ADAPTER_VERSION = "openai_responses_adapter_v4"
+OPENAI_BASE_URL = "https://api.openai.com/v1"
 _STATUS_VALUES = frozenset(
     {"completed", "failed", "in_progress", "cancelled", "queued", "incomplete"}
 )
@@ -278,7 +279,8 @@ class OpenAIResponsesAdapterV4:
     provider_id = OPENAI_PROVIDER_ID
     provider_sdk_name = "openai"
     qualification_eligible = True
-    base_url: str | None = None
+    base_url = OPENAI_BASE_URL
+    require_direct_transport = False
 
     def __init__(self, *, api_key: str) -> None:
         if type(api_key) is not str or not api_key:
@@ -290,10 +292,14 @@ class OpenAIResponsesAdapterV4:
             version = metadata.version("openai")
             sdk_arguments: dict[str, object] = {
                 "api_key": api_key,
+                "base_url": self.base_url,
                 "max_retries": 0,
             }
-            if self.base_url is not None:
-                sdk_arguments["base_url"] = self.base_url
+            if self.require_direct_transport:
+                sdk_arguments["http_client"] = openai.DefaultHttpxClient(
+                    trust_env=False,
+                    follow_redirects=False,
+                )
             client = openai.OpenAI(**sdk_arguments)
         except Exception:
             raise TypeError("shadow_adapter_unavailable") from None

@@ -18,6 +18,7 @@ from multi_agent_brief.semantic_evaluator.adapter import (
 )
 from multi_agent_brief.semantic_evaluator.adapters.openai_responses import (
     OPENAI_ADAPTER_ID,
+    OPENAI_BASE_URL,
     OPENAI_PROVIDER_ID,
     OpenAIResponsesAdapterV4,
     project_openai_response_bytes_v4,
@@ -282,7 +283,24 @@ def test_cliproxy_constructor_freezes_loopback_endpoint_and_disables_sdk_retry(
         captured.update(kwargs)
         return object()
 
-    monkeypatch.setitem(sys.modules, "openai", SimpleNamespace(OpenAI=make_client))
+    direct_transport = object()
+    transport_arguments: dict[str, object] = {}
+
+    def make_http_client(**kwargs):
+        transport_arguments.update(kwargs)
+        return direct_transport
+
+    monkeypatch.setitem(
+        sys.modules,
+        "openai",
+        SimpleNamespace(
+            DefaultHttpxClient=make_http_client,
+            OpenAI=make_client,
+        ),
+    )
+    monkeypatch.setenv("HTTP_PROXY", "http://proxy.invalid:8080")
+    monkeypatch.setenv("ALL_PROXY", "http://proxy.invalid:8080")
+    monkeypatch.delenv("NO_PROXY", raising=False)
     monkeypatch.setattr(openai_responses.metadata, "version", lambda _name: "2.46.0")
     adapter = CLIProxyResponsesAdapterV1(api_key="test")
     assert adapter.base_url == CLIPROXY_BASE_URL
@@ -290,6 +308,34 @@ def test_cliproxy_constructor_freezes_loopback_endpoint_and_disables_sdk_retry(
     assert captured == {
         "api_key": "test",
         "base_url": CLIPROXY_BASE_URL,
+        "http_client": direct_transport,
+        "max_retries": 0,
+    }
+    assert transport_arguments == {
+        "follow_redirects": False,
+        "trust_env": False,
+    }
+
+
+def test_direct_openai_constructor_ignores_environment_base_url(monkeypatch) -> None:
+    from multi_agent_brief.semantic_evaluator.adapters import openai_responses
+
+    captured: dict[str, object] = {}
+
+    def make_client(**kwargs):
+        captured.update(kwargs)
+        return object()
+
+    monkeypatch.setenv("OPENAI_BASE_URL", "http://proxy.invalid/v1")
+    monkeypatch.setitem(sys.modules, "openai", SimpleNamespace(OpenAI=make_client))
+    monkeypatch.setattr(openai_responses.metadata, "version", lambda _name: "2.46.0")
+
+    adapter = OpenAIResponsesAdapterV4(api_key="test")
+
+    assert adapter.base_url == OPENAI_BASE_URL
+    assert captured == {
+        "api_key": "test",
+        "base_url": OPENAI_BASE_URL,
         "max_retries": 0,
     }
 
