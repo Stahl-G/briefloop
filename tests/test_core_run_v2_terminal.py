@@ -668,8 +668,10 @@ def _commit_finalize_gate(
     run_id: str,
     clock: object,
     render: FinalizeRenderRecord,
+    *,
+    sequence: int = 1,
 ) -> tuple[TransactionReceipt, str, tuple[GateEvaluationRecord, ...]]:
-    transaction_id = "REQ-TERMINAL-FINALIZE-GATE-001"
+    transaction_id = f"REQ-TERMINAL-FINALIZE-GATE-{sequence:03d}"
     with SQLiteControlStore.open(
         workspace / "briefloop.db",
         clock=clock,
@@ -747,6 +749,67 @@ def _commit_finalize_gate(
         canonical_fingerprint(request.model_dump(mode="json", exclude_unset=False)),
         evaluations,
     )
+
+
+def test_finalize_complete_rejects_stale_gate_batch_before_commit(
+    tmp_path: Path,
+) -> None:
+    workspace, run_id, clock = _finalize_ready_workspace(tmp_path)
+    _render_receipt, _render_fingerprint, render = _commit_finalize_render(
+        workspace,
+        run_id,
+        clock,
+    )
+    _first_receipt, _first_fingerprint, first_evaluations = _commit_finalize_gate(
+        workspace,
+        run_id,
+        clock,
+        render,
+        sequence=1,
+    )
+    _second_receipt, _second_fingerprint, second_evaluations = _commit_finalize_gate(
+        workspace,
+        run_id,
+        clock,
+        render,
+        sequence=2,
+    )
+    assert {item.report_artifact.revision for item in first_evaluations} == {1}
+    assert {item.report_artifact.revision for item in second_evaluations} == {2}
+
+    with SQLiteControlStore.open(workspace / "briefloop.db", clock=clock) as store:
+        snapshot = store.load_snapshot(run_id)
+        finalize_stage = next(
+            item for item in snapshot.stage_states if item.stage_id == "finalize"
+        )
+        before_revision = snapshot.store_revision
+    request = FinalizeCompleteRequest.model_validate(
+        {
+            "schema_version": FinalizeCompleteRequest.schema_id,
+            "request_id": "REQ-TERMINAL-STALE-FINALIZE-GATE-001",
+            "run_id": run_id,
+            "render_id": render.render_id,
+            "expected_finalize_stage_revision": finalize_stage.revision,
+            "gate_evaluation_ids": sorted(
+                item.evaluation_id for item in first_evaluations
+            ),
+            "recovery_id": None,
+            "expected_store_revision": before_revision,
+        },
+        strict=True,
+    )
+    result = CoreRunTerminalService(workspace, clock=clock).complete_finalize(request)
+    assert (result.status, result.error_code) == (
+        "failed_uncommitted",
+        "finalize_gate_blocked",
+    )
+    with SQLiteControlStore.open(workspace / "briefloop.db", clock=clock) as store:
+        snapshot = store.load_snapshot(run_id)
+        assert snapshot.store_revision == before_revision
+        assert not snapshot.finalizations
+        assert not snapshot.run_archives
+        assert not snapshot.package_ready_records
+
 
 def _commit_finalize_complete(
     workspace: Path,

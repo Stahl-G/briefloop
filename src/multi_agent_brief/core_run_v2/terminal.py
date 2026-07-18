@@ -1324,6 +1324,12 @@ class CoreRunTerminalService:
                 ),
                 key=lambda item: item.gate_id,
             )
+            artifacts = {item.artifact_id: item for item in snapshot.artifacts}
+            current_gate_report = artifacts.get("finalize_quality_gate_report")
+            selected_report_revisions = {
+                (item.report_artifact.artifact_id, item.report_artifact.revision)
+                for item in selected
+            }
             legality = classify_recovery_legality(snapshot)
             expected_recovery_id = legality.recovery_id if legality.state == "recovered_current" else None
             if (
@@ -1335,6 +1341,15 @@ class CoreRunTerminalService:
                 or len(selected) != len(request.gate_evaluation_ids)
                 or {item.gate_id for item in selected} != set(GATE_IDS)
                 or len({item.gate_batch_id for item in selected}) != 1
+                or current_gate_report is None
+                or current_gate_report.current_revision < 1
+                or selected_report_revisions
+                != {
+                    (
+                        "finalize_quality_gate_report",
+                        current_gate_report.current_revision,
+                    )
+                }
                 or any(item.stage_id != "finalize" or item.blocking or item.status not in {"pass", "warning"} for item in selected)
                 or request.recovery_id != expected_recovery_id
             ):
