@@ -164,7 +164,22 @@ if (-not (Test-Path $venvDir)) {
         & $python.File @($python.Args) -m venv $venvDir
     }
 } else {
-    Write-Step "[3/5] Reusing virtual environment."
+    $venvOk = $false
+    if (Test-Path $venvPython) {
+        & $venvPython -c "import sys; raise SystemExit(0 if sys.version_info >= (3, 12) else 1)" 2>$null
+        $venvOk = ($LASTEXITCODE -eq 0)
+    }
+    if ($venvOk) {
+        Write-Step "[3/5] Reusing virtual environment."
+    } else {
+        Write-Step "[3/5] Recreating virtual environment (existing one predates the Python 3.12 floor)..."
+        Invoke-InstallCommand -Display "Remove-Item -Recurse -Force $venvDir" -Script {
+            Remove-Item -Recurse -Force -Path $venvDir
+        }
+        Invoke-InstallCommand -Display "$($python.Label) -m venv $venvDir" -Script {
+            & $python.File @($python.Args) -m venv $venvDir
+        }
+    }
 }
 
 if (-not $DryRun -and -not (Test-Path $venvPython)) {

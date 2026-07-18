@@ -34,8 +34,12 @@ echo "[1/4] Found Python: $PYTHON ($($PYTHON --version 2>&1))"
 if [ ! -d ".venv" ]; then
     echo "[2/4] Creating virtual environment..."
     $PYTHON -m venv .venv
-else
+elif [ -x ".venv/bin/python" ] && .venv/bin/python -c 'import sys; raise SystemExit(0 if sys.version_info >= (3, 12) else 1)' >/dev/null 2>&1; then
     echo "[2/4] Virtual environment already exists."
+else
+    echo "[2/4] Recreating virtual environment (existing one predates the Python 3.12 floor)..."
+    rm -rf .venv
+    $PYTHON -m venv .venv
 fi
 
 # 2. Activate

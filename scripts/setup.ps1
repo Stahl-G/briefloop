@@ -120,7 +120,18 @@ if (-not (Test-Path $venvDir)) {
     Write-Host "[2/4] Creating virtual environment..." -ForegroundColor Yellow
     & $python.File @($python.Args) -m venv $venvDir
 } else {
-    Write-Host "[2/4] Virtual environment already exists." -ForegroundColor Green
+    $venvOk = $false
+    if (Test-Path $venvPython) {
+        & $venvPython -c "import sys; raise SystemExit(0 if sys.version_info >= (3, 12) else 1)" 2>$null
+        $venvOk = ($LASTEXITCODE -eq 0)
+    }
+    if ($venvOk) {
+        Write-Host "[2/4] Virtual environment already exists." -ForegroundColor Green
+    } else {
+        Write-Host "[2/4] Recreating virtual environment (existing one predates the Python 3.12 floor)..." -ForegroundColor Yellow
+        Remove-Item -Recurse -Force -Path $venvDir
+        & $python.File @($python.Args) -m venv $venvDir
+    }
 }
 
 if (-not (Test-Path $venvPython)) {

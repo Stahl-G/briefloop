@@ -129,8 +129,12 @@ run mkdir -p "$PREFIX" "$BIN_DIR"
 if [ ! -d "$VENV_DIR" ]; then
     echo "[3/5] Creating virtual environment..."
     run "$PYTHON" -m venv "$VENV_DIR"
-else
+elif [ -x "$VENV_PYTHON" ] && "$VENV_PYTHON" -c 'import sys; raise SystemExit(0 if sys.version_info >= (3, 12) else 1)' >/dev/null 2>&1; then
     echo "[3/5] Reusing virtual environment."
+else
+    echo "[3/5] Recreating virtual environment (existing one predates the Python 3.12 floor)..."
+    run rm -rf "$VENV_DIR"
+    run "$PYTHON" -m venv "$VENV_DIR"
 fi
 
 if [ "$DRY_RUN" -eq 0 ] && [ ! -x "$VENV_PYTHON" ]; then
