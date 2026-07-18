@@ -72,6 +72,14 @@ page describes implemented runtime capability, not a breaking deep rename.
   Claim-Support Matrix delta candidates, and surface read-only status counts.
   This is a proposal surface only, not accepted support truth, adjudication
   queue creation, delivery gating, release authority, or semantic proof.
+- Experimental offline-shadow LAJ tools can execute or exactly replay one
+  public/synthetic Semantic Evaluator trial and deterministically render its
+  verified archive as standalone JSON, Markdown, and static HTML. These files
+  are visibly advisory second-opinion artifacts only. Missing, malformed,
+  failed, stale, or abstained LAJ never changes workflow status, gates,
+  finalization, delivery, repair, approval, contamination, reference
+  eligibility, or next-action authority; evaluator usefulness and efficacy are
+  not measured.
 - The v0.11 product-baseline target has stable product-facing workspace
   entries for `briefloop new industry-weekly`, `briefloop new
   management-monthly`, and `briefloop new document-review`. These entries map

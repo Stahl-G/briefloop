@@ -286,6 +286,9 @@ demo 用的是合成材料，主要用来展示证据链和门禁行为。真实
 - CLI：`briefloop`
 - Claude command：`/briefloop`
 - 实验性 WorkBuddy 指南：[docs/workbuddy.zh-CN.md](docs/workbuddy.zh-CN.md)
+- 实验性 offline-shadow LAJ：`briefloop experiments laj shadow-run` 与
+  `briefloop experiments laj present`；仅用于公开/合成材料的 advisory 评估及
+  独立 JSON/Markdown/HTML 展示
 
 v0.12.1 延续 v0.12.0 产品基线，并新增：
 
@@ -310,6 +313,9 @@ semantic-support auditor hardening line 包括：
 - durable source evidence pack materialization 和 source taxonomy normalization
 - 内部 review release-mode approval record
 - Quality Panel JSON / Markdown / HTML 投影及 audit bundle 集成
+- 独立的实验性 LAJ JSON / Markdown / HTML second-opinion artifact；它不改变
+  workflow status、Gate、finalize、delivery、repair、approval 或 next-action
+  authority，且 evaluator efficacy 尚未测量
 - reader-quality warning / projection surface：template conformance、
   materiality selection、support-calibrated wording、citation profile、
   coverage/omission 和 scoped final-abstract diagnostics
