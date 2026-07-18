@@ -16,6 +16,7 @@ import pytest
 
 from multi_agent_brief.contracts.v2 import (
     Approval,
+    ArtifactIdentityRecord,
     ArtifactRecord,
     ArtifactRevision,
     Delivery,
@@ -25,6 +26,7 @@ from multi_agent_brief.contracts.v2 import (
     SourceProposal,
     StageState,
     TransactionReceipt,
+    WorkspaceRunHead,
 )
 from multi_agent_brief.control_store import (
     ControlStoreCommitOutcomeUnknown,
@@ -95,7 +97,7 @@ artifact = ArtifactRecord.model_validate(
         "current_revision": 1,
         "status": "valid",
         "required": True,
-        "path": "output/brief.md",
+        "path": f"output/artifacts/{digest}/brief.md",
         "format": "markdown",
     }
 )
@@ -184,7 +186,7 @@ def _records(
             current_revision=1,
             status="valid",
             required=True,
-            path="output/brief.md",
+            path=f"output/artifacts/{BLOB_SHA256}/brief.md",
             format="markdown",
         ),
         revision=_record(
@@ -340,6 +342,23 @@ def _forged_receipt(
                 {"artifact_id": artifact_id, "revision": revision}
                 for artifact_id, revision in artifact_revisions
             ],
+            "artifact_identities": [],
+            "repair_cycles": [],
+            "artifact_supersessions": [],
+            "repair_completions": [],
+            "recovery_completions": [],
+            "run_head_transitions": [],
+            "finalize_renders": [],
+            "finalizations": [],
+            "run_archives": [],
+            "run_archive_artifact_bindings": [],
+            "package_ready_records": [],
+            "package_artifact_bindings": [],
+            "approvals": [],
+            "approval_package_bindings": [],
+            "delivery_authorizations": [],
+            "delivery_attempts": [],
+            "delivery_results": [],
         }
     )
     return TransactionReceipt.model_validate(values)
@@ -393,6 +412,20 @@ def _insert_receipt_row(
                 position,
                 reference.artifact_id,
                 reference.revision,
+            ),
+        )
+    for position, reference in enumerate(receipt.artifact_identities):
+        connection.execute(
+            """
+            INSERT INTO transaction_artifact_identities(
+                run_id, transaction_id, position, artifact_id
+            ) VALUES (?, ?, ?, ?)
+            """,
+            (
+                receipt.run_id,
+                receipt.transaction_id,
+                position,
+                reference.artifact_id,
             ),
         )
 
@@ -498,6 +531,9 @@ def test_control_store_round_trips_exact_nine_control_dtos(tmp_path: Path) -> No
         assert [
             (item.artifact_id, item.revision) for item in receipt.artifact_revisions
         ] == [(records.revision.artifact_id, records.revision.revision)]
+        assert [item.artifact_id for item in receipt.artifact_identities] == [
+            records.artifact.artifact_id
+        ]
 
         snapshot = store.load_snapshot(RUN_ID)
         assert snapshot.workspace_id == WORKSPACE_ID
@@ -506,6 +542,20 @@ def test_control_store_round_trips_exact_nine_control_dtos(tmp_path: Path) -> No
         assert snapshot.stage_states == (records.stage,)
         assert snapshot.invocations == (records.invocation,)
         assert snapshot.artifacts == (records.artifact,)
+        assert snapshot.artifact_identities == (
+            ArtifactIdentityRecord.model_validate(
+                {
+                    "schema_version": ArtifactIdentityRecord.schema_id,
+                    "run_id": RUN_ID,
+                    "artifact_id": records.artifact.artifact_id,
+                    "required": records.artifact.required,
+                    "initial_path": records.artifact.path,
+                    "format": records.artifact.format,
+                    "accepted_transaction_id": TRANSACTION_ID,
+                },
+                strict=True,
+            ),
+        )
         assert snapshot.artifact_revisions == (records.revision,)
         assert snapshot.events == (records.event,)
         assert snapshot.approvals == (records.approval,)
@@ -998,11 +1048,13 @@ def test_schema_settings_and_exact_table_universe(tmp_path: Path) -> None:
         "agent_invocations",
         "transactions",
         "transaction_events",
-        "transaction_artifact_revisions",
+            "transaction_artifact_revisions",
+            "transaction_artifact_identities",
         "transaction_sources",
         "transaction_proposals",
         "events",
-        "artifacts",
+            "artifacts",
+            "artifact_identities",
         "artifact_revisions",
         "approvals",
         "deliveries",
@@ -1034,12 +1086,50 @@ def test_schema_settings_and_exact_table_universe(tmp_path: Path) -> None:
         "transaction_gate_findings",
         "transaction_gate_artifact_bindings",
         "transaction_run_integrity_records",
+        "repair_cycles",
+        "artifact_supersessions",
+        "repair_completions",
+        "repair_completion_supersessions",
+        "repair_completion_transitions",
+        "recovery_completions",
+        "recovery_supersessions",
+        "recovery_stage_transitions",
+        "recovery_gate_evaluations",
+        "run_head_transitions",
+        "finalize_renders",
+        "finalize_render_artifacts",
+        "finalizations",
+        "finalization_gate_evaluations",
+        "run_archives",
+        "run_archive_artifact_bindings",
+        "package_ready_records",
+        "package_artifact_bindings",
+        "approval_package_bindings",
+        "delivery_authorizations",
+        "delivery_attempts",
+        "delivery_results",
+        "transaction_repair_cycles",
+        "transaction_artifact_supersessions",
+        "transaction_repair_completions",
+        "transaction_recovery_completions",
+        "transaction_run_head_transitions",
+        "transaction_finalize_renders",
+        "transaction_finalizations",
+        "transaction_run_archives",
+        "transaction_run_archive_artifact_bindings",
+        "transaction_package_ready_records",
+        "transaction_package_artifact_bindings",
+        "transaction_approvals",
+        "transaction_approval_package_bindings",
+        "transaction_delivery_authorizations",
+        "transaction_delivery_attempts",
+        "transaction_delivery_results",
     }
     with _create_store(tmp_path) as store:
         assert store._connection.execute("PRAGMA foreign_keys").fetchone()[0] == 1
         assert store._connection.execute("PRAGMA journal_mode").fetchone()[0] == "wal"
         assert store._connection.execute("PRAGMA synchronous").fetchone()[0] == 2
-        assert store._connection.execute("PRAGMA user_version").fetchone()[0] == 3
+        assert store._connection.execute("PRAGMA user_version").fetchone()[0] == 4
         tables = {
             row[0]
             for row in store._connection.execute(
@@ -1069,6 +1159,7 @@ def test_transaction_receipt_preserves_event_and_artifact_revision_order(
         for artifact_id in ("artifact-b", "artifact-a"):
             content = contents[artifact_id]
             digest = hashlib.sha256(content).hexdigest()
+            artifact_path = f"output/artifacts/{digest}/{artifact_id}.md"
             unit.put_artifact(
                 _record(
                     ArtifactRecord,
@@ -1077,7 +1168,7 @@ def test_transaction_receipt_preserves_event_and_artifact_revision_order(
                     current_revision=1,
                     status="valid",
                     required=True,
-                    path=f"output/{artifact_id}.md",
+                    path=artifact_path,
                     format="markdown",
                 )
             )
@@ -1086,7 +1177,7 @@ def test_transaction_receipt_preserves_event_and_artifact_revision_order(
                 run_id=RUN_ID,
                 artifact_id=artifact_id,
                 revision=1,
-                path=f"output/artifacts/{digest}/{artifact_id}.md",
+                path=artifact_path,
                 sha256=digest,
                 size_bytes=len(content),
                 frozen=True,
@@ -1118,7 +1209,189 @@ def test_transaction_receipt_preserves_event_and_artifact_revision_order(
             (reference.artifact_id, reference.revision)
             for reference in receipt.artifact_revisions
         ] == expected_revisions
+        assert [
+            reference.artifact_id for reference in receipt.artifact_identities
+        ] == ["artifact-a", "artifact-b"]
         assert store.load_snapshot(RUN_ID).transactions == (receipt,)
+
+
+def test_artifact_identity_is_inception_owned_and_history_is_revision_exact(
+    tmp_path: Path,
+) -> None:
+    records = _records()
+    second_content = b"Second immutable artifact revision.\n"
+    second_digest = hashlib.sha256(second_content).hexdigest()
+    second_path = f"output/artifacts/{second_digest}/brief.md"
+    with _create_store(tmp_path) as store:
+        def stage_first():
+            unit = store.begin(
+                RUN_ID,
+                TRANSACTION_ID,
+                "core-v2-initialize",
+                0,
+            )
+            unit.put_run(records.run)
+            unit.put_workspace_run_head(
+                _record(
+                    WorkspaceRunHead,
+                    workspace_id=WORKSPACE_ID,
+                    current_run_id=RUN_ID,
+                    updated_at=NOW,
+                )
+            )
+            unit.put_artifact(records.artifact)
+            unit.put_artifact_revision(records.revision, BLOB)
+            return unit
+
+        first = stage_first().commit()
+        identity_payload = store._connection.execute(
+            "SELECT payload_json FROM artifact_identities WHERE run_id=? AND artifact_id=?",
+            (RUN_ID, records.artifact.artifact_id),
+        ).fetchone()[0]
+
+        unit = store.begin(RUN_ID, "TX-ARTIFACT-REVISION-002", "artifact_update", 1)
+        unit.put_artifact(
+            records.artifact.model_copy(
+                update={"current_revision": 2, "path": second_path}
+            )
+        )
+        unit.put_artifact_revision(
+            records.revision.model_copy(
+                update={
+                    "revision": 2,
+                    "path": second_path,
+                    "sha256": second_digest,
+                    "size_bytes": len(second_content),
+                }
+            ),
+            second_content,
+        )
+        second = unit.commit()
+
+        assert second.artifact_identities == []
+        assert _table_count(store, "artifact_identities") == 1
+        assert _table_count(store, "transaction_artifact_identities") == 1
+        assert store._connection.execute(
+            "SELECT payload_json FROM artifact_identities WHERE run_id=? AND artifact_id=?",
+            (RUN_ID, records.artifact.artifact_id),
+        ).fetchone()[0] == identity_payload
+
+        history = store.load_history()
+        first_prefix = history.snapshot_at_revision(RUN_ID, 1)
+        second_prefix = history.snapshot_at_revision(RUN_ID, 2)
+        assert first_prefix.artifacts == (records.artifact,)
+        assert first_prefix.artifact_identities == second_prefix.artifact_identities
+        assert second_prefix.artifacts[0].current_revision == 2
+        assert second_prefix.artifacts[0].path == second_path
+        assert second_prefix.artifacts[0].required is records.artifact.required
+        assert second_prefix.artifacts[0].format == records.artifact.format
+
+        assert stage_first().commit() == first
+        assert store.current_revision == 2
+
+
+@pytest.mark.parametrize(
+    "update",
+    [
+        {"required": False},
+        {"format": "json"},
+        {"path": "output/renamed-before-first-revision.md"},
+    ],
+)
+def test_artifact_identity_stable_fields_and_revision_zero_path_are_immutable(
+    tmp_path: Path,
+    update: dict[str, object],
+) -> None:
+    records = _records()
+    expected = records.artifact.model_copy(
+        update={
+            "current_revision": 0,
+            "status": "expected",
+            "path": "output/expected-brief.md",
+        }
+    )
+    with _create_store(tmp_path) as store:
+        first = store.begin(RUN_ID, "TX-EXPECTED-001", "expected_artifact", 0)
+        first.put_run(records.run)
+        first.put_artifact(expected)
+        first.commit()
+        before_identity = store._connection.execute(
+            "SELECT payload_json FROM artifact_identities"
+        ).fetchone()[0]
+
+        changed = store.begin(RUN_ID, "TX-EXPECTED-002", "expected_artifact", 1)
+        changed.put_artifact(expected.model_copy(update=update))
+        with pytest.raises(ControlStoreConflict) as error:
+            changed.commit()
+        assert error.value.code == "relational_integrity_conflict"
+        assert store.current_revision == 1
+        assert _table_count(store, "transactions") == 1
+        assert store._connection.execute(
+            "SELECT payload_json FROM artifact_identities"
+        ).fetchone()[0] == before_identity
+
+
+def test_revision_positive_artifact_path_must_equal_its_exact_revision(
+    tmp_path: Path,
+) -> None:
+    records = _records()
+    second_content = b"Mismatched projection path.\n"
+    second_digest = hashlib.sha256(second_content).hexdigest()
+    revision_path = f"output/artifacts/{second_digest}/brief.md"
+    with _create_store(tmp_path) as store:
+        _stage_all(store, records).commit()
+        unit = store.begin(RUN_ID, "TX-PATH-MISMATCH-002", "artifact_update", 1)
+        unit.put_artifact(
+            records.artifact.model_copy(
+                update={"current_revision": 2, "path": "output/not-the-revision.md"}
+            )
+        )
+        unit.put_artifact_revision(
+            records.revision.model_copy(
+                update={
+                    "revision": 2,
+                    "path": revision_path,
+                    "sha256": second_digest,
+                    "size_bytes": len(second_content),
+                }
+            ),
+            second_content,
+        )
+        with pytest.raises(ControlStoreConflict) as error:
+            unit.commit()
+        assert error.value.code == "relational_integrity_conflict"
+        assert not store._blob_path(second_digest).exists()
+        assert store.current_revision == 1
+
+
+@pytest.mark.parametrize(
+    "failure_stage",
+    (
+        "before_artifact_identity_insert:1",
+        "after_artifact_identity_insert:1",
+    ),
+)
+def test_artifact_identity_insert_failure_never_leaves_partial_authority(
+    tmp_path: Path,
+    failure_stage: str,
+) -> None:
+    def fail(stage: str) -> None:
+        if stage == failure_stage:
+            raise RuntimeError("synthetic identity insertion failure")
+
+    with _create_store(tmp_path, failure_hook=fail) as store:
+        with pytest.raises(RuntimeError, match="synthetic identity insertion failure"):
+            _stage_all(store).commit()
+        assert store.current_revision == 0
+        for table in (
+            "runs",
+            "transactions",
+            "artifacts",
+            "artifact_identities",
+            "artifact_revisions",
+            "transaction_artifact_identities",
+        ):
+            assert _table_count(store, table) == 0
 
 
 def test_transaction_exact_replay_is_idempotent_and_conflict_is_value_free(
@@ -1190,6 +1463,9 @@ def test_dual_connection_late_conflict_leaves_only_non_authoritative_orphan(
     loser_content = b"Late conflicting content-addressed blob.\n"
     loser_sha256 = hashlib.sha256(loser_content).hexdigest()
     loser_artifact_id = "late-conflict-brief"
+    loser_artifact_path = (
+        f"output/artifacts/{loser_sha256}/{loser_artifact_id}.md"
+    )
     loser_transaction_id = "TX-LATE-CONFLICT-002"
     loser = primary.begin(
         RUN_ID,
@@ -1205,7 +1481,7 @@ def test_dual_connection_late_conflict_leaves_only_non_authoritative_orphan(
             current_revision=1,
             status="valid",
             required=False,
-            path=f"output/{loser_artifact_id}.md",
+            path=loser_artifact_path,
             format="markdown",
         )
     )
@@ -1215,7 +1491,7 @@ def test_dual_connection_late_conflict_leaves_only_non_authoritative_orphan(
             run_id=RUN_ID,
             artifact_id=loser_artifact_id,
             revision=1,
-            path=f"output/artifacts/{loser_sha256}/{loser_artifact_id}.md",
+            path=loser_artifact_path,
             sha256=loser_sha256,
             size_bytes=len(loser_content),
             frozen=True,
@@ -1840,6 +2116,8 @@ def test_event_revision_and_approval_rows_are_append_only(tmp_path: Path) -> Non
                 "UPDATE events SET reason = 'changed'",
                 "DELETE FROM artifact_revisions",
                 "UPDATE approvals SET decision = 'reject'",
+                "UPDATE artifact_identities SET format = 'json'",
+                "DELETE FROM transaction_artifact_identities",
             ):
                 with pytest.raises(sqlite3.IntegrityError, match="append_only"):
                     connection.execute(statement)
@@ -1850,6 +2128,141 @@ def test_event_revision_and_approval_rows_are_append_only(tmp_path: Path) -> Non
         assert snapshot.events == (_records().event,)
         assert snapshot.artifact_revisions == (_records().revision,)
         assert snapshot.approvals == (_records().approval,)
+
+
+@pytest.mark.parametrize(
+    ("corruption", "expected_code"),
+    (
+        ("missing_receipt_relation", "transaction_relation_mismatch"),
+        ("identity_payload", "transaction_ledger_integrity_invalid"),
+        ("current_projection", "transaction_ledger_integrity_invalid"),
+    ),
+)
+def test_artifact_identity_graph_tampering_fails_as_ledger_integrity(
+    tmp_path: Path,
+    corruption: str,
+    expected_code: str,
+) -> None:
+    records = _records()
+    store = _create_store(tmp_path)
+    _stage_all(store, records).commit()
+    database = store.path
+    store.close()
+
+    connection = sqlite3.connect(database)
+    try:
+        if corruption == "missing_receipt_relation":
+            connection.executescript(
+                """
+                DROP TRIGGER transaction_artifact_identities_no_delete;
+                DELETE FROM transaction_artifact_identities;
+                CREATE TRIGGER transaction_artifact_identities_no_delete BEFORE DELETE ON transaction_artifact_identities BEGIN SELECT RAISE(ABORT,'append_only'); END;
+                """
+            )
+        elif corruption == "identity_payload":
+            connection.executescript(
+                """
+                DROP TRIGGER artifact_identities_no_update;
+                UPDATE artifact_identities SET payload_json='{}';
+                CREATE TRIGGER artifact_identities_no_update BEFORE UPDATE ON artifact_identities BEGIN SELECT RAISE(ABORT,'append_only'); END;
+                """
+            )
+        else:
+            forged = records.artifact.model_copy(
+                update={"path": "output/strict-but-not-derived.md"}
+            )
+            connection.execute(
+                "UPDATE artifacts SET path=?, payload_json=? WHERE run_id=? AND artifact_id=?",
+                (
+                    forged.path,
+                    canonical_model_text(forged),
+                    RUN_ID,
+                    forged.artifact_id,
+                ),
+            )
+        connection.commit()
+        assert connection.execute("PRAGMA quick_check").fetchone()[0] == "ok"
+        assert connection.execute("PRAGMA foreign_key_check").fetchall() == []
+    finally:
+        connection.close()
+
+    with pytest.raises(ControlStoreIntegrityError) as error:
+        SQLiteControlStore.open(database)
+    assert error.value.code == expected_code
+    assert str(error.value) == expected_code
+
+
+def test_migration_0004_rebuilt_rows_remain_append_only(tmp_path: Path) -> None:
+    with _create_store(tmp_path) as store:
+        _stage_all(store).commit()
+        connection = sqlite3.connect(store.path)
+        try:
+            connection.execute("PRAGMA foreign_keys = ON")
+            connection.executescript(
+                """
+                INSERT INTO stage_transitions(
+                    run_id, transition_id, schema_version, stage_id,
+                    transition_kind, prior_status, prior_revision,
+                    result_status, result_revision, run_contract_fingerprint,
+                    transition_event_id, accepted_transaction_id,
+                    request_fingerprint, payload_json
+                )
+                SELECT run_id, 'TRN-MIGRATION-0004-001',
+                    'briefloop.stage_transition_record.v2', 'scout',
+                    'activate', 'pending', 0, 'ready', 1,
+                    printf('%064d', 1), event_id, transaction_id,
+                    printf('%064d', 2), '{}'
+                FROM events LIMIT 1;
+
+                INSERT INTO gate_evaluations(
+                    run_id, evaluation_id, schema_version, gate_batch_id,
+                    stage_id, gate_id, policy_version,
+                    run_contract_fingerprint, status, blocking,
+                    report_artifact_id, report_artifact_revision,
+                    evaluation_event_id, accepted_transaction_id,
+                    request_fingerprint, payload_json
+                )
+                SELECT revisions.run_id, 'EVAL-MIGRATION-0004-001',
+                    'briefloop.gate_evaluation_record.v2',
+                    'BATCH-MIGRATION-0004-001', 'auditor', 'material_fact',
+                    '1', printf('%064d', 1), 'pass', 0,
+                    revisions.artifact_id, revisions.revision,
+                    events.event_id, events.transaction_id,
+                    printf('%064d', 2), '{}'
+                FROM artifact_revisions AS revisions
+                JOIN events ON events.run_id = revisions.run_id
+                LIMIT 1;
+
+                INSERT INTO gate_artifact_bindings(
+                    run_id, evaluation_id, position, schema_version,
+                    artifact_id, artifact_revision, artifact_sha256, usage,
+                    accepted_transaction_id, payload_json
+                )
+                SELECT evaluations.run_id, evaluations.evaluation_id, 0,
+                    'briefloop.gate_artifact_binding.v2',
+                    revisions.artifact_id, revisions.revision,
+                    revisions.sha256, 'brief',
+                    evaluations.accepted_transaction_id, '{}'
+                FROM gate_evaluations AS evaluations
+                JOIN artifact_revisions AS revisions
+                    ON revisions.run_id = evaluations.run_id
+                LIMIT 1;
+                """
+            )
+
+            for statement in (
+                "UPDATE stage_transitions SET result_status = 'blocked'",
+                "DELETE FROM stage_transitions",
+                "UPDATE gate_evaluations SET status = 'warning'",
+                "DELETE FROM gate_evaluations",
+                "UPDATE gate_artifact_bindings SET usage = 'audit_report'",
+                "DELETE FROM gate_artifact_bindings",
+            ):
+                with pytest.raises(sqlite3.IntegrityError, match="append_only"):
+                    connection.execute(statement)
+                connection.rollback()
+        finally:
+            connection.close()
 
 
 def test_duplicate_immutable_identity_rolls_back_without_new_revision(
@@ -2002,9 +2415,24 @@ def test_load_snapshot_keeps_one_sqlite_read_revision_across_external_commit(
     original_loader = primary._load_for_run
     committed = False
 
-    def load_and_commit(model_type, table, run_id, order_by, columns):
+    def load_and_commit(
+        model_type,
+        table,
+        run_id,
+        order_by,
+        columns,
+        *,
+        run_column="run_id",
+    ):
         nonlocal committed
-        values = original_loader(model_type, table, run_id, order_by, columns)
+        values = original_loader(
+            model_type,
+            table,
+            run_id,
+            order_by,
+            columns,
+            run_column=run_column,
+        )
         if model_type is StageState and not committed:
             committed = True
             update = secondary.begin(
@@ -2122,7 +2550,7 @@ def test_future_schema_fails_closed(tmp_path: Path) -> None:
     store = _create_store(tmp_path)
     store.close()
     connection = sqlite3.connect(tmp_path / "control.db")
-    connection.execute("PRAGMA user_version = 4")
+    connection.execute("PRAGMA user_version = 5")
     connection.close()
     with pytest.raises(ControlStoreSchemaError) as error:
         SQLiteControlStore.open(tmp_path / "control.db")
@@ -2396,6 +2824,14 @@ def test_migration_resource_matches_packaged_source_text() -> None:
         "0003.sql",
     )
     assert packaged_3.read_text(encoding="utf-8") == migration_3.read_text(
+        encoding="utf-8"
+    )
+    migration_4 = source.with_name("0004.sql")
+    packaged_4 = resources.files("multi_agent_brief.control_store").joinpath(
+        "migrations",
+        "0004.sql",
+    )
+    assert packaged_4.read_text(encoding="utf-8") == migration_4.read_text(
         encoding="utf-8"
     )
 

@@ -296,29 +296,7 @@ def _proposal_request(
 def _replace_seed_context(workspace: Path, case: str) -> None:
     with SQLiteControlStore.open(workspace / "briefloop.db") as store:
         if case == "run_not_current":
-            unit = store.begin(
-                "RUN-PR3-OTHER",
-                "TX-CONTEXT-RUN",
-                "private_test_context",
-                1,
-            )
-            unit.put_run(
-                _record(
-                    RunIdentity,
-                    run_id="RUN-PR3-OTHER",
-                    workspace_id=WORKSPACE_ID,
-                    runtime="operator",
-                    created_at=NOW,
-                )
-            )
-            unit.put_workspace_run_head(
-                _record(
-                    WorkspaceRunHead,
-                    workspace_id=WORKSPACE_ID,
-                    current_run_id="RUN-PR3-OTHER",
-                    updated_at=NOW,
-                )
-            )
+            raise AssertionError("run_not_current requires a Core v2 reset fixture")
         else:
             unit = store.begin(
                 RUN_ID,
@@ -609,7 +587,6 @@ def test_missing_explicit_run_head_is_zero_write(tmp_path: Path) -> None:
 @pytest.mark.parametrize(
     ("case", "error_code"),
     [
-        ("run_not_current", "run_not_current"),
         ("run_archived", "new_run_required"),
         ("invocation_not_active", "invocation_not_active"),
         ("invocation_role_mismatch", "invocation_role_mismatch"),

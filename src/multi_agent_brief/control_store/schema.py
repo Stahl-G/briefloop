@@ -12,9 +12,9 @@ from multi_agent_brief.control_store.errors import (
 )
 
 
-SCHEMA_VERSION = 3
+SCHEMA_VERSION = 4
 MIGRATION_NAME = "0001"
-MIGRATIONS = ((1, "0001"), (2, "0002"), (3, "0003"))
+MIGRATIONS = ((1, "0001"), (2, "0002"), (3, "0003"), (4, "0004"))
 _SCHEMA_OBJECT_TYPES = ("index", "table", "trigger", "view")
 
 
@@ -116,8 +116,12 @@ def initialize_schema(connection: sqlite3.Connection) -> None:
         version = int(connection.execute("PRAGMA user_version").fetchone()[0])
         if version != 0:
             raise ControlStoreSchemaError("database_not_empty")
+        # Immutable migration rewrites use SQLite's legacy rename behavior so
+        # foreign-key declarations continue to name the replacement table.
+        connection.execute("PRAGMA foreign_keys = OFF")
         for sql in _ordered_migration_sql():
             connection.executescript(sql)
+        connection.execute("PRAGMA foreign_keys = ON")
     except ControlStoreSchemaError:
         raise
     except sqlite3.Error as exc:

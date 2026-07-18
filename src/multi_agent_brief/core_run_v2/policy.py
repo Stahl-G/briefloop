@@ -29,6 +29,10 @@ REQUIRED_AUDITOR_GATES = (
     "material_fact",
     "target_relevance",
 )
+TERMINAL_INTERNAL_ARTIFACT_IDS = (
+    "core_v2_run_archive",
+    "core_v2_package_manifest",
+)
 DOCTOR_IMPLEMENTATION = "core-v2-doctor"
 DOCTOR_VERSION = "1"
 CLAIM_EPISTEMIC = MappingProxyType(
@@ -171,8 +175,33 @@ def transaction_type_for(effect_kind: str) -> str:
         "gate_evaluation": "core-v2-gate-evaluation",
         "stage_transition": "core-v2-stage-transition",
         "integrity_contamination": "core-v2-integrity-contamination",
+        "repair_start": "core-v2-repair-start",
+        "artifact_supersession": "core-v2-artifact-supersession",
+        "repair_complete": "core-v2-repair-complete",
+        "recovery_complete": "core-v2-recovery-complete",
+        "run_head_transition": "core-v2-run-reset",
+        "finalize_render": "core-v2-finalize-render",
+        "finalize_complete": "core-v2-finalize-complete",
+        "internal_approval": "core-v2-internal-approval",
+        "delivery_authorization": "core-v2-delivery-authorization",
+        "delivery_attempt": "core-v2-delivery-attempt",
+        "delivery_result": "core-v2-delivery-result",
     }
     return values[effect_kind]
+
+
+def archive_artifact_usage(artifact_id: str) -> str:
+    """Return the sole canonical archive usage vocabulary for an artifact."""
+
+    if artifact_id.startswith("run_contract_"):
+        return "control"
+    if artifact_id.endswith("quality_gate_report"):
+        return "gate"
+    if artifact_id == "reader_brief":
+        return "reader"
+    if artifact_id in {"claim_ledger", "audit_report"}:
+        return "evidence"
+    return "workflow"
 
 
 __all__ = [
@@ -184,7 +213,9 @@ __all__ = [
     "INTERNAL_CONTRACT_ARTIFACT_IDS",
     "REQUIRED_AUDITOR_GATES",
     "STAGE_ROLES",
+    "TERMINAL_INTERNAL_ARTIFACT_IDS",
     "ArtifactPolicy",
+    "archive_artifact_usage",
     "blob_workspace_path",
     "derived_id",
     "normalize_text",
