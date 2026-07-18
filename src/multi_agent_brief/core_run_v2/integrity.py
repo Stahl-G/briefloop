@@ -212,6 +212,7 @@ class RunIntegrityService:
         additional_revisions: Iterable[ArtifactRevision] = (),
     ) -> tuple[ArtifactRevision, CheckoutObservation] | None:
         protected_keys = protected_revision_keys(verified)
+        protected_keys.update(current_checkout_revision_keys(verified))
         revisions = {
             (item.artifact_id, item.revision): item
             for item in verified.snapshot.artifact_revisions
@@ -486,21 +487,29 @@ def protected_revision_keys(
         keys.add(
             (freeze.ledger_artifact.artifact_id, freeze.ledger_artifact.revision)
         )
+    return keys
+
+
+def current_checkout_revision_keys(
+    verified: VerifiedCoreRun,
+) -> set[tuple[str, int]]:
+    """Return the complete receipt-bound current working projection."""
+
     receipt_revisions = {
         item.transaction_id: item.committed_revision
         for item in verified.snapshot.transactions
     }
-    if verified.snapshot.receipt_checkout_bindings:
-        current = max(
-            verified.snapshot.receipt_checkout_bindings,
-            key=lambda item: receipt_revisions.get(item.transaction_id, -1),
-        )
-        keys.update(
-            (item.artifact_id, item.artifact_revision)
-            for item in verified.snapshot.checkout_revision_members
-            if item.checkout_revision_id == current.post_checkout_revision_id
-        )
-    return keys
+    if not verified.snapshot.receipt_checkout_bindings:
+        return set()
+    current = max(
+        verified.snapshot.receipt_checkout_bindings,
+        key=lambda item: receipt_revisions.get(item.transaction_id, -1),
+    )
+    return {
+        (item.artifact_id, item.artifact_revision)
+        for item in verified.snapshot.checkout_revision_members
+        if item.checkout_revision_id == current.post_checkout_revision_id
+    }
 
 
 def _workspace_root(workspace: str | os.PathLike[str]) -> Path:
