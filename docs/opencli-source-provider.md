@@ -48,7 +48,7 @@ The provider appends `-f json` automatically unless the command already specifie
 Run:
 
 ```bash
-multi-agent-brief doctor --config path/to/workspace/config.yaml
+briefloop doctor --config path/to/workspace/config.yaml
 ```
 
 The doctor check validates whether `opencli` is installed and whether configured commands are allowed.

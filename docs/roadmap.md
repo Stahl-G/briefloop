@@ -30,7 +30,7 @@ Two design principles guide the next phases:
 
 ### v0.5.7
 
-- `multi-agent-brief run` became a runtime handoff launcher rather than a Python brief generator.
+- `briefloop run` became a runtime handoff launcher rather than a Python brief generator.
 - The standard workflow moved to external subagents for source extraction, screening, claim ledger creation, drafting, editing, audit, and formatting.
 - Hermes became the primary runtime path for scheduled and delegated brief workflows.
 - Input governance separates evidence from feedback, instructions, and context.
@@ -116,7 +116,7 @@ Two design principles guide the next phases:
 - Install/runtime asset parity is stabilized before v0.7 improvement-proposal work.
 - Package installs include Python CLI code, packaged contracts, policy packs, and packaged public-safe eval fixtures.
 - Source runtime directories such as `.agents/`, `.claude/`, `.codex/`, `.opencode/`, and `integrations/hermes-plugin/` are documented as source-clone-only unless copied into a workspace.
-- `multi-agent-brief runtime install --workspace <workspace> --runtime opencode|claude|codex|all` installs workspace-local OpenCode/Claude Code runtime kits and Experimental Codex custom-agent assets from a source clone.
+- `briefloop runtime install --workspace <workspace> --runtime opencode|claude|codex|all` installs workspace-local OpenCode/Claude Code runtime kits and Experimental Codex custom-agent assets from a source clone.
 - v0.6.9 does not add FrictionStore, improvement proposal commands, policy-pack authoring, or automatic workflow execution.
 
 ### v0.7.0
@@ -278,9 +278,9 @@ Public scope:
   report is being produced.
 - Introduce initial report packs such as `market_weekly`,
   `management_monthly`, and later `evidence_extract`.
-- Improve zero-config workspace creation while keeping `multi-agent-brief` as
-  the stable engine CLI, `briefloop` as its shell alias, `/briefloop` as the
-  writer command, and `/mabw` as the compatibility writer command.
+- Improve zero-config workspace creation while keeping `briefloop` as
+  the public CLI, `multi-agent-brief` as its compatibility entrypoint,
+  `/briefloop` as the writer command, and `/mabw` as the compatibility writer command.
 - Separate reader-facing delivery bundles from audit/control bundles as an
   export/projection layer, without silently moving or deleting existing control
   artifacts.

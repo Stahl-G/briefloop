@@ -71,7 +71,7 @@ modules:
 
 ```bash
 # 创建空白候选模板
-multi-agent-brief competitors init --config workspace/config.yaml
+briefloop competitors init --config workspace/config.yaml
 
 # 在 Claude Code 中让 LLM subagent 推荐竞对：
 # /propose-competitors workspace/
@@ -81,10 +81,10 @@ multi-agent-brief competitors init --config workspace/config.yaml
 # 合并已确认竞对
 
 # 查看待审核候选
-multi-agent-brief competitors list --config workspace/config.yaml
+briefloop competitors list --config workspace/config.yaml
 
 # 合并已确认竞对
-multi-agent-brief competitors merge --config workspace/config.yaml
+briefloop competitors merge --config workspace/config.yaml
 ```
 
 ## 中间产物

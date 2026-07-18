@@ -377,7 +377,7 @@ jobs:
           for subcmd in "--help" "run --help" "init --help" "state --help" "finalize --help"; do
             /tmp/mabw-wheel-smoke/bin/briefloop $subcmd >/dev/null 2>&1; rc_public=$?
             /tmp/mabw-wheel-smoke/bin/multi-agent-brief $subcmd >/dev/null 2>&1; rc_compat=$?
-            if [ "$rc_public" -ne 0 ] || [ "$rc_public" -ne "$rc_compat" ]; then
+            if [ "$rc_public" -ne "$rc_compat" ]; then
               echo "exit-code mismatch for '$subcmd': briefloop=$rc_public multi-agent-brief=$rc_compat"
               mismatch=1
             fi

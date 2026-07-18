@@ -55,9 +55,9 @@ These metrics require real runtime traces and baseline comparisons. They are not
 ## Commands
 
 ```bash
-multi-agent-brief eval-cases list
-multi-agent-brief eval-cases validate
-multi-agent-brief eval-cases run --json
+briefloop eval-cases list
+briefloop eval-cases validate
+briefloop eval-cases run --json
 ```
 
 Use `--case-id <id>` to run one case and `--cases-dir <path>` for a custom fixture directory.
