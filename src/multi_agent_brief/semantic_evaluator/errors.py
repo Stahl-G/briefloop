@@ -84,6 +84,22 @@ SHADOW_REASON_CODES = (
     "provider_boundary_invalid",
 )
 
+STUDY_REASON_CODES = (
+    "study_declaration_invalid",
+    "utility_target_ineligible",
+    "study_report_binding_mismatch",
+    "sensitivity_manifest_invalid",
+    "sensitivity_case_binding_mismatch",
+    "provider_execution_authorization_invalid",
+    "budget_preflight_unavailable",
+    "budget_provider_call_limit_exceeded",
+    "budget_input_token_limit_exceeded",
+    "provider_exclusion_invalid",
+    "study_execution_evidence_incomplete",
+    "study_execution_binding_mismatch",
+    "sensitivity_comparison_invalid",
+)
+
 
 @dataclass(frozen=True)
 class EvaluatorFailure:
@@ -120,6 +136,7 @@ __all__ = [
     "EvaluatorFailure",
     "PARSER_REASON_CODES",
     "SHADOW_REASON_CODES",
+    "STUDY_REASON_CODES",
     "SemanticEvaluatorError",
     "VALIDATION_REASON_CODES",
     "value_free_violations",

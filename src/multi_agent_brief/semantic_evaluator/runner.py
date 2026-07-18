@@ -146,6 +146,17 @@ class ShadowRunResult:
 
 
 @dataclass(frozen=True)
+class PreparedShadowRun:
+    """One immutable admitted prompt set, before any archive or adapter effect."""
+
+    admission: Any
+    archive_root: Path
+    trial_id: str
+    prompt_sizer: Any
+    policy: ShadowExecutionPolicy
+
+
+@dataclass(frozen=True)
 class _ArchivedAttempt:
     request: FrozenProviderRequest
     raw: RawProviderAttempt
@@ -751,7 +762,7 @@ def _archive_payloads(
     return payloads
 
 
-def run_shadow(
+def prepare_shadow_run(
     *,
     report: str | Path,
     bounded_context: str | Path,
@@ -759,12 +770,8 @@ def run_shadow(
     instrument: str | Path,
     trial_id: str,
     archive_root: str | Path,
-    adapter_factory: Callable[[ShadowExecutionManifest], SemanticEvaluatorAdapter]
-    | None = None,
-    clock: Callable[[], str] = _utc_now,
-    sleep: Callable[[float], None] = time.sleep,
-) -> ShadowRunResult:
-    """Run or exactly replay one isolated public/synthetic shadow trial."""
+) -> PreparedShadowRun | ShadowRunResult:
+    """Freeze one admitted prompt set without archive, credentials, or provider."""
 
     try:
         report_bytes, context, config, trial_id, root, common_input_root = (
@@ -817,10 +824,36 @@ def run_shadow(
         return _failure(*admission.reason_codes)
     try:
         policy = _policy(adapter_id)
+    except SemanticEvaluatorError as exc:
+        return _failure(exc.reason_code)
+    return PreparedShadowRun(
+        admission=admission,
+        archive_root=root,
+        trial_id=trial_id,
+        prompt_sizer=prompt_sizer,
+        policy=policy,
+    )
+
+
+def execute_prepared_shadow_run(
+    prepared: PreparedShadowRun,
+    *,
+    adapter_factory: Callable[[ShadowExecutionManifest], SemanticEvaluatorAdapter]
+    | None = None,
+    clock: Callable[[], str] = _utc_now,
+    sleep: Callable[[float], None] = time.sleep,
+) -> ShadowRunResult:
+    """Replay or execute exactly the immutable prompt set produced by prepare."""
+
+    admission = prepared.admission
+    root = prepared.archive_root
+    trial_id = prepared.trial_id
+    policy = prepared.policy
+    try:
         execution = _execution_manifest(
             instrument_sha256=admission.instrument_manifest.instrument_sha256,
             policy=policy,
-            prompt_sizer=prompt_sizer,
+            prompt_sizer=prepared.prompt_sizer,
         )
         request = _shadow_request(admission, execution)
         replay = resolve_existing_archive(
@@ -903,10 +936,46 @@ def run_shadow(
     return _from_archive(published, replayed=False)
 
 
+def run_shadow(
+    *,
+    report: str | Path,
+    bounded_context: str | Path,
+    profile: str,
+    instrument: str | Path,
+    trial_id: str,
+    archive_root: str | Path,
+    adapter_factory: Callable[[ShadowExecutionManifest], SemanticEvaluatorAdapter]
+    | None = None,
+    clock: Callable[[], str] = _utc_now,
+    sleep: Callable[[float], None] = time.sleep,
+) -> ShadowRunResult:
+    """Run or exactly replay one isolated public/synthetic shadow trial."""
+
+    prepared = prepare_shadow_run(
+        report=report,
+        bounded_context=bounded_context,
+        profile=profile,
+        instrument=instrument,
+        trial_id=trial_id,
+        archive_root=archive_root,
+    )
+    if isinstance(prepared, ShadowRunResult):
+        return prepared
+    return execute_prepared_shadow_run(
+        prepared,
+        adapter_factory=adapter_factory,
+        clock=clock,
+        sleep=sleep,
+    )
+
+
 __all__ = [
     "DEFAULT_TIMEOUT_SECONDS",
     "PROFILE_ID",
+    "PreparedShadowRun",
     "RUNNER_VERSION",
     "ShadowRunResult",
+    "execute_prepared_shadow_run",
+    "prepare_shadow_run",
     "run_shadow",
 ]

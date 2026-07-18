@@ -4,10 +4,18 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 import json
+from pathlib import Path
 from types import SimpleNamespace
 
 from multi_agent_brief.cli import experiments_commands
 from multi_agent_brief.cli.main import build_parser, main
+from multi_agent_brief.semantic_evaluator.serialization import (
+    canonical_json_bytes,
+    canonical_sha256,
+)
+from multi_agent_brief.semantic_evaluator.study_contracts import (
+    STUDY_DECLARATION_SCHEMA_ID,
+)
 
 
 @dataclass(frozen=True)
@@ -78,6 +86,71 @@ def _demo_argv(*, json_output: bool = True) -> list[str]:
     return values
 
 
+def _study_preflight_argv() -> list[str]:
+    return [
+        "experiments",
+        "laj",
+        "study-preflight",
+        "--declaration",
+        "/private/declaration.json",
+        "--report",
+        "/private/report.md",
+        "--bounded-context",
+        "/private/context.json",
+        "--instrument",
+        "/private/instrument.json",
+        "--trial-id",
+        "trial-study-v1",
+        "--archive-root",
+        "/private/archive",
+        "--budget-policy",
+        "/private/budget.json",
+        "--output",
+        "/private/preflight.json",
+        "--json",
+    ]
+
+
+def _budgeted_argv() -> list[str]:
+    return [
+        "experiments",
+        "laj",
+        "budgeted-shadow-run",
+        "--authorization",
+        "/private/authorization.json",
+        "--budget-policy",
+        "/private/budget.json",
+        "--report",
+        "/private/report.md",
+        "--bounded-context",
+        "/private/context.json",
+        "--instrument",
+        "/private/instrument.json",
+        "--archive-root",
+        "/private/archive",
+        "--evidence-output",
+        "/private/evidence.json",
+        "--json",
+    ]
+
+
+def _study_compare_argv() -> list[str]:
+    return [
+        "experiments",
+        "laj",
+        "study-compare",
+        "--case",
+        "/private/case.json",
+        "--execution-evidence",
+        "/private/evidence.json",
+        "--archive",
+        "/private/archive/trial",
+        "--output",
+        "/private/comparison.json",
+        "--json",
+    ]
+
+
 def _fake_runner(monkeypatch, *, result: _Result | None = None) -> list[dict]:
     calls: list[dict] = []
 
@@ -109,6 +182,62 @@ def test_shadow_cli_is_registered_only_below_experiments_laj() -> None:
     assert demo.command == "experiments"
     assert demo.experiments_action == "laj"
     assert demo.experiment_laj_action == "demo"
+
+    assert (
+        build_parser().parse_args(_study_preflight_argv()).experiment_laj_action
+        == "study-preflight"
+    )
+    budgeted = build_parser().parse_args(_budgeted_argv())
+    assert budgeted.experiment_laj_action == "budgeted-shadow-run"
+    assert not hasattr(budgeted, "ground_truth")
+    assert not hasattr(budgeted, "sensitivity_manifest")
+    assert (
+        build_parser().parse_args(_study_compare_argv()).experiment_laj_action
+        == "study-compare"
+    )
+
+
+def test_study_preflight_failure_precedence_is_value_free_and_zero_provider(
+    tmp_path: Path, capsys
+) -> None:
+    payload = {
+        "schema_version": STUDY_DECLARATION_SCHEMA_ID,
+        "study_id": "study-ineligible-cli",
+        "study_kind": "product_utility_check",
+        "artifact_class": "technical_postmortem",
+        "report_sha256": "0" * 64,
+        "origin_label": "public postmortem",
+        "public_safe": True,
+        "synthetic": False,
+        "self_diagnosing": True,
+        "reader_facing": False,
+        "expected_mutation_count": 0,
+    }
+    declaration = tmp_path / "declaration.json"
+    declaration.write_bytes(
+        canonical_json_bytes(
+            {**payload, "declaration_sha256": canonical_sha256(payload)}
+        )
+    )
+    output = tmp_path / "preflight.json"
+    argv = _study_preflight_argv()
+    replacements = {
+        "--declaration": str(declaration),
+        "--report": str(tmp_path / "PRIVATE_MISSING_REPORT.md"),
+        "--budget-policy": str(tmp_path / "PRIVATE_MALFORMED_BUDGET.json"),
+        "--output": str(output),
+    }
+    for option, value in replacements.items():
+        argv[argv.index(option) + 1] = value
+    assert main(argv) == 1
+    rendered = capsys.readouterr().out
+    result = json.loads(rendered)
+    assert result["reason_codes"] == ["utility_target_ineligible"]
+    assert result["provider_calls"] == 0
+    assert "/private" not in rendered.lower()
+    assert json.loads(output.read_bytes())["reason_codes"] == [
+        "utility_target_ineligible"
+    ]
 
 
 def test_demo_cli_projects_synthetic_nonqualifying_result(monkeypatch, capsys) -> None:

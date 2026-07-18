@@ -33,7 +33,13 @@ from multi_agent_brief.semantic_evaluator.prompt_sizer import (
     CLIPROXY_PROMPT_SIZER_ID,
     CLIPROXY_PROMPT_SIZER_VERSION,
 )
-from multi_agent_brief.semantic_evaluator.runner import PROFILE_ID, run_shadow
+from multi_agent_brief.semantic_evaluator.runner import (
+    PROFILE_ID,
+    PreparedShadowRun,
+    execute_prepared_shadow_run,
+    prepare_shadow_run,
+    run_shadow,
+)
 from multi_agent_brief.semantic_evaluator.serialization import canonical_json_bytes
 
 
@@ -383,3 +389,26 @@ def test_adapter_exception_is_typed_terminal_and_value_free(tmp_path: Path) -> N
     assert failed[0]["facts"]["transport_kind"] == "adapter_error"
     assert failed[0]["retry_eligible"] is False
     assert len(captures[0].calls) == 9
+
+
+def test_shared_prepare_execute_matches_ordinary_runner_lifecycle(
+    tmp_path: Path,
+) -> None:
+    (tmp_path / "prepared").mkdir()
+    (tmp_path / "ordinary").mkdir()
+    prepared_invocation = _invocation(tmp_path / "prepared")
+    prepared_invocation.pop("clock")
+    prepared = prepare_shadow_run(**prepared_invocation)
+    assert isinstance(prepared, PreparedShadowRun)
+    assert len(prepared.admission.prompts) == 9
+    assert not Path(prepared_invocation["archive_root"]).exists()
+
+    prepared_result = execute_prepared_shadow_run(prepared)
+    ordinary_result = run_shadow(**_invocation(tmp_path / "ordinary"))
+    assert prepared_result.ok is ordinary_result.ok is True
+    assert prepared_result.run_status == ordinary_result.run_status == "completed"
+    assert (
+        prepared_result.validation_status
+        == ordinary_result.validation_status
+        == "accepted"
+    )

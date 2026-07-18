@@ -56,6 +56,8 @@ import multi_agent_brief.semantic_evaluator.adapter as shadow_adapter_module
 import multi_agent_brief.semantic_evaluator.archive as shadow_archive_module
 import multi_agent_brief.semantic_evaluator.runner as shadow_runner_module
 import multi_agent_brief.semantic_evaluator.shadow_contracts as shadow_contracts_module
+import multi_agent_brief.semantic_evaluator.study as study_module
+import multi_agent_brief.semantic_evaluator.study_contracts as study_contracts_module
 import multi_agent_brief.semantic_evaluator.adapters.local_proxy_responses as local_proxy_adapter_module
 from multi_agent_brief.semantic_evaluator.adapters.local_proxy_responses import (
     CLIPROXY_ADAPTER_ID,
@@ -91,10 +93,12 @@ from multi_agent_brief.semantic_evaluator.validator import (
     assemble_semantic_assessment_run,
     make_dimension_attempt_evidence,
 )
+from multi_agent_brief.cli.main import build_parser
 import multi_agent_brief.semantic_evaluator.validator as validator_module
 from multi_agent_brief.semantic_evaluator.shadow_contracts import (
     SHADOW_CONTRACT_MODELS_V5,
 )
+from multi_agent_brief.semantic_evaluator.study_contracts import STUDY_CONTRACT_MODELS
 
 
 class Sizer:
@@ -526,6 +530,8 @@ module_files = [
         shadow_contracts_module,
         shadow_runner_module,
         local_proxy_adapter_module,
+        study_module,
+        study_contracts_module,
     )
 ]
 payload = {
@@ -541,6 +547,19 @@ payload = {
         model.schema_id: canonical_sha256(model.model_json_schema())
         for model in SHADOW_CONTRACT_MODELS_V5
     },
+    "study_schema_ids": [model.schema_id for model in STUDY_CONTRACT_MODELS],
+    "study_schema_hashes": {
+        model.schema_id: canonical_sha256(model.model_json_schema())
+        for model in STUDY_CONTRACT_MODELS
+    },
+    "study_cli_actions": [
+        build_parser().parse_args(argv).experiment_laj_action
+        for argv in (
+            ["experiments", "laj", "study-preflight", "--declaration", "d", "--report", "r", "--bounded-context", "c", "--instrument", "i", "--trial-id", "t", "--archive-root", "a", "--budget-policy", "b", "--output", "o"],
+            ["experiments", "laj", "budgeted-shadow-run", "--authorization", "z", "--budget-policy", "b", "--report", "r", "--bounded-context", "c", "--instrument", "i", "--archive-root", "a", "--evidence-output", "e"],
+            ["experiments", "laj", "study-compare", "--case", "c", "--execution-evidence", "e", "--archive", "a", "--output", "o"],
+        )
+    ],
     "shadow_runtime_identity": {
         "adapter_id": SYNTHETIC_ADAPTER_ID,
         "adapter_version": SYNTHETIC_ADAPTER_VERSION,
