@@ -172,7 +172,7 @@ if (-not (Test-Path $venvDir)) {
     if ($venvOk) {
         Write-Step "[3/5] Reusing virtual environment."
     } else {
-        Write-Step "[3/5] Recreating virtual environment (existing one predates the Python 3.12 floor)..."
+        Write-Step "[3/5] Recreating virtual environment (existing one is broken or below the Python 3.12 floor)..."
         Invoke-InstallCommand -Display "Remove-Item -Recurse -Force $venvDir" -Script {
             Remove-Item -Recurse -Force -Path $venvDir
         }

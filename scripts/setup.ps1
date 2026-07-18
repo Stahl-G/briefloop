@@ -128,7 +128,7 @@ if (-not (Test-Path $venvDir)) {
     if ($venvOk) {
         Write-Host "[2/4] Virtual environment already exists." -ForegroundColor Green
     } else {
-        Write-Host "[2/4] Recreating virtual environment (existing one predates the Python 3.12 floor)..." -ForegroundColor Yellow
+        Write-Host "[2/4] Recreating virtual environment (existing one is broken or below the Python 3.12 floor)..." -ForegroundColor Yellow
         Remove-Item -Recurse -Force -Path $venvDir
         & $python.File @($python.Args) -m venv $venvDir
     }

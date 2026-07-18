@@ -22,9 +22,11 @@ done
 if [ -z "$PYTHON" ]; then
     echo "ERROR: Python 3.12+ not found."
     echo ""
-    echo "Install Python from https://www.python.org/downloads/"
-    echo "Or on macOS: brew install python@3.12"
-    echo "Or on Ubuntu: sudo apt install python3 python3-venv"
+    echo "Install Python 3.12+ from https://www.python.org/downloads/"
+    echo "Or on macOS: brew install python"
+    echo "   (python@3.12 is keg-only; if you use it, run: brew link python@3.12)"
+    echo "Or on Ubuntu 24.04+: sudo apt install python3 python3-venv"
+    echo "Or on older Ubuntu:  sudo apt install python3.12 python3.12-venv (deadsnakes PPA)"
     exit 1
 fi
 
@@ -37,7 +39,7 @@ if [ ! -d ".venv" ]; then
 elif [ -x ".venv/bin/python" ] && .venv/bin/python -c 'import sys; raise SystemExit(0 if sys.version_info >= (3, 12) else 1)' >/dev/null 2>&1; then
     echo "[2/4] Virtual environment already exists."
 else
-    echo "[2/4] Recreating virtual environment (existing one predates the Python 3.12 floor)..."
+    echo "[2/4] Recreating virtual environment (existing one is broken or below the Python 3.12 floor)..."
     rm -rf .venv
     $PYTHON -m venv .venv
 fi
