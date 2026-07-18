@@ -48,7 +48,11 @@ def register(subparsers: argparse._SubParsersAction) -> None:
         help="Render one verified shadow archive as advisory JSON, Markdown, and HTML.",
     )
     present.add_argument("--archive", required=True)
-    present.add_argument("--output-dir", required=True)
+    present.add_argument(
+        "--output-dir",
+        required=True,
+        help="New standalone directory named laj-advisory-<label>, outside every BriefLoop workspace and the source archive.",
+    )
     present.add_argument("--expected-report-sha256")
     present.add_argument("--json", action="store_true")
 

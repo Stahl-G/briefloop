@@ -6,6 +6,10 @@ import ast
 import json
 from pathlib import Path
 
+import pytest
+
+from multi_agent_brief.semantic_evaluator import reader as reader_module
+from multi_agent_brief.semantic_evaluator.archive import verify_shadow_archive
 from multi_agent_brief.semantic_evaluator.reader import (
     LAJ_READER_BOUNDARY,
     LajReaderView,
@@ -17,6 +21,7 @@ from multi_agent_brief.semantic_evaluator.reader import (
 from multi_agent_brief.semantic_evaluator.adapters.synthetic_fixture import (
     SyntheticFixtureAdapterV4,
 )
+from multi_agent_brief.semantic_evaluator.errors import SemanticEvaluatorError
 from multi_agent_brief.semantic_evaluator.runner import PROFILE_ID, run_shadow
 from multi_agent_brief.semantic_evaluator.serialization import canonical_sha256
 
@@ -46,11 +51,11 @@ def test_verified_archive_renders_byte_stable_json_markdown_and_html(
     archive = _archive(tmp_path)
     first = write_laj_reader_artifacts(
         archive_path=archive,
-        output_dir=tmp_path / "reader-one",
+        output_dir=tmp_path / "laj-advisory-reader-one",
     )
     second = write_laj_reader_artifacts(
         archive_path=archive,
-        output_dir=tmp_path / "reader-two",
+        output_dir=tmp_path / "laj-advisory-reader-two",
     )
 
     assert first.view.status == "available"
@@ -220,18 +225,22 @@ def test_reader_has_no_runtime_authority_import_or_workspace_effect(
     tmp_path: Path,
 ) -> None:
     archive = _archive(tmp_path)
+    authority_root = tmp_path / "workspace"
+    authority_root.mkdir()
     authority_files = {
-        tmp_path / "control_store.sqlite3": b"SQLITE-AUTHORITY-SENTINEL",
-        tmp_path / "workflow_state.json": b"WORKFLOW-AUTHORITY-SENTINEL",
-        tmp_path / "finalize_report.json": b"FINALIZE-AUTHORITY-SENTINEL",
-        tmp_path / "delivery.json": b"DELIVERY-AUTHORITY-SENTINEL",
+        authority_root / "control_store.sqlite3": b"SQLITE-AUTHORITY-SENTINEL",
+        authority_root / "workflow_state.json": b"WORKFLOW-AUTHORITY-SENTINEL",
+        authority_root / "finalize_report.json": b"FINALIZE-AUTHORITY-SENTINEL",
+        authority_root / "delivery.json": b"DELIVERY-AUTHORITY-SENTINEL",
     }
     for path, data in authority_files.items():
         path.write_bytes(data)
     before = {path: path.read_bytes() for path in authority_files}
+    standalone = tmp_path / "standalone"
+    standalone.mkdir()
     write_laj_reader_artifacts(
         archive_path=archive,
-        output_dir=tmp_path / "reader",
+        output_dir=standalone / "laj-advisory-reader",
     )
     assert {path: path.read_bytes() for path in authority_files} == before
 
@@ -253,3 +262,85 @@ def test_reader_has_no_runtime_authority_import_or_workspace_effect(
         "runtime_state",
     }
     assert not any(any(token in name for token in forbidden) for name in imported)
+
+
+def _tree_bytes(root: Path) -> dict[str, bytes]:
+    return {
+        path.relative_to(root).as_posix(): path.read_bytes()
+        for path in root.rglob("*")
+        if path.is_file()
+    }
+
+
+def test_output_cannot_be_created_inside_the_verified_archive(tmp_path: Path) -> None:
+    archive = _archive(tmp_path)
+    before = _tree_bytes(archive)
+    with pytest.raises(SemanticEvaluatorError) as caught:
+        write_laj_reader_artifacts(
+            archive_path=archive,
+            output_dir=archive / "laj-advisory-reader",
+        )
+    assert caught.value.reason_code == "laj_presentation_write_failed"
+    assert _tree_bytes(archive) == before
+    assert not (archive / "laj-advisory-reader").exists()
+    assert verify_shadow_archive(archive).ok is True
+
+
+@pytest.mark.parametrize(
+    "archive_state",
+    ("valid", "missing", "malformed", "stale", "provider_failed", "abstained"),
+)
+def test_every_archive_state_rejects_missing_authority_destination_before_read(
+    tmp_path: Path,
+    monkeypatch,
+    archive_state: str,
+) -> None:
+    workspace = tmp_path / f"workspace-{archive_state}"
+    intermediate = workspace / "output" / "intermediate"
+    intermediate.mkdir(parents=True)
+    for marker in ("config.yaml", "sources.yaml", "user.md"):
+        (workspace / marker).write_text("synthetic\n", encoding="utf-8")
+    authority_path = intermediate / "workflow_state.json"
+    touched = False
+
+    def forbidden_build(*_args, **_kwargs):
+        nonlocal touched
+        touched = True
+        raise AssertionError("destination guard ran after archive read")
+
+    monkeypatch.setattr(reader_module, "build_laj_reader_view", forbidden_build)
+    with pytest.raises(SemanticEvaluatorError) as caught:
+        write_laj_reader_artifacts(
+            archive_path=tmp_path / f"archive-{archive_state}",
+            output_dir=authority_path,
+        )
+    assert caught.value.reason_code == "laj_presentation_write_failed"
+    assert touched is False
+    assert not authority_path.exists()
+    assert sorted(path.name for path in intermediate.iterdir()) == []
+
+
+def test_workspace_namespace_rejects_advisory_leaf_and_symlink_parent(
+    tmp_path: Path,
+) -> None:
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    for marker in ("config.yaml", "sources.yaml", "user.md"):
+        (workspace / marker).write_text("synthetic\n", encoding="utf-8")
+    with pytest.raises(SemanticEvaluatorError):
+        write_laj_reader_artifacts(
+            archive_path=tmp_path / "missing",
+            output_dir=workspace / "laj-advisory-reader",
+        )
+    assert not (workspace / "laj-advisory-reader").exists()
+
+    real_parent = tmp_path / "real-parent"
+    real_parent.mkdir()
+    linked_parent = tmp_path / "linked-parent"
+    linked_parent.symlink_to(real_parent, target_is_directory=True)
+    with pytest.raises(SemanticEvaluatorError):
+        write_laj_reader_artifacts(
+            archive_path=tmp_path / "missing",
+            output_dir=linked_parent / "laj-advisory-reader",
+        )
+    assert not (real_parent / "laj-advisory-reader").exists()

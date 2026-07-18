@@ -11,6 +11,7 @@ from dataclasses import dataclass
 from html import escape
 import os
 from pathlib import Path
+import re
 import shutil
 import stat
 import tempfile
@@ -50,6 +51,18 @@ ReaderStatus = Literal[
     "unavailable",
 ]
 _SHA256 = TypeAdapter(Sha256)
+_OUTPUT_DIRECTORY_PATTERN = re.compile(
+    r"^laj-advisory-[A-Za-z0-9][A-Za-z0-9._-]{0,79}$"
+)
+_WORKSPACE_CONTROL_MARKERS = (
+    "artifact_registry.json",
+    "control_store.db",
+    "control_store.sqlite3",
+    "event_log.jsonl",
+    "runtime_manifest.json",
+    "workflow_state.json",
+)
+_WORKSPACE_REQUIRED_MARKERS = ("config.yaml", "sources.yaml", "user.md")
 
 
 class LajReaderBinding(StrictModel):
@@ -388,6 +401,88 @@ main{{max-width:980px;margin:0 auto;padding:48px 22px 72px}}h1{{font-size:34px;m
     return html.encode("utf-8")
 
 
+def _absolute_lexical_path(path: Path) -> Path:
+    try:
+        return Path(os.path.abspath(os.fspath(path.expanduser())))
+    except (OSError, RuntimeError, TypeError, ValueError):
+        raise SemanticEvaluatorError("laj_presentation_write_failed") from None
+
+
+def _assert_real_directory_chain(path: Path) -> None:
+    current = Path(path.anchor)
+    for part in path.parts[1:]:
+        current /= part
+        try:
+            metadata = current.lstat()
+        except (OSError, RuntimeError):
+            raise SemanticEvaluatorError("laj_presentation_write_failed") from None
+        if stat.S_ISLNK(metadata.st_mode):
+            raise SemanticEvaluatorError("laj_presentation_write_failed")
+    try:
+        metadata = path.lstat()
+    except (OSError, RuntimeError):
+        raise SemanticEvaluatorError("laj_presentation_write_failed") from None
+    if not stat.S_ISDIR(metadata.st_mode):
+        raise SemanticEvaluatorError("laj_presentation_write_failed")
+
+
+def _exists_without_following(path: Path) -> bool:
+    try:
+        path.lstat()
+    except FileNotFoundError:
+        return False
+    except (OSError, RuntimeError):
+        raise SemanticEvaluatorError("laj_presentation_write_failed") from None
+    return True
+
+
+def _is_briefloop_workspace(path: Path) -> bool:
+    if all(
+        _exists_without_following(path / name) for name in _WORKSPACE_REQUIRED_MARKERS
+    ):
+        return True
+    if any(
+        _exists_without_following(path / name) for name in _WORKSPACE_CONTROL_MARKERS
+    ):
+        return True
+    return _exists_without_following(path / ".briefloop" / "control_store.sqlite3")
+
+
+def _presentation_destination(
+    *,
+    archive_path: str | Path,
+    output_dir: str | Path,
+) -> Path:
+    destination = _absolute_lexical_path(Path(output_dir))
+    if _OUTPUT_DIRECTORY_PATTERN.fullmatch(destination.name) is None:
+        raise SemanticEvaluatorError("laj_presentation_write_failed")
+    parent = destination.parent
+    _assert_real_directory_chain(parent)
+    if _exists_without_following(destination):
+        raise SemanticEvaluatorError("laj_presentation_write_failed")
+    if any(
+        _is_briefloop_workspace(candidate) for candidate in (parent, *parent.parents)
+    ):
+        raise SemanticEvaluatorError("laj_presentation_write_failed")
+
+    archive = _absolute_lexical_path(Path(archive_path))
+    try:
+        archive_resolved = archive.resolve(strict=True)
+        parent_resolved = parent.resolve(strict=True)
+    except FileNotFoundError:
+        archive_resolved = None
+    except (OSError, RuntimeError):
+        raise SemanticEvaluatorError("laj_presentation_write_failed") from None
+    if archive_resolved is not None:
+        resolved_destination = parent_resolved / destination.name
+        if (
+            resolved_destination == archive_resolved
+            or archive_resolved in resolved_destination.parents
+        ):
+            raise SemanticEvaluatorError("laj_presentation_write_failed")
+    return destination
+
+
 def write_laj_reader_artifacts(
     *,
     archive_path: str | Path,
@@ -396,21 +491,11 @@ def write_laj_reader_artifacts(
 ) -> LajReaderArtifacts:
     """Write one new immutable advisory presentation directory."""
 
-    destination = Path(output_dir)
+    destination = _presentation_destination(
+        archive_path=archive_path,
+        output_dir=output_dir,
+    )
     parent = destination.parent
-    try:
-        parent_metadata = parent.lstat()
-        if stat.S_ISLNK(parent_metadata.st_mode) or not stat.S_ISDIR(
-            parent_metadata.st_mode
-        ):
-            raise OSError
-        destination.lstat()
-    except FileNotFoundError:
-        pass
-    except OSError:
-        raise SemanticEvaluatorError("laj_presentation_write_failed") from None
-    else:
-        raise SemanticEvaluatorError("laj_presentation_write_failed")
 
     view = build_laj_reader_view(
         archive_path,
