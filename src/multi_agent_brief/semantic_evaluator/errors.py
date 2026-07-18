@@ -72,6 +72,18 @@ VALIDATION_REASON_CODES = (
     "instrument_manifest_mismatch",
 )
 
+SHADOW_REASON_CODES = (
+    "shadow_request_invalid",
+    "shadow_adapter_unavailable",
+    "shadow_archive_invalid",
+    "shadow_request_conflict",
+    "provider_retryable_failure",
+    "provider_failed",
+    "provider_incomplete",
+    "provider_identity_mismatch",
+    "provider_boundary_invalid",
+)
+
 
 @dataclass(frozen=True)
 class EvaluatorFailure:
@@ -107,6 +119,7 @@ __all__ = [
     "ADMISSION_REASON_CODES",
     "EvaluatorFailure",
     "PARSER_REASON_CODES",
+    "SHADOW_REASON_CODES",
     "SemanticEvaluatorError",
     "VALIDATION_REASON_CODES",
     "value_free_violations",

@@ -157,6 +157,32 @@ def test_valid_admission_builds_complete_plan_and_all_prompts_before_execution()
     assert "baseline" not in inspect.signature(build_dimension_prompt).parameters
 
 
+def test_prompt_exposes_block_local_full_span_candidates() -> None:
+    report = (FIXTURE_ROOT / "synthetic_report.md").read_bytes()
+    decision = _admit(report)
+    assert decision.admitted is True
+    user_text = decision.prompts[0].user_text
+    start = user_text.index("<REPORT_DATA>\n") + len("<REPORT_DATA>\n")
+    end = user_text.index("\n</REPORT_DATA>", start)
+    report_data = json.loads(user_text[start:end])
+    contract = report_data["span_locator_contract"]
+    assert contract["offset_basis"] == "block_text_zero_based_half_open"
+    assert (
+        contract["artifact_block_start_end_usage"] == "normalized_text_inventory_only"
+    )
+    candidates = contract["full_block_candidates"]
+    blocks = decision.reader.artifact.blocks
+    assert len(candidates) == len(blocks)
+    for candidate, block in zip(candidates, blocks, strict=True):
+        assert candidate == {
+            "block_id": block.block_id,
+            "end_char": len(block.text),
+            "excerpt_sha256": block.text_sha256,
+            "report_sha256": decision.reader.artifact.report_sha256,
+            "start_char": 0,
+        }
+
+
 def test_admission_acquires_each_current_instrument_input_once(monkeypatch) -> None:
     calls: dict[str, int] = {
         "profile": 0,
