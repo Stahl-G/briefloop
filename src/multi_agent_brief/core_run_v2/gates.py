@@ -44,7 +44,12 @@ from multi_agent_brief.quality_gates.state import (
 )
 
 from .errors import CoreRunError, CoreRunResult, core_run_failure_result
-from .integrity import RunIntegrityService, materialize_checkout
+from .integrity import RunIntegrityService
+from .checkout import (
+    prepare_checkout_effect,
+    publish_checkout_effect,
+    stage_checkout_effect,
+)
 from .lineage import classify_current_audit_promotion, classify_current_lineage
 from .policy import derived_id, transaction_type_for
 from .verifier import CoreRunDomainVerifier, resolve_core_replay
@@ -84,7 +89,18 @@ class GateEvaluationService:
             return core_run_failure_result(exc)
 
     def _evaluate(self, request: GateCheckRequest) -> CoreRunResult:
+        replay_fingerprint = canonical_fingerprint(
+            request.model_dump(mode="json", exclude_unset=False)
+        )
         with self._open_store() as store:
+            replay = resolve_core_replay(
+                store,
+                run_id=request.run_id,
+                request_id=request.request_id,
+                request_fingerprint=replay_fingerprint,
+            )
+            if replay is not None:
+                return replay
             verified = self._verifier.verify(store, request.run_id)
             lineage = classify_current_lineage(verified.snapshot)
             stage = next(
@@ -108,45 +124,6 @@ class GateEvaluationService:
             }
             if any(item is None for item in explicit.values()):
                 raise CoreRunError("gate_input_binding_invalid")
-            usage_order = (
-                ("claim_ledger", "ledger"),
-                ("audited_brief", "brief"),
-                ("analyst_draft_snapshot", "analyst_snapshot"),
-                ("screened_candidates", "screened_candidates"),
-                ("candidate_claims", "screened_candidates"),
-            )
-            explicit_by_id = {
-                item.artifact_id: item
-                for item in explicit.values()
-                if item is not None
-            }
-            explicit_hashes = [
-                {
-                    "artifact_id": explicit_by_id[artifact_id].artifact_id,
-                    "revision": explicit_by_id[artifact_id].revision,
-                    "sha256": explicit_by_id[artifact_id].sha256,
-                    "usage": usage,
-                }
-                for artifact_id, usage in usage_order
-                if artifact_id in explicit_by_id
-            ]
-            replay_fingerprint = canonical_fingerprint(
-                {
-                    "request": request.model_dump(mode="json", exclude_unset=False),
-                    "inputs": explicit_hashes,
-                    "contract_fingerprint": verified.binding.contract_fingerprint,
-                    "evaluator": _EVALUATOR_IMPLEMENTATION,
-                    "evaluator_version": _EVALUATOR_VERSION,
-                }
-            )
-            replay = resolve_core_replay(
-                store,
-                run_id=request.run_id,
-                request_id=request.request_id,
-                request_fingerprint=replay_fingerprint,
-            )
-            if replay is not None:
-                return replay
             lineage.require_stage_mutable("auditor")
             required: list[tuple[ArtifactRevision, str]] = []
 
@@ -226,17 +203,7 @@ class GateEvaluationService:
                 }
                 for item, usage in required
             ]
-            fingerprint = canonical_fingerprint(
-                {
-                    "request": request.model_dump(mode="json", exclude_unset=False),
-                    "inputs": input_hashes,
-                    "contract_fingerprint": verified.binding.contract_fingerprint,
-                    "evaluator": _EVALUATOR_IMPLEMENTATION,
-                    "evaluator_version": _EVALUATOR_VERSION,
-                }
-            )
-            if fingerprint != replay_fingerprint:
-                raise CoreRunError("gate_input_binding_invalid")
+            fingerprint = replay_fingerprint
             if stage is None or stage.status != "ready":
                 raise CoreRunError("stage_not_current")
             if verified.snapshot.store_revision != request.expected_store_revision:
@@ -462,7 +429,13 @@ class GateEvaluationService:
                 },
                 strict=True,
             )
-            materialize_checkout(self.workspace, report_record.path, report_bytes)
+            checkout = prepare_checkout_effect(
+                workspace=self.workspace,
+                snapshot=verified.snapshot,
+                transaction_id=request.request_id,
+                created_at=self._clock(),
+                additional_revisions=(report_revision,),
+            )
             unit = store.begin(
                 request.run_id,
                 request.request_id,
@@ -493,12 +466,23 @@ class GateEvaluationService:
             for finding in findings:
                 unit.put_gate_finding(finding)
             unit.append_event(event)
+            stage_checkout_effect(unit, checkout)
             receipt = unit.commit(
                 _postcommit_observer=lambda _receipt: self._verifier.verify(
                     store,
                     request.run_id,
                 )
             )
+            published, _warnings = publish_checkout_effect(
+                workspace=self.workspace,
+                store=store,
+                prepared=checkout,
+            )
+            if not published:
+                return CoreRunResult(
+                    status="commit_outcome_unknown",
+                    error_code="commit_outcome_unknown",
+                )
             return CoreRunResult(
                 status="committed",
                 receipt=receipt,

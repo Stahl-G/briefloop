@@ -29,6 +29,7 @@ from multi_agent_brief.control_store.serialization import (
 )
 
 from .errors import CoreRunError, CoreRunResult, core_run_error_code
+from .checkout import prepare_checkout_effect, stage_checkout_effect
 from .publication_platform import CapabilityProfile, open_retained_parent
 from .policy import derived_id, transaction_type_for
 from .verifier import (
@@ -349,6 +350,13 @@ class RunIntegrityService:
         unit.append_event(event)
         unit.append_event(block_event)
         unit.append_run_integrity_record(record)
+        checkout = prepare_checkout_effect(
+            workspace=self.workspace,
+            snapshot=verified.snapshot,
+            transaction_id=request_id,
+            created_at=self._clock(),
+        )
+        stage_checkout_effect(unit, checkout)
         receipt = unit.commit(
             _postcommit_observer=lambda _receipt: self._verifier.verify(
                 store,

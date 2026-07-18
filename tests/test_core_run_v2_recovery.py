@@ -12,7 +12,9 @@ import pytest
 from multi_agent_brief.cli.init_wizard import create_demo_workspace
 from multi_agent_brief.contracts.v2 import (
     ArtifactRecord,
+    ArtifactRevertRequest,
     ArtifactRevision,
+    ArtifactSupersedeRequest,
     ArtifactSupersessionRecord,
     ArtifactSupersessionReference,
     CoreRunInitializeRequest,
@@ -20,11 +22,15 @@ from multi_agent_brief.contracts.v2 import (
     EventEnvelope,
     OwnedArtifactSubmissionRecord,
     RecoveryCompletionRecord,
+    RecoveryCompleteRequest,
     RepairCompletionRecord,
+    RepairCompleteRequest,
     RepairCycleRecord,
+    RepairStartRequest,
     RunIntegrityRecord,
     RunHeadTransitionRecord,
     RunIdentity,
+    RunResetRequest,
     StageState,
     StageTransitionRecord,
     TransactionReceipt,
@@ -36,12 +42,17 @@ from multi_agent_brief.control_store import (
 )
 from multi_agent_brief.control_store.serialization import (
     canonical_fingerprint,
+    canonical_json_bytes,
     sha256_hex,
 )
-from multi_agent_brief.core_run_v2 import CoreRunService
+from multi_agent_brief.core_run_v2 import CoreRunRecoveryService, CoreRunService
 from multi_agent_brief.core_run_v2.errors import CoreRunError
 from multi_agent_brief.core_run_v2.integrity import read_workspace_file
-from multi_agent_brief.core_run_v2.policy import derived_id, transaction_type_for
+from multi_agent_brief.core_run_v2.policy import (
+    derived_id,
+    run_contract_fingerprint,
+    transaction_type_for,
+)
 from multi_agent_brief.core_run_v2.recovery import (
     CoreEffect,
     CoreEffectSubject,
@@ -72,6 +83,11 @@ def _initialized_workspace(tmp_path: Path) -> Path:
         workspace_config_sha256=read_workspace_file(workspace, "config.yaml").sha256,
         sources_config_sha256=read_workspace_file(workspace, "sources.yaml").sha256,
     )
+    adapter = dict(request["runtime_adapter_binding"])
+    adapter["run_id"] = RUN_ID
+    adapter.pop("binding_fingerprint", None)
+    adapter["binding_fingerprint"] = canonical_fingerprint(adapter)
+    request["runtime_adapter_binding"] = adapter
     result = CoreRunService(
         workspace,
         clock=lambda: datetime(2026, 7, 17, tzinfo=timezone.utc),
@@ -771,13 +787,62 @@ def _reset_run(
             "prior_workspace_revision": prior_revision,
         }
     )
-    contract = predecessor.run_contract_bindings[0].model_copy(
+    predecessor_contract = predecessor.run_contract_bindings[0]
+    adapter_ref = predecessor_contract.runtime_adapter_artifact
+    source_ref = predecessor_contract.runtime_source_plan_artifact
+    adapter_payload = json.loads(
+        store.read_artifact_revision_bytes(
+            predecessor_run_id, adapter_ref.artifact_id, adapter_ref.revision
+        )
+    )
+    adapter_payload["run_id"] = successor_run_id
+    adapter_payload.pop("binding_fingerprint", None)
+    adapter_payload["binding_fingerprint"] = canonical_fingerprint(adapter_payload)
+    adapter_bytes = canonical_json_bytes(adapter_payload)
+    source_payload = json.loads(
+        store.read_artifact_revision_bytes(
+            predecessor_run_id, source_ref.artifact_id, source_ref.revision
+        )
+    )
+    source_payload["run_id"] = successor_run_id
+    source_payload.pop("source_plan_fingerprint", None)
+    source_payload["source_plan_fingerprint"] = canonical_fingerprint(source_payload)
+    source_bytes = canonical_json_bytes(source_payload)
+    contract = predecessor_contract.model_copy(
         update={
             "run_id": successor_run_id,
+            "runtime_adapter_sha256": sha256_hex(adapter_bytes),
+            "runtime_adapter_fingerprint": adapter_payload["binding_fingerprint"],
+            "runtime_source_plan_sha256": sha256_hex(source_bytes),
+            "runtime_source_plan_fingerprint": source_payload["source_plan_fingerprint"],
             "created_at": NOW,
             "initialization_event_id": initialized_event_id,
             "accepted_transaction_id": transaction_id,
             "request_fingerprint": request_fingerprint,
+        }
+    )
+    contract = contract.model_copy(
+        update={
+            "contract_fingerprint": run_contract_fingerprint(
+                runtime=contract.runtime,
+                stage_specs_schema=contract.stage_specs_schema,
+                stage_specs_sha256=contract.stage_specs_sha256,
+                artifact_contracts_schema=contract.artifact_contracts_schema,
+                artifact_contracts_sha256=contract.artifact_contracts_sha256,
+                policy_pack_schema=contract.policy_pack_schema,
+                policy_pack_name=contract.policy_pack_name,
+                policy_pack_sha256=contract.policy_pack_sha256,
+                runtime_adapter_sha256=contract.runtime_adapter_sha256,
+                runtime_adapter_fingerprint=contract.runtime_adapter_fingerprint,
+                runtime_source_plan_sha256=contract.runtime_source_plan_sha256,
+                runtime_source_plan_fingerprint=contract.runtime_source_plan_fingerprint,
+                run_direction=contract.run_direction.model_dump(mode="json"),
+                workspace_config_sha256=contract.workspace_config_sha256,
+                sources_config_sha256=contract.sources_config_sha256,
+                role_topology=contract.role_topology,
+                gate_strictness=contract.gate_strictness,
+                input_governance_required=contract.input_governance_required,
+            )
         }
     )
     head_transition = _record(
@@ -833,8 +898,24 @@ def _reset_run(
                 artifact.artifact_id,
                 revision_number,
             )
+            if (artifact.artifact_id, revision_number) == (
+                adapter_ref.artifact_id,
+                adapter_ref.revision,
+            ):
+                content = adapter_bytes
+            elif (artifact.artifact_id, revision_number) == (
+                source_ref.artifact_id,
+                source_ref.revision,
+            ):
+                content = source_bytes
             unit.put_artifact_revision(
-                revision.model_copy(update={"run_id": successor_run_id}),
+                revision.model_copy(
+                    update={
+                        "run_id": successor_run_id,
+                        "sha256": sha256_hex(content),
+                        "size_bytes": len(content),
+                    }
+                ),
                 content,
             )
 
@@ -1308,6 +1389,36 @@ def test_repair_start_is_receipt_bound_replayable_and_restart_safe(
         assert reopened.current_revision == revision
 
 
+def test_typed_recovery_service_starts_one_repair_after_exact_replay_probe(
+    tmp_path: Path,
+) -> None:
+    workspace = _initialized_workspace(tmp_path)
+    with SQLiteControlStore.open(workspace / "briefloop.db", clock=CLOCK) as store:
+        _accept_input_classification(store)
+        _record_contamination(store)
+        before = store.current_revision
+    request = _record(
+        RepairStartRequest,
+        request_id="REQ-TYPED-REPAIR-START-001",
+        run_id=RUN_ID,
+        contamination_revision=2,
+        owner_stage_id="input-governance",
+        permitted_artifact_ids=["input_classification"],
+        reason_code="frozen_artifact_contaminated",
+        expected_store_revision=before,
+    )
+    service = CoreRunRecoveryService(workspace, clock=CLOCK)
+    first = service.start_repair(request)
+    assert first.status == "committed", first.to_dict()
+    replay = service.start_repair(request)
+    assert replay.status == "replayed"
+    assert replay.receipt == first.receipt
+    with SQLiteControlStore.open(workspace / "briefloop.db", clock=CLOCK) as store:
+        assert store.current_revision == before + 1
+        snapshot = store.load_snapshot(RUN_ID)
+        assert classify_recovery_legality(snapshot).state == "active_repair"
+        assert len(snapshot.receipt_checkout_bindings) >= 2
+
 def test_active_repair_authorization_is_bounded_by_canonical_artifact_scope(
     tmp_path: Path,
 ) -> None:
@@ -1542,6 +1653,8 @@ def test_repair_supersession_completion_and_recovery_are_exact_receipts(
         legality = classify_recovery_legality(snapshot)
         assert legality.state == "recovered_current"
         assert legality.permitted_artifact_ids == ("input_classification",)
+
+
         assert legality.required_rerun_transition_ids == (rerun_transition_id,)
         CoreRunDomainVerifier().verify(store, RUN_ID)
 
@@ -1615,6 +1728,104 @@ def test_repair_supersession_completion_and_recovery_are_exact_receipts(
         assert reopened.current_revision == revision
 
 
+def test_recovery_service_owns_supersession_repair_and_recovery_transactions(
+    tmp_path: Path,
+) -> None:
+    workspace = _initialized_workspace(tmp_path)
+    database = workspace / "briefloop.db"
+    with SQLiteControlStore.open(database, clock=CLOCK) as store:
+        _accept_input_classification(store)
+        _record_contamination(store)
+        contaminated = store.load_snapshot(RUN_ID)
+    service = CoreRunRecoveryService(workspace, clock=CLOCK)
+    start_request = RepairStartRequest.model_validate(
+        {
+            "schema_version": RepairStartRequest.schema_id,
+            "request_id": "REQ-RECOVERY-SERVICE-START-002",
+            "run_id": RUN_ID,
+            "contamination_revision": 2,
+            "owner_stage_id": "input-governance",
+            "permitted_artifact_ids": ["input_classification"],
+            "reason_code": "workspace_artifact_changed",
+            "expected_store_revision": contaminated.store_revision,
+        },
+        strict=True,
+    )
+    start = service.start_repair(start_request)
+    assert start.status == "committed"
+    scratch = workspace / "scratch" / "repair-service"
+    scratch.mkdir(parents=True)
+    content = b'{"classification":"repaired-service"}\n'
+    (scratch / "input.json").write_bytes(content)
+    with SQLiteControlStore.open(database, clock=CLOCK) as store:
+        active = store.load_snapshot(RUN_ID)
+        prior = next(item for item in active.artifacts if item.artifact_id == "input_classification")
+        prior_revision = next(
+            item
+            for item in active.artifact_revisions
+            if item.artifact_id == prior.artifact_id
+            and item.revision == prior.current_revision
+        )
+    (workspace / prior_revision.path).parent.mkdir(parents=True, exist_ok=True)
+    (workspace / prior_revision.path).write_bytes(content)
+    supersede_request = ArtifactSupersedeRequest.model_validate(
+        {
+            "schema_version": ArtifactSupersedeRequest.schema_id,
+            "request_id": "REQ-RECOVERY-SERVICE-SUPERSEDE-001",
+            "run_id": RUN_ID,
+            "repair_id": start.primary_record_id,
+            "prior_artifact": {"artifact_id": prior.artifact_id, "revision": prior.current_revision},
+            "input_path": "scratch/repair-service/input.json",
+            "expected_input_sha256": sha256_hex(content),
+            "expected_current_revision": prior.current_revision,
+            "mode": "repair",
+            "reason_code": "frozen_artifact_repaired",
+            "expected_store_revision": active.store_revision,
+        },
+        strict=True,
+    )
+    supersede = service.supersede_artifact(supersede_request)
+    assert supersede.status == "committed"
+    with SQLiteControlStore.open(database, clock=CLOCK) as store:
+        repaired = store.load_snapshot(RUN_ID)
+        stage = next(item for item in repaired.stage_states if item.stage_id == "input-governance")
+    repair_request = RepairCompleteRequest.model_validate(
+        {
+            "schema_version": RepairCompleteRequest.schema_id,
+            "request_id": "REQ-RECOVERY-SERVICE-COMPLETE-001",
+            "run_id": RUN_ID,
+            "repair_id": start.primary_record_id,
+            "supersession_ids": [supersede.primary_record_id],
+            "expected_stage_revisions": {stage.stage_id: stage.revision},
+            "expected_store_revision": repaired.store_revision,
+        },
+        strict=True,
+    )
+    repair_complete = service.complete_repair(repair_request)
+    assert repair_complete.status == "committed"
+    with SQLiteControlStore.open(database, clock=CLOCK) as store:
+        rerun_transition_id = _complete_reopened_stage(store)
+        rerun = store.load_snapshot(RUN_ID)
+    recovery_request = RecoveryCompleteRequest.model_validate(
+        {
+            "schema_version": RecoveryCompleteRequest.schema_id,
+            "request_id": "REQ-RECOVERY-SERVICE-RECOVER-001",
+            "run_id": RUN_ID,
+            "repair_completion_id": repair_complete.primary_record_id,
+            "contamination_revision": 2,
+            "rerun_transition_ids": [rerun_transition_id],
+            "gate_evaluation_ids": [],
+            "expected_store_revision": rerun.store_revision,
+        },
+        strict=True,
+    )
+    recovery = service.complete_recovery(recovery_request)
+    assert recovery.status == "committed"
+    replay = service.complete_recovery(recovery_request)
+    assert replay.status == "replayed"
+    assert replay.receipt == recovery.receipt
+
+
 def test_repair_start_before_commit_failure_rolls_back_every_relation(
     tmp_path: Path,
 ) -> None:
@@ -1652,6 +1863,61 @@ def test_repair_start_before_commit_failure_rolls_back_every_relation(
             item.transaction_id != "REQ-RECOVERY-REPAIR-START-001"
             for item in snapshot.events
         )
+
+
+def test_recovery_service_reset_is_cross_run_and_historical_replay_safe(
+    tmp_path: Path,
+) -> None:
+    workspace = _initialized_workspace(tmp_path)
+    database = workspace / "briefloop.db"
+    service = CoreRunRecoveryService(workspace, clock=CLOCK)
+
+    def request_for(predecessor: str, successor: str, request_id: str) -> RunResetRequest:
+        with SQLiteControlStore.open(database, clock=CLOCK) as store:
+            snapshot = store.load_snapshot(predecessor)
+            binding = snapshot.run_contract_bindings[0]
+        return RunResetRequest.model_validate(
+            {
+                "schema_version": RunResetRequest.schema_id,
+                "request_id": request_id,
+                "predecessor_run_id": predecessor,
+                "successor_run_id": successor,
+                "workspace_id": snapshot.workspace_id,
+                "runtime": snapshot.run.runtime,
+                "expected_head_run_id": predecessor,
+                "expected_store_revision": snapshot.store_revision,
+                "expected_workspace_revision": snapshot.store_revision,
+                "run_direction": binding.run_direction.model_dump(mode="json"),
+                "workspace_config_sha256": binding.workspace_config_sha256,
+                "sources_config_sha256": binding.sources_config_sha256,
+                "role_topology": binding.role_topology,
+                "gate_strictness": binding.gate_strictness,
+                "input_governance_required": binding.input_governance_required,
+            },
+            strict=True,
+        )
+
+    first_request = request_for(RUN_ID, "RUN-RECOVERY-SERVICE-RESET-002", "REQ-RECOVERY-SERVICE-RESET-001")
+    first = service.reset_run(first_request)
+    assert first.status == "committed"
+    second_request = request_for(
+        "RUN-RECOVERY-SERVICE-RESET-002",
+        "RUN-RECOVERY-SERVICE-RESET-003",
+        "REQ-RECOVERY-SERVICE-RESET-002",
+    )
+    second = service.reset_run(second_request)
+    assert second.status == "committed"
+    replay = service.reset_run(first_request)
+    assert replay.status == "replayed"
+    assert replay.receipt == first.receipt
+    with SQLiteControlStore.open(database, clock=CLOCK) as store:
+        latest = store.load_snapshot("RUN-RECOVERY-SERVICE-RESET-003")
+        first_snapshot = store.load_snapshot("RUN-RECOVERY-SERVICE-RESET-002")
+    assert latest.workspace_run_head.current_run_id == "RUN-RECOVERY-SERVICE-RESET-003"
+    first_binding = first_snapshot.receipt_checkout_bindings[-1]
+    assert first_binding.pre_run_id == RUN_ID
+    assert first_binding.post_run_id == "RUN-RECOVERY-SERVICE-RESET-002"
+    assert first_binding.pre_checkout_revision_id == first_binding.post_checkout_revision_id or first_binding.pre_checkout_revision_id is not None
 
 
 def test_sequential_resets_verify_each_as_of_prefix_and_replay_first_reset(

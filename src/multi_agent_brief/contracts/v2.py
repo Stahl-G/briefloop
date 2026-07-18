@@ -131,6 +131,21 @@ def _contains_non_finite_number(value: Any) -> bool:
     return False
 
 
+def _contract_fingerprint(payload: dict[str, Any], *, field: str) -> str:
+    """Recompute one self-authenticating contract fingerprint."""
+
+    canonical = dict(payload)
+    canonical.pop(field, None)
+    return hashlib.sha256(
+        json.dumps(
+            canonical,
+            ensure_ascii=False,
+            sort_keys=True,
+            separators=(",", ":"),
+        ).encode("utf-8")
+    ).hexdigest()
+
+
 def _clean_text(value: str) -> str:
     if re.fullmatch(_CLEAN_TEXT_PATTERN, value) is None:
         raise ValueError("invalid text")
@@ -1117,6 +1132,7 @@ class CoreRunInitializeRequest(StrictModel):
     role_topology: RoleTopology
     gate_strictness: dict[GateId, bool]
     input_governance_required: bool
+    runtime_adapter_binding: "RuntimeAdapterBinding"
 
     @field_validator("gate_strictness")
     @classmethod
@@ -1124,6 +1140,153 @@ class CoreRunInitializeRequest(StrictModel):
         if set(value) != set(GATE_ID_VALUES):
             raise ValueError("gate strictness must name the exact Gate universe")
         return value
+
+
+class RuntimeAdapterBinding(StrictModel):
+    """Frozen, non-secret identity and capability boundary of one runtime kit."""
+
+    schema_id = "briefloop.runtime_adapter_binding.v2"
+
+    schema_version: Literal["briefloop.runtime_adapter_binding.v2"]
+    run_id: ContractId
+    runtime: RuntimeName
+    adapter_id: ContractId
+    adapter_version: ContractId
+    briefloop_version: ContractId
+    control_protocol: Literal["controlstore_v2"]
+    action_protocol: Literal["core_run_next_action_v2"]
+    proposal_protocol: Literal["pydantic_scratch_v2"]
+    role_ids: list[ContractId] = Field(min_length=1)
+    supported_role_topologies: list[RoleTopology] = Field(min_length=1)
+    adapter_asset_sha256: dict[ContractId, Sha256]
+    max_delegation_depth: PositiveInt
+    max_threads: PositiveInt
+    binding_fingerprint: Sha256
+
+    @model_validator(mode="after")
+    def canonical_binding(self) -> "RuntimeAdapterBinding":
+        if self.role_ids != sorted(set(self.role_ids)):
+            raise ValueError("role IDs must be sorted and unique")
+        if self.supported_role_topologies != sorted(
+            set(self.supported_role_topologies)
+        ):
+            raise ValueError("topology IDs must be sorted and unique")
+        if list(self.adapter_asset_sha256) != sorted(self.adapter_asset_sha256):
+            raise ValueError("adapter asset hashes must be sorted")
+        expected = _contract_fingerprint(
+            self.model_dump(mode="json", exclude_unset=False),
+            field="binding_fingerprint",
+        )
+        if self.binding_fingerprint != expected:
+            raise ValueError("runtime adapter fingerprint mismatch")
+        return self
+
+
+class RuntimeSourceRouteBinding(StrictModel):
+    """One safe source route frozen from initialization input."""
+
+    schema_id = "briefloop.runtime_source_route_binding.v2"
+
+    schema_version: Literal["briefloop.runtime_source_route_binding.v2"]
+    route_id: ContractId
+    route_kind: Literal[
+        "manual",
+        "local_file",
+        "rss",
+        "external_api",
+        "runtime_tool",
+        "cached_package",
+        "disabled",
+    ]
+    provider_id: Optional[ContractId] = None
+    execution_owner: Literal["specialist", "deterministic", "human"]
+    required: bool
+    route_fingerprint: Sha256
+
+    @model_validator(mode="after")
+    def canonical_route(self) -> "RuntimeSourceRouteBinding":
+        expected = _contract_fingerprint(
+            self.model_dump(mode="json", exclude_unset=False),
+            field="route_fingerprint",
+        )
+        if self.route_fingerprint != expected:
+            raise ValueError("source route fingerprint mismatch")
+        return self
+
+
+class RuntimeSourcePlanBinding(StrictModel):
+    """Frozen non-secret source routing derived from exact sources.yaml bytes."""
+
+    schema_id = "briefloop.runtime_source_plan_binding.v2"
+
+    schema_version: Literal["briefloop.runtime_source_plan_binding.v2"]
+    run_id: ContractId
+    sources_config_sha256: Sha256
+    web_search_mode: Literal[
+        "manual", "disabled", "external_api", "runtime_tool", "cached_package"
+    ]
+    search_backend: Optional[ContractId] = None
+    routes: list[RuntimeSourceRouteBinding]
+    source_plan_fingerprint: Sha256
+
+    @model_validator(mode="after")
+    def canonical_source_plan(self) -> "RuntimeSourcePlanBinding":
+        if [item.route_id for item in self.routes] != sorted(
+            {item.route_id for item in self.routes}
+        ):
+            raise ValueError("source routes must be sorted and unique")
+        if self.web_search_mode == "external_api":
+            if self.search_backend is None:
+                raise ValueError("external API search requires a backend")
+        elif self.search_backend is not None:
+            raise ValueError("search backend is allowed only for external API mode")
+        expected = _contract_fingerprint(
+            self.model_dump(mode="json", exclude_unset=False),
+            field="source_plan_fingerprint",
+        )
+        if self.source_plan_fingerprint != expected:
+            raise ValueError("source plan fingerprint mismatch")
+        return self
+
+
+class CoreRunNextAction(StrictModel):
+    """One deterministic, runtime-neutral legal next action."""
+
+    schema_id = "briefloop.core_run_next_action.v2"
+
+    schema_version: Literal["briefloop.core_run_next_action.v2"]
+    run_id: ContractId
+    store_revision: NonNegativeInt
+    action_kind: Literal[
+        "delegate", "deterministic", "human_decision", "blocked", "complete"
+    ]
+    effect_kind: ContractId
+    stage_id: Optional[ContractId] = None
+    role_id: Optional[ContractId] = None
+    reason_code: ContractId
+    input_artifacts: list[ArtifactRevisionReference]
+    request_schema_id: Optional[CleanText] = None
+    adapter_binding_fingerprint: Sha256
+    source_plan_fingerprint: Sha256
+    action_fingerprint: Sha256
+
+    @model_validator(mode="after")
+    def canonical_action(self) -> "CoreRunNextAction":
+        keys = [(item.artifact_id, item.revision) for item in self.input_artifacts]
+        if keys != sorted(set(keys)):
+            raise ValueError("input artifact references must be sorted and unique")
+        if self.action_kind == "delegate":
+            if self.stage_id is None or self.role_id is None or self.request_schema_id is None:
+                raise ValueError("delegate action requires stage, role and request schema")
+        elif self.role_id is not None:
+            raise ValueError("only delegate actions name a role")
+        expected = _contract_fingerprint(
+            self.model_dump(mode="json", exclude_unset=False),
+            field="action_fingerprint",
+        )
+        if self.action_fingerprint != expected:
+            raise ValueError("next action fingerprint mismatch")
+        return self
 
 
 class RunContractBinding(StrictModel):
@@ -1143,6 +1306,12 @@ class RunContractBinding(StrictModel):
     policy_pack_name: ContractId
     policy_pack_artifact: ArtifactRevisionReference
     policy_pack_sha256: Sha256
+    runtime_adapter_artifact: ArtifactRevisionReference
+    runtime_adapter_sha256: Sha256
+    runtime_adapter_fingerprint: Sha256
+    runtime_source_plan_artifact: ArtifactRevisionReference
+    runtime_source_plan_sha256: Sha256
+    runtime_source_plan_fingerprint: Sha256
     run_direction: RunDirection
     workspace_config_sha256: Sha256
     sources_config_sha256: Sha256
@@ -1940,6 +2109,30 @@ class DeliveryResultRecord(StrictModel):
     result_event_id: ContractId
     accepted_transaction_id: ContractId
     request_fingerprint: Sha256
+
+
+class DeliveryResultObservation(StrictModel):
+    """Value-free connector observation parsed from exact scratch bytes."""
+
+    schema_id = "briefloop.delivery_result_observation.v2"
+
+    schema_version: Literal["briefloop.delivery_result_observation.v2"]
+    attempt_id: ContractId
+    adapter_id: ContractId
+    adapter_version: ContractId
+    connector_operation_id: ContractId
+    status: Literal[
+        "bundle_prepared", "draft_created", "succeeded", "failed", "outcome_unknown"
+    ]
+    evidence_sha256: Sha256
+    diagnostic_code: ContractId
+    connector_request_fingerprint: Sha256
+
+    @model_validator(mode="after")
+    def value_free_diagnostic_matches_status(self) -> "DeliveryResultObservation":
+        if self.diagnostic_code != self.status:
+            raise ValueError("delivery diagnostic must be the fixed status code")
+        return self
 
 
 class RepairStartRequest(StrictModel):
@@ -3223,6 +3416,94 @@ RunDirection.minimal_example = deepcopy(_RUN_DIRECTION)
 RunDirection.full_example = deepcopy(_RUN_DIRECTION)
 
 _GATE_STRICTNESS = {gate_id: True for gate_id in GATE_ID_VALUES}
+_RUNTIME_ADAPTER_BINDING = {
+    "schema_version": RuntimeAdapterBinding.schema_id,
+    "run_id": _RUN,
+    "runtime": "operator",
+    "adapter_id": "briefloop-operator-controlstore",
+    "adapter_version": "1",
+    "briefloop_version": "0.12.1",
+    "control_protocol": "controlstore_v2",
+    "action_protocol": "core_run_next_action_v2",
+    "proposal_protocol": "pydantic_scratch_v2",
+    "role_ids": [
+        "analyst",
+        "auditor",
+        "claim-ledger",
+        "editor",
+        "scout",
+        "screener",
+        "source-planner",
+        "source-provider",
+        "writer",
+    ],
+    "supported_role_topologies": ["default", "strict"],
+    "adapter_asset_sha256": {"role_catalog": _SHA_A},
+    "max_delegation_depth": 1,
+    "max_threads": 4,
+    "binding_fingerprint": "0" * 64,
+}
+_RUNTIME_ADAPTER_BINDING["binding_fingerprint"] = _contract_fingerprint(
+    _RUNTIME_ADAPTER_BINDING,
+    field="binding_fingerprint",
+)
+RuntimeAdapterBinding.minimal_example = deepcopy(_RUNTIME_ADAPTER_BINDING)
+RuntimeAdapterBinding.full_example = deepcopy(_RUNTIME_ADAPTER_BINDING)
+
+_SOURCE_ROUTE = {
+    "schema_version": RuntimeSourceRouteBinding.schema_id,
+    "route_id": "manual",
+    "route_kind": "manual",
+    "provider_id": None,
+    "execution_owner": "human",
+    "required": False,
+    "route_fingerprint": "0" * 64,
+}
+_SOURCE_ROUTE["route_fingerprint"] = _contract_fingerprint(
+    _SOURCE_ROUTE,
+    field="route_fingerprint",
+)
+RuntimeSourceRouteBinding.minimal_example = deepcopy(_SOURCE_ROUTE)
+RuntimeSourceRouteBinding.full_example = deepcopy(_SOURCE_ROUTE)
+
+_SOURCE_PLAN = {
+    "schema_version": RuntimeSourcePlanBinding.schema_id,
+    "run_id": _RUN,
+    "sources_config_sha256": _SHA_B,
+    "web_search_mode": "manual",
+    "search_backend": None,
+    "routes": [deepcopy(_SOURCE_ROUTE)],
+    "source_plan_fingerprint": "0" * 64,
+}
+_SOURCE_PLAN["source_plan_fingerprint"] = _contract_fingerprint(
+    _SOURCE_PLAN,
+    field="source_plan_fingerprint",
+)
+RuntimeSourcePlanBinding.minimal_example = deepcopy(_SOURCE_PLAN)
+RuntimeSourcePlanBinding.full_example = deepcopy(_SOURCE_PLAN)
+
+_NEXT_ACTION = {
+    "schema_version": CoreRunNextAction.schema_id,
+    "run_id": _RUN,
+    "store_revision": 1,
+    "action_kind": "delegate",
+    "effect_kind": "role_proposal",
+    "stage_id": "scout",
+    "role_id": "scout",
+    "reason_code": "role_proposal_required",
+    "input_artifacts": [],
+    "request_schema_id": "briefloop.candidate_claims_proposal.v2",
+    "adapter_binding_fingerprint": _RUNTIME_ADAPTER_BINDING["binding_fingerprint"],
+    "source_plan_fingerprint": _SOURCE_PLAN["source_plan_fingerprint"],
+    "action_fingerprint": "0" * 64,
+}
+_NEXT_ACTION["action_fingerprint"] = _contract_fingerprint(
+    _NEXT_ACTION,
+    field="action_fingerprint",
+)
+CoreRunNextAction.minimal_example = deepcopy(_NEXT_ACTION)
+CoreRunNextAction.full_example = deepcopy(_NEXT_ACTION)
+
 CoreRunInitializeRequest.minimal_example = {
     "schema_version": CoreRunInitializeRequest.schema_id,
     "request_id": "REQ-CORE-INIT-001",
@@ -3236,6 +3517,7 @@ CoreRunInitializeRequest.minimal_example = {
     "role_topology": "default",
     "gate_strictness": deepcopy(_GATE_STRICTNESS),
     "input_governance_required": True,
+    "runtime_adapter_binding": deepcopy(_RUNTIME_ADAPTER_BINDING),
 }
 CoreRunInitializeRequest.full_example = deepcopy(
     CoreRunInitializeRequest.minimal_example
@@ -3265,6 +3547,18 @@ RunContractBinding.minimal_example = {
         "revision": 1,
     },
     "policy_pack_sha256": "c" * 64,
+    "runtime_adapter_artifact": {
+        "artifact_id": "run_contract_runtime_adapter",
+        "revision": 1,
+    },
+    "runtime_adapter_sha256": "f" * 64,
+    "runtime_adapter_fingerprint": _RUNTIME_ADAPTER_BINDING["binding_fingerprint"],
+    "runtime_source_plan_artifact": {
+        "artifact_id": "run_contract_runtime_source_plan",
+        "revision": 1,
+    },
+    "runtime_source_plan_sha256": "9" * 64,
+    "runtime_source_plan_fingerprint": _SOURCE_PLAN["source_plan_fingerprint"],
     "run_direction": deepcopy(_RUN_DIRECTION),
     "workspace_config_sha256": _SHA_A,
     "sources_config_sha256": _SHA_B,
@@ -3711,6 +4005,20 @@ DeliveryResultRecord.minimal_example = {
     "result_event_id": "EVT-RESULT-001", "accepted_transaction_id": "REQ-RESULT-001",
     "request_fingerprint": _SHA_A,
 }
+DeliveryResultObservation.minimal_example = {
+    "schema_version": DeliveryResultObservation.schema_id,
+    "attempt_id": "ATTEMPT-001",
+    "adapter_id": "local-adapter",
+    "adapter_version": "V1",
+    "connector_operation_id": "OP-001",
+    "status": "bundle_prepared",
+    "evidence_sha256": _SHA_A,
+    "diagnostic_code": "bundle_prepared",
+    "connector_request_fingerprint": _SHA_B,
+}
+DeliveryResultObservation.full_example = deepcopy(
+    DeliveryResultObservation.minimal_example
+)
 
 RepairStartRequest.minimal_example = {
     "schema_version": RepairStartRequest.schema_id, "request_id": "REQ-REPAIR-001", "run_id": _RUN,
@@ -3904,6 +4212,10 @@ V2_CONTRACT_MODELS: tuple[type[StrictModel], ...] = (
     Delivery,
     TransactionReceipt,
     RunDirection,
+    RuntimeAdapterBinding,
+    RuntimeSourceRouteBinding,
+    RuntimeSourcePlanBinding,
+    CoreRunNextAction,
     CoreRunInitializeRequest,
     RunContractBinding,
     InvocationStartRequest,
@@ -3940,6 +4252,7 @@ V2_CONTRACT_MODELS: tuple[type[StrictModel], ...] = (
     DeliveryAuthorizationRecord,
     DeliveryAttemptRecord,
     DeliveryResultRecord,
+    DeliveryResultObservation,
     RepairStartRequest,
     ArtifactSupersedeRequest,
     ArtifactRevertRequest,
@@ -4101,6 +4414,7 @@ __all__ = [
     "ContractReadResult",
     "CoreRunEventBinding",
     "CoreRunInitializeRequest",
+    "CoreRunNextAction",
     "Delivery",
     "DeliveryAttemptRecord",
     "DeliveryAttemptReference",
@@ -4109,6 +4423,7 @@ __all__ = [
     "DeliveryAuthorizationReference",
     "DeliveryAuthorizationRequest",
     "DeliveryResultRecord",
+    "DeliveryResultObservation",
     "DeliveryResultReference",
     "DeliveryResultRequest",
     "EventEnvelope",
@@ -4154,6 +4469,9 @@ __all__ = [
     "RunArchiveReference",
     "RunContractBinding",
     "RunDirection",
+    "RuntimeAdapterBinding",
+    "RuntimeSourcePlanBinding",
+    "RuntimeSourceRouteBinding",
     "RunIdentity",
     "RunIntegrityRecord",
     "RunHeadTransitionRecord",

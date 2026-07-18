@@ -14,6 +14,8 @@ from multi_agent_brief.contracts.v2 import (
     EventEnvelope,
     InvocationStartRequest,
     RunContractBinding,
+    RuntimeAdapterBinding,
+    RuntimeSourcePlanBinding,
     ScreenedCandidatesProposal,
     TransactionReceipt,
 )
@@ -72,6 +74,8 @@ class VerifiedCoreRun:
     snapshot: ControlStoreSnapshot
     binding: RunContractBinding
     contracts: ValidatedRuntimeContractPayloads
+    runtime_adapter: RuntimeAdapterBinding
+    source_plan: RuntimeSourcePlanBinding
 
     @property
     def stages(self) -> tuple[dict[str, Any], ...]:
@@ -1161,7 +1165,7 @@ class CoreRunDomainVerifier:
         ):
             raise CoreRunError("control_store_integrity_invalid")
         reader = _AsOfArtifactReader(history, snapshot)
-        contracts = self._load_contracts(reader, binding)
+        contracts, runtime_adapter, source_plan = self._load_contracts(reader, binding)
         self._verify_contract_fingerprint(binding)
         self._verify_receipt_bindings(snapshot)
         self._verify_checkout_revisions(history, snapshot)
@@ -1177,6 +1181,8 @@ class CoreRunDomainVerifier:
             snapshot=snapshot,
             binding=binding,
             contracts=contracts,
+            runtime_adapter=runtime_adapter,
+            source_plan=source_plan,
         )
 
     @staticmethod
@@ -1750,7 +1756,11 @@ class CoreRunDomainVerifier:
     def _load_contracts(
         store: SQLiteControlStore | _AsOfArtifactReader,
         binding: RunContractBinding,
-    ) -> ValidatedRuntimeContractPayloads:
+    ) -> tuple[
+        ValidatedRuntimeContractPayloads,
+        RuntimeAdapterBinding,
+        RuntimeSourcePlanBinding,
+    ]:
         try:
             stage_bytes = store.read_artifact_revision_bytes(
                 binding.run_id,
@@ -1767,15 +1777,37 @@ class CoreRunDomainVerifier:
                 binding.policy_pack_artifact.artifact_id,
                 binding.policy_pack_artifact.revision,
             )
+            adapter_bytes = store.read_artifact_revision_bytes(
+                binding.run_id,
+                binding.runtime_adapter_artifact.artifact_id,
+                binding.runtime_adapter_artifact.revision,
+            )
+            source_plan_bytes = store.read_artifact_revision_bytes(
+                binding.run_id,
+                binding.runtime_source_plan_artifact.artifact_id,
+                binding.runtime_source_plan_artifact.revision,
+            )
             if (
                 sha256_hex(stage_bytes) != binding.stage_specs_sha256
                 or sha256_hex(artifact_bytes) != binding.artifact_contracts_sha256
                 or sha256_hex(policy_bytes) != binding.policy_pack_sha256
+                or sha256_hex(adapter_bytes) != binding.runtime_adapter_sha256
+                or sha256_hex(source_plan_bytes) != binding.runtime_source_plan_sha256
             ):
                 raise CoreRunError("core_run_contract_mismatch")
             stage_payload = parse_json_object(stage_bytes)
             artifact_payload = parse_json_object(artifact_bytes)
             policy_payload = parse_json_object(policy_bytes)
+            adapter_payload = parse_json_object(adapter_bytes)
+            source_plan_payload = parse_json_object(source_plan_bytes)
+            runtime_adapter = RuntimeAdapterBinding.model_validate(
+                adapter_payload,
+                strict=True,
+            )
+            source_plan = RuntimeSourcePlanBinding.model_validate(
+                source_plan_payload,
+                strict=True,
+            )
             contracts = validate_runtime_contract_payloads(
                 stage_payload,
                 artifact_payload,
@@ -1792,9 +1824,19 @@ class CoreRunDomainVerifier:
             or policy_payload.get("schema_version") != binding.policy_pack_schema
             or policy_payload.get("policy_pack", {}).get("name")
             != binding.policy_pack_name
+            or runtime_adapter.run_id != binding.run_id
+            or runtime_adapter.runtime != binding.runtime
+            or runtime_adapter.binding_fingerprint
+            != binding.runtime_adapter_fingerprint
+            or binding.role_topology
+            not in runtime_adapter.supported_role_topologies
+            or source_plan.run_id != binding.run_id
+            or source_plan.sources_config_sha256 != binding.sources_config_sha256
+            or source_plan.source_plan_fingerprint
+            != binding.runtime_source_plan_fingerprint
         ):
             raise CoreRunError("core_run_contract_mismatch")
-        return contracts
+        return contracts, runtime_adapter, source_plan
 
     @staticmethod
     def _verify_contract_fingerprint(binding: RunContractBinding) -> None:
@@ -1807,6 +1849,10 @@ class CoreRunDomainVerifier:
             policy_pack_schema=binding.policy_pack_schema,
             policy_pack_name=binding.policy_pack_name,
             policy_pack_sha256=binding.policy_pack_sha256,
+            runtime_adapter_sha256=binding.runtime_adapter_sha256,
+            runtime_adapter_fingerprint=binding.runtime_adapter_fingerprint,
+            runtime_source_plan_sha256=binding.runtime_source_plan_sha256,
+            runtime_source_plan_fingerprint=binding.runtime_source_plan_fingerprint,
             run_direction=binding.run_direction.model_dump(
                 mode="json",
                 exclude_unset=False,
@@ -2026,6 +2072,14 @@ class CoreRunDomainVerifier:
             binding.policy_pack_artifact.artifact_id: (
                 binding.policy_pack_artifact.revision,
                 binding.policy_pack_sha256,
+            ),
+            binding.runtime_adapter_artifact.artifact_id: (
+                binding.runtime_adapter_artifact.revision,
+                binding.runtime_adapter_sha256,
+            ),
+            binding.runtime_source_plan_artifact.artifact_id: (
+                binding.runtime_source_plan_artifact.revision,
+                binding.runtime_source_plan_sha256,
             ),
         }
         if set(contract_refs) != set(INTERNAL_CONTRACT_ARTIFACT_IDS):
@@ -4106,17 +4160,21 @@ def resolve_core_replay(
         elif binding.request_fingerprint != request_fingerprint:
             raise CoreRunError("submission_replay_conflict")
         if binding.outcome == "blocked":
-            return CoreRunResult(
+            replay = CoreRunResult(
                 status="blocked",
                 receipt=receipt,
                 error_code=event.reason or "core_run_integrity_blocked",
                 primary_record_id=binding.primary_record_id,
             )
-        return CoreRunResult(
-            status="replayed",
-            receipt=receipt,
-            primary_record_id=binding.primary_record_id,
-        )
+        else:
+            replay = CoreRunResult(
+                status="replayed",
+                receipt=receipt,
+                primary_record_id=binding.primary_record_id,
+            )
+        from .checkout import recover_checkout_replay
+
+        return recover_checkout_replay(store=store, replay=replay)
     except CoreRunError as exc:
         if exc.code in {
             "submission_replay_conflict",

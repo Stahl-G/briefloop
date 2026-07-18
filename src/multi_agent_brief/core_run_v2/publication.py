@@ -102,6 +102,10 @@ class CheckoutPublicationEngine:
             return PublicationResult(
                 "commit_outcome_unknown", "checkout_publication_journal_invalid"
             )
+        except Exception:
+            return PublicationResult(
+                "commit_outcome_unknown", "checkout_publication_io_error"
+            )
 
     recover = publish
 
@@ -116,7 +120,7 @@ class CheckoutPublicationEngine:
             for member in members:
                 self._attest_member(member, profile)
             self._verify_full_post_checkout(intent, members, profile)
-            warnings = self._record_cleanup_observations(identity, members)
+            warnings = self._cleanup_after_ack(identity, members)
             return PublicationResult("published", warnings=warnings)
         for member in members:
             self._advance_member(member, profile)
@@ -149,8 +153,18 @@ class CheckoutPublicationEngine:
         _invoke(self.hook, "before_ack", identity, -1)
         self.store.append_checkout_publication_acks(ack_records)
         _invoke(self.hook, "after_ack", identity, -1)
-        warnings = self._record_cleanup_observations(identity, members)
+        warnings = self._cleanup_after_ack(identity, members)
         return PublicationResult("published", warnings=warnings)
+
+    def _cleanup_after_ack(
+        self,
+        identity: PublicationIdentityV1,
+        members: tuple[CheckoutPublicationMember, ...],
+    ) -> tuple[str, ...]:
+        try:
+            return self._record_cleanup_observations(identity, members)
+        except Exception:
+            return ("checkout_projection_cleanup_io_warning",)
 
     def _profile_for_members(
         self, members: tuple[CheckoutPublicationMember, ...]

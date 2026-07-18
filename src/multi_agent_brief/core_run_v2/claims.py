@@ -35,7 +35,12 @@ from multi_agent_brief.intake_v2.errors import IntakeError
 from multi_agent_brief.intake_v2.scratch import parse_json_object
 
 from .errors import CoreRunError, CoreRunResult, core_run_failure_result
-from .integrity import RunIntegrityService, materialize_checkout
+from .integrity import RunIntegrityService
+from .checkout import (
+    prepare_checkout_effect,
+    publish_checkout_effect,
+    stage_checkout_effect,
+)
 from .lineage import classify_current_lineage
 from .policy import (
     CLAIM_EPISTEMIC,
@@ -74,7 +79,18 @@ class ClaimFreezeService:
             return core_run_failure_result(exc)
 
     def _freeze(self, request: ClaimFreezeRequest) -> CoreRunResult:
+        fingerprint = canonical_fingerprint(
+            request.model_dump(mode="json", exclude_unset=False)
+        )
         with self._open_store() as store:
+            replay = resolve_core_replay(
+                store,
+                run_id=request.run_id,
+                request_id=request.request_id,
+                request_fingerprint=fingerprint,
+            )
+            if replay is not None:
+                return replay
             verified = self._verifier.verify(store, request.run_id)
             lineage = classify_current_lineage(verified.snapshot)
             candidate_record, screened_record, drafts_record = (
@@ -101,23 +117,6 @@ class ClaimFreezeService:
                 candidate_record,
                 CandidateClaimsProposal,
             )
-            fingerprint = canonical_fingerprint(
-                {
-                    "request": request.model_dump(mode="json", exclude_unset=False),
-                    "claim_drafts_sha256": sha256_hex(drafts_bytes),
-                    "screened_sha256": sha256_hex(screened_bytes),
-                    "candidate_sha256": sha256_hex(candidate_bytes),
-                    "run_contract_fingerprint": verified.binding.contract_fingerprint,
-                }
-            )
-            replay = resolve_core_replay(
-                store,
-                run_id=request.run_id,
-                request_id=request.request_id,
-                request_fingerprint=fingerprint,
-            )
-            if replay is not None:
-                return replay
             lineage.require_no_active_invocation("claim-ledger")
             lineage.require_stage_mutable("claim-ledger")
             if verified.snapshot.store_revision != request.expected_store_revision:
@@ -397,7 +396,13 @@ class ClaimFreezeService:
                 },
                 strict=True,
             )
-            materialize_checkout(self.workspace, ledger.path, ledger_bytes)
+            checkout = prepare_checkout_effect(
+                workspace=self.workspace,
+                snapshot=verified.snapshot,
+                transaction_id=request.request_id,
+                created_at=self._clock(),
+                additional_revisions=(ledger_revision,),
+            )
             unit = store.begin(
                 request.run_id,
                 request.request_id,
@@ -412,12 +417,23 @@ class ClaimFreezeService:
                 unit.put_claim_source_binding(binding)
             unit.put_claim_freeze(freeze)
             unit.append_event(event)
+            stage_checkout_effect(unit, checkout)
             receipt = unit.commit(
                 _postcommit_observer=lambda _receipt: self._verifier.verify(
                     store,
                     request.run_id,
                 )
             )
+            published, _warnings = publish_checkout_effect(
+                workspace=self.workspace,
+                store=store,
+                prepared=checkout,
+            )
+            if not published:
+                return CoreRunResult(
+                    status="commit_outcome_unknown",
+                    error_code="commit_outcome_unknown",
+                )
             return CoreRunResult(
                 status="committed",
                 receipt=receipt,

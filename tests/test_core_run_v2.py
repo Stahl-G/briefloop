@@ -100,6 +100,20 @@ def _record(model_type, **values):
     )
 
 
+def _bind_init_payload(payload: dict[str, object]) -> dict[str, object]:
+    binding = dict(payload["runtime_adapter_binding"])  # type: ignore[arg-type]
+    binding["run_id"] = payload["run_id"]
+    binding["runtime"] = payload["runtime"]
+    topology = str(payload["role_topology"])
+    supported = set(binding["supported_role_topologies"])  # type: ignore[arg-type]
+    supported.add(topology)
+    binding["supported_role_topologies"] = sorted(supported)
+    binding.pop("binding_fingerprint", None)
+    binding["binding_fingerprint"] = canonical_fingerprint(binding)
+    payload["runtime_adapter_binding"] = binding
+    return payload
+
+
 def _write_json(path: Path, payload: dict[str, object]) -> bytes:
     data = json.dumps(payload, sort_keys=True, separators=(",", ":")).encode()
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -157,7 +171,7 @@ def _initialize(
         sources_config_sha256=read_workspace_file(workspace, "sources.yaml").sha256,
     )
     result = service.initialize(
-        CoreRunInitializeRequest.model_validate(request, strict=True)
+        CoreRunInitializeRequest.model_validate(_bind_init_payload(request), strict=True)
     )
     assert result.status == "committed", result.to_dict()
     return service
@@ -3282,7 +3296,7 @@ def test_gate_commit_failure_rolls_back_complete_negative_or_positive_batch(
     assert snapshot.gate_findings == ()
     assert snapshot.gate_artifact_bindings == ()
     assert report.current_revision == 0
-    assert (workspace / report.path).is_file()
+    assert not (workspace / report.path).exists()
 
 
 def test_direct_legacy_control_files_have_zero_run_truth_effect(
@@ -3347,7 +3361,9 @@ def test_initialize_replay_is_exact_and_conflict_is_zero_write(
         workspace_config_sha256=read_workspace_file(workspace, "config.yaml").sha256,
         sources_config_sha256=read_workspace_file(workspace, "sources.yaml").sha256,
     )
-    request = CoreRunInitializeRequest.model_validate(payload, strict=True)
+    request = CoreRunInitializeRequest.model_validate(
+        _bind_init_payload(payload), strict=True
+    )
     first = service.initialize(request)
     assert first.status == "committed"
     revision = _store_revision(workspace)
@@ -3396,7 +3412,7 @@ def test_new_initialize_rejects_workspace_input_hash_mismatch_without_store(
         stream.write("\n# changed before first initialize\n")
 
     result = CoreRunService(workspace, clock=CLOCK).initialize(
-        CoreRunInitializeRequest.model_validate(payload, strict=True)
+        CoreRunInitializeRequest.model_validate(_bind_init_payload(payload), strict=True)
     )
 
     assert result.to_dict() == {
@@ -3426,7 +3442,7 @@ def test_secret_bearing_workspace_input_is_rejected_before_store_creation(
         sources_config_sha256=read_workspace_file(workspace, "sources.yaml").sha256,
     )
     result = CoreRunService(workspace, clock=CLOCK).initialize(
-        CoreRunInitializeRequest.model_validate(payload, strict=True)
+        CoreRunInitializeRequest.model_validate(_bind_init_payload(payload), strict=True)
     )
 
     assert result.to_dict() == {
@@ -3465,12 +3481,12 @@ def test_legacy_json_control_workspace_cannot_become_fresh_v2(
         sources_config_sha256=read_workspace_file(workspace, "sources.yaml").sha256,
     )
     result = CoreRunService(workspace, clock=CLOCK).initialize(
-        CoreRunInitializeRequest.model_validate(payload, strict=True)
+        CoreRunInitializeRequest.model_validate(_bind_init_payload(payload), strict=True)
     )
 
     assert result.to_dict() == {
         "status": "failed_uncommitted",
-        "error_code": "unsupported_schema_version",
+        "error_code": "legacy_workspace_unsupported",
     }
     assert not (workspace / "briefloop.db").exists()
     assert marker.read_text(encoding="utf-8") == '{"legacy":true}'
@@ -3525,7 +3541,9 @@ def test_initialize_failure_cleans_revision_zero_or_exactly_replays_commit(
         workspace_config_sha256=read_workspace_file(workspace, "config.yaml").sha256,
         sources_config_sha256=read_workspace_file(workspace, "sources.yaml").sha256,
     )
-    request = CoreRunInitializeRequest.model_validate(payload, strict=True)
+    request = CoreRunInitializeRequest.model_validate(
+        _bind_init_payload(payload), strict=True
+    )
     original_create = SQLiteControlStore.create
 
     def fail(stage: str) -> None:
@@ -3589,7 +3607,9 @@ def test_initialize_unknown_never_deletes_store_when_cleanup_reopen_fails(
             "sources.yaml",
         ).sha256,
     )
-    request = CoreRunInitializeRequest.model_validate(payload, strict=True)
+    request = CoreRunInitializeRequest.model_validate(
+        _bind_init_payload(payload), strict=True
+    )
     original_create = SQLiteControlStore.create
 
     def fail_after_commit(stage: str) -> None:
@@ -4183,7 +4203,8 @@ def test_artifact_commit_failure_leaves_only_unbound_checkout(
         item.accepted_transaction_id == "REQ-ARTIFACT-ROLLBACK"
         for item in snapshot.owned_artifact_submissions
     )
-    assert (workspace / artifact.path).read_bytes() == content
+    assert not (workspace / artifact.path).exists()
+    assert scratch.read_bytes() == content
     analyst = _stage(workspace, "analyst")
     blocked = core.complete_stage(
         _record(
@@ -4279,7 +4300,7 @@ def test_claim_commit_failure_rolls_back_claims_bindings_freeze_and_ledger(
     assert snapshot.claim_source_bindings == ()
     assert snapshot.claim_freezes == ()
     assert ledger.current_revision == 0
-    assert (workspace / ledger.path).is_file()
+    assert not (workspace / ledger.path).exists()
 
 
 def test_claim_freeze_requires_current_drafts_revision_and_exactly_replays(

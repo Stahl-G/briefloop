@@ -1228,6 +1228,61 @@ class SQLiteControlStore:
                 self._connection.execute("BEGIN IMMEDIATE")
                 for record in records:
                     identity = record.identity
+                    semantic_payload = {
+                        "identity": identity.model_dump(mode="json", exclude_unset=False),
+                        "ordinal": record.ordinal,
+                        "auxiliary_role": record.auxiliary_role,
+                        "reason_code": record.reason_code,
+                        "observed_kind": record.observed_kind,
+                        "observed_sha256": record.observed_sha256,
+                        "observed_size": record.observed_size,
+                    }
+                    if record.cleanup_observation_id != sha256_hex(
+                        canonical_json_bytes(semantic_payload)
+                    ):
+                        raise ControlStoreIntegrityError(
+                            "checkout_publication_journal_invalid"
+                        )
+                    key = (
+                        identity.workspace_id,
+                        identity.run_id,
+                        identity.transaction_id,
+                        identity.checkout_revision_id,
+                        record.ordinal,
+                    )
+                    member_row = self._connection.execute(
+                        "SELECT payload_json FROM checkout_publication_members "
+                        "WHERE workspace_id=? AND run_id=? AND transaction_id=? "
+                        "AND checkout_revision_id=? AND ordinal=?",
+                        key,
+                    ).fetchone()
+                    ack_row = self._connection.execute(
+                        "SELECT 1 FROM checkout_publication_acks "
+                        "WHERE workspace_id=? AND run_id=? AND transaction_id=? "
+                        "AND checkout_revision_id=? AND ordinal=?",
+                        key,
+                    ).fetchone()
+                    if member_row is None or ack_row is None:
+                        raise ControlStoreIntegrityError(
+                            "checkout_publication_journal_invalid"
+                        )
+                    member = _decode_record(
+                        CheckoutPublicationMember,
+                        str(member_row[0]),
+                    )
+                    expected = (
+                        (member.post_kind, member.post_sha256, member.post_size)
+                        if record.auxiliary_role == "temp"
+                        else (member.pre_kind, member.pre_sha256, member.pre_size)
+                    )
+                    if expected != (
+                        record.expected_kind,
+                        record.expected_sha256,
+                        record.expected_size,
+                    ):
+                        raise ControlStoreIntegrityError(
+                            "checkout_publication_journal_invalid"
+                        )
                     row = self._connection.execute(
                         "SELECT payload_json FROM checkout_publication_cleanup_observations WHERE cleanup_observation_id=?",
                         (record.cleanup_observation_id,),
@@ -4828,6 +4883,10 @@ class SQLiteControlStore:
                 "policy_pack_schema": binding.policy_pack_schema,
                 "policy_pack_name": binding.policy_pack_name,
                 "policy_pack_sha256": binding.policy_pack_sha256,
+                "runtime_adapter_sha256": binding.runtime_adapter_sha256,
+                "runtime_adapter_fingerprint": binding.runtime_adapter_fingerprint,
+                "runtime_source_plan_sha256": binding.runtime_source_plan_sha256,
+                "runtime_source_plan_fingerprint": binding.runtime_source_plan_fingerprint,
                 "run_direction": binding.run_direction.model_dump(
                     mode="json",
                     exclude_unset=False,
@@ -4868,6 +4927,16 @@ class SQLiteControlStore:
                 binding.policy_pack_artifact.artifact_id,
                 binding.policy_pack_artifact.revision,
                 binding.policy_pack_sha256,
+            ),
+            (
+                binding.runtime_adapter_artifact.artifact_id,
+                binding.runtime_adapter_artifact.revision,
+                binding.runtime_adapter_sha256,
+            ),
+            (
+                binding.runtime_source_plan_artifact.artifact_id,
+                binding.runtime_source_plan_artifact.revision,
+                binding.runtime_source_plan_sha256,
             ),
         }
         if (

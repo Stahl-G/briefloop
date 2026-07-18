@@ -31,7 +31,12 @@ from multi_agent_brief.intake_v2.scratch import ScratchReader, parse_json_object
 from multi_agent_brief.inputs.classifier import classify_input_dir
 
 from .errors import CoreRunError, CoreRunResult, core_run_failure_result
-from .integrity import RunIntegrityService, materialize_checkout
+from .integrity import RunIntegrityService
+from .checkout import (
+    prepare_checkout_effect,
+    publish_checkout_effect,
+    stage_checkout_effect,
+)
 from .lineage import canonical_audit_report_bytes, classify_current_lineage
 from .policy import ARTIFACT_POLICIES, derived_id, transaction_type_for
 from .verifier import (
@@ -91,12 +96,10 @@ class ArtifactAcceptanceService:
             content = self._reader.read(request.input_path)
         except IntakeError as exc:
             raise CoreRunError("artifact_input_unsafe") from exc
-        if PurePosixPath(request.input_path).suffix != policy.input_suffix:
-            raise CoreRunError("artifact_input_unsafe")
         fingerprint = canonical_fingerprint(
             {
                 "request": request.model_dump(mode="json", exclude_unset=False),
-                "content_sha256": sha256_hex(content),
+                "input_sha256": sha256_hex(content),
             }
         )
         with self._open_store() as store:
@@ -108,6 +111,8 @@ class ArtifactAcceptanceService:
             )
             if replay is not None:
                 return replay
+            if PurePosixPath(request.input_path).suffix != policy.input_suffix:
+                raise CoreRunError("artifact_input_unsafe")
             if request.artifact_id == "input_classification":
                 expected_content = _input_classification_bytes(self.workspace)
                 if content != expected_content:
@@ -325,7 +330,13 @@ class ArtifactAcceptanceService:
                     outcome="committed",
                 ),
             )
-            materialize_checkout(self.workspace, artifact.path, content)
+            checkout = prepare_checkout_effect(
+                workspace=self.workspace,
+                snapshot=verified.snapshot,
+                transaction_id=request.request_id,
+                created_at=self._clock(),
+                additional_revisions=(revision,),
+            )
             unit = store.begin(
                 request.run_id,
                 request.request_id,
@@ -338,12 +349,23 @@ class ArtifactAcceptanceService:
             unit.put_artifact_revision(revision, content)
             unit.put_owned_artifact_submission(submission)
             unit.append_event(event)
+            stage_checkout_effect(unit, checkout)
             receipt = unit.commit(
                 _postcommit_observer=lambda _receipt: self._verifier.verify(
                     store,
                     request.run_id,
                 )
             )
+            published, _warnings = publish_checkout_effect(
+                workspace=self.workspace,
+                store=store,
+                prepared=checkout,
+            )
+            if not published:
+                return CoreRunResult(
+                    status="commit_outcome_unknown",
+                    error_code="commit_outcome_unknown",
+                )
             return CoreRunResult(
                 status="committed",
                 receipt=receipt,
@@ -354,7 +376,18 @@ class ArtifactAcceptanceService:
         self,
         request: AuditPromotionRequest,
     ) -> CoreRunResult:
+        fingerprint = canonical_fingerprint(
+            request.model_dump(mode="json", exclude_unset=False)
+        )
         with self._open_store() as store:
+            replay = resolve_core_replay(
+                store,
+                run_id=request.run_id,
+                request_id=request.request_id,
+                request_fingerprint=fingerprint,
+            )
+            if replay is not None:
+                return replay
             verified = self._verifier.verify(store, request.run_id)
             lineage = classify_current_lineage(verified.snapshot)
             proposal_record = next(
@@ -407,22 +440,6 @@ class ArtifactAcceptanceService:
                 proposal_bytes=proposal_bytes,
                 brief_revision=target,
             )
-            fingerprint = canonical_fingerprint(
-                {
-                    "request": request.model_dump(mode="json", exclude_unset=False),
-                    "proposal_sha256": proposal_record.proposal_sha256,
-                    "target_sha256": target.sha256,
-                    "report_sha256": sha256_hex(content),
-                }
-            )
-            replay = resolve_core_replay(
-                store,
-                run_id=request.run_id,
-                request_id=request.request_id,
-                request_fingerprint=fingerprint,
-            )
-            if replay is not None:
-                return replay
             lineage.require_current_audit(
                 proposal_id=proposal_record.proposal_id,
                 target_artifact_id=target.artifact_id,
@@ -543,7 +560,13 @@ class ArtifactAcceptanceService:
                     outcome="committed",
                 ),
             )
-            materialize_checkout(self.workspace, report_record.path, content)
+            checkout = prepare_checkout_effect(
+                workspace=self.workspace,
+                snapshot=verified.snapshot,
+                transaction_id=request.request_id,
+                created_at=self._clock(),
+                additional_revisions=(revision,),
+            )
             unit = store.begin(
                 request.run_id,
                 request.request_id,
@@ -554,12 +577,23 @@ class ArtifactAcceptanceService:
             unit.put_artifact_revision(revision, content)
             unit.put_owned_artifact_submission(submission)
             unit.append_event(event)
+            stage_checkout_effect(unit, checkout)
             receipt = unit.commit(
                 _postcommit_observer=lambda _receipt: self._verifier.verify(
                     store,
                     request.run_id,
                 )
             )
+            published, _warnings = publish_checkout_effect(
+                workspace=self.workspace,
+                store=store,
+                prepared=checkout,
+            )
+            if not published:
+                return CoreRunResult(
+                    status="commit_outcome_unknown",
+                    error_code="commit_outcome_unknown",
+                )
             return CoreRunResult(
                 status="committed",
                 receipt=receipt,

@@ -57,6 +57,10 @@ EXPECTED_V2_CONTRACT_IDS = (
     "briefloop.delivery.v2",
     "briefloop.transaction_receipt.v2",
     "briefloop.run_direction.v2",
+    "briefloop.runtime_adapter_binding.v2",
+    "briefloop.runtime_source_route_binding.v2",
+    "briefloop.runtime_source_plan_binding.v2",
+    "briefloop.core_run_next_action.v2",
     "briefloop.core_run_initialize_request.v2",
     "briefloop.run_contract_binding.v2",
     "briefloop.invocation_start_request.v2",
@@ -93,6 +97,7 @@ EXPECTED_V2_CONTRACT_IDS = (
     "briefloop.delivery_authorization_record.v2",
     "briefloop.delivery_attempt_record.v2",
     "briefloop.delivery_result_record.v2",
+    "briefloop.delivery_result_observation.v2",
     "briefloop.repair_start_request.v2",
     "briefloop.artifact_supersede_request.v2",
     "briefloop.artifact_revert_request.v2",
@@ -118,8 +123,8 @@ EXPECTED_V2_CONTRACT_IDS = (
 
 def test_v2_contract_inventory_is_exact_and_uses_existing_registry() -> None:
     assert V2_CONTRACT_IDS == EXPECTED_V2_CONTRACT_IDS
-    assert len(V2_CONTRACT_MODELS) == 78
-    assert len(set(V2_CONTRACT_IDS)) == 78
+    assert len(V2_CONTRACT_MODELS) == 83
+    assert len(set(V2_CONTRACT_IDS)) == 83
     for contract_id, model in zip(V2_CONTRACT_IDS, V2_CONTRACT_MODELS):
         assert SchemaRegistry.get(contract_id) is model
 
