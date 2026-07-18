@@ -43,6 +43,54 @@ def register(subparsers: argparse._SubParsersAction) -> None:
     shadow_run.add_argument("--trial-id", required=True)
     shadow_run.add_argument("--archive-root", required=True)
     shadow_run.add_argument("--json", action="store_true")
+    study_preflight = laj_sub.add_parser(
+        "study-preflight",
+        help="Validate LAJ study eligibility and complete-trial provider budget without provider access.",
+    )
+    study_preflight.add_argument("--declaration", required=True)
+    study_preflight.add_argument("--report", required=True)
+    study_preflight.add_argument("--bounded-context", required=True)
+    study_preflight.add_argument("--instrument", required=True)
+    study_preflight.add_argument("--trial-id", required=True)
+    study_preflight.add_argument("--archive-root", required=True)
+    study_preflight.add_argument("--budget-policy", required=True)
+    study_preflight.add_argument("--control-report")
+    study_preflight.add_argument("--sensitivity-manifest")
+    study_preflight.add_argument(
+        "--output",
+        required=True,
+        help="New JSON file in an existing standalone laj-study-<label> directory outside every BriefLoop workspace and shadow archive.",
+    )
+    study_preflight.add_argument("--json", action="store_true")
+    budgeted = laj_sub.add_parser(
+        "budgeted-shadow-run",
+        help="Run an already-authorized shadow trial only when its exact admitted prompts fit the frozen budget.",
+    )
+    budgeted.add_argument("--authorization", required=True)
+    budgeted.add_argument("--budget-policy", required=True)
+    budgeted.add_argument("--report", required=True)
+    budgeted.add_argument("--bounded-context", required=True)
+    budgeted.add_argument("--instrument", required=True)
+    budgeted.add_argument("--archive-root", required=True)
+    budgeted.add_argument(
+        "--evidence-output",
+        required=True,
+        help="Immutable JSON evidence file in an existing standalone laj-study-<label> directory outside every BriefLoop workspace and shadow archive.",
+    )
+    budgeted.add_argument("--json", action="store_true")
+    compare = laj_sub.add_parser(
+        "study-compare",
+        help="Offline exact dimension and span-overlap comparison for Human adjudication.",
+    )
+    compare.add_argument("--case", required=True)
+    compare.add_argument("--execution-evidence", required=True)
+    compare.add_argument("--archive", required=True)
+    compare.add_argument(
+        "--output",
+        required=True,
+        help="New JSON file in an existing standalone laj-study-<label> directory outside every BriefLoop workspace and shadow archive.",
+    )
+    compare.add_argument("--json", action="store_true")
     present = laj_sub.add_parser(
         "present",
         help="Render one verified shadow archive as advisory JSON, Markdown, and HTML.",
@@ -435,6 +483,12 @@ def handle(args: argparse.Namespace) -> int:
 
 
 def _handle_laj(args: argparse.Namespace) -> int:
+    if args.experiment_laj_action == "study-preflight":
+        return _handle_laj_study_preflight(args)
+    if args.experiment_laj_action == "budgeted-shadow-run":
+        return _handle_laj_budgeted_shadow_run(args)
+    if args.experiment_laj_action == "study-compare":
+        return _handle_laj_study_compare(args)
     if args.experiment_laj_action == "demo":
         return _handle_laj_demo(args)
     if args.experiment_laj_action == "present":
@@ -455,6 +509,248 @@ def _handle_laj(args: argparse.Namespace) -> int:
     except Exception:
         payload = _shadow_failure_payload()
     _print_shadow_result(payload, json_output=getattr(args, "json", False))
+    return 0 if payload["ok"] else 1
+
+
+class _LajCliError(Exception):
+    def __init__(self, reason_code: str) -> None:
+        self.reason_code = reason_code
+        super().__init__(reason_code)
+
+
+def _read_study_model(study: Any, path: str, model: type[Any], reason: str) -> Any:
+    from pathlib import Path
+
+    try:
+        raw = Path(path).read_bytes()
+    except OSError:
+        raise _LajCliError(reason) from None
+    return study.parse_study_json(raw, model, reason)
+
+
+def _write_study_output(
+    study: Any, path: str, value: Any, *, forbidden_archive: str
+) -> None:
+    from pathlib import Path
+
+    output = Path(path)
+    if output.exists() or not output.parent.exists():
+        raise RuntimeError("study output unavailable")
+    study.write_canonical_model(output, value, forbidden_archive=forbidden_archive)
+
+
+def _write_study_payload(
+    study: Any,
+    path: str,
+    payload: dict[str, object],
+    *,
+    forbidden_archive: str,
+) -> None:
+    from pathlib import Path
+
+    output = Path(path)
+    if output.exists() or not output.parent.exists():
+        raise RuntimeError("study output unavailable")
+    study.write_canonical_payload(output, payload, forbidden_archive=forbidden_archive)
+
+
+def _print_study_payload(payload: dict[str, object], *, json_output: bool) -> None:
+    if json_output:
+        print(json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True))
+        return
+    print("Experimental / Offline shadow / Advisory only")
+    print(f"ok: {payload.get('ok', False)}")
+    print(f"reason_codes: {','.join(payload.get('reason_codes', []))}")
+    print("runtime_authority: none")
+
+
+def _handle_laj_study_preflight(args: argparse.Namespace) -> int:
+    try:
+        study = importlib.import_module("multi_agent_brief.semantic_evaluator.study")
+        study.validate_standalone_study_output(
+            args.output, forbidden_archive=args.archive_root
+        )
+        contracts = importlib.import_module(
+            "multi_agent_brief.semantic_evaluator.study_contracts"
+        )
+        declaration = _read_study_model(
+            study,
+            args.declaration,
+            contracts.LajStudyDeclarationV1,
+            "study_declaration_invalid",
+        )
+        eligibility = study.evaluate_study_eligibility(declaration)
+        if not eligibility.eligible:
+            payload = {
+                "ok": False,
+                "eligibility": eligibility.to_dict(),
+                "resolved_case": None,
+                "authorization": None,
+                "preflight": None,
+                "reason_codes": ["utility_target_ineligible"],
+                "provider_calls": 0,
+                "runtime_authority": False,
+            }
+            _write_study_payload(
+                study,
+                args.output,
+                payload,
+                forbidden_archive=args.archive_root,
+            )
+            _print_study_payload(payload, json_output=getattr(args, "json", False))
+            return 1
+        if not study.verify_study_report_binding(declaration, args.report):
+            payload = {
+                "ok": False,
+                "eligibility": eligibility.to_dict(),
+                "resolved_case": None,
+                "authorization": None,
+                "preflight": None,
+                "reason_codes": ["study_report_binding_mismatch"],
+                "provider_calls": 0,
+                "runtime_authority": False,
+            }
+            _write_study_payload(
+                study,
+                args.output,
+                payload,
+                forbidden_archive=args.archive_root,
+            )
+            _print_study_payload(payload, json_output=getattr(args, "json", False))
+            return 1
+        manifest = None
+        if args.sensitivity_manifest is not None:
+            from pathlib import Path
+
+            try:
+                manifest_raw = Path(args.sensitivity_manifest).read_bytes()
+            except OSError:
+                raise _LajCliError("sensitivity_manifest_invalid") from None
+            manifest = study.parse_sensitivity_manifest(manifest_raw)
+        policy = _read_study_model(
+            study,
+            args.budget_policy,
+            contracts.LajProviderBudgetPolicyV1,
+            "budget_preflight_unavailable",
+        )
+        result = study.prepare_study(
+            declaration=declaration,
+            report=args.report,
+            bounded_context=args.bounded_context,
+            instrument=args.instrument,
+            trial_id=args.trial_id,
+            archive_root=args.archive_root,
+            budget_policy=policy,
+            manifest=manifest,
+            control_report=args.control_report,
+        )
+        payload = result.to_dict()
+        _write_study_payload(
+            study,
+            args.output,
+            payload,
+            forbidden_archive=args.archive_root,
+        )
+    except Exception as exc:
+        reason = getattr(exc, "reason_code", None)
+        payload = {
+            "ok": False,
+            "reason_codes": [reason or "study_declaration_invalid"],
+            "provider_calls": 0,
+            "runtime_authority": False,
+        }
+    _print_study_payload(payload, json_output=getattr(args, "json", False))
+    return 0 if payload["ok"] else 1
+
+
+def _handle_laj_budgeted_shadow_run(args: argparse.Namespace) -> int:
+    try:
+        study = importlib.import_module("multi_agent_brief.semantic_evaluator.study")
+        study.validate_standalone_study_output(
+            args.evidence_output, forbidden_archive=args.archive_root
+        )
+        contracts = importlib.import_module(
+            "multi_agent_brief.semantic_evaluator.study_contracts"
+        )
+        authorization = _read_study_model(
+            study,
+            args.authorization,
+            contracts.LajProviderExecutionAuthorizationV1,
+            "provider_execution_authorization_invalid",
+        )
+        policy = _read_study_model(
+            study,
+            args.budget_policy,
+            contracts.LajProviderBudgetPolicyV1,
+            "budget_preflight_unavailable",
+        )
+        result = study.budgeted_shadow_run(
+            authorization=authorization,
+            budget_policy=policy,
+            report=args.report,
+            bounded_context=args.bounded_context,
+            instrument=args.instrument,
+            archive_root=args.archive_root,
+            evidence_output=args.evidence_output,
+        )
+        payload = result.to_dict()
+    except Exception as exc:
+        reason = getattr(exc, "reason_code", None)
+        payload = {
+            "ok": False,
+            "reason_codes": [reason or "provider_execution_authorization_invalid"],
+            "runtime_authority": False,
+        }
+    _print_study_payload(payload, json_output=getattr(args, "json", False))
+    return 0 if payload["ok"] else 1
+
+
+def _handle_laj_study_compare(args: argparse.Namespace) -> int:
+    try:
+        study = importlib.import_module("multi_agent_brief.semantic_evaluator.study")
+        study.validate_standalone_study_output(
+            args.output, forbidden_archive=args.archive
+        )
+        contracts = importlib.import_module(
+            "multi_agent_brief.semantic_evaluator.study_contracts"
+        )
+        case = _read_study_model(
+            study,
+            args.case,
+            contracts.ResolvedSensitivityCaseV1,
+            "sensitivity_case_binding_mismatch",
+        )
+        evidence = _read_study_model(
+            study,
+            args.execution_evidence,
+            contracts.LajStudyExecutionEvidenceV1,
+            "study_execution_evidence_incomplete",
+        )
+        comparison = study.compare_sensitivity(
+            case=case, evidence=evidence, archive_path=args.archive
+        )
+        _write_study_output(
+            study,
+            args.output,
+            comparison,
+            forbidden_archive=args.archive,
+        )
+        payload = {
+            "ok": True,
+            "state": comparison.state,
+            "comparison_sha256": comparison.comparison_sha256,
+            "reason_codes": list(comparison.reason_codes),
+            "runtime_authority": False,
+        }
+    except Exception as exc:
+        reason = getattr(exc, "reason_code", None)
+        payload = {
+            "ok": False,
+            "state": "invalid",
+            "reason_codes": [reason or "sensitivity_comparison_invalid"],
+            "runtime_authority": False,
+        }
+    _print_study_payload(payload, json_output=getattr(args, "json", False))
     return 0 if payload["ok"] else 1
 
 
