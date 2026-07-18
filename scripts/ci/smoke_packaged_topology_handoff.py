@@ -2,7 +2,7 @@
 """Package-install smoke for topology-aware runtime handoff.
 
 This script assumes the package has already been installed into the current
-environment. It exercises the installed `multi-agent-brief` CLI only; it does
+environment. It exercises the installed public `briefloop` CLI; it does
 not import source-tree modules or install workspace runtime kits.
 """
 
@@ -16,7 +16,7 @@ from pathlib import Path
 
 
 def _run(*args: str, cwd: Path | None = None) -> subprocess.CompletedProcess[str]:
-    cmd = ["multi-agent-brief", *args]
+    cmd = ["briefloop", *args]
     result = subprocess.run(
         cmd,
         cwd=str(cwd) if cwd else None,

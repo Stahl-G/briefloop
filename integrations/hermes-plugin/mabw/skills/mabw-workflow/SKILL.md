@@ -1,9 +1,9 @@
 ---
 name: mabw-workflow
-description: Runs Multi-Agent Brief Workflow inside Hermes from chat-collected onboarding answers to workspace handoff and delegated brief execution. Use when the user asks Hermes to initialize, generate, schedule, or continue a MABW brief.
+description: Runs BriefLoop inside Hermes from chat-collected onboarding answers to workspace handoff and delegated brief execution. Use when the user asks Hermes to initialize, generate, schedule, or continue a BriefLoop brief.
 ---
 
-# MABW Workflow for Hermes
+# BriefLoop Workflow for Hermes
 
 ## Purpose
 
@@ -32,7 +32,7 @@ Read workspace context -> read contract references -> identify the next stage ->
 4. Call `mabw_run_handoff`.
 5. Read `agent_handoff.md`.
 6. Read `output/intermediate/audience_profile_snapshot.md` as the frozen runtime taste context.
-7. Read `output/intermediate/orchestrator_control_switchboard.json` and record control choices with `multi-agent-brief controls select`.
+7. Read `output/intermediate/orchestrator_control_switchboard.json` and record control choices with `briefloop controls select`.
 8. Continue the Orchestrator-led delegated workflow with Hermes child tasks.
 
 ## Brief Profile Fields
@@ -58,14 +58,14 @@ doctor → source discovery when configured → input governance when available 
 Before `finalize`, run this explicit success path:
 
 ```bash
-multi-agent-brief gates check --workspace <workspace>
-multi-agent-brief state check --workspace <workspace> --strict
-multi-agent-brief state stage-complete --workspace <workspace> --stage auditor --reason "Audit and quality gates passed."
-multi-agent-brief finalize --config <workspace>/config.yaml
+briefloop gates check --workspace <workspace>
+briefloop state check --workspace <workspace> --strict
+briefloop state stage-complete --workspace <workspace> --stage auditor --reason "Audit and quality gates passed."
+briefloop finalize --config <workspace>/config.yaml
 # proceed only when finalize_report.json reports delivery_promotion "promoted":
-multi-agent-brief gates check --workspace <workspace> --stage finalize --brief <workspace>/output/brief.md
-multi-agent-brief state finalize-complete --workspace <workspace> --reason "Reader-facing artifacts passed finalize checks."
-multi-agent-brief workbuddy diagnose --workspace <workspace> --json
+briefloop gates check --workspace <workspace> --stage finalize --brief <workspace>/output/brief.md
+briefloop state finalize-complete --workspace <workspace> --reason "Reader-facing artifacts passed finalize checks."
+briefloop workbuddy diagnose --workspace <workspace> --json
 ```
 
 `finalize` only renders reader-facing outputs; it is not a quality-gate executor. A failed reader-clean does not promote delivery and leaves any prior delivery unchanged; do not report delivery unless diagnose shows `delivery_truth.valid=true`.
@@ -77,8 +77,8 @@ Repair guidance is bounded runtime guidance. Repeated retry/repair budgets are e
 Optional audit/debug projection after runtime state exists:
 
 ```text
-multi-agent-brief provenance build --workspace <workspace>
-multi-agent-brief provenance validate --workspace <workspace>
+briefloop provenance build --workspace <workspace>
+briefloop provenance validate --workspace <workspace>
 ```
 
 Provenance projection is not semantic proof and is not required to finalize.

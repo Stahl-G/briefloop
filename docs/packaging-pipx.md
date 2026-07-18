@@ -60,7 +60,7 @@ remain an additive user-facing entrypoint.
    python3 -m venv /tmp/briefloop-wheel-smoke
    /tmp/briefloop-wheel-smoke/bin/python -m pip install dist/*.whl
    /tmp/briefloop-wheel-smoke/bin/briefloop version
-   /tmp/briefloop-wheel-smoke/bin/briefloop version
+   /tmp/briefloop-wheel-smoke/bin/multi-agent-brief version
    /tmp/briefloop-wheel-smoke/bin/briefloop init /tmp/briefloop-wheel-ws --demo --force
    /tmp/briefloop-wheel-smoke/bin/briefloop run --workspace /tmp/briefloop-wheel-ws --runtime operator --skip-doctor
    ```

@@ -67,24 +67,24 @@ def handle_mabw(ctx, argstr: str):
             "Decision vocabulary:\n"
             "  continue, retry_stage, delegate_repair, request_human_review, block_run, finalize\n\n"
             "Optional feedback controls:\n"
-            "  multi-agent-brief feedback ingest/plan/resolve/show/validate structure feedback but do not run repair.\n\n"
+            "  briefloop feedback ingest/plan/resolve/show/validate structure feedback but do not run repair.\n\n"
             "Orchestrator control switchboard:\n"
             "  Read output/intermediate/orchestrator_control_switchboard.json and record choices with controls select.\n"
             "  Selection is not execution; explicitly run the selected CLI, subagent, or human action afterward.\n\n"
             "Optional quality gate controls:\n"
-            "  multi-agent-brief gates check/show/validate writes quality_gate_report.json but does not fetch sources or repair.\n\n"
+            "  briefloop gates check/show/validate writes quality_gate_report.json but does not fetch sources or repair.\n\n"
             "Optional provenance projection:\n"
-            "  multi-agent-brief provenance build/show/validate writes provenance_graph.json for audit/debug review only.\n\n"
+            "  briefloop provenance build/show/validate writes provenance_graph.json for audit/debug review only.\n\n"
             "Step 5 — Before finalize, run gates/state controls:\n"
-            "  multi-agent-brief gates check --workspace <workspace>\n"
-            "  multi-agent-brief state check --workspace <workspace> --strict\n"
-            "  multi-agent-brief state stage-complete --workspace <workspace> --stage auditor --reason \"Audit and quality gates passed.\"\n\n"
+            "  briefloop gates check --workspace <workspace>\n"
+            "  briefloop state check --workspace <workspace> --strict\n"
+            "  briefloop state stage-complete --workspace <workspace> --stage auditor --reason \"Audit and quality gates passed.\"\n\n"
             "Step 6 — Run finalize only after gates/state pass; finalize alone is not a quality-gate executor:\n"
-            "  multi-agent-brief finalize --config <workspace>/config.yaml\n\n"
+            "  briefloop finalize --config <workspace>/config.yaml\n\n"
             "Step 7 — Proceed only when finalize_report.json reports delivery_promotion \"promoted\" (otherwise stop and route repair), then verify completion:\n"
-            "  multi-agent-brief gates check --workspace <workspace> --stage finalize --brief <workspace>/output/brief.md\n"
-            "  multi-agent-brief state finalize-complete --workspace <workspace> --reason \"Reader-facing artifacts passed finalize checks.\"\n"
-            "  multi-agent-brief workbuddy diagnose --workspace <workspace> --json  # delivery_truth.valid must be true before reporting delivery"
+            "  briefloop gates check --workspace <workspace> --stage finalize --brief <workspace>/output/brief.md\n"
+            "  briefloop state finalize-complete --workspace <workspace> --reason \"Reader-facing artifacts passed finalize checks.\"\n"
+            "  briefloop workbuddy diagnose --workspace <workspace> --json  # delivery_truth.valid must be true before reporting delivery"
         )
 
     if sub == "run":
@@ -126,23 +126,23 @@ def handle_mabw(ctx, argstr: str):
             lines.append("Use provenance build/show/validate only when an audit/debug graph is useful; it is not semantic proof and is not required before finalize.")
             lines.append("")
             lines.append("Before finalize, run:")
-            lines.append(f"  multi-agent-brief controls select --workspace {ws_path} --control quality_gates --selection enable --reason \"Use quality gates before finalize.\"")
-            lines.append(f"  multi-agent-brief gates check --workspace {ws_path}")
-            lines.append(f"  multi-agent-brief state check --workspace {ws_path} --strict")
-            lines.append(f"  multi-agent-brief state stage-complete --workspace {ws_path} --stage auditor --reason \"Audit and quality gates passed.\"")
+            lines.append(f"  briefloop controls select --workspace {ws_path} --control quality_gates --selection enable --reason \"Use quality gates before finalize.\"")
+            lines.append(f"  briefloop gates check --workspace {ws_path}")
+            lines.append(f"  briefloop state check --workspace {ws_path} --strict")
+            lines.append(f"  briefloop state stage-complete --workspace {ws_path} --stage auditor --reason \"Audit and quality gates passed.\"")
             lines.append("")
             lines.append("Then run finalize. finalize alone is not a quality-gate executor:")
-            lines.append(f"  multi-agent-brief finalize --config {ws_path}/config.yaml")
+            lines.append(f"  briefloop finalize --config {ws_path}/config.yaml")
             lines.append("")
             lines.append("Proceed only when finalize_report.json reports delivery_promotion \"promoted\" (otherwise stop and route repair), then verify completion:")
-            lines.append(f"  multi-agent-brief gates check --workspace {ws_path} --stage finalize --brief {ws_path}/output/brief.md")
-            lines.append(f"  multi-agent-brief state finalize-complete --workspace {ws_path} --reason \"Reader-facing artifacts passed finalize checks.\"")
-            lines.append(f"  multi-agent-brief workbuddy diagnose --workspace {ws_path} --json  # delivery_truth.valid must be true before reporting delivery")
+            lines.append(f"  briefloop gates check --workspace {ws_path} --stage finalize --brief {ws_path}/output/brief.md")
+            lines.append(f"  briefloop state finalize-complete --workspace {ws_path} --reason \"Reader-facing artifacts passed finalize checks.\"")
+            lines.append(f"  briefloop workbuddy diagnose --workspace {ws_path} --json  # delivery_truth.valid must be true before reporting delivery")
             lines.append("")
             lines.append("Optional provenance projection after runtime state exists:")
-            lines.append(f"  multi-agent-brief provenance build --workspace {ws_path}")
-            lines.append(f"  multi-agent-brief provenance show --workspace {ws_path} --json")
-            lines.append(f"  multi-agent-brief provenance validate --workspace {ws_path}")
+            lines.append(f"  briefloop provenance build --workspace {ws_path}")
+            lines.append(f"  briefloop provenance show --workspace {ws_path} --json")
+            lines.append(f"  briefloop provenance validate --workspace {ws_path}")
         else:
             lines.append("")
             lines.append(f"Handoff not found. Check init state of {ws_path}.")
@@ -177,23 +177,23 @@ def handle_mabw(ctx, argstr: str):
             "Use provenance build/show/validate only when an audit/debug graph is useful; it is not semantic proof and is not required before finalize.",
             "",
             "Before finalize, run:",
-            f"  multi-agent-brief controls select --workspace {ws_path} --control quality_gates --selection enable --reason \"Use quality gates before finalize.\"",
-            f"  multi-agent-brief gates check --workspace {ws_path}",
-            f"  multi-agent-brief state check --workspace {ws_path} --strict",
-            f"  multi-agent-brief state stage-complete --workspace {ws_path} --stage auditor --reason \"Audit and quality gates passed.\"",
+            f"  briefloop controls select --workspace {ws_path} --control quality_gates --selection enable --reason \"Use quality gates before finalize.\"",
+            f"  briefloop gates check --workspace {ws_path}",
+            f"  briefloop state check --workspace {ws_path} --strict",
+            f"  briefloop state stage-complete --workspace {ws_path} --stage auditor --reason \"Audit and quality gates passed.\"",
             "",
             "Then run finalize. finalize alone is not a quality-gate executor:",
-            f"  multi-agent-brief finalize --config {ws_path}/config.yaml",
+            f"  briefloop finalize --config {ws_path}/config.yaml",
             "",
             "Proceed only when finalize_report.json reports delivery_promotion \"promoted\" (otherwise stop and route repair), then verify completion:",
-            f"  multi-agent-brief gates check --workspace {ws_path} --stage finalize --brief {ws_path}/output/brief.md",
-            f"  multi-agent-brief state finalize-complete --workspace {ws_path} --reason \"Reader-facing artifacts passed finalize checks.\"",
-            f"  multi-agent-brief workbuddy diagnose --workspace {ws_path} --json  # delivery_truth.valid must be true before reporting delivery",
+            f"  briefloop gates check --workspace {ws_path} --stage finalize --brief {ws_path}/output/brief.md",
+            f"  briefloop state finalize-complete --workspace {ws_path} --reason \"Reader-facing artifacts passed finalize checks.\"",
+            f"  briefloop workbuddy diagnose --workspace {ws_path} --json  # delivery_truth.valid must be true before reporting delivery",
             "",
             "Optional provenance projection after runtime state exists:",
-            f"  multi-agent-brief provenance build --workspace {ws_path}",
-            f"  multi-agent-brief provenance show --workspace {ws_path} --json",
-            f"  multi-agent-brief provenance validate --workspace {ws_path}",
+            f"  briefloop provenance build --workspace {ws_path}",
+            f"  briefloop provenance show --workspace {ws_path} --json",
+            f"  briefloop provenance validate --workspace {ws_path}",
         ]
         return "\n".join(lines)
 

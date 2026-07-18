@@ -1,4 +1,4 @@
-# MABW Artifact Contract
+# BriefLoop Artifact Contract
 
 ## Required Inputs
 
@@ -23,7 +23,7 @@
 
 ## Optional Feedback Control Files
 
-These files are created or updated only by `multi-agent-brief feedback ingest`, `feedback plan`, and `feedback resolve`.
+These files are created or updated only by `briefloop feedback ingest`, `feedback plan`, and `feedback resolve`.
 
 - `output/intermediate/feedback_issues.json`
 - `output/intermediate/repair_plan.json`
@@ -31,13 +31,13 @@ These files are created or updated only by `multi-agent-brief feedback ingest`, 
 
 ## Optional Quality Gate Control Files
 
-This file is created only by `multi-agent-brief gates check`.
+This file is created only by `briefloop gates check`.
 
 - `output/intermediate/quality_gate_report.json`
 
 ## Optional Provenance Projection Files
 
-This file is created only by `multi-agent-brief provenance build`.
+This file is created only by `briefloop provenance build`.
 
 - `output/intermediate/provenance_graph.json`
 

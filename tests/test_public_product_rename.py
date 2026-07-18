@@ -118,6 +118,7 @@ def test_public_product_rename_scan_is_limited_to_requested_paths(tmp_path) -> N
 def test_public_product_rename_default_scan_reports_missing_target(tmp_path, monkeypatch) -> None:
     module = _load_module()
     monkeypatch.setattr(module, "TARGET_FILES", ["missing-first-user-doc.md"])
+    monkeypatch.setattr(module, "PRIMARY_CLI_FILES", [])
     monkeypatch.setattr(module, "NAMING_AUTHORITY_FILES", [])
     monkeypatch.setattr(module, "NAMING_CONSUMER_FILES", [])
     monkeypatch.setattr(module, "CLI_HELP_COMMANDS", [])
@@ -163,6 +164,33 @@ def test_operator_naming_consumer_surface_is_ratchet_locked() -> None:
         ".agents/skills/briefloop/references/version-matrix.md",
         "integrations/hermes-plugin/mabw/skills/briefloop/references/naming-and-compatibility.md",
         "integrations/hermes-plugin/mabw/skills/briefloop/references/version-matrix.md",
+    ]
+
+
+def test_active_runtime_primary_cli_surface_is_ratchet_locked() -> None:
+    module = _load_module()
+
+    expected = {
+        "HERMES.md",
+        "scripts/ci/smoke_packaged_topology_handoff.py",
+        ".agents/skills/brief-onboarding/SKILL.md",
+        ".agents/skills/claim-ledger/SKILL.md",
+        ".agents/skills/orchestrator/SKILL.md",
+        "integrations/hermes-plugin/mabw/schemas.py",
+        "integrations/hermes-plugin/mabw/skills/mabw-workflow/SKILL.md",
+        "integrations/hermes-plugin/mabw/skills/mabw-workflow/references/artifact-contract.md",
+        "integrations/hermes-plugin/mabw/skills/mabw-workflow/references/delegated-workflow.md",
+    }
+
+    assert expected <= set(module.TARGET_FILES)
+
+
+def test_legacy_hermes_plugin_primary_cli_surface_is_ratchet_locked() -> None:
+    module = _load_module()
+
+    assert module.PRIMARY_CLI_FILES == [
+        "integrations/hermes-plugin/README.md",
+        "integrations/hermes-plugin/mabw/__init__.py",
     ]
 
 
@@ -354,6 +382,7 @@ def test_naming_authority_allows_classified_compatibility_literals(tmp_path) -> 
 def test_default_scan_reports_missing_naming_authority(tmp_path, monkeypatch) -> None:
     module = _load_module()
     monkeypatch.setattr(module, "TARGET_FILES", [])
+    monkeypatch.setattr(module, "PRIMARY_CLI_FILES", [])
     monkeypatch.setattr(module, "NAMING_AUTHORITY_FILES", ["docs/missing-authority.md"])
     monkeypatch.setattr(module, "NAMING_CONSUMER_FILES", [])
     monkeypatch.setattr(module, "CLI_HELP_COMMANDS", [])
@@ -483,3 +512,10 @@ def test_compatibility_surfaces_remain_available_but_not_first_user() -> None:
     assert "/briefloop new" in first_screen
     assert "/mabw" not in first_screen
     assert "multi-agent-brief" not in first_screen
+
+
+def test_packaging_wheel_smoke_exercises_public_and_compatibility_scripts() -> None:
+    packaging = (ROOT / "docs" / "packaging-pipx.md").read_text(encoding="utf-8")
+
+    assert "/tmp/briefloop-wheel-smoke/bin/briefloop version" in packaging
+    assert "/tmp/briefloop-wheel-smoke/bin/multi-agent-brief version" in packaging

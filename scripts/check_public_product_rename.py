@@ -31,9 +31,18 @@ TARGET_FILES = [
     "docs/windows-powershell.md",
     "docs/windows-powershell.zh-CN.md",
     "CLAUDE.md",
+    "HERMES.md",
     "scripts/setup.sh",
     "scripts/setup.ps1",
+    "scripts/ci/smoke_packaged_topology_handoff.py",
+    ".agents/skills/brief-onboarding/SKILL.md",
+    ".agents/skills/claim-ledger/SKILL.md",
+    ".agents/skills/orchestrator/SKILL.md",
     ".agents/skills/briefloop-workbuddy/SKILL.md",
+    "integrations/hermes-plugin/mabw/schemas.py",
+    "integrations/hermes-plugin/mabw/skills/mabw-workflow/SKILL.md",
+    "integrations/hermes-plugin/mabw/skills/mabw-workflow/references/artifact-contract.md",
+    "integrations/hermes-plugin/mabw/skills/mabw-workflow/references/delegated-workflow.md",
     "integrations/workbuddy/briefloop/SKILL.md",
     ".claude/commands/briefloop.md",
     ".opencode/commands/briefloop.md",
@@ -42,6 +51,18 @@ TARGET_FILES = [
     "examples/reference-workspaces/industry-weekly-demo/artifacts/quality_summary.md",
     "examples/reference-workspaces/industry-weekly-demo/artifacts/source_appendix.md",
 ]
+
+# The supported Hermes plugin retains `mabw_*` tool and `/mabw` compatibility
+# identifiers. These paths still must not teach the compatibility shell CLI as
+# their primary deterministic command.
+PRIMARY_CLI_FILES = [
+    "integrations/hermes-plugin/README.md",
+    "integrations/hermes-plugin/mabw/__init__.py",
+]
+
+FORBIDDEN_PRIMARY_CLI_PATTERN = re.compile(
+    r"(?<![\w.-])multi-agent-brief(?![\w-])"
+)
 
 NAMING_AUTHORITY_FILES = [
     "docs/briefloop-naming.md",
@@ -208,6 +229,34 @@ def scan_file(path: Path) -> list[Finding]:
     return findings
 
 
+def scan_primary_cli_file(path: Path) -> list[Finding]:
+    """Reject compatibility CLI instructions without rejecting plugin API names."""
+    try:
+        text = path.read_text(encoding="utf-8")
+    except FileNotFoundError:
+        return [
+            Finding(
+                path=path,
+                line=1,
+                kind="missing_primary_cli_target",
+                sample="configured primary CLI target file is missing",
+            )
+        ]
+
+    findings: list[Finding] = []
+    for line_no, line in enumerate(text.splitlines(), start=1):
+        if FORBIDDEN_PRIMARY_CLI_PATTERN.search(line):
+            findings.append(
+                Finding(
+                    path=path,
+                    line=line_no,
+                    kind="compatibility_cli_in_primary_path",
+                    sample=line.strip(),
+                )
+            )
+    return findings
+
+
 def scan_naming_authority_file(path: Path) -> list[Finding]:
     """Validate current naming truth without rejecting classified legacy ids."""
     try:
@@ -331,6 +380,8 @@ def scan(paths: list[Path] | None = None, *, root: Path = ROOT) -> list[Finding]
     for path in target_paths:
         findings.extend(scan_file(path))
     if paths is None:
+        for rel_path in PRIMARY_CLI_FILES:
+            findings.extend(scan_primary_cli_file(root / rel_path))
         for rel_path in NAMING_AUTHORITY_FILES:
             findings.extend(scan_naming_authority_file(root / rel_path))
         for rel_path in NAMING_CONSUMER_FILES:
