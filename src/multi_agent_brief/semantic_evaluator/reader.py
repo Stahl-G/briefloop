@@ -112,6 +112,14 @@ class LajReaderView(StrictModel):
             raise ValueError("reader finding count mismatch")
         if self.status != "available" and self.findings:
             raise ValueError("non-available reader views cannot display findings")
+        if self.findings and self.binding is None:
+            raise ValueError("reader findings require an exact report binding")
+        if self.binding is not None and any(
+            span.report_sha256 != self.binding.report_sha256
+            for finding in self.findings
+            for span in finding.report_spans
+        ):
+            raise ValueError("reader finding span report binding mismatch")
         if self.archive_verified:
             if (
                 self.binding is None

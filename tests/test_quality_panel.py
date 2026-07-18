@@ -699,6 +699,46 @@ def test_quality_panel_rejects_forged_laj_authority_field(tmp_path: Path) -> Non
     )
 
 
+def test_cross_report_laj_span_fails_closed_without_authority_effect(
+    tmp_path: Path,
+) -> None:
+    ws = _workspace(tmp_path)
+    reader_target = ws / "output" / "brief.md"
+    reader_target.parent.mkdir(parents=True, exist_ok=True)
+    reader_target.write_text("# Final reader brief\n", encoding="utf-8")
+    laj_path = tmp_path / "laj.json"
+    view = _write_laj_reader_view(
+        laj_path,
+        report_sha256=_sha256_file(reader_target),
+    )
+    cross_bound = view.model_dump(mode="json", exclude={"view_sha256"})
+    cross_bound["findings"][0]["report_spans"][0]["report_sha256"] = "9" * 64
+    cross_bound["view_sha256"] = canonical_sha256(cross_bound)
+    laj_path.write_text(
+        json.dumps(cross_bound, ensure_ascii=False, sort_keys=True),
+        encoding="utf-8",
+    )
+
+    base = build_quality_panel(ws, generated_at="2026-07-18T00:00:00Z")
+    panel = build_quality_panel(
+        ws,
+        generated_at="2026-07-18T00:00:00Z",
+        laj_view_path=laj_path,
+    )
+
+    assert panel["laj_advisory"]["status"] == "invalid"
+    assert panel["laj_advisory"]["findings"] == []
+    assert panel["laj_advisory"]["finding_count"] == 0
+    for field in (
+        "overall_status",
+        "control_integrity",
+        "gates",
+        "delivery",
+        "recommended_actions",
+    ):
+        assert panel[field] == base[field]
+
+
 def test_status_recommends_quality_closeout_after_finalize_report_pass(tmp_path: Path) -> None:
     ws = _workspace(tmp_path)
     _write_finalize_report(ws)
