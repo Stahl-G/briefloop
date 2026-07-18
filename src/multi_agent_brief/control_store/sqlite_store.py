@@ -72,6 +72,10 @@ from multi_agent_brief.contracts.v2 import (
     StrictModel,
     TransactionReceipt,
     WorkspaceRunHead,
+    _CheckoutStructureError,
+    _build_checkout_revision_structure,
+    _derive_publication_structure,
+    _publication_identity_digest,
 )
 from multi_agent_brief.control_store.errors import (
     ControlStoreCommitOutcomeUnknown,
@@ -2200,38 +2204,41 @@ class SQLiteControlStore:
                 or not record.frozen
             ):
                 raise ControlStoreConflict("relational_integrity_conflict")
-        from multi_agent_brief.core_run_v2.checkout import (
-            BuiltCheckoutRevision,
-            build_checkout_revision,
-            build_publication_intent,
-        )
-        from multi_agent_brief.core_run_v2.errors import CoreRunError
-
-        rebuilt = build_checkout_revision(
-            workspace_id=revision.workspace_id,
-            run_id=revision.run_id,
-            transaction_id=revision.creator_transaction_id,
-            created_at=datetime.fromisoformat(revision.created_at.replace("Z", "+00:00")),
-            artifact_revisions=tuple(
-                available.get((item.artifact_id, item.artifact_revision))
-                or _decode_record(
-                    ArtifactRevision,
-                    str(self._connection.execute(
-                        "SELECT payload_json FROM artifact_revisions WHERE run_id=? AND artifact_id=? AND revision=?",
-                        (run_id, item.artifact_id, item.artifact_revision),
-                    ).fetchone()[0]),
+        try:
+            rebuilt_record, rebuilt_members, _manifest_bytes = (
+                _build_checkout_revision_structure(
+                    workspace_id=revision.workspace_id,
+                    run_id=revision.run_id,
+                    transaction_id=revision.creator_transaction_id,
+                    created_at=datetime.fromisoformat(
+                        revision.created_at.replace("Z", "+00:00")
+                    ),
+                    artifact_revisions=tuple(
+                        available.get((item.artifact_id, item.artifact_revision))
+                        or _decode_record(
+                            ArtifactRevision,
+                            str(
+                                self._connection.execute(
+                                    "SELECT payload_json FROM artifact_revisions WHERE run_id=? AND artifact_id=? AND revision=?",
+                                    (run_id, item.artifact_id, item.artifact_revision),
+                                ).fetchone()[0]
+                            ),
+                        )
+                        for item in revision_members
+                    ),
+                    parent_checkout_revision_id=revision.parent_checkout_revision_id,
                 )
-                for item in revision_members
-            ),
-            parent_checkout_revision_id=revision.parent_checkout_revision_id,
-        )
-        if rebuilt.record != revision or rebuilt.members != revision_members:
+            )
+        except (_CheckoutStructureError, ValueError) as exc:
+            raise ControlStoreConflict("relational_integrity_conflict") from exc
+        if rebuilt_record != revision or rebuilt_members != revision_members:
             raise ControlStoreConflict("relational_integrity_conflict")
         if intent is None:
             if publication_members:
                 raise ControlStoreConflict("relational_integrity_conflict")
             return
-        pre: BuiltCheckoutRevision | None = None
+        pre_record: CheckoutRevisionRecord | None = None
+        pre_members: tuple[CheckoutRevisionMember, ...] = ()
         if binding.pre_checkout_revision_id is not None:
             pre_snapshot = self.load_snapshot(binding.pre_run_id)
             pre_records = tuple(
@@ -2252,8 +2259,7 @@ class SQLiteControlStore:
                     key=lambda item: item.ordinal,
                 )
             )
-            pre = BuiltCheckoutRevision(pre_records[0], pre_members, b"")
-        post = BuiltCheckoutRevision(rebuilt.record, rebuilt.members, rebuilt.manifest_bytes)
+            pre_record = pre_records[0]
         if (
             intent.identity.workspace_id != self.workspace_id
             or intent.identity.run_id != run_id
@@ -2269,13 +2275,15 @@ class SQLiteControlStore:
         ):
             raise ControlStoreConflict("relational_integrity_conflict")
         try:
-            expected_intent, expected_members = build_publication_intent(
+            expected_intent, expected_members = _derive_publication_structure(
                 identity=intent.identity,
-                pre=pre,
-                post=post,
+                pre_record=pre_record,
+                pre_members=pre_members,
+                post_record=rebuilt_record,
+                post_members=rebuilt_members,
                 capability_profile_sha256=intent.capability_profile_sha256,
             )
-        except CoreRunError as exc:
+        except _CheckoutStructureError as exc:
             raise ControlStoreConflict("relational_integrity_conflict") from exc
         if (
             intent != expected_intent
@@ -4507,16 +4515,10 @@ class SQLiteControlStore:
             raise ControlStoreIntegrityError("checkout_revision_invalid")
         revisions = {item.checkout_revision_id: item for item in snapshot.checkout_revisions}
         receipts = {item.transaction_id: item for item in snapshot.transactions}
-        from datetime import datetime
-        from multi_agent_brief.core_run_v2.checkout import (
-            BuiltCheckoutRevision,
-            build_checkout_revision,
-            build_publication_intent,
-            publication_identity_sha256,
-        )
-        from multi_agent_brief.core_run_v2.errors import CoreRunError
-
-        built_revisions: dict[str, BuiltCheckoutRevision] = {}
+        built_revisions: dict[
+            str,
+            tuple[CheckoutRevisionRecord, tuple[CheckoutRevisionMember, ...]],
+        ] = {}
         members_by_revision: dict[str, list[CheckoutRevisionMember]] = {}
         for member in snapshot.checkout_revision_members:
             members_by_revision.setdefault(member.checkout_revision_id, []).append(member)
@@ -4558,19 +4560,29 @@ class SQLiteControlStore:
                 if artifact is None:
                     raise ControlStoreIntegrityError("checkout_revision_invalid")
                 artifact_rows.append(artifact)
-            rebuilt = build_checkout_revision(
-                workspace_id=revision.workspace_id,
-                run_id=revision.run_id,
-                transaction_id=revision.creator_transaction_id,
-                created_at=datetime.fromisoformat(
-                    revision.created_at.replace("Z", "+00:00")
-                ),
-                artifact_revisions=tuple(artifact_rows),
-                parent_checkout_revision_id=revision.parent_checkout_revision_id,
-            )
-            if rebuilt.record != revision or rebuilt.members != tuple(members):
+            try:
+                rebuilt_record, rebuilt_members, _manifest_bytes = (
+                    _build_checkout_revision_structure(
+                        workspace_id=revision.workspace_id,
+                        run_id=revision.run_id,
+                        transaction_id=revision.creator_transaction_id,
+                        created_at=datetime.fromisoformat(
+                            revision.created_at.replace("Z", "+00:00")
+                        ),
+                        artifact_revisions=tuple(artifact_rows),
+                        parent_checkout_revision_id=revision.parent_checkout_revision_id,
+                    )
+                )
+            except (_CheckoutStructureError, ValueError) as exc:
+                raise ControlStoreIntegrityError(
+                    "checkout_revision_invalid"
+                ) from exc
+            if rebuilt_record != revision or rebuilt_members != tuple(members):
                 raise ControlStoreIntegrityError("checkout_revision_invalid")
-            built_revisions[revision.checkout_revision_id] = rebuilt
+            built_revisions[revision.checkout_revision_id] = (
+                rebuilt_record,
+                rebuilt_members,
+            )
             receipt = receipts.get(revision.creator_transaction_id)
             if receipt is None or not any(
                 item.checkout_revision_id == revision.checkout_revision_id
@@ -4608,17 +4620,18 @@ class SQLiteControlStore:
             members = sorted(members_by_intent.get(key, []), key=lambda item: item.ordinal)
             binding = bindings.get(intent.identity.transaction_id)
             receipt = receipts.get(intent.identity.transaction_id)
-            post = built_revisions.get(intent.post_checkout_revision_id)
-            pre = (
+            post_structure = built_revisions.get(intent.post_checkout_revision_id)
+            pre_structure = (
                 None
                 if binding is None or binding.pre_checkout_revision_id is None
                 else built_revisions.get(binding.pre_checkout_revision_id)
             )
             if (
-                intent.publication_identity_sha256 != publication_identity_sha256(intent.identity)
+                intent.publication_identity_sha256
+                != _publication_identity_digest(intent.identity)
                 or binding is None
                 or receipt is None
-                or post is None
+                or post_structure is None
                 or intent.identity.workspace_id != self.workspace_id
                 or intent.identity.run_id != snapshot.run.run_id
                 or intent.identity.checkout_revision_id
@@ -4629,10 +4642,11 @@ class SQLiteControlStore:
                 or binding.post_run_id != snapshot.run.run_id
                 or binding.post_checkout_revision_id
                 != intent.post_checkout_revision_id
-                or post.record.parent_checkout_revision_id
+                or post_structure[0].parent_checkout_revision_id
                 != binding.pre_checkout_revision_id
                 or (
-                    binding.pre_checkout_revision_id is not None and pre is None
+                    binding.pre_checkout_revision_id is not None
+                    and pre_structure is None
                 )
                 or tuple(receipt.checkout_revisions)
                 != (
@@ -4655,13 +4669,19 @@ class SQLiteControlStore:
             ):
                 raise ControlStoreIntegrityError("checkout_publication_journal_invalid")
             try:
-                expected_intent, expected_members = build_publication_intent(
+                expected_intent, expected_members = _derive_publication_structure(
                     identity=intent.identity,
-                    pre=pre,
-                    post=post,
+                    pre_record=(
+                        None if pre_structure is None else pre_structure[0]
+                    ),
+                    pre_members=(
+                        () if pre_structure is None else pre_structure[1]
+                    ),
+                    post_record=post_structure[0],
+                    post_members=post_structure[1],
                     capability_profile_sha256=intent.capability_profile_sha256,
                 )
-            except CoreRunError as exc:
+            except _CheckoutStructureError as exc:
                 raise ControlStoreIntegrityError(
                     "checkout_publication_journal_invalid"
                 ) from exc

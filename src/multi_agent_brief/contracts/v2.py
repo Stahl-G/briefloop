@@ -9,6 +9,8 @@ from __future__ import annotations
 from copy import deepcopy
 from dataclasses import dataclass
 from datetime import date, datetime
+import hashlib
+import json
 import math
 from pathlib import PurePosixPath
 import re
@@ -2311,6 +2313,238 @@ class CheckoutPublicationCleanupObservation(StrictModel):
         ):
             raise ValueError("blob observed residue requires exact values")
         return self
+
+
+# Private neutral structural kernel shared by the Core adapter and Store.
+# These helpers define no domain legality and are intentionally not exported.
+_CHECKOUT_MANIFEST_SCHEMA = "multi-agent-brief-checkout-revision/v1"
+_CHECKOUT_TREE_DOMAIN = b"briefloop-checkout-tree-v1\0"
+_PUBLICATION_IDENTITY_DOMAIN = b"briefloop-publication-identity-v1\0"
+
+
+class _CheckoutStructureError(ValueError):
+    pass
+
+
+def _checkout_canonical_json_bytes(value: object) -> bytes:
+    try:
+        return json.dumps(
+            value,
+            ensure_ascii=False,
+            sort_keys=True,
+            separators=(",", ":"),
+            allow_nan=False,
+        ).encode("utf-8")
+    except (TypeError, ValueError) as exc:
+        raise _CheckoutStructureError from exc
+
+
+def _build_checkout_revision_structure(
+    *,
+    workspace_id: str,
+    run_id: str,
+    transaction_id: str,
+    created_at: datetime,
+    artifact_revisions: tuple[ArtifactRevision, ...],
+    parent_checkout_revision_id: str | None,
+) -> tuple[
+    CheckoutRevisionRecord,
+    tuple[CheckoutRevisionMember, ...],
+    bytes,
+]:
+    if created_at.tzinfo is None:
+        raise _CheckoutStructureError
+    ordered = sorted(artifact_revisions, key=lambda item: item.path)
+    paths: set[str] = set()
+    folded: set[str] = set()
+    identities: set[tuple[str, int]] = set()
+    member_payloads: list[dict[str, object]] = []
+    for item in ordered:
+        path = PurePosixPath(item.path)
+        identity = (item.artifact_id, item.revision)
+        if (
+            item.run_id != run_id
+            or not item.frozen
+            or path.is_absolute()
+            or str(path) != item.path
+            or any(part in {"", ".", ".."} for part in path.parts)
+            or item.path in paths
+            or item.path.casefold() in folded
+            or identity in identities
+        ):
+            raise _CheckoutStructureError
+        paths.add(item.path)
+        folded.add(item.path.casefold())
+        identities.add(identity)
+        member_payloads.append(
+            {
+                "canonical_path": item.path,
+                "artifact_id": item.artifact_id,
+                "artifact_revision": item.revision,
+                "blob_sha256": item.sha256,
+                "byte_size": item.size_bytes,
+            }
+        )
+    manifest_bytes = _checkout_canonical_json_bytes(
+        {
+            "schema_version": _CHECKOUT_MANIFEST_SCHEMA,
+            "workspace_id": workspace_id,
+            "run_id": run_id,
+            "parent_checkout_revision_id": parent_checkout_revision_id,
+            "members": member_payloads,
+        }
+    )
+    manifest_sha256 = hashlib.sha256(manifest_bytes).hexdigest()
+    tree_sha256 = hashlib.sha256(
+        _CHECKOUT_TREE_DOMAIN + manifest_bytes
+    ).hexdigest()
+    revision_id = f"crv_{tree_sha256}"
+    try:
+        record = CheckoutRevisionRecord.model_validate(
+            {
+                "schema_version": CheckoutRevisionRecord.schema_id,
+                "checkout_revision_id": revision_id,
+                "workspace_id": workspace_id,
+                "run_id": run_id,
+                "parent_checkout_revision_id": parent_checkout_revision_id,
+                "manifest_sha256": manifest_sha256,
+                "tree_sha256": tree_sha256,
+                "member_count": len(member_payloads),
+                "created_at": created_at.isoformat().replace("+00:00", "Z"),
+                "creator_transaction_id": transaction_id,
+            },
+            strict=True,
+        )
+        members = tuple(
+            CheckoutRevisionMember.model_validate(
+                {
+                    "schema_version": CheckoutRevisionMember.schema_id,
+                    "checkout_revision_id": revision_id,
+                    "ordinal": ordinal,
+                    "workspace_id": workspace_id,
+                    "run_id": run_id,
+                    **payload,
+                },
+                strict=True,
+            )
+            for ordinal, payload in enumerate(member_payloads)
+        )
+    except (TypeError, ValueError) as exc:
+        raise _CheckoutStructureError from exc
+    return record, members, manifest_bytes
+
+
+def _publication_identity_digest(identity: PublicationIdentityV1) -> str:
+    payload = identity.model_dump(mode="json", exclude_unset=False)
+    return hashlib.sha256(
+        _PUBLICATION_IDENTITY_DOMAIN + _checkout_canonical_json_bytes(payload)
+    ).hexdigest()
+
+
+def _publication_sibling_name(
+    identity: PublicationIdentityV1,
+    ordinal: int,
+    role: str,
+) -> str:
+    if role not in {"tmp", "claim"} or type(ordinal) is not int or ordinal < 0:
+        raise _CheckoutStructureError
+    return (
+        f".briefloop-pub-v1-{_publication_identity_digest(identity)}-"
+        f"{ordinal:08d}-{role}"
+    )
+
+
+def _derive_publication_structure(
+    *,
+    identity: PublicationIdentityV1,
+    pre_record: CheckoutRevisionRecord | None,
+    pre_members: tuple[CheckoutRevisionMember, ...],
+    post_record: CheckoutRevisionRecord,
+    post_members: tuple[CheckoutRevisionMember, ...],
+    capability_profile_sha256: str,
+) -> tuple[CheckoutPublicationIntent, tuple[CheckoutPublicationMember, ...]]:
+    if identity.checkout_revision_id != post_record.checkout_revision_id:
+        raise _CheckoutStructureError
+    pre_by_path = {item.canonical_path: item for item in pre_members}
+    post_by_path = {item.canonical_path: item for item in post_members}
+
+    def projection_value(
+        member: CheckoutRevisionMember | None,
+    ) -> tuple[str, int] | None:
+        if member is None:
+            return None
+        return member.blob_sha256, member.byte_size
+
+    changed_paths = sorted(
+        path
+        for path in set(pre_by_path) | set(post_by_path)
+        if projection_value(pre_by_path.get(path))
+        != projection_value(post_by_path.get(path))
+    )
+    if not changed_paths:
+        raise _CheckoutStructureError
+    try:
+        members = tuple(
+            CheckoutPublicationMember.model_validate(
+                {
+                    "schema_version": CheckoutPublicationMember.schema_id,
+                    "identity": identity.model_dump(mode="json"),
+                    "ordinal": ordinal,
+                    "canonical_path": path,
+                    "temporary_basename": _publication_sibling_name(
+                        identity, ordinal, "tmp"
+                    ),
+                    "claim_basename": _publication_sibling_name(
+                        identity, ordinal, "claim"
+                    ),
+                    "pre_kind": "absent" if pre_by_path.get(path) is None else "blob",
+                    "pre_sha256": (
+                        None
+                        if pre_by_path.get(path) is None
+                        else pre_by_path[path].blob_sha256
+                    ),
+                    "pre_size": (
+                        None
+                        if pre_by_path.get(path) is None
+                        else pre_by_path[path].byte_size
+                    ),
+                    "post_kind": "absent" if post_by_path.get(path) is None else "blob",
+                    "post_sha256": (
+                        None
+                        if post_by_path.get(path) is None
+                        else post_by_path[path].blob_sha256
+                    ),
+                    "post_size": (
+                        None
+                        if post_by_path.get(path) is None
+                        else post_by_path[path].byte_size
+                    ),
+                },
+                strict=True,
+            )
+            for ordinal, path in enumerate(changed_paths)
+        )
+        intent = CheckoutPublicationIntent.model_validate(
+            {
+                "schema_version": CheckoutPublicationIntent.schema_id,
+                "identity": identity.model_dump(mode="json"),
+                "publication_identity_sha256": _publication_identity_digest(identity),
+                "pre_checkout_revision_id": (
+                    None
+                    if pre_record is None
+                    else pre_record.checkout_revision_id
+                ),
+                "post_checkout_revision_id": post_record.checkout_revision_id,
+                "post_manifest_sha256": post_record.manifest_sha256,
+                "post_tree_sha256": post_record.tree_sha256,
+                "changed_member_count": len(members),
+                "capability_profile_sha256": capability_profile_sha256,
+            },
+            strict=True,
+        )
+    except (TypeError, ValueError) as exc:
+        raise _CheckoutStructureError from exc
+    return intent, members
 
 
 class RunContractBindingReference(StrictModel):
