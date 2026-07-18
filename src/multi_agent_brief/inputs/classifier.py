@@ -232,7 +232,7 @@ def _assign_by_role(
         extracted = extracted_markdown_path(Path(item["path"]))
         item["reason"] = "document_extracted" if extracted.exists() else "needs_document_extraction"
         item["suggested_role"] = role
-        item["extract_with"] = "multi-agent-brief inputs extract"
+        item["extract_with"] = "briefloop inputs extract"
         item["extracted_markdown"] = str(extracted) if extracted.exists() else ""
         skipped.append(item)
         return
@@ -291,7 +291,7 @@ def _document_skip_item(entry: Path, suggested_role: str) -> dict[str, Any]:
         item["reason"] = "document_extracted"
         item["extracted_markdown"] = str(extracted)
     else:
-        item["extract_with"] = "multi-agent-brief inputs extract"
+        item["extract_with"] = "briefloop inputs extract"
     return item
 
 

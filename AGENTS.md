@@ -12,7 +12,7 @@ This repository contains both development code and runtime agent contracts.
 
 In repository development mode, files under `.agents/skills/`, `.agents/hermes-skills/`, `.claude/agents/`, `.codex/agents/`, and `.opencode/agents/` are source assets to inspect, edit, and test. Their role instructions become active only when the corresponding runtime explicitly invokes that role or skill.
 
-Use `multi-agent-brief run --workspace <workspace> --runtime operator` to create a generic runtime handoff. The handoff artifact, not this repository manual, is the execution contract for a specific brief run.
+Use `briefloop run --workspace <workspace> --runtime operator` to create a generic runtime handoff. The handoff artifact, not this repository manual, is the execution contract for a specific brief run.
 
 For BriefLoop operator protocol, use `.agents/skills/briefloop/SKILL.md`.
 
@@ -21,7 +21,7 @@ For BriefLoop operator protocol, use `.agents/skills/briefloop/SKILL.md`.
 Keep three instruction environments separate:
 
 - Personal Codex environment: `~/.codex/AGENTS.md` is private user-level guidance. Do not copy its personal workflows, private paths, or local preferences into this public repository.
-- Repository development environment: this `AGENTS.md` guides contributors and coding agents working on the MABW source repo.
+- Repository development environment: this `AGENTS.md` guides contributors and coding agents working on the BriefLoop source repo.
 - End-user brief workspace environment: generated workspaces use `config.yaml`, `sources.yaml`, `user.md`, runtime handoff artifacts, and role skills. They must not depend on this repository `AGENTS.md` as their execution contract.
 
 Do not treat repository development instructions as user-facing product behavior. If users need guidance, put it in README, docs, CLI help, generated handoff artifacts, or runtime skills.
@@ -45,19 +45,19 @@ Use workspace files as task context. Treat repository README, examples, agent co
 For a real brief workspace:
 
 ```bash
-multi-agent-brief onboard
-multi-agent-brief init <workspace> --from-onboarding onboarding.json
-multi-agent-brief run --workspace <workspace> --runtime operator
+briefloop onboard
+briefloop init <workspace> --from-onboarding onboarding.json
+briefloop run --workspace <workspace> --runtime operator
 ```
 
 For demo exploration:
 
 ```bash
-multi-agent-brief init <workspace> --demo
-multi-agent-brief run --workspace <workspace> --runtime operator
+briefloop init <workspace> --demo
+briefloop run --workspace <workspace> --runtime operator
 ```
 
-`run` is the standard user-facing runtime handoff launcher. Generic CLI users must select one canonical runtime explicitly; dedicated adapters inject their fixed identity.
+`run` is the standard user-facing runtime handoff launcher. Generic CLI users must select one canonical runtime explicitly; dedicated adapters inject their fixed identity. The public CLI is `briefloop`; `multi-agent-brief` remains a compatibility entrypoint with identical behavior for existing scripts and installs.
 
 ## Runtime Handoff
 
@@ -134,7 +134,7 @@ Before implementing a feature or writing a code plan, answer these questions exp
 
 ### Architecture Truth
 
-- `multi-agent-brief run` must stay a runtime handoff launcher. It must not generate the brief through a Python full pipeline.
+- `briefloop run` must stay a runtime handoff launcher. It must not generate the brief through a Python full pipeline.
 - `prepare` must stay legacy/deprecated and must not call a removed Python workflow.
 - Do not reintroduce `BriefPipeline`, Python fake Agent classes, or support-matrix wording that makes the removed Python pipeline look available.
 - When changing architecture, update `docs/architecture-status.md`, `docs/MIGRATION.md`, `docs/support-matrix.md`, `README.md`, and `README_en.md` if user-facing capability or support status changes.
@@ -170,7 +170,7 @@ Before implementing a feature or writing a code plan, answer these questions exp
 
 ## Onboarding
 
-Use `multi-agent-brief onboard` for requirement capture. It collects company or organization, industry or theme, task objective, audience, language, cadence, source style, output style, must-watch topics, excluded topics, and source/search preference. For details, see `docs/onboarding.md`.
+Use `briefloop onboard` for requirement capture. It collects company or organization, industry or theme, task objective, audience, language, cadence, source style, output style, must-watch topics, excluded topics, and source/search preference. For details, see `docs/onboarding.md`.
 
 ## Role Details
 
@@ -210,10 +210,10 @@ python3 scripts/check_capabilities.py
 For install-path or runtime-handoff changes, also run a non-editable install smoke from outside the repo:
 
 ```bash
-python3 -m venv /tmp/mabw-install-smoke
-/tmp/mabw-install-smoke/bin/python -m pip install .
-/tmp/mabw-install-smoke/bin/multi-agent-brief init /tmp/mabw-smoke --demo --force
-/tmp/mabw-install-smoke/bin/multi-agent-brief doctor --config /tmp/mabw-smoke/config.yaml
+python3 -m venv /tmp/briefloop-install-smoke
+/tmp/briefloop-install-smoke/bin/python -m pip install .
+/tmp/briefloop-install-smoke/bin/briefloop init /tmp/briefloop-smoke --demo --force
+/tmp/briefloop-install-smoke/bin/briefloop doctor --config /tmp/briefloop-smoke/config.yaml
 cd /tmp
-/tmp/mabw-install-smoke/bin/multi-agent-brief run --workspace /tmp/mabw-smoke --runtime operator --skip-doctor
+/tmp/briefloop-install-smoke/bin/briefloop run --workspace /tmp/briefloop-smoke --runtime operator --skip-doctor
 ```

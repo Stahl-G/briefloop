@@ -84,7 +84,7 @@ def test_runtime_install_opencode_workspace_kit_is_local(tmp_path: Path, capsys)
 
     combined = "\n".join(path.read_text(encoding="utf-8") for path in _all_text_files(ws))
     assert ROOT.as_posix() not in combined
-    assert "multi-agent-brief run --workspace" in combined
+    assert "briefloop run --workspace" in combined
     assert "Do not assume this workspace" in combined
 
 
@@ -124,7 +124,7 @@ def test_runtime_install_claude_workspace_kit_is_local(tmp_path: Path, capsys) -
 
     combined = "\n".join(path.read_text(encoding="utf-8") for path in _all_text_files(ws))
     assert ROOT.as_posix() not in combined
-    assert "multi-agent-brief run --workspace" in combined
+    assert "briefloop run --workspace" in combined
 
 
 def test_runtime_install_codex_workspace_kit_is_local(tmp_path: Path, capsys) -> None:
@@ -176,7 +176,7 @@ def test_runtime_install_codex_workspace_kit_is_local(tmp_path: Path, capsys) ->
 
     combined = "\n".join(path.read_text(encoding="utf-8") for path in _all_text_files(ws))
     assert ROOT.as_posix() not in combined
-    assert "multi-agent-brief run --workspace" in combined
+    assert "briefloop run --workspace" in combined
     assert "Do not assume this workspace" in combined
 
 

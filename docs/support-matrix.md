@@ -5,7 +5,8 @@ acronym is retired. Literal compatibility and history identifiers such as
 `multi-agent-brief`, `/mabw`, `multi_agent_brief`, `mabw.*`, and `MABW-080`
 remain only where supported commands, schemas, workspaces, or archived
 experiments require them; they are not an implementation-lineage alias. This
-matrix continues to list those literal surfaces by their compatible names.
+matrix lists commands by their public `briefloop` name; the
+`multi-agent-brief` compatibility entrypoint is noted once in the CLI rows.
 
 Each capability has one of the following statuses:
 
@@ -49,39 +50,39 @@ validation unless that is stated separately.
 | Provenance projection control file (`provenance_graph.json`) | Supported |
 | Finalize delivery bundle (`output/delivery/brief.md` + configured DOCX) | Supported |
 | Source appendix audit/control copy (`source_appendix.md`) | Supported |
-| `multi-agent-brief` CLI | Supported |
-| `briefloop` shell CLI alias | Supported |
-| `multi-agent-brief run --workspace <path> --runtime hermes\|claude\|opencode\|codex\|codebuddy\|operator` | Supported; dedicated adapters inject their fixed identity, generic CLI users choose explicitly |
-| `multi-agent-brief run --workspace <path> --runtime operator --recipe fast-rerun` | Experimental |
-| `multi-agent-brief status --workspace <path>` | Supported |
-| `multi-agent-brief deliver --workspace <path> --target local` | Supported |
-| `multi-agent-brief deliver --workspace <path> --target feishu` | Experimental |
-| `multi-agent-brief deliver --workspace <path> --target gmail --channel draft\|send` | Experimental |
-| `multi-agent-brief state init --runtime <canonical-runtime>` plus check/show/decide/freeze-claim-ledger/stage-complete/finalize-complete | Supported |
-| `multi-agent-brief state import-fact-layer --runtime <canonical-runtime>` | Experimental |
-| `multi-agent-brief controls build-switchboard/show/select/validate` | Supported |
-| `multi-agent-brief runtime install --workspace <path> --runtime opencode\|claude\|codex\|all` | Source-clone-only |
-| `multi-agent-brief feedback ingest/plan/resolve/show/validate` | Supported |
-| `multi-agent-brief gates check/show/validate` | Supported |
-| `multi-agent-brief provenance build/show/validate` | Supported |
-| `multi-agent-brief improve propose/list/show/approve/reject/revert/stats/validate/rebuild` | Supported |
-| `multi-agent-brief eval-cases list/validate/run` | Supported |
-| `multi-agent-brief experiments 080 validate-case` | Archived Experimental |
-| `multi-agent-brief experiments 080 register-run` | Archived Experimental |
-| `multi-agent-brief experiments 080 score-run` | Archived Experimental |
-| `multi-agent-brief experiments 080 import-assessment` | Archived Experimental |
-| `multi-agent-brief experiments 080 summarize` | Archived Experimental |
-| `multi-agent-brief experiments 080 scaffold-condition` | Archived Experimental |
-| `multi-agent-brief init --from-onboarding` | Supported |
-| `multi-agent-brief onboard` | Supported |
-| `multi-agent-brief doctor` | Supported |
-| `multi-agent-brief extract --workspace <path> --scope <text> --source <file>` | Experimental |
-| `multi-agent-brief sources add-file/add-rss/add-web-search` | Experimental |
-| `multi-agent-brief approval init/record` and `multi-agent-brief release check` | Experimental |
-| `multi-agent-brief inputs extract` | Experimental |
-| `multi-agent-brief inputs classify` | Supported |
-| `multi-agent-brief finalize` | Supported |
-| `multi-agent-brief audit` | Supported |
+| `briefloop` CLI | Supported |
+| `multi-agent-brief` CLI | Supported compatibility entrypoint with identical behavior; retained for existing scripts and installs |
+| `briefloop run --workspace <path> --runtime hermes\|claude\|opencode\|codex\|codebuddy\|operator` | Supported; dedicated adapters inject their fixed identity, generic CLI users choose explicitly |
+| `briefloop run --workspace <path> --runtime operator --recipe fast-rerun` | Experimental |
+| `briefloop status --workspace <path>` | Supported |
+| `briefloop deliver --workspace <path> --target local` | Supported |
+| `briefloop deliver --workspace <path> --target feishu` | Experimental |
+| `briefloop deliver --workspace <path> --target gmail --channel draft\|send` | Experimental |
+| `briefloop state init --runtime <canonical-runtime>` plus check/show/decide/freeze-claim-ledger/stage-complete/finalize-complete | Supported |
+| `briefloop state import-fact-layer --runtime <canonical-runtime>` | Experimental |
+| `briefloop controls build-switchboard/show/select/validate` | Supported |
+| `briefloop runtime install --workspace <path> --runtime opencode\|claude\|codex\|all` | Source-clone-only |
+| `briefloop feedback ingest/plan/resolve/show/validate` | Supported |
+| `briefloop gates check/show/validate` | Supported |
+| `briefloop provenance build/show/validate` | Supported |
+| `briefloop improve propose/list/show/approve/reject/revert/stats/validate/rebuild` | Supported |
+| `briefloop eval-cases list/validate/run` | Supported |
+| `briefloop experiments 080 validate-case` | Archived Experimental |
+| `briefloop experiments 080 register-run` | Archived Experimental |
+| `briefloop experiments 080 score-run` | Archived Experimental |
+| `briefloop experiments 080 import-assessment` | Archived Experimental |
+| `briefloop experiments 080 summarize` | Archived Experimental |
+| `briefloop experiments 080 scaffold-condition` | Archived Experimental |
+| `briefloop init --from-onboarding` | Supported |
+| `briefloop onboard` | Supported |
+| `briefloop doctor` | Supported |
+| `briefloop extract --workspace <path> --scope <text> --source <file>` | Experimental |
+| `briefloop sources add-file/add-rss/add-web-search` | Experimental |
+| `briefloop approval init/record` and `briefloop release check` | Experimental |
+| `briefloop inputs extract` | Experimental |
+| `briefloop inputs classify` | Supported |
+| `briefloop finalize` | Supported |
+| `briefloop audit` | Supported |
 
 Feedback commands structure issues and repair plans for the Orchestrator. They do not automatically edit brief artifacts or execute repair.
 
@@ -343,7 +344,7 @@ For the v1.0 product boundary, see the
 | Runtime | Status |
 |---|---|
 | Hermes (`delegate_task` native pipeline + cron) | Supported |
-| Claude Code (`/briefloop` and `/mabw` five-verb writer entrypoints + `/generate-brief` generated-handoff delegated stage workflow; installable with `multi-agent-brief claude install`) | Supported |
+| Claude Code (`/briefloop` and `/mabw` five-verb writer entrypoints + `/generate-brief` generated-handoff delegated stage workflow; installable with `briefloop claude install`) | Supported |
 | OpenCode (subagent workflow) | Supported |
 | Codex (custom-agent workflow via `runtime install`) | Experimental |
 | CodeBuddy (`--runtime codebuddy` handoff using `.codebuddy/skills/briefloop/` and `.codebuddy/agents/briefloop-*.md`) | Experimental |
@@ -362,7 +363,7 @@ Runtime source assets under `.agents/`, `.claude/`, `.codex/`, `.opencode/`,
 and `integrations/hermes-plugin/` are source-clone assets. Package-only installs
 ship the CLI, packaged contracts, and packaged eval fixtures, but they do not
 ship those source runtime directories as Python package data. Use
-`multi-agent-brief runtime install --workspace <workspace> --runtime opencode|claude|codex|all`
+`briefloop runtime install --workspace <workspace> --runtime opencode|claude|codex|all`
 from a source clone to copy OpenCode/Claude Code/Codex workspace-local runtime kits.
 
 CodeBuddy handoff support is experimental and source-clone-based. It uses the
@@ -481,7 +482,7 @@ approval, release authority, semantic proof, or output-quality proof.
 
 | Item | Status |
 |---|---|
-| `multi-agent-brief prepare` | Deprecated (use `run` instead) |
+| `briefloop prepare` | Deprecated (use `run` instead) |
 | Python `BriefPipeline` | Removed |
-| `multi-agent-brief start` | Deprecated (alias for `run`) |
-| `multi-agent-brief handoff` | Deprecated (use `run`) |
+| `briefloop start` | Deprecated (alias for `run`) |
+| `briefloop handoff` | Deprecated (use `run`) |

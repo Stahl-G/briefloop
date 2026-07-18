@@ -586,7 +586,7 @@ def test_switchboard_quality_gate_hint_uses_finalize_stage_when_current_stage_fi
     assert control["recommendation"] == "required"
     assert control["selection_required"] is True
     assert control["execution_hint"] == (
-        "multi-agent-brief gates check --workspace <workspace> "
+        "briefloop gates check --workspace <workspace> "
         "--stage finalize --brief <workspace>/output/brief.md"
     )
     assert control["inputs"] == ["output/brief.md", "output/intermediate/claim_ledger.json"]

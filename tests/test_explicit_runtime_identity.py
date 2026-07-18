@@ -313,9 +313,9 @@ def test_active_runtime_docs_do_not_advertise_historical_aliases() -> None:
         assert "manual` runtime 值只保留为 `operator` 的 cli 兼容别名" not in lowered, path
 
     repo_instructions = (ROOT / "AGENTS.md").read_text(encoding="utf-8")
-    assert "multi-agent-brief run --workspace <workspace> --runtime operator" in repo_instructions
+    assert "briefloop run --workspace <workspace> --runtime operator" in repo_instructions
     assert (
-        "multi-agent-brief run --workspace /tmp/mabw-smoke --runtime operator --skip-doctor"
+        "briefloop run --workspace /tmp/briefloop-smoke --runtime operator --skip-doctor"
         in repo_instructions
     )
 

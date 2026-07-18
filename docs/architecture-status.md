@@ -12,7 +12,7 @@ page describes implemented runtime capability, not a breaking deep rename.
 ## Implemented Public Baseline
 
 - The standard user path is subagent-first.
-- `multi-agent-brief run` creates runtime handoff artifacts rather than generating a full brief by itself.
+- `briefloop run` creates runtime handoff artifacts rather than generating a full brief by itself.
 - Runtime identity is explicit and single-writer: dedicated adapters inject one
   fixed canonical literal, generic CLI users pass `--runtime`, and subsequent
   status/handoff/transaction consumers reuse `runtime_manifest.runtime` without
@@ -42,7 +42,7 @@ page describes implemented runtime capability, not a breaking deep rename.
 - Workspace-local audience taste profiles can be frozen into per-run snapshots and exposed through runtime handoff as context.
 - The Orchestrator control switchboard can surface deterministic control recommendations and record enable/defer/reject selections without executing those controls.
 - Finalize writes the reader delivery bundle under `output/delivery/`, appending the source appendix to delivery Markdown/DOCX while retaining `output/source_appendix.md` as an audit/control copy. Reader-facing appendices can show safe source identity and taxonomy labels, while `output/source_appendix_trace.md` can carry internal claim/source/span IDs, source paths, source byte hashes, and metadata completeness warnings for audit review. Delivery artifacts must not expose internal claim IDs, source IDs, evidence text, local paths, or file URLs.
-- Runtime asset availability is now explicit: packaged installs include contract configs and public-safe eval fixtures, while source runtime assets such as `.agents/`, `.claude/`, `.opencode/`, `.codex/`, `.codebuddy/`, and Hermes plugin files are source-clone-only unless copied into a workspace with `multi-agent-brief runtime install` or used directly from a source checkout where documented.
+- Runtime asset availability is now explicit: packaged installs include contract configs and public-safe eval fixtures, while source runtime assets such as `.agents/`, `.claude/`, `.opencode/`, `.codex/`, `.codebuddy/`, and Hermes plugin files are source-clone-only unless copied into a workspace with `briefloop runtime install` or used directly from a source checkout where documented.
 - The Improvement Ledger lifecycle can preserve human-authored, human-approved reader guidance in `improvement/ledger.jsonl`, project approved materializable entries into `improvement/memory.md`, freeze per-run `output/intermediate/improvement_memory_snapshot.md`, and expose only the frozen snapshot through handoff.
 - Packaged public-safe evaluation cases now cover Improvement Memory control behavior: unapproved entries are not materialized, approved guidance is frozen, and reverted entries disappear from the next snapshot.
 - Experimental Atomic Claim Graph controls can validate an optional
@@ -126,7 +126,7 @@ page describes implemented runtime capability, not a breaking deep rename.
   `retrieval_source_type`, reader-facing `source_category`, and
   `underlying_evidence_type` metadata; this is taxonomy normalization, not
   trust scoring, source-policy gating, or semantic support judgment.
-  `briefloop extract` / `multi-agent-brief extract` can register an explicit
+  `briefloop extract` can register an explicit
   extraction scope and copy local source files into an `evidence_extract`
   workspace's `input/sources/evidence_extract/` directory. It also writes a
   deterministic source-byte lock at

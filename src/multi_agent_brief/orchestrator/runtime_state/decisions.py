@@ -136,7 +136,7 @@ def record_decision(
         command = "finalize-complete" if decision == "finalize" else "stage-complete"
         raise RuntimeStateError(
             (
-                f"Decision '{decision}' must be recorded with `multi-agent-brief state {command}`. "
+                f"Decision '{decision}' must be recorded with `briefloop state {command}`. "
                 "`state decide` is reserved for retry_stage, delegate_repair, request_human_review, and block_run."
             ),
             details={

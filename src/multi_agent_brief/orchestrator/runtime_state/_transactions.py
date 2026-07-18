@@ -112,7 +112,7 @@ def _preflight_transaction_files(paths: dict[str, Path]) -> list[dict[str, Any]]
     for key in ("runtime_manifest", "workflow_state"):
         if not paths[key].exists():
             raise RuntimeStateError(
-                "Runtime state is not initialized. Run `multi-agent-brief state init "
+                "Runtime state is not initialized. Run `briefloop state init "
                 "--workspace <workspace> "
                 f"--runtime {RUNTIME_CLI_CHOICE_PLACEHOLDER}` first.",
                 details={"missing": str(paths[key])},
@@ -241,7 +241,7 @@ def _load_manifest_and_workflow(
     workflow = _read_json_if_exists(paths["workflow_state"])
     if manifest is None or workflow is None:
         raise RuntimeStateError(
-            "Runtime state is not initialized. Run `multi-agent-brief state init "
+            "Runtime state is not initialized. Run `briefloop state init "
             "--workspace <workspace> "
             f"--runtime {RUNTIME_CLI_CHOICE_PLACEHOLDER}` first.",
             details={"workspace": str(ws)},

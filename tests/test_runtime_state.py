@@ -3765,10 +3765,10 @@ def test_state_decide_delegate_repair_requires_repair_transaction_without_mutati
     assert excinfo.value.error_code == runtime_state.operations.E_REPAIR_TRANSACTION_REQUIRED
     details = excinfo.value.details
     commands = "\n".join(details["required_commands"])
-    assert "multi-agent-brief gates show" in commands
+    assert "briefloop gates show" in commands
     assert "--gate-stage auditor --gate-artifact auditor_quality_gate_report" in commands
-    assert "multi-agent-brief repair complete" in "\n".join(details["required_commands"])
-    assert f"multi-agent-brief repair start --workspace {ws}" not in details["required_commands"]
+    assert "briefloop repair complete" in "\n".join(details["required_commands"])
+    assert f"briefloop repair start --workspace {ws}" not in details["required_commands"]
     assert "Delegate only the reported repair_owner role." in details["repair_steps"]
     assert "Allow edits only to repair_route.allowed_artifacts." in details["repair_steps"]
     assert details["repair_route"]["repair_owner"] == "editor"
@@ -3807,9 +3807,9 @@ def test_state_decide_delegate_repair_human_output_points_to_repair_transaction(
 
     assert rc == 1
     out = capsys.readouterr().out
-    assert "multi-agent-brief repair start" in out
+    assert "briefloop repair start" in out
     assert "--gate-stage auditor --gate-artifact auditor_quality_gate_report" in out
-    assert "multi-agent-brief repair complete" in out
+    assert "briefloop repair complete" in out
     assert "[state] repair_steps:" in out
     assert "Delegate only the reported repair_owner role." in out
     assert "[state] repair_owner: editor" in out
@@ -3839,7 +3839,7 @@ def test_state_decide_delegate_repair_uses_current_gate_over_stale_gate(tmp_path
     assert details["repair_route"]["source"]["finding_id"] == "QG_EDITOR_REPAIR_001"
     assert any("--gate-stage auditor --gate-artifact auditor_quality_gate_report" in command for command in commands)
     assert not any("finalize_quality_gate_report" in command for command in commands)
-    assert not any(command == f"multi-agent-brief repair start --workspace {ws}" for command in commands)
+    assert not any(command == f"briefloop repair start --workspace {ws}" for command in commands)
 
 
 def test_state_decide_delegate_repair_preserves_selected_non_gate_repair_route(tmp_path):
@@ -3861,11 +3861,11 @@ def test_state_decide_delegate_repair_preserves_selected_non_gate_repair_route(t
     commands = details["required_commands"]
     assert details["repair_route"]["source"]["kind"] == "audit_report"
     assert details["repair_route"]["source"]["finding_id"] == "AUD_EDITOR_001"
-    assert any(command == f"multi-agent-brief repair route --workspace {ws} --json" for command in commands)
+    assert any(command == f"briefloop repair route --workspace {ws} --json" for command in commands)
     assert any("--route-index 0" in command for command in commands if "repair start" in command)
     assert not any("--finding-id" in command for command in commands if "repair start" in command)
     assert not any("--gate-stage" in command for command in commands if "repair start" in command)
-    assert not any(command == f"multi-agent-brief repair start --workspace {ws}" for command in commands)
+    assert not any(command == f"briefloop repair start --workspace {ws}" for command in commands)
 
 
 def test_state_decide_delegate_repair_non_gate_uses_route_index_for_duplicate_finding_ids(tmp_path):
