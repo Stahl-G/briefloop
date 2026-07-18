@@ -212,6 +212,12 @@ class ResolvedSensitivityCaseV1(StrictModel):
             f"M{index}" for index in range(1, len(ids) + 1)
         ]:
             raise ValueError("resolved mutation inventory mismatch")
+        if any(
+            item.mutated_report_sha256 != self.mutated_report_sha256
+            or item.normalized_text_sha256 != self.normalized_text_sha256
+            for item in self.resolved_mutations
+        ):
+            raise ValueError("resolved mutation binding mismatch")
         _check_hash(self, "case_sha256")
         return self
 
@@ -317,6 +323,9 @@ class LajStudyExecutionEvidenceV1(StrictModel):
     schema_version: Literal[STUDY_EXECUTION_EVIDENCE_SCHEMA_ID]
     study_id: ContractId
     trial_id: ContractId
+    budget_policy: LajProviderBudgetPolicyV1
+    authorization: LajProviderExecutionAuthorizationV1
+    preflight: LajBudgetPreflightV1
     authorization_sha256: Sha256
     preflight_sha256: Sha256
     shadow_request_sha256: Sha256
@@ -335,6 +344,27 @@ class LajStudyExecutionEvidenceV1(StrictModel):
 
     @model_validator(mode="after")
     def validate_evidence(self) -> "LajStudyExecutionEvidenceV1":
+        if (
+            self.authorization.authorization_sha256 != self.authorization_sha256
+            or self.authorization.budget_policy_sha256
+            != self.budget_policy.policy_sha256
+            or self.preflight.preflight_sha256 != self.preflight_sha256
+            or self.preflight.authorization_sha256 != self.authorization_sha256
+            or self.preflight.decision != "allowed"
+            or self.preflight.reason_codes
+            or self.authorization.study_id != self.study_id
+            or self.authorization.trial_id != self.trial_id
+            or self.authorization.report_sha256 != self.report_sha256
+            or self.authorization.instrument_sha256 != self.preflight.instrument_sha256
+            or self.authorization.assessment_plan_sha256
+            != self.preflight.assessment_plan_sha256
+            or self.authorization.ordered_prompt_request_sha256s
+            != self.preflight.ordered_prompt_request_sha256s
+            or self.preflight.max_provider_calls
+            != self.budget_policy.max_provider_calls
+            or self.preflight.max_input_tokens != self.budget_policy.max_input_tokens
+        ):
+            raise ValueError("study execution evidence binding mismatch")
         values = (self.input_tokens, self.output_tokens, self.total_tokens)
         if self.provider_usage == "not_reported" and any(v is not None for v in values):
             raise ValueError("unreported usage cannot contain values")

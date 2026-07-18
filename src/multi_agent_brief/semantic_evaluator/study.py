@@ -4,8 +4,10 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 import json
+import os
 from pathlib import Path
-from typing import Any, Mapping
+import stat
+from typing import Any, BinaryIO, Mapping
 
 from pydantic import ValidationError
 
@@ -536,6 +538,7 @@ def _usage_from_archive(path: Path) -> tuple[str, int | None, int | None, int | 
 def _build_execution_evidence(
     *,
     authorization: LajProviderExecutionAuthorizationV1,
+    budget_policy: LajProviderBudgetPolicyV1,
     preflight: LajBudgetPreflightV1,
     result: ShadowRunResult,
 ) -> LajStudyExecutionEvidenceV1:
@@ -551,6 +554,9 @@ def _build_execution_evidence(
         "schema_version": STUDY_EXECUTION_EVIDENCE_SCHEMA_ID,
         "study_id": authorization.study_id,
         "trial_id": authorization.trial_id,
+        "budget_policy": budget_policy.model_dump(mode="json", warnings="error"),
+        "authorization": authorization.model_dump(mode="json", warnings="error"),
+        "preflight": preflight.model_dump(mode="json", warnings="error"),
         "authorization_sha256": authorization.authorization_sha256,
         "preflight_sha256": preflight.preflight_sha256,
         "shadow_request_sha256": archive.request.shadow_request_sha256,
@@ -576,22 +582,44 @@ def _build_execution_evidence(
 def _verify_execution_evidence(
     *,
     evidence: LajStudyExecutionEvidenceV1,
-    authorization: LajProviderExecutionAuthorizationV1,
-    preflight: LajBudgetPreflightV1,
-    result: ShadowRunResult,
+    archive: Any,
+    authorization: LajProviderExecutionAuthorizationV1 | None = None,
+    preflight: LajBudgetPreflightV1 | None = None,
+    budget_policy: LajProviderBudgetPolicyV1 | None = None,
 ) -> LajStudyExecutionEvidenceV1:
-    if result.archive_path is None:
-        raise SemanticEvaluatorError("study_execution_evidence_incomplete")
-    archive = verify_shadow_archive(Path(result.archive_path))
     current_schema_hashes = {
         model.schema_id: canonical_sha256(model.model_json_schema())
         for model in sorted(STUDY_CONTRACT_MODELS, key=lambda item: item.schema_id)
     }
+    auth = evidence.authorization
+    frozen_preflight = evidence.preflight
+    frozen_policy = evidence.budget_policy
+    usage = _usage_from_archive(archive.path)
     expected = (
-        evidence.study_id == authorization.study_id,
-        evidence.trial_id == authorization.trial_id,
-        evidence.authorization_sha256 == authorization.authorization_sha256,
-        evidence.preflight_sha256 == preflight.preflight_sha256,
+        authorization is None
+        or canonical_json_bytes(authorization) == canonical_json_bytes(auth),
+        preflight is None
+        or canonical_json_bytes(preflight) == canonical_json_bytes(frozen_preflight),
+        budget_policy is None
+        or canonical_json_bytes(budget_policy) == canonical_json_bytes(frozen_policy),
+        evidence.study_id == auth.study_id,
+        evidence.trial_id == auth.trial_id == archive.request.trial_id,
+        evidence.authorization_sha256 == auth.authorization_sha256,
+        evidence.preflight_sha256 == frozen_preflight.preflight_sha256,
+        auth.report_sha256 == archive.request.report_sha256,
+        auth.bounded_context_sha256 == archive.request.bounded_context_sha256,
+        auth.instrument_sha256 == archive.request.instrument_sha256,
+        auth.assessment_plan_sha256 == archive.request.assessment_plan_sha256,
+        auth.ordered_prompt_request_sha256s
+        == archive.request.ordered_prompt_request_sha256s,
+        frozen_preflight.input_binding_sha256 == archive.request.input_binding_sha256,
+        frozen_preflight.instrument_sha256 == archive.request.instrument_sha256,
+        frozen_preflight.assessment_plan_sha256
+        == archive.request.assessment_plan_sha256,
+        frozen_preflight.ordered_prompt_request_sha256s
+        == archive.request.ordered_prompt_request_sha256s,
+        frozen_preflight.decision == "allowed",
+        not frozen_preflight.reason_codes,
         evidence.shadow_request_sha256 == archive.request.shadow_request_sha256,
         evidence.receipt_sha256 == archive.receipt.receipt_sha256,
         evidence.archive_manifest_sha256
@@ -603,6 +631,13 @@ def _verify_execution_evidence(
         evidence.study_schema_sha256s == current_schema_hashes,
         evidence.runner_source_sha256
         == archive.execution_manifest.runner_source_sha256,
+        (
+            evidence.provider_usage,
+            evidence.input_tokens,
+            evidence.output_tokens,
+            evidence.total_tokens,
+        )
+        == usage,
     )
     if not all(expected):
         raise SemanticEvaluatorError("study_execution_binding_mismatch")
@@ -617,11 +652,24 @@ def budgeted_shadow_run(
     bounded_context: str | Path,
     instrument: str | Path,
     archive_root: str | Path,
-    existing_execution_evidence: LajStudyExecutionEvidenceV1 | None = None,
+    evidence_output: str | Path,
     adapter_factory: Any = None,
     clock: Any = None,
     sleep: Any = None,
 ) -> BudgetedShadowRunResult:
+    try:
+        evidence_path = validate_standalone_study_output(evidence_output)
+        existing_execution_evidence = (
+            parse_study_json(
+                evidence_path.read_bytes(),
+                LajStudyExecutionEvidenceV1,
+                "study_execution_evidence_incomplete",
+            )
+            if evidence_path.exists()
+            else None
+        )
+    except SemanticEvaluatorError as exc:
+        return BudgetedShadowRunResult(None, None, None, (exc.reason_code,))
     prepared = prepare_shadow_run(
         report=report,
         bounded_context=bounded_context,
@@ -644,30 +692,71 @@ def budgeted_shadow_run(
         return BudgetedShadowRunResult(
             preflight, None, None, tuple(preflight.reason_codes)
         )
+    reserved: BinaryIO | None = None
+    if existing_execution_evidence is None:
+        try:
+            _, reserved = reserve_study_output(evidence_path)
+        except SemanticEvaluatorError as exc:
+            return BudgetedShadowRunResult(preflight, None, None, (exc.reason_code,))
     kwargs: dict[str, Any] = {"adapter_factory": adapter_factory}
+    if existing_execution_evidence is not None:
+        kwargs["replay_only"] = True
     if clock is not None:
         kwargs["clock"] = clock
     if sleep is not None:
         kwargs["sleep"] = sleep
     result = execute_prepared_shadow_run(prepared, **kwargs)
     if not result.archive_complete:
-        return BudgetedShadowRunResult(preflight, result, None, result.reason_codes)
+        if reserved is not None:
+            reserved.close()
+        reason_codes = (
+            ("study_execution_evidence_incomplete",)
+            if existing_execution_evidence is not None
+            else result.reason_codes
+        )
+        return BudgetedShadowRunResult(preflight, result, None, reason_codes)
     try:
+        if result.archive_path is None:
+            raise SemanticEvaluatorError("study_execution_evidence_incomplete")
+        archive = verify_shadow_archive(Path(result.archive_path))
         if result.replayed:
             if existing_execution_evidence is None:
                 raise SemanticEvaluatorError("study_execution_evidence_incomplete")
             evidence = _verify_execution_evidence(
                 evidence=existing_execution_evidence,
+                archive=archive,
                 authorization=authorization,
                 preflight=preflight,
-                result=result,
+                budget_policy=budget_policy,
             )
         else:
             evidence = _build_execution_evidence(
-                authorization=authorization, preflight=preflight, result=result
+                authorization=authorization,
+                budget_policy=budget_policy,
+                preflight=preflight,
+                result=result,
+            )
+            if reserved is None:
+                raise SemanticEvaluatorError("study_execution_evidence_incomplete")
+            _commit_reserved(
+                reserved,
+                canonical_json_bytes(
+                    evidence.model_dump(mode="json", warnings="error")
+                ),
             )
     except SemanticEvaluatorError as exc:
+        if reserved is not None and not reserved.closed:
+            reserved.close()
         return BudgetedShadowRunResult(preflight, result, None, (exc.reason_code,))
+    except (ValidationError, OSError, TypeError, ValueError):
+        if reserved is not None and not reserved.closed:
+            reserved.close()
+        return BudgetedShadowRunResult(
+            preflight,
+            result,
+            None,
+            ("study_execution_evidence_incomplete",),
+        )
     return BudgetedShadowRunResult(preflight, result, evidence, ())
 
 
@@ -679,6 +768,7 @@ def compare_sensitivity(
 ) -> LajSensitivityComparisonV1:
     try:
         archive = verify_shadow_archive(Path(archive_path))
+        _verify_execution_evidence(evidence=evidence, archive=archive)
         if (
             case.study_id != evidence.study_id
             or case.mutated_report_sha256 != evidence.report_sha256
@@ -748,16 +838,84 @@ def compare_sensitivity(
         raise SemanticEvaluatorError("sensitivity_comparison_invalid") from None
 
 
-def write_canonical_model(path: Path, model: Any) -> None:
-    with path.open("xb") as handle:
-        handle.write(
-            canonical_json_bytes(model.model_dump(mode="json", warnings="error"))
+_WORKSPACE_MARKERS = frozenset({"config.yaml", "sources.yaml", "user.md"})
+_ARCHIVE_MARKERS = frozenset({"COMPLETE", "archive_manifest.json", "receipt.json"})
+
+
+def validate_standalone_study_output(path: str | Path) -> Path:
+    """Require a new JSON file in a real standalone laj-study-* directory."""
+
+    try:
+        candidate = Path(path).expanduser()
+        if (
+            not candidate.is_absolute()
+            or candidate.suffix != ".json"
+            or candidate.name in _WORKSPACE_MARKERS | _ARCHIVE_MARKERS
+            or not candidate.parent.name.startswith("laj-study-")
+            or candidate.parent.name == "laj-study-"
+        ):
+            raise ValueError
+        parent_metadata = candidate.parent.lstat()
+        if stat.S_ISLNK(parent_metadata.st_mode) or not stat.S_ISDIR(
+            parent_metadata.st_mode
+        ):
+            raise ValueError
+        if candidate.parent.resolve(strict=True) != candidate.parent:
+            raise ValueError
+        for ancestor in (candidate.parent, *candidate.parent.parents):
+            metadata = ancestor.lstat()
+            if stat.S_ISLNK(metadata.st_mode):
+                raise ValueError
+            if all((ancestor / marker).is_file() for marker in _WORKSPACE_MARKERS):
+                raise ValueError
+            if any((ancestor / marker).is_file() for marker in _ARCHIVE_MARKERS):
+                raise ValueError
+        if candidate.exists():
+            metadata = candidate.lstat()
+            if stat.S_ISLNK(metadata.st_mode) or not stat.S_ISREG(metadata.st_mode):
+                raise ValueError
+    except (OSError, RuntimeError, ValueError, TypeError):
+        raise SemanticEvaluatorError("provider_exclusion_invalid") from None
+    return candidate
+
+
+def reserve_study_output(path: str | Path) -> tuple[Path, BinaryIO]:
+    candidate = validate_standalone_study_output(path)
+    try:
+        descriptor = os.open(
+            candidate,
+            os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_NOFOLLOW", 0),
+            0o600,
         )
+        return candidate, os.fdopen(descriptor, "wb")
+    except OSError:
+        raise SemanticEvaluatorError("provider_exclusion_invalid") from None
+
+
+def _commit_reserved(handle: BinaryIO, payload: bytes) -> None:
+    try:
+        handle.write(payload)
+        handle.flush()
+        os.fsync(handle.fileno())
+        handle.close()
+    except OSError:
+        try:
+            handle.close()
+        except OSError:
+            pass
+        raise SemanticEvaluatorError("study_execution_evidence_incomplete") from None
+
+
+def write_canonical_model(path: Path, model: Any) -> None:
+    _, handle = reserve_study_output(path)
+    _commit_reserved(
+        handle, canonical_json_bytes(model.model_dump(mode="json", warnings="error"))
+    )
 
 
 def write_canonical_payload(path: Path, payload: Mapping[str, Any]) -> None:
-    with path.open("xb") as handle:
-        handle.write(canonical_json_bytes(dict(payload)))
+    _, handle = reserve_study_output(path)
+    _commit_reserved(handle, canonical_json_bytes(dict(payload)))
 
 
 __all__ = [
@@ -773,6 +931,8 @@ __all__ = [
     "parse_sensitivity_manifest",
     "prepare_study",
     "resolve_sensitivity_case",
+    "reserve_study_output",
+    "validate_standalone_study_output",
     "verify_study_report_binding",
     "write_canonical_model",
     "write_canonical_payload",

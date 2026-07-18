@@ -219,7 +219,9 @@ def test_study_preflight_failure_precedence_is_value_free_and_zero_provider(
             {**payload, "declaration_sha256": canonical_sha256(payload)}
         )
     )
-    output = tmp_path / "preflight.json"
+    output_dir = tmp_path / "laj-study-cli-precedence"
+    output_dir.mkdir()
+    output = output_dir / "preflight.json"
     argv = _study_preflight_argv()
     replacements = {
         "--declaration": str(declaration),
@@ -238,6 +240,52 @@ def test_study_preflight_failure_precedence_is_value_free_and_zero_provider(
     assert json.loads(output.read_bytes())["reason_codes"] == [
         "utility_target_ineligible"
     ]
+
+
+def test_study_preflight_cannot_occupy_workspace_authority_path(
+    tmp_path: Path, capsys
+) -> None:
+    declaration_payload = {
+        "schema_version": STUDY_DECLARATION_SCHEMA_ID,
+        "study_id": "study-workspace-guard",
+        "study_kind": "product_utility_check",
+        "artifact_class": "technical_postmortem",
+        "report_sha256": "0" * 64,
+        "origin_label": "public postmortem",
+        "public_safe": True,
+        "synthetic": False,
+        "self_diagnosing": True,
+        "reader_facing": False,
+        "expected_mutation_count": 0,
+    }
+    declaration = tmp_path / "declaration.json"
+    declaration.write_bytes(
+        canonical_json_bytes(
+            {
+                **declaration_payload,
+                "declaration_sha256": canonical_sha256(declaration_payload),
+            }
+        )
+    )
+    workspace = tmp_path / "workspace"
+    output_dir = workspace / "output" / "intermediate"
+    output_dir.mkdir(parents=True)
+    for marker in ("config.yaml", "sources.yaml", "user.md"):
+        (workspace / marker).write_text("public-safe\n", encoding="utf-8")
+    authority_path = output_dir / "workflow_state.json"
+    argv = _study_preflight_argv()
+    replacements = {
+        "--declaration": str(declaration),
+        "--report": str(tmp_path / "missing.md"),
+        "--output": str(authority_path),
+    }
+    for option, value in replacements.items():
+        argv[argv.index(option) + 1] = value
+    assert main(argv) == 1
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["reason_codes"] == ["provider_exclusion_invalid"]
+    assert payload["provider_calls"] == 0
+    assert not authority_path.exists()
 
 
 def test_demo_cli_projects_synthetic_nonqualifying_result(monkeypatch, capsys) -> None:

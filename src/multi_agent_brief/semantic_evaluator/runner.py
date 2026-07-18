@@ -840,6 +840,7 @@ def execute_prepared_shadow_run(
     *,
     adapter_factory: Callable[[ShadowExecutionManifest], SemanticEvaluatorAdapter]
     | None = None,
+    replay_only: bool = False,
     clock: Callable[[], str] = _utc_now,
     sleep: Callable[[float], None] = time.sleep,
 ) -> ShadowRunResult:
@@ -865,6 +866,8 @@ def execute_prepared_shadow_run(
         return _failure(exc.reason_code)
     if replay is not None:
         return _from_archive(replay, replayed=True)
+    if replay_only:
+        return _failure("shadow_archive_incomplete")
     try:
         prepare_archive_root(archive_root=root, trial_id=trial_id)
     except SemanticEvaluatorError as exc:

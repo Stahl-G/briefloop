@@ -56,7 +56,11 @@ def register(subparsers: argparse._SubParsersAction) -> None:
     study_preflight.add_argument("--budget-policy", required=True)
     study_preflight.add_argument("--control-report")
     study_preflight.add_argument("--sensitivity-manifest")
-    study_preflight.add_argument("--output", required=True)
+    study_preflight.add_argument(
+        "--output",
+        required=True,
+        help="New JSON file in an existing standalone laj-study-<label> directory outside every BriefLoop workspace and shadow archive.",
+    )
     study_preflight.add_argument("--json", action="store_true")
     budgeted = laj_sub.add_parser(
         "budgeted-shadow-run",
@@ -68,7 +72,11 @@ def register(subparsers: argparse._SubParsersAction) -> None:
     budgeted.add_argument("--bounded-context", required=True)
     budgeted.add_argument("--instrument", required=True)
     budgeted.add_argument("--archive-root", required=True)
-    budgeted.add_argument("--evidence-output", required=True)
+    budgeted.add_argument(
+        "--evidence-output",
+        required=True,
+        help="Immutable JSON evidence file in an existing standalone laj-study-<label> directory outside every BriefLoop workspace and shadow archive.",
+    )
     budgeted.add_argument("--json", action="store_true")
     compare = laj_sub.add_parser(
         "study-compare",
@@ -77,7 +85,11 @@ def register(subparsers: argparse._SubParsersAction) -> None:
     compare.add_argument("--case", required=True)
     compare.add_argument("--execution-evidence", required=True)
     compare.add_argument("--archive", required=True)
-    compare.add_argument("--output", required=True)
+    compare.add_argument(
+        "--output",
+        required=True,
+        help="New JSON file in an existing standalone laj-study-<label> directory outside every BriefLoop workspace and shadow archive.",
+    )
     compare.add_argument("--json", action="store_true")
     present = laj_sub.add_parser(
         "present",
@@ -643,16 +655,6 @@ def _handle_laj_budgeted_shadow_run(args: argparse.Namespace) -> int:
             contracts.LajProviderBudgetPolicyV1,
             "budget_preflight_unavailable",
         )
-        from pathlib import Path
-
-        evidence_path = Path(args.evidence_output)
-        existing_evidence = None
-        if evidence_path.exists():
-            existing_evidence = study.parse_study_json(
-                evidence_path.read_bytes(),
-                contracts.LajStudyExecutionEvidenceV1,
-                "study_execution_evidence_incomplete",
-            )
         result = study.budgeted_shadow_run(
             authorization=authorization,
             budget_policy=policy,
@@ -660,11 +662,9 @@ def _handle_laj_budgeted_shadow_run(args: argparse.Namespace) -> int:
             bounded_context=args.bounded_context,
             instrument=args.instrument,
             archive_root=args.archive_root,
-            existing_execution_evidence=existing_evidence,
+            evidence_output=args.evidence_output,
         )
         payload = result.to_dict()
-        if result.execution_evidence is not None and not evidence_path.exists():
-            _write_study_output(study, args.evidence_output, result.execution_evidence)
     except Exception as exc:
         reason = getattr(exc, "reason_code", None)
         payload = {

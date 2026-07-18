@@ -277,6 +277,8 @@ def test_frozen_budget_case_blocks_653274_before_archive_or_adapter(
     normal_auth = make_execution_authorization(
         study_id="study-blocked", prepared=normal_prepared, policy=_policy(tokens=1)
     )
+    blocked_output_dir = tmp_path / "laj-study-blocked"
+    blocked_output_dir.mkdir()
     result = budgeted_shadow_run(
         authorization=normal_auth,
         budget_policy=_policy(tokens=1),
@@ -284,6 +286,7 @@ def test_frozen_budget_case_blocks_653274_before_archive_or_adapter(
         bounded_context=invocation["bounded_context"],
         instrument=invocation["instrument"],
         archive_root=invocation["archive_root"],
+        evidence_output=blocked_output_dir / "evidence.json",
         adapter_factory=factory,
     )
     assert result.reason_codes == ("budget_input_token_limit_exceeded",)
@@ -322,6 +325,9 @@ def test_allowed_synthetic_budget_creates_evidence_and_zero_finding_is_neutral(
     authorization = make_execution_authorization(
         study_id="study-compare", prepared=prepared, policy=policy
     )
+    evidence_dir = tmp_path / "laj-study-execution"
+    evidence_dir.mkdir()
+    evidence_path = evidence_dir / "evidence.json"
     result = budgeted_shadow_run(
         authorization=authorization,
         budget_policy=policy,
@@ -329,13 +335,64 @@ def test_allowed_synthetic_budget_creates_evidence_and_zero_finding_is_neutral(
         bounded_context=invocation["bounded_context"],
         instrument=invocation["instrument"],
         archive_root=invocation["archive_root"],
+        evidence_output=evidence_path,
         clock=lambda: "2026-07-19T00:00:00Z",
         sleep=lambda _seconds: None,
     )
     assert result.shadow_result is not None
     assert result.execution_evidence is not None
+    assert evidence_path.read_bytes()
     assert result.execution_evidence.provider_usage in {"reported", "not_reported"}
     assert "/private" not in json.dumps(result.to_dict())
+    adapter_calls = 0
+
+    def forbidden_factory(_execution):
+        nonlocal adapter_calls
+        adapter_calls += 1
+        raise AssertionError("provider construction forbidden")
+
+    absent_archive = budgeted_shadow_run(
+        authorization=authorization,
+        budget_policy=policy,
+        report=invocation["report"],
+        bounded_context=invocation["bounded_context"],
+        instrument=invocation["instrument"],
+        archive_root=(tmp_path / "absent-archive").resolve(),
+        evidence_output=evidence_path,
+        adapter_factory=forbidden_factory,
+    )
+    assert absent_archive.reason_codes == ("study_execution_evidence_incomplete",)
+    assert adapter_calls == 0
+    missing_parent = budgeted_shadow_run(
+        authorization=authorization,
+        budget_policy=policy,
+        report=invocation["report"],
+        bounded_context=invocation["bounded_context"],
+        instrument=invocation["instrument"],
+        archive_root=(tmp_path / "another-archive").resolve(),
+        evidence_output=tmp_path / "missing" / "evidence.json",
+        adapter_factory=forbidden_factory,
+    )
+    assert missing_parent.reason_codes == ("provider_exclusion_invalid",)
+    assert adapter_calls == 0
+    conflict_dir = tmp_path / "laj-study-conflict"
+    conflict_dir.mkdir()
+    conflict_path = conflict_dir / "evidence.json"
+    conflict_path.write_text("{}", encoding="utf-8")
+    conflict = budgeted_shadow_run(
+        authorization=authorization,
+        budget_policy=policy,
+        report=invocation["report"],
+        bounded_context=invocation["bounded_context"],
+        instrument=invocation["instrument"],
+        archive_root=(tmp_path / "conflict-archive").resolve(),
+        evidence_output=conflict_path,
+        adapter_factory=forbidden_factory,
+    )
+    assert conflict.reason_codes == ("study_execution_evidence_incomplete",)
+    assert adapter_calls == 0
+    missing_dir = tmp_path / "laj-study-missing-evidence"
+    missing_dir.mkdir()
     replay_without_evidence = budgeted_shadow_run(
         authorization=authorization,
         budget_policy=policy,
@@ -343,6 +400,7 @@ def test_allowed_synthetic_budget_creates_evidence_and_zero_finding_is_neutral(
         bounded_context=invocation["bounded_context"],
         instrument=invocation["instrument"],
         archive_root=invocation["archive_root"],
+        evidence_output=missing_dir / "evidence.json",
     )
     assert replay_without_evidence.reason_codes == (
         "study_execution_evidence_incomplete",
@@ -354,7 +412,7 @@ def test_allowed_synthetic_budget_creates_evidence_and_zero_finding_is_neutral(
         bounded_context=invocation["bounded_context"],
         instrument=invocation["instrument"],
         archive_root=invocation["archive_root"],
-        existing_execution_evidence=result.execution_evidence,
+        evidence_output=evidence_path,
     )
     assert replay.ok is True
     assert replay.shadow_result is not None and replay.shadow_result.replayed is True
@@ -390,6 +448,52 @@ def test_allowed_synthetic_budget_creates_evidence_and_zero_finding_is_neutral(
     )
 
     case = _hashed(ResolvedSensitivityCaseV1, case_payload, "case_sha256")
+    cross_bound_payload = case.model_dump(mode="json")
+    cross_bound_payload["resolved_mutations"][0]["mutated_report_sha256"] = "9" * 64
+    cross_bound_payload["case_sha256"] = canonical_sha256(
+        {
+            key: value
+            for key, value in cross_bound_payload.items()
+            if key != "case_sha256"
+        }
+    )
+    with pytest.raises(ValidationError):
+        ResolvedSensitivityCaseV1.model_validate(cross_bound_payload)
+
+    forged_evidence = result.execution_evidence.model_dump(mode="json")
+    forged_evidence["authorization_sha256"] = "8" * 64
+    forged_evidence["evidence_sha256"] = canonical_sha256(
+        {
+            key: value
+            for key, value in forged_evidence.items()
+            if key != "evidence_sha256"
+        }
+    )
+    from multi_agent_brief.semantic_evaluator.study_contracts import (
+        LajStudyExecutionEvidenceV1,
+    )
+
+    with pytest.raises(ValidationError):
+        LajStudyExecutionEvidenceV1.model_validate(forged_evidence)
+    rehashed_historical = result.execution_evidence.model_dump(mode="json")
+    rehashed_historical["study_source_sha256"] = "7" * 64
+    rehashed_historical["evidence_sha256"] = canonical_sha256(
+        {
+            key: value
+            for key, value in rehashed_historical.items()
+            if key != "evidence_sha256"
+        }
+    )
+    historical_evidence = LajStudyExecutionEvidenceV1.model_validate(
+        rehashed_historical
+    )
+    with pytest.raises(Exception) as error:
+        compare_sensitivity(
+            case=case,
+            evidence=historical_evidence,
+            archive_path=result.shadow_result.archive_path,
+        )
+    assert getattr(error.value, "reason_code") == "sensitivity_comparison_invalid"
     comparison = compare_sensitivity(
         case=case,
         evidence=result.execution_evidence,
