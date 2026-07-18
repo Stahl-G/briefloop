@@ -1388,6 +1388,11 @@ class CoreRunRecoveryService:
                 request.predecessor_run_id,
                 request.expected_store_revision,
             )
+            if (
+                request.role_topology
+                not in verified.runtime_adapter.supported_role_topologies
+            ):
+                raise CoreRunError("runtime_adapter_binding_invalid")
             snapshot = verified.snapshot
             head = snapshot.workspace_run_head
             if (

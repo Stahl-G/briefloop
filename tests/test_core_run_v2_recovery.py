@@ -2134,6 +2134,61 @@ def test_recovery_service_reset_is_cross_run_and_historical_replay_safe(
     ).status == "complete"
 
 
+def test_reset_rejects_unsupported_runtime_topology_before_store_write(
+    tmp_path: Path,
+) -> None:
+    workspace = _initialized_workspace(tmp_path)
+    database = workspace / "briefloop.db"
+    successor_run_id = "RUN-RECOVERY-UNSUPPORTED-TOPOLOGY-002"
+    request_id = "REQ-RECOVERY-UNSUPPORTED-TOPOLOGY-001"
+    with SQLiteControlStore.open(database, clock=CLOCK) as store:
+        before = store.load_snapshot(RUN_ID)
+        binding = before.run_contract_bindings[0]
+        adapter_reference = binding.runtime_adapter_artifact
+        adapter_payload = json.loads(
+            store.read_artifact_revision_bytes(
+                RUN_ID,
+                adapter_reference.artifact_id,
+                adapter_reference.revision,
+            )
+        )
+        assert "human_assisted" not in adapter_payload["supported_role_topologies"]
+
+    request = RunResetRequest.model_validate(
+        {
+            "schema_version": RunResetRequest.schema_id,
+            "request_id": request_id,
+            "predecessor_run_id": RUN_ID,
+            "successor_run_id": successor_run_id,
+            "workspace_id": before.workspace_id,
+            "runtime": before.run.runtime,
+            "expected_head_run_id": RUN_ID,
+            "expected_store_revision": before.store_revision,
+            "expected_workspace_revision": before.store_revision,
+            "run_direction": binding.run_direction.model_dump(mode="json"),
+            "workspace_config_sha256": binding.workspace_config_sha256,
+            "sources_config_sha256": binding.sources_config_sha256,
+            "role_topology": "human_assisted",
+            "gate_strictness": binding.gate_strictness,
+            "input_governance_required": binding.input_governance_required,
+        },
+        strict=True,
+    )
+    result = CoreRunRecoveryService(workspace, clock=CLOCK).reset_run(request)
+
+    assert result.status == "failed_uncommitted"
+    assert result.error_code == "runtime_adapter_binding_invalid"
+    with SQLiteControlStore.open(database, clock=CLOCK) as store:
+        after = store.load_snapshot(RUN_ID)
+        history = store.load_history()
+        assert store.current_revision == before.store_revision
+        assert after.workspace_run_head == before.workspace_run_head
+        assert all(item.transaction_id != request_id for item in after.transactions)
+        assert all(
+            item.run.run_id != successor_run_id for item in history.snapshots
+        )
+
+
 def test_sequential_resets_verify_each_as_of_prefix_and_replay_first_reset(
     tmp_path: Path,
 ) -> None:
