@@ -42,6 +42,7 @@ docx = [
 ]
 dev = [
   "pytest>=8.0",
+  "pytest-xdist>=3.5",
   "python-docx>=1.0.0",
   "ruff>=0.8.0",
   "setuptools>=68",
