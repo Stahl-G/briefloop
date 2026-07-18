@@ -1164,6 +1164,7 @@ class CoreRunDomainVerifier:
         contracts = self._load_contracts(reader, binding)
         self._verify_contract_fingerprint(binding)
         self._verify_receipt_bindings(snapshot)
+        self._verify_checkout_revisions(history, snapshot)
         self._verify_invocation_ownership(snapshot, binding)
         classify_current_lineage(snapshot)
         verify_no_post_seal_records(snapshot)
@@ -1177,6 +1178,92 @@ class CoreRunDomainVerifier:
             binding=binding,
             contracts=contracts,
         )
+
+    @staticmethod
+    def _verify_checkout_revisions(
+        history: ControlStoreHistory,
+        snapshot: ControlStoreSnapshot,
+    ) -> None:
+        """Recompute immutable checkout truth without consulting working paths."""
+
+        graph = (
+            snapshot.checkout_revisions,
+            snapshot.checkout_revision_members,
+            snapshot.receipt_checkout_bindings,
+        )
+        if not any(graph):
+            # Dormant transition: PR-4B0 receipts remain valid until PR-4B2
+            # requires a binding on every lifecycle effect.
+            return
+        if not (
+            snapshot.checkout_revisions and snapshot.receipt_checkout_bindings
+        ):
+            raise CoreRunError("checkout_revision_invalid")
+        from datetime import datetime
+        from multi_agent_brief.core_run_v2.checkout import build_checkout_revision
+
+        members_by_revision: dict[str, list[object]] = {}
+        for member in snapshot.checkout_revision_members:
+            members_by_revision.setdefault(member.checkout_revision_id, []).append(member)
+        receipts = {item.transaction_id: item for item in snapshot.transactions}
+        for revision in snapshot.checkout_revisions:
+            members = tuple(
+                sorted(
+                    members_by_revision.get(revision.checkout_revision_id, []),
+                    key=lambda item: item.ordinal,
+                )
+            )
+            artifact_rows = []
+            for member in members:
+                artifact = next(
+                    (
+                        item for item in snapshot.artifact_revisions
+                        if item.artifact_id == member.artifact_id
+                        and item.revision == member.artifact_revision
+                    ),
+                    None,
+                )
+                if artifact is None:
+                    raise CoreRunError("checkout_revision_invalid")
+                artifact_rows.append(artifact)
+            rebuilt = build_checkout_revision(
+                workspace_id=revision.workspace_id,
+                run_id=revision.run_id,
+                transaction_id=revision.creator_transaction_id,
+                created_at=datetime.fromisoformat(
+                    revision.created_at.replace("Z", "+00:00")
+                ),
+                artifact_revisions=tuple(artifact_rows),
+                parent_checkout_revision_id=revision.parent_checkout_revision_id,
+            )
+            if rebuilt.record != revision or rebuilt.members != members:
+                raise CoreRunError("checkout_revision_invalid")
+            receipt = receipts.get(revision.creator_transaction_id)
+            if receipt is None or not any(
+                item.checkout_revision_id == revision.checkout_revision_id
+                for item in receipt.checkout_revisions
+            ):
+                raise CoreRunError("checkout_revision_invalid")
+        binding_by_transaction = {
+            item.transaction_id: item for item in snapshot.receipt_checkout_bindings
+        }
+        for receipt in snapshot.transactions:
+            references = receipt.receipt_checkout_bindings
+            if not references:
+                continue
+            binding = binding_by_transaction.get(receipt.transaction_id)
+            if (
+                len(references) != 1
+                or binding is None
+                or references[0].transaction_id != receipt.transaction_id
+                or binding.post_run_id != receipt.run_id
+            ):
+                raise CoreRunError("checkout_revision_invalid")
+            if receipt.transaction_type != "core-v2-run-reset" and (
+                binding.pre_run_id != receipt.run_id
+                or binding.post_run_id != receipt.run_id
+            ):
+                raise CoreRunError("checkout_revision_invalid")
 
     def _verify_historical_pr4b_prefix(
         self,

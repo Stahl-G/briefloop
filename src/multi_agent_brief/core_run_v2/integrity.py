@@ -11,6 +11,8 @@ from typing import Callable, Iterable
 
 from multi_agent_brief.contracts.v2 import (
     ArtifactRevision,
+    CheckoutPublicationMember,
+    CheckoutRevisionMember,
     CoreRunEventBinding,
     EventEnvelope,
     IntegrityCheckRequest,
@@ -27,6 +29,7 @@ from multi_agent_brief.control_store.serialization import (
 )
 
 from .errors import CoreRunError, CoreRunResult, core_run_error_code
+from .publication_platform import CapabilityProfile, open_retained_parent
 from .policy import derived_id, transaction_type_for
 from .verifier import (
     CoreRunDomainVerifier,
@@ -37,6 +40,64 @@ from .verifier import (
 
 
 _Clock = Callable[[], datetime]
+
+
+def retained_member_parent(
+    workspace: Path,
+    canonical_path: str,
+) -> tuple[Path, str]:
+    """Return one lexical parent only when every component is a real directory."""
+
+    path = PurePosixPath(canonical_path)
+    if path.is_absolute() or any(part in {"", ".", ".."} for part in path.parts):
+        raise CoreRunError("checkout_topology_invalid")
+    try:
+        root = workspace.resolve(strict=True)
+        cursor = root
+        for part in path.parts[:-1]:
+            candidate = cursor / part
+            info = candidate.lstat()
+            if stat.S_ISLNK(info.st_mode) or not stat.S_ISDIR(info.st_mode):
+                raise CoreRunError("checkout_topology_invalid")
+            cursor = candidate
+        cursor.relative_to(root)
+    except CoreRunError:
+        raise
+    except (OSError, RuntimeError, ValueError) as exc:
+        raise CoreRunError("checkout_topology_invalid") from exc
+    return cursor, path.name
+
+
+def verify_protected_working_checkout(
+    workspace: Path,
+    revision_members: tuple[CheckoutRevisionMember, ...],
+    changed_members: tuple[CheckoutPublicationMember, ...],
+    profile: CapabilityProfile,
+) -> None:
+    """Compare cooperative files with immutable revision truth, never vice versa."""
+
+    expected_paths = {item.canonical_path for item in revision_members}
+    for item in revision_members:
+        parent, leaf = retained_member_parent(workspace, item.canonical_path)
+        with open_retained_parent(parent, profile) as retained:
+            observed = retained.observe(leaf)
+            if (
+                observed.kind != "blob"
+                or observed.sha256 != item.blob_sha256
+                or observed.size != item.byte_size
+            ):
+                raise CoreRunError("checkout_projection_conflict")
+    for changed in changed_members:
+        if changed.post_kind != "absent":
+            continue
+        if changed.canonical_path in expected_paths:
+            raise CoreRunError("checkout_publication_journal_invalid")
+        parent, leaf = retained_member_parent(
+            workspace, changed.canonical_path
+        )
+        with open_retained_parent(parent, profile) as retained:
+            if retained.observe(leaf).kind != "absent":
+                raise CoreRunError("checkout_projection_conflict")
 
 
 @dataclass(frozen=True)

@@ -28,6 +28,15 @@ from multi_agent_brief.contracts.v2 import (
     ClaimFreezeRecord,
     ClaimRecord,
     ClaimSourceBinding,
+    CheckoutPublicationAck,
+    CheckoutPublicationCleanupObservation,
+    CheckoutPublicationIntent,
+    CheckoutPublicationIntentReference,
+    CheckoutPublicationMember,
+    PublicationIdentityV1,
+    CheckoutRevisionMember,
+    CheckoutRevisionRecord,
+    CheckoutRevisionReference,
     ContractId,
     Delivery,
     DeliveryAttemptRecord,
@@ -47,6 +56,8 @@ from multi_agent_brief.contracts.v2 import (
     RecoveryCompletionRecord,
     RepairCompletionRecord,
     RepairCycleRecord,
+    ReceiptCheckoutBinding,
+    ReceiptCheckoutBindingReference,
     ArtifactSupersessionRecord,
     RunContractBinding,
     RunIdentity,
@@ -61,6 +72,10 @@ from multi_agent_brief.contracts.v2 import (
     StrictModel,
     TransactionReceipt,
     WorkspaceRunHead,
+    _CheckoutStructureError,
+    _build_checkout_revision_structure,
+    _derive_publication_structure,
+    _publication_identity_digest,
 )
 from multi_agent_brief.control_store.errors import (
     ControlStoreCommitOutcomeUnknown,
@@ -119,6 +134,13 @@ _EXTENDED_RECORD_MODELS = (
     DeliveryAuthorizationRecord,
     DeliveryAttemptRecord,
     DeliveryResultRecord,
+    CheckoutRevisionRecord,
+    CheckoutRevisionMember,
+    ReceiptCheckoutBinding,
+    CheckoutPublicationIntent,
+    CheckoutPublicationMember,
+    CheckoutPublicationAck,
+    CheckoutPublicationCleanupObservation,
 )
 
 
@@ -338,6 +360,15 @@ class ControlStoreSnapshot:
     delivery_authorizations: tuple[DeliveryAuthorizationRecord, ...]
     delivery_attempts: tuple[DeliveryAttemptRecord, ...]
     delivery_results: tuple[DeliveryResultRecord, ...]
+    checkout_revisions: tuple[CheckoutRevisionRecord, ...]
+    checkout_revision_members: tuple[CheckoutRevisionMember, ...]
+    receipt_checkout_bindings: tuple[ReceiptCheckoutBinding, ...]
+    checkout_publication_intents: tuple[CheckoutPublicationIntent, ...]
+    checkout_publication_members: tuple[CheckoutPublicationMember, ...]
+    checkout_publication_acks: tuple[CheckoutPublicationAck, ...]
+    checkout_publication_cleanup_observations: tuple[
+        CheckoutPublicationCleanupObservation, ...
+    ]
     transactions: tuple[TransactionReceipt, ...]
 
 
@@ -690,6 +721,41 @@ class ControlStoreHistory:
         delivery_results = selected(
             "delivery_results", ("result_id",), full.delivery_results
         )
+        checkout_revision_ids = {
+            reference.checkout_revision_id
+            for receipt in transactions
+            for reference in receipt.checkout_revisions
+        }
+        checkout_revisions = tuple(
+            item for item in full.checkout_revisions
+            if item.checkout_revision_id in checkout_revision_ids
+        )
+        checkout_revision_members = tuple(
+            item for item in full.checkout_revision_members
+            if item.checkout_revision_id in checkout_revision_ids
+        )
+        binding_transaction_ids = {
+            reference.transaction_id
+            for receipt in transactions
+            for reference in receipt.receipt_checkout_bindings
+        }
+        receipt_checkout_bindings = tuple(
+            item for item in full.receipt_checkout_bindings
+            if item.transaction_id in binding_transaction_ids
+        )
+        intent_revision_ids = {
+            reference.checkout_revision_id
+            for receipt in transactions
+            for reference in receipt.checkout_publication_intents
+        }
+        checkout_publication_intents = tuple(
+            item for item in full.checkout_publication_intents
+            if item.identity.checkout_revision_id in intent_revision_ids
+        )
+        checkout_publication_members = tuple(
+            item for item in full.checkout_publication_members
+            if item.identity.checkout_revision_id in intent_revision_ids
+        )
         workspace_run_head = self._workspace_head_at_revision(committed_revision)
         proposal_source_bindings = tuple(
             item
@@ -738,6 +804,15 @@ class ControlStoreHistory:
             delivery_authorizations=delivery_authorizations,
             delivery_attempts=delivery_attempts,
             delivery_results=delivery_results,
+            checkout_revisions=checkout_revisions,
+            checkout_revision_members=checkout_revision_members,
+            receipt_checkout_bindings=receipt_checkout_bindings,
+            checkout_publication_intents=checkout_publication_intents,
+            checkout_publication_members=checkout_publication_members,
+            # Ack and cleanup rows are postcommit recovery metadata without a
+            # receipt-owned revision. They never enter historical prefixes.
+            checkout_publication_acks=(),
+            checkout_publication_cleanup_observations=(),
             transactions=transactions,
         )
 
@@ -1059,6 +1134,137 @@ class SQLiteControlStore:
             expected_revision=expected_revision,
         )
 
+    def load_checkout_publication(
+        self,
+        identity: "PublicationIdentityV1",
+    ) -> tuple[
+        CheckoutPublicationIntent,
+        tuple[CheckoutPublicationMember, ...],
+        tuple[CheckoutPublicationAck, ...],
+        tuple[CheckoutPublicationCleanupObservation, ...],
+    ]:
+        """Load one exact non-business recovery graph by its full identity."""
+
+        from multi_agent_brief.contracts.v2 import PublicationIdentityV1
+
+        if type(identity) is not PublicationIdentityV1:
+            raise ControlStoreIntegrityError("checkout_publication_journal_invalid")
+        with self._lock:
+            self._require_open()
+            snapshot = self.load_snapshot(identity.run_id)
+            match = lambda item: item.identity == identity
+            intents = tuple(filter(match, snapshot.checkout_publication_intents))
+            if len(intents) != 1:
+                raise ControlStoreIntegrityError("checkout_publication_journal_invalid")
+            return (
+                intents[0],
+                tuple(filter(match, snapshot.checkout_publication_members)),
+                tuple(filter(match, snapshot.checkout_publication_acks)),
+                tuple(filter(match, snapshot.checkout_publication_cleanup_observations)),
+            )
+
+    def append_checkout_publication_acks(
+        self,
+        records: tuple[CheckoutPublicationAck, ...],
+    ) -> None:
+        """Atomically append the complete intent ack set without domain writes."""
+
+        if not records:
+            raise ControlStoreIntegrityError("checkout_publication_journal_invalid")
+        identity = records[0].identity
+        if any(item.identity != identity for item in records):
+            raise ControlStoreIntegrityError("checkout_publication_journal_invalid")
+        with self._lock:
+            intent, members, existing, _observations = self.load_checkout_publication(identity)
+            if existing:
+                if existing == records:
+                    return
+                raise ControlStoreIntegrityError("checkout_publication_journal_invalid")
+            ordered = tuple(sorted(records, key=lambda item: item.ordinal))
+            if (
+                len(ordered) != intent.changed_member_count
+                or [item.ordinal for item in ordered] != list(range(len(members)))
+            ):
+                raise ControlStoreIntegrityError("checkout_publication_journal_invalid")
+            for ack, member in zip(ordered, members, strict=True):
+                if (
+                    ack.publication_identity_sha256 != intent.publication_identity_sha256
+                    or ack.capability_profile_sha256 != intent.capability_profile_sha256
+                    or ack.post_kind != member.post_kind
+                    or ack.post_sha256 != member.post_sha256
+                    or ack.post_size != member.post_size
+                ):
+                    raise ControlStoreIntegrityError("checkout_publication_journal_invalid")
+            try:
+                self._connection.execute("BEGIN IMMEDIATE")
+                for ack in ordered:
+                    item = ack.identity
+                    self._connection.execute(
+                        "INSERT INTO checkout_publication_acks VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                        (
+                            item.workspace_id, item.run_id, item.transaction_id,
+                            item.checkout_revision_id, ack.ordinal,
+                            ack.schema_version, ack.publication_identity_sha256,
+                            ack.capability_profile_sha256, ack.post_kind,
+                            ack.post_sha256, ack.post_size, ack.verification,
+                            ack.cleanup_policy, ack.appended_at,
+                            _canonical_record_text(ack),
+                        ),
+                    )
+                self._connection.commit()
+                self.load_snapshot(identity.run_id)
+            except sqlite3.Error as exc:
+                self._connection.rollback()
+                raise ControlStoreIntegrityError("sqlite_write_failed") from exc
+
+    def append_checkout_cleanup_observations(
+        self,
+        records: tuple[CheckoutPublicationCleanupObservation, ...],
+    ) -> None:
+        """Append idempotent diagnostic residue observations after ack."""
+
+        with self._lock:
+            try:
+                self._connection.execute("BEGIN IMMEDIATE")
+                for record in records:
+                    identity = record.identity
+                    row = self._connection.execute(
+                        "SELECT payload_json FROM checkout_publication_cleanup_observations WHERE cleanup_observation_id=?",
+                        (record.cleanup_observation_id,),
+                    ).fetchone()
+                    if row is not None:
+                        existing = _decode_record(
+                            CheckoutPublicationCleanupObservation, str(row[0])
+                        )
+                        if existing.model_copy(
+                            update={"appended_at": record.appended_at}
+                        ) != record:
+                            raise ControlStoreIntegrityError(
+                                "checkout_publication_journal_invalid"
+                            )
+                        continue
+                    self._connection.execute(
+                        "INSERT INTO checkout_publication_cleanup_observations VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                        (
+                            record.cleanup_observation_id,
+                            identity.workspace_id, identity.run_id,
+                            identity.transaction_id, identity.checkout_revision_id,
+                            record.ordinal, record.schema_version,
+                            record.auxiliary_role, record.reason_code,
+                            record.expected_kind, record.expected_sha256,
+                            record.expected_size, record.observed_kind,
+                            record.observed_sha256, record.observed_size,
+                            record.appended_at, _canonical_record_text(record),
+                        ),
+                    )
+                self._connection.commit()
+            except sqlite3.Error as exc:
+                self._connection.rollback()
+                raise ControlStoreIntegrityError("sqlite_write_failed") from exc
+            except Exception:
+                self._connection.rollback()
+                raise
+
     def _existing_receipt(
         self,
         run_id: str,
@@ -1133,6 +1339,7 @@ class SQLiteControlStore:
             self._preflight_intake_subgraph(uow, run_id)
             self._preflight_core_run_subgraph(uow, run_id)
             self._preflight_pr4b_subgraph(uow, run_id)
+            self._preflight_checkout_subgraph(uow, run_id)
             self._inject("before_blob_write")
             for position, item in enumerate(uow._artifact_revisions, start=1):
                 self._inject(f"before_blob_write:{position}")
@@ -1215,6 +1422,7 @@ class SQLiteControlStore:
                     uow._run_integrity_records.values()
                 )
                 self._insert_pr4b_records(uow)
+                self._insert_checkout_records(uow)
                 self._insert_transaction_relations(receipt)
                 self._inject("after_records")
                 self._inject("before_commit")
@@ -1920,10 +2128,184 @@ class SQLiteControlStore:
                     "delivery_authorizations": [{"authorization_id": key} for key in sorted(uow._delivery_authorizations)],
                     "delivery_attempts": [{"attempt_id": key} for key in sorted(uow._delivery_attempts)],
                     "delivery_results": [{"result_id": key} for key in sorted(uow._delivery_results)],
+                    "checkout_revisions": [
+                        {"checkout_revision_id": key}
+                        for key in sorted(uow._checkout_revisions)
+                    ],
+                    "receipt_checkout_bindings": (
+                        [{"transaction_id": uow.transaction_id}]
+                        if uow._receipt_checkout_binding is not None else []
+                    ),
+                    "checkout_publication_intents": (
+                        [{
+                            "checkout_revision_id":
+                                uow._checkout_publication_intent.identity.checkout_revision_id
+                        }]
+                        if uow._checkout_publication_intent is not None else []
+                    ),
                 }
             )
         except ValueError as exc:
             raise ControlStoreIntegrityError("transaction_identity_invalid") from exc
+
+    def _preflight_checkout_subgraph(
+        self,
+        uow: "ControlUnitOfWork",
+        run_id: str,
+    ) -> None:
+        """Validate the complete immutable revision and journal before writes."""
+
+        revisions = tuple(uow._checkout_revisions.values())
+        members = tuple(uow._checkout_revision_members.values())
+        binding = uow._receipt_checkout_binding
+        intent = uow._checkout_publication_intent
+        publication_members = tuple(uow._checkout_publication_members.values())
+        if not any((revisions, members, binding, intent, publication_members)):
+            return
+        if len(revisions) != 1 or binding is None:
+            raise ControlStoreConflict("relational_integrity_conflict")
+        revision = revisions[0]
+        revision_members = tuple(
+            sorted(
+                (
+                    item for item in members
+                    if item.checkout_revision_id == revision.checkout_revision_id
+                ),
+                key=lambda item: item.ordinal,
+            )
+        )
+        if (
+            len(revision_members) != revision.member_count
+            or [item.ordinal for item in revision_members]
+            != list(range(revision.member_count))
+            or binding.post_checkout_revision_id != revision.checkout_revision_id
+            or binding.post_run_id != revision.run_id
+        ):
+            raise ControlStoreConflict("relational_integrity_conflict")
+        if (
+            binding.workspace_id != self.workspace_id
+            or binding.run_id != run_id
+            or binding.transaction_id != uow.transaction_id
+            or binding.post_run_id != revision.run_id
+            or binding.post_checkout_revision_id
+            != revision.checkout_revision_id
+            or binding.pre_checkout_revision_id
+            != revision.parent_checkout_revision_id
+        ):
+            raise ControlStoreConflict("relational_integrity_conflict")
+        available = {
+            (item.record.artifact_id, item.record.revision): item.record
+            for item in uow._artifact_revisions
+        }
+        for item in revision_members:
+            record = available.get((item.artifact_id, item.artifact_revision))
+            if record is None:
+                row = self._connection.execute(
+                    "SELECT payload_json FROM artifact_revisions WHERE run_id=? AND artifact_id=? AND revision=?",
+                    (run_id, item.artifact_id, item.artifact_revision),
+                ).fetchone()
+                if row is None:
+                    raise ControlStoreConflict("relational_integrity_conflict")
+                record = _decode_record(ArtifactRevision, str(row[0]))
+            if (
+                record.path != item.canonical_path
+                or record.sha256 != item.blob_sha256
+                or record.size_bytes != item.byte_size
+                or not record.frozen
+            ):
+                raise ControlStoreConflict("relational_integrity_conflict")
+        try:
+            rebuilt_record, rebuilt_members, _manifest_bytes = (
+                _build_checkout_revision_structure(
+                    workspace_id=revision.workspace_id,
+                    run_id=revision.run_id,
+                    transaction_id=revision.creator_transaction_id,
+                    created_at=datetime.fromisoformat(
+                        revision.created_at.replace("Z", "+00:00")
+                    ),
+                    artifact_revisions=tuple(
+                        available.get((item.artifact_id, item.artifact_revision))
+                        or _decode_record(
+                            ArtifactRevision,
+                            str(
+                                self._connection.execute(
+                                    "SELECT payload_json FROM artifact_revisions WHERE run_id=? AND artifact_id=? AND revision=?",
+                                    (run_id, item.artifact_id, item.artifact_revision),
+                                ).fetchone()[0]
+                            ),
+                        )
+                        for item in revision_members
+                    ),
+                    parent_checkout_revision_id=revision.parent_checkout_revision_id,
+                )
+            )
+        except (_CheckoutStructureError, ValueError) as exc:
+            raise ControlStoreConflict("relational_integrity_conflict") from exc
+        if rebuilt_record != revision or rebuilt_members != revision_members:
+            raise ControlStoreConflict("relational_integrity_conflict")
+        pre_record: CheckoutRevisionRecord | None = None
+        pre_members: tuple[CheckoutRevisionMember, ...] = ()
+        if binding.pre_checkout_revision_id is not None:
+            try:
+                pre_snapshot = self.load_snapshot(binding.pre_run_id)
+            except ControlStoreError as exc:
+                raise ControlStoreConflict(
+                    "relational_integrity_conflict"
+                ) from exc
+            pre_records = tuple(
+                item
+                for item in pre_snapshot.checkout_revisions
+                if item.checkout_revision_id == binding.pre_checkout_revision_id
+            )
+            if len(pre_records) != 1:
+                raise ControlStoreConflict("relational_integrity_conflict")
+            pre_members = tuple(
+                sorted(
+                    (
+                        item
+                        for item in pre_snapshot.checkout_revision_members
+                        if item.checkout_revision_id
+                        == binding.pre_checkout_revision_id
+                    ),
+                    key=lambda item: item.ordinal,
+                )
+            )
+            pre_record = pre_records[0]
+        if intent is None:
+            if publication_members:
+                raise ControlStoreConflict("relational_integrity_conflict")
+            return
+        if (
+            intent.identity.workspace_id != self.workspace_id
+            or intent.identity.run_id != run_id
+            or intent.identity.transaction_id != uow.transaction_id
+            or intent.identity.checkout_revision_id != revision.checkout_revision_id
+            or binding.workspace_id != self.workspace_id
+            or binding.run_id != run_id
+            or binding.transaction_id != uow.transaction_id
+            or binding.post_run_id != run_id
+            or binding.post_checkout_revision_id != revision.checkout_revision_id
+            or revision.parent_checkout_revision_id
+            != binding.pre_checkout_revision_id
+        ):
+            raise ControlStoreConflict("relational_integrity_conflict")
+        try:
+            expected_intent, expected_members = _derive_publication_structure(
+                identity=intent.identity,
+                pre_record=pre_record,
+                pre_members=pre_members,
+                post_record=rebuilt_record,
+                post_members=rebuilt_members,
+                capability_profile_sha256=intent.capability_profile_sha256,
+            )
+        except _CheckoutStructureError as exc:
+            raise ControlStoreConflict("relational_integrity_conflict") from exc
+        if (
+            intent != expected_intent
+            or tuple(sorted(publication_members, key=lambda item: item.ordinal))
+            != expected_members
+        ):
+            raise ControlStoreConflict("relational_integrity_conflict")
 
     def _insert_run(self, record: RunIdentity | None) -> None:
         if record is None:
@@ -2862,6 +3244,71 @@ class SQLiteControlStore:
             evidence = record.evidence_artifact
             self._connection.execute("INSERT INTO delivery_results VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)", (record.run_id, record.result_id, record.schema_version, record.attempt_id, record.prior_result_id, record.reconciliation_authorization_id, record.status, record.adapter_id, record.adapter_version, record.connector_operation_id, record.evidence_sha256, evidence.artifact_id if evidence else None, evidence.revision if evidence else None, record.recorded_at, record.result_event_id, record.accepted_transaction_id, record.request_fingerprint, _canonical_record_text(record)))
 
+    def _insert_checkout_records(self, uow: "ControlUnitOfWork") -> None:
+        for record in uow._checkout_revisions.values():
+            self._connection.execute(
+                "INSERT INTO checkout_revisions VALUES (?,?,?,?,?,?,?,?,?,?,?)",
+                (
+                    record.checkout_revision_id, record.workspace_id, record.run_id,
+                    record.parent_checkout_revision_id, record.schema_version,
+                    record.manifest_sha256, record.tree_sha256, record.member_count,
+                    record.created_at, record.creator_transaction_id,
+                    _canonical_record_text(record),
+                ),
+            )
+        for record in uow._checkout_revision_members.values():
+            self._connection.execute(
+                "INSERT INTO checkout_revision_members VALUES (?,?,?,?,?,?,?,?,?,?,?)",
+                (
+                    record.checkout_revision_id, record.ordinal,
+                    record.workspace_id, record.run_id, record.schema_version,
+                    record.canonical_path, record.artifact_id,
+                    record.artifact_revision, record.blob_sha256,
+                    record.byte_size, _canonical_record_text(record),
+                ),
+            )
+        binding = uow._receipt_checkout_binding
+        if binding is not None:
+            self._connection.execute(
+                "INSERT INTO receipt_checkout_bindings VALUES (?,?,?,?,?,?,?,?,?)",
+                (
+                    binding.workspace_id, binding.run_id, binding.transaction_id,
+                    binding.schema_version, binding.pre_run_id,
+                    binding.pre_checkout_revision_id, binding.post_run_id,
+                    binding.post_checkout_revision_id,
+                    _canonical_record_text(binding),
+                ),
+            )
+        intent = uow._checkout_publication_intent
+        if intent is not None:
+            identity = intent.identity
+            self._connection.execute(
+                "INSERT INTO checkout_publication_intents VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                (
+                    identity.workspace_id, identity.run_id, identity.transaction_id,
+                    identity.checkout_revision_id, intent.schema_version,
+                    intent.publication_identity_sha256,
+                    intent.pre_checkout_revision_id, intent.post_checkout_revision_id,
+                    intent.post_manifest_sha256, intent.post_tree_sha256,
+                    intent.changed_member_count, intent.capability_profile_sha256,
+                    _canonical_record_text(intent),
+                ),
+            )
+        for record in uow._checkout_publication_members.values():
+            identity = record.identity
+            self._connection.execute(
+                "INSERT INTO checkout_publication_members VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                (
+                    identity.workspace_id, identity.run_id, identity.transaction_id,
+                    identity.checkout_revision_id, record.ordinal,
+                    record.schema_version, record.canonical_path,
+                    record.temporary_basename, record.claim_basename,
+                    record.pre_kind, record.pre_sha256, record.pre_size,
+                    record.post_kind, record.post_sha256, record.post_size,
+                    _canonical_record_text(record),
+                ),
+            )
+
     def _insert_transaction_relations(self, receipt: TransactionReceipt) -> None:
         for position, event_id in enumerate(receipt.event_ids):
             self._connection.execute(
@@ -3128,6 +3575,24 @@ class SQLiteControlStore:
             self._connection.execute(
                 "INSERT INTO transaction_approval_package_bindings VALUES (?,?,?,?,?)",
                 (receipt.run_id, receipt.transaction_id, position, reference.approval_id, reference.package_id),
+            )
+        for position, reference in enumerate(receipt.checkout_revisions):
+            self._connection.execute(
+                "INSERT INTO transaction_checkout_revisions VALUES (?,?,?,?)",
+                (receipt.run_id, receipt.transaction_id, position,
+                 reference.checkout_revision_id),
+            )
+        for position, reference in enumerate(receipt.receipt_checkout_bindings):
+            self._connection.execute(
+                "INSERT INTO transaction_receipt_checkout_bindings VALUES (?,?,?,?)",
+                (receipt.run_id, receipt.transaction_id, position,
+                 reference.transaction_id),
+            )
+        for position, reference in enumerate(receipt.checkout_publication_intents):
+            self._connection.execute(
+                "INSERT INTO transaction_checkout_publication_intents VALUES (?,?,?,?)",
+                (receipt.run_id, receipt.transaction_id, position,
+                 reference.checkout_revision_id),
             )
 
     def _blob_relpath(self, sha256: str) -> str:
@@ -4003,10 +4468,302 @@ class SQLiteControlStore:
             delivery_authorizations=self._load_for_run(DeliveryAuthorizationRecord, "delivery_authorizations", run_id, "recorded_at, authorization_id", {"run_id":"run_id","authorization_id":"authorization_id","schema_version":"schema_version","package_id":"package_id","prior_authorization_id":"prior_authorization_id","approval_mode":"approval_mode","retry_of_attempt_id":"retry_of_attempt_id","purpose":"purpose","decision":"decision","target":"target","channel":"channel","recipient_fingerprint":"recipient_fingerprint","actor_id":"actor_id","recorded_at":"recorded_at","authorization_event_id":"authorization_event_id","accepted_transaction_id":"accepted_transaction_id","request_fingerprint":"request_fingerprint"}),
             delivery_attempts=self._load_for_run(DeliveryAttemptRecord, "delivery_attempts", run_id, "created_at, attempt_id", {"run_id":"run_id","attempt_id":"attempt_id","schema_version":"schema_version","package_id":"package_id","authorization_id":"authorization_id","target":"target","channel":"channel","recipient_fingerprint":"recipient_fingerprint","connector_operation_id":"connector_operation_id","connector_request_fingerprint":"connector_request_fingerprint","created_at":"created_at","attempt_event_id":"attempt_event_id","accepted_transaction_id":"accepted_transaction_id","request_fingerprint":"request_fingerprint"}),
             delivery_results=self._load_for_run(DeliveryResultRecord, "delivery_results", run_id, "recorded_at, result_id", {"run_id":"run_id","result_id":"result_id","schema_version":"schema_version","attempt_id":"attempt_id","prior_result_id":"prior_result_id","reconciliation_authorization_id":"reconciliation_authorization_id","status":"status","adapter_id":"adapter_id","adapter_version":"adapter_version","connector_operation_id":"connector_operation_id","evidence_sha256":"evidence_sha256","evidence_artifact_id":"evidence_artifact.artifact_id","evidence_artifact_revision":"evidence_artifact.revision","recorded_at":"recorded_at","result_event_id":"result_event_id","accepted_transaction_id":"accepted_transaction_id","request_fingerprint":"request_fingerprint"}),
+            checkout_revisions=self._load_for_run(
+                CheckoutRevisionRecord, "checkout_revisions", run_id,
+                "created_at, checkout_revision_id",
+                {"checkout_revision_id":"checkout_revision_id", "workspace_id":"workspace_id", "run_id":"run_id", "parent_checkout_revision_id":"parent_checkout_revision_id", "schema_version":"schema_version", "manifest_sha256":"manifest_sha256", "tree_sha256":"tree_sha256", "member_count":"member_count", "created_at":"created_at", "creator_transaction_id":"creator_transaction_id"},
+            ),
+            checkout_revision_members=self._load_for_run(
+                CheckoutRevisionMember, "checkout_revision_members", run_id,
+                "checkout_revision_id, ordinal",
+                {"checkout_revision_id":"checkout_revision_id", "ordinal":"ordinal", "workspace_id":"workspace_id", "run_id":"run_id", "schema_version":"schema_version", "canonical_path":"canonical_path", "artifact_id":"artifact_id", "artifact_revision":"artifact_revision", "blob_sha256":"blob_sha256", "byte_size":"byte_size"},
+            ),
+            receipt_checkout_bindings=self._load_for_run(
+                ReceiptCheckoutBinding, "receipt_checkout_bindings", run_id,
+                "transaction_id",
+                {"workspace_id":"workspace_id", "run_id":"run_id", "transaction_id":"transaction_id", "schema_version":"schema_version", "pre_run_id":"pre_run_id", "pre_checkout_revision_id":"pre_checkout_revision_id", "post_run_id":"post_run_id", "post_checkout_revision_id":"post_checkout_revision_id"},
+            ),
+            checkout_publication_intents=self._load_for_run(
+                CheckoutPublicationIntent, "checkout_publication_intents", run_id,
+                "transaction_id, checkout_revision_id",
+                {"workspace_id":"identity.workspace_id", "run_id":"identity.run_id", "transaction_id":"identity.transaction_id", "checkout_revision_id":"identity.checkout_revision_id", "schema_version":"schema_version", "publication_identity_sha256":"publication_identity_sha256", "pre_checkout_revision_id":"pre_checkout_revision_id", "post_checkout_revision_id":"post_checkout_revision_id", "post_manifest_sha256":"post_manifest_sha256", "post_tree_sha256":"post_tree_sha256", "changed_member_count":"changed_member_count", "capability_profile_sha256":"capability_profile_sha256"},
+            ),
+            checkout_publication_members=self._load_for_run(
+                CheckoutPublicationMember, "checkout_publication_members", run_id,
+                "transaction_id, checkout_revision_id, ordinal",
+                {"workspace_id":"identity.workspace_id", "run_id":"identity.run_id", "transaction_id":"identity.transaction_id", "checkout_revision_id":"identity.checkout_revision_id", "ordinal":"ordinal", "schema_version":"schema_version", "canonical_path":"canonical_path", "temporary_basename":"temporary_basename", "claim_basename":"claim_basename", "pre_kind":"pre_kind", "pre_sha256":"pre_sha256", "pre_size":"pre_size", "post_kind":"post_kind", "post_sha256":"post_sha256", "post_size":"post_size"},
+            ),
+            checkout_publication_acks=self._load_for_run(
+                CheckoutPublicationAck, "checkout_publication_acks", run_id,
+                "transaction_id, checkout_revision_id, ordinal",
+                {"workspace_id":"identity.workspace_id", "run_id":"identity.run_id", "transaction_id":"identity.transaction_id", "checkout_revision_id":"identity.checkout_revision_id", "ordinal":"ordinal", "schema_version":"schema_version", "publication_identity_sha256":"publication_identity_sha256", "capability_profile_sha256":"capability_profile_sha256", "post_kind":"post_kind", "post_sha256":"post_sha256", "post_size":"post_size", "verification":"verification", "cleanup_policy":"cleanup_policy", "appended_at":"appended_at"},
+            ),
+            checkout_publication_cleanup_observations=self._load_for_run(
+                CheckoutPublicationCleanupObservation,
+                "checkout_publication_cleanup_observations", run_id,
+                "transaction_id, checkout_revision_id, ordinal, auxiliary_role",
+                {"cleanup_observation_id":"cleanup_observation_id", "workspace_id":"identity.workspace_id", "run_id":"identity.run_id", "transaction_id":"identity.transaction_id", "checkout_revision_id":"identity.checkout_revision_id", "ordinal":"ordinal", "schema_version":"schema_version", "auxiliary_role":"auxiliary_role", "reason_code":"reason_code", "expected_kind":"expected_kind", "expected_sha256":"expected_sha256", "expected_size":"expected_size", "observed_kind":"observed_kind", "observed_sha256":"observed_sha256", "observed_size":"observed_size", "appended_at":"appended_at"},
+            ),
             transactions=self._load_transactions(run_id),
         )
         self._verify_core_snapshot_structure(snapshot)
+        self._verify_checkout_snapshot_structure(snapshot)
         return snapshot
+
+    def _verify_checkout_snapshot_structure(
+        self, snapshot: ControlStoreSnapshot
+    ) -> None:
+        graph = (
+            snapshot.checkout_revisions,
+            snapshot.checkout_revision_members,
+            snapshot.receipt_checkout_bindings,
+            snapshot.checkout_publication_intents,
+            snapshot.checkout_publication_members,
+            snapshot.checkout_publication_acks,
+            snapshot.checkout_publication_cleanup_observations,
+        )
+        if not any(graph):
+            return
+        if not (
+            snapshot.checkout_revisions and snapshot.receipt_checkout_bindings
+        ):
+            raise ControlStoreIntegrityError("checkout_revision_invalid")
+        revisions = {item.checkout_revision_id: item for item in snapshot.checkout_revisions}
+        receipts = {item.transaction_id: item for item in snapshot.transactions}
+        built_revisions: dict[
+            str,
+            tuple[CheckoutRevisionRecord, tuple[CheckoutRevisionMember, ...]],
+        ] = {}
+        members_by_revision: dict[str, list[CheckoutRevisionMember]] = {}
+        for member in snapshot.checkout_revision_members:
+            members_by_revision.setdefault(member.checkout_revision_id, []).append(member)
+            revision = revisions.get(member.checkout_revision_id)
+            artifact = next(
+                (
+                    item for item in snapshot.artifact_revisions
+                    if item.artifact_id == member.artifact_id
+                    and item.revision == member.artifact_revision
+                ),
+                None,
+            )
+            if (
+                revision is None
+                or artifact is None
+                or artifact.path != member.canonical_path
+                or artifact.sha256 != member.blob_sha256
+                or artifact.size_bytes != member.byte_size
+            ):
+                raise ControlStoreIntegrityError("checkout_revision_invalid")
+        for revision in snapshot.checkout_revisions:
+            members = sorted(
+                members_by_revision.get(revision.checkout_revision_id, []),
+                key=lambda item: item.ordinal,
+            )
+            if len(members) != revision.member_count or [m.ordinal for m in members] != list(range(len(members))):
+                raise ControlStoreIntegrityError("checkout_revision_invalid")
+            artifact_rows = []
+            for member in members:
+                artifact = next(
+                    (
+                        item
+                        for item in snapshot.artifact_revisions
+                        if item.artifact_id == member.artifact_id
+                        and item.revision == member.artifact_revision
+                    ),
+                    None,
+                )
+                if artifact is None:
+                    raise ControlStoreIntegrityError("checkout_revision_invalid")
+                artifact_rows.append(artifact)
+            try:
+                rebuilt_record, rebuilt_members, _manifest_bytes = (
+                    _build_checkout_revision_structure(
+                        workspace_id=revision.workspace_id,
+                        run_id=revision.run_id,
+                        transaction_id=revision.creator_transaction_id,
+                        created_at=datetime.fromisoformat(
+                            revision.created_at.replace("Z", "+00:00")
+                        ),
+                        artifact_revisions=tuple(artifact_rows),
+                        parent_checkout_revision_id=revision.parent_checkout_revision_id,
+                    )
+                )
+            except (_CheckoutStructureError, ValueError) as exc:
+                raise ControlStoreIntegrityError(
+                    "checkout_revision_invalid"
+                ) from exc
+            if rebuilt_record != revision or rebuilt_members != tuple(members):
+                raise ControlStoreIntegrityError("checkout_revision_invalid")
+            built_revisions[revision.checkout_revision_id] = (
+                rebuilt_record,
+                rebuilt_members,
+            )
+            receipt = receipts.get(revision.creator_transaction_id)
+            if receipt is None or not any(
+                item.checkout_revision_id == revision.checkout_revision_id
+                for item in receipt.checkout_revisions
+            ):
+                raise ControlStoreIntegrityError("checkout_revision_invalid")
+        bindings = {item.transaction_id: item for item in snapshot.receipt_checkout_bindings}
+        for transaction_id, binding in bindings.items():
+            receipt = receipts.get(transaction_id)
+            post = revisions.get(binding.post_checkout_revision_id)
+            pre_exists = binding.pre_checkout_revision_id is None
+            if binding.pre_checkout_revision_id is not None:
+                row = self._connection.execute(
+                    """
+                    SELECT payload_json FROM checkout_revisions
+                    WHERE workspace_id=? AND run_id=?
+                      AND checkout_revision_id=?
+                    """,
+                    (
+                        self.workspace_id,
+                        binding.pre_run_id,
+                        binding.pre_checkout_revision_id,
+                    ),
+                ).fetchone()
+                pre_exists = row is not None
+            if (
+                receipt is None
+                or post is None
+                or binding.workspace_id != self.workspace_id
+                or binding.run_id != snapshot.run.run_id
+                or binding.transaction_id != transaction_id
+                or binding.post_run_id != snapshot.run.run_id
+                or post.run_id != binding.post_run_id
+                or post.workspace_id != binding.workspace_id
+                or post.creator_transaction_id != transaction_id
+                or post.parent_checkout_revision_id
+                != binding.pre_checkout_revision_id
+                or not pre_exists
+                or not any(
+                    item.transaction_id == transaction_id
+                    for item in receipt.receipt_checkout_bindings
+                )
+            ):
+                raise ControlStoreIntegrityError("checkout_revision_invalid")
+        intents = {
+            (
+                item.identity.workspace_id, item.identity.run_id,
+                item.identity.transaction_id, item.identity.checkout_revision_id,
+            ): item
+            for item in snapshot.checkout_publication_intents
+        }
+        members_by_intent: dict[tuple[str, str, str, str], list[CheckoutPublicationMember]] = {}
+        for member in snapshot.checkout_publication_members:
+            key = (
+                member.identity.workspace_id, member.identity.run_id,
+                member.identity.transaction_id,
+                member.identity.checkout_revision_id,
+            )
+            members_by_intent.setdefault(key, []).append(member)
+        for key, intent in intents.items():
+            members = sorted(members_by_intent.get(key, []), key=lambda item: item.ordinal)
+            binding = bindings.get(intent.identity.transaction_id)
+            receipt = receipts.get(intent.identity.transaction_id)
+            post_structure = built_revisions.get(intent.post_checkout_revision_id)
+            pre_structure = (
+                None
+                if binding is None or binding.pre_checkout_revision_id is None
+                else built_revisions.get(binding.pre_checkout_revision_id)
+            )
+            if (
+                intent.publication_identity_sha256
+                != _publication_identity_digest(intent.identity)
+                or binding is None
+                or receipt is None
+                or post_structure is None
+                or intent.identity.workspace_id != self.workspace_id
+                or intent.identity.run_id != snapshot.run.run_id
+                or intent.identity.checkout_revision_id
+                != intent.post_checkout_revision_id
+                or binding.workspace_id != self.workspace_id
+                or binding.run_id != snapshot.run.run_id
+                or binding.transaction_id != intent.identity.transaction_id
+                or binding.post_run_id != snapshot.run.run_id
+                or binding.post_checkout_revision_id
+                != intent.post_checkout_revision_id
+                or post_structure[0].parent_checkout_revision_id
+                != binding.pre_checkout_revision_id
+                or (
+                    binding.pre_checkout_revision_id is not None
+                    and pre_structure is None
+                )
+                or tuple(receipt.checkout_revisions)
+                != (
+                    CheckoutRevisionReference(
+                        checkout_revision_id=intent.post_checkout_revision_id
+                    ),
+                )
+                or tuple(receipt.receipt_checkout_bindings)
+                != (
+                    ReceiptCheckoutBindingReference(
+                        transaction_id=intent.identity.transaction_id
+                    ),
+                )
+                or tuple(receipt.checkout_publication_intents)
+                != (
+                    CheckoutPublicationIntentReference(
+                        checkout_revision_id=intent.post_checkout_revision_id
+                    ),
+                )
+            ):
+                raise ControlStoreIntegrityError("checkout_publication_journal_invalid")
+            try:
+                expected_intent, expected_members = _derive_publication_structure(
+                    identity=intent.identity,
+                    pre_record=(
+                        None if pre_structure is None else pre_structure[0]
+                    ),
+                    pre_members=(
+                        () if pre_structure is None else pre_structure[1]
+                    ),
+                    post_record=post_structure[0],
+                    post_members=post_structure[1],
+                    capability_profile_sha256=intent.capability_profile_sha256,
+                )
+            except _CheckoutStructureError as exc:
+                raise ControlStoreIntegrityError(
+                    "checkout_publication_journal_invalid"
+                ) from exc
+            if intent != expected_intent or tuple(members) != expected_members:
+                raise ControlStoreIntegrityError(
+                    "checkout_publication_journal_invalid"
+                )
+        if set(members_by_intent) - set(intents):
+            raise ControlStoreIntegrityError("checkout_publication_journal_invalid")
+        ack_by_intent: dict[tuple[str, str, str, str], list[CheckoutPublicationAck]] = {}
+        for ack in snapshot.checkout_publication_acks:
+            key = (ack.identity.workspace_id, ack.identity.run_id, ack.identity.transaction_id, ack.identity.checkout_revision_id)
+            ack_by_intent.setdefault(key, []).append(ack)
+        for key, acks in ack_by_intent.items():
+            expected = sorted(
+                members_by_intent.get(key, []), key=lambda item: item.ordinal
+            )
+            intent = intents.get(key)
+            ordered_acks = sorted(acks, key=lambda item: item.ordinal)
+            if (
+                intent is None
+                or len(ordered_acks) != len(expected)
+                or [ack.ordinal for ack in ordered_acks]
+                != list(range(len(expected)))
+                or any(
+                    ack.identity != member.identity
+                    or ack.publication_identity_sha256
+                    != intent.publication_identity_sha256
+                    or ack.capability_profile_sha256
+                    != intent.capability_profile_sha256
+                    or ack.post_kind != member.post_kind
+                    or ack.post_sha256 != member.post_sha256
+                    or ack.post_size != member.post_size
+                    or ack.verification != "post_verified_durable"
+                    or ack.cleanup_policy != "retain_residue_v1"
+                    for ack, member in zip(
+                        ordered_acks, expected, strict=True
+                    )
+                )
+            ):
+                raise ControlStoreIntegrityError("checkout_publication_journal_invalid")
 
     def _verify_core_snapshot_structure(self, snapshot: ControlStoreSnapshot) -> None:
         """Verify PR-4A relation closure without interpreting domain policy."""
@@ -5001,6 +5758,9 @@ class SQLiteControlStore:
             ("transaction_delivery_authorizations", ("authorization_id",), tuple((item.authorization_id,) for item in receipt.delivery_authorizations)),
             ("transaction_delivery_attempts", ("attempt_id",), tuple((item.attempt_id,) for item in receipt.delivery_attempts)),
             ("transaction_delivery_results", ("result_id",), tuple((item.result_id,) for item in receipt.delivery_results)),
+            ("transaction_checkout_revisions", ("checkout_revision_id",), tuple((item.checkout_revision_id,) for item in receipt.checkout_revisions)),
+            ("transaction_receipt_checkout_bindings", ("binding_transaction_id",), tuple((item.transaction_id,) for item in receipt.receipt_checkout_bindings)),
+            ("transaction_checkout_publication_intents", ("checkout_revision_id",), tuple((item.checkout_revision_id,) for item in receipt.checkout_publication_intents)),
         )
         for table, columns, expected in specs:
             selected = ", ".join(("position", *columns))
