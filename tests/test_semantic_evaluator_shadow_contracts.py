@@ -16,7 +16,7 @@ from multi_agent_brief.semantic_evaluator.adapter import (
 from multi_agent_brief.semantic_evaluator.serialization import canonical_sha256
 from multi_agent_brief.semantic_evaluator.shadow_contracts import (
     PROVIDER_ATTEMPT_SCHEMA_ID,
-    ProviderAttemptRecordV4,
+    ProviderAttemptRecordV5,
     ProviderBoundaryFactsRecordV4,
 )
 
@@ -79,7 +79,7 @@ def _attempt_payload() -> dict[str, object]:
 
 
 def test_se2r_01_v4_attempt_accepts_exact_classifier_projection() -> None:
-    record = ProviderAttemptRecordV4.model_validate(_attempt_payload())
+    record = ProviderAttemptRecordV5.model_validate(_attempt_payload())
     assert record.attempt_status == "completed"
     assert record.output_eligible is True
     assert record.retry_eligible is False
@@ -104,7 +104,7 @@ def test_se2r_10_attempt_cannot_disagree_with_classifier(
         {key: item for key, item in payload.items() if key != "attempt_record_sha256"}
     )
     with pytest.raises(ValidationError):
-        ProviderAttemptRecordV4.model_validate(payload)
+        ProviderAttemptRecordV5.model_validate(payload)
 
 
 def test_se2r_10_attempt_rejects_boundary_fact_hash_rewrite() -> None:
@@ -117,7 +117,7 @@ def test_se2r_10_attempt_rejects_boundary_fact_hash_rewrite() -> None:
         {key: item for key, item in payload.items() if key != "attempt_record_sha256"}
     )
     with pytest.raises(ValidationError):
-        ProviderAttemptRecordV4.model_validate(payload)
+        ProviderAttemptRecordV5.model_validate(payload)
 
 
 @pytest.mark.parametrize(
@@ -128,11 +128,11 @@ def test_v4_attempt_contract_rejects_coercion(field: str, value: object) -> None
     payload = _attempt_payload()
     payload[field] = value
     with pytest.raises(ValidationError):
-        ProviderAttemptRecordV4.model_validate(payload)
+        ProviderAttemptRecordV5.model_validate(payload)
 
 
 def test_v4_attempt_contract_rejects_extra_fields() -> None:
     payload = _attempt_payload()
     payload["authority"] = "accepted"
     with pytest.raises(ValidationError):
-        ProviderAttemptRecordV4.model_validate(payload)
+        ProviderAttemptRecordV5.model_validate(payload)

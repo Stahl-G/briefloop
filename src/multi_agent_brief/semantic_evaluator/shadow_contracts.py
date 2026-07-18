@@ -47,17 +47,17 @@ from multi_agent_brief.semantic_evaluator.serialization import (
 
 
 SHADOW_EXECUTION_POLICY_SCHEMA_ID = (
-    "briefloop.semantic_evaluator.shadow_execution_policy.v4"
+    "briefloop.semantic_evaluator.shadow_execution_policy.v5"
 )
 SHADOW_EXECUTION_MANIFEST_SCHEMA_ID = (
-    "briefloop.semantic_evaluator.shadow_execution_manifest.v4"
+    "briefloop.semantic_evaluator.shadow_execution_manifest.v5"
 )
-SHADOW_RUN_REQUEST_SCHEMA_ID = "briefloop.semantic_evaluator.shadow_run_request.v4"
-PROVIDER_ATTEMPT_SCHEMA_ID = "briefloop.semantic_evaluator.provider_attempt.v4"
+SHADOW_RUN_REQUEST_SCHEMA_ID = "briefloop.semantic_evaluator.shadow_run_request.v5"
+PROVIDER_ATTEMPT_SCHEMA_ID = "briefloop.semantic_evaluator.provider_attempt.v5"
 SHADOW_ARCHIVE_MANIFEST_SCHEMA_ID = (
-    "briefloop.semantic_evaluator.shadow_archive_manifest.v4"
+    "briefloop.semantic_evaluator.shadow_archive_manifest.v5"
 )
-SHADOW_RUN_RECEIPT_SCHEMA_ID = "briefloop.semantic_evaluator.shadow_run_receipt.v4"
+SHADOW_RUN_RECEIPT_SCHEMA_ID = "briefloop.semantic_evaluator.shadow_run_receipt.v5"
 
 SHADOW_SCHEMA_IDS = (
     PROVIDER_BOUNDARY_FACTS_SCHEMA_ID,
@@ -69,9 +69,19 @@ SHADOW_SCHEMA_IDS = (
     SHADOW_RUN_REQUEST_SCHEMA_ID,
 )
 
-AdapterIdV4 = Literal["openai_responses_v4", "synthetic_fixture_v4"]
+AdapterIdV5 = Literal[
+    "local_proxy_responses_v1",
+    "openai_responses_v4",
+    "synthetic_fixture_v4",
+]
+ExecutionOriginV5 = Literal["direct_openai", "local_cliproxy", "synthetic_fixture"]
+QualificationClassV5 = Literal[
+    "direct_openai",
+    "local_proxy_experimental",
+    "synthetic_only",
+]
 SHADOW_TIMEOUT_SECONDS = 60
-ValidationStatusV4 = Literal["accepted", "rejected", "incomplete"]
+ValidationStatusV5 = Literal["accepted", "rejected", "incomplete"]
 RelativeArchivePathV4 = Annotated[
     str,
     StringConstraints(
@@ -257,15 +267,15 @@ class ProviderBoundaryFactsRecordV4(StrictModel):
         )
 
 
-class ProviderAttemptRecordV4(StrictModel):
+class ProviderAttemptRecordV5(StrictModel):
     schema_id: ClassVar[str] = PROVIDER_ATTEMPT_SCHEMA_ID
-    schema_version: Literal["briefloop.semantic_evaluator.provider_attempt.v4"]
+    schema_version: Literal["briefloop.semantic_evaluator.provider_attempt.v5"]
     attempt_ref: ContractId
     trial_id: ContractId
     dimension_id: ContractId
     attempt_ordinal: PositiveInt
     prompt_request_sha256: Sha256
-    adapter_id: AdapterIdV4
+    adapter_id: AdapterIdV5
     provider_id: ContractId
     requested_model_id: ContractId
     expected_model_version_utf8_hex: StrictStr
@@ -286,7 +296,7 @@ class ProviderAttemptRecordV4(StrictModel):
     attempt_record_sha256: Sha256
 
     @model_validator(mode="after")
-    def validate_classifier_and_hash(self) -> "ProviderAttemptRecordV4":
+    def validate_classifier_and_hash(self) -> "ProviderAttemptRecordV5":
         try:
             expected = bytes.fromhex(self.expected_model_version_utf8_hex)
             expected.decode("utf-8", errors="strict")
@@ -325,10 +335,10 @@ class ProviderAttemptRecordV4(StrictModel):
         return self
 
 
-class ShadowExecutionPolicyV4(StrictModel):
+class ShadowExecutionPolicyV5(StrictModel):
     schema_id: ClassVar[str] = SHADOW_EXECUTION_POLICY_SCHEMA_ID
-    schema_version: Literal["briefloop.semantic_evaluator.shadow_execution_policy.v4"]
-    adapter_id: AdapterIdV4
+    schema_version: Literal["briefloop.semantic_evaluator.shadow_execution_policy.v5"]
+    adapter_id: AdapterIdV5
     timeout_seconds: Literal[60]
     sdk_max_retries: Literal[0]
     raw_retention_days: Literal[30]
@@ -337,7 +347,7 @@ class ShadowExecutionPolicyV4(StrictModel):
     execution_policy_sha256: Sha256
 
     @model_validator(mode="after")
-    def validate_self_hash(self) -> "ShadowExecutionPolicyV4":
+    def validate_self_hash(self) -> "ShadowExecutionPolicyV5":
         if self.execution_policy_sha256 != _safe_model_hash(
             self, exclude=("execution_policy_sha256",)
         ):
@@ -345,13 +355,13 @@ class ShadowExecutionPolicyV4(StrictModel):
         return self
 
 
-class ShadowExecutionManifestV4(StrictModel):
+class ShadowExecutionManifestV5(StrictModel):
     schema_id: ClassVar[str] = SHADOW_EXECUTION_MANIFEST_SCHEMA_ID
-    schema_version: Literal["briefloop.semantic_evaluator.shadow_execution_manifest.v4"]
+    schema_version: Literal["briefloop.semantic_evaluator.shadow_execution_manifest.v5"]
     execution_manifest_id: ContractId
     instrument_sha256: Sha256
     execution_policy_sha256: Sha256
-    adapter_id: AdapterIdV4
+    adapter_id: AdapterIdV5
     adapter_version: ContractId
     adapter_source_sha256: Sha256
     runner_version: ContractId
@@ -361,6 +371,9 @@ class ShadowExecutionManifestV4(StrictModel):
     shadow_schema_sha256s: dict[ContractId, Sha256]
     provider_sdk_name: ContractId
     provider_sdk_version: CleanText
+    execution_origin: ExecutionOriginV5
+    qualification_class: QualificationClassV5
+    provider_endpoint_sha256: Sha256
     prompt_sizer_id: ContractId
     prompt_sizer_version: ContractId
     tokenizer_package: ContractId
@@ -371,9 +384,28 @@ class ShadowExecutionManifestV4(StrictModel):
     execution_sha256: Sha256
 
     @model_validator(mode="after")
-    def validate_inventory_and_hash(self) -> "ShadowExecutionManifestV4":
+    def validate_inventory_and_hash(self) -> "ShadowExecutionManifestV5":
         if list(self.shadow_schema_sha256s) != sorted(SHADOW_SCHEMA_IDS):
             raise ValueError("shadow schema hashes must be complete and sorted")
+        expected = {
+            "local_proxy_responses_v1": (
+                "local_cliproxy",
+                "local_proxy_experimental",
+                False,
+            ),
+            "openai_responses_v4": ("direct_openai", "direct_openai", True),
+            "synthetic_fixture_v4": (
+                "synthetic_fixture",
+                "synthetic_only",
+                False,
+            ),
+        }[self.adapter_id]
+        if (
+            self.execution_origin,
+            self.qualification_class,
+            self.qualification_eligible,
+        ) != expected:
+            raise ValueError("execution qualification projection mismatch")
         if self.execution_sha256 != _safe_model_hash(
             self, exclude=("execution_sha256",)
         ):
@@ -381,9 +413,9 @@ class ShadowExecutionManifestV4(StrictModel):
         return self
 
 
-class ShadowRunRequestV4(StrictModel):
+class ShadowRunRequestV5(StrictModel):
     schema_id: ClassVar[str] = SHADOW_RUN_REQUEST_SCHEMA_ID
-    schema_version: Literal["briefloop.semantic_evaluator.shadow_run_request.v4"]
+    schema_version: Literal["briefloop.semantic_evaluator.shadow_run_request.v5"]
     trial_id: ContractId
     artifact_id: ContractId
     report_sha256: Sha256
@@ -399,7 +431,7 @@ class ShadowRunRequestV4(StrictModel):
     shadow_request_sha256: Sha256
 
     @model_validator(mode="after")
-    def validate_request_hash(self) -> "ShadowRunRequestV4":
+    def validate_request_hash(self) -> "ShadowRunRequestV5":
         if len(set(self.ordered_prompt_request_sha256s)) != len(
             self.ordered_prompt_request_sha256s
         ):
@@ -418,34 +450,34 @@ class ShadowRunRequestV4(StrictModel):
         return self
 
 
-class ArchiveMemberV4(StrictModel):
+class ArchiveMemberV5(StrictModel):
     path: RelativeArchivePathV4
     size_bytes: NonNegativeInt
     sha256: Sha256
 
     @model_validator(mode="after")
-    def validate_path(self) -> "ArchiveMemberV4":
+    def validate_path(self) -> "ArchiveMemberV5":
         _validate_relative_archive_path(self.path)
         return self
 
 
-class ShadowArchiveManifestV4(StrictModel):
+class ShadowArchiveManifestV5(StrictModel):
     schema_id: ClassVar[str] = SHADOW_ARCHIVE_MANIFEST_SCHEMA_ID
-    schema_version: Literal["briefloop.semantic_evaluator.shadow_archive_manifest.v4"]
+    schema_version: Literal["briefloop.semantic_evaluator.shadow_archive_manifest.v5"]
     archive_id: ContractId
     shadow_request_sha256: Sha256
     instrument_sha256: Sha256
     execution_sha256: Sha256
     trial_id: ContractId
     run_status: RunStatus
-    validation_status: ValidationStatusV4
-    payload_members: list[ArchiveMemberV4] = Field(min_length=1)
+    validation_status: ValidationStatusV5
+    payload_members: list[ArchiveMemberV5] = Field(min_length=1)
     payload_file_count: PositiveInt
     aggregate_payload_sha256: Sha256
     archive_manifest_sha256: Sha256
 
     @model_validator(mode="after")
-    def validate_inventory_and_hash(self) -> "ShadowArchiveManifestV4":
+    def validate_inventory_and_hash(self) -> "ShadowArchiveManifestV5":
         paths = [item.path for item in self.payload_members]
         if paths != sorted(paths) or len(paths) != len(set(paths)):
             raise ValueError("archive payload inventory must be sorted and unique")
@@ -466,9 +498,9 @@ class ShadowArchiveManifestV4(StrictModel):
         return self
 
 
-class ShadowRunReceiptV4(StrictModel):
+class ShadowRunReceiptV5(StrictModel):
     schema_id: ClassVar[str] = SHADOW_RUN_RECEIPT_SCHEMA_ID
-    schema_version: Literal["briefloop.semantic_evaluator.shadow_run_receipt.v4"]
+    schema_version: Literal["briefloop.semantic_evaluator.shadow_run_receipt.v5"]
     receipt_id: ContractId
     archive_id: ContractId
     shadow_request_sha256: Sha256
@@ -477,48 +509,51 @@ class ShadowRunReceiptV4(StrictModel):
     run_id: ContractId
     trial_id: ContractId
     run_status: RunStatus
-    validation_status: ValidationStatusV4
+    validation_status: ValidationStatusV5
     archive_status: Literal["complete"]
     archive_manifest_sha256: Sha256
+    execution_origin: ExecutionOriginV5
+    qualification_class: QualificationClassV5
     qualification_eligible: StrictBool
     created_at: IsoDateTime
     receipt_sha256: Sha256
 
     @model_validator(mode="after")
-    def validate_receipt_hash(self) -> "ShadowRunReceiptV4":
+    def validate_receipt_hash(self) -> "ShadowRunReceiptV5":
         if self.receipt_sha256 != _safe_model_hash(self, exclude=("receipt_sha256",)):
             raise ValueError("shadow receipt hash mismatch")
         return self
 
 
-SHADOW_CONTRACT_MODELS_V4: tuple[type[StrictModel], ...] = (
+SHADOW_CONTRACT_MODELS_V5: tuple[type[StrictModel], ...] = (
     ProviderBoundaryFactsRecordV4,
-    ShadowExecutionPolicyV4,
-    ShadowExecutionManifestV4,
-    ShadowRunRequestV4,
-    ProviderAttemptRecordV4,
-    ShadowArchiveManifestV4,
-    ShadowRunReceiptV4,
+    ShadowExecutionPolicyV5,
+    ShadowExecutionManifestV5,
+    ShadowRunRequestV5,
+    ProviderAttemptRecordV5,
+    ShadowArchiveManifestV5,
+    ShadowRunReceiptV5,
 )
 
-# The runner/archive use these package-local names; there is no predecessor reader.
-ProviderAttemptRecord = ProviderAttemptRecordV4
-ShadowExecutionManifest = ShadowExecutionManifestV4
-ShadowExecutionPolicy = ShadowExecutionPolicyV4
-ShadowRunRequest = ShadowRunRequestV4
-ArchiveMember = ArchiveMemberV4
-ShadowArchiveManifest = ShadowArchiveManifestV4
-ShadowRunReceipt = ShadowRunReceiptV4
-SHADOW_CONTRACT_MODELS = SHADOW_CONTRACT_MODELS_V4
+# The runner/archive use these package-local names; there is no v4 reader.
+ProviderAttemptRecord = ProviderAttemptRecordV5
+ShadowExecutionManifest = ShadowExecutionManifestV5
+ShadowExecutionPolicy = ShadowExecutionPolicyV5
+ShadowRunRequest = ShadowRunRequestV5
+ArchiveMember = ArchiveMemberV5
+ShadowArchiveManifest = ShadowArchiveManifestV5
+ShadowRunReceipt = ShadowRunReceiptV5
+SHADOW_CONTRACT_MODELS = SHADOW_CONTRACT_MODELS_V5
 
 
 __all__ = [
-    "AdapterIdV4",
-    "ArchiveMemberV4",
+    "AdapterIdV5",
+    "ArchiveMemberV5",
+    "ExecutionOriginV5",
     "ExternalTextFactRecordV4",
     "HttpStatusFactRecordV4",
     "PROVIDER_ATTEMPT_SCHEMA_ID",
-    "ProviderAttemptRecordV4",
+    "ProviderAttemptRecordV5",
     "ProviderAttemptRecord",
     "ProviderBoundaryFactsRecordV4",
     "ResponseEnvelopeFactRecordV4",
@@ -528,13 +563,14 @@ __all__ = [
     "SHADOW_RUN_RECEIPT_SCHEMA_ID",
     "SHADOW_RUN_REQUEST_SCHEMA_ID",
     "SHADOW_SCHEMA_IDS",
-    "SHADOW_CONTRACT_MODELS_V4",
+    "SHADOW_CONTRACT_MODELS_V5",
     "SHADOW_CONTRACT_MODELS",
     "SHADOW_TIMEOUT_SECONDS",
-    "ShadowArchiveManifestV4",
-    "ShadowExecutionManifestV4",
-    "ShadowExecutionPolicyV4",
-    "ShadowRunReceiptV4",
-    "ShadowRunRequestV4",
-    "ValidationStatusV4",
+    "ShadowArchiveManifestV5",
+    "ShadowExecutionManifestV5",
+    "ShadowExecutionPolicyV5",
+    "ShadowRunReceiptV5",
+    "ShadowRunRequestV5",
+    "QualificationClassV5",
+    "ValidationStatusV5",
 ]

@@ -29,7 +29,7 @@ from multi_agent_brief.semantic_evaluator.serialization import (
     sha256_bytes,
 )
 from multi_agent_brief.semantic_evaluator.shadow_contracts import (
-    ProviderAttemptRecordV4,
+    ProviderAttemptRecordV5,
     ProviderBoundaryFactsRecordV4,
 )
 
@@ -322,7 +322,7 @@ def test_se2r_10_typed_transport_cannot_override_retained_provenance() -> None:
     forged["attempt_record_sha256"] = canonical_sha256(
         {key: value for key, value in forged.items() if key != "attempt_record_sha256"}
     )
-    forged_record = ProviderAttemptRecordV4.model_validate(forged)
+    forged_record = ProviderAttemptRecordV5.model_validate(forged)
     recomputed = _recomputed_facts(
         record=forged_record,
         response_raw=raw,

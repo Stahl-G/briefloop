@@ -19,6 +19,19 @@ from multi_agent_brief.semantic_evaluator.adapters.synthetic_fixture import (
     SYNTHETIC_PROVIDER_ID,
     SyntheticFixtureAdapterV4,
     project_synthetic_response_bytes_v4,
+    _rubric_from_prompt,
+)
+from multi_agent_brief.semantic_evaluator.adapters.local_proxy_responses import (
+    CLIPROXY_PROVIDER_ID,
+    CLIProxyResponsesAdapterV1,
+)
+from multi_agent_brief.semantic_evaluator.adapters.openai_responses import (
+    synthetic_openai_response_bytes_v4,
+)
+from multi_agent_brief.semantic_evaluator.contracts import DIMENSION_RESPONSE_SCHEMA_ID
+from multi_agent_brief.semantic_evaluator.prompt_sizer import (
+    CLIPROXY_PROMPT_SIZER_ID,
+    CLIPROXY_PROMPT_SIZER_VERSION,
 )
 from multi_agent_brief.semantic_evaluator.runner import PROFILE_ID, run_shadow
 from multi_agent_brief.semantic_evaluator.serialization import canonical_json_bytes
@@ -52,6 +65,29 @@ def _invocation(tmp_path: Path, *, max_attempts: int = 1) -> dict[str, object]:
         "archive_root": (tmp_path / "archives").resolve(),
         "clock": lambda: FIXED_TIME,
     }
+
+
+def _cliproxy_invocation(tmp_path: Path) -> dict[str, object]:
+    invocation = _invocation(tmp_path)
+    instrument = Path(invocation["instrument"])
+    payload = json.loads(instrument.read_bytes())
+    payload.update(
+        {
+            "instrument_config_id": "local-proxy-shadow-instrument-v1",
+            "provider_id": CLIPROXY_PROVIDER_ID,
+            "model_id": "gpt-5.6-sol",
+            "model_version": "gpt-5.6-sol",
+            "prompt_sizer": {
+                "max_context_tokens": 200000,
+                "reserved_output_tokens": 4096,
+                "sizer_id": CLIPROXY_PROMPT_SIZER_ID,
+                "sizer_version": CLIPROXY_PROMPT_SIZER_VERSION,
+            },
+        }
+    )
+    instrument.write_bytes(canonical_json_bytes(payload))
+    invocation["trial_id"] = "trial-local-proxy-runner-v1"
+    return invocation
 
 
 def _absent_text():
@@ -165,6 +201,47 @@ def _factory(mode: str, captures: list[_ScriptedAdapter]):
     return create
 
 
+class _CLIProxyFixtureAdapter:
+    def __init__(self, execution) -> None:
+        self.adapter_id = execution.adapter_id
+        self.adapter_version = execution.adapter_version
+        self.provider_sdk_name = execution.provider_sdk_name
+        self.provider_sdk_version = execution.provider_sdk_version
+        self.qualification_eligible = execution.qualification_eligible
+        self._delegate = object.__new__(CLIProxyResponsesAdapterV1)
+        self.calls = 0
+
+    def invoke(self, request):
+        self.calls += 1
+        rubric = _rubric_from_prompt(request.user_text)
+        units = rubric["assessment_units"]
+        output = canonical_json_bytes(
+            {
+                "dimension_id": request.dimension_id,
+                "schema_version": DIMENSION_RESPONSE_SCHEMA_ID,
+                "trial_id": request.trial_id,
+                "unit_results": [
+                    {
+                        "assessment_unit_id": item["assessment_unit_id"],
+                        "disposition": "no_finding",
+                    }
+                    for item in units
+                ],
+            }
+        )
+        raw = synthetic_openai_response_bytes_v4(
+            status="completed",
+            response_id=f"resp-public-{self.calls}",
+            model=request.expected_model_version,
+            output_text=output.decode("utf-8"),
+        )
+        return self._delegate._attempt_from_response(
+            request=request,
+            raw=raw,
+            sdk_response=None,
+        )
+
+
 def test_se2r_01_synthetic_run_preserves_exact_25_unit_accounting(
     tmp_path: Path,
 ) -> None:
@@ -179,6 +256,43 @@ def test_se2r_01_synthetic_run_preserves_exact_25_unit_accounting(
     assert len(run["assessment_units"]) == 25
     assert {item["disposition"] for item in run["assessment_units"]} == {"no_finding"}
     assert len(list((archive / "attempts").glob("*/*/transport.json"))) == 9
+
+
+def test_cliproxy_run_is_distinct_nonqualifying_and_replay_is_credential_free(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    from multi_agent_brief.semantic_evaluator import runner
+
+    monkeypatch.setattr(runner.metadata, "version", lambda _name: "2.46.0")
+    captured: list[_CLIProxyFixtureAdapter] = []
+
+    def factory(execution):
+        adapter = _CLIProxyFixtureAdapter(execution)
+        captured.append(adapter)
+        return adapter
+
+    invocation = _cliproxy_invocation(tmp_path)
+    result = run_shadow(**invocation, adapter_factory=factory)
+    assert result.ok is True
+    assert result.execution_origin == "local_cliproxy"
+    assert result.qualification_class == "local_proxy_experimental"
+    assert result.qualification_eligible is False
+    assert captured[0].calls == 9
+    archive = Path(result.archive_path or "")
+    receipt = json.loads((archive / "receipt.json").read_bytes())
+    assert receipt["execution_origin"] == "local_cliproxy"
+    assert receipt["qualification_class"] == "local_proxy_experimental"
+    monkeypatch.delenv("CLIPROXY_API_KEY", raising=False)
+    replay = run_shadow(
+        **invocation,
+        adapter_factory=lambda _execution: (_ for _ in ()).throw(
+            AssertionError("replay touched CLIProxy adapter")
+        ),
+    )
+    assert replay.ok is True
+    assert replay.replayed is True
+    assert replay.receipt_id == result.receipt_id
 
 
 def test_se2r_05_multi_attempt_policy_requires_classifier_retry_reason(

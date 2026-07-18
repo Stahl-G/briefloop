@@ -441,7 +441,9 @@ def _shadow_payload(result: Any) -> dict[str, object]:
         raise TypeError("invalid shadow result")
     return {
         "archive_complete": result.archive_complete,
+        "execution_origin": result.execution_origin,
         "ok": result.ok,
+        "qualification_class": result.qualification_class,
         "qualification_eligible": result.qualification_eligible,
         "reason_codes": list(reason_codes),
         "receipt_id": result.receipt_id,
@@ -454,7 +456,9 @@ def _shadow_payload(result: Any) -> dict[str, object]:
 def _shadow_failure_payload() -> dict[str, object]:
     return {
         "archive_complete": False,
+        "execution_origin": None,
         "ok": False,
+        "qualification_class": None,
         "qualification_eligible": False,
         "reason_codes": ["shadow_adapter_unavailable"],
         "receipt_id": None,

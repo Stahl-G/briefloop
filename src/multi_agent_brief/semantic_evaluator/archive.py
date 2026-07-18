@@ -26,8 +26,13 @@ from multi_agent_brief.semantic_evaluator.adapter import (
     make_provider_boundary_facts_v4,
 )
 from multi_agent_brief.semantic_evaluator.adapters.openai_responses import (
+    OPENAI_ADAPTER_ID,
     OPENAI_PROVIDER_ID,
     project_openai_response_bytes_v4,
+)
+from multi_agent_brief.semantic_evaluator.adapters.local_proxy_responses import (
+    CLIPROXY_ADAPTER_ID,
+    CLIPROXY_PROVIDER_ID,
 )
 from multi_agent_brief.semantic_evaluator.adapters.synthetic_fixture import (
     SYNTHETIC_PROVIDER_ID,
@@ -80,7 +85,7 @@ from multi_agent_brief.semantic_evaluator.validator import (
 )
 
 
-ARCHIVE_VERSION = "semantic_evaluator_shadow_archive_v4"
+ARCHIVE_VERSION = "semantic_evaluator_shadow_archive_v5"
 _TRIAL_ID = TypeAdapter(ContractId)
 _FIXED_CONTROL_FILES = frozenset({"archive_manifest.json", "receipt.json", "COMPLETE"})
 _REQUIRED_PAYLOAD_FILES = frozenset(
@@ -105,6 +110,17 @@ _REQUIRED_PAYLOAD_FILES = frozenset(
         "presentation_actual.json",
     }
 )
+_OPENAI_WIRE_ADAPTER_IDS = frozenset({OPENAI_ADAPTER_ID, CLIPROXY_ADAPTER_ID})
+
+
+def _provider_id_for_adapter(adapter_id: str) -> str:
+    if adapter_id == OPENAI_ADAPTER_ID:
+        return OPENAI_PROVIDER_ID
+    if adapter_id == CLIPROXY_ADAPTER_ID:
+        return CLIPROXY_PROVIDER_ID
+    if adapter_id == "synthetic_fixture_v4":
+        return SYNTHETIC_PROVIDER_ID
+    raise SemanticEvaluatorError("shadow_archive_invalid")
 
 
 @dataclass(frozen=True)
@@ -396,7 +412,7 @@ def _recomputed_facts(
     if response_raw is None:
         if record.facts.envelope.state != "absent":
             raise SemanticEvaluatorError("shadow_archive_invalid")
-        if record.adapter_id == "openai_responses_v4":
+        if record.adapter_id in _OPENAI_WIRE_ADAPTER_IDS:
             if (
                 sdk_projection is None
                 or sdk_projection.body_state != "absent"
@@ -420,12 +436,7 @@ def _recomputed_facts(
             http_status = record.facts.http_status.to_runtime()
         provider = _provider_fact(
             ExternalTextObservation(True, record.provider_id),
-            ExternalTextObservation(
-                True,
-                OPENAI_PROVIDER_ID
-                if record.adapter_id == "openai_responses_v4"
-                else SYNTHETIC_PROVIDER_ID,
-            ),
+            ExternalTextObservation(True, _provider_id_for_adapter(record.adapter_id)),
         )
         return make_provider_boundary_facts_v4(
             envelope=capture_response_envelope_v4(None, present=False),
@@ -443,7 +454,7 @@ def _recomputed_facts(
 
     if record.facts.envelope.state == "absent":
         raise SemanticEvaluatorError("shadow_archive_invalid")
-    if record.adapter_id == "openai_responses_v4":
+    if record.adapter_id in _OPENAI_WIRE_ADAPTER_IDS:
         projection = project_openai_response_bytes_v4(response_raw)
         if sdk_projection is None or sdk_projection.body_state not in {
             "present",
@@ -452,7 +463,7 @@ def _recomputed_facts(
             raise SemanticEvaluatorError("shadow_archive_invalid")
         provider = _provider_fact(
             ExternalTextObservation(True, record.provider_id),
-            ExternalTextObservation(True, OPENAI_PROVIDER_ID),
+            ExternalTextObservation(True, _provider_id_for_adapter(record.adapter_id)),
         )
         sdk_is_absent = all(
             item.state == "absent"
@@ -678,7 +689,7 @@ def _attempt_records(
         if has_response:
             expected_paths.add(response_path)
         has_sdk_projection = sdk_projection_path in payloads
-        if has_sdk_projection != (record.adapter_id == "openai_responses_v4"):
+        if has_sdk_projection != (record.adapter_id in _OPENAI_WIRE_ADAPTER_IDS):
             raise SemanticEvaluatorError("shadow_archive_invalid")
         if has_sdk_projection:
             expected_paths.add(sdk_projection_path)
@@ -837,6 +848,8 @@ def verify_shadow_archive(
         or execution.execution_sha256 != request.execution_sha256
         or execution.instrument_sha256 != request.instrument_sha256
         or execution.execution_policy_sha256 != policy.execution_policy_sha256
+        or receipt.execution_origin != execution.execution_origin
+        or receipt.qualification_class != execution.qualification_class
         or receipt.qualification_eligible != execution.qualification_eligible
     ):
         raise SemanticEvaluatorError("shadow_archive_invalid")
@@ -1168,6 +1181,8 @@ def _receipt_for_manifest(
         "validation_status": validation.validation_status,
         "archive_status": "complete",
         "archive_manifest_sha256": manifest.archive_manifest_sha256,
+        "execution_origin": execution.execution_origin,
+        "qualification_class": execution.qualification_class,
         "qualification_eligible": execution.qualification_eligible,
         "created_at": created_at,
     }

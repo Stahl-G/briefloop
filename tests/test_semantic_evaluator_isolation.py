@@ -21,6 +21,7 @@ EXPECTED_PACKAGE_FILES = {
     "adapter.py",
     "adapters/__init__.py",
     "adapters/openai_responses.py",
+    "adapters/local_proxy_responses.py",
     "adapters/synthetic_fixture.py",
     "admission.py",
     "archive.py",
@@ -75,6 +76,7 @@ FORBIDDEN_PROVIDER_OR_NETWORK_IMPORTS = (
 EXPERIMENT_ENTRYPOINT = SRC_ROOT / "cli" / "experiments_commands.py"
 NETWORK_IMPORT_ALLOWLIST = {
     "adapters/openai_responses.py": {"openai"},
+    "adapters/local_proxy_responses.py": set(),
 }
 
 

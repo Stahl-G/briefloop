@@ -32,6 +32,12 @@ from multi_agent_brief.semantic_evaluator.adapters.openai_responses import (
     OPENAI_ADAPTER_VERSION,
     OPENAI_PROVIDER_ID,
 )
+from multi_agent_brief.semantic_evaluator.adapters.local_proxy_responses import (
+    CLIPROXY_ADAPTER_ID,
+    CLIPROXY_ADAPTER_VERSION,
+    CLIPROXY_BASE_URL,
+    CLIPROXY_PROVIDER_ID,
+)
 from multi_agent_brief.semantic_evaluator.adapters.synthetic_fixture import (
     SYNTHETIC_ADAPTER_ID,
     SYNTHETIC_PROVIDER_ID,
@@ -56,7 +62,7 @@ from multi_agent_brief.semantic_evaluator.contracts import (
 )
 from multi_agent_brief.semantic_evaluator.errors import SemanticEvaluatorError
 from multi_agent_brief.semantic_evaluator.prompt_sizer import (
-    OPENAI_PROMPT_SIZER_ID,
+    CLIProxyUtf8BytePromptSizerV1,
     OpenAITiktokenPromptSizerV1,
     SyntheticFixturePromptSizerV1,
 )
@@ -83,7 +89,7 @@ from multi_agent_brief.semantic_evaluator.validator import (
 )
 
 
-RUNNER_VERSION = "semantic_evaluator_shadow_runner_v4"
+RUNNER_VERSION = "semantic_evaluator_shadow_runner_v5"
 DEFAULT_TIMEOUT_SECONDS = SHADOW_TIMEOUT_SECONDS
 PROFILE_ID = "research_design_report_zh_v1"
 _MAX_JSON_INPUT_BYTES = 8 * 1024 * 1024
@@ -119,6 +125,8 @@ class ShadowRunResult:
     run_status: str | None
     validation_status: str | None
     reason_codes: tuple[str, ...]
+    execution_origin: str | None
+    qualification_class: str | None
     qualification_eligible: bool
 
     def to_dict(self) -> dict[str, object]:
@@ -131,6 +139,8 @@ class ShadowRunResult:
             "run_status": self.run_status,
             "validation_status": self.validation_status,
             "reason_codes": list(self.reason_codes),
+            "execution_origin": self.execution_origin,
+            "qualification_class": self.qualification_class,
             "qualification_eligible": self.qualification_eligible,
         }
 
@@ -152,6 +162,8 @@ def _failure(*reason_codes: str) -> ShadowRunResult:
         run_status=None,
         validation_status=None,
         reason_codes=tuple(sorted(set(reason_codes))),
+        execution_origin=None,
+        qualification_class=None,
         qualification_eligible=False,
     )
 
@@ -170,6 +182,8 @@ def _from_archive(
         run_status=archive.receipt.run_status,
         validation_status=archive.receipt.validation_status,
         reason_codes=archive.reason_codes,
+        execution_origin=archive.receipt.execution_origin,
+        qualification_class=archive.receipt.qualification_class,
         qualification_eligible=archive.receipt.qualification_eligible,
     )
 
@@ -286,6 +300,8 @@ def _prompt_sizer_for(config: InstrumentConfig) -> tuple[str, Any]:
         return SYNTHETIC_ADAPTER_ID, SyntheticFixturePromptSizerV1()
     if config.provider_id == OPENAI_PROVIDER_ID:
         return OPENAI_ADAPTER_ID, OpenAITiktokenPromptSizerV1(model_id=config.model_id)
+    if config.provider_id == CLIPROXY_PROVIDER_ID:
+        return CLIPROXY_ADAPTER_ID, CLIProxyUtf8BytePromptSizerV1()
     raise SemanticEvaluatorError("shadow_adapter_unavailable")
 
 
@@ -322,23 +338,44 @@ def _execution_manifest(
 ) -> ShadowExecutionManifest:
     if policy.adapter_id == SYNTHETIC_ADAPTER_ID:
         adapter_version = _load_fixture_manifest()
-        adapter_module = (
-            "multi_agent_brief.semantic_evaluator.adapters.synthetic_fixture"
+        adapter_modules = (
+            "multi_agent_brief.semantic_evaluator.adapters.synthetic_fixture",
         )
         provider_sdk_name = "synthetic"
         provider_sdk_version = "synthetic-v4"
+        execution_origin = "synthetic_fixture"
+        qualification_class = "synthetic_only"
+        provider_endpoint_sha256 = canonical_sha256(["synthetic-no-network"])
         qualification_eligible = False
     elif policy.adapter_id == OPENAI_ADAPTER_ID:
         adapter_version = OPENAI_ADAPTER_VERSION
-        adapter_module = (
-            "multi_agent_brief.semantic_evaluator.adapters.openai_responses"
+        adapter_modules = (
+            "multi_agent_brief.semantic_evaluator.adapters.openai_responses",
         )
         try:
             provider_sdk_version = metadata.version("openai")
         except Exception:
             raise SemanticEvaluatorError("shadow_adapter_unavailable") from None
         provider_sdk_name = "openai"
+        execution_origin = "direct_openai"
+        qualification_class = "direct_openai"
+        provider_endpoint_sha256 = canonical_sha256(["openai-sdk-default"])
         qualification_eligible = True
+    elif policy.adapter_id == CLIPROXY_ADAPTER_ID:
+        adapter_version = CLIPROXY_ADAPTER_VERSION
+        adapter_modules = (
+            "multi_agent_brief.semantic_evaluator.adapters.openai_responses",
+            "multi_agent_brief.semantic_evaluator.adapters.local_proxy_responses",
+        )
+        try:
+            provider_sdk_version = metadata.version("openai")
+        except Exception:
+            raise SemanticEvaluatorError("shadow_adapter_unavailable") from None
+        provider_sdk_name = "openai"
+        execution_origin = "local_cliproxy"
+        qualification_class = "local_proxy_experimental"
+        provider_endpoint_sha256 = canonical_sha256([CLIPROXY_BASE_URL])
+        qualification_eligible = False
     else:
         raise SemanticEvaluatorError("shadow_adapter_unavailable")
     if type(provider_sdk_version) is not str or not provider_sdk_version:
@@ -350,7 +387,7 @@ def _execution_manifest(
     runner_source = _source_bundle(*_RUNNER_SOURCE_MODULES)
     adapter_source = _source_bundle(
         "multi_agent_brief.semantic_evaluator.adapter",
-        adapter_module,
+        *adapter_modules,
     )
     archive_source = _source_bundle("multi_agent_brief.semantic_evaluator.archive")
     component_identity = {
@@ -366,6 +403,9 @@ def _execution_manifest(
         "shadow_schema_sha256s": schema_hashes,
         "provider_sdk_name": provider_sdk_name,
         "provider_sdk_version": provider_sdk_version,
+        "execution_origin": execution_origin,
+        "qualification_class": qualification_class,
+        "provider_endpoint_sha256": provider_endpoint_sha256,
         "prompt_sizer_id": prompt_sizer.sizer_id,
         "prompt_sizer_version": prompt_sizer.sizer_version,
         "tokenizer_package": prompt_sizer.package_name,
@@ -425,6 +465,15 @@ def _adapter_for(execution: ShadowExecutionManifest) -> SemanticEvaluatorAdapter
         if type(api_key) is not str or not api_key:
             raise SemanticEvaluatorError("shadow_adapter_unavailable")
         adapter = OpenAIResponsesAdapterV4(api_key=api_key)
+    elif execution.adapter_id == CLIPROXY_ADAPTER_ID:
+        from multi_agent_brief.semantic_evaluator.adapters.local_proxy_responses import (
+            CLIProxyResponsesAdapterV1,
+        )
+
+        api_key = os.environ.get("CLIPROXY_API_KEY")
+        if type(api_key) is not str or not api_key:
+            raise SemanticEvaluatorError("shadow_adapter_unavailable")
+        adapter = CLIProxyResponsesAdapterV1(api_key=api_key)
     else:
         raise SemanticEvaluatorError("shadow_adapter_unavailable")
     if (

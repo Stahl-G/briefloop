@@ -91,11 +91,14 @@ def _project_output(
                     return _invalid_text("external_text_invalid_container")
                 continue
             item_type = capture_external_text_v4(
-                (_member(item, "type"),), allowed_values=frozenset({"message"})
+                (_member(item, "type"),),
+                allowed_values=frozenset({"message", "reasoning"}),
             )
             if item_type.state != "present_valid":
                 if completed:
                     return item_type
+                continue
+            if item_type.utf8_bytes == b"reasoning":
                 continue
             content = item.get("content")
             if type(content) is not list:
@@ -272,8 +275,10 @@ def _sdk_projection_bytes(
 class OpenAIResponsesAdapterV4:
     adapter_id = OPENAI_ADAPTER_ID
     adapter_version = OPENAI_ADAPTER_VERSION
+    provider_id = OPENAI_PROVIDER_ID
     provider_sdk_name = "openai"
     qualification_eligible = True
+    base_url: str | None = None
 
     def __init__(self, *, api_key: str) -> None:
         if type(api_key) is not str or not api_key:
@@ -283,7 +288,13 @@ class OpenAIResponsesAdapterV4:
             import openai  # type: ignore[import-not-found]
 
             version = metadata.version("openai")
-            client = openai.OpenAI(api_key=api_key, max_retries=0)
+            sdk_arguments: dict[str, object] = {
+                "api_key": api_key,
+                "max_retries": 0,
+            }
+            if self.base_url is not None:
+                sdk_arguments["base_url"] = self.base_url
+            client = openai.OpenAI(**sdk_arguments)
         except Exception:
             raise TypeError("shadow_adapter_unavailable") from None
         self._openai = openai
@@ -349,7 +360,7 @@ class OpenAIResponsesAdapterV4:
         provider = capture_external_text_v4(
             (
                 ExternalTextObservation(True, request.provider_id),
-                ExternalTextObservation(True, OPENAI_PROVIDER_ID),
+                ExternalTextObservation(True, self.provider_id),
             )
         )
         facts = make_provider_boundary_facts_v4(
@@ -410,7 +421,7 @@ class OpenAIResponsesAdapterV4:
             provider_identity=capture_external_text_v4(
                 (
                     ExternalTextObservation(True, request.provider_id),
-                    ExternalTextObservation(True, OPENAI_PROVIDER_ID),
+                    ExternalTextObservation(True, self.provider_id),
                 )
             ),
             model_identity=absent,
@@ -454,7 +465,7 @@ class OpenAIResponsesAdapterV4:
         provider = capture_external_text_v4(
             (
                 ExternalTextObservation(True, request.provider_id),
-                ExternalTextObservation(True, OPENAI_PROVIDER_ID),
+                ExternalTextObservation(True, self.provider_id),
             )
         )
         facts = make_provider_boundary_facts_v4(

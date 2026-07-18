@@ -53,6 +53,13 @@ import multi_agent_brief.semantic_evaluator.adapter as shadow_adapter_module
 import multi_agent_brief.semantic_evaluator.archive as shadow_archive_module
 import multi_agent_brief.semantic_evaluator.runner as shadow_runner_module
 import multi_agent_brief.semantic_evaluator.shadow_contracts as shadow_contracts_module
+import multi_agent_brief.semantic_evaluator.adapters.local_proxy_responses as local_proxy_adapter_module
+from multi_agent_brief.semantic_evaluator.adapters.local_proxy_responses import (
+    CLIPROXY_ADAPTER_ID,
+    CLIPROXY_ADAPTER_VERSION,
+    CLIPROXY_BASE_URL,
+    CLIPROXY_PROVIDER_ID,
+)
 from multi_agent_brief.semantic_evaluator.adapters.synthetic_fixture import (
     SYNTHETIC_ADAPTER_ID,
     SYNTHETIC_ADAPTER_VERSION,
@@ -83,7 +90,7 @@ from multi_agent_brief.semantic_evaluator.validator import (
 )
 import multi_agent_brief.semantic_evaluator.validator as validator_module
 from multi_agent_brief.semantic_evaluator.shadow_contracts import (
-    SHADOW_CONTRACT_MODELS_V4,
+    SHADOW_CONTRACT_MODELS_V5,
 )
 
 
@@ -515,6 +522,7 @@ module_files = [
         shadow_archive_module,
         shadow_contracts_module,
         shadow_runner_module,
+        local_proxy_adapter_module,
     )
 ]
 payload = {
@@ -524,11 +532,11 @@ payload = {
         for model in SEMANTIC_EVALUATOR_CONTRACT_MODELS
     },
     "shadow_schema_ids": [
-        model.schema_id for model in SHADOW_CONTRACT_MODELS_V4
+        model.schema_id for model in SHADOW_CONTRACT_MODELS_V5
     ],
     "shadow_schema_hashes": {
         model.schema_id: canonical_sha256(model.model_json_schema())
-        for model in SHADOW_CONTRACT_MODELS_V4
+        for model in SHADOW_CONTRACT_MODELS_V5
     },
     "shadow_runtime_identity": {
         "adapter_id": SYNTHETIC_ADAPTER_ID,
@@ -537,6 +545,12 @@ payload = {
         "fixture_identity": _load_fixture_manifest(),
         "archive_version": shadow_archive_module.ARCHIVE_VERSION,
         "runner_version": shadow_runner_module.RUNNER_VERSION,
+    },
+    "local_proxy_runtime_identity": {
+        "adapter_id": CLIPROXY_ADAPTER_ID,
+        "adapter_version": CLIPROXY_ADAPTER_VERSION,
+        "provider_id": CLIPROXY_PROVIDER_ID,
+        "base_url_sha256": canonical_sha256([CLIPROXY_BASE_URL]),
     },
     "manifest": build_instrument_manifest(config).model_dump(mode="json"),
     "prompts": [

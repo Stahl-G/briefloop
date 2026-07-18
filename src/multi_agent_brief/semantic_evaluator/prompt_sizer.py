@@ -9,6 +9,8 @@ from multi_agent_brief.semantic_evaluator.errors import SemanticEvaluatorError
 
 
 OPENAI_PROMPT_SIZER_ID = "openai_tiktoken_v1"
+CLIPROXY_PROMPT_SIZER_ID = "local_proxy_utf8_bytes_conservative_v1"
+CLIPROXY_PROMPT_SIZER_VERSION = "local_proxy_utf8_bytes_conservative_v1"
 SYNTHETIC_PROMPT_SIZER_ID = "synthetic_fixture_sizer_v4"
 SYNTHETIC_PROMPT_SIZER_VERSION = "synthetic_fixture_sizer_v4"
 _RESPONSES_MESSAGE_OVERHEAD = 8
@@ -78,13 +80,43 @@ class OpenAITiktokenPromptSizerV1:
         return _exact_count(system_count + user_count + _RESPONSES_MESSAGE_OVERHEAD)
 
 
+class CLIProxyUtf8BytePromptSizerV1:
+    """Conservative local admission for proxy-visible model aliases.
+
+    A BPE token consumes at least one input byte.  Counting strict UTF-8 bytes
+    therefore provides a deterministic upper bound without pretending that a
+    CLIProxy model alias has a known tiktoken mapping.
+    """
+
+    sizer_id = CLIPROXY_PROMPT_SIZER_ID
+    sizer_version = CLIPROXY_PROMPT_SIZER_VERSION
+    package_name = "briefloop"
+    package_version = "semantic-evaluator-v1"
+    encoding_name = "utf8-bytes-upper-bound-v1"
+
+    def count_tokens(self, *, system_text: str, user_text: str) -> int:
+        if type(system_text) is not str or type(user_text) is not str:
+            raise SemanticEvaluatorError("prompt_sizer_unavailable")
+        try:
+            system_bytes = system_text.encode("utf-8", errors="strict")
+            user_bytes = user_text.encode("utf-8", errors="strict")
+        except UnicodeEncodeError:
+            raise SemanticEvaluatorError("prompt_sizer_unavailable") from None
+        return _exact_count(
+            len(system_bytes) + len(user_bytes) + _RESPONSES_MESSAGE_OVERHEAD
+        )
+
+
 SyntheticFixturePromptSizerV1 = SyntheticFixturePromptSizerV4
 
 
 __all__ = [
+    "CLIPROXY_PROMPT_SIZER_ID",
+    "CLIPROXY_PROMPT_SIZER_VERSION",
     "OPENAI_PROMPT_SIZER_ID",
     "SYNTHETIC_PROMPT_SIZER_ID",
     "SYNTHETIC_PROMPT_SIZER_VERSION",
+    "CLIProxyUtf8BytePromptSizerV1",
     "OpenAITiktokenPromptSizerV1",
     "SyntheticFixturePromptSizerV4",
     "SyntheticFixturePromptSizerV1",

@@ -20,6 +20,8 @@ class _Result:
     run_status: str | None = "completed"
     validation_status: str | None = "accepted"
     reason_codes: tuple[str, ...] = ()
+    execution_origin: str | None = "synthetic_fixture"
+    qualification_class: str | None = "synthetic_only"
     qualification_eligible: bool = False
 
 
@@ -79,7 +81,9 @@ def test_shadow_cli_emits_fixed_json_without_paths_or_provider_material(
     payload = json.loads(captured.out)
     assert payload == {
         "archive_complete": True,
+        "execution_origin": "synthetic_fixture",
         "ok": True,
+        "qualification_class": "synthetic_only",
         "qualification_eligible": False,
         "reason_codes": [],
         "receipt_id": "receipt-public-identity",
@@ -136,7 +140,9 @@ def test_shadow_cli_untyped_exception_is_value_free(monkeypatch, capsys) -> None
     captured = capsys.readouterr()
     assert json.loads(captured.out) == {
         "archive_complete": False,
+        "execution_origin": None,
         "ok": False,
+        "qualification_class": None,
         "qualification_eligible": False,
         "reason_codes": ["shadow_adapter_unavailable"],
         "receipt_id": None,

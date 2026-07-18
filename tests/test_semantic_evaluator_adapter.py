@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import replace
+import sys
 from types import SimpleNamespace
 
 import pytest
@@ -22,8 +23,17 @@ from multi_agent_brief.semantic_evaluator.adapters.openai_responses import (
     project_openai_response_bytes_v4,
     synthetic_openai_response_bytes_v4,
 )
+from multi_agent_brief.semantic_evaluator.adapters.local_proxy_responses import (
+    CLIPROXY_ADAPTER_ID,
+    CLIPROXY_BASE_URL,
+    CLIPROXY_PROVIDER_ID,
+    CLIProxyResponsesAdapterV1,
+)
 from multi_agent_brief.semantic_evaluator.adapters.synthetic_fixture import (
     project_synthetic_response_bytes_v4,
+)
+from multi_agent_brief.semantic_evaluator.prompt_sizer import (
+    CLIProxyUtf8BytePromptSizerV1,
 )
 
 
@@ -239,6 +249,59 @@ def test_se2r_02_openai_raw_incomplete_is_terminal_even_with_valid_output() -> N
     assert attempt.sdk_projection_bytes is not None
 
 
+def test_cliproxy_reuses_openai_projector_with_distinct_provider_identity() -> None:
+    request = replace(
+        _openai_request(),
+        adapter_id=CLIPROXY_ADAPTER_ID,
+        provider_id=CLIPROXY_PROVIDER_ID,
+    )
+    raw = synthetic_openai_response_bytes_v4(
+        status="completed",
+        response_id="resp-public",
+        model=EXPECTED_MODEL.decode(),
+        output_text='{"findings":[]}',
+    )
+    attempt = object.__new__(CLIProxyResponsesAdapterV1)._attempt_from_response(
+        request=request,
+        raw=raw,
+        sdk_response=None,
+    )
+    assert attempt.outcome.attempt_status == "completed"
+    assert attempt.facts.provider_identity.utf8_bytes == CLIPROXY_PROVIDER_ID.encode()
+    assert attempt.extracted_output == b'{"findings":[]}'
+
+
+def test_cliproxy_constructor_freezes_loopback_endpoint_and_disables_sdk_retry(
+    monkeypatch,
+) -> None:
+    from multi_agent_brief.semantic_evaluator.adapters import openai_responses
+
+    captured: dict[str, object] = {}
+
+    def make_client(**kwargs):
+        captured.update(kwargs)
+        return object()
+
+    monkeypatch.setitem(sys.modules, "openai", SimpleNamespace(OpenAI=make_client))
+    monkeypatch.setattr(openai_responses.metadata, "version", lambda _name: "2.46.0")
+    adapter = CLIProxyResponsesAdapterV1(api_key="test")
+    assert adapter.base_url == CLIPROXY_BASE_URL
+    assert adapter.qualification_eligible is False
+    assert captured == {
+        "api_key": "test",
+        "base_url": CLIPROXY_BASE_URL,
+        "max_retries": 0,
+    }
+
+
+def test_cliproxy_prompt_sizer_is_strict_utf8_and_conservative() -> None:
+    sizer = CLIProxyUtf8BytePromptSizerV1()
+    assert sizer.count_tokens(system_text="A", user_text="中文") == 15
+    with pytest.raises(Exception) as exc_info:
+        sizer.count_tokens(system_text="bad\ud800", user_text="ok")
+    assert getattr(exc_info.value, "reason_code", None) == "prompt_sizer_unavailable"
+
+
 def test_se2r_02_openai_status_error_body_cannot_complete() -> None:
     raw = synthetic_openai_response_bytes_v4(
         status="completed",
@@ -285,6 +348,18 @@ def test_se2r_04_completed_rejects_unknown_output_item_type() -> None:
     projection = project_openai_response_bytes_v4(raw)
     assert projection.output.state == "present_invalid"
     assert projection.output.invalid_code == "external_text_unknown"
+
+
+def test_cliproxy_completed_accepts_known_reasoning_item_before_message() -> None:
+    raw = (
+        b'{"id":"resp-public","model":"gpt-test-2026-07-18","output":['
+        b'{"id":"reasoning-public","summary":[],"type":"reasoning"},'
+        b'{"content":[{"text":"{\\"findings\\":[]}","type":"output_text"}],'
+        b'"type":"message"}],"status":"completed"}'
+    )
+    projection = project_openai_response_bytes_v4(raw)
+    assert projection.envelope_valid is True
+    assert projection.output.utf8_bytes == b'{"findings":[]}'
 
 
 @pytest.mark.parametrize(

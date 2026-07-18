@@ -39,6 +39,8 @@ def test_se2r_01_public_synthetic_archive_is_complete_and_nonqualifying(
         "run_status": "completed",
         "validation_status": "accepted",
         "reason_codes": [],
+        "execution_origin": "synthetic_fixture",
+        "qualification_class": "synthetic_only",
         "qualification_eligible": False,
     }
     archive = Path(result.archive_path or "")
@@ -48,6 +50,8 @@ def test_se2r_01_public_synthetic_archive_is_complete_and_nonqualifying(
     assert len(list((archive / "attempts").glob("*/*/boundary_facts.json"))) == 9
     receipt = json.loads((archive / "receipt.json").read_bytes())
     assert receipt["qualification_eligible"] is False
+    assert receipt["execution_origin"] == "synthetic_fixture"
+    assert receipt["qualification_class"] == "synthetic_only"
 
 
 def test_se2r_12_exact_replay_precedes_credentials_adapter_and_network(
