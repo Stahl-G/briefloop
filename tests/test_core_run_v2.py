@@ -4565,6 +4565,11 @@ def test_core_effect_receipt_binding_table_is_exact() -> None:
         "committed_at",
         "projection_status",
         "event_ids",
+        # PR-4B1 checkout identity and publication metadata are receipt-bound
+        # structural/recovery relations, not Core domain effect families.
+        "checkout_revisions",
+        "receipt_checkout_bindings",
+        "checkout_publication_intents",
     }
     assert {
         effect: rule.authoritative_relation_families
@@ -5838,3 +5843,16 @@ def test_store_rejects_missing_core_receipt_reverse_relation(tmp_path: Path) -> 
         with pytest.raises(ControlStoreIntegrityError) as exc_info:
             store.load_snapshot(RUN_ID)
     assert exc_info.value.code == "transaction_relation_mismatch"
+
+
+def test_domain_verifier_never_uses_publication_metadata_as_business_authority() -> None:
+    source = (
+        Path(__file__).parents[1]
+        / "src"
+        / "multi_agent_brief"
+        / "core_run_v2"
+        / "verifier.py"
+    ).read_text(encoding="utf-8")
+    assert "checkout_publication_acks" not in source
+    assert "checkout_publication_cleanup_observations" not in source
+    assert "checkout_publication_intents" not in source

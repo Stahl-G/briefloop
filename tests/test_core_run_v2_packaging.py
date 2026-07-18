@@ -74,6 +74,8 @@ def test_non_editable_wheel_runs_complete_dormant_core_spine(
             StageCompleteRequest,
         )
         from multi_agent_brief.control_store import SQLiteControlStore
+        from multi_agent_brief.core_run_v2.checkout import build_checkout_revision
+        from multi_agent_brief.core_run_v2.publication import CheckoutPublicationEngine
         from multi_agent_brief.core_run_v2.policy import REQUIRED_AUDITOR_GATES
 
         workspace = Path(sys.argv[1])
@@ -84,6 +86,13 @@ def test_non_editable_wheel_runs_complete_dormant_core_spine(
         ).joinpath("migrations", "0004.sql")
         assert migration_0004.is_file()
         assert "PRAGMA user_version=4;" in migration_0004.read_text(encoding="utf-8")
+        migration_0005 = resources.files(
+            "multi_agent_brief.control_store"
+        ).joinpath("migrations", "0005.sql")
+        assert migration_0005.is_file()
+        assert "PRAGMA user_version=5;" in migration_0005.read_text(encoding="utf-8")
+        assert callable(build_checkout_revision)
+        assert CheckoutPublicationEngine.__module__.endswith(".publication")
         create_demo_workspace(workspace)
         run_id = "RUN-WHEEL-CORE-V2-001"
         workspace_id = "WS-WHEEL-CORE-V2-001"

@@ -1124,12 +1124,22 @@ def test_schema_settings_and_exact_table_universe(tmp_path: Path) -> None:
         "transaction_delivery_authorizations",
         "transaction_delivery_attempts",
         "transaction_delivery_results",
+        "checkout_revisions",
+        "checkout_revision_members",
+        "receipt_checkout_bindings",
+        "checkout_publication_intents",
+        "checkout_publication_members",
+        "checkout_publication_acks",
+        "checkout_publication_cleanup_observations",
+        "transaction_checkout_revisions",
+        "transaction_receipt_checkout_bindings",
+        "transaction_checkout_publication_intents",
     }
     with _create_store(tmp_path) as store:
         assert store._connection.execute("PRAGMA foreign_keys").fetchone()[0] == 1
         assert store._connection.execute("PRAGMA journal_mode").fetchone()[0] == "wal"
         assert store._connection.execute("PRAGMA synchronous").fetchone()[0] == 2
-        assert store._connection.execute("PRAGMA user_version").fetchone()[0] == 4
+        assert store._connection.execute("PRAGMA user_version").fetchone()[0] == 5
         tables = {
             row[0]
             for row in store._connection.execute(
@@ -2550,7 +2560,7 @@ def test_future_schema_fails_closed(tmp_path: Path) -> None:
     store = _create_store(tmp_path)
     store.close()
     connection = sqlite3.connect(tmp_path / "control.db")
-    connection.execute("PRAGMA user_version = 5")
+    connection.execute("PRAGMA user_version = 6")
     connection.close()
     with pytest.raises(ControlStoreSchemaError) as error:
         SQLiteControlStore.open(tmp_path / "control.db")
@@ -2832,6 +2842,13 @@ def test_migration_resource_matches_packaged_source_text() -> None:
         "0004.sql",
     )
     assert packaged_4.read_text(encoding="utf-8") == migration_4.read_text(
+        encoding="utf-8"
+    )
+    migration_5 = source.with_name("0005.sql")
+    packaged_5 = resources.files("multi_agent_brief.control_store").joinpath(
+        "migrations", "0005.sql"
+    )
+    assert packaged_5.read_text(encoding="utf-8") == migration_5.read_text(
         encoding="utf-8"
     )
 
