@@ -1135,6 +1135,132 @@ def test_blocked_recovery_denies_terminal_spine_effects_without_writes(
         assert store.current_revision == revision
 
 
+def test_later_recovered_epoch_cannot_mask_earliest_unresolved_contamination(
+    tmp_path: Path,
+) -> None:
+    """Every epoch must recover in order; a later repair cannot jump ahead."""
+
+    workspace = _initialized_workspace(tmp_path)
+    with SQLiteControlStore.open(workspace / "briefloop.db", clock=CLOCK) as store:
+        _accept_input_classification(store)
+        _record_contamination(store)
+        _start_repair(store)
+        _supersede_input_classification(store)
+        _complete_repair(store)
+        _complete_reopened_stage(store)
+        recovery_request = _complete_recovery(store)
+        snapshot = store.load_snapshot(RUN_ID)
+        revision = store.current_revision
+
+    first_contamination = next(
+        item for item in snapshot.run_integrity_records if item.status == "contaminated"
+    )
+    later_contamination = first_contamination.model_copy(
+        update={
+            "integrity_revision": 3,
+            "prior_integrity_revision": 2,
+            "accepted_transaction_id": recovery_request[0],
+        }
+    )
+    later_repair = snapshot.repair_cycles[0].model_copy(
+        update={"contamination_revision": 3}
+    )
+    later_completion = snapshot.repair_completions[0].model_copy(
+        update={"contamination_revision": 3}
+    )
+    later_recovery = snapshot.recovery_completions[0].model_copy(
+        update={"contamination_revision": 3}
+    )
+    jumped = replace(
+        snapshot,
+        run_integrity_records=(
+            *snapshot.run_integrity_records,
+            later_contamination,
+        ),
+        repair_cycles=(later_repair,),
+        repair_completions=(later_completion,),
+        recovery_completions=(later_recovery,),
+    )
+    assert classify_recovery_legality(jumped).state == "invalid"
+    authorization = classify_effect_authorization(
+        jumped,
+        CoreEffect.FINALIZE_RENDER,
+    )
+    assert authorization.decision == "invalid"
+    assert authorization.reason_code == "recovery_state_invalid"
+
+    no_jump = replace(
+        jumped,
+        repair_cycles=(),
+        artifact_supersessions=(),
+        repair_completions=(),
+        recovery_completions=(),
+    )
+    earliest = classify_recovery_legality(no_jump)
+    assert earliest.state == "blocked"
+    assert earliest.latest_contamination_revision == 2
+    assert revision == snapshot.store_revision
+
+
+def test_claim_freeze_is_not_authorized_by_forged_claim_ledger_reopen(
+    tmp_path: Path,
+) -> None:
+    """Pending recovery cannot manufacture an unsupported Claim re-freeze lane."""
+
+    workspace = _initialized_workspace(tmp_path)
+    with SQLiteControlStore.open(workspace / "briefloop.db", clock=CLOCK) as store:
+        _accept_input_classification(store)
+        _record_contamination(store)
+        blocked = store.load_snapshot(RUN_ID)
+        _start_repair(store)
+        active = store.load_snapshot(RUN_ID)
+        _supersede_input_classification(store)
+        _complete_repair(store)
+        rerun = store.load_snapshot(RUN_ID)
+        history = store.load_history()
+        revision = store.current_revision
+
+    assert not rerun.claim_freezes
+    completion = rerun.repair_completions[0]
+    reopen_id = completion.reopened_transition_ids[0]
+    claim_reopen = next(
+        item for item in rerun.stage_transitions if item.transition_id == reopen_id
+    ).model_copy(update={"stage_id": "claim-ledger"})
+    claim_rerun = replace(
+        rerun,
+        stage_transitions=tuple(
+            claim_reopen if item.transition_id == reopen_id else item
+            for item in rerun.stage_transitions
+        ),
+    )
+    assert classify_recovery_legality(claim_rerun).state == "rerun_required"
+    denied = classify_effect_authorization(
+        claim_rerun,
+        CoreEffect.CLAIM_FREEZE,
+        CoreEffectSubject(stage_id="claim-ledger"),
+    )
+    assert denied.decision == "deny"
+    assert denied.reason_code == "recovery_state_invalid"
+    forged_history = replace(history, snapshots=(claim_rerun,))
+    with pytest.raises(CoreRunError, match="historical_prefix_invalid"):
+        CoreRunDomainVerifier().verify_history(forged_history)
+
+    for snapshot, stage_id in (
+        (claim_rerun, "analyst"),
+        (rerun, "claim-ledger"),
+        (blocked, "claim-ledger"),
+        (active, "claim-ledger"),
+    ):
+        denied = classify_effect_authorization(
+            snapshot,
+            CoreEffect.CLAIM_FREEZE,
+            CoreEffectSubject(stage_id=stage_id),
+        )
+        assert denied.decision == "deny"
+        assert denied.reason_code == "recovery_state_invalid"
+    assert rerun.store_revision == revision
+
+
 def test_repair_start_is_receipt_bound_replayable_and_restart_safe(
     tmp_path: Path,
 ) -> None:

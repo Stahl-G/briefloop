@@ -250,10 +250,16 @@ def classify_recovery_legality(snapshot: ControlStoreSnapshot) -> RecoveryLegali
         or set(recoveries_by_completion) - known_completions
     ):
         return RecoveryLegality("invalid")
-    latest = epochs[-1]
-    if latest.state == "recovered_current":
-        return latest
-    return latest
+    for index, epoch in enumerate(epochs):
+        if epoch.state == "recovered_current":
+            continue
+        if any(
+            repairs_by_epoch.get(item.integrity_revision)
+            for item in contaminations[index + 1 :]
+        ):
+            return RecoveryLegality("invalid")
+        return epoch
+    return epochs[-1]
 
 
 def _required_recovery_relations(
