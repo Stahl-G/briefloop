@@ -7,7 +7,7 @@ name = "briefloop"
 version = "0.12.1"
 description = "Source-grounded, audit-ready multi-agent workflow for business and research briefs."
 readme = "README.md"
-requires-python = ">=3.9"
+requires-python = ">=3.12"
 license = "MIT"
 authors = [
   {name = "BriefLoop contributors"}
@@ -24,9 +24,6 @@ classifiers = [
   "Intended Audience :: Developers",
   "Operating System :: OS Independent",
   "Programming Language :: Python :: 3",
-  "Programming Language :: Python :: 3.9",
-  "Programming Language :: Python :: 3.10",
-  "Programming Language :: Python :: 3.11",
   "Programming Language :: Python :: 3.12",
   "Topic :: Office/Business",
   "Topic :: Software Development :: Quality Assurance",
@@ -42,6 +39,7 @@ docx = [
 ]
 dev = [
   "pytest>=8.0",
+  "pytest-xdist>=3.5",
   "python-docx>=1.0.0",
   "ruff>=0.8.0",
   "setuptools>=68",
@@ -94,7 +92,7 @@ testpaths = ["tests"]
 pythonpath = ["src"]
 
 [tool.ruff]
-target-version = "py39"
+target-version = "py312"
 
 [tool.ruff.lint]
 select = ["E9", "F63", "F7", "F82"]

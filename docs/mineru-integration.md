@@ -11,7 +11,7 @@ pip install "mineru[all]"
 # Or: uv pip install -U "mineru[all]"
 ```
 
-Requires Python 3.10-3.13. See [MinerU docs](https://opendatalab.github.io/MinerU/) for detailed installation.
+MinerU upstream requires Python 3.10-3.13; with BriefLoop's 3.12 floor the effective supported range for this optional integration is 3.12-3.13. See [MinerU docs](https://opendatalab.github.io/MinerU/) for detailed installation.
 
 ## Input Extraction Mode
 

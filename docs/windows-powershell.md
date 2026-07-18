@@ -7,7 +7,7 @@ or Git Bash to install and run the CLI.
 
 - Windows 10 or Windows 11
 - Windows PowerShell 5.1 or PowerShell 7
-- Python 3.9+
+- Python 3.12+
 - Git for Windows
 
 PowerShell is the recommended Windows path. WSL is an optional advanced path,
@@ -43,7 +43,7 @@ briefloop version
 `scripts/setup.ps1` will:
 
 - find `py -3`, `py`, `python`, `python3`, or common Python install paths;
-- require Python 3.9+;
+- require Python 3.12+;
 - create `.venv`;
 - install `.[dev]`;
 - verify `python -m multi_agent_brief.cli.main version`;

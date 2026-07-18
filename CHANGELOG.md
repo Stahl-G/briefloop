@@ -9,6 +9,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **Breaking:** the supported Python floor is now 3.12. `requires-python`
+  moves from `>=3.9` to `>=3.12`, so the next release refuses to install on
+  Python 3.9-3.11. Setup and install scripts enforce the same floor at
+  preflight, probe versioned interpreters (`python3.14`/`python3.13`/
+  `python3.12`) when the unversioned `python3` is too old, and recreate an
+  existing venv whose interpreter is broken or below the floor instead of
+  reusing it. CI runs the full test suite on macOS and Windows with Python
+  3.12 in parallel (pytest-xdist worksteal); Linux full-suite legs are
+  retired by explicit maintainer decision, while Linux install and CLI
+  smoke coverage remains.
 - **Breaking:** runtime identity must now be explicit. Dedicated adapters inject
   their fixed canonical identity, while generic CLI users pass `--runtime`.
   New state accepts only `hermes`, `claude`, `opencode`, `codex`, `codebuddy`,

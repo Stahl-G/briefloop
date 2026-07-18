@@ -111,14 +111,21 @@ def test_pr_concurrency_is_stable_while_non_pr_runs_are_unique() -> None:
     assert "github.event.pull_request.number || github.ref" not in group
 
 
-def test_candidate_classification_keeps_one_full_supported_matrix() -> None:
+def test_candidate_classification_pins_supported_matrix() -> None:
+    """The PR test matrix is intentionally macOS + Windows on Python 3.12.
+
+    Linux full-suite legs are retired by explicit maintainer decision; Linux
+    keeps install/CLI smoke coverage via the non-dev smoke jobs. Guard
+    against silently collapsing the matrix to a single ubuntu leg or
+    restoring an untested Python floor.
+    """
     workflow = _workflow()
     changes = workflow["jobs"]["changes"]
     script = changes["steps"][1]["run"]
 
     assert set(changes["outputs"]) == {"docs_only", "run_candidate", "test_matrix"}
-    assert '"os": ["ubuntu-latest", "macos-latest", "windows-latest"]' in script
-    assert '"python-version": ["3.9", "3.12"]' in script
+    assert '"os": ["macos-latest", "windows-latest"]' in script
+    assert '"python-version": ["3.12"]' in script
     assert 'event_name != "pull_request" or not pr_is_draft' in script
     assert 'event_name == "pull_request"' in script
     assert 'event_name == "workflow_dispatch"' not in script
