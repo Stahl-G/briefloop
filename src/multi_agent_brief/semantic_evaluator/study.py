@@ -658,7 +658,9 @@ def budgeted_shadow_run(
     sleep: Any = None,
 ) -> BudgetedShadowRunResult:
     try:
-        evidence_path = validate_standalone_study_output(evidence_output)
+        evidence_path = validate_standalone_study_output(
+            evidence_output, forbidden_archive=archive_root
+        )
         existing_execution_evidence = (
             parse_study_json(
                 evidence_path.read_bytes(),
@@ -695,7 +697,9 @@ def budgeted_shadow_run(
     reserved: BinaryIO | None = None
     if existing_execution_evidence is None:
         try:
-            _, reserved = reserve_study_output(evidence_path)
+            _, reserved = reserve_study_output(
+                evidence_path, forbidden_archive=archive_root
+            )
         except SemanticEvaluatorError as exc:
             return BudgetedShadowRunResult(preflight, None, None, (exc.reason_code,))
     kwargs: dict[str, Any] = {"adapter_factory": adapter_factory}
@@ -842,7 +846,13 @@ _WORKSPACE_MARKERS = frozenset({"config.yaml", "sources.yaml", "user.md"})
 _ARCHIVE_MARKERS = frozenset({"COMPLETE", "archive_manifest.json", "receipt.json"})
 
 
-def validate_standalone_study_output(path: str | Path) -> Path:
+def _paths_overlap(first: Path, second: Path) -> bool:
+    return first == second or first in second.parents or second in first.parents
+
+
+def validate_standalone_study_output(
+    path: str | Path, *, forbidden_archive: str | Path | None = None
+) -> Path:
     """Require a new JSON file in a real standalone laj-study-* directory."""
 
     try:
@@ -860,8 +870,18 @@ def validate_standalone_study_output(path: str | Path) -> Path:
             parent_metadata.st_mode
         ):
             raise ValueError
-        if candidate.parent.resolve(strict=True) != candidate.parent:
+        resolved_parent = candidate.parent.resolve(strict=True)
+        if resolved_parent != candidate.parent:
             raise ValueError
+        resolved_candidate = resolved_parent / candidate.name
+        if forbidden_archive is not None:
+            archive = Path(forbidden_archive).expanduser()
+            if not archive.is_absolute():
+                archive = archive.absolute()
+            if _paths_overlap(candidate.absolute(), archive) or _paths_overlap(
+                resolved_candidate, archive.resolve(strict=False)
+            ):
+                raise ValueError
         for ancestor in (candidate.parent, *candidate.parent.parents):
             metadata = ancestor.lstat()
             if stat.S_ISLNK(metadata.st_mode):
@@ -879,8 +899,12 @@ def validate_standalone_study_output(path: str | Path) -> Path:
     return candidate
 
 
-def reserve_study_output(path: str | Path) -> tuple[Path, BinaryIO]:
-    candidate = validate_standalone_study_output(path)
+def reserve_study_output(
+    path: str | Path, *, forbidden_archive: str | Path | None = None
+) -> tuple[Path, BinaryIO]:
+    candidate = validate_standalone_study_output(
+        path, forbidden_archive=forbidden_archive
+    )
     try:
         descriptor = os.open(
             candidate,
@@ -906,15 +930,22 @@ def _commit_reserved(handle: BinaryIO, payload: bytes) -> None:
         raise SemanticEvaluatorError("study_execution_evidence_incomplete") from None
 
 
-def write_canonical_model(path: Path, model: Any) -> None:
-    _, handle = reserve_study_output(path)
+def write_canonical_model(
+    path: Path, model: Any, *, forbidden_archive: str | Path | None = None
+) -> None:
+    _, handle = reserve_study_output(path, forbidden_archive=forbidden_archive)
     _commit_reserved(
         handle, canonical_json_bytes(model.model_dump(mode="json", warnings="error"))
     )
 
 
-def write_canonical_payload(path: Path, payload: Mapping[str, Any]) -> None:
-    _, handle = reserve_study_output(path)
+def write_canonical_payload(
+    path: Path,
+    payload: Mapping[str, Any],
+    *,
+    forbidden_archive: str | Path | None = None,
+) -> None:
+    _, handle = reserve_study_output(path, forbidden_archive=forbidden_archive)
     _commit_reserved(handle, canonical_json_bytes(dict(payload)))
 
 

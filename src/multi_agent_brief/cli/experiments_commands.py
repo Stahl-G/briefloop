@@ -528,22 +528,30 @@ def _read_study_model(study: Any, path: str, model: type[Any], reason: str) -> A
     return study.parse_study_json(raw, model, reason)
 
 
-def _write_study_output(study: Any, path: str, value: Any) -> None:
+def _write_study_output(
+    study: Any, path: str, value: Any, *, forbidden_archive: str
+) -> None:
     from pathlib import Path
 
     output = Path(path)
     if output.exists() or not output.parent.exists():
         raise RuntimeError("study output unavailable")
-    study.write_canonical_model(output, value)
+    study.write_canonical_model(output, value, forbidden_archive=forbidden_archive)
 
 
-def _write_study_payload(study: Any, path: str, payload: dict[str, object]) -> None:
+def _write_study_payload(
+    study: Any,
+    path: str,
+    payload: dict[str, object],
+    *,
+    forbidden_archive: str,
+) -> None:
     from pathlib import Path
 
     output = Path(path)
     if output.exists() or not output.parent.exists():
         raise RuntimeError("study output unavailable")
-    study.write_canonical_payload(output, payload)
+    study.write_canonical_payload(output, payload, forbidden_archive=forbidden_archive)
 
 
 def _print_study_payload(payload: dict[str, object], *, json_output: bool) -> None:
@@ -559,6 +567,9 @@ def _print_study_payload(payload: dict[str, object], *, json_output: bool) -> No
 def _handle_laj_study_preflight(args: argparse.Namespace) -> int:
     try:
         study = importlib.import_module("multi_agent_brief.semantic_evaluator.study")
+        study.validate_standalone_study_output(
+            args.output, forbidden_archive=args.archive_root
+        )
         contracts = importlib.import_module(
             "multi_agent_brief.semantic_evaluator.study_contracts"
         )
@@ -580,7 +591,12 @@ def _handle_laj_study_preflight(args: argparse.Namespace) -> int:
                 "provider_calls": 0,
                 "runtime_authority": False,
             }
-            _write_study_payload(study, args.output, payload)
+            _write_study_payload(
+                study,
+                args.output,
+                payload,
+                forbidden_archive=args.archive_root,
+            )
             _print_study_payload(payload, json_output=getattr(args, "json", False))
             return 1
         if not study.verify_study_report_binding(declaration, args.report):
@@ -594,7 +610,12 @@ def _handle_laj_study_preflight(args: argparse.Namespace) -> int:
                 "provider_calls": 0,
                 "runtime_authority": False,
             }
-            _write_study_payload(study, args.output, payload)
+            _write_study_payload(
+                study,
+                args.output,
+                payload,
+                forbidden_archive=args.archive_root,
+            )
             _print_study_payload(payload, json_output=getattr(args, "json", False))
             return 1
         manifest = None
@@ -624,7 +645,12 @@ def _handle_laj_study_preflight(args: argparse.Namespace) -> int:
             control_report=args.control_report,
         )
         payload = result.to_dict()
-        _write_study_payload(study, args.output, payload)
+        _write_study_payload(
+            study,
+            args.output,
+            payload,
+            forbidden_archive=args.archive_root,
+        )
     except Exception as exc:
         reason = getattr(exc, "reason_code", None)
         payload = {
@@ -640,6 +666,9 @@ def _handle_laj_study_preflight(args: argparse.Namespace) -> int:
 def _handle_laj_budgeted_shadow_run(args: argparse.Namespace) -> int:
     try:
         study = importlib.import_module("multi_agent_brief.semantic_evaluator.study")
+        study.validate_standalone_study_output(
+            args.evidence_output, forbidden_archive=args.archive_root
+        )
         contracts = importlib.import_module(
             "multi_agent_brief.semantic_evaluator.study_contracts"
         )
@@ -679,6 +708,9 @@ def _handle_laj_budgeted_shadow_run(args: argparse.Namespace) -> int:
 def _handle_laj_study_compare(args: argparse.Namespace) -> int:
     try:
         study = importlib.import_module("multi_agent_brief.semantic_evaluator.study")
+        study.validate_standalone_study_output(
+            args.output, forbidden_archive=args.archive
+        )
         contracts = importlib.import_module(
             "multi_agent_brief.semantic_evaluator.study_contracts"
         )
@@ -697,7 +729,12 @@ def _handle_laj_study_compare(args: argparse.Namespace) -> int:
         comparison = study.compare_sensitivity(
             case=case, evidence=evidence, archive_path=args.archive
         )
-        _write_study_output(study, args.output, comparison)
+        _write_study_output(
+            study,
+            args.output,
+            comparison,
+            forbidden_archive=args.archive,
+        )
         payload = {
             "ok": True,
             "state": comparison.state,

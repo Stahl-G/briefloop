@@ -197,6 +197,33 @@ def test_shadow_cli_is_registered_only_below_experiments_laj() -> None:
     )
 
 
+def test_all_study_cli_writers_reject_bound_empty_archive_root(
+    tmp_path: Path, capsys
+) -> None:
+    archive_root = tmp_path / "empty-archive"
+    output_dir = archive_root / "laj-study-inside-archive"
+    output_dir.mkdir(parents=True)
+    commands = (
+        (_study_preflight_argv(), "--archive-root", "--output", "preflight.json"),
+        (
+            _budgeted_argv(),
+            "--archive-root",
+            "--evidence-output",
+            "evidence.json",
+        ),
+        (_study_compare_argv(), "--archive", "--output", "comparison.json"),
+    )
+    for argv, archive_option, output_option, filename in commands:
+        target = output_dir / filename
+        argv[argv.index(archive_option) + 1] = str(archive_root)
+        argv[argv.index(output_option) + 1] = str(target)
+        assert main(argv) == 1
+        payload = json.loads(capsys.readouterr().out)
+        assert payload["reason_codes"] == ["provider_exclusion_invalid"]
+        assert payload.get("provider_calls", 0) == 0
+        assert not target.exists()
+
+
 def test_study_preflight_failure_precedence_is_value_free_and_zero_provider(
     tmp_path: Path, capsys
 ) -> None:

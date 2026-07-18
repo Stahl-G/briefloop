@@ -29,6 +29,7 @@ from multi_agent_brief.semantic_evaluator.study import (
     parse_sensitivity_manifest,
     parse_study_json,
     resolve_sensitivity_case,
+    validate_standalone_study_output,
 )
 from multi_agent_brief.semantic_evaluator.study_contracts import (
     PROVIDER_BUDGET_POLICY_SCHEMA_ID,
@@ -125,6 +126,36 @@ def test_product_utility_target_is_strict_and_sensitivity_is_calibration_only() 
     result = evaluate_study_eligibility(sensitivity)
     assert result.eligible is True
     assert result.evidence_class == "calibration_only"
+
+
+def test_study_output_rejects_explicit_archive_overlap_before_markers(
+    tmp_path: Path,
+) -> None:
+    archive_root = (tmp_path / "empty-archive").resolve()
+    archive_root.mkdir()
+    inside = archive_root / "laj-study-inside"
+    inside.mkdir()
+    equal_parent = tmp_path / "laj-study-equal"
+    equal_parent.mkdir()
+    equal_output = equal_parent / "result.json"
+    parent_dir = tmp_path / "laj-study-parent"
+    parent_dir.mkdir()
+    parent_output = parent_dir / "result.json"
+
+    candidates = (
+        inside / "result.json",
+        equal_output,
+        parent_output,
+    )
+    forbidden = (
+        archive_root,
+        equal_output,
+        parent_output / "archive",
+    )
+    for output, archive in zip(candidates, forbidden, strict=True):
+        with pytest.raises(Exception) as error:
+            validate_standalone_study_output(output, forbidden_archive=archive)
+        assert getattr(error.value, "reason_code") == "provider_exclusion_invalid"
 
 
 def test_study_contract_rejects_coercion_extra_and_self_hash_tamper() -> None:
