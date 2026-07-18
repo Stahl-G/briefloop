@@ -1274,6 +1274,79 @@ def test_gate_batches_append_and_old_request_exactly_replays(
     assert report_path.read_bytes() == second_report_bytes
 
 
+def test_gate_rejects_finalize_stage_before_store_or_checkout_access(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    workspace = _workspace(tmp_path)
+    _advance_to_auditor_ready(workspace)
+    auditor_request = _gate_request(
+        workspace,
+        request_id="REQ-GATE-FINALIZE-REJECTED",
+    )
+    request_values = auditor_request.model_dump(mode="python", exclude_unset=False)
+    request_values["stage_id"] = "finalize"
+    request = GateCheckRequest.model_validate(request_values, strict=True)
+
+    database = workspace / "briefloop.db"
+    with SQLiteControlStore.open(database) as store:
+        before = store.load_snapshot(RUN_ID)
+        before_artifact_bytes = {
+            (revision.artifact_id, revision.revision): (
+                store.read_artifact_revision_bytes(
+                    RUN_ID,
+                    revision.artifact_id,
+                    revision.revision,
+                )
+            )
+            for revision in before.artifact_revisions
+        }
+    ignored_database_names = {"briefloop.db", "briefloop.db-shm", "briefloop.db-wal"}
+    before_checkout = {
+        path.relative_to(workspace).as_posix(): path.read_bytes()
+        for path in workspace.rglob("*")
+        if path.is_file()
+        and path.name not in ignored_database_names
+        and "briefloop.db.blobs" not in path.parts
+    }
+
+    service = GateEvaluationService(workspace, clock=CLOCK)
+
+    def unexpected_store_access() -> SQLiteControlStore:
+        raise AssertionError("finalize Gate request reached the Store")
+
+    monkeypatch.setattr(service, "_open_store", unexpected_store_access)
+    result = service.evaluate(request)
+
+    assert result.to_dict() == {
+        "status": "failed_uncommitted",
+        "error_code": "core_run_request_invalid",
+    }
+    assert result.receipt is None
+    assert result.primary_record_id is None
+    after_checkout = {
+        path.relative_to(workspace).as_posix(): path.read_bytes()
+        for path in workspace.rglob("*")
+        if path.is_file()
+        and path.name not in ignored_database_names
+        and "briefloop.db.blobs" not in path.parts
+    }
+    assert after_checkout == before_checkout
+    with SQLiteControlStore.open(database) as store:
+        assert store.current_revision == before.store_revision
+        assert store.load_snapshot(RUN_ID) == before
+        assert {
+            (revision.artifact_id, revision.revision): (
+                store.read_artifact_revision_bytes(
+                    RUN_ID,
+                    revision.artifact_id,
+                    revision.revision,
+                )
+            )
+            for revision in before.artifact_revisions
+        } == before_artifact_bytes
+
+
 def test_audit_promotion_exact_replay_precedes_report_revision_and_stage_checks(
     tmp_path: Path,
 ) -> None:

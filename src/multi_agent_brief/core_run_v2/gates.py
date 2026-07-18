@@ -77,6 +77,8 @@ class GateEvaluationService:
 
     def evaluate(self, request: GateCheckRequest) -> CoreRunResult:
         try:
+            if request.stage_id != "auditor":
+                raise CoreRunError("core_run_request_invalid")
             return self._evaluate(request)
         except (CoreRunError, ControlStoreError) as exc:
             return core_run_failure_result(exc)
