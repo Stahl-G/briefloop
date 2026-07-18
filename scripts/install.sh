@@ -87,9 +87,9 @@ run() {
 }
 
 find_python() {
-    for cmd in python3 python; do
+    for cmd in python3 python python3.14 python3.13 python3.12; do
         if command -v "$cmd" >/dev/null 2>&1; then
-            if "$cmd" -c 'import sys; raise SystemExit(0 if sys.version_info >= (3, 9) else 1)' >/dev/null 2>&1; then
+            if "$cmd" -c 'import sys; raise SystemExit(0 if sys.version_info >= (3, 12) else 1)' >/dev/null 2>&1; then
                 command -v "$cmd"
                 return 0
             fi
@@ -103,10 +103,10 @@ echo "=== multi-agent-brief user installer ==="
 PYTHON="$(find_python || true)"
 if [ -z "$PYTHON" ]; then
     echo ""
-    echo "ERROR: Python 3.9+ not found."
+    echo "ERROR: Python 3.12+ not found."
     echo ""
     echo "Install Python first:"
-    echo "  macOS:  brew install python"
+    echo "  macOS:  brew install python@3.12"
     echo "  Ubuntu: sudo apt install python3 python3-venv"
     echo "  Python: https://www.python.org/downloads/"
     exit 1

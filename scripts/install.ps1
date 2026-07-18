@@ -71,7 +71,7 @@ function Test-PythonCandidate {
     param([Parameter(Mandatory = $true)][pscustomobject]$Candidate)
 
     try {
-        $version = & $Candidate.File @($Candidate.Args) -c "import sys; print(f'{sys.version_info.major}.{sys.version_info.minor}.{sys.version_info.micro}'); raise SystemExit(0 if sys.version_info >= (3, 9) else 1)" 2>$null
+        $version = & $Candidate.File @($Candidate.Args) -c "import sys; print(f'{sys.version_info.major}.{sys.version_info.minor}.{sys.version_info.micro}'); raise SystemExit(0 if sys.version_info >= (3, 12) else 1)" 2>$null
         if ($LASTEXITCODE -eq 0 -and $version) {
             return $version.Trim()
         }
@@ -123,7 +123,7 @@ Write-Host "=== multi-agent-brief user installer ===" -ForegroundColor Cyan
 $pythonInfo = Find-Python
 if (-not $pythonInfo) {
     Write-Host ""
-    Write-Host "ERROR: Python 3.9+ was not found." -ForegroundColor Red
+    Write-Host "ERROR: Python 3.12+ was not found." -ForegroundColor Red
     Write-Host ""
     Write-Host "Install Python, then reopen PowerShell:" -ForegroundColor Yellow
     Write-Host "  winget install Python.Python.3.12" -ForegroundColor White

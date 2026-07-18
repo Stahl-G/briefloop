@@ -8,9 +8,9 @@ cd "$(dirname "$0")/.."
 
 echo "=== BriefLoop setup ==="
 
-# Find Python 3.12+: try python3, python
+# Find Python 3.12+: try python3, python, then versioned binaries
 PYTHON=""
-for cmd in python3 python; do
+for cmd in python3 python python3.14 python3.13 python3.12; do
     if command -v "$cmd" >/dev/null 2>&1; then
         if "$cmd" -c 'import sys; raise SystemExit(0 if sys.version_info >= (3, 12) else 1)' >/dev/null 2>&1; then
             PYTHON="$cmd"
