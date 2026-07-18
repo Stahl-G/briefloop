@@ -2,13 +2,32 @@
 # Setup script for multi-agent-brief-workflow
 # Run this after cloning to get a working environment.
 # Windows users: use scripts\setup.ps1 instead.
+# Pass --dry-run to print the planned actions without executing them.
 set -euo pipefail
+
+DRY_RUN=0
+for arg in "$@"; do
+    case "$arg" in
+        --dry-run) DRY_RUN=1 ;;
+        *) echo "Unknown option: $arg" >&2; exit 2 ;;
+    esac
+done
+
+run() {
+    if [ "$DRY_RUN" -eq 1 ]; then
+        echo "+ $*"
+    else
+        "$@"
+    fi
+}
 
 cd "$(dirname "$0")/.."
 
 echo "=== BriefLoop setup ==="
 
-# Find Python 3.12+: try python3, python, then versioned binaries
+# Find Python 3.12+: try python3, python, then versioned binaries.
+# The versioned probe list is capped at 3.14; extend it when newer
+# interpreters land (unversioned python3 wins whenever it meets the floor).
 PYTHON=""
 for cmd in python3 python python3.14 python3.13 python3.12; do
     if command -v "$cmd" >/dev/null 2>&1; then
@@ -35,13 +54,19 @@ echo "[1/4] Found Python: $PYTHON ($($PYTHON --version 2>&1))"
 # 1. Create venv if missing
 if [ ! -d ".venv" ]; then
     echo "[2/4] Creating virtual environment..."
-    $PYTHON -m venv .venv
+    run "$PYTHON" -m venv .venv
 elif [ -x ".venv/bin/python" ] && .venv/bin/python -c 'import sys; raise SystemExit(0 if sys.version_info >= (3, 12) else 1)' >/dev/null 2>&1; then
     echo "[2/4] Virtual environment already exists."
 else
     echo "[2/4] Recreating virtual environment (existing one is broken or below the Python 3.12 floor)..."
-    rm -rf .venv
-    $PYTHON -m venv .venv
+    run rm -rf .venv
+    run "$PYTHON" -m venv .venv
+fi
+
+if [ "$DRY_RUN" -eq 1 ]; then
+    echo "[3/4] (dry-run) would install the package into .venv"
+    echo "[4/4] (dry-run) would verify the installation"
+    exit 0
 fi
 
 # 2. Activate

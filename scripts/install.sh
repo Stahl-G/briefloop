@@ -87,6 +87,8 @@ run() {
 }
 
 find_python() {
+    # Probe order prefers unversioned python3; the versioned list is capped
+    # at 3.14 — extend it when newer interpreters land.
     for cmd in python3 python python3.14 python3.13 python3.12; do
         if command -v "$cmd" >/dev/null 2>&1; then
             if "$cmd" -c 'import sys; raise SystemExit(0 if sys.version_info >= (3, 12) else 1)' >/dev/null 2>&1; then
