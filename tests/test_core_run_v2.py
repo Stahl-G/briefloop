@@ -97,6 +97,11 @@ NOW = "2026-07-15T12:00:00Z"
 CLOCK = lambda: datetime(2026, 7, 15, 12, 0, tzinfo=timezone.utc)
 
 
+def _require_supported_working_projection() -> None:
+    if sys.platform == "win32":
+        pytest.skip("working-checkout publication is precommit unsupported on Windows")
+
+
 def _commit_core_fixture(store: SQLiteControlStore, unit):
     """Commit an intentionally forged core receipt with a valid checkout edge."""
 
@@ -275,6 +280,7 @@ def _complete_stage(
 
 
 def _submit_source(workspace: Path, invocation_id: str) -> None:
+    _require_supported_working_projection()
     scratch = workspace / "scratch" / invocation_id
     content = b"ExampleCo opened a public pilot facility on 2026-07-14.\n"
     content_path = scratch / "source_content.txt"
@@ -340,6 +346,7 @@ def _submit_proposal(
     payload: dict[str, object],
     expected_artifact_revision: int = 0,
 ) -> None:
+    _require_supported_working_projection()
     scratch = workspace / "scratch" / invocation_id
     proposal_path = scratch / f"{artifact_id}.json"
     _write_json(proposal_path, payload)
@@ -369,6 +376,7 @@ def _advance_to_scout_ready(
     *,
     topology: str = "default",
 ) -> CoreRunService:
+    _require_supported_working_projection()
     service = _initialize(workspace, topology=topology)
     doctor = service.doctor_check(
         _record(
@@ -501,6 +509,7 @@ def test_bound_intake_verifies_domain_before_and_after_commit(
 
 
 def _advance_to_input_governance_ready(workspace: Path) -> CoreRunService:
+    _require_supported_working_projection()
     service = _initialize(workspace, input_governance_required=True)
     doctor = service.doctor_check(
         _record(
@@ -739,6 +748,63 @@ def test_input_classification_identity_is_workspace_relative_and_selector_stable
         var_alias = Path(str(workspace).removeprefix("/private"))
         assert var_alias.is_dir()
         assert _input_classification_bytes(var_alias) == canonical
+
+
+@pytest.mark.skipif(sys.platform != "win32", reason="Windows publication contract")
+def test_windows_artifact_publication_is_rejected_before_store_commit(
+    tmp_path: Path,
+) -> None:
+    workspace = _workspace(tmp_path)
+    service = _initialize(workspace)
+    doctor = service.doctor_check(
+        _record(
+            IntegrityCheckRequest,
+            request_id="REQ-DOCTOR-WINDOWS-PUBLICATION",
+            run_id=RUN_ID,
+            expected_store_revision=_store_revision(workspace),
+        )
+    )
+    assert doctor.status == "committed", doctor.to_dict()
+    invocation_id = _start_invocation(
+        service,
+        workspace,
+        request_id="REQ-INVOKE-WINDOWS-PUBLICATION",
+        stage_id="source-discovery",
+        role_id="source-planner",
+    )
+    scratch = workspace / "scratch" / invocation_id / "source_candidates.yaml"
+    scratch.parent.mkdir(parents=True, exist_ok=True)
+    scratch.write_text("sources:\n  - SRC-001\n", encoding="utf-8")
+    before = _store_revision(workspace)
+    with SQLiteControlStore.open(workspace / "briefloop.db") as store:
+        before_snapshot = store.load_snapshot(RUN_ID)
+
+    result = ArtifactAcceptanceService(workspace, clock=CLOCK).submit_owned_artifact(
+        _record(
+            OwnedArtifactSubmitRequest,
+            request_id="REQ-ARTIFACT-WINDOWS-PUBLICATION",
+            run_id=RUN_ID,
+            artifact_id="source_candidates",
+            invocation_id=invocation_id,
+            producer_tool_id=None,
+            input_path=scratch.relative_to(workspace).as_posix(),
+            expected_store_revision=before,
+            expected_artifact_revision=0,
+            expected_parent_artifact=None,
+        )
+    )
+
+    assert result.to_dict() == {
+        "status": "failed_uncommitted",
+        "error_code": "checkout_publication_unsupported",
+    }
+    assert _store_revision(workspace) == before
+    with SQLiteControlStore.open(workspace / "briefloop.db") as store:
+        snapshot = store.load_snapshot(RUN_ID)
+    assert snapshot.artifacts == before_snapshot.artifacts
+    assert snapshot.artifact_revisions == before_snapshot.artifact_revisions
+    assert snapshot.checkout_revisions == before_snapshot.checkout_revisions
+    assert scratch.read_text(encoding="utf-8") == "sources:\n  - SRC-001\n"
 
 
 def _candidate_payload() -> dict[str, object]:
@@ -2300,6 +2366,7 @@ def _submit_human_assisted_draft(
     revision: int,
     parent: dict[str, object] | None = None,
 ) -> bytes:
+    _require_supported_working_projection()
     content = (
         f"# {artifact_id} revision {revision}\n\n"
         "ExampleCo opened a public pilot facility. [src:CL-0001]\n"
@@ -3784,6 +3851,7 @@ def test_source_discovery_requires_candidates_and_eligible_source(
     tmp_path: Path,
     only: str,
 ) -> None:
+    _require_supported_working_projection()
     workspace = _workspace(tmp_path)
     service = _initialize(workspace)
     checked = service.doctor_check(

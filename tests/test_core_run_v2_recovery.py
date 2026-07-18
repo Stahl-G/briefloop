@@ -6,6 +6,7 @@ from datetime import datetime, timezone
 import hashlib
 import json
 from pathlib import Path
+import sys
 
 import pytest
 
@@ -1910,6 +1911,7 @@ def test_repair_start_before_commit_failure_rolls_back_every_relation(
         )
 
 
+@pytest.mark.skipif(sys.platform == "win32", reason="requires working-checkout publication")
 def test_recovery_service_reset_is_cross_run_and_historical_replay_safe(
     tmp_path: Path,
 ) -> None:
