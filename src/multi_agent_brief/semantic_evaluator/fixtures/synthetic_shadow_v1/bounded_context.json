@@ -1,0 +1,1 @@
+{"context_id":"context-shadow-fixture-v1","context_sha256":"523ab79bbf35abc063aca24bec93eac6b5f64e31337840fb244b635db25eec8b","data_class":"synthetic","language":"zh-CN","requirements":[{"requirement_id":"REQ-SHADOW-1","source_locator":"synthetic:shadow","text":"说明当前状态与下一步边界。","type":"must_answer"}],"schema_version":"briefloop.semantic_evaluator.bounded_context.v1"}
