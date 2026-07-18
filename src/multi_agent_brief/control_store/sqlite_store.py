@@ -31,10 +31,12 @@ from multi_agent_brief.contracts.v2 import (
     CheckoutPublicationAck,
     CheckoutPublicationCleanupObservation,
     CheckoutPublicationIntent,
+    CheckoutPublicationIntentReference,
     CheckoutPublicationMember,
     PublicationIdentityV1,
     CheckoutRevisionMember,
     CheckoutRevisionRecord,
+    CheckoutRevisionReference,
     ContractId,
     Delivery,
     DeliveryAttemptRecord,
@@ -55,6 +57,7 @@ from multi_agent_brief.contracts.v2 import (
     RepairCompletionRecord,
     RepairCycleRecord,
     ReceiptCheckoutBinding,
+    ReceiptCheckoutBindingReference,
     ArtifactSupersessionRecord,
     RunContractBinding,
     RunIdentity,
@@ -2197,7 +2200,12 @@ class SQLiteControlStore:
                 or not record.frozen
             ):
                 raise ControlStoreConflict("relational_integrity_conflict")
-        from multi_agent_brief.core_run_v2.checkout import build_checkout_revision
+        from multi_agent_brief.core_run_v2.checkout import (
+            BuiltCheckoutRevision,
+            build_checkout_revision,
+            build_publication_intent,
+        )
+        from multi_agent_brief.core_run_v2.errors import CoreRunError
 
         rebuilt = build_checkout_revision(
             workspace_id=revision.workspace_id,
@@ -2223,13 +2231,56 @@ class SQLiteControlStore:
             if publication_members:
                 raise ControlStoreConflict("relational_integrity_conflict")
             return
+        pre: BuiltCheckoutRevision | None = None
+        if binding.pre_checkout_revision_id is not None:
+            pre_snapshot = self.load_snapshot(binding.pre_run_id)
+            pre_records = tuple(
+                item
+                for item in pre_snapshot.checkout_revisions
+                if item.checkout_revision_id == binding.pre_checkout_revision_id
+            )
+            if len(pre_records) != 1:
+                raise ControlStoreConflict("relational_integrity_conflict")
+            pre_members = tuple(
+                sorted(
+                    (
+                        item
+                        for item in pre_snapshot.checkout_revision_members
+                        if item.checkout_revision_id
+                        == binding.pre_checkout_revision_id
+                    ),
+                    key=lambda item: item.ordinal,
+                )
+            )
+            pre = BuiltCheckoutRevision(pre_records[0], pre_members, b"")
+        post = BuiltCheckoutRevision(rebuilt.record, rebuilt.members, rebuilt.manifest_bytes)
         if (
-            intent.identity.checkout_revision_id != revision.checkout_revision_id
+            intent.identity.workspace_id != self.workspace_id
             or intent.identity.run_id != run_id
             or intent.identity.transaction_id != uow.transaction_id
-            or len(publication_members) != intent.changed_member_count
-            or [item.ordinal for item in sorted(publication_members, key=lambda x: x.ordinal)]
-            != list(range(intent.changed_member_count))
+            or intent.identity.checkout_revision_id != revision.checkout_revision_id
+            or binding.workspace_id != self.workspace_id
+            or binding.run_id != run_id
+            or binding.transaction_id != uow.transaction_id
+            or binding.post_run_id != run_id
+            or binding.post_checkout_revision_id != revision.checkout_revision_id
+            or revision.parent_checkout_revision_id
+            != binding.pre_checkout_revision_id
+        ):
+            raise ControlStoreConflict("relational_integrity_conflict")
+        try:
+            expected_intent, expected_members = build_publication_intent(
+                identity=intent.identity,
+                pre=pre,
+                post=post,
+                capability_profile_sha256=intent.capability_profile_sha256,
+            )
+        except CoreRunError as exc:
+            raise ControlStoreConflict("relational_integrity_conflict") from exc
+        if (
+            intent != expected_intent
+            or tuple(sorted(publication_members, key=lambda item: item.ordinal))
+            != expected_members
         ):
             raise ControlStoreConflict("relational_integrity_conflict")
 
@@ -4456,6 +4507,16 @@ class SQLiteControlStore:
             raise ControlStoreIntegrityError("checkout_revision_invalid")
         revisions = {item.checkout_revision_id: item for item in snapshot.checkout_revisions}
         receipts = {item.transaction_id: item for item in snapshot.transactions}
+        from datetime import datetime
+        from multi_agent_brief.core_run_v2.checkout import (
+            BuiltCheckoutRevision,
+            build_checkout_revision,
+            build_publication_intent,
+            publication_identity_sha256,
+        )
+        from multi_agent_brief.core_run_v2.errors import CoreRunError
+
+        built_revisions: dict[str, BuiltCheckoutRevision] = {}
         members_by_revision: dict[str, list[CheckoutRevisionMember]] = {}
         for member in snapshot.checkout_revision_members:
             members_by_revision.setdefault(member.checkout_revision_id, []).append(member)
@@ -4483,9 +4544,6 @@ class SQLiteControlStore:
             )
             if len(members) != revision.member_count or [m.ordinal for m in members] != list(range(len(members))):
                 raise ControlStoreIntegrityError("checkout_revision_invalid")
-            from datetime import datetime
-            from multi_agent_brief.core_run_v2.checkout import build_checkout_revision
-
             artifact_rows = []
             for member in members:
                 artifact = next(
@@ -4512,6 +4570,7 @@ class SQLiteControlStore:
             )
             if rebuilt.record != revision or rebuilt.members != tuple(members):
                 raise ControlStoreIntegrityError("checkout_revision_invalid")
+            built_revisions[revision.checkout_revision_id] = rebuilt
             receipt = receipts.get(revision.creator_transaction_id)
             if receipt is None or not any(
                 item.checkout_revision_id == revision.checkout_revision_id
@@ -4545,16 +4604,71 @@ class SQLiteControlStore:
                 member.identity.checkout_revision_id,
             )
             members_by_intent.setdefault(key, []).append(member)
-        from multi_agent_brief.core_run_v2.checkout import publication_identity_sha256
         for key, intent in intents.items():
             members = sorted(members_by_intent.get(key, []), key=lambda item: item.ordinal)
+            binding = bindings.get(intent.identity.transaction_id)
+            receipt = receipts.get(intent.identity.transaction_id)
+            post = built_revisions.get(intent.post_checkout_revision_id)
+            pre = (
+                None
+                if binding is None or binding.pre_checkout_revision_id is None
+                else built_revisions.get(binding.pre_checkout_revision_id)
+            )
             if (
                 intent.publication_identity_sha256 != publication_identity_sha256(intent.identity)
-                or len(members) != intent.changed_member_count
-                or [item.ordinal for item in members] != list(range(len(members)))
-                or intent.identity.transaction_id not in bindings
+                or binding is None
+                or receipt is None
+                or post is None
+                or intent.identity.workspace_id != self.workspace_id
+                or intent.identity.run_id != snapshot.run.run_id
+                or intent.identity.checkout_revision_id
+                != intent.post_checkout_revision_id
+                or binding.workspace_id != self.workspace_id
+                or binding.run_id != snapshot.run.run_id
+                or binding.transaction_id != intent.identity.transaction_id
+                or binding.post_run_id != snapshot.run.run_id
+                or binding.post_checkout_revision_id
+                != intent.post_checkout_revision_id
+                or post.record.parent_checkout_revision_id
+                != binding.pre_checkout_revision_id
+                or (
+                    binding.pre_checkout_revision_id is not None and pre is None
+                )
+                or tuple(receipt.checkout_revisions)
+                != (
+                    CheckoutRevisionReference(
+                        checkout_revision_id=intent.post_checkout_revision_id
+                    ),
+                )
+                or tuple(receipt.receipt_checkout_bindings)
+                != (
+                    ReceiptCheckoutBindingReference(
+                        transaction_id=intent.identity.transaction_id
+                    ),
+                )
+                or tuple(receipt.checkout_publication_intents)
+                != (
+                    CheckoutPublicationIntentReference(
+                        checkout_revision_id=intent.post_checkout_revision_id
+                    ),
+                )
             ):
                 raise ControlStoreIntegrityError("checkout_publication_journal_invalid")
+            try:
+                expected_intent, expected_members = build_publication_intent(
+                    identity=intent.identity,
+                    pre=pre,
+                    post=post,
+                    capability_profile_sha256=intent.capability_profile_sha256,
+                )
+            except CoreRunError as exc:
+                raise ControlStoreIntegrityError(
+                    "checkout_publication_journal_invalid"
+                ) from exc
+            if intent != expected_intent or tuple(members) != expected_members:
+                raise ControlStoreIntegrityError(
+                    "checkout_publication_journal_invalid"
+                )
         if set(members_by_intent) - set(intents):
             raise ControlStoreIntegrityError("checkout_publication_journal_invalid")
         ack_by_intent: dict[tuple[str, str, str, str], list[CheckoutPublicationAck]] = {}
@@ -4562,8 +4676,32 @@ class SQLiteControlStore:
             key = (ack.identity.workspace_id, ack.identity.run_id, ack.identity.transaction_id, ack.identity.checkout_revision_id)
             ack_by_intent.setdefault(key, []).append(ack)
         for key, acks in ack_by_intent.items():
-            expected = members_by_intent.get(key)
-            if expected is None or len(acks) != len(expected) or sorted(a.ordinal for a in acks) != list(range(len(expected))):
+            expected = sorted(
+                members_by_intent.get(key, []), key=lambda item: item.ordinal
+            )
+            intent = intents.get(key)
+            ordered_acks = sorted(acks, key=lambda item: item.ordinal)
+            if (
+                intent is None
+                or len(ordered_acks) != len(expected)
+                or [ack.ordinal for ack in ordered_acks]
+                != list(range(len(expected)))
+                or any(
+                    ack.identity != member.identity
+                    or ack.publication_identity_sha256
+                    != intent.publication_identity_sha256
+                    or ack.capability_profile_sha256
+                    != intent.capability_profile_sha256
+                    or ack.post_kind != member.post_kind
+                    or ack.post_sha256 != member.post_sha256
+                    or ack.post_size != member.post_size
+                    or ack.verification != "post_verified_durable"
+                    or ack.cleanup_policy != "retain_residue_v1"
+                    for ack, member in zip(
+                        ordered_acks, expected, strict=True
+                    )
+                )
+            ):
                 raise ControlStoreIntegrityError("checkout_publication_journal_invalid")
 
     def _verify_core_snapshot_structure(self, snapshot: ControlStoreSnapshot) -> None:

@@ -19,13 +19,20 @@ from multi_agent_brief.core_run_v2.errors import CoreRunError
 NOW = datetime(2026, 7, 18, tzinfo=timezone.utc)
 
 
-def revision(artifact_id: str, path: str, digest: str, size: int = 4) -> ArtifactRevision:
+def revision(
+    artifact_id: str,
+    path: str,
+    digest: str,
+    size: int = 4,
+    *,
+    revision_number: int = 1,
+) -> ArtifactRevision:
     return ArtifactRevision.model_validate(
         {
             "schema_version": ArtifactRevision.schema_id,
             "run_id": "run-001",
             "artifact_id": artifact_id,
-            "revision": 1,
+            "revision": revision_number,
             "path": path,
             "sha256": digest,
             "size_bytes": size,
@@ -141,3 +148,30 @@ def test_publication_delta_covers_create_replace_and_delete_in_path_order() -> N
         ("output/delete.md", "blob", "absent"),
         ("output/replace.md", "blob", "blob"),
     ]
+
+
+def test_publication_delta_ignores_container_revision_when_projection_is_unchanged() -> None:
+    before = build_checkout_revision(
+        workspace_id="workspace-001", run_id="run-001",
+        transaction_id="prior", created_at=NOW,
+        artifact_revisions=(
+            revision("brief", "output/brief.md", "a" * 64),
+            revision("other", "output/other.md", "b" * 64),
+        ), parent_checkout_revision_id=None,
+    )
+    after = build_checkout_revision(
+        workspace_id="workspace-001", run_id="run-001",
+        transaction_id="transaction-001", created_at=NOW,
+        artifact_revisions=(
+            revision(
+                "brief", "output/brief.md", "a" * 64,
+                revision_number=2,
+            ),
+            revision("other", "output/other.md", "c" * 64),
+        ), parent_checkout_revision_id=before.record.checkout_revision_id,
+    )
+    _intent, members = build_publication_intent(
+        identity=identity(after.record.checkout_revision_id),
+        pre=before, post=after, capability_profile_sha256="e" * 64,
+    )
+    assert [item.canonical_path for item in members] == ["output/other.md"]

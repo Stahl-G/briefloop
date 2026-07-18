@@ -131,6 +131,9 @@ class CheckoutPublicationEngine:
         if acks:
             if len(acks) != len(members):
                 raise CoreRunError("checkout_publication_journal_invalid")
+            for member in members:
+                self._attest_member(member, profile)
+            self._verify_full_post_checkout(intent, members, profile)
             warnings = self._record_cleanup_observations(identity, members)
             return PublicationResult("published", warnings=warnings)
         for member in members:
@@ -195,6 +198,26 @@ class CheckoutPublicationEngine:
             _invoke(self.hook, "after_observe", identity, member.ordinal)
             if self._matches(canonical, member.post_kind, member.post_sha256, member.post_size):
                 return
+            resume_after_claim = (
+                member.pre_kind == "blob"
+                and canonical.kind == "absent"
+                and self._matches(
+                    claim, "blob", member.pre_sha256, member.pre_size
+                )
+                and self._matches(
+                    temp, member.post_kind, member.post_sha256, member.post_size
+                )
+            )
+            if resume_after_claim:
+                parent.sync_parent()
+                if member.post_kind == "blob":
+                    _invoke(self.hook, "before_publish", identity, member.ordinal)
+                    parent.no_clobber_rename(
+                        member.temporary_basename, canonical_leaf
+                    )
+                    _invoke(self.hook, "after_publish", identity, member.ordinal)
+                    parent.sync_parent()
+                return
             if not self._matches(canonical, member.pre_kind, member.pre_sha256, member.pre_size):
                 raise CoreRunError("checkout_projection_conflict")
             if member.post_kind == "blob" and temp.kind == "absent":
@@ -212,6 +235,14 @@ class CheckoutPublicationEngine:
                 if claim.kind != "absent":
                     raise CoreRunError("checkout_projection_conflict")
                 _invoke(self.hook, "before_claim", identity, member.ordinal)
+                canonical = parent.observe(canonical_leaf)
+                if not self._matches(
+                    canonical,
+                    member.pre_kind,
+                    member.pre_sha256,
+                    member.pre_size,
+                ):
+                    raise CoreRunError("checkout_projection_conflict")
                 parent.no_clobber_rename(canonical_leaf, member.claim_basename)
                 _invoke(self.hook, "after_claim", identity, member.ordinal)
                 _invoke(self.hook, "before_claim_parent_sync", identity, member.ordinal)

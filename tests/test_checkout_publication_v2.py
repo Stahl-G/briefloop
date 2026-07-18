@@ -12,11 +12,16 @@ import pytest
 from multi_agent_brief.contracts.v2 import (
     ArtifactRecord,
     ArtifactRevision,
+    CheckoutPublicationAck,
     PublicationIdentityV1,
     ReceiptCheckoutBinding,
     RunIdentity,
 )
-from multi_agent_brief.control_store import SQLiteControlStore
+from multi_agent_brief.control_store import (
+    ControlStoreConflict,
+    ControlStoreIntegrityError,
+    SQLiteControlStore,
+)
 from multi_agent_brief.core_run_v2.checkout import (
     BuiltCheckoutRevision,
     build_checkout_revision,
@@ -66,6 +71,7 @@ def commit_checkout(
     revisions: tuple[tuple[ArtifactRevision, bytes], ...],
     parent: BuiltCheckoutRevision | None,
     publish: bool,
+    publication_member_patch: dict[str, object] | None = None,
 ) -> tuple[BuiltCheckoutRevision, PublicationIdentityV1 | None]:
     current = tuple(item[0] for item in revisions)
     built = build_checkout_revision(
@@ -119,6 +125,8 @@ def commit_checkout(
         )
         unit.put_checkout_publication_intent(intent)
         for member in changed:
+            if member.ordinal == 0 and publication_member_patch is not None:
+                member = member.model_copy(update=publication_member_patch)
             unit.put_checkout_publication_member(member)
     unit.commit()
     return built, identity
@@ -174,6 +182,53 @@ def test_exact_recovery_reuses_receipt_and_never_republishes(checkout) -> None:
     assert len(store.load_snapshot("run-001").checkout_publication_acks) == 1
 
 
+def test_real_uow_rejects_off_delta_publication_member(checkout) -> None:
+    workspace, store = checkout
+    content = b"reader brief\n"
+    with pytest.raises(ControlStoreConflict, match="relational_integrity_conflict"):
+        commit_checkout(
+            store, workspace, transaction_id="tx-off-delta", expected_revision=0,
+            revisions=((artifact_revision(content), content),),
+            parent=None, publish=True,
+            publication_member_patch={"post_sha256": "f" * 64},
+        )
+    assert store.current_revision == 0
+
+
+def test_store_rejects_ack_values_not_equal_to_reconstructed_delta(checkout) -> None:
+    workspace, store = checkout
+    content = b"reader brief\n"
+    _built, identity = commit_checkout(
+        store, workspace, transaction_id="tx-bad-ack", expected_revision=0,
+        revisions=((artifact_revision(content), content),), parent=None, publish=True,
+    )
+    assert identity is not None
+    intent, members, _acks, _observations = store.load_checkout_publication(identity)
+    member = members[0]
+    bad = CheckoutPublicationAck.model_validate(
+        {
+            "schema_version": CheckoutPublicationAck.schema_id,
+            "identity": identity.model_dump(mode="json"),
+            "ordinal": member.ordinal,
+            "publication_identity_sha256": intent.publication_identity_sha256,
+            "capability_profile_sha256": intent.capability_profile_sha256,
+            "post_kind": "blob",
+            "post_sha256": "f" * 64,
+            "post_size": member.post_size,
+            "verification": "post_verified_durable",
+            "cleanup_policy": "retain_residue_v1",
+            "appended_at": "2026-07-18T00:00:00Z",
+        },
+        strict=True,
+    )
+    with pytest.raises(
+        ControlStoreIntegrityError,
+        match="checkout_publication_journal_invalid",
+    ):
+        store.append_checkout_publication_acks((bad,))
+    assert store.current_revision == 1
+
+
 @pytest.mark.skipif(sys.platform not in {"darwin", "linux"}, reason="POSIX publication")
 def test_nonpost_external_winner_is_preserved_and_no_ack(checkout) -> None:
     workspace, store = checkout
@@ -216,6 +271,90 @@ def test_replace_retains_claim_and_records_non_authoritative_warning(checkout) -
     member = store.load_snapshot("run-001").checkout_publication_members[0]
     assert (workspace / "output" / member.claim_basename).read_bytes() == old
     assert current.record.parent_checkout_revision_id == prior.record.checkout_revision_id
+
+
+@pytest.mark.skipif(sys.platform not in {"darwin", "linux"}, reason="POSIX publication")
+def test_recovery_resumes_exact_after_claim_state(checkout) -> None:
+    workspace, store = checkout
+    old, new = b"old\n", b"new\n"
+    prior, _ = commit_checkout(
+        store, workspace, transaction_id="tx-claim-old", expected_revision=0,
+        revisions=((artifact_revision(old), old),), parent=None, publish=False,
+    )
+    (workspace / "output/brief.md").write_bytes(old)
+    _current, identity = commit_checkout(
+        store, workspace, transaction_id="tx-claim-new", expected_revision=1,
+        revisions=((artifact_revision(new, revision=2), new),),
+        parent=prior, publish=True,
+    )
+    assert identity is not None
+
+    def stop_after_claim(name, _identity, _ordinal):
+        if name == "after_claim":
+            raise CoreRunError("checkout_publication_io_error")
+
+    first = CheckoutPublicationEngine(
+        workspace, store, hook=stop_after_claim
+    ).publish(identity)
+    assert first.status == "commit_outcome_unknown"
+    assert not (workspace / "output/brief.md").exists()
+    recovered = CheckoutPublicationEngine(workspace, store).recover(identity)
+    assert recovered.status == "published"
+    assert (workspace / "output/brief.md").read_bytes() == new
+    assert len(store.load_snapshot("run-001").checkout_publication_acks) == 1
+
+
+@pytest.mark.skipif(sys.platform not in {"darwin", "linux"}, reason="POSIX publication")
+def test_before_claim_mutation_fails_closed_without_ack(checkout) -> None:
+    workspace, store = checkout
+    old, new = b"old\n", b"new\n"
+    prior, _ = commit_checkout(
+        store, workspace, transaction_id="tx-race-old", expected_revision=0,
+        revisions=((artifact_revision(old), old),), parent=None, publish=False,
+    )
+    target = workspace / "output/brief.md"
+    target.write_bytes(old)
+    _current, identity = commit_checkout(
+        store, workspace, transaction_id="tx-race-new", expected_revision=1,
+        revisions=((artifact_revision(new, revision=2), new),),
+        parent=prior, publish=True,
+    )
+    assert identity is not None
+
+    def mutate_before_claim(name, _identity, _ordinal):
+        if name == "before_claim":
+            target.write_bytes(b"third-party\n")
+
+    result = CheckoutPublicationEngine(
+        workspace, store, hook=mutate_before_claim
+    ).publish(identity)
+    assert result == result.__class__(
+        "commit_outcome_unknown", "checkout_projection_conflict"
+    )
+    assert target.read_bytes() == b"third-party\n"
+    assert store.load_snapshot("run-001").checkout_publication_acks == ()
+
+
+@pytest.mark.skipif(sys.platform not in {"darwin", "linux"}, reason="POSIX publication")
+def test_acked_fast_path_detects_drift_without_republication(checkout) -> None:
+    workspace, store = checkout
+    content = b"reader brief\n"
+    _built, identity = commit_checkout(
+        store, workspace, transaction_id="tx-acked-drift", expected_revision=0,
+        revisions=((artifact_revision(content), content),), parent=None, publish=True,
+    )
+    assert identity is not None
+    engine = CheckoutPublicationEngine(workspace, store)
+    assert engine.publish(identity).status == "published"
+    before_acks = store.load_snapshot("run-001").checkout_publication_acks
+    target = workspace / "output/brief.md"
+    target.write_bytes(b"drift\n")
+    result = engine.recover(identity)
+    assert result == result.__class__(
+        "commit_outcome_unknown", "checkout_projection_conflict"
+    )
+    assert target.read_bytes() == b"drift\n"
+    assert store.load_snapshot("run-001").checkout_publication_acks == before_acks
 
 
 @pytest.mark.skipif(sys.platform not in {"darwin", "linux"}, reason="POSIX publication")

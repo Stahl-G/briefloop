@@ -161,10 +161,18 @@ def build_publication_intent(
         raise CoreRunError("checkout_publication_journal_invalid")
     pre_by_path = {} if pre is None else {m.canonical_path: m for m in pre.members}
     post_by_path = {m.canonical_path: m for m in post.members}
+    def projection_value(
+        member: CheckoutRevisionMember | None,
+    ) -> tuple[str, int] | None:
+        if member is None:
+            return None
+        return member.blob_sha256, member.byte_size
+
     changed_paths = sorted(
         path
         for path in set(pre_by_path) | set(post_by_path)
-        if pre_by_path.get(path) != post_by_path.get(path)
+        if projection_value(pre_by_path.get(path))
+        != projection_value(post_by_path.get(path))
     )
     if not changed_paths:
         raise CoreRunError("checkout_publication_journal_invalid")
