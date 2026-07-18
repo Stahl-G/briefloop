@@ -82,8 +82,32 @@ def test_verified_archive_renders_byte_stable_json_markdown_and_html(
     assert "Advisory only" in markdown
     assert "Runtime authority: `none`" in markdown
     assert "Experimental · Offline shadow · Advisory only" in html
+    assert "实验性 · 离线影子 · 仅供参考" in html
+    assert 'class="skip-link" href="#laj-main"' in html
+    assert '<main id="laj-main" tabindex="-1">' in html
+    assert '<dl class="grid" aria-label="Assessment summary / 复盘摘要">' in html
+    assert "@media print" in html
+    assert "@media(forced-colors:active)" in html
     assert payload["boundary"] == LAJ_READER_BOUNDARY
     assert payload["runtime_authority"] is False
+
+
+def test_html_accessibility_and_print_contract_is_static_and_bilingual(
+    tmp_path: Path,
+) -> None:
+    view = build_laj_reader_view(_archive(tmp_path))
+    html = render_laj_reader_html(view).decode("utf-8")
+
+    assert '<html lang="en">' in html
+    assert '<span lang="zh-CN">AI 复盘第二意见</span>' in html
+    assert 'role="note" aria-label="Advisory boundary / 参考边界"' in html
+    assert 'aria-labelledby="assessment-note-heading"' in html
+    assert 'aria-labelledby="evidence-binding-heading"' in html
+    assert 'aria-labelledby="candidate-findings-heading"' in html
+    assert ":focus-visible" in html
+    assert "break-inside:avoid" in html
+    assert "window." not in html
+    assert "<script" not in html
 
 
 def test_missing_tampered_and_stale_archives_never_display_findings(
@@ -135,7 +159,10 @@ def test_strict_reader_view_load_and_current_report_binding_fail_closed(
     assert stale.status == "stale"
     assert stale.findings == []
     assert stale.finding_count == 0
-    assert stale.withheld_finding_count == loaded.withheld_finding_count + loaded.finding_count
+    assert (
+        stale.withheld_finding_count
+        == loaded.withheld_finding_count + loaded.finding_count
+    )
     assert "report_binding_stale" in stale.reason_codes
 
     path.write_bytes(b"{not-json")

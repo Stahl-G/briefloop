@@ -413,16 +413,19 @@ def render_laj_reader_html(view: LajReaderView) -> bytes:
     binding = ""
     if view.binding is not None:
         binding = f"""
-        <section class="card">
-          <h2>Evidence binding</h2>
+        <section class="card" aria-labelledby="evidence-binding-heading">
+          <h2 id="evidence-binding-heading"><span lang="en">Evidence binding</span> / <span lang="zh-CN">证据绑定</span></h2>
           <dl>
-            <dt>Report SHA-256</dt><dd><code>{escape(view.binding.report_sha256)}</code></dd>
-            <dt>Instrument SHA-256</dt><dd><code>{escape(view.binding.instrument_sha256)}</code></dd>
-            <dt>Model</dt><dd>{escape(view.binding.model_id)} / {escape(view.binding.model_version)}</dd>
-            <dt>Shadow receipt</dt><dd><code>{escape(view.binding.shadow_receipt_id)}</code></dd>
+            <dt><span lang="en">Report SHA-256</span> / <span lang="zh-CN">报告 SHA-256</span></dt><dd><code>{escape(view.binding.report_sha256)}</code></dd>
+            <dt><span lang="en">Instrument SHA-256</span> / <span lang="zh-CN">评估工具 SHA-256</span></dt><dd><code>{escape(view.binding.instrument_sha256)}</code></dd>
+            <dt><span lang="en">Model</span> / <span lang="zh-CN">模型</span></dt><dd>{escape(view.binding.model_id)} / {escape(view.binding.model_version)}</dd>
+            <dt><span lang="en">Shadow receipt</span> / <span lang="zh-CN">影子回执</span></dt><dd><code>{escape(view.binding.shadow_receipt_id)}</code></dd>
           </dl>
         </section>"""
-    findings = "<p>No displayable candidate finding is available for this view.</p>"
+    findings = (
+        '<p><span lang="en">No displayable candidate finding is available for '
+        'this view.</span> / <span lang="zh-CN">本视图没有可展示的候选发现。</span></p>'
+    )
     if view.findings:
         cards = []
         for finding in view.findings:
@@ -435,32 +438,38 @@ def render_laj_reader_html(view: LajReaderView) -> bytes:
                 <div class="finding-head"><span>{escape(finding.dimension_id)}</span><strong>{escape(finding.severity)}</strong></div>
                 <h3>{escape(finding.observation)}</h3>
                 <p>{escape(finding.rationale)}</p>
-                <p><b>Severity basis:</b> {escape(finding.severity_basis)}</p>
-                <p><b>Recommended human action:</b> {escape(finding.recommended_human_action)}</p>
-                <p class="muted"><b>Bound spans:</b> {spans}</p>
+                <p><b><span lang="en">Severity basis</span> / <span lang="zh-CN">严重程度依据</span>:</b> {escape(finding.severity_basis)}</p>
+                <p><b><span lang="en">Recommended human action</span> / <span lang="zh-CN">建议人工动作</span>:</b> {escape(finding.recommended_human_action)}</p>
+                <p class="muted"><b><span lang="en">Bound spans</span> / <span lang="zh-CN">绑定区段</span>:</b> {spans}</p>
                 </article>"""
             )
         findings = "".join(cards)
     html = f"""<!doctype html>
-<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<title>Experimental AI assessment</title>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="color-scheme" content="light">
+<title>Experimental AI assessment / 实验性 AI 复盘</title>
 <style>
 :root{{--ink:#172033;--muted:#657087;--paper:#f4f7fb;--card:#fff;--line:#d9e0ea;--accent:#3157d5;--warn:#8a5a00}}
 *{{box-sizing:border-box}}body{{margin:0;background:var(--paper);color:var(--ink);font:15px/1.6 -apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif}}
 main{{max-width:980px;margin:0 auto;padding:48px 22px 72px}}h1{{font-size:34px;margin:.2rem 0}}h2{{margin-top:0}}code{{overflow-wrap:anywhere}}
+.skip-link{{position:fixed;left:12px;top:12px;z-index:10;transform:translateY(-160%);background:var(--ink);color:#fff;padding:10px 14px;border-radius:8px}}.skip-link:focus{{transform:none}}:focus-visible{{outline:3px solid var(--accent);outline-offset:3px}}
 .eyebrow{{color:var(--accent);font-weight:750;letter-spacing:.08em;text-transform:uppercase}}.boundary{{border-left:4px solid var(--warn);background:#fff8e8;padding:14px 18px;margin:22px 0}}
 .grid{{display:grid;grid-template-columns:repeat(auto-fit,minmax(145px,1fr));gap:12px;margin:22px 0}}.metric,.card,.finding{{background:var(--card);border:1px solid var(--line);border-radius:14px;padding:18px}}
-.metric b{{display:block;font-size:24px}}.metric span,.muted{{color:var(--muted)}}dl{{display:grid;grid-template-columns:150px 1fr;gap:8px 16px}}dt{{font-weight:700}}dd{{margin:0;overflow-wrap:anywhere}}
+.metric dd{{display:block;font-size:24px;font-weight:700}}.metric dt,.muted{{color:var(--muted)}}dl{{display:grid;grid-template-columns:205px 1fr;gap:8px 16px}}dt{{font-weight:700}}dd{{margin:0;overflow-wrap:anywhere}}
 .finding{{margin:12px 0}}.finding-head{{display:flex;justify-content:space-between;color:var(--accent)}}.finding h3{{font-size:18px}}
 @media(max-width:600px){{dl{{grid-template-columns:1fr}}main{{padding-top:28px}}}}
-</style></head><body><main>
-<p class="eyebrow">Experimental · Offline shadow · Advisory only</p>
-<h1>AI assessment second opinion</h1>
-<div class="boundary">Not a Gate, delivery decision, or proof of correctness. Runtime authority: none.</div>
-<div class="grid"><div class="metric"><span>Status</span><b>{escape(view.status)}</b></div><div class="metric"><span>Assessed units</span><b>{view.assessed_unit_count}</b></div><div class="metric"><span>Candidate findings</span><b>{view.finding_count}</b></div><div class="metric"><span>Abstentions</span><b>{view.abstention_count}</b></div></div>
-<section class="card"><h2>Assessment note</h2><p>{escape(view.disclaimer)}</p><p class="muted">View SHA-256: <code>{view.view_sha256}</code></p></section>
+@media(forced-colors:active){{.boundary{{border:2px solid CanvasText}}.metric,.card,.finding{{border-color:CanvasText}}}}
+@media print{{@page{{margin:12mm}}body{{background:#fff;color:#000;font-size:9.5pt;line-height:1.45}}main{{max-width:none;padding:0}}h1{{font-size:22pt}}h2{{font-size:15pt}}.skip-link{{display:none}}.eyebrow{{font-size:9pt}}.boundary{{margin:10px 0;padding:8px 12px}}.grid{{gap:8px;margin:12px 0}}.metric,.card,.finding{{background:#fff;border-color:#777;box-shadow:none;break-inside:avoid;padding:12px}}.finding{{page-break-inside:avoid}}a{{color:#000}}}}
+</style></head><body>
+<a class="skip-link" href="#laj-main"><span lang="en">Skip to assessment</span> / <span lang="zh-CN">跳转到复盘内容</span></a>
+<main id="laj-main" tabindex="-1">
+<p class="eyebrow"><span lang="en">Experimental · Offline shadow · Advisory only</span> / <span lang="zh-CN">实验性 · 离线影子 · 仅供参考</span></p>
+<h1><span lang="en">AI assessment second opinion</span> / <span lang="zh-CN">AI 复盘第二意见</span></h1>
+<div class="boundary" role="note" aria-label="Advisory boundary / 参考边界"><span lang="en">Not a Gate, delivery decision, or proof of correctness. Runtime authority: none.</span> <span lang="zh-CN">不是门禁、交付决定或正确性证明；运行时权威：无。</span></div>
+<dl class="grid" aria-label="Assessment summary / 复盘摘要"><div class="metric"><dt><span lang="en">Status</span> / <span lang="zh-CN">状态</span></dt><dd>{escape(view.status)}</dd></div><div class="metric"><dt><span lang="en">Assessed units</span> / <span lang="zh-CN">已评估单元</span></dt><dd>{view.assessed_unit_count}</dd></div><div class="metric"><dt><span lang="en">Candidate findings</span> / <span lang="zh-CN">候选发现</span></dt><dd>{view.finding_count}</dd></div><div class="metric"><dt><span lang="en">Abstentions</span> / <span lang="zh-CN">弃权单元</span></dt><dd>{view.abstention_count}</dd></div></dl>
+<section class="card" aria-labelledby="assessment-note-heading"><h2 id="assessment-note-heading"><span lang="en">Assessment note</span> / <span lang="zh-CN">复盘说明</span></h2><p>{escape(view.disclaimer)}</p><p class="muted"><span lang="en">View SHA-256</span> / <span lang="zh-CN">视图 SHA-256</span>: <code>{view.view_sha256}</code></p></section>
 {binding}
-<section><h2>Candidate findings</h2>{findings}</section>
+<section aria-labelledby="candidate-findings-heading"><h2 id="candidate-findings-heading"><span lang="en">Candidate findings</span> / <span lang="zh-CN">候选发现</span></h2>{findings}</section>
+<footer class="muted"><span lang="en">Experimental advisory output · no runtime authority</span> / <span lang="zh-CN">实验性参考输出 · 无运行时权威</span></footer>
 </main></body></html>
 """
     return html.encode("utf-8")
