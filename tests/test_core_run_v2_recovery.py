@@ -1873,6 +1873,18 @@ def test_recovery_service_owns_supersession_repair_and_recovery_transactions(
         strict=True,
     )
     supersede = service.supersede_artifact(supersede_request)
+    if sys.platform == "win32":
+        assert supersede.to_dict() == {
+            "status": "failed_uncommitted",
+            "error_code": "checkout_publication_unsupported",
+        }
+        with SQLiteControlStore.open(database, clock=CLOCK) as store:
+            unsupported = store.load_snapshot(RUN_ID)
+        assert unsupported.store_revision == active.store_revision
+        assert unsupported.transactions == active.transactions
+        assert unsupported.artifact_supersessions == active.artifact_supersessions
+        assert unsupported.artifact_revisions == active.artifact_revisions
+        return
     assert supersede.status == "committed"
     with SQLiteControlStore.open(database, clock=CLOCK) as store:
         repaired = store.load_snapshot(RUN_ID)
