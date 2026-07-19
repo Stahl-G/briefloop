@@ -27,6 +27,10 @@ SQLITE_ACTIVE_COMMANDS = frozenset(
     }
 )
 
+# A fresh workspace may only be bootstrapped through the SQLite runtime path.
+# Legacy control-plane commands are never allowed to become a first writer.
+FRESH_BOOTSTRAP_COMMANDS = frozenset({"core-v2", "init", "new", "run", "runtime"})
+
 
 @dataclass(frozen=True)
 class WorkspaceAuthority:
@@ -68,6 +72,8 @@ def active_command_authority_error(
         return "legacy_workspace_unsupported"
     if authority.kind == "invalid_sqlite":
         return "control_store_integrity_invalid"
+    if authority.kind == "fresh" and command not in FRESH_BOOTSTRAP_COMMANDS:
+        return "runtime_command_unsupported"
     if authority.kind == "sqlite" and command not in SQLITE_ACTIVE_COMMANDS:
         return "runtime_command_unsupported"
     return None
@@ -75,6 +81,7 @@ def active_command_authority_error(
 
 __all__ = [
     "LEGACY_CONTROL_PATHS",
+    "FRESH_BOOTSTRAP_COMMANDS",
     "SQLITE_ACTIVE_COMMANDS",
     "WorkspaceAuthority",
     "active_command_authority_error",

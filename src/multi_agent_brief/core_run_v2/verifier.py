@@ -78,9 +78,9 @@ class VerifiedCoreRun:
     contracts: ValidatedRuntimeContractPayloads
     runtime_adapter: RuntimeAdapterBinding
     source_plan: RuntimeSourcePlanBinding
-    exhausted_source_route_keys: frozenset[
-        tuple[str, str, str, str | None]
-    ] = frozenset()
+    exhausted_source_route_keys: frozenset[tuple[str, str, str, str | None]] = (
+        frozenset()
+    )
 
     @property
     def stages(self) -> tuple[dict[str, Any], ...]:
@@ -1217,16 +1217,16 @@ class CoreRunDomainVerifier:
             raise CoreRunError("checkout_revision_invalid")
         if not core_receipts and not any(graph):
             return
-        if not (
-            snapshot.checkout_revisions and snapshot.receipt_checkout_bindings
-        ):
+        if not (snapshot.checkout_revisions and snapshot.receipt_checkout_bindings):
             raise CoreRunError("checkout_revision_invalid")
         from datetime import datetime
         from multi_agent_brief.core_run_v2.checkout import build_checkout_revision
 
         members_by_revision: dict[str, list[object]] = {}
         for member in snapshot.checkout_revision_members:
-            members_by_revision.setdefault(member.checkout_revision_id, []).append(member)
+            members_by_revision.setdefault(member.checkout_revision_id, []).append(
+                member
+            )
         receipts = {item.transaction_id: item for item in snapshot.transactions}
         for revision in snapshot.checkout_revisions:
             members = tuple(
@@ -1239,7 +1239,8 @@ class CoreRunDomainVerifier:
             for member in members:
                 artifact = next(
                     (
-                        item for item in snapshot.artifact_revisions
+                        item
+                        for item in snapshot.artifact_revisions
                         if item.artifact_id == member.artifact_id
                         and item.revision == member.artifact_revision
                     ),
@@ -1386,8 +1387,20 @@ class CoreRunDomainVerifier:
                     and event.stage_id == "source-discovery"
                     and invocation.role_id == "source-provider"
                 )
+                human_source_reservation = (
+                    invocation is not None
+                    and action.action_kind == "human_decision"
+                    and action.effect_kind == "source_input_required"
+                    and action.stage_id == "source-discovery"
+                    and action.request_schema_id
+                    == "briefloop.runtime_human_source_material_request.v2"
+                    and event.stage_id == "source-discovery"
+                    and invocation.role_id == "source-provider"
+                )
                 if event.stage_id is None or not (
-                    delegate_reservation or source_acquire_reservation
+                    delegate_reservation
+                    or source_acquire_reservation
+                    or human_source_reservation
                 ):
                     raise CoreRunError("historical_prefix_invalid")
             classify_effect_authorization(
@@ -1433,9 +1446,7 @@ class CoreRunDomainVerifier:
 
         receipts = {item.transaction_id: item for item in snapshot.transactions}
         invocations = {item.invocation_id: item for item in snapshot.invocations}
-        accepted_by_invocation = {
-            item.invocation_id for item in snapshot.sources
-        }
+        accepted_by_invocation = {item.invocation_id for item in snapshot.sources}
         starts = sorted(
             (
                 event
@@ -1949,8 +1960,7 @@ class CoreRunDomainVerifier:
             or runtime_adapter.runtime != binding.runtime
             or runtime_adapter.binding_fingerprint
             != binding.runtime_adapter_fingerprint
-            or binding.role_topology
-            not in runtime_adapter.supported_role_topologies
+            or binding.role_topology not in runtime_adapter.supported_role_topologies
             or source_plan.run_id != binding.run_id
             or source_plan.sources_config_sha256 != binding.sources_config_sha256
             or source_plan.source_plan_fingerprint
@@ -2472,7 +2482,10 @@ class CoreRunDomainVerifier:
             stage_id = transition.stage_id
             kind = transition.transition_kind
             if kind == "satisfied_by_topology":
-                if stage_id == "screener" and not topology_policy.separate_screener_stage:
+                if (
+                    stage_id == "screener"
+                    and not topology_policy.separate_screener_stage
+                ):
                     return (
                         (proposal_revision("candidate"), "consumed"),
                         (proposal_revision("screened"), "produced"),
@@ -3079,8 +3092,7 @@ class CoreRunDomainVerifier:
             raise CoreRunError("control_store_integrity_invalid")
         contaminated_revision: int | None = None
         recoveries_by_transaction = {
-            item.accepted_transaction_id: item
-            for item in snapshot.recovery_completions
+            item.accepted_transaction_id: item for item in snapshot.recovery_completions
         }
         for revision, row in enumerate(rows, start=1):
             expected_prior = None if revision == 1 else revision - 1

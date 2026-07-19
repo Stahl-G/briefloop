@@ -10,12 +10,39 @@ from multi_agent_brief.contracts.v2 import (
     ContractId,
     CleanText,
     CoreRunNextAction,
+    IsoDate,
+    IsoDateTime,
+    MimeType,
     NonNegativeInt,
     Sha256,
     ScratchInputPath,
     StrictModel,
     WorkspacePath,
 )
+
+
+class HumanSourceMaterialRequest(StrictModel):
+    """One explicit human-provided source consumed through normal intake."""
+
+    schema_id = "briefloop.runtime_human_source_material_request.v2"
+
+    schema_version: Literal["briefloop.runtime_human_source_material_request.v2"]
+    request_id: ContractId
+    run_id: ContractId
+    expected_store_revision: NonNegativeInt
+    input_path: WorkspacePath
+    expected_input_sha256: Sha256
+    title: CleanText
+    publisher: CleanText | None = None
+    published_at: IsoDate | None = None
+    retrieved_at: IsoDateTime
+    content_media_type: MimeType
+
+    @model_validator(mode="after")
+    def input_is_explicit_workspace_material(self) -> "HumanSourceMaterialRequest":
+        if not self.input_path.startswith("input/"):
+            raise ValueError("human source material must be under input")
+        return self
 
 
 class RoleTaskEnvelope(StrictModel):
@@ -38,12 +65,16 @@ class RoleTaskEnvelope(StrictModel):
         "main_session", "delegated_specialist", "declared_existing_route"
     ]
     context_mode: Literal[
-        "shared_session", "independent_stage_context", "delegated_context",
-        "declared_existing_context"
+        "shared_session",
+        "independent_stage_context",
+        "delegated_context",
+        "declared_existing_context",
     ]
     review_mode: Literal[
-        "stage_separated_self_review", "independent_stage_context",
-        "delegated_review", "declared_existing_route"
+        "stage_separated_self_review",
+        "independent_stage_context",
+        "delegated_review",
+        "declared_existing_route",
     ]
     dispatch_instruction: Literal[
         "execute_in_current_session", "delegate_exact_role", "use_declared_route"
@@ -102,6 +133,7 @@ class RepairContentInput(StrictModel):
 
 
 __all__ = [
+    "HumanSourceMaterialRequest",
     "RoleTaskEnvelope",
     "RepairContentInput",
     "RuntimeDiagnoseReport",

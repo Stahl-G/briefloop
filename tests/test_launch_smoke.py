@@ -29,7 +29,9 @@ def test_launch_smoke_json_runs_demo_handoff_path():
         text=True,
         cwd=str(SCRIPT.parent.parent),
     )
-    assert result.returncode == 0, f"launch smoke failed:\n{result.stdout}\n{result.stderr}"
+    assert result.returncode == 0, (
+        f"launch smoke failed:\n{result.stdout}\n{result.stderr}"
+    )
     payload = json.loads(result.stdout)
     assert payload["ok"] is True
     assert "not semantic truth proof" in payload["boundary"]
@@ -39,27 +41,32 @@ def test_launch_smoke_json_runs_demo_handoff_path():
         "source_import",
         "cli_version",
         "cli_version_matches_repo",
-        "demo_init",
-        "demo_doctor",
-        "demo_runtime_handoff",
+        "product_init",
+        "demo_runtime_bootstrap",
+        "demo_runtime_next",
+        "sqlite_runtime_next_action",
         "deterministic_demo_script",
-        "handoff_artifacts",
+        "sqlite_runtime_artifacts",
         "deterministic_demo_artifacts",
     }
     by_id = {step["id"]: step for step in payload["steps"]}
-    assert by_id["cli_version_matches_repo"]["expected"] == (
-        SCRIPT.parent.parent / "VERSION"
-    ).read_text(encoding="utf-8").strip()
+    assert (
+        by_id["cli_version_matches_repo"]["expected"]
+        == (SCRIPT.parent.parent / "VERSION").read_text(encoding="utf-8").strip()
+    )
     assert (
         by_id["cli_version_matches_repo"]["actual"]
         == by_id["cli_version_matches_repo"]["expected"]
     )
-    assert not by_id["handoff_artifacts"]["missing"]
+    assert not by_id["sqlite_runtime_artifacts"]["missing"]
     assert not by_id["deterministic_demo_artifacts"]["missing"]
     demo_stdout = by_id["deterministic_demo_script"]["stdout_tail"]
     assert "quality_panel.html" in demo_stdout
     assert "static audit/operator attachment" in demo_stdout
-    assert "not correctness proof, delivery approval, or release authorization" in demo_stdout
+    assert (
+        "not correctness proof, delivery approval, or release authorization"
+        in demo_stdout
+    )
 
 
 def test_demo_quality_panel_artifacts_are_deterministic(tmp_path):
@@ -88,9 +95,10 @@ def test_launch_smoke_rejects_cli_version_drift():
     result = module._check_cli_version({"stdout_tail": "0.8.5\n"})
 
     assert result["ok"] is False
-    assert result["expected"] == (
-        SCRIPT.parent.parent / "VERSION"
-    ).read_text(encoding="utf-8").strip()
+    assert (
+        result["expected"]
+        == (SCRIPT.parent.parent / "VERSION").read_text(encoding="utf-8").strip()
+    )
     assert result["actual"] == "0.8.5"
 
 

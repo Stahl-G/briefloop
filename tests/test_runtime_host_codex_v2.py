@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import date
+import hashlib
 import json
 from pathlib import Path
 
@@ -152,44 +153,53 @@ def test_stale_or_forged_action_file_cannot_start_invocation_or_write(
     doctor_action = json.loads(capsys.readouterr().out)
     action_path = workspace / "doctor_action.json"
     action_path.write_text(json.dumps(doctor_action), encoding="utf-8")
-    assert main(
-        [
-            "runtime",
-            "apply",
-            "--workspace",
-            str(workspace),
-            "--action",
-            str(action_path),
-        ]
-    ) == 0
+    assert (
+        main(
+            [
+                "runtime",
+                "apply",
+                "--workspace",
+                str(workspace),
+                "--action",
+                str(action_path),
+            ]
+        )
+        == 0
+    )
     capsys.readouterr()
     with SQLiteControlStore.open(workspace / "briefloop.db") as store:
         revision = store.current_revision
 
-    assert main(
-        [
-            "runtime",
-            "invocation-start",
-            "--workspace",
-            str(workspace),
-            "--action",
-            str(action_path),
-        ]
-    ) == 1
+    assert (
+        main(
+            [
+                "runtime",
+                "invocation-start",
+                "--workspace",
+                str(workspace),
+                "--action",
+                str(action_path),
+            ]
+        )
+        == 1
+    )
     assert "runtime_action_stale" in capsys.readouterr().out
     forged = dict(doctor_action)
     forged["reason_code"] = "forged"
     action_path.write_text(json.dumps(forged), encoding="utf-8")
-    assert main(
-        [
-            "runtime",
-            "invocation-start",
-            "--workspace",
-            str(workspace),
-            "--action",
-            str(action_path),
-        ]
-    ) == 1
+    assert (
+        main(
+            [
+                "runtime",
+                "invocation-start",
+                "--workspace",
+                str(workspace),
+                "--action",
+                str(action_path),
+            ]
+        )
+        == 1
+    )
     assert "runtime_action_invalid" in capsys.readouterr().out
     with SQLiteControlStore.open(workspace / "briefloop.db") as store:
         assert store.current_revision == revision
@@ -282,6 +292,12 @@ def test_cli_authority_guard_blocks_legacy_and_sqlite_legacy_commands(
     tmp_path: Path,
     capsys,
 ) -> None:
+    fresh = tmp_path / "fresh"
+    fresh.mkdir()
+    assert main(["state", "init", "--runtime", "codex", "--workspace", str(fresh)]) == 1
+    assert "runtime_command_unsupported" in capsys.readouterr().out
+    assert list(fresh.iterdir()) == []
+
     legacy = tmp_path / "legacy"
     control = legacy / "output" / "intermediate" / "workflow_state.json"
     control.parent.mkdir(parents=True)
@@ -458,16 +474,19 @@ def test_deterministic_source_failure_exhausts_frozen_route_without_retry(
         "version: 1\ncandidates:\n  - route: web-search\n",
         encoding="utf-8",
     )
-    assert main(
-        [
-            "runtime",
-            "invocation-accept",
-            "--workspace",
-            str(workspace),
-            "--envelope",
-            str(_envelope_path(workspace, planner)),
-        ]
-    ) == 0
+    assert (
+        main(
+            [
+                "runtime",
+                "invocation-accept",
+                "--workspace",
+                str(workspace),
+                "--envelope",
+                str(_envelope_path(workspace, planner)),
+            ]
+        )
+        == 0
+    )
     accepted = json.loads(capsys.readouterr().out)
     assert accepted["next_action"]["effect_kind"] == "source_acquire"
 
@@ -483,12 +502,88 @@ def test_deterministic_source_failure_exhausts_frozen_route_without_retry(
         revision = store.current_revision
         snapshot = store.load_snapshot("RUN-external-codex-run")
     assert snapshot.sources == ()
-    assert len([item for item in snapshot.invocations if item.role_id == "source-provider"]) == 1
+    assert (
+        len(
+            [item for item in snapshot.invocations if item.role_id == "source-provider"]
+        )
+        == 1
+    )
     assert _apply_current(workspace, capsys) == 1
     assert "runtime_human_request_required" in capsys.readouterr().out
     assert calls == 1
     with SQLiteControlStore.open(workspace / "briefloop.db") as store:
         assert store.current_revision == revision
+
+    content = b"Human-provided durable source content for deterministic intake.\n"
+    manual = workspace / "input" / "manual-source.txt"
+    manual.write_bytes(content)
+    action_path = _current_action_path(workspace, capsys)
+    action = json.loads(action_path.read_text(encoding="utf-8"))
+    request_path = workspace / "human-source-request.json"
+    request_path.write_text(
+        json.dumps(
+            {
+                "schema_version": (
+                    "briefloop.runtime_human_source_material_request.v2"
+                ),
+                "request_id": "REQ-HUMAN-SOURCE-001",
+                "run_id": action["run_id"],
+                "expected_store_revision": action["store_revision"],
+                "input_path": "input/manual-source.txt",
+                "expected_input_sha256": hashlib.sha256(content).hexdigest(),
+                "title": "Human supplied source",
+                "publisher": None,
+                "published_at": None,
+                "retrieved_at": "2026-07-19T00:00:00+00:00",
+                "content_media_type": "text/plain",
+            },
+            sort_keys=True,
+        ),
+        encoding="utf-8",
+    )
+    assert (
+        main(
+            [
+                "runtime",
+                "apply",
+                "--workspace",
+                str(workspace),
+                "--action",
+                str(action_path),
+                "--human-request",
+                str(request_path),
+            ]
+        )
+        == 0
+    )
+    accepted_manual = json.loads(capsys.readouterr().out)
+    assert accepted_manual["status"] == "committed"
+    with SQLiteControlStore.open(workspace / "briefloop.db") as store:
+        after_manual = store.current_revision
+        snapshot = store.load_snapshot(action["run_id"])
+    assert snapshot.sources[-1].claims_eligible is True
+    assert snapshot.sources[-1].locator.path == "input/manual-source.txt"
+
+    manual.write_text("mutated after acceptance\n", encoding="utf-8")
+    assert (
+        main(
+            [
+                "runtime",
+                "apply",
+                "--workspace",
+                str(workspace),
+                "--action",
+                str(action_path),
+                "--human-request",
+                str(request_path),
+            ]
+        )
+        == 0
+    )
+    replayed = json.loads(capsys.readouterr().out)
+    assert replayed["status"] == "replayed"
+    with SQLiteControlStore.open(workspace / "briefloop.db") as store:
+        assert store.current_revision == after_manual
 
 
 def test_cached_source_acquisition_is_claims_eligible_and_completes_discovery(
@@ -507,16 +602,19 @@ def test_cached_source_acquisition_is_claims_eligible_and_completes_discovery(
         "version: 1\ncandidates:\n  - route: cached_package\n",
         encoding="utf-8",
     )
-    assert main(
-        [
-            "runtime",
-            "invocation-accept",
-            "--workspace",
-            str(workspace),
-            "--envelope",
-            str(_envelope_path(workspace, planner)),
-        ]
-    ) == 0
+    assert (
+        main(
+            [
+                "runtime",
+                "invocation-accept",
+                "--workspace",
+                str(workspace),
+                "--envelope",
+                str(_envelope_path(workspace, planner)),
+            ]
+        )
+        == 0
+    )
     accepted = json.loads(capsys.readouterr().out)
     assert accepted["next_action"]["effect_kind"] == "source_acquire"
     assert accepted["next_action"]["source_route_id"] == "cached_package"
@@ -530,6 +628,59 @@ def test_cached_source_acquisition_is_claims_eligible_and_completes_discovery(
     source = snapshot.sources[0]
     assert source.material_kind == "full_content"
     assert source.claims_eligible is True
+
+
+def test_cached_source_locator_binds_the_exact_selected_path(
+    tmp_path: Path,
+    capsys,
+) -> None:
+    workspace = _workspace(tmp_path)
+    (workspace / "input" / "ignored.txt").write_text("short\n", encoding="utf-8")
+    selected = workspace / "input" / "selected.txt"
+    selected.write_text(
+        "Selected durable source content long enough for deterministic intake.\n",
+        encoding="utf-8",
+    )
+    (workspace / "sources.yaml").write_text(
+        """source_strategy:
+  profile: conservative
+  enabled_providers: [cached_package]
+cached_package:
+  enabled: true
+  paths: [input/ignored.txt, input/selected.txt]
+  formats: [txt]
+""",
+        encoding="utf-8",
+    )
+    assert main(["run", "--workspace", str(workspace), "--runtime", "codex"]) == 0
+    capsys.readouterr()
+    assert _apply_current(workspace, capsys) == 0
+    capsys.readouterr()
+    assert _start_current(workspace, capsys) == 0
+    planner = json.loads(capsys.readouterr().out)
+    (workspace / planner["scratch_directory"] / "source_candidates.yaml").write_text(
+        "version: 1\ncandidates:\n  - route: cached_package\n",
+        encoding="utf-8",
+    )
+    assert (
+        main(
+            [
+                "runtime",
+                "invocation-accept",
+                "--workspace",
+                str(workspace),
+                "--envelope",
+                str(_envelope_path(workspace, planner)),
+            ]
+        )
+        == 0
+    )
+    capsys.readouterr()
+    assert _apply_current(workspace, capsys) == 0
+    capsys.readouterr()
+    with SQLiteControlStore.open(workspace / "briefloop.db") as store:
+        source = store.load_snapshot("RUN-codex-run").sources[0]
+    assert source.locator.path == "input/selected.txt"
 
 
 def test_single_session_envelope_cannot_be_rewritten_as_delegated_execution(

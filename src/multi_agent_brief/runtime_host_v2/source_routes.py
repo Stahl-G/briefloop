@@ -109,9 +109,7 @@ def collect_frozen_source(
             ),
             {
                 "enabled": True,
-                "providers": [
-                    {"name": "newsapi", "api_key_env": "NEWSAPI_API_KEY"}
-                ],
+                "providers": [{"name": "newsapi", "api_key_env": "NEWSAPI_API_KEY"}],
                 "query": spec.query,
                 "max_results": spec.max_results,
                 "sort_by": spec.sort_by,
@@ -144,6 +142,7 @@ def collect_frozen_source(
         ),
     )[0]
     return _material_from_item(
+        workspace=workspace,
         run_id=run_id,
         invocation_id=invocation_id,
         route=route,
@@ -181,6 +180,7 @@ def _validated_cached_paths(workspace: Path, paths: list[str]) -> list[Path]:
 
 def _material_from_item(
     *,
+    workspace: Path,
     run_id: str,
     invocation_id: str,
     route: RuntimeSourceRouteBinding,
@@ -205,7 +205,22 @@ def _material_from_item(
         spec = route.acquisition_spec
         if not isinstance(spec, RuntimeCachedPackageAcquisitionSpec):
             raise RuntimeHostError("runtime_source_plan_invalid")
-        locator = {"kind": "file", "path": spec.paths[0]}
+        observed_path = item.metadata.get("path")
+        if not isinstance(observed_path, str):
+            raise RuntimeHostError("runtime_source_acquisition_failed")
+        try:
+            selected = Path(observed_path)
+            selected_relative = selected.relative_to(workspace).as_posix()
+        except ValueError as exc:
+            raise RuntimeHostError("runtime_source_acquisition_failed") from exc
+        roots = [Path(logical) for logical in spec.paths]
+        selected_path = Path(selected_relative)
+        if not any(
+            selected_path == root or root in selected_path.parents for root in roots
+        ):
+            raise RuntimeHostError("runtime_source_acquisition_failed")
+        _validated_cached_paths(workspace, [selected_relative])
+        locator = {"kind": "file", "path": selected_relative}
     else:
         if not item.url:
             raise RuntimeHostError("runtime_source_acquisition_failed")
@@ -239,7 +254,9 @@ def _material_from_item(
             ),
             "provider": route.provider_id or "cached_package",
             "locator": locator,
-            "title": item.title.strip() or item.source_name.strip() or "Collected source",
+            "title": item.title.strip()
+            or item.source_name.strip()
+            or "Collected source",
             "publisher": item.source_name.strip() or None,
             "published_at": published_at,
             "retrieved_at": item.retrieved_at,

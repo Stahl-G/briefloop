@@ -260,7 +260,9 @@ class CoreRunService:
                 },
                 strict=True,
             )
-            contract_artifacts: list[tuple[ArtifactRecord, ArtifactRevision, bytes]] = []
+            contract_artifacts: list[
+                tuple[ArtifactRecord, ArtifactRevision, bytes]
+            ] = []
             for artifact_id, payload in zip(
                 INTERNAL_CONTRACT_ARTIFACT_IDS,
                 (
@@ -476,9 +478,7 @@ class CoreRunService:
                 try:
                     # Cleanup is allowed only while the creating connection can
                     # still positively prove that no transaction committed.
-                    remove_revision_zero_store = (
-                        created and store.current_revision == 0
-                    )
+                    remove_revision_zero_store = created and store.current_revision == 0
                 except Exception:
                     remove_revision_zero_store = False
                 try:
@@ -522,7 +522,20 @@ class CoreRunService:
                 and request.stage_id == "source-discovery"
                 and request.role_id == "source-provider"
             )
-            if not (delegate_reservation or source_acquire_reservation):
+            human_source_reservation = (
+                action.action_kind == "human_decision"
+                and action.effect_kind == "source_input_required"
+                and action.stage_id == "source-discovery"
+                and action.request_schema_id
+                == "briefloop.runtime_human_source_material_request.v2"
+                and request.stage_id == "source-discovery"
+                and request.role_id == "source-provider"
+            )
+            if not (
+                delegate_reservation
+                or source_acquire_reservation
+                or human_source_reservation
+            ):
                 raise CoreRunError("invocation_owner_mismatch")
             if request.role_id not in verified.runtime_adapter.role_ids:
                 raise CoreRunError("runtime_role_unavailable")
@@ -536,13 +549,12 @@ class CoreRunService:
                 request.stage_id,
             ):
                 raise CoreRunError("invocation_owner_mismatch")
-            if (
-                core_role_topology_policy(
-                    verified.binding.role_topology
-                ).analyst_editor_route
-                == "human_assisted"
-                and request.stage_id in {"analyst", "editor"}
-            ):
+            if core_role_topology_policy(
+                verified.binding.role_topology
+            ).analyst_editor_route == "human_assisted" and request.stage_id in {
+                "analyst",
+                "editor",
+            }:
                 route = classify_human_assisted_analyst_route(verified.snapshot)
                 if request.stage_id == "analyst":
                     expected_family = (
@@ -714,26 +726,26 @@ class CoreRunService:
                 gate_ids,
                 producer_invocation_id,
                 producer_tool_id,
-            ) = (
-                self._completion_bindings(
-                    store,
-                    verified,
-                    request.stage_id,
-                )
+            ) = self._completion_bindings(
+                store,
+                verified,
+                request.stage_id,
             )
             self._require_store_revision(verified, request.expected_store_revision)
             state = _stage_state(verified, request.stage_id)
             if lineage.active_invocations_by_stage.get(request.stage_id):
                 raise CoreRunError("stage_artifact_binding_invalid")
-            if state.status != "ready" or state.revision != request.expected_stage_revision:
+            if (
+                state.status != "ready"
+                or state.revision != request.expected_stage_revision
+            ):
                 raise CoreRunError("stage_not_current")
             expected_artifacts = {
                 (item.artifact_id, item.revision)
                 for item in request.expected_artifact_revisions
             }
             actual_artifacts = {
-                (item.artifact_id, item.revision)
-                for item, _usage in required_revisions
+                (item.artifact_id, item.revision) for item, _usage in required_revisions
             }
             if expected_artifacts != actual_artifacts:
                 raise CoreRunError("stage_artifact_binding_invalid")
@@ -754,9 +766,7 @@ class CoreRunService:
                 recovery_authorization.require_allowed()
                 mismatch = self._integrity.first_mismatch(
                     verified,
-                    additional_revisions=(
-                        item for item, _usage in required_revisions
-                    ),
+                    additional_revisions=(item for item, _usage in required_revisions),
                 )
                 if mismatch is not None:
                     raise CoreRunError("core_run_integrity_blocked")
@@ -769,9 +779,7 @@ class CoreRunService:
                     request_id=request.request_id,
                     request_fingerprint=fingerprint,
                     expected_store_revision=request.expected_store_revision,
-                    additional_revisions=(
-                        item for item, _usage in required_revisions
-                    ),
+                    additional_revisions=(item for item, _usage in required_revisions),
                 )
                 advance_workflow = True
             if blocked is not None:
@@ -812,9 +820,7 @@ class CoreRunService:
         selected: list[tuple[ArtifactRevision, str]] = []
         producer_invocation_id: str | None = None
         producer_tool_id: str | None = None
-        invocations = {
-            item.invocation_id: item for item in snapshot.invocations
-        }
+        invocations = {item.invocation_id: item for item in snapshot.invocations}
 
         def require_invocation(
             invocation_id: str,
@@ -1012,19 +1018,19 @@ class CoreRunService:
                 (
                     (
                         revisions[
-                        (
-                            freeze.claim_drafts_artifact.artifact_id,
-                            freeze.claim_drafts_artifact.revision,
-                        )
+                            (
+                                freeze.claim_drafts_artifact.artifact_id,
+                                freeze.claim_drafts_artifact.revision,
+                            )
                         ],
                         "consumed",
                     ),
                     (
                         revisions[
-                        (
-                            freeze.ledger_artifact.artifact_id,
-                            freeze.ledger_artifact.revision,
-                        )
+                            (
+                                freeze.ledger_artifact.artifact_id,
+                                freeze.ledger_artifact.revision,
+                            )
                         ],
                         "produced",
                     ),
@@ -1093,8 +1099,7 @@ class CoreRunService:
                 or submissions[0].parent_artifact is None
                 or submissions[0].parent_artifact.artifact_id
                 != snapshot_revision.artifact_id
-                or submissions[0].parent_artifact.revision
-                != snapshot_revision.revision
+                or submissions[0].parent_artifact.revision != snapshot_revision.revision
             ):
                 raise CoreRunError("stage_artifact_binding_invalid")
         elif stage_id == "auditor":
@@ -1115,8 +1120,7 @@ class CoreRunService:
             if (
                 audit_promotion is None
                 or not audit_promotion.is_current_lineage
-                or audit_promotion.report_revision.artifact_id
-                != report.artifact_id
+                or audit_promotion.report_revision.artifact_id != report.artifact_id
                 or audit_promotion.report_revision.revision != report.revision
                 or audit_promotion.brief_revision.artifact_id != brief.artifact_id
                 or audit_promotion.brief_revision.revision != brief.revision
@@ -1129,12 +1133,9 @@ class CoreRunService:
             if artifacts["analyst_draft_snapshot"].current_revision:
                 require_artifact("analyst_draft_snapshot", "consumed")
             del ledger
-            if (
-                audit_promotion.proposal.decision == "fail"
-                or any(
-                    finding.severity == "error"
-                    for finding in audit_promotion.proposal.findings
-                )
+            if audit_promotion.proposal.decision == "fail" or any(
+                finding.severity == "error"
+                for finding in audit_promotion.proposal.findings
             ):
                 raise CoreRunError("stage_artifact_binding_invalid")
             evaluations = {
@@ -1168,8 +1169,7 @@ class CoreRunService:
         else:
             raise CoreRunError("stage_decision_not_supported")
         deduped = {
-            (item.artifact_id, item.revision): (item, usage)
-            for item, usage in selected
+            (item.artifact_id, item.revision): (item, usage) for item, usage in selected
         }
         return (
             tuple(deduped[key] for key in sorted(deduped)),
@@ -1264,9 +1264,7 @@ class CoreRunService:
                     producer_version=doctor_result[1],
                 )
             elif transition_producer_invocation_id is not None:
-                payload["producer_invocation_id"] = (
-                    transition_producer_invocation_id
-                )
+                payload["producer_invocation_id"] = transition_producer_invocation_id
             elif primary and producer_tool_id is not None:
                 payload["producer_tool_id"] = producer_tool_id
             transition = StageTransitionRecord.model_validate(payload, strict=True)
@@ -1616,9 +1614,8 @@ def _require_non_secret_mapping(content: bytes) -> None:
                 if type(key) is not str:
                     raise CoreRunError("core_run_contract_mismatch")
                 normalized = key.strip().casefold().replace("-", "_")
-                if (
-                    normalized in _SECRET_BEARING_INPUT_KEYS
-                    or normalized.endswith(_SECRET_BEARING_INPUT_SUFFIXES)
+                if normalized in _SECRET_BEARING_INPUT_KEYS or normalized.endswith(
+                    _SECRET_BEARING_INPUT_SUFFIXES
                 ):
                     raise CoreRunError("core_run_contract_mismatch")
                 pending.append(child)
@@ -1951,7 +1948,9 @@ def _derive_runtime_source_plan(
         "sources_config_sha256": sources_config_sha256,
         "web_search_mode": mode,
         "search_backend": backend,
-        "routes": [item.model_dump(mode="json", exclude_unset=False) for item in routes],
+        "routes": [
+            item.model_dump(mode="json", exclude_unset=False) for item in routes
+        ],
     }
     payload["source_plan_fingerprint"] = canonical_fingerprint(payload)
     try:
@@ -2039,9 +2038,10 @@ def _source_acquisition_spec(
         backfill = web.get("initial_news_backfill", {})
         if type(backfill) is not dict or backfill.get("enabled", False) is not False:
             raise CoreRunError("runtime_source_plan_invalid")
-        if web.get("topic", "news") != "news" or web.get(
-            "search_depth", "basic"
-        ) != "basic":
+        if (
+            web.get("topic", "news") != "news"
+            or web.get("search_depth", "basic") != "basic"
+        ):
             raise CoreRunError("runtime_source_plan_invalid")
         configured_env = web.get("api_key_env")
         if configured_env not in {None, "", _WEB_CREDENTIAL_ENV[provider_id]}:
@@ -2121,7 +2121,11 @@ def _source_acquisition_spec(
     if section.get("enabled") is not True:
         raise CoreRunError("runtime_source_plan_invalid")
     providers = section.get("providers", [])
-    if type(providers) is not list or len(providers) != 1 or type(providers[0]) is not dict:
+    if (
+        type(providers) is not list
+        or len(providers) != 1
+        or type(providers[0]) is not dict
+    ):
         raise CoreRunError("runtime_source_plan_invalid")
     provider = providers[0]
     if set(provider) - {"name", "api_key_env"} or provider.get("name") != "newsapi":

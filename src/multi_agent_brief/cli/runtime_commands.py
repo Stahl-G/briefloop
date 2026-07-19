@@ -128,6 +128,7 @@ def handle(args: argparse.Namespace) -> int:
         from multi_agent_brief.runtime_host_v2.service import RuntimeHostService
         from multi_agent_brief.runtime_host_v2.scratch import read_host_contract
         from multi_agent_brief.runtime_host_v2.contracts import (
+            HumanSourceMaterialRequest,
             RepairContentInput,
             RoleTaskEnvelope,
         )
@@ -170,9 +171,7 @@ def handle(args: argparse.Namespace) -> int:
                 payload = service.accept_invocation(
                     envelope.invocation_id,
                     expected_envelope=envelope,
-                ).model_dump(
-                    mode="json", exclude_unset=False
-                )
+                ).model_dump(mode="json", exclude_unset=False)
             elif args.runtime_action == "invocation-fail":
                 envelope = read_host_contract(
                     workspace,
@@ -196,6 +195,9 @@ def handle(args: argparse.Namespace) -> int:
                 action_input = None
                 if action.action_kind == "human_decision":
                     request_models = {
+                        HumanSourceMaterialRequest.schema_id: (
+                            HumanSourceMaterialRequest
+                        ),
                         InternalApprovalRequest.schema_id: InternalApprovalRequest,
                         DeliveryAuthorizationRequest.schema_id: (
                             DeliveryAuthorizationRequest

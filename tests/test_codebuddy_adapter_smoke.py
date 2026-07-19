@@ -12,7 +12,9 @@ SCRIPT = ROOT / "scripts" / "check_codebuddy_adapter_smoke.py"
 
 
 def _load_smoke_module():
-    spec = importlib.util.spec_from_file_location("check_codebuddy_adapter_smoke", SCRIPT)
+    spec = importlib.util.spec_from_file_location(
+        "check_codebuddy_adapter_smoke", SCRIPT
+    )
     assert spec is not None and spec.loader is not None
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
@@ -36,8 +38,7 @@ def test_codebuddy_adapter_smoke_json_passes() -> None:
     assert {
         "codebuddy.skill.contract",
         "codebuddy.role_agents.contract",
-        "codebuddy.handoff.contract",
-        "codebuddy.missing_assets.fail_closed",
+        "codebuddy.runtime.fail_closed",
     } <= check_ids
 
 
@@ -93,7 +94,9 @@ permissionMode: default
 Do not run `briefloop` or `multi-agent-brief` CLI commands.
 Never edit workflow_state.json or event_log.jsonl.
 """
-    errors = smoke._role_agent_contract_errors("briefloop-formatter", formatter_with_write)
+    errors = smoke._role_agent_contract_errors(
+        "briefloop-formatter", formatter_with_write
+    )
     assert "briefloop-formatter: tools must be Read, Grep, Glob" in errors
 
 

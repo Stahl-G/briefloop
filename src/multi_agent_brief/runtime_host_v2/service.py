@@ -3,7 +3,10 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+import os
 from pathlib import Path
+from pathlib import PurePosixPath
+import stat
 from typing import Literal
 
 from pydantic import ValidationError
@@ -40,7 +43,7 @@ from multi_agent_brief.contracts.v2 import (
     StageCompleteRequest,
     StrictModel,
 )
-from multi_agent_brief.control_store import SQLiteControlStore
+from multi_agent_brief.control_store import ControlStoreError, SQLiteControlStore
 from multi_agent_brief.control_store.serialization import (
     canonical_fingerprint,
     canonical_json_bytes,
@@ -81,6 +84,7 @@ from multi_agent_brief.outputs.reader_projection import (
 )
 
 from .contracts import (
+    HumanSourceMaterialRequest,
     RepairContentInput,
     RoleTaskEnvelope,
     RuntimeDiagnoseReport,
@@ -227,14 +231,31 @@ class RuntimeHostService:
             raise RuntimeHostError("runtime_action_not_invocable")
         if role_id is None or action.stage_id is None:
             raise RuntimeHostError("runtime_action_not_invocable")
+        return self._start_invocation_for_action(
+            current,
+            action,
+            role_id=role_id,
+            request_id=derived_id(
+                "REQ-HOST-INVOKE",
+                action.run_id,
+                action.action_fingerprint,
+            ),
+        )
+
+    def _start_invocation_for_action(
+        self,
+        current,
+        action: CoreRunNextAction,
+        *,
+        role_id: str,
+        request_id: str,
+    ) -> InvocationDispatch:
+        if action.stage_id is None:
+            raise RuntimeHostError("runtime_action_not_invocable")
         request = InvocationStartRequest.model_validate(
             {
                 "schema_version": InvocationStartRequest.schema_id,
-                "request_id": derived_id(
-                    "REQ-HOST-INVOKE",
-                    action.run_id,
-                    action.action_fingerprint,
-                ),
+                "request_id": request_id,
                 "run_id": action.run_id,
                 "stage_id": action.stage_id,
                 "role_id": role_id,
@@ -252,9 +273,7 @@ class RuntimeHostService:
             raise RuntimeHostError("control_store_integrity_invalid")
         invocation_id = result.primary_record_id
         output = _ROLE_OUTPUTS[role_id]
-        topology = core_role_topology_policy(
-            current.verified.binding.role_topology
-        )
+        topology = core_role_topology_policy(current.verified.binding.role_topology)
         dispatch_instruction = {
             "main_session": "execute_in_current_session",
             "delegated_specialist": "delegate_exact_role",
@@ -472,9 +491,7 @@ class RuntimeHostService:
         )
 
     def _validate_envelope(self, current, envelope, spec: _RoleOutputSpec) -> None:
-        topology = core_role_topology_policy(
-            current.verified.binding.role_topology
-        )
+        topology = core_role_topology_policy(current.verified.binding.role_topology)
         dispatch_instruction = {
             "main_session": "execute_in_current_session",
             "delegated_specialist": "delegate_exact_role",
@@ -677,11 +694,23 @@ class RuntimeHostService:
                     expected_action,
                     action_input,
                 )
+            if (
+                isinstance(human_request, HumanSourceMaterialRequest)
+                and action_input is None
+                and expected_action.action_kind == "human_decision"
+                and expected_action.effect_kind == "source_input_required"
+            ):
+                return self._apply_human_source_material(
+                    current,
+                    expected_action,
+                    human_request,
+                    replay_only=True,
+                )
             raise RuntimeHostError("runtime_action_stale")
         if action.action_kind == "human_decision":
             if action_input is not None:
                 raise RuntimeHostError("runtime_action_input_invalid")
-            return self._apply_human_decision(action, human_request)
+            return self._apply_human_decision(current, action, human_request)
         if action.action_kind != "deterministic":
             raise RuntimeHostError("runtime_action_not_deterministic")
         if human_request is not None:
@@ -747,6 +776,7 @@ class RuntimeHostService:
 
     def _apply_human_decision(
         self,
+        current,
         action: CoreRunNextAction,
         request: StrictModel | None,
     ):
@@ -754,7 +784,10 @@ class RuntimeHostService:
             raise RuntimeHostError("runtime_human_request_required")
         request_run_id = getattr(request, "run_id", None)
         expected_revision = getattr(request, "expected_store_revision", None)
-        if request_run_id != action.run_id or expected_revision != action.store_revision:
+        if (
+            request_run_id != action.run_id
+            or expected_revision != action.store_revision
+        ):
             raise RuntimeHostError("runtime_human_request_invalid")
         terminal = CoreRunTerminalService(self.workspace)
         if action.effect_kind == "internal_approval" and isinstance(
@@ -767,6 +800,15 @@ class RuntimeHostService:
             "delivery_retry_authorization",
         } and isinstance(request, DeliveryAuthorizationRequest):
             result = terminal.authorize_delivery(request)
+        elif action.effect_kind == "source_input_required" and isinstance(
+            request, HumanSourceMaterialRequest
+        ):
+            return self._apply_human_source_material(
+                current,
+                action,
+                request,
+                replay_only=False,
+            )
         else:
             raise RuntimeHostError("runtime_human_request_invalid")
         if result.status not in {"committed", "replayed"}:
@@ -827,6 +869,177 @@ class RuntimeHostService:
                 reason_code="dispatch_unavailable",
             )
         return self.accept_invocation(invocation_id)
+
+    def _apply_human_source_material(
+        self,
+        current,
+        action: CoreRunNextAction,
+        request: HumanSourceMaterialRequest,
+        *,
+        replay_only: bool,
+    ):
+        invocation_request_id = derived_id(
+            "REQ-HOST-HUMAN-SOURCE-INVOKE",
+            request.request_id,
+            action.action_fingerprint,
+        )
+        invocation_request = InvocationStartRequest.model_validate(
+            {
+                "schema_version": InvocationStartRequest.schema_id,
+                "request_id": invocation_request_id,
+                "run_id": action.run_id,
+                "stage_id": "source-discovery",
+                "role_id": "source-provider",
+                "runtime": current.verified.snapshot.run.runtime,
+                "expected_store_revision": action.store_revision,
+            },
+            strict=True,
+        )
+        invocation_fingerprint = canonical_fingerprint(
+            invocation_request.model_dump(mode="json", exclude_unset=False)
+        )
+        invocation_id = derived_id(
+            "INV",
+            invocation_request_id,
+            invocation_fingerprint,
+        )
+        submit_relative = f"scratch/{invocation_id}/submit_request.json"
+        submit_path = self.workspace / submit_relative
+        content: bytes | None = None
+        if not submit_path.exists():
+            if replay_only:
+                raise RuntimeHostError("runtime_action_stale")
+            content = self._read_human_source_bytes(request)
+        dispatch = self._start_invocation_for_action(
+            current,
+            action,
+            role_id="source-provider",
+            request_id=invocation_request_id,
+        )
+        if dispatch.envelope.invocation_id != invocation_id:
+            raise RuntimeHostError("control_store_integrity_invalid")
+        if submit_path.exists():
+            return IntakeService(self.workspace).submit_source(submit_relative)
+        if content is None:  # pragma: no cover - guarded by replay branch above
+            raise RuntimeHostError("runtime_action_stale")
+        source_id = derived_id(
+            "SRC-HUMAN",
+            action.run_id,
+            request.request_id,
+            request.expected_input_sha256,
+        )
+        proposal = SourceProposal.model_validate(
+            {
+                "schema_version": SourceProposal.schema_id,
+                "proposal_id": derived_id(
+                    "PROP-SOURCE-HUMAN",
+                    invocation_id,
+                    source_id,
+                ),
+                "run_id": action.run_id,
+                "source_id": source_id,
+                "origin_type": "uploaded_file",
+                "acquisition_method": "manual_upload",
+                "material_kind": "uploaded_file",
+                "provider": None,
+                "locator": {"kind": "file", "path": request.input_path},
+                "title": request.title,
+                "publisher": request.publisher,
+                "published_at": request.published_at,
+                "retrieved_at": request.retrieved_at,
+                "source_category": "other",
+                "retrieval_source_type": "local_file",
+                "underlying_evidence_type": "unknown",
+                "raw_underlying_evidence_type": None,
+                "content_sha256": request.expected_input_sha256,
+                "content_media_type": request.content_media_type,
+                "raw_payload_sha256": None,
+                "raw_payload_media_type": None,
+            },
+            strict=True,
+        )
+        content_relative = f"scratch/{invocation_id}/source_content.bin"
+        proposal_relative = f"scratch/{invocation_id}/source_proposal.json"
+        try:
+            self._materialize_tool_input(content_relative, content)
+            self._materialize_tool_input(
+                proposal_relative,
+                canonical_json_bytes(
+                    proposal.model_dump(mode="json", exclude_unset=False)
+                ),
+            )
+            submit = SourceCommitRequest.model_validate(
+                {
+                    "schema_version": SourceCommitRequest.schema_id,
+                    "request_id": derived_id(
+                        "REQ-HOST-HUMAN-SOURCE-COMMIT",
+                        request.request_id,
+                        action.action_fingerprint,
+                    ),
+                    "run_id": action.run_id,
+                    "invocation_id": invocation_id,
+                    "proposal_path": proposal_relative,
+                    "content_path": content_relative,
+                    "raw_payload_path": None,
+                    "expected_store_revision": dispatch.envelope.store_revision,
+                },
+                strict=True,
+            )
+            self._materialize_tool_input(
+                submit_relative,
+                canonical_json_bytes(
+                    submit.model_dump(mode="json", exclude_unset=False)
+                ),
+            )
+        except (OSError, RuntimeHostError, ValidationError, ValueError):
+            self.fail_invocation(
+                invocation_id,
+                reason_code="proposal_invalid",
+                expected_envelope=dispatch.envelope,
+            )
+            raise RuntimeHostError("runtime_human_request_invalid")
+        return IntakeService(self.workspace).submit_source(submit_relative)
+
+    def _read_human_source_bytes(
+        self,
+        request: HumanSourceMaterialRequest,
+    ) -> bytes:
+        candidate = self.workspace / request.input_path
+        try:
+            current = self.workspace
+            for part in Path(request.input_path).parts:
+                current = current / part
+                metadata = current.lstat()
+                if current.is_symlink():
+                    raise RuntimeHostError("runtime_human_request_invalid")
+            if (
+                not stat.S_ISREG(metadata.st_mode)
+                or metadata.st_nlink != 1
+                or metadata.st_size > 16 * 1024 * 1024
+            ):
+                raise RuntimeHostError("runtime_human_request_invalid")
+            descriptor = os.open(
+                candidate,
+                os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0),
+            )
+            try:
+                opened = os.fstat(descriptor)
+                if (
+                    (opened.st_dev, opened.st_ino) != (metadata.st_dev, metadata.st_ino)
+                    or opened.st_nlink != 1
+                    or opened.st_size > 16 * 1024 * 1024
+                ):
+                    raise RuntimeHostError("runtime_human_request_invalid")
+                payload = os.read(descriptor, 16 * 1024 * 1024 + 1)
+            finally:
+                os.close(descriptor)
+        except RuntimeHostError:
+            raise
+        except OSError as exc:
+            raise RuntimeHostError("runtime_human_request_invalid") from exc
+        if not payload or sha256_hex(payload) != request.expected_input_sha256:
+            raise RuntimeHostError("runtime_human_request_invalid")
+        return payload
 
     def _apply_input_governance(self, current, action: CoreRunNextAction):
         snapshot = current.verified.snapshot
@@ -1066,11 +1279,7 @@ class RuntimeHostService:
         relative = f"scratch/{request_id}/reader_brief.md"
         self._materialize_tool_input(relative, reader_bytes)
         reader_artifact = next(
-            (
-                item
-                for item in snapshot.artifacts
-                if item.artifact_id == "reader_brief"
-            ),
+            (item for item in snapshot.artifacts if item.artifact_id == "reader_brief"),
             None,
         )
         request = FinalizeRenderRequest.model_validate(
@@ -1088,12 +1297,12 @@ class RuntimeHostService:
                     "revision": promotion.report_revision.revision,
                 },
                 "reader_scratch_inputs": {"reader_brief": relative},
-                "expected_reader_sha256": {
-                    "reader_brief": sha256_hex(reader_bytes)
-                },
+                "expected_reader_sha256": {"reader_brief": sha256_hex(reader_bytes)},
                 "expected_reader_revisions": {
                     "reader_brief": (
-                        0 if reader_artifact is None else reader_artifact.current_revision
+                        0
+                        if reader_artifact is None
+                        else reader_artifact.current_revision
                     )
                 },
                 "expected_store_revision": action.store_revision,
@@ -1214,6 +1423,11 @@ class RuntimeHostService:
         )
         if attempt is None or attempt.target != "local":
             raise RuntimeHostError("runtime_delivery_connector_required")
+        bundle_manifest = self._materialize_local_delivery_bundle(
+            snapshot,
+            run_id=action.run_id,
+            package_id=attempt.package_id,
+        )
         observation = DeliveryResultObservation.model_validate(
             {
                 "schema_version": DeliveryResultObservation.schema_id,
@@ -1227,6 +1441,7 @@ class RuntimeHostService:
                         "run_id": action.run_id,
                         "package_id": attempt.package_id,
                         "attempt_id": attempt.attempt_id,
+                        "bundle": bundle_manifest,
                     }
                 ),
                 "diagnostic_code": "bundle_prepared",
@@ -1261,6 +1476,112 @@ class RuntimeHostService:
             strict=True,
         )
         return CoreRunTerminalService(self.workspace).record_delivery_result(request)
+
+    def _materialize_local_delivery_bundle(
+        self,
+        snapshot,
+        *,
+        run_id: str,
+        package_id: str,
+    ) -> list[dict[str, object]]:
+        bindings = sorted(
+            (
+                item
+                for item in snapshot.package_artifact_bindings
+                if item.package_id == package_id and item.usage == "reader"
+            ),
+            key=lambda item: item.position,
+        )
+        if not bindings:
+            raise RuntimeHostError("control_store_integrity_invalid")
+        revisions = {
+            (item.artifact_id, item.revision): item
+            for item in snapshot.artifact_revisions
+        }
+        payloads: list[tuple[str, bytes, object]] = []
+        names: set[str] = set()
+        with SQLiteControlStore.open(self.workspace / "briefloop.db") as store:
+            for binding in bindings:
+                revision = revisions.get(
+                    (binding.artifact_id, binding.artifact_revision)
+                )
+                if (
+                    revision is None
+                    or revision.sha256 != binding.artifact_sha256
+                    or revision.run_id != run_id
+                ):
+                    raise RuntimeHostError("control_store_integrity_invalid")
+                name = PurePosixPath(revision.path).name
+                if not name or name in names or name in {".", ".."}:
+                    raise RuntimeHostError("control_store_integrity_invalid")
+                names.add(name)
+                try:
+                    payload = store.read_artifact_revision_bytes(
+                        run_id,
+                        binding.artifact_id,
+                        binding.artifact_revision,
+                    )
+                except (ControlStoreError, OSError) as exc:
+                    raise RuntimeHostError("control_store_integrity_invalid") from exc
+                if sha256_hex(payload) != binding.artifact_sha256:
+                    raise RuntimeHostError("control_store_integrity_invalid")
+                payloads.append((name, payload, binding))
+        directory = self.workspace / "output" / "delivery"
+        try:
+            directory.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
+            directory.mkdir(mode=0o700, exist_ok=True)
+            metadata = directory.lstat()
+            if directory.is_symlink() or not stat.S_ISDIR(metadata.st_mode):
+                raise RuntimeHostError("runtime_delivery_materialization_failed")
+            manifest: list[dict[str, object]] = []
+            for name, payload, binding in payloads:
+                destination = directory / name
+                try:
+                    descriptor = os.open(
+                        destination,
+                        os.O_WRONLY | os.O_CREAT | os.O_EXCL,
+                        0o600,
+                    )
+                except FileExistsError:
+                    if (
+                        destination.is_symlink()
+                        or not stat.S_ISREG(destination.lstat().st_mode)
+                        or destination.read_bytes() != payload
+                    ):
+                        raise RuntimeHostError(
+                            "runtime_delivery_materialization_failed"
+                        )
+                else:
+                    try:
+                        written = 0
+                        while written < len(payload):
+                            count = os.write(descriptor, payload[written:])
+                            if count <= 0:
+                                raise OSError("delivery bundle write made no progress")
+                            written += count
+                        os.fsync(descriptor)
+                    finally:
+                        os.close(descriptor)
+                manifest.append(
+                    {
+                        "artifact_id": binding.artifact_id,
+                        "revision": binding.artifact_revision,
+                        "path": f"output/delivery/{name}",
+                        "sha256": binding.artifact_sha256,
+                    }
+                )
+            if {item.name for item in directory.iterdir()} != names:
+                raise RuntimeHostError("runtime_delivery_materialization_failed")
+            directory_descriptor = os.open(directory, os.O_RDONLY)
+            try:
+                os.fsync(directory_descriptor)
+            finally:
+                os.close(directory_descriptor)
+        except RuntimeHostError:
+            raise
+        except OSError as exc:
+            raise RuntimeHostError("runtime_delivery_materialization_failed") from exc
+        return manifest
 
     def _apply_artifact_supersede(
         self,
@@ -1370,7 +1691,10 @@ class RuntimeHostService:
     def _apply_repair_start(self, current, action: CoreRunNextAction):
         snapshot = current.verified.snapshot
         legality = classify_recovery_legality(snapshot)
-        if legality.state != "blocked" or legality.latest_contamination_revision is None:
+        if (
+            legality.state != "blocked"
+            or legality.latest_contamination_revision is None
+        ):
             raise RuntimeHostError("control_store_integrity_invalid")
         contamination = next(
             (
@@ -1426,8 +1750,7 @@ class RuntimeHostService:
                 for relation in supersessions
                 for submission in snapshot.owned_artifact_submissions
                 if submission.artifact_id == relation.successor_artifact.artifact_id
-                and submission.artifact_revision
-                == relation.successor_artifact.revision
+                and submission.artifact_revision == relation.successor_artifact.revision
             }
         )
         stages = {item.stage_id: item for item in snapshot.stage_states}
@@ -1473,12 +1796,8 @@ class RuntimeHostService:
                 "run_id": action.run_id,
                 "repair_completion_id": legality.repair_completion_id,
                 "contamination_revision": legality.latest_contamination_revision,
-                "rerun_transition_ids": list(
-                    legality.required_rerun_transition_ids
-                ),
-                "gate_evaluation_ids": list(
-                    legality.required_gate_evaluation_ids
-                ),
+                "rerun_transition_ids": list(legality.required_rerun_transition_ids),
+                "gate_evaluation_ids": list(legality.required_gate_evaluation_ids),
                 "expected_store_revision": action.store_revision,
             },
             strict=True,

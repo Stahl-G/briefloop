@@ -286,7 +286,9 @@ def classify_core_run_next_action(verified: VerifiedCoreRun) -> CoreRunNextActio
         ]
     )
     if len(ready) != 1:
-        if not ready and all(item.status in {"complete", "skipped"} for item in stages.values()):
+        if not ready and all(
+            item.status in {"complete", "skipped"} for item in stages.values()
+        ):
             return _action(
                 verified,
                 action_kind="blocked",
@@ -333,11 +335,7 @@ def classify_core_run_next_action(verified: VerifiedCoreRun) -> CoreRunNextActio
     role = _ROLE_BY_STAGE.get(stage_id)
     topology = core_role_topology_policy(verified.binding.role_topology)
     if stage_id == "analyst" and topology.analyst_editor_route == "human_assisted":
-        role = (
-            "analyst"
-            if "analyst" in verified.runtime_adapter.role_ids
-            else "writer"
-        )
+        role = "analyst" if "analyst" in verified.runtime_adapter.role_ids else "writer"
     if role is None or role not in verified.runtime_adapter.role_ids:
         return _action(
             verified,
@@ -396,6 +394,7 @@ def _source_discovery_action(verified: VerifiedCoreRun) -> CoreRunNextAction:
             effect_kind="source_input_required",
             reason_code="human_source_material_required",
             stage_id="source-discovery",
+            request_schema_id=("briefloop.runtime_human_source_material_request.v2"),
         )
     route = min(
         routes,
@@ -450,6 +449,7 @@ def _source_discovery_action(verified: VerifiedCoreRun) -> CoreRunNextAction:
         action_kind="human_decision",
         effect_kind="source_input_required",
         reason_code="human_source_material_required",
+        request_schema_id="briefloop.runtime_human_source_material_request.v2",
         **common,
     )
 
@@ -592,8 +592,7 @@ def _has_current_finalize_gate(snapshot) -> bool:
         and {item.gate_id for item in current} == set(GATE_IDS)
         and len({item.gate_batch_id for item in current}) == 1
         and all(
-            item.status in {"pass", "warning"} and not item.blocking
-            for item in current
+            item.status in {"pass", "warning"} and not item.blocking for item in current
         )
     )
 
@@ -643,8 +642,7 @@ def _stage_has_current_effect(verified: VerifiedCoreRun, stage_id: str) -> bool:
     if stage_id == "analyst":
         return any(
             item.owner_stage_id == "analyst"
-            and item.artifact_revision
-            == artifacts[item.artifact_id].current_revision
+            and item.artifact_revision == artifacts[item.artifact_id].current_revision
             for item in snapshot.owned_artifact_submissions
             if item.artifact_id in {"analyst_draft_snapshot", "audited_brief"}
             and item.artifact_id in artifacts

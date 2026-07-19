@@ -28,6 +28,16 @@ ROOT = Path(__file__).resolve().parent.parent
 INTERMEDIATE = Path("output/intermediate")
 
 
+@pytest.fixture(autouse=True)
+def _exercise_pre_cutover_runtime_internals(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Keep legacy identity internals covered until LEGACY-DELETE removes them."""
+
+    monkeypatch.setattr(
+        "multi_agent_brief.cli.authority_guard.active_command_authority_error",
+        lambda _workspace, _command: None,
+    )
+
+
 def _workspace(tmp_path: Path) -> Path:
     return write_workspace_files_under(
         tmp_path,
@@ -235,7 +245,7 @@ def test_active_adapter_entrypoints_bind_runtime_literals() -> None:
     runtime_assets = (ROOT / "src/multi_agent_brief/runtime_assets.py").read_text(
         encoding="utf-8"
     )
-    assert '_workspace_skill_text(runtime="codex", runtime_label="Codex")' in runtime_assets
+    assert "all_writes.extend(_codex_writes(workspace=ws))" in runtime_assets
     assert "--runtime {runtime}" in runtime_assets
 
     hermes_schema = (ROOT / "integrations/hermes-plugin/mabw/schemas.py").read_text(

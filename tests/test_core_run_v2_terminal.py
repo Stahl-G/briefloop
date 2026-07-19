@@ -331,13 +331,19 @@ def test_terminal_service_owns_finalize_render_and_complete(tmp_path: Path) -> N
     assert service.accept_finalize_render(render_request).status == "replayed"
     with SQLiteControlStore.open(workspace / "briefloop.db", clock=clock) as store:
         snapshot = store.load_snapshot(run_id)
-        render = next(item for item in snapshot.finalize_renders if item.render_id == render_result.primary_record_id)
+        render = next(
+            item
+            for item in snapshot.finalize_renders
+            if item.render_id == render_result.primary_record_id
+        )
     _gate_receipt, _gate_fingerprint, evaluations = _commit_finalize_gate(
         workspace, run_id, clock, render
     )
     with SQLiteControlStore.open(workspace / "briefloop.db", clock=clock) as store:
         snapshot = store.load_snapshot(run_id)
-        finalize_stage = next(item for item in snapshot.stage_states if item.stage_id == "finalize")
+        finalize_stage = next(
+            item for item in snapshot.stage_states if item.stage_id == "finalize"
+        )
     complete_request = FinalizeCompleteRequest.model_validate(
         {
             "schema_version": FinalizeCompleteRequest.schema_id,
@@ -612,8 +618,38 @@ def test_runtime_host_applies_store_derived_local_terminal_path(
 
     action = host.next_action()
     assert action.effect_kind == "delivery_result"
+    assert not (workspace / "output" / "delivery").exists()
     result = host.apply_current(action)
     assert result.status == "committed"
+    with SQLiteControlStore.open(workspace / "briefloop.db") as store:
+        snapshot = store.load_snapshot(run_id)
+        reader_bindings = sorted(
+            (
+                item
+                for item in snapshot.package_artifact_bindings
+                if item.package_id == package.package_id and item.usage == "reader"
+            ),
+            key=lambda item: item.position,
+        )
+        revisions = {
+            (item.artifact_id, item.revision): item
+            for item in snapshot.artifact_revisions
+        }
+        expected_bundle = {
+            Path(
+                revisions[(item.artifact_id, item.artifact_revision)].path
+            ).name: store.read_artifact_revision_bytes(
+                run_id,
+                item.artifact_id,
+                item.artifact_revision,
+            )
+            for item in reader_bindings
+        }
+    delivery = workspace / "output" / "delivery"
+    assert {item.name for item in delivery.iterdir()} == set(expected_bundle)
+    assert {
+        name: (delivery / name).read_bytes() for name in expected_bundle
+    } == expected_bundle
     final_action = host.next_action()
     assert (final_action.action_kind, final_action.effect_kind) == (
         "complete",
@@ -682,7 +718,9 @@ def test_finalize_complete_records_contamination_before_requested_effect(
     _commit_finalize_gate(workspace, run_id, clock, render)
     with SQLiteControlStore.open(workspace / "briefloop.db", clock=clock) as store:
         snapshot = store.load_snapshot(run_id)
-        stage = next(item for item in snapshot.stage_states if item.stage_id == "finalize")
+        stage = next(
+            item for item in snapshot.stage_states if item.stage_id == "finalize"
+        )
         reader = next(
             item
             for item in snapshot.artifact_revisions
