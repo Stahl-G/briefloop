@@ -7,7 +7,11 @@ from multi_agent_brief.control_store.serialization import canonical_fingerprint
 
 from .errors import CoreRunError
 from .lineage import classify_current_lineage
-from .policy import REQUIRED_AUDITOR_GATES, SOURCE_ROUTE_OWNER_ORDER
+from .policy import (
+    REQUIRED_AUDITOR_GATES,
+    SOURCE_ROUTE_OWNER_ORDER,
+    core_role_topology_policy,
+)
 from .recovery import classify_recovery_legality
 from .terminal import classify_terminal_legality
 from .verifier import VerifiedCoreRun
@@ -309,7 +313,8 @@ def classify_core_run_next_action(verified: VerifiedCoreRun) -> CoreRunNextActio
         )
 
     role = _ROLE_BY_STAGE.get(stage_id)
-    if stage_id == "analyst" and verified.binding.role_topology == "human_assisted":
+    topology = core_role_topology_policy(verified.binding.role_topology)
+    if stage_id == "analyst" and topology.analyst_editor_route == "human_assisted":
         role = (
             "analyst"
             if "analyst" in verified.runtime_adapter.role_ids
@@ -355,14 +360,23 @@ def _source_discovery_action(verified: VerifiedCoreRun) -> CoreRunNextAction:
             request_schema_id="briefloop.stage_complete_request.v2",
         )
     routes = [
-        item for item in verified.source_plan.routes if item.route_kind != "disabled"
+        item
+        for item in verified.source_plan.routes
+        if item.route_kind != "disabled"
+        and (
+            snapshot.run.run_id,
+            verified.source_plan.source_plan_fingerprint,
+            item.route_id,
+            item.provider_id,
+        )
+        not in verified.exhausted_source_route_keys
     ]
     if not routes:
         return _action(
             verified,
-            action_kind="blocked",
-            effect_kind="source_route_unavailable",
-            reason_code="runtime_source_route_unavailable",
+            action_kind="human_decision",
+            effect_kind="source_input_required",
+            reason_code="human_source_material_required",
             stage_id="source-discovery",
         )
     route = min(
@@ -570,7 +584,9 @@ def _stage_has_current_effect(verified: VerifiedCoreRun, stage_id: str) -> bool:
     if stage_id == "scout":
         try:
             lineage.current_proposal("candidate")
-            if verified.binding.role_topology in {"default", "human_assisted"}:
+            if not core_role_topology_policy(
+                verified.binding.role_topology
+            ).separate_screener_stage:
                 lineage.current_proposal("screened")
         except CoreRunError:
             return False

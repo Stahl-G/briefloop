@@ -6,15 +6,72 @@ import json
 import os
 from pathlib import Path
 import stat
-from typing import Iterable
+from typing import Iterable, TypeVar
 
 from multi_agent_brief.control_store.serialization import canonical_json_bytes
+
+from multi_agent_brief.contracts.v2 import StrictModel
 
 from .contracts import RoleTaskEnvelope
 from .errors import RuntimeHostError
 
 
 MAX_ROLE_OUTPUT_BYTES = 16 * 1024 * 1024
+MAX_HOST_CONTRACT_BYTES = 1024 * 1024
+_ModelT = TypeVar("_ModelT", bound=StrictModel)
+
+
+def read_host_contract(
+    workspace: Path,
+    input_path: str,
+    model: type[_ModelT],
+    *,
+    error_code: str,
+) -> _ModelT:
+    """Read one strict workspace-contained host input without following links."""
+
+    candidate = Path(input_path).expanduser()
+    if not candidate.is_absolute():
+        candidate = workspace / candidate
+    try:
+        relative = candidate.relative_to(workspace)
+        if not relative.parts or ".." in relative.parts:
+            raise RuntimeHostError(error_code)
+        current = workspace
+        for part in relative.parts:
+            current = current / part
+            metadata = current.lstat()
+            if current.is_symlink():
+                raise RuntimeHostError(error_code)
+        if (
+            not stat.S_ISREG(metadata.st_mode)
+            or metadata.st_nlink != 1
+            or metadata.st_size > MAX_HOST_CONTRACT_BYTES
+        ):
+            raise RuntimeHostError(error_code)
+        descriptor = os.open(
+            current,
+            os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0),
+        )
+        try:
+            opened = os.fstat(descriptor)
+            if (
+                (opened.st_dev, opened.st_ino)
+                != (metadata.st_dev, metadata.st_ino)
+                or opened.st_nlink != 1
+                or opened.st_size > MAX_HOST_CONTRACT_BYTES
+            ):
+                raise RuntimeHostError(error_code)
+            payload = os.read(descriptor, MAX_HOST_CONTRACT_BYTES + 1)
+        finally:
+            os.close(descriptor)
+        if not payload or len(payload) > MAX_HOST_CONTRACT_BYTES:
+            raise RuntimeHostError(error_code)
+        return model.model_validate_json(payload, strict=True)
+    except RuntimeHostError:
+        raise
+    except (OSError, ValueError) as exc:
+        raise RuntimeHostError(error_code) from exc
 
 
 def materialize_role_envelope(
@@ -175,9 +232,11 @@ def materialize_host_request(
 
 
 __all__ = [
+    "MAX_HOST_CONTRACT_BYTES",
     "MAX_ROLE_OUTPUT_BYTES",
     "materialize_host_request",
     "materialize_role_envelope",
     "read_role_envelope",
     "read_role_outputs",
+    "read_host_contract",
 ]

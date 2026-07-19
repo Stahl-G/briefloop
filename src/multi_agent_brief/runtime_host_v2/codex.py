@@ -74,7 +74,7 @@ def load_codex_adapter_binding(run_id: str) -> RuntimeAdapterBinding:
         "action_protocol": "core_run_next_action_v2",
         "proposal_protocol": "pydantic_scratch_v2",
         "role_ids": list(_ROLE_IDS),
-        "supported_role_topologies": ["default", "strict"],
+        "supported_role_topologies": ["default", "single_session", "strict"],
         "adapter_asset_sha256": hashes,
         "max_delegation_depth": 1,
         "max_threads": 6,

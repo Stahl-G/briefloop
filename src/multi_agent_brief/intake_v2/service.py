@@ -24,6 +24,7 @@ from multi_agent_brief.contracts.v2 import (
     EventEnvelope,
     IntakeEventBinding,
     Invocation,
+    InvocationFailureRequest,
     ProposalSourceBinding,
     ScreenedCandidatesProposal,
     SourceCommitRequest,
@@ -111,6 +112,79 @@ class IntakeService:
         except IntakeError as exc:
             return IntakeResult(status="failed_uncommitted", error_code=exc.code)
 
+    def fail_invocation(self, request: InvocationFailureRequest) -> IntakeResult:
+        """Record one finite host failure for an already-authoritative invocation."""
+
+        try:
+            return self._fail_invocation(request)
+        except ControlStoreCommitOutcomeUnknown:
+            return IntakeResult(
+                status="commit_outcome_unknown",
+                error_code="commit_outcome_unknown",
+            )
+        except IntakeError as exc:
+            return IntakeResult(status="failed_uncommitted", error_code=exc.code)
+
+    def _fail_invocation(self, request: InvocationFailureRequest) -> IntakeResult:
+        request_fingerprint = canonical_fingerprint(
+            request.model_dump(mode="json", exclude_unset=False)
+        )
+        with self._open_store() as store:
+            replay = self._resolve_replay(
+                store,
+                run_id=request.run_id,
+                request_id=request.request_id,
+                request_fingerprint=request_fingerprint,
+            )
+            if replay is not None:
+                return replay
+            try:
+                snapshot = store.load_snapshot(request.run_id)
+            except ControlStoreError as exc:
+                raise IntakeError("control_store_integrity_invalid") from exc
+            if snapshot.store_revision != request.expected_store_revision:
+                raise IntakeError("expected_store_revision_conflict")
+            invocation = next(
+                (
+                    item
+                    for item in snapshot.invocations
+                    if item.invocation_id == request.invocation_id
+                ),
+                None,
+            )
+            events = [
+                item
+                for item in snapshot.events
+                if item.event_type == "role_invocation_started"
+                and item.core_run_binding is not None
+                and item.core_run_binding.primary_record_id == request.invocation_id
+            ]
+            if invocation is None or invocation.status != "active" or len(events) != 1:
+                raise IntakeError("intake_request_invalid")
+            owner_stage = events[0].stage_id
+            if owner_stage is None:
+                raise IntakeError("control_store_integrity_invalid")
+            core_run_bound = bool(snapshot.run_contract_bindings)
+            if core_run_bound:
+                from multi_agent_brief.core_run_v2.errors import CoreRunError
+                from multi_agent_brief.core_run_v2.verifier import (
+                    CoreRunDomainVerifier,
+                )
+
+                try:
+                    CoreRunDomainVerifier().verify(store, request.run_id)
+                except CoreRunError as exc:
+                    raise IntakeError("control_store_integrity_invalid") from exc
+            return self._record_rejection(
+                store,
+                request=request,
+                request_fingerprint=request_fingerprint,
+                invocation=invocation,
+                owner_stage=owner_stage,
+                core_run_bound=core_run_bound,
+                reason_code=request.reason_code,
+            )
+
     def _submit_source(self, request_path: str | os.PathLike[str]) -> IntakeResult:
         request = self._read_request(SourceCommitRequest, request_path)
         proposal_bytes = self._reader.read(request.proposal_path)
@@ -165,11 +239,9 @@ class IntakeService:
                 ):
                     raise _KnownInvalid("source_hash_mismatch")
                 try:
-                    claims_eligible, eligibility_reason = (
-                        evaluate_source_eligibility(
-                            proposal,
-                            raw_payload_present=raw_bytes is not None,
-                        )
+                    claims_eligible, eligibility_reason = evaluate_source_eligibility(
+                        proposal,
+                        raw_payload_present=raw_bytes is not None,
                     )
                 except SourcePolicyError as exc:
                     raise _KnownInvalid(str(exc)) from exc
@@ -384,9 +456,7 @@ class IntakeService:
         try:
             receipt = store.load_transaction_receipt(run_id, request_id)
         except ControlStoreError as exc:
-            raise ControlStoreCommitOutcomeUnknown(
-                "commit_outcome_unknown"
-            ) from exc
+            raise ControlStoreCommitOutcomeUnknown("commit_outcome_unknown") from exc
         if receipt is None:
             return None
         try:
@@ -422,21 +492,17 @@ class IntakeService:
         except IntakeError as exc:
             if exc.code == "submission_replay_conflict":
                 raise
-            raise ControlStoreCommitOutcomeUnknown(
-                "commit_outcome_unknown"
-            ) from exc
+            raise ControlStoreCommitOutcomeUnknown("commit_outcome_unknown") from exc
         except ControlStoreCommitOutcomeUnknown:
             raise
         except Exception as exc:
-            raise ControlStoreCommitOutcomeUnknown(
-                "commit_outcome_unknown"
-            ) from exc
+            raise ControlStoreCommitOutcomeUnknown("commit_outcome_unknown") from exc
 
     def _trusted_submission_context(
         self,
         store: SQLiteControlStore,
         lane: LanePolicy,
-        request: SourceCommitRequest | ArtifactSubmitRequest,
+        request: SourceCommitRequest | ArtifactSubmitRequest | InvocationFailureRequest,
     ) -> tuple[ControlStoreSnapshot, Invocation, str, bool]:
         # A structural snapshot is sufficient only to select the dormant PR-3
         # path or the PR-4A domain-verified path.  Every subsequent bound-run
@@ -723,9 +789,7 @@ class IntakeService:
                 "source_category": proposal.source_category,
                 "retrieval_source_type": proposal.retrieval_source_type,
                 "underlying_evidence_type": proposal.underlying_evidence_type,
-                "raw_underlying_evidence_type": (
-                    proposal.raw_underlying_evidence_type
-                ),
+                "raw_underlying_evidence_type": (proposal.raw_underlying_evidence_type),
                 "content_sha256": proposal.content_sha256,
                 "content_size_bytes": len(content_bytes),
                 "content_media_type": proposal.content_media_type,
@@ -741,9 +805,7 @@ class IntakeService:
                 "raw_payload_artifact_id": (
                     None if raw_bytes is None else raw_artifact_id
                 ),
-                "raw_payload_artifact_revision": (
-                    None if raw_bytes is None else 1
-                ),
+                "raw_payload_artifact_revision": (None if raw_bytes is None else 1),
                 "claims_eligible": claims_eligible,
                 "eligibility_reason": eligibility_reason,
                 "invocation_id": request.invocation_id,
@@ -777,16 +839,19 @@ class IntakeService:
         unit.put_invocation(completed)
         unit.put_artifact(content_artifact)
         unit.put_artifact_revision(content_revision, content_bytes)
-        if raw_artifact is not None and raw_revision is not None and raw_bytes is not None:
+        if (
+            raw_artifact is not None
+            and raw_revision is not None
+            and raw_bytes is not None
+        ):
             unit.put_artifact(raw_artifact)
             unit.put_artifact_revision(raw_revision, raw_bytes)
         unit.append_event(event)
         unit.put_source(source)
+
         def observe(receipt: TransactionReceipt) -> None:
             post_snapshot = (
-                self._verify_core_run(store, request.run_id)
-                if core_run_bound
-                else None
+                self._verify_core_run(store, request.run_id) if core_run_bound else None
             )
             self._verify_source_readback(store, source, receipt, post_snapshot)
 
@@ -890,11 +955,10 @@ class IntakeService:
                     strict=True,
                 )
             )
+
         def observe(receipt: TransactionReceipt) -> None:
             post_snapshot = (
-                self._verify_core_run(store, request.run_id)
-                if core_run_bound
-                else None
+                self._verify_core_run(store, request.run_id) if core_run_bound else None
             )
             self._verify_proposal_readback(store, accepted, receipt, post_snapshot)
 
@@ -942,6 +1006,7 @@ class IntakeService:
         )
         unit.put_invocation(failed)
         unit.append_event(event)
+
         def observe(_receipt: TransactionReceipt) -> None:
             if core_run_bound:
                 self._verify_core_run(store, request.run_id)

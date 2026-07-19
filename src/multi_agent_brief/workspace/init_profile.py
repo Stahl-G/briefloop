@@ -125,7 +125,7 @@ def build_controlstore_bootstrap(
             "workspace_id": workspace_id,
             "run_id": run_id,
             "runtime": "codex",
-            "role_topology": "default",
+            "role_topology": "single_session",
             "input_governance_required": True,
             "gate_strictness": {gate_id: True for gate_id in GATE_ID_VALUES},
             "run_direction": direction.model_dump(mode="json", exclude_unset=False),

@@ -6,7 +6,10 @@ from typing import Any
 
 
 ROLE_TOPOLOGY_DEFAULT = "default"
-ROLE_TOPOLOGY_VALUES = frozenset({"default", "strict", "human_assisted"})
+ROLE_TOPOLOGY_SINGLE_SESSION = "single_session"
+ROLE_TOPOLOGY_VALUES = frozenset(
+    {"single_session", "default", "strict", "human_assisted"}
+)
 ROLE_TOPOLOGY_SATISFIER_VALUES = frozenset({"scout", "writer"})
 
 

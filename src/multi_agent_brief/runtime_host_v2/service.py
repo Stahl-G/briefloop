@@ -18,7 +18,10 @@ from multi_agent_brief.contracts.v2 import (
     ClaimDraftsProposal,
     CoreRunNextAction,
     GateCheckRequest,
+    DeliveryAuthorizationRequest,
     IntegrityCheckRequest,
+    InternalApprovalRequest,
+    InvocationFailureRequest,
     InvocationStartRequest,
     OwnedArtifactSubmitRequest,
     RuntimeAdapterBinding,
@@ -37,11 +40,16 @@ from multi_agent_brief.core_run_v2.artifacts import (
 from multi_agent_brief.core_run_v2.claims import ClaimFreezeService
 from multi_agent_brief.core_run_v2.gates import GateEvaluationService
 from multi_agent_brief.core_run_v2.lineage import classify_current_lineage
-from multi_agent_brief.core_run_v2.policy import derived_id
+from multi_agent_brief.core_run_v2.policy import (
+    core_role_topology_policy,
+    derived_id,
+)
 from multi_agent_brief.core_run_v2.service import CoreRunService
+from multi_agent_brief.core_run_v2.terminal import CoreRunTerminalService
 from multi_agent_brief.intake_v2.errors import IntakeError
 from multi_agent_brief.intake_v2.scratch import parse_json_object
 from multi_agent_brief.intake_v2.service import IntakeService
+from multi_agent_brief.sources.search_backends.base import SearchBackendError
 
 from .contracts import (
     RoleTaskEnvelope,
@@ -77,7 +85,7 @@ _ROLE_OUTPUTS: dict[str, _RoleOutputSpec] = {
         artifact_id="source_candidates",
     ),
     "source-provider": _RoleOutputSpec(
-        filenames=("source_content.bin", "source_proposal.json"),
+        filenames=("source_content.bin", "source_proposal.json", "source_raw.json"),
         proposal_schema_id=SourceProposal.schema_id,
         owner_kind="source",
         proposal_model=SourceProposal,
@@ -167,12 +175,17 @@ class RuntimeHostService:
             strict=True,
         )
 
-    def start_current_invocation(self) -> InvocationDispatch:
+    def start_current_invocation(
+        self,
+        expected_action: CoreRunNextAction | None = None,
+    ) -> InvocationDispatch:
         current = initialize_or_open_runtime(
             self.workspace,
             adapter_loader=self._adapter_loader,
         )
         action = current.action
+        if expected_action is not None and expected_action != action:
+            raise RuntimeHostError("runtime_action_stale")
         if action.action_kind == "delegate":
             role_id = action.role_id
         elif (
@@ -209,6 +222,14 @@ class RuntimeHostService:
             raise RuntimeHostError("control_store_integrity_invalid")
         invocation_id = result.primary_record_id
         output = _ROLE_OUTPUTS[role_id]
+        topology = core_role_topology_policy(
+            current.verified.binding.role_topology
+        )
+        dispatch_instruction = {
+            "main_session": "execute_in_current_session",
+            "delegated_specialist": "delegate_exact_role",
+            "declared_existing_route": "use_declared_route",
+        }[topology.role_executor_route]
         envelope = RoleTaskEnvelope.model_validate(
             {
                 "schema_version": RoleTaskEnvelope.schema_id,
@@ -228,15 +249,117 @@ class RuntimeHostService:
                 "source_plan_fingerprint": (
                     current.verified.source_plan.source_plan_fingerprint
                 ),
-                "task_instructions": f"Complete the frozen {role_id} proposal contract.",
+                "executor_kind": topology.role_executor_route,
+                "context_mode": topology.context_mode,
+                "review_mode": topology.review_mode,
+                "dispatch_instruction": dispatch_instruction,
+                "task_instructions": (
+                    f"Complete only the frozen {role_id} role task in this "
+                    "recorded invocation."
+                ),
             },
             strict=True,
         )
-        envelope_path = materialize_role_envelope(self.workspace, envelope)
+        try:
+            envelope_path = materialize_role_envelope(self.workspace, envelope)
+        except RuntimeHostError:
+            failed = self._record_invocation_failure(
+                envelope,
+                reason_code="envelope_materialization_failed",
+                expected_store_revision=result.receipt.committed_revision,
+            )
+            if failed.status not in {"rejected_recorded", "replayed"}:
+                raise RuntimeHostError("control_store_integrity_invalid")
+            raise RuntimeHostError("runtime_envelope_materialization_failed")
         return InvocationDispatch(envelope=envelope, envelope_path=envelope_path)
 
-    def accept_invocation(self, invocation_id: str) -> RuntimeInvocationResult:
+    def fail_invocation(
+        self,
+        invocation_id: str,
+        *,
+        reason_code: str,
+        expected_envelope: RoleTaskEnvelope | None = None,
+    ) -> RuntimeInvocationResult:
         envelope = read_role_envelope(self.workspace, invocation_id)
+        if expected_envelope is not None and expected_envelope != envelope:
+            raise RuntimeHostError("runtime_envelope_invalid")
+        current = initialize_or_open_runtime(
+            self.workspace,
+            adapter_loader=self._adapter_loader,
+        )
+        spec = _ROLE_OUTPUTS.get(envelope.role_id)
+        if spec is None:
+            raise RuntimeHostError("runtime_envelope_invalid")
+        self._validate_envelope(current, envelope, spec)
+        result = self._record_invocation_failure(
+            envelope,
+            reason_code=reason_code,
+            expected_store_revision=envelope.store_revision,
+        )
+        if result.status == "commit_outcome_unknown":
+            result = self._record_invocation_failure(
+                envelope,
+                reason_code=reason_code,
+                expected_store_revision=envelope.store_revision,
+            )
+        if result.status not in {"rejected_recorded", "replayed"}:
+            raise RuntimeHostError(
+                result.error_code or "control_store_integrity_invalid"
+            )
+        receipt = result.receipt
+        if receipt is None:
+            raise RuntimeHostError("control_store_integrity_invalid")
+        return RuntimeInvocationResult.model_validate(
+            {
+                "schema_version": RuntimeInvocationResult.schema_id,
+                "run_id": envelope.run_id,
+                "invocation_id": invocation_id,
+                "status": result.status,
+                "transaction_id": receipt.transaction_id,
+                "store_revision": receipt.committed_revision,
+                "next_action": self.next_action().model_dump(
+                    mode="json", exclude_unset=False
+                ),
+            },
+            strict=True,
+        )
+
+    def _record_invocation_failure(
+        self,
+        envelope: RoleTaskEnvelope,
+        *,
+        reason_code: str,
+        expected_store_revision: int,
+    ):
+        try:
+            request = InvocationFailureRequest.model_validate(
+                {
+                    "schema_version": InvocationFailureRequest.schema_id,
+                    "request_id": derived_id(
+                        "REQ-HOST-INVOCATION-FAILURE",
+                        envelope.invocation_id,
+                        reason_code,
+                    ),
+                    "run_id": envelope.run_id,
+                    "invocation_id": envelope.invocation_id,
+                    "reason_code": reason_code,
+                    "expected_store_revision": expected_store_revision,
+                },
+                strict=True,
+            )
+        except ValidationError as exc:
+            raise RuntimeHostError("runtime_failure_reason_invalid") from exc
+        return IntakeService(self.workspace).fail_invocation(request)
+
+    def accept_invocation(
+        self,
+        invocation_id: str,
+        *,
+        expected_envelope: RoleTaskEnvelope | None = None,
+    ) -> RuntimeInvocationResult:
+        envelope = read_role_envelope(self.workspace, invocation_id)
+        if expected_envelope is not None and expected_envelope != envelope:
+            raise RuntimeHostError("runtime_envelope_invalid")
         spec = _ROLE_OUTPUTS.get(envelope.role_id)
         if spec is None:
             raise RuntimeHostError("runtime_envelope_invalid")
@@ -319,6 +442,14 @@ class RuntimeHostService:
         )
 
     def _validate_envelope(self, current, envelope, spec: _RoleOutputSpec) -> None:
+        topology = core_role_topology_policy(
+            current.verified.binding.role_topology
+        )
+        dispatch_instruction = {
+            "main_session": "execute_in_current_session",
+            "delegated_specialist": "delegate_exact_role",
+            "declared_existing_route": "use_declared_route",
+        }[topology.role_executor_route]
         if (
             envelope.run_id != current.verified.snapshot.run.run_id
             or envelope.adapter_binding_fingerprint
@@ -329,6 +460,10 @@ class RuntimeHostService:
             or envelope.proposal_schema_id != spec.proposal_schema_id
             or envelope.scratch_directory != f"scratch/{envelope.invocation_id}"
             or envelope.store_revision != envelope.action.store_revision + 1
+            or envelope.executor_kind != topology.role_executor_route
+            or envelope.context_mode != topology.context_mode
+            or envelope.review_mode != topology.review_mode
+            or envelope.dispatch_instruction != dispatch_instruction
         ):
             raise RuntimeHostError("runtime_envelope_invalid")
         invocation = next(
@@ -412,7 +547,7 @@ class RuntimeHostService:
                         "invocation_id": envelope.invocation_id,
                         "proposal_path": f"{scratch}/source_proposal.json",
                         "content_path": f"{scratch}/source_content.bin",
-                        "raw_payload_path": None,
+                        "raw_payload_path": f"{scratch}/source_raw.json",
                         "expected_store_revision": envelope.store_revision,
                     },
                     strict=True,
@@ -490,14 +625,24 @@ class RuntimeHostService:
             None,
         )
 
-    def apply_current(self):
+    def apply_current(
+        self,
+        expected_action: CoreRunNextAction | None = None,
+        human_request: StrictModel | None = None,
+    ):
         current = initialize_or_open_runtime(
             self.workspace,
             adapter_loader=self._adapter_loader,
         )
         action = current.action
+        if expected_action is not None and expected_action != action:
+            raise RuntimeHostError("runtime_action_stale")
+        if action.action_kind == "human_decision":
+            return self._apply_human_decision(action, human_request)
         if action.action_kind != "deterministic":
             raise RuntimeHostError("runtime_action_not_deterministic")
+        if human_request is not None:
+            raise RuntimeHostError("runtime_human_request_invalid")
         if action.effect_kind == "doctor_check":
             request = IntegrityCheckRequest.model_validate(
                 {
@@ -515,6 +660,8 @@ class RuntimeHostService:
             result = CoreRunService(self.workspace).doctor_check(request)
         elif action.effect_kind == "owned_artifact_acceptance":
             result = self._apply_input_governance(current, action)
+        elif action.effect_kind == "source_acquire":
+            result = self._apply_source_acquire(current, action)
         elif action.effect_kind == "claim_freeze":
             result = self._apply_claim_freeze(current, action)
         elif action.effect_kind == "audit_promotion":
@@ -525,11 +672,98 @@ class RuntimeHostService:
             result = self._apply_stage_complete(current, action)
         else:
             raise RuntimeHostError("runtime_action_not_implemented")
+        if isinstance(result, RuntimeInvocationResult):
+            if result.status not in {"committed", "replayed", "rejected_recorded"}:
+                raise RuntimeHostError("control_store_integrity_invalid")
+            return result
         if result.status not in {"committed", "replayed"}:
             raise RuntimeHostError(
                 result.error_code or "control_store_integrity_invalid"
             )
         return result
+
+    def _apply_human_decision(
+        self,
+        action: CoreRunNextAction,
+        request: StrictModel | None,
+    ):
+        if request is None or request.schema_id != action.request_schema_id:
+            raise RuntimeHostError("runtime_human_request_required")
+        request_run_id = getattr(request, "run_id", None)
+        expected_revision = getattr(request, "expected_store_revision", None)
+        if request_run_id != action.run_id or expected_revision != action.store_revision:
+            raise RuntimeHostError("runtime_human_request_invalid")
+        terminal = CoreRunTerminalService(self.workspace)
+        if action.effect_kind == "internal_approval" and isinstance(
+            request, InternalApprovalRequest
+        ):
+            result = terminal.record_internal_approval(request)
+        elif action.effect_kind in {
+            "delivery_authorization",
+            "delivery_reconciliation",
+            "delivery_retry_authorization",
+        } and isinstance(request, DeliveryAuthorizationRequest):
+            result = terminal.authorize_delivery(request)
+        else:
+            raise RuntimeHostError("runtime_human_request_invalid")
+        if result.status not in {"committed", "replayed"}:
+            raise RuntimeHostError(
+                result.error_code or "control_store_integrity_invalid"
+            )
+        return result
+
+    def _apply_source_acquire(self, current, action: CoreRunNextAction):
+        from .source_routes import collect_frozen_source
+
+        route = next(
+            (
+                item
+                for item in current.verified.source_plan.routes
+                if item.route_id == action.source_route_id
+                and item.provider_id == action.source_provider_id
+            ),
+            None,
+        )
+        if route is None or route.execution_owner != "deterministic":
+            raise RuntimeHostError("runtime_source_plan_invalid")
+        dispatch = self.start_current_invocation(action)
+        invocation_id = dispatch.envelope.invocation_id
+        try:
+            material = collect_frozen_source(
+                self.workspace,
+                run_id=action.run_id,
+                invocation_id=invocation_id,
+                route=route,
+            )
+            scratch = f"scratch/{invocation_id}"
+            self._materialize_tool_input(
+                f"{scratch}/source_content.bin",
+                material.content,
+            )
+            self._materialize_tool_input(
+                f"{scratch}/source_raw.json",
+                material.raw_payload,
+            )
+            self._materialize_tool_input(
+                f"{scratch}/source_proposal.json",
+                canonical_json_bytes(
+                    material.proposal.model_dump(mode="json", exclude_unset=False)
+                ),
+            )
+        except (
+            OSError,
+            NotImplementedError,
+            RuntimeError,
+            RuntimeHostError,
+            SearchBackendError,
+            ValidationError,
+            ValueError,
+        ):
+            return self.fail_invocation(
+                invocation_id,
+                reason_code="dispatch_unavailable",
+            )
+        return self.accept_invocation(invocation_id)
 
     def _apply_input_governance(self, current, action: CoreRunNextAction):
         snapshot = current.verified.snapshot

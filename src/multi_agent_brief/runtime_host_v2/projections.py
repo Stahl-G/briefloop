@@ -11,6 +11,7 @@ from pathlib import Path
 from multi_agent_brief.control_store import ControlStoreError, SQLiteControlStore
 from multi_agent_brief.core_run_v2.errors import CoreRunError
 from multi_agent_brief.core_run_v2.next_action import classify_core_run_next_action
+from multi_agent_brief.core_run_v2.policy import core_role_topology_policy
 from multi_agent_brief.core_run_v2.terminal import classify_terminal_legality
 from multi_agent_brief.core_run_v2.verifier import CoreRunDomainVerifier
 
@@ -29,6 +30,7 @@ def build_store_status_projection(workspace: str | Path) -> dict[str, object]:
             verified = CoreRunDomainVerifier().verify(store, head.current_run_id)
         action = classify_core_run_next_action(verified)
         terminal = classify_terminal_legality(verified.snapshot)
+        topology = core_role_topology_policy(verified.binding.role_topology)
     except RuntimeHostError:
         raise
     except (ControlStoreError, CoreRunError, OSError, RuntimeError, ValueError) as exc:
@@ -46,6 +48,12 @@ def build_store_status_projection(workspace: str | Path) -> dict[str, object]:
         "authority": "sqlite_control_store",
         "run_id": verified.snapshot.run.run_id,
         "runtime": verified.snapshot.run.runtime,
+        "execution_topology": topology.topology,
+        "executor_display": topology.role_executor_route,
+        "execution_topology_display": topology.topology_display,
+        "context_independence": topology.context_display,
+        "review_mode": topology.review_display,
+        "role_stages": topology.role_stages_display,
         "store_revision": verified.snapshot.store_revision,
         "current_stage": ready[0] if len(ready) == 1 else None,
         "stage_states": [
@@ -97,6 +105,12 @@ def build_store_quality_projection(workspace: str | Path) -> dict[str, object]:
         "store_revision": status["store_revision"],
         "package_ready": status["package_ready"],
         "delivered": status["delivered"],
+        "execution_topology": status["execution_topology"],
+        "executor_display": status["executor_display"],
+        "execution_topology_display": status["execution_topology_display"],
+        "context_independence": status["context_independence"],
+        "review_mode": status["review_mode"],
+        "role_stages": status["role_stages"],
         "next_action": status["next_action"],
         "projection_source": status["projection_source"],
     }

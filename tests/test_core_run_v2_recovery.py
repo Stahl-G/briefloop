@@ -2353,6 +2353,112 @@ def test_recovery_service_reset_is_cross_run_and_historical_replay_safe(
     ).status == "complete"
 
 
+@pytest.mark.skipif(sys.platform == "win32", reason="requires working-checkout publication")
+def test_reset_derives_successor_source_spec_from_successor_direction_and_replays(
+    tmp_path: Path,
+) -> None:
+    workspace = tmp_path / "source-plan-reset"
+    create_demo_workspace(workspace)
+    (workspace / "sources.yaml").write_text(
+        """source_strategy:
+  profile: conservative
+  enabled_providers: [web_search]
+web_search:
+  enabled: true
+  mode: external_api
+  backend: tavily
+  max_results: 7
+""",
+        encoding="utf-8",
+    )
+    initialize_values = deepcopy(CoreRunInitializeRequest.minimal_example)
+    initialize_values.update(
+        request_id="REQ-RESET-SOURCE-PLAN-INIT-001",
+        workspace_id="WS-RESET-SOURCE-PLAN-001",
+        run_id="RUN-RESET-SOURCE-PLAN-001",
+        workspace_config_sha256=read_workspace_file(
+            workspace, "config.yaml"
+        ).sha256,
+        sources_config_sha256=read_workspace_file(
+            workspace, "sources.yaml"
+        ).sha256,
+    )
+    direction = dict(initialize_values["run_direction"])
+    direction.update(
+        web_search_mode="external_api",
+        search_backend="tavily",
+        target_terms=["predecessor term"],
+    )
+    initialize_values["run_direction"] = direction
+    adapter = dict(initialize_values["runtime_adapter_binding"])
+    adapter["run_id"] = initialize_values["run_id"]
+    adapter.pop("binding_fingerprint", None)
+    adapter["binding_fingerprint"] = canonical_fingerprint(adapter)
+    initialize_values["runtime_adapter_binding"] = adapter
+    service = CoreRunService(workspace, clock=CLOCK)
+    initialized = service.initialize(
+        CoreRunInitializeRequest.model_validate(initialize_values, strict=True)
+    )
+    assert initialized.status == "committed"
+
+    database = workspace / "briefloop.db"
+    with SQLiteControlStore.open(database, clock=CLOCK) as store:
+        predecessor = store.load_snapshot("RUN-RESET-SOURCE-PLAN-001")
+        predecessor_plan = CoreRunDomainVerifier().verify(
+            store, "RUN-RESET-SOURCE-PLAN-001"
+        ).source_plan
+    predecessor_binding = predecessor.run_contract_bindings[0]
+    successor_direction = predecessor_binding.run_direction.model_copy(
+        update={
+            "target_terms": ["successor term"],
+            "report_window_start": "2026-07-15",
+            "report_window_end": "2026-07-18",
+            "report_date": "2026-07-18",
+        }
+    )
+    reset = RunResetRequest.model_validate(
+        {
+            "schema_version": RunResetRequest.schema_id,
+            "request_id": "REQ-RESET-SOURCE-PLAN-001",
+            "predecessor_run_id": "RUN-RESET-SOURCE-PLAN-001",
+            "successor_run_id": "RUN-RESET-SOURCE-PLAN-002",
+            "workspace_id": predecessor.workspace_id,
+            "runtime": predecessor.run.runtime,
+            "expected_head_run_id": "RUN-RESET-SOURCE-PLAN-001",
+            "expected_store_revision": predecessor.store_revision,
+            "expected_workspace_revision": predecessor.store_revision,
+            "run_direction": successor_direction.model_dump(mode="json"),
+            "workspace_config_sha256": predecessor_binding.workspace_config_sha256,
+            "sources_config_sha256": predecessor_binding.sources_config_sha256,
+            "role_topology": predecessor_binding.role_topology,
+            "gate_strictness": predecessor_binding.gate_strictness,
+            "input_governance_required": predecessor_binding.input_governance_required,
+        },
+        strict=True,
+    )
+    recovery = CoreRunRecoveryService(workspace, clock=CLOCK)
+    result = recovery.reset_run(reset)
+    assert result.status == "committed", result.to_dict()
+    with SQLiteControlStore.open(database, clock=CLOCK) as store:
+        revision = store.current_revision
+        successor_plan = CoreRunDomainVerifier().verify(
+            store, "RUN-RESET-SOURCE-PLAN-002"
+        ).source_plan
+    assert successor_plan.source_plan_fingerprint != (
+        predecessor_plan.source_plan_fingerprint
+    )
+    successor_route = successor_plan.routes[0]
+    assert successor_route.acquisition_spec is not None
+    assert successor_route.acquisition_spec.requests[0].query == "successor term"
+
+    (workspace / "sources.yaml").write_text("later: mutation\n", encoding="utf-8")
+    replay = recovery.reset_run(reset)
+    assert replay.status == "replayed"
+    assert replay.receipt == result.receipt
+    with SQLiteControlStore.open(database, clock=CLOCK) as store:
+        assert store.current_revision == revision
+
+
 def test_reset_rejects_unsupported_runtime_topology_before_store_write(
     tmp_path: Path,
 ) -> None:

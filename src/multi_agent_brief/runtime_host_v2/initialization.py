@@ -20,6 +20,7 @@ from multi_agent_brief.contracts.v2 import (
 )
 from multi_agent_brief.control_store.sqlite_store import SQLiteControlStore
 from multi_agent_brief.core_run_v2.next_action import classify_core_run_next_action
+from multi_agent_brief.core_run_v2.errors import CoreRunError
 from multi_agent_brief.core_run_v2.policy import derived_id
 from multi_agent_brief.core_run_v2.service import CoreRunService
 from multi_agent_brief.core_run_v2.verifier import (
@@ -128,6 +129,8 @@ def initialize_or_open_runtime(
             sources_bytes,
             run_id=bootstrap.run_id,
             sources_config_sha256=sources_sha256,
+            run_direction=bootstrap.run_direction,
+            workspace_root=workspace,
         )
         request = CoreRunInitializeRequest.model_validate(
             {
@@ -155,7 +158,7 @@ def initialize_or_open_runtime(
             },
             strict=True,
         )
-    except (ValidationError, ValueError) as exc:
+    except (CoreRunError, ValidationError, ValueError) as exc:
         raise RuntimeHostError("runtime_initialization_input_invalid") from exc
     result = CoreRunService(workspace).initialize(request)
     if result.status not in {"committed", "replayed"}:

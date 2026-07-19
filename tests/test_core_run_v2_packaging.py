@@ -78,6 +78,7 @@ def test_non_editable_wheel_runs_complete_dormant_core_spine(
         from multi_agent_brief.core_run_v2.checkout import build_checkout_revision
         from multi_agent_brief.core_run_v2.publication import CheckoutPublicationEngine
         from multi_agent_brief.core_run_v2.policy import REQUIRED_AUDITOR_GATES
+        from multi_agent_brief.runtime_host_v2.codex import load_codex_adapter_binding
 
         workspace = Path(sys.argv[1])
         installed = Path(sys.argv[2]).resolve()
@@ -94,6 +95,14 @@ def test_non_editable_wheel_runs_complete_dormant_core_spine(
         assert "PRAGMA user_version=5;" in migration_0005.read_text(encoding="utf-8")
         assert callable(build_checkout_revision)
         assert CheckoutPublicationEngine.__module__.endswith(".publication")
+        codex_binding = load_codex_adapter_binding("RUN-WHEEL-SINGLE-SESSION")
+        assert "single_session" in codex_binding.supported_role_topologies
+        codex_reference = resources.files("multi_agent_brief").joinpath(
+            "runtime_kits", "codex", "skills", "briefloop", "references",
+            "controlstore-v2.md",
+        ).read_text(encoding="utf-8")
+        assert "execute_in_current_session" in codex_reference
+        assert "stage-separated self-review" in codex_reference
         create_demo_workspace(workspace)
         run_id = "RUN-WHEEL-CORE-V2-001"
         workspace_id = "WS-WHEEL-CORE-V2-001"

@@ -65,12 +65,17 @@ EXPECTED_V2_CONTRACT_IDS = (
     "briefloop.run_direction.v2",
     "briefloop.workspace_controlstore_bootstrap.v2",
     "briefloop.runtime_adapter_binding.v2",
+    "briefloop.runtime_web_search_request_spec.v2",
+    "briefloop.runtime_web_search_acquisition_spec.v2",
+    "briefloop.runtime_cached_package_acquisition_spec.v2",
+    "briefloop.runtime_newsapi_acquisition_spec.v2",
     "briefloop.runtime_source_route_binding.v2",
     "briefloop.runtime_source_plan_binding.v2",
     "briefloop.core_run_next_action.v2",
     "briefloop.core_run_initialize_request.v2",
     "briefloop.run_contract_binding.v2",
     "briefloop.invocation_start_request.v2",
+    "briefloop.invocation_failure_request.v2",
     "briefloop.owned_artifact_submit_request.v2",
     "briefloop.owned_artifact_submission_record.v2",
     "briefloop.claim_record.v2",
@@ -136,8 +141,8 @@ def _refingerprint(payload: dict[str, object], *, field: str) -> None:
 
 def test_v2_contract_inventory_is_exact_and_uses_existing_registry() -> None:
     assert V2_CONTRACT_IDS == EXPECTED_V2_CONTRACT_IDS
-    assert len(V2_CONTRACT_MODELS) == 84
-    assert len(set(V2_CONTRACT_IDS)) == 84
+    assert len(V2_CONTRACT_MODELS) == 89
+    assert len(set(V2_CONTRACT_IDS)) == 89
     for contract_id, model in zip(V2_CONTRACT_IDS, V2_CONTRACT_MODELS):
         assert SchemaRegistry.get(contract_id) is model
 
@@ -659,18 +664,24 @@ def test_runtime_source_route_and_provider_vocabulary_is_finite() -> None:
         "briefloop.runtime_source_route_binding.v2",
         "minimal",
     )
+    web_spec = SchemaRegistry.example(
+        "briefloop.runtime_web_search_acquisition_spec.v2",
+        "minimal",
+    )
     for values in (
         {
             "route_id": "web-search",
             "route_kind": "external_api",
             "provider_id": "tavily",
             "execution_owner": "deterministic",
+            "acquisition_spec": web_spec,
         },
         {
             "route_id": "runtime_tool",
             "route_kind": "runtime_tool",
             "provider_id": "runtime-tool",
             "execution_owner": "specialist",
+            "acquisition_spec": None,
         },
     ):
         candidate = {**route, **values}
@@ -689,6 +700,7 @@ def test_runtime_source_route_and_provider_vocabulary_is_finite() -> None:
         "route_kind": "external_api",
         "provider_id": "tavily",
         "execution_owner": "deterministic",
+        "acquisition_spec": web_spec,
     }
     _refingerprint(mismatched, field="route_fingerprint")
     assert [
@@ -698,6 +710,27 @@ def test_runtime_source_route_and_provider_vocabulary_is_finite() -> None:
             mismatched,
         )
     ] == [("$", "is invalid")]
+
+    for mutation in ("missing", "extra", "coerced"):
+        invalid = {
+            **route,
+            "route_id": "web-search",
+            "route_kind": "external_api",
+            "provider_id": "tavily",
+            "execution_owner": "deterministic",
+            "acquisition_spec": deepcopy(web_spec),
+        }
+        if mutation == "missing":
+            invalid["acquisition_spec"] = None
+        elif mutation == "extra":
+            invalid["acquisition_spec"]["unexpected"] = True
+        else:
+            invalid["acquisition_spec"]["requests"][0]["max_results"] = "5"
+        _refingerprint(invalid, field="route_fingerprint")
+        assert SchemaRegistry.validate(
+            "briefloop.runtime_source_route_binding.v2",
+            invalid,
+        )
 
 
 def test_source_route_fields_are_bound_into_next_action_fingerprint() -> None:

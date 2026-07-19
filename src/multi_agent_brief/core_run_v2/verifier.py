@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from collections import Counter, defaultdict
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import Any, Literal
 
 from multi_agent_brief.contracts.v2 import (
@@ -51,8 +51,10 @@ from .policy import (
     REQUIRED_AUDITOR_GATES,
     TERMINAL_INTERNAL_ARTIFACT_IDS,
     archive_artifact_usage,
+    core_role_topology_policy,
     derived_id,
     normalize_text,
+    require_topology_runtime,
     run_contract_fingerprint,
     transaction_type_for,
 )
@@ -76,6 +78,9 @@ class VerifiedCoreRun:
     contracts: ValidatedRuntimeContractPayloads
     runtime_adapter: RuntimeAdapterBinding
     source_plan: RuntimeSourcePlanBinding
+    exhausted_source_route_keys: frozenset[
+        tuple[str, str, str, str | None]
+    ] = frozenset()
 
     @property
     def stages(self) -> tuple[dict[str, Any], ...]:
@@ -1114,7 +1119,13 @@ class CoreRunDomainVerifier:
             raise CoreRunError("core_run_head_mismatch")
         verified = self._verify_snapshot(history, snapshot)
         self.verify_history(history)
-        return verified
+        return replace(
+            verified,
+            exhausted_source_route_keys=self._source_route_exhaustion_as_of(
+                history,
+                snapshot,
+            ),
+        )
 
     def verify_history(
         self,
@@ -1345,6 +1356,14 @@ class CoreRunDomainVerifier:
             if effect is CoreEffect.INVOCATION_START:
                 from .next_action import classify_core_run_next_action
 
+                pre_verified = replace(
+                    pre_verified,
+                    exhausted_source_route_keys=self._source_route_exhaustion_as_of(
+                        history,
+                        pre,
+                    ),
+                )
+
                 invocations = [
                     item
                     for item in snapshot.invocations
@@ -1402,6 +1421,72 @@ class CoreRunDomainVerifier:
             or receipt.package_artifact_bindings
         ):
             self._verify_archive_package_reconstruction(history, snapshot, receipt)
+
+    def _source_route_exhaustion_as_of(
+        self,
+        history: ControlStoreHistory,
+        snapshot: ControlStoreSnapshot,
+    ) -> frozenset[tuple[str, str, str, str | None]]:
+        """Derive terminal source-route attempts from verified receipt history."""
+
+        from .next_action import classify_core_run_next_action
+
+        receipts = {item.transaction_id: item for item in snapshot.transactions}
+        invocations = {item.invocation_id: item for item in snapshot.invocations}
+        accepted_by_invocation = {
+            item.invocation_id for item in snapshot.sources
+        }
+        starts = sorted(
+            (
+                event
+                for event in snapshot.events
+                if event.core_run_binding is not None
+                and event.core_run_binding.effect_kind == "invocation_start"
+                and event.stage_id == "source-discovery"
+            ),
+            key=lambda item: receipts[item.transaction_id].committed_revision,
+        )
+        exhausted: set[tuple[str, str, str, str | None]] = set()
+        for event in starts:
+            invocation_id = event.core_run_binding.primary_record_id
+            invocation = invocations.get(invocation_id)
+            receipt = receipts.get(event.transaction_id)
+            if invocation is None or receipt is None:
+                raise CoreRunError("control_store_integrity_invalid")
+            try:
+                pre = history.snapshot_at_revision(
+                    snapshot.run.run_id,
+                    receipt.prior_revision,
+                )
+            except Exception as exc:
+                raise CoreRunError("control_store_integrity_invalid") from exc
+            pre_verified = replace(
+                self._verify_snapshot(history, pre),
+                exhausted_source_route_keys=frozenset(exhausted),
+            )
+            action = classify_core_run_next_action(pre_verified)
+            route_id = action.source_route_id
+            if (
+                invocation.role_id != "source-provider"
+                or route_id is None
+                or action.stage_id != "source-discovery"
+                or action.action_kind not in {"delegate", "deterministic"}
+            ):
+                continue
+            key = (
+                snapshot.run.run_id,
+                action.source_plan_fingerprint,
+                route_id,
+                action.source_provider_id,
+            )
+            if invocation.status == "failed" or (
+                invocation.status == "completed"
+                and invocation_id in accepted_by_invocation
+            ):
+                exhausted.add(key)
+            elif invocation.status != "active":
+                raise CoreRunError("control_store_integrity_invalid")
+        return frozenset(exhausted)
 
     @staticmethod
     def _verify_reset_history(
@@ -1872,6 +1957,10 @@ class CoreRunDomainVerifier:
             != binding.runtime_source_plan_fingerprint
         ):
             raise CoreRunError("core_run_contract_mismatch")
+        try:
+            require_topology_runtime(binding.role_topology, binding.runtime)
+        except ValueError as exc:
+            raise CoreRunError("core_run_contract_mismatch") from exc
         return contracts, runtime_adapter, source_plan
 
     @staticmethod
@@ -1927,6 +2016,7 @@ class CoreRunDomainVerifier:
         snapshot: ControlStoreSnapshot,
         binding: RunContractBinding,
     ) -> None:
+        topology_policy = core_role_topology_policy(binding.role_topology)
         invocation_stages = _invocation_stage_map(snapshot)
         invocations = {item.invocation_id: item for item in snapshot.invocations}
         if set(invocations) != set(invocation_stages):
@@ -1992,7 +2082,7 @@ class CoreRunDomainVerifier:
         for submission in snapshot.owned_artifact_submissions:
             if submission.artifact_id == "audited_brief":
                 allowed = {("editor", "editor")}
-                if binding.role_topology == "human_assisted":
+                if topology_policy.analyst_editor_route == "human_assisted":
                     allowed.add(("analyst", "writer"))
                 expected = (
                     submission.owner_stage_id,
@@ -2253,9 +2343,10 @@ class CoreRunDomainVerifier:
             snapshot,
             store.read_artifact_revision_bytes,
         )
+        topology_policy = core_role_topology_policy(binding.role_topology)
         analyst_route = (
             classify_human_assisted_analyst_route(snapshot)
-            if binding.role_topology == "human_assisted"
+            if topology_policy.analyst_editor_route == "human_assisted"
             else None
         )
         stage_ids = [str(item["stage_id"]) for item in contracts.stages]
@@ -2381,15 +2472,15 @@ class CoreRunDomainVerifier:
             stage_id = transition.stage_id
             kind = transition.transition_kind
             if kind == "satisfied_by_topology":
-                if stage_id == "screener" and binding.role_topology in {
-                    "default",
-                    "human_assisted",
-                }:
+                if stage_id == "screener" and not topology_policy.separate_screener_stage:
                     return (
                         (proposal_revision("candidate"), "consumed"),
                         (proposal_revision("screened"), "produced"),
                     )
-                if stage_id == "editor" and binding.role_topology == "human_assisted":
+                if (
+                    stage_id == "editor"
+                    and topology_policy.analyst_editor_route == "human_assisted"
+                ):
                     return ((current_revision("audited_brief"), "topology_required"),)
                 raise CoreRunError("control_store_integrity_invalid")
             if kind != "complete":
@@ -2424,13 +2515,13 @@ class CoreRunDomainVerifier:
                 return ((current_revision("input_classification"), "produced"),)
             if stage_id == "scout":
                 selected = [(proposal_revision("candidate"), "produced")]
-                if binding.role_topology in {"default", "human_assisted"}:
+                if not topology_policy.separate_screener_stage:
                     selected.append(
                         (proposal_revision("screened"), "topology_required")
                     )
                 return tuple(selected)
             if stage_id == "screener":
-                if binding.role_topology != "strict":
+                if not topology_policy.separate_screener_stage:
                     raise CoreRunError("control_store_integrity_invalid")
                 return (
                     (proposal_revision("screened"), "produced"),
@@ -2456,7 +2547,7 @@ class CoreRunDomainVerifier:
                     raise CoreRunError("control_store_integrity_invalid")
                 return ((draft, "consumed"), (ledger, "produced"))
             if stage_id == "analyst":
-                if binding.role_topology == "human_assisted":
+                if topology_policy.analyst_editor_route == "human_assisted":
                     bound_ids = {
                         item.artifact_id
                         for item in artifact_bindings.get(transition.transition_id, [])
@@ -2882,7 +2973,7 @@ class CoreRunDomainVerifier:
                 expected_invocation_stage = "analyst"
             elif (
                 transition.stage_id == "analyst"
-                and binding.role_topology == "human_assisted"
+                and topology_policy.analyst_editor_route == "human_assisted"
             ):
                 bound_ids = {
                     item.artifact_id

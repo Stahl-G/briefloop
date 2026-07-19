@@ -70,6 +70,95 @@ class ArtifactPolicy:
     invocation_role_id: str | None = None
 
 
+@dataclass(frozen=True)
+class CoreRoleTopologyPolicy:
+    """Pure execution semantics derived from the frozen topology selection."""
+
+    topology: str
+    separate_screener_stage: bool
+    analyst_editor_route: str
+    role_executor_route: str
+    context_mode: str
+    review_mode: str
+    topology_display: str
+    context_display: str
+    review_display: str
+    role_stages_display: str
+    required_runtime: str | None = None
+
+
+_ROLE_TOPOLOGY_POLICIES = MappingProxyType(
+    {
+        "single_session": CoreRoleTopologyPolicy(
+            topology="single_session",
+            separate_screener_stage=True,
+            analyst_editor_route="separate",
+            role_executor_route="main_session",
+            context_mode="shared_session",
+            review_mode="stage_separated_self_review",
+            topology_display="Single session",
+            context_display="Shared context",
+            review_display="Stage-separated self-review",
+            role_stages_display="Separate recorded invocations",
+            required_runtime="codex",
+        ),
+        "strict": CoreRoleTopologyPolicy(
+            topology="strict",
+            separate_screener_stage=True,
+            analyst_editor_route="separate",
+            role_executor_route="delegated_specialist",
+            context_mode="independent_stage_context",
+            review_mode="independent_stage_context",
+            topology_display="Delegated strict",
+            context_display="Separate stage context",
+            review_display="Independent stage context",
+            role_stages_display="Separate recorded invocations",
+        ),
+        "default": CoreRoleTopologyPolicy(
+            topology="default",
+            separate_screener_stage=False,
+            analyst_editor_route="separate",
+            role_executor_route="delegated_specialist",
+            context_mode="delegated_context",
+            review_mode="delegated_review",
+            topology_display="Delegated compact",
+            context_display="Delegated context",
+            review_display="Delegated review",
+            role_stages_display="Topology-defined recorded invocations",
+        ),
+        "human_assisted": CoreRoleTopologyPolicy(
+            topology="human_assisted",
+            separate_screener_stage=False,
+            analyst_editor_route="human_assisted",
+            role_executor_route="declared_existing_route",
+            context_mode="declared_existing_context",
+            review_mode="declared_existing_route",
+            topology_display="Human-assisted",
+            context_display="Declared existing context",
+            review_display="Declared existing route",
+            role_stages_display="Topology-defined recorded invocations",
+        ),
+    }
+)
+
+
+def core_role_topology_policy(topology: str) -> CoreRoleTopologyPolicy:
+    """Return the sole deterministic semantics for a frozen role topology."""
+
+    try:
+        return _ROLE_TOPOLOGY_POLICIES[topology]
+    except KeyError as exc:
+        raise ValueError("role topology is not supported") from exc
+
+
+def require_topology_runtime(topology: str, runtime: str) -> None:
+    """Fail when a topology is selected by a runtime it does not support."""
+
+    policy = core_role_topology_policy(topology)
+    if policy.required_runtime is not None and runtime != policy.required_runtime:
+        raise ValueError("role topology is unavailable for runtime")
+
+
 ARTIFACT_POLICIES = MappingProxyType(
     {
         "source_candidates": ArtifactPolicy(
@@ -229,6 +318,7 @@ __all__ = [
     "ARTIFACT_POLICIES",
     "CLAIM_EPISTEMIC",
     "CORE_ARTIFACT_IDS",
+    "CoreRoleTopologyPolicy",
     "DOCTOR_IMPLEMENTATION",
     "DOCTOR_VERSION",
     "INTERNAL_CONTRACT_ARTIFACT_IDS",
@@ -242,9 +332,11 @@ __all__ = [
     "ArtifactPolicy",
     "archive_artifact_usage",
     "blob_workspace_path",
+    "core_role_topology_policy",
     "derived_id",
     "normalize_text",
     "run_contract_fingerprint",
+    "require_topology_runtime",
     "transaction_type_for",
     "utc_now",
 ]

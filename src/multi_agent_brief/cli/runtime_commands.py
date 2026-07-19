@@ -56,6 +56,7 @@ def register(subparsers: argparse._SubParsersAction) -> None:
         "diagnose",
         "invocation-start",
         "invocation-accept",
+        "invocation-fail",
         "apply",
     ):
         command = actions.add_parser(
@@ -63,8 +64,25 @@ def register(subparsers: argparse._SubParsersAction) -> None:
             help=f"ControlStore v2 runtime {action}.",
         )
         command.add_argument("--workspace", required=True)
-        if action == "invocation-accept":
-            command.add_argument("--invocation-id", required=True)
+        if action in {"invocation-start", "apply"}:
+            command.add_argument("--action", required=True)
+        if action in {"invocation-accept", "invocation-fail"}:
+            command.add_argument("--envelope", required=True)
+        if action == "apply":
+            command.add_argument("--human-request")
+        if action == "invocation-fail":
+            command.add_argument(
+                "--reason",
+                required=True,
+                choices=(
+                    "dispatch_unavailable",
+                    "child_failed",
+                    "child_timed_out",
+                    "session_interrupted",
+                    "proposal_missing",
+                    "proposal_invalid",
+                ),
+            )
 
 
 def handle(args: argparse.Namespace) -> int:
@@ -99,6 +117,7 @@ def handle(args: argparse.Namespace) -> int:
         "diagnose",
         "invocation-start",
         "invocation-accept",
+        "invocation-fail",
         "apply",
     }:
         from multi_agent_brief.runtime_host_v2.codex import (
@@ -106,6 +125,13 @@ def handle(args: argparse.Namespace) -> int:
         )
         from multi_agent_brief.runtime_host_v2.errors import RuntimeHostError
         from multi_agent_brief.runtime_host_v2.service import RuntimeHostService
+        from multi_agent_brief.runtime_host_v2.scratch import read_host_contract
+        from multi_agent_brief.runtime_host_v2.contracts import RoleTaskEnvelope
+        from multi_agent_brief.contracts.v2 import (
+            CoreRunNextAction,
+            DeliveryAuthorizationRequest,
+            InternalApprovalRequest,
+        )
 
         try:
             workspace = Path(args.workspace).expanduser().resolve(strict=True)
@@ -122,14 +148,71 @@ def handle(args: argparse.Namespace) -> int:
                     mode="json", exclude_unset=False
                 )
             elif args.runtime_action == "invocation-start":
-                dispatch = service.start_current_invocation()
+                action = read_host_contract(
+                    workspace,
+                    args.action,
+                    CoreRunNextAction,
+                    error_code="runtime_action_invalid",
+                )
+                dispatch = service.start_current_invocation(action)
                 payload = dispatch.envelope.model_dump(mode="json", exclude_unset=False)
             elif args.runtime_action == "invocation-accept":
-                payload = service.accept_invocation(args.invocation_id).model_dump(
+                envelope = read_host_contract(
+                    workspace,
+                    args.envelope,
+                    RoleTaskEnvelope,
+                    error_code="runtime_envelope_invalid",
+                )
+                payload = service.accept_invocation(
+                    envelope.invocation_id,
+                    expected_envelope=envelope,
+                ).model_dump(
                     mode="json", exclude_unset=False
                 )
+            elif args.runtime_action == "invocation-fail":
+                envelope = read_host_contract(
+                    workspace,
+                    args.envelope,
+                    RoleTaskEnvelope,
+                    error_code="runtime_envelope_invalid",
+                )
+                payload = service.fail_invocation(
+                    envelope.invocation_id,
+                    reason_code=args.reason,
+                    expected_envelope=envelope,
+                ).model_dump(mode="json", exclude_unset=False)
             else:
-                payload = service.apply_current().to_dict()
+                action = read_host_contract(
+                    workspace,
+                    args.action,
+                    CoreRunNextAction,
+                    error_code="runtime_action_invalid",
+                )
+                human_request = None
+                if action.action_kind == "human_decision":
+                    request_models = {
+                        InternalApprovalRequest.schema_id: InternalApprovalRequest,
+                        DeliveryAuthorizationRequest.schema_id: (
+                            DeliveryAuthorizationRequest
+                        ),
+                    }
+                    request_model = request_models.get(action.request_schema_id)
+                    if args.human_request is None or request_model is None:
+                        raise RuntimeHostError("runtime_human_request_required")
+                    human_request = read_host_contract(
+                        workspace,
+                        args.human_request,
+                        request_model,
+                        error_code="runtime_human_request_invalid",
+                    )
+                elif args.human_request is not None:
+                    raise RuntimeHostError("runtime_human_request_invalid")
+                applied = service.apply_current(action, human_request)
+                payload = (
+                    applied.model_dump(mode="json", exclude_unset=False)
+                    if hasattr(applied, "model_dump")
+                    else applied.to_dict()
+                )
         except (OSError, RuntimeHostError) as exc:
             print(f"[runtime {args.runtime_action}] {exc}")
             return 1

@@ -262,6 +262,8 @@ def _initialize(
         workspace_config_sha256=read_workspace_file(workspace, "config.yaml").sha256,
         sources_config_sha256=read_workspace_file(workspace, "sources.yaml").sha256,
     )
+    if topology == "single_session":
+        request["runtime"] = "codex"
     if role_ids is not None:
         binding = dict(request["runtime_adapter_binding"])
         binding["role_ids"] = sorted(role_ids)
@@ -334,6 +336,35 @@ def test_initialize_rejects_unknown_source_provider_without_writes(
     assert not (workspace / "briefloop.db.blobs").exists()
 
 
+def test_single_session_rejects_non_codex_runtime_before_store_write(
+    tmp_path: Path,
+) -> None:
+    workspace = _workspace(tmp_path)
+    request = deepcopy(CoreRunInitializeRequest.minimal_example)
+    request.update(
+        request_id="REQ-INIT-SINGLE-SESSION-OPERATOR",
+        workspace_id=WORKSPACE_ID,
+        run_id=RUN_ID,
+        runtime="operator",
+        role_topology="single_session",
+        workspace_config_sha256=read_workspace_file(workspace, "config.yaml").sha256,
+        sources_config_sha256=read_workspace_file(workspace, "sources.yaml").sha256,
+    )
+
+    result = CoreRunService(workspace, clock=CLOCK).initialize(
+        CoreRunInitializeRequest.model_validate(
+            _bind_init_payload(request),
+            strict=True,
+        )
+    )
+
+    assert result.to_dict() == {
+        "status": "failed_uncommitted",
+        "error_code": "runtime_adapter_binding_invalid",
+    }
+    assert not (workspace / "briefloop.db").exists()
+
+
 def _start_invocation(
     service: CoreRunService,
     workspace: Path,
@@ -342,6 +373,8 @@ def _start_invocation(
     stage_id: str,
     role_id: str,
 ) -> str:
+    with SQLiteControlStore.open(workspace / "briefloop.db") as store:
+        runtime = store.load_snapshot(RUN_ID).run.runtime
     result = service.start_invocation(
         _record(
             InvocationStartRequest,
@@ -349,7 +382,7 @@ def _start_invocation(
             run_id=RUN_ID,
             stage_id=stage_id,
             role_id=role_id,
-            runtime="operator",
+            runtime=runtime,
             expected_store_revision=_store_revision(workspace),
         )
     )
@@ -984,6 +1017,35 @@ def _advance_to_claim_ledger_ready(
         artifact_id="candidate_claims",
         payload=_candidate_payload(),
     )
+    if topology in {"single_session", "strict"}:
+        _complete_stage(
+            service,
+            workspace,
+            stage_id="scout",
+            artifacts=[("candidate_claims", 1)],
+        )
+        screener = _start_invocation(
+            service,
+            workspace,
+            request_id="REQ-INVOKE-SCREEN",
+            stage_id="screener",
+            role_id="screener",
+        )
+        _submit_proposal(
+            workspace,
+            lane="screened",
+            invocation_id=screener,
+            request_id="REQ-SCREENED-001",
+            artifact_id="screened_candidates",
+            payload=_screened_payload(),
+        )
+        _complete_stage(
+            service,
+            workspace,
+            stage_id="screener",
+            artifacts=[("candidate_claims", 1), ("screened_candidates", 1)],
+        )
+        return service
     screening_scout = _start_invocation(
         service,
         workspace,
@@ -1272,12 +1334,13 @@ def _advance_to_analyst_ready(
 def _advance_to_auditor_ready(
     workspace: Path,
     *,
+    topology: str = "default",
     audit_decision: str = "pass",
     audit_findings: list[dict[str, object]] | None = None,
     submit_audit: bool = True,
     promote_audit: bool = True,
 ) -> CoreRunService:
-    service = _advance_to_analyst_ready(workspace)
+    service = _advance_to_analyst_ready(workspace, topology=topology)
     analyst = _start_invocation(
         service,
         workspace,

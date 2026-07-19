@@ -171,6 +171,16 @@ def test_runtime_install_codex_workspace_kit_is_local(tmp_path: Path, capsys) ->
     skill_text = skill_path.read_text(encoding="utf-8")
     assert "SQLite-only" in skill_text
     assert "CoreRunNextAction" in skill_text
+    reference_text = (
+        ws
+        / ".codex"
+        / "skills"
+        / "briefloop"
+        / "references"
+        / "controlstore-v2.md"
+    ).read_text(encoding="utf-8")
+    assert "execute_in_current_session" in reference_text
+    assert "stage-separated self-review" in reference_text
 
     combined = "\n".join(path.read_text(encoding="utf-8") for path in _all_text_files(ws))
     assert ROOT.as_posix() not in combined

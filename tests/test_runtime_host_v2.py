@@ -42,6 +42,30 @@ def _workspace(tmp_path: Path) -> Path:
     return workspace
 
 
+def _external_web_workspace(tmp_path: Path) -> Path:
+    workspace = tmp_path / "external-workspace"
+    ids = iter(("external-workspace", "external-run"))
+    create_workspace(
+        workspace,
+        InitProfile(
+            company="ExampleCo",
+            industry="manufacturing",
+            brief_title="ExampleCo weekly brief",
+            task_objective="Prepare the weekly manufacturing brief.",
+            audience="management",
+            audience_profile="management",
+            focus_areas=["operations", "policy"],
+            output_formats=["markdown", "docx"],
+            web_search_mode="external_api",
+            web_search_enabled=True,
+            search_backend="tavily",
+        ),
+        report_date_factory=lambda: date(2026, 7, 19),
+        identity_factory=lambda: next(ids),
+    )
+    return workspace
+
+
 def _adapter(run_id: str) -> RuntimeAdapterBinding:
     payload = deepcopy(RuntimeAdapterBinding.minimal_example)
     payload.update(
@@ -58,8 +82,17 @@ def _adapter(run_id: str) -> RuntimeAdapterBinding:
             "source-planner",
             "source-provider",
         ],
+        supported_role_topologies=["default", "single_session", "strict"],
     )
     payload.pop("binding_fingerprint", None)
+    payload["binding_fingerprint"] = canonical_fingerprint(payload)
+    return RuntimeAdapterBinding.model_validate(payload, strict=True)
+
+
+def _adapter_without_single_session(run_id: str) -> RuntimeAdapterBinding:
+    payload = _adapter(run_id).model_dump(mode="json", exclude_unset=False)
+    payload["supported_role_topologies"] = ["default", "strict"]
+    payload.pop("binding_fingerprint")
     payload["binding_fingerprint"] = canonical_fingerprint(payload)
     return RuntimeAdapterBinding.model_validate(payload, strict=True)
 
@@ -68,6 +101,8 @@ def test_fresh_runtime_initializes_once_and_existing_store_ignores_input_drift(
     tmp_path: Path,
 ) -> None:
     workspace = _workspace(tmp_path)
+    config = yaml.safe_load((workspace / "config.yaml").read_text(encoding="utf-8"))
+    assert config["controlstore_v2"]["role_topology"] == "single_session"
     first = initialize_or_open_runtime(workspace, adapter_loader=_adapter)
 
     assert first.initialized is True
@@ -85,6 +120,133 @@ def test_fresh_runtime_initializes_once_and_existing_store_ignores_input_drift(
     assert reopened.initialized is False
     assert reopened.verified.snapshot.store_revision == revision
     assert reopened.action == first.action
+
+
+def test_external_source_plan_freezes_executable_non_secret_requests(
+    tmp_path: Path,
+) -> None:
+    workspace = _external_web_workspace(tmp_path)
+    first = initialize_or_open_runtime(workspace, adapter_loader=_adapter)
+    route = next(
+        item for item in first.verified.source_plan.routes if item.route_id == "web-search"
+    )
+    spec = route.acquisition_spec
+    assert spec is not None and spec.kind == "web_search"
+    assert spec.provider_id == "tavily"
+    assert [item.query for item in spec.requests] == ["operations", "policy"]
+    assert all(item.max_results == 5 for item in spec.requests)
+    assert all(item.recency_days == 7 for item in spec.requests)
+    assert "TAVILY_API_KEY" not in str(spec.model_dump(mode="json"))
+    fingerprint = first.verified.source_plan.source_plan_fingerprint
+
+    (workspace / "sources.yaml").write_text("changed: true\n", encoding="utf-8")
+    reopened = initialize_or_open_runtime(workspace, adapter_loader=_adapter)
+    reopened_route = next(
+        item
+        for item in reopened.verified.source_plan.routes
+        if item.route_id == "web-search"
+    )
+    assert reopened.verified.source_plan.source_plan_fingerprint == fingerprint
+    assert reopened_route.acquisition_spec == spec
+
+
+def test_executable_source_parameters_change_spec_and_route_fingerprints(
+    tmp_path: Path,
+) -> None:
+    web_fingerprints: list[tuple[str, str]] = []
+    for name, query, domains, max_results in (
+        ("base", "operations", ["example.com"], 5),
+        ("query", "policy", ["example.com"], 5),
+        ("bounds", "operations", ["example.org"], 9),
+    ):
+        workspace = _external_web_workspace(tmp_path / name)
+        path = workspace / "sources.yaml"
+        payload = yaml.safe_load(path.read_text(encoding="utf-8"))
+        payload["web_search"]["search_tasks"] = [
+            {"query": query, "domains": domains}
+        ]
+        payload["web_search"]["max_results"] = max_results
+        path.write_text(yaml.safe_dump(payload, sort_keys=False), encoding="utf-8")
+        initialized = initialize_or_open_runtime(workspace, adapter_loader=_adapter)
+        route = next(
+            item
+            for item in initialized.verified.source_plan.routes
+            if item.route_id == "web-search"
+        )
+        assert route.acquisition_spec is not None
+        web_fingerprints.append(
+            (
+                route.acquisition_spec.acquisition_spec_fingerprint,
+                route.route_fingerprint,
+            )
+        )
+    assert len(set(web_fingerprints)) == len(web_fingerprints)
+
+    cached_fingerprints: list[tuple[str, str]] = []
+    for name, logical_path, formats in (
+        ("one", "input/one.txt", ["txt"]),
+        ("two", "input/two.txt", ["md", "txt"]),
+    ):
+        workspace = _workspace(tmp_path / f"cached-{name}")
+        source_path = workspace / logical_path
+        source_path.write_text("cached source content", encoding="utf-8")
+        (workspace / "sources.yaml").write_text(
+            yaml.safe_dump(
+                {
+                    "source_strategy": {
+                        "profile": "conservative",
+                        "enabled_providers": ["cached_package"],
+                    },
+                    "cached_package": {
+                        "enabled": True,
+                        "paths": [logical_path],
+                        "formats": formats,
+                    },
+                },
+                sort_keys=False,
+            ),
+            encoding="utf-8",
+        )
+        initialized = initialize_or_open_runtime(workspace, adapter_loader=_adapter)
+        route = initialized.verified.source_plan.routes[0]
+        assert route.acquisition_spec is not None
+        cached_fingerprints.append(
+            (
+                route.acquisition_spec.acquisition_spec_fingerprint,
+                route.route_fingerprint,
+            )
+        )
+    assert len(set(cached_fingerprints)) == len(cached_fingerprints)
+
+
+def test_custom_source_credential_selector_fails_before_store_write(
+    tmp_path: Path,
+) -> None:
+    workspace = _external_web_workspace(tmp_path)
+    path = workspace / "sources.yaml"
+    payload = yaml.safe_load(path.read_text(encoding="utf-8"))
+    payload["web_search"]["api_key_env"] = "CUSTOM_SECRET"
+    path.write_text(yaml.safe_dump(payload, sort_keys=False), encoding="utf-8")
+
+    with pytest.raises(RuntimeHostError, match="runtime_initialization_input_invalid"):
+        initialize_or_open_runtime(workspace, adapter_loader=_adapter)
+
+    assert not (workspace / "briefloop.db").exists()
+
+
+def test_single_session_adapter_capability_is_required_before_store_write(
+    tmp_path: Path,
+) -> None:
+    workspace = _workspace(tmp_path)
+
+    with pytest.raises(RuntimeHostError, match="runtime_adapter_binding_invalid"):
+        initialize_or_open_runtime(
+            workspace,
+            adapter_loader=_adapter_without_single_session,
+        )
+
+    assert not (workspace / "briefloop.db").exists()
+    assert not (workspace / "scratch").exists()
 
 
 @pytest.mark.parametrize(
@@ -157,6 +319,12 @@ def test_store_status_ignores_forged_legacy_projections(tmp_path: Path) -> None:
     assert second == first
     assert second["authority"] == "sqlite_control_store"
     assert second["delivered"] is False
+    assert second["execution_topology"] == "single_session"
+    assert second["execution_topology_display"] == "Single session"
+    assert second["context_independence"] == "Shared context"
+    assert second["review_mode"] == "Stage-separated self-review"
+    assert second["role_stages"] == "Separate recorded invocations"
+    assert "independent review" not in str(second).lower()
     quality = build_store_quality_projection(workspace)
     assert quality == {
         "ok": False,

@@ -40,7 +40,9 @@ def test_default_policy_pack_selects_default_scout_satisfies_screener():
 
     assert resolve_role_topology(_default_policy_pack()) == ROLE_TOPOLOGY_DEFAULT
     assert _role_topology_from_policy_pack(_default_policy_pack()) == ROLE_TOPOLOGY_DEFAULT
-    assert ROLE_TOPOLOGY_VALUES == frozenset({"default", "strict", "human_assisted"})
+    assert ROLE_TOPOLOGY_VALUES == frozenset(
+        {"single_session", "default", "strict", "human_assisted"}
+    )
     assert ROLE_TOPOLOGY_SATISFIER_VALUES == frozenset({"scout", "writer"})
     assert rules["screener"] == {
         "topology": "default",
@@ -65,6 +67,19 @@ def test_strict_topology_keeps_independent_screener_stage():
     assert resolve_role_topology(policy_pack) == "strict"
     assert "screener" not in rules
     assert layer_d_rules == rules
+
+
+def test_single_session_topology_keeps_separate_screener_stage():
+    policy_pack = {"policy": {"role_topology": "single_session"}}
+
+    rules = stage_satisfaction_rules_for_topology(
+        stages=_stage_specs(),
+        policy_pack=policy_pack,
+    )
+
+    assert resolve_role_topology(policy_pack) == "single_session"
+    assert "screener" not in rules
+    assert "editor" not in rules
 
 
 def test_human_assisted_topology_declares_writer_satisfaction_hooks():

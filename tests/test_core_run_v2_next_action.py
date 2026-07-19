@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from copy import deepcopy
+import hashlib
 from types import SimpleNamespace
 
 import pytest
@@ -14,6 +15,7 @@ from multi_agent_brief.contracts.v2 import (
     IntegrityCheckRequest,
     InvocationStartRequest,
     OwnedArtifactSubmitRequest,
+    SourceCommitRequest,
 )
 from multi_agent_brief.control_store import SQLiteControlStore
 from multi_agent_brief.core_run_v2 import (
@@ -21,12 +23,94 @@ from multi_agent_brief.core_run_v2 import (
     GateEvaluationService,
 )
 from multi_agent_brief.core_run_v2.next_action import classify_core_run_next_action
+from multi_agent_brief.core_run_v2.policy import core_role_topology_policy
 from multi_agent_brief.core_run_v2.verifier import CoreRunDomainVerifier
+from multi_agent_brief.intake_v2.service import IntakeService
 
 
 def _verified(workspace, run_id):
     with SQLiteControlStore.open(workspace / "briefloop.db") as store:
         return CoreRunDomainVerifier().verify(store, run_id)
+
+
+def test_role_topology_policy_is_total_and_single_session_uses_strict_plan() -> None:
+    single = core_role_topology_policy("single_session")
+    assert single.separate_screener_stage is True
+    assert single.analyst_editor_route == "separate"
+    assert single.role_executor_route == "main_session"
+    assert single.context_mode == "shared_session"
+    assert single.review_mode == "stage_separated_self_review"
+    assert single.required_runtime == "codex"
+    assert core_role_topology_policy("strict").separate_screener_stage is True
+    assert core_role_topology_policy("default").separate_screener_stage is False
+    assert (
+        core_role_topology_policy("human_assisted").analyst_editor_route
+        == "human_assisted"
+    )
+    with pytest.raises(ValueError, match="role topology is not supported"):
+        core_role_topology_policy("unknown")
+
+
+def test_single_session_preserves_separate_scout_and_screener_invocations(
+    tmp_path,
+) -> None:
+    workspace = core_fixture._workspace(tmp_path)
+    core_fixture._advance_to_claim_ledger_ready(
+        workspace,
+        topology="single_session",
+    )
+    verified = _verified(workspace, core_fixture.RUN_ID)
+    invocation_roles = {
+        item.role_id: item.invocation_id
+        for item in verified.snapshot.invocations
+        if item.role_id in {"scout", "screener"}
+    }
+    assert set(invocation_roles) == {"scout", "screener"}
+    assert invocation_roles["scout"] != invocation_roles["screener"]
+    assert not any(
+        item.stage_id == "screener"
+        and item.transition_kind == "satisfied_by_topology"
+        for item in verified.snapshot.stage_transitions
+    )
+    action = classify_core_run_next_action(verified)
+    assert action.stage_id == "claim-ledger"
+    assert action.role_id == "claim-ledger"
+
+
+def test_single_session_preserves_distinct_analyst_editor_and_auditor_invocations(
+    tmp_path,
+) -> None:
+    workspace = core_fixture._workspace(tmp_path)
+    core_fixture._advance_to_auditor_ready(
+        workspace,
+        topology="single_session",
+    )
+    verified = _verified(workspace, core_fixture.RUN_ID)
+    by_role = {
+        item.role_id: item.invocation_id
+        for item in verified.snapshot.invocations
+        if item.role_id in {"analyst", "editor", "auditor"}
+    }
+    assert set(by_role) == {"analyst", "editor", "auditor"}
+    assert len(set(by_role.values())) == 3
+    analyst = next(
+        item
+        for item in verified.snapshot.owned_artifact_submissions
+        if item.artifact_id == "analyst_draft_snapshot"
+    )
+    editor = next(
+        item
+        for item in verified.snapshot.owned_artifact_submissions
+        if item.artifact_id == "audited_brief"
+    )
+    audit = next(
+        item
+        for item in verified.snapshot.accepted_proposals
+        if item.proposal_kind == "audit"
+    )
+    assert analyst.invocation_id == by_role["analyst"]
+    assert editor.invocation_id == by_role["editor"]
+    assert audit.invocation_id == by_role["auditor"]
 
 
 def _accept_source_candidates(workspace, service):
@@ -171,7 +255,7 @@ def test_next_action_external_api_is_deterministic_provider_reservation(
     workspace = core_fixture._workspace(tmp_path)
     path = workspace / "sources.yaml"
     payload = core_fixture.yaml.safe_load(path.read_text(encoding="utf-8"))
-    payload["source_strategy"]["enabled_providers"] = ["manual", "web_search"]
+    payload["source_strategy"]["enabled_providers"] = ["web_search"]
     web_search = payload.setdefault("web_search", {})
     web_search["enabled"] = True
     web_search["mode"] = "external_api"
@@ -213,6 +297,108 @@ def test_next_action_external_api_is_deterministic_provider_reservation(
     )
     assert reserved_action.effect_kind == "invocation_accept_or_fail"
     assert reserved_action.request_schema_id == "briefloop.source_commit_request.v2"
+
+
+def test_discovery_only_source_exhausts_exact_route_without_stage_success(
+    tmp_path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    workspace = core_fixture._workspace(tmp_path)
+    path = workspace / "sources.yaml"
+    payload = core_fixture.yaml.safe_load(path.read_text(encoding="utf-8"))
+    payload["source_strategy"]["enabled_providers"] = ["web_search"]
+    payload["web_search"] = {
+        "enabled": True,
+        "mode": "external_api",
+        "backend": "tavily",
+        "api_key_env": "TAVILY_API_KEY",
+        "max_results": 5,
+        "recency_days": 7,
+        "search_tasks": [{"query": "ExampleCo pilot", "domains": []}],
+    }
+    path.write_text(core_fixture.yaml.safe_dump(payload, sort_keys=False), encoding="utf-8")
+    monkeypatch.setattr(
+        "multi_agent_brief.core_run_v2.service.run_doctor",
+        lambda **_kwargs: [SimpleNamespace(status="OK")],
+    )
+    service = _source_discovery_ready(workspace)
+    _accept_source_candidates(workspace, service)
+    before = classify_core_run_next_action(_verified(workspace, core_fixture.RUN_ID))
+    assert (before.action_kind, before.effect_kind, before.source_route_id) == (
+        "deterministic",
+        "source_acquire",
+        "web-search",
+    )
+    invocation_id = core_fixture._start_invocation(
+        service,
+        workspace,
+        request_id="REQ-WEB-SNIPPET-START",
+        stage_id="source-discovery",
+        role_id="source-provider",
+    )
+    active = classify_core_run_next_action(_verified(workspace, core_fixture.RUN_ID))
+    assert active.effect_kind == "invocation_accept_or_fail"
+    scratch = workspace / "scratch" / invocation_id
+    scratch.mkdir(parents=True, exist_ok=True)
+    content = b"Search snippet only; not durable evidence."
+    raw = b'{"query":"ExampleCo pilot"}'
+    (scratch / "source_content.txt").write_bytes(content)
+    (scratch / "source_raw.json").write_bytes(raw)
+    core_fixture._write_json(
+        scratch / "source_proposal.json",
+        {
+            "schema_version": "briefloop.source_proposal.v2",
+            "proposal_id": "PROP-WEB-SNIPPET",
+            "run_id": core_fixture.RUN_ID,
+            "source_id": "SRC-WEB-SNIPPET",
+            "origin_type": "search_snippet_only",
+            "acquisition_method": "provider_search",
+            "material_kind": "search_snippet",
+            "provider": "tavily",
+            "locator": {"kind": "web", "url": "https://example.com/snippet"},
+            "title": "ExampleCo search result",
+            "publisher": "Example publisher",
+            "published_at": None,
+            "retrieved_at": core_fixture.NOW,
+            "source_category": "news_media",
+            "retrieval_source_type": "news_media",
+            "underlying_evidence_type": "media_report",
+            "raw_underlying_evidence_type": "provider-search-response",
+            "content_sha256": hashlib.sha256(content).hexdigest(),
+            "content_media_type": "text/plain",
+            "raw_payload_sha256": hashlib.sha256(raw).hexdigest(),
+            "raw_payload_media_type": "application/json",
+        },
+    )
+    request_path = scratch / "submit_request.json"
+    core_fixture._write_json(
+        request_path,
+        core_fixture._record(
+            SourceCommitRequest,
+            request_id="REQ-WEB-SNIPPET-COMMIT",
+            run_id=core_fixture.RUN_ID,
+            invocation_id=invocation_id,
+            proposal_path=f"scratch/{invocation_id}/source_proposal.json",
+            content_path=f"scratch/{invocation_id}/source_content.txt",
+            raw_payload_path=f"scratch/{invocation_id}/source_raw.json",
+            expected_store_revision=core_fixture._store_revision(workspace),
+        ).model_dump(mode="json", exclude_unset=False),
+    )
+    committed = IntakeService(workspace, clock=core_fixture.CLOCK).submit_source(
+        request_path.relative_to(workspace).as_posix()
+    )
+    assert committed.status == "committed", committed.to_dict()
+    verified = _verified(workspace, core_fixture.RUN_ID)
+    source = next(item for item in verified.snapshot.sources if item.source_id == "SRC-WEB-SNIPPET")
+    assert source.claims_eligible is False
+    assert source.eligibility_reason == "ineligible_search_snippet"
+    after = classify_core_run_next_action(verified)
+    assert (after.action_kind, after.effect_kind, after.reason_code) == (
+        "human_decision",
+        "source_input_required",
+        "human_source_material_required",
+    )
+    assert after.source_route_id is None
 
 
 def test_next_action_manual_route_requires_human_source_input(tmp_path) -> None:

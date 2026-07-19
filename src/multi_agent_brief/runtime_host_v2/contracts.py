@@ -33,6 +33,20 @@ class RoleTaskEnvelope(StrictModel):
     proposal_schema_id: ContractId
     adapter_binding_fingerprint: Sha256
     source_plan_fingerprint: Sha256
+    executor_kind: Literal[
+        "main_session", "delegated_specialist", "declared_existing_route"
+    ]
+    context_mode: Literal[
+        "shared_session", "independent_stage_context", "delegated_context",
+        "declared_existing_context"
+    ]
+    review_mode: Literal[
+        "stage_separated_self_review", "independent_stage_context",
+        "delegated_review", "declared_existing_route"
+    ]
+    dispatch_instruction: Literal[
+        "execute_in_current_session", "delegate_exact_role", "use_declared_route"
+    ]
     task_instructions: CleanText
 
     @model_validator(mode="after")

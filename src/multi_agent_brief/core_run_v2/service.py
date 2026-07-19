@@ -5,7 +5,7 @@ from __future__ import annotations
 from collections.abc import Iterable
 from datetime import datetime, timezone
 import os
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 import shutil
 from typing import Callable
 
@@ -21,11 +21,16 @@ from multi_agent_brief.contracts.v2 import (
     Invocation,
     InvocationStartRequest,
     RunContractBinding,
+    RunDirection,
     RunIdentity,
     RunIntegrityRecord,
     RuntimeAdapterBinding,
+    RuntimeCachedPackageAcquisitionSpec,
+    RuntimeNewsApiAcquisitionSpec,
     RuntimeSourcePlanBinding,
     RuntimeSourceRouteBinding,
+    RuntimeWebSearchAcquisitionSpec,
+    RuntimeWebSearchRequestSpec,
     ReceiptCheckoutBinding,
     StageArtifactBinding,
     StageCompleteRequest,
@@ -74,8 +79,10 @@ from .policy import (
     SOURCE_WEB_PROVIDER_IDS,
     STAGE_ROLES,
     blob_workspace_path,
+    core_role_topology_policy,
     derived_id,
     run_contract_fingerprint,
+    require_topology_runtime,
     transaction_type_for,
 )
 from .verifier import (
@@ -157,6 +164,10 @@ class CoreRunService:
                     return replay
             raise CoreRunError("core_run_head_mismatch")
         adapter = request.runtime_adapter_binding
+        try:
+            require_topology_runtime(request.role_topology, request.runtime)
+        except ValueError as exc:
+            raise CoreRunError("runtime_adapter_binding_invalid") from exc
         if (
             adapter.run_id != request.run_id
             or adapter.runtime != request.runtime
@@ -176,6 +187,8 @@ class CoreRunService:
             sources_content,
             run_id=request.run_id,
             sources_config_sha256=request.sources_config_sha256,
+            run_direction=request.run_direction,
+            workspace_root=self.workspace,
         )
         contracts = self._load_contracts()
         stage_bytes = canonical_json_bytes(contracts.stage_specs)
@@ -523,10 +536,13 @@ class CoreRunService:
                 request.stage_id,
             ):
                 raise CoreRunError("invocation_owner_mismatch")
-            if verified.binding.role_topology == "human_assisted" and request.stage_id in {
-                "analyst",
-                "editor",
-            }:
+            if (
+                core_role_topology_policy(
+                    verified.binding.role_topology
+                ).analyst_editor_route
+                == "human_assisted"
+                and request.stage_id in {"analyst", "editor"}
+            ):
                 route = classify_human_assisted_analyst_route(verified.snapshot)
                 if request.stage_id == "analyst":
                     expected_family = (
@@ -898,7 +914,8 @@ class CoreRunService:
                     "produced",
                 )
             )
-            if verified.binding.role_topology in {"default", "human_assisted"}:
+            topology = core_role_topology_policy(verified.binding.role_topology)
+            if not topology.separate_screener_stage:
                 screened = require_proposal(
                     "screened",
                     owner_stage_id="scout",
@@ -913,7 +930,9 @@ class CoreRunService:
                 if screened.parent_proposal_id != candidate.proposal_id:
                     raise CoreRunError("stage_artifact_binding_invalid")
         elif stage_id == "screener":
-            if verified.binding.role_topology != "strict":
+            if not core_role_topology_policy(
+                verified.binding.role_topology
+            ).separate_screener_stage:
                 raise CoreRunError("stage_decision_not_supported")
             screened = require_proposal(
                 "screened",
@@ -986,7 +1005,12 @@ class CoreRunService:
                 )
             )
         elif stage_id == "analyst":
-            if verified.binding.role_topology == "human_assisted":
+            if (
+                core_role_topology_policy(
+                    verified.binding.role_topology
+                ).analyst_editor_route
+                == "human_assisted"
+            ):
                 route = classify_human_assisted_analyst_route(snapshot)
                 if route.route_family == "writer":
                     brief = require_artifact(
@@ -1276,10 +1300,8 @@ class CoreRunService:
         revisions = tuple(artifact_revisions)
         transition_artifacts[completed.transition_id] = revisions
         next_index = stage_order.index(completed_stage_id) + 1
-        if (
-            completed_stage_id == "scout"
-            and verified.binding.role_topology in {"default", "human_assisted"}
-        ):
+        topology_policy = core_role_topology_policy(verified.binding.role_topology)
+        if completed_stage_id == "scout" and not topology_policy.separate_screener_stage:
             if lineage.active_invocations_by_stage.get("screener"):
                 raise CoreRunError("stage_artifact_binding_invalid")
             topology_transition = add_transition(
@@ -1299,7 +1321,7 @@ class CoreRunService:
             next_index = stage_order.index("screener") + 1
         if (
             completed_stage_id == "analyst"
-            and verified.binding.role_topology == "human_assisted"
+            and topology_policy.analyst_editor_route == "human_assisted"
             and any(
                 revision.artifact_id == "audited_brief"
                 for revision, _usage in revisions
@@ -1406,7 +1428,10 @@ class CoreRunService:
 
     def _roles_for(self, verified: VerifiedCoreRun, stage_id: str) -> tuple[str, ...]:
         if (
-            verified.binding.role_topology == "human_assisted"
+            core_role_topology_policy(
+                verified.binding.role_topology
+            ).analyst_editor_route
+            == "human_assisted"
             and stage_id == "analyst"
         ):
             return (*STAGE_ROLES.get(stage_id, ()), "writer")
@@ -1709,11 +1734,29 @@ def _derive_runtime_source_plan(
     *,
     run_id: str,
     sources_config_sha256: str,
+    run_direction: RunDirection | None = None,
+    workspace_root: Path | None = None,
 ) -> RuntimeSourcePlanBinding:
     """Derive the only safe source routing projection from exact YAML bytes."""
 
+    class _UniqueKeyLoader(yaml.SafeLoader):
+        pass
+
+    def _construct_unique_mapping(loader, node, deep=False):
+        mapping = {}
+        for key_node, value_node in node.value:
+            key = loader.construct_object(key_node, deep=deep)
+            if key in mapping:
+                raise yaml.YAMLError("duplicate mapping key")
+            mapping[key] = loader.construct_object(value_node, deep=deep)
+        return mapping
+
+    _UniqueKeyLoader.add_constructor(
+        yaml.resolver.BaseResolver.DEFAULT_MAPPING_TAG,
+        _construct_unique_mapping,
+    )
     try:
-        raw = yaml.safe_load(sources_content.decode("utf-8"))
+        raw = yaml.load(sources_content.decode("utf-8"), Loader=_UniqueKeyLoader)
     except (UnicodeDecodeError, yaml.YAMLError) as exc:
         raise CoreRunError("runtime_source_plan_invalid") from exc
     if type(raw) is not dict or sha256_hex(sources_content) != sources_config_sha256:
@@ -1776,7 +1819,22 @@ def _derive_runtime_source_plan(
             else:
                 route_kind = mode
                 owner = "specialist" if mode == "runtime_tool" else "deterministic"
-                provider_id = backend if mode == "external_api" else "runtime-tool"
+                provider_id = (
+                    backend
+                    if mode == "external_api"
+                    else "runtime-tool"
+                    if mode == "runtime_tool"
+                    else None
+                )
+            acquisition_spec = _source_acquisition_spec(
+                route_id=route_id,
+                route_kind=route_kind,
+                provider_id=provider_id,
+                raw=raw,
+                web=web,
+                run_direction=run_direction,
+                workspace_root=workspace_root,
+            )
             route_payload = {
                 "schema_version": RuntimeSourceRouteBinding.schema_id,
                 "route_id": route_id,
@@ -1784,6 +1842,7 @@ def _derive_runtime_source_plan(
                 "provider_id": provider_id,
                 "execution_owner": owner,
                 "required": False,
+                "acquisition_spec": acquisition_spec,
             }
             route_payload["route_fingerprint"] = canonical_fingerprint(route_payload)
             routes.append(_validate_runtime_source_route(route_payload))
@@ -1791,6 +1850,15 @@ def _derive_runtime_source_plan(
         if route_id not in route_kinds:
             raise CoreRunError("runtime_source_plan_invalid")
         route_kind, owner = route_kinds[route_id]
+        acquisition_spec = _source_acquisition_spec(
+            route_id=route_id,
+            route_kind=route_kind,
+            provider_id=("api" if route_id == "api" else None),
+            raw=raw,
+            web=web,
+            run_direction=run_direction,
+            workspace_root=workspace_root,
+        )
         route_payload: dict[str, object] = {
             "schema_version": RuntimeSourceRouteBinding.schema_id,
             "route_id": route_id,
@@ -1804,6 +1872,7 @@ def _derive_runtime_source_plan(
             ),
             "execution_owner": owner,
             "required": False,
+            "acquisition_spec": acquisition_spec,
         }
         route_payload["route_fingerprint"] = canonical_fingerprint(route_payload)
         routes.append(_validate_runtime_source_route(route_payload))
@@ -1815,7 +1884,22 @@ def _derive_runtime_source_plan(
         else:
             route_kind = mode
             owner = "specialist" if mode == "runtime_tool" else "deterministic"
-            provider_id = backend if mode == "external_api" else "runtime-tool"
+            provider_id = (
+                backend
+                if mode == "external_api"
+                else "runtime-tool"
+                if mode == "runtime_tool"
+                else None
+            )
+        acquisition_spec = _source_acquisition_spec(
+            route_id="web-search",
+            route_kind=route_kind,
+            provider_id=provider_id,
+            raw=raw,
+            web=web,
+            run_direction=run_direction,
+            workspace_root=workspace_root,
+        )
         route_payload = {
             "schema_version": RuntimeSourceRouteBinding.schema_id,
             "route_id": "web-search",
@@ -1823,6 +1907,7 @@ def _derive_runtime_source_plan(
             "provider_id": provider_id,
             "execution_owner": owner,
             "required": False,
+            "acquisition_spec": acquisition_spec,
         }
         route_payload["route_fingerprint"] = canonical_fingerprint(route_payload)
         routes.append(_validate_runtime_source_route(route_payload))
@@ -1840,6 +1925,274 @@ def _derive_runtime_source_plan(
         return RuntimeSourcePlanBinding.model_validate(payload, strict=True)
     except (TypeError, ValueError) as exc:
         raise CoreRunError("runtime_source_plan_invalid") from exc
+
+
+_WEB_CREDENTIAL_ENV = {
+    "tavily": "TAVILY_API_KEY",
+    "exa": "EXA_API_KEY",
+    "brave": "BRAVE_SEARCH_API_KEY",
+    "firecrawl": "FIRECRAWL_API_KEY",
+    "serper": "SERPER_API_KEY",
+}
+
+
+def _source_acquisition_spec(
+    *,
+    route_id: str,
+    route_kind: str,
+    provider_id: str | None,
+    raw: dict[str, object],
+    web: dict[str, object],
+    run_direction: RunDirection | None,
+    workspace_root: Path | None,
+) -> dict[str, object] | None:
+    if route_kind not in {"external_api", "cached_package"}:
+        return None
+    if route_kind == "cached_package":
+        section = raw.get("cached_package", {})
+        if type(section) is not dict:
+            raise CoreRunError("runtime_source_plan_invalid")
+        allowed = {"enabled", "paths", "formats"}
+        if set(section) - allowed:
+            raise CoreRunError("runtime_source_plan_invalid")
+        if section.get("enabled") is not True:
+            raise CoreRunError("runtime_source_plan_invalid")
+        paths = section.get("paths", [])
+        formats = section.get("formats", ["json", "md", "txt"])
+        if (
+            type(paths) is not list
+            or not paths
+            or any(type(item) is not str for item in paths)
+            or type(formats) is not list
+            or not formats
+            or any(type(item) is not str for item in formats)
+        ):
+            raise CoreRunError("runtime_source_plan_invalid")
+        _validate_cached_package_topology(workspace_root, paths)
+        payload: dict[str, object] = {
+            "schema_version": RuntimeCachedPackageAcquisitionSpec.schema_id,
+            "kind": "cached_package",
+            "paths": paths,
+            "formats": sorted(formats),
+        }
+        payload["acquisition_spec_fingerprint"] = canonical_fingerprint(payload)
+        try:
+            return RuntimeCachedPackageAcquisitionSpec.model_validate(
+                payload, strict=True
+            ).model_dump(mode="json", exclude_unset=False)
+        except (TypeError, ValueError) as exc:
+            raise CoreRunError("runtime_source_plan_invalid") from exc
+    if route_id == "web-search":
+        if provider_id not in _WEB_CREDENTIAL_ENV:
+            raise CoreRunError("runtime_source_plan_invalid")
+        allowed = {
+            "enabled",
+            "mode",
+            "backend",
+            "api_key_env",
+            "max_results",
+            "recency_days",
+            "search_tasks",
+            "initial_news_backfill",
+            "news_source_domains",
+            "note",
+            "required_capability",
+            "status",
+            "topic",
+            "search_depth",
+        }
+        if set(web) - allowed:
+            raise CoreRunError("runtime_source_plan_invalid")
+        backfill = web.get("initial_news_backfill", {})
+        if type(backfill) is not dict or backfill.get("enabled", False) is not False:
+            raise CoreRunError("runtime_source_plan_invalid")
+        if web.get("topic", "news") != "news" or web.get(
+            "search_depth", "basic"
+        ) != "basic":
+            raise CoreRunError("runtime_source_plan_invalid")
+        configured_env = web.get("api_key_env")
+        if configured_env not in {None, "", _WEB_CREDENTIAL_ENV[provider_id]}:
+            raise CoreRunError("runtime_source_plan_invalid")
+        max_results = web.get("max_results", 20)
+        recency_days = web.get(
+            "recency_days",
+            None if run_direction is None else run_direction.max_source_age_days,
+        )
+        if type(max_results) is not int or type(recency_days) not in {int, type(None)}:
+            raise CoreRunError("runtime_source_plan_invalid")
+        domains = _web_preferred_domains(web)
+        tasks = web.get("search_tasks", [])
+        if type(tasks) is not list:
+            raise CoreRunError("runtime_source_plan_invalid")
+        requests: list[dict[str, object]] = []
+        for task in tasks:
+            if type(task) is not dict or set(task) - {
+                "query",
+                "domains",
+                "topic",
+                "market",
+                "language",
+                "platform_group",
+                "signal_type",
+            }:
+                raise CoreRunError("runtime_source_plan_invalid")
+            query = task.get("query")
+            task_domains = task.get("domains", domains)
+            requests.append(
+                _web_request_payload(
+                    query=query,
+                    domains=task_domains,
+                    max_results=max_results,
+                    recency_days=recency_days,
+                )
+            )
+        if not requests:
+            if run_direction is None:
+                raise CoreRunError("runtime_source_plan_invalid")
+            requests = [
+                _web_request_payload(
+                    query=term,
+                    domains=domains,
+                    max_results=max_results,
+                    recency_days=recency_days,
+                )
+                for term in run_direction.target_terms
+            ]
+        payload = {
+            "schema_version": RuntimeWebSearchAcquisitionSpec.schema_id,
+            "kind": "web_search",
+            "provider_id": provider_id,
+            "requests": requests,
+        }
+        payload["acquisition_spec_fingerprint"] = canonical_fingerprint(payload)
+        try:
+            return RuntimeWebSearchAcquisitionSpec.model_validate(
+                payload, strict=True
+            ).model_dump(mode="json", exclude_unset=False)
+        except (TypeError, ValueError) as exc:
+            raise CoreRunError("runtime_source_plan_invalid") from exc
+    if route_id != "api" or provider_id != "api":
+        raise CoreRunError("runtime_source_plan_invalid")
+    section = raw.get("api", {})
+    if type(section) is not dict or set(section) - {
+        "enabled",
+        "providers",
+        "query",
+        "default_query",
+        "max_results",
+        "sort_by",
+        "language",
+        "domains",
+    }:
+        raise CoreRunError("runtime_source_plan_invalid")
+    if section.get("enabled") is not True:
+        raise CoreRunError("runtime_source_plan_invalid")
+    providers = section.get("providers", [])
+    if type(providers) is not list or len(providers) != 1 or type(providers[0]) is not dict:
+        raise CoreRunError("runtime_source_plan_invalid")
+    provider = providers[0]
+    if set(provider) - {"name", "api_key_env"} or provider.get("name") != "newsapi":
+        raise CoreRunError("runtime_source_plan_invalid")
+    if provider.get("api_key_env") not in {None, "", "NEWSAPI_API_KEY"}:
+        raise CoreRunError("runtime_source_plan_invalid")
+    if run_direction is None:
+        raise CoreRunError("runtime_source_plan_invalid")
+    query = section.get("query", section.get("default_query"))
+    if query is None:
+        query = " ".join(run_direction.target_terms)
+    domains = section.get("domains", [])
+    if type(domains) is not list:
+        raise CoreRunError("runtime_source_plan_invalid")
+    payload = {
+        "schema_version": RuntimeNewsApiAcquisitionSpec.schema_id,
+        "kind": "newsapi",
+        "provider_id": "newsapi",
+        "query": query,
+        "terms": run_direction.target_terms,
+        "max_results": section.get("max_results", 20),
+        "start_date": run_direction.report_window_start,
+        "end_date": run_direction.report_window_end,
+        "sort_by": section.get("sort_by"),
+        "language": section.get("language"),
+        "domains": sorted(str(item).lower() for item in domains),
+    }
+    payload["acquisition_spec_fingerprint"] = canonical_fingerprint(payload)
+    try:
+        return RuntimeNewsApiAcquisitionSpec.model_validate(
+            payload, strict=True
+        ).model_dump(mode="json", exclude_unset=False)
+    except (TypeError, ValueError) as exc:
+        raise CoreRunError("runtime_source_plan_invalid") from exc
+
+
+def _web_preferred_domains(web: dict[str, object]) -> list[str]:
+    domain_policy = web.get("news_source_domains", {})
+    if type(domain_policy) is not dict:
+        raise CoreRunError("runtime_source_plan_invalid")
+    if set(domain_policy) - {"preferred_domains", "excluded_domains", "mode", "note"}:
+        raise CoreRunError("runtime_source_plan_invalid")
+    excluded = domain_policy.get("excluded_domains", [])
+    preferred = domain_policy.get("preferred_domains", [])
+    if (
+        type(excluded) is not list
+        or excluded
+        or type(preferred) is not list
+        or any(type(item) is not str for item in preferred)
+    ):
+        raise CoreRunError("runtime_source_plan_invalid")
+    return sorted({item.lower() for item in preferred})
+
+
+def _web_request_payload(
+    *,
+    query: object,
+    domains: object,
+    max_results: object,
+    recency_days: object,
+) -> dict[str, object]:
+    if (
+        type(query) is not str
+        or type(domains) is not list
+        or any(type(item) is not str for item in domains)
+    ):
+        raise CoreRunError("runtime_source_plan_invalid")
+    try:
+        return RuntimeWebSearchRequestSpec.model_validate(
+            {
+                "schema_version": RuntimeWebSearchRequestSpec.schema_id,
+                "query": query,
+                "domains": sorted({item.lower() for item in domains}),
+                "max_results": max_results,
+                "recency_days": recency_days,
+            },
+            strict=True,
+        ).model_dump(mode="json", exclude_unset=False)
+    except (TypeError, ValueError) as exc:
+        raise CoreRunError("runtime_source_plan_invalid") from exc
+
+
+def _validate_cached_package_topology(
+    workspace_root: Path | None,
+    paths: list[str],
+) -> None:
+    if workspace_root is None:
+        return
+    root = workspace_root.resolve(strict=True)
+    for raw_path in paths:
+        relative = PurePosixPath(raw_path)
+        if relative.is_absolute() or ".." in relative.parts or "." in relative.parts:
+            raise CoreRunError("runtime_source_plan_invalid")
+        current = root
+        for part in relative.parts:
+            current = current / part
+            try:
+                if current.is_symlink():
+                    raise CoreRunError("runtime_source_plan_invalid")
+                current.lstat()
+            except FileNotFoundError:
+                break
+            except OSError as exc:
+                raise CoreRunError("runtime_source_plan_invalid") from exc
 
 
 def _validate_runtime_source_route(
