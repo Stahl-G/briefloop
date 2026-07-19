@@ -1370,9 +1370,33 @@ def test_web_search_no_domains_passes_none():
 
 # --- Init profiles recommend online search without requiring an API key ---
 
+def _with_task_objective_if_supported(args):
+    from multi_agent_brief.cli.main import build_parser
+
+    parser = build_parser()
+    subcommands = next(
+        action.choices
+        for action in parser._actions
+        if getattr(action, "choices", None)
+    )
+    init_options = {
+        option
+        for action in subcommands["init"]._actions
+        for option in action.option_strings
+    }
+    if "--task-objective" in init_options:
+        # LEGACY-DELETE: retain only the strict SQLite initialization contract.
+        return [
+            *args,
+            "--task-objective",
+            "Track material manufacturing developments.",
+        ]
+    return args
+
+
 def test_init_aggressive_signal_web_search_enabled_without_backend(tmp_path):
     import yaml
-    from multi_agent_brief.cli.main import build_parser, main
+    from multi_agent_brief.cli.main import main
 
     workspace = tmp_path / "ws"
     args = [
@@ -1393,25 +1417,7 @@ def test_init_aggressive_signal_web_search_enabled_without_backend(tmp_path):
         "--source-profile",
         "aggressive_signal",
     ]
-    parser = build_parser()
-    subcommands = next(
-        action.choices
-        for action in parser._actions
-        if getattr(action, "choices", None)
-    )
-    init_options = {
-        option
-        for action in subcommands["init"]._actions
-        for option in action.option_strings
-    }
-    if "--task-objective" in init_options:
-        # LEGACY-DELETE: remove this pre/post-CX option branch and retain only
-        # the strict SQLite-runtime bootstrap contract.
-        args.extend([
-            "--task-objective",
-            "Track material manufacturing developments.",
-        ])
-    assert main(args) == 0
+    assert main(_with_task_objective_if_supported(args)) == 0
     config = yaml.safe_load((workspace / "sources.yaml").read_text(encoding="utf-8"))
     web_search = config["web_search"]
     assert web_search["enabled"] is True
@@ -1423,7 +1429,7 @@ def test_init_custom_web_search_enabled_without_backend(tmp_path):
     import yaml
     from multi_agent_brief.cli.main import main
     workspace = tmp_path / "ws"
-    assert main([
+    args = [
         "init",
         str(workspace),
         "--language",
@@ -1440,7 +1446,8 @@ def test_init_custom_web_search_enabled_without_backend(tmp_path):
         "weekly",
         "--source-profile",
         "custom",
-    ]) == 0
+    ]
+    assert main(_with_task_objective_if_supported(args)) == 0
     config = yaml.safe_load((workspace / "sources.yaml").read_text(encoding="utf-8"))
     web_search = config["web_search"]
     assert web_search["enabled"] is True
@@ -1452,7 +1459,7 @@ def test_init_research_web_search_enabled_without_backend(tmp_path):
     import yaml
     from multi_agent_brief.cli.main import main
     workspace = tmp_path / "ws"
-    assert main([
+    args = [
         "init",
         str(workspace),
         "--language",
@@ -1469,7 +1476,8 @@ def test_init_research_web_search_enabled_without_backend(tmp_path):
         "weekly",
         "--source-profile",
         "research",
-    ]) == 0
+    ]
+    assert main(_with_task_objective_if_supported(args)) == 0
     config = yaml.safe_load((workspace / "sources.yaml").read_text(encoding="utf-8"))
     web_search = config["web_search"]
     assert web_search["enabled"] is True
