@@ -7,6 +7,7 @@ from multi_agent_brief.control_store.serialization import canonical_fingerprint
 
 from .errors import CoreRunError
 from .lineage import classify_current_lineage
+from .policy import REQUIRED_AUDITOR_GATES, SOURCE_ROUTE_OWNER_ORDER
 from .recovery import classify_recovery_legality
 from .terminal import classify_terminal_legality
 from .verifier import VerifiedCoreRun
@@ -23,7 +24,7 @@ _ROLE_BY_STAGE = {
 }
 
 _REQUEST_SCHEMA_BY_STAGE = {
-    "source-discovery": "briefloop.source_proposal.v2",
+    "source-discovery": "briefloop.owned_artifact_submit_request.v2",
     "scout": "briefloop.candidate_claims_proposal.v2",
     "screener": "briefloop.screened_candidates_proposal.v2",
     "claim-ledger": "briefloop.claim_drafts_proposal.v2",
@@ -42,6 +43,8 @@ def _action(
     stage_id: str | None = None,
     role_id: str | None = None,
     request_schema_id: str | None = None,
+    source_route_id: str | None = None,
+    source_provider_id: str | None = None,
 ) -> CoreRunNextAction:
     snapshot = verified.snapshot
     revisions = sorted(
@@ -68,6 +71,8 @@ def _action(
         "effect_kind": effect_kind,
         "stage_id": stage_id,
         "role_id": role_id,
+        "source_route_id": source_route_id,
+        "source_provider_id": source_provider_id,
         "reason_code": reason_code,
         "input_artifacts": revisions,
         "request_schema_id": request_schema_id,
@@ -158,7 +163,11 @@ def classify_core_run_next_action(verified: VerifiedCoreRun) -> CoreRunNextActio
             effect_kind="invocation_accept_or_fail",
             reason_code="active_invocation_reserved",
             stage_id=event.stage_id,
-            request_schema_id=_REQUEST_SCHEMA_BY_STAGE.get(event.stage_id),
+            request_schema_id=(
+                "briefloop.source_commit_request.v2"
+                if invocation.role_id == "source-provider"
+                else _REQUEST_SCHEMA_BY_STAGE.get(event.stage_id)
+            ),
         )
 
     terminal = classify_terminal_legality(snapshot)
@@ -184,7 +193,10 @@ def classify_core_run_next_action(verified: VerifiedCoreRun) -> CoreRunNextActio
         "delivery_failed",
         "draft_created",
     }:
-        if terminal.terminal_state in {"package_ready", "approval_incomplete"} and not terminal.approval_complete:
+        if (
+            terminal.terminal_state in {"package_ready", "approval_incomplete"}
+            and not terminal.approval_complete
+        ):
             return _action(
                 verified,
                 action_kind="human_decision",
@@ -261,6 +273,16 @@ def classify_core_run_next_action(verified: VerifiedCoreRun) -> CoreRunNextActio
             )
         raise CoreRunError("control_store_integrity_invalid")
     stage_id = ready[0]
+    if stage_id == "source-discovery":
+        return _source_discovery_action(verified)
+    if stage_id == "claim-ledger":
+        action = _claim_ledger_action(verified)
+        if action is not None:
+            return action
+    if stage_id == "auditor":
+        action = _auditor_action(verified)
+        if action is not None:
+            return action
     if _stage_has_current_effect(verified, stage_id):
         return _action(
             verified,
@@ -288,7 +310,11 @@ def classify_core_run_next_action(verified: VerifiedCoreRun) -> CoreRunNextActio
 
     role = _ROLE_BY_STAGE.get(stage_id)
     if stage_id == "analyst" and verified.binding.role_topology == "human_assisted":
-        role = "writer"
+        role = (
+            "analyst"
+            if "analyst" in verified.runtime_adapter.role_ids
+            else "writer"
+        )
     if role is None or role not in verified.runtime_adapter.role_ids:
         return _action(
             verified,
@@ -305,6 +331,215 @@ def classify_core_run_next_action(verified: VerifiedCoreRun) -> CoreRunNextActio
         stage_id=stage_id,
         role_id=role,
         request_schema_id=_REQUEST_SCHEMA_BY_STAGE[stage_id],
+    )
+
+
+def _source_discovery_action(verified: VerifiedCoreRun) -> CoreRunNextAction:
+    snapshot = verified.snapshot
+    artifacts = {item.artifact_id: item for item in snapshot.artifacts}
+    candidates = artifacts.get("source_candidates")
+    if candidates is None or candidates.current_revision == 0:
+        return _delegate_action(
+            verified,
+            stage_id="source-discovery",
+            role_id="source-planner",
+            request_schema_id="briefloop.owned_artifact_submit_request.v2",
+        )
+    if any(item.claims_eligible for item in snapshot.sources):
+        return _action(
+            verified,
+            action_kind="deterministic",
+            effect_kind="stage_complete",
+            reason_code="current_stage_effect_ready_for_completion",
+            stage_id="source-discovery",
+            request_schema_id="briefloop.stage_complete_request.v2",
+        )
+    routes = [
+        item for item in verified.source_plan.routes if item.route_kind != "disabled"
+    ]
+    if not routes:
+        return _action(
+            verified,
+            action_kind="blocked",
+            effect_kind="source_route_unavailable",
+            reason_code="runtime_source_route_unavailable",
+            stage_id="source-discovery",
+        )
+    route = min(
+        routes,
+        key=lambda item: (
+            0 if item.required else 1,
+            SOURCE_ROUTE_OWNER_ORDER[item.execution_owner],
+            item.route_id,
+        ),
+    )
+    common = {
+        "stage_id": "source-discovery",
+        "source_route_id": route.route_id,
+        "source_provider_id": route.provider_id,
+    }
+    if route.execution_owner == "deterministic":
+        if "source-provider" not in verified.runtime_adapter.role_ids:
+            return _action(
+                verified,
+                action_kind="blocked",
+                effect_kind="role_unavailable",
+                reason_code="runtime_role_unavailable",
+                **common,
+            )
+        return _action(
+            verified,
+            action_kind="deterministic",
+            effect_kind="source_acquire",
+            reason_code="deterministic_source_route_required",
+            request_schema_id="briefloop.source_commit_request.v2",
+            **common,
+        )
+    if route.execution_owner == "specialist":
+        if "source-provider" not in verified.runtime_adapter.role_ids:
+            return _action(
+                verified,
+                action_kind="blocked",
+                effect_kind="role_unavailable",
+                reason_code="runtime_role_unavailable",
+                **common,
+            )
+        return _action(
+            verified,
+            action_kind="delegate",
+            effect_kind="role_proposal",
+            reason_code="source_provider_required",
+            role_id="source-provider",
+            request_schema_id="briefloop.source_commit_request.v2",
+            **common,
+        )
+    return _action(
+        verified,
+        action_kind="human_decision",
+        effect_kind="source_input_required",
+        reason_code="human_source_material_required",
+        **common,
+    )
+
+
+def _claim_ledger_action(verified: VerifiedCoreRun) -> CoreRunNextAction | None:
+    snapshot = verified.snapshot
+    lineage = classify_current_lineage(snapshot)
+    if lineage.proposals.claim_drafts is None or snapshot.claim_freezes:
+        return None
+    return _action(
+        verified,
+        action_kind="deterministic",
+        effect_kind="claim_freeze",
+        reason_code="current_claim_drafts_require_freeze",
+        stage_id="claim-ledger",
+        request_schema_id="briefloop.claim_freeze_request.v2",
+    )
+
+
+def _auditor_action(verified: VerifiedCoreRun) -> CoreRunNextAction | None:
+    snapshot = verified.snapshot
+    lineage = classify_current_lineage(snapshot)
+    if lineage.proposals.audit is None:
+        return None
+    promotion_revision = _current_audit_promotion_revision(verified)
+    if promotion_revision is None:
+        return _action(
+            verified,
+            action_kind="deterministic",
+            effect_kind="audit_promotion",
+            reason_code="current_audit_proposal_requires_promotion",
+            stage_id="auditor",
+            request_schema_id="briefloop.audit_promotion_request.v2",
+        )
+    gate = lineage.current_gate_batch
+    if gate is None or gate.committed_revision <= promotion_revision:
+        return _action(
+            verified,
+            action_kind="deterministic",
+            effect_kind="gate_evaluation",
+            reason_code="current_audit_promotion_requires_gate",
+            stage_id="auditor",
+            request_schema_id="briefloop.gate_check_request.v2",
+        )
+    required = {
+        item.gate_id: item
+        for item in gate.evaluations
+        if item.gate_id in REQUIRED_AUDITOR_GATES
+    }
+    if set(required) != set(REQUIRED_AUDITOR_GATES):
+        raise CoreRunError("control_store_integrity_invalid")
+    if any(
+        item.status not in {"pass", "warning"} or item.blocking
+        for item in required.values()
+    ):
+        return _action(
+            verified,
+            action_kind="blocked",
+            effect_kind="auditor_gate_blocked",
+            reason_code="current_auditor_gate_blocked",
+            stage_id="auditor",
+        )
+    return _action(
+        verified,
+        action_kind="deterministic",
+        effect_kind="stage_complete",
+        reason_code="current_stage_effect_ready_for_completion",
+        stage_id="auditor",
+        request_schema_id="briefloop.stage_complete_request.v2",
+    )
+
+
+def _current_audit_promotion_revision(verified: VerifiedCoreRun) -> int | None:
+    snapshot = verified.snapshot
+    lineage = classify_current_lineage(snapshot)
+    audit = lineage.proposals.audit
+    submission = lineage.current_submissions.get("audit_report")
+    if audit is None or submission is None:
+        return None
+    artifacts = {item.artifact_id: item for item in snapshot.artifacts}
+    brief = artifacts.get("audited_brief")
+    parent = submission.parent_artifact
+    if (
+        submission.source_proposal_id != audit.proposal_id
+        or brief is None
+        or parent is None
+        or parent.artifact_id != brief.artifact_id
+        or parent.revision != brief.current_revision
+    ):
+        return None
+    receipts = {
+        item.transaction_id: item.committed_revision for item in snapshot.transactions
+    }
+    try:
+        return receipts[submission.accepted_transaction_id]
+    except KeyError as exc:
+        raise CoreRunError("control_store_integrity_invalid") from exc
+
+
+def _delegate_action(
+    verified: VerifiedCoreRun,
+    *,
+    stage_id: str,
+    role_id: str,
+    request_schema_id: str,
+) -> CoreRunNextAction:
+    if role_id not in verified.runtime_adapter.role_ids:
+        return _action(
+            verified,
+            action_kind="blocked",
+            effect_kind="role_unavailable",
+            reason_code="runtime_role_unavailable",
+            stage_id=stage_id,
+        )
+    return _action(
+        verified,
+        action_kind="delegate",
+        effect_kind="role_proposal",
+        reason_code="role_proposal_required",
+        stage_id=stage_id,
+        role_id=role_id,
+        request_schema_id=request_schema_id,
     )
 
 
@@ -328,9 +563,8 @@ def _stage_has_current_effect(verified: VerifiedCoreRun, stage_id: str) -> bool:
             item.claims_eligible for item in snapshot.sources
         )
     if stage_id == "input-governance":
-        return (
-            not verified.binding.input_governance_required
-            or current("input_classification")
+        return not verified.binding.input_governance_required or current(
+            "input_classification"
         )
     lineage = classify_current_lineage(snapshot)
     if stage_id == "scout":

@@ -13,6 +13,7 @@ import sys
 from types import SimpleNamespace
 
 import pytest
+import yaml
 
 from multi_agent_brief.cli.init_wizard import create_demo_workspace
 from multi_agent_brief.contracts.v2 import (
@@ -164,6 +165,7 @@ def _commit_core_fixture(store: SQLiteControlStore, unit, *, observer=None):
         )
     )
     return unit.commit(_postcommit_observer=observer)
+
 ROOT = Path(__file__).parents[1]
 
 
@@ -201,6 +203,21 @@ def _workspace(tmp_path: Path) -> Path:
     return workspace
 
 
+def _configure_runtime_tool_source_route(workspace: Path) -> None:
+    path = workspace / "sources.yaml"
+    payload = yaml.safe_load(path.read_text(encoding="utf-8"))
+    assert isinstance(payload, dict)
+    strategy = payload.setdefault("source_strategy", {})
+    assert isinstance(strategy, dict)
+    strategy["enabled_providers"] = ["manual", "web_search"]
+    web = payload.setdefault("web_search", {})
+    assert isinstance(web, dict)
+    web["enabled"] = True
+    web["mode"] = "runtime_tool"
+    web.pop("backend", None)
+    path.write_text(yaml.safe_dump(payload, sort_keys=False), encoding="utf-8")
+
+
 def _store_revision(workspace: Path) -> int:
     with SQLiteControlStore.open(workspace / "briefloop.db") as store:
         return store.current_revision
@@ -232,6 +249,7 @@ def _initialize(
     *,
     topology: str = "default",
     input_governance_required: bool = False,
+    role_ids: list[str] | None = None,
 ) -> CoreRunService:
     service = CoreRunService(workspace, clock=CLOCK)
     request = deepcopy(CoreRunInitializeRequest.minimal_example)
@@ -244,6 +262,10 @@ def _initialize(
         workspace_config_sha256=read_workspace_file(workspace, "config.yaml").sha256,
         sources_config_sha256=read_workspace_file(workspace, "sources.yaml").sha256,
     )
+    if role_ids is not None:
+        binding = dict(request["runtime_adapter_binding"])
+        binding["role_ids"] = sorted(role_ids)
+        request["runtime_adapter_binding"] = binding
     result = service.initialize(
         CoreRunInitializeRequest.model_validate(_bind_init_payload(request), strict=True)
     )
@@ -275,6 +297,41 @@ def test_initialize_normalizes_web_search_configure_later_source_plan(
         ("manual", "manual", "human"),
         ("web-search", "disabled", "human"),
     ]
+
+
+def test_initialize_rejects_unknown_source_provider_without_writes(
+    tmp_path: Path,
+) -> None:
+    workspace = _workspace(tmp_path)
+    sources_path = workspace / "sources.yaml"
+    payload = yaml.safe_load(sources_path.read_text(encoding="utf-8"))
+    payload["source_strategy"]["enabled_providers"] = ["unknown-provider"]
+    sources_path.write_text(
+        yaml.safe_dump(payload, sort_keys=False),
+        encoding="utf-8",
+    )
+    request = deepcopy(CoreRunInitializeRequest.minimal_example)
+    request.update(
+        request_id="REQ-INIT-UNKNOWN-SOURCE-PROVIDER",
+        workspace_id=WORKSPACE_ID,
+        run_id=RUN_ID,
+        workspace_config_sha256=read_workspace_file(workspace, "config.yaml").sha256,
+        sources_config_sha256=read_workspace_file(workspace, "sources.yaml").sha256,
+    )
+
+    result = CoreRunService(workspace, clock=CLOCK).initialize(
+        CoreRunInitializeRequest.model_validate(
+            _bind_init_payload(request),
+            strict=True,
+        )
+    )
+
+    assert result.to_dict() == {
+        "status": "failed_uncommitted",
+        "error_code": "runtime_source_plan_invalid",
+    }
+    assert not (workspace / "briefloop.db").exists()
+    assert not (workspace / "briefloop.db.blobs").exists()
 
 
 def _start_invocation(
@@ -425,9 +482,11 @@ def _advance_to_scout_ready(
     workspace: Path,
     *,
     topology: str = "default",
+    role_ids: list[str] | None = None,
 ) -> CoreRunService:
     _require_supported_working_projection()
-    service = _initialize(workspace, topology=topology)
+    _configure_runtime_tool_source_route(workspace)
+    service = _initialize(workspace, topology=topology, role_ids=role_ids)
     doctor = service.doctor_check(
         _record(
             IntegrityCheckRequest,
@@ -560,6 +619,7 @@ def test_bound_intake_verifies_domain_before_and_after_commit(
 
 def _advance_to_input_governance_ready(workspace: Path) -> CoreRunService:
     _require_supported_working_projection()
+    _configure_runtime_tool_source_route(workspace)
     service = _initialize(workspace, input_governance_required=True)
     doctor = service.doctor_check(
         _record(
@@ -902,8 +962,13 @@ def _advance_to_claim_ledger_ready(
     workspace: Path,
     *,
     topology: str = "default",
+    role_ids: list[str] | None = None,
 ) -> CoreRunService:
-    service = _advance_to_scout_ready(workspace, topology=topology)
+    service = _advance_to_scout_ready(
+        workspace,
+        topology=topology,
+        role_ids=role_ids,
+    )
     scout = _start_invocation(
         service,
         workspace,
@@ -943,7 +1008,7 @@ def _advance_to_claim_ledger_ready(
     return service
 
 
-def test_stage_completion_rejects_current_candidate_with_stale_screened_parent(
+def test_current_screened_chain_blocks_revision_drift_before_completion(
     tmp_path: Path,
 ) -> None:
     workspace = _workspace(tmp_path)
@@ -978,47 +1043,31 @@ def test_stage_completion_rejects_current_candidate_with_stale_screened_parent(
         artifact_id="screened_candidates",
         payload=_screened_payload(),
     )
-    second = _start_invocation(
-        service,
-        workspace,
-        request_id="REQ-INVOKE-CANDIDATE-2",
-        stage_id="scout",
-        role_id="scout",
-    )
-    candidate_2 = deepcopy(_candidate_payload())
-    candidate_2["proposal_id"] = "PROP-CANDIDATE-002"
-    _submit_proposal(
-        workspace,
-        lane="candidate",
-        invocation_id=second,
-        request_id="REQ-CANDIDATE-2",
-        artifact_id="candidate_claims",
-        payload=candidate_2,
-        expected_artifact_revision=1,
-    )
     with SQLiteControlStore.open(workspace / "briefloop.db") as store:
         before = store.load_snapshot(RUN_ID)
-    stage = _stage(workspace, "scout")
-    result = service.complete_stage(
+    second = service.start_invocation(
         _record(
-            StageCompleteRequest,
-            request_id="REQ-COMPLETE-STALE-SCREENED",
+            InvocationStartRequest,
+            request_id="REQ-INVOKE-CANDIDATE-2",
             run_id=RUN_ID,
             stage_id="scout",
-            reason="stale screened child cannot complete",
-            expected_stage_revision=stage.revision,
+            role_id="scout",
+            runtime="operator",
             expected_store_revision=before.store_revision,
-            expected_artifact_revisions=[
-                {"artifact_id": "candidate_claims", "revision": 2},
-                {"artifact_id": "screened_candidates", "revision": 1},
-            ],
-            expected_gate_evaluation_ids=[],
         )
     )
-    assert result.status == "failed_uncommitted"
-    assert result.error_code == "stage_artifact_binding_invalid"
+    assert second.to_dict() == {
+        "status": "failed_uncommitted",
+        "error_code": "invocation_owner_mismatch",
+    }
     with SQLiteControlStore.open(workspace / "briefloop.db") as store:
         assert store.load_snapshot(RUN_ID) == before
+    _complete_stage(
+        service,
+        workspace,
+        stage_id="scout",
+        artifacts=[("candidate_claims", 1), ("screened_candidates", 1)],
+    )
 
 
 def test_current_claim_chain_marks_stale_screened_parent_invalid(
@@ -1104,18 +1153,27 @@ def test_claim_freeze_rejects_competing_invocation_and_seals_future_work(
         artifact_id="claim_drafts",
         payload=payload,
     )
-    competing = _start_invocation(
-        service,
-        workspace,
-        request_id="REQ-INVOKE-DRAFTS-COMPETING",
-        stage_id="claim-ledger",
-        role_id="claim-ledger",
-    )
     with SQLiteControlStore.open(workspace / "briefloop.db") as store:
         before = store.load_snapshot(RUN_ID)
+    competing = service.start_invocation(
+        _record(
+            InvocationStartRequest,
+            request_id="REQ-INVOKE-DRAFTS-COMPETING",
+            run_id=RUN_ID,
+            stage_id="claim-ledger",
+            role_id="claim-ledger",
+            runtime="operator",
+            expected_store_revision=before.store_revision,
+        )
+    )
+    assert competing.to_dict() == {
+        "status": "failed_uncommitted",
+        "error_code": "invocation_owner_mismatch",
+    }
+    assert _store_revision(workspace) == before.store_revision
     request = _record(
         ClaimFreezeRequest,
-        request_id="REQ-FREEZE-COMPETING",
+        request_id="REQ-FREEZE-SEALED",
         run_id=RUN_ID,
         claim_drafts_proposal_id="PROP-DRAFTS-SEAL",
         expected_claim_drafts_artifact={
@@ -1125,42 +1183,7 @@ def test_claim_freeze_rejects_competing_invocation_and_seals_future_work(
         expected_store_revision=before.store_revision,
         expected_ledger_revision=0,
     )
-    blocked = ClaimFreezeService(workspace, clock=CLOCK).freeze(request)
-    assert blocked.status == "failed_uncommitted"
-    assert blocked.error_code == "claim_lineage_invalid"
-    with SQLiteControlStore.open(workspace / "briefloop.db") as store:
-        assert store.load_snapshot(RUN_ID) == before
-
-    scratch = workspace / "scratch" / competing
-    proposal_path = scratch / "claim_drafts.json"
-    _write_json(proposal_path, {"schema_version": "invalid"})
-    request_path = scratch / "submit_request.json"
-    _write_json(
-        request_path,
-        _record(
-            ArtifactSubmitRequest,
-            request_id="REQ-DRAFTS-COMPETING-REJECT",
-            run_id=RUN_ID,
-            artifact_id="claim_drafts",
-            invocation_id=competing,
-            input_path=proposal_path.relative_to(workspace).as_posix(),
-            expected_store_revision=before.store_revision,
-            expected_artifact_revision=1,
-        ).model_dump(mode="json", exclude_unset=False),
-    )
-    rejected = IntakeService(workspace, clock=CLOCK).submit_proposal(
-        "claim-drafts",
-        request_path.relative_to(workspace).as_posix(),
-    )
-    assert rejected.status == "rejected_recorded"
-
-    freeze_request = request.model_copy(
-        update={
-            "request_id": "REQ-FREEZE-SEALED",
-            "expected_store_revision": _store_revision(workspace),
-        }
-    )
-    frozen = ClaimFreezeService(workspace, clock=CLOCK).freeze(freeze_request)
+    frozen = ClaimFreezeService(workspace, clock=CLOCK).freeze(request)
     assert frozen.status == "committed", frozen.to_dict()
     after_freeze = _store_revision(workspace)
     late = service.start_invocation(
@@ -1175,7 +1198,7 @@ def test_claim_freeze_rejects_competing_invocation_and_seals_future_work(
         )
     )
     assert late.status == "failed_uncommitted"
-    assert late.error_code == "stage_not_current"
+    assert late.error_code == "invocation_owner_mismatch"
     assert _store_revision(workspace) == after_freeze
 
 
@@ -1183,8 +1206,13 @@ def _advance_to_analyst_ready(
     workspace: Path,
     *,
     topology: str = "default",
+    role_ids: list[str] | None = None,
 ) -> CoreRunService:
-    service = _advance_to_claim_ledger_ready(workspace, topology=topology)
+    service = _advance_to_claim_ledger_ready(
+        workspace,
+        topology=topology,
+        role_ids=role_ids,
+    )
     claim_ledger = _start_invocation(
         service,
         workspace,
@@ -1246,6 +1274,8 @@ def _advance_to_auditor_ready(
     *,
     audit_decision: str = "pass",
     audit_findings: list[dict[str, object]] | None = None,
+    submit_audit: bool = True,
+    promote_audit: bool = True,
 ) -> CoreRunService:
     service = _advance_to_analyst_ready(workspace)
     analyst = _start_invocation(
@@ -1330,48 +1360,50 @@ def _advance_to_auditor_ready(
         artifacts=[("analyst_draft_snapshot", 1), ("audited_brief", 1)],
     )
 
-    auditor = _start_invocation(
-        service,
-        workspace,
-        request_id="REQ-INVOKE-AUDITOR",
-        stage_id="auditor",
-        role_id="auditor",
-    )
-    _submit_proposal(
-        workspace,
-        lane="audit",
-        invocation_id=auditor,
-        request_id="REQ-AUDIT-001",
-        artifact_id="audit_proposal",
-        payload={
-            "schema_version": "briefloop.audit_proposal.v2",
-            "proposal_id": "PROP-AUDIT-001",
-            "run_id": RUN_ID,
-            "artifact_id": "audited_brief",
-            "artifact_revision": 1,
-            "decision": audit_decision,
-            "created_at": NOW,
-            "findings": audit_findings or [],
-        },
-    )
-    promoted = ArtifactAcceptanceService(
-        workspace,
-        clock=CLOCK,
-    ).promote_audit_proposal(
-        _record(
-            AuditPromotionRequest,
-            request_id="REQ-AUDIT-PROMOTE-001",
-            run_id=RUN_ID,
-            audit_proposal_id="PROP-AUDIT-001",
-            expected_target_artifact={
-                "artifact_id": "audited_brief",
-                "revision": 1,
-            },
-            expected_audit_report_revision=0,
-            expected_store_revision=_store_revision(workspace),
+    if submit_audit:
+        auditor = _start_invocation(
+            service,
+            workspace,
+            request_id="REQ-INVOKE-AUDITOR",
+            stage_id="auditor",
+            role_id="auditor",
         )
-    )
-    assert promoted.status == "committed", promoted.to_dict()
+        _submit_proposal(
+            workspace,
+            lane="audit",
+            invocation_id=auditor,
+            request_id="REQ-AUDIT-001",
+            artifact_id="audit_proposal",
+            payload={
+                "schema_version": "briefloop.audit_proposal.v2",
+                "proposal_id": "PROP-AUDIT-001",
+                "run_id": RUN_ID,
+                "artifact_id": "audited_brief",
+                "artifact_revision": 1,
+                "decision": audit_decision,
+                "created_at": NOW,
+                "findings": audit_findings or [],
+            },
+        )
+    if submit_audit and promote_audit:
+        promoted = ArtifactAcceptanceService(
+            workspace,
+            clock=CLOCK,
+        ).promote_audit_proposal(
+            _record(
+                AuditPromotionRequest,
+                request_id="REQ-AUDIT-PROMOTE-001",
+                run_id=RUN_ID,
+                audit_proposal_id="PROP-AUDIT-001",
+                expected_target_artifact={
+                    "artifact_id": "audited_brief",
+                    "revision": 1,
+                },
+                expected_audit_report_revision=0,
+                expected_store_revision=_store_revision(workspace),
+            )
+        )
+        assert promoted.status == "committed", promoted.to_dict()
     return service
 
 
@@ -1608,7 +1640,7 @@ def test_audit_intake_rejects_a_non_brief_target_before_acceptance(
     tmp_path: Path,
 ) -> None:
     workspace = _workspace(tmp_path)
-    service = _advance_to_auditor_ready(workspace)
+    service = _advance_to_auditor_ready(workspace, submit_audit=False)
     auditor = _start_invocation(
         service,
         workspace,
@@ -1642,14 +1674,14 @@ def test_audit_intake_rejects_a_non_brief_target_before_acceptance(
             invocation_id=auditor,
             input_path=proposal_path.relative_to(workspace).as_posix(),
             expected_store_revision=_store_revision(workspace),
-            expected_artifact_revision=1,
+            expected_artifact_revision=0,
         ).model_dump(mode="json", exclude_unset=False),
     )
     result = IntakeService(workspace, clock=CLOCK).submit_proposal(
         "audit",
         request_path.relative_to(workspace).as_posix(),
     )
-    assert result.status == "rejected_recorded"
+    assert result.status == "rejected_recorded", result.to_dict()
     assert result.error_code == "audit_target_invalid"
     with SQLiteControlStore.open(workspace / "briefloop.db") as store:
         after = store.load_snapshot(RUN_ID)
@@ -1657,12 +1689,7 @@ def test_audit_intake_rejects_a_non_brief_target_before_acceptance(
         item.proposal_id == "PROP-AUDIT-WRONG-TARGET"
         for item in after.accepted_proposals
     )
-    assert (
-        next(
-            item for item in after.artifacts if item.artifact_id == "audit_proposal"
-        ).current_revision
-        == 1
-    )
+    assert not any(item.artifact_id == "audit_proposal" for item in after.artifacts)
     assert _stage(workspace, "auditor").status == "ready"
     assert _stage(workspace, "finalize").status == "pending"
 
@@ -1671,7 +1698,7 @@ def test_audit_intake_rejects_domain_invalid_bound_snapshot_without_writes(
     tmp_path: Path,
 ) -> None:
     workspace = _workspace(tmp_path)
-    core = _advance_to_auditor_ready(workspace)
+    core = _advance_to_auditor_ready(workspace, submit_audit=False)
     auditor = _start_invocation(
         core,
         workspace,
@@ -1705,7 +1732,7 @@ def test_audit_intake_rejects_domain_invalid_bound_snapshot_without_writes(
             invocation_id=auditor,
             input_path=proposal_path.relative_to(workspace).as_posix(),
             expected_store_revision=_store_revision(workspace),
-            expected_artifact_revision=1,
+            expected_artifact_revision=0,
         ).model_dump(mode="json", exclude_unset=False),
     )
 
@@ -1714,7 +1741,7 @@ def test_audit_intake_rejects_domain_invalid_bound_snapshot_without_writes(
         row = store._connection.execute(
             "SELECT submission_id, payload_json "
             "FROM owned_artifact_submissions "
-            "WHERE run_id = ? AND artifact_id = 'audit_report' "
+            "WHERE run_id = ? AND artifact_id = 'audited_brief' "
             "AND artifact_revision = 1",
             (RUN_ID,),
         ).fetchone()
@@ -1804,147 +1831,53 @@ def test_audit_intake_rejects_domain_invalid_bound_snapshot_without_writes(
             CoreRunDomainVerifier().verify(store, RUN_ID)
 
 
-def test_audit_promotion_consumes_only_current_proposal_and_brief(
+def test_audit_promotion_is_the_only_action_after_current_proposal(
     tmp_path: Path,
 ) -> None:
     workspace = _workspace(tmp_path)
-    service = _advance_to_auditor_ready(workspace)
-    auditor = _start_invocation(
-        service,
-        workspace,
-        request_id="REQ-INVOKE-AUDITOR-REV2",
-        stage_id="auditor",
-        role_id="auditor",
-    )
-    _submit_proposal(
-        workspace,
-        lane="audit",
-        invocation_id=auditor,
-        request_id="REQ-AUDIT-REV2",
-        artifact_id="audit_proposal",
-        expected_artifact_revision=1,
-        payload={
-            "schema_version": "briefloop.audit_proposal.v2",
-            "proposal_id": "PROP-AUDIT-002",
-            "run_id": RUN_ID,
-            "artifact_id": "audited_brief",
-            "artifact_revision": 1,
-            "decision": "pass",
-            "created_at": NOW,
-            "findings": [],
-        },
-    )
+    service = _advance_to_auditor_ready(workspace, promote_audit=False)
     before = _store_revision(workspace)
+    extra = service.start_invocation(
+        _record(
+            InvocationStartRequest,
+            request_id="REQ-INVOKE-AUDITOR-REV2",
+            run_id=RUN_ID,
+            stage_id="auditor",
+            role_id="auditor",
+            runtime="operator",
+            expected_store_revision=before,
+        )
+    )
+    assert extra.to_dict() == {
+        "status": "failed_uncommitted",
+        "error_code": "invocation_owner_mismatch",
+    }
+    assert _store_revision(workspace) == before
+
     promoter = ArtifactAcceptanceService(workspace, clock=CLOCK)
-    stale = promoter.promote_audit_proposal(
+    current = promoter.promote_audit_proposal(
         _record(
             AuditPromotionRequest,
-            request_id="REQ-AUDIT-PROMOTE-STALE",
+            request_id="REQ-AUDIT-PROMOTE-CURRENT",
             run_id=RUN_ID,
             audit_proposal_id="PROP-AUDIT-001",
             expected_target_artifact={
                 "artifact_id": "audited_brief",
                 "revision": 1,
             },
-            expected_audit_report_revision=1,
-            expected_store_revision=before,
-        )
-    )
-    assert stale.status == "failed_uncommitted"
-    assert stale.error_code == "artifact_revision_conflict"
-    assert _store_revision(workspace) == before
-
-    current = promoter.promote_audit_proposal(
-        _record(
-            AuditPromotionRequest,
-            request_id="REQ-AUDIT-PROMOTE-REV2",
-            run_id=RUN_ID,
-            audit_proposal_id="PROP-AUDIT-002",
-            expected_target_artifact={
-                "artifact_id": "audited_brief",
-                "revision": 1,
-            },
-            expected_audit_report_revision=1,
+            expected_audit_report_revision=0,
             expected_store_revision=before,
         )
     )
     assert current.status == "committed", current.to_dict()
 
 
-def test_auditor_completion_requires_report_from_current_audit_proposal(
+def test_auditor_completion_requires_current_promotion_and_gate(
     tmp_path: Path,
 ) -> None:
     workspace = _workspace(tmp_path)
-    service = _advance_to_auditor_ready(workspace)
-    auditor = _start_invocation(
-        service,
-        workspace,
-        request_id="REQ-INVOKE-AUDITOR-CURRENT",
-        stage_id="auditor",
-        role_id="auditor",
-    )
-    _submit_proposal(
-        workspace,
-        lane="audit",
-        invocation_id=auditor,
-        request_id="REQ-AUDIT-CURRENT",
-        artifact_id="audit_proposal",
-        expected_artifact_revision=1,
-        payload={
-            "schema_version": "briefloop.audit_proposal.v2",
-            "proposal_id": "PROP-AUDIT-002",
-            "run_id": RUN_ID,
-            "artifact_id": "audited_brief",
-            "artifact_revision": 1,
-            "decision": "pass",
-            "created_at": NOW,
-            "findings": [],
-        },
-    )
-    gate_service = GateEvaluationService(workspace, clock=CLOCK)
-    stale_gate_request = _gate_request(
-        workspace,
-        request_id="REQ-GATE-STALE-AUDIT",
-    )
-    stale_gate = gate_service.evaluate(stale_gate_request)
-    assert stale_gate.status == "committed", stale_gate.to_dict()
-    with SQLiteControlStore.open(workspace / "briefloop.db") as store:
-        before = store.load_snapshot(RUN_ID)
-    stale_gate_ids = [
-        item.evaluation_id
-        for item in before.gate_evaluations
-        if item.report_artifact.revision == 1 and item.gate_id in REQUIRED_AUDITOR_GATES
-    ]
-    stage = next(item for item in before.stage_states if item.stage_id == "auditor")
-    rejected = service.complete_stage(
-        _record(
-            StageCompleteRequest,
-            request_id="REQ-COMPLETE-AUDITOR-STALE-AUDIT",
-            run_id=RUN_ID,
-            stage_id="auditor",
-            reason="stale audit report cannot complete",
-            expected_stage_revision=stage.revision,
-            expected_store_revision=before.store_revision,
-            expected_artifact_revisions=[
-                {"artifact_id": artifact_id, "revision": revision}
-                for artifact_id, revision in [
-                    ("claim_ledger", 1),
-                    ("audited_brief", 1),
-                    ("audit_report", 1),
-                    ("auditor_quality_gate_report", 1),
-                    ("analyst_draft_snapshot", 1),
-                ]
-            ],
-            expected_gate_evaluation_ids=stale_gate_ids,
-        )
-    )
-    assert rejected.to_dict() == {
-        "status": "failed_uncommitted",
-        "error_code": "stage_artifact_binding_invalid",
-    }
-    with SQLiteControlStore.open(workspace / "briefloop.db") as store:
-        assert store.load_snapshot(RUN_ID) == before
-
+    service = _advance_to_auditor_ready(workspace, promote_audit=False)
+    before = _store_revision(workspace)
     promoted = ArtifactAcceptanceService(
         workspace,
         clock=CLOCK,
@@ -1953,61 +1886,20 @@ def test_auditor_completion_requires_report_from_current_audit_proposal(
             AuditPromotionRequest,
             request_id="REQ-AUDIT-PROMOTE-CURRENT",
             run_id=RUN_ID,
-            audit_proposal_id="PROP-AUDIT-002",
+            audit_proposal_id="PROP-AUDIT-001",
             expected_target_artifact={
                 "artifact_id": "audited_brief",
                 "revision": 1,
             },
-            expected_audit_report_revision=1,
-            expected_store_revision=before.store_revision,
+            expected_audit_report_revision=0,
+            expected_store_revision=before,
         )
     )
     assert promoted.status == "committed", promoted.to_dict()
-
-    with SQLiteControlStore.open(workspace / "briefloop.db") as store:
-        after_promotion = store.load_snapshot(RUN_ID)
-    stage = next(
-        item for item in after_promotion.stage_states if item.stage_id == "auditor"
-    )
-    stale_after_promotion = service.complete_stage(
-        _record(
-            StageCompleteRequest,
-            request_id="REQ-COMPLETE-AUDITOR-STALE-GATE",
-            run_id=RUN_ID,
-            stage_id="auditor",
-            reason="Gate predates the current audit promotion",
-            expected_stage_revision=stage.revision,
-            expected_store_revision=after_promotion.store_revision,
-            expected_artifact_revisions=[
-                {"artifact_id": artifact_id, "revision": revision}
-                for artifact_id, revision in [
-                    ("claim_ledger", 1),
-                    ("audited_brief", 1),
-                    ("audit_report", 2),
-                    ("auditor_quality_gate_report", 1),
-                    ("analyst_draft_snapshot", 1),
-                ]
-            ],
-            expected_gate_evaluation_ids=stale_gate_ids,
-        )
-    )
-    assert stale_after_promotion.to_dict() == {
-        "status": "failed_uncommitted",
-        "error_code": "stage_gate_binding_invalid",
-    }
-    with SQLiteControlStore.open(workspace / "briefloop.db") as store:
-        assert store.load_snapshot(RUN_ID) == after_promotion
-
-    old_gate_replay = gate_service.evaluate(stale_gate_request)
-    assert old_gate_replay.status == "replayed"
-    assert old_gate_replay.receipt == stale_gate.receipt
-    with SQLiteControlStore.open(workspace / "briefloop.db") as store:
-        assert store.load_snapshot(RUN_ID) == after_promotion
-
     gate_request = _gate_request(
         workspace,
         request_id="REQ-GATE-CURRENT-AUDIT",
-    ).model_copy(update={"expected_report_artifact_revision": 1})
+    )
     current_gate = GateEvaluationService(workspace, clock=CLOCK).evaluate(gate_request)
     assert current_gate.status == "committed", current_gate.to_dict()
     with SQLiteControlStore.open(workspace / "briefloop.db") as store:
@@ -2015,7 +1907,7 @@ def test_auditor_completion_requires_report_from_current_audit_proposal(
     current_gate_ids = [
         item.evaluation_id
         for item in current.gate_evaluations
-        if item.report_artifact.revision == 2 and item.gate_id in REQUIRED_AUDITOR_GATES
+        if item.report_artifact.revision == 1 and item.gate_id in REQUIRED_AUDITOR_GATES
     ]
     _complete_stage(
         service,
@@ -2024,8 +1916,8 @@ def test_auditor_completion_requires_report_from_current_audit_proposal(
         artifacts=[
             ("claim_ledger", 1),
             ("audited_brief", 1),
-            ("audit_report", 2),
-            ("auditor_quality_gate_report", 2),
+            ("audit_report", 1),
+            ("auditor_quality_gate_report", 1),
             ("analyst_draft_snapshot", 1),
         ],
         gate_evaluation_ids=current_gate_ids,
@@ -2449,65 +2341,62 @@ def _submit_human_assisted_draft(
     return content
 
 
-@pytest.mark.parametrize(
-    ("role_id", "artifact_id", "route_family"),
-    [
-        ("analyst", "analyst_draft_snapshot", "snapshot"),
-        ("writer", "audited_brief", "writer"),
-    ],
-)
-def test_human_assisted_analyst_routes_accept_revision_two_before_consumption(
+def test_human_assisted_analyst_action_is_exact_and_seals_current_snapshot(
     tmp_path: Path,
-    role_id: str,
-    artifact_id: str,
-    route_family: str,
 ) -> None:
     workspace = _workspace(tmp_path)
     service = _advance_to_analyst_ready(workspace, topology="human_assisted")
     first_invocation = _start_invocation(
         service,
         workspace,
-        request_id=f"REQ-INVOKE-{role_id.upper()}-REV-1",
+        request_id="REQ-INVOKE-ANALYST-REV-1",
         stage_id="analyst",
-        role_id=role_id,
+        role_id="analyst",
     )
     first_bytes = _submit_human_assisted_draft(
         workspace,
         invocation_id=first_invocation,
-        request_id=f"REQ-ARTIFACT-{role_id.upper()}-REV-1",
-        artifact_id=artifact_id,
+        request_id="REQ-ARTIFACT-ANALYST-REV-1",
+        artifact_id="analyst_draft_snapshot",
         revision=1,
     )
-    second_invocation = _start_invocation(
-        service,
-        workspace,
-        request_id=f"REQ-INVOKE-{role_id.upper()}-REV-2",
-        stage_id="analyst",
-        role_id=role_id,
+    before = _store_revision(workspace)
+    second = service.start_invocation(
+        _record(
+            InvocationStartRequest,
+            request_id="REQ-INVOKE-ANALYST-REV-2",
+            run_id=RUN_ID,
+            stage_id="analyst",
+            role_id="analyst",
+            runtime="operator",
+            expected_store_revision=before,
+        )
     )
-    second_bytes = _submit_human_assisted_draft(
-        workspace,
-        invocation_id=second_invocation,
-        request_id=f"REQ-ARTIFACT-{role_id.upper()}-REV-2",
-        artifact_id=artifact_id,
-        revision=2,
-    )
+    assert second.to_dict() == {
+        "status": "failed_uncommitted",
+        "error_code": "invocation_owner_mismatch",
+    }
+    assert _store_revision(workspace) == before
 
     with SQLiteControlStore.open(workspace / "briefloop.db") as store:
         verified = CoreRunDomainVerifier().verify(store, RUN_ID)
         route = classify_human_assisted_analyst_route(verified.snapshot)
-        assert route.route_family == route_family
+        assert route.route_family == "snapshot"
         assert route.active_analyst_role is None
-        assert store.read_artifact_revision_bytes(RUN_ID, artifact_id, 1) == first_bytes
         assert (
-            store.read_artifact_revision_bytes(RUN_ID, artifact_id, 2) == second_bytes
+            store.read_artifact_revision_bytes(
+                RUN_ID,
+                "analyst_draft_snapshot",
+                1,
+            )
+            == first_bytes
         )
 
     _complete_stage(
         service,
         workspace,
         stage_id="analyst",
-        artifacts=[(artifact_id, 2)],
+        artifacts=[("analyst_draft_snapshot", 1)],
     )
     with SQLiteControlStore.open(workspace / "briefloop.db") as store:
         verified = CoreRunDomainVerifier().verify(store, RUN_ID)
@@ -2522,12 +2411,43 @@ def test_human_assisted_analyst_routes_accept_revision_two_before_consumption(
             if item.transition_id == transition.transition_id
         ]
         assert {(item.artifact_id, item.artifact_revision) for item in bindings} == {
-            (artifact_id, 2)
+            ("analyst_draft_snapshot", 1)
         }
-        assert store.read_artifact_revision_bytes(RUN_ID, artifact_id, 1) == first_bytes
+        assert (
+            store.read_artifact_revision_bytes(
+                RUN_ID,
+                "analyst_draft_snapshot",
+                1,
+            )
+            == first_bytes
+        )
 
 
-def test_human_assisted_editor_accepts_revision_two_before_consumption(
+def test_human_assisted_writer_cannot_override_exact_analyst_action(
+    tmp_path: Path,
+) -> None:
+    workspace = _workspace(tmp_path)
+    service = _advance_to_analyst_ready(workspace, topology="human_assisted")
+    before = _store_revision(workspace)
+    result = service.start_invocation(
+        _record(
+            InvocationStartRequest,
+            request_id="REQ-INVOKE-WRITER-OUT-OF-ORDER",
+            run_id=RUN_ID,
+            stage_id="analyst",
+            role_id="writer",
+            runtime="operator",
+            expected_store_revision=before,
+        )
+    )
+    assert result.to_dict() == {
+        "status": "failed_uncommitted",
+        "error_code": "invocation_owner_mismatch",
+    }
+    assert _store_revision(workspace) == before
+
+
+def test_human_assisted_editor_action_seals_current_brief_before_completion(
     tmp_path: Path,
 ) -> None:
     workspace = _workspace(tmp_path)
@@ -2569,13 +2489,6 @@ def test_human_assisted_editor_accepts_revision_two_before_consumption(
         revision=1,
         parent=parent,
     )
-    second_editor = _start_invocation(
-        service,
-        workspace,
-        request_id="REQ-INVOKE-EDITOR-REV-2",
-        stage_id="editor",
-        role_id="editor",
-    )
     with SQLiteControlStore.open(workspace / "briefloop.db") as store:
         before_rejections = store.load_snapshot(RUN_ID)
         brief = next(
@@ -2586,10 +2499,10 @@ def test_human_assisted_editor_accepts_revision_two_before_consumption(
     canonical_path = workspace / brief.path
     assert canonical_path.read_bytes() == first_bytes
 
-    concurrent = service.start_invocation(
+    second = service.start_invocation(
         _record(
             InvocationStartRequest,
-            request_id="REQ-INVOKE-EDITOR-CONCURRENT-REV-2",
+            request_id="REQ-INVOKE-EDITOR-REV-2",
             run_id=RUN_ID,
             stage_id="editor",
             role_id="editor",
@@ -2597,69 +2510,29 @@ def test_human_assisted_editor_accepts_revision_two_before_consumption(
             expected_store_revision=before_rejections.store_revision,
         )
     )
-    assert concurrent.to_dict() == {
+    assert second.to_dict() == {
         "status": "failed_uncommitted",
         "error_code": "invocation_owner_mismatch",
-    }
-    scratch = workspace / "scratch" / second_editor / "audited_brief.md"
-    scratch.parent.mkdir(parents=True, exist_ok=True)
-    scratch.write_text("# invalid parent\n", encoding="utf-8")
-    wrong_parent = ArtifactAcceptanceService(
-        workspace,
-        clock=CLOCK,
-    ).submit_owned_artifact(
-        _record(
-            OwnedArtifactSubmitRequest,
-            request_id="REQ-ARTIFACT-EDITOR-REV-2-WRONG-PARENT",
-            run_id=RUN_ID,
-            artifact_id="audited_brief",
-            invocation_id=second_editor,
-            producer_tool_id=None,
-            input_path=scratch.relative_to(workspace).as_posix(),
-            expected_store_revision=before_rejections.store_revision,
-            expected_artifact_revision=1,
-            expected_parent_artifact={
-                "artifact_id": "analyst_draft_snapshot",
-                "revision": 2,
-            },
-        )
-    )
-    assert wrong_parent.to_dict() == {
-        "status": "failed_uncommitted",
-        "error_code": "artifact_revision_conflict",
     }
     with SQLiteControlStore.open(workspace / "briefloop.db") as store:
         assert store.load_snapshot(RUN_ID) == before_rejections
     assert canonical_path.read_bytes() == first_bytes
-
-    second_bytes = _submit_human_assisted_draft(
-        workspace,
-        invocation_id=second_editor,
-        request_id="REQ-ARTIFACT-EDITOR-REV-2",
-        artifact_id="audited_brief",
-        revision=2,
-        parent=parent,
-    )
     with SQLiteControlStore.open(workspace / "briefloop.db") as store:
         verified = CoreRunDomainVerifier().verify(store, RUN_ID)
         route = classify_human_assisted_analyst_route(verified.snapshot)
         assert route.route_family == "snapshot"
-        assert route.audited_brief_revision == 2
+        assert route.audited_brief_revision == 1
         assert route.consumed_analyst_snapshot_revision == 1
         assert (
             store.read_artifact_revision_bytes(RUN_ID, "audited_brief", 1)
             == first_bytes
-        )
-        assert (
-            store.read_artifact_revision_bytes(RUN_ID, "audited_brief", 2)
-            == second_bytes
         )
 
     _complete_stage(
         service,
         workspace,
         stage_id="editor",
-        artifacts=[("analyst_draft_snapshot", 1), ("audited_brief", 2)],
+        artifacts=[("analyst_draft_snapshot", 1), ("audited_brief", 1)],
     )
     with SQLiteControlStore.open(workspace / "briefloop.db") as store:
         verified = CoreRunDomainVerifier().verify(store, RUN_ID)
@@ -2677,13 +2550,24 @@ def test_human_assisted_editor_accepts_revision_two_before_consumption(
             (item.artifact_id, item.artifact_revision, item.usage) for item in bindings
         } == {
             ("analyst_draft_snapshot", 1, "consumed"),
-            ("audited_brief", 2, "produced"),
+            ("audited_brief", 1, "produced"),
         }
 
 
 def test_human_assisted_writer_satisfies_analyst_and_editor(tmp_path: Path) -> None:
     workspace = _workspace(tmp_path)
-    service = _advance_to_analyst_ready(workspace, topology="human_assisted")
+    roles = [
+        role
+        for role in CoreRunInitializeRequest.minimal_example[
+            "runtime_adapter_binding"
+        ]["role_ids"]
+        if role != "analyst"
+    ]
+    service = _advance_to_analyst_ready(
+        workspace,
+        topology="human_assisted",
+        role_ids=roles,
+    )
     writer = _start_invocation(
         service,
         workspace,
@@ -3946,22 +3830,24 @@ def test_source_discovery_requires_candidates_and_eligible_source(
         assert accepted.status == "committed", accepted.to_dict()
         expected_artifacts.append({"artifact_id": "source_candidates", "revision": 1})
     else:
-        provider = _start_invocation(
-            service,
-            workspace,
-            request_id="REQ-INVOKE-PROVIDER-ONLY",
-            stage_id="source-discovery",
-            role_id="source-provider",
+        before = _store_revision(workspace)
+        provider = service.start_invocation(
+            _record(
+                InvocationStartRequest,
+                request_id="REQ-INVOKE-PROVIDER-ONLY",
+                run_id=RUN_ID,
+                stage_id="source-discovery",
+                role_id="source-provider",
+                runtime="operator",
+                expected_store_revision=before,
+            )
         )
-        _submit_source(workspace, provider)
-        with SQLiteControlStore.open(workspace / "briefloop.db") as store:
-            source = store.load_snapshot(RUN_ID).sources[0]
-        expected_artifacts.append(
-            {
-                "artifact_id": source.content_artifact_id,
-                "revision": source.content_artifact_revision,
-            }
-        )
+        assert provider.to_dict() == {
+            "status": "failed_uncommitted",
+            "error_code": "invocation_owner_mismatch",
+        }
+        assert _store_revision(workspace) == before
+        return
 
     before = _store_revision(workspace)
     stage = _stage(workspace, "source-discovery")
@@ -4517,7 +4403,6 @@ def test_claim_freeze_requires_current_drafts_revision_and_exactly_replays(
         )
 
     submit_claim_drafts(revision=1)
-    submit_claim_drafts(revision=2)
 
     def tracked_file_state() -> dict[str, tuple[bytes, int]]:
         state: dict[str, tuple[bytes, int]] = {}
@@ -4533,21 +4418,39 @@ def test_claim_freeze_requires_current_drafts_revision_and_exactly_replays(
                     )
         return state
 
+    before = _store_revision(workspace)
+    extra = core.start_invocation(
+        _record(
+            InvocationStartRequest,
+            request_id="REQ-INVOKE-CLAIMS-REV2",
+            run_id=RUN_ID,
+            stage_id="claim-ledger",
+            role_id="claim-ledger",
+            runtime="operator",
+            expected_store_revision=before,
+        )
+    )
+    assert extra.to_dict() == {
+        "status": "failed_uncommitted",
+        "error_code": "invocation_owner_mismatch",
+    }
+    assert _store_revision(workspace) == before
+
     service = ClaimFreezeService(workspace, clock=CLOCK)
     before_files = tracked_file_state()
     with SQLiteControlStore.open(workspace / "briefloop.db") as store:
-        before_stale = store.load_snapshot(RUN_ID)
+        before_freeze = store.load_snapshot(RUN_ID)
     stale = service.freeze(
         _record(
             ClaimFreezeRequest,
             request_id="REQ-FREEZE-STALE-DRAFTS",
             run_id=RUN_ID,
-            claim_drafts_proposal_id="PROP-CLAIM-DRAFTS-REV1",
+            claim_drafts_proposal_id="PROP-CLAIM-DRAFTS-MISSING",
             expected_claim_drafts_artifact={
                 "artifact_id": "claim_drafts",
-                "revision": 1,
+                "revision": 2,
             },
-            expected_store_revision=before_stale.store_revision,
+            expected_store_revision=before_freeze.store_revision,
             expected_ledger_revision=0,
         )
     )
@@ -4556,19 +4459,19 @@ def test_claim_freeze_requires_current_drafts_revision_and_exactly_replays(
         "error_code": "artifact_revision_conflict",
     }
     with SQLiteControlStore.open(workspace / "briefloop.db") as store:
-        assert store.load_snapshot(RUN_ID) == before_stale
+        assert store.load_snapshot(RUN_ID) == before_freeze
     assert tracked_file_state() == before_files
 
     current_request = _record(
         ClaimFreezeRequest,
         request_id="REQ-FREEZE-CURRENT-DRAFTS",
         run_id=RUN_ID,
-        claim_drafts_proposal_id="PROP-CLAIM-DRAFTS-REV2",
+        claim_drafts_proposal_id="PROP-CLAIM-DRAFTS-REV1",
         expected_claim_drafts_artifact={
             "artifact_id": "claim_drafts",
-            "revision": 2,
+            "revision": 1,
         },
-        expected_store_revision=before_stale.store_revision,
+        expected_store_revision=before_freeze.store_revision,
         expected_ledger_revision=0,
     )
     frozen = service.freeze(current_request)
@@ -4577,7 +4480,7 @@ def test_claim_freeze_requires_current_drafts_revision_and_exactly_replays(
         core,
         workspace,
         stage_id="claim-ledger",
-        artifacts=[("claim_drafts", 2), ("claim_ledger", 1)],
+        artifacts=[("claim_drafts", 1), ("claim_ledger", 1)],
     )
     assert _stage(workspace, "analyst").status == "ready"
 
@@ -4596,13 +4499,13 @@ def test_claim_freeze_requires_current_drafts_revision_and_exactly_replays(
         stale_snapshot = replace(
             verified.snapshot,
             artifacts=tuple(
-                item.model_copy(update={"current_revision": 1})
+                item.model_copy(update={"current_revision": 0})
                 if item.artifact_id == "claim_drafts"
                 else item
                 for item in verified.snapshot.artifacts
             ),
         )
-        assert drafts_artifact.current_revision == 2
+        assert drafts_artifact.current_revision == 1
         with pytest.raises(
             CoreRunError,
             match="control_store_integrity_invalid",
@@ -5122,6 +5025,65 @@ def test_forged_core_primary_record_id_is_rejected_before_replay(
         assert store.current_revision == revision
 
 
+def test_exact_replay_rejects_forged_invocation_role_ordering(
+    tmp_path: Path,
+) -> None:
+    workspace = _workspace(tmp_path)
+    service = _advance_to_scout_ready(workspace)
+    invocation_id = _start_invocation(
+        service,
+        workspace,
+        request_id="REQ-INVOKE-FORGED-ORDERING",
+        stage_id="scout",
+        role_id="scout",
+    )
+    database = workspace / "briefloop.db"
+    with SQLiteControlStore.open(database) as store:
+        row = store._connection.execute(
+            "SELECT payload_json FROM agent_invocations "
+            "WHERE run_id=? AND invocation_id=?",
+            (RUN_ID, invocation_id),
+        ).fetchone()
+        assert row is not None
+        invocation_payload = json.loads(row[0])
+        invocation_payload["role_id"] = "editor"
+        store._connection.execute(
+            "UPDATE agent_invocations SET role_id=?, payload_json=? "
+            "WHERE run_id=? AND invocation_id=?",
+            (
+                "editor",
+                json.dumps(
+                    invocation_payload,
+                    sort_keys=True,
+                    separators=(",", ":"),
+                ),
+                RUN_ID,
+                invocation_id,
+            ),
+        )
+        store._connection.commit()
+        event = next(
+            item
+            for item in store.load_snapshot(RUN_ID).events
+            if item.core_run_binding is not None
+            and item.core_run_binding.primary_record_id == invocation_id
+        )
+        assert event.core_run_binding is not None
+        fingerprint = event.core_run_binding.request_fingerprint
+        revision = store.current_revision
+
+        with pytest.raises(CoreRunError, match="control_store_integrity_invalid"):
+            CoreRunDomainVerifier().verify(store, RUN_ID)
+        with pytest.raises(CoreRunError, match="historical_prefix_invalid"):
+            resolve_core_replay(
+                store,
+                run_id=RUN_ID,
+                request_id="REQ-INVOKE-FORGED-ORDERING",
+                request_fingerprint=fingerprint,
+            )
+        assert store.current_revision == revision
+
+
 @pytest.mark.parametrize("mutation", ["edit", "delete"])
 def test_protected_checkout_mutation_records_contamination_and_blocks_effect(
     tmp_path: Path,
@@ -5210,7 +5172,7 @@ def test_protected_checkout_mutation_records_contamination_and_blocks_effect(
         )
     )
     assert repeated.status == "failed_uncommitted"
-    assert repeated.error_code == "core_run_integrity_blocked"
+    assert repeated.error_code == "invocation_owner_mismatch"
     assert _store_revision(workspace) == after.store_revision
 
 

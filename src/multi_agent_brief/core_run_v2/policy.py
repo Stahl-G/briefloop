@@ -6,6 +6,11 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 import hashlib
 from types import MappingProxyType
+from multi_agent_brief.contracts.v2 import (
+    RUNTIME_SOURCE_PROVIDER_IDS,
+    RUNTIME_SOURCE_ROUTE_IDS,
+    RUNTIME_SOURCE_WEB_PROVIDER_IDS,
+)
 from multi_agent_brief.control_store.serialization import canonical_fingerprint
 
 
@@ -30,6 +35,12 @@ REQUIRED_AUDITOR_GATES = (
     "freshness",
     "material_fact",
     "target_relevance",
+)
+SOURCE_ROUTE_IDS = frozenset(RUNTIME_SOURCE_ROUTE_IDS)
+SOURCE_PROVIDER_IDS = frozenset(RUNTIME_SOURCE_PROVIDER_IDS)
+SOURCE_WEB_PROVIDER_IDS = frozenset(RUNTIME_SOURCE_WEB_PROVIDER_IDS)
+SOURCE_ROUTE_OWNER_ORDER = MappingProxyType(
+    {"deterministic": 0, "specialist": 1, "human": 2}
 )
 TERMINAL_INTERNAL_ARTIFACT_IDS = (
     "core_v2_run_archive",
@@ -223,6 +234,10 @@ __all__ = [
     "INTERNAL_CONTRACT_ARTIFACT_IDS",
     "REQUIRED_AUDITOR_GATES",
     "STAGE_ROLES",
+    "SOURCE_PROVIDER_IDS",
+    "SOURCE_ROUTE_IDS",
+    "SOURCE_ROUTE_OWNER_ORDER",
+    "SOURCE_WEB_PROVIDER_IDS",
     "TERMINAL_INTERNAL_ARTIFACT_IDS",
     "ArtifactPolicy",
     "archive_artifact_usage",

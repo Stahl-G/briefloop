@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import argparse
+import json
+from pathlib import Path
 
 from multi_agent_brief.runtime_assets import (
     RuntimeAssetInstallError,
@@ -49,6 +51,20 @@ def register(subparsers: argparse._SubParsersAction) -> None:
         action="store_true",
         help="Print planned writes without changing files.",
     )
+    for action in (
+        "next",
+        "diagnose",
+        "invocation-start",
+        "invocation-accept",
+        "apply",
+    ):
+        command = actions.add_parser(
+            action,
+            help=f"ControlStore v2 runtime {action}.",
+        )
+        command.add_argument("--workspace", required=True)
+        if action == "invocation-accept":
+            command.add_argument("--invocation-id", required=True)
 
 
 def handle(args: argparse.Namespace) -> int:
@@ -77,5 +93,46 @@ def handle(args: argparse.Namespace) -> int:
                 "[runtime install] Codex note: open and trust this workspace in Codex "
                 "so project .codex/config.toml and custom agents are loaded."
             )
+        return 0
+    if args.runtime_action in {
+        "next",
+        "diagnose",
+        "invocation-start",
+        "invocation-accept",
+        "apply",
+    }:
+        from multi_agent_brief.runtime_host_v2.codex import (
+            load_codex_adapter_binding,
+        )
+        from multi_agent_brief.runtime_host_v2.errors import RuntimeHostError
+        from multi_agent_brief.runtime_host_v2.service import RuntimeHostService
+
+        try:
+            workspace = Path(args.workspace).expanduser().resolve(strict=True)
+            service = RuntimeHostService(
+                workspace,
+                adapter_loader=load_codex_adapter_binding,
+            )
+            if args.runtime_action == "next":
+                payload = service.next_action().model_dump(
+                    mode="json", exclude_unset=False
+                )
+            elif args.runtime_action == "diagnose":
+                payload = service.diagnose().model_dump(
+                    mode="json", exclude_unset=False
+                )
+            elif args.runtime_action == "invocation-start":
+                dispatch = service.start_current_invocation()
+                payload = dispatch.envelope.model_dump(mode="json", exclude_unset=False)
+            elif args.runtime_action == "invocation-accept":
+                payload = service.accept_invocation(args.invocation_id).model_dump(
+                    mode="json", exclude_unset=False
+                )
+            else:
+                payload = service.apply_current().to_dict()
+        except (OSError, RuntimeHostError) as exc:
+            print(f"[runtime {args.runtime_action}] {exc}")
+            return 1
+        print(json.dumps(payload, sort_keys=True, separators=(",", ":")))
         return 0
     return 1

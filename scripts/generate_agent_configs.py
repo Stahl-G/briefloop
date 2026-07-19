@@ -58,6 +58,16 @@ CODEX_WRITER_FLOW_PROTOCOL = """Codex writer flow protocol:
 """
 
 TARGETS = {"codex", "claude", "docs", "opencode"}
+PACKAGED_CODEX_ROLE_IDS = (
+    "source-planner",
+    "source-provider",
+    "scout",
+    "screener",
+    "claim-ledger",
+    "analyst",
+    "editor",
+    "auditor",
+)
 
 SENSITIVE_PATTERNS = [
     "api_key", "password",
@@ -239,6 +249,29 @@ def render_codex_agent(role_name: str, role: dict, manifest: dict) -> str:
         f'name = "{role_name}"\n'
         f"description = {desc}\n"
         f"developer_instructions = {_toml_literal_multiline_string(instructions)}\n"
+    )
+
+
+def render_packaged_codex_agent(role_name: str, role: dict) -> str:
+    description = _toml_basic_string(str(role["description"]))
+    instructions = (
+        f"You are the BriefLoop {role_name} specialist for the SQLite-only "
+        "ControlStore v2 runtime.\n\n"
+        "Read the exact RoleTaskEnvelope supplied by the host. Treat its "
+        "run, invocation, action, role, stage, scratch directory, filenames "
+        "and proposal schema as binding. Write only the listed proposal "
+        "files under that invocation scratch directory. Do not write SQLite, "
+        "receipts, stage state, gates, frozen artifacts, projections, config, "
+        "sources, runtime files or another invocation's scratch. Do not call "
+        "stage, gate, finalize, repair, approval or delivery transactions. "
+        "Return control to the root host after the proposal is complete."
+    )
+    return (
+        f"{AUTOGEN_HEADER_TOML}\n\n"
+        f'name = "{role_name}"\n'
+        f"description = {description}\n"
+        f"developer_instructions = "
+        f"{_toml_literal_multiline_string(instructions)}\n"
     )
 
 
@@ -1018,6 +1051,19 @@ def generate_all(manifest: dict, check: bool = False, target: str | None = None)
         for name, role in roles.items():
             path = ROOT / ".codex" / "agents" / f"{name}.toml"
             content = render_codex_agent(name, role, manifest)
+            if not write_or_check(path, content, check):
+                ok = False
+
+        packaged_root = ROOT / "src" / "multi_agent_brief" / "runtime_kits" / "codex"
+        if not write_or_check(
+            packaged_root / "config.toml",
+            render_codex_config(manifest),
+            check,
+        ):
+            ok = False
+        for name in PACKAGED_CODEX_ROLE_IDS:
+            path = packaged_root / "agents" / f"briefloop-{name}.toml"
+            content = render_packaged_codex_agent(name, roles[name])
             if not write_or_check(path, content, check):
                 ok = False
 

@@ -59,9 +59,7 @@ _SCRATCH_INPUT_PATH_PATTERN = (
     r"[A-Za-z0-9][A-Za-z0-9._:-]*\.(?:json|md)$"
 )
 _APPROVAL_REASON_MAX_LENGTH = 1000
-_MIME_TYPE_PATTERN = (
-    r"^[a-z0-9][a-z0-9!#$&^_.+-]*/[a-z0-9][a-z0-9!#$&^_.+-]*$"
-)
+_MIME_TYPE_PATTERN = r"^[a-z0-9][a-z0-9!#$&^_.+-]*/[a-z0-9][a-z0-9!#$&^_.+-]*$"
 
 SOURCE_ORIGIN_TYPES = (
     "uploaded_file",
@@ -1142,6 +1140,28 @@ class CoreRunInitializeRequest(StrictModel):
         return value
 
 
+class WorkspaceControlStoreBootstrapV2(StrictModel):
+    """One-time, non-authoritative initialization input for a fresh v2 Store."""
+
+    schema_id = "briefloop.workspace_controlstore_bootstrap.v2"
+
+    schema_version: Literal["briefloop.workspace_controlstore_bootstrap.v2"]
+    workspace_id: ContractId
+    run_id: ContractId
+    runtime: Literal["codex"]
+    role_topology: Literal["default", "strict"]
+    input_governance_required: bool
+    gate_strictness: dict[GateId, bool]
+    run_direction: RunDirection
+
+    @field_validator("gate_strictness")
+    @classmethod
+    def exact_gate_set(cls, value: dict[str, bool]) -> dict[str, bool]:
+        if set(value) != set(GATE_ID_VALUES):
+            raise ValueError("gate strictness must name the exact Gate universe")
+        return value
+
+
 class RuntimeAdapterBinding(StrictModel):
     """Frozen, non-secret identity and capability boundary of one runtime kit."""
 
@@ -1182,13 +1202,44 @@ class RuntimeAdapterBinding(StrictModel):
         return self
 
 
+RUNTIME_SOURCE_ROUTE_IDS = (
+    "api",
+    "cached_package",
+    "local_file",
+    "manual",
+    "rss",
+    "runtime_tool",
+    "web-search",
+)
+RUNTIME_SOURCE_WEB_PROVIDER_IDS = (
+    "brave",
+    "exa",
+    "firecrawl",
+    "serper",
+    "tavily",
+)
+RUNTIME_SOURCE_GENERIC_PROVIDER_IDS = ("api", "runtime-tool")
+RUNTIME_SOURCE_PROVIDER_IDS = (
+    *RUNTIME_SOURCE_WEB_PROVIDER_IDS,
+    *RUNTIME_SOURCE_GENERIC_PROVIDER_IDS,
+)
+
+
 class RuntimeSourceRouteBinding(StrictModel):
     """One safe source route frozen from initialization input."""
 
     schema_id = "briefloop.runtime_source_route_binding.v2"
 
     schema_version: Literal["briefloop.runtime_source_route_binding.v2"]
-    route_id: ContractId
+    route_id: Literal[
+        "api",
+        "cached_package",
+        "local_file",
+        "manual",
+        "rss",
+        "runtime_tool",
+        "web-search",
+    ]
     route_kind: Literal[
         "manual",
         "local_file",
@@ -1198,13 +1249,59 @@ class RuntimeSourceRouteBinding(StrictModel):
         "cached_package",
         "disabled",
     ]
-    provider_id: Optional[ContractId] = None
+    provider_id: Optional[
+        Literal[
+            "api",
+            "runtime-tool",
+            "tavily",
+            "exa",
+            "brave",
+            "firecrawl",
+            "serper",
+        ]
+    ] = None
     execution_owner: Literal["specialist", "deterministic", "human"]
     required: bool
     route_fingerprint: Sha256
 
     @model_validator(mode="after")
     def canonical_route(self) -> "RuntimeSourceRouteBinding":
+        fixed_shapes: dict[str, tuple[set[str], str, set[str | None]]] = {
+            "api": ({"external_api"}, "deterministic", {"api"}),
+            "cached_package": ({"cached_package"}, "deterministic", {None}),
+            "local_file": ({"local_file"}, "human", {None}),
+            "manual": ({"manual"}, "human", {None}),
+            "rss": ({"rss"}, "specialist", {None}),
+            "runtime_tool": ({"runtime_tool"}, "specialist", {"runtime-tool"}),
+        }
+        if self.route_id == "web-search":
+            expected_owner = {
+                "manual": "human",
+                "external_api": "deterministic",
+                "runtime_tool": "specialist",
+                "cached_package": "deterministic",
+                "disabled": "human",
+            }[self.route_kind]
+            expected_providers: set[str | None]
+            if self.route_kind == "external_api":
+                expected_providers = set(RUNTIME_SOURCE_WEB_PROVIDER_IDS)
+            elif self.route_kind == "runtime_tool":
+                expected_providers = {"runtime-tool"}
+            else:
+                expected_providers = {None}
+            if (
+                self.execution_owner != expected_owner
+                or self.provider_id not in expected_providers
+            ):
+                raise ValueError("source route owner/provider mismatch")
+        else:
+            route_kinds, owner, provider_ids = fixed_shapes[self.route_id]
+            if (
+                self.route_kind not in route_kinds
+                or self.execution_owner != owner
+                or self.provider_id not in provider_ids
+            ):
+                raise ValueError("source route owner/provider mismatch")
         expected = _contract_fingerprint(
             self.model_dump(mode="json", exclude_unset=False),
             field="route_fingerprint",
@@ -1230,7 +1327,9 @@ class RuntimeSourcePlanBinding(StrictModel):
         "runtime_tool",
         "cached_package",
     ]
-    search_backend: Optional[ContractId] = None
+    search_backend: Optional[
+        Literal["tavily", "exa", "brave", "firecrawl", "serper"]
+    ] = None
     routes: list[RuntimeSourceRouteBinding]
     source_plan_fingerprint: Sha256
 
@@ -1245,6 +1344,26 @@ class RuntimeSourcePlanBinding(StrictModel):
                 raise ValueError("external API search requires a backend")
         elif self.search_backend is not None:
             raise ValueError("search backend is allowed only for external API mode")
+        web_routes = [item for item in self.routes if item.route_id == "web-search"]
+        if len(web_routes) > 1:
+            raise ValueError("source plan has duplicate web-search route")
+        if web_routes:
+            web_route = web_routes[0]
+            expected_kind = {
+                "manual": "manual",
+                "disabled": "disabled",
+                "configure_later": "disabled",
+                "external_api": "external_api",
+                "runtime_tool": "runtime_tool",
+                "cached_package": "cached_package",
+            }[self.web_search_mode]
+            if web_route.route_kind != expected_kind:
+                raise ValueError("web-search route mode mismatch")
+            if self.web_search_mode == "external_api":
+                if web_route.provider_id != self.search_backend:
+                    raise ValueError("web-search provider mismatch")
+            elif self.search_backend is not None:
+                raise ValueError("web-search provider mismatch")
         expected = _contract_fingerprint(
             self.model_dump(mode="json", exclude_unset=False),
             field="source_plan_fingerprint",
@@ -1268,6 +1387,28 @@ class CoreRunNextAction(StrictModel):
     effect_kind: ContractId
     stage_id: Optional[ContractId] = None
     role_id: Optional[ContractId] = None
+    source_route_id: Optional[
+        Literal[
+            "api",
+            "cached_package",
+            "local_file",
+            "manual",
+            "rss",
+            "runtime_tool",
+            "web-search",
+        ]
+    ] = None
+    source_provider_id: Optional[
+        Literal[
+            "api",
+            "runtime-tool",
+            "tavily",
+            "exa",
+            "brave",
+            "firecrawl",
+            "serper",
+        ]
+    ] = None
     reason_code: ContractId
     input_artifacts: list[ArtifactRevisionReference]
     request_schema_id: Optional[CleanText] = None
@@ -1281,10 +1422,38 @@ class CoreRunNextAction(StrictModel):
         if keys != sorted(set(keys)):
             raise ValueError("input artifact references must be sorted and unique")
         if self.action_kind == "delegate":
-            if self.stage_id is None or self.role_id is None or self.request_schema_id is None:
-                raise ValueError("delegate action requires stage, role and request schema")
+            if (
+                self.stage_id is None
+                or self.role_id is None
+                or self.request_schema_id is None
+            ):
+                raise ValueError(
+                    "delegate action requires stage, role and request schema"
+                )
         elif self.role_id is not None:
             raise ValueError("only delegate actions name a role")
+        source_route_action = (
+            self.stage_id == "source-discovery"
+            and self.effect_kind
+            in {
+                "source_acquire",
+                "source_input_required",
+                "role_proposal",
+                "role_unavailable",
+            }
+            and (
+                self.effect_kind != "role_unavailable"
+                or self.source_route_id is not None
+            )
+            and (self.role_id == "source-provider" or self.action_kind != "delegate")
+        )
+        if source_route_action:
+            if self.source_route_id is None:
+                raise ValueError("source route action requires a frozen route")
+        elif self.source_route_id is not None or self.source_provider_id is not None:
+            raise ValueError("only source route actions name source routing")
+        if self.source_provider_id is not None and self.source_route_id is None:
+            raise ValueError("source provider requires a source route")
         expected = _contract_fingerprint(
             self.model_dump(mode="json", exclude_unset=False),
             field="action_fingerprint",
@@ -1546,7 +1715,11 @@ class StageTransitionRecord(StrictModel):
                 raise ValueError("non-initial transition requires prior state")
             if self.result_revision != self.prior_revision + 1:
                 raise ValueError("stage transition revision must advance once")
-        topology_values = (self.topology, self.satisfaction_source_kind, self.satisfied_by_id)
+        topology_values = (
+            self.topology,
+            self.satisfaction_source_kind,
+            self.satisfied_by_id,
+        )
         if self.transition_kind == "satisfied_by_topology":
             if any(item is None for item in topology_values):
                 raise ValueError("topology transition requires its source tuple")
@@ -1787,8 +1960,13 @@ class RunIntegrityRecord(StrictModel):
                 self.integrity_revision > 1
                 and self.prior_integrity_revision != self.integrity_revision - 1
             ):
-                raise ValueError("recovered clean integrity must extend the prior revision")
-            if any(item is not None for item in contamination) or self.observed_sha256 is not None:
+                raise ValueError(
+                    "recovered clean integrity must extend the prior revision"
+                )
+            if (
+                any(item is not None for item in contamination)
+                or self.observed_sha256 is not None
+            ):
                 raise ValueError("clean integrity cannot carry contamination data")
         else:
             if self.prior_integrity_revision is None or any(
@@ -3430,6 +3608,19 @@ RunDirection.minimal_example = deepcopy(_RUN_DIRECTION)
 RunDirection.full_example = deepcopy(_RUN_DIRECTION)
 
 _GATE_STRICTNESS = {gate_id: True for gate_id in GATE_ID_VALUES}
+WorkspaceControlStoreBootstrapV2.minimal_example = {
+    "schema_version": WorkspaceControlStoreBootstrapV2.schema_id,
+    "workspace_id": "WS-PUBLIC-DEMO",
+    "run_id": _RUN,
+    "runtime": "codex",
+    "role_topology": "default",
+    "input_governance_required": True,
+    "gate_strictness": deepcopy(_GATE_STRICTNESS),
+    "run_direction": deepcopy(_RUN_DIRECTION),
+}
+WorkspaceControlStoreBootstrapV2.full_example = deepcopy(
+    WorkspaceControlStoreBootstrapV2.minimal_example
+)
 _RUNTIME_ADAPTER_BINDING = {
     "schema_version": RuntimeAdapterBinding.schema_id,
     "run_id": _RUN,
@@ -3504,6 +3695,8 @@ _NEXT_ACTION = {
     "effect_kind": "role_proposal",
     "stage_id": "scout",
     "role_id": "scout",
+    "source_route_id": None,
+    "source_provider_id": None,
     "reason_code": "role_proposal_required",
     "input_artifacts": [],
     "request_schema_id": "briefloop.candidate_claims_proposal.v2",
@@ -4226,6 +4419,7 @@ V2_CONTRACT_MODELS: tuple[type[StrictModel], ...] = (
     Delivery,
     TransactionReceipt,
     RunDirection,
+    WorkspaceControlStoreBootstrapV2,
     RuntimeAdapterBinding,
     RuntimeSourceRouteBinding,
     RuntimeSourcePlanBinding,
@@ -4484,6 +4678,10 @@ __all__ = [
     "RunContractBinding",
     "RunDirection",
     "RuntimeAdapterBinding",
+    "RUNTIME_SOURCE_GENERIC_PROVIDER_IDS",
+    "RUNTIME_SOURCE_PROVIDER_IDS",
+    "RUNTIME_SOURCE_ROUTE_IDS",
+    "RUNTIME_SOURCE_WEB_PROVIDER_IDS",
     "RuntimeSourcePlanBinding",
     "RuntimeSourceRouteBinding",
     "RunIdentity",
@@ -4508,5 +4706,6 @@ __all__ = [
     "V2_CONTRACT_IDS",
     "V2_CONTRACT_MODELS",
     "WorkspaceRunHead",
+    "WorkspaceControlStoreBootstrapV2",
     "read_contract_payload",
 ]

@@ -145,39 +145,37 @@ def test_runtime_install_codex_workspace_kit_is_local(tmp_path: Path, capsys) ->
     out = capsys.readouterr().out
     assert "Installed workspace runtime kit for codex" in out
     assert "open and trust this workspace in Codex" in out
-    assert (ws / "AGENTS.md").exists()
     assert (ws / ".codex" / "config.toml").exists()
-    assert (ws / ".codex" / "agents" / "scout.toml").exists()
-    assert (ws / ".codex" / "agents" / "orchestrator.toml").exists()
-    assert (ws / ".codex" / "skills" / "multi-agent-brief-workflow" / "SKILL.md").exists()
-    assert (ws / ".codex" / "skills" / "multi-agent-brief-workflow" / "references" / "runtime-workflow.md").exists()
-    assert (ws / ".codex" / "config.toml").read_text(encoding="utf-8").startswith(
-        TOML_INSTALL_MARKER
+    assert (ws / ".codex" / "agents" / "briefloop-scout.toml").exists()
+    assert not (ws / ".codex" / "agents" / "orchestrator.toml").exists()
+    assert (ws / ".codex" / "skills" / "briefloop" / "SKILL.md").exists()
+    assert (
+        ws
+        / ".codex"
+        / "skills"
+        / "briefloop"
+        / "references"
+        / "controlstore-v2.md"
+    ).exists()
+    scout = tomllib.loads(
+        (ws / ".codex" / "agents" / "briefloop-scout.toml").read_text(
+            encoding="utf-8"
+        )
     )
-    scout = tomllib.loads((ws / ".codex" / "agents" / "scout.toml").read_text(encoding="utf-8"))
     for key in ("name", "description", "developer_instructions"):
         assert key in scout
     assert scout["name"] == "scout"
-    assert "setup.ps1" in scout["developer_instructions"]
-    skill_path = ws / ".codex" / "skills" / "multi-agent-brief-workflow" / "SKILL.md"
-    _assert_frontmatter_first(skill_path)
+    assert "invocation scratch" in scout["developer_instructions"]
+    skill_path = ws / ".codex" / "skills" / "briefloop" / "SKILL.md"
+    assert skill_path.read_text(encoding="utf-8").startswith("---\n")
     skill_text = skill_path.read_text(encoding="utf-8")
-    assert "Codex writer flow" in skill_text
-    assert "Workspace Card" in skill_text
-    assert "Do not launch the interactive terminal onboarding wizard inside Codex chat" in skill_text
-    assert "Source Mode Card" in skill_text
-    assert "input/sources/" in skill_text
-    assert "URL, source title/name" in skill_text
-    assert "raw excerpt/snippet" in skill_text
-    assert "Do not call `sources decide --search` unless `web_search.mode` is" in skill_text
-    assert "Do not call `sources decide --merge` on `source_plan_only` artifacts" in skill_text
-    assert "`source_candidates.yaml` is planning/review only, not evidence" in skill_text
-    assert "state stage-complete" in skill_text
+    assert "SQLite-only" in skill_text
+    assert "CoreRunNextAction" in skill_text
 
     combined = "\n".join(path.read_text(encoding="utf-8") for path in _all_text_files(ws))
     assert ROOT.as_posix() not in combined
     assert "briefloop run --workspace" in combined
-    assert "Do not assume this workspace" in combined
+    assert "JSON-only workspace is unsupported" in combined
 
 
 def test_runtime_install_dry_run_does_not_write_files(tmp_path: Path, capsys) -> None:
@@ -225,7 +223,7 @@ def test_runtime_install_codex_dry_run_lists_assets(tmp_path: Path, capsys) -> N
     assert "would write" in out
     assert "open and trust this workspace in Codex" in out
     assert ".codex/config.toml" in out
-    assert ".codex/agents/scout.toml" in out
+    assert ".codex/agents/briefloop-scout.toml" in out
     assert not (ws / ".codex").exists()
     assert not (ws / ".claude").exists()
 
@@ -253,7 +251,7 @@ def test_runtime_install_refuses_non_mabw_existing_file(tmp_path: Path, capsys) 
 
 def test_runtime_install_codex_refuses_non_mabw_agent_file(tmp_path: Path, capsys) -> None:
     ws = _workspace(tmp_path)
-    target = ws / ".codex" / "agents" / "scout.toml"
+    target = ws / ".codex" / "agents" / "briefloop-scout.toml"
     target.parent.mkdir(parents=True)
     target.write_text("name = \"user-owned\"\n", encoding="utf-8")
 

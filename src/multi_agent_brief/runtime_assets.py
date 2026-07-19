@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from importlib import resources
 from pathlib import Path
 from typing import Any
 
@@ -47,16 +48,24 @@ def install_runtime_kit(
     if unknown:
         raise RuntimeAssetInstallError(f"Unsupported runtime: {', '.join(unknown)}")
 
-    repo = _resolve_source_repo(repo_workdir=repo_workdir, workspace=ws)
+    repo = (
+        _resolve_source_repo(repo_workdir=repo_workdir, workspace=ws)
+        if any(runtime_name != "codex" for runtime_name in runtimes)
+        else None
+    )
 
     all_writes: list[PlannedWrite] = []
     for runtime_name in runtimes:
         if runtime_name == "opencode":
+            if repo is None:
+                raise RuntimeAssetInstallError(SOURCE_CLONE_ONLY_MESSAGE)
             all_writes.extend(_opencode_writes(workspace=ws, repo=repo))
         elif runtime_name == "claude":
+            if repo is None:
+                raise RuntimeAssetInstallError(SOURCE_CLONE_ONLY_MESSAGE)
             all_writes.extend(_claude_writes(workspace=ws, repo=repo))
         elif runtime_name == "codex":
-            all_writes.extend(_codex_writes(workspace=ws, repo=repo))
+            all_writes.extend(_codex_writes(workspace=ws))
     all_writes = _deduplicate_writes(all_writes)
 
     try:
@@ -73,7 +82,7 @@ def install_runtime_kit(
     return {
         "runtime": runtime,
         "workspace": str(ws),
-        "repo_workdir": str(repo),
+        "repo_workdir": None if repo is None else str(repo),
         "dry_run": dry_run,
         "written": [str(write.destination) for write in all_writes],
         "count": len(all_writes),
@@ -132,35 +141,56 @@ def _claude_writes(*, workspace: Path, repo: Path) -> list[PlannedWrite]:
     )
 
 
-def _codex_writes(*, workspace: Path, repo: Path) -> list[PlannedWrite]:
-    writes: list[PlannedWrite] = [
-        PlannedWrite(
-            workspace / "AGENTS.md",
-            _workspace_agents_text(),
-        ),
+def _codex_asset(relative: str) -> str:
+    try:
+        return (
+            resources.files("multi_agent_brief")
+            .joinpath("runtime_kits", "codex", *relative.split("/"))
+            .read_text(encoding="utf-8")
+        )
+    except (FileNotFoundError, OSError) as exc:
+        raise RuntimeAssetInstallError(
+            "Packaged Codex ControlStore runtime kit is unavailable."
+        ) from exc
+
+
+def _codex_writes(*, workspace: Path) -> list[PlannedWrite]:
+    role_ids = (
+        "source-planner",
+        "source-provider",
+        "scout",
+        "screener",
+        "claim-ledger",
+        "analyst",
+        "editor",
+        "auditor",
+    )
+    return [
         PlannedWrite(
             workspace / ".codex" / "config.toml",
-            _marked_toml_source_text(repo / ".codex" / "config.toml"),
+            _codex_asset("config.toml"),
         ),
         PlannedWrite(
-            workspace / ".codex" / "skills" / SKILL_NAME / "SKILL.md",
-            _workspace_skill_text(runtime="codex", runtime_label="Codex"),
+            workspace / ".codex" / "skills" / "briefloop" / "SKILL.md",
+            _codex_asset("skills/briefloop/SKILL.md"),
+        ),
+        PlannedWrite(
+            workspace
+            / ".codex"
+            / "skills"
+            / "briefloop"
+            / "references"
+            / "controlstore-v2.md",
+            _codex_asset("skills/briefloop/references/controlstore-v2.md"),
+        ),
+        *(
+            PlannedWrite(
+                workspace / ".codex" / "agents" / f"briefloop-{role_id}.toml",
+                _codex_asset(f"agents/briefloop-{role_id}.toml"),
+            )
+            for role_id in role_ids
         ),
     ]
-    writes.extend(
-        PlannedWrite(
-            workspace / ".codex" / "agents" / src.name,
-            _marked_toml_source_text(src),
-        )
-        for src in sorted((repo / ".codex" / "agents").glob("*.toml"))
-    )
-    writes.extend(
-        _reference_writes(
-            workspace / ".codex" / "skills" / SKILL_NAME / "references",
-            runtime="codex",
-        )
-    )
-    return writes
 
 
 def _runtime_writes(

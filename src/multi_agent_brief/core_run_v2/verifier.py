@@ -1341,6 +1341,36 @@ class CoreRunDomainVerifier:
                 )
             except Exception as exc:
                 raise CoreRunError("historical_prefix_invalid") from exc
+            pre_verified = self._verify_snapshot(history, pre)
+            if effect is CoreEffect.INVOCATION_START:
+                from .next_action import classify_core_run_next_action
+
+                invocations = [
+                    item
+                    for item in snapshot.invocations
+                    if item.invocation_id == binding.primary_record_id
+                ]
+                action = classify_core_run_next_action(pre_verified)
+                invocation = invocations[0] if len(invocations) == 1 else None
+                delegate_reservation = (
+                    invocation is not None
+                    and action.action_kind == "delegate"
+                    and action.stage_id == event.stage_id
+                    and action.role_id == invocation.role_id
+                )
+                source_acquire_reservation = (
+                    invocation is not None
+                    and action.action_kind == "deterministic"
+                    and action.effect_kind == "source_acquire"
+                    and action.stage_id == "source-discovery"
+                    and action.source_route_id is not None
+                    and event.stage_id == "source-discovery"
+                    and invocation.role_id == "source-provider"
+                )
+                if event.stage_id is None or not (
+                    delegate_reservation or source_acquire_reservation
+                ):
+                    raise CoreRunError("historical_prefix_invalid")
             classify_effect_authorization(
                 pre,
                 effect,

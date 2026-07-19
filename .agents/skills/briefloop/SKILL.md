@@ -65,6 +65,8 @@ First classify the mode before acting:
 
 Then read the matching reference:
 
+- SQLite-only Codex runtime workspaces:
+  `references/codex-controlstore-v2.md`
 - runtime workspaces: `references/runtime-workspace.md`
 - experiments: `references/experiment-080-090.md`
 - owner-stage repair: `references/repair-protocol.md`

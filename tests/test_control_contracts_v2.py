@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from copy import deepcopy
 from dataclasses import FrozenInstanceError
 import math
 from types import MappingProxyType
@@ -15,12 +16,17 @@ from multi_agent_brief.contracts import (
     ArtifactIdentityReference,
     ContractError,
     LEGACY_READ_ONLY_CONTRACTS,
+    RUNTIME_SOURCE_GENERIC_PROVIDER_IDS,
+    RUNTIME_SOURCE_PROVIDER_IDS,
+    RUNTIME_SOURCE_ROUTE_IDS,
+    RUNTIME_SOURCE_WEB_PROVIDER_IDS,
     SchemaRegistry,
     StrictModel,
     V2_CONTRACT_IDS,
     V2_CONTRACT_MODELS,
     read_contract_payload,
 )
+from multi_agent_brief.control_store.serialization import canonical_fingerprint
 from multi_agent_brief.orchestrator.runtime_state.event_log import ACTORS, EVENT_TYPES
 from multi_agent_brief.orchestrator.runtime_state.workflow import (
     PERSISTED_STAGE_STATUSES,
@@ -57,6 +63,7 @@ EXPECTED_V2_CONTRACT_IDS = (
     "briefloop.delivery.v2",
     "briefloop.transaction_receipt.v2",
     "briefloop.run_direction.v2",
+    "briefloop.workspace_controlstore_bootstrap.v2",
     "briefloop.runtime_adapter_binding.v2",
     "briefloop.runtime_source_route_binding.v2",
     "briefloop.runtime_source_plan_binding.v2",
@@ -121,10 +128,16 @@ EXPECTED_V2_CONTRACT_IDS = (
 )
 
 
+def _refingerprint(payload: dict[str, object], *, field: str) -> None:
+    payload[field] = canonical_fingerprint(
+        {key: value for key, value in payload.items() if key != field}
+    )
+
+
 def test_v2_contract_inventory_is_exact_and_uses_existing_registry() -> None:
     assert V2_CONTRACT_IDS == EXPECTED_V2_CONTRACT_IDS
-    assert len(V2_CONTRACT_MODELS) == 83
-    assert len(set(V2_CONTRACT_IDS)) == 83
+    assert len(V2_CONTRACT_MODELS) == 84
+    assert len(set(V2_CONTRACT_IDS)) == 84
     for contract_id, model in zip(V2_CONTRACT_IDS, V2_CONTRACT_MODELS):
         assert SchemaRegistry.get(contract_id) is model
 
@@ -388,10 +401,13 @@ def test_artifact_identity_record_and_reference_are_exact_strict_contracts() -> 
             {**payload, "media_type": "application/json"},
             strict=True,
         )
-    assert ArtifactIdentityReference.model_validate(
-        {"artifact_id": "artifact-a"},
-        strict=True,
-    ).artifact_id == "artifact-a"
+    assert (
+        ArtifactIdentityReference.model_validate(
+            {"artifact_id": "artifact-a"},
+            strict=True,
+        ).artifact_id
+        == "artifact-a"
+    )
     for invalid in ({}, {"artifact_id": 1}, {"artifact_id": "artifact-a", "x": 1}):
         with pytest.raises(ValidationError):
             ArtifactIdentityReference.model_validate(invalid, strict=True)
@@ -434,10 +450,13 @@ def test_event_envelope_rejects_every_event_type_outside_the_current_owner() -> 
         "intake_rejected",
     }
     for event_type in EVENT_TYPES - intake_types:
-        assert SchemaRegistry.validate(
-            contract_id,
-            {**payload, "event_type": event_type},
-        ) == []
+        assert (
+            SchemaRegistry.validate(
+                contract_id,
+                {**payload, "event_type": event_type},
+            )
+            == []
+        )
 
     payload["event_type"] = "invented_event_type"
 
@@ -504,7 +523,9 @@ def test_intake_event_types_require_exact_typed_binding() -> None:
     )
 
 
-def test_approval_contract_matches_current_owner_mode_role_matrix_and_reason_limit() -> None:
+def test_approval_contract_matches_current_owner_mode_role_matrix_and_reason_limit() -> (
+    None
+):
     contract_id = "briefloop.approval.v2"
     base = SchemaRegistry.example(contract_id, "minimal")
     accepted_pairs = {
@@ -608,9 +629,112 @@ def test_control_dto_examples_cover_required_revision_and_identity_bindings() ->
     assert receipt["artifact_revisions"] == [
         {"artifact_id": "candidate_claims", "revision": 1}
     ]
-    assert receipt["artifact_identities"] == [
-        {"artifact_id": "candidate_claims"}
-    ]
+    assert receipt["artifact_identities"] == [{"artifact_id": "candidate_claims"}]
+
+
+def test_runtime_source_route_and_provider_vocabulary_is_finite() -> None:
+    assert RUNTIME_SOURCE_ROUTE_IDS == (
+        "api",
+        "cached_package",
+        "local_file",
+        "manual",
+        "rss",
+        "runtime_tool",
+        "web-search",
+    )
+    assert RUNTIME_SOURCE_WEB_PROVIDER_IDS == (
+        "brave",
+        "exa",
+        "firecrawl",
+        "serper",
+        "tavily",
+    )
+    assert RUNTIME_SOURCE_GENERIC_PROVIDER_IDS == ("api", "runtime-tool")
+    assert RUNTIME_SOURCE_PROVIDER_IDS == (
+        *RUNTIME_SOURCE_WEB_PROVIDER_IDS,
+        *RUNTIME_SOURCE_GENERIC_PROVIDER_IDS,
+    )
+
+    route = SchemaRegistry.example(
+        "briefloop.runtime_source_route_binding.v2",
+        "minimal",
+    )
+    for values in (
+        {
+            "route_id": "web-search",
+            "route_kind": "external_api",
+            "provider_id": "tavily",
+            "execution_owner": "deterministic",
+        },
+        {
+            "route_id": "runtime_tool",
+            "route_kind": "runtime_tool",
+            "provider_id": "runtime-tool",
+            "execution_owner": "specialist",
+        },
+    ):
+        candidate = {**route, **values}
+        _refingerprint(candidate, field="route_fingerprint")
+        assert (
+            SchemaRegistry.validate(
+                "briefloop.runtime_source_route_binding.v2",
+                candidate,
+            )
+            == []
+        )
+
+    mismatched = {
+        **route,
+        "route_id": "runtime_tool",
+        "route_kind": "external_api",
+        "provider_id": "tavily",
+        "execution_owner": "deterministic",
+    }
+    _refingerprint(mismatched, field="route_fingerprint")
+    assert [
+        (item.field, item.error)
+        for item in SchemaRegistry.validate(
+            "briefloop.runtime_source_route_binding.v2",
+            mismatched,
+        )
+    ] == [("$", "is invalid")]
+
+
+def test_source_route_fields_are_bound_into_next_action_fingerprint() -> None:
+    action = SchemaRegistry.example("briefloop.core_run_next_action.v2", "minimal")
+    action.update(
+        action_kind="deterministic",
+        effect_kind="source_acquire",
+        stage_id="source-discovery",
+        role_id=None,
+        source_route_id="web-search",
+        source_provider_id="tavily",
+        reason_code="deterministic_source_acquisition_required",
+        request_schema_id="briefloop.source_commit_request.v2",
+    )
+    _refingerprint(action, field="action_fingerprint")
+    assert SchemaRegistry.validate("briefloop.core_run_next_action.v2", action) == []
+
+    changed = deepcopy(action)
+    changed["source_provider_id"] = "exa"
+    assert [
+        (item.field, item.error)
+        for item in SchemaRegistry.validate(
+            "briefloop.core_run_next_action.v2",
+            changed,
+        )
+    ] == [("$", "is invalid")]
+
+    unknown = deepcopy(action)
+    unknown["source_provider_id"] = "unknown-provider"
+    _refingerprint(unknown, field="action_fingerprint")
+    assert [
+        (item.field, item.error)
+        for item in SchemaRegistry.validate(
+            "briefloop.core_run_next_action.v2",
+            unknown,
+        )
+    ] == [("source_provider_id", "must be one of the allowed values")]
 
 
 def test_nested_error_path_uses_stable_briefloop_format() -> None:

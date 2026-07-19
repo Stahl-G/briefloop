@@ -41,16 +41,30 @@ from multi_agent_brief.orchestrator.runtime_state.semantic_assessment_report imp
     project_semantic_assessment_report_from_workspace,
 )
 from multi_agent_brief.orchestrator.timing import derive_control_timing_from_path
-from multi_agent_brief.outputs.atomic_reader_projection import project_atomic_reader_text_from_workspace
-from multi_agent_brief.product.guidance_manifestation import project_workspace_guidance_manifestation
-from multi_agent_brief.product.materiality_selection import project_workspace_materiality_selection
+from multi_agent_brief.outputs.atomic_reader_projection import (
+    project_atomic_reader_text_from_workspace,
+)
+from multi_agent_brief.product.guidance_manifestation import (
+    project_workspace_guidance_manifestation,
+)
+from multi_agent_brief.product.materiality_selection import (
+    project_workspace_materiality_selection,
+)
 from multi_agent_brief.product.policy_projection import project_workspace_policy_profile
 from multi_agent_brief.product.quality_closeout import quality_panel_closeout_projection
 from multi_agent_brief.product.support_wording import project_workspace_support_wording
-from multi_agent_brief.product.template_conformance import project_workspace_report_template_conformance
-from multi_agent_brief.product.template_projection import project_workspace_report_template
-from multi_agent_brief.product.template_render_plan import project_workspace_report_template_render_plan
-from multi_agent_brief.product.trajectory_regulation import project_workspace_trajectory_regulation
+from multi_agent_brief.product.template_conformance import (
+    project_workspace_report_template_conformance,
+)
+from multi_agent_brief.product.template_projection import (
+    project_workspace_report_template,
+)
+from multi_agent_brief.product.template_render_plan import (
+    project_workspace_report_template_render_plan,
+)
+from multi_agent_brief.product.trajectory_regulation import (
+    project_workspace_trajectory_regulation,
+)
 
 
 INTERMEDIATE_DIR = Path("output/intermediate")
@@ -83,6 +97,12 @@ def build_workspace_status(workspace: str | Path) -> dict[str, Any]:
     """
 
     ws = Path(workspace).expanduser().resolve()
+    if (ws / "briefloop.db").exists() or (ws / "briefloop.db").is_symlink():
+        from multi_agent_brief.runtime_host_v2.projections import (
+            build_store_status_projection,
+        )
+
+        return build_store_status_projection(ws)
     payload: dict[str, Any] = {
         "ok": ws.exists() and ws.is_dir(),
         "workspace": str(ws),
@@ -125,17 +145,25 @@ def build_workspace_status(workspace: str | Path) -> dict[str, Any]:
     workflow = _read_json(ws / INTERMEDIATE_DIR / "workflow_state.json")
     registry_verdict = interpret_artifact_registry(workspace=ws)
     quality_gate = _read_json(ws / INTERMEDIATE_DIR / "quality_gate_report.json")
-    auditor_quality_gate = _read_json(ws / INTERMEDIATE_DIR / "gates" / "auditor_quality_gate_report.json")
-    finalize_quality_gate = _read_json(ws / INTERMEDIATE_DIR / "gates" / "finalize_quality_gate_report.json")
+    auditor_quality_gate = _read_json(
+        ws / INTERMEDIATE_DIR / "gates" / "auditor_quality_gate_report.json"
+    )
+    finalize_quality_gate = _read_json(
+        ws / INTERMEDIATE_DIR / "gates" / "finalize_quality_gate_report.json"
+    )
     finalize_report = _read_json(ws / INTERMEDIATE_DIR / "finalize_report.json")
     feedback_issues = _read_json(ws / INTERMEDIATE_DIR / "feedback_issues.json")
     repair_plan = _read_json(ws / INTERMEDIATE_DIR / "repair_plan.json")
 
     event_log_path = ws / INTERMEDIATE_DIR / "event_log.jsonl"
     event_records = _event_records_best_effort(event_log_path)
-    workflow_payload = workflow.get("payload") if workflow.get("status") == "present" else None
+    workflow_payload = (
+        workflow.get("payload") if workflow.get("status") == "present" else None
+    )
 
-    manifest_payload = manifest.get("payload") if manifest.get("status") == "present" else None
+    manifest_payload = (
+        manifest.get("payload") if manifest.get("status") == "present" else None
+    )
     expected_run_id = (
         str(manifest_payload.get("run_id") or "")
         if isinstance(manifest_payload, dict)
@@ -160,7 +188,9 @@ def build_workspace_status(workspace: str | Path) -> dict[str, Any]:
     payload["reader_clean"] = _reader_clean_summary(finalize_report)
     payload["quality_panel_closeout"] = quality_panel_closeout_projection(
         workspace=ws,
-        finalize_report=finalize_report.get("payload") if finalize_report.get("status") == "present" else None,
+        finalize_report=finalize_report.get("payload")
+        if finalize_report.get("status") == "present"
+        else None,
         artifact_registry=registry_payload,
     )
     payload["improvement"] = _improvement_summary(ws, manifest)
@@ -184,7 +214,9 @@ def build_workspace_status(workspace: str | Path) -> dict[str, Any]:
     payload["recovery_state"] = evaluate_recovery_state(workspace=ws)
     payload["atomic_reader_projection"] = _atomic_reader_projection_summary(ws)
     payload["claim_support_matrix"] = project_claim_support_matrix_from_workspace(ws)
-    payload["semantic_assessment_report"] = project_semantic_assessment_report_from_workspace(ws)
+    payload["semantic_assessment_report"] = (
+        project_semantic_assessment_report_from_workspace(ws)
+    )
     payload["policy_profile"] = project_workspace_policy_profile(ws)
     payload["materiality_selection"] = project_workspace_materiality_selection(
         ws,
@@ -197,24 +229,34 @@ def build_workspace_status(workspace: str | Path) -> dict[str, Any]:
         claim_support_matrix=payload["claim_support_matrix"],
     )
     payload["report_template"] = project_workspace_report_template(ws)
-    payload["report_template_conformance"] = project_workspace_report_template_conformance(ws)
-    payload["report_template_render_plan"] = project_workspace_report_template_render_plan(ws)
+    payload["report_template_conformance"] = (
+        project_workspace_report_template_conformance(ws)
+    )
+    payload["report_template_render_plan"] = (
+        project_workspace_report_template_render_plan(ws)
+    )
     payload["trajectory_regulation"] = project_workspace_trajectory_regulation(
         ws,
         workflow_state=workflow_payload if isinstance(workflow_payload, dict) else None,
         event_records=event_records,
         event_log_present=event_log_path.exists(),
         event_log_corrupt_count=int(payload["events"].get("corrupt_count") or 0),
-        run_id=(manifest_payload or {}).get("run_id") if isinstance(manifest_payload, dict) else None,
+        run_id=(manifest_payload or {}).get("run_id")
+        if isinstance(manifest_payload, dict)
+        else None,
     )
     payload["guidance_manifestation"] = project_workspace_guidance_manifestation(
         ws,
-        runtime_manifest=manifest_payload if isinstance(manifest_payload, dict) else None,
+        runtime_manifest=manifest_payload
+        if isinstance(manifest_payload, dict)
+        else None,
     )
     payload["timing"] = derive_control_timing_from_path(
         event_log_path,
         workflow_state=workflow_payload if isinstance(workflow_payload, dict) else None,
-        expected_run_id=(manifest_payload or {}).get("run_id") if isinstance(manifest_payload, dict) else None,
+        expected_run_id=(manifest_payload or {}).get("run_id")
+        if isinstance(manifest_payload, dict)
+        else None,
     )
 
     stale = payload["stale_or_unknown"]
@@ -251,6 +293,26 @@ def build_workspace_status(workspace: str | Path) -> dict[str, Any]:
 def format_workspace_status(status: dict[str, Any]) -> str:
     """Format a concise human-readable status report."""
 
+    if status.get("authority") == "sqlite_control_store":
+        action = status.get("next_action") or {}
+        return "\n".join(
+            [
+                f"[status] workspace: {status.get('workspace')}",
+                "[status] authority: sqlite_control_store",
+                f"[status] run_id: {status.get('run_id')}",
+                f"[status] runtime: {status.get('runtime')}",
+                f"[status] store_revision: {status.get('store_revision')}",
+                f"[status] current_stage: {status.get('current_stage') or 'none'}",
+                f"[status] terminal_state: {status.get('terminal_state')}",
+                f"[status] package_ready: {status.get('package_ready')}",
+                f"[status] delivered: {status.get('delivered')}",
+                (
+                    "[status] next_action: "
+                    f"{action.get('action_kind')}/{action.get('effect_kind')}"
+                ),
+            ]
+        )
+
     lines = [
         f"[status] workspace: {status.get('workspace')}",
         f"[status] read_only: {status.get('read_only')}",
@@ -285,7 +347,11 @@ def format_workspace_status(status: dict[str, Any]) -> str:
     events = status.get("events") or {}
     progress = status.get("progress") or {}
     timing = status.get("timing") or {}
-    run_integrity = workflow.get("run_integrity") if isinstance(workflow.get("run_integrity"), dict) else {}
+    run_integrity = (
+        workflow.get("run_integrity")
+        if isinstance(workflow.get("run_integrity"), dict)
+        else {}
+    )
 
     lines.extend(
         [
@@ -391,7 +457,11 @@ def format_workspace_status(status: dict[str, Any]) -> str:
             f"adjudication={counts.get('requires_human_adjudication_count', 0)}"
         )
     if policy_profile.get("status") not in {None, "not_available"}:
-        errors = policy_profile.get("errors") if isinstance(policy_profile.get("errors"), list) else []
+        errors = (
+            policy_profile.get("errors")
+            if isinstance(policy_profile.get("errors"), list)
+            else []
+        )
         lines.append(
             "[status] policy_profile: "
             f"{policy_profile.get('status')} "
@@ -402,7 +472,11 @@ def format_workspace_status(status: dict[str, Any]) -> str:
             f"errors={len(errors)}"
         )
     if report_template.get("status") not in {None, "not_available"}:
-        errors = report_template.get("errors") if isinstance(report_template.get("errors"), list) else []
+        errors = (
+            report_template.get("errors")
+            if isinstance(report_template.get("errors"), list)
+            else []
+        )
         lines.append(
             "[status] report_template: "
             f"{report_template.get('status')} "
@@ -431,7 +505,9 @@ def format_workspace_status(status: dict[str, Any]) -> str:
     if report_template_render_plan.get("status") not in {None, "not_available"}:
         counts = report_template_render_plan.get("summary_counts")
         counts = counts if isinstance(counts, dict) else {}
-        selected_source = report_template_render_plan.get("selected_source_artifact") or "none"
+        selected_source = (
+            report_template_render_plan.get("selected_source_artifact") or "none"
+        )
         lines.append(
             "[status] report_template_render_plan: "
             f"{report_template_render_plan.get('status')} "
@@ -456,7 +532,11 @@ def format_workspace_status(status: dict[str, Any]) -> str:
             "boundary=projection_only "
             "runtime_effect=none"
         )
-    if guidance_manifestation.get("status") not in {None, "not_available", "no_materialized_guidance"}:
+    if guidance_manifestation.get("status") not in {
+        None,
+        "not_available",
+        "no_materialized_guidance",
+    }:
         counts = guidance_manifestation.get("summary_counts")
         counts = counts if isinstance(counts, dict) else {}
         lines.append(
@@ -501,13 +581,22 @@ def _format_topology_satisfaction_lines(timing: dict[str, Any]) -> list[str]:
     stages = timing.get("stages") if isinstance(timing.get("stages"), list) else []
     lines: list[str] = []
     for stage in stages:
-        if not isinstance(stage, dict) or stage.get("status") != "satisfied_by_topology":
+        if (
+            not isinstance(stage, dict)
+            or stage.get("status") != "satisfied_by_topology"
+        ):
             continue
         stage_id = str(stage.get("stage_id") or "unknown")
-        satisfied_by = str(stage.get("satisfied_by") or stage.get("satisfied_by_stage") or "unknown")
+        satisfied_by = str(
+            stage.get("satisfied_by") or stage.get("satisfied_by_stage") or "unknown"
+        )
         topology = str(stage.get("topology") or "unknown")
         required = stage.get("required_artifacts")
-        required_ids = [str(item) for item in required if item] if isinstance(required, list) else []
+        required_ids = (
+            [str(item) for item in required if item]
+            if isinstance(required, list)
+            else []
+        )
         required_text = ",".join(required_ids) if required_ids else "unknown"
         lines.append(
             f"[status] topology: {stage_id} complete via {satisfied_by} "
@@ -535,9 +624,17 @@ def _format_experiment_080_lines(experiment: dict[str, Any]) -> list[str]:
                 "do not finalize for this target"
             )
         else:
-            reasons = experiment.get("reasons") if isinstance(experiment.get("reasons"), list) else []
-            first_reason = str(reasons[0]) if reasons else "target contract not yet satisfied"
-            lines.append(f"[status] target_incomplete: auditable_brief reason={first_reason}")
+            reasons = (
+                experiment.get("reasons")
+                if isinstance(experiment.get("reasons"), list)
+                else []
+            )
+            first_reason = (
+                str(reasons[0]) if reasons else "target contract not yet satisfied"
+            )
+            lines.append(
+                f"[status] target_incomplete: auditable_brief reason={first_reason}"
+            )
     return lines
 
 
@@ -546,9 +643,13 @@ def _format_timing_line(timing: dict[str, Any]) -> str:
     if status == "available":
         elapsed = timing.get("total_elapsed_seconds")
         stages = timing.get("stages") if isinstance(timing.get("stages"), list) else []
-        finalized = timing.get("finalize") if isinstance(timing.get("finalize"), dict) else None
+        finalized = (
+            timing.get("finalize") if isinstance(timing.get("finalize"), dict) else None
+        )
         stage_count = len(stages) + (1 if finalized else 0)
-        return f"[status] timing: available total_elapsed={elapsed}s stages={stage_count}"
+        return (
+            f"[status] timing: available total_elapsed={elapsed}s stages={stage_count}"
+        )
     if status == "contaminated":
         return "[status] timing: contaminated; elapsed buckets are not clean evidence"
     return f"[status] timing: {status}"
@@ -558,15 +659,19 @@ def _format_progress_line(progress: dict[str, Any]) -> str:
     return (
         "[status] progress: "
         f"{progress.get('status') or 'unknown'} "
-        f"current_work=\"{progress.get('current_work') or 'check workspace'}\" "
-        f"message=\"{progress.get('message') or ''}\" "
-        f"next=\"{progress.get('next_command') or ''}\""
+        f'current_work="{progress.get("current_work") or "check workspace"}" '
+        f'message="{progress.get("message") or ""}" '
+        f'next="{progress.get("next_command") or ""}"'
     )
 
 
 def _format_fact_layer_import_line(summary: dict[str, Any]) -> str:
     if summary.get("status") == "valid":
-        freshness = summary.get("freshness_at_import") if isinstance(summary.get("freshness_at_import"), dict) else {}
+        freshness = (
+            summary.get("freshness_at_import")
+            if isinstance(summary.get("freshness_at_import"), dict)
+            else {}
+        )
         freshness_status = freshness.get("status") or "unknown"
         return (
             "[status] fact_layer_import: valid "
@@ -590,9 +695,19 @@ def _read_json(path: Path) -> dict[str, Any]:
     try:
         payload = json.loads(path.read_text(encoding="utf-8"))
     except (OSError, UnicodeDecodeError, json.JSONDecodeError) as exc:
-        return {"status": "error", "path": str(path), "payload": None, "error": str(exc)}
+        return {
+            "status": "error",
+            "path": str(path),
+            "payload": None,
+            "error": str(exc),
+        }
     if not isinstance(payload, dict):
-        return {"status": "error", "path": str(path), "payload": None, "error": "JSON root is not an object"}
+        return {
+            "status": "error",
+            "path": str(path),
+            "payload": None,
+            "error": "JSON root is not an object",
+        }
     return {"status": "present", "path": str(path), "payload": payload}
 
 
@@ -662,7 +777,10 @@ def _read_optional_text(path: Path) -> str | None:
 def _atomic_reader_projection_summary(workspace: Path) -> dict[str, Any]:
     graph_present = (workspace / INTERMEDIATE_DIR / "atomic_claim_graph.json").exists()
     targets = {
-        "audited_brief": (workspace / INTERMEDIATE_DIR / "audited_brief.md", "output/intermediate/audited_brief.md"),
+        "audited_brief": (
+            workspace / INTERMEDIATE_DIR / "audited_brief.md",
+            "output/intermediate/audited_brief.md",
+        ),
         "reader_brief": (workspace / "output" / "brief.md", "output/brief.md"),
     }
     summary: dict[str, Any] = {}
@@ -740,11 +858,18 @@ def _workflow_summary(result: dict[str, Any]) -> dict[str, Any]:
 
 def _format_trajectory_decision_narrowing_line(workflow: dict[str, Any]) -> str:
     narrowing = workflow.get("trajectory_regulation")
-    if not isinstance(narrowing, dict) or narrowing.get("status") != "decision_narrowed":
+    if (
+        not isinstance(narrowing, dict)
+        or narrowing.get("status") != "decision_narrowed"
+    ):
         return "[status] trajectory_decision_narrowing: none"
-    reasons = narrowing.get("reasons") if isinstance(narrowing.get("reasons"), list) else []
+    reasons = (
+        narrowing.get("reasons") if isinstance(narrowing.get("reasons"), list) else []
+    )
     allowed = workflow.get("next_allowed_decisions")
-    allowed = allowed if isinstance(allowed, list) else narrowing.get("allowed_decisions")
+    allowed = (
+        allowed if isinstance(allowed, list) else narrowing.get("allowed_decisions")
+    )
     allowed = allowed if isinstance(allowed, list) else []
     return (
         "[status] trajectory_decision_narrowing: "
@@ -847,7 +972,9 @@ def _intake_projection_summary(
                 artifact_id=artifact_id,
             )
             if expected_run_id
-            else ["runtime_manifest run_id is unavailable for intake projection binding"]
+            else [
+                "runtime_manifest run_id is unavailable for intake projection binding"
+            ]
         )
         consumption_reasons = (
             validate_workspace_intake_consumption_context(
@@ -857,7 +984,9 @@ def _intake_projection_summary(
                 artifact_id=artifact_id,
             )
             if expected_run_id
-            else ["runtime_manifest run_id is unavailable for intake consumption binding"]
+            else [
+                "runtime_manifest run_id is unavailable for intake consumption binding"
+            ]
         )
         normalization_count = (
             projection.get("normalization_count") if isinstance(projection, dict) else 0
@@ -865,8 +994,12 @@ def _intake_projection_summary(
         fatal_finding_count = (
             projection.get("fatal_finding_count") if isinstance(projection, dict) else 0
         )
-        normalization_count = normalization_count if isinstance(normalization_count, int) else 0
-        fatal_finding_count = fatal_finding_count if isinstance(fatal_finding_count, int) else 0
+        normalization_count = (
+            normalization_count if isinstance(normalization_count, int) else 0
+        )
+        fatal_finding_count = (
+            fatal_finding_count if isinstance(fatal_finding_count, int) else 0
+        )
         findings = projection.get("findings") if isinstance(projection, dict) else []
         artifacts.append(
             {
@@ -932,9 +1065,18 @@ def _format_intake_projection_line(value: Any) -> str:
 
 def _event_summary(path: Path) -> dict[str, Any]:
     if not path.exists():
-        return {"present": False, "event_count": 0, "corrupt_count": 0, "recent_events": []}
+        return {
+            "present": False,
+            "event_count": 0,
+            "corrupt_count": 0,
+            "recent_events": [],
+        }
     try:
-        lines = [line for line in path.read_text(encoding="utf-8").splitlines() if line.strip()]
+        lines = [
+            line
+            for line in path.read_text(encoding="utf-8").splitlines()
+            if line.strip()
+        ]
     except (OSError, UnicodeDecodeError) as exc:
         return {
             "present": True,
@@ -954,13 +1096,15 @@ def _event_summary(path: Path) -> dict[str, Any]:
         if not isinstance(event, dict):
             corrupt += 1
             continue
-        recent.append({
-            "event_type": event.get("event_type"),
-            "stage_id": event.get("stage_id"),
-            "artifact_id": event.get("artifact_id"),
-            "decision": event.get("decision"),
-            "created_at": event.get("created_at"),
-        })
+        recent.append(
+            {
+                "event_type": event.get("event_type"),
+                "stage_id": event.get("stage_id"),
+                "artifact_id": event.get("artifact_id"),
+                "decision": event.get("decision"),
+                "created_at": event.get("created_at"),
+            }
+        )
     return {
         "present": True,
         "event_count": len(lines),
@@ -973,7 +1117,11 @@ def _event_records_best_effort(path: Path) -> list[dict[str, Any]]:
     if not path.exists():
         return []
     try:
-        lines = [line for line in path.read_text(encoding="utf-8").splitlines() if line.strip()]
+        lines = [
+            line
+            for line in path.read_text(encoding="utf-8").splitlines()
+            if line.strip()
+        ]
     except (OSError, UnicodeDecodeError):
         return []
     records: list[dict[str, Any]] = []
@@ -990,7 +1138,12 @@ def _event_records_best_effort(path: Path) -> list[dict[str, Any]]:
 def _quality_gate_summary(result: dict[str, Any]) -> dict[str, Any]:
     payload = result.get("payload") if result.get("status") == "present" else None
     if not isinstance(payload, dict):
-        return {"present": False, "status": None, "blocking_findings": 0, "schema_warnings": []}
+        return {
+            "present": False,
+            "status": None,
+            "blocking_findings": 0,
+            "schema_warnings": [],
+        }
     warnings: list[str] = []
     findings = payload.get("findings") or []
     if not isinstance(payload.get("findings", []), list):
@@ -1004,7 +1157,10 @@ def _quality_gate_summary(result: dict[str, Any]) -> dict[str, Any]:
         finding
         for finding in findings
         if isinstance(finding, dict)
-        and (finding.get("blocking") is True or finding.get("blocking_level") == "blocking")
+        and (
+            finding.get("blocking") is True
+            or finding.get("blocking_level") == "blocking"
+        )
     ]
     return {
         "present": True,
@@ -1050,15 +1206,23 @@ def _reader_clean_summary(result: dict[str, Any]) -> dict[str, Any]:
     }
 
 
-def _improvement_summary(workspace: Path, manifest_result: dict[str, Any]) -> dict[str, Any]:
-    manifest = manifest_result.get("payload") if manifest_result.get("status") == "present" else {}
+def _improvement_summary(
+    workspace: Path, manifest_result: dict[str, Any]
+) -> dict[str, Any]:
+    manifest = (
+        manifest_result.get("payload")
+        if manifest_result.get("status") == "present"
+        else {}
+    )
     improvement = manifest.get("improvement") if isinstance(manifest, dict) else {}
     if not isinstance(improvement, dict):
         improvement = {}
     return {
         "ledger_present": (workspace / "improvement" / "ledger.jsonl").exists(),
         "memory_present": (workspace / "improvement" / "memory.md").exists(),
-        "snapshot_present": (workspace / INTERMEDIATE_DIR / "improvement_memory_snapshot.md").exists(),
+        "snapshot_present": (
+            workspace / INTERMEDIATE_DIR / "improvement_memory_snapshot.md"
+        ).exists(),
         "ledger_sha256": improvement.get("ledger_sha256"),
         "memory_sha256": improvement.get("memory_sha256"),
         "snapshot_sha256": improvement.get("snapshot_sha256"),
@@ -1067,9 +1231,15 @@ def _improvement_summary(workspace: Path, manifest_result: dict[str, Any]) -> di
     }
 
 
-def _feedback_summary(issues_result: dict[str, Any], plan_result: dict[str, Any]) -> dict[str, Any]:
-    issues_payload = issues_result.get("payload") if issues_result.get("status") == "present" else {}
-    plan_payload = plan_result.get("payload") if plan_result.get("status") == "present" else {}
+def _feedback_summary(
+    issues_result: dict[str, Any], plan_result: dict[str, Any]
+) -> dict[str, Any]:
+    issues_payload = (
+        issues_result.get("payload") if issues_result.get("status") == "present" else {}
+    )
+    plan_payload = (
+        plan_result.get("payload") if plan_result.get("status") == "present" else {}
+    )
     issues = issues_payload.get("issues") if isinstance(issues_payload, dict) else []
     plans = plan_payload.get("repair_plans") if isinstance(plan_payload, dict) else []
     if not isinstance(issues, list):
@@ -1081,7 +1251,11 @@ def _feedback_summary(issues_result: dict[str, Any], plan_result: dict[str, Any]
     return {
         "issues_present": issues_result.get("status") == "present",
         "issue_count": len(issues),
-        "open_count": sum(1 for item in issues if isinstance(item, dict) and item.get("status") in open_statuses),
+        "open_count": sum(
+            1
+            for item in issues
+            if isinstance(item, dict) and item.get("status") in open_statuses
+        ),
         "blocking_count": sum(
             1
             for item in issues
@@ -1091,7 +1265,11 @@ def _feedback_summary(issues_result: dict[str, Any], plan_result: dict[str, Any]
                 or item.get("blocking_level") in blocking_severities
             )
         ),
-        "triage_count": sum(1 for item in issues if isinstance(item, dict) and item.get("status") == "triage"),
+        "triage_count": sum(
+            1
+            for item in issues
+            if isinstance(item, dict) and item.get("status") == "triage"
+        ),
         "repair_plan_present": plan_result.get("status") == "present",
         "repair_plan_count": len(plans),
     }
@@ -1119,7 +1297,10 @@ def _suggested_next_command(workspace: Path, status: dict[str, Any]) -> str:
         return f"briefloop state show --workspace {workspace} --json"
     if not runtime.get("present"):
         return f"briefloop run --workspace {workspace} --runtime <{runtime_choices}>"
-    if recovery_state.get("status") not in {"not_applicable", "completed_non_reference"}:
+    if recovery_state.get("status") not in {
+        "not_applicable",
+        "completed_non_reference",
+    }:
         return f"briefloop workbuddy diagnose --workspace {workspace} --json"
     if workflow.get("blocked"):
         return f"briefloop state show --workspace {workspace} --json"
@@ -1150,16 +1331,24 @@ def _suggested_next_command(workspace: Path, status: dict[str, Any]) -> str:
         return f"briefloop gates check --workspace {workspace} --stage auditor"
     if current_stage:
         return f"briefloop run --workspace {workspace} --runtime {runtime_value}"
-    return f"briefloop run --workspace {workspace} --runtime {runtime_value} --skip-doctor"
+    return (
+        f"briefloop run --workspace {workspace} --runtime {runtime_value} --skip-doctor"
+    )
 
 
 def _progress_summary(status: dict[str, Any]) -> dict[str, Any]:
-    workflow = status.get("workflow") if isinstance(status.get("workflow"), dict) else {}
+    workflow = (
+        status.get("workflow") if isinstance(status.get("workflow"), dict) else {}
+    )
     runtime = status.get("runtime") if isinstance(status.get("runtime"), dict) else {}
-    artifacts = status.get("artifacts") if isinstance(status.get("artifacts"), dict) else {}
+    artifacts = (
+        status.get("artifacts") if isinstance(status.get("artifacts"), dict) else {}
+    )
     events = status.get("events") if isinstance(status.get("events"), dict) else {}
     quality_closeout = (
-        status.get("quality_panel_closeout") if isinstance(status.get("quality_panel_closeout"), dict) else {}
+        status.get("quality_panel_closeout")
+        if isinstance(status.get("quality_panel_closeout"), dict)
+        else {}
     )
     suggested_next = str(status.get("suggested_next_command") or "")
     current_stage = _text(workflow.get("current_stage"))
@@ -1203,7 +1392,11 @@ def _progress_summary(status: dict[str, Any]) -> dict[str, Any]:
             "current_work": "create handoff",
             "message": "Create or refresh the BriefLoop handoff before stage work.",
         }
-    narrowing = workflow.get("trajectory_regulation") if isinstance(workflow.get("trajectory_regulation"), dict) else {}
+    narrowing = (
+        workflow.get("trajectory_regulation")
+        if isinstance(workflow.get("trajectory_regulation"), dict)
+        else {}
+    )
     if narrowing.get("status") == "decision_narrowed":
         return {
             **base,

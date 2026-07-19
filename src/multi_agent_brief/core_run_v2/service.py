@@ -63,12 +63,15 @@ from .lineage import (
     classify_current_lineage,
     require_current_gate_after_audit_promotion,
 )
+from .next_action import classify_core_run_next_action
 from .policy import (
     CORE_ARTIFACT_IDS,
     DOCTOR_IMPLEMENTATION,
     DOCTOR_VERSION,
     INTERNAL_CONTRACT_ARTIFACT_IDS,
     REQUIRED_AUDITOR_GATES,
+    SOURCE_ROUTE_IDS,
+    SOURCE_WEB_PROVIDER_IDS,
     STAGE_ROLES,
     blob_workspace_path,
     derived_id,
@@ -487,6 +490,29 @@ class CoreRunService:
                 return replay
             verified = self._verifier.verify(store, request.run_id)
             self._require_store_revision(verified, request.expected_store_revision)
+            action = classify_core_run_next_action(verified)
+            if (
+                action.action_kind == "blocked"
+                and action.reason_code == "runtime_role_unavailable"
+            ):
+                raise CoreRunError("runtime_role_unavailable")
+            delegate_reservation = (
+                action.action_kind == "delegate"
+                and action.stage_id == request.stage_id
+                and action.role_id == request.role_id
+            )
+            source_acquire_reservation = (
+                action.action_kind == "deterministic"
+                and action.effect_kind == "source_acquire"
+                and action.stage_id == "source-discovery"
+                and action.source_route_id is not None
+                and request.stage_id == "source-discovery"
+                and request.role_id == "source-provider"
+            )
+            if not (delegate_reservation or source_acquire_reservation):
+                raise CoreRunError("invocation_owner_mismatch")
+            if request.role_id not in verified.runtime_adapter.role_ids:
+                raise CoreRunError("runtime_role_unavailable")
             lineage = classify_current_lineage(verified.snapshot)
             lineage.require_stage_mutable(request.stage_id)
             if request.runtime != verified.snapshot.run.runtime:
@@ -1703,6 +1729,8 @@ def _derive_runtime_source_plan(
     enabled_ids = sorted(
         {"web-search" if item == "web_search" else item for item in enabled}
     )
+    if any(item not in SOURCE_ROUTE_IDS for item in enabled_ids):
+        raise CoreRunError("runtime_source_plan_invalid")
 
     web = raw.get("web_search", {})
     if type(web) is not dict:
@@ -1725,6 +1753,8 @@ def _derive_runtime_source_plan(
     if mode == "external_api" and web_enabled and type(backend_value) is not str:
         raise CoreRunError("runtime_source_plan_invalid")
     backend = str(backend_value) if type(backend_value) is str else None
+    if mode == "external_api" and backend not in SOURCE_WEB_PROVIDER_IDS:
+        raise CoreRunError("runtime_source_plan_invalid")
 
     route_kinds = {
         "manual": ("manual", "human"),
@@ -1756,9 +1786,7 @@ def _derive_runtime_source_plan(
                 "required": False,
             }
             route_payload["route_fingerprint"] = canonical_fingerprint(route_payload)
-            routes.append(
-                RuntimeSourceRouteBinding.model_validate(route_payload, strict=True)
-            )
+            routes.append(_validate_runtime_source_route(route_payload))
             continue
         if route_id not in route_kinds:
             raise CoreRunError("runtime_source_plan_invalid")
@@ -1767,12 +1795,18 @@ def _derive_runtime_source_plan(
             "schema_version": RuntimeSourceRouteBinding.schema_id,
             "route_id": route_id,
             "route_kind": route_kind,
-            "provider_id": route_id if route_kind in {"external_api", "runtime_tool"} else None,
+            "provider_id": (
+                "api"
+                if route_id == "api"
+                else "runtime-tool"
+                if route_id == "runtime_tool"
+                else None
+            ),
             "execution_owner": owner,
             "required": False,
         }
         route_payload["route_fingerprint"] = canonical_fingerprint(route_payload)
-        routes.append(RuntimeSourceRouteBinding.model_validate(route_payload, strict=True))
+        routes.append(_validate_runtime_source_route(route_payload))
     if web_enabled and mode != "disabled" and "web-search" not in enabled_ids:
         if mode == "configure_later":
             route_kind, owner, provider_id = "disabled", "human", None
@@ -1791,7 +1825,7 @@ def _derive_runtime_source_plan(
             "required": False,
         }
         route_payload["route_fingerprint"] = canonical_fingerprint(route_payload)
-        routes.append(RuntimeSourceRouteBinding.model_validate(route_payload, strict=True))
+        routes.append(_validate_runtime_source_route(route_payload))
     routes.sort(key=lambda item: item.route_id)
     payload: dict[str, object] = {
         "schema_version": RuntimeSourcePlanBinding.schema_id,
@@ -1804,6 +1838,15 @@ def _derive_runtime_source_plan(
     payload["source_plan_fingerprint"] = canonical_fingerprint(payload)
     try:
         return RuntimeSourcePlanBinding.model_validate(payload, strict=True)
+    except (TypeError, ValueError) as exc:
+        raise CoreRunError("runtime_source_plan_invalid") from exc
+
+
+def _validate_runtime_source_route(
+    payload: dict[str, object],
+) -> RuntimeSourceRouteBinding:
+    try:
+        return RuntimeSourceRouteBinding.model_validate(payload, strict=True)
     except (TypeError, ValueError) as exc:
         raise CoreRunError("runtime_source_plan_invalid") from exc
 
