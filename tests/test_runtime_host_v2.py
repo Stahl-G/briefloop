@@ -7,15 +7,24 @@ from pathlib import Path
 import pytest
 import yaml
 
+from tests.test_core_run_v2_terminal import _finalize_ready_workspace
+
 from multi_agent_brief.cli.init_wizard import create_workspace
-from multi_agent_brief.contracts.v2 import RuntimeAdapterBinding
+from multi_agent_brief.contracts.v2 import (
+    DeliveryAuthorizationRequest,
+    InternalApprovalRequest,
+    RuntimeAdapterBinding,
+)
+from multi_agent_brief.control_store import SQLiteControlStore
 from multi_agent_brief.control_store.serialization import canonical_fingerprint
+from multi_agent_brief.core_run_v2.verifier import CoreRunDomainVerifier
 from multi_agent_brief.runtime_host_v2 import RuntimeHostError
 from multi_agent_brief.runtime_host_v2.initialization import initialize_or_open_runtime
 from multi_agent_brief.runtime_host_v2.projections import (
     build_store_quality_projection,
     build_store_status_projection,
 )
+from multi_agent_brief.runtime_host_v2.service import RuntimeHostService
 from multi_agent_brief.workspace.init_profile import InitProfile
 
 
@@ -334,3 +343,114 @@ def test_store_status_ignores_forged_legacy_projections(tmp_path: Path) -> None:
         "run_id": "RUN-run",
         "store_revision": first["store_revision"],
     }
+
+
+def test_store_native_local_delivery_materializes_receipt_bound_reader_bundle(
+    tmp_path: Path,
+) -> None:
+    workspace, run_id, _clock = _finalize_ready_workspace(tmp_path)
+    with SQLiteControlStore.open(workspace / "briefloop.db") as store:
+        adapter = CoreRunDomainVerifier().verify(store, run_id).runtime_adapter
+    host = RuntimeHostService(workspace, adapter_loader=lambda _run_id: adapter)
+
+    for effect_kind in ("finalize_render", "finalize_gate", "finalize_complete"):
+        action = host.next_action()
+        assert action.effect_kind == effect_kind
+        assert host.apply_current(action).status == "committed"
+
+    with SQLiteControlStore.open(workspace / "briefloop.db") as store:
+        verified = CoreRunDomainVerifier().verify(store, run_id)
+        package = verified.snapshot.package_ready_records[0]
+
+    action = host.next_action()
+    approval = host.apply_current(
+        action,
+        human_request=InternalApprovalRequest.model_validate(
+            {
+                "schema_version": InternalApprovalRequest.schema_id,
+                "request_id": "REQ-HOST-V2-LOCAL-APPROVAL-001",
+                "run_id": run_id,
+                "package_id": package.package_id,
+                "approval_id": "APPROVAL-HOST-V2-LOCAL-001",
+                "mode": "internal_management_review",
+                "role": "content_owner",
+                "decision": "approve",
+                "reason": "reader package reviewed",
+                "actor_id": "human-reviewer",
+                "expected_store_revision": action.store_revision,
+            },
+            strict=True,
+        ),
+    )
+    assert approval.status == "committed"
+
+    action = host.next_action()
+    authorization = host.apply_current(
+        action,
+        human_request=DeliveryAuthorizationRequest.model_validate(
+            {
+                "schema_version": DeliveryAuthorizationRequest.schema_id,
+                "request_id": "REQ-HOST-V2-LOCAL-AUTH-001",
+                "run_id": run_id,
+                "package_id": package.package_id,
+                "prior_authorization_id": None,
+                "approval_mode": "internal_management_review",
+                "retry_of_attempt_id": None,
+                "purpose": "initial_attempt",
+                "decision": "authorize",
+                "target": "local",
+                "channel": "local_bundle",
+                "recipient_fingerprint": "a" * 64,
+                "actor_id": "human-reviewer",
+                "reason": "approved local bundle",
+                "expected_store_revision": action.store_revision,
+            },
+            strict=True,
+        ),
+    )
+    assert authorization.status == "committed"
+
+    action = host.next_action()
+    assert action.effect_kind == "delivery_attempt"
+    assert host.apply_current(action).status == "committed"
+
+    action = host.next_action()
+    assert action.effect_kind == "delivery_result"
+    delivery = workspace / "output" / "delivery"
+    assert not delivery.exists()
+    result = host.apply_current(action)
+    assert result.status == "committed"
+
+    with SQLiteControlStore.open(workspace / "briefloop.db") as store:
+        verified = CoreRunDomainVerifier().verify(store, run_id)
+        snapshot = verified.snapshot
+        reader_bindings = sorted(
+            (
+                item
+                for item in snapshot.package_artifact_bindings
+                if item.package_id == package.package_id and item.usage == "reader"
+            ),
+            key=lambda item: item.position,
+        )
+        revisions = {
+            (item.artifact_id, item.revision): item
+            for item in snapshot.artifact_revisions
+        }
+        expected = {
+            Path(revisions[(binding.artifact_id, binding.artifact_revision)].path).name:
+            store.read_artifact_revision_bytes(
+                run_id,
+                binding.artifact_id,
+                binding.artifact_revision,
+            )
+            for binding in reader_bindings
+        }
+        assert snapshot.delivery_results[-1].status == "bundle_prepared"
+
+    assert expected
+    assert {item.name for item in delivery.iterdir()} == set(expected)
+    assert {name: (delivery / name).read_bytes() for name in expected} == expected
+    assert result.receipt is not None
+    assert [item.result_id for item in result.receipt.delivery_results] == [
+        snapshot.delivery_results[-1].result_id
+    ]

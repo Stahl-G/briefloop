@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from copy import deepcopy
 import hashlib
+import sys
 from types import SimpleNamespace
 
 import pytest
@@ -238,14 +239,30 @@ def test_next_action_routes_planner_to_frozen_runtime_tool_provider(tmp_path) ->
     assert action.source_provider_id == "runtime-tool"
     assert action.request_schema_id == "briefloop.source_commit_request.v2"
 
-    invocation_id = core_fixture._start_invocation(
-        service,
-        workspace,
-        request_id="REQ-NEXT-SOURCE-PROVIDER",
-        stage_id="source-discovery",
-        role_id="source-provider",
+    before_revision = core_fixture._store_revision(workspace)
+    before = _verified(workspace, core_fixture.RUN_ID)
+    result = service.start_invocation(
+        core_fixture._record(
+            InvocationStartRequest,
+            request_id="REQ-NEXT-SOURCE-PROVIDER",
+            run_id=core_fixture.RUN_ID,
+            stage_id="source-discovery",
+            role_id="source-provider",
+            runtime=before.snapshot.run.runtime,
+            expected_store_revision=before_revision,
+        )
     )
-    assert invocation_id
+
+    if sys.platform == "win32":
+        assert result.to_dict() == {
+            "status": "failed_uncommitted",
+            "error_code": "checkout_publication_unsupported",
+        }
+        assert core_fixture._store_revision(workspace) == before_revision
+        assert _verified(workspace, core_fixture.RUN_ID).snapshot == before.snapshot
+    else:
+        assert result.status == "committed", result.to_dict()
+        assert result.primary_record_id is not None
 
 
 def test_next_action_external_api_is_deterministic_provider_reservation(

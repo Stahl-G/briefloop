@@ -211,9 +211,14 @@ class TestB02CLISearchIntegration:
             )
 
     def test_sources_decide_search_uses_workspace_env_key(self, tmp_path, monkeypatch, capsys):
-        """CLI search must use the same workspace .env key path as provider validation."""
+        """The closed public search command must not load workspace credentials."""
         monkeypatch.delenv("TAVILY_API_KEY", raising=False)
-        monkeypatch.setitem(web_search._KNOWN_BACKENDS, "tavily", EnvCliSearchBackend)
+
+        class ProviderMustNotStart:
+            def __init__(self, *_args, **_kwargs):
+                raise AssertionError("closed public source command must not start a provider")
+
+        monkeypatch.setitem(web_search._KNOWN_BACKENDS, "tavily", ProviderMustNotStart)
         ws = tmp_path / "ws"
         ws.mkdir()
         (ws / ".env").write_text("TAVILY_API_KEY=workspace-cli-secret\n", encoding="utf-8")
@@ -237,18 +242,35 @@ class TestB02CLISearchIntegration:
             "    - test query\n",
             encoding="utf-8",
         )
+        before = {
+            path.relative_to(ws).as_posix(): path.read_bytes()
+            for path in ws.rglob("*")
+            if path.is_file()
+        }
 
         rc = main(["sources", "decide", "--config", str(ws / "config.yaml"), "--search"])
 
         captured = capsys.readouterr()
-        assert rc == 0
+        assert rc == 1
+        assert captured.out.strip() == "runtime_command_unsupported"
         assert "workspace-cli-secret" not in captured.out
-        assert "Workspace env CLI result" in (ws / "source_candidates.yaml").read_text(encoding="utf-8")
+        assert {
+            path.relative_to(ws).as_posix(): path.read_bytes()
+            for path in ws.rglob("*")
+            if path.is_file()
+        } == before
+        assert not (ws / "source_candidates.yaml").exists()
+        assert not (ws / "briefloop.db").exists()
         assert os.environ.get("TAVILY_API_KEY") is None
 
     def test_sources_decide_search_rejects_invalid_web_search_modes(self, tmp_path, monkeypatch, capsys):
-        """--search must reuse web_search validation and require external_api mode."""
-        monkeypatch.setitem(web_search._KNOWN_BACKENDS, "tavily", EnvCliSearchBackend)
+        """The closed public search command must not validate or start providers."""
+
+        class ProviderMustNotStart:
+            def __init__(self, *_args, **_kwargs):
+                raise AssertionError("closed public source command must not start a provider")
+
+        monkeypatch.setitem(web_search._KNOWN_BACKENDS, "tavily", ProviderMustNotStart)
         invalid_configs = [
             "web_search:\n"
             "  enabled: true\n"
@@ -287,17 +309,33 @@ class TestB02CLISearchIntegration:
                 "    - test query\n",
                 encoding="utf-8",
             )
+            before = {
+                path.relative_to(ws).as_posix(): path.read_bytes()
+                for path in ws.rglob("*")
+                if path.is_file()
+            }
 
             rc = main(["sources", "decide", "--config", str(ws / "config.yaml"), "--search"])
 
             captured = capsys.readouterr()
             assert rc == 1
-            assert "valid external_api web_search configuration" in captured.out
+            assert captured.out.strip() == "runtime_command_unsupported"
+            assert {
+                path.relative_to(ws).as_posix(): path.read_bytes()
+                for path in ws.rglob("*")
+                if path.is_file()
+            } == before
             assert not (ws / "source_candidates.yaml").exists()
+            assert not (ws / "briefloop.db").exists()
 
     def test_sources_decide_search_all_queries_failed_writes_no_candidates(self, tmp_path, monkeypatch, capsys):
-        """If every backend request fails, the CLI must fail instead of writing a plan."""
-        monkeypatch.setitem(web_search._KNOWN_BACKENDS, "tavily", FailingCliSearchBackend)
+        """The closed public command must not call even a failing backend."""
+
+        class ProviderMustNotStart:
+            def __init__(self, *_args, **_kwargs):
+                raise AssertionError("closed public source command must not start a provider")
+
+        monkeypatch.setitem(web_search._KNOWN_BACKENDS, "tavily", ProviderMustNotStart)
         ws = tmp_path / "ws"
         ws.mkdir()
         (ws / "config.yaml").write_text(
@@ -320,17 +358,33 @@ class TestB02CLISearchIntegration:
             "    - failing query\n",
             encoding="utf-8",
         )
+        before = {
+            path.relative_to(ws).as_posix(): path.read_bytes()
+            for path in ws.rglob("*")
+            if path.is_file()
+        }
 
         rc = main(["sources", "decide", "--config", str(ws / "config.yaml"), "--search"])
 
         captured = capsys.readouterr()
         assert rc == 1
-        assert "All configured search queries failed" in captured.out
+        assert captured.out.strip() == "runtime_command_unsupported"
+        assert {
+            path.relative_to(ws).as_posix(): path.read_bytes()
+            for path in ws.rglob("*")
+            if path.is_file()
+        } == before
         assert not (ws / "source_candidates.yaml").exists()
+        assert not (ws / "briefloop.db").exists()
 
     def test_sources_decide_search_all_queries_zero_results_writes_no_candidates(self, tmp_path, monkeypatch, capsys):
-        """If every backend request returns zero results, the CLI must fail instead of writing a plan."""
-        monkeypatch.setitem(web_search._KNOWN_BACKENDS, "tavily", EmptyCliSearchBackend)
+        """The closed public command must not call even an empty backend."""
+
+        class ProviderMustNotStart:
+            def __init__(self, *_args, **_kwargs):
+                raise AssertionError("closed public source command must not start a provider")
+
+        monkeypatch.setitem(web_search._KNOWN_BACKENDS, "tavily", ProviderMustNotStart)
         ws = tmp_path / "ws"
         ws.mkdir()
         (ws / "config.yaml").write_text(
@@ -353,11 +407,21 @@ class TestB02CLISearchIntegration:
             "    - empty query\n",
             encoding="utf-8",
         )
+        before = {
+            path.relative_to(ws).as_posix(): path.read_bytes()
+            for path in ws.rglob("*")
+            if path.is_file()
+        }
 
         rc = main(["sources", "decide", "--config", str(ws / "config.yaml"), "--search"])
 
         captured = capsys.readouterr()
         assert rc == 1
-        assert "[0 results]" in captured.out
-        assert "returned zero results" in captured.out
+        assert captured.out.strip() == "runtime_command_unsupported"
+        assert {
+            path.relative_to(ws).as_posix(): path.read_bytes()
+            for path in ws.rglob("*")
+            if path.is_file()
+        } == before
         assert not (ws / "source_candidates.yaml").exists()
+        assert not (ws / "briefloop.db").exists()

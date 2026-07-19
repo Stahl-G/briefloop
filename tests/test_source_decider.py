@@ -378,6 +378,11 @@ def test_sources_decide_merge_rejects_source_plan_only_cli(
         ),
         encoding="utf-8",
     )
+    before = {
+        path.relative_to(workspace_with_sources).as_posix(): path.read_bytes()
+        for path in workspace_with_sources.rglob("*")
+        if path.is_file()
+    }
 
     rc = main([
         "sources",
@@ -389,10 +394,14 @@ def test_sources_decide_merge_rejects_source_plan_only_cli(
 
     out = capsys.readouterr().out
     assert rc == 1
-    assert E_SOURCE_CANDIDATES_PLAN_ONLY in out
-    assert "source plan only" in out
-    assert "not evidence" in out or "as evidence" in out
+    assert out.strip() == "runtime_command_unsupported"
+    assert {
+        path.relative_to(workspace_with_sources).as_posix(): path.read_bytes()
+        for path in workspace_with_sources.rglob("*")
+        if path.is_file()
+    } == before
     assert sources_path.read_text(encoding="utf-8") == original_sources
+    assert not (workspace_with_sources / "briefloop.db").exists()
 
 
 def test_merge_candidates_preserves_daily_backfill_source_metadata(workspace_with_sources: Path):

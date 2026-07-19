@@ -421,21 +421,27 @@ def test_missing_provenance_does_not_block_state_check(tmp_path):
 def test_provenance_cli_build_show_validate_json(tmp_path, capsys):
     ws = _workspace(tmp_path)
     _init_state(ws)
+    before = {
+        path.relative_to(ws).as_posix(): path.read_bytes()
+        for path in ws.rglob("*")
+        if path.is_file()
+    }
 
-    rc = main(["provenance", "build", "--workspace", str(ws), "--repo-workdir", str(REPO), "--json"])
-    payload = json.loads(capsys.readouterr().out)
-    assert rc == 0
-    assert payload["ok"] is True
+    for action in ("build", "show", "validate"):
+        argv = ["provenance", action, "--workspace", str(ws)]
+        if action == "build":
+            argv.extend(["--repo-workdir", str(REPO)])
+        argv.append("--json")
+        rc = main(argv)
 
-    rc = main(["provenance", "show", "--workspace", str(ws), "--json"])
-    payload = json.loads(capsys.readouterr().out)
-    assert rc == 0
-    assert payload["ok"] is True
-
-    rc = main(["provenance", "validate", "--workspace", str(ws), "--json"])
-    payload = json.loads(capsys.readouterr().out)
-    assert rc == 0
-    assert payload["ok"] is True
+        assert rc == 1
+        assert capsys.readouterr().out.strip() == "legacy_workspace_unsupported"
+        assert {
+            path.relative_to(ws).as_posix(): path.read_bytes()
+            for path in ws.rglob("*")
+            if path.is_file()
+        } == before
+        assert not provenance_graph_path(ws).exists()
 
 
 def test_validate_strict_fails_on_warnings(tmp_path):

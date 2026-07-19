@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import argparse
 import json
 import subprocess
 from pathlib import Path
@@ -7,14 +8,30 @@ from pathlib import Path
 import pytest
 
 from multi_agent_brief.cli.main import main
+from multi_agent_brief.cli import deliver_commands as legacy_deliver_commands
 from multi_agent_brief.delivery.base import DeliveryResult
 from multi_agent_brief.delivery.gws import GwsGmailDeliveryConnector
-from multi_agent_brief.orchestrator.runtime_state import RuntimeStateError, initialize_runtime_state, runtime_state_paths
+from multi_agent_brief.orchestrator.runtime_state import (
+    RuntimeStateError,
+    check_runtime_state,
+    initialize_runtime_state,
+    runtime_state_paths,
+)
 from tests.helpers import sha256_file as _sha256_file
 from tests.helpers import write_minimal_workspace
 
 
 ROOT = Path(__file__).resolve().parents[1]
+
+
+def _legacy_delivery_main(argv: list[str]) -> int:
+    """Exercise the retired delivery module directly, outside public routing."""
+
+    parser = argparse.ArgumentParser()
+    subparsers = parser.add_subparsers(dest="command", required=True)
+    legacy_deliver_commands.register(subparsers)
+    args = parser.parse_args(argv)
+    return legacy_deliver_commands.handle(args)
 
 
 def _workspace(tmp_path: Path) -> Path:
@@ -118,34 +135,59 @@ def _mark_active_repair(ws: Path) -> None:
     paths["workflow_state"].write_text(json.dumps(workflow, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
 
 
-def test_deliver_local_lists_only_delivery_bundle(tmp_path: Path, capsys) -> None:
+@pytest.mark.parametrize(
+    "target_args",
+    (
+        ("--target", "local"),
+        ("--target", "feishu", "--channel", "doc", "--recipient", "folder_secret_token"),
+        ("--target", "gmail", "--channel", "draft", "--recipient", "recipient@example.com"),
+    ),
+)
+def test_legacy_deliver_public_cli_is_rejected_without_effects(
+    tmp_path: Path,
+    capsys,
+    monkeypatch,
+    target_args: tuple[str, ...],
+) -> None:
     ws = _workspace(tmp_path)
     _write_bundle(ws)
 
-    rc = main(["deliver", "--workspace", str(ws), "--target", "local"])
+    def connector_must_not_run(*_args, **_kwargs):
+        raise AssertionError("legacy delivery refusal must precede connector execution")
 
-    assert rc == 0
-    out = capsys.readouterr().out
-    assert "output/delivery/brief.md" in out
-    assert "output/delivery/Weekly_Brief_2026-06-12.docx" in out
-    assert "source_appendix.md" not in out
-    assert "claim_ledger.json" not in out
-    assert "audit_report.json" not in out
-    events = _delivery_events(ws)
-    assert [event["event_type"] for event in events] == [
-        "delivery_attempted",
-        "delivery_bundle_prepared",
-    ]
-    assert events[0]["metadata"]["artifact"] == "output/delivery/brief.md"
-    assert events[1]["metadata"]["render_transaction_id"] == "render-deliver-test-001"
+    monkeypatch.setattr(
+        "multi_agent_brief.cli.deliver_commands.FeishuDeliveryConnector.deliver",
+        connector_must_not_run,
+    )
+    monkeypatch.setattr(
+        "multi_agent_brief.cli.deliver_commands.GwsGmailDeliveryConnector.deliver",
+        connector_must_not_run,
+    )
+    before = {
+        path.relative_to(ws).as_posix(): path.read_bytes()
+        for path in ws.rglob("*")
+        if path.is_file()
+    }
+    before_events = _delivery_events(ws)
+
+    rc = main(["deliver", "--workspace", str(ws), *target_args])
+
+    assert rc == 1
+    assert capsys.readouterr().out.strip() == "legacy_workspace_unsupported"
+    assert {
+        path.relative_to(ws).as_posix(): path.read_bytes()
+        for path in ws.rglob("*")
+        if path.is_file()
+    } == before
+    assert _delivery_events(ws) == before_events
 
 
-def test_deliver_local_fails_without_events_when_active_repair_open(tmp_path: Path, capsys) -> None:
+def test_legacy_internal_delivery_blocks_active_repair(tmp_path: Path, capsys) -> None:
     ws = _workspace(tmp_path)
     _write_bundle(ws)
     _mark_active_repair(ws)
 
-    rc = main(["deliver", "--workspace", str(ws), "--target", "local", "--json"])
+    rc = _legacy_delivery_main(["deliver", "--workspace", str(ws), "--target", "local", "--json"])
 
     assert rc == 1
     payload = json.loads(capsys.readouterr().out)
@@ -155,12 +197,12 @@ def test_deliver_local_fails_without_events_when_active_repair_open(tmp_path: Pa
     assert _delivery_events(ws) == []
 
 
-def test_deliver_local_blocks_contaminated_run_without_events(tmp_path: Path, capsys) -> None:
+def test_legacy_internal_delivery_blocks_contaminated_run(tmp_path: Path, capsys) -> None:
     ws = _workspace(tmp_path)
     _write_bundle(ws)
     _mark_run_contaminated(ws)
 
-    rc = main(["deliver", "--workspace", str(ws), "--target", "local", "--json"])
+    rc = _legacy_delivery_main(["deliver", "--workspace", str(ws), "--target", "local", "--json"])
 
     assert rc == 1
     payload = json.loads(capsys.readouterr().out)
@@ -171,7 +213,7 @@ def test_deliver_local_blocks_contaminated_run_without_events(tmp_path: Path, ca
     assert "run integrity is not clean" in payload["message"]
     assert _delivery_events(ws) == []
 
-    rc = main(["deliver", "--workspace", str(ws), "--target", "local"])
+    rc = _legacy_delivery_main(["deliver", "--workspace", str(ws), "--target", "local"])
 
     assert rc == 1
     captured = capsys.readouterr()
@@ -179,11 +221,10 @@ def test_deliver_local_blocks_contaminated_run_without_events(tmp_path: Path, ca
     assert "run integrity is not clean" in captured.err
 
 
-def test_deliver_refreshes_run_integrity_before_recording_events(tmp_path: Path, capsys) -> None:
+def test_legacy_internal_delivery_refreshes_run_integrity(tmp_path: Path, capsys) -> None:
     ws = _workspace(tmp_path)
     _write_bundle(ws)
-    assert main(["state", "check", "--workspace", str(ws), "--json"]) == 0
-    capsys.readouterr()
+    check_runtime_state(workspace=ws, repo_workdir=ROOT)
     paths = runtime_state_paths(ws)
     workflow = json.loads(paths["workflow_state"].read_text(encoding="utf-8"))
     workflow["stage_statuses"]["claim-ledger"]["status"] = "complete"
@@ -192,7 +233,7 @@ def test_deliver_refreshes_run_integrity_before_recording_events(tmp_path: Path,
     ledger = ws / "output" / "intermediate" / "claim_ledger.json"
     ledger.write_text('[{"claim_id":"CL-TAMPERED"}]\n', encoding="utf-8")
 
-    rc = main(["deliver", "--workspace", str(ws), "--target", "local", "--json"])
+    rc = _legacy_delivery_main(["deliver", "--workspace", str(ws), "--target", "local", "--json"])
 
     assert rc == 1
     payload = json.loads(capsys.readouterr().out)
@@ -204,12 +245,12 @@ def test_deliver_refreshes_run_integrity_before_recording_events(tmp_path: Path,
     assert _delivery_events(ws) == []
 
 
-def test_deliver_json_returns_typed_error_for_corrupt_workflow_state(tmp_path: Path, capsys) -> None:
+def test_legacy_internal_delivery_rejects_corrupt_workflow_state(tmp_path: Path, capsys) -> None:
     ws = _workspace(tmp_path)
     _write_bundle(ws)
     runtime_state_paths(ws)["workflow_state"].write_text("{broken", encoding="utf-8")
 
-    rc = main(["deliver", "--workspace", str(ws), "--target", "local", "--json"])
+    rc = _legacy_delivery_main(["deliver", "--workspace", str(ws), "--target", "local", "--json"])
 
     assert rc == 1
     payload = json.loads(capsys.readouterr().out)
@@ -218,7 +259,7 @@ def test_deliver_json_returns_typed_error_for_corrupt_workflow_state(tmp_path: P
     assert "workflow_state.json is unreadable" in payload["message"]
 
 
-def test_deliver_json_blocks_malformed_run_integrity_as_unknown(tmp_path: Path, capsys) -> None:
+def test_legacy_internal_delivery_blocks_malformed_run_integrity(tmp_path: Path, capsys) -> None:
     ws = _workspace(tmp_path)
     _write_bundle(ws)
     paths = runtime_state_paths(ws)
@@ -226,7 +267,7 @@ def test_deliver_json_blocks_malformed_run_integrity_as_unknown(tmp_path: Path, 
     workflow["run_integrity"] = "bad"
     paths["workflow_state"].write_text(json.dumps(workflow, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
 
-    rc = main(["deliver", "--workspace", str(ws), "--target", "local", "--json"])
+    rc = _legacy_delivery_main(["deliver", "--workspace", str(ws), "--target", "local", "--json"])
 
     assert rc == 1
     payload = json.loads(capsys.readouterr().out)
@@ -237,10 +278,10 @@ def test_deliver_json_blocks_malformed_run_integrity_as_unknown(tmp_path: Path, 
     assert _delivery_events(ws) == []
 
 
-def test_deliver_missing_bundle_returns_typed_error(tmp_path: Path, capsys) -> None:
+def test_legacy_internal_delivery_rejects_missing_bundle(tmp_path: Path, capsys) -> None:
     ws = _workspace(tmp_path)
 
-    rc = main(["deliver", "--workspace", str(ws), "--json"])
+    rc = _legacy_delivery_main(["deliver", "--workspace", str(ws), "--json"])
 
     assert rc == 1
     payload = json.loads(capsys.readouterr().out)
@@ -249,11 +290,11 @@ def test_deliver_missing_bundle_returns_typed_error(tmp_path: Path, capsys) -> N
     assert "finalize" in payload["message"]
 
 
-def test_deliver_rejects_dirty_finalize_report(tmp_path: Path, capsys) -> None:
+def test_legacy_internal_delivery_rejects_dirty_finalize_report(tmp_path: Path, capsys) -> None:
     ws = _workspace(tmp_path)
     _write_bundle(ws, reader_clean_status="fail", init_runtime=False)
 
-    rc = main(["deliver", "--workspace", str(ws), "--json"])
+    rc = _legacy_delivery_main(["deliver", "--workspace", str(ws), "--json"])
 
     assert rc == 1
     payload = json.loads(capsys.readouterr().out)
@@ -261,12 +302,12 @@ def test_deliver_rejects_dirty_finalize_report(tmp_path: Path, capsys) -> None:
     assert not (ws / "output" / "intermediate" / "event_log.jsonl").exists()
 
 
-def test_deliver_rejects_dirty_current_delivery_artifact(tmp_path: Path, capsys) -> None:
+def test_legacy_internal_delivery_rejects_dirty_current_artifact(tmp_path: Path, capsys) -> None:
     ws = _workspace(tmp_path)
     markdown, _docx = _write_bundle(ws, include_docx=False)
     markdown.write_text("# Final Brief\n\nLeaked marker [src:CLAIM-001]\n", encoding="utf-8")
 
-    rc = main(["deliver", "--workspace", str(ws), "--json"])
+    rc = _legacy_delivery_main(["deliver", "--workspace", str(ws), "--json"])
 
     assert rc == 1
     payload = json.loads(capsys.readouterr().out)
@@ -274,12 +315,12 @@ def test_deliver_rejects_dirty_current_delivery_artifact(tmp_path: Path, capsys)
     assert _delivery_events(ws) == []
 
 
-def test_deliver_rejects_clean_markdown_changed_after_finalize(tmp_path: Path, capsys) -> None:
+def test_legacy_internal_delivery_rejects_changed_markdown(tmp_path: Path, capsys) -> None:
     ws = _workspace(tmp_path)
     markdown, _docx = _write_bundle(ws, include_docx=False)
     markdown.write_text("# Different Clean Brief\n\nSource Appendix\n", encoding="utf-8")
 
-    rc = main(["deliver", "--workspace", str(ws), "--target", "local", "--json"])
+    rc = _legacy_delivery_main(["deliver", "--workspace", str(ws), "--target", "local", "--json"])
 
     assert rc == 1
     payload = json.loads(capsys.readouterr().out)
@@ -289,7 +330,7 @@ def test_deliver_rejects_clean_markdown_changed_after_finalize(tmp_path: Path, c
     assert _delivery_events(ws) == []
 
 
-def test_deliver_rejects_clean_docx_changed_after_finalize(tmp_path: Path, capsys) -> None:
+def test_legacy_internal_delivery_rejects_changed_docx(tmp_path: Path, capsys) -> None:
     docx_module = pytest.importorskip("docx", reason="python-docx not installed")
     ws = _workspace(tmp_path)
     _markdown, docx = _write_bundle(ws, include_docx=True)
@@ -299,7 +340,7 @@ def test_deliver_rejects_clean_docx_changed_after_finalize(tmp_path: Path, capsy
     document.add_paragraph("Source Appendix")
     document.save(str(docx))
 
-    rc = main(["deliver", "--workspace", str(ws), "--target", "local", "--json"])
+    rc = _legacy_delivery_main(["deliver", "--workspace", str(ws), "--target", "local", "--json"])
 
     assert rc == 1
     payload = json.loads(capsys.readouterr().out)
@@ -309,7 +350,7 @@ def test_deliver_rejects_clean_docx_changed_after_finalize(tmp_path: Path, capsy
     assert _delivery_events(ws) == []
 
 
-def test_deliver_rejects_missing_delivery_hashes(tmp_path: Path, capsys) -> None:
+def test_legacy_internal_delivery_rejects_missing_hashes(tmp_path: Path, capsys) -> None:
     ws = _workspace(tmp_path)
     _write_bundle(ws, include_docx=False)
     report_path = ws / "output" / "intermediate" / "finalize_report.json"
@@ -317,7 +358,7 @@ def test_deliver_rejects_missing_delivery_hashes(tmp_path: Path, capsys) -> None
     report.pop("delivery_artifact_sha256")
     report_path.write_text(json.dumps(report, ensure_ascii=False, indent=2), encoding="utf-8")
 
-    rc = main(["deliver", "--workspace", str(ws), "--json"])
+    rc = _legacy_delivery_main(["deliver", "--workspace", str(ws), "--json"])
 
     assert rc == 1
     payload = json.loads(capsys.readouterr().out)
@@ -326,12 +367,12 @@ def test_deliver_rejects_missing_delivery_hashes(tmp_path: Path, capsys) -> None
     assert _delivery_events(ws) == []
 
 
-def test_deliver_rejects_corrupt_finalize_report_utf8(tmp_path: Path, capsys) -> None:
+def test_legacy_internal_delivery_rejects_corrupt_finalize_utf8(tmp_path: Path, capsys) -> None:
     ws = _workspace(tmp_path)
     _write_bundle(ws, include_docx=False)
     (ws / "output" / "intermediate" / "finalize_report.json").write_bytes(b"\xff\xfe\x00")
 
-    rc = main(["deliver", "--workspace", str(ws), "--json"])
+    rc = _legacy_delivery_main(["deliver", "--workspace", str(ws), "--json"])
 
     assert rc == 1
     payload = json.loads(capsys.readouterr().out)
@@ -340,14 +381,14 @@ def test_deliver_rejects_corrupt_finalize_report_utf8(tmp_path: Path, capsys) ->
     assert _delivery_events(ws) == []
 
 
-def test_deliver_rejects_non_file_delivery_artifact(tmp_path: Path, capsys) -> None:
+def test_legacy_internal_delivery_rejects_non_file_artifact(tmp_path: Path, capsys) -> None:
     ws = _workspace(tmp_path)
     _write_bundle(ws, include_docx=False)
     delivery_brief = ws / "output" / "delivery" / "brief.md"
     delivery_brief.unlink()
     delivery_brief.mkdir()
 
-    rc = main(["deliver", "--workspace", str(ws), "--json"])
+    rc = _legacy_delivery_main(["deliver", "--workspace", str(ws), "--json"])
 
     assert rc == 1
     payload = json.loads(capsys.readouterr().out)
@@ -356,7 +397,7 @@ def test_deliver_rejects_non_file_delivery_artifact(tmp_path: Path, capsys) -> N
     assert _delivery_events(ws) == []
 
 
-def test_deliver_rejects_unsupported_delivery_artifact(tmp_path: Path, capsys) -> None:
+def test_legacy_internal_delivery_rejects_unsupported_artifact(tmp_path: Path, capsys) -> None:
     ws = _workspace(tmp_path)
     _write_bundle(ws, include_docx=False)
     operator_file = ws / "output" / "delivery" / "operator-only.txt"
@@ -368,7 +409,7 @@ def test_deliver_rejects_unsupported_delivery_artifact(tmp_path: Path, capsys) -
     report["delivery_artifact_sha256"][rel] = _sha256_file(operator_file)
     report_path.write_text(json.dumps(report, ensure_ascii=False, indent=2), encoding="utf-8")
 
-    rc = main(["deliver", "--workspace", str(ws), "--json"])
+    rc = _legacy_delivery_main(["deliver", "--workspace", str(ws), "--json"])
 
     assert rc == 1
     payload = json.loads(capsys.readouterr().out)
@@ -377,11 +418,11 @@ def test_deliver_rejects_unsupported_delivery_artifact(tmp_path: Path, capsys) -
     assert _delivery_events(ws) == []
 
 
-def test_deliver_requires_existing_runtime_state(tmp_path: Path, capsys) -> None:
+def test_legacy_internal_delivery_requires_runtime_state(tmp_path: Path, capsys) -> None:
     ws = _workspace(tmp_path)
     _write_bundle(ws, include_docx=False, init_runtime=False)
 
-    rc = main(["deliver", "--workspace", str(ws), "--json"])
+    rc = _legacy_delivery_main(["deliver", "--workspace", str(ws), "--json"])
 
     assert rc == 1
     payload = json.loads(capsys.readouterr().out)
@@ -390,19 +431,19 @@ def test_deliver_requires_existing_runtime_state(tmp_path: Path, capsys) -> None
     assert not (ws / "output" / "intermediate" / "event_log.jsonl").exists()
 
 
-def test_deliver_rejects_non_delivery_artifact_in_report(tmp_path: Path, capsys) -> None:
+def test_legacy_internal_delivery_rejects_non_delivery_artifact(tmp_path: Path, capsys) -> None:
     ws = _workspace(tmp_path)
     bad_path = ws / "output" / "source_appendix.md"
     _write_bundle(ws, delivery_artifacts=[str(bad_path)])
 
-    rc = main(["deliver", "--workspace", str(ws), "--json"])
+    rc = _legacy_delivery_main(["deliver", "--workspace", str(ws), "--json"])
 
     assert rc == 1
     payload = json.loads(capsys.readouterr().out)
     assert payload["error_code"] == "E_DELIVERY_BUNDLE_MISSING"
 
 
-def test_deliver_feishu_doc_sends_delivery_markdown_and_sanitizes_events(tmp_path: Path, capsys, monkeypatch) -> None:
+def test_legacy_internal_feishu_doc_sanitizes_events(tmp_path: Path, capsys, monkeypatch) -> None:
     ws = _workspace(tmp_path)
     markdown, _docx = _write_bundle(ws)
     calls: list[tuple[str, str, str]] = []
@@ -413,7 +454,7 @@ def test_deliver_feishu_doc_sends_delivery_markdown_and_sanitizes_events(tmp_pat
 
     monkeypatch.setattr("multi_agent_brief.cli.deliver_commands.FeishuDeliveryConnector.deliver", fake_deliver)
 
-    rc = main([
+    rc = _legacy_delivery_main([
         "deliver",
         "--workspace",
         str(ws),
@@ -437,7 +478,7 @@ def test_deliver_feishu_doc_sends_delivery_markdown_and_sanitizes_events(tmp_pat
     assert '"recipient_present": true' in event_blob
 
 
-def test_deliver_feishu_drive_prefers_named_docx(tmp_path: Path, monkeypatch) -> None:
+def test_legacy_internal_feishu_drive_prefers_named_docx(tmp_path: Path, monkeypatch) -> None:
     ws = _workspace(tmp_path)
     _markdown, docx = _write_bundle(ws)
     calls: list[str] = []
@@ -448,7 +489,7 @@ def test_deliver_feishu_drive_prefers_named_docx(tmp_path: Path, monkeypatch) ->
 
     monkeypatch.setattr("multi_agent_brief.cli.deliver_commands.FeishuDeliveryConnector.deliver", fake_deliver)
 
-    rc = main([
+    rc = _legacy_delivery_main([
         "deliver",
         "--workspace",
         str(ws),
@@ -465,7 +506,7 @@ def test_deliver_feishu_drive_prefers_named_docx(tmp_path: Path, monkeypatch) ->
     assert calls == [str(docx)]
 
 
-def test_deliver_feishu_failure_records_failed_event(tmp_path: Path, capsys, monkeypatch) -> None:
+def test_legacy_internal_feishu_failure_records_event(tmp_path: Path, capsys, monkeypatch) -> None:
     ws = _workspace(tmp_path)
     _write_bundle(ws, include_docx=False)
 
@@ -478,7 +519,7 @@ def test_deliver_feishu_failure_records_failed_event(tmp_path: Path, capsys, mon
 
     monkeypatch.setattr("multi_agent_brief.cli.deliver_commands.FeishuDeliveryConnector.deliver", fake_deliver)
 
-    rc = main([
+    rc = _legacy_delivery_main([
         "deliver",
         "--workspace",
         str(ws),
@@ -503,7 +544,7 @@ def test_deliver_feishu_failure_records_failed_event(tmp_path: Path, capsys, mon
     assert "oc_secret_chat" not in json.dumps(events, ensure_ascii=False)
 
 
-def test_deliver_feishu_success_with_success_event_failure_reports_delivered(
+def test_legacy_internal_feishu_success_event_failure_reports_delivered(
     tmp_path: Path,
     capsys,
     monkeypatch,
@@ -527,7 +568,7 @@ def test_deliver_feishu_success_with_success_event_failure_reports_delivered(
     monkeypatch.setattr("multi_agent_brief.cli.deliver_commands.FeishuDeliveryConnector.deliver", fake_deliver)
     monkeypatch.setattr("multi_agent_brief.cli.deliver_commands.append_event", flaky_append_event)
 
-    rc = main([
+    rc = _legacy_delivery_main([
         "deliver",
         "--workspace",
         str(ws),
@@ -548,7 +589,7 @@ def test_deliver_feishu_success_with_success_event_failure_reports_delivered(
     assert [event["event_type"] for event in _delivery_events(ws)] == ["delivery_attempted"]
 
 
-def test_deliver_feishu_success_event_failure_warns_in_text_output(
+def test_legacy_internal_feishu_event_failure_warns_in_text_output(
     tmp_path: Path,
     capsys,
     monkeypatch,
@@ -572,7 +613,7 @@ def test_deliver_feishu_success_event_failure_warns_in_text_output(
     monkeypatch.setattr("multi_agent_brief.cli.deliver_commands.FeishuDeliveryConnector.deliver", fake_deliver)
     monkeypatch.setattr("multi_agent_brief.cli.deliver_commands.append_event", flaky_append_event)
 
-    rc = main([
+    rc = _legacy_delivery_main([
         "deliver",
         "--workspace",
         str(ws),
@@ -591,7 +632,7 @@ def test_deliver_feishu_success_event_failure_warns_in_text_output(
     assert "do not retry blindly" in captured.err
 
 
-def test_deliver_gmail_draft_creates_draft_without_email_leak(tmp_path: Path, capsys, monkeypatch) -> None:
+def test_legacy_internal_gmail_draft_avoids_email_leak(tmp_path: Path, capsys, monkeypatch) -> None:
     ws = _workspace(tmp_path)
     markdown, docx = _write_bundle(ws)
     markdown.write_text(
@@ -613,7 +654,7 @@ def test_deliver_gmail_draft_creates_draft_without_email_leak(tmp_path: Path, ca
 
     monkeypatch.setattr("multi_agent_brief.cli.deliver_commands.GwsGmailDeliveryConnector.deliver", fake_deliver)
 
-    rc = main([
+    rc = _legacy_delivery_main([
         "deliver",
         "--workspace",
         str(ws),
@@ -664,7 +705,7 @@ def test_deliver_gmail_draft_creates_draft_without_email_leak(tmp_path: Path, ca
     assert '"recipient_present": true' in event_blob
 
 
-def test_deliver_gmail_draft_event_failure_returns_error_without_retry_signal(
+def test_legacy_internal_gmail_draft_event_failure_has_no_retry_signal(
     tmp_path: Path,
     capsys,
     monkeypatch,
@@ -688,7 +729,7 @@ def test_deliver_gmail_draft_event_failure_returns_error_without_retry_signal(
     monkeypatch.setattr("multi_agent_brief.cli.deliver_commands.GwsGmailDeliveryConnector.deliver", fake_deliver)
     monkeypatch.setattr("multi_agent_brief.cli.deliver_commands.append_event", flaky_append_event)
 
-    rc = main([
+    rc = _legacy_delivery_main([
         "deliver",
         "--workspace",
         str(ws),
@@ -716,7 +757,7 @@ def test_deliver_gmail_draft_event_failure_returns_error_without_retry_signal(
     assert [event["event_type"] for event in _delivery_events(ws)] == ["delivery_attempted"]
 
 
-def test_deliver_gmail_send_sends_message_without_email_leak(tmp_path: Path, capsys, monkeypatch) -> None:
+def test_legacy_internal_gmail_send_avoids_email_leak(tmp_path: Path, capsys, monkeypatch) -> None:
     ws = _workspace(tmp_path)
     _markdown, docx = _write_bundle(ws)
     calls: list[tuple[str, str, str, dict[str, object]]] = []
@@ -727,7 +768,7 @@ def test_deliver_gmail_send_sends_message_without_email_leak(tmp_path: Path, cap
 
     monkeypatch.setattr("multi_agent_brief.cli.deliver_commands.GwsGmailDeliveryConnector.deliver", fake_deliver)
 
-    rc = main([
+    rc = _legacy_delivery_main([
         "deliver",
         "--workspace",
         str(ws),
@@ -774,7 +815,7 @@ def test_deliver_gmail_send_sends_message_without_email_leak(tmp_path: Path, cap
         assert secret not in event_blob
 
 
-def test_deliver_gmail_send_event_failure_returns_error_without_retry_signal(
+def test_legacy_internal_gmail_send_event_failure_has_no_retry_signal(
     tmp_path: Path,
     capsys,
     monkeypatch,
@@ -798,7 +839,7 @@ def test_deliver_gmail_send_event_failure_returns_error_without_retry_signal(
     monkeypatch.setattr("multi_agent_brief.cli.deliver_commands.GwsGmailDeliveryConnector.deliver", fake_deliver)
     monkeypatch.setattr("multi_agent_brief.cli.deliver_commands.append_event", flaky_append_event)
 
-    rc = main([
+    rc = _legacy_delivery_main([
         "deliver",
         "--workspace",
         str(ws),
@@ -827,7 +868,7 @@ def test_deliver_gmail_send_event_failure_returns_error_without_retry_signal(
     assert [event["event_type"] for event in _delivery_events(ws)] == ["delivery_attempted"]
 
 
-def test_deliver_gmail_draft_uses_markdown_when_docx_missing(tmp_path: Path, monkeypatch) -> None:
+def test_legacy_internal_gmail_draft_uses_markdown_without_docx(tmp_path: Path, monkeypatch) -> None:
     ws = _workspace(tmp_path)
     markdown, _docx = _write_bundle(ws, include_docx=False)
     calls: list[str] = []
@@ -838,7 +879,7 @@ def test_deliver_gmail_draft_uses_markdown_when_docx_missing(tmp_path: Path, mon
 
     monkeypatch.setattr("multi_agent_brief.cli.deliver_commands.GwsGmailDeliveryConnector.deliver", fake_deliver)
 
-    rc = main([
+    rc = _legacy_delivery_main([
         "deliver",
         "--workspace",
         str(ws),
@@ -855,7 +896,7 @@ def test_deliver_gmail_draft_uses_markdown_when_docx_missing(tmp_path: Path, mon
     assert calls == [str(markdown)]
 
 
-def test_deliver_gmail_draft_failure_scrubs_gws_subject_body_and_recipient(
+def test_legacy_internal_gmail_failure_scrubs_sensitive_fields(
     tmp_path: Path,
     capsys,
     monkeypatch,
@@ -876,7 +917,7 @@ def test_deliver_gmail_draft_failure_scrubs_gws_subject_body_and_recipient(
 
     monkeypatch.setattr("multi_agent_brief.delivery.gws.subprocess.run", fake_run)
 
-    rc = main([
+    rc = _legacy_delivery_main([
         "deliver",
         "--workspace",
         str(ws),
@@ -907,7 +948,7 @@ def test_deliver_gmail_draft_failure_scrubs_gws_subject_body_and_recipient(
     assert [event["event_type"] for event in _delivery_events(ws)] == ["delivery_attempted", "delivery_failed"]
 
 
-def test_deliver_gmail_timeout_is_reported_as_unknown_outcome(tmp_path: Path, capsys, monkeypatch) -> None:
+def test_legacy_internal_gmail_timeout_is_outcome_unknown(tmp_path: Path, capsys, monkeypatch) -> None:
     ws = _workspace(tmp_path)
     _write_bundle(ws, include_docx=False)
     monkeypatch.setattr("multi_agent_brief.delivery.gws.shutil.which", lambda name: "/usr/local/bin/gws")
@@ -919,7 +960,7 @@ def test_deliver_gmail_timeout_is_reported_as_unknown_outcome(tmp_path: Path, ca
 
     monkeypatch.setattr("multi_agent_brief.delivery.gws.subprocess.run", fake_run)
 
-    rc = main([
+    rc = _legacy_delivery_main([
         "deliver",
         "--workspace",
         str(ws),
@@ -948,11 +989,11 @@ def test_deliver_gmail_timeout_is_reported_as_unknown_outcome(tmp_path: Path, ca
     assert events[1]["metadata"]["inspect_target"] == "Gmail Sent Mail"
 
 
-def test_deliver_gmail_rejects_unknown_channel(tmp_path: Path, capsys) -> None:
+def test_legacy_internal_gmail_rejects_unknown_channel(tmp_path: Path, capsys) -> None:
     ws = _workspace(tmp_path)
     _write_bundle(ws, include_docx=False)
 
-    rc = main([
+    rc = _legacy_delivery_main([
         "deliver",
         "--workspace",
         str(ws),
