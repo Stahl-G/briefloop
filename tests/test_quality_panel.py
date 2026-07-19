@@ -44,6 +44,16 @@ from multi_agent_brief.semantic_evaluator.serialization import canonical_sha256
 from tests.helpers import initialized_workspace_writer
 
 
+@pytest.fixture(autouse=True)
+def _exercise_pre_cutover_quality_internals(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Retain dead-path coverage until the serial LEGACY-DELETE merge unit."""
+
+    monkeypatch.setattr(
+        "multi_agent_brief.cli.authority_guard.active_command_authority_error",
+        lambda _workspace, _command: None,
+    )
+
+
 _workspace = initialized_workspace_writer(
     project_name="Quality Panel Test",
 )

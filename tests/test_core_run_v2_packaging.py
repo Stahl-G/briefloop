@@ -74,7 +74,6 @@ def test_non_editable_wheel_runs_complete_dormant_core_spine(
             StageCompleteRequest,
         )
         from multi_agent_brief.control_store import SQLiteControlStore
-        from multi_agent_brief.control_store.serialization import canonical_fingerprint
         from multi_agent_brief.core_run_v2.checkout import build_checkout_revision
         from multi_agent_brief.core_run_v2.publication import CheckoutPublicationEngine
         from multi_agent_brief.core_run_v2.policy import REQUIRED_AUDITOR_GATES
@@ -150,7 +149,7 @@ def test_non_editable_wheel_runs_complete_dormant_core_spine(
             lines = stream.getvalue().splitlines()
             assert len(lines) == 1, lines
             result = json.loads(lines[0])
-            assert result["status"] == expected, result
+            assert result["status"] == expected, (group, action, result)
             assert return_code == (0 if expected in {"committed", "replayed"} else 1)
             return result
 
@@ -191,7 +190,7 @@ def test_non_editable_wheel_runs_complete_dormant_core_spine(
                     run_id=run_id,
                     stage_id=stage_id,
                     role_id=role_id,
-                    runtime="operator",
+                    runtime="codex",
                     expected_store_revision=revision(),
                 ),
                 scope="cli",
@@ -221,21 +220,37 @@ def test_non_editable_wheel_runs_complete_dormant_core_spine(
                 expected=expected,
             )
 
+        sources_bytes = (
+            b"source_strategy:\n"
+            b"  enabled_providers:\n"
+            b"    - cached_package\n"
+            b"web_search:\n"
+            b"  enabled: false\n"
+            b"cached_package:\n"
+            b"  enabled: true\n"
+            b"  paths:\n"
+            b"    - input/source.txt\n"
+            b"  formats:\n"
+            b"    - txt\n"
+        )
+        (workspace / "sources.yaml").write_bytes(sources_bytes)
+        (workspace / "input" / "source.txt").write_text(
+            "Synthetic cached package input.\n",
+            encoding="utf-8",
+        )
         initialize = deepcopy(CoreRunInitializeRequest.minimal_example)
         initialize.update(
             request_id="REQ-WHEEL-INIT",
             run_id=run_id,
             workspace_id=workspace_id,
-            role_topology="default",
+            runtime="codex",
+            role_topology="single_session",
+            sources_config_sha256=hashlib.sha256(sources_bytes).hexdigest(),
             input_governance_required=False,
         )
-        runtime_adapter = dict(initialize["runtime_adapter_binding"])
-        runtime_adapter["run_id"] = run_id
-        runtime_adapter.pop("binding_fingerprint", None)
-        runtime_adapter["binding_fingerprint"] = canonical_fingerprint(
-            runtime_adapter
-        )
-        initialize["runtime_adapter_binding"] = runtime_adapter
+        initialize["runtime_adapter_binding"] = load_codex_adapter_binding(
+            run_id
+        ).model_dump(mode="json", exclude_unset=False)
         call(
             "core-v2",
             "initialize",
@@ -423,8 +438,9 @@ def test_non_editable_wheel_runs_complete_dormant_core_spine(
             "candidate",
             candidate_request_path.relative_to(workspace).as_posix(),
         )
+        complete("scout", [("candidate_claims", 1)])
 
-        screening = start("REQ-WHEEL-INVOKE-SCREEN", "scout", "scout")
+        screening = start("REQ-WHEEL-INVOKE-SCREEN", "screener", "screener")
         screening_dir = workspace / "scratch" / screening
         screened_path = write_json(
             screening_dir / "screened_candidates.json",
@@ -465,7 +481,7 @@ def test_non_editable_wheel_runs_complete_dormant_core_spine(
             screened_request_path.relative_to(workspace).as_posix(),
         )
         complete(
-            "scout",
+            "screener",
             [("candidate_claims", 1), ("screened_candidates", 1)],
         )
 
@@ -771,5 +787,5 @@ def test_non_editable_wheel_runs_complete_dormant_core_spine(
             '{"auditor": "complete", "claim_count": 1, '
             '"contamination_blocked": true, "finalize": "ready", '
             '"gate_count": 6, "legacy_file_zero_truth": true, '
-            '"receipt_count": 28}\n'
+            '"receipt_count": 29}\n'
         )

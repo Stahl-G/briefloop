@@ -24,6 +24,20 @@ from tests.helpers import sha256_file as _sha256_file
 from tests.helpers import write_minimal_workspace
 
 
+@pytest.fixture(autouse=True)
+def _exercise_pre_cutover_status_internals(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Keep legacy internals covered until LEGACY-DELETE removes this module.
+
+    The active CLI authority guard is covered by the SQLite runtime-host tests;
+    these tests no longer make the JSON workspace a supported public path.
+    """
+
+    monkeypatch.setattr(
+        "multi_agent_brief.cli.authority_guard.active_command_authority_error",
+        lambda _workspace, _command: None,
+    )
+
+
 def _minimal_workspace(path: Path) -> Path:
     return write_minimal_workspace(
         path,
