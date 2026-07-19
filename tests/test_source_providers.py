@@ -1372,9 +1372,10 @@ def test_web_search_no_domains_passes_none():
 
 def test_init_aggressive_signal_web_search_enabled_without_backend(tmp_path):
     import yaml
-    from multi_agent_brief.cli.main import main
+    from multi_agent_brief.cli.main import build_parser, main
+
     workspace = tmp_path / "ws"
-    assert main([
+    args = [
         "init",
         str(workspace),
         "--language",
@@ -1391,7 +1392,26 @@ def test_init_aggressive_signal_web_search_enabled_without_backend(tmp_path):
         "weekly",
         "--source-profile",
         "aggressive_signal",
-    ]) == 0
+    ]
+    parser = build_parser()
+    subcommands = next(
+        action.choices
+        for action in parser._actions
+        if getattr(action, "choices", None)
+    )
+    init_options = {
+        option
+        for action in subcommands["init"]._actions
+        for option in action.option_strings
+    }
+    if "--task-objective" in init_options:
+        # LEGACY-DELETE: remove this pre/post-CX option branch and retain only
+        # the strict SQLite-runtime bootstrap contract.
+        args.extend([
+            "--task-objective",
+            "Track material manufacturing developments.",
+        ])
+    assert main(args) == 0
     config = yaml.safe_load((workspace / "sources.yaml").read_text(encoding="utf-8"))
     web_search = config["web_search"]
     assert web_search["enabled"] is True

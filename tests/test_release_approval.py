@@ -5,22 +5,101 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from multi_agent_brief.cli.main import main
+from multi_agent_brief.orchestrator.runtime_state import (
+    RuntimeStateError,
+    check_runtime_state,
+)
 from multi_agent_brief.orchestrator.runtime_state.event_log import append_event
+from multi_agent_brief.orchestrator.runtime_state.lifecycle import initialize_runtime_state
 from multi_agent_brief.product.release_approval import (
     APPROVAL_BOUNDARY,
     HUMAN_APPROVAL_LEDGER_SCHEMA,
+    ReleaseApprovalError,
     check_release_readiness,
+    initialize_approval_ledger,
     record_human_approval,
     validate_human_approval_ledger_payload,
     validate_release_readiness_report_payload,
 )
-from tests.helpers import initialized_workspace_writer
+from tests.helpers import write_minimal_workspace_under
 
 
-_workspace = initialized_workspace_writer(
-    project_name="Release Approval Test",
-)
+ROOT = Path(__file__).resolve().parent.parent
+
+
+def _arg(argv: list[str], name: str, *, default: str | None = None) -> str | None:
+    try:
+        return argv[argv.index(name) + 1]
+    except ValueError:
+        return default
+
+
+def main(argv: list[str]) -> int:
+    """Exercise retired release modules directly, never the public CLI guard.
+
+    LEGACY-DELETE removes this bridge with the legacy approval/release module
+    tests.  Until then it preserves their deterministic invariants without
+    claiming that JSON control state remains a supported public authority.
+    """
+
+    workspace = _arg(argv, "--workspace")
+    assert workspace is not None
+    try:
+        if argv[:2] == ["approval", "init"]:
+            result = initialize_approval_ledger(
+                workspace=workspace,
+                mode=str(_arg(argv, "--mode")),
+            )
+            print(json.dumps({"ok": True, "boundary": APPROVAL_BOUNDARY, "event": result.event}))
+            return 0
+        if argv[:2] == ["approval", "record"]:
+            result = record_human_approval(
+                workspace=workspace,
+                mode=_arg(argv, "--mode"),
+                role=str(_arg(argv, "--role")),
+                decision=str(_arg(argv, "--decision")),
+                reason=str(_arg(argv, "--reason")),
+            )
+            print(json.dumps({"ok": True, "boundary": APPROVAL_BOUNDARY, "event": result.event}))
+            return 0
+        if argv[:2] == ["release", "check"]:
+            result = check_release_readiness(
+                workspace=workspace,
+                mode=str(_arg(argv, "--mode")),
+            )
+            print(json.dumps(result.payload, ensure_ascii=False, sort_keys=True))
+            return 0 if result.payload["status"] == "pass" else 1
+        if argv[:2] == ["state", "check"]:
+            state = check_runtime_state(workspace=workspace, repo_workdir=ROOT)
+            print(json.dumps(state, ensure_ascii=False, sort_keys=True))
+            return 0
+        if argv[:2] == ["state", "init"] and "--reset-state" in argv:
+            initialize_runtime_state(
+                workspace=workspace,
+                runtime=str(_arg(argv, "--runtime")),
+                repo_workdir=ROOT,
+                reset_state=True,
+            )
+            return 0
+    except (ReleaseApprovalError, RuntimeStateError, OSError, json.JSONDecodeError) as exc:
+        print(str(exc))
+        return 1
+    raise AssertionError(f"unsupported direct legacy module call: {argv[:2]}")
+
+
+def _workspace(tmp_path: Path) -> Path:
+    """Build the legacy module fixture without claiming a public CLI path."""
+
+    workspace = write_minimal_workspace_under(
+        tmp_path,
+        project_name="Release Approval Test",
+    )
+    initialize_runtime_state(
+        runtime="operator",
+        workspace=workspace,
+        repo_workdir=ROOT,
+    )
+    return workspace
 
 
 def _json(path: Path) -> dict:
