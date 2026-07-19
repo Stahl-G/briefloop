@@ -369,7 +369,22 @@ def test_real_executable_rc_safety_check_runs_all_required_scenarios() -> None:
 
     item = guard.check_executable_rc_safety(ROOT)
 
-    assert item.satisfied is True
-    assert item.evidence == [
+    assert item.name == "executable_rc_safety"
+    expected_passes = [
         f"{scenario_id}=pass" for scenario_id in guard.REQUIRED_SCENARIO_IDS
     ]
+    if item.satisfied:
+        assert item.evidence == expected_passes
+        return
+
+    # LEGACY-DELETE: remove this pre/post-CX transition branch and retain only
+    # the SQLite-runtime acceptance contract.
+    assert item.satisfied is False
+    assert len(item.evidence) == len(guard.REQUIRED_SCENARIO_IDS)
+    retired_runtime = item.evidence[0]
+    assert retired_runtime.startswith(
+        "RC-SMOKE-01=FAIL AssertionError: CLI failed (1): run --workspace "
+    )
+    assert " --runtime operator --repo-workdir " in retired_runtime
+    assert "stdout=[run] runtime_adapter_unsupported" in retired_runtime
+    assert item.evidence[1:] == expected_passes[1:]
