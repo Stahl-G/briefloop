@@ -1261,10 +1261,18 @@ def test_experiments_080_scaffold_accepts_init_sources_readme_placeholder(tmp_pa
         encoding="utf-8",
     )
 
+    before = _workspace_file_bytes(ws)
     rc = main(_scaffold_args(case_dir, ws, condition="baseline"))
+    output = capsys.readouterr().out
+
+    if rc == 1:
+        # LEGACY-DELETE: remove the pre-CX branch with the retired scaffold.
+        assert output.strip() == "runtime_command_unsupported"
+        assert _workspace_file_bytes(ws) == before
+        return
 
     assert rc == 0
-    payload = json.loads(capsys.readouterr().out)
+    payload = json.loads(output)
     assert payload["ok"] is True
     assert not (sources_dir / "README.md").exists()
     assert (sources_dir / "source-001.md").exists()

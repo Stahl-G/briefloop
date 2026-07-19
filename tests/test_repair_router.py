@@ -403,15 +403,39 @@ def test_repair_route_maps_unsupported_claim_to_audited_brief(tmp_path, capsys):
         },
     )
 
-    rc = main(["repair", "route", "--workspace", str(ws), "--json"])
+    routed = route_repair(workspace=ws)
+    assert routed["ok"] is True
+    assert routed["route_kind"] == "owner_stage_repair"
+    assert routed["repair_owner"] == "editor"
+    assert routed["allowed_artifacts"] == ["output/intermediate/audited_brief.md"]
+    assert routed["must_rerun_from"] == "auditor"
+    assert "output/intermediate/audit_report.json" in routed["blocked_direct_edits"]
 
-    assert rc == 0
-    payload = json.loads(capsys.readouterr().out)
-    assert payload["route_kind"] == "owner_stage_repair"
-    assert payload["repair_owner"] == "editor"
-    assert payload["allowed_artifacts"] == ["output/intermediate/audited_brief.md"]
-    assert payload["must_rerun_from"] == "auditor"
-    assert "output/intermediate/audit_report.json" in payload["blocked_direct_edits"]
+    before_files = {
+        path.relative_to(ws).as_posix(): path.read_bytes()
+        for path in ws.rglob("*")
+        if path.is_file()
+    }
+    rc = main(["repair", "route", "--workspace", str(ws), "--json"])
+    output = capsys.readouterr().out
+
+    if rc == 1:
+        # LEGACY-DELETE: remove the pre-CX branch with the retired public CLI.
+        assert output.strip() == "legacy_workspace_unsupported"
+    else:
+        assert rc == 0
+        payload = json.loads(output)
+        assert payload["route_kind"] == "owner_stage_repair"
+        assert payload["repair_owner"] == "editor"
+        assert payload["allowed_artifacts"] == ["output/intermediate/audited_brief.md"]
+        assert payload["must_rerun_from"] == "auditor"
+        assert "output/intermediate/audit_report.json" in payload["blocked_direct_edits"]
+    after_files = {
+        path.relative_to(ws).as_posix(): path.read_bytes()
+        for path in ws.rglob("*")
+        if path.is_file()
+    }
+    assert after_files == before_files
     assert not (ws / "output" / "intermediate" / "repair_plan.json").exists()
     assert runtime_state_paths(ws)["event_log"].read_bytes() == before_events
 
