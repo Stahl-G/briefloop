@@ -67,6 +67,10 @@ where = ["src"]
 [tool.setuptools.package-data]
 multi_agent_brief = [
   "control_store/migrations/*.sql",
+  "runtime_kits/codex/*.toml",
+  "runtime_kits/codex/agents/*.toml",
+  "runtime_kits/codex/skills/briefloop/*.md",
+  "runtime_kits/codex/skills/briefloop/references/*.md",
   "semantic_evaluator/profiles/*.yaml",
   "semantic_evaluator/prompts/*.txt",
   "semantic_evaluator/baselines/*.yaml",

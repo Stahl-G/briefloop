@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import json
 from pathlib import Path
 
 from multi_agent_brief.orchestrator.handoff import (
@@ -178,6 +179,45 @@ def _run_launcher(args: argparse.Namespace) -> int:
         print("For a demo only:")
         print("  briefloop init <workspace> --demo")
         return 1
+
+    from multi_agent_brief.cli.authority_guard import classify_workspace_authority
+
+    authority = classify_workspace_authority(workspace_path)
+    if authority.kind == "legacy":
+        print(f"{prefix} legacy_workspace_unsupported")
+        return 1
+    if authority.kind == "invalid_sqlite":
+        print(f"{prefix} control_store_integrity_invalid")
+        return 1
+    if getattr(args, "command", None) == "start":
+        print(f"{prefix} runtime_command_unsupported")
+        return 1
+    if args.runtime != "codex":
+        print(f"{prefix} runtime_adapter_unsupported")
+        return 1
+    if getattr(args, "skip_doctor", False):
+        print(f"{prefix} runtime_command_unsupported")
+        return 1
+    from multi_agent_brief.runtime_host_v2.codex import load_codex_adapter_binding
+    from multi_agent_brief.runtime_host_v2.errors import RuntimeHostError
+    from multi_agent_brief.runtime_host_v2.service import RuntimeHostService
+
+    try:
+        action = RuntimeHostService(
+            workspace_path,
+            adapter_loader=load_codex_adapter_binding,
+        ).next_action()
+    except RuntimeHostError as exc:
+        print(f"{prefix} {exc}")
+        return 1
+    print(
+        json.dumps(
+            action.model_dump(mode="json", exclude_unset=False),
+            sort_keys=True,
+            separators=(",", ":"),
+        )
+    )
+    return 0
 
     try:
         repo_workdir = resolve_repo_workdir(

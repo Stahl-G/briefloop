@@ -1444,6 +1444,8 @@ class CoreRunRecoveryService:
                 sources_content,
                 run_id=request.successor_run_id,
                 sources_config_sha256=sources_config_sha256,
+                run_direction=request.run_direction,
+                workspace_root=self.workspace,
             )
             source_payload = source_plan.model_dump(
                 mode="json", exclude_unset=False

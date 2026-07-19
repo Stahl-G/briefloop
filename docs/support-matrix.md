@@ -30,9 +30,10 @@ validation unless that is stated separately.
 | Capability | Status |
 |---|---|
 | Subagent workflow (default topology: Scout finds + screens; strict topology: independent Screener; Claim Ledger → Analyst → Delivery Editor → Auditor) | Supported |
-| Role topology selector (`policy.role_topology`: `default`, `strict`, `human_assisted`) with topology-satisfied stages recorded in workflow state and event log | Supported |
-| Runtime handoff (`agent_handoff.md` + `agent_handoff.json`) | Supported |
-| Runtime state control files (`runtime_manifest.json`, `workflow_state.json`, `artifact_registry.json`, `event_log.jsonl`) | Supported |
+| Fresh SQLite-only Codex control path (`briefloop.db`, strict DTOs, UoW receipts, Store-derived `CoreRunNextAction`) | Experimental |
+| Codex `single_session` topology (shared context, distinct Receipt-backed invocations, stage-separated self-review) | Experimental |
+| Legacy runtime handoff (`agent_handoff.md` + `agent_handoff.json`) | Deprecated; not an authority or new-run entrypoint |
+| JSON/JSONL runtime control files (`runtime_manifest.json`, `workflow_state.json`, `artifact_registry.json`, `event_log.jsonl`) | Projection/legacy only; never accepted as runtime authority |
 | Stage runtime/model provenance on completion transactions | Supported |
 | Audience profile runtime surface (`audience_profile.md` + `audience_profile_snapshot.md`) | Supported |
 | Improvement Ledger / Memory (`improvement/ledger.jsonl`, `improvement/memory.md`, `improvement_memory_snapshot.md`) | Supported |
@@ -52,16 +53,16 @@ validation unless that is stated separately.
 | Source appendix audit/control copy (`source_appendix.md`) | Supported |
 | `briefloop` CLI | Supported |
 | `multi-agent-brief` CLI | Supported compatibility entrypoint with identical behavior; retained for existing scripts and installs |
-| `briefloop run --workspace <path> --runtime hermes\|claude\|opencode\|codex\|codebuddy\|operator` | Supported; dedicated adapters inject their fixed identity, generic CLI users choose explicitly |
-| `briefloop run --workspace <path> --runtime operator --recipe fast-rerun` | Experimental |
-| `briefloop status --workspace <path>` | Supported |
-| `briefloop deliver --workspace <path> --target local` | Supported |
+| `briefloop run --workspace <path> --runtime codex` plus `runtime next/invocation-start/invocation-accept/invocation-fail/apply/diagnose` | Experimental; fresh SQLite-only, no JSON migration or fallback |
+| Legacy runtime names and `operator --recipe fast-rerun` | Unsupported for the SQLite-only active path |
+| `briefloop status --workspace <path>` | Supported read-only Store projection for SQLite workspaces; JSON-only workspace unsupported |
+| Legacy `briefloop deliver` commands | Unsupported on SQLite; approval and delivery use typed Store actions through `runtime apply` |
 | `briefloop deliver --workspace <path> --target feishu` | Experimental |
 | `briefloop deliver --workspace <path> --target gmail --channel draft\|send` | Experimental |
-| `briefloop state init --runtime <canonical-runtime>` plus check/show/decide/freeze-claim-ledger/stage-complete/finalize-complete | Supported |
+| Legacy `state`, `gates`, `repair`, `finalize`, `delivery`, `controls`, and feedback mutators | Unsupported on SQLite; retained only until legacy deletion |
 | `briefloop state import-fact-layer --runtime <canonical-runtime>` | Experimental |
 | `briefloop controls build-switchboard/show/select/validate` | Supported |
-| `briefloop runtime install --workspace <path> --runtime opencode\|claude\|codex\|all` | Source-clone-only |
+| `briefloop runtime install --workspace <path> --runtime codex` | Experimental; packaged/non-editable Codex kit |
 | `briefloop feedback ingest/plan/resolve/show/validate` | Supported |
 | `briefloop gates check/show/validate` | Supported |
 | `briefloop provenance build/show/validate` | Supported |
@@ -350,21 +351,13 @@ For the v1.0 product boundary, see the
 
 | Runtime | Status |
 |---|---|
-| Hermes (`delegate_task` native pipeline + cron) | Supported |
-| Claude Code (`/briefloop` and `/mabw` five-verb writer entrypoints + `/generate-brief` generated-handoff delegated stage workflow; installable with `briefloop claude install`) | Supported |
-| OpenCode (subagent workflow) | Supported |
-| Codex (custom-agent workflow via `runtime install`) | Experimental |
-| CodeBuddy (`--runtime codebuddy` handoff using `.codebuddy/skills/briefloop/` and `.codebuddy/agents/briefloop-*.md`) | Experimental |
-| Operator (host-agnostic compact workflow; historical `manual` manifests are read-only and require explicit reset) | Supported |
+| Codex (`runtime install`, SQLite ControlStore, `single_session`) | Experimental active path |
+| Hermes / Claude Code / OpenCode / CodeBuddy / Operator | Legacy adapter assets only; not active SQLite runtimes |
 
-Claude Code is the first-class writer / five-verb path (`new`, `run`, `status`,
-`feedback`, `deliver`). Hermes remains a supported delegated/scheduled runtime
-path. Codex custom-agent assets are installable into a workspace, but Codex
-remains Experimental until a real Codex control-trace smoke validates the
-end-to-end specialist workflow. Other runtimes keep their existing workflow
-entrypoints. The operator runtime does not assume subagent/delegate capability;
-it is a compact operator workflow that still requires deterministic
-transactions, artifacts, gates, and human-triggered delivery.
+Codex is the only active fresh SQLite runtime in this cutover. It remains
+Experimental until a real Codex control trace validates the end-to-end role,
+receipt, Gate, approval and delivery correspondence. Retained adapters do not
+provide a JSON compatibility path and may not be used as fallback.
 
 Runtime source assets under `.agents/`, `.claude/`, `.codex/`, `.opencode/`,
 and `integrations/hermes-plugin/` are source-clone assets. Package-only installs

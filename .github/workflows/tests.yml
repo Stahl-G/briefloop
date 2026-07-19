@@ -216,7 +216,7 @@ jobs:
         run: python scripts/check_terms.py
 
       - name: Tests
-        run: python -m pytest -q -x -n auto --dist worksteal
+        run: python -m pytest -q -n auto --dist worksteal
 
       - name: Agent config check
         run: python scripts/generate_agent_configs.py --check

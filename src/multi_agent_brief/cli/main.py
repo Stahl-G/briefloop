@@ -302,6 +302,23 @@ def _dispatch(args: argparse.Namespace) -> int:
 def main(argv: list[str] | None = None) -> int:
     parser = build_parser()
     args = parser.parse_args(argv)
+    workspace = getattr(args, "workspace", None)
+    if workspace is None:
+        config = getattr(args, "config", None)
+        if config is not None:
+            workspace = Path(config).expanduser().resolve().parent
+    if workspace is not None:
+        from multi_agent_brief.cli.authority_guard import (
+            active_command_authority_error,
+        )
+
+        error = active_command_authority_error(
+            Path(workspace).expanduser().resolve(),
+            str(args.command),
+        )
+        if error is not None:
+            print(error)
+            return 1
     return _dispatch(args)
 
 
