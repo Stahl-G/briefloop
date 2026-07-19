@@ -6,7 +6,7 @@ from pathlib import Path
 
 import yaml
 
-from multi_agent_brief.cli.main import main
+from multi_agent_brief.cli.main import build_parser, main
 
 
 def complete_init_args(workspace, *, language="zh-CN", industry="finance", extra=None):
@@ -28,6 +28,20 @@ def complete_init_args(workspace, *, language="zh-CN", industry="finance", extra
         "--source-profile",
         "research",
     ]
+    parser = build_parser()
+    subcommands = next(
+        action.choices
+        for action in parser._actions
+        if getattr(action, "choices", None)
+    )
+    init_options = {
+        option
+        for action in subcommands["init"]._actions
+        for option in action.option_strings
+    }
+    if "--task-objective" in init_options:
+        # LEGACY-DELETE: retain only the strict SQLite initialization contract.
+        args.extend(["--task-objective", "Track material finance developments."])
     if extra:
         args.extend(extra)
     return args
