@@ -373,6 +373,18 @@ def test_discovery_only_source_exhausts_exact_route_without_stage_success(
         lambda **_kwargs: [SimpleNamespace(status="OK")],
     )
     service = _source_discovery_ready(workspace)
+    if sys.platform == "win32":
+        accepted, before_revision, before_snapshot = _submit_source_candidates(
+            workspace,
+            service,
+        )
+        assert accepted.to_dict() == {
+            "status": "failed_uncommitted",
+            "error_code": "checkout_publication_unsupported",
+        }
+        assert core_fixture._store_revision(workspace) == before_revision
+        assert _verified(workspace, core_fixture.RUN_ID).snapshot == before_snapshot
+        return
     _accept_source_candidates(workspace, service)
     before = classify_core_run_next_action(_verified(workspace, core_fixture.RUN_ID))
     assert (before.action_kind, before.effect_kind, before.source_route_id) == (
