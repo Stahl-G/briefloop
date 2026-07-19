@@ -76,6 +76,7 @@ validation unless that is stated separately.
 | `briefloop experiments 080 scaffold-condition` | Archived Experimental |
 | `briefloop experiments laj shadow-run` | Experimental; public/synthetic offline-shadow execution and exact replay only; advisory output has zero workflow, Gate, finalize, delivery, repair, approval, or next-action authority |
 | `briefloop experiments laj present` | Experimental; deterministic standalone JSON/Markdown/HTML projection of one verified shadow archive; invalid, missing, stale, abstained, or unavailable results display no advice and have zero runtime authority |
+| `briefloop experiments laj study-preflight/budgeted-shadow-run/study-compare` | Experimental; strict target eligibility, complete-trial call/token budget, and offline exact dimension/span-overlap comparison only; advisory with zero runtime authority; utility and efficacy NOT MEASURED |
 | `briefloop init --from-onboarding` | Supported |
 | `briefloop onboard` | Supported |
 | `briefloop doctor` | Supported |

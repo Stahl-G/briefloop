@@ -49,6 +49,8 @@ EXPECTED_PACKAGE_FILES = {
     "runner.py",
     "serialization.py",
     "shadow_contracts.py",
+    "study.py",
+    "study_contracts.py",
     "snapshot.py",
     "unit_planner.py",
     "validator.py",
@@ -164,7 +166,7 @@ def test_se2r_15_only_live_adapter_may_import_provider_or_network_code() -> None
     assert offenders == {}
 
 
-def test_only_archive_and_standalone_reader_are_persistent_writers() -> None:
+def test_only_archive_reader_and_explicit_study_output_are_persistent_writers() -> None:
     write_methods = {
         "mkdir",
         "rename",
@@ -183,7 +185,7 @@ def test_only_archive_and_standalone_reader_are_persistent_writers() -> None:
                 and node.func.attr in write_methods
             }
         )
-        if calls and path.name not in {"archive.py", "reader.py"}:
+        if calls and path.name not in {"archive.py", "reader.py", "study.py"}:
             offenders[path.relative_to(REPO_ROOT).as_posix()] = calls
     assert offenders == {}
 
