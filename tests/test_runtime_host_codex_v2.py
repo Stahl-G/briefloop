@@ -520,25 +520,21 @@ def test_deterministic_source_failure_exhausts_frozen_route_without_retry(
     action_path = _current_action_path(workspace, capsys)
     action = json.loads(action_path.read_text(encoding="utf-8"))
     request_path = workspace / "human-source-request.json"
+    request_payload = {
+        "schema_version": "briefloop.runtime_human_source_material_request.v2",
+        "request_id": "REQ-HUMAN-SOURCE-001",
+        "run_id": action["run_id"],
+        "expected_store_revision": action["store_revision"],
+        "input_path": "input/manual-source.txt",
+        "expected_input_sha256": hashlib.sha256(content).hexdigest(),
+        "title": "Human supplied source",
+        "publisher": None,
+        "published_at": None,
+        "retrieved_at": "2026-07-19T00:00:00+00:00",
+        "content_media_type": "text/plain",
+    }
     request_path.write_text(
-        json.dumps(
-            {
-                "schema_version": (
-                    "briefloop.runtime_human_source_material_request.v2"
-                ),
-                "request_id": "REQ-HUMAN-SOURCE-001",
-                "run_id": action["run_id"],
-                "expected_store_revision": action["store_revision"],
-                "input_path": "input/manual-source.txt",
-                "expected_input_sha256": hashlib.sha256(content).hexdigest(),
-                "title": "Human supplied source",
-                "publisher": None,
-                "published_at": None,
-                "retrieved_at": "2026-07-19T00:00:00+00:00",
-                "content_media_type": "text/plain",
-            },
-            sort_keys=True,
-        ),
+        json.dumps(request_payload, sort_keys=True),
         encoding="utf-8",
     )
     assert (
@@ -584,6 +580,63 @@ def test_deterministic_source_failure_exhausts_frozen_route_without_retry(
     assert replayed["status"] == "replayed"
     with SQLiteControlStore.open(workspace / "briefloop.db") as store:
         assert store.current_revision == after_manual
+        replay_snapshot = store.load_snapshot(action["run_id"])
+
+    scratch_before_conflicts = {
+        path.relative_to(workspace).as_posix(): (
+            path.read_bytes(),
+            path.stat().st_mtime_ns,
+        )
+        for path in sorted((workspace / "scratch").rglob("*"))
+        if path.is_file()
+    }
+    authoritative_counts = (
+        len(replay_snapshot.invocations),
+        len(replay_snapshot.sources),
+        len(replay_snapshot.transactions),
+    )
+    for field, changed_value in (
+        ("title", "Changed title under the same request identity"),
+        ("input_path", "input/missing-source.txt"),
+        ("expected_input_sha256", "0" * 64),
+    ):
+        changed_request = {**request_payload, field: changed_value}
+        request_path.write_text(
+            json.dumps(changed_request, sort_keys=True),
+            encoding="utf-8",
+        )
+        assert (
+            main(
+                [
+                    "runtime",
+                    "apply",
+                    "--workspace",
+                    str(workspace),
+                    "--action",
+                    str(action_path),
+                    "--human-request",
+                    str(request_path),
+                ]
+            )
+            == 1
+        )
+        assert "submission_replay_conflict" in capsys.readouterr().out
+        with SQLiteControlStore.open(workspace / "briefloop.db") as store:
+            assert store.current_revision == after_manual
+            conflict_snapshot = store.load_snapshot(action["run_id"])
+        assert (
+            len(conflict_snapshot.invocations),
+            len(conflict_snapshot.sources),
+            len(conflict_snapshot.transactions),
+        ) == authoritative_counts
+        assert {
+            path.relative_to(workspace).as_posix(): (
+                path.read_bytes(),
+                path.stat().st_mtime_ns,
+            )
+            for path in sorted((workspace / "scratch").rglob("*"))
+            if path.is_file()
+        } == scratch_before_conflicts
 
 
 def test_cached_source_acquisition_is_claims_eligible_and_completes_discovery(

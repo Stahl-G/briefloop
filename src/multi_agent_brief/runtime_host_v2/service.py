@@ -75,7 +75,7 @@ from multi_agent_brief.core_run_v2.terminal import (
 )
 from multi_agent_brief.core.citations import remove_src_marker_spans
 from multi_agent_brief.intake_v2.errors import IntakeError
-from multi_agent_brief.intake_v2.scratch import parse_json_object
+from multi_agent_brief.intake_v2.scratch import ScratchReader, parse_json_object
 from multi_agent_brief.intake_v2.service import IntakeService
 from multi_agent_brief.sources.search_backends.base import SearchBackendError
 from multi_agent_brief.outputs.reader_projection import (
@@ -878,6 +878,9 @@ class RuntimeHostService:
         *,
         replay_only: bool,
     ):
+        human_request_fingerprint = canonical_fingerprint(
+            request.model_dump(mode="json", exclude_unset=False)
+        )
         invocation_request_id = derived_id(
             "REQ-HOST-HUMAN-SOURCE-INVOKE",
             request.request_id,
@@ -905,8 +908,26 @@ class RuntimeHostService:
         )
         submit_relative = f"scratch/{invocation_id}/submit_request.json"
         submit_path = self.workspace / submit_relative
+        commit_request_id = derived_id(
+            "REQ-HOST-HUMAN-SOURCE-COMMIT",
+            request.request_id,
+            action.action_fingerprint,
+            human_request_fingerprint,
+        )
         content: bytes | None = None
-        if not submit_path.exists():
+        if submit_path.exists():
+            try:
+                stored_submit = SourceCommitRequest.model_validate(
+                    parse_json_object(
+                        ScratchReader(self.workspace).read_request(submit_relative)
+                    ),
+                    strict=True,
+                )
+            except (IntakeError, ValidationError, ValueError) as exc:
+                raise RuntimeHostError("runtime_human_request_invalid") from exc
+            if stored_submit.request_id != commit_request_id:
+                raise RuntimeHostError("submission_replay_conflict")
+        else:
             if replay_only:
                 raise RuntimeHostError("runtime_action_stale")
             content = self._read_human_source_bytes(request)
@@ -971,11 +992,7 @@ class RuntimeHostService:
             submit = SourceCommitRequest.model_validate(
                 {
                     "schema_version": SourceCommitRequest.schema_id,
-                    "request_id": derived_id(
-                        "REQ-HOST-HUMAN-SOURCE-COMMIT",
-                        request.request_id,
-                        action.action_fingerprint,
-                    ),
+                    "request_id": commit_request_id,
                     "run_id": action.run_id,
                     "invocation_id": invocation_id,
                     "proposal_path": proposal_relative,
