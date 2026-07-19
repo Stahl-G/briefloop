@@ -1,6 +1,7 @@
 """Tests for the Capability Center: models, catalog, detect, and CI gate."""
 from __future__ import annotations
 
+import argparse
 import os
 from pathlib import Path
 
@@ -19,6 +20,19 @@ from multi_agent_brief.capabilities.models import (
     CapabilityStatus,
     RequirementResult,
 )
+from multi_agent_brief.cli.capability_commands import (
+    handle_features_capability,
+    handle_recommend,
+    handle_setup,
+)
+
+
+def _workspace_file_bytes(workspace: Path) -> dict[str, bytes]:
+    return {
+        path.relative_to(workspace).as_posix(): path.read_bytes()
+        for path in workspace.rglob("*")
+        if path.is_file()
+    }
 
 
 class TestCapabilitySpecModels:
@@ -296,11 +310,33 @@ class TestFeaturesCommand:
             "--company", "Test",
             "--industry", "mfg",
             "--title", "Brief",
+            "--task-objective", "Track material manufacturing developments.",
             "--audience", "mgmt",
             "--cadence", "weekly",
             "--source-profile", "research",
         ])
-        assert main(["features", str(ws)]) == 0
+        assert main(["run", "--workspace", str(ws), "--runtime", "codex"]) == 0
+        capsys.readouterr()
+        before_public = {
+            path.relative_to(ws).as_posix(): path.read_bytes()
+            for path in ws.rglob("*")
+            if path.is_file()
+        }
+        assert main(["features", str(ws)]) == 1
+        assert capsys.readouterr().out.strip() == "runtime_command_unsupported"
+        assert {
+            path.relative_to(ws).as_posix(): path.read_bytes()
+            for path in ws.rglob("*")
+            if path.is_file()
+        } == before_public
+
+        assert handle_features_capability(
+            argparse.Namespace(
+                workspace=str(ws),
+                info=None,
+                json_output=False,
+            )
+        ) == 0
         out = capsys.readouterr().out
         # manual is enabled in research profile
         assert "Manual Inputs" in out
@@ -340,11 +376,23 @@ class TestRecommendCommand:
             "--company", "Tesla",
             "--industry", "automotive",
             "--title", "Competitor Analysis",
+            "--task-objective", "Track competitors and market developments.",
             "--audience", "mgmt",
             "--cadence", "weekly",
             "--source-profile", "research",
         ])
-        assert main(["recommend", str(ws)]) == 0
+        capsys.readouterr()
+        before_public = _workspace_file_bytes(ws)
+        assert main(["recommend", str(ws)]) == 1
+        assert capsys.readouterr().out.strip() == "runtime_command_unsupported"
+        assert _workspace_file_bytes(ws) == before_public
+        assert handle_recommend(
+            argparse.Namespace(
+                workspace=str(ws),
+                text=None,
+                json_output=False,
+            )
+        ) == 0
         out = capsys.readouterr().out
         assert "market_competitor" in out
 
@@ -361,11 +409,23 @@ class TestSetupCommand:
             "--company", "Tesla",
             "--industry", "automotive",
             "--title", "Competitor Analysis",
+            "--task-objective", "Track competitors and market developments.",
             "--audience", "mgmt",
             "--cadence", "weekly",
             "--source-profile", "research",
         ])
-        assert main(["setup", str(ws), "--dry-run"]) == 0
+        capsys.readouterr()
+        before_public = _workspace_file_bytes(ws)
+        assert main(["setup", str(ws), "--dry-run"]) == 1
+        assert capsys.readouterr().out.strip() == "runtime_command_unsupported"
+        assert _workspace_file_bytes(ws) == before_public
+        assert handle_setup(
+            argparse.Namespace(
+                workspace=str(ws),
+                from_plan=None,
+                dry_run=True,
+            )
+        ) == 0
         out = capsys.readouterr().out
         assert "dry-run" in out.lower()
 
@@ -378,11 +438,23 @@ class TestSetupCommand:
             "--company", "Tesla",
             "--industry", "automotive",
             "--title", "Competitor Analysis",
+            "--task-objective", "Track competitors and market developments.",
             "--audience", "mgmt",
             "--cadence", "weekly",
             "--source-profile", "research",
         ])
-        assert main(["setup", str(ws)]) == 0
+        capsys.readouterr()
+        before_public = _workspace_file_bytes(ws)
+        assert main(["setup", str(ws)]) == 1
+        assert capsys.readouterr().out.strip() == "runtime_command_unsupported"
+        assert _workspace_file_bytes(ws) == before_public
+        assert handle_setup(
+            argparse.Namespace(
+                workspace=str(ws),
+                from_plan=None,
+                dry_run=False,
+            )
+        ) == 0
         out = capsys.readouterr().out
         assert "change(s) applied" in out
 
@@ -403,6 +475,7 @@ class TestInitIntegration:
             "--company", "Tesla",
             "--industry", "automotive",
             "--title", "Competitor Analysis",
+            "--task-objective", "Track competitors and market developments.",
             "--audience", "mgmt",
             "--cadence", "weekly",
             "--source-profile", "research",
@@ -422,6 +495,7 @@ class TestInitIntegration:
             "--company", "Test Corp",
             "--industry", "textiles",
             "--title", "Weekly Report",
+            "--task-objective", "Track policy, competitors, markets, and demand.",
             "--audience", "mgmt",
             "--cadence", "weekly",
             "--source-profile", "conservative",

@@ -13,7 +13,8 @@ import pytest
 import yaml
 
 import multi_agent_brief.orchestrator.runtime_state as runtime_state
-from multi_agent_brief.cli.main import main
+from multi_agent_brief.cli import feedback_commands, gates_commands
+from multi_agent_brief.cli.main import build_parser, main as public_main
 from multi_agent_brief.orchestrator.runtime_state import (
     RuntimeStateError,
     check_runtime_state,
@@ -36,6 +37,16 @@ from tests.helpers import write_workspace_files_under
 
 
 ROOT = Path(__file__).resolve().parent.parent
+
+
+def main(argv: list[str]) -> int:
+    """Keep retired control mechanics under their deterministic handlers."""
+
+    if argv and argv[0] == "gates":
+        return gates_commands.handle(build_parser().parse_args(argv))
+    if argv and argv[0] == "feedback":
+        return feedback_commands.handle(build_parser().parse_args(argv))
+    return public_main(argv)
 
 
 _write_workspace_files = partial(
@@ -61,6 +72,14 @@ def _write_workspace(tmp_path: Path) -> Path:
 
 def _write_uninitialized_workspace(tmp_path: Path) -> Path:
     return _write_workspace_files(tmp_path)
+
+
+def _workspace_file_bytes(workspace: Path) -> dict[str, bytes]:
+    return {
+        path.relative_to(workspace).as_posix(): path.read_bytes()
+        for path in workspace.rglob("*")
+        if path.is_file()
+    }
 
 
 def _intermediate(ws: Path) -> Path:
@@ -673,7 +692,7 @@ def test_real_gate_check_blocks_current_auditor_but_keeps_repair_target(tmp_path
     _advance_to_auditor(ws)
     _write_json(ws, "audit_report.json", "{}\n")
 
-    rc = main([
+    public_args = [
         "gates",
         "check",
         "--workspace",
@@ -681,10 +700,16 @@ def test_real_gate_check_blocks_current_auditor_but_keeps_repair_target(tmp_path
         "--repo-workdir",
         str(ROOT),
         "--json",
-    ])
+    ]
+    before_public = _workspace_file_bytes(ws)
+    assert public_main(public_args) == 1
+    assert capsys.readouterr().out.strip() == "legacy_workspace_unsupported"
+    assert _workspace_file_bytes(ws) == before_public
 
-    assert rc == 0
-    payload = json.loads(capsys.readouterr().out)
+    payload = quality_gate_state.check_quality_gates(
+        workspace=ws,
+        repo_workdir=ROOT,
+    )
     report = payload["quality_gate_report"]
     blocker = next(finding for finding in report["findings"] if finding["finding_type"] == "number_without_source")
     assert blocker["gate_stage_id"] == "auditor"
@@ -728,15 +753,26 @@ def test_real_gate_check_blocks_current_auditor_but_keeps_repair_target(tmp_path
     assert state["workflow_state"]["blocked"] is True
     assert "blocking quality gate findings" in state["workflow_state"]["blocking_reason"]
 
-    rc = main([
+    before_show = _workspace_file_bytes(ws)
+    assert public_main([
         "gates",
         "show",
         "--workspace",
         str(ws),
         "--repo-workdir",
         str(ROOT),
-    ])
-    assert rc == 0
+    ]) == 1
+    assert capsys.readouterr().out.strip() == "legacy_workspace_unsupported"
+    assert _workspace_file_bytes(ws) == before_show
+
+    assert main([
+        "gates",
+        "show",
+        "--workspace",
+        str(ws),
+        "--repo-workdir",
+        str(ROOT),
+    ]) == 0
     output = capsys.readouterr().out
     assert "[gates show] required_commands:" in output
     assert (
@@ -756,7 +792,8 @@ def test_real_gate_check_blocks_current_auditor_but_keeps_repair_target(tmp_path
     assert "output/intermediate/audited_brief.md" in output
     assert "output/intermediate/audit_report.json" in output
 
-    rc = main([
+    before_decide = _workspace_file_bytes(ws)
+    rc = public_main([
         "state",
         "decide",
         "--workspace",
@@ -772,9 +809,8 @@ def test_real_gate_check_blocks_current_auditor_but_keeps_repair_target(tmp_path
         "--json",
     ])
     assert rc == 1
-    payload = json.loads(capsys.readouterr().out)
-    assert payload["error_code"] == "E_COMPLETION_TRANSACTION_REQUIRED"
-    assert payload["details"]["required_command"] == "stage-complete"
+    assert capsys.readouterr().out.strip() == "legacy_workspace_unsupported"
+    assert _workspace_file_bytes(ws) == before_decide
 
 
 @pytest.mark.parametrize("repair_owner", ["human", "human_review", "human-review"])
@@ -2690,7 +2726,8 @@ def test_reader_brief_missing_target_blocks_finalize_stage(tmp_path, capsys):
     assert state["workflow_state"]["blocked"] is True
     assert "blocking quality gate findings" in state["workflow_state"]["blocking_reason"]
 
-    rc = main([
+    before_public = _workspace_file_bytes(ws)
+    rc = public_main([
         "state",
         "decide",
         "--workspace",
@@ -2706,9 +2743,8 @@ def test_reader_brief_missing_target_blocks_finalize_stage(tmp_path, capsys):
         "--json",
     ])
     assert rc == 1
-    payload = json.loads(capsys.readouterr().out)
-    assert payload["error_code"] == "E_COMPLETION_TRANSACTION_REQUIRED"
-    assert payload["details"]["required_command"] == "finalize-complete"
+    assert capsys.readouterr().out.strip() == "legacy_workspace_unsupported"
+    assert _workspace_file_bytes(ws) == before_public
 
 
 def test_freshness_reads_config_report_defaults_and_preserves_zero(tmp_path, capsys):
@@ -2811,7 +2847,8 @@ input:
     assert state["workflow_state"]["blocked"] is True
     assert "requires output/intermediate/gates/auditor_quality_gate_report.json" in state["workflow_state"]["blocking_reason"]
 
-    rc = main([
+    before_public = _workspace_file_bytes(ws)
+    rc = public_main([
         "state",
         "decide",
         "--workspace",
@@ -2827,9 +2864,8 @@ input:
         "--json",
     ])
     assert rc == 1
-    payload = json.loads(capsys.readouterr().out)
-    assert payload["error_code"] == "E_COMPLETION_TRANSACTION_REQUIRED"
-    assert payload["details"]["required_command"] == "stage-complete"
+    assert capsys.readouterr().out.strip() == "legacy_workspace_unsupported"
+    assert _workspace_file_bytes(ws) == before_public
 
 
 def test_gates_validate_json_rolls_up_auditor_scoped_status(tmp_path, capsys):
@@ -3001,7 +3037,8 @@ def test_quality_gate_blocker_enforced_by_state_check_and_decide(tmp_path, capsy
     assert workflow["blocked"] is True
     assert "blocking quality gate findings" in workflow["blocking_reason"]
 
-    rc = main([
+    before_public = _workspace_file_bytes(ws)
+    rc = public_main([
         "state",
         "decide",
         "--workspace",
@@ -3017,9 +3054,8 @@ def test_quality_gate_blocker_enforced_by_state_check_and_decide(tmp_path, capsy
         "--json",
     ])
     assert rc == 1
-    payload = json.loads(capsys.readouterr().out)
-    assert payload["error_code"] == "E_COMPLETION_TRANSACTION_REQUIRED"
-    assert payload["details"]["required_command"] == "stage-complete"
+    assert capsys.readouterr().out.strip() == "legacy_workspace_unsupported"
+    assert _workspace_file_bytes(ws) == before_public
 
 
 def test_editor_new_fact_gate_warns_when_editor_adds_number(tmp_path, capsys):

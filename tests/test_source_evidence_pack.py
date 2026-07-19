@@ -2,13 +2,16 @@
 
 from __future__ import annotations
 
+import argparse
 import hashlib
 import json
 from pathlib import Path
 
 import pytest
 
-from multi_agent_brief.cli.main import main
+from multi_agent_brief.cli import sources_commands
+from multi_agent_brief.cli.main import build_parser, main as public_main
+from multi_agent_brief.cli.sources_commands import _sources_materialize_pack
 from multi_agent_brief.orchestrator.runtime_state.claim_metadata_enrichment import (
     _source_evidence_metadata_from_file,
 )
@@ -18,6 +21,14 @@ from multi_agent_brief.orchestrator.runtime_state.lifecycle import (
 )
 
 ROOT = Path(__file__).resolve().parent.parent
+
+
+def main(argv: list[str]) -> int:
+    """Exercise retired pack mechanics without reopening the public command."""
+
+    if argv[:2] == ["sources", "materialize-pack"]:
+        return sources_commands.handle_sources(build_parser().parse_args(argv))
+    return public_main(argv)
 
 
 def _workspace(tmp_path: Path) -> Path:
@@ -32,6 +43,14 @@ def _workspace(tmp_path: Path) -> Path:
     )
     (ws / "user.md").write_text("# User\n", encoding="utf-8")
     return ws
+
+
+def _workspace_file_bytes(workspace: Path) -> dict[str, bytes]:
+    return {
+        path.relative_to(workspace).as_posix(): path.read_bytes()
+        for path in workspace.rglob("*")
+        if path.is_file()
+    }
 
 
 def test_sources_materialize_pack_writes_durable_source_records_and_manifest(
@@ -55,13 +74,25 @@ def test_sources_materialize_pack_writes_durable_source_records_and_manifest(
     )
     initialize_runtime_state(runtime="operator", workspace=ws, repo_workdir=ROOT)
 
-    assert main([
+    public_args = [
         "sources",
         "materialize-pack",
         "--config",
         str(ws / "config.yaml"),
         "--json",
-    ]) == 0
+    ]
+    before_public = _workspace_file_bytes(ws)
+    assert public_main(public_args) == 1
+    assert capsys.readouterr().out.strip() == "legacy_workspace_unsupported"
+    assert _workspace_file_bytes(ws) == before_public
+
+    assert _sources_materialize_pack(
+        argparse.Namespace(
+            config=str(ws / "config.yaml"),
+            force=False,
+            json=True,
+        )
+    ) == 0
     payload = json.loads(capsys.readouterr().out)
 
     assert payload["ok"] is True

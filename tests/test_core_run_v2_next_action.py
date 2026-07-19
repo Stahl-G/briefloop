@@ -114,7 +114,7 @@ def test_single_session_preserves_distinct_analyst_editor_and_auditor_invocation
     assert audit.invocation_id == by_role["auditor"]
 
 
-def _accept_source_candidates(workspace, service):
+def _submit_source_candidates(workspace, service):
     planner_action = classify_core_run_next_action(
         _verified(workspace, core_fixture.RUN_ID)
     )
@@ -133,6 +133,8 @@ def _accept_source_candidates(workspace, service):
     candidates = workspace / "scratch" / planner / "source_candidates.yaml"
     candidates.parent.mkdir(parents=True, exist_ok=True)
     candidates.write_text("sources:\n  - SRC-001\n", encoding="utf-8")
+    before_revision = core_fixture._store_revision(workspace)
+    before_snapshot = _verified(workspace, core_fixture.RUN_ID).snapshot
     accepted = ArtifactAcceptanceService(
         workspace,
         clock=core_fixture.CLOCK,
@@ -145,10 +147,18 @@ def _accept_source_candidates(workspace, service):
             invocation_id=planner,
             producer_tool_id=None,
             input_path=candidates.relative_to(workspace).as_posix(),
-            expected_store_revision=core_fixture._store_revision(workspace),
+            expected_store_revision=before_revision,
             expected_artifact_revision=0,
             expected_parent_artifact=None,
         )
+    )
+    return accepted, before_revision, before_snapshot
+
+
+def _accept_source_candidates(workspace, service) -> None:
+    accepted, _before_revision, _before_snapshot = _submit_source_candidates(
+        workspace,
+        service,
     )
     assert accepted.status == "committed", accepted.to_dict()
 
@@ -228,6 +238,18 @@ def test_next_action_routes_planner_to_frozen_runtime_tool_provider(tmp_path) ->
     workspace = core_fixture._workspace(tmp_path)
     core_fixture._configure_runtime_tool_source_route(workspace)
     service = _source_discovery_ready(workspace)
+    if sys.platform == "win32":
+        accepted, before_revision, before_snapshot = _submit_source_candidates(
+            workspace,
+            service,
+        )
+        assert accepted.to_dict() == {
+            "status": "failed_uncommitted",
+            "error_code": "checkout_publication_unsupported",
+        }
+        assert core_fixture._store_revision(workspace) == before_revision
+        assert _verified(workspace, core_fixture.RUN_ID).snapshot == before_snapshot
+        return
     _accept_source_candidates(workspace, service)
 
     action = classify_core_run_next_action(_verified(workspace, core_fixture.RUN_ID))

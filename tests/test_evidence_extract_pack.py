@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import argparse
 import json
 import shutil
 from pathlib import Path
@@ -9,7 +10,8 @@ from pathlib import Path
 import pytest
 import yaml
 
-from multi_agent_brief.cli.main import main
+from multi_agent_brief.cli.main import build_parser, main as public_main
+from multi_agent_brief.cli.product_commands import handle_extract
 from multi_agent_brief.contracts.schemas.evidence_span_registry import EvidenceSpanRegistryContract
 from multi_agent_brief.inputs.contracts import extracted_markdown_path
 from multi_agent_brief.orchestrator.runtime_state import check_runtime_state, initialize_runtime_state
@@ -19,6 +21,22 @@ from multi_agent_brief.orchestrator.runtime_state.evidence_span_registry import 
 from multi_agent_brief.sources.registry import collect_all_sources, load_sources_config
 
 ROOT = Path(__file__).resolve().parent.parent
+
+
+def main(argv: list[str]) -> int:
+    """Exercise retired extraction mechanics through the deterministic handler."""
+
+    if argv and argv[0] == "extract":
+        return handle_extract(build_parser().parse_args(argv))
+    return public_main(argv)
+
+
+def _workspace_file_bytes(workspace: Path) -> dict[str, bytes]:
+    return {
+        path.relative_to(workspace).as_posix(): path.read_bytes()
+        for path in workspace.rglob("*")
+        if path.is_file()
+    }
 
 
 def test_extract_registers_scope_and_local_sources(tmp_path: Path, capsys) -> None:
@@ -33,24 +51,36 @@ def test_extract_registers_scope_and_local_sources(tmp_path: Path, capsys) -> No
     assert main(["new", "evidence-extract", str(workspace)]) == 0
     capsys.readouterr()
 
-    assert (
-        main(
-            [
-                "extract",
-                "--workspace",
-                str(workspace),
-                "--scope",
-                "utilities, permits, production capacity",
-                "--sources",
-                str(memo),
-                str(pdf),
-                "--source-category",
-                "regulator_record",
-                "--json",
-            ]
+    public_args = [
+        "extract",
+        "--workspace",
+        str(workspace),
+        "--scope",
+        "utilities, permits, production capacity",
+        "--sources",
+        str(memo),
+        str(pdf),
+        "--source-category",
+        "regulator_record",
+        "--json",
+    ]
+    before_public = _workspace_file_bytes(workspace)
+    assert public_main(public_args) == 1
+    assert capsys.readouterr().out.strip() == "runtime_command_unsupported"
+    assert _workspace_file_bytes(workspace) == before_public
+
+    assert handle_extract(
+        argparse.Namespace(
+            workspace=str(workspace),
+            scope="utilities, permits, production capacity",
+            source=[],
+            sources=[str(memo), str(pdf)],
+            source_category="regulator_record",
+            language="en",
+            force=False,
+            json=True,
         )
-        == 0
-    )
+    ) == 0
 
     payload = json.loads(capsys.readouterr().out)
     assert payload["ok"] is True
