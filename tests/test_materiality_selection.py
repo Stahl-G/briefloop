@@ -6,7 +6,6 @@ from pathlib import Path
 
 import yaml
 
-from multi_agent_brief.cli.main import main
 from multi_agent_brief.product.materiality_selection import (
     MATERIALITY_SELECTION_RUNTIME_EFFECT,
     project_workspace_materiality_selection,
@@ -24,6 +23,7 @@ from multi_agent_brief.status import build_workspace_status, format_workspace_st
 def _workspace(tmp_path: Path, *, with_policy: bool = True) -> Path:
     ws = tmp_path / "ws"
     ws.mkdir()
+    (ws / "output" / "intermediate").mkdir(parents=True)
     (ws / "config.yaml").write_text(
         yaml.safe_dump(
             {
@@ -45,7 +45,10 @@ def _workspace(tmp_path: Path, *, with_policy: bool = True) -> Path:
                     "title": "Market Weekly Brief",
                     "cadence": "weekly",
                     "audience": {"label": "business reader", "language": "en-US"},
-                    "source_policy": {"mode": "local_first", "hidden_autonomous_crawling": False},
+                    "source_policy": {
+                        "mode": "local_first",
+                        "hidden_autonomous_crawling": False,
+                    },
                     "control_spine": {
                         "claim_ledger": True,
                         "artifact_registry": True,
@@ -63,7 +66,6 @@ def _workspace(tmp_path: Path, *, with_policy: bool = True) -> Path:
             ),
             encoding="utf-8",
         )
-    assert main(["state", "init", "--runtime", "operator", "--workspace", str(ws)]) == 0
     return ws
 
 
@@ -134,7 +136,9 @@ def _write_screened_candidates(ws: Path) -> None:
     )
 
 
-def test_materiality_selection_flags_capacity_capped_policy_or_focus_terms(tmp_path: Path) -> None:
+def test_materiality_selection_flags_capacity_capped_policy_or_focus_terms(
+    tmp_path: Path,
+) -> None:
     ws = _workspace(tmp_path)
     _write_screened_candidates(ws)
 
@@ -208,7 +212,9 @@ def test_materiality_selection_consumes_normalized_intake_view(tmp_path: Path) -
     assert projection["findings"][0]["statement"].startswith("ExampleCo capacity")
 
 
-def test_status_and_quality_panel_surface_materiality_selection_without_authority(tmp_path: Path) -> None:
+def test_status_and_quality_panel_surface_materiality_selection_without_authority(
+    tmp_path: Path,
+) -> None:
     ws = _workspace(tmp_path)
     _write_screened_candidates(ws)
 
@@ -216,7 +222,9 @@ def test_status_and_quality_panel_surface_materiality_selection_without_authorit
     formatted = format_workspace_status(status)
 
     assert status["materiality_selection"]["status"] == "checked"
-    assert "[status] materiality_selection: checked findings=2 human_review=1" in formatted
+    assert (
+        "[status] materiality_selection: checked findings=2 human_review=1" in formatted
+    )
 
     panel = build_quality_panel(ws)
     assert validate_quality_panel_payload(panel) is None
@@ -230,7 +238,9 @@ def test_status_and_quality_panel_surface_materiality_selection_without_authorit
     assert panel["boundary"]
 
     panel_sha = hashlib.sha256(
-        json.dumps(panel, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode("utf-8")
+        json.dumps(
+            panel, ensure_ascii=False, sort_keys=True, separators=(",", ":")
+        ).encode("utf-8")
     ).hexdigest()
     summary = render_quality_summary(panel, quality_panel_sha256=panel_sha)
     html = render_quality_panel_html(panel, quality_panel_sha256=panel_sha)
@@ -242,7 +252,9 @@ def test_status_and_quality_panel_surface_materiality_selection_without_authorit
     assert "approved for release" not in html
 
 
-def test_materiality_selection_does_not_guess_without_policy_or_focus_terms(tmp_path: Path) -> None:
+def test_materiality_selection_does_not_guess_without_policy_or_focus_terms(
+    tmp_path: Path,
+) -> None:
     ws = _workspace(tmp_path, with_policy=False)
     _write_screened_candidates(ws)
 
@@ -254,7 +266,9 @@ def test_materiality_selection_does_not_guess_without_policy_or_focus_terms(tmp_
     assert validate_materiality_selection_payload(projection) is None
 
 
-def test_materiality_selection_rejects_contract_invalid_screened_candidates(tmp_path: Path) -> None:
+def test_materiality_selection_rejects_contract_invalid_screened_candidates(
+    tmp_path: Path,
+) -> None:
     ws = _workspace(tmp_path)
     path = ws / "output" / "intermediate" / "screened_candidates.json"
     path.write_text(
@@ -275,7 +289,9 @@ def test_materiality_selection_rejects_contract_invalid_screened_candidates(tmp_
     assert validate_quality_panel_payload(panel) is None
 
 
-def test_materiality_does_not_interpret_universe_invalid_screening(tmp_path: Path) -> None:
+def test_materiality_does_not_interpret_universe_invalid_screening(
+    tmp_path: Path,
+) -> None:
     ws = _workspace(tmp_path)
     intermediate = ws / "output" / "intermediate"
     (intermediate / "candidate_claims.json").write_text(
@@ -369,7 +385,9 @@ def test_materiality_selection_rejects_bad_screening_policy(tmp_path: Path) -> N
     assert validate_materiality_selection_payload(projection) is None
 
 
-def test_materiality_selection_validator_rejects_authority_shape(tmp_path: Path) -> None:
+def test_materiality_selection_validator_rejects_authority_shape(
+    tmp_path: Path,
+) -> None:
     ws = _workspace(tmp_path)
     _write_screened_candidates(ws)
     projection = project_workspace_materiality_selection(ws)
