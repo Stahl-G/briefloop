@@ -179,6 +179,14 @@ def test_hidden_intake_cli_emits_unknown_and_nonzero_without_values(
 ) -> None:
     workspace = tmp_path / "workspace"
     workspace.mkdir()
+    before = {
+        path.relative_to(workspace).as_posix(): (
+            path.read_bytes(),
+            path.stat().st_mtime_ns,
+        )
+        for path in sorted(workspace.rglob("*"))
+        if path.is_file()
+    }
     monkeypatch.setattr(
         IntakeService,
         "submit_source",
@@ -201,10 +209,16 @@ def test_hidden_intake_cli_emits_unknown_and_nonzero_without_values(
     )
 
     assert exit_code == 1
-    assert json.loads(capsys.readouterr().out) == {
-        "status": "commit_outcome_unknown",
-        "error_code": "commit_outcome_unknown",
-    }
+    assert capsys.readouterr().out == "runtime_command_unsupported\n"
+    assert not (workspace / "briefloop.db").exists()
+    assert {
+        path.relative_to(workspace).as_posix(): (
+            path.read_bytes(),
+            path.stat().st_mtime_ns,
+        )
+        for path in sorted(workspace.rglob("*"))
+        if path.is_file()
+    } == before
 
 
 def test_intake_cli_json_only_workspace_never_creates_sqlite_fallback(
@@ -279,13 +293,14 @@ def test_intake_cli_is_labelled_internal_and_requires_json() -> None:
     assert "not the active runtime path" in intake_parser.description
 
 
-def test_intake_v2_imports_are_confined_to_dormant_package_and_cli_adapter() -> None:
+def test_intake_v2_imports_are_confined_to_active_owned_consumers() -> None:
     package_root = Path(__file__).parents[1] / "src" / "multi_agent_brief"
     allowed = {
         "cli/core_v2_commands.py",
         "cli/intake_v2_commands.py",
         "intake_v2/__init__.py",
         "intake_v2/service.py",
+        "runtime_host_v2/service.py",
     }
     findings: list[str] = []
     for path in sorted(package_root.rglob("*.py")):

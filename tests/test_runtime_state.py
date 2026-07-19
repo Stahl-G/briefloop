@@ -154,6 +154,14 @@ def _state_file(ws: Path, key: str) -> Path:
     return ws / RUNTIME_STATE_FILES[key]
 
 
+def _workspace_file_snapshot(ws: Path) -> dict[str, tuple[bytes, int]]:
+    return {
+        path.relative_to(ws).as_posix(): (path.read_bytes(), path.stat().st_mtime_ns)
+        for path in sorted(ws.rglob("*"))
+        if path.is_file()
+    }
+
+
 def _intermediate(ws: Path) -> Path:
     path = ws / "output" / "intermediate"
     path.mkdir(parents=True, exist_ok=True)
@@ -3812,6 +3820,7 @@ def test_state_decide_delegate_repair_human_output_points_to_repair_transaction(
     initialize_runtime_state(runtime="operator", workspace=ws, repo_workdir=ROOT)
     _advance_to_auditor(ws)
     _write_editor_repair_gate_report(ws)
+    before = _workspace_file_snapshot(ws)
 
     rc = main([
         "state",
@@ -3829,15 +3838,9 @@ def test_state_decide_delegate_repair_human_output_points_to_repair_transaction(
     ])
 
     assert rc == 1
-    out = capsys.readouterr().out
-    assert "briefloop repair start" in out
-    assert "--gate-stage auditor --gate-artifact auditor_quality_gate_report" in out
-    assert "briefloop repair complete" in out
-    assert "[state] repair_steps:" in out
-    assert "Delegate only the reported repair_owner role." in out
-    assert "[state] repair_owner: editor" in out
-    assert "[state] must_rerun_from: auditor" in out
-    assert "output/intermediate/audited_brief.md" in out
+    assert capsys.readouterr().out == "legacy_workspace_unsupported\n"
+    assert not (ws / "briefloop.db").exists()
+    assert _workspace_file_snapshot(ws) == before
 
 
 def test_state_decide_delegate_repair_uses_current_gate_over_stale_gate(tmp_path):
@@ -3966,6 +3969,17 @@ def test_stage_complete_records_runtime_model_provenance_from_cli(tmp_path, caps
     ws = _write_workspace(tmp_path)
     initialize_runtime_state(runtime="operator", workspace=ws, repo_workdir=ROOT)
 
+    payload = complete_stage_transaction(
+        workspace=ws,
+        repo_workdir=ROOT,
+        stage_id="doctor",
+        reason="doctor passed",
+        runtime="claude",
+        model="claude-sonnet-4",
+    )
+    provenance = payload["transaction"]["runtime_provenance"]
+    before = _workspace_file_snapshot(ws)
+
     rc = main([
         "state",
         "stage-complete",
@@ -3984,9 +3998,9 @@ def test_stage_complete_records_runtime_model_provenance_from_cli(tmp_path, caps
         "--json",
     ])
 
-    assert rc == 0
-    payload = json.loads(capsys.readouterr().out)
-    provenance = payload["transaction"]["runtime_provenance"]
+    assert rc == 1
+    assert capsys.readouterr().out == "legacy_workspace_unsupported\n"
+    assert _workspace_file_snapshot(ws) == before
     assert provenance == {
         "schema_version": "mabw.stage_runtime_provenance.v1",
         "source": "stage_completion_args",
@@ -4110,6 +4124,17 @@ def test_stage_complete_missing_required_output_writes_nothing(tmp_path):
 def test_stage_complete_cli_json_error_includes_error_code(tmp_path, capsys):
     ws = _write_workspace(tmp_path)
     initialize_runtime_state(runtime="operator", workspace=ws, repo_workdir=ROOT)
+    before = _workspace_file_snapshot(ws)
+
+    with pytest.raises(RuntimeStateError) as excinfo:
+        complete_stage_transaction(
+            workspace=ws,
+            repo_workdir=ROOT,
+            stage_id="auditor",
+            reason="out of order",
+        )
+    assert excinfo.value.error_code == "E_STAGE_MISMATCH"
+    assert _workspace_file_snapshot(ws) == before
 
     rc = main([
         "state",
@@ -4126,9 +4151,8 @@ def test_stage_complete_cli_json_error_includes_error_code(tmp_path, capsys):
     ])
 
     assert rc == 1
-    payload = json.loads(capsys.readouterr().out)
-    assert payload["ok"] is False
-    assert payload["error_code"] == "E_STAGE_MISMATCH"
+    assert capsys.readouterr().out == "legacy_workspace_unsupported\n"
+    assert _workspace_file_snapshot(ws) == before
 
 
 def test_stage_complete_event_append_failure_is_detectable_partial_write(tmp_path, monkeypatch):
@@ -6861,6 +6885,11 @@ def test_state_enrich_claim_metadata_cli_json(tmp_path, capsys):
     _write_json_artifact(ws, "claim_drafts.json", _valid_claim_drafts_payload())
     freeze_claim_ledger_transaction(workspace=ws, repo_workdir=ROOT)
 
+    payload = enrich_claim_metadata_transaction(workspace=ws, repo_workdir=ROOT)
+    assert payload["transaction"]["decision"] == "enrich_claim_metadata"
+    assert payload["claim_ledger_metadata_enrichment"]["enriched_claim_count"] == 2
+    before = _workspace_file_snapshot(ws)
+
     rc = main([
         "state",
         "enrich-claim-metadata",
@@ -6872,10 +6901,9 @@ def test_state_enrich_claim_metadata_cli_json(tmp_path, capsys):
         "--json",
     ])
 
-    assert rc == 0
-    payload = json.loads(capsys.readouterr().out)
-    assert payload["transaction"]["decision"] == "enrich_claim_metadata"
-    assert payload["claim_ledger_metadata_enrichment"]["enriched_claim_count"] == 2
+    assert rc == 1
+    assert capsys.readouterr().out == "legacy_workspace_unsupported\n"
+    assert _workspace_file_snapshot(ws) == before
 
 
 def test_enrich_claim_metadata_rejects_missing_imported_source_authority(tmp_path):
@@ -7214,6 +7242,12 @@ def test_state_freeze_claim_ledger_cli_json(tmp_path, capsys):
     _set_current_stage(ws, "claim-ledger")
     _write_json_artifact(ws, "claim_drafts.json", _valid_claim_drafts_payload())
 
+    payload = freeze_claim_ledger_transaction(workspace=ws, repo_workdir=ROOT)
+    assert payload["claim_ledger_freeze"]["status"] == "frozen"
+    assert payload["transaction"]["decision"] == "freeze_claim_ledger"
+    assert (_intermediate(ws) / "claim_ledger.json").exists()
+    before = _workspace_file_snapshot(ws)
+
     rc = main([
         "state",
         "freeze-claim-ledger",
@@ -7224,11 +7258,9 @@ def test_state_freeze_claim_ledger_cli_json(tmp_path, capsys):
         "--json",
     ])
 
-    assert rc == 0
-    payload = json.loads(capsys.readouterr().out)
-    assert payload["claim_ledger_freeze"]["status"] == "frozen"
-    assert payload["transaction"]["decision"] == "freeze_claim_ledger"
-    assert (_intermediate(ws) / "claim_ledger.json").exists()
+    assert rc == 1
+    assert capsys.readouterr().out == "legacy_workspace_unsupported\n"
+    assert _workspace_file_snapshot(ws) == before
 
 
 def test_state_freeze_claim_ledger_cli_json_explains_invalid_claim_type(tmp_path, capsys):
@@ -7255,6 +7287,22 @@ def test_state_freeze_claim_ledger_cli_json_explains_invalid_claim_type(tmp_path
         )
         + "\n",
     )
+    before = _workspace_file_snapshot(ws)
+
+    with pytest.raises(RuntimeStateError) as excinfo:
+        freeze_claim_ledger_transaction(workspace=ws, repo_workdir=ROOT)
+    assert excinfo.value.error_code == "E_CLAIM_DRAFT_CONTRACT_INVALID"
+    diagnostic = excinfo.value.details["diagnostics"][0]
+    assert diagnostic["field"] == "drafts[0].claim_type"
+    assert diagnostic["allowed_values"] == [
+        "date",
+        "fact",
+        "forecast",
+        "interpretation",
+        "number",
+        "risk",
+    ]
+    assert _workspace_file_snapshot(ws) == before
 
     rc = main([
         "state",
@@ -7267,18 +7315,8 @@ def test_state_freeze_claim_ledger_cli_json_explains_invalid_claim_type(tmp_path
     ])
 
     assert rc == 1
-    payload = json.loads(capsys.readouterr().out)
-    assert payload["error_code"] == "E_CLAIM_DRAFT_CONTRACT_INVALID"
-    diagnostic = payload["details"]["diagnostics"][0]
-    assert diagnostic["field"] == "drafts[0].claim_type"
-    assert diagnostic["allowed_values"] == [
-        "date",
-        "fact",
-        "forecast",
-        "interpretation",
-        "number",
-        "risk",
-    ]
+    assert capsys.readouterr().out == "legacy_workspace_unsupported\n"
+    assert _workspace_file_snapshot(ws) == before
     assert not (_intermediate(ws) / "claim_ledger.json").exists()
 
 
@@ -7304,6 +7342,14 @@ def test_state_freeze_claim_ledger_human_output_explains_forbidden_claim_id(tmp_
         )
         + "\n",
     )
+    before = _workspace_file_snapshot(ws)
+
+    with pytest.raises(RuntimeStateError) as excinfo:
+        freeze_claim_ledger_transaction(workspace=ws, repo_workdir=ROOT)
+    assert excinfo.value.error_code == "E_CLAIM_DRAFT_CONTRACT_INVALID"
+    assert "drafts[0].claim_id" in str(excinfo.value.details)
+    assert excinfo.value.details["diagnostics"][0]["forbidden_fields"] == ["claim_id"]
+    assert _workspace_file_snapshot(ws) == before
 
     rc = main([
         "state",
@@ -7315,10 +7361,8 @@ def test_state_freeze_claim_ledger_human_output_explains_forbidden_claim_id(tmp_
     ])
 
     assert rc == 1
-    output = capsys.readouterr().out
-    assert "drafts[0].claim_id" in output
-    assert "forbidden_fields: claim_id" in output
-    assert "Python assigns CL-####" in output
+    assert capsys.readouterr().out == "legacy_workspace_unsupported\n"
+    assert _workspace_file_snapshot(ws) == before
     assert not (_intermediate(ws) / "claim_ledger.json").exists()
 
 
@@ -8883,6 +8927,21 @@ def test_scoped_repair_start_uses_current_finalize_route_over_stale_auditor(tmp_
     workflow = json.loads(_state_file(ws, "workflow_state").read_text(encoding="utf-8"))
     assert "active_repair" not in workflow
 
+    payload = start_repair_transaction(
+        workspace=ws,
+        repo_workdir=ROOT,
+        gate_stage_id="finalize",
+        gate_artifact_id="finalize_quality_gate_report",
+    )
+    repair = payload["workflow_state"]["active_repair"]
+    assert repair["repair_owner"] == "editor"
+    assert repair["allowed_artifacts"] == ["output/intermediate/audited_brief.md"]
+    assert repair["source"]["kind"] == "finalize_quality_gate_report"
+    assert repair["source"]["stage_id"] == "finalize"
+    assert repair["source"]["finding_id"] == "QG_CURRENT_EDITOR_001"
+    assert payload["transaction"]["stage_id"] == "editor"
+    before = _workspace_file_snapshot(ws)
+
     rc = main([
         "repair",
         "start",
@@ -8897,15 +8956,9 @@ def test_scoped_repair_start_uses_current_finalize_route_over_stale_auditor(tmp_
         "--json",
     ])
 
-    assert rc == 0
-    payload = json.loads(capsys.readouterr().out)
-    repair = payload["workflow_state"]["active_repair"]
-    assert repair["repair_owner"] == "editor"
-    assert repair["allowed_artifacts"] == ["output/intermediate/audited_brief.md"]
-    assert repair["source"]["kind"] == "finalize_quality_gate_report"
-    assert repair["source"]["stage_id"] == "finalize"
-    assert repair["source"]["finding_id"] == "QG_CURRENT_EDITOR_001"
-    assert payload["transaction"]["stage_id"] == "editor"
+    assert rc == 1
+    assert capsys.readouterr().out == "legacy_workspace_unsupported\n"
+    assert _workspace_file_snapshot(ws) == before
 
 
 def test_scoped_repair_start_rejects_current_human_review_route(tmp_path):
@@ -9647,6 +9700,19 @@ def test_supersede_stage_rejects_clean_run_without_contamination(tmp_path):
 def test_repair_supersede_stage_cli_records_current_revision(tmp_path, capsys):
     ws, old_sha, current_sha = _contaminated_editor_artifact_workspace(tmp_path)
 
+    payload = supersede_stage_artifact_transaction(
+        workspace=ws,
+        repo_workdir=ROOT,
+        stage_id="editor",
+        artifact="output/intermediate/audited_brief.md",
+        reason="operator accepted contaminated edit as new editor revision",
+    )
+    assert payload["repair"]["old_registered_sha256"] == old_sha
+    assert payload["repair"]["current_bytes_sha256"] == current_sha
+    assert payload["workflow_state"]["run_integrity"]["reference_eligible"] is False
+    assert payload["transaction"]["decision"] == "supersede_stage"
+    before = _workspace_file_snapshot(ws)
+
     rc = main([
         "repair",
         "supersede-stage",
@@ -9663,12 +9729,9 @@ def test_repair_supersede_stage_cli_records_current_revision(tmp_path, capsys):
         "--json",
     ])
 
-    assert rc == 0
-    payload = json.loads(capsys.readouterr().out)
-    assert payload["repair"]["old_registered_sha256"] == old_sha
-    assert payload["repair"]["current_bytes_sha256"] == current_sha
-    assert payload["workflow_state"]["run_integrity"]["reference_eligible"] is False
-    assert payload["transaction"]["decision"] == "supersede_stage"
+    assert rc == 1
+    assert capsys.readouterr().out == "legacy_workspace_unsupported\n"
+    assert _workspace_file_snapshot(ws) == before
 
 
 def test_repair_start_contamination_event_failure_rolls_back_control_files(tmp_path, monkeypatch):
@@ -10847,6 +10910,22 @@ def test_finalize_complete_cli_records_runtime_model_provenance(tmp_path, capsys
     _write_quality_gate_report(ws, stage_id="finalize")
     _write_finalize_report(ws)
 
+    payload = complete_finalize_transaction(
+        workspace=ws,
+        repo_workdir=ROOT,
+        reason="reader artifacts finalized and clean",
+        runtime="codex",
+        model="gpt-5-codex",
+    )
+    provenance = payload["workflow_state"]["stage_statuses"]["finalize"]["metadata"][
+        "runtime_provenance"
+    ]
+    assert provenance["runtime"] == "codex"
+    assert provenance["model"] == "gpt-5-codex"
+    assert provenance["provenance_only"] is True
+    assert provenance["quality_claim"] is False
+    before = _workspace_file_snapshot(ws)
+
     rc = main([
         "state",
         "finalize-complete",
@@ -10863,13 +10942,9 @@ def test_finalize_complete_cli_records_runtime_model_provenance(tmp_path, capsys
         "--json",
     ])
 
-    assert rc == 0
-    payload = json.loads(capsys.readouterr().out)
-    provenance = payload["workflow_state"]["stage_statuses"]["finalize"]["metadata"]["runtime_provenance"]
-    assert provenance["runtime"] == "codex"
-    assert provenance["model"] == "gpt-5-codex"
-    assert provenance["provenance_only"] is True
-    assert provenance["quality_claim"] is False
+    assert rc == 1
+    assert capsys.readouterr().out == "legacy_workspace_unsupported\n"
+    assert _workspace_file_snapshot(ws) == before
 
 
 def test_run_integrity_contamination_event_is_sticky_on_state_check(tmp_path):
@@ -12355,13 +12430,26 @@ def test_import_fact_layer_transaction_rejects_existing_runtime_state(tmp_path):
 def test_state_import_fact_layer_cli_outputs_json(tmp_path, capsys):
     source_root = tmp_path / "source"
     target_root = tmp_path / "target"
+    internal_target_root = tmp_path / "internal-target"
     source_root.mkdir()
     target_root.mkdir()
+    internal_target_root.mkdir()
     source_ws = _write_workspace(source_root)
     target_ws = _write_workspace(target_root)
+    internal_target_ws = _write_workspace(internal_target_root)
     _write_fact_layer_inputs(source_ws)
     finalized = _complete_finalized_workspace(source_ws)
     archive_manifest = source_ws / "output" / "runs" / finalized["manifest"]["run_id"] / "manifest.json"
+
+    payload = import_fact_layer_transaction(
+        runtime="operator",
+        workspace=internal_target_ws,
+        archive=archive_manifest,
+        repo_workdir=ROOT,
+    )
+    assert payload["manifest"]["recipe"] == "fast-rerun"
+    assert payload["fact_layer_import"]["source_run_id"] == finalized["manifest"]["run_id"]
+    before = _workspace_file_snapshot(target_ws)
 
     rc = main([
         "state",
@@ -12376,10 +12464,9 @@ def test_state_import_fact_layer_cli_outputs_json(tmp_path, capsys):
         "--json",
     ])
 
-    assert rc == 0
-    payload = json.loads(capsys.readouterr().out)
-    assert payload["manifest"]["recipe"] == "fast-rerun"
-    assert payload["fact_layer_import"]["source_run_id"] == finalized["manifest"]["run_id"]
+    assert rc == 1
+    assert capsys.readouterr().out == "runtime_command_unsupported\n"
+    assert _workspace_file_snapshot(target_ws) == before
 
 
 def test_finalize_complete_rejects_archive_conflict_for_same_run_id(tmp_path):
@@ -12716,7 +12803,17 @@ def test_completion_transactions_preserve_manifest_extensions(tmp_path):
 def test_state_decide_rejects_out_of_order_stage_and_leaves_workflow_unchanged(tmp_path, capsys):
     ws = _write_workspace(tmp_path)
     initialize_runtime_state(runtime="operator", workspace=ws, repo_workdir=ROOT)
-    before = json.loads(_state_file(ws, "workflow_state").read_text(encoding="utf-8"))
+    before = _workspace_file_snapshot(ws)
+
+    with pytest.raises(RuntimeStateError, match="does not match current stage"):
+        record_decision(
+            workspace=ws,
+            repo_workdir=ROOT,
+            stage_id="auditor",
+            decision="continue",
+            reason="out of order",
+        )
+    assert _workspace_file_snapshot(ws) == before
 
     rc = main([
         "state",
@@ -12735,11 +12832,8 @@ def test_state_decide_rejects_out_of_order_stage_and_leaves_workflow_unchanged(t
     ])
 
     assert rc == 1
-    payload = json.loads(capsys.readouterr().out)
-    assert payload["ok"] is False
-    assert "does not match current stage" in payload["error"]
-    after = json.loads(_state_file(ws, "workflow_state").read_text(encoding="utf-8"))
-    assert after == before
+    assert capsys.readouterr().out == "legacy_workspace_unsupported\n"
+    assert _workspace_file_snapshot(ws) == before
 
 
 def test_state_decide_event_failure_leaves_workflow_unchanged(tmp_path, monkeypatch):
@@ -12883,6 +12977,12 @@ def test_state_check_strict_json_reports_event_log_integrity_error(tmp_path, cap
         + "\n",
         encoding="utf-8",
     )
+    before = _workspace_file_snapshot(ws)
+
+    with pytest.raises(RuntimeStateError) as excinfo:
+        check_runtime_state(workspace=ws, repo_workdir=ROOT)
+    assert excinfo.value.error_code == runtime_state.operations.E_TRANSACTION_INTEGRITY
+    assert _workspace_file_snapshot(ws) == before
 
     rc = main([
         "state",
@@ -12894,11 +12994,10 @@ def test_state_check_strict_json_reports_event_log_integrity_error(tmp_path, cap
         "--strict",
         "--json",
     ])
-    payload = json.loads(capsys.readouterr().out)
 
     assert rc == 1
-    assert payload["ok"] is False
-    assert payload["error_code"] == runtime_state.operations.E_TRANSACTION_INTEGRITY
+    assert capsys.readouterr().out == "legacy_workspace_unsupported\n"
+    assert _workspace_file_snapshot(ws) == before
 
 
 def test_state_check_rejects_event_log_missing_schema_version(tmp_path):
@@ -13037,13 +13136,17 @@ def test_state_show_json_handles_corrupted_state_without_traceback(tmp_path, cap
     ws = _write_workspace(tmp_path)
     initialize_runtime_state(runtime="operator", workspace=ws, repo_workdir=ROOT)
     _state_file(ws, "workflow_state").write_text("{broken", encoding="utf-8")
+    before = _workspace_file_snapshot(ws)
+
+    with pytest.raises(RuntimeStateError, match="Invalid JSON state file"):
+        show_runtime_state(workspace=ws)
+    assert _workspace_file_snapshot(ws) == before
 
     rc = main(["state", "show", "--workspace", str(ws), "--json"])
 
     assert rc == 1
-    payload = json.loads(capsys.readouterr().out)
-    assert payload["ok"] is False
-    assert "Invalid JSON state file" in payload["error"]
+    assert capsys.readouterr().out == "legacy_workspace_unsupported\n"
+    assert _workspace_file_snapshot(ws) == before
 
 
 def test_reset_state_archives_old_event_log(tmp_path):
