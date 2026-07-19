@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from copy import deepcopy
 from datetime import date
+import os
 from pathlib import Path
 
 import pytest
@@ -422,6 +423,95 @@ def test_store_status_ignores_forged_legacy_projections(tmp_path: Path) -> None:
     }
 
 
+def _delivery_result_ready_host(
+    tmp_path: Path,
+) -> tuple[Path, str, RuntimeHostService, dict[str, bytes]]:
+    workspace, run_id, _clock = _finalize_ready_workspace(tmp_path)
+    with SQLiteControlStore.open(workspace / "briefloop.db") as store:
+        adapter = CoreRunDomainVerifier().verify(store, run_id).runtime_adapter
+    host = RuntimeHostService(workspace, adapter_loader=lambda _run_id: adapter)
+    for effect_kind in ("finalize_render", "finalize_gate", "finalize_complete"):
+        action = host.next_action()
+        assert action.effect_kind == effect_kind
+        assert host.apply_current(action).status == "committed"
+    with SQLiteControlStore.open(workspace / "briefloop.db") as store:
+        verified = CoreRunDomainVerifier().verify(store, run_id)
+        package = verified.snapshot.package_ready_records[0]
+    action = host.next_action()
+    assert (
+        host.apply_current(
+            action,
+            human_request=InternalApprovalRequest.model_validate(
+                {
+                    "schema_version": InternalApprovalRequest.schema_id,
+                    "request_id": "REQ-HOST-V2-LOCAL-APPROVAL-SAFETY",
+                    "run_id": run_id,
+                    "package_id": package.package_id,
+                    "approval_id": "APPROVAL-HOST-V2-LOCAL-SAFETY",
+                    "mode": "internal_management_review",
+                    "role": "content_owner",
+                    "decision": "approve",
+                    "reason": "reader package reviewed",
+                    "actor_id": "human-reviewer",
+                    "expected_store_revision": action.store_revision,
+                },
+                strict=True,
+            ),
+        ).status
+        == "committed"
+    )
+    action = host.next_action()
+    assert (
+        host.apply_current(
+            action,
+            human_request=DeliveryAuthorizationRequest.model_validate(
+                {
+                    "schema_version": DeliveryAuthorizationRequest.schema_id,
+                    "request_id": "REQ-HOST-V2-LOCAL-AUTH-SAFETY",
+                    "run_id": run_id,
+                    "package_id": package.package_id,
+                    "prior_authorization_id": None,
+                    "approval_mode": "internal_management_review",
+                    "retry_of_attempt_id": None,
+                    "purpose": "initial_attempt",
+                    "decision": "authorize",
+                    "target": "local",
+                    "channel": "local_bundle",
+                    "recipient_fingerprint": "b" * 64,
+                    "actor_id": "human-reviewer",
+                    "reason": "approved local bundle",
+                    "expected_store_revision": action.store_revision,
+                },
+                strict=True,
+            ),
+        ).status
+        == "committed"
+    )
+    action = host.next_action()
+    assert action.effect_kind == "delivery_attempt"
+    assert host.apply_current(action).status == "committed"
+    assert host.next_action().effect_kind == "delivery_result"
+    with SQLiteControlStore.open(workspace / "briefloop.db") as store:
+        verified = CoreRunDomainVerifier().verify(store, run_id)
+        snapshot = verified.snapshot
+        revisions = {
+            (item.artifact_id, item.revision): item
+            for item in snapshot.artifact_revisions
+        }
+        expected = {
+            Path(
+                revisions[(binding.artifact_id, binding.artifact_revision)].path
+            ).name: store.read_artifact_revision_bytes(
+                run_id,
+                binding.artifact_id,
+                binding.artifact_revision,
+            )
+            for binding in snapshot.package_artifact_bindings
+            if binding.package_id == package.package_id and binding.usage == "reader"
+        }
+    return workspace, run_id, host, expected
+
+
 def test_store_native_local_delivery_materializes_receipt_bound_reader_bundle(
     tmp_path: Path,
 ) -> None:
@@ -532,3 +622,75 @@ def test_store_native_local_delivery_materializes_receipt_bound_reader_bundle(
     assert [item.result_id for item in result.receipt.delivery_results] == [
         snapshot.delivery_results[-1].result_id
     ]
+    replayed_manifest = host._materialize_local_delivery_bundle(
+        snapshot,
+        run_id=run_id,
+        package_id=package.package_id,
+    )
+    assert {item["path"] for item in replayed_manifest} == {
+        f"output/delivery/{name}" for name in expected
+    }
+
+
+@pytest.mark.parametrize(
+    "conflict_kind",
+    (
+        "output_symlink",
+        "delivery_symlink",
+        "destination_symlink",
+        "destination_hardlink",
+        "destination_different_bytes",
+        "unexpected_member",
+    ),
+)
+def test_local_delivery_fails_closed_on_unsafe_or_conflicting_output(
+    tmp_path: Path,
+    conflict_kind: str,
+) -> None:
+    workspace, run_id, host, expected = _delivery_result_ready_host(tmp_path)
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    delivery = workspace / "output" / "delivery"
+    name = sorted(expected)[0]
+    outside_target = outside / name
+    if conflict_kind == "output_symlink":
+        output = workspace / "output"
+        output.rename(workspace / "output-preserved")
+        output.symlink_to(outside, target_is_directory=True)
+    elif conflict_kind == "delivery_symlink":
+        delivery.symlink_to(outside, target_is_directory=True)
+    else:
+        delivery.mkdir()
+        destination = delivery / name
+        if conflict_kind == "destination_symlink":
+            outside_target.write_bytes(b"outside-original")
+            destination.symlink_to(outside_target)
+        elif conflict_kind == "destination_hardlink":
+            outside_target.write_bytes(expected[name])
+            os.link(outside_target, destination)
+        elif conflict_kind == "destination_different_bytes":
+            destination.write_bytes(b"different")
+        else:
+            (delivery / "unexpected.txt").write_bytes(b"unexpected")
+    with SQLiteControlStore.open(workspace / "briefloop.db") as store:
+        before_revision = store.current_revision
+        before_results = len(store.load_snapshot(run_id).delivery_results)
+
+    with pytest.raises(
+        RuntimeHostError,
+        match="runtime_delivery_materialization_failed",
+    ):
+        host.apply_current(host.next_action())
+
+    with SQLiteControlStore.open(workspace / "briefloop.db") as store:
+        assert store.current_revision == before_revision
+        assert len(store.load_snapshot(run_id).delivery_results) == before_results
+    if outside_target.exists():
+        expected_outside = (
+            expected[name]
+            if conflict_kind == "destination_hardlink"
+            else b"outside-original"
+        )
+        assert outside_target.read_bytes() == expected_outside
+    elif conflict_kind in {"output_symlink", "delivery_symlink"}:
+        assert list(outside.iterdir()) == []

@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 import os
 from pathlib import Path
 from pathlib import PurePosixPath
@@ -59,6 +59,7 @@ from multi_agent_brief.core_run_v2.lineage import (
     classify_current_audit_promotion,
     classify_current_lineage,
 )
+from multi_agent_brief.core_run_v2.next_action import classify_core_run_next_action
 from multi_agent_brief.core_run_v2.policy import (
     ARTIFACT_POLICIES,
     core_role_topology_policy,
@@ -73,6 +74,7 @@ from multi_agent_brief.core_run_v2.terminal import (
     CoreRunTerminalService,
     classify_terminal_legality,
 )
+from multi_agent_brief.core_run_v2.verifier import CoreRunDomainVerifier
 from multi_agent_brief.core.citations import remove_src_marker_spans
 from multi_agent_brief.intake_v2.errors import IntakeError
 from multi_agent_brief.intake_v2.scratch import ScratchReader, parse_json_object
@@ -93,6 +95,7 @@ from .contracts import (
 from .errors import RuntimeHostError
 from .initialization import AdapterLoader, initialize_or_open_runtime
 from .scratch import (
+    attest_host_directory,
     materialize_host_bytes,
     materialize_host_request,
     materialize_role_envelope,
@@ -218,18 +221,13 @@ class RuntimeHostService:
             self.workspace,
             adapter_loader=self._adapter_loader,
         )
+        recovered = self._recover_active_invocation(current, expected_action)
+        if recovered is not None:
+            return recovered
         action = current.action
         if expected_action is not None and expected_action != action:
             raise RuntimeHostError("runtime_action_stale")
-        if action.action_kind == "delegate":
-            role_id = action.role_id
-        elif (
-            action.action_kind == "deterministic"
-            and action.effect_kind == "source_acquire"
-        ):
-            role_id = "source-provider"
-        else:
-            raise RuntimeHostError("runtime_action_not_invocable")
+        role_id = self._invocation_role_for_action(action)
         if role_id is None or action.stage_id is None:
             raise RuntimeHostError("runtime_action_not_invocable")
         return self._start_invocation_for_action(
@@ -243,17 +241,120 @@ class RuntimeHostService:
             ),
         )
 
-    def _start_invocation_for_action(
+    @staticmethod
+    def _invocation_role_for_action(action: CoreRunNextAction) -> str | None:
+        if action.action_kind == "delegate":
+            return action.role_id
+        if (
+            action.action_kind == "deterministic"
+            and action.effect_kind == "source_acquire"
+        ):
+            return "source-provider"
+        return None
+
+    def _recover_active_invocation(
         self,
+        current,
+        expected_action: CoreRunNextAction | None,
+    ) -> InvocationDispatch | None:
+        active = [
+            item
+            for item in current.verified.snapshot.invocations
+            if item.status == "active"
+        ]
+        if not active:
+            return None
+        if len(active) != 1:
+            raise RuntimeHostError("runtime_envelope_invalid")
+        invocation = active[0]
+        starts = [
+            item
+            for item in current.verified.snapshot.events
+            if item.event_type == "role_invocation_started"
+            and item.core_run_binding is not None
+            and item.core_run_binding.effect_kind == "invocation_start"
+            and item.core_run_binding.primary_record_id == invocation.invocation_id
+        ]
+        if len(starts) != 1 or starts[0].stage_id is None:
+            raise RuntimeHostError("runtime_envelope_invalid")
+        start = starts[0]
+        binding = start.core_run_binding
+        if binding is None:
+            raise RuntimeHostError("runtime_envelope_invalid")
+        try:
+            with SQLiteControlStore.open(self.workspace / "briefloop.db") as store:
+                history = store.load_history()
+                receipt = store.load_transaction_receipt(
+                    invocation.run_id,
+                    start.transaction_id,
+                )
+            if (
+                receipt is None
+                or receipt.committed_revision <= 1
+                or receipt.prior_revision != receipt.committed_revision - 1
+            ):
+                raise RuntimeHostError("runtime_envelope_invalid")
+            verifier = CoreRunDomainVerifier()
+            verifier.verify_history(
+                history,
+                through_revision=receipt.committed_revision,
+            )
+            pre_snapshot = history.snapshot_at_revision(
+                invocation.run_id,
+                receipt.prior_revision,
+            )
+        except RuntimeHostError:
+            raise
+        except Exception as exc:
+            raise RuntimeHostError("runtime_envelope_invalid") from exc
+        historical = replace(current.verified, snapshot=pre_snapshot)
+        action = classify_core_run_next_action(historical)
+        role_id = self._invocation_role_for_action(action)
+        if role_id is None or action.stage_id is None:
+            raise RuntimeHostError("runtime_envelope_invalid")
+        request_id = derived_id(
+            "REQ-HOST-INVOKE",
+            action.run_id,
+            action.action_fingerprint,
+        )
+        request = self._invocation_start_request(
+            current,
+            action,
+            role_id=role_id,
+            request_id=request_id,
+        )
+        fingerprint = canonical_fingerprint(
+            request.model_dump(mode="json", exclude_unset=False)
+        )
+        if (
+            (expected_action is not None and expected_action != action)
+            or action.stage_id != start.stage_id
+            or invocation.role_id != role_id
+            or invocation.runtime != request.runtime
+            or start.transaction_id != request_id
+            or binding.request_id != request_id
+            or binding.request_fingerprint != fingerprint
+            or derived_id("INV", request_id, fingerprint) != invocation.invocation_id
+        ):
+            raise RuntimeHostError("runtime_envelope_invalid")
+        return self._start_invocation_for_action(
+            current,
+            action,
+            role_id=role_id,
+            request_id=request_id,
+        )
+
+    @staticmethod
+    def _invocation_start_request(
         current,
         action: CoreRunNextAction,
         *,
-        role_id: str,
+        role_id: str | None,
         request_id: str,
-    ) -> InvocationDispatch:
-        if action.stage_id is None:
+    ) -> InvocationStartRequest:
+        if role_id is None or action.stage_id is None:
             raise RuntimeHostError("runtime_action_not_invocable")
-        request = InvocationStartRequest.model_validate(
+        return InvocationStartRequest.model_validate(
             {
                 "schema_version": InvocationStartRequest.schema_id,
                 "request_id": request_id,
@@ -265,7 +366,26 @@ class RuntimeHostService:
             },
             strict=True,
         )
+
+    def _start_invocation_for_action(
+        self,
+        current,
+        action: CoreRunNextAction,
+        *,
+        role_id: str,
+        request_id: str,
+    ) -> InvocationDispatch:
+        if action.stage_id is None:
+            raise RuntimeHostError("runtime_action_not_invocable")
+        request = self._invocation_start_request(
+            current,
+            action,
+            role_id=role_id,
+            request_id=request_id,
+        )
         result = CoreRunService(self.workspace).start_invocation(request)
+        if result.status == "commit_outcome_unknown":
+            result = CoreRunService(self.workspace).start_invocation(request)
         if result.status not in {"committed", "replayed"}:
             raise RuntimeHostError(
                 result.error_code or "control_store_integrity_invalid"
@@ -1544,42 +1664,15 @@ class RuntimeHostService:
                 if sha256_hex(payload) != binding.artifact_sha256:
                     raise RuntimeHostError("control_store_integrity_invalid")
                 payloads.append((name, payload, binding))
-        directory = self.workspace / "output" / "delivery"
         try:
-            directory.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
-            directory.mkdir(mode=0o700, exist_ok=True)
-            metadata = directory.lstat()
-            if directory.is_symlink() or not stat.S_ISDIR(metadata.st_mode):
-                raise RuntimeHostError("runtime_delivery_materialization_failed")
             manifest: list[dict[str, object]] = []
             for name, payload, binding in payloads:
-                destination = directory / name
-                try:
-                    descriptor = os.open(
-                        destination,
-                        os.O_WRONLY | os.O_CREAT | os.O_EXCL,
-                        0o600,
-                    )
-                except FileExistsError:
-                    if (
-                        destination.is_symlink()
-                        or not stat.S_ISREG(destination.lstat().st_mode)
-                        or destination.read_bytes() != payload
-                    ):
-                        raise RuntimeHostError(
-                            "runtime_delivery_materialization_failed"
-                        )
-                else:
-                    try:
-                        written = 0
-                        while written < len(payload):
-                            count = os.write(descriptor, payload[written:])
-                            if count <= 0:
-                                raise OSError("delivery bundle write made no progress")
-                            written += count
-                        os.fsync(descriptor)
-                    finally:
-                        os.close(descriptor)
+                materialize_host_bytes(
+                    self.workspace,
+                    f"output/delivery/{name}",
+                    payload,
+                    error_code="runtime_delivery_materialization_failed",
+                )
                 manifest.append(
                     {
                         "artifact_id": binding.artifact_id,
@@ -1588,13 +1681,12 @@ class RuntimeHostService:
                         "sha256": binding.artifact_sha256,
                     }
                 )
-            if {item.name for item in directory.iterdir()} != names:
-                raise RuntimeHostError("runtime_delivery_materialization_failed")
-            directory_descriptor = os.open(directory, os.O_RDONLY)
-            try:
-                os.fsync(directory_descriptor)
-            finally:
-                os.close(directory_descriptor)
+            attest_host_directory(
+                self.workspace,
+                "output/delivery",
+                expected_members=names,
+                error_code="runtime_delivery_materialization_failed",
+            )
         except RuntimeHostError:
             raise
         except OSError as exc:

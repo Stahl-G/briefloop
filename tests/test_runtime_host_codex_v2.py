@@ -10,7 +10,11 @@ import yaml
 
 from multi_agent_brief.cli.init_wizard import create_workspace
 from multi_agent_brief.cli.main import main
+from multi_agent_brief.contracts.v2 import InvocationStartRequest
 from multi_agent_brief.control_store import SQLiteControlStore
+from multi_agent_brief.core_run_v2.errors import CoreRunResult
+from multi_agent_brief.core_run_v2.policy import derived_id
+from multi_agent_brief.core_run_v2.service import CoreRunService
 from multi_agent_brief.runtime_host_v2.codex import load_codex_adapter_binding
 from multi_agent_brief.runtime_host_v2.errors import RuntimeHostError
 from multi_agent_brief.runtime_host_v2.service import RuntimeHostService
@@ -246,6 +250,114 @@ def test_invocation_start_uses_exact_current_store_action(
     assert envelope["role_id"] == "source-planner"
 
 
+def test_invocation_start_unknown_immediately_replays_one_committed_request(
+    tmp_path: Path,
+    capsys,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    workspace = _workspace(tmp_path)
+    assert main(["run", "--workspace", str(workspace), "--runtime", "codex"]) == 0
+    capsys.readouterr()
+    assert _apply_current(workspace, capsys) == 0
+    capsys.readouterr()
+    with SQLiteControlStore.open(workspace / "briefloop.db") as store:
+        before = store.current_revision
+    original = CoreRunService.start_invocation
+    calls = 0
+
+    def unknown_after_first_commit(self, request):
+        nonlocal calls
+        calls += 1
+        result = original(self, request)
+        if calls == 1:
+            assert result.status == "committed"
+            return CoreRunResult(
+                status="commit_outcome_unknown",
+                error_code="commit_outcome_unknown",
+            )
+        return result
+
+    monkeypatch.setattr(CoreRunService, "start_invocation", unknown_after_first_commit)
+    host = RuntimeHostService(
+        workspace,
+        adapter_loader=load_codex_adapter_binding,
+    )
+    dispatch = host.start_current_invocation()
+
+    assert calls == 2
+    assert dispatch.envelope.role_id == "source-planner"
+    assert dispatch.envelope_path.exists()
+    with SQLiteControlStore.open(workspace / "briefloop.db") as store:
+        assert store.current_revision == before + 1
+        snapshot = store.load_snapshot("RUN-codex-run")
+    assert len(snapshot.invocations) == 1
+    assert snapshot.invocations[0].invocation_id == dispatch.envelope.invocation_id
+
+
+def test_restart_recovers_original_invocation_action_and_envelope(
+    tmp_path: Path,
+    capsys,
+) -> None:
+    workspace = _workspace(tmp_path)
+    assert main(["run", "--workspace", str(workspace), "--runtime", "codex"]) == 0
+    capsys.readouterr()
+    assert _apply_current(workspace, capsys) == 0
+    capsys.readouterr()
+    host = RuntimeHostService(
+        workspace,
+        adapter_loader=load_codex_adapter_binding,
+    )
+    action = host.next_action()
+    request_id = derived_id(
+        "REQ-HOST-INVOKE",
+        action.run_id,
+        action.action_fingerprint,
+    )
+    committed = CoreRunService(workspace).start_invocation(
+        InvocationStartRequest.model_validate(
+            {
+                "schema_version": InvocationStartRequest.schema_id,
+                "request_id": request_id,
+                "run_id": action.run_id,
+                "stage_id": action.stage_id,
+                "role_id": action.role_id,
+                "runtime": "codex",
+                "expected_store_revision": action.store_revision,
+            },
+            strict=True,
+        )
+    )
+    assert committed.status == "committed"
+    assert committed.receipt is not None
+    with SQLiteControlStore.open(workspace / "briefloop.db") as store:
+        revision = store.current_revision
+
+    recovered = host.start_current_invocation(expected_action=action)
+    replay = host.start_current_invocation(expected_action=action)
+
+    assert recovered.envelope == replay.envelope
+    assert recovered.envelope.invocation_id == committed.primary_record_id
+    assert recovered.envelope.store_revision == committed.receipt.committed_revision
+    assert recovered.envelope.action == action
+    assert recovered.envelope_path.read_bytes() == replay.envelope_path.read_bytes()
+    with SQLiteControlStore.open(workspace / "briefloop.db") as store:
+        assert store.current_revision == revision
+        assert len(store.load_snapshot(action.run_id).invocations) == 1
+
+    recovered.envelope_path.write_text("{}", encoding="utf-8")
+    with pytest.raises(
+        RuntimeHostError,
+        match="runtime_envelope_materialization_failed",
+    ):
+        host.start_current_invocation(expected_action=action)
+    with SQLiteControlStore.open(workspace / "briefloop.db") as store:
+        snapshot = store.load_snapshot(action.run_id)
+        assert store.current_revision == revision + 1
+    assert len(snapshot.invocations) == 1
+    assert snapshot.invocations[0].status == "failed"
+    assert snapshot.invocations[0].failure_reason == "envelope_materialization_failed"
+
+
 def test_symlinked_scratch_records_invocation_failure_without_external_write(
     tmp_path: Path,
     capsys,
@@ -356,8 +468,9 @@ def test_runtime_doctor_then_exact_source_planner_invocation(
 
     with SQLiteControlStore.open(workspace / "briefloop.db") as store:
         revision = store.current_revision
-    assert _start_current(workspace, capsys) == 1
-    assert "runtime_action_not_invocable" in capsys.readouterr().out
+    assert _start_current(workspace, capsys) == 0
+    replayed_envelope = json.loads(capsys.readouterr().out)
+    assert replayed_envelope == envelope
     with SQLiteControlStore.open(workspace / "briefloop.db") as store:
         assert store.current_revision == revision
 

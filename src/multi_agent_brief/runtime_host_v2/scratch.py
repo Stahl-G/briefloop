@@ -151,6 +151,53 @@ def materialize_host_bytes(
     return path
 
 
+def attest_host_directory(
+    workspace: Path,
+    relative: str,
+    *,
+    expected_members: Iterable[str],
+    error_code: str,
+) -> Path:
+    """Create and durably attest one exact workspace-relative directory."""
+
+    names = set(expected_members)
+    if any(
+        not name or name in {".", ".."} or Path(name).name != name for name in names
+    ):
+        raise RuntimeHostError(error_code)
+    marker = _prepare_host_parent(
+        workspace,
+        f"{relative}/.briefloop-directory-attestation",
+        error_code=error_code,
+    )
+    directory = marker.parent
+    try:
+        metadata = directory.lstat()
+        if directory.is_symlink() or not stat.S_ISDIR(metadata.st_mode):
+            raise RuntimeHostError(error_code)
+        if {entry.name for entry in os.scandir(directory)} != names:
+            raise RuntimeHostError(error_code)
+        descriptor = os.open(
+            directory,
+            os.O_RDONLY | getattr(os, "O_DIRECTORY", 0) | getattr(os, "O_NOFOLLOW", 0),
+        )
+        try:
+            opened = os.fstat(descriptor)
+            if (opened.st_dev, opened.st_ino) != (
+                metadata.st_dev,
+                metadata.st_ino,
+            ) or not stat.S_ISDIR(opened.st_mode):
+                raise RuntimeHostError(error_code)
+            os.fsync(descriptor)
+        finally:
+            os.close(descriptor)
+    except RuntimeHostError:
+        raise
+    except OSError as exc:
+        raise RuntimeHostError(error_code) from exc
+    return directory
+
+
 def read_host_contract(
     workspace: Path,
     input_path: str,
