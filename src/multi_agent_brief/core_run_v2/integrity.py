@@ -101,6 +101,48 @@ def verify_protected_working_checkout(
                 raise CoreRunError("checkout_projection_conflict")
 
 
+def verify_publication_preimage(
+    workspace: Path,
+    revision_members: tuple[CheckoutRevisionMember, ...],
+    changed_members: tuple[CheckoutPublicationMember, ...],
+    profile: CapabilityProfile,
+) -> None:
+    """Fail before business commit unless the full parent projection is exact."""
+
+    expected = {item.canonical_path: item for item in revision_members}
+    for item in revision_members:
+        parent, leaf = retained_member_parent(workspace, item.canonical_path)
+        with open_retained_parent(parent, profile) as retained:
+            observed = retained.observe(leaf)
+        if observed.kind not in {"absent", "blob"}:
+            raise CoreRunError("checkout_topology_invalid")
+        if (
+            observed.kind != "blob"
+            or observed.sha256 != item.blob_sha256
+            or observed.size != item.byte_size
+        ):
+            raise CoreRunError("checkout_projection_preimage_restore_required")
+    for item in changed_members:
+        prior = expected.get(item.canonical_path)
+        if prior is not None:
+            if (
+                item.pre_kind != "blob"
+                or item.pre_sha256 != prior.blob_sha256
+                or item.pre_size != prior.byte_size
+            ):
+                raise CoreRunError("checkout_publication_journal_invalid")
+            continue
+        if item.pre_kind != "absent":
+            raise CoreRunError("checkout_publication_journal_invalid")
+        parent, leaf = retained_member_parent(workspace, item.canonical_path)
+        with open_retained_parent(parent, profile) as retained:
+            observed = retained.observe(leaf)
+        if observed.kind not in {"absent", "blob"}:
+            raise CoreRunError("checkout_topology_invalid")
+        if observed.kind != "absent":
+            raise CoreRunError("checkout_projection_preimage_restore_required")
+
+
 @dataclass(frozen=True)
 class CheckoutObservation:
     entry_kind: str
@@ -535,4 +577,5 @@ __all__ = [
     "materialize_checkout",
     "protected_revision_keys",
     "read_workspace_file",
+    "verify_publication_preimage",
 ]

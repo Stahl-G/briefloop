@@ -115,7 +115,7 @@ def test_fresh_runtime_initializes_once_and_existing_store_ignores_input_drift(
     (workspace / "sources.yaml").write_text("also: inert\n", encoding="utf-8")
     reopened = initialize_or_open_runtime(
         workspace,
-        adapter_loader=lambda _run_id: (_ for _ in ()).throw(AssertionError()),
+        adapter_loader=_adapter,
     )
     assert reopened.initialized is False
     assert reopened.verified.snapshot.store_revision == revision

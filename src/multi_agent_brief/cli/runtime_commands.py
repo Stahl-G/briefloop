@@ -70,6 +70,7 @@ def register(subparsers: argparse._SubParsersAction) -> None:
             command.add_argument("--envelope", required=True)
         if action == "apply":
             command.add_argument("--human-request")
+            command.add_argument("--action-input")
         if action == "invocation-fail":
             command.add_argument(
                 "--reason",
@@ -126,7 +127,10 @@ def handle(args: argparse.Namespace) -> int:
         from multi_agent_brief.runtime_host_v2.errors import RuntimeHostError
         from multi_agent_brief.runtime_host_v2.service import RuntimeHostService
         from multi_agent_brief.runtime_host_v2.scratch import read_host_contract
-        from multi_agent_brief.runtime_host_v2.contracts import RoleTaskEnvelope
+        from multi_agent_brief.runtime_host_v2.contracts import (
+            RepairContentInput,
+            RoleTaskEnvelope,
+        )
         from multi_agent_brief.contracts.v2 import (
             CoreRunNextAction,
             DeliveryAuthorizationRequest,
@@ -189,6 +193,7 @@ def handle(args: argparse.Namespace) -> int:
                     error_code="runtime_action_invalid",
                 )
                 human_request = None
+                action_input = None
                 if action.action_kind == "human_decision":
                     request_models = {
                         InternalApprovalRequest.schema_id: InternalApprovalRequest,
@@ -205,9 +210,26 @@ def handle(args: argparse.Namespace) -> int:
                         request_model,
                         error_code="runtime_human_request_invalid",
                     )
+                    if args.action_input is not None:
+                        raise RuntimeHostError("runtime_action_input_invalid")
                 elif args.human_request is not None:
                     raise RuntimeHostError("runtime_human_request_invalid")
-                applied = service.apply_current(action, human_request)
+                elif action.effect_kind == "artifact_supersede":
+                    if args.action_input is None:
+                        raise RuntimeHostError("runtime_action_input_required")
+                    action_input = read_host_contract(
+                        workspace,
+                        args.action_input,
+                        RepairContentInput,
+                        error_code="runtime_action_input_invalid",
+                    )
+                elif args.action_input is not None:
+                    raise RuntimeHostError("runtime_action_input_invalid")
+                applied = service.apply_current(
+                    action,
+                    human_request,
+                    action_input,
+                )
                 payload = (
                     applied.model_dump(mode="json", exclude_unset=False)
                     if hasattr(applied, "model_dump")

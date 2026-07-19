@@ -19,6 +19,15 @@ from multi_agent_brief.contracts.v2 import (
     CoreRunNextAction,
     GateCheckRequest,
     DeliveryAuthorizationRequest,
+    DeliveryAttemptRequest,
+    DeliveryResultObservation,
+    DeliveryResultRequest,
+    FinalizeCompleteRequest,
+    FinalizeRenderRequest,
+    ArtifactSupersedeRequest,
+    RecoveryCompleteRequest,
+    RepairCompleteRequest,
+    RepairStartRequest,
     IntegrityCheckRequest,
     InternalApprovalRequest,
     InvocationFailureRequest,
@@ -32,26 +41,47 @@ from multi_agent_brief.contracts.v2 import (
     StrictModel,
 )
 from multi_agent_brief.control_store import SQLiteControlStore
-from multi_agent_brief.control_store.serialization import canonical_json_bytes
+from multi_agent_brief.control_store.serialization import (
+    canonical_fingerprint,
+    canonical_json_bytes,
+    sha256_hex,
+)
 from multi_agent_brief.core_run_v2.artifacts import (
     ArtifactAcceptanceService,
     _input_classification_bytes,
 )
 from multi_agent_brief.core_run_v2.claims import ClaimFreezeService
 from multi_agent_brief.core_run_v2.gates import GateEvaluationService
-from multi_agent_brief.core_run_v2.lineage import classify_current_lineage
+from multi_agent_brief.core_run_v2.lineage import (
+    classify_current_audit_promotion,
+    classify_current_lineage,
+)
 from multi_agent_brief.core_run_v2.policy import (
+    ARTIFACT_POLICIES,
     core_role_topology_policy,
     derived_id,
 )
 from multi_agent_brief.core_run_v2.service import CoreRunService
-from multi_agent_brief.core_run_v2.terminal import CoreRunTerminalService
+from multi_agent_brief.core_run_v2.recovery import (
+    CoreRunRecoveryService,
+    classify_recovery_legality,
+)
+from multi_agent_brief.core_run_v2.terminal import (
+    CoreRunTerminalService,
+    classify_terminal_legality,
+)
+from multi_agent_brief.core.citations import remove_src_marker_spans
 from multi_agent_brief.intake_v2.errors import IntakeError
 from multi_agent_brief.intake_v2.scratch import parse_json_object
 from multi_agent_brief.intake_v2.service import IntakeService
 from multi_agent_brief.sources.search_backends.base import SearchBackendError
+from multi_agent_brief.outputs.reader_projection import (
+    ReaderProjectionSourceError,
+    reader_projection_source_markdown,
+)
 
 from .contracts import (
+    RepairContentInput,
     RoleTaskEnvelope,
     RuntimeDiagnoseReport,
     RuntimeInvocationResult,
@@ -629,6 +659,7 @@ class RuntimeHostService:
         self,
         expected_action: CoreRunNextAction | None = None,
         human_request: StrictModel | None = None,
+        action_input: StrictModel | None = None,
     ):
         current = initialize_or_open_runtime(
             self.workspace,
@@ -636,14 +667,32 @@ class RuntimeHostService:
         )
         action = current.action
         if expected_action is not None and expected_action != action:
+            if (
+                expected_action.effect_kind == "artifact_supersede"
+                and isinstance(action_input, RepairContentInput)
+                and human_request is None
+            ):
+                return self._replay_artifact_supersede(
+                    current,
+                    expected_action,
+                    action_input,
+                )
             raise RuntimeHostError("runtime_action_stale")
         if action.action_kind == "human_decision":
+            if action_input is not None:
+                raise RuntimeHostError("runtime_action_input_invalid")
             return self._apply_human_decision(action, human_request)
         if action.action_kind != "deterministic":
             raise RuntimeHostError("runtime_action_not_deterministic")
         if human_request is not None:
             raise RuntimeHostError("runtime_human_request_invalid")
-        if action.effect_kind == "doctor_check":
+        if action.effect_kind == "artifact_supersede":
+            if not isinstance(action_input, RepairContentInput):
+                raise RuntimeHostError("runtime_action_input_required")
+            result = self._apply_artifact_supersede(current, action, action_input)
+        elif action_input is not None:
+            raise RuntimeHostError("runtime_action_input_invalid")
+        elif action.effect_kind == "doctor_check":
             request = IntegrityCheckRequest.model_validate(
                 {
                     "schema_version": IntegrityCheckRequest.schema_id,
@@ -666,10 +715,24 @@ class RuntimeHostService:
             result = self._apply_claim_freeze(current, action)
         elif action.effect_kind == "audit_promotion":
             result = self._apply_audit_promotion(current, action)
-        elif action.effect_kind == "gate_evaluation":
+        elif action.effect_kind in {"gate_evaluation", "finalize_gate"}:
             result = self._apply_gate_evaluation(current, action)
         elif action.effect_kind == "stage_complete":
             result = self._apply_stage_complete(current, action)
+        elif action.effect_kind == "repair_start":
+            result = self._apply_repair_start(current, action)
+        elif action.effect_kind == "repair_complete":
+            result = self._apply_repair_complete(current, action)
+        elif action.effect_kind == "recovery_complete":
+            result = self._apply_recovery_complete(current, action)
+        elif action.effect_kind == "finalize_render":
+            result = self._apply_finalize_render(current, action)
+        elif action.effect_kind == "finalize_complete":
+            result = self._apply_finalize_complete(current, action)
+        elif action.effect_kind == "delivery_attempt":
+            result = self._apply_delivery_attempt(current, action)
+        elif action.effect_kind == "delivery_result":
+            result = self._apply_delivery_result(current, action)
         else:
             raise RuntimeHostError("runtime_action_not_implemented")
         if isinstance(result, RuntimeInvocationResult):
@@ -849,25 +912,48 @@ class RuntimeHostService:
         stage_id = action.stage_id
         if stage_id not in {"auditor", "finalize"}:
             raise RuntimeHostError("runtime_action_not_implemented")
-        allowed = (
-            {
-                "candidate_claims",
-                "screened_candidates",
-                "claim_ledger",
-                "analyst_draft_snapshot",
-                "audited_brief",
+        artifacts = {item.artifact_id: item for item in snapshot.artifacts}
+
+        def reference(artifact_id: str) -> dict[str, object]:
+            artifact = artifacts.get(artifact_id)
+            if artifact is None or artifact.current_revision < 1:
+                raise RuntimeHostError("control_store_integrity_invalid")
+            return {
+                "artifact_id": artifact.artifact_id,
+                "revision": artifact.current_revision,
             }
-            if stage_id == "auditor"
-            else {"audit_report", "reader_brief", "reader_brief_docx"}
-        )
-        references = sorted(
-            (
-                {"artifact_id": item.artifact_id, "revision": item.current_revision}
-                for item in snapshot.artifacts
-                if item.artifact_id in allowed and item.current_revision > 0
-            ),
-            key=lambda item: str(item["artifact_id"]),
-        )
+
+        if stage_id == "auditor":
+            references = [
+                reference("claim_ledger"),
+                reference("audited_brief"),
+            ]
+            analyst = artifacts.get("analyst_draft_snapshot")
+            if analyst is not None and analyst.current_revision > 0:
+                references.append(reference("analyst_draft_snapshot"))
+            references.extend(
+                [reference("screened_candidates"), reference("candidate_claims")]
+            )
+        else:
+            if len(snapshot.finalize_renders) != 1:
+                raise RuntimeHostError("control_store_integrity_invalid")
+            render = snapshot.finalize_renders[0]
+            references = [
+                reference("candidate_claims"),
+                reference("screened_candidates"),
+                *[
+                    {
+                        "artifact_id": item.artifact_id,
+                        "revision": item.revision,
+                    }
+                    for item in render.reader_artifacts
+                ],
+                {
+                    "artifact_id": render.audit_report.artifact_id,
+                    "revision": render.audit_report.revision,
+                },
+                reference("claim_ledger"),
+            ]
         report = next(
             (
                 item
@@ -944,6 +1030,499 @@ class RuntimeHostService:
             strict=True,
         )
         return service.complete_stage(request)
+
+    def _apply_finalize_render(self, current, action: CoreRunNextAction):
+        snapshot = current.verified.snapshot
+        with SQLiteControlStore.open(self.workspace / "briefloop.db") as store:
+            promotion = classify_current_audit_promotion(
+                snapshot,
+                store.read_artifact_revision_bytes,
+            )
+            if promotion is None or not promotion.is_current_lineage:
+                raise RuntimeHostError("control_store_integrity_invalid")
+            try:
+                audited_bytes = store.read_artifact_revision_bytes(
+                    action.run_id,
+                    promotion.brief_revision.artifact_id,
+                    promotion.brief_revision.revision,
+                )
+            except Exception as exc:
+                raise RuntimeHostError("control_store_integrity_invalid") from exc
+        try:
+            audited = audited_bytes.decode("utf-8")
+            reader = remove_src_marker_spans(
+                reader_projection_source_markdown(audited)
+            ).strip()
+        except (UnicodeDecodeError, ReaderProjectionSourceError) as exc:
+            raise RuntimeHostError("runtime_deterministic_input_invalid") from exc
+        if not reader:
+            raise RuntimeHostError("runtime_deterministic_input_invalid")
+        reader_bytes = (reader + "\n").encode("utf-8")
+        request_id = derived_id(
+            "REQ-HOST-FINALIZE-RENDER",
+            action.run_id,
+            action.action_fingerprint,
+        )
+        relative = f"scratch/{request_id}/reader_brief.md"
+        self._materialize_tool_input(relative, reader_bytes)
+        reader_artifact = next(
+            (
+                item
+                for item in snapshot.artifacts
+                if item.artifact_id == "reader_brief"
+            ),
+            None,
+        )
+        request = FinalizeRenderRequest.model_validate(
+            {
+                "schema_version": FinalizeRenderRequest.schema_id,
+                "request_id": request_id,
+                "run_id": action.run_id,
+                "audit_proposal_id": promotion.proposal_record.proposal_id,
+                "expected_audited_brief": {
+                    "artifact_id": promotion.brief_revision.artifact_id,
+                    "revision": promotion.brief_revision.revision,
+                },
+                "expected_audit_report": {
+                    "artifact_id": promotion.report_revision.artifact_id,
+                    "revision": promotion.report_revision.revision,
+                },
+                "reader_scratch_inputs": {"reader_brief": relative},
+                "expected_reader_sha256": {
+                    "reader_brief": sha256_hex(reader_bytes)
+                },
+                "expected_reader_revisions": {
+                    "reader_brief": (
+                        0 if reader_artifact is None else reader_artifact.current_revision
+                    )
+                },
+                "expected_store_revision": action.store_revision,
+            },
+            strict=True,
+        )
+        return CoreRunTerminalService(self.workspace).accept_finalize_render(request)
+
+    def _apply_finalize_complete(self, current, action: CoreRunNextAction):
+        snapshot = current.verified.snapshot
+        if len(snapshot.finalize_renders) != 1:
+            raise RuntimeHostError("control_store_integrity_invalid")
+        render = snapshot.finalize_renders[0]
+        stage = next(
+            (item for item in snapshot.stage_states if item.stage_id == "finalize"),
+            None,
+        )
+        report = self._artifact(snapshot, "finalize_quality_gate_report")
+        evaluations = sorted(
+            (
+                item
+                for item in snapshot.gate_evaluations
+                if item.stage_id == "finalize"
+                and item.report_artifact.artifact_id == report.artifact_id
+                and item.report_artifact.revision == report.current_revision
+            ),
+            key=lambda item: item.gate_id,
+        )
+        if stage is None or not evaluations:
+            raise RuntimeHostError("control_store_integrity_invalid")
+        recovery = classify_recovery_legality(snapshot)
+        recovery_id = (
+            recovery.recovery_id if recovery.state == "recovered_current" else None
+        )
+        request = FinalizeCompleteRequest.model_validate(
+            {
+                "schema_version": FinalizeCompleteRequest.schema_id,
+                "request_id": derived_id(
+                    "REQ-HOST-FINALIZE-COMPLETE",
+                    action.run_id,
+                    action.action_fingerprint,
+                ),
+                "run_id": action.run_id,
+                "render_id": render.render_id,
+                "expected_finalize_stage_revision": stage.revision,
+                "gate_evaluation_ids": [
+                    item.evaluation_id
+                    for item in sorted(
+                        evaluations,
+                        key=lambda item: item.evaluation_id,
+                    )
+                ],
+                "recovery_id": recovery_id,
+                "expected_store_revision": action.store_revision,
+            },
+            strict=True,
+        )
+        return CoreRunTerminalService(self.workspace).complete_finalize(request)
+
+    def _apply_delivery_attempt(self, current, action: CoreRunNextAction):
+        snapshot = current.verified.snapshot
+        terminal = classify_terminal_legality(snapshot)
+        authorization = next(
+            (
+                item
+                for item in snapshot.delivery_authorizations
+                if item.authorization_id == terminal.current_authorization_id
+            ),
+            None,
+        )
+        if authorization is None or terminal.package_id is None:
+            raise RuntimeHostError("control_store_integrity_invalid")
+        connector_operation_id = derived_id(
+            "DELIVERY-HOST-OPERATION",
+            authorization.authorization_id,
+            action.action_fingerprint,
+        )
+        connector_fingerprint = canonical_fingerprint(
+            {
+                "run_id": action.run_id,
+                "package_id": terminal.package_id,
+                "authorization_id": authorization.authorization_id,
+                "target": authorization.target,
+                "channel": authorization.channel,
+                "recipient_fingerprint": authorization.recipient_fingerprint,
+                "connector_operation_id": connector_operation_id,
+            }
+        )
+        request = DeliveryAttemptRequest.model_validate(
+            {
+                "schema_version": DeliveryAttemptRequest.schema_id,
+                "request_id": derived_id(
+                    "REQ-HOST-DELIVERY-ATTEMPT",
+                    action.run_id,
+                    action.action_fingerprint,
+                ),
+                "run_id": action.run_id,
+                "package_id": terminal.package_id,
+                "authorization_id": authorization.authorization_id,
+                "connector_operation_id": connector_operation_id,
+                "connector_request_fingerprint": connector_fingerprint,
+                "expected_store_revision": action.store_revision,
+            },
+            strict=True,
+        )
+        return CoreRunTerminalService(self.workspace).record_delivery_attempt(request)
+
+    def _apply_delivery_result(self, current, action: CoreRunNextAction):
+        snapshot = current.verified.snapshot
+        terminal = classify_terminal_legality(snapshot)
+        attempt = next(
+            (
+                item
+                for item in snapshot.delivery_attempts
+                if item.attempt_id == terminal.attempt_id_for_current_authorization
+            ),
+            None,
+        )
+        if attempt is None or attempt.target != "local":
+            raise RuntimeHostError("runtime_delivery_connector_required")
+        observation = DeliveryResultObservation.model_validate(
+            {
+                "schema_version": DeliveryResultObservation.schema_id,
+                "attempt_id": attempt.attempt_id,
+                "adapter_id": current.verified.runtime_adapter.adapter_id,
+                "adapter_version": current.verified.runtime_adapter.adapter_version,
+                "connector_operation_id": attempt.connector_operation_id,
+                "status": "bundle_prepared",
+                "evidence_sha256": canonical_fingerprint(
+                    {
+                        "run_id": action.run_id,
+                        "package_id": attempt.package_id,
+                        "attempt_id": attempt.attempt_id,
+                    }
+                ),
+                "diagnostic_code": "bundle_prepared",
+                "connector_request_fingerprint": (
+                    attempt.connector_request_fingerprint
+                ),
+            },
+            strict=True,
+        )
+        payload = canonical_json_bytes(
+            observation.model_dump(mode="json", exclude_unset=False)
+        )
+        request_id = derived_id(
+            "REQ-HOST-DELIVERY-RESULT",
+            action.run_id,
+            action.action_fingerprint,
+        )
+        relative = f"scratch/{request_id}/delivery_result.json"
+        self._materialize_tool_input(relative, payload)
+        request = DeliveryResultRequest.model_validate(
+            {
+                "schema_version": DeliveryResultRequest.schema_id,
+                "request_id": request_id,
+                "run_id": action.run_id,
+                "attempt_id": attempt.attempt_id,
+                "prior_result_id": terminal.current_result_id,
+                "observation_input_path": relative,
+                "expected_observation_sha256": sha256_hex(payload),
+                "reconciliation_authorization_id": None,
+                "expected_store_revision": action.store_revision,
+            },
+            strict=True,
+        )
+        return CoreRunTerminalService(self.workspace).record_delivery_result(request)
+
+    def _apply_artifact_supersede(
+        self,
+        current,
+        action: CoreRunNextAction,
+        repair_input: RepairContentInput,
+    ):
+        snapshot = current.verified.snapshot
+        legality = classify_recovery_legality(snapshot)
+        if legality.state != "active_repair" or legality.repair_id is None:
+            raise RuntimeHostError("runtime_action_input_invalid")
+        superseded = {
+            item.prior_artifact.artifact_id
+            for item in snapshot.artifact_supersessions
+            if item.repair_id == legality.repair_id
+        }
+        remaining = set(legality.permitted_artifact_ids) - superseded
+        if repair_input.artifact_id not in remaining:
+            raise RuntimeHostError("runtime_action_input_invalid")
+        artifact = self._artifact(snapshot, repair_input.artifact_id)
+        if artifact.current_revision < 1:
+            raise RuntimeHostError("control_store_integrity_invalid")
+        request = ArtifactSupersedeRequest.model_validate(
+            {
+                "schema_version": ArtifactSupersedeRequest.schema_id,
+                "request_id": derived_id(
+                    "REQ-HOST-ARTIFACT-SUPERSEDE",
+                    action.run_id,
+                    action.action_fingerprint,
+                    repair_input.artifact_id,
+                ),
+                "run_id": action.run_id,
+                "repair_id": legality.repair_id,
+                "prior_artifact": {
+                    "artifact_id": artifact.artifact_id,
+                    "revision": artifact.current_revision,
+                },
+                "input_path": repair_input.input_path,
+                "expected_input_sha256": repair_input.expected_input_sha256,
+                "expected_current_revision": artifact.current_revision,
+                "mode": "repair",
+                "reason_code": "frozen_artifact_repaired",
+                "expected_store_revision": action.store_revision,
+            },
+            strict=True,
+        )
+        return CoreRunRecoveryService(self.workspace).supersede_artifact(request)
+
+    def _replay_artifact_supersede(
+        self,
+        current,
+        action: CoreRunNextAction,
+        repair_input: RepairContentInput,
+    ):
+        """Resolve one committed supersession without reading scratch again."""
+
+        request_id = derived_id(
+            "REQ-HOST-ARTIFACT-SUPERSEDE",
+            action.run_id,
+            action.action_fingerprint,
+            repair_input.artifact_id,
+        )
+        with SQLiteControlStore.open(self.workspace / "briefloop.db") as store:
+            receipt = store.load_transaction_receipt(action.run_id, request_id)
+        if receipt is None:
+            raise RuntimeHostError("runtime_action_stale")
+        relations = [
+            item
+            for item in current.verified.snapshot.artifact_supersessions
+            if item.accepted_transaction_id == request_id
+        ]
+        if len(relations) != 1:
+            raise RuntimeHostError("control_store_integrity_invalid")
+        relation = relations[0]
+        if (
+            relation.run_id != action.run_id
+            or relation.prior_artifact.artifact_id != repair_input.artifact_id
+            or receipt.committed_revision != action.store_revision + 1
+        ):
+            raise RuntimeHostError("control_store_integrity_invalid")
+        request = ArtifactSupersedeRequest.model_validate(
+            {
+                "schema_version": ArtifactSupersedeRequest.schema_id,
+                "request_id": request_id,
+                "run_id": action.run_id,
+                "repair_id": relation.repair_id,
+                "prior_artifact": relation.prior_artifact.model_dump(
+                    mode="json",
+                    exclude_unset=False,
+                ),
+                "input_path": repair_input.input_path,
+                "expected_input_sha256": repair_input.expected_input_sha256,
+                "expected_current_revision": relation.prior_artifact.revision,
+                "mode": relation.mode,
+                "reason_code": relation.reason_code,
+                "expected_store_revision": action.store_revision,
+            },
+            strict=True,
+        )
+        result = CoreRunRecoveryService(self.workspace).supersede_artifact(request)
+        if result.status != "replayed":
+            raise RuntimeHostError(
+                result.error_code or "control_store_integrity_invalid"
+            )
+        return result
+
+    def _apply_repair_start(self, current, action: CoreRunNextAction):
+        snapshot = current.verified.snapshot
+        legality = classify_recovery_legality(snapshot)
+        if legality.state != "blocked" or legality.latest_contamination_revision is None:
+            raise RuntimeHostError("control_store_integrity_invalid")
+        contamination = next(
+            (
+                item
+                for item in snapshot.run_integrity_records
+                if item.integrity_revision == legality.latest_contamination_revision
+                and item.status == "contaminated"
+            ),
+            None,
+        )
+        if contamination is None or contamination.affected_artifact_id is None:
+            raise RuntimeHostError("control_store_integrity_invalid")
+        owner_stage_id = self._artifact_owner_stage(
+            snapshot,
+            contamination.affected_artifact_id,
+            contamination.affected_artifact_revision,
+        )
+        request = RepairStartRequest.model_validate(
+            {
+                "schema_version": RepairStartRequest.schema_id,
+                "request_id": derived_id(
+                    "REQ-HOST-REPAIR-START",
+                    action.run_id,
+                    action.action_fingerprint,
+                ),
+                "run_id": action.run_id,
+                "contamination_revision": contamination.integrity_revision,
+                "owner_stage_id": owner_stage_id,
+                "permitted_artifact_ids": [contamination.affected_artifact_id],
+                "reason_code": contamination.reason_code,
+                "expected_store_revision": action.store_revision,
+            },
+            strict=True,
+        )
+        return CoreRunRecoveryService(self.workspace).start_repair(request)
+
+    def _apply_repair_complete(self, current, action: CoreRunNextAction):
+        snapshot = current.verified.snapshot
+        legality = classify_recovery_legality(snapshot)
+        if legality.state != "active_repair" or legality.repair_id is None:
+            raise RuntimeHostError("control_store_integrity_invalid")
+        supersessions = sorted(
+            (
+                item
+                for item in snapshot.artifact_supersessions
+                if item.repair_id == legality.repair_id
+            ),
+            key=lambda item: item.supersession_id,
+        )
+        owner_stages = sorted(
+            {
+                submission.owner_stage_id
+                for relation in supersessions
+                for submission in snapshot.owned_artifact_submissions
+                if submission.artifact_id == relation.successor_artifact.artifact_id
+                and submission.artifact_revision
+                == relation.successor_artifact.revision
+            }
+        )
+        stages = {item.stage_id: item for item in snapshot.stage_states}
+        if not supersessions or any(stage not in stages for stage in owner_stages):
+            raise RuntimeHostError("control_store_integrity_invalid")
+        request = RepairCompleteRequest.model_validate(
+            {
+                "schema_version": RepairCompleteRequest.schema_id,
+                "request_id": derived_id(
+                    "REQ-HOST-REPAIR-COMPLETE",
+                    action.run_id,
+                    action.action_fingerprint,
+                ),
+                "run_id": action.run_id,
+                "repair_id": legality.repair_id,
+                "supersession_ids": [item.supersession_id for item in supersessions],
+                "expected_stage_revisions": {
+                    stage_id: stages[stage_id].revision for stage_id in owner_stages
+                },
+                "expected_store_revision": action.store_revision,
+            },
+            strict=True,
+        )
+        return CoreRunRecoveryService(self.workspace).complete_repair(request)
+
+    def _apply_recovery_complete(self, current, action: CoreRunNextAction):
+        legality = classify_recovery_legality(current.verified.snapshot)
+        if (
+            legality.state != "rerun_required"
+            or legality.repair_completion_id is None
+            or legality.latest_contamination_revision is None
+            or not legality.required_rerun_transition_ids
+        ):
+            raise RuntimeHostError("control_store_integrity_invalid")
+        request = RecoveryCompleteRequest.model_validate(
+            {
+                "schema_version": RecoveryCompleteRequest.schema_id,
+                "request_id": derived_id(
+                    "REQ-HOST-RECOVERY-COMPLETE",
+                    action.run_id,
+                    action.action_fingerprint,
+                ),
+                "run_id": action.run_id,
+                "repair_completion_id": legality.repair_completion_id,
+                "contamination_revision": legality.latest_contamination_revision,
+                "rerun_transition_ids": list(
+                    legality.required_rerun_transition_ids
+                ),
+                "gate_evaluation_ids": list(
+                    legality.required_gate_evaluation_ids
+                ),
+                "expected_store_revision": action.store_revision,
+            },
+            strict=True,
+        )
+        return CoreRunRecoveryService(self.workspace).complete_recovery(request)
+
+    @staticmethod
+    def _artifact_owner_stage(
+        snapshot,
+        artifact_id: str,
+        revision: int | None,
+    ) -> str:
+        policy = ARTIFACT_POLICIES.get(artifact_id)
+        if policy is not None:
+            return policy.owner_stage_id
+        proposal = next(
+            (
+                item
+                for item in snapshot.accepted_proposals
+                if item.artifact_id == artifact_id
+                and item.artifact_revision == revision
+            ),
+            None,
+        )
+        stages = {
+            "candidate": "scout",
+            "screened": "screener",
+            "claim_drafts": "claim-ledger",
+            "audit": "auditor",
+        }
+        if proposal is not None and proposal.proposal_kind in stages:
+            return stages[proposal.proposal_kind]
+        submission = next(
+            (
+                item
+                for item in snapshot.owned_artifact_submissions
+                if item.artifact_id == artifact_id
+                and item.artifact_revision == revision
+            ),
+            None,
+        )
+        if submission is not None:
+            return submission.owner_stage_id
+        raise RuntimeHostError("control_store_integrity_invalid")
 
     @staticmethod
     def _artifact(snapshot, artifact_id: str):

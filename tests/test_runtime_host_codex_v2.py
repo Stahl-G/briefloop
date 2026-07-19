@@ -4,11 +4,15 @@ from datetime import date
 import json
 from pathlib import Path
 
+import pytest
 import yaml
 
 from multi_agent_brief.cli.init_wizard import create_workspace
 from multi_agent_brief.cli.main import main
 from multi_agent_brief.control_store import SQLiteControlStore
+from multi_agent_brief.runtime_host_v2.codex import load_codex_adapter_binding
+from multi_agent_brief.runtime_host_v2.errors import RuntimeHostError
+from multi_agent_brief.runtime_host_v2.service import RuntimeHostService
 from multi_agent_brief.workspace.init_profile import InitProfile
 
 
@@ -206,6 +210,20 @@ def test_existing_codex_run_does_not_reread_mutable_inputs(
     assert second == first
 
 
+def test_existing_run_rejects_installed_adapter_drift(tmp_path: Path) -> None:
+    workspace = _workspace(tmp_path)
+    assert main(["run", "--workspace", str(workspace), "--runtime", "codex"]) == 0
+    installed = load_codex_adapter_binding("RUN-codex-run")
+    drifted = installed.model_copy(update={"adapter_version": "drifted"})
+    host = RuntimeHostService(
+        workspace,
+        adapter_loader=lambda _run_id: drifted,
+    )
+
+    with pytest.raises(RuntimeHostError, match="runtime_adapter_binding_mismatch"):
+        host.next_action()
+
+
 def test_start_and_non_codex_runtime_do_not_mutate_sqlite_workspace(
     tmp_path: Path,
     capsys,
@@ -258,6 +276,29 @@ def test_runtime_doctor_then_exact_source_planner_invocation(
     assert "runtime_action_not_invocable" in capsys.readouterr().out
     with SQLiteControlStore.open(workspace / "briefloop.db") as store:
         assert store.current_revision == revision
+
+
+def test_cli_authority_guard_blocks_legacy_and_sqlite_legacy_commands(
+    tmp_path: Path,
+    capsys,
+) -> None:
+    legacy = tmp_path / "legacy"
+    control = legacy / "output" / "intermediate" / "workflow_state.json"
+    control.parent.mkdir(parents=True)
+    control.write_text("{}\n", encoding="utf-8")
+    before_legacy = control.read_bytes()
+    assert main(["status", "--workspace", str(legacy), "--json"]) == 1
+    assert "legacy_workspace_unsupported" in capsys.readouterr().out
+    assert control.read_bytes() == before_legacy
+
+    workspace = _workspace(tmp_path)
+    assert main(["run", "--workspace", str(workspace), "--runtime", "codex"]) == 0
+    capsys.readouterr()
+    database = workspace / "briefloop.db"
+    before_database = database.read_bytes()
+    assert main(["state", "check", "--workspace", str(workspace)]) == 1
+    assert "runtime_command_unsupported" in capsys.readouterr().out
+    assert database.read_bytes() == before_database
 
 
 def test_explicit_strict_topology_never_falls_back_to_current_session(

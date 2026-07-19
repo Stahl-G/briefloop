@@ -12,6 +12,7 @@ from multi_agent_brief.contracts.v2 import (
     CoreRunNextAction,
     NonNegativeInt,
     Sha256,
+    ScratchInputPath,
     StrictModel,
     WorkspacePath,
 )
@@ -89,8 +90,20 @@ class RuntimeInvocationResult(StrictModel):
     next_action: CoreRunNextAction
 
 
+class RepairContentInput(StrictModel):
+    """Non-authoritative bytes locator for one deterministic repair effect."""
+
+    schema_id = "briefloop.runtime_repair_content_input.v2"
+
+    schema_version: Literal["briefloop.runtime_repair_content_input.v2"]
+    artifact_id: ContractId
+    input_path: ScratchInputPath
+    expected_input_sha256: Sha256
+
+
 __all__ = [
     "RoleTaskEnvelope",
+    "RepairContentInput",
     "RuntimeDiagnoseReport",
     "RuntimeInvocationResult",
 ]

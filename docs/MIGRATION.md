@@ -13,6 +13,16 @@ This page explains the public architecture migration from older Python-pipeline 
 
 ## Migration Rules
 
+- The current cutover is intentionally fresh-only. A new Codex run writes one
+  SQLite `briefloop.db`; JSON/JSONL controls are projections only.
+- Existing JSON-only workspaces are unsupported. There is no importer, silent
+  migration, dual-read, dual-write, compatibility mode, or fallback.
+- `config.yaml` and `sources.yaml` are strict initialization inputs. Their exact
+  bytes and normalized bindings are frozen into SQLite; later edits cannot
+  change run legality.
+- Retained legacy commands and assets may remain in the tree until the separate
+  deletion unit, but the authority guard prevents them from acting on a SQLite
+  workspace or continuing a JSON-only workspace.
 - Do not restore a Python full-pipeline as the standard generation path.
 - Do not treat roadmap goals as implemented modules.
 - Do not move hard constraints into user notes when validators or audit checks should enforce them.

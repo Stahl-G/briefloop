@@ -11,8 +11,21 @@ page describes implemented runtime capability, not a breaking deep rename.
 
 ## Implemented Public Baseline
 
-- The standard user path is subagent-first.
-- `briefloop run` creates runtime handoff artifacts rather than generating a full brief by itself.
+- The active new-run path is Experimental, fresh SQLite-only Codex. `briefloop
+  init` writes the strict bootstrap; `briefloop run --runtime codex` creates or
+  verifies `briefloop.db` and returns one Store-derived `CoreRunNextAction`.
+- SQLite ControlStore receipts and ledger relations are the sole runtime
+  authority. Strict Pydantic DTOs are the write boundary; deterministic domain
+  services own effects; agents write only invocation scratch proposals.
+- `role_topology=single_session` uses one shared Codex session with distinct
+  Receipt-backed role invocations and stage-separated self-review. It is not an
+  independent-review claim.
+- JSON-only workspaces are unsupported and are never imported, migrated,
+  dual-read, dual-written or used as fallback. JSON/JSONL and reader/status/QP
+  files are replaceable projections only.
+- The former handoff/control-file runtime paths remain in the source tree only
+  until the separate legacy deletion unit; authority guards prevent them from
+  acting on SQLite or JSON-only workspaces.
 - Runtime identity is explicit and single-writer: dedicated adapters inject one
   fixed canonical literal, generic CLI users pass `--runtime`, and subsequent
   status/handoff/transaction consumers reuse `runtime_manifest.runtime` without

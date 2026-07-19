@@ -29,6 +29,7 @@ from multi_agent_brief.core_run_v2.checkout import (
     build_publication_intent,
 )
 from multi_agent_brief.core_run_v2.errors import CoreRunError
+from multi_agent_brief.core_run_v2.integrity import verify_publication_preimage
 from multi_agent_brief.core_run_v2.publication import CheckoutPublicationEngine
 from multi_agent_brief.core_run_v2.publication_platform import (
     capability_profile,
@@ -523,6 +524,71 @@ def test_unrelated_protected_drift_before_ack_blocks_complete_ack(checkout) -> N
     result = CheckoutPublicationEngine(workspace, store, hook=drift).publish(identity)
     assert result.error_code == "checkout_projection_conflict"
     assert store.load_snapshot("run-001").checkout_publication_acks == ()
+
+
+@pytest.mark.skipif(sys.platform not in {"darwin", "linux"}, reason="POSIX publication")
+def test_precommit_preimage_checks_full_parent_and_leaf_topology(checkout) -> None:
+    workspace, _store = checkout
+    a, b, successor = b"a\n", b"b\n", b"successor\n"
+    pre = build_checkout_revision(
+        workspace_id="workspace-001",
+        run_id="run-001",
+        transaction_id="tx-preimage-parent",
+        created_at=NOW,
+        artifact_revisions=(
+            artifact_revision(a, artifact_id="a", path="output/a.md"),
+            artifact_revision(b, artifact_id="b", path="output/b.md"),
+        ),
+        parent_checkout_revision_id=None,
+    )
+    post = build_checkout_revision(
+        workspace_id="workspace-001",
+        run_id="run-001",
+        transaction_id="tx-preimage-child",
+        created_at=NOW,
+        artifact_revisions=(
+            artifact_revision(a, artifact_id="a", path="output/a.md"),
+            artifact_revision(
+                successor,
+                revision=2,
+                artifact_id="b",
+                path="output/b.md",
+            ),
+        ),
+        parent_checkout_revision_id=pre.record.checkout_revision_id,
+    )
+    identity = PublicationIdentityV1.model_validate(
+        {
+            "schema_version": "briefloop-publication-identity/v1",
+            "workspace_id": "workspace-001",
+            "run_id": "run-001",
+            "transaction_id": "tx-preimage-child",
+            "checkout_revision_id": post.record.checkout_revision_id,
+        },
+        strict=True,
+    )
+    profile = probe_publication_capability(workspace / "output")
+    _intent, changed = build_publication_intent(
+        identity=identity,
+        pre=pre,
+        post=post,
+        capability_profile_sha256=profile.sha256,
+    )
+    (workspace / "output/a.md").write_bytes(a)
+    (workspace / "output/b.md").write_bytes(b)
+    verify_publication_preimage(workspace, pre.members, changed, profile)
+
+    (workspace / "output/a.md").write_bytes(b"unrelated drift\n")
+    with pytest.raises(
+        CoreRunError,
+        match="checkout_projection_preimage_restore_required",
+    ):
+        verify_publication_preimage(workspace, pre.members, changed, profile)
+
+    (workspace / "output/a.md").unlink()
+    (workspace / "output/a.md").symlink_to(workspace / "output/b.md")
+    with pytest.raises(CoreRunError, match="checkout_topology_invalid"):
+        verify_publication_preimage(workspace, pre.members, changed, profile)
 
 
 @pytest.mark.skipif(sys.platform not in {"darwin", "linux"}, reason="POSIX publication")

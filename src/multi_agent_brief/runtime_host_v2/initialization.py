@@ -84,13 +84,20 @@ def _load_yaml_mapping(content: bytes) -> dict[str, object]:
     return payload
 
 
-def _verify_existing(workspace: Path) -> InitializedRuntime:
+def _verify_existing(
+    workspace: Path,
+    *,
+    adapter_loader: AdapterLoader,
+) -> InitializedRuntime:
     try:
         with SQLiteControlStore.open(workspace / "briefloop.db") as store:
             head = store.load_workspace_run_head()
             if head is None:
                 raise RuntimeHostError("control_store_integrity_invalid")
             verified = CoreRunDomainVerifier().verify(store, head.current_run_id)
+            installed = adapter_loader(head.current_run_id)
+            if installed != verified.runtime_adapter:
+                raise RuntimeHostError("runtime_adapter_binding_mismatch")
             action = classify_core_run_next_action(verified)
             return InitializedRuntime(
                 verified=verified, action=action, initialized=False
@@ -108,7 +115,7 @@ def initialize_or_open_runtime(
 ) -> InitializedRuntime:
     authority = classify_workspace_authority(workspace)
     if authority.kind == "sqlite":
-        return _verify_existing(workspace)
+        return _verify_existing(workspace, adapter_loader=adapter_loader)
     if authority.kind == "legacy":
         raise RuntimeHostError("legacy_workspace_unsupported")
     if authority.kind == "invalid_sqlite":
@@ -163,7 +170,7 @@ def initialize_or_open_runtime(
     result = CoreRunService(workspace).initialize(request)
     if result.status not in {"committed", "replayed"}:
         raise RuntimeHostError(result.error_code or "control_store_integrity_invalid")
-    current = _verify_existing(workspace)
+    current = _verify_existing(workspace, adapter_loader=adapter_loader)
     return InitializedRuntime(
         verified=current.verified,
         action=current.action,

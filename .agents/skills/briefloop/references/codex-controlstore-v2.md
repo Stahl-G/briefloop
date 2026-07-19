@@ -22,8 +22,8 @@ selected runtime is `codex`.
    CLI flag is not approval or delivery authority.
 
 For `role_topology=single_session`, one shared Codex context executes separate
-recorded role invocations in the strict stage sequence. This is stage-separated
-self-review, not independent review. The session must not draft future stages
+recorded role invocations in the strict stage sequence. This is
+stage-separated self-review, not independent review. The session must not draft future stages
 before their invocation-start Receipt exists.
 
 SQLite receipts and ledger records are the sole runtime authority. Config and

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from multi_agent_brief.contracts.v2 import CoreRunNextAction
 from multi_agent_brief.control_store.serialization import canonical_fingerprint
+from multi_agent_brief.quality_gates.contract import GATE_IDS
 
 from .errors import CoreRunError
 from .lineage import classify_current_lineage
@@ -122,7 +123,11 @@ def classify_core_run_next_action(verified: VerifiedCoreRun) -> CoreRunNextActio
             verified,
             action_kind="deterministic",
             effect_kind=effect,
-            reason_code="active_repair_requires_deterministic_effect",
+            reason_code=(
+                "active_repair_requires_projection_preimage_restore"
+                if remaining
+                else "active_repair_requires_deterministic_effect"
+            ),
             request_schema_id=schema,
         )
     if recovery.state == "rerun_required" and recovery.required_rerun_transition_ids:
@@ -184,6 +189,16 @@ def classify_core_run_next_action(verified: VerifiedCoreRun) -> CoreRunNextActio
             effect_kind="delivered",
             reason_code="delivery_succeeded",
         )
+    if (
+        terminal.terminal_state == "package_ready"
+        and terminal.current_result_status == "bundle_prepared"
+    ):
+        return _action(
+            verified,
+            action_kind="complete",
+            effect_kind="package_ready",
+            reason_code="local_delivery_bundle_prepared",
+        )
     if terminal.terminal_state in {
         "auditor_ready",
         "rendered",
@@ -237,8 +252,11 @@ def classify_core_run_next_action(verified: VerifiedCoreRun) -> CoreRunNextActio
             )
         effects = terminal.next_effects
         if len(effects) > 1:
-            # Rendered permits a Gate before completion; Gate is the sole first effect.
-            effects = ("finalize_gate",)
+            effects = (
+                ("finalize_complete",)
+                if _has_current_finalize_gate(snapshot)
+                else ("finalize_gate",)
+            )
         if effects:
             effect = effects[0]
             schema = {
@@ -554,6 +572,29 @@ def _delegate_action(
         stage_id=stage_id,
         role_id=role_id,
         request_schema_id=request_schema_id,
+    )
+
+
+def _has_current_finalize_gate(snapshot) -> bool:
+    artifacts = {item.artifact_id: item for item in snapshot.artifacts}
+    report = artifacts.get("finalize_quality_gate_report")
+    if report is None or report.current_revision < 1:
+        return False
+    current = [
+        item
+        for item in snapshot.gate_evaluations
+        if item.stage_id == "finalize"
+        and item.report_artifact.artifact_id == report.artifact_id
+        and item.report_artifact.revision == report.current_revision
+    ]
+    return (
+        len(current) == len(GATE_IDS)
+        and {item.gate_id for item in current} == set(GATE_IDS)
+        and len({item.gate_batch_id for item in current}) == 1
+        and all(
+            item.status in {"pass", "warning"} and not item.blocking
+            for item in current
+        )
     )
 
 

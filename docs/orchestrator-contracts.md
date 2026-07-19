@@ -15,6 +15,18 @@ human approval step.
 
 Defines whether the workflow has progressed through required stages and whether expected artifacts exist before downstream work proceeds.
 
+For a fresh SQLite Codex run, strict Pydantic requests enter one deterministic
+domain service and one ControlStore UoW. SQLite receipts, ledger relations and
+immutable artifact revisions are the sole run authority. `CoreRunNextAction` is
+derived from one verified Store snapshot; role prompts and adapter files cannot
+choose or override it. In `single_session`, one shared Codex context still uses
+separate Receipt-backed invocations and stage-separated self-review; it is not
+independent review.
+
+JSON/JSONL, Markdown, HTML, status and Quality Panel outputs are replaceable
+projections. Editing, deleting or recreating them cannot advance a stage, pass a
+Gate, approve delivery or alter the next action.
+
 `orchestrator_control_switchboard.json` and `control_selections.json` are
 runtime control context files. They are not expected workflow artifacts, Claim
 Ledger evidence, reader-facing output, or default finalize gates.

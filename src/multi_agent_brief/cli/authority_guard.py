@@ -16,6 +16,17 @@ LEGACY_CONTROL_PATHS = (
     "output/intermediate/finalize_report.json",
 )
 
+SQLITE_ACTIVE_COMMANDS = frozenset(
+    {
+        "run",
+        "runtime",
+        "status",
+        "quality",
+        "core-v2",
+        "intake-v2",
+    }
+)
+
 
 @dataclass(frozen=True)
 class WorkspaceAuthority:
@@ -46,8 +57,26 @@ def classify_workspace_authority(workspace: Path) -> WorkspaceAuthority:
     return WorkspaceAuthority("fresh", database)
 
 
+def active_command_authority_error(
+    workspace: Path,
+    command: str,
+) -> str | None:
+    """Fail closed before dispatch when a workspace has the wrong authority."""
+
+    authority = classify_workspace_authority(workspace)
+    if authority.kind == "legacy":
+        return "legacy_workspace_unsupported"
+    if authority.kind == "invalid_sqlite":
+        return "control_store_integrity_invalid"
+    if authority.kind == "sqlite" and command not in SQLITE_ACTIVE_COMMANDS:
+        return "runtime_command_unsupported"
+    return None
+
+
 __all__ = [
     "LEGACY_CONTROL_PATHS",
+    "SQLITE_ACTIVE_COMMANDS",
     "WorkspaceAuthority",
+    "active_command_authority_error",
     "classify_workspace_authority",
 ]

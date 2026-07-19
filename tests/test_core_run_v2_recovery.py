@@ -82,6 +82,9 @@ from multi_agent_brief.core_run_v2.verifier import (
     resolve_core_replay,
 )
 from multi_agent_brief.intake_v2.service import IntakeService
+from multi_agent_brief.runtime_host_v2.contracts import RepairContentInput
+from multi_agent_brief.runtime_host_v2.errors import RuntimeHostError
+from multi_agent_brief.runtime_host_v2.service import RuntimeHostService
 
 RUN_ID = "RUN-RECOVERY-PREFIX-001"
 NOW = "2026-07-17T00:00:00Z"
@@ -1999,15 +2002,24 @@ def test_recovery_service_owns_supersession_repair_and_recovery_transactions(
     (scratch / "input.json").write_bytes(content)
     with SQLiteControlStore.open(database, clock=CLOCK) as store:
         active = store.load_snapshot(RUN_ID)
-        prior = next(item for item in active.artifacts if item.artifact_id == "input_classification")
+        prior = next(
+            item
+            for item in active.artifacts
+            if item.artifact_id == "input_classification"
+        )
         prior_revision = next(
             item
             for item in active.artifact_revisions
             if item.artifact_id == prior.artifact_id
             and item.revision == prior.current_revision
         )
+        prior_content = store.read_artifact_revision_bytes(
+            RUN_ID,
+            prior.artifact_id,
+            prior.current_revision,
+        )
     (workspace / prior_revision.path).parent.mkdir(parents=True, exist_ok=True)
-    (workspace / prior_revision.path).write_bytes(content)
+    (workspace / prior_revision.path).write_bytes(prior_content)
     supersede_request = ArtifactSupersedeRequest.model_validate(
         {
             "schema_version": ArtifactSupersedeRequest.schema_id,
@@ -2091,6 +2103,108 @@ def test_recovery_service_owns_supersession_repair_and_recovery_transactions(
         )
         assert blocked is None
         assert store.current_revision == revision
+
+
+def test_runtime_host_derives_repair_identity_from_store_and_content_input(
+    tmp_path: Path,
+) -> None:
+    workspace = _initialized_workspace(tmp_path)
+    database = workspace / "briefloop.db"
+    with SQLiteControlStore.open(database, clock=CLOCK) as store:
+        _accept_input_classification(store)
+        original = store.read_artifact_revision_bytes(
+            RUN_ID,
+            "input_classification",
+            1,
+        )
+        original_revision = next(
+            item
+            for item in store.load_snapshot(RUN_ID).artifact_revisions
+            if item.artifact_id == "input_classification" and item.revision == 1
+        )
+        canonical_path = workspace / original_revision.path
+        canonical_path.parent.mkdir(parents=True, exist_ok=True)
+        canonical_path.write_bytes(b"external mutation")
+        _record_contamination(store)
+        adapter = CoreRunDomainVerifier().verify(store, RUN_ID).runtime_adapter
+    host = RuntimeHostService(
+        workspace,
+        adapter_loader=lambda _run_id: adapter,
+    )
+
+    action = host.next_action()
+    assert action.effect_kind == "repair_start"
+    assert host.apply_current(action).status == "committed"
+
+    repair_path = workspace / "scratch" / "host-repair" / "input.json"
+    repair_path.parent.mkdir(parents=True)
+    repaired = b'{"classification":"repaired"}\n'
+    repair_path.write_bytes(repaired)
+    repair_input = RepairContentInput.model_validate(
+        {
+            "schema_version": RepairContentInput.schema_id,
+            "artifact_id": "input_classification",
+            "input_path": "scratch/host-repair/input.json",
+            "expected_input_sha256": sha256_hex(repaired),
+        },
+        strict=True,
+    )
+    action = host.next_action()
+    assert action.effect_kind == "artifact_supersede"
+    if sys.platform == "win32":
+        with pytest.raises(
+            RuntimeHostError,
+            match="checkout_publication_unsupported",
+        ):
+            host.apply_current(action, action_input=repair_input)
+        return
+    with SQLiteControlStore.open(database, clock=CLOCK) as store:
+        before_restore = store.load_snapshot(RUN_ID)
+    with pytest.raises(
+        RuntimeHostError,
+        match="checkout_projection_preimage_restore_required",
+    ):
+        host.apply_current(action, action_input=repair_input)
+    with SQLiteControlStore.open(database, clock=CLOCK) as store:
+        after_restore_required = store.load_snapshot(RUN_ID)
+    assert after_restore_required.store_revision == before_restore.store_revision
+    assert (
+        after_restore_required.checkout_publication_intents
+        == before_restore.checkout_publication_intents
+    )
+    assert classify_recovery_legality(after_restore_required).state == "active_repair"
+
+    canonical_path.write_bytes(original)
+    assert host.apply_current(action, action_input=repair_input).status == "committed"
+    repair_path.unlink()
+    with SQLiteControlStore.open(database, clock=CLOCK) as store:
+        revision_after_supersede = store.current_revision
+    assert host.apply_current(action, action_input=repair_input).status == "replayed"
+    changed_input = repair_input.model_copy(
+        update={"expected_input_sha256": "f" * 64}
+    )
+    with pytest.raises(RuntimeHostError, match="submission_replay_conflict"):
+        host.apply_current(action, action_input=changed_input)
+    with SQLiteControlStore.open(database, clock=CLOCK) as store:
+        assert store.current_revision == revision_after_supersede
+
+    action = host.next_action()
+    assert action.effect_kind == "repair_complete"
+    assert host.apply_current(action).status == "committed"
+
+    for expected in ("stage_complete", "recovery_complete"):
+        action = host.next_action()
+        assert action.effect_kind == expected
+        if expected == "stage_complete":
+            with SQLiteControlStore.open(database, clock=CLOCK) as store:
+                current = CoreRunDomainVerifier().verify(store, RUN_ID)
+            assert RunIntegrityService(workspace, clock=CLOCK).first_mismatch(
+                current
+            ) is None
+        assert host.apply_current(action).status == "committed"
+    with SQLiteControlStore.open(database, clock=CLOCK) as store:
+        verified = CoreRunDomainVerifier().verify(store, RUN_ID)
+    assert classify_recovery_legality(verified.snapshot).state == "recovered_current"
 
 
 def test_recovery_complete_failure_rolls_back_clean_successor_and_receipt(

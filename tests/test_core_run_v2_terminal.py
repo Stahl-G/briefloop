@@ -78,6 +78,12 @@ from multi_agent_brief.core_run_v2.verifier import (
     resolve_core_replay,
 )
 from multi_agent_brief.quality_gates.contract import GATE_IDS
+from multi_agent_brief.runtime_host_v2.service import RuntimeHostService
+from multi_agent_brief.runtime_host_v2.projections import (
+    build_store_quality_projection,
+    build_store_status_projection,
+    write_store_quality_projection,
+)
 
 RUN_ID = "RUN-TERMINAL-PREFIX-001"
 
@@ -511,6 +517,111 @@ def test_terminal_service_owns_finalize_render_and_complete(tmp_path: Path) -> N
     assert replayed_result.receipt == result.receipt
     with SQLiteControlStore.open(workspace / "briefloop.db", clock=clock) as store:
         assert store.current_revision == committed_revision
+
+
+def test_runtime_host_applies_store_derived_local_terminal_path(
+    tmp_path: Path,
+) -> None:
+    workspace, run_id, _clock = _finalize_ready_workspace(tmp_path)
+    with SQLiteControlStore.open(workspace / "briefloop.db") as store:
+        adapter = CoreRunDomainVerifier().verify(store, run_id).runtime_adapter
+    host = RuntimeHostService(
+        workspace,
+        adapter_loader=lambda _run_id: adapter,
+    )
+
+    action = host.next_action()
+    assert action.effect_kind == "finalize_render"
+    render = host.apply_current(action)
+    assert render.status == "committed"
+
+    action = host.next_action()
+    assert action.effect_kind == "finalize_gate"
+    gate = host.apply_current(action)
+    assert gate.status == "committed"
+
+    action = host.next_action()
+    assert action.effect_kind == "finalize_complete"
+    finalized = host.apply_current(action)
+    assert finalized.status == "committed"
+
+    with SQLiteControlStore.open(workspace / "briefloop.db") as store:
+        verified = CoreRunDomainVerifier().verify(store, run_id)
+        package = verified.snapshot.package_ready_records[0]
+    status_projection = build_store_status_projection(workspace)
+    assert status_projection["package_ready"] is True
+    assert status_projection["delivered"] is False
+    quality_projection = write_store_quality_projection(workspace)
+    assert quality_projection["package_ready"] is True
+    assert quality_projection["delivered"] is False
+    quality_path = workspace / "output" / "intermediate" / "quality_panel.json"
+    quality_path.write_text('{"delivered": true}\n', encoding="utf-8")
+    assert build_store_status_projection(workspace) == status_projection
+    assert build_store_quality_projection(workspace)["delivered"] is False
+    action = host.next_action()
+    approval_request = InternalApprovalRequest.model_validate(
+        {
+            "schema_version": InternalApprovalRequest.schema_id,
+            "request_id": "REQ-HOST-TERMINAL-APPROVAL-001",
+            "run_id": run_id,
+            "package_id": package.package_id,
+            "approval_id": "APPROVAL-HOST-TERMINAL-001",
+            "mode": "internal_management_review",
+            "role": "content_owner",
+            "decision": "approve",
+            "reason": "review completed",
+            "actor_id": "human-reviewer",
+            "expected_store_revision": action.store_revision,
+        },
+        strict=True,
+    )
+    approval = host.apply_current(action, human_request=approval_request)
+    assert approval.status == "committed"
+
+    action = host.next_action()
+    authorization_request = DeliveryAuthorizationRequest.model_validate(
+        {
+            "schema_version": DeliveryAuthorizationRequest.schema_id,
+            "request_id": "REQ-HOST-TERMINAL-AUTH-001",
+            "run_id": run_id,
+            "package_id": package.package_id,
+            "prior_authorization_id": None,
+            "approval_mode": "internal_management_review",
+            "retry_of_attempt_id": None,
+            "purpose": "initial_attempt",
+            "decision": "authorize",
+            "target": "local",
+            "channel": "local_bundle",
+            "recipient_fingerprint": "a" * 64,
+            "actor_id": "human-reviewer",
+            "reason": "approved local bundle",
+            "expected_store_revision": action.store_revision,
+        },
+        strict=True,
+    )
+    authorization = host.apply_current(
+        action,
+        human_request=authorization_request,
+    )
+    assert authorization.status == "committed"
+
+    action = host.next_action()
+    assert action.effect_kind == "delivery_attempt"
+    attempt = host.apply_current(action)
+    assert attempt.status == "committed"
+
+    action = host.next_action()
+    assert action.effect_kind == "delivery_result"
+    result = host.apply_current(action)
+    assert result.status == "committed"
+    final_action = host.next_action()
+    assert (final_action.action_kind, final_action.effect_kind) == (
+        "complete",
+        "package_ready",
+    )
+    delivered_status = build_store_status_projection(workspace)
+    assert delivered_status["package_ready"] is True
+    assert delivered_status["delivered"] is False
 
 
 def test_finalize_render_records_contamination_before_requested_effect(

@@ -739,16 +739,41 @@ class CoreRunService:
                 raise CoreRunError("stage_artifact_binding_invalid")
             if set(request.expected_gate_evaluation_ids) != set(gate_ids):
                 raise CoreRunError("stage_gate_binding_invalid")
-            blocked = self._integrity.require_clean(
-                store,
-                verified,
-                request_id=request.request_id,
-                request_fingerprint=fingerprint,
-                expected_store_revision=request.expected_store_revision,
-                additional_revisions=(
-                    item for item, _usage in required_revisions
-                ),
+            from .recovery import (
+                CoreEffect,
+                CoreEffectSubject,
+                classify_effect_authorization,
             )
+
+            recovery_authorization = classify_effect_authorization(
+                verified.snapshot,
+                CoreEffect.STAGE_COMPLETE,
+                CoreEffectSubject(stage_id=request.stage_id),
+            )
+            if recovery_authorization.recovery_state == "rerun_required":
+                recovery_authorization.require_allowed()
+                mismatch = self._integrity.first_mismatch(
+                    verified,
+                    additional_revisions=(
+                        item for item, _usage in required_revisions
+                    ),
+                )
+                if mismatch is not None:
+                    raise CoreRunError("core_run_integrity_blocked")
+                blocked = None
+                advance_workflow = False
+            else:
+                blocked = self._integrity.require_clean(
+                    store,
+                    verified,
+                    request_id=request.request_id,
+                    request_fingerprint=fingerprint,
+                    expected_store_revision=request.expected_store_revision,
+                    additional_revisions=(
+                        item for item, _usage in required_revisions
+                    ),
+                )
+                advance_workflow = True
             if blocked is not None:
                 return blocked
             return self._commit_transition_set(
@@ -763,6 +788,7 @@ class CoreRunService:
                 gate_evaluation_ids=gate_ids,
                 producer_invocation_id=producer_invocation_id,
                 producer_tool_id=producer_tool_id,
+                advance_workflow=advance_workflow,
             )
 
     def _completion_bindings(
@@ -1167,6 +1193,7 @@ class CoreRunService:
         doctor_result: tuple[str, str] | None = None,
         producer_invocation_id: str | None = None,
         producer_tool_id: str | None = None,
+        advance_workflow: bool = True,
     ) -> CoreRunResult:
         now = _now(self._clock)
         lineage = classify_current_lineage(verified.snapshot)
@@ -1301,7 +1328,11 @@ class CoreRunService:
         transition_artifacts[completed.transition_id] = revisions
         next_index = stage_order.index(completed_stage_id) + 1
         topology_policy = core_role_topology_policy(verified.binding.role_topology)
-        if completed_stage_id == "scout" and not topology_policy.separate_screener_stage:
+        if (
+            advance_workflow
+            and completed_stage_id == "scout"
+            and not topology_policy.separate_screener_stage
+        ):
             if lineage.active_invocations_by_stage.get("screener"):
                 raise CoreRunError("stage_artifact_binding_invalid")
             topology_transition = add_transition(
@@ -1320,7 +1351,8 @@ class CoreRunService:
             )
             next_index = stage_order.index("screener") + 1
         if (
-            completed_stage_id == "analyst"
+            advance_workflow
+            and completed_stage_id == "analyst"
             and topology_policy.analyst_editor_route == "human_assisted"
             and any(
                 revision.artifact_id == "audited_brief"
@@ -1348,13 +1380,14 @@ class CoreRunService:
                 (audited_brief, "topology_required"),
             )
             next_index = stage_order.index("editor") + 1
-        next_stage_id = stage_order[next_index]
-        add_transition(
-            next_stage_id,
-            transition_kind="activate",
-            result_status="ready",
-            transition_reason=f"activated after {completed_stage_id}",
-        )
+        if advance_workflow:
+            next_stage_id = stage_order[next_index]
+            add_transition(
+                next_stage_id,
+                transition_kind="activate",
+                result_status="ready",
+                transition_reason=f"activated after {completed_stage_id}",
+            )
         unit = store.begin(
             verified.snapshot.run.run_id,
             request_id,
