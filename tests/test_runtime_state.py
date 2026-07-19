@@ -3700,6 +3700,11 @@ def test_state_check_marks_input_classification_path_escape_invalid(tmp_path):
 def test_state_decide_validates_decision_vocabulary(tmp_path, capsys):
     ws = _write_workspace(tmp_path)
     initialize_runtime_state(runtime="operator", workspace=ws, repo_workdir=ROOT)
+    before = {
+        path.relative_to(ws).as_posix(): (path.read_bytes(), path.stat().st_mtime_ns)
+        for path in sorted(ws.rglob("*"))
+        if path.is_file()
+    }
 
     rc = main([
         "state",
@@ -3718,9 +3723,27 @@ def test_state_decide_validates_decision_vocabulary(tmp_path, capsys):
     ])
 
     assert rc == 1
-    payload = json.loads(capsys.readouterr().out)
-    assert payload["ok"] is False
-    assert "Unknown Orchestrator decision" in payload["error"]
+    assert capsys.readouterr().out == "legacy_workspace_unsupported\n"
+    assert not (ws / "briefloop.db").exists()
+    assert {
+        path.relative_to(ws).as_posix(): (path.read_bytes(), path.stat().st_mtime_ns)
+        for path in sorted(ws.rglob("*"))
+        if path.is_file()
+    } == before
+
+    with pytest.raises(RuntimeStateError, match="Unknown Orchestrator decision"):
+        record_decision(
+            workspace=ws,
+            repo_workdir=ROOT,
+            stage_id="doctor",
+            decision="invent_decision",
+            reason="bad",
+        )
+    assert {
+        path.relative_to(ws).as_posix(): (path.read_bytes(), path.stat().st_mtime_ns)
+        for path in sorted(ws.rglob("*"))
+        if path.is_file()
+    } == before
 
 
 def test_state_decide_records_event_and_last_decision(tmp_path):
@@ -11835,16 +11858,28 @@ def test_state_show_human_output_reports_imported_stages(tmp_path, capsys):
         runtime="codex",
         repo_workdir=ROOT,
     )
+    before = {
+        path.relative_to(target_ws).as_posix(): (
+            path.read_bytes(),
+            path.stat().st_mtime_ns,
+        )
+        for path in sorted(target_ws.rglob("*"))
+        if path.is_file()
+    }
 
     rc = main(["state", "show", "--workspace", str(target_ws)])
 
-    assert rc == 0
-    out = capsys.readouterr().out
-    assert "[state show] fact_layer_import: valid" in out
-    assert "[state show] imported_satisfied_stages:" in out
-    assert "source-discovery: complete via import" in out
-    assert "claim-ledger: complete via import" in out
-    assert "[state show] next_runtime_stage: analyst" in out
+    assert rc == 1
+    assert capsys.readouterr().out == "legacy_workspace_unsupported\n"
+    assert not (target_ws / "briefloop.db").exists()
+    assert {
+        path.relative_to(target_ws).as_posix(): (
+            path.read_bytes(),
+            path.stat().st_mtime_ns,
+        )
+        for path in sorted(target_ws.rglob("*"))
+        if path.is_file()
+    } == before
 
 
 def test_import_fact_layer_transaction_rejects_incomplete_fact_layer(tmp_path):

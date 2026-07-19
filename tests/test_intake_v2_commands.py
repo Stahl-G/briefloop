@@ -247,12 +247,12 @@ def test_intake_cli_json_only_workspace_never_creates_sqlite_fallback(
     )
 
     assert exit_code == 1
-    assert json.loads(capsys.readouterr().out) == {
-        "status": "failed_uncommitted",
-        "error_code": "control_store_not_found",
-    }
+    assert capsys.readouterr().out == "runtime_command_unsupported\n"
     assert not (workspace / "briefloop.db").exists()
     assert not (workspace / "briefloop.db.blobs").exists()
+    assert request.exists()
+    assert (scratch / "source_proposal.json").read_text(encoding="utf-8") == "{}"
+    assert (scratch / "source_content.pdf").read_bytes() == b"x"
 
 
 def test_intake_cli_is_labelled_internal_and_requires_json() -> None:

@@ -2883,19 +2883,20 @@ def test_migration_resource_matches_packaged_source_text() -> None:
     )
 
 
-def test_only_dormant_v2_modules_import_control_store() -> None:
+def test_only_active_v2_authority_modules_import_control_store() -> None:
     package_root = Path(__file__).parents[1] / "src" / "multi_agent_brief"
     findings: list[str] = []
+    runtime_host_consumers: set[str] = set()
     for path in sorted(package_root.rglob("*.py")):
         if "control_store" in path.relative_to(package_root).parts:
             continue
         relative = path.relative_to(package_root).as_posix()
-        if (
+        allowed = (
             relative == "intake_v2/service.py"
             or relative == "cli/core_v2_commands.py"
             or relative.startswith("core_run_v2/")
-        ):
-            continue
+            or relative.startswith("runtime_host_v2/")
+        )
         tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
         for node in ast.walk(tree):
             if isinstance(node, ast.Import):
@@ -2909,8 +2910,20 @@ def test_only_dormant_v2_modules_import_control_store() -> None:
                 or name.startswith("multi_agent_brief.control_store.")
                 for name in names
             ):
-                findings.append(f"{path.relative_to(package_root)}:{node.lineno}")
+                if allowed:
+                    if relative.startswith("runtime_host_v2/"):
+                        runtime_host_consumers.add(relative)
+                else:
+                    findings.append(f"{relative}:{node.lineno}")
     assert findings == []
+    assert runtime_host_consumers == {
+        "runtime_host_v2/codex.py",
+        "runtime_host_v2/initialization.py",
+        "runtime_host_v2/projections.py",
+        "runtime_host_v2/scratch.py",
+        "runtime_host_v2/service.py",
+        "runtime_host_v2/source_routes.py",
+    }
 
 
 def test_closed_store_rejects_reads_and_new_uow(tmp_path: Path) -> None:

@@ -296,6 +296,7 @@ jobs:
             --company "CI Test" \
             --industry manufacturing \
             --title "Smoke Brief" \
+            --task-objective "Prepare a public-safe manufacturing smoke brief." \
             --audience management \
             --cadence weekly \
             --source-profile conservative \
@@ -303,54 +304,89 @@ jobs:
           echo "- Manufacturing output improved as supply chain disruption eased in the latest reporting period." > /tmp/mabw-ci-smoke/input/smoke.md
 
       - name: Doctor check
-        run: briefloop doctor --config /tmp/mabw-ci-smoke/config.yaml
-
-      - name: Runtime handoff check
         run: |
-          briefloop run --workspace /tmp/mabw-ci-smoke --runtime operator --skip-doctor
-          briefloop state show --workspace /tmp/mabw-ci-smoke --json
-          briefloop state check --workspace /tmp/mabw-ci-smoke --json
-          test -f /tmp/mabw-ci-smoke/output/intermediate/agent_handoff.json
-          test -f /tmp/mabw-ci-smoke/output/intermediate/runtime_manifest.json
-          test -f /tmp/mabw-ci-smoke/output/intermediate/workflow_state.json
-          test -f /tmp/mabw-ci-smoke/output/intermediate/artifact_registry.json
-          test -f /tmp/mabw-ci-smoke/output/intermediate/event_log.jsonl
-          test -f /tmp/mabw-ci-smoke/output/intermediate/audience_profile_snapshot.md
-          test -f /tmp/mabw-ci-smoke/output/intermediate/orchestrator_control_switchboard.json
-          test ! -f /tmp/mabw-ci-smoke/output/intermediate/control_selections.json
-          test ! -f /tmp/mabw-ci-smoke/output/intermediate/claim_ledger.json
-          test ! -f /tmp/mabw-ci-smoke/output/brief.md
-          test ! -f /tmp/mabw-ci-smoke/output/source_appendix.md
+          briefloop run --workspace /tmp/mabw-ci-smoke --runtime codex
+          briefloop runtime next --workspace /tmp/mabw-ci-smoke > /tmp/mabw-ci-smoke/runtime_action.json
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          action = json.loads(Path("/tmp/mabw-ci-smoke/runtime_action.json").read_text())
+          assert action["schema_version"] == "briefloop.core_run_next_action.v2"
+          assert action["effect_kind"] == "doctor_check"
+          assert action["action_fingerprint"]
+          PY
+          briefloop runtime apply \
+            --workspace /tmp/mabw-ci-smoke \
+            --action runtime_action.json > /tmp/mabw-ci-smoke/doctor_result.json
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          result = json.loads(Path("/tmp/mabw-ci-smoke/doctor_result.json").read_text())
+          assert result["status"] == "committed"
+          assert result["receipt"]["transaction_id"]
+          PY
 
-      - name: Packaged topology handoff smoke
-        run: python scripts/ci/smoke_packaged_topology_handoff.py
+      - name: SQLite runtime receipt check
+        run: |
+          briefloop runtime next --workspace /tmp/mabw-ci-smoke > /tmp/mabw-ci-smoke/next_action.json
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          workspace = Path("/tmp/mabw-ci-smoke")
+          action = json.loads((workspace / "next_action.json").read_text())
+          assert action["schema_version"] == "briefloop.core_run_next_action.v2"
+          assert action["store_revision"] == 2
+          assert (workspace / "briefloop.db").is_file()
+          legacy = (
+              "agent_handoff.json",
+              "runtime_manifest.json",
+              "workflow_state.json",
+              "artifact_registry.json",
+              "event_log.jsonl",
+          )
+          intermediate = workspace / "output" / "intermediate"
+          assert all(not (intermediate / name).exists() for name in legacy)
+          PY
 
       - name: Package-only runtime asset boundary
         run: |
-          cd /tmp
+          before=$(sha256sum /tmp/mabw-ci-smoke/briefloop.db | cut -d' ' -f1)
           set +e
-          briefloop runtime install --workspace /tmp/mabw-ci-smoke --runtime opencode > /tmp/runtime-install.log 2>&1
+          briefloop run --workspace /tmp/mabw-ci-smoke --runtime opencode > /tmp/runtime-install.log 2>&1
           rc=$?
           set -e
           cat /tmp/runtime-install.log
           test "$rc" -ne 0
-          grep -q "source-clone-only" /tmp/runtime-install.log
+          grep -q "runtime_adapter_unsupported" /tmp/runtime-install.log
+          after=$(sha256sum /tmp/mabw-ci-smoke/briefloop.db | cut -d' ' -f1)
+          test "$before" = "$after"
 
-      - name: Control switchboard smoke
+      - name: Legacy controls fail closed
         run: |
-          briefloop controls show --workspace /tmp/mabw-ci-smoke --json
-          briefloop controls validate --workspace /tmp/mabw-ci-smoke --json
-          briefloop controls select \
-            --workspace /tmp/mabw-ci-smoke \
-            --control quality_gates \
-            --selection enable \
-            --reason "Use quality gates before finalize." \
-            --json
-          test -f /tmp/mabw-ci-smoke/output/intermediate/control_selections.json
-          test ! -f /tmp/mabw-ci-smoke/output/intermediate/quality_gate_report.json
+          before=$(sha256sum /tmp/mabw-ci-smoke/briefloop.db | cut -d' ' -f1)
+          set +e
+          briefloop controls show --workspace /tmp/mabw-ci-smoke --json > /tmp/controls.log 2>&1
+          rc=$?
+          set -e
+          cat /tmp/controls.log
+          test "$rc" -ne 0
+          grep -q "runtime_command_unsupported" /tmp/controls.log
+          after=$(sha256sum /tmp/mabw-ci-smoke/briefloop.db | cut -d' ' -f1)
+          test "$before" = "$after"
+          test ! -e /tmp/mabw-ci-smoke/output/intermediate/control_selections.json
 
       - name: Assert prepare stays removed
-        run: python scripts/ci/smoke_pipeline.py /tmp/mabw-ci-smoke/config.yaml /tmp/mabw-ci-smoke/input
+        run: |
+          before=$(sha256sum /tmp/mabw-ci-smoke/briefloop.db | cut -d' ' -f1)
+          set +e
+          briefloop prepare --config /tmp/mabw-ci-smoke/config.yaml > /tmp/prepare.log 2>&1
+          rc=$?
+          set -e
+          cat /tmp/prepare.log
+          test "$rc" -ne 0
+          grep -q "runtime_command_unsupported" /tmp/prepare.log
+          after=$(sha256sum /tmp/mabw-ci-smoke/briefloop.db | cut -d' ' -f1)
+          test "$before" = "$after"
 
       - name: Wheel install smoke
         run: |
@@ -359,8 +395,10 @@ jobs:
           python -m venv /tmp/mabw-wheel-smoke
           /tmp/mabw-wheel-smoke/bin/python -m pip install dist/*.whl
           cd /tmp
-          /tmp/mabw-wheel-smoke/bin/briefloop init /tmp/mabw-wheel-ws --demo --force --web-search-mode disabled
-          /tmp/mabw-wheel-smoke/bin/briefloop run --workspace /tmp/mabw-wheel-ws --runtime operator --skip-doctor
+          /tmp/mabw-wheel-smoke/bin/briefloop new industry-weekly /tmp/mabw-wheel-ws --web-search-mode disabled
+          /tmp/mabw-wheel-smoke/bin/briefloop run --workspace /tmp/mabw-wheel-ws --runtime codex
+          /tmp/mabw-wheel-smoke/bin/briefloop runtime next --workspace /tmp/mabw-wheel-ws > /tmp/mabw-wheel-ws/runtime_action.json
+          test -s /tmp/mabw-wheel-ws/briefloop.db
           /tmp/mabw-wheel-smoke/bin/briefloop eval-cases run --json
 
       - name: Wheel CLI entrypoint parity
@@ -416,6 +454,7 @@ jobs:
             --company "Sample Company" \
             --industry manufacturing \
             --title "Sample Brief" \
+            --task-objective "Prepare a public-safe manufacturing source brief." \
             --audience management \
             --cadence weekly \
             --source-profile llm_decide \
@@ -423,19 +462,53 @@ jobs:
           echo "- Placeholder input" > /tmp/mabw-llm/input/placeholder.md
 
       - name: Doctor check
-        run: cd /tmp/mabw-llm && briefloop doctor --config config.yaml
+        run: |
+          briefloop run --workspace /tmp/mabw-llm --runtime codex
+          briefloop runtime next --workspace /tmp/mabw-llm > /tmp/mabw-llm/runtime_action.json
+          briefloop runtime apply \
+            --workspace /tmp/mabw-llm \
+            --action runtime_action.json > /tmp/mabw-llm/doctor_result.json
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          result = json.loads(Path("/tmp/mabw-llm/doctor_result.json").read_text())
+          assert result["status"] == "committed"
+          assert result["receipt"]["transaction_id"]
+          PY
 
-      - name: Sources decide (template)
-        run: cd /tmp/mabw-llm && briefloop sources decide --config config.yaml
+      - name: Source planner next action
+        run: |
+          briefloop runtime next --workspace /tmp/mabw-llm > /tmp/mabw-llm/next_action.json
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          action = json.loads(Path("/tmp/mabw-llm/next_action.json").read_text())
+          assert action["schema_version"] == "briefloop.core_run_next_action.v2"
+          assert action["action_kind"] == "delegate"
+          assert action["role_id"] == "source-planner"
+          assert action["stage_id"] == "source-discovery"
+          PY
 
-      - name: Assert source_candidates.yaml exists
-        run: test -s /tmp/mabw-llm/source_candidates.yaml
+      - name: Assert SQLite authority exists
+        run: |
+          test -s /tmp/mabw-llm/briefloop.db
+          test ! -e /tmp/mabw-llm/output/intermediate/runtime_manifest.json
+          test ! -e /tmp/mabw-llm/output/intermediate/workflow_state.json
 
       - name: Add input and assert prepare stays removed
         run: |
           cd /tmp/mabw-llm
           echo "- Manufacturing sector grew 5 percent." > input/smoke.md
-          python $GITHUB_WORKSPACE/scripts/ci/smoke_pipeline.py config.yaml input
+          before=$(sha256sum briefloop.db | cut -d' ' -f1)
+          set +e
+          briefloop prepare --config config.yaml > /tmp/llm-prepare.log 2>&1
+          rc=$?
+          set -e
+          cat /tmp/llm-prepare.log
+          test "$rc" -ne 0
+          grep -q "runtime_command_unsupported" /tmp/llm-prepare.log
+          after=$(sha256sum briefloop.db | cut -d' ' -f1)
+          test "$before" = "$after"
 
   onboarding-smoke:
     name: Onboarding (--from-onboarding) smoke
@@ -465,6 +538,7 @@ jobs:
             "target": "/tmp/mabw-onboarding",
             "company_or_org": "Sample Company",
             "industry_or_theme": "manufacturing",
+            "task_objective": "Prepare a public-safe manufacturing source brief.",
             "audience_plain": "management team",
             "source_style_plain": "reliable research",
             "language_plain": "English",
@@ -480,13 +554,35 @@ jobs:
           echo "- Placeholder input" > /tmp/mabw-onboarding/input/placeholder.md
 
       - name: Doctor check
-        run: cd /tmp/mabw-onboarding && briefloop doctor --config config.yaml
+        run: |
+          briefloop run --workspace /tmp/mabw-onboarding --runtime codex
+          briefloop runtime next --workspace /tmp/mabw-onboarding > /tmp/mabw-onboarding/runtime_action.json
+          briefloop runtime apply \
+            --workspace /tmp/mabw-onboarding \
+            --action runtime_action.json > /tmp/mabw-onboarding/doctor_result.json
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          result = json.loads(Path("/tmp/mabw-onboarding/doctor_result.json").read_text())
+          assert result["status"] == "committed"
+          assert result["receipt"]["transaction_id"]
+          assert Path("/tmp/mabw-onboarding/briefloop.db").is_file()
+          PY
 
       - name: Assert prepare stays removed
         run: |
           cd /tmp/mabw-onboarding
           echo "- Manufacturing output improved." > input/smoke.md
-          python $GITHUB_WORKSPACE/scripts/ci/smoke_pipeline.py config.yaml input
+          before=$(sha256sum briefloop.db | cut -d' ' -f1)
+          set +e
+          briefloop prepare --config config.yaml > /tmp/onboarding-prepare.log 2>&1
+          rc=$?
+          set -e
+          cat /tmp/onboarding-prepare.log
+          test "$rc" -ne 0
+          grep -q "runtime_command_unsupported" /tmp/onboarding-prepare.log
+          after=$(sha256sum briefloop.db | cut -d' ' -f1)
+          test "$before" = "$after"
 
   docx-smoke:
     name: DOCX output smoke
@@ -510,53 +606,46 @@ jobs:
         run: python -m pip install -e ".[dev,docx]"
 
       - name: Init demo workspace
-        run: briefloop init /tmp/mabw-docx --demo --force --web-search-mode disabled
+        run: briefloop new industry-weekly /tmp/mabw-docx --web-search-mode disabled
 
-      - name: Enable docx in config
+      - name: Bootstrap SQLite Codex runtime
+        run: briefloop run --workspace /tmp/mabw-docx --runtime codex
+
+      - name: Render deterministic DOCX fixture
         shell: python
         run: |
           from pathlib import Path
-          import yaml
-          p = Path("/tmp/mabw-docx/config.yaml")
-          cfg = yaml.safe_load(p.read_text(encoding="utf-8"))
-          output = cfg.setdefault("output", {})
-          fmts = output.get("formats", ["markdown"])
-          if "docx" not in fmts:
-              fmts.append("docx")
-              output["formats"] = fmts
-              p.write_text(yaml.dump(cfg, sort_keys=False, allow_unicode=True), encoding="utf-8")
+          from multi_agent_brief.outputs.docx import render_docx
+          source = Path("/tmp/mabw-docx-renderer-fixture.md")
+          target = Path("/tmp/mabw-docx-rendered.docx")
+          source.write_text(
+              "# Smoke Brief\n\nDeterministic public-safe renderer fixture.\n",
+              encoding="utf-8",
+          )
+          assert render_docx(source, target, title="Smoke Brief") == target
+          assert target.stat().st_size > 0
 
-      - name: Create audited markdown fixture
+      - name: Legacy finalize fails closed
         run: |
-          mkdir -p /tmp/mabw-docx/output/intermediate
-          printf '# Smoke Brief\n\nSubagents produced this audited statement [src:CLM-1].\n' > /tmp/mabw-docx/output/intermediate/audited_brief.md
-          cat > /tmp/mabw-docx/output/intermediate/claim_ledger.json <<'JSON'
-          [
-            {
-              "claim_id": "CLM-1",
-              "statement": "Subagents produced this audited statement.",
-              "source_id": "SRC-1",
-              "evidence_text": "Subagents produced this audited statement.",
-              "source_url": "https://example.com/docx-smoke",
-              "source_type": "web_search",
-              "metadata": {
-                "source_title": "DOCX Smoke Source",
-                "publisher": "Example",
-                "source_category": "news_media"
-              }
-            }
-          ]
-          JSON
-
-      - name: Finalize reader outputs
-        run: briefloop finalize --config /tmp/mabw-docx/config.yaml
+          before_db=$(sha256sum /tmp/mabw-docx/briefloop.db | cut -d' ' -f1)
+          before_docx=$(sha256sum /tmp/mabw-docx-rendered.docx | cut -d' ' -f1)
+          set +e
+          briefloop finalize --config /tmp/mabw-docx/config.yaml > /tmp/docx-finalize.log 2>&1
+          rc=$?
+          set -e
+          cat /tmp/docx-finalize.log
+          test "$rc" -ne 0
+          grep -q "runtime_command_unsupported" /tmp/docx-finalize.log
+          after_db=$(sha256sum /tmp/mabw-docx/briefloop.db | cut -d' ' -f1)
+          after_docx=$(sha256sum /tmp/mabw-docx-rendered.docx | cut -d' ' -f1)
+          test "$before_db" = "$after_db"
+          test "$before_docx" = "$after_docx"
 
       - name: Assert brief.docx exists
         shell: bash
         run: |
-          test -s /tmp/mabw-docx/output/brief.md
-          ! grep -q '\[src:' /tmp/mabw-docx/output/brief.md
-          test -s /tmp/mabw-docx/output/brief.docx
+          test -s /tmp/mabw-docx-rendered.docx
+          test ! -e /tmp/mabw-docx/output/intermediate/finalize_report.json
 
   golden-smoke:
     name: Subagent-first tool smoke
@@ -579,53 +668,29 @@ jobs:
       - name: Install with docx extra
         run: python -m pip install -e ".[dev,docx]"
 
-      # --- Reference demo (init --demo) ---
-      - name: Init demo workspace
-        run: briefloop init /tmp/golden-demo --demo --force --web-search-mode disabled
-
-      - name: Assert reference demo prepare stays removed
-        run: python scripts/ci/smoke_reference_workflow.py /tmp/golden-demo
-
-      # --- Basic example demo ---
-      - name: Refresh example input dates
-        shell: python
+      - name: Fresh SQLite Codex launch smoke
         run: |
+          python scripts/check_launch_smoke.py --json > /tmp/launch-smoke.json
+          python - <<'PY'
           import json
-          from datetime import date, timedelta
           from pathlib import Path
-          yesterday = (date.today() - timedelta(days=1)).isoformat()
-          for p in Path("tests/fixtures/basic_market_brief/input").glob("*.json"):
-              data = json.loads(p.read_text(encoding="utf-8"))
-              data["published_at"] = yesterday
-              p.write_text(json.dumps(data, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
+          payload = json.loads(Path("/tmp/launch-smoke.json").read_text())
+          assert payload["ok"] is True
+          checks = {item["id"]: item for item in payload["steps"]}
+          assert checks["sqlite_runtime_artifacts"]["ok"] is True
+          assert checks["sqlite_runtime_next_action"]["ok"] is True
+          PY
 
-      - name: Assert basic example prepare stays removed
-        run: python scripts/ci/smoke_pipeline.py tests/fixtures/basic_market_brief/config.yaml tests/fixtures/basic_market_brief/input /tmp/golden-basic/output
-
-      # --- Onboarding demo ---
-      - name: Create onboarding.json
+      - name: Inactive CodeBuddy adapter fails closed
         run: |
-          cat > /tmp/golden-onboarding.json << 'JSON'
-          {
-            "target": "/tmp/golden-onboarding",
-            "company_or_org": "Golden Test Corp",
-            "industry_or_theme": "manufacturing",
-            "audience_plain": "management team",
-            "source_style_plain": "reliable research",
-            "language_plain": "English",
-            "cadence_plain": "weekly",
-            "search_backend_plain": "none",
-            "must_watch": ["policy", "competitors", "market"]
-          }
-          JSON
-
-      - name: Init from onboarding
-        run: |
-          briefloop init --from-onboarding /tmp/golden-onboarding.json
-          echo "- Manufacturing output improved with new automation line deployment." > /tmp/golden-onboarding/input/smoke.md
-
-      - name: Assert onboarding prepare stays removed
-        run: python scripts/ci/smoke_pipeline.py /tmp/golden-onboarding/config.yaml /tmp/golden-onboarding/input /tmp/golden-onboarding/output
+          python scripts/check_codebuddy_adapter_smoke.py --json > /tmp/codebuddy-smoke.json
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          payload = json.loads(Path("/tmp/codebuddy-smoke.json").read_text())
+          assert payload["ok"] is True
+          assert payload["runtime_effect"] == "readiness_check_only"
+          PY
 
   merge-gate:
     name: >-

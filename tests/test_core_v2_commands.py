@@ -319,10 +319,11 @@ def test_core_v2_cli_is_internal_and_requires_json() -> None:
         assert required == {"--workspace", "--request", "--json"}
 
 
-def test_core_v2_imports_are_confined_to_dormant_cli_package_and_bound_intake() -> None:
+def test_core_v2_imports_are_confined_to_active_authority_packages() -> None:
     package_root = ROOT / "src" / "multi_agent_brief"
     allowed = {"cli/core_v2_commands.py", "intake_v2/service.py"}
     findings: list[str] = []
+    runtime_host_consumers: set[str] = set()
     for path in sorted(package_root.rglob("*.py")):
         relative = path.relative_to(package_root).as_posix()
         tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
@@ -333,9 +334,17 @@ def test_core_v2_imports_are_confined_to_dormant_cli_package_and_bound_intake() 
             if module == "multi_agent_brief.core_run_v2" or module.startswith(
                 "multi_agent_brief.core_run_v2."
             ):
-                if relative not in allowed and not relative.startswith("core_run_v2/"):
+                if relative.startswith("runtime_host_v2/"):
+                    runtime_host_consumers.add(relative)
+                elif relative not in allowed and not relative.startswith("core_run_v2/"):
                     findings.append(f"{relative}:{node.lineno}")
     assert findings == []
+    assert runtime_host_consumers == {
+        "runtime_host_v2/initialization.py",
+        "runtime_host_v2/projections.py",
+        "runtime_host_v2/service.py",
+        "runtime_host_v2/source_routes.py",
+    }
 
 
 def test_core_v2_does_not_import_legacy_runtime_writers() -> None:

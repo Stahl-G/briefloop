@@ -9,6 +9,7 @@ except ModuleNotFoundError:  # pragma: no cover - test env includes PyYAML
     yaml = None
 
 from multi_agent_brief.cli.main import main
+from multi_agent_brief.control_store import SQLiteControlStore
 
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -47,70 +48,69 @@ def _enable_source_appendix(config_path: Path) -> None:
     config_path.write_text(yaml.safe_dump(config, allow_unicode=True, sort_keys=False), encoding="utf-8")
 
 
-def test_public_safe_runtime_handoff_control_selection_and_finalize_e2e(tmp_path: Path) -> None:
+def test_public_safe_runtime_handoff_control_selection_and_finalize_e2e(
+    tmp_path: Path,
+    capsys,
+) -> None:
     workspace = tmp_path / "public-safe-e2e"
 
-    assert main(["init", str(workspace), "--demo", "--force"]) == 0
-    _enable_source_appendix(workspace / "config.yaml")
-
-    assert main([
-        "run",
-        "--workspace",
-        str(workspace),
-        "--repo-workdir",
-        str(ROOT),
-        "--runtime",
-        "operator",
-        "--skip-doctor",
-    ]) == 0
-
-    intermediate = workspace / "output" / "intermediate"
-    assert (intermediate / "agent_handoff.json").exists()
-    assert (intermediate / "workflow_state.json").exists()
-    assert (intermediate / "artifact_registry.json").exists()
-    assert (intermediate / "audience_profile_snapshot.md").exists()
-    assert (intermediate / "orchestrator_control_switchboard.json").exists()
-
-    assert not (intermediate / "claim_ledger.json").exists()
-    assert not (workspace / "output" / "brief.md").exists()
-    assert not (workspace / "output" / "source_appendix.md").exists()
-
-    assert main([
-        "controls",
-        "select",
-        "--workspace",
-        str(workspace),
-        "--control",
-        "quality_gates",
-        "--selection",
-        "enable",
-        "--reason",
-        "Synthetic E2E requires deterministic gates before delivery.",
-        "--json",
-    ]) == 0
-    assert (intermediate / "control_selections.json").exists()
-    assert not (intermediate / "quality_gate_report.json").exists()
-
-    _write_public_safe_ledger(intermediate / "claim_ledger.json")
-    (intermediate / "audited_brief.md").write_text(
-        "# ExampleCo Demo Brief\n\n"
-        "ExampleCo opened a public demo facility in June 2026. [src:SYN_CLAIM_001]\n",
+    assert (
+        main(
+            [
+                "new",
+                "industry-weekly",
+                str(workspace),
+                "--web-search-mode",
+                "disabled",
+            ]
+        )
+        == 0
+    )
+    capsys.readouterr()
+    public_input = workspace / "input" / "public-safe-source.md"
+    public_input.write_text(
+        "ExampleCo opened a synthetic public demo facility in June 2026.\n",
         encoding="utf-8",
     )
 
-    assert main(["finalize", "--config", str(workspace / "config.yaml")]) == 0
+    assert (
+        main(
+            [
+                "run",
+                "--workspace",
+                str(workspace),
+                "--runtime",
+                "codex",
+            ]
+        )
+        == 0
+    )
+    capsys.readouterr()
+    assert main(["runtime", "next", "--workspace", str(workspace)]) == 0
+    action = json.loads(capsys.readouterr().out)
+    assert action["schema_version"] == "briefloop.core_run_next_action.v2"
+    assert action["effect_kind"] == "doctor_check"
+    assert action["action_fingerprint"]
 
-    reader = (workspace / "output" / "brief.md").read_text(encoding="utf-8")
-    appendix = (workspace / "output" / "source_appendix.md").read_text(encoding="utf-8")
-    finalize_report = json.loads((intermediate / "finalize_report.json").read_text(encoding="utf-8"))
+    intermediate = workspace / "output" / "intermediate"
+    legacy_controls = (
+        "agent_handoff.json",
+        "runtime_manifest.json",
+        "workflow_state.json",
+        "artifact_registry.json",
+        "event_log.jsonl",
+        "finalize_report.json",
+    )
+    assert all(not (intermediate / name).exists() for name in legacy_controls)
+    assert (workspace / "briefloop.db").is_file()
+    with SQLiteControlStore.open(workspace / "briefloop.db") as store:
+        before_revision = store.current_revision
+        snapshot = store.load_snapshot(action["run_id"])
+    assert snapshot.run.runtime == "codex"
+    assert snapshot.transactions[-1].committed_revision == before_revision
 
-    assert "Source Appendix" in reader
-    assert "ExampleCo Opens Demo Facility" in reader
-    assert "https://example.com/exampleco-demo" in appendix
-    assert "SYN_CLAIM" not in reader
-    assert "SYN_SRC" not in reader
-    assert "Full synthetic evidence" not in reader
-    assert "file://" not in reader
-    assert str(tmp_path) not in reader
-    assert finalize_report["source_appendix_generation"] == "generated"
-    assert finalize_report["source_appendix_source_count"] == 1
+    database_before = (workspace / "briefloop.db").read_bytes()
+    assert main(["finalize", "--config", str(workspace / "config.yaml")]) == 1
+    assert capsys.readouterr().out == "runtime_command_unsupported\n"
+    assert (workspace / "briefloop.db").read_bytes() == database_before
+    assert all(not (intermediate / name).exists() for name in legacy_controls)
