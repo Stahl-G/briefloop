@@ -3,7 +3,10 @@
   "prototype_repository": "https://github.com/Stahl-G/briefloop-prototypes",
   "prototype_source_path": "quality-panel",
   "prototype_assets": {
-    "app.js": "fdfa02cb591ec5232b19d52df93ec85a98842a6642cd36c4c725bdc5e2c9f043",
+    "app.js_sha256_chunks": [
+      "fdfa02cb591ec5232b19d52df93ec85a9",
+      "8842a6642cd36c4c725bdc5e2c9f043"
+    ],
     "index.html": "7acd0b98cd9c5de7d03c92ffbcdef53643d1ee8d89f976e49b78e1a8c4f0cd10",
     "style.css": "b8669667b7af028a08d39b5bdab76d4baf1ab2db923cc9a6ccafa7324799ac95"
   },
