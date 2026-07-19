@@ -64,7 +64,9 @@ def register(subparsers: argparse._SubParsersAction) -> None:
             help=f"ControlStore v2 runtime {action}.",
         )
         command.add_argument("--workspace", required=True)
-        if action in {"invocation-start", "apply"}:
+        if action == "invocation-start":
+            command.add_argument("--action")
+        if action == "apply":
             command.add_argument("--action", required=True)
         if action in {"invocation-accept", "invocation-fail"}:
             command.add_argument("--envelope", required=True)
@@ -153,11 +155,15 @@ def handle(args: argparse.Namespace) -> int:
                     mode="json", exclude_unset=False
                 )
             elif args.runtime_action == "invocation-start":
-                action = read_host_contract(
-                    workspace,
-                    args.action,
-                    CoreRunNextAction,
-                    error_code="runtime_action_invalid",
+                action = (
+                    read_host_contract(
+                        workspace,
+                        args.action,
+                        CoreRunNextAction,
+                        error_code="runtime_action_invalid",
+                    )
+                    if args.action is not None
+                    else None
                 )
                 dispatch = service.start_current_invocation(action)
                 payload = dispatch.envelope.model_dump(mode="json", exclude_unset=False)

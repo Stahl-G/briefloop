@@ -93,6 +93,7 @@ from .contracts import (
 from .errors import RuntimeHostError
 from .initialization import AdapterLoader, initialize_or_open_runtime
 from .scratch import (
+    materialize_host_bytes,
     materialize_host_request,
     materialize_role_envelope,
     read_role_envelope,
@@ -1871,20 +1872,12 @@ class RuntimeHostService:
         return artifact
 
     def _materialize_tool_input(self, relative: str, payload: bytes) -> Path:
-        path = self.workspace / relative
-        try:
-            path.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
-            descriptor = path.open("xb")
-        except FileExistsError:
-            if path.is_symlink() or path.read_bytes() != payload:
-                raise RuntimeHostError("runtime_deterministic_input_invalid")
-            return path
-        except OSError as exc:
-            raise RuntimeHostError("runtime_deterministic_input_invalid") from exc
-        with descriptor:
-            descriptor.write(payload)
-            descriptor.flush()
-        return path
+        return materialize_host_bytes(
+            self.workspace,
+            relative,
+            payload,
+            error_code="runtime_deterministic_input_invalid",
+        )
 
 
 __all__ = ["InvocationDispatch", "RuntimeHostService"]

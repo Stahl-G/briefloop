@@ -21,6 +21,136 @@ MAX_HOST_CONTRACT_BYTES = 1024 * 1024
 _ModelT = TypeVar("_ModelT", bound=StrictModel)
 
 
+def _prepare_host_parent(
+    workspace: Path,
+    relative: str,
+    *,
+    error_code: str,
+) -> Path:
+    """Create a workspace-relative parent chain without following links."""
+
+    candidate = Path(relative)
+    if candidate.is_absolute() or not candidate.parts:
+        raise RuntimeHostError(error_code)
+    if any(part in {"", ".", ".."} for part in candidate.parts):
+        raise RuntimeHostError(error_code)
+    try:
+        root = workspace.lstat()
+        if workspace.is_symlink() or not stat.S_ISDIR(root.st_mode):
+            raise RuntimeHostError(error_code)
+        current = workspace
+        for part in candidate.parts[:-1]:
+            current = current / part
+            try:
+                current.mkdir(mode=0o700)
+            except FileExistsError:
+                pass
+            metadata = current.lstat()
+            if current.is_symlink() or not stat.S_ISDIR(metadata.st_mode):
+                raise RuntimeHostError(error_code)
+        return current / candidate.parts[-1]
+    except RuntimeHostError:
+        raise
+    except OSError as exc:
+        raise RuntimeHostError(error_code) from exc
+
+
+def _read_existing_host_bytes(
+    path: Path,
+    expected: bytes,
+    *,
+    error_code: str,
+) -> None:
+    try:
+        metadata = path.lstat()
+        if (
+            path.is_symlink()
+            or not stat.S_ISREG(metadata.st_mode)
+            or metadata.st_nlink != 1
+            or metadata.st_size != len(expected)
+        ):
+            raise RuntimeHostError(error_code)
+        descriptor = os.open(
+            path,
+            os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0),
+        )
+        try:
+            opened = os.fstat(descriptor)
+            if (
+                (opened.st_dev, opened.st_ino) != (metadata.st_dev, metadata.st_ino)
+                or not stat.S_ISREG(opened.st_mode)
+                or opened.st_nlink != 1
+                or opened.st_size != len(expected)
+            ):
+                raise RuntimeHostError(error_code)
+            chunks: list[bytes] = []
+            remaining = len(expected) + 1
+            while remaining:
+                chunk = os.read(descriptor, remaining)
+                if not chunk:
+                    break
+                chunks.append(chunk)
+                remaining -= len(chunk)
+            payload = b"".join(chunks)
+        finally:
+            os.close(descriptor)
+        if payload != expected:
+            raise RuntimeHostError(error_code)
+    except RuntimeHostError:
+        raise
+    except OSError as exc:
+        raise RuntimeHostError(error_code) from exc
+
+
+def materialize_host_bytes(
+    workspace: Path,
+    relative: str,
+    payload: bytes,
+    *,
+    error_code: str,
+) -> Path:
+    """Create or exactly replay host-owned bytes without following links."""
+
+    path = _prepare_host_parent(workspace, relative, error_code=error_code)
+    try:
+        descriptor = os.open(
+            path,
+            os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_NOFOLLOW", 0),
+            0o600,
+        )
+    except FileExistsError:
+        _read_existing_host_bytes(path, payload, error_code=error_code)
+        return path
+    except OSError as exc:
+        raise RuntimeHostError(error_code) from exc
+    try:
+        opened = os.fstat(descriptor)
+        if not stat.S_ISREG(opened.st_mode) or opened.st_nlink != 1:
+            raise RuntimeHostError(error_code)
+        written = 0
+        while written < len(payload):
+            count = os.write(descriptor, payload[written:])
+            if count <= 0:
+                raise RuntimeHostError(error_code)
+            written += count
+        os.fsync(descriptor)
+        persisted = path.lstat()
+        if (
+            path.is_symlink()
+            or not stat.S_ISREG(persisted.st_mode)
+            or persisted.st_nlink != 1
+            or (persisted.st_dev, persisted.st_ino) != (opened.st_dev, opened.st_ino)
+        ):
+            raise RuntimeHostError(error_code)
+    except RuntimeHostError:
+        raise
+    except OSError as exc:
+        raise RuntimeHostError(error_code) from exc
+    finally:
+        os.close(descriptor)
+    return path
+
+
 def read_host_contract(
     workspace: Path,
     input_path: str,
@@ -56,8 +186,7 @@ def read_host_contract(
         try:
             opened = os.fstat(descriptor)
             if (
-                (opened.st_dev, opened.st_ino)
-                != (metadata.st_dev, metadata.st_ino)
+                (opened.st_dev, opened.st_ino) != (metadata.st_dev, metadata.st_ino)
                 or opened.st_nlink != 1
                 or opened.st_size > MAX_HOST_CONTRACT_BYTES
             ):
@@ -78,43 +207,15 @@ def materialize_role_envelope(
     workspace: Path,
     envelope: RoleTaskEnvelope,
 ) -> Path:
-    scratch = workspace / envelope.scratch_directory
     payload = canonical_json_bytes(
         envelope.model_dump(mode="json", exclude_unset=False)
     )
-    try:
-        parent = scratch.parent
-        parent.mkdir(mode=0o700, parents=True, exist_ok=True)
-        if parent.is_symlink() or not stat.S_ISDIR(parent.lstat().st_mode):
-            raise RuntimeHostError("runtime_envelope_materialization_failed")
-        envelope_path = scratch / "role_task_envelope.json"
-        try:
-            scratch.mkdir(mode=0o700, exist_ok=False)
-        except FileExistsError:
-            if (
-                scratch.is_symlink()
-                or not stat.S_ISDIR(scratch.lstat().st_mode)
-                or envelope_path.is_symlink()
-                or not stat.S_ISREG(envelope_path.lstat().st_mode)
-                or envelope_path.read_bytes() != payload
-            ):
-                raise RuntimeHostError("runtime_envelope_materialization_failed")
-            return envelope_path
-        descriptor = os.open(
-            envelope_path,
-            os.O_WRONLY | os.O_CREAT | os.O_EXCL,
-            0o600,
-        )
-        try:
-            os.write(descriptor, payload)
-            os.fsync(descriptor)
-        finally:
-            os.close(descriptor)
-        return envelope_path
-    except RuntimeHostError:
-        raise
-    except (OSError, ValueError) as exc:
-        raise RuntimeHostError("runtime_envelope_materialization_failed") from exc
+    return materialize_host_bytes(
+        workspace,
+        f"{envelope.scratch_directory}/role_task_envelope.json",
+        payload,
+        error_code="runtime_envelope_materialization_failed",
+    )
 
 
 def read_role_envelope(workspace: Path, invocation_id: str) -> RoleTaskEnvelope:
@@ -203,37 +304,18 @@ def materialize_host_request(
 ) -> Path:
     """Create or replay the exact host-derived submit request bytes."""
 
-    path = workspace / envelope.scratch_directory / "submit_request.json"
-    try:
-        descriptor = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
-    except FileExistsError:
-        try:
-            metadata = path.lstat()
-            if (
-                path.is_symlink()
-                or not stat.S_ISREG(metadata.st_mode)
-                or metadata.st_nlink != 1
-                or path.read_bytes() != payload
-            ):
-                raise RuntimeHostError("runtime_envelope_invalid")
-            return path
-        except RuntimeHostError:
-            raise
-        except OSError as exc:
-            raise RuntimeHostError("runtime_envelope_invalid") from exc
-    except OSError as exc:
-        raise RuntimeHostError("runtime_envelope_invalid") from exc
-    try:
-        os.write(descriptor, payload)
-        os.fsync(descriptor)
-    finally:
-        os.close(descriptor)
-    return path
+    return materialize_host_bytes(
+        workspace,
+        f"{envelope.scratch_directory}/submit_request.json",
+        payload,
+        error_code="runtime_envelope_invalid",
+    )
 
 
 __all__ = [
     "MAX_HOST_CONTRACT_BYTES",
     "MAX_ROLE_OUTPUT_BYTES",
+    "materialize_host_bytes",
     "materialize_host_request",
     "materialize_role_envelope",
     "read_role_envelope",
