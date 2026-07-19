@@ -7,6 +7,7 @@ from pathlib import Path
 
 from multi_agent_brief.cli.main import main
 from multi_agent_brief.orchestrator.runtime_state.event_log import append_event
+from multi_agent_brief.orchestrator.runtime_state.lifecycle import initialize_runtime_state
 from multi_agent_brief.product.release_approval import (
     APPROVAL_BOUNDARY,
     HUMAN_APPROVAL_LEDGER_SCHEMA,
@@ -15,12 +16,25 @@ from multi_agent_brief.product.release_approval import (
     validate_human_approval_ledger_payload,
     validate_release_readiness_report_payload,
 )
-from tests.helpers import initialized_workspace_writer
+from tests.helpers import write_minimal_workspace_under
 
 
-_workspace = initialized_workspace_writer(
-    project_name="Release Approval Test",
-)
+ROOT = Path(__file__).resolve().parent.parent
+
+
+def _workspace(tmp_path: Path) -> Path:
+    """Build the legacy module fixture without claiming a public CLI path."""
+
+    workspace = write_minimal_workspace_under(
+        tmp_path,
+        project_name="Release Approval Test",
+    )
+    initialize_runtime_state(
+        runtime="operator",
+        workspace=workspace,
+        repo_workdir=ROOT,
+    )
+    return workspace
 
 
 def _json(path: Path) -> dict:

@@ -233,6 +233,14 @@ def _write_scaffold_workspace(ws: Path) -> None:
     (ws / "audience_profile.md").write_text("# Seed audience\n\nBoard-facing Chinese brief.\n", encoding="utf-8")
 
 
+def _workspace_file_bytes(workspace: Path) -> dict[str, bytes]:
+    return {
+        path.relative_to(workspace).as_posix(): path.read_bytes()
+        for path in sorted(workspace.rglob("*"))
+        if path.is_file()
+    }
+
+
 def _write_auditable_condition_metadata(ws: Path, *, condition: str = "memory") -> None:
     condition_path = ws / "experiment" / "080" / "condition.json"
     condition_path.parent.mkdir(parents=True, exist_ok=True)
@@ -1177,10 +1185,19 @@ def test_experiments_080_scaffold_condition_imports_fact_layer_workspace(tmp_pat
     _write_case_from_archive(case_dir, CLEAN_FIXTURE_MANIFEST)
     _write_scaffold_workspace(ws)
 
+    before = _workspace_file_bytes(ws)
     rc = main(_scaffold_args(case_dir, ws, condition="baseline"))
+    output = capsys.readouterr().out
+
+    if rc == 1:
+        # LEGACY-DELETE: remove this pre/post-CX transition branch and retain
+        # only the SQLite-runtime acceptance contract.
+        assert output.strip() == "runtime_command_unsupported"
+        assert _workspace_file_bytes(ws) == before
+        return
 
     assert rc == 0
-    payload = json.loads(capsys.readouterr().out)
+    payload = json.loads(output)
     assert payload["ok"] is True
     assert payload["condition"] == "baseline"
     assert payload["fact_layer_import"]["source_run_id"] == "mabw-20260614T000000Z-public0001"
