@@ -201,11 +201,11 @@ Common setup helpers:
 
 ```bash
 briefloop init --from-onboarding onboarding.json <workspace>
-briefloop sources decide --config <workspace>/config.yaml
+briefloop run --workspace <workspace> --runtime codex
 ```
 
-`sources decide` is the explicit source-discovery helper for workspaces that use
-the `llm_decide` source profile.
+For workspaces that use the `llm_decide` source profile, source discovery runs
+through the runtime-host route (`run --runtime codex` → `runtime next`).
 
 ### Windows PowerShell
 

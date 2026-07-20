@@ -57,6 +57,7 @@ validation unless that is stated separately.
 | Legacy runtime names and `operator --recipe fast-rerun` | Unsupported for the SQLite-only active path |
 | `briefloop status --workspace <path>` | Supported read-only Store projection for SQLite workspaces; JSON-only workspace unsupported |
 | Legacy `briefloop deliver` commands | Unsupported on SQLite; approval and delivery use typed Store actions through `runtime apply` |
+| Legacy `briefloop sources decide` command | Unsupported on SQLite; source discovery runs through the runtime-host route |
 | `briefloop deliver --workspace <path> --target feishu` | Experimental |
 | `briefloop deliver --workspace <path> --target gmail --channel draft\|send` | Experimental |
 | Legacy `state`, `gates`, `repair`, `finalize`, `delivery`, `controls`, and feedback mutators | Unsupported on SQLite; retained only until legacy deletion |
