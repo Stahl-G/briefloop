@@ -23,7 +23,11 @@ from multi_agent_brief.improvement.state import (
     propose_improvement,
     revert_improvement,
 )
-from multi_agent_brief.orchestrator.runtime_state import initialize_runtime_state
+from multi_agent_brief.orchestrator.handoff import build_handoff, write_handoff_and_state
+from multi_agent_brief.orchestrator.runtime_state import (
+    check_runtime_state,
+    initialize_runtime_state,
+)
 from tests.helpers import write_minimal_workspace_under
 
 
@@ -38,6 +42,79 @@ _workspace = partial(
     input_path="input",
     output_path="output",
 )
+
+
+def _workspace_file_bytes(ws: Path) -> dict[str, bytes]:
+    return {
+        path.relative_to(ws).as_posix(): path.read_bytes()
+        for path in sorted(ws.rglob("*"))
+        if path.is_file()
+    }
+
+
+def _run_operator_handoff(ws: Path) -> None:
+    """Direct deterministic seam for the retired `run --runtime operator` launcher."""
+    handoff = build_handoff(
+        workspace=ws,
+        repo_workdir=ROOT,
+        runtime="operator",
+        run_doctor=False,
+    )
+    written = write_handoff_and_state(
+        handoff=handoff,
+        workspace=ws,
+        repo_workdir=ROOT,
+        prefix="[run]",
+    )
+    assert written is not None
+
+
+_RETIRED_RUNTIME_COMMANDS = [
+    pytest.param(
+        ["run", "--runtime", "operator", "--skip-doctor"],
+        "[run] runtime_adapter_unsupported\n",
+        False,
+        id="run-operator",
+    ),
+    pytest.param(
+        ["start", "--runtime", "operator", "--skip-doctor"],
+        "runtime_command_unsupported\n",
+        False,
+        id="start-operator",
+    ),
+    pytest.param(
+        ["state", "check", "--strict"],
+        "legacy_workspace_unsupported\n",
+        True,
+        id="state-check-legacy-workspace",
+    ),
+]
+
+
+@pytest.mark.parametrize(
+    ("command", "expected_output", "legacy_workspace"),
+    _RETIRED_RUNTIME_COMMANDS,
+)
+def test_retired_runtime_public_surfaces_rejected_without_writes(
+    tmp_path,
+    capsys,
+    command,
+    expected_output,
+    legacy_workspace,
+):
+    ws = _workspace(tmp_path)
+    if legacy_workspace:
+        initialize_runtime_state(runtime="operator", workspace=ws, repo_workdir=ROOT)
+    before = _workspace_file_bytes(ws)
+
+    rc = main([*command, "--workspace", str(ws)])
+
+    # LEGACY-DELETE: retired operator-runtime and state public CLI surfaces;
+    # the invariants below are driven through the deterministic
+    # handoff/runtime_state/improvement seams instead.
+    assert rc == 1
+    assert capsys.readouterr().out == expected_output
+    assert _workspace_file_bytes(ws) == before
 
 
 def _propose_and_approve(
@@ -137,13 +214,8 @@ def test_state_check_strict_preserves_improvement_manifest_after_freeze(tmp_path
         (ws / "output" / "intermediate" / "runtime_manifest.json").read_text(encoding="utf-8")
     )["improvement"]
 
-    assert main([
-        "state",
-        "check",
-        "--workspace", str(ws),
-        "--repo-workdir", str(ROOT),
-        "--strict",
-    ]) == 0
+    checked = check_runtime_state(workspace=ws, repo_workdir=ROOT)
+    assert not (checked.get("workflow_state") or {}).get("blocked")
     after = json.loads(
         (ws / "output" / "intermediate" / "runtime_manifest.json").read_text(encoding="utf-8")
     )["improvement"]
@@ -357,7 +429,7 @@ def test_freeze_rejects_unsafe_runtime_run_id(tmp_path):
 def test_run_records_no_ledger_manifest_semantics_without_snapshot(tmp_path):
     ws = _workspace(tmp_path)
 
-    assert main(["run", "--runtime", "operator", "--workspace", str(ws), "--skip-doctor"]) == 0
+    _run_operator_handoff(ws)
 
     improvement = _manifest(ws)["improvement"]
     memory_sha = sha256_file(ws / IMPROVEMENT_MEMORY_FILE)
@@ -378,7 +450,7 @@ def test_run_records_zero_eligible_manifest_semantics(tmp_path):
     _append_non_materializable_approved_entry(ws)
     ledger_sha = sha256_file(improvement_ledger_path(ws))
 
-    assert main(["run", "--runtime", "operator", "--workspace", str(ws), "--skip-doctor"]) == 0
+    _run_operator_handoff(ws)
 
     improvement = _manifest(ws)["improvement"]
     memory_sha = sha256_file(ws / IMPROVEMENT_MEMORY_FILE)
@@ -399,7 +471,7 @@ def test_run_freezes_snapshot_manifest_and_handoff_consistently(tmp_path):
     (ws / IMPROVEMENT_MEMORY_FILE).parent.mkdir(parents=True, exist_ok=True)
     (ws / IMPROVEMENT_MEMORY_FILE).write_text("stale memory\n", encoding="utf-8")
 
-    assert main(["run", "--runtime", "operator", "--workspace", str(ws), "--skip-doctor"]) == 0
+    _run_operator_handoff(ws)
 
     memory_text = (ws / IMPROVEMENT_MEMORY_FILE).read_text(encoding="utf-8")
     assert "stale memory" not in memory_text
@@ -449,12 +521,12 @@ def test_repeated_run_deduplicates_event_and_ledger_change_refreshes_snapshot(tm
     ws = _workspace(tmp_path)
     first_id = _propose_and_approve(ws)
 
-    assert main(["run", "--runtime", "operator", "--workspace", str(ws), "--skip-doctor"]) == 0
+    _run_operator_handoff(ws)
     first_snapshot = (ws / IMPROVEMENT_MEMORY_SNAPSHOT_FILE).read_text(encoding="utf-8")
     first_sha = sha256_file(ws / IMPROVEMENT_MEMORY_SNAPSHOT_FILE)
     assert _event_types(ws).count("improvement_memory_snapshot_created") == 1
 
-    assert main(["run", "--runtime", "operator", "--workspace", str(ws), "--skip-doctor"]) == 0
+    _run_operator_handoff(ws)
     assert (ws / IMPROVEMENT_MEMORY_SNAPSHOT_FILE).read_text(encoding="utf-8") == first_snapshot
     assert sha256_file(ws / IMPROVEMENT_MEMORY_SNAPSHOT_FILE) == first_sha
     assert _event_types(ws).count("improvement_memory_snapshot_created") == 1
@@ -465,7 +537,7 @@ def test_repeated_run_deduplicates_event_and_ledger_change_refreshes_snapshot(tm
         scope="executive_summary",
         source_summary="Operator-created second proposal.",
     )
-    assert main(["run", "--runtime", "operator", "--workspace", str(ws), "--skip-doctor"]) == 0
+    _run_operator_handoff(ws)
 
     improvement = _manifest(ws)["improvement"]
     assert improvement["materialized_entry_ids"] == sorted([first_id, second_id])
@@ -480,7 +552,7 @@ def test_start_uses_same_improvement_snapshot_surface(tmp_path):
     ws = _workspace(tmp_path)
     entry_id = _propose_and_approve(ws)
 
-    assert main(["start", "--runtime", "operator", "--workspace", str(ws), "--skip-doctor"]) == 0
+    _run_operator_handoff(ws)
 
     improvement = _manifest(ws)["improvement"]
     assert improvement["materialized_entry_ids"] == [entry_id]

@@ -3,13 +3,21 @@ from __future__ import annotations
 import json
 import subprocess
 from pathlib import Path
+from typing import Any
 
 import pytest
 
+from multi_agent_brief.cli.deliver_commands import DeliverCommandError, deliver_workspace
 from multi_agent_brief.cli.main import main
 from multi_agent_brief.delivery.base import DeliveryResult
 from multi_agent_brief.delivery.gws import GwsGmailDeliveryConnector
-from multi_agent_brief.orchestrator.runtime_state import RuntimeStateError, initialize_runtime_state, runtime_state_paths
+from multi_agent_brief.orchestrator.runtime_state import (
+    RuntimeStateError,
+    check_runtime_state,
+    initialize_runtime_state,
+    runtime_state_paths,
+)
+from tests.helpers import initialize_workspace
 from tests.helpers import sha256_file as _sha256_file
 from tests.helpers import write_minimal_workspace
 
@@ -118,19 +126,95 @@ def _mark_active_repair(ws: Path) -> None:
     paths["workflow_state"].write_text(json.dumps(workflow, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
 
 
-def test_deliver_local_lists_only_delivery_bundle(tmp_path: Path, capsys) -> None:
+def _deliver(
+    ws: Path,
+    *,
+    target: str = "local",
+    channel: str | None = None,
+    recipient: str = "",
+    subject: str = "",
+    body: str = "",
+) -> tuple[int, dict[str, Any]]:
+    """Drive delivery through the direct deterministic seam.
+
+    Mirrors deliver_commands.handle: rc 0 with the success payload, or rc 1
+    with the typed DeliverCommandError payload.
+    """
+    resolved_channel = channel or ("local" if target == "local" else "")
+    try:
+        return 0, deliver_workspace(
+            workspace=ws,
+            target=target,
+            channel=resolved_channel,
+            recipient=recipient,
+            subject=subject,
+            body=body,
+        )
+    except DeliverCommandError as exc:
+        payload: dict[str, Any] = exc.to_payload()
+        payload["target"] = payload.get("target") or target
+        payload["channel"] = payload.get("channel") or resolved_channel
+        return 1, payload
+
+
+def _workspace_file_bytes(ws: Path) -> dict[str, bytes]:
+    return {
+        path.relative_to(ws).as_posix(): path.read_bytes()
+        for path in sorted(ws.rglob("*"))
+        if path.is_file()
+    }
+
+
+def test_deliver_public_cli_is_retired_with_zero_writes(tmp_path: Path, capsys) -> None:
+    # LEGACY-DELETE: retired public `deliver` CLI surface; delivery semantics are
+    # only reachable through the direct deterministic seam (deliver_workspace).
+    cases: list[tuple[Path, str, list[str]]] = []
+
+    legacy_ws = _workspace(tmp_path / "legacy")
+    _write_bundle(legacy_ws)
+    cases.append((
+        legacy_ws,
+        "legacy_workspace_unsupported",
+        ["deliver", "--workspace", str(legacy_ws), "--target", "local", "--json"],
+    ))
+
+    fresh_ws = _workspace(tmp_path / "fresh")
+    cases.append((
+        fresh_ws,
+        "runtime_command_unsupported",
+        ["deliver", "--workspace", str(fresh_ws), "--json"],
+    ))
+
+    sqlite_ws = initialize_workspace(tmp_path / "sqlite")
+    cases.append((
+        sqlite_ws,
+        "runtime_command_unsupported",
+        ["deliver", "--workspace", str(sqlite_ws), "--target", "local"],
+    ))
+    capsys.readouterr()
+
+    for ws, token, argv in cases:
+        before = _workspace_file_bytes(ws)
+        rc = main(argv)
+        out = capsys.readouterr().out
+        assert rc == 1
+        assert out.strip() == token
+        assert _workspace_file_bytes(ws) == before
+
+
+def test_deliver_local_lists_only_delivery_bundle(tmp_path: Path) -> None:
     ws = _workspace(tmp_path)
     _write_bundle(ws)
 
-    rc = main(["deliver", "--workspace", str(ws), "--target", "local"])
+    rc, payload = _deliver(ws, target="local")
 
     assert rc == 0
-    out = capsys.readouterr().out
-    assert "output/delivery/brief.md" in out
-    assert "output/delivery/Weekly_Brief_2026-06-12.docx" in out
-    assert "source_appendix.md" not in out
-    assert "claim_ledger.json" not in out
-    assert "audit_report.json" not in out
+    listed = payload["delivery_artifacts"]
+    assert "output/delivery/brief.md" in listed
+    assert "output/delivery/Weekly_Brief_2026-06-12.docx" in listed
+    assert not any("source_appendix.md" in artifact for artifact in listed)
+    assert not any("claim_ledger.json" in artifact for artifact in listed)
+    assert not any("audit_report.json" in artifact for artifact in listed)
     events = _delivery_events(ws)
     assert [event["event_type"] for event in events] == [
         "delivery_attempted",
@@ -140,30 +224,28 @@ def test_deliver_local_lists_only_delivery_bundle(tmp_path: Path, capsys) -> Non
     assert events[1]["metadata"]["render_transaction_id"] == "render-deliver-test-001"
 
 
-def test_deliver_local_fails_without_events_when_active_repair_open(tmp_path: Path, capsys) -> None:
+def test_deliver_local_fails_without_events_when_active_repair_open(tmp_path: Path) -> None:
     ws = _workspace(tmp_path)
     _write_bundle(ws)
     _mark_active_repair(ws)
 
-    rc = main(["deliver", "--workspace", str(ws), "--target", "local", "--json"])
+    rc, payload = _deliver(ws, target="local")
 
     assert rc == 1
-    payload = json.loads(capsys.readouterr().out)
     assert payload["error_code"] == "E_ACTIVE_REPAIR_OPEN"
     assert payload["runtime_error_code"] == "E_ACTIVE_REPAIR_OPEN"
     assert "repair complete" in payload["message"]
     assert _delivery_events(ws) == []
 
 
-def test_deliver_local_blocks_contaminated_run_without_events(tmp_path: Path, capsys) -> None:
+def test_deliver_local_blocks_contaminated_run_without_events(tmp_path: Path) -> None:
     ws = _workspace(tmp_path)
     _write_bundle(ws)
     _mark_run_contaminated(ws)
 
-    rc = main(["deliver", "--workspace", str(ws), "--target", "local", "--json"])
+    rc, payload = _deliver(ws, target="local")
 
     assert rc == 1
-    payload = json.loads(capsys.readouterr().out)
     assert payload["ok"] is False
     assert payload["error_code"] == "E_DELIVERY_RUN_INTEGRITY_BLOCKED"
     assert payload["run_integrity"]["status"] == "contaminated"
@@ -171,19 +253,17 @@ def test_deliver_local_blocks_contaminated_run_without_events(tmp_path: Path, ca
     assert "run integrity is not clean" in payload["message"]
     assert _delivery_events(ws) == []
 
-    rc = main(["deliver", "--workspace", str(ws), "--target", "local"])
+    rc, payload = _deliver(ws, target="local")
 
     assert rc == 1
-    captured = capsys.readouterr()
-    assert "Delivery bundle ready" not in captured.out
-    assert "run integrity is not clean" in captured.err
+    assert "Delivery bundle ready" not in payload["message"]
+    assert "run integrity is not clean" in payload["message"]
 
 
-def test_deliver_refreshes_run_integrity_before_recording_events(tmp_path: Path, capsys) -> None:
+def test_deliver_refreshes_run_integrity_before_recording_events(tmp_path: Path) -> None:
     ws = _workspace(tmp_path)
     _write_bundle(ws)
-    assert main(["state", "check", "--workspace", str(ws), "--json"]) == 0
-    capsys.readouterr()
+    check_runtime_state(workspace=ws)
     paths = runtime_state_paths(ws)
     workflow = json.loads(paths["workflow_state"].read_text(encoding="utf-8"))
     workflow["stage_statuses"]["claim-ledger"]["status"] = "complete"
@@ -192,10 +272,9 @@ def test_deliver_refreshes_run_integrity_before_recording_events(tmp_path: Path,
     ledger = ws / "output" / "intermediate" / "claim_ledger.json"
     ledger.write_text('[{"claim_id":"CL-TAMPERED"}]\n', encoding="utf-8")
 
-    rc = main(["deliver", "--workspace", str(ws), "--target", "local", "--json"])
+    rc, payload = _deliver(ws, target="local")
 
     assert rc == 1
-    payload = json.loads(capsys.readouterr().out)
     assert payload["error_code"] == "E_DELIVERY_RUN_INTEGRITY_BLOCKED"
     assert payload["runtime_error_code"] == "E_TRANSACTION_INTEGRITY"
     assert payload["run_integrity"]["status"] == "contaminated"
@@ -204,21 +283,20 @@ def test_deliver_refreshes_run_integrity_before_recording_events(tmp_path: Path,
     assert _delivery_events(ws) == []
 
 
-def test_deliver_json_returns_typed_error_for_corrupt_workflow_state(tmp_path: Path, capsys) -> None:
+def test_deliver_json_returns_typed_error_for_corrupt_workflow_state(tmp_path: Path) -> None:
     ws = _workspace(tmp_path)
     _write_bundle(ws)
     runtime_state_paths(ws)["workflow_state"].write_text("{broken", encoding="utf-8")
 
-    rc = main(["deliver", "--workspace", str(ws), "--target", "local", "--json"])
+    rc, payload = _deliver(ws, target="local")
 
     assert rc == 1
-    payload = json.loads(capsys.readouterr().out)
     assert payload["ok"] is False
     assert payload["error_code"] == "E_DELIVERY_EVENT_FAILED"
     assert "workflow_state.json is unreadable" in payload["message"]
 
 
-def test_deliver_json_blocks_malformed_run_integrity_as_unknown(tmp_path: Path, capsys) -> None:
+def test_deliver_json_blocks_malformed_run_integrity_as_unknown(tmp_path: Path) -> None:
     ws = _workspace(tmp_path)
     _write_bundle(ws)
     paths = runtime_state_paths(ws)
@@ -226,10 +304,9 @@ def test_deliver_json_blocks_malformed_run_integrity_as_unknown(tmp_path: Path, 
     workflow["run_integrity"] = "bad"
     paths["workflow_state"].write_text(json.dumps(workflow, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
 
-    rc = main(["deliver", "--workspace", str(ws), "--target", "local", "--json"])
+    rc, payload = _deliver(ws, target="local")
 
     assert rc == 1
-    payload = json.loads(capsys.readouterr().out)
     assert payload["error_code"] == "E_DELIVERY_RUN_INTEGRITY_BLOCKED"
     assert payload["run_integrity"]["status"] == "unknown"
     assert payload["run_integrity"]["reference_eligible"] is False
@@ -237,59 +314,55 @@ def test_deliver_json_blocks_malformed_run_integrity_as_unknown(tmp_path: Path, 
     assert _delivery_events(ws) == []
 
 
-def test_deliver_missing_bundle_returns_typed_error(tmp_path: Path, capsys) -> None:
+def test_deliver_missing_bundle_returns_typed_error(tmp_path: Path) -> None:
     ws = _workspace(tmp_path)
 
-    rc = main(["deliver", "--workspace", str(ws), "--json"])
+    rc, payload = _deliver(ws)
 
     assert rc == 1
-    payload = json.loads(capsys.readouterr().out)
     assert payload["ok"] is False
     assert payload["error_code"] == "E_DELIVERY_BUNDLE_MISSING"
     assert "finalize" in payload["message"]
 
 
-def test_deliver_rejects_dirty_finalize_report(tmp_path: Path, capsys) -> None:
+def test_deliver_rejects_dirty_finalize_report(tmp_path: Path) -> None:
     ws = _workspace(tmp_path)
     _write_bundle(ws, reader_clean_status="fail", init_runtime=False)
 
-    rc = main(["deliver", "--workspace", str(ws), "--json"])
+    rc, payload = _deliver(ws)
 
     assert rc == 1
-    payload = json.loads(capsys.readouterr().out)
     assert payload["error_code"] == "E_DELIVERY_NOT_CLEAN"
     assert not (ws / "output" / "intermediate" / "event_log.jsonl").exists()
 
 
-def test_deliver_rejects_dirty_current_delivery_artifact(tmp_path: Path, capsys) -> None:
+def test_deliver_rejects_dirty_current_delivery_artifact(tmp_path: Path) -> None:
     ws = _workspace(tmp_path)
     markdown, _docx = _write_bundle(ws, include_docx=False)
     markdown.write_text("# Final Brief\n\nLeaked marker [src:CLAIM-001]\n", encoding="utf-8")
 
-    rc = main(["deliver", "--workspace", str(ws), "--json"])
+    rc, payload = _deliver(ws)
 
     assert rc == 1
-    payload = json.loads(capsys.readouterr().out)
     assert payload["error_code"] == "E_DELIVERY_ARTIFACT_MISMATCH"
     assert _delivery_events(ws) == []
 
 
-def test_deliver_rejects_clean_markdown_changed_after_finalize(tmp_path: Path, capsys) -> None:
+def test_deliver_rejects_clean_markdown_changed_after_finalize(tmp_path: Path) -> None:
     ws = _workspace(tmp_path)
     markdown, _docx = _write_bundle(ws, include_docx=False)
     markdown.write_text("# Different Clean Brief\n\nSource Appendix\n", encoding="utf-8")
 
-    rc = main(["deliver", "--workspace", str(ws), "--target", "local", "--json"])
+    rc, payload = _deliver(ws, target="local")
 
     assert rc == 1
-    payload = json.loads(capsys.readouterr().out)
     assert payload["error_code"] == "E_DELIVERY_ARTIFACT_MISMATCH"
     assert payload["artifact"] == "output/delivery/brief.md"
     assert "Run finalize again" in payload["message"]
     assert _delivery_events(ws) == []
 
 
-def test_deliver_rejects_clean_docx_changed_after_finalize(tmp_path: Path, capsys) -> None:
+def test_deliver_rejects_clean_docx_changed_after_finalize(tmp_path: Path) -> None:
     docx_module = pytest.importorskip("docx", reason="python-docx not installed")
     ws = _workspace(tmp_path)
     _markdown, docx = _write_bundle(ws, include_docx=True)
@@ -299,17 +372,16 @@ def test_deliver_rejects_clean_docx_changed_after_finalize(tmp_path: Path, capsy
     document.add_paragraph("Source Appendix")
     document.save(str(docx))
 
-    rc = main(["deliver", "--workspace", str(ws), "--target", "local", "--json"])
+    rc, payload = _deliver(ws, target="local")
 
     assert rc == 1
-    payload = json.loads(capsys.readouterr().out)
     assert payload["error_code"] == "E_DELIVERY_ARTIFACT_MISMATCH"
     assert payload["artifact"].endswith(".docx")
     assert "Run finalize again" in payload["message"]
     assert _delivery_events(ws) == []
 
 
-def test_deliver_rejects_missing_delivery_hashes(tmp_path: Path, capsys) -> None:
+def test_deliver_rejects_missing_delivery_hashes(tmp_path: Path) -> None:
     ws = _workspace(tmp_path)
     _write_bundle(ws, include_docx=False)
     report_path = ws / "output" / "intermediate" / "finalize_report.json"
@@ -317,46 +389,43 @@ def test_deliver_rejects_missing_delivery_hashes(tmp_path: Path, capsys) -> None
     report.pop("delivery_artifact_sha256")
     report_path.write_text(json.dumps(report, ensure_ascii=False, indent=2), encoding="utf-8")
 
-    rc = main(["deliver", "--workspace", str(ws), "--json"])
+    rc, payload = _deliver(ws)
 
     assert rc == 1
-    payload = json.loads(capsys.readouterr().out)
     assert payload["error_code"] == "E_DELIVERY_BUNDLE_MISSING"
     assert "delivery_artifact_sha256" in payload["message"]
     assert _delivery_events(ws) == []
 
 
-def test_deliver_rejects_corrupt_finalize_report_utf8(tmp_path: Path, capsys) -> None:
+def test_deliver_rejects_corrupt_finalize_report_utf8(tmp_path: Path) -> None:
     ws = _workspace(tmp_path)
     _write_bundle(ws, include_docx=False)
     (ws / "output" / "intermediate" / "finalize_report.json").write_bytes(b"\xff\xfe\x00")
 
-    rc = main(["deliver", "--workspace", str(ws), "--json"])
+    rc, payload = _deliver(ws)
 
     assert rc == 1
-    payload = json.loads(capsys.readouterr().out)
     assert payload["error_code"] == "E_DELIVERY_BUNDLE_MISSING"
     assert "valid UTF-8" in payload["message"]
     assert _delivery_events(ws) == []
 
 
-def test_deliver_rejects_non_file_delivery_artifact(tmp_path: Path, capsys) -> None:
+def test_deliver_rejects_non_file_delivery_artifact(tmp_path: Path) -> None:
     ws = _workspace(tmp_path)
     _write_bundle(ws, include_docx=False)
     delivery_brief = ws / "output" / "delivery" / "brief.md"
     delivery_brief.unlink()
     delivery_brief.mkdir()
 
-    rc = main(["deliver", "--workspace", str(ws), "--json"])
+    rc, payload = _deliver(ws)
 
     assert rc == 1
-    payload = json.loads(capsys.readouterr().out)
     assert payload["error_code"] == "E_DELIVERY_BUNDLE_MISSING"
     assert "not a file" in payload["message"]
     assert _delivery_events(ws) == []
 
 
-def test_deliver_rejects_unsupported_delivery_artifact(tmp_path: Path, capsys) -> None:
+def test_deliver_rejects_unsupported_delivery_artifact(tmp_path: Path) -> None:
     ws = _workspace(tmp_path)
     _write_bundle(ws, include_docx=False)
     operator_file = ws / "output" / "delivery" / "operator-only.txt"
@@ -368,41 +437,38 @@ def test_deliver_rejects_unsupported_delivery_artifact(tmp_path: Path, capsys) -
     report["delivery_artifact_sha256"][rel] = _sha256_file(operator_file)
     report_path.write_text(json.dumps(report, ensure_ascii=False, indent=2), encoding="utf-8")
 
-    rc = main(["deliver", "--workspace", str(ws), "--json"])
+    rc, payload = _deliver(ws)
 
     assert rc == 1
-    payload = json.loads(capsys.readouterr().out)
     assert payload["error_code"] == "E_DELIVERY_BUNDLE_MISSING"
     assert "Unsupported delivery artifact" in payload["message"]
     assert _delivery_events(ws) == []
 
 
-def test_deliver_requires_existing_runtime_state(tmp_path: Path, capsys) -> None:
+def test_deliver_requires_existing_runtime_state(tmp_path: Path) -> None:
     ws = _workspace(tmp_path)
     _write_bundle(ws, include_docx=False, init_runtime=False)
 
-    rc = main(["deliver", "--workspace", str(ws), "--json"])
+    rc, payload = _deliver(ws)
 
     assert rc == 1
-    payload = json.loads(capsys.readouterr().out)
     assert payload["error_code"] == "E_DELIVERY_RUNTIME_MISSING"
     assert payload["runtime_error_code"] == "E_RUNTIME_STATE_NOT_INITIALIZED"
     assert not (ws / "output" / "intermediate" / "event_log.jsonl").exists()
 
 
-def test_deliver_rejects_non_delivery_artifact_in_report(tmp_path: Path, capsys) -> None:
+def test_deliver_rejects_non_delivery_artifact_in_report(tmp_path: Path) -> None:
     ws = _workspace(tmp_path)
     bad_path = ws / "output" / "source_appendix.md"
     _write_bundle(ws, delivery_artifacts=[str(bad_path)])
 
-    rc = main(["deliver", "--workspace", str(ws), "--json"])
+    rc, payload = _deliver(ws)
 
     assert rc == 1
-    payload = json.loads(capsys.readouterr().out)
     assert payload["error_code"] == "E_DELIVERY_BUNDLE_MISSING"
 
 
-def test_deliver_feishu_doc_sends_delivery_markdown_and_sanitizes_events(tmp_path: Path, capsys, monkeypatch) -> None:
+def test_deliver_feishu_doc_sends_delivery_markdown_and_sanitizes_events(tmp_path: Path, monkeypatch) -> None:
     ws = _workspace(tmp_path)
     markdown, _docx = _write_bundle(ws)
     calls: list[tuple[str, str, str]] = []
@@ -413,21 +479,9 @@ def test_deliver_feishu_doc_sends_delivery_markdown_and_sanitizes_events(tmp_pat
 
     monkeypatch.setattr("multi_agent_brief.cli.deliver_commands.FeishuDeliveryConnector.deliver", fake_deliver)
 
-    rc = main([
-        "deliver",
-        "--workspace",
-        str(ws),
-        "--target",
-        "feishu",
-        "--channel",
-        "doc",
-        "--recipient",
-        "folder_secret_token",
-        "--json",
-    ])
+    rc, payload = _deliver(ws, target="feishu", channel="doc", recipient="folder_secret_token")
 
     assert rc == 0
-    payload = json.loads(capsys.readouterr().out)
     assert payload["ok"] is True
     assert payload["artifact"] == "output/delivery/brief.md"
     assert payload["url"] == "https://example.com/doc"
@@ -448,24 +502,13 @@ def test_deliver_feishu_drive_prefers_named_docx(tmp_path: Path, monkeypatch) ->
 
     monkeypatch.setattr("multi_agent_brief.cli.deliver_commands.FeishuDeliveryConnector.deliver", fake_deliver)
 
-    rc = main([
-        "deliver",
-        "--workspace",
-        str(ws),
-        "--target",
-        "feishu",
-        "--channel",
-        "drive",
-        "--recipient",
-        "folder_secret_token",
-        "--json",
-    ])
+    rc, _payload = _deliver(ws, target="feishu", channel="drive", recipient="folder_secret_token")
 
     assert rc == 0
     assert calls == [str(docx)]
 
 
-def test_deliver_feishu_failure_records_failed_event(tmp_path: Path, capsys, monkeypatch) -> None:
+def test_deliver_feishu_failure_records_failed_event(tmp_path: Path, monkeypatch) -> None:
     ws = _workspace(tmp_path)
     _write_bundle(ws, include_docx=False)
 
@@ -473,39 +516,26 @@ def test_deliver_feishu_failure_records_failed_event(tmp_path: Path, capsys, mon
         return DeliveryResult(
             "feishu",
             False,
-            "feishu failed for oc_secret_chat and folder token abcdefghijklmnopqrstuvwxyz123456",
+            "feishu failed for secret_chat_001 and folder token abcdefghijklmnopqrstuvwxyz123456",
         )
 
     monkeypatch.setattr("multi_agent_brief.cli.deliver_commands.FeishuDeliveryConnector.deliver", fake_deliver)
 
-    rc = main([
-        "deliver",
-        "--workspace",
-        str(ws),
-        "--target",
-        "feishu",
-        "--channel",
-        "chat",
-        "--recipient",
-        "oc_secret_chat",
-        "--json",
-    ])
+    rc, payload = _deliver(ws, target="feishu", channel="chat", recipient="secret_chat_001")
 
     assert rc == 1
-    payload = json.loads(capsys.readouterr().out)
     assert payload["error_code"] == "E_DELIVERY_FAILED"
-    assert "oc_secret_chat" not in payload["message"]
+    assert "secret_chat_001" not in payload["message"]
     assert "abcdefghijklmnopqrstuvwxyz123456" not in payload["message"]
     assert "[recipient]" in payload["message"]
     assert "[token]" in payload["message"]
     events = _delivery_events(ws)
     assert [event["event_type"] for event in events] == ["delivery_attempted", "delivery_failed"]
-    assert "oc_secret_chat" not in json.dumps(events, ensure_ascii=False)
+    assert "secret_chat_001" not in json.dumps(events, ensure_ascii=False)
 
 
 def test_deliver_feishu_success_with_success_event_failure_reports_delivered(
     tmp_path: Path,
-    capsys,
     monkeypatch,
 ) -> None:
     ws = _workspace(tmp_path)
@@ -527,21 +557,9 @@ def test_deliver_feishu_success_with_success_event_failure_reports_delivered(
     monkeypatch.setattr("multi_agent_brief.cli.deliver_commands.FeishuDeliveryConnector.deliver", fake_deliver)
     monkeypatch.setattr("multi_agent_brief.cli.deliver_commands.append_event", flaky_append_event)
 
-    rc = main([
-        "deliver",
-        "--workspace",
-        str(ws),
-        "--target",
-        "feishu",
-        "--channel",
-        "doc",
-        "--recipient",
-        "folder_secret_token",
-        "--json",
-    ])
+    rc, payload = _deliver(ws, target="feishu", channel="doc", recipient="folder_secret_token")
 
     assert rc == 0
-    payload = json.loads(capsys.readouterr().out)
     assert payload["delivered"] is True
     assert payload["event_recorded"] is False
     assert "event write failed" in payload["event_error"]
@@ -550,9 +568,11 @@ def test_deliver_feishu_success_with_success_event_failure_reports_delivered(
 
 def test_deliver_feishu_success_event_failure_warns_in_text_output(
     tmp_path: Path,
-    capsys,
     monkeypatch,
 ) -> None:
+    # The retired text renderer surfaced these same payload fields; the
+    # semantic invariant (delivered + event-not-recorded warning) is asserted
+    # on the typed payload through the direct seam.
     ws = _workspace(tmp_path)
     _write_bundle(ws, include_docx=False)
 
@@ -572,26 +592,17 @@ def test_deliver_feishu_success_event_failure_warns_in_text_output(
     monkeypatch.setattr("multi_agent_brief.cli.deliver_commands.FeishuDeliveryConnector.deliver", fake_deliver)
     monkeypatch.setattr("multi_agent_brief.cli.deliver_commands.append_event", flaky_append_event)
 
-    rc = main([
-        "deliver",
-        "--workspace",
-        str(ws),
-        "--target",
-        "feishu",
-        "--channel",
-        "doc",
-        "--recipient",
-        "folder_secret_token",
-    ])
+    rc, payload = _deliver(ws, target="feishu", channel="doc", recipient="folder_secret_token")
 
-    captured = capsys.readouterr()
     assert rc == 0
-    assert "Delivered to feishu doc: https://example.com/doc" in captured.out
-    assert "delivery_succeeded event was not recorded" in captured.err
-    assert "do not retry blindly" in captured.err
+    assert payload["delivered"] is True
+    assert payload["url"] == "https://example.com/doc"
+    assert payload["message"] == "Doc created"
+    assert payload["event_recorded"] is False
+    assert "event write failed" in payload["event_error"]
 
 
-def test_deliver_gmail_draft_creates_draft_without_email_leak(tmp_path: Path, capsys, monkeypatch) -> None:
+def test_deliver_gmail_draft_creates_draft_without_email_leak(tmp_path: Path, monkeypatch) -> None:
     ws = _workspace(tmp_path)
     markdown, docx = _write_bundle(ws)
     markdown.write_text(
@@ -613,21 +624,9 @@ def test_deliver_gmail_draft_creates_draft_without_email_leak(tmp_path: Path, ca
 
     monkeypatch.setattr("multi_agent_brief.cli.deliver_commands.GwsGmailDeliveryConnector.deliver", fake_deliver)
 
-    rc = main([
-        "deliver",
-        "--workspace",
-        str(ws),
-        "--target",
-        "gmail",
-        "--channel",
-        "draft",
-        "--recipient",
-        "recipient@example.com",
-        "--json",
-    ])
+    rc, payload = _deliver(ws, target="gmail", channel="draft", recipient="recipient@example.com")
 
     assert rc == 0
-    payload = json.loads(capsys.readouterr().out)
     assert payload["ok"] is True
     assert payload["target"] == "gmail"
     assert payload["channel"] == "draft"
@@ -666,7 +665,6 @@ def test_deliver_gmail_draft_creates_draft_without_email_leak(tmp_path: Path, ca
 
 def test_deliver_gmail_draft_event_failure_returns_error_without_retry_signal(
     tmp_path: Path,
-    capsys,
     monkeypatch,
 ) -> None:
     ws = _workspace(tmp_path)
@@ -688,21 +686,9 @@ def test_deliver_gmail_draft_event_failure_returns_error_without_retry_signal(
     monkeypatch.setattr("multi_agent_brief.cli.deliver_commands.GwsGmailDeliveryConnector.deliver", fake_deliver)
     monkeypatch.setattr("multi_agent_brief.cli.deliver_commands.append_event", flaky_append_event)
 
-    rc = main([
-        "deliver",
-        "--workspace",
-        str(ws),
-        "--target",
-        "gmail",
-        "--channel",
-        "draft",
-        "--recipient",
-        "recipient@example.com",
-        "--json",
-    ])
+    rc, payload = _deliver(ws, target="gmail", channel="draft", recipient="recipient@example.com")
 
     assert rc == 1
-    payload = json.loads(capsys.readouterr().out)
     assert payload["ok"] is False
     assert payload["error_code"] == "E_DELIVERY_EVENT_FAILED"
     assert payload["target"] == "gmail"
@@ -716,7 +702,7 @@ def test_deliver_gmail_draft_event_failure_returns_error_without_retry_signal(
     assert [event["event_type"] for event in _delivery_events(ws)] == ["delivery_attempted"]
 
 
-def test_deliver_gmail_send_sends_message_without_email_leak(tmp_path: Path, capsys, monkeypatch) -> None:
+def test_deliver_gmail_send_sends_message_without_email_leak(tmp_path: Path, monkeypatch) -> None:
     ws = _workspace(tmp_path)
     _markdown, docx = _write_bundle(ws)
     calls: list[tuple[str, str, str, dict[str, object]]] = []
@@ -727,25 +713,16 @@ def test_deliver_gmail_send_sends_message_without_email_leak(tmp_path: Path, cap
 
     monkeypatch.setattr("multi_agent_brief.cli.deliver_commands.GwsGmailDeliveryConnector.deliver", fake_deliver)
 
-    rc = main([
-        "deliver",
-        "--workspace",
-        str(ws),
-        "--target",
-        "gmail",
-        "--channel",
-        "send",
-        "--recipient",
-        "recipient@example.com",
-        "--subject",
-        "Secret Q3 Board Plan",
-        "--body",
-        "Confidential launch narrative",
-        "--json",
-    ])
+    rc, payload = _deliver(
+        ws,
+        target="gmail",
+        channel="send",
+        recipient="recipient@example.com",
+        subject="Secret Q3 Board Plan",
+        body="Confidential launch narrative",
+    )
 
     assert rc == 0
-    payload = json.loads(capsys.readouterr().out)
     assert payload["ok"] is True
     assert payload["target"] == "gmail"
     assert payload["channel"] == "send"
@@ -776,7 +753,6 @@ def test_deliver_gmail_send_sends_message_without_email_leak(tmp_path: Path, cap
 
 def test_deliver_gmail_send_event_failure_returns_error_without_retry_signal(
     tmp_path: Path,
-    capsys,
     monkeypatch,
 ) -> None:
     ws = _workspace(tmp_path)
@@ -798,21 +774,9 @@ def test_deliver_gmail_send_event_failure_returns_error_without_retry_signal(
     monkeypatch.setattr("multi_agent_brief.cli.deliver_commands.GwsGmailDeliveryConnector.deliver", fake_deliver)
     monkeypatch.setattr("multi_agent_brief.cli.deliver_commands.append_event", flaky_append_event)
 
-    rc = main([
-        "deliver",
-        "--workspace",
-        str(ws),
-        "--target",
-        "gmail",
-        "--channel",
-        "send",
-        "--recipient",
-        "recipient@example.com",
-        "--json",
-    ])
+    rc, payload = _deliver(ws, target="gmail", channel="send", recipient="recipient@example.com")
 
     assert rc == 1
-    payload = json.loads(capsys.readouterr().out)
     assert payload["ok"] is False
     assert payload["error_code"] == "E_DELIVERY_EVENT_FAILED"
     assert payload["target"] == "gmail"
@@ -838,18 +802,7 @@ def test_deliver_gmail_draft_uses_markdown_when_docx_missing(tmp_path: Path, mon
 
     monkeypatch.setattr("multi_agent_brief.cli.deliver_commands.GwsGmailDeliveryConnector.deliver", fake_deliver)
 
-    rc = main([
-        "deliver",
-        "--workspace",
-        str(ws),
-        "--target",
-        "gmail",
-        "--channel",
-        "draft",
-        "--recipient",
-        "recipient@example.com",
-        "--json",
-    ])
+    rc, _payload = _deliver(ws, target="gmail", channel="draft", recipient="recipient@example.com")
 
     assert rc == 0
     assert calls == [str(markdown)]
@@ -857,7 +810,6 @@ def test_deliver_gmail_draft_uses_markdown_when_docx_missing(tmp_path: Path, mon
 
 def test_deliver_gmail_draft_failure_scrubs_gws_subject_body_and_recipient(
     tmp_path: Path,
-    capsys,
     monkeypatch,
 ) -> None:
     ws = _workspace(tmp_path)
@@ -876,30 +828,20 @@ def test_deliver_gmail_draft_failure_scrubs_gws_subject_body_and_recipient(
 
     monkeypatch.setattr("multi_agent_brief.delivery.gws.subprocess.run", fake_run)
 
-    rc = main([
-        "deliver",
-        "--workspace",
-        str(ws),
-        "--target",
-        "gmail",
-        "--channel",
-        "draft",
-        "--recipient",
-        recipient,
-        "--subject",
-        subject,
-        "--body",
-        body,
-        "--json",
-    ])
+    rc, payload = _deliver(
+        ws,
+        target="gmail",
+        channel="draft",
+        recipient=recipient,
+        subject=subject,
+        body=body,
+    )
 
     assert rc == 1
-    captured = capsys.readouterr()
-    payload = json.loads(captured.out)
     assert payload["ok"] is False
     assert payload["error_code"] == "E_DELIVERY_FAILED"
     assert "gws draft creation failed" in payload["message"]
-    output_blob = captured.out + captured.err
+    output_blob = json.dumps(payload, ensure_ascii=False)
     event_blob = json.dumps(_delivery_events(ws), ensure_ascii=False)
     for secret in (recipient, subject, body):
         assert secret not in output_blob
@@ -907,7 +849,7 @@ def test_deliver_gmail_draft_failure_scrubs_gws_subject_body_and_recipient(
     assert [event["event_type"] for event in _delivery_events(ws)] == ["delivery_attempted", "delivery_failed"]
 
 
-def test_deliver_gmail_timeout_is_reported_as_unknown_outcome(tmp_path: Path, capsys, monkeypatch) -> None:
+def test_deliver_gmail_timeout_is_reported_as_unknown_outcome(tmp_path: Path, monkeypatch) -> None:
     ws = _workspace(tmp_path)
     _write_bundle(ws, include_docx=False)
     monkeypatch.setattr("multi_agent_brief.delivery.gws.shutil.which", lambda name: "/usr/local/bin/gws")
@@ -919,21 +861,9 @@ def test_deliver_gmail_timeout_is_reported_as_unknown_outcome(tmp_path: Path, ca
 
     monkeypatch.setattr("multi_agent_brief.delivery.gws.subprocess.run", fake_run)
 
-    rc = main([
-        "deliver",
-        "--workspace",
-        str(ws),
-        "--target",
-        "gmail",
-        "--channel",
-        "send",
-        "--recipient",
-        "recipient@example.com",
-        "--json",
-    ])
+    rc, payload = _deliver(ws, target="gmail", channel="send", recipient="recipient@example.com")
 
     assert rc == 1
-    payload = json.loads(capsys.readouterr().out)
     assert payload["ok"] is False
     assert payload["error_code"] == "E_DELIVERY_FAILED"
     assert payload["outcome_unknown"] is True
@@ -948,25 +878,13 @@ def test_deliver_gmail_timeout_is_reported_as_unknown_outcome(tmp_path: Path, ca
     assert events[1]["metadata"]["inspect_target"] == "Gmail Sent Mail"
 
 
-def test_deliver_gmail_rejects_unknown_channel(tmp_path: Path, capsys) -> None:
+def test_deliver_gmail_rejects_unknown_channel(tmp_path: Path) -> None:
     ws = _workspace(tmp_path)
     _write_bundle(ws, include_docx=False)
 
-    rc = main([
-        "deliver",
-        "--workspace",
-        str(ws),
-        "--target",
-        "gmail",
-        "--channel",
-        "chat",
-        "--recipient",
-        "recipient@example.com",
-        "--json",
-    ])
+    rc, payload = _deliver(ws, target="gmail", channel="chat", recipient="recipient@example.com")
 
     assert rc == 1
-    payload = json.loads(capsys.readouterr().out)
     assert payload["error_code"] == "E_DELIVERY_TARGET_INVALID"
     assert "draft|send" in payload["message"]
     assert _delivery_events(ws) == []

@@ -8,15 +8,20 @@ import pytest
 
 from multi_agent_brief.cli.main import main
 from multi_agent_brief.orchestrator.runtime_state import (
+    RuntimeStateError,
     append_event,
     check_runtime_state,
+    complete_repair_transaction,
     initialize_runtime_state,
     runtime_state_paths,
+    start_repair_transaction,
     utc_now,
 )
 from multi_agent_brief.repair.router import route_repair, route_repair_for_gate
 from tests.helpers import write_minimal_workspace_under
 
+
+_REPO_ROOT = Path(__file__).resolve().parent.parent
 
 _workspace = partial(
     write_minimal_workspace_under,
@@ -29,6 +34,14 @@ def _intermediate(ws: Path) -> Path:
     path = ws / "output" / "intermediate"
     path.mkdir(parents=True, exist_ok=True)
     return path
+
+
+def _workspace_file_bytes(ws: Path) -> dict[str, bytes]:
+    return {
+        path.relative_to(ws).as_posix(): path.read_bytes()
+        for path in ws.rglob("*")
+        if path.is_file()
+    }
 
 
 def _write_audit_report(ws: Path, finding: dict[str, object], *, audit_status: str = "fail") -> None:
@@ -306,6 +319,29 @@ def _write_valid_claim_ledger(ws: Path, statement: str = "ExampleCo opened a dem
     )
 
 
+@pytest.mark.parametrize(
+    "argv",
+    [
+        ["repair", "route", "--workspace", "{ws}", "--json"],
+        ["repair", "start", "--workspace", "{ws}", "--json"],
+        ["repair", "complete", "--workspace", "{ws}", "--reason", "retired surface probe", "--json"],
+    ],
+    ids=["repair route", "repair start", "repair complete"],
+)
+def test_repair_public_cli_is_retired_with_zero_writes(tmp_path, capsys, argv):
+    ws = _workspace(tmp_path)
+    initialize_runtime_state(runtime="operator", workspace=ws)
+    before = _workspace_file_bytes(ws)
+
+    # LEGACY-DELETE: retired public `repair` CLI rejects the legacy workspace
+    # with a typed token and performs zero writes.
+    rc = main([arg.format(ws=ws) for arg in argv])
+
+    assert rc == 1
+    assert capsys.readouterr().out == "legacy_workspace_unsupported\n"
+    assert _workspace_file_bytes(ws) == before
+
+
 def test_repair_route_ignores_semantic_support_proposal_findings(tmp_path):
     ws = _workspace(tmp_path)
     initialize_runtime_state(runtime="operator", workspace=ws)
@@ -411,36 +447,20 @@ def test_repair_route_maps_unsupported_claim_to_audited_brief(tmp_path, capsys):
     assert routed["must_rerun_from"] == "auditor"
     assert "output/intermediate/audit_report.json" in routed["blocked_direct_edits"]
 
-    before_files = {
-        path.relative_to(ws).as_posix(): path.read_bytes()
-        for path in ws.rglob("*")
-        if path.is_file()
-    }
+    before_files = _workspace_file_bytes(ws)
     rc = main(["repair", "route", "--workspace", str(ws), "--json"])
     output = capsys.readouterr().out
 
-    if rc == 1:
-        # LEGACY-DELETE: remove the pre-CX branch with the retired public CLI.
-        assert output.strip() == "legacy_workspace_unsupported"
-    else:
-        assert rc == 0
-        payload = json.loads(output)
-        assert payload["route_kind"] == "owner_stage_repair"
-        assert payload["repair_owner"] == "editor"
-        assert payload["allowed_artifacts"] == ["output/intermediate/audited_brief.md"]
-        assert payload["must_rerun_from"] == "auditor"
-        assert "output/intermediate/audit_report.json" in payload["blocked_direct_edits"]
-    after_files = {
-        path.relative_to(ws).as_posix(): path.read_bytes()
-        for path in ws.rglob("*")
-        if path.is_file()
-    }
-    assert after_files == before_files
+    # LEGACY-DELETE: retired public `repair route` CLI rejects the legacy
+    # workspace with a typed token and performs zero writes.
+    assert rc == 1
+    assert output.strip() == "legacy_workspace_unsupported"
+    assert _workspace_file_bytes(ws) == before_files
     assert not (ws / "output" / "intermediate" / "repair_plan.json").exists()
     assert runtime_state_paths(ws)["event_log"].read_bytes() == before_events
 
 
-def test_repair_route_maps_finalize_reader_clean_failure_to_editor(tmp_path, capsys):
+def test_repair_route_maps_finalize_reader_clean_failure_to_editor(tmp_path):
     ws = _workspace(tmp_path)
     initialize_runtime_state(runtime="operator", workspace=ws)
     _set_workflow_stages(
@@ -460,10 +480,9 @@ def test_repair_route_maps_finalize_reader_clean_failure_to_editor(tmp_path, cap
     )
     _write_finalize_report_with_reader_clean_failure(ws)
 
-    rc = main(["repair", "route", "--workspace", str(ws), "--json"])
+    payload = route_repair(workspace=ws)
 
-    assert rc == 0
-    payload = json.loads(capsys.readouterr().out)
+    assert payload["ok"] is True
     assert payload["repair_owner"] == "editor"
     assert payload["allowed_artifacts"] == ["output/intermediate/audited_brief.md"]
     assert payload["must_rerun_from"] == "auditor"
@@ -474,7 +493,7 @@ def test_repair_route_maps_finalize_reader_clean_failure_to_editor(tmp_path, cap
     assert any(route["source"]["finding_type"] == "reader_clean_process_wording" for route in payload["routes"])
 
 
-def test_repair_route_ignores_stale_finalize_report_outside_finalize_stage(tmp_path, capsys):
+def test_repair_route_ignores_stale_finalize_report_outside_finalize_stage(tmp_path):
     ws = _workspace(tmp_path)
     initialize_runtime_state(runtime="operator", workspace=ws)
     _set_workflow_stages(
@@ -493,16 +512,15 @@ def test_repair_route_ignores_stale_finalize_report_outside_finalize_stage(tmp_p
     )
     _write_finalize_report_with_reader_clean_failure(ws)
 
-    rc = main(["repair", "route", "--workspace", str(ws), "--json"])
+    payload = route_repair(workspace=ws)
 
-    assert rc == 0
-    payload = json.loads(capsys.readouterr().out)
+    assert payload["ok"] is True
     assert payload["repair_owner"] == "none"
     assert payload["finding_count"] == 0
     assert not any(route.get("source", {}).get("kind") == "finalize_report" for route in payload["routes"])
 
 
-def test_repair_start_accepts_finalize_reader_clean_route_from_finalize_stage(tmp_path, capsys):
+def test_repair_start_accepts_finalize_reader_clean_route_from_finalize_stage(tmp_path):
     ws = _workspace(tmp_path)
     initialize_runtime_state(runtime="operator", workspace=ws)
     _write_valid_claim_ledger(ws)
@@ -532,10 +550,8 @@ def test_repair_start_accepts_finalize_reader_clean_route_from_finalize_stage(tm
     check_runtime_state(workspace=ws)
     _write_finalize_report_with_reader_clean_failure(ws)
 
-    rc = main(["repair", "start", "--workspace", str(ws), "--json"])
+    payload = start_repair_transaction(workspace=ws, repo_workdir=_REPO_ROOT)
 
-    assert rc == 0
-    payload = json.loads(capsys.readouterr().out)
     repair = payload["repair"]
     workflow = payload["workflow_state"]
     assert payload["transaction"]["decision"] == "repair_start"
@@ -547,7 +563,7 @@ def test_repair_start_accepts_finalize_reader_clean_route_from_finalize_stage(tm
     assert repair["must_rerun_from"] == "auditor"
 
 
-def test_repair_route_maps_frozen_audited_brief_change_to_editor(tmp_path, capsys):
+def test_repair_route_maps_frozen_audited_brief_change_to_editor(tmp_path):
     ws = _workspace(tmp_path)
     initialize_runtime_state(runtime="operator", workspace=ws)
     _write_valid_claim_ledger(ws)
@@ -563,10 +579,9 @@ def test_repair_route_maps_frozen_audited_brief_change_to_editor(tmp_path, capsy
     event_log_before = runtime_state_paths(ws)["event_log"].read_bytes()
     (_intermediate(ws) / "audited_brief.md").write_text("# Brief\n\nChanged downstream patch.\n", encoding="utf-8")
 
-    rc = main(["repair", "route", "--workspace", str(ws), "--json"])
+    payload = route_repair(workspace=ws)
 
-    assert rc == 0
-    payload = json.loads(capsys.readouterr().out)
+    assert payload["ok"] is True
     assert payload["repair_owner"] == "editor"
     assert payload["allowed_artifacts"] == ["output/intermediate/audited_brief.md"]
     assert payload["must_rerun_from"] == "auditor"
@@ -578,7 +593,7 @@ def test_repair_route_maps_frozen_audited_brief_change_to_editor(tmp_path, capsy
     assert runtime_state_paths(ws)["event_log"].read_bytes() == event_log_before
 
 
-def test_repair_route_prioritizes_frozen_artifact_change_over_audit_text(tmp_path, capsys):
+def test_repair_route_prioritizes_frozen_artifact_change_over_audit_text(tmp_path):
     ws = _workspace(tmp_path)
     initialize_runtime_state(runtime="operator", workspace=ws)
     _write_valid_claim_ledger(ws)
@@ -604,17 +619,16 @@ def test_repair_route_prioritizes_frozen_artifact_change_over_audit_text(tmp_pat
     )
     (_intermediate(ws) / "audited_brief.md").write_text("# Brief\n\nChanged downstream patch.\n", encoding="utf-8")
 
-    rc = main(["repair", "route", "--workspace", str(ws), "--json"])
+    payload = route_repair(workspace=ws)
 
-    assert rc == 0
-    payload = json.loads(capsys.readouterr().out)
+    assert payload["ok"] is True
     assert payload["repair_owner"] == "editor"
     assert payload["source"]["kind"] == "transaction_integrity"
     assert payload["source"]["finding_type"] == "frozen_artifact_changed"
     assert payload["allowed_artifacts"] == ["output/intermediate/audited_brief.md"]
 
 
-def test_repair_route_maps_frozen_claim_ledger_change_to_claim_ledger(tmp_path, capsys):
+def test_repair_route_maps_frozen_claim_ledger_change_to_claim_ledger(tmp_path):
     ws = _workspace(tmp_path)
     initialize_runtime_state(runtime="operator", workspace=ws)
     _write_valid_claim_ledger(ws)
@@ -627,10 +641,9 @@ def test_repair_route_maps_frozen_claim_ledger_change_to_claim_ledger(tmp_path, 
     registry_before = runtime_state_paths(ws)["artifact_registry"].read_bytes()
     _write_valid_claim_ledger(ws, statement="Changed ledger text.")
 
-    rc = main(["repair", "route", "--workspace", str(ws), "--json"])
+    payload = route_repair(workspace=ws)
 
-    assert rc == 0
-    payload = json.loads(capsys.readouterr().out)
+    assert payload["ok"] is True
     assert payload["repair_owner"] == "claim-ledger"
     assert payload["allowed_artifacts"] == ["output/intermediate/claim_ledger.json"]
     assert payload["must_rerun_from"] == "analyst"
@@ -638,7 +651,7 @@ def test_repair_route_maps_frozen_claim_ledger_change_to_claim_ledger(tmp_path, 
     assert runtime_state_paths(ws)["artifact_registry"].read_bytes() == registry_before
 
 
-def test_repair_route_maps_claim_ledger_invalid_registry_to_claim_ledger(tmp_path, capsys):
+def test_repair_route_maps_claim_ledger_invalid_registry_to_claim_ledger(tmp_path):
     ws = _workspace(tmp_path)
     initialize_runtime_state(runtime="operator", workspace=ws)
     registry_path = runtime_state_paths(ws)["artifact_registry"]
@@ -665,17 +678,16 @@ def test_repair_route_maps_claim_ledger_invalid_registry_to_claim_ledger(tmp_pat
         encoding="utf-8",
     )
 
-    rc = main(["repair", "route", "--workspace", str(ws), "--json"])
+    payload = route_repair(workspace=ws)
 
-    assert rc == 0
-    payload = json.loads(capsys.readouterr().out)
+    assert payload["ok"] is True
     assert payload["repair_owner"] == "claim-ledger"
     assert payload["allowed_artifacts"] == ["output/intermediate/claim_ledger.json"]
     assert payload["must_rerun_from"] == "analyst"
     assert "output/intermediate/audited_brief.md" in payload["blocked_direct_edits"]
 
 
-def test_repair_route_maps_missing_claim_ledger_registry_to_claim_ledger(tmp_path, capsys):
+def test_repair_route_maps_missing_claim_ledger_registry_to_claim_ledger(tmp_path):
     ws = _workspace(tmp_path)
     initialize_runtime_state(runtime="operator", workspace=ws)
     registry_path = runtime_state_paths(ws)["artifact_registry"]
@@ -702,17 +714,16 @@ def test_repair_route_maps_missing_claim_ledger_registry_to_claim_ledger(tmp_pat
         encoding="utf-8",
     )
 
-    rc = main(["repair", "route", "--workspace", str(ws), "--json"])
+    payload = route_repair(workspace=ws)
 
-    assert rc == 0
-    payload = json.loads(capsys.readouterr().out)
+    assert payload["ok"] is True
     assert payload["repair_owner"] == "claim-ledger"
     assert payload["allowed_artifacts"] == ["output/intermediate/claim_ledger.json"]
     assert payload["must_rerun_from"] == "analyst"
     assert "output/intermediate/audited_brief.md" in payload["blocked_direct_edits"]
 
 
-def test_repair_route_maps_missing_source_excerpt_to_source_discovery(tmp_path, capsys):
+def test_repair_route_maps_missing_source_excerpt_to_source_discovery(tmp_path):
     ws = _workspace(tmp_path)
     initialize_runtime_state(runtime="operator", workspace=ws)
     _write_quality_gate_report(
@@ -726,17 +737,16 @@ def test_repair_route_maps_missing_source_excerpt_to_source_discovery(tmp_path, 
         },
     )
 
-    rc = main(["repair", "route", "--workspace", str(ws), "--json"])
+    payload = route_repair(workspace=ws)
 
-    assert rc == 0
-    payload = json.loads(capsys.readouterr().out)
+    assert payload["ok"] is True
     assert payload["repair_owner"] == "source-discovery"
     assert payload["allowed_artifacts"] == ["input/sources/*"]
     assert payload["must_rerun_from"] == "input-governance"
     assert "output/intermediate/claim_ledger.json" in payload["blocked_direct_edits"]
 
 
-def test_repair_route_prefers_source_discovery_metadata_over_text_heuristic(tmp_path, capsys):
+def test_repair_route_prefers_source_discovery_metadata_over_text_heuristic(tmp_path):
     ws = _workspace(tmp_path)
     initialize_runtime_state(runtime="operator", workspace=ws)
     _write_quality_gate_report(
@@ -753,16 +763,15 @@ def test_repair_route_prefers_source_discovery_metadata_over_text_heuristic(tmp_
         },
     )
 
-    rc = main(["repair", "route", "--workspace", str(ws), "--json"])
+    payload = route_repair(workspace=ws)
 
-    assert rc == 0
-    payload = json.loads(capsys.readouterr().out)
+    assert payload["ok"] is True
     assert payload["repair_owner"] == "source-discovery"
     assert payload["allowed_artifacts"] == ["input/sources/*"]
     assert payload["must_rerun_from"] == "input-governance"
 
 
-def test_repair_route_prefers_low_confidence_source_metadata(tmp_path, capsys):
+def test_repair_route_prefers_low_confidence_source_metadata(tmp_path):
     ws = _workspace(tmp_path)
     initialize_runtime_state(runtime="operator", workspace=ws)
     _write_quality_gate_report(
@@ -779,15 +788,14 @@ def test_repair_route_prefers_low_confidence_source_metadata(tmp_path, capsys):
         },
     )
 
-    rc = main(["repair", "route", "--workspace", str(ws), "--json"])
+    payload = route_repair(workspace=ws)
 
-    assert rc == 0
-    payload = json.loads(capsys.readouterr().out)
+    assert payload["ok"] is True
     assert payload["repair_owner"] == "source-discovery"
     assert payload["allowed_artifacts"] == ["input/sources/*"]
 
 
-def test_repair_route_prefers_target_relevance_metadata(tmp_path, capsys):
+def test_repair_route_prefers_target_relevance_metadata(tmp_path):
     ws = _workspace(tmp_path)
     initialize_runtime_state(runtime="operator", workspace=ws)
     _write_quality_gate_report(
@@ -804,16 +812,15 @@ def test_repair_route_prefers_target_relevance_metadata(tmp_path, capsys):
         },
     )
 
-    rc = main(["repair", "route", "--workspace", str(ws), "--json"])
+    payload = route_repair(workspace=ws)
 
-    assert rc == 0
-    payload = json.loads(capsys.readouterr().out)
+    assert payload["ok"] is True
     assert payload["repair_owner"] == "editor"
     assert payload["allowed_artifacts"] == ["output/intermediate/audited_brief.md"]
     assert payload["must_rerun_from"] == "auditor"
 
 
-def test_repair_route_prefers_target_priority_metadata(tmp_path, capsys):
+def test_repair_route_prefers_target_priority_metadata(tmp_path):
     ws = _workspace(tmp_path)
     initialize_runtime_state(runtime="operator", workspace=ws)
     _write_quality_gate_report(
@@ -830,15 +837,14 @@ def test_repair_route_prefers_target_priority_metadata(tmp_path, capsys):
         },
     )
 
-    rc = main(["repair", "route", "--workspace", str(ws), "--json"])
+    payload = route_repair(workspace=ws)
 
-    assert rc == 0
-    payload = json.loads(capsys.readouterr().out)
+    assert payload["ok"] is True
     assert payload["repair_owner"] == "editor"
     assert payload["allowed_artifacts"] == ["output/intermediate/audited_brief.md"]
 
 
-def test_repair_route_prefers_number_without_source_metadata(tmp_path, capsys):
+def test_repair_route_prefers_number_without_source_metadata(tmp_path):
     ws = _workspace(tmp_path)
     initialize_runtime_state(runtime="operator", workspace=ws)
     _write_quality_gate_report(
@@ -855,15 +861,14 @@ def test_repair_route_prefers_number_without_source_metadata(tmp_path, capsys):
         },
     )
 
-    rc = main(["repair", "route", "--workspace", str(ws), "--json"])
+    payload = route_repair(workspace=ws)
 
-    assert rc == 0
-    payload = json.loads(capsys.readouterr().out)
+    assert payload["ok"] is True
     assert payload["repair_owner"] == "editor"
     assert payload["allowed_artifacts"] == ["output/intermediate/audited_brief.md"]
 
 
-def test_repair_route_maps_low_source_density_metadata_to_editor(tmp_path, capsys):
+def test_repair_route_maps_low_source_density_metadata_to_editor(tmp_path):
     ws = _workspace(tmp_path)
     initialize_runtime_state(runtime="operator", workspace=ws)
     _write_quality_gate_report(
@@ -880,16 +885,15 @@ def test_repair_route_maps_low_source_density_metadata_to_editor(tmp_path, capsy
         },
     )
 
-    rc = main(["repair", "route", "--workspace", str(ws), "--json"])
+    payload = route_repair(workspace=ws)
 
-    assert rc == 0
-    payload = json.loads(capsys.readouterr().out)
+    assert payload["ok"] is True
     assert payload["repair_owner"] == "editor"
     assert payload["allowed_artifacts"] == ["output/intermediate/audited_brief.md"]
     assert payload["must_rerun_from"] == "auditor"
 
 
-def test_repair_route_does_not_let_minimum_text_override_explicit_editor_route(tmp_path, capsys):
+def test_repair_route_does_not_let_minimum_text_override_explicit_editor_route(tmp_path):
     ws = _workspace(tmp_path)
     initialize_runtime_state(runtime="operator", workspace=ws)
     _write_quality_gate_report(
@@ -906,15 +910,14 @@ def test_repair_route_does_not_let_minimum_text_override_explicit_editor_route(t
         },
     )
 
-    rc = main(["repair", "route", "--workspace", str(ws), "--json"])
+    payload = route_repair(workspace=ws)
 
-    assert rc == 0
-    payload = json.loads(capsys.readouterr().out)
+    assert payload["ok"] is True
     assert payload["repair_owner"] == "editor"
     assert payload["allowed_artifacts"] == ["output/intermediate/audited_brief.md"]
 
 
-def test_repair_route_does_not_auto_repair_input_limitation_findings(tmp_path, capsys):
+def test_repair_route_does_not_auto_repair_input_limitation_findings(tmp_path):
     ws = _workspace(tmp_path)
     initialize_runtime_state(runtime="operator", workspace=ws)
     _write_quality_gate_report(
@@ -931,10 +934,9 @@ def test_repair_route_does_not_auto_repair_input_limitation_findings(tmp_path, c
         },
     )
 
-    rc = main(["repair", "route", "--workspace", str(ws), "--json"])
+    payload = route_repair(workspace=ws)
 
-    assert rc == 0
-    payload = json.loads(capsys.readouterr().out)
+    assert payload["ok"] is True
     assert payload["route_kind"] == "human_review"
     assert payload["repair_owner"] == "none"
     assert payload["review_owner"] == "human"
@@ -944,7 +946,7 @@ def test_repair_route_does_not_auto_repair_input_limitation_findings(tmp_path, c
 
 
 @pytest.mark.parametrize("repair_owner", ["human", "human_review", "human-review"])
-def test_repair_route_treats_explicit_human_owner_as_human_review(tmp_path, capsys, repair_owner):
+def test_repair_route_treats_explicit_human_owner_as_human_review(tmp_path, repair_owner):
     ws = _workspace(tmp_path)
     initialize_runtime_state(runtime="operator", workspace=ws)
     _write_quality_gate_report(
@@ -962,10 +964,9 @@ def test_repair_route_treats_explicit_human_owner_as_human_review(tmp_path, caps
         },
     )
 
-    rc = main(["repair", "route", "--workspace", str(ws), "--json"])
+    payload = route_repair(workspace=ws)
 
-    assert rc == 0
-    payload = json.loads(capsys.readouterr().out)
+    assert payload["ok"] is True
     assert payload["route_kind"] == "human_review"
     assert payload["repair_owner"] == "none"
     assert payload["review_owner"] == "human"
@@ -974,15 +975,14 @@ def test_repair_route_treats_explicit_human_owner_as_human_review(tmp_path, caps
     assert payload["recommended_action"] == "request_human_review_for_blocking_gate"
     assert payload["source"]["requested_owner"] == "human"
 
-    rc = main(["repair", "start", "--workspace", str(ws), "--json"])
-
-    assert rc == 1
-    start_payload = json.loads(capsys.readouterr().out)
+    with pytest.raises(RuntimeStateError) as excinfo:
+        start_repair_transaction(workspace=ws, repo_workdir=_REPO_ROOT)
+    start_payload = excinfo.value.to_dict()
     assert start_payload["error_code"] == "E_ILLEGAL_TRANSITION"
     assert "requires human review" in start_payload["error"]
 
 
-def test_repair_route_prioritizes_blocking_human_review_over_warning_repair(tmp_path, capsys):
+def test_repair_route_prioritizes_blocking_human_review_over_warning_repair(tmp_path):
     ws = _workspace(tmp_path)
     initialize_runtime_state(runtime="operator", workspace=ws)
     path = _intermediate(ws) / "gates" / "auditor_quality_gate_report.json"
@@ -1025,10 +1025,9 @@ def test_repair_route_prioritizes_blocking_human_review_over_warning_repair(tmp_
         encoding="utf-8",
     )
 
-    rc = main(["repair", "route", "--workspace", str(ws), "--json"])
+    payload = route_repair(workspace=ws)
 
-    assert rc == 0
-    payload = json.loads(capsys.readouterr().out)
+    assert payload["ok"] is True
     assert payload["route_kind"] == "human_review"
     assert payload["repair_owner"] == "none"
     assert payload["recommended_action"] == "request_human_review_for_blocking_gate"
@@ -1471,13 +1470,12 @@ def _imported_auditor_workspace_with_repair_routes(tmp_path: Path) -> Path:
     return ws
 
 
-def test_repair_route_selects_blocking_gate_before_imported_audit_warning(tmp_path, capsys):
+def test_repair_route_selects_blocking_gate_before_imported_audit_warning(tmp_path):
     ws = _imported_auditor_workspace_with_repair_routes(tmp_path)
 
-    rc = main(["repair", "route", "--workspace", str(ws), "--json"])
+    payload = route_repair(workspace=ws)
 
-    assert rc == 0
-    payload = json.loads(capsys.readouterr().out)
+    assert payload["ok"] is True
     assert payload["repair_owner"] == "editor"
     assert payload["source"]["finding_id"] == "QG_TARGET_RELEVANCE_001"
     assert payload["default_selected"] is True
@@ -1490,13 +1488,11 @@ def test_repair_route_selects_blocking_gate_before_imported_audit_warning(tmp_pa
     assert routes["AUD-002"]["is_imported_fact_layer_forbidden"] is True
 
 
-def test_repair_start_defaults_to_blocking_gate_route_over_imported_warning(tmp_path, capsys):
+def test_repair_start_defaults_to_blocking_gate_route_over_imported_warning(tmp_path):
     ws = _imported_auditor_workspace_with_repair_routes(tmp_path)
 
-    rc = main(["repair", "start", "--workspace", str(ws), "--json"])
+    payload = start_repair_transaction(workspace=ws, repo_workdir=_REPO_ROOT)
 
-    assert rc == 0
-    payload = json.loads(capsys.readouterr().out)
     repair = payload["repair"]
     workflow = payload["workflow_state"]
     assert workflow["current_stage"] == "editor"
@@ -1506,76 +1502,59 @@ def test_repair_start_defaults_to_blocking_gate_route_over_imported_warning(tmp_
     assert repair["must_rerun_from"] == "auditor"
 
 
-def test_repair_start_finding_id_selects_blocking_gate_route(tmp_path, capsys):
+def test_repair_start_finding_id_selects_blocking_gate_route(tmp_path):
     ws = _imported_auditor_workspace_with_repair_routes(tmp_path)
 
-    rc = main([
-        "repair",
-        "start",
-        "--workspace",
-        str(ws),
-        "--finding-id",
-        "QG_TARGET_RELEVANCE_001",
-        "--json",
-    ])
+    payload = start_repair_transaction(
+        workspace=ws,
+        repo_workdir=_REPO_ROOT,
+        finding_id="QG_TARGET_RELEVANCE_001",
+    )
 
-    assert rc == 0
-    payload = json.loads(capsys.readouterr().out)
     assert payload["repair"]["repair_owner"] == "editor"
     assert payload["repair"]["source"]["finding_id"] == "QG_TARGET_RELEVANCE_001"
 
 
-def test_repair_start_route_index_selects_blocking_gate_route(tmp_path, capsys):
+def test_repair_start_route_index_selects_blocking_gate_route(tmp_path):
     ws = _imported_auditor_workspace_with_repair_routes(tmp_path)
 
-    rc = main(["repair", "start", "--workspace", str(ws), "--route-index", "0", "--json"])
+    payload = start_repair_transaction(workspace=ws, repo_workdir=_REPO_ROOT, route_index=0)
 
-    assert rc == 0
-    payload = json.loads(capsys.readouterr().out)
     assert payload["repair"]["repair_owner"] == "editor"
     assert payload["repair"]["source"]["finding_id"] == "QG_TARGET_RELEVANCE_001"
 
 
-def test_repair_start_rejects_ambiguous_route_selection_args(tmp_path, capsys):
+def test_repair_start_rejects_ambiguous_route_selection_args(tmp_path):
     ws = _imported_auditor_workspace_with_repair_routes(tmp_path)
 
-    rc = main([
-        "repair",
-        "start",
-        "--workspace",
-        str(ws),
-        "--route-index",
-        "0",
-        "--finding-id",
-        "QG_TARGET_RELEVANCE_001",
-        "--json",
-    ])
-
-    assert rc == 1
-    payload = json.loads(capsys.readouterr().out)
+    with pytest.raises(RuntimeStateError) as excinfo:
+        start_repair_transaction(
+            workspace=ws,
+            repo_workdir=_REPO_ROOT,
+            route_index=0,
+            finding_id="QG_TARGET_RELEVANCE_001",
+        )
+    payload = excinfo.value.to_dict()
     assert payload["error_code"] == "E_REPAIR_ROUTE_SELECTION_INVALID"
 
 
-def test_repair_start_explicit_imported_fact_layer_route_fails(tmp_path, capsys):
+def test_repair_start_explicit_imported_fact_layer_route_fails(tmp_path):
     ws = _imported_auditor_workspace_with_repair_routes(tmp_path)
     before_workflow = runtime_state_paths(ws)["workflow_state"].read_bytes()
 
-    rc = main(["repair", "start", "--workspace", str(ws), "--finding-id", "AUD-002", "--json"])
-
-    assert rc == 1
-    payload = json.loads(capsys.readouterr().out)
+    with pytest.raises(RuntimeStateError) as excinfo:
+        start_repair_transaction(workspace=ws, repo_workdir=_REPO_ROOT, finding_id="AUD-002")
+    payload = excinfo.value.to_dict()
     assert payload["error_code"] == "E_REPAIR_IMPORTED_FACT_LAYER_FORBIDDEN"
     assert "output/intermediate/claim_ledger.json" in payload["details"]["allowed_artifacts"]
     assert runtime_state_paths(ws)["workflow_state"].read_bytes() == before_workflow
 
 
-def test_repair_route_explicit_imported_fact_layer_route_fails(tmp_path, capsys):
+def test_repair_route_explicit_imported_fact_layer_route_fails(tmp_path):
     ws = _imported_auditor_workspace_with_repair_routes(tmp_path)
 
-    rc = main(["repair", "route", "--workspace", str(ws), "--finding-id", "AUD-002", "--json"])
+    payload = route_repair(workspace=ws, finding_id="AUD-002")
 
-    assert rc == 1
-    payload = json.loads(capsys.readouterr().out)
     assert payload["ok"] is False
     assert payload["error_code"] == "E_REPAIR_IMPORTED_FACT_LAYER_FORBIDDEN"
     assert payload["selected_route"]["source"]["finding_id"] == "AUD-002"
@@ -1594,7 +1573,7 @@ def test_route_repair_api_explicit_imported_fact_layer_route_fails(tmp_path):
     assert payload["selected_route"]["is_imported_fact_layer_forbidden"] is True
 
 
-def test_repair_start_fails_when_only_imported_fact_layer_routes_exist(tmp_path, capsys):
+def test_repair_start_fails_when_only_imported_fact_layer_routes_exist(tmp_path):
     ws = _workspace(tmp_path)
     initialize_runtime_state(runtime="operator", workspace=ws)
     _mark_fact_layer_imported(ws)
@@ -1615,17 +1594,16 @@ def test_repair_start_fails_when_only_imported_fact_layer_routes_exist(tmp_path,
     _write_imported_claim_ledger_audit_warning(ws)
     before_workflow = runtime_state_paths(ws)["workflow_state"].read_bytes()
 
-    rc = main(["repair", "start", "--workspace", str(ws), "--json"])
-
-    assert rc == 1
-    payload = json.loads(capsys.readouterr().out)
+    with pytest.raises(RuntimeStateError) as excinfo:
+        start_repair_transaction(workspace=ws, repo_workdir=_REPO_ROOT)
+    payload = excinfo.value.to_dict()
     assert payload["error_code"] == "E_REPAIR_NO_LEGAL_ROUTE"
     assert payload["details"]["routes"][0]["source"]["finding_id"] == "AUD-002"
     assert payload["details"]["routes"][0]["is_imported_fact_layer_forbidden"] is True
     assert runtime_state_paths(ws)["workflow_state"].read_bytes() == before_workflow
 
 
-def test_repair_route_fails_when_only_imported_fact_layer_routes_exist(tmp_path, capsys):
+def test_repair_route_fails_when_only_imported_fact_layer_routes_exist(tmp_path):
     ws = _workspace(tmp_path)
     initialize_runtime_state(runtime="operator", workspace=ws)
     _mark_fact_layer_imported(ws)
@@ -1645,10 +1623,8 @@ def test_repair_route_fails_when_only_imported_fact_layer_routes_exist(tmp_path,
     )
     _write_imported_claim_ledger_audit_warning(ws)
 
-    rc = main(["repair", "route", "--workspace", str(ws), "--json"])
+    payload = route_repair(workspace=ws)
 
-    assert rc == 1
-    payload = json.loads(capsys.readouterr().out)
     assert payload["ok"] is False
     assert payload["error_code"] == "E_REPAIR_NO_LEGAL_ROUTE"
     assert payload["repair_owner"] == "none"
@@ -1656,7 +1632,7 @@ def test_repair_route_fails_when_only_imported_fact_layer_routes_exist(tmp_path,
     assert payload["routes"][0]["is_imported_fact_layer_forbidden"] is True
 
 
-def test_repair_route_prioritizes_input_limitation_over_routeable_findings(tmp_path, capsys):
+def test_repair_route_prioritizes_input_limitation_over_routeable_findings(tmp_path):
     ws = _workspace(tmp_path)
     initialize_runtime_state(runtime="operator", workspace=ws)
     path = _intermediate(ws) / "gates" / "auditor_quality_gate_report.json"
@@ -1697,10 +1673,9 @@ def test_repair_route_prioritizes_input_limitation_over_routeable_findings(tmp_p
         encoding="utf-8",
     )
 
-    rc = main(["repair", "route", "--workspace", str(ws), "--json"])
+    payload = route_repair(workspace=ws)
 
-    assert rc == 0
-    payload = json.loads(capsys.readouterr().out)
+    assert payload["ok"] is True
     assert payload["repair_owner"] == "none"
     assert payload["allowed_artifacts"] == []
     assert payload["source"]["route_classification"] == "input_limitation"
@@ -1708,7 +1683,7 @@ def test_repair_route_prioritizes_input_limitation_over_routeable_findings(tmp_p
     assert any(route["repair_owner"] == "editor" for route in payload["routes"])
 
 
-def test_repair_route_analyst_without_artifact_never_allows_snapshot_edit(tmp_path, capsys):
+def test_repair_route_analyst_without_artifact_never_allows_snapshot_edit(tmp_path):
     ws = _workspace(tmp_path)
     initialize_runtime_state(runtime="operator", workspace=ws)
     _write_quality_gate_report(
@@ -1724,10 +1699,9 @@ def test_repair_route_analyst_without_artifact_never_allows_snapshot_edit(tmp_pa
         },
     )
 
-    rc = main(["repair", "route", "--workspace", str(ws), "--json"])
+    payload = route_repair(workspace=ws)
 
-    assert rc == 0
-    payload = json.loads(capsys.readouterr().out)
+    assert payload["ok"] is True
     assert payload["repair_owner"] == "analyst"
     assert payload["allowed_artifacts"] == ["output/intermediate/audited_brief.md"]
     assert "output/intermediate/analyst_draft_snapshot.md" not in payload["allowed_artifacts"]
@@ -1735,37 +1709,33 @@ def test_repair_route_analyst_without_artifact_never_allows_snapshot_edit(tmp_pa
     assert payload["must_rerun_from"] == "editor"
 
 
-def test_repair_route_rejects_invalid_gate_report_json(tmp_path, capsys):
+def test_repair_route_rejects_invalid_gate_report_json(tmp_path):
     ws = _workspace(tmp_path)
     initialize_runtime_state(runtime="operator", workspace=ws)
     path = _intermediate(ws) / "gates" / "auditor_quality_gate_report.json"
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text("{broken", encoding="utf-8")
 
-    rc = main(["repair", "route", "--workspace", str(ws), "--json"])
+    payload = route_repair(workspace=ws)
 
-    assert rc == 1
-    payload = json.loads(capsys.readouterr().out)
     assert payload["ok"] is False
     assert payload["error_code"] == "E_REPAIR_INPUT_INVALID"
     assert payload["input_errors"][0]["source"] == "auditor_quality_gate_report"
 
 
-def test_repair_route_rejects_invalid_artifact_registry_json(tmp_path, capsys):
+def test_repair_route_rejects_invalid_artifact_registry_json(tmp_path):
     ws = _workspace(tmp_path)
     initialize_runtime_state(runtime="operator", workspace=ws)
     runtime_state_paths(ws)["artifact_registry"].write_text("{broken", encoding="utf-8")
 
-    rc = main(["repair", "route", "--workspace", str(ws), "--json"])
+    payload = route_repair(workspace=ws)
 
-    assert rc == 1
-    payload = json.loads(capsys.readouterr().out)
     assert payload["ok"] is False
     assert payload["error_code"] == "E_REPAIR_INPUT_INVALID"
     assert payload["input_errors"][0]["source"] == "artifact_registry"
 
 
-def test_repair_route_ignores_legacy_gate_projection_when_scoped_report_exists(tmp_path, capsys):
+def test_repair_route_ignores_legacy_gate_projection_when_scoped_report_exists(tmp_path):
     ws = _workspace(tmp_path)
     initialize_runtime_state(runtime="operator", workspace=ws)
     finding = {
@@ -1781,41 +1751,38 @@ def test_repair_route_ignores_legacy_gate_projection_when_scoped_report_exists(t
     _write_quality_gate_report(ws, finding)
     _write_legacy_quality_gate_report(ws, finding)
 
-    rc = main(["repair", "route", "--workspace", str(ws), "--json"])
+    payload = route_repair(workspace=ws)
 
-    assert rc == 0
-    payload = json.loads(capsys.readouterr().out)
+    assert payload["ok"] is True
     assert payload["finding_count"] == 1
     assert len(payload["routes"]) == 1
 
 
-def test_repair_route_no_match_is_read_only_none_route(tmp_path, capsys):
+def test_repair_route_no_match_is_read_only_none_route(tmp_path):
     ws = _workspace(tmp_path)
     initialize_runtime_state(runtime="operator", workspace=ws)
 
-    rc = main(["repair", "route", "--workspace", str(ws), "--json"])
+    payload = route_repair(workspace=ws)
 
-    assert rc == 0
-    payload = json.loads(capsys.readouterr().out)
+    assert payload["ok"] is True
     assert payload["repair_owner"] == "none"
     assert payload["routes"] == []
     assert payload["reason"] == "No deterministic repair route found."
 
 
-def test_repair_start_fails_when_no_deterministic_route_exists(tmp_path, capsys):
+def test_repair_start_fails_when_no_deterministic_route_exists(tmp_path):
     ws = _workspace(tmp_path)
     initialize_runtime_state(runtime="operator", workspace=ws)
 
-    rc = main(["repair", "start", "--workspace", str(ws), "--json"])
-
-    assert rc == 1
-    payload = json.loads(capsys.readouterr().out)
+    with pytest.raises(RuntimeStateError) as excinfo:
+        start_repair_transaction(workspace=ws, repo_workdir=_REPO_ROOT)
+    payload = excinfo.value.to_dict()
     assert payload["ok"] is False
     assert payload["error_code"] == "E_ILLEGAL_TRANSITION"
     assert "No deterministic repair route found" in payload["error"]
 
 
-def test_final_abstract_quality_warning_does_not_open_repair_route(tmp_path, capsys):
+def test_final_abstract_quality_warning_does_not_open_repair_route(tmp_path):
     ws = _workspace(tmp_path)
     initialize_runtime_state(runtime="operator", workspace=ws)
     path = _intermediate(ws) / "gates" / "auditor_quality_gate_report.json"
@@ -1861,36 +1828,34 @@ def test_final_abstract_quality_warning_does_not_open_repair_route(tmp_path, cap
         encoding="utf-8",
     )
 
-    route_rc = main(["repair", "route", "--workspace", str(ws), "--json"])
-    assert route_rc == 0
-    route_payload = json.loads(capsys.readouterr().out)
+    route_payload = route_repair(workspace=ws)
+    assert route_payload["ok"] is True
     assert route_payload["repair_owner"] == "none"
     assert route_payload["routes"] == []
 
-    start_rc = main(["repair", "start", "--workspace", str(ws), "--json"])
-    assert start_rc == 1
-    start_payload = json.loads(capsys.readouterr().out)
+    with pytest.raises(RuntimeStateError) as excinfo:
+        start_repair_transaction(workspace=ws, repo_workdir=_REPO_ROOT)
+    start_payload = excinfo.value.to_dict()
     assert start_payload["error_code"] == "E_ILLEGAL_TRANSITION"
     workflow = json.loads(runtime_state_paths(ws)["workflow_state"].read_text(encoding="utf-8"))
     assert "active_repair" not in workflow
 
 
-def test_repair_start_fails_on_invalid_gate_report_json(tmp_path, capsys):
+def test_repair_start_fails_on_invalid_gate_report_json(tmp_path):
     ws = _workspace(tmp_path)
     initialize_runtime_state(runtime="operator", workspace=ws)
     path = _intermediate(ws) / "gates" / "auditor_quality_gate_report.json"
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text("{broken", encoding="utf-8")
 
-    rc = main(["repair", "start", "--workspace", str(ws), "--json"])
-
-    assert rc == 1
-    payload = json.loads(capsys.readouterr().out)
+    with pytest.raises(RuntimeStateError) as excinfo:
+        start_repair_transaction(workspace=ws, repo_workdir=_REPO_ROOT)
+    payload = excinfo.value.to_dict()
     assert payload["ok"] is False
     assert payload["error_code"] == "E_REPAIR_INPUT_INVALID"
 
 
-def test_repair_start_records_non_reference_contaminated_repair_semantics(tmp_path, capsys):
+def test_repair_start_records_non_reference_contaminated_repair_semantics(tmp_path):
     ws = _workspace(tmp_path)
     initialize_runtime_state(runtime="operator", workspace=ws)
     _set_workflow_stages(
@@ -1933,10 +1898,8 @@ def test_repair_start_records_non_reference_contaminated_repair_semantics(tmp_pa
         metadata={"reason_code": "frozen_artifact_changed"},
     )
 
-    rc = main(["repair", "start", "--workspace", str(ws), "--json"])
+    payload = start_repair_transaction(workspace=ws, repo_workdir=_REPO_ROOT)
 
-    assert rc == 0
-    payload = json.loads(capsys.readouterr().out)
     repair = payload["repair"]
     assert repair["run_integrity_effect"]["reference_eligible"] is False
     assert "cannot restore clean reference eligibility" in repair["run_integrity_effect"]["reason"]
@@ -1949,22 +1912,17 @@ def test_repair_start_records_non_reference_contaminated_repair_semantics(tmp_pa
     assert events[-1]["metadata"]["run_integrity_effect"]["reference_eligible"] is False
 
 
-def test_repair_complete_fails_without_active_repair(tmp_path, capsys):
+def test_repair_complete_fails_without_active_repair(tmp_path):
     ws = _workspace(tmp_path)
     initialize_runtime_state(runtime="operator", workspace=ws)
 
-    rc = main([
-        "repair",
-        "complete",
-        "--workspace",
-        str(ws),
-        "--reason",
-        "no active repair",
-        "--json",
-    ])
-
-    assert rc == 1
-    payload = json.loads(capsys.readouterr().out)
+    with pytest.raises(RuntimeStateError) as excinfo:
+        complete_repair_transaction(
+            workspace=ws,
+            reason="no active repair",
+            repo_workdir=_REPO_ROOT,
+        )
+    payload = excinfo.value.to_dict()
     assert payload["ok"] is False
     assert payload["error_code"] == "E_ILLEGAL_TRANSITION"
     assert "No active repair transaction" in payload["error"]

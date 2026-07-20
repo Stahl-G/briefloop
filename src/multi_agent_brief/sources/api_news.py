@@ -144,7 +144,6 @@ class NewsApiProvider(SourceProvider):
                     content=body,
                     url=(article.get("url") or "").strip(),
                     published_at=published_at,
-                    retrieved_at="",
                     language=language or "",
                     reliability="medium",
                     dedupe_key=article.get("url", "") or title,

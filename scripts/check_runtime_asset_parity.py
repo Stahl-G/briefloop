@@ -49,6 +49,22 @@ REQUIRED_PACKAGE_FILES = [
     "src/multi_agent_brief/configs/policy_packs/default.yaml",
     "src/multi_agent_brief/configs/policy_profiles/manufacturing_default.yaml",
     "src/multi_agent_brief/evaluation_cases/fixtures/manifest.yaml",
+    "src/multi_agent_brief/runtime_kits/codex/config.toml",
+    "src/multi_agent_brief/runtime_kits/codex/skills/briefloop/SKILL.md",
+    "src/multi_agent_brief/runtime_kits/codex/skills/briefloop/references/controlstore-v2.md",
+    *(
+        f"src/multi_agent_brief/runtime_kits/codex/agents/briefloop-{role}.toml"
+        for role in (
+            "source-planner",
+            "source-provider",
+            "scout",
+            "screener",
+            "claim-ledger",
+            "analyst",
+            "editor",
+            "auditor",
+        )
+    ),
 ]
 
 REQUIRED_PACKAGE_DATA_PATTERNS = [
@@ -62,6 +78,10 @@ REQUIRED_PACKAGE_DATA_PATTERNS = [
     '"evaluation_cases/fixtures/cases/*/workspace/*.md"',
     '"evaluation_cases/fixtures/cases/*/workspace/output/intermediate/*.json"',
     '"evaluation_cases/fixtures/cases/*/workspace/output/intermediate/finalize_candidate/*/*.md"',
+    '"runtime_kits/codex/*.toml"',
+    '"runtime_kits/codex/agents/*.toml"',
+    '"runtime_kits/codex/skills/briefloop/*.md"',
+    '"runtime_kits/codex/skills/briefloop/references/*.md"',
 ]
 
 
@@ -81,6 +101,16 @@ def main() -> int:
     for pattern in REQUIRED_PACKAGE_DATA_PATTERNS:
         if pattern not in pyproject:
             errors.append(f"pyproject package-data missing pattern: {pattern}")
+
+    source_reference = (
+        ROOT / ".agents/skills/briefloop/references/codex-controlstore-v2.md"
+    ).read_bytes()
+    packaged_reference = (
+        ROOT
+        / "src/multi_agent_brief/runtime_kits/codex/skills/briefloop/references/controlstore-v2.md"
+    ).read_bytes()
+    if source_reference != packaged_reference:
+        errors.append("packaged Codex ControlStore reference is stale")
 
     if errors:
         print("Runtime Asset Parity Check")

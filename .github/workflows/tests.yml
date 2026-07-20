@@ -216,7 +216,7 @@ jobs:
         run: python scripts/check_terms.py
 
       - name: Tests
-        run: python -m pytest -q -x -n auto --dist worksteal
+        run: python -m pytest -q -n auto --dist worksteal
 
       - name: Agent config check
         run: python scripts/generate_agent_configs.py --check
@@ -299,7 +299,8 @@ jobs:
             --audience management \
             --cadence weekly \
             --source-profile conservative \
-            --web-search-mode disabled
+            --web-search-mode disabled \
+            --task-objective "Track material manufacturing developments."
           echo "- Manufacturing output improved as supply chain disruption eased in the latest reporting period." > /tmp/mabw-ci-smoke/input/smoke.md
 
       - name: Doctor check
@@ -307,23 +308,64 @@ jobs:
 
       - name: Runtime handoff check
         run: |
-          briefloop run --workspace /tmp/mabw-ci-smoke --runtime operator --skip-doctor
-          briefloop state show --workspace /tmp/mabw-ci-smoke --json
-          briefloop state check --workspace /tmp/mabw-ci-smoke --json
-          test -f /tmp/mabw-ci-smoke/output/intermediate/agent_handoff.json
-          test -f /tmp/mabw-ci-smoke/output/intermediate/runtime_manifest.json
-          test -f /tmp/mabw-ci-smoke/output/intermediate/workflow_state.json
-          test -f /tmp/mabw-ci-smoke/output/intermediate/artifact_registry.json
-          test -f /tmp/mabw-ci-smoke/output/intermediate/event_log.jsonl
-          test -f /tmp/mabw-ci-smoke/output/intermediate/audience_profile_snapshot.md
-          test -f /tmp/mabw-ci-smoke/output/intermediate/orchestrator_control_switchboard.json
-          test ! -f /tmp/mabw-ci-smoke/output/intermediate/control_selections.json
-          test ! -f /tmp/mabw-ci-smoke/output/intermediate/claim_ledger.json
-          test ! -f /tmp/mabw-ci-smoke/output/brief.md
-          test ! -f /tmp/mabw-ci-smoke/output/source_appendix.md
+          briefloop run --workspace /tmp/mabw-ci-smoke --runtime codex
+          briefloop runtime next --workspace /tmp/mabw-ci-smoke | grep '"effect_kind":"doctor_check"'
+          test -f /tmp/mabw-ci-smoke/briefloop.db
+          test ! -e /tmp/mabw-ci-smoke/output/intermediate/agent_handoff.json
+          test ! -e /tmp/mabw-ci-smoke/output/intermediate/runtime_manifest.json
+          test ! -e /tmp/mabw-ci-smoke/output/intermediate/workflow_state.json
+          test ! -e /tmp/mabw-ci-smoke/output/intermediate/artifact_registry.json
+          test ! -e /tmp/mabw-ci-smoke/output/intermediate/event_log.jsonl
+          test ! -e /tmp/mabw-ci-smoke/output/brief.md
+          test ! -e /tmp/mabw-ci-smoke/output/source_appendix.md
 
       - name: Packaged topology handoff smoke
-        run: python scripts/ci/smoke_packaged_topology_handoff.py
+        shell: bash
+        run: |
+          set -e
+          for topology in single_session strict; do
+            ws="/tmp/mabw-topology-$topology"
+            briefloop init "$ws" \
+              --language en-US \
+              --company "Topology Smoke" \
+              --industry manufacturing \
+              --title "Topology Smoke Brief" \
+              --audience management \
+              --cadence weekly \
+              --source-profile conservative \
+              --web-search-mode disabled \
+              --task-objective "Track material manufacturing developments."
+            echo "- Manufacturing output improved after the latest capacity ramp." > "$ws/input/smoke.md"
+            if [ "$topology" = "strict" ]; then
+              WS="$ws" python - <<'PY'
+          import os
+          from pathlib import Path
+          import yaml
+
+          config_path = Path(os.environ["WS"]) / "config.yaml"
+          config = yaml.safe_load(config_path.read_text(encoding="utf-8"))
+          config["controlstore_v2"]["role_topology"] = "strict"
+          config_path.write_text(yaml.safe_dump(config, sort_keys=False), encoding="utf-8")
+          PY
+            fi
+            briefloop run --workspace "$ws" --runtime codex
+            briefloop runtime next --workspace "$ws" | grep '"effect_kind":"doctor_check"'
+            test -f "$ws/briefloop.db"
+            test ! -e "$ws/output/intermediate/agent_handoff.json"
+            test ! -e "$ws/output/intermediate/workflow_state.json"
+            WS="$ws" EXPECTED="$topology" python - <<'PY'
+          import os
+          from pathlib import Path
+          from multi_agent_brief.runtime_host_v2.initialization import initialize_or_open_runtime
+          from multi_agent_brief.runtime_host_v2.codex import load_codex_adapter_binding
+
+          runtime = initialize_or_open_runtime(
+              Path(os.environ["WS"]), adapter_loader=load_codex_adapter_binding
+          )
+          bound = runtime.verified.binding.role_topology
+          assert bound == os.environ["EXPECTED"], f"bound topology {bound!r}"
+          PY
+          done
 
       - name: Package-only runtime asset boundary
         run: |
@@ -338,16 +380,20 @@ jobs:
 
       - name: Control switchboard smoke
         run: |
-          briefloop controls show --workspace /tmp/mabw-ci-smoke --json
-          briefloop controls validate --workspace /tmp/mabw-ci-smoke --json
-          briefloop controls select \
+          set +e
+          out=$(briefloop controls select \
             --workspace /tmp/mabw-ci-smoke \
             --control quality_gates \
             --selection enable \
             --reason "Use quality gates before finalize." \
-            --json
-          test -f /tmp/mabw-ci-smoke/output/intermediate/control_selections.json
-          test ! -f /tmp/mabw-ci-smoke/output/intermediate/quality_gate_report.json
+            --json 2>&1)
+          rc=$?
+          set -e
+          echo "$out"
+          test "$rc" -eq 1
+          test "$out" = "runtime_command_unsupported"
+          test ! -e /tmp/mabw-ci-smoke/output/intermediate/control_selections.json
+          test ! -e /tmp/mabw-ci-smoke/output/intermediate/quality_gate_report.json
 
       - name: Assert prepare stays removed
         run: python scripts/ci/smoke_pipeline.py /tmp/mabw-ci-smoke/config.yaml /tmp/mabw-ci-smoke/input
@@ -360,7 +406,8 @@ jobs:
           /tmp/mabw-wheel-smoke/bin/python -m pip install dist/*.whl
           cd /tmp
           /tmp/mabw-wheel-smoke/bin/briefloop init /tmp/mabw-wheel-ws --demo --force --web-search-mode disabled
-          /tmp/mabw-wheel-smoke/bin/briefloop run --workspace /tmp/mabw-wheel-ws --runtime operator --skip-doctor
+          /tmp/mabw-wheel-smoke/bin/briefloop run --workspace /tmp/mabw-wheel-ws --runtime codex
+          /tmp/mabw-wheel-smoke/bin/briefloop runtime next --workspace /tmp/mabw-wheel-ws | grep '"effect_kind":"doctor_check"'
           /tmp/mabw-wheel-smoke/bin/briefloop eval-cases run --json
 
       - name: Wheel CLI entrypoint parity
@@ -419,17 +466,53 @@ jobs:
             --audience management \
             --cadence weekly \
             --source-profile llm_decide \
-            --web-search-mode disabled
+            --web-search-mode disabled \
+            --task-objective "Track material manufacturing developments."
           echo "- Placeholder input" > /tmp/mabw-llm/input/placeholder.md
 
       - name: Doctor check
         run: cd /tmp/mabw-llm && briefloop doctor --config config.yaml
 
-      - name: Sources decide (template)
-        run: cd /tmp/mabw-llm && briefloop sources decide --config config.yaml
+      - name: Source planning through the runtime host
+        run: |
+          cd /tmp/mabw-llm
+          briefloop run --workspace . --runtime codex
+          briefloop runtime next --workspace . | grep '"effect_kind":"doctor_check"'
+          briefloop runtime next --workspace . > runtime_action.json
+          briefloop runtime apply --workspace . --action runtime_action.json
+          briefloop runtime next --workspace . | grep '"effect_kind":"role_proposal"'
+          briefloop runtime invocation-start --workspace . > envelope.json
+          SCRATCH=$(python -c "import json; print(json.load(open('envelope.json'))['scratch_directory'])")
+          printf 'version: 1\ncandidates:\n  - route: manual\n' > "$SCRATCH/source_candidates.yaml"
+          briefloop runtime invocation-accept --workspace . --envelope "$SCRATCH/role_task_envelope.json"
+          python - <<'PY'
+          from pathlib import Path
+          from multi_agent_brief.control_store import SQLiteControlStore
+          from multi_agent_brief.runtime_host_v2.initialization import initialize_or_open_runtime
+          from multi_agent_brief.runtime_host_v2.codex import load_codex_adapter_binding
 
-      - name: Assert source_candidates.yaml exists
-        run: test -s /tmp/mabw-llm/source_candidates.yaml
+          runtime = initialize_or_open_runtime(Path("."), adapter_loader=load_codex_adapter_binding)
+          snapshot = runtime.verified.snapshot
+          artifact = next(a for a in snapshot.artifacts if a.artifact_id == "source_candidates")
+          assert artifact.current_revision == 1
+          with SQLiteControlStore.open(Path("briefloop.db")) as store:
+              data = store.read_artifact_revision_bytes(snapshot.run.run_id, "source_candidates", 1)
+          assert b"route: manual" in data
+          PY
+
+      - name: Retired sources decide CLI is rejected without writes
+        run: |
+          cd /tmp/mabw-llm
+          before=$(find . -type f -exec shasum -a 256 {} + | sort | shasum -a 256 | cut -d' ' -f1)
+          set +e
+          out=$(briefloop sources decide --config config.yaml 2>&1)
+          rc=$?
+          set -e
+          echo "$out"
+          test "$rc" -eq 1
+          test "$out" = "runtime_command_unsupported"
+          after=$(find . -type f -exec shasum -a 256 {} + | sort | shasum -a 256 | cut -d' ' -f1)
+          test "$before" = "$after"
 
       - name: Add input and assert prepare stays removed
         run: |
@@ -465,6 +548,7 @@ jobs:
             "target": "/tmp/mabw-onboarding",
             "company_or_org": "Sample Company",
             "industry_or_theme": "manufacturing",
+            "task_objective": "Prepare the weekly manufacturing brief.",
             "audience_plain": "management team",
             "source_style_plain": "reliable research",
             "language_plain": "English",
@@ -549,7 +633,36 @@ jobs:
           JSON
 
       - name: Finalize reader outputs
-        run: briefloop finalize --config /tmp/mabw-docx/config.yaml
+        shell: bash
+        run: |
+          set +e
+          out=$(briefloop finalize --config /tmp/mabw-docx/config.yaml 2>&1)
+          rc=$?
+          set -e
+          echo "$out"
+          test "$rc" -eq 1
+          test "$out" = "runtime_command_unsupported"
+          test ! -e /tmp/mabw-docx/output/brief.md
+          test ! -e /tmp/mabw-docx/output/brief.docx
+
+      - name: Render DOCX through the deterministic seam
+        run: |
+          python - <<'PY'
+          import re
+          from pathlib import Path
+          from multi_agent_brief.outputs.ib_docx import convert
+
+          audited = Path("/tmp/mabw-docx/output/intermediate/audited_brief.md")
+          reader_text = re.sub(r"\s*\[src:[^\]]+\]", "", audited.read_text(encoding="utf-8"))
+          reader = Path("/tmp/mabw-docx/output/brief.md")
+          reader.write_text(reader_text, encoding="utf-8")
+          convert(
+              reader,
+              Path("/tmp/mabw-docx/output/brief.docx"),
+              title="Smoke Brief",
+              template="default",
+          )
+          PY
 
       - name: Assert brief.docx exists
         shell: bash
@@ -610,6 +723,7 @@ jobs:
             "target": "/tmp/golden-onboarding",
             "company_or_org": "Golden Test Corp",
             "industry_or_theme": "manufacturing",
+            "task_objective": "Prepare the weekly manufacturing brief.",
             "audience_plain": "management team",
             "source_style_plain": "reliable research",
             "language_plain": "English",

@@ -187,18 +187,25 @@ workspace:
 ```bash
 briefloop onboard
 briefloop init ~/briefloop-workspace --from-onboarding onboarding.json
-briefloop run --workspace ~/briefloop-workspace --runtime operator
+briefloop runtime install --workspace ~/briefloop-workspace --runtime codex
+briefloop run --workspace ~/briefloop-workspace --runtime codex
 ```
+
+New runs use a fresh SQLite `briefloop.db` as their only runtime authority.
+JSON-only workspaces are not migrated or accepted as control input. The Codex
+adapter is Experimental: it freezes `role_topology=single_session`, executes
+separate Receipt-backed role invocations in one shared Codex session, and keeps
+JSON, Markdown, HTML, status and Quality Panel files as replaceable projections.
 
 Common setup helpers:
 
 ```bash
 briefloop init --from-onboarding onboarding.json <workspace>
-briefloop sources decide --config <workspace>/config.yaml
+briefloop run --workspace <workspace> --runtime codex
 ```
 
-`sources decide` is the explicit source-discovery helper for workspaces that use
-the `llm_decide` source profile.
+For workspaces that use the `llm_decide` source profile, source discovery runs
+through the runtime-host route (`run --runtime codex` → `runtime next`).
 
 ### Windows PowerShell
 
@@ -224,23 +231,18 @@ powershell -ExecutionPolicy Bypass -File .\scripts\setup.ps1
 
 ---
 
-## 🤖 Claude Code path
+## 🤖 Runtime transition
 
-If you use Claude Code, install the writer entrypoint:
+The former Claude/Hermes/OpenCode/operator JSON-control paths are not entrypoints
+for a new SQLite run. Their retained assets are historical surfaces pending the
+separate legacy deletion unit. Do not use them to continue or migrate a
+JSON-only workspace.
+
+For the active Experimental Codex path, install the packaged workspace kit:
 
 ```bash
-source .venv/bin/activate
-briefloop claude install --repo-workdir .
-```
-
-Then use the five main writer commands:
-
-```text
-/briefloop new
-/briefloop run <workspace>
-/briefloop status <workspace>
-/briefloop feedback <workspace> [text-or-file]
-/briefloop deliver <workspace>
+briefloop runtime install --workspace <workspace> --runtime codex
+briefloop run --workspace <workspace> --runtime codex
 ```
 
 Good next reads:
@@ -298,7 +300,9 @@ Current version: **v0.12.1**
 Current main entrypoints:
 
 - CLI: `briefloop`
-- Claude command: `/briefloop`
+- Experimental SQLite-only Codex runtime: `briefloop run --workspace <path>
+  --runtime codex`, followed by `briefloop runtime next`,
+  `invocation-start`, `invocation-accept|fail`, and `apply`
 - experimental WorkBuddy / CodeBuddy guide: [docs/workbuddy.md](docs/workbuddy.md)
 - experimental offline-shadow LAJ: `briefloop experiments laj shadow-run` and
   `briefloop experiments laj present` for public/synthetic advisory evaluation

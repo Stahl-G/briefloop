@@ -10,10 +10,12 @@ import yaml
 from multi_agent_brief.cli.main import main
 from multi_agent_brief.hermes import (
     build_hermes_cron_plan,
+    render_hermes_cron_markdown,
     render_hermes_prompt,
     render_hermes_setup_success,
     render_hermes_skill,
 )
+from multi_agent_brief.hermes.adapter import sync_cached_package_source, write_json
 from tests.helpers import write_workspace_files_under
 
 
@@ -392,29 +394,54 @@ def test_hermes_prompt_contains_doctor_and_sources():
 # CLI tests
 # ---------------------------------------------------------------------------
 
+def test_hermes_workspace_public_cli_is_retired_with_zero_writes(tmp_path: Path, capsys) -> None:
+    ws = _write_workspace(tmp_path)
+    variants = [
+        ["hermes", "cron-plan", "--config", str(ws / "config.yaml")],
+        ["hermes", "sync-sources", "--config", str(ws / "config.yaml")],
+        ["hermes", "prompt", "--config", str(ws / "config.yaml")],
+    ]
+    for args in variants:
+        before = {
+            path.relative_to(ws).as_posix(): path.read_bytes()
+            for path in ws.rglob("*")
+            if path.is_file()
+        }
+
+        rc = main(args)
+        out = capsys.readouterr().out
+
+        # LEGACY-DELETE: retired public hermes cron-plan/sync-sources/prompt
+        # workspace subcommands and their typed rejection with zero writes.
+        assert rc == 1
+        assert out == "runtime_command_unsupported\n"
+        after = {
+            path.relative_to(ws).as_posix(): path.read_bytes()
+            for path in ws.rglob("*")
+            if path.is_file()
+        }
+        assert after == before
+
+
 def test_cli_hermes_cron_plan_writes_json_and_markdown(tmp_path: Path):
     ws = _write_workspace(tmp_path)
     out = tmp_path / "plan.json"
     md = tmp_path / "plan.md"
 
-    result = main([
-        "hermes",
-        "cron-plan",
-        "--config",
-        str(ws / "config.yaml"),
-        "--repo-workdir",
-        str(tmp_path),
-        "--cadence",
-        "weekly,monthly",
-        "--deliver",
-        "feishu",
-        "--output",
-        str(out),
-        "--markdown",
-        str(md),
-    ])
+    # LEGACY-DELETE: retired public `hermes cron-plan` CLI; the plan/markdown
+    # invariant runs through the direct deterministic hermes adapter seams.
+    config = yaml.safe_load((ws / "config.yaml").read_text(encoding="utf-8"))
+    plan = build_hermes_cron_plan(
+        config=config,
+        workspace=ws,
+        repo_workdir=tmp_path,
+        cadences=["weekly", "monthly"],
+        deliver="feishu",
+        profile="",
+    )
+    write_json(out, plan.to_dict())
+    md.write_text(render_hermes_cron_markdown(plan), encoding="utf-8")
 
-    assert result == 0
     data = json.loads(out.read_text(encoding="utf-8"))
     assert data["version"] == f"v{SOURCE_VERSION}"
     assert data["cadences"] == ["weekly", "monthly"]
@@ -436,9 +463,15 @@ def test_cli_hermes_skill_writes_file(tmp_path: Path):
 def test_cli_hermes_sync_sources_enables_cached_package(tmp_path: Path):
     ws = _write_workspace(tmp_path)
 
-    result = main(["hermes", "sync-sources", "--config", str(ws / "config.yaml")])
+    # LEGACY-DELETE: retired public `hermes sync-sources` CLI; the sources.yaml
+    # sync invariant runs through the direct deterministic adapter seam.
+    result = sync_cached_package_source(
+        sources_path=ws / "sources.yaml",
+        cache_dir="input/hermes_cache",
+        dry_run=False,
+    )
 
-    assert result == 0
+    assert result["changed"] is True
     data = yaml.safe_load((ws / "sources.yaml").read_text(encoding="utf-8"))
     assert "cached_package" in data["source_strategy"]["enabled_providers"]
     assert data["cached_package"]["enabled"] is True
@@ -457,26 +490,27 @@ def test_cli_hermes_install_skill(tmp_path: Path):
 
 def test_cli_hermes_prompt_generates_output(tmp_path: Path):
     ws = _write_workspace(tmp_path)
-    result = main([
-        "hermes", "prompt",
-        "--config", str(ws / "config.yaml"),
-        "--repo-workdir", str(tmp_path),
-        "--venv", str(tmp_path / ".venv" / "bin" / "activate"),
-    ])
-    assert result == 0
+
+    # LEGACY-DELETE: retired public `hermes prompt` CLI; prompt rendering runs
+    # through the direct deterministic adapter seam.
+    prompt = render_hermes_prompt(
+        workspace=ws,
+        repo_workdir=tmp_path,
+        venv_path=str(tmp_path / ".venv" / "bin" / "activate"),
+    )
+    assert prompt
 
 
-def test_cli_hermes_prompt_output_contains_workflow_steps(capsys, tmp_path: Path):
+def test_cli_hermes_prompt_output_contains_workflow_steps(tmp_path: Path):
     ws = _write_workspace(tmp_path)
-    result = main([
-        "hermes", "prompt",
-        "--config", str(ws / "config.yaml"),
-        "--repo-workdir", str(tmp_path),
-        "--venv", str(tmp_path / ".venv" / "bin" / "activate"),
-    ])
-    assert result == 0
-    captured = capsys.readouterr()
-    output = captured.out
+
+    # LEGACY-DELETE: retired public `hermes prompt` CLI; prompt content
+    # invariants run through the direct deterministic adapter seam.
+    output = render_hermes_prompt(
+        workspace=ws,
+        repo_workdir=tmp_path,
+        venv_path=str(tmp_path / ".venv" / "bin" / "activate"),
+    )
     assert "delegate_task" in output
     assert "Orchestrator main agent" in output
     assert "configs/orchestrator_contract.yaml" in output

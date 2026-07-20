@@ -63,7 +63,10 @@ def _workspace(tmp_path: Path, *, with_policy: bool = True) -> Path:
             ),
             encoding="utf-8",
         )
-    assert main(["state", "init", "--runtime", "operator", "--workspace", str(ws)]) == 0
+    # LEGACY-DELETE: retired public `state init --runtime operator` bootstrap;
+    # the projections under test read workspace files through direct
+    # deterministic seams and need no runtime-state scaffold.
+    (ws / "output" / "intermediate").mkdir(parents=True, exist_ok=True)
     return ws
 
 
@@ -379,3 +382,27 @@ def test_materiality_selection_validator_rejects_authority_shape(tmp_path: Path)
     assert validate_materiality_selection_payload(projection) == (
         "materiality_selection_schema_error:authority_field"
     )
+
+
+def test_state_init_operator_public_surface_is_retired_without_writes(tmp_path: Path, capsys) -> None:
+    """`state init --runtime operator` is retired: typed rejection, zero writes."""
+    ws = _workspace(tmp_path)
+    before_files = {
+        path.relative_to(ws).as_posix(): path.read_bytes()
+        for path in ws.rglob("*")
+        if path.is_file()
+    }
+
+    rc = main(["state", "init", "--runtime", "operator", "--workspace", str(ws)])
+
+    # LEGACY-DELETE: retired public `state init --runtime operator` bootstrap
+    # surface and its output/intermediate runtime-state artifacts; the Codex
+    # SQLite ControlStore runtime is the sole runtime authority.
+    assert rc == 1
+    assert capsys.readouterr().out == "runtime_command_unsupported\n"
+    after_files = {
+        path.relative_to(ws).as_posix(): path.read_bytes()
+        for path in ws.rglob("*")
+        if path.is_file()
+    }
+    assert after_files == before_files

@@ -40,7 +40,9 @@ def test_default_policy_pack_selects_default_scout_satisfies_screener():
 
     assert resolve_role_topology(_default_policy_pack()) == ROLE_TOPOLOGY_DEFAULT
     assert _role_topology_from_policy_pack(_default_policy_pack()) == ROLE_TOPOLOGY_DEFAULT
-    assert ROLE_TOPOLOGY_VALUES == frozenset({"default", "strict", "human_assisted"})
+    assert ROLE_TOPOLOGY_VALUES == frozenset(
+        {"single_session", "default", "strict", "human_assisted"}
+    )
     assert ROLE_TOPOLOGY_SATISFIER_VALUES == frozenset({"scout", "writer"})
     assert rules["screener"] == {
         "topology": "default",

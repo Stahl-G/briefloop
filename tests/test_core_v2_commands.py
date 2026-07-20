@@ -321,7 +321,19 @@ def test_core_v2_cli_is_internal_and_requires_json() -> None:
 
 def test_core_v2_imports_are_confined_to_dormant_cli_package_and_bound_intake() -> None:
     package_root = ROOT / "src" / "multi_agent_brief"
-    allowed = {"cli/core_v2_commands.py", "intake_v2/service.py"}
+    allowed = {
+        "cli/core_v2_commands.py",
+        "intake_v2/service.py",
+        # Post-CX activation is intentional: runtime_host_v2 is the sole
+        # runtime authority and cli/authority_guard.py enforces its
+        # fail-closed boundary; both bind core_run_v2 directly. Importers
+        # are listed exactly (no prefixes); any new importer fails here.
+        "cli/authority_guard.py",
+        "runtime_host_v2/initialization.py",
+        "runtime_host_v2/projections.py",
+        "runtime_host_v2/service.py",
+        "runtime_host_v2/source_routes.py",
+    }
     findings: list[str] = []
     for path in sorted(package_root.rglob("*.py")):
         relative = path.relative_to(package_root).as_posix()

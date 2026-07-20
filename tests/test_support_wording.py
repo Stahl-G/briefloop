@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+from multi_agent_brief.orchestrator.runtime_state import initialize_runtime_state
 from multi_agent_brief.product.quality_panel import build_quality_panel, validate_quality_panel_payload
 from multi_agent_brief.product.support_wording import (
     SUPPORT_WORDING_BOUNDARY,
@@ -10,12 +11,23 @@ from multi_agent_brief.product.support_wording import (
     validate_support_wording_payload,
 )
 from multi_agent_brief.status import build_workspace_status, format_workspace_status
-from tests.helpers import initialized_workspace_writer
+from tests.helpers import write_minimal_workspace_under
 
 
-_workspace = initialized_workspace_writer(
-    project_name="Support Wording Test",
-)
+def _workspace(base_path: Path) -> Path:
+    """Legacy module fixture without claiming a public CLI path.
+
+    The retired public `state init` operator CLI is replaced by the direct
+    runtime-state seam; the status/quality-panel fold-in invariants below
+    remain live product behavior and are preserved unchanged.
+    """
+
+    workspace = write_minimal_workspace_under(
+        base_path,
+        project_name="Support Wording Test",
+    )
+    initialize_runtime_state(runtime="operator", workspace=workspace)
+    return workspace
 
 
 def _write_json(path: Path, payload: object) -> None:

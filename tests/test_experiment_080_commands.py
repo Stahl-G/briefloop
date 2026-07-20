@@ -8,7 +8,18 @@ from pathlib import Path
 import pytest
 
 from multi_agent_brief.cli.main import main
-from multi_agent_brief.experiments import scaffold_condition, validate_run_record, validate_scorecard
+from multi_agent_brief.experiments import (
+    Experiment080Error,
+    export_blind_pack,
+    import_assessment,
+    register_run_record,
+    scaffold_condition,
+    score_run_record,
+    summarize_case,
+    validate_case_dir,
+    validate_run_record,
+    validate_scorecard,
+)
 from multi_agent_brief.orchestrator.runtime_state import (
     E_ASSESSMENT_TARGET_COMPLETE,
     RuntimeStateError,
@@ -684,136 +695,107 @@ def _patch_archive_manifest(path: Path, **updates) -> None:
     _write_json(path, payload)
 
 
-def _register_args(case_dir: Path, ws: Path, output: Path, *, condition: str = "memory") -> list[str]:
-    return [
-        "experiments",
-        "080",
-        "register-run",
-        "--case",
-        str(case_dir),
-        "--condition",
-        condition,
-        "--workspace",
-        str(ws),
-        "--output",
-        str(output),
-        "--json",
-    ]
+def _emit_experiment_payload(payload: dict, *, ok: bool) -> int:
+    print(json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True))
+    return 0 if ok else 1
 
 
-def _score_args(case_dir: Path, run_record: Path, output: Path) -> list[str]:
-    return [
-        "experiments",
-        "080",
-        "score-run",
-        "--case",
-        str(case_dir),
-        "--run-record",
-        str(run_record),
-        "--output",
-        str(output),
-        "--json",
-    ]
+def _invoke_experiment(operation, /, **kwargs) -> int:
+    # LEGACY-DELETE: retired public `experiments 080 ...` CLI dispatch; tests
+    # drive the deterministic multi_agent_brief.experiments module seam
+    # directly with the same return-code/JSON-payload contract.
+    try:
+        payload = operation(**kwargs)
+    except Experiment080Error as exc:
+        return _emit_experiment_payload(exc.to_dict(), ok=False)
+    return _emit_experiment_payload(payload, ok=True)
 
 
-def _assessment_args(scorecard: Path, assessment: Path, output: Path) -> list[str]:
-    return [
-        "experiments",
-        "080",
-        "import-assessment",
-        "--scorecard",
-        str(scorecard),
-        "--assessment",
-        str(assessment),
-        "--output",
-        str(output),
-        "--json",
-    ]
+def _register_run(case_dir: Path, ws: Path, output: Path, *, condition: str = "memory") -> int:
+    return _invoke_experiment(
+        register_run_record,
+        case_dir=case_dir,
+        condition=condition,
+        workspace=ws,
+        output=output,
+    )
 
 
-def _blind_assessment_args(blind_pack: Path, reveal_mapping: Path, assessment: Path, output: Path) -> list[str]:
-    return [
-        "experiments",
-        "080",
-        "import-assessment",
-        "--blind-pack",
-        str(blind_pack),
-        "--reveal-mapping",
-        str(reveal_mapping),
-        "--assessment",
-        str(assessment),
-        "--output",
-        str(output),
-        "--json",
-    ]
+def _score_run(case_dir: Path, run_record: Path, output: Path) -> int:
+    return _invoke_experiment(
+        score_run_record,
+        case_dir=case_dir,
+        run_record=run_record,
+        output=output,
+    )
 
 
-def _export_blind_pack_args(
+def _import_assessment(scorecard: Path, assessment: Path, output: Path) -> int:
+    return _invoke_experiment(
+        import_assessment,
+        scorecard=scorecard,
+        assessment=assessment,
+        output=output,
+    )
+
+
+def _import_blind_assessment(blind_pack: Path, reveal_mapping: Path, assessment: Path, output: Path) -> int:
+    return _invoke_experiment(
+        import_assessment,
+        scorecard=None,
+        blind_pack=blind_pack,
+        reveal_mapping=reveal_mapping,
+        assessment=assessment,
+        output=output,
+    )
+
+
+def _export_blind_pack(
     case_dir: Path,
     output: Path,
     scorecards: list[Path],
     *,
     seed: str = "fixed-seed",
-) -> list[str]:
-    args = [
-        "experiments",
-        "080",
-        "export-blind-pack",
-        "--case",
-        str(case_dir),
-        "--output",
-        str(output),
-        "--seed",
-        seed,
-        "--json",
-    ]
-    for scorecard in scorecards:
-        args.extend(["--scorecard", str(scorecard)])
-    return args
+) -> int:
+    return _invoke_experiment(
+        export_blind_pack,
+        case_dir=case_dir,
+        scorecards=scorecards,
+        output=output,
+        seed=seed,
+    )
 
 
-def _summarize_args(case_dir: Path, output: Path | None = None, *, scorecards: list[Path] | None = None) -> list[str]:
-    args = [
-        "experiments",
-        "080",
-        "summarize",
-        "--case",
-        str(case_dir),
-        "--json",
-    ]
-    for scorecard in scorecards or []:
-        args.extend(["--scorecard", str(scorecard)])
-    if output is not None:
-        args.extend(["--output", str(output)])
-    return args
+def _summarize(case_dir: Path, output: Path | None = None, *, scorecards: list[Path] | None = None) -> int:
+    return _invoke_experiment(
+        summarize_case,
+        case_dir=case_dir,
+        output=output,
+        scorecards=list(scorecards or []),
+    )
 
 
-def _scaffold_args(
+def _scaffold(
     case_dir: Path,
     workspace: Path,
     *,
     condition: str = "memory",
     archive: Path | None = CLEAN_FIXTURE_MANIFEST,
-) -> list[str]:
-    args = [
-        "experiments",
-        "080",
-        "scaffold-condition",
-        "--case",
-        str(case_dir),
-        "--condition",
-        condition,
-        "--workspace",
-        str(workspace),
-        "--runtime",
-        "codex",
-        "--repo-workdir",
-        str(ROOT),
-        "--json",
-    ]
-    if archive is not None:
-        args.extend(["--archive", str(archive)])
-    return args
+) -> int:
+    return _invoke_experiment(
+        scaffold_condition,
+        case_dir=case_dir,
+        condition=condition,
+        workspace=workspace,
+        archive=archive,
+        runtime="codex",
+        repo_workdir=ROOT,
+    )
+
+
+def _validate_case(case_dir: Path) -> int:
+    payload = validate_case_dir(case_dir)
+    return _emit_experiment_payload(payload, ok=bool(payload.get("ok")))
 
 
 def _assessment_payload(
@@ -872,9 +854,9 @@ def _write_auditable_scorecard_for_condition(
         _write_treatment_condition_metadata(ws, condition=condition)
     run_record = ws / f"{condition}.run_record.json"
     scorecard = ws / f"{condition}.scorecard.json"
-    assert main(_register_args(case_dir, ws, run_record, condition=condition)) == 0
+    assert _register_run(case_dir, ws, run_record, condition=condition) == 0
     capsys.readouterr()
-    assert main(_score_args(case_dir, run_record, scorecard)) == 0
+    assert _score_run(case_dir, run_record, scorecard) == 0
     capsys.readouterr()
     return scorecard
 
@@ -1098,9 +1080,9 @@ def _write_scorecard_draft_from_fixture(tmp_path: Path, capsys) -> tuple[Path, P
     _write_improvement_memory_snapshot(ws)
     run_record = ws / "memory.run_record.json"
     scorecard_path = tmp_path / "memory.scorecard.json"
-    assert main(_register_args(case_dir, ws, run_record)) == 0
+    assert _register_run(case_dir, ws, run_record) == 0
     capsys.readouterr()
-    assert main(_score_args(case_dir, run_record, scorecard_path)) == 0
+    assert _score_run(case_dir, run_record, scorecard_path) == 0
     capsys.readouterr()
     return case_dir, scorecard_path
 
@@ -1109,7 +1091,7 @@ def test_experiments_080_validate_case_json_ok(tmp_path, capsys):
     case_dir = tmp_path / "weekly_public_001"
     _write_case(case_dir)
 
-    rc = main(["experiments", "080", "validate-case", str(case_dir), "--json"])
+    rc = _validate_case(case_dir)
 
     assert rc == 0
     payload = json.loads(capsys.readouterr().out)
@@ -1127,7 +1109,7 @@ def test_experiments_080_validate_case_missing_frozen_fact_layer_fails(tmp_path,
     _write_case(case_dir)
     (case_dir / "frozen_fact_layer.json").unlink()
 
-    rc = main(["experiments", "080", "validate-case", str(case_dir), "--json"])
+    rc = _validate_case(case_dir)
 
     assert rc == 1
     payload = json.loads(capsys.readouterr().out)
@@ -1153,7 +1135,7 @@ def test_experiments_080_validate_case_source_candidates_only_fails(tmp_path, ca
         },
     )
 
-    rc = main(["experiments", "080", "validate-case", str(case_dir), "--json"])
+    rc = _validate_case(case_dir)
 
     assert rc == 1
     payload = json.loads(capsys.readouterr().out)
@@ -1168,7 +1150,7 @@ def test_experiments_080_validate_case_is_read_only(tmp_path, capsys):
         for path in sorted(case_dir.glob("*.json"))
     }
 
-    rc = main(["experiments", "080", "validate-case", str(case_dir), "--json"])
+    rc = _validate_case(case_dir)
 
     assert rc == 0
     json.loads(capsys.readouterr().out)
@@ -1179,22 +1161,95 @@ def test_experiments_080_validate_case_is_read_only(tmp_path, capsys):
     assert after == before
 
 
+def test_experiments_080_public_cli_workspace_surfaces_are_retired(tmp_path, capsys):
+    # LEGACY-DELETE: retired public `experiments 080 scaffold-condition`,
+    # `experiments 080 register-run`, `finalize`, and `state finalize-complete`
+    # workspace surfaces; the deterministic experiments module seam and the
+    # runtime_state completion seam carry the invariants, while the workspace
+    # authority guard rejects the public CLI paths with a typed token and
+    # zero writes.
+    case_dir = tmp_path / "weekly_public_001"
+    _write_case_from_archive(case_dir, CLEAN_FIXTURE_MANIFEST)
+
+    fresh_ws = tmp_path / "fresh-workspace"
+    _write_scaffold_workspace(fresh_ws)
+    fresh_before = _workspace_file_bytes(fresh_ws)
+
+    scaffold_rc = main([
+        "experiments",
+        "080",
+        "scaffold-condition",
+        "--case",
+        str(case_dir),
+        "--condition",
+        "baseline",
+        "--workspace",
+        str(fresh_ws),
+        "--runtime",
+        "codex",
+        "--json",
+    ])
+
+    assert scaffold_rc == 1
+    assert capsys.readouterr().out == "runtime_command_unsupported\n"
+    assert _workspace_file_bytes(fresh_ws) == fresh_before
+
+    legacy_ws = tmp_path / "legacy-workspace"
+    _write_scaffold_workspace(legacy_ws)
+    archive_manifest = _copy_archive_to_workspace(legacy_ws, CLEAN_FIXTURE_MANIFEST)
+    _write_terminal_runtime(legacy_ws, run_id=archive_manifest.parent.name)
+    legacy_before = _workspace_file_bytes(legacy_ws)
+    run_record_output = tmp_path / "memory.run_record.json"
+
+    register_rc = main([
+        "experiments",
+        "080",
+        "register-run",
+        "--case",
+        str(case_dir),
+        "--condition",
+        "memory",
+        "--workspace",
+        str(legacy_ws),
+        "--output",
+        str(run_record_output),
+        "--json",
+    ])
+
+    assert register_rc == 1
+    assert capsys.readouterr().out == "legacy_workspace_unsupported\n"
+    assert _workspace_file_bytes(legacy_ws) == legacy_before
+    assert not run_record_output.exists()
+
+    finalize_rc = main(["finalize", "--config", str(legacy_ws / "config.yaml")])
+
+    assert finalize_rc == 1
+    assert capsys.readouterr().out == "legacy_workspace_unsupported\n"
+    assert _workspace_file_bytes(legacy_ws) == legacy_before
+
+    complete_rc = main([
+        "state",
+        "finalize-complete",
+        "--workspace",
+        str(legacy_ws),
+        "--reason",
+        "retired surface must not write",
+        "--json",
+    ])
+
+    assert complete_rc == 1
+    assert capsys.readouterr().out == "legacy_workspace_unsupported\n"
+    assert _workspace_file_bytes(legacy_ws) == legacy_before
+
+
 def test_experiments_080_scaffold_condition_imports_fact_layer_workspace(tmp_path, capsys):
     case_dir = tmp_path / "weekly_public_001"
     ws = tmp_path / "baseline workspace"
     _write_case_from_archive(case_dir, CLEAN_FIXTURE_MANIFEST)
     _write_scaffold_workspace(ws)
 
-    before = _workspace_file_bytes(ws)
-    rc = main(_scaffold_args(case_dir, ws, condition="baseline"))
+    rc = _scaffold(case_dir, ws, condition="baseline")
     output = capsys.readouterr().out
-
-    if rc == 1:
-        # LEGACY-DELETE: remove this pre/post-CX transition branch and retain
-        # only the SQLite-runtime acceptance contract.
-        assert output.strip() == "runtime_command_unsupported"
-        assert _workspace_file_bytes(ws) == before
-        return
 
     assert rc == 0
     payload = json.loads(output)
@@ -1261,15 +1316,8 @@ def test_experiments_080_scaffold_accepts_init_sources_readme_placeholder(tmp_pa
         encoding="utf-8",
     )
 
-    before = _workspace_file_bytes(ws)
-    rc = main(_scaffold_args(case_dir, ws, condition="baseline"))
+    rc = _scaffold(case_dir, ws, condition="baseline")
     output = capsys.readouterr().out
-
-    if rc == 1:
-        # LEGACY-DELETE: remove the pre-CX branch with the retired scaffold.
-        assert output.strip() == "runtime_command_unsupported"
-        assert _workspace_file_bytes(ws) == before
-        return
 
     assert rc == 0
     payload = json.loads(output)
@@ -1288,7 +1336,7 @@ def test_experiments_080_scaffold_rejects_runtime_visible_guidance_leakage(tmp_p
         encoding="utf-8",
     )
 
-    rc = main(_scaffold_args(case_dir, ws, condition="baseline"))
+    rc = _scaffold(case_dir, ws, condition="baseline")
 
     assert rc == 1
     payload = json.loads(capsys.readouterr().out)
@@ -1311,7 +1359,7 @@ def test_experiments_080_scaffold_rejects_demo_source_leftovers(tmp_path, capsys
     (sources_dir / "news.json").write_text('{"items": []}\n', encoding="utf-8")
     (sources_dir / "market_data.json").write_text('{"items": []}\n', encoding="utf-8")
 
-    rc = main(_scaffold_args(case_dir, ws, condition="baseline"))
+    rc = _scaffold(case_dir, ws, condition="baseline")
 
     assert rc == 1
     payload = json.loads(capsys.readouterr().out)
@@ -1335,7 +1383,7 @@ def test_experiments_080_scaffold_rejects_existing_real_source_leftover(tmp_path
     sources_dir.mkdir()
     (sources_dir / "source-note.md").write_text("Real source-like material.\n", encoding="utf-8")
 
-    rc = main(_scaffold_args(case_dir, ws, condition="baseline"))
+    rc = _scaffold(case_dir, ws, condition="baseline")
 
     assert rc == 1
     payload = json.loads(capsys.readouterr().out)
@@ -1357,7 +1405,7 @@ def test_experiments_080_scaffold_prompt_only_records_guidance_without_memory(tm
     case_manifest["allowed_claims"]["memory_mechanism_adds_over_prompt"] = True
     _write_json(case_dir / "case_manifest.json", case_manifest)
 
-    rc = main(_scaffold_args(case_dir, ws, condition="prompt_only"))
+    rc = _scaffold(case_dir, ws, condition="prompt_only")
 
     assert rc == 0
     json.loads(capsys.readouterr().out)
@@ -1404,7 +1452,7 @@ def test_experiments_080_scaffold_baseline_rejects_existing_improvement_ledger(t
         encoding="utf-8",
     )
 
-    rc = main(_scaffold_args(case_dir, ws, condition="baseline"))
+    rc = _scaffold(case_dir, ws, condition="baseline")
 
     assert rc == 1
     payload = json.loads(capsys.readouterr().out)
@@ -1424,7 +1472,7 @@ def test_experiments_080_scaffold_baseline_rejects_existing_improvement_snapshot
     snapshot.parent.mkdir(parents=True)
     snapshot.write_text("# Frozen Improvement Memory\n\n- Prior memory treatment.\n", encoding="utf-8")
 
-    rc = main(_scaffold_args(case_dir, ws, condition="baseline"))
+    rc = _scaffold(case_dir, ws, condition="baseline")
 
     assert rc == 1
     payload = json.loads(capsys.readouterr().out)
@@ -1449,7 +1497,7 @@ def test_experiments_080_scaffold_prompt_only_rejects_existing_improvement_memor
     improvement_dir.mkdir()
     (improvement_dir / "memory.md").write_text("# Improvement Memory\n\n- Use business framing.\n", encoding="utf-8")
 
-    rc = main(_scaffold_args(case_dir, ws, condition="prompt_only"))
+    rc = _scaffold(case_dir, ws, condition="prompt_only")
 
     assert rc == 1
     payload = json.loads(capsys.readouterr().out)
@@ -1494,7 +1542,7 @@ def test_experiments_080_scaffold_prompt_only_rejects_improvement_runtime_residu
         },
     )
 
-    rc = main(_scaffold_args(case_dir, ws, condition="prompt_only"))
+    rc = _scaffold(case_dir, ws, condition="prompt_only")
 
     assert rc == 1
     payload = json.loads(capsys.readouterr().out)
@@ -1512,7 +1560,7 @@ def test_experiments_080_scaffold_rejects_condition_not_declared(tmp_path, capsy
     ws = tmp_path / "prompt-only-workspace"
     _write_case_from_archive(case_dir, CLEAN_FIXTURE_MANIFEST)
 
-    rc = main(_scaffold_args(case_dir, ws, condition="prompt_only"))
+    rc = _scaffold(case_dir, ws, condition="prompt_only")
 
     assert rc == 1
     payload = json.loads(capsys.readouterr().out)
@@ -1528,7 +1576,7 @@ def test_experiments_080_scaffold_rejects_archive_fact_layer_mismatch(tmp_path, 
     frozen_fact_layer["artifacts"][0]["sha256"] = "0" * 64
     _write_json(case_dir / "frozen_fact_layer.json", frozen_fact_layer)
 
-    rc = main(_scaffold_args(case_dir, ws, condition="baseline"))
+    rc = _scaffold(case_dir, ws, condition="baseline")
 
     assert rc == 1
     payload = json.loads(capsys.readouterr().out)
@@ -1542,7 +1590,7 @@ def test_experiments_080_scaffold_requires_initialized_workspace(tmp_path, capsy
     ws = tmp_path / "workspace"
     _write_case_from_archive(case_dir, CLEAN_FIXTURE_MANIFEST)
 
-    rc = main(_scaffold_args(case_dir, ws, condition="baseline"))
+    rc = _scaffold(case_dir, ws, condition="baseline")
 
     assert rc == 1
     payload = json.loads(capsys.readouterr().out)
@@ -1561,11 +1609,11 @@ def test_experiments_080_scaffold_rejects_existing_runtime_state(tmp_path, capsy
     ws = tmp_path / "workspace"
     _write_case_from_archive(case_dir, CLEAN_FIXTURE_MANIFEST)
     _write_scaffold_workspace(ws)
-    assert main(_scaffold_args(case_dir, ws, condition="baseline")) == 0
+    assert _scaffold(case_dir, ws, condition="baseline") == 0
     capsys.readouterr()
     shutil.rmtree(ws / "experiment")
 
-    rc = main(_scaffold_args(case_dir, ws, condition="memory"))
+    rc = _scaffold(case_dir, ws, condition="memory")
 
     assert rc == 1
     payload = json.loads(capsys.readouterr().out)
@@ -1583,7 +1631,7 @@ def test_experiments_080_scaffold_uses_case_archive_path(tmp_path, capsys):
     target_run_dir.parent.mkdir(parents=True)
     shutil.copytree(run_dir, target_run_dir)
 
-    rc = main(_scaffold_args(case_dir, ws, condition="memory", archive=None))
+    rc = _scaffold(case_dir, ws, condition="memory", archive=None)
 
     assert rc == 0
     payload = json.loads(capsys.readouterr().out)
@@ -1612,7 +1660,7 @@ def test_experiments_080_register_run_writes_valid_record(tmp_path, capsys):
     _write_terminal_runtime(ws, run_id=run_id)
     output = tmp_path / "runs" / "memory.run_record.json"
 
-    rc = main(_register_args(case_dir, ws, output))
+    rc = _register_run(case_dir, ws, output)
 
     assert rc == 0
     payload = json.loads(capsys.readouterr().out)
@@ -1641,7 +1689,7 @@ def test_experiments_080_register_run_records_memory_snapshot_treatment_isolatio
     _write_improvement_memory_snapshot(ws)
     output = tmp_path / "runs" / "memory.run_record.json"
 
-    rc = main(_register_args(case_dir, ws, output, condition="memory"))
+    rc = _register_run(case_dir, ws, output, condition="memory")
 
     assert rc == 0
     json.loads(capsys.readouterr().out)
@@ -1662,7 +1710,7 @@ def test_experiments_080_register_run_rejects_baseline_condition_metadata_guidan
     _write_treatment_condition_metadata(ws, condition="baseline", leak_guidance=True)
     output = tmp_path / "runs" / "baseline.run_record.json"
 
-    rc = main(_register_args(case_dir, ws, output, condition="baseline"))
+    rc = _register_run(case_dir, ws, output, condition="baseline")
 
     assert rc == 1
     payload = json.loads(capsys.readouterr().out)
@@ -1684,7 +1732,7 @@ def test_experiments_080_register_run_rejects_memory_prompt_guidance_block(tmp_p
     _write_improvement_memory_snapshot(ws)
     output = tmp_path / "runs" / "memory.run_record.json"
 
-    rc = main(_register_args(case_dir, ws, output, condition="memory"))
+    rc = _register_run(case_dir, ws, output, condition="memory")
 
     assert rc == 1
     payload = json.loads(capsys.readouterr().out)
@@ -1704,7 +1752,7 @@ def test_experiments_080_register_run_rejects_memory_snapshot_extra_guidance_ids
     _write_improvement_memory_snapshot(ws, selected_entry_ids=["AG-0001", "AG-9999"])
     output = tmp_path / "runs" / "memory.run_record.json"
 
-    rc = main(_register_args(case_dir, ws, output, condition="memory"))
+    rc = _register_run(case_dir, ws, output, condition="memory")
 
     assert rc == 1
     payload = json.loads(capsys.readouterr().out)
@@ -1736,7 +1784,7 @@ def test_experiments_080_register_run_accepts_memory_live_store_guidance(tmp_pat
     )
     output = tmp_path / "runs" / "memory.run_record.json"
 
-    rc = main(_register_args(case_dir, ws, output, condition="memory"))
+    rc = _register_run(case_dir, ws, output, condition="memory")
 
     assert rc == 0
     json.loads(capsys.readouterr().out)
@@ -1760,7 +1808,7 @@ def test_experiments_080_register_run_rejects_baseline_live_memory_store(tmp_pat
     )
     output = tmp_path / "runs" / "baseline.run_record.json"
 
-    rc = main(_register_args(case_dir, ws, output, condition="baseline"))
+    rc = _register_run(case_dir, ws, output, condition="baseline")
 
     assert rc == 1
     payload = json.loads(capsys.readouterr().out)
@@ -1788,7 +1836,7 @@ def test_experiments_080_register_run_rejects_prompt_only_improvement_memory_sna
     _write_improvement_memory_snapshot(ws)
     output = tmp_path / "runs" / "prompt.run_record.json"
 
-    rc = main(_register_args(case_dir, ws, output, condition="prompt_only"))
+    rc = _register_run(case_dir, ws, output, condition="prompt_only")
 
     assert rc == 1
     payload = json.loads(capsys.readouterr().out)
@@ -1819,7 +1867,7 @@ def test_experiments_080_register_run_rejects_prompt_only_extra_guidance_ids(tmp
     )
     output = tmp_path / "runs" / "prompt.run_record.json"
 
-    rc = main(_register_args(case_dir, ws, output, condition="prompt_only"))
+    rc = _register_run(case_dir, ws, output, condition="prompt_only")
 
     assert rc == 1
     payload = json.loads(capsys.readouterr().out)
@@ -1846,7 +1894,7 @@ def test_experiments_080_register_run_accepts_prompt_only_guidance_block_without
     _write_treatment_condition_metadata(ws, condition="prompt_only", prompt_block=True)
     output = tmp_path / "runs" / "prompt.run_record.json"
 
-    rc = main(_register_args(case_dir, ws, output, condition="prompt_only"))
+    rc = _register_run(case_dir, ws, output, condition="prompt_only")
 
     assert rc == 0
     json.loads(capsys.readouterr().out)
@@ -1869,13 +1917,13 @@ def test_experiments_080_register_run_writes_archive_path_resolvable_from_case_o
     output = case_dir / "runs" / "memory" / "run_record.json"
     scorecard_path = case_dir / "runs" / "memory" / "scorecard.json"
 
-    assert main(_register_args(case_dir, ws, output)) == 0
+    assert _register_run(case_dir, ws, output) == 0
     capsys.readouterr()
     record = json.loads(output.read_text(encoding="utf-8"))
     assert not Path(record["run_archive_path"]).is_absolute()
     assert (output.parent / record["run_archive_path"]).resolve() == archive_manifest.resolve()
 
-    assert main(_score_args(case_dir, output, scorecard_path)) == 0
+    assert _score_run(case_dir, output, scorecard_path) == 0
     payload = json.loads(capsys.readouterr().out)
     assert payload["ok"] is True
     scorecard = json.loads(scorecard_path.read_text(encoding="utf-8"))
@@ -1892,10 +1940,10 @@ def test_experiments_080_register_run_is_idempotent_when_output_matches(tmp_path
     _write_terminal_runtime(ws, run_id=run_id)
     output = tmp_path / "memory.run_record.json"
 
-    assert main(_register_args(case_dir, ws, output)) == 0
+    assert _register_run(case_dir, ws, output) == 0
     capsys.readouterr()
     before = output.read_bytes()
-    assert main(_register_args(case_dir, ws, output)) == 0
+    assert _register_run(case_dir, ws, output) == 0
 
     payload = json.loads(capsys.readouterr().out)
     assert payload["written"] is False
@@ -1912,7 +1960,7 @@ def test_experiments_080_register_run_refuses_different_existing_output(tmp_path
     output = tmp_path / "memory.run_record.json"
     output.write_text("{}\n", encoding="utf-8")
 
-    rc = main(_register_args(case_dir, ws, output))
+    rc = _register_run(case_dir, ws, output)
 
     assert rc == 1
     payload = json.loads(capsys.readouterr().out)
@@ -1929,7 +1977,7 @@ def test_experiments_080_register_run_rejects_condition_not_in_case(tmp_path, ca
     _write_terminal_runtime(ws, run_id=archive_manifest.parent.name)
     output = tmp_path / "prompt.run_record.json"
 
-    rc = main(_register_args(case_dir, ws, output, condition="prompt_only"))
+    rc = _register_run(case_dir, ws, output, condition="prompt_only")
 
     assert rc == 1
     payload = json.loads(capsys.readouterr().out)
@@ -1946,7 +1994,7 @@ def test_experiments_080_register_run_rejects_non_terminal_workspace(tmp_path, c
     _write_terminal_runtime(ws, run_id=archive_manifest.parent.name, current_stage="analyst")
     output = tmp_path / "memory.run_record.json"
 
-    rc = main(_register_args(case_dir, ws, output))
+    rc = _register_run(case_dir, ws, output)
 
     assert rc == 1
     payload = json.loads(capsys.readouterr().out)
@@ -1962,7 +2010,7 @@ def test_experiments_080_register_run_rejects_missing_archive(tmp_path, capsys):
     _write_terminal_runtime(ws, run_id="mabw-20260614T000000Z-public0001")
     output = tmp_path / "memory.run_record.json"
 
-    rc = main(_register_args(case_dir, ws, output))
+    rc = _register_run(case_dir, ws, output)
 
     assert rc == 1
     payload = json.loads(capsys.readouterr().out)
@@ -1987,7 +2035,7 @@ def test_experiments_080_register_run_records_contaminated_run(tmp_path, capsys)
     _write_terminal_runtime(ws, run_id=run_id, run_integrity=contaminated)
     output = tmp_path / "memory.run_record.json"
 
-    rc = main(_register_args(case_dir, ws, output))
+    rc = _register_run(case_dir, ws, output)
 
     assert rc == 0
     json.loads(capsys.readouterr().out)
@@ -2006,7 +2054,7 @@ def test_experiments_080_register_run_rejects_malformed_run_integrity(tmp_path, 
     _write_terminal_runtime(ws, run_id=archive_manifest.parent.name, run_integrity="bad")
     output = tmp_path / "memory.run_record.json"
 
-    rc = main(_register_args(case_dir, ws, output))
+    rc = _register_run(case_dir, ws, output)
 
     assert rc == 1
     payload = json.loads(capsys.readouterr().out)
@@ -2027,7 +2075,7 @@ def test_experiments_080_register_run_rejects_run_id_mismatch(tmp_path, capsys):
     _write_json(workflow_path, workflow)
     output = tmp_path / "memory.run_record.json"
 
-    rc = main(_register_args(case_dir, ws, output))
+    rc = _register_run(case_dir, ws, output)
 
     assert rc == 1
     payload = json.loads(capsys.readouterr().out)
@@ -2044,7 +2092,7 @@ def test_experiments_080_register_run_records_fact_layer_mismatch(tmp_path, caps
     _write_terminal_runtime(ws, run_id=archive_manifest.parent.name)
     output = tmp_path / "memory.run_record.json"
 
-    rc = main(_register_args(case_dir, ws, output))
+    rc = _register_run(case_dir, ws, output)
 
     assert rc == 0
     json.loads(capsys.readouterr().out)
@@ -2063,7 +2111,7 @@ def test_experiments_080_register_run_rejects_source_plan_archive(tmp_path, caps
     _write_terminal_runtime(ws, run_id=archive_manifest.parent.name)
     output = tmp_path / "memory.run_record.json"
 
-    rc = main(_register_args(case_dir, ws, output))
+    rc = _register_run(case_dir, ws, output)
 
     assert rc == 1
     payload = json.loads(capsys.readouterr().out)
@@ -2083,7 +2131,7 @@ def test_experiments_080_register_run_rejects_missing_fact_layer_file(tmp_path, 
     claim_ledger.unlink()
     output = tmp_path / "memory.run_record.json"
 
-    rc = main(_register_args(case_dir, ws, output))
+    rc = _register_run(case_dir, ws, output)
 
     assert rc == 1
     payload = json.loads(capsys.readouterr().out)
@@ -2103,7 +2151,7 @@ def test_experiments_080_register_run_rejects_tampered_fact_layer_file(tmp_path,
     claim_ledger.write_text('{"tampered": true}\n', encoding="utf-8")
     output = tmp_path / "memory.run_record.json"
 
-    rc = main(_register_args(case_dir, ws, output))
+    rc = _register_run(case_dir, ws, output)
 
     assert rc == 1
     payload = json.loads(capsys.readouterr().out)
@@ -2124,7 +2172,7 @@ def test_experiments_080_register_run_rejects_source_pack_hash_mismatch(tmp_path
     _write_json(archive_manifest, manifest)
     output = tmp_path / "memory.run_record.json"
 
-    rc = main(_register_args(case_dir, ws, output))
+    rc = _register_run(case_dir, ws, output)
 
     assert rc == 1
     payload = json.loads(capsys.readouterr().out)
@@ -2152,7 +2200,7 @@ def test_experiments_080_register_run_rejects_extra_non_fact_layer_artifact(tmp_
     _write_json(archive_manifest, manifest)
     output = tmp_path / "memory.run_record.json"
 
-    rc = main(_register_args(case_dir, ws, output))
+    rc = _register_run(case_dir, ws, output)
 
     assert rc == 1
     payload = json.loads(capsys.readouterr().out)
@@ -2191,7 +2239,7 @@ def test_experiments_080_register_run_does_not_use_unrelated_cwd_git(tmp_path, c
     _write_terminal_runtime(ws, run_id=archive_manifest.parent.name)
     output = tmp_path / "memory.run_record.json"
 
-    rc = main(_register_args(case_dir, ws, output))
+    rc = _register_run(case_dir, ws, output)
 
     assert rc == 0
     json.loads(capsys.readouterr().out)
@@ -2212,10 +2260,10 @@ def test_experiments_080_score_run_writes_deterministic_scorecard_draft(tmp_path
     _write_terminal_runtime(ws, run_id=run_id)
     run_record = ws / "memory.run_record.json"
     scorecard_path = tmp_path / "scorecards" / "memory.scorecard.json"
-    assert main(_register_args(case_dir, ws, run_record)) == 0
+    assert _register_run(case_dir, ws, run_record) == 0
     capsys.readouterr()
 
-    rc = main(_score_args(case_dir, run_record, scorecard_path))
+    rc = _score_run(case_dir, run_record, scorecard_path)
 
     assert rc == 0
     payload = json.loads(capsys.readouterr().out)
@@ -2276,10 +2324,10 @@ def test_experiments_080_score_run_treats_warning_only_gate_reports_as_control_p
     _write_terminal_runtime(ws, run_id=run_id)
     run_record = ws / "memory.run_record.json"
     scorecard_path = tmp_path / "scorecards" / "memory.scorecard.json"
-    assert main(_register_args(case_dir, ws, run_record)) == 0
+    assert _register_run(case_dir, ws, run_record) == 0
     capsys.readouterr()
 
-    rc = main(_score_args(case_dir, run_record, scorecard_path))
+    rc = _score_run(case_dir, run_record, scorecard_path)
 
     assert rc == 0
     json.loads(capsys.readouterr().out)
@@ -2307,7 +2355,7 @@ def test_experiments_080_auditable_brief_target_scores_without_finalize(tmp_path
     run_record = ws / "memory.run_record.json"
     scorecard_path = tmp_path / "scorecards" / "memory.scorecard.json"
 
-    assert main(_register_args(case_dir, ws, run_record)) == 0
+    assert _register_run(case_dir, ws, run_record) == 0
     record = json.loads(run_record.read_text(encoding="utf-8"))
     assert record["assessment_target"] == "auditable_brief"
     assert record["assessment_target_manifest"]["assessment_target"] == "auditable_brief"
@@ -2324,7 +2372,7 @@ def test_experiments_080_auditable_brief_target_scores_without_finalize(tmp_path
     assert record["timing"]["status"] == "available"
     capsys.readouterr()
 
-    assert main(_score_args(case_dir, run_record, scorecard_path)) == 0
+    assert _score_run(case_dir, run_record, scorecard_path) == 0
 
     scorecard = json.loads(scorecard_path.read_text(encoding="utf-8"))
     assert validate_scorecard(scorecard) == []
@@ -2357,7 +2405,7 @@ def test_experiments_080_auditable_brief_target_scores_without_finalize(tmp_path
     assessed_path = tmp_path / "assessed.scorecard.json"
     _write_json(assessment_path, _assessment_payload(method="human", run_id=run_id))
     capsys.readouterr()
-    assert main(_assessment_args(scorecard_path, assessment_path, assessed_path)) == 0
+    assert _import_assessment(scorecard_path, assessment_path, assessed_path) == 0
     assessed = json.loads(assessed_path.read_text(encoding="utf-8"))
     assert assessed["validity_class"] == "A_controlled"
     assert assessed["assessment_target"] == "auditable_brief"
@@ -2376,7 +2424,7 @@ def test_experiments_080_auditable_brief_target_scores_without_finalize(tmp_path
     assert validate_scorecard(scorecard) == []
 
     capsys.readouterr()
-    assert main(_assessment_args(no_timing_scorecard_path, assessment_path, no_timing_assessed_path)) == 0
+    assert _import_assessment(no_timing_scorecard_path, assessment_path, no_timing_assessed_path) == 0
     no_timing_assessed = json.loads(no_timing_assessed_path.read_text(encoding="utf-8"))
     assert no_timing_assessed["control_integrity"]["timing_available"] is False
     assert no_timing_assessed["validity_class"] == "A_controlled"
@@ -2400,7 +2448,7 @@ def test_experiments_080_auditable_brief_final_abstract_advisory_warning_is_cont
     _write_improvement_memory_snapshot(ws)
     run_record = ws / "memory.run_record.json"
     scorecard_path = tmp_path / "scorecards" / "memory.scorecard.json"
-    assert main(_register_args(case_dir, ws, run_record)) == 0
+    assert _register_run(case_dir, ws, run_record) == 0
     record = json.loads(run_record.read_text(encoding="utf-8"))
     gate = record["target_artifacts"]["auditor_quality_gate_report"]
     gate["report_status"] = "warning"
@@ -2409,7 +2457,7 @@ def test_experiments_080_auditable_brief_final_abstract_advisory_warning_is_cont
     _write_json(run_record, record)
     capsys.readouterr()
 
-    assert main(_score_args(case_dir, run_record, scorecard_path)) == 0
+    assert _score_run(case_dir, run_record, scorecard_path) == 0
 
     scorecard = json.loads(scorecard_path.read_text(encoding="utf-8"))
     assert scorecard["quality_gates"]["auditor_status"] == "warning"
@@ -2437,7 +2485,7 @@ def test_experiments_080_auditable_brief_warning_gate_is_not_control_passed(tmp_
     scorecard_path = tmp_path / "scorecards" / "memory.scorecard.json"
     assessment_path = tmp_path / "assessment.json"
     assessed_path = tmp_path / "assessed.scorecard.json"
-    assert main(_register_args(case_dir, ws, run_record)) == 0
+    assert _register_run(case_dir, ws, run_record) == 0
     record = json.loads(run_record.read_text(encoding="utf-8"))
     gate = record["target_artifacts"]["auditor_quality_gate_report"]
     gate["report_status"] = "warning"
@@ -2446,7 +2494,7 @@ def test_experiments_080_auditable_brief_warning_gate_is_not_control_passed(tmp_
     _write_json(run_record, record)
     capsys.readouterr()
 
-    assert main(_score_args(case_dir, run_record, scorecard_path)) == 0
+    assert _score_run(case_dir, run_record, scorecard_path) == 0
     scorecard = json.loads(scorecard_path.read_text(encoding="utf-8"))
     assert scorecard["quality_gates"]["auditor_status"] == "warning"
     assert scorecard["quality_gates"]["passed"] is False
@@ -2456,7 +2504,7 @@ def test_experiments_080_auditable_brief_warning_gate_is_not_control_passed(tmp_
     _write_json(assessment_path, _assessment_payload(method="human", run_id=run_id))
     capsys.readouterr()
 
-    assert main(_assessment_args(scorecard_path, assessment_path, assessed_path)) == 0
+    assert _import_assessment(scorecard_path, assessment_path, assessed_path) == 0
     assessed = json.loads(assessed_path.read_text(encoding="utf-8"))
     assert assessed["validity_class"] == "invalid_incomplete"
 
@@ -2477,11 +2525,11 @@ def test_experiments_080_auditable_brief_missing_treatment_isolation_stays_incom
     run_record = ws / "memory.run_record.json"
     scorecard_path = tmp_path / "scorecards" / "memory.scorecard.json"
 
-    assert main(_register_args(case_dir, ws, run_record)) == 0
+    assert _register_run(case_dir, ws, run_record) == 0
     record = json.loads(run_record.read_text(encoding="utf-8"))
     assert record["treatment_isolation"]["status"] == "not_checked"
     capsys.readouterr()
-    assert main(_score_args(case_dir, run_record, scorecard_path)) == 0
+    assert _score_run(case_dir, run_record, scorecard_path) == 0
     scorecard = json.loads(scorecard_path.read_text(encoding="utf-8"))
     assert scorecard["control_integrity"]["treatment_isolation_passed"] is False
     assert scorecard["target_readiness"]["status"] == "incomplete"
@@ -2491,7 +2539,7 @@ def test_experiments_080_auditable_brief_missing_treatment_isolation_stays_incom
     assessed_path = tmp_path / "assessed.scorecard.json"
     _write_json(assessment_path, _assessment_payload(method="human", run_id=run_id))
     capsys.readouterr()
-    assert main(_assessment_args(scorecard_path, assessment_path, assessed_path)) == 0
+    assert _import_assessment(scorecard_path, assessment_path, assessed_path) == 0
     assessed = json.loads(assessed_path.read_text(encoding="utf-8"))
     assert assessed["validity_class"] == "invalid_incomplete"
 
@@ -2507,12 +2555,12 @@ def test_experiments_080_auditable_brief_missing_treatment_isolation_stays_incom
     assert validate_scorecard(scorecard) == []
 
     capsys.readouterr()
-    assert main(_assessment_args(tampered_scorecard_path, assessment_path, tampered_assessed_path)) == 0
+    assert _import_assessment(tampered_scorecard_path, assessment_path, tampered_assessed_path) == 0
     tampered_assessed = json.loads(tampered_assessed_path.read_text(encoding="utf-8"))
     assert tampered_assessed["validity_class"] == "invalid_incomplete"
 
 
-def test_experiments_080_auditable_brief_target_blocks_finalize(tmp_path, capsys):
+def test_experiments_080_auditable_brief_target_blocks_finalize(tmp_path):
     ws = tmp_path / "workspace"
     _write_scaffold_workspace(ws)
     _write_auditable_condition_metadata(ws)
@@ -2521,13 +2569,19 @@ def test_experiments_080_auditable_brief_target_blocks_finalize(tmp_path, capsys
         run_id="mabw-20260614T000000Z-auditable0001",
         source_archive_manifest=CLEAN_FIXTURE_MANIFEST,
     )
+    workflow = json.loads((ws / "output" / "intermediate" / "workflow_state.json").read_text(encoding="utf-8"))
 
-    rc = main(["finalize", "--config", str(ws / "config.yaml")])
+    with pytest.raises(RuntimeStateError) as excinfo:
+        raise_if_auditable_target_complete_blocks_downstream(
+            workspace=ws,
+            workflow=workflow,
+            command="finalize",
+        )
 
-    captured = capsys.readouterr()
-    assert rc == 1
-    assert "TARGET COMPLETE: auditable_brief" in captured.err
-    assert "outside this target" in captured.err
+    assert excinfo.value.error_code == E_ASSESSMENT_TARGET_COMPLETE
+    message = str(excinfo.value)
+    assert "TARGET COMPLETE: auditable_brief" in message
+    assert "outside this target" in message
     assert not (ws / "output" / "delivery" / "brief.md").exists()
     assert not (ws / "output" / "intermediate" / "finalize_report.json").exists()
 
@@ -2583,7 +2637,6 @@ def test_experiments_080_auditable_brief_target_block_uses_event_log_repair_bind
 
 def test_experiments_080_auditable_brief_finalize_blocks_incomplete_target_before_writing(
     tmp_path,
-    capsys,
 ):
     ws = tmp_path / "workspace"
     _write_scaffold_workspace(ws)
@@ -2618,17 +2671,24 @@ def test_experiments_080_auditable_brief_finalize_blocks_incomplete_target_befor
             + "\n"
         )
 
-    rc = main(["finalize", "--config", str(ws / "config.yaml")])
+    workflow = json.loads((ws / "output" / "intermediate" / "workflow_state.json").read_text(encoding="utf-8"))
 
-    captured = capsys.readouterr()
-    assert rc == 1
-    assert "TARGET INCOMPLETE: auditable_brief" in captured.err
-    assert "TARGET COMPLETE: auditable_brief" not in captured.err
+    with pytest.raises(RuntimeStateError) as excinfo:
+        raise_if_auditable_target_complete_blocks_downstream(
+            workspace=ws,
+            workflow=workflow,
+            command="finalize",
+        )
+
+    assert excinfo.value.error_code == E_ASSESSMENT_TARGET_COMPLETE
+    message = str(excinfo.value)
+    assert "TARGET INCOMPLETE: auditable_brief" in message
+    assert "TARGET COMPLETE: auditable_brief" not in message
     assert not (ws / "output" / "delivery" / "brief.md").exists()
     assert not (ws / "output" / "intermediate" / "finalize_report.json").exists()
 
 
-def test_experiments_080_auditable_brief_target_blocks_finalize_complete(tmp_path, capsys):
+def test_experiments_080_auditable_brief_target_blocks_finalize_complete(tmp_path):
     ws = tmp_path / "workspace"
     _write_scaffold_workspace(ws)
     _write_auditable_condition_metadata(ws)
@@ -2637,20 +2697,18 @@ def test_experiments_080_auditable_brief_target_blocks_finalize_complete(tmp_pat
         run_id="mabw-20260614T000000Z-auditable0001",
         source_archive_manifest=CLEAN_FIXTURE_MANIFEST,
     )
+    workflow = json.loads((ws / "output" / "intermediate" / "workflow_state.json").read_text(encoding="utf-8"))
 
-    rc = main([
-        "state",
-        "finalize-complete",
-        "--workspace", str(ws),
-        "--reason", "auditable target should stop before delivery",
-        "--json",
-    ])
+    with pytest.raises(RuntimeStateError) as excinfo:
+        raise_if_auditable_target_complete_blocks_downstream(
+            workspace=ws,
+            workflow=workflow,
+            command="state finalize-complete",
+        )
 
-    assert rc == 1
-    payload = json.loads(capsys.readouterr().out)
-    assert payload["error_code"] == "E_ASSESSMENT_TARGET_COMPLETE"
-    assert payload["details"]["target_complete"] is True
-    assert "briefloop finalize" in payload["details"]["forbidden_downstream_actions"]
+    assert excinfo.value.error_code == E_ASSESSMENT_TARGET_COMPLETE
+    assert excinfo.value.details["target_complete"] is True
+    assert "briefloop finalize" in excinfo.value.details["forbidden_downstream_actions"]
     events = (ws / "output" / "intermediate" / "event_log.jsonl").read_text(encoding="utf-8").splitlines()
     assert not any("finalize_completed" in line for line in events)
 
@@ -2672,7 +2730,7 @@ def test_experiments_080_auditable_brief_register_rejects_active_repair(tmp_path
     )
     output = tmp_path / "memory.run_record.json"
 
-    rc = main(_register_args(case_dir, ws, output))
+    rc = _register_run(case_dir, ws, output)
 
     assert rc == 1
     payload = json.loads(capsys.readouterr().out)
@@ -2706,7 +2764,7 @@ def test_experiments_080_auditable_brief_register_requires_downstream_stage_even
     )
     output = tmp_path / "memory.run_record.json"
 
-    rc = main(_register_args(case_dir, ws, output))
+    rc = _register_run(case_dir, ws, output)
 
     assert rc == 1
     payload = json.loads(capsys.readouterr().out)
@@ -2735,7 +2793,7 @@ def test_experiments_080_auditable_brief_register_requires_audit_binding(tmp_pat
     _write_json(workflow_path, workflow)
     output = tmp_path / "memory.run_record.json"
 
-    rc = main(_register_args(case_dir, ws, output))
+    rc = _register_run(case_dir, ws, output)
 
     assert rc == 1
     payload = json.loads(capsys.readouterr().out)
@@ -2763,7 +2821,7 @@ def test_experiments_080_auditable_brief_register_rejects_mismatched_audit_bindi
     _write_json(workflow_path, workflow)
     output = tmp_path / "memory.run_record.json"
 
-    rc = main(_register_args(case_dir, ws, output))
+    rc = _register_run(case_dir, ws, output)
 
     assert rc == 1
     payload = json.loads(capsys.readouterr().out)
@@ -2794,7 +2852,7 @@ def test_experiments_080_auditable_brief_register_requires_auditor_completion_ev
     _write_json(workflow_path, workflow)
     output = tmp_path / "memory.run_record.json"
 
-    rc = main(_register_args(case_dir, ws, output))
+    rc = _register_run(case_dir, ws, output)
 
     assert rc == 1
     payload = json.loads(capsys.readouterr().out)
@@ -2827,7 +2885,7 @@ def test_experiments_080_auditable_brief_register_rejects_stage_completion_event
     _write_json(workflow_path, workflow)
     output = tmp_path / "memory.run_record.json"
 
-    rc = main(_register_args(case_dir, ws, output))
+    rc = _register_run(case_dir, ws, output)
 
     assert rc == 1
     payload = json.loads(capsys.readouterr().out)
@@ -2857,7 +2915,7 @@ def test_experiments_080_auditable_brief_register_rejects_stale_target_artifact(
     _write_json(registry_path, registry)
     output = tmp_path / "memory.run_record.json"
 
-    rc = main(_register_args(case_dir, ws, output))
+    rc = _register_run(case_dir, ws, output)
 
     assert rc == 1
     payload = json.loads(capsys.readouterr().out)
@@ -2902,7 +2960,7 @@ def test_experiments_080_auditable_brief_register_requires_repair_ids_in_binding
         handle.write(json.dumps(repair_event, sort_keys=True) + "\n")
     output = tmp_path / "memory.run_record.json"
 
-    rc = main(_register_args(case_dir, ws, output))
+    rc = _register_run(case_dir, ws, output)
 
     assert rc == 1
     payload = json.loads(capsys.readouterr().out)
@@ -2931,7 +2989,7 @@ def test_experiments_080_auditable_brief_register_requires_fact_layer_import(tmp
     _write_json(manifest_path, manifest)
     output = tmp_path / "memory.run_record.json"
 
-    rc = main(_register_args(case_dir, ws, output))
+    rc = _register_run(case_dir, ws, output)
 
     assert rc == 1
     payload = json.loads(capsys.readouterr().out)
@@ -2959,7 +3017,7 @@ def test_experiments_080_auditable_brief_register_rejects_fact_layer_import_mism
     _write_json(manifest_path, manifest)
     output = tmp_path / "memory.run_record.json"
 
-    rc = main(_register_args(case_dir, ws, output))
+    rc = _register_run(case_dir, ws, output)
 
     assert rc == 1
     payload = json.loads(capsys.readouterr().out)
@@ -2984,7 +3042,7 @@ def test_experiments_080_auditable_brief_register_rejects_tampered_imported_fact
     (ws / "output" / "intermediate" / "claim_ledger.json").write_text('{"tampered": true}\n', encoding="utf-8")
     output = tmp_path / "memory.run_record.json"
 
-    rc = main(_register_args(case_dir, ws, output))
+    rc = _register_run(case_dir, ws, output)
 
     assert rc == 1
     payload = json.loads(capsys.readouterr().out)
@@ -3009,7 +3067,7 @@ def test_experiments_080_auditable_brief_register_rejects_blocking_gate_binding(
     _mutate_auditable_gate_report(ws, lambda gate: gate["gate_results"][0].__setitem__("blocking", True))
     output = tmp_path / "memory.run_record.json"
 
-    rc = main(_register_args(case_dir, ws, output))
+    rc = _register_run(case_dir, ws, output)
 
     assert rc == 1
     payload = json.loads(capsys.readouterr().out)
@@ -3054,7 +3112,7 @@ def test_experiments_080_auditable_brief_register_rejects_blocking_gate_finding(
     _mutate_auditable_gate_report(ws, add_blocking_finding)
     output = tmp_path / "memory.run_record.json"
 
-    rc = main(_register_args(case_dir, ws, output))
+    rc = _register_run(case_dir, ws, output)
 
     assert rc == 1
     payload = json.loads(capsys.readouterr().out)
@@ -3079,7 +3137,7 @@ def test_experiments_080_delivery_target_still_requires_terminal_workflow(tmp_pa
     )
     output = tmp_path / "memory.run_record.json"
 
-    rc = main(_register_args(case_dir, ws, output))
+    rc = _register_run(case_dir, ws, output)
 
     assert rc == 1
     payload = json.loads(capsys.readouterr().out)
@@ -3246,13 +3304,13 @@ def _scorecard_from_fast_rerun_timing(tmp_path, capsys, timing: dict) -> dict:
     )
     run_record = ws / "memory.run_record.json"
     scorecard_path = tmp_path / "scorecards" / "memory.scorecard.json"
-    assert main(_register_args(case_dir, ws, run_record)) == 0
+    assert _register_run(case_dir, ws, run_record) == 0
     capsys.readouterr()
     record = json.loads(run_record.read_text(encoding="utf-8"))
     assert record["timing"]["run_recipe"] == "fast-rerun"
     assert record["timing"]["timing_comparability"] == "downstream_only"
 
-    assert main(_score_args(case_dir, run_record, scorecard_path)) == 0
+    assert _score_run(case_dir, run_record, scorecard_path) == 0
 
     return json.loads(scorecard_path.read_text(encoding="utf-8"))
 
@@ -3290,13 +3348,13 @@ def test_experiments_080_score_run_is_idempotent_when_output_matches(tmp_path, c
     _write_terminal_runtime(ws, run_id=archive_manifest.parent.name)
     run_record = ws / "memory.run_record.json"
     scorecard_path = tmp_path / "memory.scorecard.json"
-    assert main(_register_args(case_dir, ws, run_record)) == 0
+    assert _register_run(case_dir, ws, run_record) == 0
     capsys.readouterr()
-    assert main(_score_args(case_dir, run_record, scorecard_path)) == 0
+    assert _score_run(case_dir, run_record, scorecard_path) == 0
     capsys.readouterr()
     before = scorecard_path.read_bytes()
 
-    assert main(_score_args(case_dir, run_record, scorecard_path)) == 0
+    assert _score_run(case_dir, run_record, scorecard_path) == 0
 
     payload = json.loads(capsys.readouterr().out)
     assert payload["written"] is False
@@ -3313,10 +3371,10 @@ def test_experiments_080_score_run_refuses_different_existing_output(tmp_path, c
     run_record = ws / "memory.run_record.json"
     scorecard_path = tmp_path / "memory.scorecard.json"
     scorecard_path.write_text("{}\n", encoding="utf-8")
-    assert main(_register_args(case_dir, ws, run_record)) == 0
+    assert _register_run(case_dir, ws, run_record) == 0
     capsys.readouterr()
 
-    rc = main(_score_args(case_dir, run_record, scorecard_path))
+    rc = _score_run(case_dir, run_record, scorecard_path)
 
     assert rc == 1
     payload = json.loads(capsys.readouterr().out)
@@ -3334,10 +3392,10 @@ def test_experiments_080_score_run_marks_fact_layer_mismatch(tmp_path, capsys):
     _write_terminal_runtime(ws, run_id=archive_manifest.parent.name)
     run_record = ws / "memory.run_record.json"
     scorecard_path = tmp_path / "memory.scorecard.json"
-    assert main(_register_args(case_dir, ws, run_record)) == 0
+    assert _register_run(case_dir, ws, run_record) == 0
     capsys.readouterr()
 
-    rc = main(_score_args(case_dir, run_record, scorecard_path))
+    rc = _score_run(case_dir, run_record, scorecard_path)
 
     assert rc == 0
     json.loads(capsys.readouterr().out)
@@ -3363,10 +3421,10 @@ def test_experiments_080_score_run_marks_contaminated_run(tmp_path, capsys):
     _write_terminal_runtime(ws, run_id=archive_manifest.parent.name, run_integrity=contaminated)
     run_record = ws / "memory.run_record.json"
     scorecard_path = tmp_path / "memory.scorecard.json"
-    assert main(_register_args(case_dir, ws, run_record)) == 0
+    assert _register_run(case_dir, ws, run_record) == 0
     capsys.readouterr()
 
-    rc = main(_score_args(case_dir, run_record, scorecard_path))
+    rc = _score_run(case_dir, run_record, scorecard_path)
 
     assert rc == 0
     json.loads(capsys.readouterr().out)
@@ -3385,11 +3443,11 @@ def test_experiments_080_score_run_marks_missing_archive_incomplete(tmp_path, ca
     _write_terminal_runtime(ws, run_id=run_id)
     run_record = ws / "memory.run_record.json"
     scorecard_path = tmp_path / "memory.scorecard.json"
-    assert main(_register_args(case_dir, ws, run_record)) == 0
+    assert _register_run(case_dir, ws, run_record) == 0
     capsys.readouterr()
     shutil.rmtree(archive_manifest.parent)
 
-    rc = main(_score_args(case_dir, run_record, scorecard_path))
+    rc = _score_run(case_dir, run_record, scorecard_path)
 
     assert rc == 0
     json.loads(capsys.readouterr().out)
@@ -3409,11 +3467,11 @@ def test_experiments_080_score_run_rejects_archive_run_id_mismatch(tmp_path, cap
     _write_terminal_runtime(ws, run_id=archive_manifest.parent.name)
     run_record = ws / "memory.run_record.json"
     scorecard_path = tmp_path / "memory.scorecard.json"
-    assert main(_register_args(case_dir, ws, run_record)) == 0
+    assert _register_run(case_dir, ws, run_record) == 0
     capsys.readouterr()
     _patch_archive_manifest(archive_manifest, run_id="mabw-20260614T000000Z-other0001")
 
-    rc = main(_score_args(case_dir, run_record, scorecard_path))
+    rc = _score_run(case_dir, run_record, scorecard_path)
 
     assert rc == 1
     payload = json.loads(capsys.readouterr().out)
@@ -3431,11 +3489,11 @@ def test_experiments_080_score_run_rejects_archive_runtime_manifest_run_id_misma
     _write_terminal_runtime(ws, run_id=archive_manifest.parent.name)
     run_record = ws / "memory.run_record.json"
     scorecard_path = tmp_path / "memory.scorecard.json"
-    assert main(_register_args(case_dir, ws, run_record)) == 0
+    assert _register_run(case_dir, ws, run_record) == 0
     capsys.readouterr()
     _patch_archive_manifest(archive_manifest, runtime_manifest_run_id="mabw-20260614T000000Z-other0001")
 
-    rc = main(_score_args(case_dir, run_record, scorecard_path))
+    rc = _score_run(case_dir, run_record, scorecard_path)
 
     assert rc == 1
     payload = json.loads(capsys.readouterr().out)
@@ -3453,14 +3511,14 @@ def test_experiments_080_score_run_rejects_tampered_finalize_report(tmp_path, ca
     _write_terminal_runtime(ws, run_id=archive_manifest.parent.name)
     run_record = ws / "memory.run_record.json"
     scorecard_path = tmp_path / "memory.scorecard.json"
-    assert main(_register_args(case_dir, ws, run_record)) == 0
+    assert _register_run(case_dir, ws, run_record) == 0
     capsys.readouterr()
     _write_json(
         archive_manifest.parent / "intermediate" / "finalize_report.json",
         {"status": "pass", "reader_clean": {"status": "pass", "markdown_blocking_count": 0}},
     )
 
-    rc = main(_score_args(case_dir, run_record, scorecard_path))
+    rc = _score_run(case_dir, run_record, scorecard_path)
 
     assert rc == 1
     payload = json.loads(capsys.readouterr().out)
@@ -3478,14 +3536,14 @@ def test_experiments_080_score_run_rejects_tampered_gate_report(tmp_path, capsys
     _write_terminal_runtime(ws, run_id=archive_manifest.parent.name)
     run_record = ws / "memory.run_record.json"
     scorecard_path = tmp_path / "memory.scorecard.json"
-    assert main(_register_args(case_dir, ws, run_record)) == 0
+    assert _register_run(case_dir, ws, run_record) == 0
     capsys.readouterr()
     _write_json(
         archive_manifest.parent / "intermediate" / "gates" / "auditor_quality_gate_report.json",
         {"status": "pass", "gate_results": [{"gate_id": "tampered"}]},
     )
 
-    rc = main(_score_args(case_dir, run_record, scorecard_path))
+    rc = _score_run(case_dir, run_record, scorecard_path)
 
     assert rc == 1
     payload = json.loads(capsys.readouterr().out)
@@ -3503,14 +3561,14 @@ def test_experiments_080_score_run_rejects_tampered_artifact_registry(tmp_path, 
     _write_terminal_runtime(ws, run_id=archive_manifest.parent.name)
     run_record = ws / "memory.run_record.json"
     scorecard_path = tmp_path / "memory.scorecard.json"
-    assert main(_register_args(case_dir, ws, run_record)) == 0
+    assert _register_run(case_dir, ws, run_record) == 0
     capsys.readouterr()
     _write_json(
         archive_manifest.parent / "control" / "artifact_registry.json",
         {"schema_version": "multi-agent-brief-artifact-registry/v1", "artifacts": {"tampered": {}}},
     )
 
-    rc = main(_score_args(case_dir, run_record, scorecard_path))
+    rc = _score_run(case_dir, run_record, scorecard_path)
 
     assert rc == 1
     payload = json.loads(capsys.readouterr().out)
@@ -3525,7 +3583,7 @@ def test_experiments_080_score_run_rejects_invalid_run_record(tmp_path, capsys):
     _write_json(run_record, {"schema_version": "mabw.experiment_080.run_record.v1"})
     scorecard_path = tmp_path / "bad.scorecard.json"
 
-    rc = main(_score_args(case_dir, run_record, scorecard_path))
+    rc = _score_run(case_dir, run_record, scorecard_path)
 
     assert rc == 1
     payload = json.loads(capsys.readouterr().out)
@@ -3548,7 +3606,7 @@ def test_experiments_080_export_blind_pack_strips_conditions_and_hash_binds(tmp_
     ]
     blind_dir = tmp_path / "blind-pack"
 
-    rc = main(_export_blind_pack_args(case_dir, blind_dir, scorecards, seed="080-fixed"))
+    rc = _export_blind_pack(case_dir, blind_dir, scorecards, seed="080-fixed")
 
     assert rc == 0
     payload = json.loads(capsys.readouterr().out)
@@ -3575,7 +3633,7 @@ def test_experiments_080_export_blind_pack_strips_conditions_and_hash_binds(tmp_
         assert item_json["artifact_sha256"] == item["artifact_sha256"]
 
     repeat_dir = tmp_path / "blind-pack-repeat"
-    assert main(_export_blind_pack_args(case_dir, repeat_dir, scorecards, seed="080-fixed")) == 0
+    assert _export_blind_pack(case_dir, repeat_dir, scorecards, seed="080-fixed") == 0
     assert (repeat_dir / "blind_pack.json").read_text(encoding="utf-8") == (
         blind_dir / "blind_pack.json"
     ).read_text(encoding="utf-8")
@@ -3602,7 +3660,7 @@ def test_experiments_080_export_blind_pack_checks_direct_artifact_before_recursi
 
     monkeypatch.setattr(Path, "rglob", fail_rglob)
 
-    rc = main(_export_blind_pack_args(case_dir, blind_dir, [scorecard], seed="080-fixed"))
+    rc = _export_blind_pack(case_dir, blind_dir, [scorecard], seed="080-fixed")
 
     assert rc == 0
     payload = json.loads(capsys.readouterr().out)
@@ -3633,7 +3691,7 @@ def test_experiments_080_export_blind_pack_resolves_artifacts_from_condition_wor
         scorecards.append(scorecard)
     blind_dir = case_dir / "blind-pack"
 
-    rc = main(_export_blind_pack_args(case_dir, blind_dir, scorecards, seed="080-fixed"))
+    rc = _export_blind_pack(case_dir, blind_dir, scorecards, seed="080-fixed")
 
     assert rc == 0
     payload = json.loads(capsys.readouterr().out)
@@ -3662,7 +3720,7 @@ def test_experiments_080_export_blind_pack_resolves_artifacts_from_experiment_ro
         scorecards.append(scorecard)
     blind_dir = case_dir / "blind-pack"
 
-    rc = main(_export_blind_pack_args(case_dir, blind_dir, scorecards, seed="080-fixed"))
+    rc = _export_blind_pack(case_dir, blind_dir, scorecards, seed="080-fixed")
 
     assert rc == 0
     payload = json.loads(capsys.readouterr().out)
@@ -3697,7 +3755,7 @@ def test_experiments_080_export_blind_pack_resolves_numbered_condition_workspace
         scorecards.append(scorecard)
     blind_dir = case_dir / "blind-pack"
 
-    rc = main(_export_blind_pack_args(case_dir, blind_dir, scorecards, seed="080-fixed"))
+    rc = _export_blind_pack(case_dir, blind_dir, scorecards, seed="080-fixed")
 
     assert rc == 0
     payload = json.loads(capsys.readouterr().out)
@@ -3718,7 +3776,7 @@ def test_experiments_080_import_blind_assessment_verifies_hash_and_reveals_ident
         run_id="mabw-20260614T000000Z-memory0001",
     )
     blind_dir = tmp_path / "blind-pack"
-    assert main(_export_blind_pack_args(case_dir, blind_dir, [scorecard], seed="080-fixed")) == 0
+    assert _export_blind_pack(case_dir, blind_dir, [scorecard], seed="080-fixed") == 0
     capsys.readouterr()
     pack = json.loads((blind_dir / "blind_pack.json").read_text(encoding="utf-8"))
     item = pack["items"][0]
@@ -3732,12 +3790,12 @@ def test_experiments_080_import_blind_assessment_verifies_hash_and_reveals_ident
         ),
     )
 
-    rc = main(_blind_assessment_args(
+    rc = _import_blind_assessment(
         blind_dir / "blind_pack.json",
         blind_dir / "reveal_mapping.json",
         assessment_path,
         output_path,
-    ))
+    )
 
     assert rc == 0
     payload = json.loads(capsys.readouterr().out)
@@ -3760,7 +3818,7 @@ def test_experiments_080_import_blind_assessment_rejects_modified_item(tmp_path,
         run_id="mabw-20260614T000000Z-memory0001",
     )
     blind_dir = tmp_path / "blind-pack"
-    assert main(_export_blind_pack_args(case_dir, blind_dir, [scorecard], seed="080-fixed")) == 0
+    assert _export_blind_pack(case_dir, blind_dir, [scorecard], seed="080-fixed") == 0
     capsys.readouterr()
     pack = json.loads((blind_dir / "blind_pack.json").read_text(encoding="utf-8"))
     item = pack["items"][0]
@@ -3775,12 +3833,12 @@ def test_experiments_080_import_blind_assessment_rejects_modified_item(tmp_path,
         ),
     )
 
-    rc = main(_blind_assessment_args(
+    rc = _import_blind_assessment(
         blind_dir / "blind_pack.json",
         blind_dir / "reveal_mapping.json",
         assessment_path,
         output_path,
-    ))
+    )
 
     assert rc == 1
     payload = json.loads(capsys.readouterr().out)
@@ -3802,7 +3860,7 @@ def test_experiments_080_import_blind_assessment_rejects_rebound_scorecard(tmp_p
         for condition in ("baseline", "memory")
     ]
     blind_dir = tmp_path / "blind-pack"
-    assert main(_export_blind_pack_args(case_dir, blind_dir, scorecards, seed="080-fixed")) == 0
+    assert _export_blind_pack(case_dir, blind_dir, scorecards, seed="080-fixed") == 0
     capsys.readouterr()
     reveal_path = blind_dir / "reveal_mapping.json"
     reveal = json.loads(reveal_path.read_text(encoding="utf-8"))
@@ -3825,12 +3883,12 @@ def test_experiments_080_import_blind_assessment_rejects_rebound_scorecard(tmp_p
         ),
     )
 
-    rc = main(_blind_assessment_args(
+    rc = _import_blind_assessment(
         blind_dir / "blind_pack.json",
         reveal_path,
         assessment_path,
         output_path,
-    ))
+    )
 
     assert rc == 1
     payload = json.loads(capsys.readouterr().out)
@@ -3846,18 +3904,13 @@ def test_experiments_080_import_blind_assessment_requires_reveal_mapping(tmp_pat
         _blind_assessment_payload(blind_item_id="BI-A", artifact_sha256="a" * 64),
     )
 
-    rc = main([
-        "experiments",
-        "080",
-        "import-assessment",
-        "--blind-pack",
-        str(tmp_path / "blind_pack.json"),
-        "--assessment",
-        str(assessment_path),
-        "--output",
-        str(output_path),
-        "--json",
-    ])
+    rc = _invoke_experiment(
+        import_assessment,
+        scorecard=None,
+        blind_pack=tmp_path / "blind_pack.json",
+        assessment=assessment_path,
+        output=output_path,
+    )
 
     assert rc == 1
     payload = json.loads(capsys.readouterr().out)
@@ -3871,7 +3924,7 @@ def test_experiments_080_import_assessment_promotes_to_a_controlled(tmp_path, ca
     output_path = tmp_path / "assessed.scorecard.json"
     _write_json(assessment_path, _assessment_payload(method="human"))
 
-    rc = main(_assessment_args(scorecard_path, assessment_path, output_path))
+    rc = _import_assessment(scorecard_path, assessment_path, output_path)
 
     assert rc == 0
     payload = json.loads(capsys.readouterr().out)
@@ -3897,7 +3950,7 @@ def test_experiments_080_import_assessment_rejects_unverified_blind_metadata(tmp
     assessment["blind_pack"] = {"hash_verified": True}
     _write_json(assessment_path, assessment)
 
-    rc = main(_assessment_args(scorecard_path, assessment_path, output_path))
+    rc = _import_assessment(scorecard_path, assessment_path, output_path)
 
     assert rc == 1
     payload = json.loads(capsys.readouterr().out)
@@ -3915,9 +3968,9 @@ def test_experiments_080_import_assessment_requires_delivery_treatment_isolation
     _write_terminal_runtime(ws, run_id=archive_manifest.parent.name)
     run_record = ws / "memory.run_record.json"
     scorecard_path = tmp_path / "memory.scorecard.json"
-    assert main(_register_args(case_dir, ws, run_record)) == 0
+    assert _register_run(case_dir, ws, run_record) == 0
     capsys.readouterr()
-    assert main(_score_args(case_dir, run_record, scorecard_path)) == 0
+    assert _score_run(case_dir, run_record, scorecard_path) == 0
     scorecard = json.loads(scorecard_path.read_text(encoding="utf-8"))
     assert scorecard["assessment_target"] == "delivery_brief"
     assert scorecard["control_integrity"]["treatment_isolation_passed"] is False
@@ -3926,7 +3979,7 @@ def test_experiments_080_import_assessment_requires_delivery_treatment_isolation
     output_path = tmp_path / "assessed.scorecard.json"
     _write_json(assessment_path, _assessment_payload(method="human"))
 
-    rc = main(_assessment_args(scorecard_path, assessment_path, output_path))
+    rc = _import_assessment(scorecard_path, assessment_path, output_path)
 
     assert rc == 0
     payload = json.loads(capsys.readouterr().out)
@@ -3955,7 +4008,7 @@ def test_experiments_080_auditable_target_readiness_smoke(tmp_path, capsys):
 
         run_record_path = ws / f"{condition}.run_record.json"
         scorecard_path = ws / f"{condition}.scorecard.json"
-        assert main(_register_args(case_dir, ws, run_record_path, condition=condition)) == 0
+        assert _register_run(case_dir, ws, run_record_path, condition=condition) == 0
         capsys.readouterr()
         record = json.loads(run_record_path.read_text(encoding="utf-8"))
         run_records[condition] = record
@@ -3980,7 +4033,7 @@ def test_experiments_080_auditable_target_readiness_smoke(tmp_path, capsys):
             ]
             assert not (ws / "output" / "intermediate" / "improvement_memory_snapshot.md").exists()
 
-        assert main(_score_args(case_dir, run_record_path, scorecard_path)) == 0
+        assert _score_run(case_dir, run_record_path, scorecard_path) == 0
         capsys.readouterr()
         scorecard = json.loads(scorecard_path.read_text(encoding="utf-8"))
         assert scorecard["target_readiness"]["status"] == "complete"
@@ -3997,13 +4050,13 @@ def test_experiments_080_auditable_target_readiness_smoke(tmp_path, capsys):
     stale_record_path = tmp_path / "memory.stale.run_record.json"
     stale_scorecard_path = tmp_path / "memory.stale.scorecard.json"
     _write_json(stale_record_path, stale_record)
-    assert main(_score_args(case_dir, stale_record_path, stale_scorecard_path)) == 0
+    assert _score_run(case_dir, stale_record_path, stale_scorecard_path) == 0
     stale_scorecard = json.loads(stale_scorecard_path.read_text(encoding="utf-8"))
     assert stale_scorecard["control_integrity"]["audit_report_frozen_valid"] is False
     assert stale_scorecard["validity_class"] == "invalid_incomplete"
 
     blind_dir = tmp_path / "blind-pack"
-    assert main(_export_blind_pack_args(case_dir, blind_dir, scorecards, seed="080-fixed")) == 0
+    assert _export_blind_pack(case_dir, blind_dir, scorecards, seed="080-fixed") == 0
     capsys.readouterr()
     blind_pack = json.loads((blind_dir / "blind_pack.json").read_text(encoding="utf-8"))
     reveal = json.loads((blind_dir / "reveal_mapping.json").read_text(encoding="utf-8"))
@@ -4028,12 +4081,12 @@ def test_experiments_080_auditable_target_readiness_smoke(tmp_path, capsys):
         assessment_path = tmp_path / f"{condition}.blind-assessment.json"
         assessed_path = tmp_path / f"{condition}.assessed.scorecard.json"
         _write_json(assessment_path, assessment)
-        assert main(_blind_assessment_args(
+        assert _import_blind_assessment(
             blind_dir / "blind_pack.json",
             blind_dir / "reveal_mapping.json",
             assessment_path,
             assessed_path,
-        )) == 0
+        ) == 0
         capsys.readouterr()
         assessed = json.loads(assessed_path.read_text(encoding="utf-8"))
         assert assessed["condition"] == condition
@@ -4042,7 +4095,7 @@ def test_experiments_080_auditable_target_readiness_smoke(tmp_path, capsys):
         assessed_scorecards.append(assessed_path)
 
     summary_path = tmp_path / "case_summary.json"
-    assert main(_summarize_args(case_dir, summary_path, scorecards=assessed_scorecards)) == 0
+    assert _summarize(case_dir, summary_path, scorecards=assessed_scorecards) == 0
     summary = json.loads(capsys.readouterr().out)["summary"]
     assert summary["raw_observed_assessments"]["score_2_manifested_count"] == 1
     assert summary["raw_observed_assessments"]["score_3_overapplication_count"] == 1
@@ -4061,7 +4114,7 @@ def test_experiments_080_import_assessment_llm_only_becomes_b_integration(tmp_pa
     output_path = tmp_path / "assessed.scorecard.json"
     _write_json(assessment_path, _assessment_payload(method="llm_only"))
 
-    rc = main(_assessment_args(scorecard_path, assessment_path, output_path))
+    rc = _import_assessment(scorecard_path, assessment_path, output_path)
 
     assert rc == 0
     json.loads(capsys.readouterr().out)
@@ -4080,15 +4133,15 @@ def test_experiments_080_import_assessment_keeps_fact_layer_mismatch_invalid(tmp
     _write_terminal_runtime(ws, run_id=archive_manifest.parent.name)
     run_record = ws / "memory.run_record.json"
     scorecard_path = tmp_path / "memory.scorecard.json"
-    assert main(_register_args(case_dir, ws, run_record)) == 0
+    assert _register_run(case_dir, ws, run_record) == 0
     capsys.readouterr()
-    assert main(_score_args(case_dir, run_record, scorecard_path)) == 0
+    assert _score_run(case_dir, run_record, scorecard_path) == 0
     capsys.readouterr()
     assessment_path = tmp_path / "assessment.json"
     output_path = tmp_path / "assessed.scorecard.json"
     _write_json(assessment_path, _assessment_payload(method="human"))
 
-    rc = main(_assessment_args(scorecard_path, assessment_path, output_path))
+    rc = _import_assessment(scorecard_path, assessment_path, output_path)
 
     assert rc == 0
     json.loads(capsys.readouterr().out)
@@ -4104,7 +4157,7 @@ def test_experiments_080_import_assessment_rejects_identity_mismatch(tmp_path, c
     output_path = tmp_path / "assessed.scorecard.json"
     _write_json(assessment_path, assessment)
 
-    rc = main(_assessment_args(scorecard_path, assessment_path, output_path))
+    rc = _import_assessment(scorecard_path, assessment_path, output_path)
 
     assert rc == 1
     payload = json.loads(capsys.readouterr().out)
@@ -4118,7 +4171,7 @@ def test_experiments_080_import_assessment_rejects_unknown_guidance_entry(tmp_pa
     output_path = tmp_path / "assessed.scorecard.json"
     _write_json(assessment_path, _assessment_payload(method="human", entry_id="AG-9999"))
 
-    rc = main(_assessment_args(scorecard_path, assessment_path, output_path))
+    rc = _import_assessment(scorecard_path, assessment_path, output_path)
 
     assert rc == 1
     payload = json.loads(capsys.readouterr().out)
@@ -4135,7 +4188,7 @@ def test_experiments_080_import_assessment_rejects_missing_guidance_entry(tmp_pa
     output_path = tmp_path / "assessed.scorecard.json"
     _write_json(assessment_path, _assessment_payload(method="human"))
 
-    rc = main(_assessment_args(scorecard_path, assessment_path, output_path))
+    rc = _import_assessment(scorecard_path, assessment_path, output_path)
 
     assert rc == 1
     payload = json.loads(capsys.readouterr().out)
@@ -4153,7 +4206,7 @@ def test_experiments_080_import_assessment_rejects_missing_scorecard_guidance_bi
     output_path = tmp_path / "assessed.scorecard.json"
     _write_json(assessment_path, _assessment_payload(method="human", entry_id="AG-9999"))
 
-    rc = main(_assessment_args(scorecard_path, assessment_path, output_path))
+    rc = _import_assessment(scorecard_path, assessment_path, output_path)
 
     assert rc == 1
     payload = json.loads(capsys.readouterr().out)
@@ -4170,7 +4223,7 @@ def test_experiments_080_import_assessment_rejects_empty_scorecard_guidance_bind
     output_path = tmp_path / "assessed.scorecard.json"
     _write_json(assessment_path, _assessment_payload(method="human"))
 
-    rc = main(_assessment_args(scorecard_path, assessment_path, output_path))
+    rc = _import_assessment(scorecard_path, assessment_path, output_path)
 
     assert rc == 1
     payload = json.loads(capsys.readouterr().out)
@@ -4187,7 +4240,7 @@ def test_experiments_080_import_assessment_rejects_duplicate_scorecard_guidance_
     output_path = tmp_path / "assessed.scorecard.json"
     _write_json(assessment_path, _assessment_payload(method="human"))
 
-    rc = main(_assessment_args(scorecard_path, assessment_path, output_path))
+    rc = _import_assessment(scorecard_path, assessment_path, output_path)
 
     assert rc == 1
     payload = json.loads(capsys.readouterr().out)
@@ -4205,7 +4258,7 @@ def test_experiments_080_import_assessment_rejects_already_assessed_scorecard(tm
     output_path = tmp_path / "assessed.scorecard.json"
     _write_json(assessment_path, _assessment_payload(method="human"))
 
-    rc = main(_assessment_args(scorecard_path, assessment_path, output_path))
+    rc = _import_assessment(scorecard_path, assessment_path, output_path)
 
     assert rc == 1
     payload = json.loads(capsys.readouterr().out)
@@ -4253,7 +4306,7 @@ def test_experiments_080_summarize_aggregates_scorecards_without_quality_claim(t
     )
     output = tmp_path / "summary.json"
 
-    rc = main(_summarize_args(case_dir, output))
+    rc = _summarize(case_dir, output)
 
     assert rc == 0
     payload = json.loads(capsys.readouterr().out)
@@ -4299,7 +4352,7 @@ def test_experiments_080_summarize_does_not_count_auditable_target_reader_clean(
     _write_case(case_dir)
     _write_json(case_dir / "memory.scorecard.json", _auditable_scorecard_payload())
 
-    rc = main(_summarize_args(case_dir))
+    rc = _summarize(case_dir)
 
     assert rc == 0
     payload = json.loads(capsys.readouterr().out)
@@ -4344,7 +4397,7 @@ def test_experiments_080_summarize_counts_only_blind_bound_scorecards_as_formal_
         ),
     )
 
-    rc = main(_summarize_args(case_dir))
+    rc = _summarize(case_dir)
 
     assert rc == 0
     summary = json.loads(capsys.readouterr().out)["summary"]
@@ -4378,7 +4431,7 @@ def test_experiments_080_summarize_excludes_binding_invalid_scorecards_from_form
     scorecard["audit_binding"]["status"] = "invalid"
     _write_json(case_dir / "memory.scorecard.json", scorecard)
 
-    rc = main(_summarize_args(case_dir))
+    rc = _summarize(case_dir)
 
     assert rc == 0
     summary = json.loads(capsys.readouterr().out)["summary"]
@@ -4404,7 +4457,7 @@ def test_experiments_080_summarize_excludes_mismatched_blind_metadata_from_forma
     scorecard["guidance_assessment"]["blind_pack"]["scorecard_sha256"] = "not-a-sha"
     _write_json(case_dir / "memory.scorecard.json", scorecard)
 
-    rc = main(_summarize_args(case_dir))
+    rc = _summarize(case_dir)
 
     assert rc == 0
     summary = json.loads(capsys.readouterr().out)["summary"]
@@ -4432,7 +4485,7 @@ def test_experiments_080_summarize_excludes_blind_assessment_when_guidance_score
     scorecard["guidance_scores"][0]["overapplication"] = True
     _write_json(case_dir / "memory.scorecard.json", scorecard)
 
-    rc = main(_summarize_args(case_dir))
+    rc = _summarize(case_dir)
 
     assert rc == 0
     summary = json.loads(capsys.readouterr().out)["summary"]
@@ -4456,7 +4509,7 @@ def test_experiments_080_summarize_excludes_blind_metadata_when_target_artifact_
     scorecard["target_artifacts"]["audited_brief"]["sha256"] = "7" * 64
     _write_json(case_dir / "memory.scorecard.json", scorecard)
 
-    rc = main(_summarize_args(case_dir))
+    rc = _summarize(case_dir)
 
     assert rc == 0
     summary = json.loads(capsys.readouterr().out)["summary"]
@@ -4478,7 +4531,7 @@ def test_experiments_080_summarize_excludes_blind_metadata_when_scorecard_was_ed
     scorecard["notes"].append("Post-import manual edit.")
     _write_json(case_dir / "memory.scorecard.json", scorecard)
 
-    rc = main(_summarize_args(case_dir))
+    rc = _summarize(case_dir)
 
     assert rc == 0
     summary = json.loads(capsys.readouterr().out)["summary"]
@@ -4501,7 +4554,7 @@ def test_experiments_080_summarize_surfaces_unsupported_strategic_warning(tmp_pa
     scorecard = _bind_blind_metadata_for_test(scorecard)
     _write_json(case_dir / "memory.scorecard.json", scorecard)
 
-    rc = main(_summarize_args(case_dir))
+    rc = _summarize(case_dir)
 
     assert rc == 0
     summary = json.loads(capsys.readouterr().out)["summary"]
@@ -4524,7 +4577,7 @@ def test_experiments_080_summarize_handles_missing_condition_scorecards(tmp_path
         ),
     )
 
-    rc = main(_summarize_args(case_dir))
+    rc = _summarize(case_dir)
 
     assert rc == 0
     payload = json.loads(capsys.readouterr().out)
@@ -4552,7 +4605,7 @@ def test_experiments_080_summarize_includes_explicit_scorecard_outside_case_dir(
         ),
     )
 
-    rc = main(_summarize_args(case_dir, scorecards=[scorecard_path]))
+    rc = _summarize(case_dir, scorecards=[scorecard_path])
 
     assert rc == 0
     payload = json.loads(capsys.readouterr().out)
@@ -4591,7 +4644,7 @@ def test_experiments_080_summarize_rejects_external_scorecard_display_path_colli
     )
     output = tmp_path / "summary.json"
 
-    rc = main(_summarize_args(case_dir, output, scorecards=[first, second]))
+    rc = _summarize(case_dir, output, scorecards=[first, second])
 
     assert rc == 1
     payload = json.loads(capsys.readouterr().out)
@@ -4611,7 +4664,7 @@ def test_experiments_080_summarize_rejects_missing_explicit_scorecard(tmp_path, 
     _write_case(case_dir)
     missing_scorecard = tmp_path / "assessed_scorecard.json"
 
-    rc = main(_summarize_args(case_dir, scorecards=[missing_scorecard]))
+    rc = _summarize(case_dir, scorecards=[missing_scorecard])
 
     assert rc == 1
     payload = json.loads(capsys.readouterr().out)
@@ -4648,7 +4701,7 @@ def test_experiments_080_summarize_excludes_invalid_scorecards_from_interpretabl
         ),
     )
 
-    rc = main(_summarize_args(case_dir))
+    rc = _summarize(case_dir)
 
     assert rc == 0
     payload = json.loads(capsys.readouterr().out)
@@ -4672,7 +4725,7 @@ def test_experiments_080_summarize_rejects_invalid_scorecard_file(tmp_path, caps
     _write_json(case_dir / "bad.scorecard.json", invalid_scorecard)
     output = tmp_path / "summary.json"
 
-    rc = main(_summarize_args(case_dir, output))
+    rc = _summarize(case_dir, output)
 
     assert rc == 1
     payload = json.loads(capsys.readouterr().out)
@@ -4687,7 +4740,7 @@ def test_experiments_080_import_assessment_rejects_different_existing_output(tmp
     output_path.write_text("{}\n", encoding="utf-8")
     _write_json(assessment_path, _assessment_payload(method="human"))
 
-    rc = main(_assessment_args(scorecard_path, assessment_path, output_path))
+    rc = _import_assessment(scorecard_path, assessment_path, output_path)
 
     assert rc == 1
     payload = json.loads(capsys.readouterr().out)
@@ -4700,11 +4753,11 @@ def test_experiments_080_import_assessment_is_idempotent_when_output_matches(tmp
     assessment_path = tmp_path / "assessment.json"
     output_path = tmp_path / "assessed.scorecard.json"
     _write_json(assessment_path, _assessment_payload(method="human"))
-    assert main(_assessment_args(scorecard_path, assessment_path, output_path)) == 0
+    assert _import_assessment(scorecard_path, assessment_path, output_path) == 0
     capsys.readouterr()
     before = output_path.read_bytes()
 
-    rc = main(_assessment_args(scorecard_path, assessment_path, output_path))
+    rc = _import_assessment(scorecard_path, assessment_path, output_path)
 
     assert rc == 0
     payload = json.loads(capsys.readouterr().out)

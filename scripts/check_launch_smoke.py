@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """Quick launch smoke for a fresh source checkout.
 
-This guard validates that the public setup/demo path still reaches a working
-runtime handoff and deterministic demo artifact package from the current
+This guard validates that the public setup/demo path reaches a verified fresh
+SQLite Codex runtime action and deterministic demo artifact package from the current
 checkout. It does not install package dependencies, call an LLM, access the
 network, run subagents, or prove output quality.
 """
@@ -23,7 +23,7 @@ from typing import Any
 ROOT = Path(__file__).resolve().parents[1]
 BOUNDARY = (
     "Launch smoke verifies source-checkout setup/demo mechanics only: import, "
-    "CLI version, demo init, doctor, runtime handoff, and deterministic demo "
+    "CLI version, product init, SQLite runtime bootstrap/action, and deterministic demo "
     "artifacts. It is not semantic truth proof, output-quality improvement "
     "proof, delivery approval, or release authorization."
 )
@@ -136,20 +136,16 @@ def _check_artifacts(workspace: Path) -> dict[str, Any]:
         workspace / "config.yaml",
         workspace / "sources.yaml",
         workspace / "user.md",
-        workspace / "output" / "intermediate" / "artifact_registry.json",
-        workspace / "output" / "intermediate" / "agent_handoff.md",
-        workspace / "output" / "intermediate" / "agent_handoff.json",
-        workspace / "output" / "intermediate" / "event_log.jsonl",
-        workspace / "output" / "intermediate" / "runtime_manifest.json",
-        workspace / "output" / "intermediate" / "workflow_state.json",
+        workspace / "briefloop.db",
     ]
     missing = [str(path) for path in required if not path.exists()]
-    missing.extend(_missing_runtime_state_files(workspace))
     return {
-        "id": "handoff_artifacts",
+        "id": "sqlite_runtime_artifacts",
         "ok": not missing,
         "missing": missing,
-        "error": f"missing expected handoff artifacts: {missing}" if missing else "",
+        "error": f"missing expected SQLite runtime artifacts: {missing}"
+        if missing
+        else "",
     }
 
 
@@ -173,39 +169,36 @@ def _check_demo_script_artifacts(workspace: Path) -> dict[str, Any]:
         "id": "deterministic_demo_artifacts",
         "ok": not missing,
         "missing": missing,
-        "error": f"missing expected deterministic demo artifacts: {missing}" if missing else "",
+        "error": f"missing expected deterministic demo artifacts: {missing}"
+        if missing
+        else "",
     }
 
 
-def _missing_runtime_state_files(workspace: Path) -> list[str]:
-    handoff_path = workspace / "output" / "intermediate" / "agent_handoff.json"
+def _check_next_action(step: dict[str, Any]) -> dict[str, Any]:
     try:
-        payload = json.loads(handoff_path.read_text(encoding="utf-8"))
-    except (OSError, UnicodeDecodeError, json.JSONDecodeError):
-        return [str(handoff_path)]
-    files = payload.get("runtime_state_files")
-    if files is None:
-        return []
-    if isinstance(files, dict):
-        values = list(files.values())
-    elif isinstance(files, list):
-        values = files
-    else:
-        return ["agent_handoff.json.runtime_state_files"]
-    missing: list[str] = []
-    for item in values:
-        if not isinstance(item, str) or not item.strip():
-            missing.append("agent_handoff.json.runtime_state_files[]")
-            continue
-        candidate = (workspace / item).resolve(strict=False)
-        try:
-            candidate.relative_to(workspace.resolve())
-        except ValueError:
-            missing.append(item)
-            continue
-        if not candidate.exists():
-            missing.append(item)
-    return missing
+        payload = json.loads(str(step.get("stdout_tail") or ""))
+    except json.JSONDecodeError:
+        payload = {}
+    ok = (
+        payload.get("schema_version") == "briefloop.core_run_next_action.v2"
+        and payload.get("action_kind")
+        in {
+            "delegate",
+            "deterministic",
+            "human_decision",
+            "blocked",
+            "complete",
+        }
+        and isinstance(payload.get("action_fingerprint"), str)
+    )
+    return {
+        "id": "sqlite_runtime_next_action",
+        "ok": ok,
+        "error": "runtime next did not return a strict CoreRunNextAction"
+        if not ok
+        else "",
+    }
 
 
 def run_launch_smoke() -> dict[str, Any]:
@@ -236,32 +229,20 @@ def run_launch_smoke() -> dict[str, Any]:
                 [sys.executable, "-m", "multi_agent_brief.cli.main", "version"],
             ),
             (
-                "demo_init",
+                "product_init",
                 [
                     sys.executable,
                     "-m",
                     "multi_agent_brief.cli.main",
-                    "init",
+                    "new",
+                    "industry-weekly",
                     str(workspace),
-                    "--demo",
-                    "--force",
                     "--web-search-mode",
                     "disabled",
                 ],
             ),
             (
-                "demo_doctor",
-                [
-                    sys.executable,
-                    "-m",
-                    "multi_agent_brief.cli.main",
-                    "doctor",
-                    "--config",
-                    str(workspace / "config.yaml"),
-                ],
-            ),
-            (
-                "demo_runtime_handoff",
+                "demo_runtime_bootstrap",
                 [
                     sys.executable,
                     "-m",
@@ -270,7 +251,19 @@ def run_launch_smoke() -> dict[str, Any]:
                     "--workspace",
                     str(workspace),
                     "--runtime",
-                    "operator",
+                    "codex",
+                ],
+            ),
+            (
+                "demo_runtime_next",
+                [
+                    sys.executable,
+                    "-m",
+                    "multi_agent_brief.cli.main",
+                    "runtime",
+                    "next",
+                    "--workspace",
+                    str(workspace),
                 ],
             ),
             (
@@ -293,12 +286,23 @@ def run_launch_smoke() -> dict[str, Any]:
             )
             steps.append(result)
             if not result["ok"]:
-                return _payload(False, steps, tmp_root=tmp_root, workspace_path=workspace_path)
+                return _payload(
+                    False, steps, tmp_root=tmp_root, workspace_path=workspace_path
+                )
             if step_id == "cli_version":
                 version_check = _check_cli_version(result)
                 steps.append(version_check)
                 if not version_check["ok"]:
-                    return _payload(False, steps, tmp_root=tmp_root, workspace_path=workspace_path)
+                    return _payload(
+                        False, steps, tmp_root=tmp_root, workspace_path=workspace_path
+                    )
+            if step_id == "demo_runtime_next":
+                action_check = _check_next_action(result)
+                steps.append(action_check)
+                if not action_check["ok"]:
+                    return _payload(
+                        False, steps, tmp_root=tmp_root, workspace_path=workspace_path
+                    )
         steps.append(_check_artifacts(workspace))
         steps.append(_check_demo_script_artifacts(deterministic_demo_workspace))
         ok = all(step.get("ok") is True for step in steps)
@@ -354,7 +358,9 @@ def _print_human(payload: dict[str, Any]) -> None:
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--json", action="store_true", help="Emit machine-readable JSON.")
+    parser.add_argument(
+        "--json", action="store_true", help="Emit machine-readable JSON."
+    )
     args = parser.parse_args(argv)
 
     payload = run_launch_smoke()

@@ -49,6 +49,10 @@ def register(subparsers: argparse._SubParsersAction) -> None:
         "--industry", help="Industry slug, e.g. manufacturing."
     )
     init_parser.add_argument("--title", help="Brief title.")
+    init_parser.add_argument(
+        "--task-objective",
+        help="Explicit objective for the brief run.",
+    )
     init_parser.add_argument("--audience", help="Target reader group.")
     init_parser.add_argument(
         "--focus-areas", help="Comma-separated focus areas."
@@ -403,7 +407,7 @@ def _init_workspace(args: argparse.Namespace) -> int:
             missing_onboarding.append("company_or_org")
         if not profile.industry_text:
             missing_onboarding.append("industry_or_theme")
-        if not profile.task_objective and not profile.brief_title:
+        if not profile.task_objective:
             missing_onboarding.append("task_objective")
         if missing_onboarding:
             print(

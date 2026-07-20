@@ -2,27 +2,20 @@
 from __future__ import annotations
 
 import json
-import os
 import subprocess
-import sys
 from functools import partial
 from pathlib import Path
 
 import pytest
 from multi_agent_brief.cli.main import main
+from multi_agent_brief.core.config import load_config
+from multi_agent_brief.inputs.classifier import classify_input_dir
+from multi_agent_brief.inputs.extractor import extract_input_documents
+from multi_agent_brief.orchestrator.handoff import build_handoff, write_handoff_and_state
 from multi_agent_brief.outputs.finalize import finalize_reader_outputs
 from tests.helpers import write_workspace_files_under
 
-CLI = sys.executable, "-m", "multi_agent_brief.cli.main"
 ROOT = Path(__file__).resolve().parent.parent
-SRC = ROOT / "src"
-
-
-def _cli_env() -> dict[str, str]:
-    env = os.environ.copy()
-    existing = env.get("PYTHONPATH")
-    env["PYTHONPATH"] = str(SRC) + (os.pathsep + existing if existing else "")
-    return env
 
 
 _write_workspace = partial(
@@ -49,6 +42,78 @@ def _docx_text(path: Path) -> str:
     return paragraphs + "\n" + tables
 
 
+def _config_input_path(ws: Path) -> Path:
+    """Resolve the configured input directory exactly as the retired CLI did."""
+    cfg = load_config(ws / "config.yaml")
+    raw = (cfg.get("input", {}) or {}).get("path", "input")
+    input_path = Path(raw)
+    return input_path if input_path.is_absolute() else ws / input_path
+
+
+def _extract_inputs(input_dir: Path, ws: Path) -> dict:
+    # Direct deterministic seam behind the retired public `inputs extract` CLI.
+    return extract_input_documents(
+        input_path=input_dir,
+        workspace=ws,
+        output_dir=ws / "output",
+        backend="pipeline",
+        force=False,
+        dry_run=False,
+    )
+
+
+def _workspace_file_bytes(ws: Path) -> dict[str, bytes]:
+    return {
+        path.relative_to(ws).as_posix(): path.read_bytes()
+        for path in ws.rglob("*")
+        if path.is_file()
+    }
+
+
+# ────────────────────────────────────────────────────────────────────
+# Retired public CLI surfaces: one bounded typed-rejection matrix.
+# ────────────────────────────────────────────────────────────────────
+
+@pytest.mark.parametrize(
+    ("argv", "expected_line"),
+    [
+        (
+            ["inputs", "classify", "--config", "{config}", "--quiet"],
+            "runtime_command_unsupported",
+        ),
+        (
+            ["inputs", "extract", "--config", "{config}", "--quiet"],
+            "runtime_command_unsupported",
+        ),
+        (
+            ["finalize", "--config", "{config}"],
+            "runtime_command_unsupported",
+        ),
+        (
+            ["run", "--runtime", "operator", "--workspace", "{ws}", "--skip-doctor"],
+            "[run] runtime_adapter_unsupported",
+        ),
+    ],
+    ids=["inputs-classify", "inputs-extract", "finalize", "run-operator-runtime"],
+)
+def test_retired_public_cli_paths_fail_closed_with_zero_writes(
+    tmp_path: Path,
+    capsys,
+    argv: list[str],
+    expected_line: str,
+) -> None:
+    # LEGACY-DELETE: retired public inputs/finalize/operator-run CLI surfaces;
+    # their semantics now live only in the direct deterministic seams below.
+    ws = _write_workspace(tmp_path)
+    before_files = _workspace_file_bytes(ws)
+
+    rc = main([part.format(config=ws / "config.yaml", ws=ws) for part in argv])
+
+    assert rc == 1
+    assert capsys.readouterr().out.strip() == expected_line
+    assert _workspace_file_bytes(ws) == before_files
+
+
 # ────────────────────────────────────────────────────────────────────
 # Test 1: respects config input.path
 # ────────────────────────────────────────────────────────────────────
@@ -70,13 +135,9 @@ def test_inputs_classify_respects_config_input_path(tmp_path: Path):
     # There should be NO input/ directory
     assert not (ws / "input").exists()
 
-    result = subprocess.run(
-        [*CLI, "inputs", "classify", "--config", str(ws / "config.yaml")],
-        capture_output=True, text=True, cwd=str(ws), env=_cli_env(),
-    )
-    assert result.returncode == 0, f"stderr: {result.stderr}"
-
-    j = json.loads((ws / "output" / "input_classification.json").read_text(encoding="utf-8"))
+    # Direct deterministic seam behind the retired public `inputs classify` CLI.
+    assert _config_input_path(ws) == custom_input
+    j = classify_input_dir(_config_input_path(ws))
     evidence_names = [e["name"] for e in j["evidence"]]
     assert "real_source.md" in evidence_names
     assert len(j["feedback"]) == 0
@@ -100,13 +161,8 @@ def test_inputs_classify_detects_old_output_artifact_in_root(tmp_path: Path):
         encoding="utf-8",
     )
 
-    result = subprocess.run(
-        [*CLI, "inputs", "classify", "--config", str(ws / "config.yaml")],
-        capture_output=True, text=True, cwd=str(ws), env=_cli_env(),
-    )
-    assert result.returncode == 0, f"stderr: {result.stderr}"
-
-    j = json.loads((ws / "output" / "input_classification.json").read_text(encoding="utf-8"))
+    # Direct deterministic seam behind the retired public `inputs classify` CLI.
+    j = classify_input_dir(input_dir)
 
     evidence_names = [e["name"] for e in j["evidence"]]
     assert "real_source.md" in evidence_names
@@ -135,17 +191,17 @@ def test_feedback_only_text_does_not_contaminate_evidence_or_reader_artifacts(tm
         encoding="utf-8",
     )
 
-    result = main(["inputs", "classify", "--config", str(ws / "config.yaml"), "--quiet"])
-
-    assert result == 0
-    classification = json.loads((ws / "output" / "input_classification.json").read_text(encoding="utf-8"))
+    # Direct deterministic seam behind the retired public `inputs classify` CLI.
+    classification = classify_input_dir(input_dir)
     assert [item["name"] for item in classification["evidence"]] == ["market_source.md"]
     assert [item["name"] for item in classification["feedback"]] == ["operator_feedback.md"]
     assert sentinel in (feedback_dir / "operator_feedback.md").read_text(encoding="utf-8")
 
-    result = main(["run", "--runtime", "operator", "--workspace", str(ws), "--skip-doctor"])
-
-    assert result == 0
+    # Direct deterministic seam behind the retired public `run --runtime
+    # operator` CLI: build and write the same runtime handoff artifacts.
+    handoff = build_handoff(workspace=ws, repo_workdir=ROOT, runtime="operator", run_doctor=False)
+    written = write_handoff_and_state(handoff=handoff, workspace=ws, repo_workdir=ROOT, prefix="[test]")
+    assert written is not None
     handoff_json_path = ws / "output" / "intermediate" / "agent_handoff.json"
     handoff_md_path = ws / "output" / "intermediate" / "agent_handoff.md"
     handoff_payload = json.loads(handoff_json_path.read_text(encoding="utf-8"))
@@ -261,13 +317,8 @@ def test_inputs_classify_records_skipped_files(tmp_path: Path):
     (input_dir / "sources" / "archive.xyz").write_text("...", encoding="utf-8")
     (input_dir / "random" / "foo.md").write_text("some content", encoding="utf-8")
 
-    result = subprocess.run(
-        [*CLI, "inputs", "classify", "--config", str(ws / "config.yaml")],
-        capture_output=True, text=True, cwd=str(ws), env=_cli_env(),
-    )
-    assert result.returncode == 0, f"stderr: {result.stderr}"
-
-    j = json.loads((ws / "output" / "input_classification.json").read_text(encoding="utf-8"))
+    # Direct deterministic seam behind the retired public `inputs classify` CLI.
+    j = classify_input_dir(input_dir)
 
     skipped_names = {s["name"]: s for s in j["skipped"]}
 
@@ -326,8 +377,8 @@ def test_inputs_extract_converts_non_text_inputs_with_mineru(tmp_path: Path, mon
         fake_run,
     )
 
-    result = main(["inputs", "extract", "--config", str(ws / "config.yaml"), "--quiet"])
-    assert result == 0
+    report = _extract_inputs(input_dir, ws)
+    assert report["status"] == "completed"
 
     source_md = input_dir / "sources" / "report_pdf.mineru.md"
     context_md = input_dir / "context" / "prior_weekly_docx.mineru.md"
@@ -337,16 +388,13 @@ def test_inputs_extract_converts_non_text_inputs_with_mineru(tmp_path: Path, mon
     assert feedback_md.exists()
     assert "mabw-input-extraction" in source_md.read_text(encoding="utf-8")
 
-    report = json.loads((ws / "output" / "input_extraction_report.json").read_text(encoding="utf-8"))
-    assert report["status"] == "completed"
     extracted = {item["input_relative_path"]: item for item in report["extracted"]}
     assert extracted["sources/report.pdf"]["role"] == "evidence"
     assert extracted["context/prior_weekly.docx"]["role"] == "context"
     assert extracted["feedback/screenshot.jpg"]["role"] == "feedback"
 
-    result = main(["inputs", "classify", "--config", str(ws / "config.yaml"), "--quiet"])
-    assert result == 0
-    classified = json.loads((ws / "output" / "input_classification.json").read_text(encoding="utf-8"))
+    # Direct deterministic seam behind the retired public `inputs classify` CLI.
+    classified = classify_input_dir(input_dir)
     assert "report_pdf.mineru.md" in [item["name"] for item in classified["evidence"]]
     assert "prior_weekly_docx.mineru.md" in [item["name"] for item in classified["context"]]
     assert "screenshot_jpg.mineru.md" in [item["name"] for item in classified["feedback"]]
@@ -367,12 +415,9 @@ def test_inputs_extract_reports_missing_mineru_cli(tmp_path: Path, monkeypatch: 
         lambda name: None,
     )
 
-    result = main(["inputs", "extract", "--config", str(ws / "config.yaml"), "--quiet"])
-    assert result == 1
-    assert not (input_dir / "sources" / "report_pdf.mineru.md").exists()
-
-    report = json.loads((ws / "output" / "input_extraction_report.json").read_text(encoding="utf-8"))
+    report = _extract_inputs(input_dir, ws)
     assert report["status"] == "failed"
+    assert not (input_dir / "sources" / "report_pdf.mineru.md").exists()
     assert report["skipped"][0]["reason"] == "missing_mineru_cli"
 
 
@@ -395,10 +440,7 @@ def test_inputs_extract_fails_when_mineru_file_parse_fails(tmp_path: Path, monke
         fake_run,
     )
 
-    result = main(["inputs", "extract", "--config", str(ws / "config.yaml"), "--quiet"])
-    assert result == 1
-
-    report = json.loads((ws / "output" / "input_extraction_report.json").read_text(encoding="utf-8"))
+    report = _extract_inputs(input_dir, ws)
     assert report["status"] == "failed"
     assert report["skipped"][0]["reason"] == "mineru_cli_failed"
 
@@ -412,17 +454,10 @@ def test_inputs_classify_custom_output_creates_parent(tmp_path: Path):
     (ws / "input" / "sources").mkdir(parents=True, exist_ok=True)
     (ws / "input" / "sources" / "real.md").write_text("# real", encoding="utf-8")
 
-    deep_output = ws / "nonexistent" / "sub" / "input_classification.json"
-    assert not deep_output.parent.exists()
-
-    result = subprocess.run(
-        [*CLI, "inputs", "classify", "--config", str(ws / "config.yaml"),
-         "--output", str(deep_output)],
-        capture_output=True, text=True, cwd=str(ws), env=_cli_env(),
-    )
-    assert result.returncode == 0, f"stderr: {result.stderr}"
-    assert deep_output.exists()
-    j = json.loads(deep_output.read_text(encoding="utf-8"))
+    # LEGACY-DELETE: the retired public `inputs classify --output` CLI owned
+    # custom output path parent creation and JSON serialization; the surviving
+    # seam is the read-only classify_input_dir projection.
+    j = classify_input_dir(ws / "input")
     assert "real.md" in [e["name"] for e in j["evidence"]]
 
 
@@ -438,21 +473,13 @@ def test_inputs_classify_custom_output_does_not_create_default_output_dir(tmp_pa
     (ws / "input" / "sources").mkdir(parents=True)
     (ws / "input" / "sources" / "real.md").write_text("# real", encoding="utf-8")
 
-    custom_output = ws / "custom" / "classification.json"
-    result = main(
-        [
-            "inputs",
-            "classify",
-            "--config",
-            str(ws / "config.yaml"),
-            "--output",
-            str(custom_output),
-            "--quiet",
-        ]
-    )
+    # LEGACY-DELETE: the retired public `inputs classify --output` CLI owned
+    # custom output file writing; classify_input_dir is read-only and never
+    # creates the configured output directory.
+    assert _config_input_path(ws) == ws / "input"
+    j = classify_input_dir(_config_input_path(ws))
 
-    assert result == 0
-    assert custom_output.exists()
+    assert "real.md" in [e["name"] for e in j["evidence"]]
     assert not (ws / "configured_output").exists()
 
 
@@ -551,11 +578,17 @@ def test_finalize_reader_outputs_strip_src_markers(tmp_path: Path):
         encoding="utf-8",
     )
 
-    result = subprocess.run(
-        [*CLI, "finalize", "--config", str(ws / "config.yaml")],
-        capture_output=True, text=True, cwd=str(ws), env=_cli_env(),
+    # Direct deterministic seam behind the retired public `finalize` CLI.
+    result = finalize_reader_outputs(
+        output_dir=ws / "output",
+        project_name="Test",
+        output_formats=["markdown"],
+        output_named_outputs=True,
+        output_filename_template="{project_name}_{report_date}",
+        output_filename_tokens={"project_name": "Test", "report_date": "2026-06-30"},
+        workspace_dir=ws,
     )
-    assert result.returncode == 0, f"finalize failed: {result.stderr}"
+    assert result.delivery_markdown
 
     reader = ws / "output" / "brief.md"
     assert reader.exists(), f"brief.md not created. Files in output: {list((ws/'output').iterdir())}"

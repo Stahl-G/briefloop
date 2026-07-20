@@ -19,10 +19,14 @@ from multi_agent_brief.cli.start_commands import (
     render_handoff_cli,
     write_handoff_artifacts,
 )
+from multi_agent_brief.controls.switchboard import build_control_switchboard
+from multi_agent_brief.orchestrator.fact_layer_import import require_fast_rerun_handoff_ready
+from multi_agent_brief.orchestrator.handoff import write_handoff_and_state
 from multi_agent_brief.orchestrator_contract import contract_references_exist
 from multi_agent_brief.orchestrator_contract import resolve_repo_workdir
 from multi_agent_brief.orchestrator.runtime_state import RUNTIME_STATE_FILES
 from multi_agent_brief.orchestrator.runtime_state import (
+    check_runtime_state,
     complete_stage_transaction,
     initialize_runtime_state,
     record_decision,
@@ -68,6 +72,46 @@ manual:
 """.strip(),
     include_input_dir=True,
 )
+
+
+def _launch_handoff(
+    ws: Path,
+    *,
+    runtime: str,
+    recipe: str = "full",
+    repo_workdir: Path | None = None,
+    venv: str | None = None,
+):
+    """Drive the retired run/start/handoff launcher through its direct seam.
+
+    LEGACY-DELETE: the public `run`/`start`/`handoff` launcher CLI is retired;
+    the handoff build + runtime-state bootstrap it wrapped stays exercised here
+    through build_handoff + write_handoff_and_state.
+    """
+    handoff = build_handoff(
+        workspace=ws,
+        repo_workdir=repo_workdir or ROOT,
+        runtime=runtime,
+        recipe=recipe,
+        venv=venv,
+        run_doctor=False,
+    )
+    written = write_handoff_and_state(
+        handoff=handoff,
+        workspace=ws,
+        repo_workdir=repo_workdir or ROOT,
+        prefix="[test]",
+    )
+    assert written is not None
+    return handoff
+
+
+def _snapshot_workspace_bytes(ws: Path) -> dict[str, bytes]:
+    return {
+        path.relative_to(ws).as_posix(): path.read_bytes()
+        for path in ws.rglob("*")
+        if path.is_file()
+    }
 
 
 def _write_market_report_spec(ws: Path, *, policy_profile: str = "internet_default") -> None:
@@ -347,7 +391,7 @@ def _assert_orchestrator_contract_handoff(data: dict[str, object]) -> None:
         "delegate screener",
         "state stage-complete --stage screener",
     ]
-    assert screener_protocol["independent_completion_topologies"] == ["strict"]
+    assert screener_protocol["independent_completion_topologies"] == ["strict", "single_session"]
     analyst_protocol = protocol_stages["analyst"]
     assert analyst_protocol["topology_satisfaction"]["human_assisted"]["satisfied_by"] == "writer"
     assert "forbidden_replay_actions" not in analyst_protocol["topology_satisfaction"]["human_assisted"]
@@ -448,7 +492,7 @@ def _assert_orchestrator_contract_handoff(data: dict[str, object]) -> None:
     assert "append to candidate_claims.json from chunk workers" in text
     assert "topology satisfaction: default: satisfied by scout" in text
     assert "do not replay delegate screener, state stage-complete --stage screener" in text
-    assert "independent MUST produce (strict): screened_candidates at output/intermediate/screened_candidates.json" in text
+    assert "independent MUST produce (strict, single_session): screened_candidates at output/intermediate/screened_candidates.json" in text
     assert "role MUST produce freeze input: audited_brief at output/intermediate/audited_brief.md" in text
     assert (
         "control transaction before stage-complete: "
@@ -568,12 +612,14 @@ def test_start_no_workspace_in_non_workspace_dir(tmp_path, monkeypatch, capsys):
     assert "No workspace found" in output or "briefloop init" in output
 
 
-def test_start_auto_detects_workspace_in_cwd(tmp_path, monkeypatch):
-    """start without --workspace should detect workspace if CWD is one."""
+def test_start_auto_detects_workspace_in_cwd(tmp_path):
+    """The handoff launch bootstraps the full runtime control plane for a workspace.
+
+    The retired `start` CWD auto-detect now fails closed with a typed rejection;
+    it is covered by test_retired_launcher_public_paths_reject_without_writes.
+    """
     ws = _write_workspace(tmp_path)
-    monkeypatch.chdir(ws)
-    rc = main(["start", "--runtime", "operator", "--skip-doctor"])
-    assert rc == 0
+    _launch_handoff(ws, runtime="operator")
     assert (ws / "output" / "intermediate" / "agent_handoff.md").exists()
     json_path = ws / "output" / "intermediate" / "agent_handoff.json"
     assert json_path.exists()
@@ -596,13 +642,11 @@ def test_start_auto_detects_workspace_in_cwd(tmp_path, monkeypatch):
 
 def test_start_with_workspace_generates_handoff(tmp_path):
     ws = _write_workspace(tmp_path)
-    rc = main([
-        "start", "--runtime", "operator",
-        "--workspace", str(ws),
-        "--skip-doctor",
-        "--venv", str(tmp_path / ".venv" / "bin" / "activate"),
-    ])
-    assert rc == 0
+    _launch_handoff(
+        ws,
+        runtime="operator",
+        venv=str(tmp_path / ".venv" / "bin" / "activate"),
+    )
 
     md = ws / "output" / "intermediate" / "agent_handoff.md"
     js = ws / "output" / "intermediate" / "agent_handoff.json"
@@ -629,13 +673,11 @@ def test_start_handoff_projects_policy_profile_without_runtime_effect(tmp_path):
     ws = _write_workspace(tmp_path)
     _write_market_report_spec(ws, policy_profile="internet_default")
 
-    rc = main([
-        "start", "--runtime", "operator",
-        "--workspace", str(ws),
-        "--skip-doctor",
-        "--venv", str(tmp_path / ".venv" / "bin" / "activate"),
-    ])
-    assert rc == 0
+    _launch_handoff(
+        ws,
+        runtime="operator",
+        venv=str(tmp_path / ".venv" / "bin" / "activate"),
+    )
 
     md = (ws / "output" / "intermediate" / "agent_handoff.md").read_text(encoding="utf-8")
     data = json.loads((ws / "output" / "intermediate" / "agent_handoff.json").read_text(encoding="utf-8"))
@@ -674,13 +716,11 @@ def test_start_handoff_projects_sourcehub_runtime_search_tasks(tmp_path):
         encoding="utf-8",
     )
 
-    rc = main([
-        "start", "--runtime", "operator",
-        "--workspace", str(ws),
-        "--skip-doctor",
-        "--venv", str(tmp_path / ".venv" / "bin" / "activate"),
-    ])
-    assert rc == 0
+    _launch_handoff(
+        ws,
+        runtime="operator",
+        venv=str(tmp_path / ".venv" / "bin" / "activate"),
+    )
 
     md = (ws / "output" / "intermediate" / "agent_handoff.md").read_text(encoding="utf-8")
     data = json.loads((ws / "output" / "intermediate" / "agent_handoff.json").read_text(encoding="utf-8"))
@@ -740,13 +780,11 @@ def test_start_handoff_projects_report_template_section_order(tmp_path):
     ws = _write_workspace(tmp_path)
     _write_solar_report_spec(ws)
 
-    rc = main([
-        "start", "--runtime", "operator",
-        "--workspace", str(ws),
-        "--skip-doctor",
-        "--venv", str(tmp_path / ".venv" / "bin" / "activate"),
-    ])
-    assert rc == 0
+    _launch_handoff(
+        ws,
+        runtime="operator",
+        venv=str(tmp_path / ".venv" / "bin" / "activate"),
+    )
 
     md = (ws / "output" / "intermediate" / "agent_handoff.md").read_text(encoding="utf-8")
     data = json.loads((ws / "output" / "intermediate" / "agent_handoff.json").read_text(encoding="utf-8"))
@@ -803,13 +841,11 @@ def test_start_handoff_projects_report_template_conformance_pass(tmp_path):
         encoding="utf-8",
     )
 
-    rc = main([
-        "start", "--runtime", "operator",
-        "--workspace", str(ws),
-        "--skip-doctor",
-        "--venv", str(tmp_path / ".venv" / "bin" / "activate"),
-    ])
-    assert rc == 0
+    _launch_handoff(
+        ws,
+        runtime="operator",
+        venv=str(tmp_path / ".venv" / "bin" / "activate"),
+    )
 
     md = (ws / "output" / "intermediate" / "agent_handoff.md").read_text(encoding="utf-8")
     data = json.loads((ws / "output" / "intermediate" / "agent_handoff.json").read_text(encoding="utf-8"))
@@ -853,13 +889,11 @@ def test_start_handoff_projects_report_template_render_plan(tmp_path):
         encoding="utf-8",
     )
 
-    rc = main([
-        "start", "--runtime", "operator",
-        "--workspace", str(ws),
-        "--skip-doctor",
-        "--venv", str(tmp_path / ".venv" / "bin" / "activate"),
-    ])
-    assert rc == 0
+    _launch_handoff(
+        ws,
+        runtime="operator",
+        venv=str(tmp_path / ".venv" / "bin" / "activate"),
+    )
 
     md = (ws / "output" / "intermediate" / "agent_handoff.md").read_text(encoding="utf-8")
     data = json.loads((ws / "output" / "intermediate" / "agent_handoff.json").read_text(encoding="utf-8"))
@@ -908,13 +942,11 @@ def test_start_handoff_projects_report_template_conformance_warning(tmp_path):
         encoding="utf-8",
     )
 
-    rc = main([
-        "start", "--runtime", "operator",
-        "--workspace", str(ws),
-        "--skip-doctor",
-        "--venv", str(tmp_path / ".venv" / "bin" / "activate"),
-    ])
-    assert rc == 0
+    _launch_handoff(
+        ws,
+        runtime="operator",
+        venv=str(tmp_path / ".venv" / "bin" / "activate"),
+    )
 
     md = (ws / "output" / "intermediate" / "agent_handoff.md").read_text(encoding="utf-8")
     data = json.loads((ws / "output" / "intermediate" / "agent_handoff.json").read_text(encoding="utf-8"))
@@ -939,13 +971,11 @@ def test_start_handoff_does_not_treat_invalid_report_template_as_contract(tmp_pa
     spec["report_type"] = "unknown_report_type"
     (ws / "report_spec.yaml").write_text(yaml.safe_dump(spec, sort_keys=False), encoding="utf-8")
 
-    rc = main([
-        "start", "--runtime", "operator",
-        "--workspace", str(ws),
-        "--skip-doctor",
-        "--venv", str(tmp_path / ".venv" / "bin" / "activate"),
-    ])
-    assert rc == 0
+    _launch_handoff(
+        ws,
+        runtime="operator",
+        venv=str(tmp_path / ".venv" / "bin" / "activate"),
+    )
 
     data = json.loads((ws / "output" / "intermediate" / "agent_handoff.json").read_text(encoding="utf-8"))
     projection = data["report_template_projection"]
@@ -976,14 +1006,12 @@ def test_run_handoff_projects_trajectory_decision_narrowing(tmp_path):
             reason=f"retry {idx + 1}",
         )
 
-    rc = main([
-        "run", "--runtime", "operator",
-        "--workspace", str(ws),
-        "--skip-doctor",
-        "--venv", str(tmp_path / ".venv" / "bin" / "activate"),
-    ])
+    _launch_handoff(
+        ws,
+        runtime="operator",
+        venv=str(tmp_path / ".venv" / "bin" / "activate"),
+    )
 
-    assert rc == 0
     data = json.loads((ws / "output" / "intermediate" / "agent_handoff.json").read_text(encoding="utf-8"))
     md = (ws / "output" / "intermediate" / "agent_handoff.md").read_text(encoding="utf-8")
     text = data["prompt"] + "\n" + "\n".join(data["notes"]) + "\n" + md
@@ -998,14 +1026,12 @@ def test_start_handoff_projects_auditable_assessment_target(tmp_path):
     ws = _write_workspace(tmp_path)
     _write_auditable_condition_metadata(ws)
 
-    rc = main([
-        "start", "--runtime", "operator",
-        "--workspace", str(ws),
-        "--skip-doctor",
-        "--venv", str(tmp_path / ".venv" / "bin" / "activate"),
-    ])
+    _launch_handoff(
+        ws,
+        runtime="operator",
+        venv=str(tmp_path / ".venv" / "bin" / "activate"),
+    )
 
-    assert rc == 0
     data = json.loads((ws / "output" / "intermediate" / "agent_handoff.json").read_text(encoding="utf-8"))
     md = (ws / "output" / "intermediate" / "agent_handoff.md").read_text(encoding="utf-8")
     text = data["prompt"] + "\n" + "\n".join(data["notes"]) + "\n" + md
@@ -1038,15 +1064,12 @@ def test_start_codebuddy_handoff_strips_finalize_for_auditable_assessment_target
     ws = _write_workspace(tmp_path)
     _write_auditable_condition_metadata(ws)
 
-    rc = main([
-        "start",
-        "--workspace", str(ws),
-        "--runtime", "codebuddy",
-        "--skip-doctor",
-        "--venv", str(tmp_path / ".venv" / "bin" / "activate"),
-    ])
+    _launch_handoff(
+        ws,
+        runtime="codebuddy",
+        venv=str(tmp_path / ".venv" / "bin" / "activate"),
+    )
 
-    assert rc == 0
     data = json.loads((ws / "output" / "intermediate" / "agent_handoff.json").read_text(encoding="utf-8"))
     md = (ws / "output" / "intermediate" / "agent_handoff.md").read_text(encoding="utf-8")
     text = data["prompt"] + "\n" + "\n".join(data["notes"]) + "\n" + md
@@ -1072,13 +1095,11 @@ def test_start_codebuddy_handoff_strips_finalize_for_auditable_assessment_target
 def test_start_does_not_generate_brief(tmp_path):
     """start must NOT generate brief.md or claim_ledger.json."""
     ws = _write_workspace(tmp_path)
-    rc = main([
-        "start", "--runtime", "operator",
-        "--workspace", str(ws),
-        "--skip-doctor",
-        "--venv", str(tmp_path / ".venv" / "bin" / "activate"),
-    ])
-    assert rc == 0
+    _launch_handoff(
+        ws,
+        runtime="operator",
+        venv=str(tmp_path / ".venv" / "bin" / "activate"),
+    )
     assert not (ws / "output" / "brief.md").exists()
     assert not (ws / "output" / "intermediate" / "claim_ledger.json").exists()
     assert not (ws / "output" / "intermediate" / "audited_brief.md").exists()
@@ -1102,14 +1123,11 @@ def test_start_does_not_generate_brief(tmp_path):
 
 def test_start_hermes_handoff_contains_delegate_task(tmp_path):
     ws = _write_workspace(tmp_path)
-    rc = main([
-        "start",
-        "--workspace", str(ws),
-        "--runtime", "hermes",
-        "--skip-doctor",
-        "--venv", str(tmp_path / ".venv" / "bin" / "activate"),
-    ])
-    assert rc == 0
+    _launch_handoff(
+        ws,
+        runtime="hermes",
+        venv=str(tmp_path / ".venv" / "bin" / "activate"),
+    )
     data = json.loads((ws / "output" / "intermediate" / "agent_handoff.json").read_text(encoding="utf-8"))
     assert "delegate_task" in data["prompt"]
     assert "scout" in data["prompt"]
@@ -1118,51 +1136,41 @@ def test_start_hermes_handoff_contains_delegate_task(tmp_path):
     _assert_orchestrator_contract_handoff(data)
 
 
-def test_start_hermes_output_no_legacy_generate_brief(tmp_path, capsys):
+def test_start_hermes_output_no_legacy_generate_brief(tmp_path):
     """start --runtime hermes must not mention legacy /generate-brief in CLI output or handoff."""
     ws = _write_workspace(tmp_path)
-    rc = main([
-        "start",
-        "--workspace", str(ws),
-        "--runtime", "hermes",
-        "--skip-doctor",
-        "--venv", str(tmp_path / ".venv" / "bin" / "activate"),
-    ])
-    assert rc == 0
-    captured = capsys.readouterr()
-    cli_output = captured.out
+    handoff = _launch_handoff(
+        ws,
+        runtime="hermes",
+        venv=str(tmp_path / ".venv" / "bin" / "activate"),
+    )
+    cli_output = render_handoff_cli(handoff)
     assert "/generate-brief" not in cli_output
 
     data = json.loads((ws / "output" / "intermediate" / "agent_handoff.json").read_text(encoding="utf-8"))
     assert "/generate-brief" not in data["prompt"]
 
 
-def test_start_claude_output_contains_stage_workflow_command(tmp_path, capsys):
+def test_start_claude_output_contains_stage_workflow_command(tmp_path):
     """start --runtime claude must point the operator at the stage-running command."""
     ws = _write_workspace(tmp_path)
-    rc = main([
-        "start",
-        "--workspace", str(ws),
-        "--runtime", "claude",
-        "--skip-doctor",
-        "--venv", str(tmp_path / ".venv" / "bin" / "activate"),
-    ])
-    assert rc == 0
-    captured = capsys.readouterr()
-    assert "/generate-brief" in captured.out
-    assert "/briefloop run" in captured.out
+    handoff = _launch_handoff(
+        ws,
+        runtime="claude",
+        venv=str(tmp_path / ".venv" / "bin" / "activate"),
+    )
+    output = render_handoff_cli(handoff)
+    assert "/generate-brief" in output
+    assert "/briefloop run" in output
 
 
 def test_start_codex_handoff_uses_root_session_orchestrator(tmp_path):
     ws = _write_workspace(tmp_path)
-    rc = main([
-        "start",
-        "--workspace", str(ws),
-        "--runtime", "codex",
-        "--skip-doctor",
-        "--venv", str(tmp_path / ".venv" / "bin" / "activate"),
-    ])
-    assert rc == 0
+    _launch_handoff(
+        ws,
+        runtime="codex",
+        venv=str(tmp_path / ".venv" / "bin" / "activate"),
+    )
     data = json.loads((ws / "output" / "intermediate" / "agent_handoff.json").read_text(encoding="utf-8"))
     prompt = data["prompt"]
     assert "/generate-brief" not in prompt
@@ -1203,26 +1211,18 @@ def test_start_codex_handoff_uses_root_session_orchestrator(tmp_path):
     _assert_orchestrator_contract_handoff(data)
 
 
-def test_run_fast_rerun_recipe_requires_fact_layer_import(tmp_path, capsys):
+def test_run_fast_rerun_recipe_requires_fact_layer_import(tmp_path):
     ws = _write_workspace(tmp_path)
 
-    rc = main([
-        "run",
-        "--workspace", str(ws),
-        "--runtime", "claude",
-        "--recipe", "fast-rerun",
-        "--skip-doctor",
-        "--venv", str(tmp_path / ".venv" / "bin" / "activate"),
-    ])
-
-    assert rc == 1
-    out = capsys.readouterr().out
-    assert "E_FAST_RERUN_IMPORT_REQUIRED" in out
+    with pytest.raises(ValueError) as excinfo:
+        require_fast_rerun_handoff_ready(ws)
+    message = str(excinfo.value)
+    assert "E_FAST_RERUN_IMPORT_REQUIRED" in message
     assert (
         "briefloop state import-fact-layer --workspace <workspace> "
         "--archive <output/runs/run_id> "
         "--runtime <hermes|claude|opencode|codex|codebuddy|operator>"
-    ) in out
+    ) in message
     assert not (ws / "output" / "intermediate" / "agent_handoff.json").exists()
 
 
@@ -1231,37 +1231,23 @@ def test_run_fast_rerun_recipe_uses_imported_fact_layer_handoff(tmp_path):
     initialize_runtime_state(workspace=ws, runtime="claude", repo_workdir=ROOT, recipe="fast-rerun")
     _mark_fact_layer_imported(ws)
 
-    rc = main([
-        "run",
-        "--workspace", str(ws),
-        "--runtime", "claude",
-        "--recipe", "fast-rerun",
-        "--skip-doctor",
-        "--venv", str(tmp_path / ".venv" / "bin" / "activate"),
-    ])
+    _launch_handoff(
+        ws,
+        runtime="claude",
+        recipe="fast-rerun",
+        venv=str(tmp_path / ".venv" / "bin" / "activate"),
+    )
 
-    assert rc == 0
     data = json.loads((ws / "output" / "intermediate" / "agent_handoff.json").read_text(encoding="utf-8"))
     manifest = json.loads((ws / "output" / "intermediate" / "runtime_manifest.json").read_text(encoding="utf-8"))
     text = data["prompt"] + "\n" + "\n".join(data["notes"])
     assert data["recipe"] == "fast-rerun"
     assert manifest["recipe"] == "fast-rerun"
     assert manifest["fact_layer_import"]["source_run_id"] == "mabw-20260614T010000Z-source"
-    assert main([
-        "state",
-        "check",
-        "--workspace", str(ws),
-        "--repo-workdir", str(ROOT),
-        "--strict",
-    ]) == 0
+    check_runtime_state(workspace=ws, repo_workdir=ROOT)
     after_state_check = json.loads((ws / "output" / "intermediate" / "runtime_manifest.json").read_text(encoding="utf-8"))
     assert after_state_check["recipe"] == "fast-rerun"
-    assert main([
-        "controls",
-        "build-switchboard",
-        "--workspace", str(ws),
-        "--repo-workdir", str(ROOT),
-    ]) == 0
+    build_control_switchboard(workspace=ws, repo_workdir=ROOT)
     after_switchboard = json.loads((ws / "output" / "intermediate" / "runtime_manifest.json").read_text(encoding="utf-8"))
     assert after_switchboard["recipe"] == "fast-rerun"
     assert "Runtime recipe: fast-rerun" in text
@@ -1280,25 +1266,24 @@ def test_run_fast_rerun_recipe_uses_imported_fact_layer_handoff(tmp_path):
     assert not (ws / "output" / "brief.md").exists()
 
 
-def test_run_fast_rerun_recipe_rejects_missing_imported_file_before_handoff(tmp_path, capsys):
+def test_run_fast_rerun_recipe_rejects_missing_imported_file_before_handoff(tmp_path):
     ws = _write_workspace(tmp_path)
     initialize_runtime_state(workspace=ws, runtime="claude", repo_workdir=ROOT, recipe="fast-rerun")
     _mark_fact_layer_imported(ws)
     (ws / "output" / "intermediate" / "claim_ledger.json").unlink()
 
-    rc = main([
-        "run",
-        "--workspace", str(ws),
-        "--runtime", "claude",
-        "--recipe", "fast-rerun",
-        "--skip-doctor",
-        "--venv", str(tmp_path / ".venv" / "bin" / "activate"),
-    ])
-
-    assert rc == 1
-    out = capsys.readouterr().out
-    assert "E_FAST_RERUN_IMPORT_REQUIRED" in out
-    assert "Imported fact-layer file is missing: output/intermediate/claim_ledger.json" in out
+    with pytest.raises(ValueError) as excinfo:
+        build_handoff(
+            workspace=ws,
+            repo_workdir=ROOT,
+            runtime="claude",
+            recipe="fast-rerun",
+            venv=str(tmp_path / ".venv" / "bin" / "activate"),
+            run_doctor=False,
+        )
+    message = str(excinfo.value)
+    assert "E_FAST_RERUN_IMPORT_REQUIRED" in message
+    assert "Imported fact-layer file is missing: output/intermediate/claim_ledger.json" in message
     assert not (ws / "output" / "intermediate" / "agent_handoff.json").exists()
     assert not (ws / "output" / "intermediate" / "agent_handoff.md").exists()
     event_log = ws / "output" / "intermediate" / "event_log.jsonl"
@@ -1324,14 +1309,11 @@ def test_build_handoff_fast_rerun_requires_import_manifest(tmp_path):
 
 def test_start_operator_handoff_contains_compact_runtime_contract(tmp_path):
     ws = _write_workspace(tmp_path)
-    rc = main([
-        "start",
-        "--workspace", str(ws),
-        "--runtime", "operator",
-        "--skip-doctor",
-        "--venv", str(tmp_path / ".venv" / "bin" / "activate"),
-    ])
-    assert rc == 0
+    _launch_handoff(
+        ws,
+        runtime="operator",
+        venv=str(tmp_path / ".venv" / "bin" / "activate"),
+    )
     data = json.loads((ws / "output" / "intermediate" / "agent_handoff.json").read_text(encoding="utf-8"))
     text = (ws / "output" / "intermediate" / "agent_handoff.md").read_text(encoding="utf-8")
     assert data["runtime"] == RUNTIME_OPERATOR
@@ -1368,14 +1350,11 @@ def test_start_operator_handoff_contains_compact_runtime_contract(tmp_path):
 
 def test_start_codebuddy_handoff_contains_project_skill_and_role_agent_contract(tmp_path):
     ws = _write_workspace(tmp_path)
-    rc = main([
-        "start",
-        "--workspace", str(ws),
-        "--runtime", "codebuddy",
-        "--skip-doctor",
-        "--venv", str(tmp_path / ".venv" / "bin" / "activate"),
-    ])
-    assert rc == 0
+    _launch_handoff(
+        ws,
+        runtime="codebuddy",
+        venv=str(tmp_path / ".venv" / "bin" / "activate"),
+    )
     data = json.loads((ws / "output" / "intermediate" / "agent_handoff.json").read_text(encoding="utf-8"))
     text = (ws / "output" / "intermediate" / "agent_handoff.md").read_text(encoding="utf-8")
 
@@ -1446,24 +1425,22 @@ def test_start_codebuddy_handoff_contains_project_skill_and_role_agent_contract(
     _assert_orchestrator_contract_handoff(data)
 
 
-def test_start_codebuddy_handoff_fails_without_source_clone_assets(tmp_path, capsys):
+def test_start_codebuddy_handoff_fails_without_source_clone_assets(tmp_path):
     ws = _write_workspace(tmp_path)
     package_base = _write_packaged_contract_base(tmp_path)
 
-    rc = main([
-        "start",
-        "--workspace", str(ws),
-        "--runtime", "codebuddy",
-        "--repo-workdir", str(package_base),
-        "--skip-doctor",
-        "--venv", str(tmp_path / ".venv" / "bin" / "activate"),
-    ])
-
-    assert rc == 1
-    output = capsys.readouterr().out
-    assert "CodeBuddy runtime is source-clone-only" in output
-    assert ".codebuddy/skills/briefloop/SKILL.md" in output
-    assert ".codebuddy/agents/briefloop-scout.md" in output
+    with pytest.raises(ValueError) as excinfo:
+        build_handoff(
+            workspace=ws,
+            repo_workdir=package_base,
+            runtime="codebuddy",
+            venv=str(tmp_path / ".venv" / "bin" / "activate"),
+            run_doctor=False,
+        )
+    message = str(excinfo.value)
+    assert "CodeBuddy runtime is source-clone-only" in message
+    assert ".codebuddy/skills/briefloop/SKILL.md" in message
+    assert ".codebuddy/agents/briefloop-scout.md" in message
     assert not (ws / "output" / "intermediate" / "agent_handoff.json").exists()
 
 
@@ -1486,14 +1463,11 @@ def test_start_rejects_historical_runtime_without_writes(tmp_path):
 
 def test_handoff_with_config_generates_artifacts(tmp_path):
     ws = _write_workspace(tmp_path)
-    rc = main([
-        "handoff",
-        "--config", str(ws / "config.yaml"),
-        "--runtime", "hermes",
-        "--skip-doctor",
-        "--venv", str(tmp_path / ".venv" / "bin" / "activate"),
-    ])
-    assert rc == 0
+    _launch_handoff(
+        ws,
+        runtime="hermes",
+        venv=str(tmp_path / ".venv" / "bin" / "activate"),
+    )
     assert (ws / "output" / "intermediate" / "agent_handoff.md").exists()
     assert (ws / "output" / "intermediate" / "agent_handoff.json").exists()
     assert (ws / "output" / "intermediate" / "runtime_manifest.json").exists()
@@ -1773,14 +1747,11 @@ def test_run_requires_explicit_runtime_without_writes(tmp_path):
 def test_run_claude_contains_stage_workflow_command(tmp_path):
     """run --runtime claude must contain the command that actually runs stages."""
     ws = _write_workspace(tmp_path)
-    rc = main([
-        "run",
-        "--workspace", str(ws),
-        "--runtime", "claude",
-        "--skip-doctor",
-        "--venv", str(tmp_path / ".venv" / "bin" / "activate"),
-    ])
-    assert rc == 0
+    _launch_handoff(
+        ws,
+        runtime="claude",
+        venv=str(tmp_path / ".venv" / "bin" / "activate"),
+    )
     data = json.loads((ws / "output" / "intermediate" / "agent_handoff.json").read_text(encoding="utf-8"))
     assert "/generate-brief" in data["next_steps"]
     assert "/generate-brief" in data["prompt"]
@@ -1791,13 +1762,11 @@ def test_run_claude_contains_stage_workflow_command(tmp_path):
 def test_run_does_not_generate_brief(tmp_path):
     """run must NOT generate brief.md or claim_ledger.json."""
     ws = _write_workspace(tmp_path)
-    rc = main([
-        "run", "--runtime", "operator",
-        "--workspace", str(ws),
-        "--skip-doctor",
-        "--venv", str(tmp_path / ".venv" / "bin" / "activate"),
-    ])
-    assert rc == 0
+    _launch_handoff(
+        ws,
+        runtime="operator",
+        venv=str(tmp_path / ".venv" / "bin" / "activate"),
+    )
     assert not (ws / "output" / "brief.md").exists()
     assert not (ws / "output" / "intermediate" / "claim_ledger.json").exists()
     assert not (ws / "output" / "intermediate" / "provenance_graph.json").exists()
@@ -1805,17 +1774,80 @@ def test_run_does_not_generate_brief(tmp_path):
     assert not (ws / "output" / "intermediate" / "control_selections.json").exists()
 
 
-def test_prepare_output_points_to_run(capsys):
-    """prepare must only point to briefloop run, nothing else."""
-    try:
-        main(["prepare", "--config", "/tmp/nonexistent/config.yaml"])
-    except SystemExit:
-        pass
-    output = capsys.readouterr().out + capsys.readouterr().err
-    assert "briefloop run --workspace <workspace>" in output
-    assert "/generate-brief" not in output
-    assert "Python pipeline" not in output
-    assert "deterministic pipeline" not in output
+def test_prepare_output_points_to_run(tmp_path, capsys):
+    """prepare is a retired public path: typed rejection with zero writes."""
+    ws = _write_workspace(tmp_path)
+    before = _snapshot_workspace_bytes(ws)
+    # LEGACY-DELETE: retired public `prepare` launcher and its legacy guidance text.
+    rc = main(["prepare", "--config", str(ws / "config.yaml")])
+    assert rc == 1
+    assert capsys.readouterr().out == "runtime_command_unsupported\n"
+    assert _snapshot_workspace_bytes(ws) == before
+
+
+def test_retired_launcher_public_paths_reject_without_writes(tmp_path, monkeypatch, capsys):
+    """Bounded rejection matrix for the retired run/start/handoff launcher surface."""
+    venv = str(tmp_path / ".venv" / "bin" / "activate")
+
+    def assert_rejected(ws: Path, argv: list[str], expected: str) -> None:
+        before = _snapshot_workspace_bytes(ws)
+        assert main(argv) == 1
+        assert capsys.readouterr().out == expected
+        assert _snapshot_workspace_bytes(ws) == before
+
+    # LEGACY-DELETE: retired public `start` launcher (explicit --workspace).
+    ws_start = _write_workspace(tmp_path / "start-flag")
+    assert_rejected(
+        ws_start,
+        ["start", "--runtime", "operator", "--workspace", str(ws_start), "--skip-doctor", "--venv", venv],
+        "runtime_command_unsupported\n",
+    )
+    # LEGACY-DELETE: retired `start` CWD workspace auto-detection.
+    ws_start_cwd = _write_workspace(tmp_path / "start-cwd")
+    monkeypatch.chdir(ws_start_cwd)
+    assert_rejected(
+        ws_start_cwd,
+        ["start", "--runtime", "operator", "--skip-doctor", "--venv", venv],
+        "[start] runtime_command_unsupported\n",
+    )
+    # LEGACY-DELETE: retired non-codex `run` runtime adapters (operator/claude).
+    ws_run = _write_workspace(tmp_path / "run-operator")
+    assert_rejected(
+        ws_run,
+        ["run", "--runtime", "operator", "--workspace", str(ws_run), "--skip-doctor", "--venv", venv],
+        "[run] runtime_adapter_unsupported\n",
+    )
+    ws_rerun = _write_workspace(tmp_path / "run-fast-rerun")
+    assert_rejected(
+        ws_rerun,
+        [
+            "run", "--runtime", "claude", "--recipe", "fast-rerun",
+            "--workspace", str(ws_rerun), "--skip-doctor", "--venv", venv,
+        ],
+        "[run] runtime_adapter_unsupported\n",
+    )
+    # LEGACY-DELETE: retired `run --skip-doctor` launcher path for the codex runtime.
+    ws_codex = _write_workspace(tmp_path / "run-codex")
+    assert_rejected(
+        ws_codex,
+        ["run", "--runtime", "codex", "--workspace", str(ws_codex), "--skip-doctor", "--venv", venv],
+        "[run] runtime_command_unsupported\n",
+    )
+    # LEGACY-DELETE: retired public `handoff` generator command.
+    ws_handoff = _write_workspace(tmp_path / "handoff")
+    assert_rejected(
+        ws_handoff,
+        ["handoff", "--config", str(ws_handoff / "config.yaml"), "--runtime", "hermes", "--skip-doctor", "--venv", venv],
+        "runtime_command_unsupported\n",
+    )
+    # LEGACY-DELETE: legacy JSON control-plane workspaces are refused by every command.
+    ws_legacy = _write_workspace(tmp_path / "legacy")
+    initialize_runtime_state(runtime="operator", workspace=ws_legacy, repo_workdir=ROOT)
+    assert_rejected(
+        ws_legacy,
+        ["run", "--runtime", "claude", "--workspace", str(ws_legacy), "--skip-doctor", "--venv", venv],
+        "legacy_workspace_unsupported\n",
+    )
 
 
 # ---------------------------------------------------------------------------

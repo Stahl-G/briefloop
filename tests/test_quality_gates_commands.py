@@ -31,6 +31,7 @@ from multi_agent_brief.quality_gates.contract import (
     quality_gate_report_path_for_stage,
     require_quality_gate_binding_pass,
 )
+from multi_agent_brief.feedback.feedback_state import ingest_feedback
 from multi_agent_brief.repair import router as repair_router
 from tests.helpers import write_workspace_files_under
 
@@ -663,7 +664,60 @@ def _write_stage_gate_report(
     )
 
 
-def test_real_gate_check_blocks_current_auditor_but_keeps_repair_target(tmp_path, capsys):
+@pytest.mark.parametrize(
+    "argv",
+    [
+        ["gates", "check", "--json"],
+        ["gates", "show", "--json"],
+        ["gates", "validate", "--json"],
+        [
+            "state",
+            "decide",
+            "--stage",
+            "auditor",
+            "--decision",
+            "continue",
+            "--reason",
+            "skip quality gates",
+            "--json",
+        ],
+        [
+            "feedback",
+            "ingest",
+            "--feedback",
+            "output/intermediate/quality_gate_report.json",
+            "--source",
+            "audit",
+            "--json",
+        ],
+    ],
+    ids=["gates-check", "gates-show", "gates-validate", "state-decide", "feedback-ingest"],
+)
+def test_retired_public_gate_command_surfaces_fail_closed_on_legacy_workspace(tmp_path, capsys, argv):
+    ws = _write_workspace(tmp_path)
+    _write_ledger(ws, [])
+    _write_audited_brief(ws, "## Executive Summary\nTargetCo update.\n")
+    # LEGACY-DELETE: retired public gates/state/feedback CLI surfaces on legacy JSON
+    # workspaces; the SQLite ControlStore runtime is the sole command authority.
+    before_files = {
+        path.relative_to(ws).as_posix(): path.read_bytes()
+        for path in ws.rglob("*")
+        if path.is_file()
+    }
+
+    rc = main([argv[0], argv[1], "--workspace", str(ws), "--repo-workdir", str(ROOT), *argv[2:]])
+
+    assert rc == 1
+    assert capsys.readouterr().out.strip() == "legacy_workspace_unsupported"
+    after_files = {
+        path.relative_to(ws).as_posix(): path.read_bytes()
+        for path in ws.rglob("*")
+        if path.is_file()
+    }
+    assert after_files == before_files
+
+
+def test_real_gate_check_blocks_current_auditor_but_keeps_repair_target(tmp_path):
     ws = _write_workspace(tmp_path)
     _write_ledger(ws, [])
     _write_audited_brief(
@@ -673,18 +727,9 @@ def test_real_gate_check_blocks_current_auditor_but_keeps_repair_target(tmp_path
     _advance_to_auditor(ws)
     _write_json(ws, "audit_report.json", "{}\n")
 
-    rc = main([
-        "gates",
-        "check",
-        "--workspace",
-        str(ws),
-        "--repo-workdir",
-        str(ROOT),
-        "--json",
-    ])
+    payload = quality_gate_state.check_quality_gates(workspace=ws, repo_workdir=ROOT)
 
-    assert rc == 0
-    payload = json.loads(capsys.readouterr().out)
+    assert payload["ok"] is True
     report = payload["quality_gate_report"]
     blocker = next(finding for finding in report["findings"] if finding["finding_type"] == "number_without_source")
     assert blocker["gate_stage_id"] == "auditor"
@@ -728,53 +773,36 @@ def test_real_gate_check_blocks_current_auditor_but_keeps_repair_target(tmp_path
     assert state["workflow_state"]["blocked"] is True
     assert "blocking quality gate findings" in state["workflow_state"]["blocking_reason"]
 
-    rc = main([
-        "gates",
-        "show",
-        "--workspace",
-        str(ws),
-        "--repo-workdir",
-        str(ROOT),
-    ])
-    assert rc == 0
-    output = capsys.readouterr().out
-    assert "[gates show] required_commands:" in output
+    show_state = quality_gate_state.show_quality_gates(workspace=ws, repo_workdir=ROOT)
+    assert show_state["ok"] is True
+    assert show_state["required_commands"]
     assert (
         f"briefloop repair start --workspace {ws.resolve()} "
         "--gate-stage auditor --gate-artifact auditor_quality_gate_report --json"
-    ) in output
-    assert f"briefloop repair start --workspace {ws.resolve()} --json" not in output
-    assert "[gates show] repair_warnings:" in output
-    assert "Do not edit frozen artifacts directly." in output
-    assert "Direct edits will mark the run contaminated and non-reference-eligible." in output
-    assert "Never manually update artifact_registry.json" in output
-    assert "[gates show] repair_steps:" in output
-    assert "Delegate only the reported repair_owner role." in output
-    assert "Allow edits only to repair_route.allowed_artifacts." in output
-    assert "[gates show] repair_owner: editor" in output
-    assert "[gates show] must_rerun_from: auditor" in output
-    assert "output/intermediate/audited_brief.md" in output
-    assert "output/intermediate/audit_report.json" in output
+    ) in show_state["required_commands"]
+    assert f"briefloop repair start --workspace {ws.resolve()} --json" not in show_state["required_commands"]
+    assert show_state["repair_warnings"]
+    assert "Do not edit frozen artifacts directly." in show_state["repair_warnings"]
+    assert "Direct edits will mark the run contaminated and non-reference-eligible." in show_state["repair_warnings"]
+    assert any("Never manually update artifact_registry.json" in warning for warning in show_state["repair_warnings"])
+    assert show_state["repair_steps"]
+    assert "Delegate only the reported repair_owner role." in show_state["repair_steps"]
+    assert "Allow edits only to repair_route.allowed_artifacts." in show_state["repair_steps"]
+    assert show_state["repair_route"]["repair_owner"] == "editor"
+    assert show_state["repair_route"]["must_rerun_from"] == "auditor"
+    assert "output/intermediate/audited_brief.md" in show_state["repair_route"]["allowed_artifacts"]
+    assert "output/intermediate/audit_report.json" in show_state["repair_route"]["blocked_direct_edits"]
 
-    rc = main([
-        "state",
-        "decide",
-        "--workspace",
-        str(ws),
-        "--repo-workdir",
-        str(ROOT),
-        "--stage",
-        "auditor",
-        "--decision",
-        "continue",
-        "--reason",
-        "skip quality gates",
-        "--json",
-    ])
-    assert rc == 1
-    payload = json.loads(capsys.readouterr().out)
-    assert payload["error_code"] == "E_COMPLETION_TRANSACTION_REQUIRED"
-    assert payload["details"]["required_command"] == "stage-complete"
+    with pytest.raises(RuntimeStateError) as excinfo:
+        runtime_state.record_decision(
+            workspace=ws,
+            stage_id="auditor",
+            decision="continue",
+            reason="skip quality gates",
+            repo_workdir=ROOT,
+        )
+    assert excinfo.value.error_code == "E_COMPLETION_TRANSACTION_REQUIRED"
+    assert excinfo.value.details["required_command"] == "stage-complete"
 
 
 @pytest.mark.parametrize("repair_owner", ["human", "human_review", "human-review"])
@@ -1194,7 +1222,7 @@ def test_runtime_repair_instructions_use_scoped_current_gate_start() -> None:
     assert "do not use unscoped repair start for current-gate blockers" in combined_text
 
 
-def test_evaluate_quality_gate_findings_is_read_only_and_matches_report(tmp_path, capsys):
+def test_evaluate_quality_gate_findings_is_read_only_and_matches_report(tmp_path):
     ws = _write_workspace(tmp_path)
     event_log = ws / "output" / "intermediate" / "event_log.jsonl"
     event_log_before = event_log.read_bytes()
@@ -1225,17 +1253,9 @@ def test_evaluate_quality_gate_findings_is_read_only_and_matches_report(tmp_path
     assert not _auditor_report_path(ws).exists()
     assert event_log.read_bytes() == event_log_before
 
-    rc = main([
-        "gates",
-        "check",
-        "--workspace",
-        str(ws),
-        "--repo-workdir",
-        str(ROOT),
-        "--json",
-    ])
-    assert rc == 0
-    report = json.loads(capsys.readouterr().out)["quality_gate_report"]
+    state = quality_gate_state.check_quality_gates(workspace=ws, repo_workdir=ROOT)
+    assert state["ok"] is True
+    report = state["quality_gate_report"]
     report_finding_types = {
         gate_id: [finding["finding_type"] for finding in report["findings"] if finding["gate_id"] == gate_id]
         for gate_id in sorted(GATE_IDS)
@@ -1315,7 +1335,7 @@ def test_parallel_quality_gate_errors_wait_for_scheduled_gates(tmp_path, monkeyp
     assert target_called["value"] is True
 
 
-def test_gates_check_writes_report_and_events_for_material_blocker(tmp_path, capsys):
+def test_gates_check_writes_report_and_events_for_material_blocker(tmp_path):
     ws = _write_workspace(tmp_path)
     _write_ledger(ws, [])
     _write_audited_brief(
@@ -1323,18 +1343,9 @@ def test_gates_check_writes_report_and_events_for_material_blocker(tmp_path, cap
         "## Executive Summary\nTargetCo update.\n\n## Detail\nRevenue was $42 million.\n",
     )
 
-    rc = main([
-        "gates",
-        "check",
-        "--workspace",
-        str(ws),
-        "--repo-workdir",
-        str(ROOT),
-        "--json",
-    ])
+    payload = quality_gate_state.check_quality_gates(workspace=ws, repo_workdir=ROOT)
 
-    assert rc == 0
-    payload = json.loads(capsys.readouterr().out)
+    assert payload["ok"] is True
     report = payload["quality_gate_report"]
     assert report["status"] == "fail"
     assert _report_path(ws).exists()
@@ -1504,40 +1515,24 @@ def test_gates_check_finalize_stage_not_blocked_by_frozen_auditor_gate(tmp_path)
     assert _finalize_report_path(ws).exists()
 
 
-def test_gate_report_can_be_explicitly_ingested_as_audit_feedback(tmp_path, capsys):
+def test_gate_report_can_be_explicitly_ingested_as_audit_feedback(tmp_path):
     ws = _write_workspace(tmp_path)
     _write_ledger(ws, [])
     _write_audited_brief(
         ws,
         "## Executive Summary\nTargetCo update.\n\n## Detail\nRevenue was $42 million.\n",
     )
-    assert main([
-        "gates",
-        "check",
-        "--workspace",
-        str(ws),
-        "--repo-workdir",
-        str(ROOT),
-    ]) == 0
-    capsys.readouterr()
+    check_state = quality_gate_state.check_quality_gates(workspace=ws, repo_workdir=ROOT)
+    assert check_state["ok"] is True
     assert not (ws / "output" / "intermediate" / "feedback_issues.json").exists()
 
-    rc = main([
-        "feedback",
-        "ingest",
-        "--workspace",
-        str(ws),
-        "--feedback",
-        str(_report_path(ws)),
-        "--source",
-        "audit",
-        "--repo-workdir",
-        str(ROOT),
-        "--json",
-    ])
-
-    assert rc == 0
-    issue = json.loads(capsys.readouterr().out)["feedback_issues"]["issues"][0]
+    payload = ingest_feedback(
+        workspace=ws,
+        feedback_path=str(_report_path(ws)),
+        source="audit",
+        repo_workdir=ROOT,
+    )
+    issue = payload["feedback_issues"]["issues"][0]
     assert issue["source"] == "audit"
     assert issue["status"] == "open"
     assert issue["stage_id"] == "editor"
@@ -1633,7 +1628,7 @@ def test_quality_gates_do_not_warn_when_strategic_implication_is_ledger_supporte
     ]
 
 
-def test_final_abstract_quality_warns_without_blocking_under_strict(tmp_path, capsys):
+def test_final_abstract_quality_warns_without_blocking_under_strict(tmp_path):
     ws = _write_workspace(tmp_path)
     (ws / "config.yaml").write_text(
         (ws / "config.yaml").read_text(encoding="utf-8")
@@ -1653,19 +1648,10 @@ def test_final_abstract_quality_warns_without_blocking_under_strict(tmp_path, ca
         "- Case: TargetCo demo facility\n",
     )
 
-    rc = main([
-        "gates",
-        "check",
-        "--workspace",
-        str(ws),
-        "--repo-workdir",
-        str(ROOT),
-        "--strict",
-        "--json",
-    ])
+    state = quality_gate_state.check_quality_gates(workspace=ws, repo_workdir=ROOT, strict=True)
 
-    assert rc == 0
-    report = json.loads(capsys.readouterr().out)["quality_gate_report"]
+    assert state["ok"] is True
+    report = state["quality_gate_report"]
     findings = [item for item in report["findings"] if item["gate_id"] == "final_abstract_quality"]
     finding_types = {item["finding_type"] for item in findings}
     assert report["status"] == "warning"
@@ -1866,7 +1852,7 @@ def test_coverage_omission_warns_when_selected_ledger_claim_is_not_cited(tmp_pat
     assert findings[0]["claim_id"] == "CL-001"
 
 
-def test_coverage_omission_does_not_require_internal_claim_refs_in_reader_brief(tmp_path, capsys):
+def test_coverage_omission_does_not_require_internal_claim_refs_in_reader_brief(tmp_path):
     ws = _write_workspace(tmp_path)
     _write_ledger(
         ws,
@@ -1897,23 +1883,16 @@ def test_coverage_omission_does_not_require_internal_claim_refs_in_reader_brief(
         "- URL: [https://example.com/targetco-demo](https://example.com/targetco-demo)\n",
     )
 
-    rc = main([
-        "gates",
-        "check",
-        "--workspace",
-        str(ws),
-        "--stage",
-        "finalize",
-        "--brief",
-        "output/brief.md",
-        "--strict",
-        "--repo-workdir",
-        str(ROOT),
-        "--json",
-    ])
+    state = quality_gate_state.check_quality_gates(
+        workspace=ws,
+        brief="output/brief.md",
+        stage_id="finalize",
+        strict=True,
+        repo_workdir=ROOT,
+    )
 
-    assert rc == 0
-    report = json.loads(capsys.readouterr().out)["quality_gate_report"]
+    assert state["ok"] is True
+    report = state["quality_gate_report"]
     projection = report["metadata"]["coverage_omission_projection"]
     findings = [item for item in report["findings"] if item["gate_id"] == "coverage_omission"]
     assert report["metadata"]["reader_facing_mode"] is True
@@ -2405,46 +2384,21 @@ def test_quality_gate_invalid_claim_ledger_dependency_skips_claim_support_findin
     ]
 
 
-def test_gates_show_and_validate_are_machine_readable(tmp_path, capsys):
+def test_gates_show_and_validate_are_machine_readable(tmp_path):
     ws = _write_workspace(tmp_path)
     _write_ledger(ws, [])
     _write_audited_brief(ws, "## Executive Summary\nTargetCo update.\n")
-    assert main([
-        "gates",
-        "check",
-        "--workspace",
-        str(ws),
-        "--repo-workdir",
-        str(ROOT),
-    ]) == 0
-    capsys.readouterr()
+    check_state = quality_gate_state.check_quality_gates(workspace=ws, repo_workdir=ROOT)
+    assert check_state["ok"] is True
 
-    rc = main([
-        "gates",
-        "show",
-        "--workspace",
-        str(ws),
-        "--repo-workdir",
-        str(ROOT),
-        "--json",
-    ])
-    assert rc == 0
-    assert json.loads(capsys.readouterr().out)["ok"] is True
+    show_state = quality_gate_state.show_quality_gates(workspace=ws, repo_workdir=ROOT)
+    assert show_state["ok"] is True
 
-    rc = main([
-        "gates",
-        "validate",
-        "--workspace",
-        str(ws),
-        "--repo-workdir",
-        str(ROOT),
-        "--json",
-    ])
-    assert rc == 0
-    assert json.loads(capsys.readouterr().out)["ok"] is True
+    result = quality_gate_state.validate_quality_gates_workspace(workspace=ws, repo_workdir=ROOT)
+    assert result["ok"] is True
 
 
-def test_gates_validate_rejects_unknown_stage_and_artifact_refs(tmp_path, capsys):
+def test_gates_validate_rejects_unknown_stage_and_artifact_refs(tmp_path):
     ws = _write_workspace(tmp_path)
     _report_path(ws).parent.mkdir(parents=True, exist_ok=True)
     _report_path(ws).write_text(
@@ -2489,24 +2443,14 @@ def test_gates_validate_rejects_unknown_stage_and_artifact_refs(tmp_path, capsys
         encoding="utf-8",
     )
 
-    rc = main([
-        "gates",
-        "validate",
-        "--workspace",
-        str(ws),
-        "--repo-workdir",
-        str(ROOT),
-        "--json",
-    ])
+    result = quality_gate_state.validate_quality_gates_workspace(workspace=ws, repo_workdir=ROOT)
 
-    assert rc == 1
-    result = json.loads(capsys.readouterr().out)
     assert result["ok"] is False
     assert any("stage_id is unknown" in error for error in result["errors"])
     assert any("artifact_id is unknown" in error for error in result["errors"])
 
 
-def test_explicit_reader_brief_skips_source_reference_material_gate(tmp_path, capsys):
+def test_explicit_reader_brief_skips_source_reference_material_gate(tmp_path):
     ws = _write_workspace(tmp_path)
     _write_ledger(ws, [
         {
@@ -2522,20 +2466,14 @@ def test_explicit_reader_brief_skips_source_reference_material_gate(tmp_path, ca
         "## Executive Summary\nTargetCo revenue was $42 million.\n",
     )
 
-    rc = main([
-        "gates",
-        "check",
-        "--workspace",
-        str(ws),
-        "--brief",
-        "output/brief.md",
-        "--repo-workdir",
-        str(ROOT),
-        "--json",
-    ])
+    state = quality_gate_state.check_quality_gates(
+        workspace=ws,
+        brief="output/brief.md",
+        repo_workdir=ROOT,
+    )
 
-    assert rc == 0
-    report = json.loads(capsys.readouterr().out)["quality_gate_report"]
+    assert state["ok"] is True
+    report = state["quality_gate_report"]
     finding_types = {finding["finding_type"] for finding in report["findings"]}
     assert "number_without_source" not in finding_types
     assert "target_priority_claim_missing_from_summary" not in finding_types
@@ -2544,7 +2482,7 @@ def test_explicit_reader_brief_skips_source_reference_material_gate(tmp_path, ca
     assert _finalize_report_path(ws).exists()
 
 
-def test_delivery_reader_brief_skips_internal_citation_material_gate(tmp_path, capsys):
+def test_delivery_reader_brief_skips_internal_citation_material_gate(tmp_path):
     ws = _write_workspace(tmp_path)
     _write_ledger(ws, [
         {
@@ -2561,20 +2499,14 @@ def test_delivery_reader_brief_skips_internal_citation_material_gate(tmp_path, c
         "## Source Appendix\n### [S1] TargetCo Filing\n",
     )
 
-    rc = main([
-        "gates",
-        "check",
-        "--workspace",
-        str(ws),
-        "--brief",
-        "output/delivery/brief.md",
-        "--repo-workdir",
-        str(ROOT),
-        "--json",
-    ])
+    state = quality_gate_state.check_quality_gates(
+        workspace=ws,
+        brief="output/delivery/brief.md",
+        repo_workdir=ROOT,
+    )
 
-    assert rc == 0
-    report = json.loads(capsys.readouterr().out)["quality_gate_report"]
+    assert state["ok"] is True
+    report = state["quality_gate_report"]
     finding_types = {finding["finding_type"] for finding in report["findings"]}
     assert "number_without_source" not in finding_types
     assert report["metadata"]["reader_facing_mode"] is True
@@ -2582,7 +2514,7 @@ def test_delivery_reader_brief_skips_internal_citation_material_gate(tmp_path, c
     assert report["metadata"]["brief"] == "output/delivery/brief.md"
 
 
-def test_auditable_brief_hyphenated_target_claim_ref_counts_for_summary(tmp_path, capsys):
+def test_auditable_brief_hyphenated_target_claim_ref_counts_for_summary(tmp_path):
     ws = _write_workspace(tmp_path)
     _write_ledger(ws, [
         {
@@ -2598,24 +2530,16 @@ def test_auditable_brief_hyphenated_target_claim_ref_counts_for_summary(tmp_path
         "## Executive Summary\nTargetCo revenue was $42 million. [src:CLM-001]\n",
     )
 
-    rc = main([
-        "gates",
-        "check",
-        "--workspace",
-        str(ws),
-        "--repo-workdir",
-        str(ROOT),
-        "--json",
-    ])
+    state = quality_gate_state.check_quality_gates(workspace=ws, repo_workdir=ROOT)
 
-    assert rc == 0
-    report = json.loads(capsys.readouterr().out)["quality_gate_report"]
+    assert state["ok"] is True
+    report = state["quality_gate_report"]
     finding_types = {finding["finding_type"] for finding in report["findings"]}
     assert "target_priority_claim_missing_from_summary" not in finding_types
     assert "number_without_source" not in finding_types
 
 
-def test_gates_check_accepts_cwd_relative_workspace_prefixed_paths(tmp_path, monkeypatch, capsys):
+def test_gates_check_accepts_cwd_relative_workspace_prefixed_paths(tmp_path, monkeypatch):
     repo = tmp_path / "repo"
     work = repo / "work"
     work.mkdir(parents=True)
@@ -2635,29 +2559,22 @@ def test_gates_check_accepts_cwd_relative_workspace_prefixed_paths(tmp_path, mon
     )
     monkeypatch.chdir(repo)
 
-    rc = main([
-        "gates",
-        "check",
-        "--workspace",
-        str(ws.relative_to(repo)),
-        "--brief",
-        str((ws / "output" / "intermediate" / "audited_brief.md").relative_to(repo)),
-        "--ledger",
-        str((ws / "output" / "intermediate" / "claim_ledger.json").relative_to(repo)),
-        "--repo-workdir",
-        str(ROOT),
-        "--json",
-    ])
+    state = quality_gate_state.check_quality_gates(
+        workspace=str(ws.relative_to(repo)),
+        brief=str((ws / "output" / "intermediate" / "audited_brief.md").relative_to(repo)),
+        ledger=str((ws / "output" / "intermediate" / "claim_ledger.json").relative_to(repo)),
+        repo_workdir=ROOT,
+    )
 
-    assert rc == 0
-    report = json.loads(capsys.readouterr().out)["quality_gate_report"]
+    assert state["ok"] is True
+    report = state["quality_gate_report"]
     assert report["metadata"]["brief"] == "output/intermediate/audited_brief.md"
     assert report["metadata"]["ledger"] == "output/intermediate/claim_ledger.json"
     finding_types = {finding["finding_type"] for finding in report["findings"]}
     assert "number_without_source" not in finding_types
 
 
-def test_reader_brief_missing_target_blocks_finalize_stage(tmp_path, capsys):
+def test_reader_brief_missing_target_blocks_finalize_stage(tmp_path):
     ws = _write_workspace(tmp_path)
     _write_ledger(ws, [])
     _write_audited_brief(ws, "## Executive Summary\nTargetCo update.\n")
@@ -2666,20 +2583,14 @@ def test_reader_brief_missing_target_blocks_finalize_stage(tmp_path, capsys):
     _set_current_stage(ws, "finalize")
     _write_reader_brief(ws, "## Executive Summary\nMarket update without the configured company.\n")
 
-    rc = main([
-        "gates",
-        "check",
-        "--workspace",
-        str(ws),
-        "--brief",
-        "output/brief.md",
-        "--repo-workdir",
-        str(ROOT),
-        "--json",
-    ])
+    state = quality_gate_state.check_quality_gates(
+        workspace=ws,
+        brief="output/brief.md",
+        repo_workdir=ROOT,
+    )
 
-    assert rc == 0
-    report = json.loads(capsys.readouterr().out)["quality_gate_report"]
+    assert state["ok"] is True
+    report = state["quality_gate_report"]
     gap = next(finding for finding in report["findings"] if finding["finding_type"] == "target_relevance_gap")
     assert gap["gate_stage_id"] == "finalize"
     assert gap["gate_artifact_id"] == "finalize_quality_gate_report"
@@ -2690,28 +2601,19 @@ def test_reader_brief_missing_target_blocks_finalize_stage(tmp_path, capsys):
     assert state["workflow_state"]["blocked"] is True
     assert "blocking quality gate findings" in state["workflow_state"]["blocking_reason"]
 
-    rc = main([
-        "state",
-        "decide",
-        "--workspace",
-        str(ws),
-        "--repo-workdir",
-        str(ROOT),
-        "--stage",
-        "finalize",
-        "--decision",
-        "finalize",
-        "--reason",
-        "ship",
-        "--json",
-    ])
-    assert rc == 1
-    payload = json.loads(capsys.readouterr().out)
-    assert payload["error_code"] == "E_COMPLETION_TRANSACTION_REQUIRED"
-    assert payload["details"]["required_command"] == "finalize-complete"
+    with pytest.raises(RuntimeStateError) as excinfo:
+        runtime_state.record_decision(
+            workspace=ws,
+            stage_id="finalize",
+            decision="finalize",
+            reason="ship",
+            repo_workdir=ROOT,
+        )
+    assert excinfo.value.error_code == "E_COMPLETION_TRANSACTION_REQUIRED"
+    assert excinfo.value.details["required_command"] == "finalize-complete"
 
 
-def test_freshness_reads_config_report_defaults_and_preserves_zero(tmp_path, capsys):
+def test_freshness_reads_config_report_defaults_and_preserves_zero(tmp_path):
     ws = _write_workspace(tmp_path)
     (ws / "config.yaml").write_text(
         """
@@ -2738,41 +2640,25 @@ input:
     ])
     _write_audited_brief(ws, "## Executive Summary\nTargetCo update. [src:OLD_ABCDEF]\n")
 
-    rc = main([
-        "gates",
-        "check",
-        "--workspace",
-        str(ws),
-        "--repo-workdir",
-        str(ROOT),
-        "--json",
-    ])
+    state = quality_gate_state.check_quality_gates(workspace=ws, repo_workdir=ROOT)
 
-    assert rc == 0
-    report = json.loads(capsys.readouterr().out)["quality_gate_report"]
+    assert state["ok"] is True
+    report = state["quality_gate_report"]
     assert report["report_date"] == "2026-06-08"
     assert report["metadata"]["max_source_age_days"] == 0
     assert any(finding["finding_type"] == "stale_source" for finding in report["findings"])
 
 
-def test_policy_profile_strict_target_relevance_tightens_existing_gate(tmp_path, capsys):
+def test_policy_profile_strict_target_relevance_tightens_existing_gate(tmp_path):
     ws = _write_workspace(tmp_path)
     _write_report_spec(ws, policy_profile="finance_default")
     _write_supported_target_ledger(ws)
     _write_audited_brief(ws, "TargetCo update is discussed outside a summary. [src:CL-001]\n")
 
-    rc = main([
-        "gates",
-        "check",
-        "--workspace",
-        str(ws),
-        "--repo-workdir",
-        str(ROOT),
-        "--json",
-    ])
+    state = quality_gate_state.check_quality_gates(workspace=ws, repo_workdir=ROOT)
 
-    assert rc == 0
-    report = json.loads(capsys.readouterr().out)["quality_gate_report"]
+    assert state["ok"] is True
+    report = state["quality_gate_report"]
     adapter = report["metadata"]["policy_gate_adapter"]
     assert adapter["status"] == "applied"
     assert adapter["policy_profile_id"] == "finance_default"
@@ -2783,7 +2669,7 @@ def test_policy_profile_strict_target_relevance_tightens_existing_gate(tmp_path,
     assert finding["metadata"]["strict"] is True
 
 
-def test_quality_gates_enabled_blocks_required_stage_when_report_missing(tmp_path, capsys):
+def test_quality_gates_enabled_blocks_required_stage_when_report_missing(tmp_path):
     ws = _write_workspace(tmp_path)
     (ws / "config.yaml").write_text(
         """
@@ -2811,28 +2697,19 @@ input:
     assert state["workflow_state"]["blocked"] is True
     assert "requires output/intermediate/gates/auditor_quality_gate_report.json" in state["workflow_state"]["blocking_reason"]
 
-    rc = main([
-        "state",
-        "decide",
-        "--workspace",
-        str(ws),
-        "--repo-workdir",
-        str(ROOT),
-        "--stage",
-        "auditor",
-        "--decision",
-        "continue",
-        "--reason",
-        "skip missing gate",
-        "--json",
-    ])
-    assert rc == 1
-    payload = json.loads(capsys.readouterr().out)
-    assert payload["error_code"] == "E_COMPLETION_TRANSACTION_REQUIRED"
-    assert payload["details"]["required_command"] == "stage-complete"
+    with pytest.raises(RuntimeStateError) as excinfo:
+        runtime_state.record_decision(
+            workspace=ws,
+            stage_id="auditor",
+            decision="continue",
+            reason="skip missing gate",
+            repo_workdir=ROOT,
+        )
+    assert excinfo.value.error_code == "E_COMPLETION_TRANSACTION_REQUIRED"
+    assert excinfo.value.details["required_command"] == "stage-complete"
 
 
-def test_gates_validate_json_rolls_up_auditor_scoped_status(tmp_path, capsys):
+def test_gates_validate_json_rolls_up_auditor_scoped_status(tmp_path):
     ws = _write_workspace(tmp_path)
     _auditor_report_path(ws).parent.mkdir(parents=True, exist_ok=True)
     _auditor_report_path(ws).write_text(
@@ -2840,15 +2717,14 @@ def test_gates_validate_json_rolls_up_auditor_scoped_status(tmp_path, capsys):
         encoding="utf-8",
     )
 
-    rc = main(["gates", "validate", "--workspace", str(ws), "--repo-workdir", str(ROOT), "--json"])
+    payload = quality_gate_state.validate_quality_gates_workspace(workspace=ws, repo_workdir=ROOT)
 
-    assert rc == 0
-    payload = json.loads(capsys.readouterr().out)
+    assert payload["ok"] is True
     assert payload["status"] == "fail"
     assert payload["statuses"] == {"auditor_quality_gate_report": "fail"}
 
 
-def test_gates_validate_json_rolls_up_finalize_scoped_status(tmp_path, capsys):
+def test_gates_validate_json_rolls_up_finalize_scoped_status(tmp_path):
     ws = _write_workspace(tmp_path)
     _finalize_report_path(ws).parent.mkdir(parents=True, exist_ok=True)
     _finalize_report_path(ws).write_text(
@@ -2856,15 +2732,14 @@ def test_gates_validate_json_rolls_up_finalize_scoped_status(tmp_path, capsys):
         encoding="utf-8",
     )
 
-    rc = main(["gates", "validate", "--workspace", str(ws), "--repo-workdir", str(ROOT), "--json"])
+    payload = quality_gate_state.validate_quality_gates_workspace(workspace=ws, repo_workdir=ROOT)
 
-    assert rc == 0
-    payload = json.loads(capsys.readouterr().out)
+    assert payload["ok"] is True
     assert payload["status"] == "warning"
     assert payload["statuses"] == {"finalize_quality_gate_report": "warning"}
 
 
-def test_gates_validate_json_rolls_up_both_scoped_statuses(tmp_path, capsys):
+def test_gates_validate_json_rolls_up_both_scoped_statuses(tmp_path):
     ws = _write_workspace(tmp_path)
     _auditor_report_path(ws).parent.mkdir(parents=True, exist_ok=True)
     _auditor_report_path(ws).write_text(
@@ -2876,10 +2751,9 @@ def test_gates_validate_json_rolls_up_both_scoped_statuses(tmp_path, capsys):
         encoding="utf-8",
     )
 
-    rc = main(["gates", "validate", "--workspace", str(ws), "--repo-workdir", str(ROOT), "--json"])
+    payload = quality_gate_state.validate_quality_gates_workspace(workspace=ws, repo_workdir=ROOT)
 
-    assert rc == 0
-    payload = json.loads(capsys.readouterr().out)
+    assert payload["ok"] is True
     assert payload["status"] == "fail"
     assert payload["statuses"] == {
         "auditor_quality_gate_report": "pass",
@@ -2903,7 +2777,7 @@ def test_gates_check_rolls_back_report_when_event_append_fails(tmp_path, monkeyp
     assert not _report_path(ws).exists()
 
 
-def test_strict_freshness_gate_blocks_stale_source(tmp_path, capsys):
+def test_strict_freshness_gate_blocks_stale_source(tmp_path):
     ws = _write_workspace(tmp_path)
     _write_ledger(ws, [
         {
@@ -2919,29 +2793,22 @@ def test_strict_freshness_gate_blocks_stale_source(tmp_path, capsys):
         "## Executive Summary\nTargetCo update. [src:OLD_ABCDEF]\n",
     )
 
-    rc = main([
-        "gates",
-        "check",
-        "--workspace",
-        str(ws),
-        "--repo-workdir",
-        str(ROOT),
-        "--report-date",
-        "2026-06-08",
-        "--max-source-age-days",
-        "14",
-        "--strict",
-        "--json",
-    ])
+    state = quality_gate_state.check_quality_gates(
+        workspace=ws,
+        report_date="2026-06-08",
+        max_source_age_days=14,
+        strict=True,
+        repo_workdir=ROOT,
+    )
 
-    assert rc == 0
-    report = json.loads(capsys.readouterr().out)["quality_gate_report"]
+    assert state["ok"] is True
+    report = state["quality_gate_report"]
     stale = [finding for finding in report["findings"] if finding["finding_type"] == "stale_source"]
     assert stale
     assert stale[0]["blocking_level"] == "blocking"
 
 
-def test_quality_gate_blocker_enforced_by_state_check_and_decide(tmp_path, capsys):
+def test_quality_gate_blocker_enforced_by_state_check_and_decide(tmp_path):
     ws = _write_workspace(tmp_path)
     _write_ledger(ws, [])
     _write_audited_brief(
@@ -3001,46 +2868,29 @@ def test_quality_gate_blocker_enforced_by_state_check_and_decide(tmp_path, capsy
     assert workflow["blocked"] is True
     assert "blocking quality gate findings" in workflow["blocking_reason"]
 
-    rc = main([
-        "state",
-        "decide",
-        "--workspace",
-        str(ws),
-        "--repo-workdir",
-        str(ROOT),
-        "--stage",
-        "auditor",
-        "--decision",
-        "continue",
-        "--reason",
-        "skip quality gates",
-        "--json",
-    ])
-    assert rc == 1
-    payload = json.loads(capsys.readouterr().out)
-    assert payload["error_code"] == "E_COMPLETION_TRANSACTION_REQUIRED"
-    assert payload["details"]["required_command"] == "stage-complete"
+    with pytest.raises(RuntimeStateError) as excinfo:
+        runtime_state.record_decision(
+            workspace=ws,
+            stage_id="auditor",
+            decision="continue",
+            reason="skip quality gates",
+            repo_workdir=ROOT,
+        )
+    assert excinfo.value.error_code == "E_COMPLETION_TRANSACTION_REQUIRED"
+    assert excinfo.value.details["required_command"] == "stage-complete"
 
 
-def test_editor_new_fact_gate_warns_when_editor_adds_number(tmp_path, capsys):
+def test_editor_new_fact_gate_warns_when_editor_adds_number(tmp_path):
     ws = _prepare_editor_gate_workspace(
         tmp_path,
         analyst_text="## Executive Summary\nTargetCo opened a demo facility. [src:CL-001]\n",
         editor_text="## Executive Summary\nTargetCo opened a demo facility and reported 42 deployments. [src:CL-001]\n",
     )
 
-    rc = main([
-        "gates",
-        "check",
-        "--workspace",
-        str(ws),
-        "--repo-workdir",
-        str(ROOT),
-        "--json",
-    ])
+    state = quality_gate_state.check_quality_gates(workspace=ws, repo_workdir=ROOT)
 
-    assert rc == 0
-    report = json.loads(capsys.readouterr().out)["quality_gate_report"]
+    assert state["ok"] is True
+    report = state["quality_gate_report"]
     editor_result = next(result for result in report["gate_results"] if result["gate_id"] == "editor_new_fact")
     editor_finding = next(finding for finding in report["findings"] if finding["finding_type"] == "editor_introduced_new_fact")
     assert report["status"] == "warning"
@@ -3051,7 +2901,7 @@ def test_editor_new_fact_gate_warns_when_editor_adds_number(tmp_path, capsys):
     assert editor_finding["metadata"]["introduced_numbers"] == ["42"]
 
 
-def test_editor_new_fact_gate_allows_pure_restructuring(tmp_path, capsys):
+def test_editor_new_fact_gate_allows_pure_restructuring(tmp_path):
     ws = _prepare_editor_gate_workspace(
         tmp_path,
         analyst_text=(
@@ -3066,18 +2916,10 @@ def test_editor_new_fact_gate_allows_pure_restructuring(tmp_path, capsys):
         ),
     )
 
-    rc = main([
-        "gates",
-        "check",
-        "--workspace",
-        str(ws),
-        "--repo-workdir",
-        str(ROOT),
-        "--json",
-    ])
+    state = quality_gate_state.check_quality_gates(workspace=ws, repo_workdir=ROOT)
 
-    assert rc == 0
-    report = json.loads(capsys.readouterr().out)["quality_gate_report"]
+    assert state["ok"] is True
+    report = state["quality_gate_report"]
     finding_types = {finding["finding_type"] for finding in report["findings"]}
     editor_result = next(result for result in report["gate_results"] if result["gate_id"] == "editor_new_fact")
     assert "editor_introduced_new_fact" not in finding_types
@@ -3085,26 +2927,17 @@ def test_editor_new_fact_gate_allows_pure_restructuring(tmp_path, capsys):
     assert editor_result["blocking"] is False
 
 
-def test_editor_new_fact_gate_allows_added_markdown_heading_in_strict_mode(tmp_path, capsys):
+def test_editor_new_fact_gate_allows_added_markdown_heading_in_strict_mode(tmp_path):
     ws = _prepare_editor_gate_workspace(
         tmp_path,
         analyst_text="TargetCo opened a demo facility. [src:CL-001]\nNo wording changes.\n",
         editor_text="## Market Update\nTargetCo opened a demo facility. [src:CL-001]\nNo wording changes.\n",
     )
 
-    rc = main([
-        "gates",
-        "check",
-        "--workspace",
-        str(ws),
-        "--repo-workdir",
-        str(ROOT),
-        "--strict",
-        "--json",
-    ])
+    state = quality_gate_state.check_quality_gates(workspace=ws, repo_workdir=ROOT, strict=True)
 
-    assert rc == 0
-    report = json.loads(capsys.readouterr().out)["quality_gate_report"]
+    assert state["ok"] is True
+    report = state["quality_gate_report"]
     finding_types = {finding["finding_type"] for finding in report["findings"]}
     editor_result = next(result for result in report["gate_results"] if result["gate_id"] == "editor_new_fact")
     assert "editor_introduced_new_fact" not in finding_types
@@ -3112,7 +2945,7 @@ def test_editor_new_fact_gate_allows_added_markdown_heading_in_strict_mode(tmp_p
     assert editor_result["blocking"] is False
 
 
-def test_editor_new_fact_gate_allows_declared_project_name_metadata(tmp_path, capsys):
+def test_editor_new_fact_gate_allows_declared_project_name_metadata(tmp_path):
     ws = _prepare_editor_gate_workspace(
         tmp_path,
         analyst_text="## Executive Summary\nTargetCo opened a demo facility. [src:CL-001]\n",
@@ -3130,19 +2963,10 @@ def test_editor_new_fact_gate_allows_declared_project_name_metadata(tmp_path, ca
         encoding="utf-8",
     )
 
-    rc = main([
-        "gates",
-        "check",
-        "--workspace",
-        str(ws),
-        "--repo-workdir",
-        str(ROOT),
-        "--strict",
-        "--json",
-    ])
+    state = quality_gate_state.check_quality_gates(workspace=ws, repo_workdir=ROOT, strict=True)
 
-    assert rc == 0
-    report = json.loads(capsys.readouterr().out)["quality_gate_report"]
+    assert state["ok"] is True
+    report = state["quality_gate_report"]
     finding_types = {finding["finding_type"] for finding in report["findings"]}
     editor_result = next(result for result in report["gate_results"] if result["gate_id"] == "editor_new_fact")
     assert "editor_introduced_new_fact" not in finding_types
@@ -3150,7 +2974,7 @@ def test_editor_new_fact_gate_allows_declared_project_name_metadata(tmp_path, ca
     assert editor_result["blocking"] is False
 
 
-def test_editor_new_fact_gate_blocks_added_entity_in_bullet_strict_mode(tmp_path, capsys):
+def test_editor_new_fact_gate_blocks_added_entity_in_bullet_strict_mode(tmp_path):
     ws = _prepare_editor_gate_workspace(
         tmp_path,
         analyst_text="- TargetCo opened a demo facility. [src:CL-001]\n",
@@ -3160,19 +2984,10 @@ def test_editor_new_fact_gate_blocks_added_entity_in_bullet_strict_mode(tmp_path
         ),
     )
 
-    rc = main([
-        "gates",
-        "check",
-        "--workspace",
-        str(ws),
-        "--repo-workdir",
-        str(ROOT),
-        "--strict",
-        "--json",
-    ])
+    state = quality_gate_state.check_quality_gates(workspace=ws, repo_workdir=ROOT, strict=True)
 
-    assert rc == 0
-    report = json.loads(capsys.readouterr().out)["quality_gate_report"]
+    assert state["ok"] is True
+    report = state["quality_gate_report"]
     editor_result = next(result for result in report["gate_results"] if result["gate_id"] == "editor_new_fact")
     editor_finding = next(finding for finding in report["findings"] if finding["finding_type"] == "editor_introduced_new_fact")
     assert report["status"] == "fail"
@@ -3182,26 +2997,17 @@ def test_editor_new_fact_gate_blocks_added_entity_in_bullet_strict_mode(tmp_path
     assert "NewCo Holdings" in editor_finding["metadata"]["introduced_entities"]
 
 
-def test_editor_new_fact_gate_blocks_in_strict_mode(tmp_path, capsys):
+def test_editor_new_fact_gate_blocks_in_strict_mode(tmp_path):
     ws = _prepare_editor_gate_workspace(
         tmp_path,
         analyst_text="## Executive Summary\nTargetCo opened a demo facility. [src:CL-001]\n",
         editor_text="## Executive Summary\nTargetCo opened a demo facility and reported 42 deployments. [src:CL-001]\n",
     )
 
-    rc = main([
-        "gates",
-        "check",
-        "--workspace",
-        str(ws),
-        "--repo-workdir",
-        str(ROOT),
-        "--strict",
-        "--json",
-    ])
+    state = quality_gate_state.check_quality_gates(workspace=ws, repo_workdir=ROOT, strict=True)
 
-    assert rc == 0
-    report = json.loads(capsys.readouterr().out)["quality_gate_report"]
+    assert state["ok"] is True
+    report = state["quality_gate_report"]
     editor_result = next(result for result in report["gate_results"] if result["gate_id"] == "editor_new_fact")
     editor_finding = next(finding for finding in report["findings"] if finding["finding_type"] == "editor_introduced_new_fact")
     assert report["status"] == "fail"

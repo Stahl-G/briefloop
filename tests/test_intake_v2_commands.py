@@ -178,7 +178,9 @@ def test_hidden_intake_cli_emits_unknown_and_nonzero_without_values(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     workspace = tmp_path / "workspace"
-    workspace.mkdir()
+    # STRICT_INPUT_UPDATE: intake-v2 now dispatches only on SQLite-authority
+    # workspaces; seed the control store so the original assertions still run.
+    _seed_workspace(workspace)
     monkeypatch.setattr(
         IntakeService,
         "submit_source",
@@ -207,12 +209,27 @@ def test_hidden_intake_cli_emits_unknown_and_nonzero_without_values(
     }
 
 
+@pytest.mark.parametrize(
+    ("workspace_kind", "expected_token"),
+    [
+        ("fresh", "runtime_command_unsupported"),
+        ("legacy", "legacy_workspace_unsupported"),
+    ],
+)
 def test_intake_cli_json_only_workspace_never_creates_sqlite_fallback(
     tmp_path: Path,
     capsys,
+    workspace_kind: str,
+    expected_token: str,
 ) -> None:
     workspace = tmp_path / "workspace"
     workspace.mkdir()
+    if workspace_kind == "legacy":
+        legacy_control = (
+            workspace / "output" / "intermediate" / "runtime_manifest.json"
+        )
+        legacy_control.parent.mkdir(parents=True)
+        legacy_control.write_text("{}", encoding="utf-8")
     scratch = workspace / "scratch" / "INV-SOURCE-001"
     scratch.mkdir(parents=True)
     request = scratch / "submit_request.json"
@@ -233,6 +250,11 @@ def test_intake_cli_json_only_workspace_never_creates_sqlite_fallback(
     )
     (scratch / "source_proposal.json").write_text("{}", encoding="utf-8")
     (scratch / "source_content.pdf").write_bytes(b"x")
+    before_files = {
+        path.relative_to(workspace).as_posix(): path.read_bytes()
+        for path in workspace.rglob("*")
+        if path.is_file()
+    }
 
     exit_code = main(
         [
@@ -246,11 +268,16 @@ def test_intake_cli_json_only_workspace_never_creates_sqlite_fallback(
         ]
     )
 
+    # LEGACY-DELETE: the control_store_not_found JSON fallback is removed with
+    # the retired store-less intake surface; rejection is now fail-closed.
     assert exit_code == 1
-    assert json.loads(capsys.readouterr().out) == {
-        "status": "failed_uncommitted",
-        "error_code": "control_store_not_found",
+    assert capsys.readouterr().out == f"{expected_token}\n"
+    after_files = {
+        path.relative_to(workspace).as_posix(): path.read_bytes()
+        for path in workspace.rglob("*")
+        if path.is_file()
     }
+    assert after_files == before_files
     assert not (workspace / "briefloop.db").exists()
     assert not (workspace / "briefloop.db.blobs").exists()
 
@@ -286,6 +313,10 @@ def test_intake_v2_imports_are_confined_to_dormant_package_and_cli_adapter() -> 
         "cli/intake_v2_commands.py",
         "intake_v2/__init__.py",
         "intake_v2/service.py",
+        # Post-CX activation is intentional: runtime_host_v2 is the sole
+        # runtime authority and binds intake_v2 directly. Importers are
+        # listed exactly (no prefixes); any new importer must be reviewed.
+        "runtime_host_v2/service.py",
     }
     findings: list[str] = []
     for path in sorted(package_root.rglob("*.py")):

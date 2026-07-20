@@ -238,11 +238,11 @@ class TestReportDateAuto:
         assert settings["report_date"] == ""
 
     def test_init_generates_auto_date(self, tmp_path):
-        """Init-generated config should have report.date = 'auto' which resolves."""
+        """Init-generated config carries the bootstrap-resolved report date."""
         from multi_agent_brief.cli.main import main
 
         ws = tmp_path / "ws"
-        main([
+        assert main([
             "init",
             str(ws),
             "--language",
@@ -259,12 +259,16 @@ class TestReportDateAuto:
             "weekly",
             "--source-profile",
             "research",
-        ])
+            # LEGACY-DELETE: retain only the strict SQLite initialization contract.
+            "--task-objective",
+            "Prepare the weekly operations brief.",
+        ]) == 0
         config_text = (ws / "config.yaml").read_text(encoding="utf-8")
-        assert "auto" in config_text
 
-        import yaml
         config = yaml.safe_load(config_text)
+        # LEGACY-DELETE: pre-CX report.date "auto" placeholder; the ControlStore
+        # bootstrap stamps the resolved report date into the generated config.
+        assert config["report"]["date"] == date.today().isoformat()
         config["_config_dir"] = str(ws)
         settings = build_run_settings(
             config=config,

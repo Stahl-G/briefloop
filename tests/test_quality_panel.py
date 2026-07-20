@@ -12,6 +12,10 @@ from pathlib import Path
 import pytest
 
 from multi_agent_brief.cli.main import main
+from multi_agent_brief.orchestrator.runtime_state import (
+    check_runtime_state,
+    initialize_runtime_state,
+)
 from multi_agent_brief.orchestrator.runtime_state.semantic_assessment_report import (
     SEMANTIC_ASSESSMENT_REPORT_STATUSES,
     build_semantic_assessment_checked_inputs,
@@ -41,12 +45,26 @@ from multi_agent_brief.semantic_evaluator.reader import (
     LajReaderView,
 )
 from multi_agent_brief.semantic_evaluator.serialization import canonical_sha256
-from tests.helpers import initialized_workspace_writer
+from tests.helpers import write_minimal_workspace_under
 
 
-_workspace = initialized_workspace_writer(
-    project_name="Quality Panel Test",
-)
+def _workspace(base_path: Path) -> Path:
+    """Build the legacy module fixture without claiming a public CLI path."""
+
+    workspace = write_minimal_workspace_under(
+        base_path,
+        project_name="Quality Panel Test",
+    )
+    initialize_runtime_state(runtime="operator", workspace=workspace)
+    return workspace
+
+
+def _snapshot_workspace_files(ws: Path) -> dict[str, bytes]:
+    return {
+        path.relative_to(ws).as_posix(): path.read_bytes()
+        for path in sorted(ws.rglob("*"))
+        if path.is_file()
+    }
 
 
 def _json(path: Path) -> dict:
@@ -774,7 +792,7 @@ def test_quality_summarize_marks_closeout_generated_and_then_complete(tmp_path: 
     pre_registry_status = build_workspace_status(ws)
     assert pre_registry_status["quality_panel_closeout"]["status"] == "stale_or_invalid"
 
-    assert main(["state", "check", "--workspace", str(ws), "--json"]) == 0
+    check_runtime_state(workspace=ws)
     status = build_workspace_status(ws)
     assert status["quality_panel_closeout"]["status"] == "complete"
     assert not status["quality_panel_closeout"]["missing_artifacts"]
@@ -792,7 +810,7 @@ def test_quality_closeout_rejects_stale_or_hand_edited_quality_artifacts(tmp_pat
     panel = write_quality_panel(workspace=ws)
     write_quality_summary(workspace=ws, panel_payload=panel)
     write_quality_panel_html(workspace=ws, panel_payload=panel)
-    assert main(["state", "check", "--workspace", str(ws), "--json"]) == 0
+    check_runtime_state(workspace=ws)
     assert build_workspace_status(ws)["quality_panel_closeout"]["status"] == "complete"
 
     html_path = quality_panel_html_path(ws)
@@ -926,7 +944,7 @@ def test_quality_panel_writes_source_gate_claim_summary(tmp_path: Path) -> None:
     _write_source_evidence_pack(ws)
     _write_claim_ledger(ws)
     _write_gate_report(ws)
-    assert main(["state", "check", "--workspace", str(ws), "--json"]) == 0
+    check_runtime_state(workspace=ws)
 
     payload = write_quality_panel(workspace=ws)
 
@@ -947,7 +965,7 @@ def test_quality_summary_renders_human_markdown_without_authority_claims(tmp_pat
     _write_source_evidence_pack(ws)
     _write_claim_ledger(ws)
     _write_gate_report(ws)
-    assert main(["state", "check", "--workspace", str(ws), "--json"]) == 0
+    check_runtime_state(workspace=ws)
 
     panel = write_quality_panel(workspace=ws)
     panel_sha = _sha256_file(quality_panel_path(ws))
@@ -988,7 +1006,7 @@ def test_quality_panel_surfaces_final_abstract_quality_warnings(tmp_path: Path) 
     )
     _write_gate_report(ws, stage="finalize")
     _write_finalize_report(ws)
-    assert main(["state", "check", "--workspace", str(ws), "--json"]) == 0
+    check_runtime_state(workspace=ws)
 
     panel = write_quality_panel(workspace=ws)
     panel_sha = _sha256_file(quality_panel_path(ws))
@@ -1008,7 +1026,7 @@ def test_quality_panel_surfaces_semantic_support_proposals_without_authority(tmp
     _write_gate_report(ws)
     _write_gate_report(ws, stage="finalize")
     _write_finalize_report(ws)
-    assert main(["state", "check", "--workspace", str(ws), "--json"]) == 0
+    check_runtime_state(workspace=ws)
     _set_workflow_unblocked(ws)
 
     panel = write_quality_panel(workspace=ws)
@@ -1161,7 +1179,7 @@ def test_quality_panel_semantic_support_survives_corrupt_reader_target(tmp_path:
     output = ws / "output"
     output.mkdir(exist_ok=True)
     (output / "brief.md").write_bytes(b"\xff\xfe")
-    assert main(["state", "check", "--workspace", str(ws), "--json"]) == 0
+    check_runtime_state(workspace=ws)
 
     status = build_workspace_status(ws)
     panel = build_quality_panel(ws)
@@ -1185,8 +1203,8 @@ def test_quality_summary_write_reads_existing_panel_and_registers_artifact(tmp_p
     summary = quality_summary_path(ws).read_text(encoding="utf-8")
     assert f"Quality-Panel-SHA256: sha256:{_sha256_file(quality_panel_path(ws))}" in summary
     assert validate_quality_summary_markdown(summary) is None
-    assert main(["state", "check", "--workspace", str(ws), "--json"]) == 0
-    assert main(["state", "check", "--workspace", str(ws), "--json"]) == 0
+    check_runtime_state(workspace=ws)
+    check_runtime_state(workspace=ws)
     registry = _json(ws / "output" / "intermediate" / "artifact_registry.json")
     record = registry["artifacts"]["quality_summary"]
     assert record["status"] == "valid"
@@ -1198,7 +1216,7 @@ def test_quality_panel_html_renders_static_audit_attachment_without_external_ass
     _write_source_evidence_pack(ws)
     _write_claim_ledger(ws)
     _write_gate_report(ws)
-    assert main(["state", "check", "--workspace", str(ws), "--json"]) == 0
+    check_runtime_state(workspace=ws)
     panel = write_quality_panel(workspace=ws)
 
     html = render_quality_panel_html(panel, quality_panel_sha256=_sha256_file(quality_panel_path(ws)))
@@ -1296,44 +1314,20 @@ def test_quality_panel_html_write_reads_existing_panel_and_registers_artifact(tm
     html = quality_panel_html_path(ws).read_text(encoding="utf-8")
     assert f"Quality-Panel-SHA256: sha256:{_sha256_file(quality_panel_path(ws))}" in html
     assert validate_quality_panel_html(html) is None
-    assert main(["state", "check", "--workspace", str(ws), "--json"]) == 0
-    assert main(["state", "check", "--workspace", str(ws), "--json"]) == 0
+    check_runtime_state(workspace=ws)
+    check_runtime_state(workspace=ws)
     registry = _json(ws / "output" / "intermediate" / "artifact_registry.json")
     record = registry["artifacts"]["quality_panel_html"]
     assert record["status"] == "valid"
     assert record["validation_result"] == "experimental_quality_panel_html"
 
 
-def test_quality_summarize_cli_writes_panel_and_summary_json(tmp_path: Path, capsys) -> None:
-    ws = _workspace(tmp_path)
-    capsys.readouterr()
-
-    assert main(["quality", "summarize", "--workspace", str(ws), "--json"]) == 0
-    payload = json.loads(capsys.readouterr().out)
-
-    assert payload["ok"] is True
-    assert payload["quality_panel"] == "output/intermediate/quality_panel.json"
-    assert payload["quality_summary"] == "output/intermediate/quality_summary.md"
-    assert payload["quality_panel_html"] == "output/intermediate/quality_panel.html"
-    assert payload["boundary"] == "quality_projection_only_not_gate_or_release_authority"
-    assert payload["laj_advisory_status"] == "not_requested"
-    assert "not_release_authorization" in payload["non_claims"]
-    assert quality_panel_path(ws).exists()
-    assert quality_summary_path(ws).exists()
-    assert quality_panel_html_path(ws).exists()
-    assert validate_quality_summary_markdown(quality_summary_path(ws).read_text(encoding="utf-8")) is None
-    assert validate_quality_panel_html(quality_panel_html_path(ws).read_text(encoding="utf-8")) is None
-    assert main(["state", "check", "--workspace", str(ws), "--json"]) == 0
-    registry = _json(ws / "output" / "intermediate" / "artifact_registry.json")
-    assert registry["artifacts"]["quality_panel"]["status"] == "valid"
-    assert registry["artifacts"]["quality_summary"]["status"] == "valid"
-    assert registry["artifacts"]["quality_panel_html"]["status"] == "valid"
-
-
-def test_quality_summarize_cli_accepts_explicit_bound_laj_view(
+def test_quality_summarize_public_cli_retired_rejects_typed_without_writes(
     tmp_path: Path,
     capsys,
 ) -> None:
+    # LEGACY-DELETE: retired public `quality summarize` CLI on JSON control
+    # state; the authority guard answers a typed token and performs zero writes.
     ws = _workspace(tmp_path)
     reader_target = ws / "output" / "brief.md"
     reader_target.parent.mkdir(parents=True, exist_ok=True)
@@ -1342,7 +1336,9 @@ def test_quality_summarize_cli_accepts_explicit_bound_laj_view(
     _write_laj_reader_view(laj_path, report_sha256=_sha256_file(reader_target))
     capsys.readouterr()
 
-    assert main(
+    for argv in (
+        ["quality", "summarize", "--workspace", str(ws), "--json"],
+        ["quality", "summarize", "--workspace", str(ws)],
         [
             "quality",
             "summarize",
@@ -1351,62 +1347,47 @@ def test_quality_summarize_cli_accepts_explicit_bound_laj_view(
             "--laj-view",
             str(laj_path),
             "--json",
-        ]
-    ) == 0
-    payload = json.loads(capsys.readouterr().out)
+        ],
+    ):
+        before = _snapshot_workspace_files(ws)
+        rc = main(argv)
+        assert rc == 1
+        assert capsys.readouterr().out.strip() == "legacy_workspace_unsupported"
+        assert _snapshot_workspace_files(ws) == before
 
-    assert payload["laj_advisory_status"] == "available"
-    panel = _json(quality_panel_path(ws))
-    assert panel["laj_advisory"]["status"] == "available"
-    assert panel["overall_status"] in {"incomplete", "warning", "pass", "block"}
-    assert validate_quality_panel_payload(panel) is None
-
-
-def test_quality_summarize_cli_human_output_keeps_projection_boundary(tmp_path: Path, capsys) -> None:
-    ws = _workspace(tmp_path)
-    capsys.readouterr()
-
-    assert main(["quality", "summarize", "--workspace", str(ws)]) == 0
-    output = capsys.readouterr().out
-
-    assert "quality_panel: output/intermediate/quality_panel.json" in output
-    assert "quality_summary: output/intermediate/quality_summary.md" in output
-    assert "quality_panel_html: output/intermediate/quality_panel.html" in output
-    assert "quality projection only" in output
-    assert "no gates were run" in output
-    assert "no release was authorized" in output
-    assert "ready to publish" not in output.lower()
-    assert "truth proven" not in output.lower()
-
-
-def test_quality_summarize_cli_rejects_missing_workspace_without_writing(tmp_path: Path, capsys) -> None:
     missing = tmp_path / "missing-ws"
-    capsys.readouterr()
-
-    assert main(["quality", "summarize", "--workspace", str(missing), "--json"]) == 1
-    payload = json.loads(capsys.readouterr().out)
-
-    assert payload["ok"] is False
-    assert "workspace does not exist" in payload["error"]
+    rc = main(["quality", "summarize", "--workspace", str(missing), "--json"])
+    assert rc == 1
+    assert capsys.readouterr().out.strip() == "runtime_command_unsupported"
     assert not missing.exists()
 
-
-def test_quality_summarize_cli_rejects_output_intermediate_shell_without_writing(
-    tmp_path: Path,
-    capsys,
-) -> None:
     shell = tmp_path / "not-a-workspace"
     (shell / "output" / "intermediate").mkdir(parents=True)
-    capsys.readouterr()
-
-    assert main(["quality", "summarize", "--workspace", str(shell), "--json"]) == 1
-    payload = json.loads(capsys.readouterr().out)
-
-    assert payload["ok"] is False
-    assert "not a BriefLoop workspace" in payload["error"]
+    before = _snapshot_workspace_files(shell)
+    rc = main(["quality", "summarize", "--workspace", str(shell), "--json"])
+    assert rc == 1
+    assert capsys.readouterr().out.strip() == "runtime_command_unsupported"
+    assert _snapshot_workspace_files(shell) == before
     assert not (shell / "output" / "intermediate" / "quality_panel.json").exists()
     assert not (shell / "output" / "intermediate" / "quality_summary.md").exists()
     assert not (shell / "output" / "intermediate" / "quality_panel.html").exists()
+
+
+def test_state_public_cli_retired_rejects_typed_without_writes(tmp_path: Path, capsys) -> None:
+    # LEGACY-DELETE: retired public `state` operator CLI surface; the authority
+    # guard answers a typed token and performs zero writes.
+    ws = _workspace(tmp_path)
+    capsys.readouterr()
+
+    for argv in (
+        ["state", "check", "--workspace", str(ws), "--json"],
+        ["state", "init", "--runtime", "operator", "--workspace", str(ws), "--reset-state"],
+    ):
+        before = _snapshot_workspace_files(ws)
+        rc = main(argv)
+        assert rc == 1
+        assert capsys.readouterr().out.strip() == "legacy_workspace_unsupported"
+        assert _snapshot_workspace_files(ws) == before
 
 
 def test_quality_summary_missing_or_invalid_panel_fails_without_writing(tmp_path: Path) -> None:
@@ -1448,14 +1429,14 @@ def test_quality_summary_registry_requires_valid_quality_panel_source(tmp_path: 
     summary = render_quality_summary(build_quality_panel(ws), quality_panel_sha256="0" * 64)
     quality_summary_path(ws).write_text(summary, encoding="utf-8")
 
-    assert main(["state", "check", "--workspace", str(ws), "--json"]) == 0
+    check_runtime_state(workspace=ws)
     registry = _json(ws / "output" / "intermediate" / "artifact_registry.json")
     record = registry["artifacts"]["quality_summary"]
     assert record["status"] == "invalid"
     assert record["validation_result"] == "quality_summary_validation_error:quality_panel_missing"
 
     quality_panel_path(ws).write_text('{"schema_version": "bad"}\n', encoding="utf-8")
-    assert main(["state", "check", "--workspace", str(ws), "--json"]) == 0
+    check_runtime_state(workspace=ws)
     registry = _json(ws / "output" / "intermediate" / "artifact_registry.json")
     record = registry["artifacts"]["quality_summary"]
     assert record["status"] == "invalid"
@@ -1470,7 +1451,7 @@ def test_quality_summary_registry_treats_invalid_utf8_panel_as_invalid(tmp_path:
     quality_summary_path(ws).write_text(summary, encoding="utf-8")
     quality_panel_path(ws).write_bytes(b"\xff\xfe\x00")
 
-    assert main(["state", "check", "--workspace", str(ws), "--json"]) == 0
+    check_runtime_state(workspace=ws)
     registry = _json(ws / "output" / "intermediate" / "artifact_registry.json")
     record = registry["artifacts"]["quality_summary"]
     assert record["status"] == "invalid"
@@ -1488,7 +1469,7 @@ def test_quality_summary_registry_rejects_stale_or_hand_edited_summary(tmp_path:
         encoding="utf-8",
     )
 
-    assert main(["state", "check", "--workspace", str(ws), "--json"]) == 0
+    check_runtime_state(workspace=ws)
     registry = _json(ws / "output" / "intermediate" / "artifact_registry.json")
     record = registry["artifacts"]["quality_summary"]
     assert record["status"] == "invalid"
@@ -1513,14 +1494,14 @@ def test_quality_panel_html_registry_requires_valid_quality_panel_source(tmp_pat
     html = render_quality_panel_html(build_quality_panel(ws), quality_panel_sha256="0" * 64)
     quality_panel_html_path(ws).write_text(html, encoding="utf-8")
 
-    assert main(["state", "check", "--workspace", str(ws), "--json"]) == 0
+    check_runtime_state(workspace=ws)
     registry = _json(ws / "output" / "intermediate" / "artifact_registry.json")
     record = registry["artifacts"]["quality_panel_html"]
     assert record["status"] == "invalid"
     assert record["validation_result"] == "quality_panel_html_validation_error:quality_panel_missing"
 
     quality_panel_path(ws).write_text('{"schema_version": "bad"}\n', encoding="utf-8")
-    assert main(["state", "check", "--workspace", str(ws), "--json"]) == 0
+    check_runtime_state(workspace=ws)
     registry = _json(ws / "output" / "intermediate" / "artifact_registry.json")
     record = registry["artifacts"]["quality_panel_html"]
     assert record["status"] == "invalid"
@@ -1535,7 +1516,7 @@ def test_quality_panel_html_registry_treats_invalid_utf8_panel_as_invalid(tmp_pa
     quality_panel_html_path(ws).write_text(html, encoding="utf-8")
     quality_panel_path(ws).write_bytes(b"\xff\xfe\x00")
 
-    assert main(["state", "check", "--workspace", str(ws), "--json"]) == 0
+    check_runtime_state(workspace=ws)
     registry = _json(ws / "output" / "intermediate" / "artifact_registry.json")
     record = registry["artifacts"]["quality_panel_html"]
     assert record["status"] == "invalid"
@@ -1549,7 +1530,7 @@ def test_quality_panel_html_registry_rejects_stale_or_hand_edited_html(tmp_path:
     html = quality_panel_html_path(ws).read_text(encoding="utf-8")
     quality_panel_html_path(ws).write_text(html.replace("Quality Panel", "Quality Panel Edited", 1), encoding="utf-8")
 
-    assert main(["state", "check", "--workspace", str(ws), "--json"]) == 0
+    check_runtime_state(workspace=ws)
     registry = _json(ws / "output" / "intermediate" / "artifact_registry.json")
     record = registry["artifacts"]["quality_panel_html"]
     assert record["status"] == "invalid"
@@ -1561,7 +1542,7 @@ def test_quality_panel_stays_incomplete_before_finalize_and_reader_hygiene(tmp_p
     _write_source_evidence_pack(ws)
     _write_claim_ledger(ws)
     _write_gate_report(ws)
-    assert main(["state", "check", "--workspace", str(ws), "--json"]) == 0
+    check_runtime_state(workspace=ws)
     _set_workflow_unblocked(ws)
 
     payload = build_quality_panel(ws)
@@ -1584,7 +1565,7 @@ def test_quality_panel_distinguishes_legacy_gate_report_from_missing_scoped_repo
     _write_claim_ledger(ws)
     _write_legacy_quality_gate_report(ws, status="pass", stage="finalize")
     _write_finalize_report(ws, reader_status="pass")
-    assert main(["state", "check", "--workspace", str(ws), "--json"]) == 0
+    check_runtime_state(workspace=ws)
     _set_workflow_unblocked(ws)
 
     payload = build_quality_panel(ws)
@@ -1635,7 +1616,7 @@ def test_quality_panel_does_not_interpret_invalid_claim_support_matrix_rows(tmp_
         json.dumps(invalid_matrix, ensure_ascii=False, indent=2, sort_keys=True) + "\n",
         encoding="utf-8",
     )
-    assert main(["state", "check", "--workspace", str(ws), "--json"]) == 0
+    check_runtime_state(workspace=ws)
     _set_workflow_unblocked(ws)
 
     payload = build_quality_panel(ws)
@@ -1653,7 +1634,7 @@ def test_quality_panel_honors_workflow_blocker_in_overall_status(tmp_path: Path)
     _write_gate_report(ws)
     _write_gate_report(ws, stage="finalize")
     _write_finalize_report(ws)
-    assert main(["state", "check", "--workspace", str(ws), "--json"]) == 0
+    check_runtime_state(workspace=ws)
     _set_workflow_blocked(ws)
 
     payload = build_quality_panel(ws)
@@ -1672,7 +1653,7 @@ def test_quality_panel_blocks_failed_finalize_gate_status_without_findings(tmp_p
     _write_gate_report(ws)
     _write_gate_report(ws, status="fail", findings=[], stage="finalize")
     _write_finalize_report(ws)
-    assert main(["state", "check", "--workspace", str(ws), "--json"]) == 0
+    check_runtime_state(workspace=ws)
     _set_workflow_unblocked(ws)
 
     payload = build_quality_panel(ws)
@@ -1693,7 +1674,7 @@ def test_quality_panel_keeps_unknown_reader_clean_incomplete(tmp_path: Path) -> 
     _write_gate_report(ws)
     _write_gate_report(ws, stage="finalize")
     _write_finalize_report(ws, reader_status="unknown")
-    assert main(["state", "check", "--workspace", str(ws), "--json"]) == 0
+    check_runtime_state(workspace=ws)
     _set_workflow_unblocked(ws)
 
     payload = build_quality_panel(ws)
@@ -1710,7 +1691,7 @@ def test_quality_panel_does_not_interpret_invalid_source_evidence_pack_counts(tm
     ws = _workspace(tmp_path)
     _write_invalid_source_evidence_pack(ws)
     _write_claim_ledger(ws)
-    assert main(["state", "check", "--workspace", str(ws), "--json"]) == 0
+    check_runtime_state(workspace=ws)
 
     payload = build_quality_panel(ws)
 
@@ -1735,7 +1716,7 @@ def test_quality_panel_dogfood_surfaces_source_and_reader_hygiene_failures(tmp_p
         source_appendix_warnings=[{"kind": "missing_source_title"}],
         source_appendix_trace_warnings=[{"kind": "metadata_warning"}],
     )
-    assert main(["state", "check", "--workspace", str(ws), "--json"]) == 0
+    check_runtime_state(workspace=ws)
     _set_workflow_unblocked(ws)
 
     payload = build_quality_panel(ws)
@@ -1760,8 +1741,8 @@ def test_quality_panel_artifact_registry_validation(tmp_path: Path) -> None:
     ws = _workspace(tmp_path)
     write_quality_panel(workspace=ws)
 
-    assert main(["state", "check", "--workspace", str(ws), "--json"]) == 0
-    assert main(["state", "check", "--workspace", str(ws), "--json"]) == 0
+    check_runtime_state(workspace=ws)
+    check_runtime_state(workspace=ws)
 
     registry = _json(ws / "output" / "intermediate" / "artifact_registry.json")
     record = registry["artifacts"]["quality_panel"]
@@ -1775,9 +1756,9 @@ def test_runtime_reset_archives_prior_run_quality_panel(tmp_path: Path) -> None:
     write_quality_panel(workspace=ws)
     write_quality_summary(workspace=ws)
     write_quality_panel_html(workspace=ws)
-    assert main(["state", "check", "--workspace", str(ws), "--json"]) == 0
+    check_runtime_state(workspace=ws)
 
-    assert main(["state", "init", "--runtime", "operator", "--workspace", str(ws), "--reset-state"]) == 0
+    initialize_runtime_state(workspace=ws, runtime="operator", reset_state=True)
 
     intermediate = ws / "output" / "intermediate"
     assert (intermediate / f"quality_panel.{old_run_id}.json").exists()
@@ -1786,7 +1767,7 @@ def test_runtime_reset_archives_prior_run_quality_panel(tmp_path: Path) -> None:
     assert not quality_panel_path(ws).exists()
     assert not quality_summary_path(ws).exists()
     assert not quality_panel_html_path(ws).exists()
-    assert main(["state", "check", "--workspace", str(ws), "--json"]) == 0
+    check_runtime_state(workspace=ws)
     registry = _json(intermediate / "artifact_registry.json")
     record = registry["artifacts"]["quality_panel"]
     assert record["status"] == "expected"

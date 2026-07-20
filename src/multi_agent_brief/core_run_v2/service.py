@@ -5,7 +5,7 @@ from __future__ import annotations
 from collections.abc import Iterable
 from datetime import datetime, timezone
 import os
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 import shutil
 from typing import Callable
 
@@ -21,11 +21,16 @@ from multi_agent_brief.contracts.v2 import (
     Invocation,
     InvocationStartRequest,
     RunContractBinding,
+    RunDirection,
     RunIdentity,
     RunIntegrityRecord,
     RuntimeAdapterBinding,
+    RuntimeCachedPackageAcquisitionSpec,
+    RuntimeNewsApiAcquisitionSpec,
     RuntimeSourcePlanBinding,
     RuntimeSourceRouteBinding,
+    RuntimeWebSearchAcquisitionSpec,
+    RuntimeWebSearchRequestSpec,
     ReceiptCheckoutBinding,
     StageArtifactBinding,
     StageCompleteRequest,
@@ -63,16 +68,21 @@ from .lineage import (
     classify_current_lineage,
     require_current_gate_after_audit_promotion,
 )
+from .next_action import classify_core_run_next_action
 from .policy import (
     CORE_ARTIFACT_IDS,
     DOCTOR_IMPLEMENTATION,
     DOCTOR_VERSION,
     INTERNAL_CONTRACT_ARTIFACT_IDS,
     REQUIRED_AUDITOR_GATES,
+    SOURCE_ROUTE_IDS,
+    SOURCE_WEB_PROVIDER_IDS,
     STAGE_ROLES,
     blob_workspace_path,
+    core_role_topology_policy,
     derived_id,
     run_contract_fingerprint,
+    require_topology_runtime,
     transaction_type_for,
 )
 from .verifier import (
@@ -154,6 +164,10 @@ class CoreRunService:
                     return replay
             raise CoreRunError("core_run_head_mismatch")
         adapter = request.runtime_adapter_binding
+        try:
+            require_topology_runtime(request.role_topology, request.runtime)
+        except ValueError as exc:
+            raise CoreRunError("runtime_adapter_binding_invalid") from exc
         if (
             adapter.run_id != request.run_id
             or adapter.runtime != request.runtime
@@ -173,6 +187,8 @@ class CoreRunService:
             sources_content,
             run_id=request.run_id,
             sources_config_sha256=request.sources_config_sha256,
+            run_direction=request.run_direction,
+            workspace_root=self.workspace,
         )
         contracts = self._load_contracts()
         stage_bytes = canonical_json_bytes(contracts.stage_specs)
@@ -244,7 +260,9 @@ class CoreRunService:
                 },
                 strict=True,
             )
-            contract_artifacts: list[tuple[ArtifactRecord, ArtifactRevision, bytes]] = []
+            contract_artifacts: list[
+                tuple[ArtifactRecord, ArtifactRevision, bytes]
+            ] = []
             for artifact_id, payload in zip(
                 INTERNAL_CONTRACT_ARTIFACT_IDS,
                 (
@@ -460,9 +478,7 @@ class CoreRunService:
                 try:
                     # Cleanup is allowed only while the creating connection can
                     # still positively prove that no transaction committed.
-                    remove_revision_zero_store = (
-                        created and store.current_revision == 0
-                    )
+                    remove_revision_zero_store = created and store.current_revision == 0
                 except Exception:
                     remove_revision_zero_store = False
                 try:
@@ -487,6 +503,42 @@ class CoreRunService:
                 return replay
             verified = self._verifier.verify(store, request.run_id)
             self._require_store_revision(verified, request.expected_store_revision)
+            action = classify_core_run_next_action(verified)
+            if (
+                action.action_kind == "blocked"
+                and action.reason_code == "runtime_role_unavailable"
+            ):
+                raise CoreRunError("runtime_role_unavailable")
+            delegate_reservation = (
+                action.action_kind == "delegate"
+                and action.stage_id == request.stage_id
+                and action.role_id == request.role_id
+            )
+            source_acquire_reservation = (
+                action.action_kind == "deterministic"
+                and action.effect_kind == "source_acquire"
+                and action.stage_id == "source-discovery"
+                and action.source_route_id is not None
+                and request.stage_id == "source-discovery"
+                and request.role_id == "source-provider"
+            )
+            human_source_reservation = (
+                action.action_kind == "human_decision"
+                and action.effect_kind == "source_input_required"
+                and action.stage_id == "source-discovery"
+                and action.request_schema_id
+                == "briefloop.runtime_human_source_material_request.v2"
+                and request.stage_id == "source-discovery"
+                and request.role_id == "source-provider"
+            )
+            if not (
+                delegate_reservation
+                or source_acquire_reservation
+                or human_source_reservation
+            ):
+                raise CoreRunError("invocation_owner_mismatch")
+            if request.role_id not in verified.runtime_adapter.role_ids:
+                raise CoreRunError("runtime_role_unavailable")
             lineage = classify_current_lineage(verified.snapshot)
             lineage.require_stage_mutable(request.stage_id)
             if request.runtime != verified.snapshot.run.runtime:
@@ -497,7 +549,9 @@ class CoreRunService:
                 request.stage_id,
             ):
                 raise CoreRunError("invocation_owner_mismatch")
-            if verified.binding.role_topology == "human_assisted" and request.stage_id in {
+            if core_role_topology_policy(
+                verified.binding.role_topology
+            ).analyst_editor_route == "human_assisted" and request.stage_id in {
                 "analyst",
                 "editor",
             }:
@@ -672,41 +726,62 @@ class CoreRunService:
                 gate_ids,
                 producer_invocation_id,
                 producer_tool_id,
-            ) = (
-                self._completion_bindings(
-                    store,
-                    verified,
-                    request.stage_id,
-                )
+            ) = self._completion_bindings(
+                store,
+                verified,
+                request.stage_id,
             )
             self._require_store_revision(verified, request.expected_store_revision)
             state = _stage_state(verified, request.stage_id)
             if lineage.active_invocations_by_stage.get(request.stage_id):
                 raise CoreRunError("stage_artifact_binding_invalid")
-            if state.status != "ready" or state.revision != request.expected_stage_revision:
+            if (
+                state.status != "ready"
+                or state.revision != request.expected_stage_revision
+            ):
                 raise CoreRunError("stage_not_current")
             expected_artifacts = {
                 (item.artifact_id, item.revision)
                 for item in request.expected_artifact_revisions
             }
             actual_artifacts = {
-                (item.artifact_id, item.revision)
-                for item, _usage in required_revisions
+                (item.artifact_id, item.revision) for item, _usage in required_revisions
             }
             if expected_artifacts != actual_artifacts:
                 raise CoreRunError("stage_artifact_binding_invalid")
             if set(request.expected_gate_evaluation_ids) != set(gate_ids):
                 raise CoreRunError("stage_gate_binding_invalid")
-            blocked = self._integrity.require_clean(
-                store,
-                verified,
-                request_id=request.request_id,
-                request_fingerprint=fingerprint,
-                expected_store_revision=request.expected_store_revision,
-                additional_revisions=(
-                    item for item, _usage in required_revisions
-                ),
+            from .recovery import (
+                CoreEffect,
+                CoreEffectSubject,
+                classify_effect_authorization,
             )
+
+            recovery_authorization = classify_effect_authorization(
+                verified.snapshot,
+                CoreEffect.STAGE_COMPLETE,
+                CoreEffectSubject(stage_id=request.stage_id),
+            )
+            if recovery_authorization.recovery_state == "rerun_required":
+                recovery_authorization.require_allowed()
+                mismatch = self._integrity.first_mismatch(
+                    verified,
+                    additional_revisions=(item for item, _usage in required_revisions),
+                )
+                if mismatch is not None:
+                    raise CoreRunError("core_run_integrity_blocked")
+                blocked = None
+                advance_workflow = False
+            else:
+                blocked = self._integrity.require_clean(
+                    store,
+                    verified,
+                    request_id=request.request_id,
+                    request_fingerprint=fingerprint,
+                    expected_store_revision=request.expected_store_revision,
+                    additional_revisions=(item for item, _usage in required_revisions),
+                )
+                advance_workflow = True
             if blocked is not None:
                 return blocked
             return self._commit_transition_set(
@@ -721,6 +796,7 @@ class CoreRunService:
                 gate_evaluation_ids=gate_ids,
                 producer_invocation_id=producer_invocation_id,
                 producer_tool_id=producer_tool_id,
+                advance_workflow=advance_workflow,
             )
 
     def _completion_bindings(
@@ -744,9 +820,7 @@ class CoreRunService:
         selected: list[tuple[ArtifactRevision, str]] = []
         producer_invocation_id: str | None = None
         producer_tool_id: str | None = None
-        invocations = {
-            item.invocation_id: item for item in snapshot.invocations
-        }
+        invocations = {item.invocation_id: item for item in snapshot.invocations}
 
         def require_invocation(
             invocation_id: str,
@@ -872,7 +946,8 @@ class CoreRunService:
                     "produced",
                 )
             )
-            if verified.binding.role_topology in {"default", "human_assisted"}:
+            topology = core_role_topology_policy(verified.binding.role_topology)
+            if not topology.separate_screener_stage:
                 screened = require_proposal(
                     "screened",
                     owner_stage_id="scout",
@@ -887,7 +962,9 @@ class CoreRunService:
                 if screened.parent_proposal_id != candidate.proposal_id:
                     raise CoreRunError("stage_artifact_binding_invalid")
         elif stage_id == "screener":
-            if verified.binding.role_topology != "strict":
+            if not core_role_topology_policy(
+                verified.binding.role_topology
+            ).separate_screener_stage:
                 raise CoreRunError("stage_decision_not_supported")
             screened = require_proposal(
                 "screened",
@@ -941,26 +1018,31 @@ class CoreRunService:
                 (
                     (
                         revisions[
-                        (
-                            freeze.claim_drafts_artifact.artifact_id,
-                            freeze.claim_drafts_artifact.revision,
-                        )
+                            (
+                                freeze.claim_drafts_artifact.artifact_id,
+                                freeze.claim_drafts_artifact.revision,
+                            )
                         ],
                         "consumed",
                     ),
                     (
                         revisions[
-                        (
-                            freeze.ledger_artifact.artifact_id,
-                            freeze.ledger_artifact.revision,
-                        )
+                            (
+                                freeze.ledger_artifact.artifact_id,
+                                freeze.ledger_artifact.revision,
+                            )
                         ],
                         "produced",
                     ),
                 )
             )
         elif stage_id == "analyst":
-            if verified.binding.role_topology == "human_assisted":
+            if (
+                core_role_topology_policy(
+                    verified.binding.role_topology
+                ).analyst_editor_route
+                == "human_assisted"
+            ):
                 route = classify_human_assisted_analyst_route(snapshot)
                 if route.route_family == "writer":
                     brief = require_artifact(
@@ -1017,8 +1099,7 @@ class CoreRunService:
                 or submissions[0].parent_artifact is None
                 or submissions[0].parent_artifact.artifact_id
                 != snapshot_revision.artifact_id
-                or submissions[0].parent_artifact.revision
-                != snapshot_revision.revision
+                or submissions[0].parent_artifact.revision != snapshot_revision.revision
             ):
                 raise CoreRunError("stage_artifact_binding_invalid")
         elif stage_id == "auditor":
@@ -1039,8 +1120,7 @@ class CoreRunService:
             if (
                 audit_promotion is None
                 or not audit_promotion.is_current_lineage
-                or audit_promotion.report_revision.artifact_id
-                != report.artifact_id
+                or audit_promotion.report_revision.artifact_id != report.artifact_id
                 or audit_promotion.report_revision.revision != report.revision
                 or audit_promotion.brief_revision.artifact_id != brief.artifact_id
                 or audit_promotion.brief_revision.revision != brief.revision
@@ -1053,12 +1133,9 @@ class CoreRunService:
             if artifacts["analyst_draft_snapshot"].current_revision:
                 require_artifact("analyst_draft_snapshot", "consumed")
             del ledger
-            if (
-                audit_promotion.proposal.decision == "fail"
-                or any(
-                    finding.severity == "error"
-                    for finding in audit_promotion.proposal.findings
-                )
+            if audit_promotion.proposal.decision == "fail" or any(
+                finding.severity == "error"
+                for finding in audit_promotion.proposal.findings
             ):
                 raise CoreRunError("stage_artifact_binding_invalid")
             evaluations = {
@@ -1092,8 +1169,7 @@ class CoreRunService:
         else:
             raise CoreRunError("stage_decision_not_supported")
         deduped = {
-            (item.artifact_id, item.revision): (item, usage)
-            for item, usage in selected
+            (item.artifact_id, item.revision): (item, usage) for item, usage in selected
         }
         return (
             tuple(deduped[key] for key in sorted(deduped)),
@@ -1117,6 +1193,7 @@ class CoreRunService:
         doctor_result: tuple[str, str] | None = None,
         producer_invocation_id: str | None = None,
         producer_tool_id: str | None = None,
+        advance_workflow: bool = True,
     ) -> CoreRunResult:
         now = _now(self._clock)
         lineage = classify_current_lineage(verified.snapshot)
@@ -1187,9 +1264,7 @@ class CoreRunService:
                     producer_version=doctor_result[1],
                 )
             elif transition_producer_invocation_id is not None:
-                payload["producer_invocation_id"] = (
-                    transition_producer_invocation_id
-                )
+                payload["producer_invocation_id"] = transition_producer_invocation_id
             elif primary and producer_tool_id is not None:
                 payload["producer_tool_id"] = producer_tool_id
             transition = StageTransitionRecord.model_validate(payload, strict=True)
@@ -1250,9 +1325,11 @@ class CoreRunService:
         revisions = tuple(artifact_revisions)
         transition_artifacts[completed.transition_id] = revisions
         next_index = stage_order.index(completed_stage_id) + 1
+        topology_policy = core_role_topology_policy(verified.binding.role_topology)
         if (
-            completed_stage_id == "scout"
-            and verified.binding.role_topology in {"default", "human_assisted"}
+            advance_workflow
+            and completed_stage_id == "scout"
+            and not topology_policy.separate_screener_stage
         ):
             if lineage.active_invocations_by_stage.get("screener"):
                 raise CoreRunError("stage_artifact_binding_invalid")
@@ -1272,8 +1349,9 @@ class CoreRunService:
             )
             next_index = stage_order.index("screener") + 1
         if (
-            completed_stage_id == "analyst"
-            and verified.binding.role_topology == "human_assisted"
+            advance_workflow
+            and completed_stage_id == "analyst"
+            and topology_policy.analyst_editor_route == "human_assisted"
             and any(
                 revision.artifact_id == "audited_brief"
                 for revision, _usage in revisions
@@ -1300,13 +1378,14 @@ class CoreRunService:
                 (audited_brief, "topology_required"),
             )
             next_index = stage_order.index("editor") + 1
-        next_stage_id = stage_order[next_index]
-        add_transition(
-            next_stage_id,
-            transition_kind="activate",
-            result_status="ready",
-            transition_reason=f"activated after {completed_stage_id}",
-        )
+        if advance_workflow:
+            next_stage_id = stage_order[next_index]
+            add_transition(
+                next_stage_id,
+                transition_kind="activate",
+                result_status="ready",
+                transition_reason=f"activated after {completed_stage_id}",
+            )
         unit = store.begin(
             verified.snapshot.run.run_id,
             request_id,
@@ -1380,7 +1459,10 @@ class CoreRunService:
 
     def _roles_for(self, verified: VerifiedCoreRun, stage_id: str) -> tuple[str, ...]:
         if (
-            verified.binding.role_topology == "human_assisted"
+            core_role_topology_policy(
+                verified.binding.role_topology
+            ).analyst_editor_route
+            == "human_assisted"
             and stage_id == "analyst"
         ):
             return (*STAGE_ROLES.get(stage_id, ()), "writer")
@@ -1532,9 +1614,8 @@ def _require_non_secret_mapping(content: bytes) -> None:
                 if type(key) is not str:
                     raise CoreRunError("core_run_contract_mismatch")
                 normalized = key.strip().casefold().replace("-", "_")
-                if (
-                    normalized in _SECRET_BEARING_INPUT_KEYS
-                    or normalized.endswith(_SECRET_BEARING_INPUT_SUFFIXES)
+                if normalized in _SECRET_BEARING_INPUT_KEYS or normalized.endswith(
+                    _SECRET_BEARING_INPUT_SUFFIXES
                 ):
                     raise CoreRunError("core_run_contract_mismatch")
                 pending.append(child)
@@ -1683,11 +1764,29 @@ def _derive_runtime_source_plan(
     *,
     run_id: str,
     sources_config_sha256: str,
+    run_direction: RunDirection | None = None,
+    workspace_root: Path | None = None,
 ) -> RuntimeSourcePlanBinding:
     """Derive the only safe source routing projection from exact YAML bytes."""
 
+    class _UniqueKeyLoader(yaml.SafeLoader):
+        pass
+
+    def _construct_unique_mapping(loader, node, deep=False):
+        mapping = {}
+        for key_node, value_node in node.value:
+            key = loader.construct_object(key_node, deep=deep)
+            if key in mapping:
+                raise yaml.YAMLError("duplicate mapping key")
+            mapping[key] = loader.construct_object(value_node, deep=deep)
+        return mapping
+
+    _UniqueKeyLoader.add_constructor(
+        yaml.resolver.BaseResolver.DEFAULT_MAPPING_TAG,
+        _construct_unique_mapping,
+    )
     try:
-        raw = yaml.safe_load(sources_content.decode("utf-8"))
+        raw = yaml.load(sources_content.decode("utf-8"), Loader=_UniqueKeyLoader)
     except (UnicodeDecodeError, yaml.YAMLError) as exc:
         raise CoreRunError("runtime_source_plan_invalid") from exc
     if type(raw) is not dict or sha256_hex(sources_content) != sources_config_sha256:
@@ -1703,6 +1802,8 @@ def _derive_runtime_source_plan(
     enabled_ids = sorted(
         {"web-search" if item == "web_search" else item for item in enabled}
     )
+    if any(item not in SOURCE_ROUTE_IDS for item in enabled_ids):
+        raise CoreRunError("runtime_source_plan_invalid")
 
     web = raw.get("web_search", {})
     if type(web) is not dict:
@@ -1725,6 +1826,8 @@ def _derive_runtime_source_plan(
     if mode == "external_api" and web_enabled and type(backend_value) is not str:
         raise CoreRunError("runtime_source_plan_invalid")
     backend = str(backend_value) if type(backend_value) is str else None
+    if mode == "external_api" and backend not in SOURCE_WEB_PROVIDER_IDS:
+        raise CoreRunError("runtime_source_plan_invalid")
 
     route_kinds = {
         "manual": ("manual", "human"),
@@ -1746,7 +1849,22 @@ def _derive_runtime_source_plan(
             else:
                 route_kind = mode
                 owner = "specialist" if mode == "runtime_tool" else "deterministic"
-                provider_id = backend if mode == "external_api" else "runtime-tool"
+                provider_id = (
+                    backend
+                    if mode == "external_api"
+                    else "runtime-tool"
+                    if mode == "runtime_tool"
+                    else None
+                )
+            acquisition_spec = _source_acquisition_spec(
+                route_id=route_id,
+                route_kind=route_kind,
+                provider_id=provider_id,
+                raw=raw,
+                web=web,
+                run_direction=run_direction,
+                workspace_root=workspace_root,
+            )
             route_payload = {
                 "schema_version": RuntimeSourceRouteBinding.schema_id,
                 "route_id": route_id,
@@ -1754,25 +1872,40 @@ def _derive_runtime_source_plan(
                 "provider_id": provider_id,
                 "execution_owner": owner,
                 "required": False,
+                "acquisition_spec": acquisition_spec,
             }
             route_payload["route_fingerprint"] = canonical_fingerprint(route_payload)
-            routes.append(
-                RuntimeSourceRouteBinding.model_validate(route_payload, strict=True)
-            )
+            routes.append(_validate_runtime_source_route(route_payload))
             continue
         if route_id not in route_kinds:
             raise CoreRunError("runtime_source_plan_invalid")
         route_kind, owner = route_kinds[route_id]
+        acquisition_spec = _source_acquisition_spec(
+            route_id=route_id,
+            route_kind=route_kind,
+            provider_id=("api" if route_id == "api" else None),
+            raw=raw,
+            web=web,
+            run_direction=run_direction,
+            workspace_root=workspace_root,
+        )
         route_payload: dict[str, object] = {
             "schema_version": RuntimeSourceRouteBinding.schema_id,
             "route_id": route_id,
             "route_kind": route_kind,
-            "provider_id": route_id if route_kind in {"external_api", "runtime_tool"} else None,
+            "provider_id": (
+                "api"
+                if route_id == "api"
+                else "runtime-tool"
+                if route_id == "runtime_tool"
+                else None
+            ),
             "execution_owner": owner,
             "required": False,
+            "acquisition_spec": acquisition_spec,
         }
         route_payload["route_fingerprint"] = canonical_fingerprint(route_payload)
-        routes.append(RuntimeSourceRouteBinding.model_validate(route_payload, strict=True))
+        routes.append(_validate_runtime_source_route(route_payload))
     if web_enabled and mode != "disabled" and "web-search" not in enabled_ids:
         if mode == "configure_later":
             route_kind, owner, provider_id = "disabled", "human", None
@@ -1781,7 +1914,22 @@ def _derive_runtime_source_plan(
         else:
             route_kind = mode
             owner = "specialist" if mode == "runtime_tool" else "deterministic"
-            provider_id = backend if mode == "external_api" else "runtime-tool"
+            provider_id = (
+                backend
+                if mode == "external_api"
+                else "runtime-tool"
+                if mode == "runtime_tool"
+                else None
+            )
+        acquisition_spec = _source_acquisition_spec(
+            route_id="web-search",
+            route_kind=route_kind,
+            provider_id=provider_id,
+            raw=raw,
+            web=web,
+            run_direction=run_direction,
+            workspace_root=workspace_root,
+        )
         route_payload = {
             "schema_version": RuntimeSourceRouteBinding.schema_id,
             "route_id": "web-search",
@@ -1789,9 +1937,10 @@ def _derive_runtime_source_plan(
             "provider_id": provider_id,
             "execution_owner": owner,
             "required": False,
+            "acquisition_spec": acquisition_spec,
         }
         route_payload["route_fingerprint"] = canonical_fingerprint(route_payload)
-        routes.append(RuntimeSourceRouteBinding.model_validate(route_payload, strict=True))
+        routes.append(_validate_runtime_source_route(route_payload))
     routes.sort(key=lambda item: item.route_id)
     payload: dict[str, object] = {
         "schema_version": RuntimeSourcePlanBinding.schema_id,
@@ -1799,11 +1948,295 @@ def _derive_runtime_source_plan(
         "sources_config_sha256": sources_config_sha256,
         "web_search_mode": mode,
         "search_backend": backend,
-        "routes": [item.model_dump(mode="json", exclude_unset=False) for item in routes],
+        "routes": [
+            item.model_dump(mode="json", exclude_unset=False) for item in routes
+        ],
     }
     payload["source_plan_fingerprint"] = canonical_fingerprint(payload)
     try:
         return RuntimeSourcePlanBinding.model_validate(payload, strict=True)
+    except (TypeError, ValueError) as exc:
+        raise CoreRunError("runtime_source_plan_invalid") from exc
+
+
+_WEB_CREDENTIAL_ENV = {
+    "tavily": "TAVILY_API_KEY",
+    "exa": "EXA_API_KEY",
+    "brave": "BRAVE_SEARCH_API_KEY",
+    "firecrawl": "FIRECRAWL_API_KEY",
+    "serper": "SERPER_API_KEY",
+}
+
+
+def _source_acquisition_spec(
+    *,
+    route_id: str,
+    route_kind: str,
+    provider_id: str | None,
+    raw: dict[str, object],
+    web: dict[str, object],
+    run_direction: RunDirection | None,
+    workspace_root: Path | None,
+) -> dict[str, object] | None:
+    if route_kind not in {"external_api", "cached_package"}:
+        return None
+    if route_kind == "cached_package":
+        section = raw.get("cached_package", {})
+        if type(section) is not dict:
+            raise CoreRunError("runtime_source_plan_invalid")
+        allowed = {"enabled", "paths", "formats"}
+        if set(section) - allowed:
+            raise CoreRunError("runtime_source_plan_invalid")
+        if section.get("enabled") is not True:
+            raise CoreRunError("runtime_source_plan_invalid")
+        paths = section.get("paths", [])
+        formats = section.get("formats", ["json", "md", "txt"])
+        if (
+            type(paths) is not list
+            or not paths
+            or any(type(item) is not str for item in paths)
+            or type(formats) is not list
+            or not formats
+            or any(type(item) is not str for item in formats)
+        ):
+            raise CoreRunError("runtime_source_plan_invalid")
+        _validate_cached_package_topology(workspace_root, paths)
+        payload: dict[str, object] = {
+            "schema_version": RuntimeCachedPackageAcquisitionSpec.schema_id,
+            "kind": "cached_package",
+            "paths": paths,
+            "formats": sorted(formats),
+        }
+        payload["acquisition_spec_fingerprint"] = canonical_fingerprint(payload)
+        try:
+            return RuntimeCachedPackageAcquisitionSpec.model_validate(
+                payload, strict=True
+            ).model_dump(mode="json", exclude_unset=False)
+        except (TypeError, ValueError) as exc:
+            raise CoreRunError("runtime_source_plan_invalid") from exc
+    if route_id == "web-search":
+        if provider_id not in _WEB_CREDENTIAL_ENV:
+            raise CoreRunError("runtime_source_plan_invalid")
+        allowed = {
+            "enabled",
+            "mode",
+            "backend",
+            "api_key_env",
+            "max_results",
+            "recency_days",
+            "search_tasks",
+            "initial_news_backfill",
+            "news_source_domains",
+            "note",
+            "required_capability",
+            "status",
+            "topic",
+            "search_depth",
+        }
+        if set(web) - allowed:
+            raise CoreRunError("runtime_source_plan_invalid")
+        backfill = web.get("initial_news_backfill", {})
+        if type(backfill) is not dict or backfill.get("enabled", False) is not False:
+            raise CoreRunError("runtime_source_plan_invalid")
+        if (
+            web.get("topic", "news") != "news"
+            or web.get("search_depth", "basic") != "basic"
+        ):
+            raise CoreRunError("runtime_source_plan_invalid")
+        configured_env = web.get("api_key_env")
+        if configured_env not in {None, "", _WEB_CREDENTIAL_ENV[provider_id]}:
+            raise CoreRunError("runtime_source_plan_invalid")
+        max_results = web.get("max_results", 20)
+        recency_days = web.get(
+            "recency_days",
+            None if run_direction is None else run_direction.max_source_age_days,
+        )
+        if type(max_results) is not int or type(recency_days) not in {int, type(None)}:
+            raise CoreRunError("runtime_source_plan_invalid")
+        domains = _web_preferred_domains(web)
+        tasks = web.get("search_tasks", [])
+        if type(tasks) is not list:
+            raise CoreRunError("runtime_source_plan_invalid")
+        requests: list[dict[str, object]] = []
+        for task in tasks:
+            if type(task) is not dict or set(task) - {
+                "query",
+                "domains",
+                "topic",
+                "market",
+                "language",
+                "platform_group",
+                "signal_type",
+            }:
+                raise CoreRunError("runtime_source_plan_invalid")
+            query = task.get("query")
+            task_domains = task.get("domains", domains)
+            requests.append(
+                _web_request_payload(
+                    query=query,
+                    domains=task_domains,
+                    max_results=max_results,
+                    recency_days=recency_days,
+                )
+            )
+        if not requests:
+            if run_direction is None:
+                raise CoreRunError("runtime_source_plan_invalid")
+            requests = [
+                _web_request_payload(
+                    query=term,
+                    domains=domains,
+                    max_results=max_results,
+                    recency_days=recency_days,
+                )
+                for term in run_direction.target_terms
+            ]
+        payload = {
+            "schema_version": RuntimeWebSearchAcquisitionSpec.schema_id,
+            "kind": "web_search",
+            "provider_id": provider_id,
+            "requests": requests,
+        }
+        payload["acquisition_spec_fingerprint"] = canonical_fingerprint(payload)
+        try:
+            return RuntimeWebSearchAcquisitionSpec.model_validate(
+                payload, strict=True
+            ).model_dump(mode="json", exclude_unset=False)
+        except (TypeError, ValueError) as exc:
+            raise CoreRunError("runtime_source_plan_invalid") from exc
+    if route_id != "api" or provider_id != "api":
+        raise CoreRunError("runtime_source_plan_invalid")
+    section = raw.get("api", {})
+    if type(section) is not dict or set(section) - {
+        "enabled",
+        "providers",
+        "query",
+        "default_query",
+        "max_results",
+        "sort_by",
+        "language",
+        "domains",
+    }:
+        raise CoreRunError("runtime_source_plan_invalid")
+    if section.get("enabled") is not True:
+        raise CoreRunError("runtime_source_plan_invalid")
+    providers = section.get("providers", [])
+    if (
+        type(providers) is not list
+        or len(providers) != 1
+        or type(providers[0]) is not dict
+    ):
+        raise CoreRunError("runtime_source_plan_invalid")
+    provider = providers[0]
+    if set(provider) - {"name", "api_key_env"} or provider.get("name") != "newsapi":
+        raise CoreRunError("runtime_source_plan_invalid")
+    if provider.get("api_key_env") not in {None, "", "NEWSAPI_API_KEY"}:
+        raise CoreRunError("runtime_source_plan_invalid")
+    if run_direction is None:
+        raise CoreRunError("runtime_source_plan_invalid")
+    query = section.get("query", section.get("default_query"))
+    if query is None:
+        query = " ".join(run_direction.target_terms)
+    domains = section.get("domains", [])
+    if type(domains) is not list:
+        raise CoreRunError("runtime_source_plan_invalid")
+    payload = {
+        "schema_version": RuntimeNewsApiAcquisitionSpec.schema_id,
+        "kind": "newsapi",
+        "provider_id": "newsapi",
+        "query": query,
+        "terms": run_direction.target_terms,
+        "max_results": section.get("max_results", 20),
+        "start_date": run_direction.report_window_start,
+        "end_date": run_direction.report_window_end,
+        "sort_by": section.get("sort_by"),
+        "language": section.get("language"),
+        "domains": sorted(str(item).lower() for item in domains),
+    }
+    payload["acquisition_spec_fingerprint"] = canonical_fingerprint(payload)
+    try:
+        return RuntimeNewsApiAcquisitionSpec.model_validate(
+            payload, strict=True
+        ).model_dump(mode="json", exclude_unset=False)
+    except (TypeError, ValueError) as exc:
+        raise CoreRunError("runtime_source_plan_invalid") from exc
+
+
+def _web_preferred_domains(web: dict[str, object]) -> list[str]:
+    domain_policy = web.get("news_source_domains", {})
+    if type(domain_policy) is not dict:
+        raise CoreRunError("runtime_source_plan_invalid")
+    if set(domain_policy) - {"preferred_domains", "excluded_domains", "mode", "note"}:
+        raise CoreRunError("runtime_source_plan_invalid")
+    excluded = domain_policy.get("excluded_domains", [])
+    preferred = domain_policy.get("preferred_domains", [])
+    if (
+        type(excluded) is not list
+        or excluded
+        or type(preferred) is not list
+        or any(type(item) is not str for item in preferred)
+    ):
+        raise CoreRunError("runtime_source_plan_invalid")
+    return sorted({item.lower() for item in preferred})
+
+
+def _web_request_payload(
+    *,
+    query: object,
+    domains: object,
+    max_results: object,
+    recency_days: object,
+) -> dict[str, object]:
+    if (
+        type(query) is not str
+        or type(domains) is not list
+        or any(type(item) is not str for item in domains)
+    ):
+        raise CoreRunError("runtime_source_plan_invalid")
+    try:
+        return RuntimeWebSearchRequestSpec.model_validate(
+            {
+                "schema_version": RuntimeWebSearchRequestSpec.schema_id,
+                "query": query,
+                "domains": sorted({item.lower() for item in domains}),
+                "max_results": max_results,
+                "recency_days": recency_days,
+            },
+            strict=True,
+        ).model_dump(mode="json", exclude_unset=False)
+    except (TypeError, ValueError) as exc:
+        raise CoreRunError("runtime_source_plan_invalid") from exc
+
+
+def _validate_cached_package_topology(
+    workspace_root: Path | None,
+    paths: list[str],
+) -> None:
+    if workspace_root is None:
+        return
+    root = workspace_root.resolve(strict=True)
+    for raw_path in paths:
+        relative = PurePosixPath(raw_path)
+        if relative.is_absolute() or ".." in relative.parts or "." in relative.parts:
+            raise CoreRunError("runtime_source_plan_invalid")
+        current = root
+        for part in relative.parts:
+            current = current / part
+            try:
+                if current.is_symlink():
+                    raise CoreRunError("runtime_source_plan_invalid")
+                current.lstat()
+            except FileNotFoundError:
+                break
+            except OSError as exc:
+                raise CoreRunError("runtime_source_plan_invalid") from exc
+
+
+def _validate_runtime_source_route(
+    payload: dict[str, object],
+) -> RuntimeSourceRouteBinding:
+    try:
+        return RuntimeSourceRouteBinding.model_validate(payload, strict=True)
     except (TypeError, ValueError) as exc:
         raise CoreRunError("runtime_source_plan_invalid") from exc
 

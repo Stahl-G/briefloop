@@ -7,6 +7,10 @@ import sys
 from pathlib import Path
 
 from multi_agent_brief.cli.main import main
+from multi_agent_brief.orchestrator.runtime_state import (
+    check_runtime_state,
+    initialize_runtime_state,
+)
 from multi_agent_brief.product.guidance_manifestation import (
     GUIDANCE_MANIFESTATION_BOUNDARY,
     GUIDANCE_MANIFESTATION_REPORT_SCHEMA_VERSION,
@@ -18,17 +22,36 @@ from multi_agent_brief.product.guidance_manifestation import (
 )
 from multi_agent_brief.product.quality_panel import build_quality_panel, validate_quality_panel_payload
 from multi_agent_brief.status import build_workspace_status, format_workspace_status
-from tests.helpers import initialized_workspace_writer
+from tests.helpers import write_minimal_workspace_under
 
 
-_workspace = initialized_workspace_writer(
-    project_name="Guidance Manifestation Test",
-    user_text="# Guidance manifestation test\n",
-)
+def _workspace(base_path: Path) -> Path:
+    """Legacy module fixture without claiming a public CLI path.
+
+    The retired public `state init` operator CLI is replaced by the direct
+    runtime-state seam; the status/quality-panel fold-in and artifact-registry
+    invariants below remain live product behavior, preserved unchanged.
+    """
+
+    workspace = write_minimal_workspace_under(
+        base_path,
+        project_name="Guidance Manifestation Test",
+        user_text="# Guidance manifestation test\n",
+    )
+    initialize_runtime_state(runtime="operator", workspace=workspace)
+    return workspace
 
 
 def _json(path: Path) -> dict:
     return json.loads(path.read_text(encoding="utf-8"))
+
+
+def _workspace_file_bytes(ws: Path) -> dict[str, bytes]:
+    return {
+        path.relative_to(ws).as_posix(): path.read_bytes()
+        for path in sorted(ws.rglob("*"))
+        if path.is_file()
+    }
 
 
 def _write_manifest_improvement(ws: Path, entry_ids: list[str]) -> str:
@@ -101,6 +124,19 @@ def test_guidance_manifestation_direct_import_has_no_runtime_state_cycle() -> No
 
     assert result.returncode == 0, result.stderr
     assert "project_workspace_guidance_manifestation" in result.stdout
+
+
+def test_state_check_cli_is_retired_with_typed_rejection(tmp_path: Path, capsys) -> None:
+    ws = _workspace(tmp_path)
+    run_id = _write_manifest_improvement(ws, ["AG-0001"])
+    _write_report(ws, _report(run_id))
+    files_before = _workspace_file_bytes(ws)
+
+    # LEGACY-DELETE: retired public `state check` operator CLI; typed rejection
+    # with zero writes replaces the pre-CX artifact-registry refresh.
+    assert main(["state", "check", "--workspace", str(ws)]) == 1
+    assert capsys.readouterr().out == "legacy_workspace_unsupported\n"
+    assert _workspace_file_bytes(ws) == files_before
 
 
 def test_guidance_manifestation_missing_runtime_manifest_is_not_available(tmp_path: Path) -> None:
@@ -259,7 +295,9 @@ def test_guidance_manifestation_artifact_registry_validates_current_run(tmp_path
     run_id = _write_manifest_improvement(ws, ["AG-0001"])
     _write_report(ws, _report(run_id))
 
-    assert main(["state", "check", "--workspace", str(ws)]) == 0
+    # LEGACY-DELETE: retired public `state check` CLI; the artifact-registry
+    # refresh is driven through the direct runtime-state seam.
+    check_runtime_state(workspace=ws)
     registry = _json(ws / "output" / "intermediate" / "artifact_registry.json")
     artifact = registry["artifacts"]["guidance_manifestation_report"]
     assert artifact["status"] == "valid"
@@ -267,7 +305,9 @@ def test_guidance_manifestation_artifact_registry_validates_current_run(tmp_path
 
     stale = _report("mabw-20260101T000000Z-stale")
     _write_report(ws, stale)
-    assert main(["state", "check", "--workspace", str(ws)]) == 0
+    # LEGACY-DELETE: retired public `state check` CLI; the artifact-registry
+    # refresh is driven through the direct runtime-state seam.
+    check_runtime_state(workspace=ws)
     registry = _json(ws / "output" / "intermediate" / "artifact_registry.json")
     artifact = registry["artifacts"]["guidance_manifestation_report"]
     assert artifact["status"] == "invalid"
@@ -284,7 +324,9 @@ def test_guidance_manifestation_artifact_registry_validates_current_run(tmp_path
         }
     )
     _write_report(ws, extra)
-    assert main(["state", "check", "--workspace", str(ws)]) == 0
+    # LEGACY-DELETE: retired public `state check` CLI; the artifact-registry
+    # refresh is driven through the direct runtime-state seam.
+    check_runtime_state(workspace=ws)
     registry = _json(ws / "output" / "intermediate" / "artifact_registry.json")
     artifact = registry["artifacts"]["guidance_manifestation_report"]
     assert artifact["status"] == "invalid"
@@ -293,7 +335,9 @@ def test_guidance_manifestation_artifact_registry_validates_current_run(tmp_path
     forged_method = _report(run_id)
     forged_method["assessment_method"] = "python_auto_manifestation_judge"
     _write_report(ws, forged_method)
-    assert main(["state", "check", "--workspace", str(ws)]) == 0
+    # LEGACY-DELETE: retired public `state check` CLI; the artifact-registry
+    # refresh is driven through the direct runtime-state seam.
+    check_runtime_state(workspace=ws)
     registry = _json(ws / "output" / "intermediate" / "artifact_registry.json")
     artifact = registry["artifacts"]["guidance_manifestation_report"]
     assert artifact["status"] == "invalid"

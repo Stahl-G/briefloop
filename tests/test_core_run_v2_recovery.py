@@ -2006,8 +2006,13 @@ def test_recovery_service_owns_supersession_repair_and_recovery_transactions(
             if item.artifact_id == prior.artifact_id
             and item.revision == prior.current_revision
         )
+        frozen_preimage = store.read_artifact_revision_bytes(
+            RUN_ID, prior.artifact_id, prior.current_revision
+        )
+    # The repair contract requires the working checkout to be restored to the
+    # frozen preimage before the supersession publishes the repaired bytes.
     (workspace / prior_revision.path).parent.mkdir(parents=True, exist_ok=True)
-    (workspace / prior_revision.path).write_bytes(content)
+    (workspace / prior_revision.path).write_bytes(frozen_preimage)
     supersede_request = ArtifactSupersedeRequest.model_validate(
         {
             "schema_version": ArtifactSupersedeRequest.schema_id,

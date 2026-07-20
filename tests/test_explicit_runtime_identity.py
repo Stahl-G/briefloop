@@ -138,16 +138,6 @@ def test_legacy_manifest_is_read_only_until_reset_and_archived_byte_exact(
         repo_workdir=ROOT,
         runtime="operator",
     )
-    assert main([
-        "controls",
-        "build-switchboard",
-        "--workspace",
-        str(ws),
-        "--repo-workdir",
-        str(ROOT),
-        "--json",
-    ]) == 0
-    capsys.readouterr()
     manifest_path = ws / INTERMEDIATE / "runtime_manifest.json"
     manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
     manifest["runtime"] = historical_runtime
@@ -173,22 +163,21 @@ def test_legacy_manifest_is_read_only_until_reset_and_archived_byte_exact(
     assert "--reset-state" in status["suggested_next_command"]
     assert f"--runtime {historical_runtime}" not in status["suggested_next_command"]
 
-    for argv in (
-        ["state", "check", "--workspace", str(ws), "--json"],
-        ["controls", "build-switchboard", "--workspace", str(ws), "--json"],
-        [
-            "controls", "select", "--workspace", str(ws),
-            "--control", "quality_gates", "--selection", "enable",
-            "--reason", "Use deterministic gates.", "--json",
-        ],
-        ["controls", "validate", "--workspace", str(ws), "--json"],
-        ["gates", "check", "--workspace", str(ws), "--json"],
-        ["feedback", "plan", "--workspace", str(ws), "--json"],
-    ):
-        assert main(argv) == 1
-        payload = json.loads(capsys.readouterr().out)
-        assert payload["error_code"] == "E_TRANSACTION_INTEGRITY"
-        assert _files(ws) == before
+    # LEGACY-DELETE: retired public state/controls/gates/feedback commands on a
+    # legacy-JSON workspace authority. The mutating-consumer invariant is kept
+    # by the direct-seam assertions in
+    # test_mutating_runtime_consumers_reject_historical_identity_without_writes.
+    assert main([
+        "controls",
+        "build-switchboard",
+        "--workspace",
+        str(ws),
+        "--repo-workdir",
+        str(ROOT),
+        "--json",
+    ]) == 1
+    assert capsys.readouterr().out == "legacy_workspace_unsupported\n"
+    assert _files(ws) == before
 
     reset = initialize_runtime_state(
         workspace=ws,
@@ -235,7 +224,17 @@ def test_active_adapter_entrypoints_bind_runtime_literals() -> None:
     runtime_assets = (ROOT / "src/multi_agent_brief/runtime_assets.py").read_text(
         encoding="utf-8"
     )
-    assert '_workspace_skill_text(runtime="codex", runtime_label="Codex")' in runtime_assets
+    # LEGACY-DELETE: the generated `_workspace_skill_text(runtime="codex", ...)`
+    # skill left with the retired pre-CX codex kit; the codex workspace kit is
+    # now installed verbatim from the packaged ControlStore v2 assets.
+    assert "_codex_writes" in runtime_assets
+    codex_reference = (
+        ROOT
+        / "src/multi_agent_brief/runtime_kits/codex/skills/briefloop/references/controlstore-v2.md"
+    ).read_text(encoding="utf-8")
+    assert "--runtime codex" in codex_reference
+    assert "--runtime auto" not in codex_reference
+    assert "--runtime manual" not in codex_reference
     assert "--runtime {runtime}" in runtime_assets
 
     hermes_schema = (ROOT / "integrations/hermes-plugin/mabw/schemas.py").read_text(
@@ -349,9 +348,11 @@ def test_runtime_consumers_do_not_implicitly_initialize(
     before = _files(ws)
     command = [*argv, "--workspace", str(ws)]
 
+    # LEGACY-DELETE: retired public state/controls/gates/feedback commands. The
+    # fail-closed authority guard rejects them with zero writes on a fresh
+    # workspace, so runtime state is never implicitly initialized.
     assert main(command) == 1
-    payload = json.loads(capsys.readouterr().out)
-    assert payload["error_code"] == "E_RUNTIME_STATE_NOT_INITIALIZED"
+    assert capsys.readouterr().out == "runtime_command_unsupported\n"
     assert _files(ws) == before
 
 

@@ -4,10 +4,12 @@ from __future__ import annotations
 import json
 import os
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 import yaml
 
+from multi_agent_brief.cli import sources_commands
 from multi_agent_brief.cli.main import main
 from multi_agent_brief.sources import web_search
 from multi_agent_brief.sources.decider import (
@@ -16,6 +18,19 @@ from multi_agent_brief.sources.decider import (
     load_source_discovery,
 )
 from multi_agent_brief.sources.search_backends.base import SearchResult
+
+
+def _decide_args(config_path: Path, *, search: bool = True) -> SimpleNamespace:
+    """Namespace matching the `sources decide` parser defaults for the direct seam."""
+    return SimpleNamespace(
+        config=str(config_path),
+        search=search,
+        daily_news_backfill=False,
+        backfill_days=None,
+        daily_max_results=None,
+        merge=False,
+        candidates=None,
+    )
 
 
 class FakeSearchBackend:
@@ -170,6 +185,57 @@ class TestB02SearchExecution:
 class TestB02CLISearchIntegration:
     """Integration tests through the decider module (not full CLI)."""
 
+    def test_sources_decide_public_cli_is_retired_with_zero_writes(self, tmp_path, capsys):
+        ws = tmp_path / "ws"
+        ws.mkdir()
+        (ws / "config.yaml").write_text(
+            "project:\n  name: test\ninput:\n  path: input\noutput:\n  path: output\n",
+            encoding="utf-8",
+        )
+        (ws / "sources.yaml").write_text(
+            "source_strategy:\n"
+            "  profile: research\n"
+            "  enabled_providers: [web_search]\n"
+            "web_search:\n"
+            "  enabled: true\n"
+            "  mode: external_api\n"
+            "  backend: tavily\n"
+            "source_discovery:\n"
+            "  company: TestCo\n"
+            "  industry: manufacturing\n"
+            "  topics: [policy]\n"
+            "  queries:\n"
+            "    - test query\n",
+            encoding="utf-8",
+        )
+        variants = [
+            ["sources", "decide", "--config", str(ws / "config.yaml")],
+            ["sources", "decide", "--config", str(ws / "config.yaml"), "--search"],
+            ["sources", "decide", "--config", str(ws / "config.yaml"), "--search", "--daily-news-backfill"],
+            ["sources", "decide", "--config", str(ws / "config.yaml"), "--merge"],
+        ]
+        for args in variants:
+            before = {
+                path.relative_to(ws).as_posix(): path.read_bytes()
+                for path in ws.rglob("*")
+                if path.is_file()
+            }
+
+            rc = main(args)
+            out = capsys.readouterr().out
+
+            # LEGACY-DELETE: retired public `sources decide` command and its
+            # typed rejection with zero writes.
+            assert rc == 1
+            assert out == "runtime_command_unsupported\n"
+            after = {
+                path.relative_to(ws).as_posix(): path.read_bytes()
+                for path in ws.rglob("*")
+                if path.is_file()
+            }
+            assert after == before
+        assert not (ws / "source_candidates.yaml").exists()
+
     def test_run_with_fake_backend_produces_candidates(self, tmp_path):
         """Running searches with a fake backend must produce non-empty candidates."""
         discovery = {
@@ -238,7 +304,9 @@ class TestB02CLISearchIntegration:
             encoding="utf-8",
         )
 
-        rc = main(["sources", "decide", "--config", str(ws / "config.yaml"), "--search"])
+        # LEGACY-DELETE: retired public `sources decide --search` CLI; the
+        # search-execution invariants run through the direct decider seam.
+        rc = sources_commands._sources_decide(_decide_args(ws / "config.yaml"))
 
         captured = capsys.readouterr()
         assert rc == 0
@@ -288,7 +356,9 @@ class TestB02CLISearchIntegration:
                 encoding="utf-8",
             )
 
-            rc = main(["sources", "decide", "--config", str(ws / "config.yaml"), "--search"])
+            # LEGACY-DELETE: retired public `sources decide --search` CLI; the
+            # search-execution invariants run through the direct decider seam.
+            rc = sources_commands._sources_decide(_decide_args(ws / "config.yaml"))
 
             captured = capsys.readouterr()
             assert rc == 1
@@ -321,7 +391,9 @@ class TestB02CLISearchIntegration:
             encoding="utf-8",
         )
 
-        rc = main(["sources", "decide", "--config", str(ws / "config.yaml"), "--search"])
+        # LEGACY-DELETE: retired public `sources decide --search` CLI; the
+        # search-execution invariants run through the direct decider seam.
+        rc = sources_commands._sources_decide(_decide_args(ws / "config.yaml"))
 
         captured = capsys.readouterr()
         assert rc == 1
@@ -354,7 +426,9 @@ class TestB02CLISearchIntegration:
             encoding="utf-8",
         )
 
-        rc = main(["sources", "decide", "--config", str(ws / "config.yaml"), "--search"])
+        # LEGACY-DELETE: retired public `sources decide --search` CLI; the
+        # search-execution invariants run through the direct decider seam.
+        rc = sources_commands._sources_decide(_decide_args(ws / "config.yaml"))
 
         captured = capsys.readouterr()
         assert rc == 1

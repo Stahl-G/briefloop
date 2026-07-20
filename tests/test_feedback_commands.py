@@ -6,13 +6,23 @@ import json
 from functools import partial
 from pathlib import Path
 
+import pytest
+
 import multi_agent_brief.orchestrator.runtime_state as runtime_state
 import multi_agent_brief.feedback.feedback_state as feedback_state
 from multi_agent_brief.cli.main import main
+from multi_agent_brief.feedback.feedback_state import (
+    ingest_feedback,
+    plan_feedback,
+    resolve_feedback,
+    validate_feedback_workspace,
+)
 from multi_agent_brief.orchestrator.runtime_state import (
     RuntimeStateError,
     check_runtime_state,
+    complete_stage_transaction,
     initialize_runtime_state,
+    record_decision,
 )
 from multi_agent_brief.orchestrator.runtime_state.workflow import _allowed_decisions_for_stage
 from tests.helpers import write_workspace_files_under
@@ -64,6 +74,14 @@ def _write_json_artifact(ws: Path, name: str, payload: str = "[]\n") -> None:
     (_intermediate(ws) / name).write_text(payload, encoding="utf-8")
 
 
+def _workspace_file_bytes(ws: Path) -> dict[str, bytes]:
+    return {
+        path.relative_to(ws).as_posix(): path.read_bytes()
+        for path in ws.rglob("*")
+        if path.is_file()
+    }
+
+
 def _set_current_stage(ws: Path, stage_id: str) -> None:
     stages = runtime_state.load_stage_specs(ROOT)
     stage_ids = [str(stage.get("stage_id") or "") for stage in stages if stage.get("stage_id")]
@@ -99,35 +117,75 @@ def _events(ws: Path) -> list[dict[str, object]]:
     return [json.loads(line) for line in path.read_text(encoding="utf-8").splitlines()]
 
 
-def test_human_feedback_ingest_creates_valid_feedback_issues(tmp_path, capsys):
+@pytest.mark.parametrize("action", ["ingest", "plan", "resolve", "validate"])
+def test_feedback_public_cli_is_retired_with_typed_rejection(tmp_path, capsys, action):
+    # LEGACY-DELETE: retired public `feedback` CLI surface; feedback issue and
+    # repair-plan state is driven only through the deterministic feedback_state
+    # module seam used by the tests below.
     ws = _write_workspace(tmp_path)
     feedback = tmp_path / "feedback.txt"
-    feedback.write_text("The audited brief needs a clearer citation.\n", encoding="utf-8")
+    feedback.write_text("Retired surface probe.\n", encoding="utf-8")
+    args = ["feedback", action, "--workspace", str(ws), "--repo-workdir", str(ROOT), "--json"]
+    if action == "ingest":
+        args += ["--feedback", str(feedback), "--source", "human"]
+    if action == "resolve":
+        args += ["--issue-id", "issue_retired", "--repair-plan-id", "rp_retired", "--reason", "probe"]
+    before = _workspace_file_bytes(ws)
+
+    rc = main(args)
+
+    assert rc == 1
+    assert capsys.readouterr().out.strip() == "legacy_workspace_unsupported"
+    assert _workspace_file_bytes(ws) == before
+    assert not _issues_path(ws).exists()
+    assert not _plan_path(ws).exists()
+
+
+@pytest.mark.parametrize(
+    "action_args",
+    [
+        ["stage-complete", "--stage", "analyst", "--reason", "probe"],
+        ["decide", "--stage", "analyst", "--decision", "delegate_repair", "--reason", "probe"],
+    ],
+)
+def test_state_public_cli_is_retired_with_typed_rejection(tmp_path, capsys, action_args):
+    # LEGACY-DELETE: retired public `state` CLI surface; runtime-state transitions
+    # are driven only through the deterministic runtime_state module seam used by
+    # the tests below.
+    ws = _write_workspace(tmp_path)
+    before = _workspace_file_bytes(ws)
 
     rc = main([
-        "feedback",
-        "ingest",
+        "state",
+        *action_args,
         "--workspace",
         str(ws),
-        "--feedback",
-        str(feedback),
-        "--source",
-        "human",
-        "--stage",
-        "analyst",
-        "--artifact",
-        "audited_brief",
-        "--category",
-        "citation_error",
-        "--severity",
-        "blocking",
         "--repo-workdir",
         str(ROOT),
         "--json",
     ])
 
-    assert rc == 0
-    payload = json.loads(capsys.readouterr().out)
+    assert rc == 1
+    assert capsys.readouterr().out.strip() == "legacy_workspace_unsupported"
+    assert _workspace_file_bytes(ws) == before
+
+
+def test_human_feedback_ingest_creates_valid_feedback_issues(tmp_path):
+    ws = _write_workspace(tmp_path)
+    feedback = tmp_path / "feedback.txt"
+    feedback.write_text("The audited brief needs a clearer citation.\n", encoding="utf-8")
+
+    payload = ingest_feedback(
+        workspace=ws,
+        feedback_path=feedback,
+        source="human",
+        stage_id="analyst",
+        artifact_id="audited_brief",
+        category="citation_error",
+        severity="blocking",
+        repo_workdir=ROOT,
+    )
+
     assert payload["ok"] is True
     issues = payload["feedback_issues"]["issues"]
     assert len(issues) == 1
@@ -137,47 +195,30 @@ def test_human_feedback_ingest_creates_valid_feedback_issues(tmp_path, capsys):
     assert "evidence" not in issues[0]
     assert _issues_path(ws).exists()
 
-    rc = main([
-        "feedback",
-        "validate",
-        "--workspace",
-        str(ws),
-        "--repo-workdir",
-        str(ROOT),
-        "--json",
-    ])
-    assert rc == 0
-    assert json.loads(capsys.readouterr().out)["ok"] is True
+    result = validate_feedback_workspace(workspace=ws, repo_workdir=ROOT)
+    assert result["ok"] is True
 
 
-def test_human_feedback_without_mapping_becomes_triage(tmp_path, capsys):
+def test_human_feedback_without_mapping_becomes_triage(tmp_path):
     ws = _write_workspace(tmp_path)
     feedback = tmp_path / "feedback.txt"
     feedback.write_text("This section does not answer the executive question.\n", encoding="utf-8")
 
-    rc = main([
-        "feedback",
-        "ingest",
-        "--workspace",
-        str(ws),
-        "--feedback",
-        str(feedback),
-        "--source",
-        "human",
-        "--repo-workdir",
-        str(ROOT),
-        "--json",
-    ])
+    payload = ingest_feedback(
+        workspace=ws,
+        feedback_path=feedback,
+        source="human",
+        repo_workdir=ROOT,
+    )
 
-    assert rc == 0
-    issue = json.loads(capsys.readouterr().out)["feedback_issues"]["issues"][0]
+    issue = payload["feedback_issues"]["issues"][0]
     assert issue["status"] == "triage"
     assert issue["stage_id"] is None
     assert issue["artifact_id"] is None
     assert issue["category"] is None
 
 
-def test_audit_feedback_ingest_preserves_audit_finding_fields(tmp_path, capsys):
+def test_audit_feedback_ingest_preserves_audit_finding_fields(tmp_path):
     ws = _write_workspace(tmp_path)
     audit = tmp_path / "audit_report.json"
     audit.write_text(
@@ -196,22 +237,14 @@ def test_audit_feedback_ingest_preserves_audit_finding_fields(tmp_path, capsys):
         encoding="utf-8",
     )
 
-    rc = main([
-        "feedback",
-        "ingest",
-        "--workspace",
-        str(ws),
-        "--feedback",
-        str(audit),
-        "--source",
-        "audit",
-        "--repo-workdir",
-        str(ROOT),
-        "--json",
-    ])
+    payload = ingest_feedback(
+        workspace=ws,
+        feedback_path=audit,
+        source="audit",
+        repo_workdir=ROOT,
+    )
 
-    assert rc == 0
-    issue = json.loads(capsys.readouterr().out)["feedback_issues"]["issues"][0]
+    issue = payload["feedback_issues"]["issues"][0]
     assert issue["source"] == "audit"
     assert issue["status"] == "open"
     assert issue["stage_id"] == "editor"
@@ -222,7 +255,7 @@ def test_audit_feedback_ingest_preserves_audit_finding_fields(tmp_path, capsys):
     assert issue["metadata"]["source_finding_id"] == "AUDIT_001"
 
 
-def test_audit_feedback_ingest_ignores_semantic_support_proposals(tmp_path, capsys):
+def test_audit_feedback_ingest_ignores_semantic_support_proposals(tmp_path):
     ws = _write_workspace(tmp_path)
     audit = tmp_path / "audit_report.json"
     audit.write_text(
@@ -250,22 +283,14 @@ def test_audit_feedback_ingest_ignores_semantic_support_proposals(tmp_path, caps
         encoding="utf-8",
     )
 
-    rc = main([
-        "feedback",
-        "ingest",
-        "--workspace",
-        str(ws),
-        "--feedback",
-        str(audit),
-        "--source",
-        "audit",
-        "--repo-workdir",
-        str(ROOT),
-        "--json",
-    ])
+    payload = ingest_feedback(
+        workspace=ws,
+        feedback_path=audit,
+        source="audit",
+        repo_workdir=ROOT,
+    )
 
-    assert rc == 0
-    issues = json.loads(capsys.readouterr().out)["feedback_issues"]["issues"]
+    issues = payload["feedback_issues"]["issues"]
     # Only the real finding is ingested; the advisory proposal is dropped.
     assert [issue["metadata"]["source_finding_id"] for issue in issues] == ["AUDIT_001"]
     assert all(
@@ -273,44 +298,23 @@ def test_audit_feedback_ingest_ignores_semantic_support_proposals(tmp_path, caps
     )
 
 
-def test_feedback_plan_creates_plan_and_marks_open_issues_planned(tmp_path, capsys):
+def test_feedback_plan_creates_plan_and_marks_open_issues_planned(tmp_path):
     ws = _write_workspace(tmp_path)
     feedback = tmp_path / "feedback.txt"
     feedback.write_text("The audited brief needs a repair pass.\n", encoding="utf-8")
-    assert main([
-        "feedback",
-        "ingest",
-        "--workspace",
-        str(ws),
-        "--feedback",
-        str(feedback),
-        "--source",
-        "human",
-        "--stage",
-        "analyst",
-        "--artifact",
-        "audited_brief",
-        "--category",
-        "clarity",
-        "--severity",
-        "blocking",
-        "--repo-workdir",
-        str(ROOT),
-    ]) == 0
-    capsys.readouterr()
+    ingest_feedback(
+        workspace=ws,
+        feedback_path=feedback,
+        source="human",
+        stage_id="analyst",
+        artifact_id="audited_brief",
+        category="clarity",
+        severity="blocking",
+        repo_workdir=ROOT,
+    )
 
-    rc = main([
-        "feedback",
-        "plan",
-        "--workspace",
-        str(ws),
-        "--repo-workdir",
-        str(ROOT),
-        "--json",
-    ])
+    payload = plan_feedback(workspace=ws, repo_workdir=ROOT)
 
-    assert rc == 0
-    payload = json.loads(capsys.readouterr().out)
     issue = payload["feedback_issues"]["issues"][0]
     plan = payload["repair_plan"]["repair_plans"][0]
     assert issue["status"] == "planned"
@@ -326,35 +330,27 @@ def test_feedback_plan_creates_plan_and_marks_open_issues_planned(tmp_path, caps
     assert "repair_plan_created" in event_types
 
 
-def test_feedback_ingest_rejects_invalid_explicit_refs(tmp_path, capsys):
+def test_feedback_ingest_rejects_invalid_explicit_refs(tmp_path):
     ws = _write_workspace(tmp_path)
     feedback = tmp_path / "feedback.txt"
     feedback.write_text("Bad mapping.\n", encoding="utf-8")
 
-    rc = main([
-        "feedback",
-        "ingest",
-        "--workspace",
-        str(ws),
-        "--feedback",
-        str(feedback),
-        "--source",
-        "human",
-        "--stage",
-        "future-stage",
-        "--repo-workdir",
-        str(ROOT),
-        "--json",
-    ])
+    with pytest.raises(RuntimeStateError) as excinfo:
+        ingest_feedback(
+            workspace=ws,
+            feedback_path=feedback,
+            source="human",
+            stage_id="future-stage",
+            repo_workdir=ROOT,
+        )
 
-    assert rc == 1
-    payload = json.loads(capsys.readouterr().out)
+    payload = excinfo.value.to_dict()
     assert payload["ok"] is False
     assert "Unknown feedback stage" in payload["error"]
     assert not _issues_path(ws).exists()
 
 
-def test_feedback_ingest_bad_existing_contract_does_not_initialize_runtime(tmp_path, capsys):
+def test_feedback_ingest_bad_existing_contract_does_not_initialize_runtime(tmp_path):
     ws = _write_uninitialized_workspace(tmp_path)
     out = ws / "output" / "intermediate"
     out.mkdir(parents=True)
@@ -365,30 +361,19 @@ def test_feedback_ingest_bad_existing_contract_does_not_initialize_runtime(tmp_p
     feedback = tmp_path / "feedback.txt"
     feedback.write_text("Bad existing feedback state.\n", encoding="utf-8")
 
-    rc = main([
-        "feedback",
-        "ingest",
-        "--workspace",
-        str(ws),
-        "--feedback",
-        str(feedback),
-        "--source",
-        "human",
-        "--stage",
-        "analyst",
-        "--artifact",
-        "audited_brief",
-        "--category",
-        "citation_error",
-        "--severity",
-        "blocking",
-        "--repo-workdir",
-        str(ROOT),
-        "--json",
-    ])
+    with pytest.raises(RuntimeStateError) as excinfo:
+        ingest_feedback(
+            workspace=ws,
+            feedback_path=feedback,
+            source="human",
+            stage_id="analyst",
+            artifact_id="audited_brief",
+            category="citation_error",
+            severity="blocking",
+            repo_workdir=ROOT,
+        )
 
-    assert rc == 1
-    payload = json.loads(capsys.readouterr().out)
+    payload = excinfo.value.to_dict()
     assert payload["ok"] is False
     assert "feedback_issues.json has an unsupported schema_version" in json.dumps(payload)
     assert not (ws / "output" / "intermediate" / "runtime_manifest.json").exists()
@@ -405,32 +390,22 @@ def test_feedback_ingest_event_failure_leaves_feedback_file_unwritten(tmp_path, 
 
     monkeypatch.setattr(feedback_state, "append_event", fail_append)
 
-    rc = main([
-        "feedback",
-        "ingest",
-        "--workspace",
-        str(ws),
-        "--feedback",
-        str(feedback),
-        "--source",
-        "human",
-        "--stage",
-        "analyst",
-        "--artifact",
-        "audited_brief",
-        "--category",
-        "citation_error",
-        "--severity",
-        "blocking",
-        "--repo-workdir",
-        str(ROOT),
-    ])
+    with pytest.raises(RuntimeStateError, match="event append failed"):
+        ingest_feedback(
+            workspace=ws,
+            feedback_path=feedback,
+            source="human",
+            stage_id="analyst",
+            artifact_id="audited_brief",
+            category="citation_error",
+            severity="blocking",
+            repo_workdir=ROOT,
+        )
 
-    assert rc == 1
     assert not _issues_path(ws).exists()
 
 
-def test_feedback_validate_rejects_repair_plan_referencing_missing_issue(tmp_path, capsys):
+def test_feedback_validate_rejects_repair_plan_referencing_missing_issue(tmp_path):
     ws = _write_uninitialized_workspace(tmp_path)
     out = ws / "output" / "intermediate"
     out.mkdir(parents=True)
@@ -468,46 +443,26 @@ def test_feedback_validate_rejects_repair_plan_referencing_missing_issue(tmp_pat
         encoding="utf-8",
     )
 
-    rc = main([
-        "feedback",
-        "validate",
-        "--workspace",
-        str(ws),
-        "--repo-workdir",
-        str(ROOT),
-        "--json",
-    ])
+    result = validate_feedback_workspace(workspace=ws, repo_workdir=ROOT)
 
-    assert rc == 1
-    payload = json.loads(capsys.readouterr().out)
-    assert payload["ok"] is False
-    assert "missing issues" in " ".join(payload["errors"])
+    assert result["ok"] is False
+    assert "missing issues" in " ".join(result["errors"])
 
 
 def test_feedback_plan_event_failure_leaves_feedback_state_unchanged(tmp_path, monkeypatch):
     ws = _write_workspace(tmp_path)
     feedback = tmp_path / "feedback.txt"
     feedback.write_text("The audited brief needs a repair pass.\n", encoding="utf-8")
-    assert main([
-        "feedback",
-        "ingest",
-        "--workspace",
-        str(ws),
-        "--feedback",
-        str(feedback),
-        "--source",
-        "human",
-        "--stage",
-        "analyst",
-        "--artifact",
-        "audited_brief",
-        "--category",
-        "clarity",
-        "--severity",
-        "blocking",
-        "--repo-workdir",
-        str(ROOT),
-    ]) == 0
+    ingest_feedback(
+        workspace=ws,
+        feedback_path=feedback,
+        source="human",
+        stage_id="analyst",
+        artifact_id="audited_brief",
+        category="clarity",
+        severity="blocking",
+        repo_workdir=ROOT,
+    )
     before = json.loads(_issues_path(ws).read_text(encoding="utf-8"))
 
     def fail_append(*args, **kwargs):
@@ -515,16 +470,9 @@ def test_feedback_plan_event_failure_leaves_feedback_state_unchanged(tmp_path, m
 
     monkeypatch.setattr(feedback_state, "append_event", fail_append)
 
-    rc = main([
-        "feedback",
-        "plan",
-        "--workspace",
-        str(ws),
-        "--repo-workdir",
-        str(ROOT),
-    ])
+    with pytest.raises(RuntimeStateError, match="event append failed"):
+        plan_feedback(workspace=ws, repo_workdir=ROOT)
 
-    assert rc == 1
     after = json.loads(_issues_path(ws).read_text(encoding="utf-8"))
     assert after == before
     assert not _plan_path(ws).exists()
@@ -534,26 +482,16 @@ def test_state_check_feedback_blocks_only_current_stage(tmp_path):
     ws = _write_workspace(tmp_path)
     feedback = tmp_path / "feedback.txt"
     feedback.write_text("The analyst draft needs repair before continuing.\n", encoding="utf-8")
-    assert main([
-        "feedback",
-        "ingest",
-        "--workspace",
-        str(ws),
-        "--feedback",
-        str(feedback),
-        "--source",
-        "human",
-        "--stage",
-        "analyst",
-        "--artifact",
-        "audited_brief",
-        "--category",
-        "clarity",
-        "--severity",
-        "blocking",
-        "--repo-workdir",
-        str(ROOT),
-    ]) == 0
+    ingest_feedback(
+        workspace=ws,
+        feedback_path=feedback,
+        source="human",
+        stage_id="analyst",
+        artifact_id="audited_brief",
+        category="clarity",
+        severity="blocking",
+        repo_workdir=ROOT,
+    )
 
     state = check_runtime_state(workspace=ws, repo_workdir=ROOT)
     assert state["workflow_state"]["current_stage"] == "doctor"
@@ -568,43 +506,25 @@ def test_state_check_feedback_blocks_only_current_stage(tmp_path):
     assert "blocking feedback issues without a repair plan" in workflow["blocking_reason"]
 
 
-def test_planned_blocking_issue_rejects_continue_until_resolved(tmp_path, capsys):
+def test_planned_blocking_issue_rejects_continue_until_resolved(tmp_path):
     ws = _write_workspace(tmp_path)
     feedback = tmp_path / "feedback.txt"
     feedback.write_text("The analyst draft needs repair before continuing.\n", encoding="utf-8")
-    assert main([
-        "feedback",
-        "ingest",
-        "--workspace",
-        str(ws),
-        "--feedback",
-        str(feedback),
-        "--source",
-        "human",
-        "--stage",
-        "analyst",
-        "--artifact",
-        "audited_brief",
-        "--category",
-        "clarity",
-        "--severity",
-        "blocking",
-        "--repo-workdir",
-        str(ROOT),
-    ]) == 0
-    assert main([
-        "feedback",
-        "plan",
-        "--workspace",
-        str(ws),
-        "--repo-workdir",
-        str(ROOT),
-    ]) == 0
+    ingest_feedback(
+        workspace=ws,
+        feedback_path=feedback,
+        source="human",
+        stage_id="analyst",
+        artifact_id="audited_brief",
+        category="clarity",
+        severity="blocking",
+        repo_workdir=ROOT,
+    )
+    plan_feedback(workspace=ws, repo_workdir=ROOT)
     issues = json.loads(_issues_path(ws).read_text(encoding="utf-8"))["issues"]
     plans = json.loads(_plan_path(ws).read_text(encoding="utf-8"))["repair_plans"]
     issue_id = issues[0]["issue_id"]
     repair_plan_id = plans[0]["repair_plan_id"]
-    capsys.readouterr()
 
     _advance_to_analyst(ws)
     (_intermediate(ws) / "audited_brief.md").write_text("# Audited brief\n", encoding="utf-8")
@@ -615,64 +535,40 @@ def test_planned_blocking_issue_rejects_continue_until_resolved(tmp_path, capsys
     assert workflow["blocked"] is True
     assert "unresolved blocking feedback issues" in workflow["blocking_reason"]
 
-    rc = main([
-        "state",
-        "stage-complete",
-        "--workspace",
-        str(ws),
-        "--repo-workdir",
-        str(ROOT),
-        "--stage",
-        "analyst",
-        "--reason",
-        "skip repair",
-        "--json",
-    ])
-    assert rc == 1
-    payload = json.loads(capsys.readouterr().out)
+    with pytest.raises(RuntimeStateError) as excinfo:
+        complete_stage_transaction(
+            workspace=ws,
+            stage_id="analyst",
+            reason="skip repair",
+            repo_workdir=ROOT,
+        )
+    payload = excinfo.value.to_dict()
     assert payload["error_code"] == "E_ILLEGAL_TRANSITION"
     assert "unresolved blocking feedback issues" in " ".join(payload["details"]["blocking_reasons"])
 
-    rc = main([
-        "feedback",
-        "resolve",
-        "--workspace",
-        str(ws),
-        "--repo-workdir",
-        str(ROOT),
-        "--issue-id",
-        issue_id,
-        "--repair-plan-id",
-        repair_plan_id,
-        "--reason",
-        "Repair was handled by runtime subagent.",
-        "--json",
-    ])
-    assert rc == 0
-    resolved = json.loads(capsys.readouterr().out)
+    resolved = resolve_feedback(
+        workspace=ws,
+        issue_id=issue_id,
+        repair_plan_id=repair_plan_id,
+        reason="Repair was handled by runtime subagent.",
+        repo_workdir=ROOT,
+    )
     assert resolved["feedback_issues"]["issues"][0]["status"] == "resolved"
     assert resolved["repair_plan"]["repair_plans"][0]["status"] == "completed"
     event_types = [event["event_type"] for event in _events(ws)]
     assert "feedback_issue_resolved" in event_types
     assert "repair_plan_completed" in event_types
 
-    rc = main([
-        "state",
-        "stage-complete",
-        "--workspace",
-        str(ws),
-        "--repo-workdir",
-        str(ROOT),
-        "--stage",
-        "analyst",
-        "--reason",
-        "repair resolved",
-        "--json",
-    ])
-    assert rc == 0
+    # Completing the stage succeeds once the blocking feedback issue is resolved.
+    complete_stage_transaction(
+        workspace=ws,
+        stage_id="analyst",
+        reason="repair resolved",
+        repo_workdir=ROOT,
+    )
 
 
-def test_resolving_one_issue_does_not_complete_shared_repair_plan(tmp_path, capsys):
+def test_resolving_one_issue_does_not_complete_shared_repair_plan(tmp_path):
     ws = _write_workspace(tmp_path)
     feedback_a = tmp_path / "feedback-a.txt"
     feedback_b = tmp_path / "feedback-b.txt"
@@ -683,59 +579,30 @@ def test_resolving_one_issue_does_not_complete_shared_repair_plan(tmp_path, caps
         (feedback_a, "citation_error"),
         (feedback_b, "clarity"),
     ):
-        assert main([
-            "feedback",
-            "ingest",
-            "--workspace",
-            str(ws),
-            "--feedback",
-            str(feedback_path),
-            "--source",
-            "human",
-            "--stage",
-            "analyst",
-            "--artifact",
-            "audited_brief",
-            "--category",
-            category,
-            "--severity",
-            "blocking",
-            "--repo-workdir",
-            str(ROOT),
-        ]) == 0
-    capsys.readouterr()
+        ingest_feedback(
+            workspace=ws,
+            feedback_path=feedback_path,
+            source="human",
+            stage_id="analyst",
+            artifact_id="audited_brief",
+            category=category,
+            severity="blocking",
+            repo_workdir=ROOT,
+        )
 
-    assert main([
-        "feedback",
-        "plan",
-        "--workspace",
-        str(ws),
-        "--repo-workdir",
-        str(ROOT),
-        "--json",
-    ]) == 0
-    planned = json.loads(capsys.readouterr().out)
+    planned = plan_feedback(workspace=ws, repo_workdir=ROOT)
     plan = planned["repair_plan"]["repair_plans"][0]
     issue_ids = plan["issue_ids"]
     assert len(issue_ids) == 2
     assert plan["status"] == "planned"
 
-    assert main([
-        "feedback",
-        "resolve",
-        "--workspace",
-        str(ws),
-        "--repo-workdir",
-        str(ROOT),
-        "--issue-id",
-        issue_ids[0],
-        "--repair-plan-id",
-        plan["repair_plan_id"],
-        "--reason",
-        "First issue resolved.",
-        "--json",
-    ]) == 0
-    partial = json.loads(capsys.readouterr().out)
+    partial = resolve_feedback(
+        workspace=ws,
+        issue_id=issue_ids[0],
+        repair_plan_id=plan["repair_plan_id"],
+        reason="First issue resolved.",
+        repo_workdir=ROOT,
+    )
     partial_plan = partial["repair_plan"]["repair_plans"][0]
     statuses = {
         issue["issue_id"]: issue["status"]
@@ -750,22 +617,13 @@ def test_resolving_one_issue_does_not_complete_shared_repair_plan(tmp_path, caps
     assert "feedback_issue_resolved" in event_types
     assert "repair_plan_completed" not in event_types
 
-    assert main([
-        "feedback",
-        "resolve",
-        "--workspace",
-        str(ws),
-        "--repo-workdir",
-        str(ROOT),
-        "--issue-id",
-        issue_ids[1],
-        "--repair-plan-id",
-        plan["repair_plan_id"],
-        "--reason",
-        "All shared plan issues resolved.",
-        "--json",
-    ]) == 0
-    completed = json.loads(capsys.readouterr().out)
+    completed = resolve_feedback(
+        workspace=ws,
+        issue_id=issue_ids[1],
+        repair_plan_id=plan["repair_plan_id"],
+        reason="All shared plan issues resolved.",
+        repo_workdir=ROOT,
+    )
     completed_plan = completed["repair_plan"]["repair_plans"][0]
     assert completed_plan["status"] == "completed"
     assert completed_plan["completion_reason"] == "All shared plan issues resolved."
@@ -789,34 +647,17 @@ def test_feedback_commands_do_not_modify_stage_output_artifacts(tmp_path):
     feedback = tmp_path / "feedback.txt"
     feedback.write_text("The audited brief needs a repair pass.\n", encoding="utf-8")
 
-    assert main([
-        "feedback",
-        "ingest",
-        "--workspace",
-        str(ws),
-        "--feedback",
-        str(feedback),
-        "--source",
-        "human",
-        "--stage",
-        "analyst",
-        "--artifact",
-        "audited_brief",
-        "--category",
-        "clarity",
-        "--severity",
-        "blocking",
-        "--repo-workdir",
-        str(ROOT),
-    ]) == 0
-    assert main([
-        "feedback",
-        "plan",
-        "--workspace",
-        str(ws),
-        "--repo-workdir",
-        str(ROOT),
-    ]) == 0
+    ingest_feedback(
+        workspace=ws,
+        feedback_path=feedback,
+        source="human",
+        stage_id="analyst",
+        artifact_id="audited_brief",
+        category="clarity",
+        severity="blocking",
+        repo_workdir=ROOT,
+    )
+    plan_feedback(workspace=ws, repo_workdir=ROOT)
 
     assert not (ws / "output" / "brief.md").exists()
     assert not (ws / "output" / "intermediate" / "candidate_claims.json").exists()
@@ -827,26 +668,18 @@ def test_feedback_commands_do_not_modify_stage_output_artifacts(tmp_path):
     assert not (ws / "output" / "intermediate" / "delta_audit_report.json").exists()
 
 
-def test_delegate_repair_cannot_target_non_current_stage(tmp_path, capsys):
+def test_delegate_repair_cannot_target_non_current_stage(tmp_path):
     ws = _write_workspace(tmp_path)
     initialize_runtime_state(runtime="operator", workspace=ws, repo_workdir=ROOT)
 
-    rc = main([
-        "state",
-        "decide",
-        "--workspace",
-        str(ws),
-        "--repo-workdir",
-        str(ROOT),
-        "--stage",
-        "analyst",
-        "--decision",
-        "delegate_repair",
-        "--reason",
-        "future repair",
-        "--json",
-    ])
+    with pytest.raises(RuntimeStateError) as excinfo:
+        record_decision(
+            workspace=ws,
+            stage_id="analyst",
+            decision="delegate_repair",
+            reason="future repair",
+            repo_workdir=ROOT,
+        )
 
-    assert rc == 1
-    payload = json.loads(capsys.readouterr().out)
+    payload = excinfo.value.to_dict()
     assert "does not match current stage" in payload["error"]

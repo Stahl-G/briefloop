@@ -332,37 +332,59 @@ def test_claude_install_refuses_existing_non_mabw_file_without_force(tmp_path, c
 
 
 def test_cli_run_command_creates_handoff(capsys):
-    """run command must create a runtime handoff when given a workspace with config.yaml."""
+    """run --runtime operator is retired: typed rejection with zero workspace writes."""
     import tempfile
     d = Path(tempfile.mkdtemp())
     config = d / "config.yaml"
     config.write_text("project:\n  name: test\noutput:\n  path: output\n", encoding="utf-8")
     (d / "user.md").write_text("# test\n", encoding="utf-8")
+    before_files = {
+        path.relative_to(d).as_posix(): path.read_bytes()
+        for path in d.rglob("*")
+        if path.is_file()
+    }
     exit_code = main(["run", "--runtime", "operator", "--config", str(config), "--skip-doctor"])
     captured = capsys.readouterr()
-    assert exit_code == 0
-    assert "Runtime:" in captured.out
-    assert (d / "output" / "intermediate" / "agent_handoff.md").exists()
-    assert (d / "output" / "intermediate" / "agent_handoff.json").exists()
-    assert (d / "output" / "intermediate" / "runtime_manifest.json").exists()
-    assert (d / "output" / "intermediate" / "workflow_state.json").exists()
-    assert (d / "output" / "intermediate" / "artifact_registry.json").exists()
-    assert (d / "output" / "intermediate" / "event_log.jsonl").exists()
+    # LEGACY-DELETE: retired public `run --runtime operator` handoff surface and
+    # its output/intermediate control artifacts; the Codex SQLite ControlStore
+    # runtime is the sole runtime authority.
+    assert exit_code == 1
+    assert captured.out == "[run] runtime_adapter_unsupported\n"
     assert "/generate-brief" not in captured.out
+    after_files = {
+        path.relative_to(d).as_posix(): path.read_bytes()
+        for path in d.rglob("*")
+        if path.is_file()
+    }
+    assert after_files == before_files
+    assert not (d / "output").exists()
 
 
 def test_cli_prepare_is_deprecated_and_does_not_generate_outputs(tmp_path: Path, capsys):
-    """prepare must not run the removed Python brief pipeline."""
+    """prepare is retired: typed rejection and it must not generate any outputs."""
     ws = tmp_path / "ws"
     assert main(complete_init_args(ws, extra=["--source-profile", "conservative"])) == 0
+    capsys.readouterr()
+    before_files = {
+        path.relative_to(ws).as_posix(): path.read_bytes()
+        for path in ws.rglob("*")
+        if path.is_file()
+    }
 
     result = main(["prepare", "--config", str(ws / "config.yaml")])
     captured = capsys.readouterr()
 
+    # LEGACY-DELETE: retired public `prepare` surface and its deprecation
+    # message; the workspace authority guard rejects it before dispatch.
     assert result == 1
-    assert "prepare has been replaced by" in captured.out
-    assert "briefloop run --workspace <workspace>" in captured.out
+    assert captured.out == "runtime_command_unsupported\n"
     assert "/generate-brief" not in captured.out
+    after_files = {
+        path.relative_to(ws).as_posix(): path.read_bytes()
+        for path in ws.rglob("*")
+        if path.is_file()
+    }
+    assert after_files == before_files
     assert not (ws / "output" / "brief.md").exists()
     assert not (ws / "output" / "intermediate" / "claim_ledger.json").exists()
     assert not (ws / "output" / "intermediate" / "candidate_claims.json").exists()

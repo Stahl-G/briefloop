@@ -16,6 +16,10 @@ from multi_agent_brief.orchestrator.runtime_state.lifecycle import (
     check_runtime_state,
     initialize_runtime_state,
 )
+from multi_agent_brief.sources.evidence_pack import (
+    SourceEvidencePackError,
+    materialize_source_evidence_pack,
+)
 
 ROOT = Path(__file__).resolve().parent.parent
 
@@ -34,9 +38,52 @@ def _workspace(tmp_path: Path) -> Path:
     return ws
 
 
-def test_sources_materialize_pack_writes_durable_source_records_and_manifest(
+@pytest.mark.parametrize(
+    ("runtime_state", "expected_token"),
+    [
+        ("legacy", "legacy_workspace_unsupported"),
+        ("fresh", "runtime_command_unsupported"),
+    ],
+)
+def test_sources_materialize_pack_public_cli_is_retired(
     tmp_path: Path,
     capsys,
+    runtime_state: str,
+    expected_token: str,
+) -> None:
+    ws = _workspace(tmp_path)
+    if runtime_state == "legacy":
+        initialize_runtime_state(runtime="operator", workspace=ws, repo_workdir=ROOT)
+    before_files = {
+        path.relative_to(ws).as_posix(): path.read_bytes()
+        for path in ws.rglob("*")
+        if path.is_file()
+    }
+
+    rc = main([
+        "sources",
+        "materialize-pack",
+        "--config",
+        str(ws / "config.yaml"),
+        "--force",
+        "--json",
+    ])
+    output = capsys.readouterr().out
+
+    # LEGACY-DELETE: retired public `sources materialize-pack` CLI; the pack
+    # materializes through the deterministic evidence_pack seam only.
+    assert rc == 1
+    assert output.strip() == expected_token
+    after_files = {
+        path.relative_to(ws).as_posix(): path.read_bytes()
+        for path in ws.rglob("*")
+        if path.is_file()
+    }
+    assert after_files == before_files
+
+
+def test_sources_materialize_pack_writes_durable_source_records_and_manifest(
+    tmp_path: Path,
 ) -> None:
     ws = _workspace(tmp_path)
     source = ws / "input" / "raw" / "source-001.md"
@@ -55,14 +102,7 @@ def test_sources_materialize_pack_writes_durable_source_records_and_manifest(
     )
     initialize_runtime_state(runtime="operator", workspace=ws, repo_workdir=ROOT)
 
-    assert main([
-        "sources",
-        "materialize-pack",
-        "--config",
-        str(ws / "config.yaml"),
-        "--json",
-    ]) == 0
-    payload = json.loads(capsys.readouterr().out)
+    payload = materialize_source_evidence_pack(config_path=ws / "config.yaml")
 
     assert payload["ok"] is True
     assert payload["record_count"] == 1
@@ -111,7 +151,6 @@ def test_sources_materialize_pack_writes_durable_source_records_and_manifest(
 
 def test_sources_materialize_pack_separates_retrieval_and_underlying_evidence_types(
     tmp_path: Path,
-    capsys,
 ) -> None:
     ws = _workspace(tmp_path)
     cache_dir = ws / "input" / "raw" / "cache"
@@ -145,14 +184,7 @@ def test_sources_materialize_pack_separates_retrieval_and_underlying_evidence_ty
         encoding="utf-8",
     )
 
-    assert main([
-        "sources",
-        "materialize-pack",
-        "--config",
-        str(ws / "config.yaml"),
-        "--json",
-    ]) == 0
-    payload = json.loads(capsys.readouterr().out)
+    payload = materialize_source_evidence_pack(config_path=ws / "config.yaml")
 
     record_payload = json.loads((ws / payload["records"][0]["path"]).read_text(encoding="utf-8"))
     assert record_payload["source_type"] == "cached_package"
@@ -164,7 +196,6 @@ def test_sources_materialize_pack_separates_retrieval_and_underlying_evidence_ty
 
 def test_sources_materialize_pack_infers_cached_retrieval_from_legacy_category(
     tmp_path: Path,
-    capsys,
 ) -> None:
     ws = _workspace(tmp_path)
     cache_dir = ws / "input" / "raw" / "cache"
@@ -198,14 +229,7 @@ def test_sources_materialize_pack_infers_cached_retrieval_from_legacy_category(
         encoding="utf-8",
     )
 
-    assert main([
-        "sources",
-        "materialize-pack",
-        "--config",
-        str(ws / "config.yaml"),
-        "--json",
-    ]) == 0
-    payload = json.loads(capsys.readouterr().out)
+    payload = materialize_source_evidence_pack(config_path=ws / "config.yaml")
 
     record_payload = json.loads((ws / payload["records"][0]["path"]).read_text(encoding="utf-8"))
     assert record_payload["source_type"] == "cached_package"
@@ -217,7 +241,6 @@ def test_sources_materialize_pack_infers_cached_retrieval_from_legacy_category(
 
 def test_sources_materialize_pack_unknown_category_stays_explicit_unknown(
     tmp_path: Path,
-    capsys,
 ) -> None:
     ws = _workspace(tmp_path)
     source = ws / "input" / "raw" / "source-unknown.md"
@@ -234,14 +257,7 @@ def test_sources_materialize_pack_unknown_category_stays_explicit_unknown(
         encoding="utf-8",
     )
 
-    assert main([
-        "sources",
-        "materialize-pack",
-        "--config",
-        str(ws / "config.yaml"),
-        "--json",
-    ]) == 0
-    payload = json.loads(capsys.readouterr().out)
+    payload = materialize_source_evidence_pack(config_path=ws / "config.yaml")
 
     record_payload = json.loads((ws / payload["records"][0]["path"]).read_text(encoding="utf-8"))
     assert record_payload["source_category"] == "other"
@@ -251,7 +267,6 @@ def test_sources_materialize_pack_unknown_category_stays_explicit_unknown(
 
 def test_sources_materialize_pack_rejects_duplicate_source_ids_before_writing(
     tmp_path: Path,
-    capsys,
 ) -> None:
     ws = _workspace(tmp_path)
     cache_dir = ws / "input" / "raw" / "cache"
@@ -290,25 +305,17 @@ def test_sources_materialize_pack_rejects_duplicate_source_ids_before_writing(
         encoding="utf-8",
     )
 
-    assert main([
-        "sources",
-        "materialize-pack",
-        "--config",
-        str(ws / "config.yaml"),
-        "--json",
-    ]) == 1
-    payload = json.loads(capsys.readouterr().out)
+    with pytest.raises(SourceEvidencePackError) as excinfo:
+        materialize_source_evidence_pack(config_path=ws / "config.yaml")
 
-    assert payload["ok"] is False
-    assert "duplicate source_id" in payload["error"]
-    assert "DUP_001" in payload["error"]
+    assert "duplicate source_id" in str(excinfo.value)
+    assert "DUP_001" in str(excinfo.value)
     assert not (ws / "input" / "sources").exists()
     assert not (ws / "output" / "intermediate" / "source_evidence_pack_manifest.json").exists()
 
 
 def test_sources_materialize_pack_refuses_search_only_sources(
     tmp_path: Path,
-    capsys,
 ) -> None:
     ws = _workspace(tmp_path)
     (ws / "sources.yaml").write_text(
@@ -321,24 +328,16 @@ def test_sources_materialize_pack_refuses_search_only_sources(
         encoding="utf-8",
     )
 
-    assert main([
-        "sources",
-        "materialize-pack",
-        "--config",
-        str(ws / "config.yaml"),
-        "--json",
-    ]) == 1
-    payload = json.loads(capsys.readouterr().out)
+    with pytest.raises(SourceEvidencePackError) as excinfo:
+        materialize_source_evidence_pack(config_path=ws / "config.yaml")
 
-    assert payload["ok"] is False
-    assert "manual or cached_package" in payload["error"]
+    assert "manual or cached_package" in str(excinfo.value)
     assert not (ws / "input" / "sources").exists()
     assert not (ws / "output" / "intermediate" / "source_evidence_pack_manifest.json").exists()
 
 
 def test_sources_materialize_pack_fails_closed_on_partial_provider_errors(
     tmp_path: Path,
-    capsys,
 ) -> None:
     ws = _workspace(tmp_path)
     source = ws / "input" / "raw" / "source-001.md"
@@ -359,25 +358,17 @@ def test_sources_materialize_pack_fails_closed_on_partial_provider_errors(
         encoding="utf-8",
     )
 
-    assert main([
-        "sources",
-        "materialize-pack",
-        "--config",
-        str(ws / "config.yaml"),
-        "--json",
-    ]) == 1
-    payload = json.loads(capsys.readouterr().out)
+    with pytest.raises(SourceEvidencePackError) as excinfo:
+        materialize_source_evidence_pack(config_path=ws / "config.yaml")
 
-    assert payload["ok"] is False
-    assert "provider errors must be resolved" in payload["error"]
-    assert "cached_package:ConfigValidationError" in payload["error"]
+    assert "provider errors must be resolved" in str(excinfo.value)
+    assert "cached_package:ConfigValidationError" in str(excinfo.value)
     assert not (ws / "input" / "sources").exists()
     assert not (ws / "output" / "intermediate" / "source_evidence_pack_manifest.json").exists()
 
 
 def test_sources_materialize_pack_force_refuses_user_source_file(
     tmp_path: Path,
-    capsys,
 ) -> None:
     ws = _workspace(tmp_path)
     source = ws / "input" / "raw" / "source-001.md"
@@ -398,25 +389,16 @@ def test_sources_materialize_pack_force_refuses_user_source_file(
         encoding="utf-8",
     )
 
-    assert main([
-        "sources",
-        "materialize-pack",
-        "--config",
-        str(ws / "config.yaml"),
-        "--force",
-        "--json",
-    ]) == 1
-    payload = json.loads(capsys.readouterr().out)
+    with pytest.raises(SourceEvidencePackError) as excinfo:
+        materialize_source_evidence_pack(config_path=ws / "config.yaml", force=True)
 
-    assert payload["ok"] is False
-    assert "can only replace records generated by sources.materialize-pack" in payload["error"]
+    assert "can only replace records generated by sources.materialize-pack" in str(excinfo.value)
     assert json.loads(user_file.read_text(encoding="utf-8")) == user_payload
     assert not (ws / "output" / "intermediate" / "source_evidence_pack_manifest.json").exists()
 
 
 def test_sources_materialize_pack_force_replaces_generated_record(
     tmp_path: Path,
-    capsys,
 ) -> None:
     ws = _workspace(tmp_path)
     source = ws / "input" / "raw" / "source-001.md"
@@ -432,26 +414,11 @@ def test_sources_materialize_pack_force_replaces_generated_record(
         encoding="utf-8",
     )
 
-    assert main([
-        "sources",
-        "materialize-pack",
-        "--config",
-        str(ws / "config.yaml"),
-        "--json",
-    ]) == 0
-    first = json.loads(capsys.readouterr().out)
+    first = materialize_source_evidence_pack(config_path=ws / "config.yaml")
     record_path = ws / first["records"][0]["path"]
     source.write_text("# Source 001\n\nUpdated durable evidence text.\n", encoding="utf-8")
 
-    assert main([
-        "sources",
-        "materialize-pack",
-        "--config",
-        str(ws / "config.yaml"),
-        "--force",
-        "--json",
-    ]) == 0
-    second = json.loads(capsys.readouterr().out)
+    second = materialize_source_evidence_pack(config_path=ws / "config.yaml", force=True)
 
     assert second["records"][0]["path"] == first["records"][0]["path"]
     record_payload = json.loads(record_path.read_text(encoding="utf-8"))
@@ -461,7 +428,6 @@ def test_sources_materialize_pack_force_replaces_generated_record(
 
 def test_source_evidence_pack_manifest_invalid_when_source_record_changes(
     tmp_path: Path,
-    capsys,
 ) -> None:
     ws = _workspace(tmp_path)
     source = ws / "input" / "raw" / "source-001.md"
@@ -477,14 +443,7 @@ def test_source_evidence_pack_manifest_invalid_when_source_record_changes(
         encoding="utf-8",
     )
     initialize_runtime_state(runtime="operator", workspace=ws, repo_workdir=ROOT)
-    assert main([
-        "sources",
-        "materialize-pack",
-        "--config",
-        str(ws / "config.yaml"),
-        "--json",
-    ]) == 0
-    payload = json.loads(capsys.readouterr().out)
+    payload = materialize_source_evidence_pack(config_path=ws / "config.yaml")
     record_path = ws / payload["records"][0]["path"]
     record_path.write_text(record_path.read_text(encoding="utf-8") + "\nchanged\n", encoding="utf-8")
 
@@ -525,7 +484,6 @@ def test_source_evidence_pack_manifest_rejects_non_evidence_placeholder(
 
 def test_source_evidence_pack_manifest_rejects_inconsistent_summary_counts(
     tmp_path: Path,
-    capsys,
 ) -> None:
     ws = _workspace(tmp_path)
     source = ws / "input" / "raw" / "source-001.md"
@@ -541,14 +499,7 @@ def test_source_evidence_pack_manifest_rejects_inconsistent_summary_counts(
         encoding="utf-8",
     )
     initialize_runtime_state(runtime="operator", workspace=ws, repo_workdir=ROOT)
-    assert main([
-        "sources",
-        "materialize-pack",
-        "--config",
-        str(ws / "config.yaml"),
-        "--json",
-    ]) == 0
-    payload = json.loads(capsys.readouterr().out)
+    payload = materialize_source_evidence_pack(config_path=ws / "config.yaml")
     manifest_path = ws / payload["manifest_path"]
     manifest_payload = json.loads(manifest_path.read_text(encoding="utf-8"))
     manifest_payload["record_count"] = 999

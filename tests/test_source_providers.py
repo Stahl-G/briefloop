@@ -12,6 +12,7 @@ from multi_agent_brief.sources.manual import ManualProvider
 from multi_agent_brief.sources.rss import RssProvider
 from multi_agent_brief.sources.web_search import WebSearchProvider
 from multi_agent_brief.sources.api_news import NewsApiProvider
+from multi_agent_brief.sources.cached_package import CachedPackageProvider
 from multi_agent_brief.sources.api_filings import FilingsProvider
 from multi_agent_brief.sources.mcp_provider import McpProvider
 from multi_agent_brief.sources.cli_provider import CliProvider
@@ -346,6 +347,56 @@ def test_news_api_validate_config_no_providers():
     provider = NewsApiProvider()
     errors = provider.validate_config({"enabled": True, "providers": []})
     assert any("no providers configured" in e for e in errors)
+
+
+def test_news_api_success_items_carry_retrieved_at(monkeypatch):
+    payload = {
+        "status": "ok",
+        "articles": [
+            {
+                "title": "Capacity expansion",
+                "description": "ExampleCo expanded manufacturing capacity.",
+                "url": "https://example.com/news/1",
+                "publishedAt": "2026-07-19T00:00:00Z",
+                "source": {"name": "Example News", "id": "example"},
+            }
+        ],
+    }
+
+    class _FakeResponse:
+        def read(self):
+            return json.dumps(payload).encode("utf-8")
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            return False
+
+    monkeypatch.setattr("urllib.request.urlopen", lambda req, timeout=30: _FakeResponse())
+    monkeypatch.setenv("NEWSAPI_API_KEY", "test-key")
+    provider = NewsApiProvider()
+    items = provider.collect(
+        SourceQuery(keywords=["manufacturing"]),
+        {"enabled": True, "providers": [{"name": "newsapi"}]},
+    )
+    assert len(items) == 1
+    assert items[0].retrieved_at
+
+
+def test_cached_package_json_string_items_bind_source_path(tmp_path):
+    package_dir = tmp_path / "cache"
+    package_dir.mkdir()
+    package_file = package_dir / "news.json"
+    package_file.write_text(json.dumps({"items": ["A" * 60, "B" * 60]}), encoding="utf-8")
+
+    provider = CachedPackageProvider()
+    items = provider.collect(
+        SourceQuery(),
+        {"enabled": True, "paths": [str(package_dir)], "formats": ["json"]},
+    )
+    assert len(items) == 2
+    assert all(item.metadata.get("path") == str(package_file) for item in items)
 
 
 def test_filings_disabled_returns_empty():

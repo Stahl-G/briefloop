@@ -15,7 +15,9 @@ from typing import Any
 
 import yaml
 
-from multi_agent_brief.contracts.schemas.evidence_span_registry import EVIDENCE_SPAN_REGISTRY_SCHEMA_VERSION
+from multi_agent_brief.contracts.schemas.evidence_span_registry import (
+    EVIDENCE_SPAN_REGISTRY_SCHEMA_VERSION,
+)
 from multi_agent_brief.contracts.source_metadata import normalize_source_category
 from multi_agent_brief.inputs.contracts import extracted_markdown_path
 from multi_agent_brief.orchestrator_contract import RUNTIME_CLI_CHOICE_PLACEHOLDER
@@ -24,7 +26,10 @@ from multi_agent_brief.product.bundle_projection import (
     write_report_bundle_manifest,
 )
 from multi_agent_brief.product.policy_registry import PolicyProfileRegistry
-from multi_agent_brief.product.policy_resolver import PolicyProfileResolution, resolve_policy_profile
+from multi_agent_brief.product.policy_resolver import (
+    PolicyProfileResolution,
+    resolve_policy_profile,
+)
 from multi_agent_brief.product.quality_panel import (
     QualityPanelError,
     quality_panel_path,
@@ -50,11 +55,24 @@ SPECIALIZED_REPORT_PACK_POLICY_PROFILES = {
     "evidence_extract": "evidence_extract_default",
     "solar_industry_periodic": "solar_manufacturing_default",
 }
-EVIDENCE_EXTRACT_BINARY_EXTENSIONS = {".pdf", ".docx", ".pptx", ".xlsx", ".xls", ".png", ".jpg", ".jpeg"}
+EVIDENCE_EXTRACT_BINARY_EXTENSIONS = {
+    ".pdf",
+    ".docx",
+    ".pptx",
+    ".xlsx",
+    ".xls",
+    ".png",
+    ".jpg",
+    ".jpeg",
+}
 EVIDENCE_EXTRACT_TEXT_EXTENSIONS = {".md", ".txt", ".json"}
 EVIDENCE_EXTRACT_SPAN_EXCERPT_LIMIT = 1200
-EVIDENCE_EXTRACT_SOURCE_LOCK_SCHEMA_VERSION = "briefloop.evidence_extract_source_lock.v1"
-EVIDENCE_EXTRACT_PAGE_INVENTORY_SCHEMA_VERSION = "briefloop.evidence_extract_page_inventory.v1"
+EVIDENCE_EXTRACT_SOURCE_LOCK_SCHEMA_VERSION = (
+    "briefloop.evidence_extract_source_lock.v1"
+)
+EVIDENCE_EXTRACT_PAGE_INVENTORY_SCHEMA_VERSION = (
+    "briefloop.evidence_extract_page_inventory.v1"
+)
 PRODUCT_WORKSPACE_SELECTOR_MAX_ITEMS = 20
 
 
@@ -63,9 +81,14 @@ def register_new_workspace(subparsers: argparse._SubParsersAction) -> None:
         "new",
         help="Create a conservative zero-config workspace from a ReportPack.",
     )
-    parser.add_argument("report_pack", help="Product entry or ReportPack id, for example industry-weekly.")
+    parser.add_argument(
+        "report_pack",
+        help="Product entry or ReportPack id, for example industry-weekly.",
+    )
     parser.add_argument("workspace", help="Target workspace directory.")
-    parser.add_argument("--force", action="store_true", help="Overwrite existing init files.")
+    parser.add_argument(
+        "--force", action="store_true", help="Overwrite existing init files."
+    )
     parser.add_argument(
         "--company",
         default="Your Organization",
@@ -112,23 +135,33 @@ def register_packs(subparsers: argparse._SubParsersAction) -> None:
     actions = parser.add_subparsers(dest="packs_action", required=True)
 
     list_parser = actions.add_parser("list", help="List packaged ReportPacks.")
-    list_parser.add_argument("--json", action="store_true", help="Emit machine-readable JSON.")
+    list_parser.add_argument(
+        "--json", action="store_true", help="Emit machine-readable JSON."
+    )
 
     show_parser = actions.add_parser("show", help="Show a packaged ReportPack.")
-    show_parser.add_argument("pack_id", help="Product entry or ReportPack id, for example industry-weekly.")
-    show_parser.add_argument("--json", action="store_true", help="Emit machine-readable JSON.")
+    show_parser.add_argument(
+        "pack_id", help="Product entry or ReportPack id, for example industry-weekly."
+    )
+    show_parser.add_argument(
+        "--json", action="store_true", help="Emit machine-readable JSON."
+    )
 
     templates_parser = actions.add_parser(
         "templates",
         help="List packaged ReportTemplate contracts.",
     )
-    templates_parser.add_argument("--json", action="store_true", help="Emit machine-readable JSON.")
+    templates_parser.add_argument(
+        "--json", action="store_true", help="Emit machine-readable JSON."
+    )
 
     bundle_parser = actions.add_parser(
         "bundle",
         help="Write a delivery/audit bundle projection for a finalized workspace.",
     )
-    bundle_parser.add_argument("--workspace", required=True, help="Path to workspace directory.")
+    bundle_parser.add_argument(
+        "--workspace", required=True, help="Path to workspace directory."
+    )
     bundle_parser.add_argument(
         "--output",
         help="Manifest output path. Defaults to <workspace>/output/report_bundle_manifest.json.",
@@ -138,7 +171,9 @@ def register_packs(subparsers: argparse._SubParsersAction) -> None:
         action="store_true",
         help="Write clean delivery_bundle.zip and audit_bundle.zip from the manifest artifacts.",
     )
-    bundle_parser.add_argument("--json", action="store_true", help="Emit machine-readable JSON.")
+    bundle_parser.add_argument(
+        "--json", action="store_true", help="Emit machine-readable JSON."
+    )
 
 
 def register_validate_report_spec(subparsers: argparse._SubParsersAction) -> None:
@@ -147,7 +182,9 @@ def register_validate_report_spec(subparsers: argparse._SubParsersAction) -> Non
         help="Validate a ReportSpec YAML file.",
     )
     parser.add_argument("report_spec", help="Path to report_spec.yaml.")
-    parser.add_argument("--json", action="store_true", help="Emit machine-readable JSON.")
+    parser.add_argument(
+        "--json", action="store_true", help="Emit machine-readable JSON."
+    )
 
 
 def register_extract(subparsers: argparse._SubParsersAction) -> None:
@@ -155,7 +192,9 @@ def register_extract(subparsers: argparse._SubParsersAction) -> None:
         "extract",
         help="Register an explicit evidence-extract scope and local source files.",
     )
-    parser.add_argument("--workspace", required=True, help="Path to an evidence_extract workspace.")
+    parser.add_argument(
+        "--workspace", required=True, help="Path to an evidence_extract workspace."
+    )
     parser.add_argument("--scope", required=True, help="Explicit extraction scope.")
     parser.add_argument(
         "--source",
@@ -174,13 +213,19 @@ def register_extract(subparsers: argparse._SubParsersAction) -> None:
         default="other",
         help="Reader-facing source_category to write into manual source entries. Defaults to other.",
     )
-    parser.add_argument("--language", default="en", help="Source language hint for manual source entries.")
+    parser.add_argument(
+        "--language",
+        default="en",
+        help="Source language hint for manual source entries.",
+    )
     parser.add_argument(
         "--force",
         action="store_true",
         help="Replace previously registered evidence-extract source copies.",
     )
-    parser.add_argument("--json", action="store_true", help="Emit machine-readable JSON.")
+    parser.add_argument(
+        "--json", action="store_true", help="Emit machine-readable JSON."
+    )
 
 
 def register_quality(subparsers: argparse._SubParsersAction) -> None:
@@ -194,7 +239,9 @@ def register_quality(subparsers: argparse._SubParsersAction) -> None:
         "summarize",
         help="Write Quality Panel JSON, Markdown, and static HTML projection artifacts.",
     )
-    summarize_parser.add_argument("--workspace", required=True, help="Path to workspace directory.")
+    summarize_parser.add_argument(
+        "--workspace", required=True, help="Path to workspace directory."
+    )
     summarize_parser.add_argument(
         "--laj-view",
         help=(
@@ -202,7 +249,9 @@ def register_quality(subparsers: argparse._SubParsersAction) -> None:
             "advisory-only Quality Panel section."
         ),
     )
-    summarize_parser.add_argument("--json", action="store_true", help="Emit machine-readable JSON.")
+    summarize_parser.add_argument(
+        "--json", action="store_true", help="Emit machine-readable JSON."
+    )
 
 
 def handle_new_workspace(args: argparse.Namespace) -> int:
@@ -294,7 +343,9 @@ def handle_packs(args: argparse.Namespace) -> int:
                 "error": str(exc),
                 "workspace": str(getattr(args, "workspace")),
             }
-            _print_payload("packs bundle", payload, as_json=getattr(args, "json", False))
+            _print_payload(
+                "packs bundle", payload, as_json=getattr(args, "json", False)
+            )
             return 1
         payload["ok"] = True
         _print_payload("packs bundle", payload, as_json=getattr(args, "json", False))
@@ -314,14 +365,20 @@ def handle_validate_report_spec(args: argparse.Namespace) -> int:
             "ok": False,
             "errors": [{"field": str(path), "error": str(exc), "severity": "error"}],
         }
-        _print_payload("validate-report-spec", result, as_json=getattr(args, "json", False))
+        _print_payload(
+            "validate-report-spec", result, as_json=getattr(args, "json", False)
+        )
         return 1
     except ReportSpecLoadError as exc:
         result = {
             "ok": False,
-            "errors": [{"field": str(exc.path), "error": exc.message, "severity": "error"}],
+            "errors": [
+                {"field": str(exc.path), "error": exc.message, "severity": "error"}
+            ],
         }
-        _print_payload("validate-report-spec", result, as_json=getattr(args, "json", False))
+        _print_payload(
+            "validate-report-spec", result, as_json=getattr(args, "json", False)
+        )
         return 1
 
     validation = validate_report_spec_payload(
@@ -361,6 +418,29 @@ def handle_quality(args: argparse.Namespace) -> int:
         return 1
 
     workspace = Path(args.workspace).expanduser().resolve()
+    if (workspace / "briefloop.db").exists() or (
+        workspace / "briefloop.db"
+    ).is_symlink():
+        from multi_agent_brief.runtime_host_v2.errors import RuntimeHostError
+        from multi_agent_brief.runtime_host_v2.projections import (
+            write_store_quality_projection,
+        )
+
+        try:
+            payload = write_store_quality_projection(workspace)
+        except (OSError, RuntimeHostError) as exc:
+            payload = {
+                "ok": False,
+                "status": "projection_not_available",
+                "reason_code": str(exc),
+                "authority": "sqlite_control_store",
+            }
+        _print_payload(
+            "quality summarize",
+            payload,
+            as_json=getattr(args, "json", False),
+        )
+        return 0 if payload.get("ok") else 1
     try:
         _require_existing_briefloop_workspace(workspace)
         panel = write_quality_panel(
@@ -376,7 +456,9 @@ def handle_quality(args: argparse.Namespace) -> int:
             "workspace": str(workspace),
             "boundary": "quality_projection_only_not_gate_or_release_authority",
         }
-        _print_payload("quality summarize", payload, as_json=getattr(args, "json", False))
+        _print_payload(
+            "quality summarize", payload, as_json=getattr(args, "json", False)
+        )
         return 1
 
     payload = {
@@ -411,9 +493,12 @@ def handle_quality(args: argparse.Namespace) -> int:
 def _require_existing_briefloop_workspace(workspace: Path) -> None:
     if not workspace.exists() or not workspace.is_dir():
         raise ValueError(f"workspace does not exist: {workspace}")
-    if not (workspace / "config.yaml").exists() and not (
-        workspace / "output" / "intermediate" / "runtime_manifest.json"
-    ).exists():
+    if (
+        not (workspace / "config.yaml").exists()
+        and not (
+            workspace / "output" / "intermediate" / "runtime_manifest.json"
+        ).exists()
+    ):
         raise ValueError(f"not a BriefLoop workspace: {workspace}")
 
 
@@ -434,7 +519,9 @@ def _print_payload(label: str, payload: dict[str, Any], *, as_json: bool) -> Non
             print(f"[error] {error.get('field')}: {error.get('error')}")
     elif label == "packs templates":
         for item in payload.get("templates", []):
-            print(f"- {item.get('template_id')}: {item.get('display_name')} ({item.get('status')})")
+            print(
+                f"- {item.get('template_id')}: {item.get('display_name')} ({item.get('status')})"
+            )
         for error in payload.get("errors", []):
             print(f"[error] {error.get('field')}: {error.get('error')}")
     elif label == "packs show":
@@ -478,14 +565,20 @@ def _print_payload(label: str, payload: dict[str, Any], *, as_json: bool) -> Non
                 print("Online search:")
                 print(f"  Online search is enabled via {search_backend}.")
                 if search_api_key_env:
-                    print(f"  Set {search_api_key_env} before running doctor or source discovery.")
-                print("  To run without online search, recreate with --web-search-mode disabled.")
+                    print(
+                        f"  Set {search_api_key_env} before running doctor or source discovery."
+                    )
+                print(
+                    "  To run without online search, recreate with --web-search-mode disabled."
+                )
             elif web_search_mode == "configure_later":
                 print()
                 print("Online search:")
                 print("  Online search is recommended but not active by default.")
                 print("  Tavily is the recommended external API backend.")
-                print("  To enable it, recreate with --search-backend tavily and set TAVILY_API_KEY.")
+                print(
+                    "  To enable it, recreate with --search-backend tavily and set TAVILY_API_KEY."
+                )
                 print("  To stay offline, recreate with --web-search-mode disabled.")
             elif web_search_mode == "disabled":
                 print()
@@ -512,15 +605,33 @@ def _print_payload(label: str, payload: dict[str, Any], *, as_json: bool) -> Non
     elif label == "packs bundle":
         if payload.get("ok"):
             print(f"manifest: {payload.get('manifest_path')}")
-            print(f"delivery_artifacts: {payload.get('delivery_bundle', {}).get('artifact_count')}")
-            print(f"audit_artifacts: {payload.get('audit_bundle', {}).get('artifact_count')}")
-            archives = payload.get("bundle_archives") if isinstance(payload.get("bundle_archives"), dict) else {}
+            print(
+                f"delivery_artifacts: {payload.get('delivery_bundle', {}).get('artifact_count')}"
+            )
+            print(
+                f"audit_artifacts: {payload.get('audit_bundle', {}).get('artifact_count')}"
+            )
+            archives = (
+                payload.get("bundle_archives")
+                if isinstance(payload.get("bundle_archives"), dict)
+                else {}
+            )
             if archives.get("status") == "generated":
-                delivery_archive = archives.get("delivery") if isinstance(archives.get("delivery"), dict) else {}
-                audit_archive = archives.get("audit") if isinstance(archives.get("audit"), dict) else {}
+                delivery_archive = (
+                    archives.get("delivery")
+                    if isinstance(archives.get("delivery"), dict)
+                    else {}
+                )
+                audit_archive = (
+                    archives.get("audit")
+                    if isinstance(archives.get("audit"), dict)
+                    else {}
+                )
                 print(f"delivery_archive: {delivery_archive.get('path')}")
                 print(f"audit_archive: {audit_archive.get('path')}")
-            print("boundary: bundle projection/export only; no render, delivery approval, or gate bypass")
+            print(
+                "boundary: bundle projection/export only; no render, delivery approval, or gate bypass"
+            )
         else:
             print(payload.get("error"))
     elif label == "extract":
@@ -531,8 +642,12 @@ def _print_payload(label: str, payload: dict[str, Any], *, as_json: bool) -> Non
             print(f"extraction_scope: {payload.get('extraction_scope')}")
             print(f"audit_extraction_scope: {payload.get('audit_extraction_scope')}")
             if payload.get("evidence_span_registry"):
-                print(f"evidence_span_registry: {payload.get('evidence_span_registry')}")
-                print(f"evidence_span_registry_span_count: {payload.get('evidence_span_registry_span_count')}")
+                print(
+                    f"evidence_span_registry: {payload.get('evidence_span_registry')}"
+                )
+                print(
+                    f"evidence_span_registry_span_count: {payload.get('evidence_span_registry_span_count')}"
+                )
             for warning in payload.get("warnings", []):
                 print(f"[warning] {warning.get('code')}: {warning.get('message')}")
             print(
@@ -598,7 +713,9 @@ def _with_report_pack_aliases(payload: dict[str, Any]) -> dict[str, Any]:
 def _report_pack_boundary_text(pack: dict[str, Any]) -> str:
     status = str(pack.get("status") or "").strip()
     if status == "supported":
-        return "supported product-layer contract; control spine and gates remain required"
+        return (
+            "supported product-layer contract; control spine and gates remain required"
+        )
     return "experimental product-layer contract only"
 
 
@@ -636,7 +753,9 @@ def _resolve_report_pack_policy_profile(
     return resolution
 
 
-def _create_report_pack_workspace(*, target: Path, pack: Any, args: argparse.Namespace) -> dict[str, Any]:
+def _create_report_pack_workspace(
+    *, target: Path, pack: Any, args: argparse.Namespace
+) -> dict[str, Any]:
     from multi_agent_brief.cli.init_wizard import InitProfile, create_workspace
 
     policy_registry = PolicyProfileRegistry.from_package()
@@ -649,11 +768,17 @@ def _create_report_pack_workspace(*, target: Path, pack: Any, args: argparse.Nam
     spec["policy_profile"] = policy_resolution.policy_profile
     spec["policy_profile_resolution"] = policy_resolution.to_dict()
     audience = spec.get("audience") if isinstance(spec.get("audience"), dict) else {}
-    title = args.title or str(spec.get("title") or pack.display_name or "BriefLoop Report")
+    title = args.title or str(
+        spec.get("title") or pack.display_name or "BriefLoop Report"
+    )
     language = args.language or str(audience.get("language") or "en-US")
     reader_label = args.audience or str(audience.get("label") or "business reader")
     industry_hint = getattr(args, "industry", None)
-    industry_text = industry_hint if isinstance(industry_hint, str) and industry_hint.strip() else pack.display_name
+    industry_text = (
+        industry_hint
+        if isinstance(industry_hint, str) and industry_hint.strip()
+        else pack.display_name
+    )
     spec["title"] = title
     spec["audience"] = dict(audience)
     spec["audience"]["label"] = reader_label
@@ -740,12 +865,16 @@ def _create_report_pack_workspace(*, target: Path, pack: Any, args: argparse.Nam
     }
 
 
-def _register_evidence_extract_scope(*, workspace: Path, args: argparse.Namespace) -> dict[str, Any]:
+def _register_evidence_extract_scope(
+    *, workspace: Path, args: argparse.Namespace
+) -> dict[str, Any]:
     if not workspace.exists() or not workspace.is_dir():
         raise ValueError(f"workspace does not exist: {workspace}")
     spec_path = workspace / "report_spec.yaml"
     if not spec_path.exists():
-        raise ValueError("report_spec.yaml not found. Run `briefloop new evidence-extract <workspace>` first.")
+        raise ValueError(
+            "report_spec.yaml not found. Run `briefloop new evidence-extract <workspace>` first."
+        )
     spec = load_report_spec(spec_path)
     if spec.get("report_pack") != "evidence_extract":
         raise ValueError(
@@ -785,9 +914,17 @@ def _register_evidence_extract_scope(*, workspace: Path, args: argparse.Namespac
             if extension in EVIDENCE_EXTRACT_BINARY_EXTENSIONS
             else None
         )
-        derived_target = extracted_markdown_path(target) if derived_input is not None else None
-        derived_rel_target = _workspace_relative(workspace, derived_target) if derived_target is not None else ""
-        manual_enabled = extension in EVIDENCE_EXTRACT_TEXT_EXTENSIONS or derived_input is not None
+        derived_target = (
+            extracted_markdown_path(target) if derived_input is not None else None
+        )
+        derived_rel_target = (
+            _workspace_relative(workspace, derived_target)
+            if derived_target is not None
+            else ""
+        )
+        manual_enabled = (
+            extension in EVIDENCE_EXTRACT_TEXT_EXTENSIONS or derived_input is not None
+        )
         if extension in EVIDENCE_EXTRACT_BINARY_EXTENSIONS:
             if derived_input is None:
                 warnings.append(
@@ -861,14 +998,20 @@ def _register_evidence_extract_scope(*, workspace: Path, args: argparse.Namespac
                 }
             )
 
-    if sources_dir.exists() and any(sources_dir.iterdir()) and not getattr(args, "force", False):
+    if (
+        sources_dir.exists()
+        and any(sources_dir.iterdir())
+        and not getattr(args, "force", False)
+    ):
         raise FileExistsError(
             f"Refusing to overwrite existing evidence-extract sources: {sources_dir}. Use --force."
         )
     _build_sources_yaml_text(
         workspace=workspace,
         sources=registered,
-        source_category=normalize_source_category(getattr(args, "source_category", None), default="other"),
+        source_category=normalize_source_category(
+            getattr(args, "source_category", None), default="other"
+        ),
         language=str(getattr(args, "language", "") or "en").strip() or "en",
     )
     staged_sources: dict[Path, Path] = {}
@@ -913,7 +1056,9 @@ def _register_evidence_extract_scope(*, workspace: Path, args: argparse.Namespac
     sources_yaml_text = _build_sources_yaml_text(
         workspace=workspace,
         sources=registered,
-        source_category=normalize_source_category(getattr(args, "source_category", None), default="other"),
+        source_category=normalize_source_category(
+            getattr(args, "source_category", None), default="other"
+        ),
         language=str(getattr(args, "language", "") or "en").strip() or "en",
     )
     source_lock_path = _write_evidence_extract_source_lock(
@@ -922,19 +1067,25 @@ def _register_evidence_extract_scope(*, workspace: Path, args: argparse.Namespac
         scope=scope,
         warnings=warnings,
     )
-    page_inventory_path, page_count, page_inventory_source_count = _write_evidence_extract_page_inventory(
-        workspace=workspace,
-        sources=registered,
-        scope=scope,
-        warnings=warnings,
-        source_lock_path=source_lock_path,
+    page_inventory_path, page_count, page_inventory_source_count = (
+        _write_evidence_extract_page_inventory(
+            workspace=workspace,
+            sources=registered,
+            scope=scope,
+            warnings=warnings,
+            source_lock_path=source_lock_path,
+        )
     )
-    span_registry_path, span_count, span_source_count = _write_evidence_extract_span_registry(
-        workspace=workspace,
-        sources=registered,
-        warnings=warnings,
+    span_registry_path, span_count, span_source_count = (
+        _write_evidence_extract_span_registry(
+            workspace=workspace,
+            sources=registered,
+            warnings=warnings,
+        )
     )
-    extraction_scope_text = _extraction_scope_text(scope=scope, sources=registered, warnings=warnings)
+    extraction_scope_text = _extraction_scope_text(
+        scope=scope, sources=registered, warnings=warnings
+    )
     _write_extraction_scope(workspace=workspace, text=extraction_scope_text)
     (workspace / "sources.yaml").write_text(sources_yaml_text, encoding="utf-8")
     payload = {
@@ -951,7 +1102,9 @@ def _register_evidence_extract_scope(*, workspace: Path, args: argparse.Namespac
         "audit_page_inventory": "output/audit/evidence_extract_page_inventory.json",
         "page_inventory_source_count": page_inventory_source_count,
         "page_inventory_page_count": page_count,
-        "evidence_span_registry": _workspace_relative(workspace, span_registry_path) if span_registry_path else "",
+        "evidence_span_registry": _workspace_relative(workspace, span_registry_path)
+        if span_registry_path
+        else "",
         "evidence_span_registry_source_count": span_source_count,
         "evidence_span_registry_span_count": span_count,
         "warnings": warnings,
@@ -998,8 +1151,12 @@ def _write_evidence_extract_source_lock(
                 "extractor": str(record.get("derived_markdown_extractor") or ""),
                 "source_path": str(record.get("path") or ""),
             }
-            source_record["text_evidence_path"] = str(record.get("text_evidence_path") or "")
-            source_record["text_evidence_basis"] = str(record.get("text_evidence_basis") or "")
+            source_record["text_evidence_path"] = str(
+                record.get("text_evidence_path") or ""
+            )
+            source_record["text_evidence_basis"] = str(
+                record.get("text_evidence_basis") or ""
+            )
         locked_sources.append(source_record)
     payload = {
         "schema_version": EVIDENCE_EXTRACT_SOURCE_LOCK_SCHEMA_VERSION,
@@ -1025,7 +1182,9 @@ def _write_evidence_extract_source_lock(
             "no_delivery_or_publication_authority",
         ],
     }
-    lock_path = workspace / "output" / "intermediate" / "evidence_extract_source_lock.json"
+    lock_path = (
+        workspace / "output" / "intermediate" / "evidence_extract_source_lock.json"
+    )
     lock_path.parent.mkdir(parents=True, exist_ok=True)
     text = json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True) + "\n"
     lock_path.write_text(text, encoding="utf-8")
@@ -1053,7 +1212,11 @@ def _write_evidence_extract_page_inventory(
         extension = str(record.get("extension") or "")
         source_file = workspace / source_path
         text_evidence = _text_evidence_for_record(workspace=workspace, record=record)
-        source_text = _source_text_for_span_registry(text_evidence["path"]) if text_evidence else None
+        source_text = (
+            _source_text_for_span_registry(text_evidence["path"])
+            if text_evidence
+            else None
+        )
         page_basis = str(text_evidence["basis"]) if text_evidence else ""
         needs_visual_inspection = page_basis == "mineru_derived_markdown"
         pages: list[dict[str, Any]] = []
@@ -1094,7 +1257,8 @@ def _write_evidence_extract_page_inventory(
                 "inventory_status": inventory_status,
                 "page_count": len(pages),
                 "needs_external_extraction_tool": source_text is None,
-                "visual_inspection_required": source_text is None or needs_visual_inspection,
+                "visual_inspection_required": source_text is None
+                or needs_visual_inspection,
                 "pages": pages,
             }
         )
@@ -1129,7 +1293,9 @@ def _write_evidence_extract_page_inventory(
             "no_delivery_or_publication_authority",
         ],
     }
-    inventory_path = workspace / "output" / "intermediate" / "evidence_extract_page_inventory.json"
+    inventory_path = (
+        workspace / "output" / "intermediate" / "evidence_extract_page_inventory.json"
+    )
     inventory_path.parent.mkdir(parents=True, exist_ok=True)
     text = json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True) + "\n"
     inventory_path.write_text(text, encoding="utf-8")
@@ -1169,7 +1335,9 @@ def _copy_extract_sources(
             )
 
 
-def _refresh_registered_source_digests(*, workspace: Path, registered: list[dict[str, Any]]) -> None:
+def _refresh_registered_source_digests(
+    *, workspace: Path, registered: list[dict[str, Any]]
+) -> None:
     for record in registered:
         source_path = workspace / str(record.get("path") or "")
         record["source_sha256"] = _sha256_file(source_path)
@@ -1184,7 +1352,9 @@ def _refresh_registered_source_digests(*, workspace: Path, registered: list[dict
             record["text_evidence_size_bytes"] = derived_size
 
 
-def _managed_extract_source_inputs(sources: list[Path], *, sources_dir: Path) -> list[Path]:
+def _managed_extract_source_inputs(
+    sources: list[Path], *, sources_dir: Path
+) -> list[Path]:
     managed_root = sources_dir.expanduser().resolve()
     managed: list[Path] = []
     for source in sources:
@@ -1196,7 +1366,9 @@ def _managed_extract_source_inputs(sources: list[Path], *, sources_dir: Path) ->
     return managed
 
 
-def _stage_extract_source_files(sources: list[Path], *, staging_dir: Path) -> dict[Path, Path]:
+def _stage_extract_source_files(
+    sources: list[Path], *, staging_dir: Path
+) -> dict[Path, Path]:
     """Copy managed inputs before managed-source cleanup.
 
     `extract --force` may be rerun with source paths that already live under
@@ -1296,11 +1468,17 @@ def _write_evidence_extract_span_registry(
             }
         )
         if record.get("derived_markdown_path"):
-            registry_sources[-1]["metadata"]["original_source_path"] = record.get("path", "")
-            registry_sources[-1]["metadata"]["derived_markdown_path"] = record.get("derived_markdown_path", "")
+            registry_sources[-1]["metadata"]["original_source_path"] = record.get(
+                "path", ""
+            )
+            registry_sources[-1]["metadata"]["derived_markdown_path"] = record.get(
+                "derived_markdown_path", ""
+            )
 
     if not registry_sources:
-        registry_path = workspace / "output" / "intermediate" / "evidence_span_registry.json"
+        registry_path = (
+            workspace / "output" / "intermediate" / "evidence_span_registry.json"
+        )
         try:
             registry_path.unlink()
         except FileNotFoundError:
@@ -1375,7 +1553,9 @@ def _filter_paired_mineru_markdown_sources(sources: list[Path]) -> list[Path]:
     return [source for source in sources if source not in consumed_markdown]
 
 
-def _text_evidence_for_record(*, workspace: Path, record: dict[str, Any]) -> dict[str, Any] | None:
+def _text_evidence_for_record(
+    *, workspace: Path, record: dict[str, Any]
+) -> dict[str, Any] | None:
     if not bool(record.get("manual_enabled")):
         return None
     rel_path = str(record.get("text_evidence_path") or record.get("path") or "")
@@ -1384,14 +1564,22 @@ def _text_evidence_for_record(*, workspace: Path, record: dict[str, Any]) -> dic
     return {
         "path": workspace / rel_path,
         "rel_path": rel_path,
-        "sha256": str(record.get("text_evidence_sha256") or record.get("source_sha256") or ""),
-        "size_bytes": int(record.get("text_evidence_size_bytes") or record.get("source_size_bytes") or 0),
+        "sha256": str(
+            record.get("text_evidence_sha256") or record.get("source_sha256") or ""
+        ),
+        "size_bytes": int(
+            record.get("text_evidence_size_bytes")
+            or record.get("source_size_bytes")
+            or 0
+        ),
         "basis": str(record.get("text_evidence_basis") or "utf8_text_file"),
     }
 
 
 def _first_text_span(source_text: str, *, source_id: str) -> dict[str, Any] | None:
-    start = next((idx for idx, char in enumerate(source_text) if not char.isspace()), None)
+    start = next(
+        (idx for idx, char in enumerate(source_text) if not char.isspace()), None
+    )
     if start is None:
         return None
     paragraph_end = source_text.find("\n\n", start)
@@ -1454,7 +1642,11 @@ def _build_sources_yaml_text(
     path = workspace / "sources.yaml"
     data = yaml.safe_load(path.read_text(encoding="utf-8")) if path.exists() else {}
     data = data if isinstance(data, dict) else {}
-    strategy = data.get("source_strategy") if isinstance(data.get("source_strategy"), dict) else {}
+    strategy = (
+        data.get("source_strategy")
+        if isinstance(data.get("source_strategy"), dict)
+        else {}
+    )
     enabled = strategy.get("enabled_providers")
     if isinstance(enabled, str):
         enabled = [enabled]
@@ -1497,14 +1689,18 @@ def _build_sources_yaml_text(
                 {
                     "derived_markdown_path": record["derived_markdown_path"],
                     "derived_markdown_sha256": record["derived_markdown_sha256"],
-                    "derived_markdown_size_bytes": record["derived_markdown_size_bytes"],
+                    "derived_markdown_size_bytes": record[
+                        "derived_markdown_size_bytes"
+                    ],
                     "text_evidence_basis": record.get("text_evidence_basis", ""),
                 }
             )
     manual["enabled"] = True
     manual["sources"] = existing
     data["manual"] = manual
-    web_search = data.get("web_search") if isinstance(data.get("web_search"), dict) else {}
+    web_search = (
+        data.get("web_search") if isinstance(data.get("web_search"), dict) else {}
+    )
     web_search.setdefault("enabled", False)
     web_search.setdefault("mode", "disabled")
     data["web_search"] = web_search

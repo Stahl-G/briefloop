@@ -1,12 +1,11 @@
 from __future__ import annotations
 
 import importlib.util
-import json
 import sys
 from pathlib import Path
 
 from multi_agent_brief.cli.main import main
-from multi_agent_brief.experiments import validate_case_dir
+from multi_agent_brief.experiments import scaffold_condition, validate_case_dir
 
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -73,9 +72,37 @@ def test_080_public_pilot_case_passes_public_safety_scan():
     assert module.scan([CASE_DIR], banned_terms=[]) == []
 
 
-def test_080_public_pilot_seed_archive_scaffolds_baseline(tmp_path, capsys):
+def test_080_public_pilot_seed_archive_scaffolds_baseline(tmp_path):
     ws = tmp_path / "baseline-workspace"
     _write_scaffold_workspace(ws)
+
+    payload = scaffold_condition(
+        case_dir=CASE_DIR,
+        condition="baseline",
+        workspace=ws,
+        runtime="operator",
+        repo_workdir=ROOT,
+    )
+
+    assert payload["ok"] is True
+    assert payload["case_id"] == "solar_public_001"
+    assert payload["condition"] == "baseline"
+    assert payload["metadata"]["treatment"]["improvement_memory"] == "disabled"
+    assert payload["fact_layer_import"]["source_run_id"] == "mabw-20260618T000000Z-solarseed0001"
+    assert (ws / "input" / "sources" / "source-001.md").exists()
+    assert (ws / "output" / "intermediate" / "claim_ledger.json").exists()
+    assert not (ws / "output" / "delivery" / "brief.md").exists()
+
+
+def test_080_public_pilot_scaffold_condition_cli_is_retired(tmp_path, capsys):
+    """Retired public scaffold-condition CLI: typed rejection, zero writes."""
+    ws = tmp_path / "baseline-workspace"
+    _write_scaffold_workspace(ws)
+    before_files = {
+        path.relative_to(ws).as_posix(): path.read_bytes()
+        for path in ws.rglob("*")
+        if path.is_file()
+    }
 
     rc = main([
         "experiments",
@@ -88,19 +115,20 @@ def test_080_public_pilot_seed_archive_scaffolds_baseline(tmp_path, capsys):
         "--workspace",
         str(ws),
         "--runtime",
-            "operator",
+        "operator",
         "--repo-workdir",
         str(ROOT),
         "--json",
     ])
 
-    assert rc == 0
-    payload = json.loads(capsys.readouterr().out)
-    assert payload["ok"] is True
-    assert payload["case_id"] == "solar_public_001"
-    assert payload["condition"] == "baseline"
-    assert payload["metadata"]["treatment"]["improvement_memory"] == "disabled"
-    assert payload["fact_layer_import"]["source_run_id"] == "mabw-20260618T000000Z-solarseed0001"
-    assert (ws / "input" / "sources" / "source-001.md").exists()
-    assert (ws / "output" / "intermediate" / "claim_ledger.json").exists()
-    assert not (ws / "output" / "delivery" / "brief.md").exists()
+    # LEGACY-DELETE: retired public `experiments 080 scaffold-condition` CLI
+    # surface; the deterministic scaffold_condition seam keeps the scaffold
+    # invariant in test_080_public_pilot_seed_archive_scaffolds_baseline.
+    assert rc == 1
+    assert capsys.readouterr().out == "runtime_command_unsupported\n"
+    after_files = {
+        path.relative_to(ws).as_posix(): path.read_bytes()
+        for path in ws.rglob("*")
+        if path.is_file()
+    }
+    assert after_files == before_files

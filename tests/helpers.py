@@ -61,10 +61,58 @@ def write_workspace_files(
     return path
 
 
-def initialize_workspace(path: Path) -> Path:
-    from multi_agent_brief.cli.main import main
+def _controlstore_adapter(run_id: str):
+    from copy import deepcopy
 
-    assert main(["state", "init", "--runtime", "operator", "--workspace", str(path)]) == 0
+    from multi_agent_brief.contracts.v2 import RuntimeAdapterBinding
+    from multi_agent_brief.control_store.serialization import canonical_fingerprint
+
+    payload = deepcopy(RuntimeAdapterBinding.minimal_example)
+    payload.update(
+        run_id=run_id,
+        runtime="codex",
+        adapter_id="briefloop-codex-controlstore",
+        role_ids=[
+            "analyst",
+            "auditor",
+            "claim-ledger",
+            "editor",
+            "scout",
+            "screener",
+            "source-planner",
+            "source-provider",
+        ],
+        supported_role_topologies=["default", "single_session", "strict"],
+    )
+    payload.pop("binding_fingerprint", None)
+    payload["binding_fingerprint"] = canonical_fingerprint(payload)
+    return RuntimeAdapterBinding.model_validate(payload, strict=True)
+
+
+def initialize_workspace(path: Path) -> Path:
+    # LEGACY-DELETE: retired public `state init --runtime operator`; workspace
+    # bootstrap goes through the deterministic ControlStore seam only.
+    from multi_agent_brief.cli.init_wizard import create_workspace
+    from multi_agent_brief.runtime_host_v2.initialization import initialize_or_open_runtime
+    from multi_agent_brief.workspace.init_profile import InitProfile
+
+    create_workspace(
+        path,
+        InitProfile(
+            company="ExampleCo",
+            industry="manufacturing",
+            brief_title="ExampleCo weekly brief",
+            task_objective="Prepare the weekly manufacturing brief.",
+            audience="management",
+            audience_profile="management",
+            focus_areas=["operations", "policy"],
+            output_formats=["markdown", "docx"],
+            web_search_mode="disabled",
+            web_search_enabled=False,
+        ),
+        force=True,
+    )
+    initialize_or_open_runtime(path, adapter_loader=_controlstore_adapter)
     return path
 
 
@@ -80,7 +128,9 @@ def initialized_workspace_writer(
     writer: Callable[..., Path] = write_minimal_workspace_under,
     **default_kwargs: object,
 ) -> Callable[[Path], Path]:
+    # LEGACY-DELETE: the retired operator writer and its kwargs are ignored;
+    # bootstrap is the deterministic ControlStore seam in initialize_workspace.
     def _write(base_path: Path) -> Path:
-        return initialize_workspace(writer(base_path, **default_kwargs))
+        return initialize_workspace(base_path)
 
     return _write
