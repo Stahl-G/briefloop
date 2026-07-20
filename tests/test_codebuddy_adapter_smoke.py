@@ -33,11 +33,12 @@ def test_codebuddy_adapter_smoke_json_passes() -> None:
     assert payload["runtime_effect"] == "readiness_check_only"
     assert "delegated_runtime_proof" in payload["non_goals"]
     check_ids = {item["id"] for item in payload["checks"]}
+    # Post-CX check inventory: the retired operator handoff-contract check is
+    # gone and the fail-closed check is rescoped to the runtime boundary.
     assert {
         "codebuddy.skill.contract",
         "codebuddy.role_agents.contract",
-        "codebuddy.handoff.contract",
-        "codebuddy.missing_assets.fail_closed",
+        "codebuddy.runtime.fail_closed",
     } <= check_ids
 
 

@@ -21,6 +21,38 @@ from multi_agent_brief.capabilities.models import (
 )
 
 
+def _strict_init_args(
+    workspace: Path,
+    *,
+    company: str,
+    industry: str,
+    title: str,
+    source_profile: str,
+) -> list[str]:
+    """Direct init args satisfying the strict post-CX initialization contract."""
+    return [
+        "init",
+        str(workspace),
+        "--language",
+        "en-US",
+        "--company",
+        company,
+        "--industry",
+        industry,
+        "--title",
+        title,
+        "--audience",
+        "mgmt",
+        "--cadence",
+        "weekly",
+        "--source-profile",
+        source_profile,
+        # LEGACY-DELETE: retain only the strict SQLite initialization contract.
+        "--task-objective",
+        "Prepare the weekly operations brief.",
+    ]
+
+
 class TestCapabilitySpecModels:
     """Data model basics."""
 
@@ -290,20 +322,24 @@ class TestFeaturesCommand:
     def test_features_with_workspace(self, tmp_path, capsys):
         from multi_agent_brief.cli.main import main
         ws = tmp_path / "ws"
-        main([
-            "init", str(ws),
-            "--language", "en-US",
-            "--company", "Test",
-            "--industry", "mfg",
-            "--title", "Brief",
-            "--audience", "mgmt",
-            "--cadence", "weekly",
-            "--source-profile", "research",
-        ])
-        assert main(["features", str(ws)]) == 0
-        out = capsys.readouterr().out
+        assert main(_strict_init_args(
+            ws, company="Test", industry="mfg", title="Brief",
+            source_profile="research",
+        )) == 0
+        capsys.readouterr()
+
+        # LEGACY-DELETE: retired public `features <workspace>`; the activated
+        # capability invariant is asserted through the direct detect seam.
+        from multi_agent_brief.sources.registry import load_sources_config
+
+        enabled_providers = set(
+            load_sources_config(ws / "sources.yaml").enabled_providers
+        )
         # manual is enabled in research profile
-        assert "Manual Inputs" in out
+        assert "manual" in enabled_providers
+        status = assess_capability("manual", ws, enabled_providers)
+        assert status.state == "ENABLED_READY"
+        assert get_capability("manual").name["en"] == "Manual Inputs"
 
 
 class TestRecommendCommand:
@@ -334,61 +370,87 @@ class TestRecommendCommand:
     def test_recommend_with_workspace(self, tmp_path, capsys):
         from multi_agent_brief.cli.main import main
         ws = tmp_path / "ws"
-        main([
-            "init", str(ws),
-            "--language", "en-US",
-            "--company", "Tesla",
-            "--industry", "automotive",
-            "--title", "Competitor Analysis",
-            "--audience", "mgmt",
-            "--cadence", "weekly",
-            "--source-profile", "research",
-        ])
-        assert main(["recommend", str(ws)]) == 0
-        out = capsys.readouterr().out
-        assert "market_competitor" in out
+        assert main(_strict_init_args(
+            ws, company="Tesla", industry="automotive",
+            title="Competitor Analysis", source_profile="research",
+        )) == 0
+        capsys.readouterr()
+
+        # LEGACY-DELETE: retired public `recommend <workspace>`; the
+        # recommendation invariant is asserted through the direct recommend seam.
+        from multi_agent_brief.capabilities.recommend import (
+            generate_setup_plan,
+            recommend_from_input_dir,
+            recommend_from_text,
+        )
+        from multi_agent_brief.core.config import load_config
+        from multi_agent_brief.sources.registry import load_sources_config
+
+        enabled_providers = set(
+            load_sources_config(ws / "sources.yaml").enabled_providers
+        )
+        config = load_config(str(ws / "config.yaml"))
+        project = config.get("project", {})
+        text = " ".join(
+            str(project[key])
+            for key in ("name", "industry", "title")
+            if project.get(key)
+        )
+        recs = recommend_from_text(text, enabled_providers)
+        recs += recommend_from_input_dir(ws / "input", enabled_providers)
+        assert "market_competitor" in {rec.capability_id for rec in recs}
+        plan = generate_setup_plan(recs, ws)
+        assert any(
+            cap["id"] == "market_competitor" for cap in plan["capabilities"]
+        )
 
 
 class TestSetupCommand:
     """CLI 'setup' command tests."""
 
-    def test_setup_dry_run(self, tmp_path, capsys):
-        from multi_agent_brief.cli.main import main
-        ws = tmp_path / "ws"
-        main([
-            "init", str(ws),
-            "--language", "en-US",
-            "--company", "Tesla",
-            "--industry", "automotive",
-            "--title", "Competitor Analysis",
-            "--audience", "mgmt",
-            "--cadence", "weekly",
-            "--source-profile", "research",
-        ])
-        assert main(["setup", str(ws), "--dry-run"]) == 0
-        out = capsys.readouterr().out
-        assert "dry-run" in out.lower()
-
-    def test_setup_applies_changes(self, tmp_path, capsys):
-        from multi_agent_brief.cli.main import main
-        ws = tmp_path / "ws"
-        main([
-            "init", str(ws),
-            "--language", "en-US",
-            "--company", "Tesla",
-            "--industry", "automotive",
-            "--title", "Competitor Analysis",
-            "--audience", "mgmt",
-            "--cadence", "weekly",
-            "--source-profile", "research",
-        ])
-        assert main(["setup", str(ws)]) == 0
-        out = capsys.readouterr().out
-        assert "change(s) applied" in out
-
     def test_setup_nonexistent_workspace(self, capsys):
         from multi_agent_brief.cli.main import main
         assert main(["setup", "/nonexistent/path"]) == 1
+
+
+class TestRetiredWorkspaceCapabilityCommands:
+    """Workspace-aware capability public CLI paths are retired post-CX."""
+
+    @pytest.mark.parametrize(
+        "argv",
+        [
+            ["features", "{ws}"],
+            ["recommend", "{ws}"],
+            ["setup", "{ws}", "--dry-run"],
+            ["setup", "{ws}"],
+        ],
+    )
+    def test_workspace_aware_capability_commands_are_retired(
+        self, tmp_path, capsys, argv
+    ):
+        from multi_agent_brief.cli.main import main
+        ws = tmp_path / "ws"
+        assert main(_strict_init_args(
+            ws, company="Tesla", industry="automotive",
+            title="Competitor Analysis", source_profile="research",
+        )) == 0
+        capsys.readouterr()
+
+        before_files = {
+            path.relative_to(ws).as_posix(): path.read_bytes()
+            for path in ws.rglob("*")
+            if path.is_file()
+        }
+        # LEGACY-DELETE: retired workspace-aware features/recommend/setup
+        # public CLI; capability state is read through direct provider seams.
+        assert main([part.format(ws=ws) for part in argv]) == 1
+        assert capsys.readouterr().out == "runtime_command_unsupported\n"
+        after_files = {
+            path.relative_to(ws).as_posix(): path.read_bytes()
+            for path in ws.rglob("*")
+            if path.is_file()
+        }
+        assert after_files == before_files
 
 
 class TestInitIntegration:
@@ -397,16 +459,10 @@ class TestInitIntegration:
     def test_init_shows_recommendations(self, tmp_path, capsys):
         from multi_agent_brief.cli.main import main
         ws = tmp_path / "ws"
-        main([
-            "init", str(ws),
-            "--language", "en-US",
-            "--company", "Tesla",
-            "--industry", "automotive",
-            "--title", "Competitor Analysis",
-            "--audience", "mgmt",
-            "--cadence", "weekly",
-            "--source-profile", "research",
-        ])
+        assert main(_strict_init_args(
+            ws, company="Tesla", industry="automotive",
+            title="Competitor Analysis", source_profile="research",
+        )) == 0
         out = capsys.readouterr().out
         assert "Recommended capabilities" in out
         assert "market_competitor" in out
@@ -416,16 +472,10 @@ class TestInitIntegration:
         from multi_agent_brief.cli.main import main
         ws = tmp_path / "ws"
         # Default focus_areas include "competitor" and "market" which trigger market_competitor
-        main([
-            "init", str(ws),
-            "--language", "en-US",
-            "--company", "Test Corp",
-            "--industry", "textiles",
-            "--title", "Weekly Report",
-            "--audience", "mgmt",
-            "--cadence", "weekly",
-            "--source-profile", "conservative",
-        ])
+        assert main(_strict_init_args(
+            ws, company="Test Corp", industry="textiles",
+            title="Weekly Report", source_profile="conservative",
+        )) == 0
         out = capsys.readouterr().out
         # Default focus_areas ["policy", "competitor", "market", "customer_demand"] trigger recommendations
         assert "Recommended capabilities" in out

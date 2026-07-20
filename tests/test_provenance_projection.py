@@ -14,6 +14,7 @@ from multi_agent_brief.orchestrator.runtime_state import (
 from multi_agent_brief.provenance.builder import (
     build_provenance_workspace,
     provenance_graph_path,
+    show_provenance_workspace,
     validate_provenance_workspace,
 )
 from multi_agent_brief.provenance.model import ProvenanceError
@@ -418,24 +419,46 @@ def test_missing_provenance_does_not_block_state_check(tmp_path):
     assert registry["provenance_graph"]["validation_result"] == "valid_minimum"
 
 
-def test_provenance_cli_build_show_validate_json(tmp_path, capsys):
+@pytest.mark.parametrize("action", ("build", "show", "validate"))
+def test_provenance_cli_is_retired_with_zero_writes(tmp_path, capsys, action):
+    ws = _workspace(tmp_path)
+    _init_state(ws)
+    argv = ["provenance", action, "--workspace", str(ws), "--json"]
+    if action == "build":
+        argv.extend(["--repo-workdir", str(REPO)])
+    before_files = {
+        path.relative_to(ws).as_posix(): path.read_bytes()
+        for path in ws.rglob("*")
+        if path.is_file()
+    }
+
+    rc = main(argv)
+
+    # LEGACY-DELETE: the JSON provenance CLI payloads are removed with the
+    # retired legacy-workspace public surface; rejection is now fail-closed.
+    assert rc == 1
+    assert capsys.readouterr().out == "legacy_workspace_unsupported\n"
+    after_files = {
+        path.relative_to(ws).as_posix(): path.read_bytes()
+        for path in ws.rglob("*")
+        if path.is_file()
+    }
+    assert after_files == before_files
+    assert not provenance_graph_path(ws).exists()
+
+
+def test_provenance_build_show_validate_round_trip(tmp_path):
     ws = _workspace(tmp_path)
     _init_state(ws)
 
-    rc = main(["provenance", "build", "--workspace", str(ws), "--repo-workdir", str(REPO), "--json"])
-    payload = json.loads(capsys.readouterr().out)
-    assert rc == 0
-    assert payload["ok"] is True
+    build_state = build_provenance_workspace(workspace=ws, repo_workdir=REPO)
+    assert build_state["ok"] is True
 
-    rc = main(["provenance", "show", "--workspace", str(ws), "--json"])
-    payload = json.loads(capsys.readouterr().out)
-    assert rc == 0
-    assert payload["ok"] is True
+    show_state = show_provenance_workspace(workspace=ws)
+    assert show_state["ok"] is True
 
-    rc = main(["provenance", "validate", "--workspace", str(ws), "--json"])
-    payload = json.loads(capsys.readouterr().out)
-    assert rc == 0
-    assert payload["ok"] is True
+    validate_state = validate_provenance_workspace(workspace=ws)
+    assert validate_state["ok"] is True
 
 
 def test_validate_strict_fails_on_warnings(tmp_path):

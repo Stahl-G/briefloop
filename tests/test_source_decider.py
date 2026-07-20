@@ -361,6 +361,7 @@ def test_sources_decide_merge_rejects_source_plan_only_cli(
     workspace_with_sources: Path,
     capsys,
 ):
+    """Retired public `sources decide` CLI: typed rejection with zero writes."""
     sources_path = workspace_with_sources / "sources.yaml"
     original_sources = sources_path.read_text(encoding="utf-8")
     candidates_path = workspace_with_sources / "source_candidates.yaml"
@@ -378,6 +379,7 @@ def test_sources_decide_merge_rejects_source_plan_only_cli(
         ),
         encoding="utf-8",
     )
+    original_candidates = candidates_path.read_text(encoding="utf-8")
 
     rc = main([
         "sources",
@@ -388,11 +390,14 @@ def test_sources_decide_merge_rejects_source_plan_only_cli(
     ])
 
     out = capsys.readouterr().out
+    # LEGACY-DELETE: retired public `sources decide` operator CLI surface; the
+    # plan-only rejection invariant is preserved through the direct
+    # merge_candidates_to_sources seam in
+    # test_merge_rejects_source_plan_only_without_writing.
     assert rc == 1
-    assert E_SOURCE_CANDIDATES_PLAN_ONLY in out
-    assert "source plan only" in out
-    assert "not evidence" in out or "as evidence" in out
+    assert out == "runtime_command_unsupported\n"
     assert sources_path.read_text(encoding="utf-8") == original_sources
+    assert candidates_path.read_text(encoding="utf-8") == original_candidates
 
 
 def test_merge_candidates_preserves_daily_backfill_source_metadata(workspace_with_sources: Path):

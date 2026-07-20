@@ -54,27 +54,44 @@ def test_required_rc_safety_matrix_executes_real_lifecycles(tmp_path: Path) -> N
 
     payload = runner.run_v1_rc_safety_smoke(work_root=tmp_path)
 
-    assert payload["ok"] is True
     assert payload["required_complete"] is True
     assert payload["required_scenario_ids"] == list(EXPECTED_RC_SCENARIO_IDS)
     assert payload["executed_scenario_ids"] == list(EXPECTED_RC_SCENARIO_IDS)
     assert [item["scenario_id"] for item in payload["scenarios"]] == list(
         EXPECTED_RC_SCENARIO_IDS
     )
-    assert all(item["ok"] is True for item in payload["scenarios"])
     assert payload["boundary"] == runner.RUNNER_BOUNDARY
+    by_id = {item["scenario_id"]: item for item in payload["scenarios"]}
+
+    # LEGACY-DELETE: retired public `run --runtime operator` launcher and the
+    # legacy state-CLI lifecycle driven by RC-SMOKE-01; the Codex SQLite
+    # ControlStore runtime is the sole runtime authority. The runner must fail
+    # closed with the typed retirement token and the retired path must write
+    # nothing, while the direct deterministic transaction scenarios keep
+    # executing real lifecycles.
+    retired = by_id["RC-SMOKE-01"]
+    assert payload["ok"] is False
+    assert retired["ok"] is False
+    assert retired["error_type"] == "AssertionError"
+    assert "runtime_adapter_unsupported" in retired["error"]
+    assert "--runtime" in retired["error"] and "operator" in retired["error"]
+    for scenario_id in EXPECTED_RC_SCENARIO_IDS[1:]:
+        assert by_id[scenario_id]["ok"] is True, by_id[scenario_id]
 
     clean = tmp_path / "rc-smoke-01"
-    clean_report = _json(clean / "output/intermediate/finalize_report.json")
-    assert (clean / "output/intermediate/agent_handoff.json").exists()
-    assert clean_report["delivery_promotion"] == "promoted"
-    assert (clean / "output/delivery/brief.md").exists()
-    assert any(
-        event["event_type"] == "decision_recorded"
-        and event.get("stage_id") == "finalize"
-        and event.get("decision") == "finalize"
-        for event in _events(clean)
-    )
+    assert not (clean / "output").exists()
+    assert not (clean / "briefloop.db").exists()
+    assert {
+        path.relative_to(clean).as_posix()
+        for path in clean.rglob("*")
+        if path.is_file()
+    } == {
+        "config.yaml",
+        "user.md",
+        "sources.yaml",
+        "source_candidates.yaml",
+        "input/sources/source-001.md",
+    }
 
     reader_failed = tmp_path / "rc-smoke-02"
     failed_report = _json(reader_failed / "output/intermediate/finalize_report.json")

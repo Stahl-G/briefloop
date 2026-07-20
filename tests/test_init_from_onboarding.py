@@ -14,6 +14,7 @@ def test_init_from_onboarding_creates_workspace(tmp_path: Path, capsys):
         "target": "exampleco-weekly",
         "company_or_org": "ExampleCo",
         "industry_or_theme": "manufacturing",
+        "task_objective": "Track material manufacturing developments for ExampleCo management.",
         "audience_plain": "management team",
         "source_style_plain": "reliable, but include sector news",
         "output_style_plain": "executive brief, conclusion-first",
@@ -65,6 +66,7 @@ def test_init_from_onboarding_preserves_declined_online_search(tmp_path: Path):
         "target": "no-search-weekly",
         "company_or_org": "ExampleCo",
         "industry_or_theme": "manufacturing",
+        "task_objective": "Track material manufacturing developments for ExampleCo management.",
         "audience_plain": "management team",
         "source_style_plain": "llm_decide",
         "output_style_plain": "executive brief",
@@ -96,6 +98,7 @@ def test_init_from_onboarding_cli_workspace_overrides_target(tmp_path: Path):
         "target": "onboarding-target",
         "company_or_org": "TestCo",
         "industry_or_theme": "technology",
+        "task_objective": "Track material technology developments for TestCo management.",
         "language_plain": "English",
         "cadence_plain": "weekly",
     }
@@ -116,6 +119,7 @@ def test_init_from_onboarding_uses_onboarding_target_when_no_cli_target(tmp_path
         "target": "auto-target",
         "company_or_org": "TestCo",
         "industry_or_theme": "technology",
+        "task_objective": "Track material technology developments for TestCo management.",
         "language_plain": "English",
         "cadence_plain": "weekly",
     }
@@ -149,13 +153,25 @@ def test_sources_decide_search_no_mock_residual(capsys, tmp_path: Path):
         "  topics: [policy]\n  queries:\n    - test query\n"
     )
     (ws / "sources.yaml").write_text(sources_yaml, encoding="utf-8")
+    before_files = {
+        path.relative_to(ws).as_posix(): path.read_bytes()
+        for path in ws.rglob("*")
+        if path.is_file()
+    }
 
     rc = main(["sources", "decide", "--config", str(ws / "config.yaml"), "--search"])
-    # --search without a configured backend should fail with clear message
-    assert rc != 0
     captured = capsys.readouterr()
+    # LEGACY-DELETE: retired public `sources decide` surface; source decisions
+    # now run inside the SQLite ControlStore runtime authority.
+    assert rc == 1
+    assert captured.out == "runtime_command_unsupported\n"
     assert "mock" not in captured.out.lower()
-    assert "backend" in captured.out.lower() or "search" in captured.out.lower()
+    after_files = {
+        path.relative_to(ws).as_posix(): path.read_bytes()
+        for path in ws.rglob("*")
+        if path.is_file()
+    }
+    assert after_files == before_files
 
 
 def test_init_from_onboarding_aliases_accepted(tmp_path: Path):
@@ -163,6 +179,7 @@ def test_init_from_onboarding_aliases_accepted(tmp_path: Path):
     onboarding = {
         "company": "Canadian Solar",
         "industry": "光伏",
+        "task_objective": "跟踪加拿大太阳能行业政策、诉讼与法规变化，输出管理层周报。",
         "title": "美国光储市场周报",
         "audience": "总裁办",
         "language": "zh-CN",
@@ -238,6 +255,7 @@ def test_init_from_onboarding_rejects_selector_below_quality_floor(tmp_path: Pat
         "company": "Example Solar",
         "industry": "美国光储市场",
         "title": "美国光储市场周报",
+        "task_objective": "制作 Example Solar 美国光储市场周报并供管理层决策参考",
         "audience": "管理层",
         "language": "zh-CN",
         "cadence": "weekly",
@@ -269,6 +287,8 @@ def test_direct_init_creates_audience_profile(tmp_path: Path):
         "manufacturing",
         "--title",
         "DirectCo Weekly Brief",
+        "--task-objective",
+        "Track material manufacturing developments for DirectCo management.",
         "--audience",
         "management",
         "--cadence",
@@ -302,6 +322,8 @@ def test_direct_init_rejects_selector_below_quality_floor(tmp_path: Path, capsys
             "manufacturing",
             "--title",
             "DirectCo Weekly Brief",
+            "--task-objective",
+            "Track material manufacturing developments for DirectCo management.",
             "--audience",
             "management",
             "--cadence",

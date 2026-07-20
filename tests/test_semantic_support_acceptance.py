@@ -7,7 +7,11 @@ from pathlib import Path
 
 import pytest
 
-from multi_agent_brief.cli.main import main
+from multi_agent_brief.cli.main import main as cli_main
+from multi_agent_brief.orchestrator.runtime_state import (
+    RuntimeStateError,
+    check_runtime_state,
+)
 from multi_agent_brief.orchestrator.runtime_state.event_log import read_event_log_records_strict
 from multi_agent_brief.orchestrator.runtime_state.semantic_assessment_report import (
     SEMANTIC_ASSESSMENT_CHECKED_INPUTS,
@@ -17,10 +21,69 @@ from multi_agent_brief.orchestrator.runtime_state.semantic_assessment_report imp
 from multi_agent_brief.orchestrator.runtime_state.semantic_support_acceptance import (
     SEMANTIC_SUPPORT_ACCEPTANCE_BOUNDARY,
     bind_semantic_assessment_checked_inputs_transaction,
+    record_semantic_support_adjudication,
     semantic_support_acceptance_ledger_path,
     semantic_support_acceptance_record_current_effectiveness,
 )
 from tests.test_quality_panel import _workspace, _write_semantic_support_artifacts
+
+
+def _arg(argv: list[str], name: str, *, default: str | None = None) -> str | None:
+    try:
+        return argv[argv.index(name) + 1]
+    except ValueError:
+        return default
+
+
+def main(argv: list[str]) -> int:
+    """Exercise retired semantic-support modules directly, never the public CLI guard.
+
+    LEGACY-DELETE removes this bridge with the legacy semantic-support
+    acceptance module tests.  Until then it preserves their deterministic
+    invariants without claiming that JSON control state remains a supported
+    public authority.
+    """
+
+    workspace = _arg(argv, "--workspace")
+    assert workspace is not None
+    try:
+        if argv[:2] == ["semantic-support", "bind"]:
+            payload = bind_semantic_assessment_checked_inputs_transaction(
+                workspace=workspace,
+            )
+            print(json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True))
+            return 0
+        if argv[:2] == ["semantic-support", "adjudicate"]:
+            payload = record_semantic_support_adjudication(
+                workspace=workspace,
+                proposal_id=str(_arg(argv, "--proposal-id")),
+                decision=str(_arg(argv, "--decision")),
+                reason=str(_arg(argv, "--reason")),
+                actor_id=str(_arg(argv, "--by") or "human"),
+            )
+            print(json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True))
+            return 0
+        if argv[:2] == ["state", "check"]:
+            state = check_runtime_state(workspace=workspace)
+            print(json.dumps(state, ensure_ascii=False, indent=2, sort_keys=True))
+            return 0
+    except (RuntimeStateError, OSError, json.JSONDecodeError) as exc:
+        payload = (
+            exc.to_dict()
+            if isinstance(exc, RuntimeStateError)
+            else {"ok": False, "error": str(exc)}
+        )
+        print(json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True))
+        return 1
+    raise AssertionError(f"unsupported direct legacy module call: {argv[:2]}")
+
+
+def _snapshot_workspace_files(ws: Path) -> dict[str, bytes]:
+    return {
+        path.relative_to(ws).as_posix(): path.read_bytes()
+        for path in sorted(ws.rglob("*"))
+        if path.is_file()
+    }
 
 
 def _artifact_status(ws: Path, capsys) -> dict:
@@ -555,3 +618,37 @@ def test_semantic_support_acceptance_ledger_requires_current_bound_sar_for_linke
         "semantic_support_acceptance_ledger_schema_error:"
         "records[0].current_effectiveness:missing_checked_inputs"
     )
+
+
+def test_semantic_support_public_cli_retired_rejects_typed_without_writes(
+    tmp_path: Path,
+    capsys,
+) -> None:
+    # LEGACY-DELETE: retired public `semantic-support` CLI surface; the
+    # authority guard answers a typed token and performs zero writes.
+    ws = _workspace(tmp_path)
+    _write_fresh_semantic_support_artifacts(ws)
+    capsys.readouterr()
+
+    for argv in (
+        ["semantic-support", "bind", "--workspace", str(ws), "--json"],
+        [
+            "semantic-support",
+            "adjudicate",
+            "--workspace",
+            str(ws),
+            "--proposal-id",
+            "SAR-0001",
+            "--decision",
+            "accept",
+            "--reason",
+            "Human reviewer adjudicated this proposal.",
+            "--json",
+        ],
+    ):
+        before = _snapshot_workspace_files(ws)
+        rc = cli_main(argv)
+        assert rc == 1
+        assert capsys.readouterr().out.strip() == "legacy_workspace_unsupported"
+        assert _snapshot_workspace_files(ws) == before
+        assert not semantic_support_acceptance_ledger_path(ws).exists()

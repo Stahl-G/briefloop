@@ -9,8 +9,25 @@ import pytest
 import yaml
 
 from multi_agent_brief.cli.main import main
-from multi_agent_brief.orchestrator.runtime_state import initialize_runtime_state, runtime_state_paths
+from multi_agent_brief.core.config import build_run_settings, get_output_config, load_config
+from multi_agent_brief.orchestrator.recovery_state import (
+    RECOVERY_AWAITING,
+    RECOVERY_FINALIZE_RENDER_REQUIRED,
+    RECOVERY_NOT_APPLICABLE,
+    evaluate_recovery_state,
+)
+from multi_agent_brief.orchestrator.runtime_state import (
+    E_ACTIVE_REPAIR_OPEN,
+    E_ASSESSMENT_TARGET_COMPLETE,
+    RuntimeStateError,
+    check_runtime_state,
+    initialize_runtime_state,
+    raise_if_active_repair_open,
+    raise_if_auditable_target_complete_blocks_downstream,
+    runtime_state_paths,
+)
 from multi_agent_brief.orchestrator.runtime_state.completion_projection import build_completion_projection
+from multi_agent_brief.orchestrator.runtime_state.errors import E_TRANSACTION_INTEGRITY
 from multi_agent_brief.orchestrator.runtime_state.completion_gates import (
     _finalize_report_delivery_artifact_reasons,
     _finalize_report_reader_artifact_paths,
@@ -28,6 +45,48 @@ from multi_agent_brief.outputs import finalize as finalize_module
 from tests.helpers import sha256_file as _sha256_file
 
 ROOT = Path(__file__).resolve().parents[1]
+
+
+def _workspace_file_bytes(workspace: Path) -> dict[str, bytes]:
+    return {
+        path.relative_to(workspace).as_posix(): path.read_bytes()
+        for path in workspace.rglob("*")
+        if path.is_file()
+    }
+
+
+def _finalize_via_config(config_path: Path):
+    """Drive finalize through the deterministic config and finalize seams.
+
+    LEGACY-DELETE: replaces the retired public `finalize --config` handler's
+    config-to-kwargs mapping; the retired runtime preflight guards are
+    exercised directly through the runtime_state module in the fail-closed
+    tests below.
+    """
+    resolved = config_path.resolve()
+    workspace = resolved.parent
+    config = load_config(str(resolved))
+    settings = build_run_settings(
+        config=config,
+        input_dir=None,
+        output_dir=None,
+        name=None,
+        language=None,
+        audience=None,
+    )
+    output_config = get_output_config(config)
+    return finalize_reader_outputs(
+        output_dir=Path(settings["output_dir"]),
+        project_name=settings["project_name"],
+        output_formats=settings.get("output_formats", ["markdown"]),
+        output_footer=settings.get("output_footer", ""),
+        output_named_outputs=bool(settings.get("output_named_outputs", True)),
+        output_filename_template=settings.get("output_filename_template", ""),
+        output_filename_tokens=settings.get("output_filename_tokens", {}),
+        docx_template=output_config.get("docx_template", "default"),
+        source_appendix_config=output_config.get("source_appendix", {}),
+        workspace_dir=workspace,
+    )
 
 
 def _docx_text(path: Path) -> str:
@@ -478,8 +537,58 @@ def test_finalize_applies_report_template_order_before_delivery(tmp_path: Path):
     assert report["citation_profile_audit_bundle_keeps_trace"] is True
 
 
-def test_finalize_cli_strips_src_markers_after_subagent_rewrite(tmp_path: Path, capsys):
-    """CLI finalization prevents audited [src:...] markers from leaking to final files."""
+@pytest.mark.parametrize(
+    ("workspace_kind", "expected_token"),
+    [
+        ("fresh", "runtime_command_unsupported"),
+        ("legacy", "legacy_workspace_unsupported"),
+    ],
+)
+def test_finalize_public_cli_is_retired_with_typed_rejection_and_zero_writes(
+    tmp_path: Path,
+    capsys,
+    workspace_kind: str,
+    expected_token: str,
+) -> None:
+    workspace = tmp_path / "workspace"
+    input_dir = workspace / "input"
+    intermediate = workspace / "output" / "intermediate"
+    input_dir.mkdir(parents=True)
+    intermediate.mkdir(parents=True)
+    (input_dir / "source.md").write_text("dummy", encoding="utf-8")
+    (workspace / "config.yaml").write_text(
+        "project:\n"
+        "  name: Retired Finalize Brief\n"
+        "input:\n"
+        "  path: input\n"
+        "output:\n"
+        "  path: output\n"
+        "  formats:\n"
+        "    - markdown\n",
+        encoding="utf-8",
+    )
+    (intermediate / "audited_brief.md").write_text(
+        "# Brief\n\n- Claim [src:CLAIM_123456]\n",
+        encoding="utf-8",
+    )
+    if workspace_kind == "legacy":
+        (intermediate / "workflow_state.json").write_text("{}\n", encoding="utf-8")
+    before = _workspace_file_bytes(workspace)
+
+    rc = main(["finalize", "--config", str(workspace / "config.yaml")])
+    captured = capsys.readouterr()
+
+    # LEGACY-DELETE: retired public `finalize --config` operator surface; the
+    # workspace authority guard rejects it before dispatch with zero writes.
+    assert rc == 1
+    assert captured.out == f"{expected_token}\n"
+    assert captured.err == ""
+    assert _workspace_file_bytes(workspace) == before
+    assert not (workspace / "briefloop.db").exists()
+
+
+def test_finalize_cli_strips_src_markers_after_subagent_rewrite(tmp_path: Path):
+    """Finalization prevents audited [src:...] markers from leaking to final files."""
     workspace = tmp_path / "workspace"
     input_dir = workspace / "input"
     output_dir = workspace / "output"
@@ -507,14 +616,15 @@ def test_finalize_cli_strips_src_markers_after_subagent_rewrite(tmp_path: Path, 
     audited_path.write_text("# Brief\n\n- Claim [src:CLAIM_123456]\n", encoding="utf-8")
     _write_single_claim_ledger(intermediate / "claim_ledger.json", claim_id="CLAIM_123456")
 
-    assert main(["finalize", "--config", str(workspace / "config.yaml")]) == 0
-    captured = capsys.readouterr()
+    result = _finalize_via_config(workspace / "config.yaml")
 
     assert "[src:" in audited_path.read_text(encoding="utf-8")
     assert "[src:" not in (output_dir / "brief.md").read_text(encoding="utf-8")
     assert "[src:" not in (output_dir / "上能电气_电力设备周报_2026-06-06.md").read_text(encoding="utf-8")
     assert (output_dir / "delivery" / "brief.md").exists()
-    assert "[finalize] Delivery snapshot:" in captured.out
+    # LEGACY-DELETE: retired handler stdout summary; the snapshot truth is the
+    # deterministic finalize result.
+    assert result.delivery_snapshot_dir
     assert (intermediate / "finalize_report.json").exists()
     report = json.loads((intermediate / "finalize_report.json").read_text(encoding="utf-8"))
     closeout = report["quality_panel_closeout"]
@@ -529,7 +639,7 @@ def test_finalize_cli_strips_src_markers_after_subagent_rewrite(tmp_path: Path, 
     assert not (intermediate / "quality_panel.html").exists()
 
 
-def test_finalize_cli_fails_without_writing_when_active_repair_open(tmp_path: Path, capsys):
+def test_finalize_cli_fails_without_writing_when_active_repair_open(tmp_path: Path):
     workspace = tmp_path / "workspace"
     input_dir = workspace / "input"
     output_dir = workspace / "output"
@@ -569,11 +679,16 @@ def test_finalize_cli_fails_without_writing_when_active_repair_open(tmp_path: Pa
         + "\n",
         encoding="utf-8",
     )
+    before = _workspace_file_bytes(workspace)
+    workflow = json.loads((intermediate / "workflow_state.json").read_text(encoding="utf-8"))
 
-    assert main(["finalize", "--config", str(workspace / "config.yaml")]) == 1
-    captured = capsys.readouterr()
+    # The retired handler ran this guard before any finalize rendering.
+    with pytest.raises(RuntimeStateError) as excinfo:
+        raise_if_active_repair_open(workspace=workspace, workflow=workflow)
 
-    assert "repair complete" in captured.err
+    assert excinfo.value.error_code == E_ACTIVE_REPAIR_OPEN
+    assert "repair complete" in str(excinfo.value)
+    assert _workspace_file_bytes(workspace) == before
     assert not (output_dir / "brief.md").exists()
     assert not (output_dir / "delivery").exists()
     assert not (intermediate / "finalize_report.json").exists()
@@ -581,7 +696,6 @@ def test_finalize_cli_fails_without_writing_when_active_repair_open(tmp_path: Pa
 
 def test_finalize_cli_preserves_auditable_target_precedence_over_recovery_eligibility(
     tmp_path: Path,
-    capsys,
 ):
     workspace = tmp_path / "workspace"
     input_dir = workspace / "input"
@@ -756,11 +870,24 @@ def test_finalize_cli_preserves_auditable_target_precedence_over_recovery_eligib
             + "\n"
         )
 
-    assert main(["finalize", "--config", str(workspace / "config.yaml")]) == 1
-    captured = capsys.readouterr()
+    # Mirror the retired handler's preflight order: integrity refresh first,
+    # then the auditable-target guard, then the recovery evaluation.
+    check_runtime_state(workspace=workspace, actor="cli")
+    workflow = json.loads(paths["workflow_state"].read_text(encoding="utf-8"))
 
-    assert "TARGET INCOMPLETE: auditable_brief" in captured.err
-    assert "Runtime recovery state does not permit finalize rendering" not in captured.err
+    with pytest.raises(RuntimeStateError) as excinfo:
+        raise_if_auditable_target_complete_blocks_downstream(
+            workspace=workspace,
+            workflow=workflow,
+            command="finalize",
+        )
+
+    assert excinfo.value.error_code == E_ASSESSMENT_TARGET_COMPLETE
+    assert "TARGET INCOMPLETE: auditable_brief" in str(excinfo.value)
+    assert "Runtime recovery state does not permit finalize rendering" not in str(excinfo.value)
+    # The recovery gate was also unmet, yet the auditable-target error surfaced.
+    recovery = evaluate_recovery_state(workspace=workspace)
+    assert recovery["status"] != RECOVERY_FINALIZE_RENDER_REQUIRED
     assert not (output_dir / "brief.md").exists()
     assert not (output_dir / "delivery").exists()
     assert not (intermediate / "finalize_report.json").exists()
@@ -771,7 +898,6 @@ def test_finalize_cli_preserves_auditable_target_precedence_over_recovery_eligib
 
 def test_finalize_cli_blocks_contaminated_delivery_run_before_writing(
     tmp_path: Path,
-    capsys,
 ):
     workspace = tmp_path / "workspace"
     input_dir = workspace / "input"
@@ -825,10 +951,21 @@ def test_finalize_cli_blocks_contaminated_delivery_run_before_writing(
             + "\n"
         )
 
-    assert main(["finalize", "--config", str(workspace / "config.yaml")]) == 1
-    captured = capsys.readouterr()
+    check_runtime_state(workspace=workspace, actor="cli")
+    workflow = json.loads(paths["workflow_state"].read_text(encoding="utf-8"))
+    integrity = workflow.get("run_integrity") if isinstance(workflow.get("run_integrity"), dict) else {}
+    recovery = evaluate_recovery_state(workspace=workspace)
 
-    assert "Runtime recovery state does not permit finalize rendering" in captured.err
+    # LEGACY-DELETE: the retired handler raised RuntimeStateError("Runtime
+    # recovery state does not permit finalize rendering.") unless this
+    # deterministic predicate held; the predicate is the invariant.
+    render_permitted = recovery.get("status") == RECOVERY_FINALIZE_RENDER_REQUIRED or (
+        recovery.get("status") == RECOVERY_NOT_APPLICABLE
+        and integrity.get("status") == "clean"
+        and integrity.get("reference_eligible") is True
+    )
+    assert render_permitted is False
+    assert recovery["status"] == RECOVERY_AWAITING
     assert not (output_dir / "delivery").exists()
     assert not (intermediate / "finalize_report.json").exists()
     refreshed = json.loads(paths["workflow_state"].read_text(encoding="utf-8"))
@@ -836,7 +973,7 @@ def test_finalize_cli_blocks_contaminated_delivery_run_before_writing(
     assert refreshed["run_integrity"]["reference_eligible"] is False
 
 
-def test_finalize_cli_blocks_modified_frozen_audited_brief_before_writing(tmp_path: Path, capsys):
+def test_finalize_cli_blocks_modified_frozen_audited_brief_before_writing(tmp_path: Path):
     workspace = tmp_path / "workspace"
     input_dir = workspace / "input"
     output_dir = workspace / "output"
@@ -890,10 +1027,11 @@ def test_finalize_cli_blocks_modified_frozen_audited_brief_before_writing(tmp_pa
         encoding="utf-8",
     )
 
-    assert main(["finalize", "--config", str(workspace / "config.yaml")]) == 1
-    captured = capsys.readouterr()
+    with pytest.raises(RuntimeStateError) as excinfo:
+        check_runtime_state(workspace=workspace, actor="cli")
 
-    assert "Runtime state integrity check failed because a frozen artifact changed" in captured.err
+    assert excinfo.value.error_code == E_TRANSACTION_INTEGRITY
+    assert "Runtime state integrity check failed because a frozen artifact changed" in str(excinfo.value)
     assert not (output_dir / "brief.md").exists()
     assert not (output_dir / "delivery").exists()
     assert not (intermediate / "finalize_report.json").exists()
@@ -1891,7 +2029,6 @@ def test_finalize_legacy_malformed_ledger_preserves_stale_source_appendix_on_fai
 
 def test_finalize_cli_reports_missing_explicit_source_appendix_ledger_without_traceback(
     tmp_path: Path,
-    capsys,
 ):
     workspace = tmp_path / "workspace"
     output_dir = workspace / "output"
@@ -1914,13 +2051,15 @@ def test_finalize_cli_reports_missing_explicit_source_appendix_ledger_without_tr
         encoding="utf-8",
     )
 
-    rc = main(["finalize", "--config", str(workspace / "config.yaml")])
-    captured = capsys.readouterr()
+    # LEGACY-DELETE: retired handler stderr prefix/traceback assertions; the
+    # deterministic seam fails closed with a typed FileNotFoundError and no
+    # partial writes.
+    with pytest.raises(FileNotFoundError, match="Claim Ledger not found"):
+        _finalize_via_config(workspace / "config.yaml")
 
-    assert rc == 1
-    assert "[finalize] Error:" in captured.err
-    assert "Claim Ledger not found" in captured.err
-    assert "Traceback" not in captured.err
+    assert not (output_dir / "brief.md").exists()
+    assert not (output_dir / "delivery").exists()
+    assert not (intermediate / "finalize_report.json").exists()
 
 
 def test_finalize_cli_supports_legacy_outputs_alias_for_source_appendix(tmp_path: Path):
@@ -1948,9 +2087,14 @@ def test_finalize_cli_supports_legacy_outputs_alias_for_source_appendix(tmp_path
     )
     _write_claim_ledger(intermediate / "claim_ledger.json")
 
-    rc = main(["finalize", "--config", str(workspace / "config.yaml")])
+    # The legacy `outputs:` alias resolution lives in the deterministic
+    # config seam (get_output_config).
+    config = load_config(str(workspace / "config.yaml"))
+    assert get_output_config(config)["source_appendix"]["enabled"] is True
 
-    assert rc == 0
+    result = _finalize_via_config(workspace / "config.yaml")
+
+    assert result.source_appendix_generation == "generated"
     assert (output_dir / "source_appendix.md").exists()
     report = json.loads((intermediate / "finalize_report.json").read_text(encoding="utf-8"))
     assert report["source_appendix_generation"] == "generated"
@@ -2405,7 +2549,6 @@ def test_finalize_applies_policy_profile_forbidden_phrases(tmp_path: Path):
 
 def test_finalize_cli_resolves_policy_profile_from_workspace_for_nested_output(
     tmp_path: Path,
-    capsys,
 ):
     workspace = tmp_path / "workspace"
     output_dir = workspace / "nested" / "output"
@@ -2430,11 +2573,9 @@ def test_finalize_cli_resolves_policy_profile_from_workspace_for_nested_output(
         encoding="utf-8",
     )
 
-    rc = main(["finalize", "--config", str(workspace / "config.yaml")])
-    captured = capsys.readouterr()
+    with pytest.raises(RuntimeError, match="Reader final output gate failed"):
+        _finalize_via_config(workspace / "config.yaml")
 
-    assert rc == 1
-    assert "Reader final output gate failed" in captured.err
     report = json.loads((intermediate / "finalize_report.json").read_text(encoding="utf-8"))
     assert report["policy_gate_adapter"]["status"] == "applied"
     assert report["policy_gate_adapter"]["policy_profile_id"] == "finance_default"
@@ -2672,7 +2813,6 @@ def test_finalize_fails_on_blank_source_column_in_reader_table(tmp_path: Path):
 
 def test_finalize_cli_reports_reader_clean_failure_without_traceback(
     tmp_path: Path,
-    capsys,
 ):
     workspace = tmp_path / "workspace"
     output_dir = workspace / "output"
@@ -2694,13 +2834,13 @@ def test_finalize_cli_reports_reader_clean_failure_without_traceback(
         encoding="utf-8",
     )
 
-    rc = main(["finalize", "--config", str(workspace / "config.yaml")])
-    captured = capsys.readouterr()
+    # LEGACY-DELETE: retired handler stderr prefix/traceback assertions; the
+    # deterministic seam raises a typed error pointing at the failed report.
+    with pytest.raises(RuntimeError) as excinfo:
+        _finalize_via_config(workspace / "config.yaml")
 
-    assert rc == 1
-    assert "[finalize] Error:" in captured.err
-    assert "Reader final output gate failed" in captured.err
-    assert "finalize_report.json" in captured.err
-    assert "Traceback" not in captured.err
+    message = str(excinfo.value)
+    assert "Reader final output gate failed" in message
+    assert "finalize_report.json" in message
     report = json.loads((intermediate / "finalize_report.json").read_text(encoding="utf-8"))
     assert report["reader_clean"]["status"] == "fail"

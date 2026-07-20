@@ -3697,30 +3697,78 @@ def test_state_check_marks_input_classification_path_escape_invalid(tmp_path):
     assert record["validation_result"] == "input_classification_schema_error:evidence[0].path"
 
 
-def test_state_decide_validates_decision_vocabulary(tmp_path, capsys):
+def _snapshot_workspace_files(ws: Path) -> dict[str, bytes]:
+    return {
+        path.relative_to(ws).as_posix(): path.read_bytes()
+        for path in ws.rglob("*")
+        if path.is_file()
+    }
+
+
+def _assert_retired_cli_typed_rejection_without_writes(ws: Path, capsys, argv: list[str]) -> None:
+    before_files = _snapshot_workspace_files(ws)
+
+    rc = main(argv)
+
+    assert rc == 1
+    assert capsys.readouterr().out.strip() == "legacy_workspace_unsupported"
+    assert _snapshot_workspace_files(ws) == before_files
+
+
+@pytest.mark.parametrize(
+    "argv",
+    [
+        ["decide", "--stage", "doctor", "--decision", "continue", "--reason", "continue doctor", "--repo-workdir", str(ROOT), "--json"],
+        ["stage-complete", "--stage", "doctor", "--reason", "doctor passed", "--repo-workdir", str(ROOT), "--json"],
+        ["enrich-claim-metadata", "--from-source-evidence", "--repo-workdir", str(ROOT), "--json"],
+        ["freeze-claim-ledger", "--repo-workdir", str(ROOT), "--json"],
+        ["finalize-complete", "--reason", "reader artifacts finalized and clean", "--repo-workdir", str(ROOT), "--json"],
+        ["show"],
+        ["show", "--json"],
+        ["import-fact-layer", "--runtime", "operator", "--archive", "output/runs/source-run/manifest.json", "--repo-workdir", str(ROOT), "--json"],
+        ["check", "--strict", "--repo-workdir", str(ROOT), "--json"],
+    ],
+    ids=[
+        "decide-json",
+        "stage-complete-json",
+        "enrich-claim-metadata-json",
+        "freeze-claim-ledger-json",
+        "finalize-complete-json",
+        "show",
+        "show-json",
+        "import-fact-layer-json",
+        "check-strict-json",
+    ],
+)
+def test_retired_state_cli_rejects_legacy_workspace_without_writes(tmp_path, capsys, argv):
     ws = _write_workspace(tmp_path)
     initialize_runtime_state(runtime="operator", workspace=ws, repo_workdir=ROOT)
 
-    rc = main([
-        "state",
-        "decide",
-        "--workspace",
-        str(ws),
-        "--repo-workdir",
-        str(ROOT),
-        "--stage",
-        "doctor",
-        "--decision",
-        "invent_decision",
-        "--reason",
-        "bad",
-        "--json",
-    ])
+    # LEGACY-DELETE: retired public `state ...` CLI surface; the deterministic
+    # runtime_state module seams are the only callers of these transactions.
+    _assert_retired_cli_typed_rejection_without_writes(
+        ws,
+        capsys,
+        ["state", argv[0], "--workspace", str(ws), *argv[1:]],
+    )
 
-    assert rc == 1
-    payload = json.loads(capsys.readouterr().out)
-    assert payload["ok"] is False
-    assert "Unknown Orchestrator decision" in payload["error"]
+
+def test_state_decide_validates_decision_vocabulary(tmp_path):
+    ws = _write_workspace(tmp_path)
+    initialize_runtime_state(runtime="operator", workspace=ws, repo_workdir=ROOT)
+
+    # LEGACY-DELETE: retired public `state decide --json`; the decision
+    # vocabulary invariant is driven through the deterministic record_decision seam.
+    with pytest.raises(RuntimeStateError) as excinfo:
+        record_decision(
+            workspace=ws,
+            repo_workdir=ROOT,
+            stage_id="doctor",
+            decision="invent_decision",
+            reason="bad",
+        )
+
+    assert "Unknown Orchestrator decision" in str(excinfo.value)
 
 
 def test_state_decide_records_event_and_last_decision(tmp_path):
@@ -3784,37 +3832,32 @@ def test_state_decide_delegate_repair_requires_repair_transaction_without_mutati
     assert _state_file(ws, "event_log").read_bytes() == before_events
 
 
-def test_state_decide_delegate_repair_human_output_points_to_repair_transaction(tmp_path, capsys):
+def test_state_decide_delegate_repair_human_output_points_to_repair_transaction(tmp_path):
     ws = _write_workspace(tmp_path)
     initialize_runtime_state(runtime="operator", workspace=ws, repo_workdir=ROOT)
     _advance_to_auditor(ws)
     _write_editor_repair_gate_report(ws)
 
-    rc = main([
-        "state",
-        "decide",
-        "--workspace",
-        str(ws),
-        "--repo-workdir",
-        str(ROOT),
-        "--stage",
-        "auditor",
-        "--decision",
-        "delegate_repair",
-        "--reason",
-        "repair editor-owned brief",
-    ])
+    # LEGACY-DELETE: retired public `state decide` human output; the repair
+    # guidance invariant is asserted on the deterministic record_decision error details.
+    with pytest.raises(RuntimeStateError) as excinfo:
+        record_decision(
+            workspace=ws,
+            repo_workdir=ROOT,
+            stage_id="auditor",
+            decision="delegate_repair",
+            reason="repair editor-owned brief",
+        )
 
-    assert rc == 1
-    out = capsys.readouterr().out
-    assert "briefloop repair start" in out
-    assert "--gate-stage auditor --gate-artifact auditor_quality_gate_report" in out
-    assert "briefloop repair complete" in out
-    assert "[state] repair_steps:" in out
-    assert "Delegate only the reported repair_owner role." in out
-    assert "[state] repair_owner: editor" in out
-    assert "[state] must_rerun_from: auditor" in out
-    assert "output/intermediate/audited_brief.md" in out
+    details = excinfo.value.details
+    commands = "\n".join(details["required_commands"])
+    assert "briefloop repair start" in commands
+    assert "--gate-stage auditor --gate-artifact auditor_quality_gate_report" in commands
+    assert "briefloop repair complete" in commands
+    assert "Delegate only the reported repair_owner role." in details["repair_steps"]
+    assert details["repair_route"]["repair_owner"] == "editor"
+    assert details["repair_route"]["must_rerun_from"] == "auditor"
+    assert details["repair_route"]["allowed_artifacts"] == ["output/intermediate/audited_brief.md"]
 
 
 def test_state_decide_delegate_repair_uses_current_gate_over_stale_gate(tmp_path):
@@ -3939,31 +3982,22 @@ def test_stage_complete_records_transaction_event_and_advances(tmp_path):
     assert decision_events[0]["decision"] == "continue"
 
 
-def test_stage_complete_records_runtime_model_provenance_from_cli(tmp_path, capsys):
+def test_stage_complete_records_runtime_model_provenance_from_cli(tmp_path):
     ws = _write_workspace(tmp_path)
     initialize_runtime_state(runtime="operator", workspace=ws, repo_workdir=ROOT)
 
-    rc = main([
-        "state",
-        "stage-complete",
-        "--workspace",
-        str(ws),
-        "--repo-workdir",
-        str(ROOT),
-        "--stage",
-        "doctor",
-        "--reason",
-        "doctor passed",
-        "--runtime",
-        "claude",
-        "--model",
-        "claude-sonnet-4",
-        "--json",
-    ])
+    # LEGACY-DELETE: retired public `state stage-complete --json`; runtime/model
+    # provenance is recorded through the deterministic complete_stage_transaction seam.
+    state = complete_stage_transaction(
+        workspace=ws,
+        repo_workdir=ROOT,
+        stage_id="doctor",
+        reason="doctor passed",
+        runtime="claude",
+        model="claude-sonnet-4",
+    )
 
-    assert rc == 0
-    payload = json.loads(capsys.readouterr().out)
-    provenance = payload["transaction"]["runtime_provenance"]
+    provenance = state["transaction"]["runtime_provenance"]
     assert provenance == {
         "schema_version": "mabw.stage_runtime_provenance.v1",
         "source": "stage_completion_args",
@@ -4084,28 +4118,21 @@ def test_stage_complete_missing_required_output_writes_nothing(tmp_path):
     assert _event_records(ws) == before_events
 
 
-def test_stage_complete_cli_json_error_includes_error_code(tmp_path, capsys):
+def test_stage_complete_cli_json_error_includes_error_code(tmp_path):
     ws = _write_workspace(tmp_path)
     initialize_runtime_state(runtime="operator", workspace=ws, repo_workdir=ROOT)
 
-    rc = main([
-        "state",
-        "stage-complete",
-        "--workspace",
-        str(ws),
-        "--repo-workdir",
-        str(ROOT),
-        "--stage",
-        "auditor",
-        "--reason",
-        "out of order",
-        "--json",
-    ])
+    # LEGACY-DELETE: retired public `state stage-complete --json`; the typed
+    # error code invariant is driven through the deterministic complete_stage_transaction seam.
+    with pytest.raises(RuntimeStateError) as excinfo:
+        complete_stage_transaction(
+            workspace=ws,
+            repo_workdir=ROOT,
+            stage_id="auditor",
+            reason="out of order",
+        )
 
-    assert rc == 1
-    payload = json.loads(capsys.readouterr().out)
-    assert payload["ok"] is False
-    assert payload["error_code"] == "E_STAGE_MISMATCH"
+    assert excinfo.value.error_code == "E_STAGE_MISMATCH"
 
 
 def test_stage_complete_event_append_failure_is_detectable_partial_write(tmp_path, monkeypatch):
@@ -6829,7 +6856,7 @@ def test_enrich_claim_metadata_preserves_fast_rerun_import_after_chained_enrichm
     ]
 
 
-def test_state_enrich_claim_metadata_cli_json(tmp_path, capsys):
+def test_state_enrich_claim_metadata_cli_json(tmp_path):
     ws = _write_workspace(tmp_path)
     initialize_runtime_state(runtime="operator", workspace=ws, repo_workdir=ROOT)
     _set_current_stage(ws, "claim-ledger")
@@ -6838,21 +6865,16 @@ def test_state_enrich_claim_metadata_cli_json(tmp_path, capsys):
     _write_json_artifact(ws, "claim_drafts.json", _valid_claim_drafts_payload())
     freeze_claim_ledger_transaction(workspace=ws, repo_workdir=ROOT)
 
-    rc = main([
-        "state",
-        "enrich-claim-metadata",
-        "--workspace",
-        str(ws),
-        "--repo-workdir",
-        str(ROOT),
-        "--from-source-evidence",
-        "--json",
-    ])
+    # LEGACY-DELETE: retired public `state enrich-claim-metadata --json`; the
+    # enrichment transaction is driven through the deterministic module seam.
+    state = enrich_claim_metadata_transaction(
+        workspace=ws,
+        repo_workdir=ROOT,
+        from_source_evidence=True,
+    )
 
-    assert rc == 0
-    payload = json.loads(capsys.readouterr().out)
-    assert payload["transaction"]["decision"] == "enrich_claim_metadata"
-    assert payload["claim_ledger_metadata_enrichment"]["enriched_claim_count"] == 2
+    assert state["transaction"]["decision"] == "enrich_claim_metadata"
+    assert state["claim_ledger_metadata_enrichment"]["enriched_claim_count"] == 2
 
 
 def test_enrich_claim_metadata_rejects_missing_imported_source_authority(tmp_path):
@@ -7185,30 +7207,22 @@ def test_claim_ledger_stage_complete_rejects_changed_drafts_after_freeze(tmp_pat
     assert "source hash does not match" in str(excinfo.value)
 
 
-def test_state_freeze_claim_ledger_cli_json(tmp_path, capsys):
+def test_state_freeze_claim_ledger_cli_json(tmp_path):
     ws = _write_workspace(tmp_path)
     initialize_runtime_state(runtime="operator", workspace=ws, repo_workdir=ROOT)
     _set_current_stage(ws, "claim-ledger")
     _write_json_artifact(ws, "claim_drafts.json", _valid_claim_drafts_payload())
 
-    rc = main([
-        "state",
-        "freeze-claim-ledger",
-        "--workspace",
-        str(ws),
-        "--repo-workdir",
-        str(ROOT),
-        "--json",
-    ])
+    # LEGACY-DELETE: retired public `state freeze-claim-ledger --json`; the
+    # freeze transaction is driven through the deterministic module seam.
+    state = freeze_claim_ledger_transaction(workspace=ws, repo_workdir=ROOT)
 
-    assert rc == 0
-    payload = json.loads(capsys.readouterr().out)
-    assert payload["claim_ledger_freeze"]["status"] == "frozen"
-    assert payload["transaction"]["decision"] == "freeze_claim_ledger"
+    assert state["claim_ledger_freeze"]["status"] == "frozen"
+    assert state["transaction"]["decision"] == "freeze_claim_ledger"
     assert (_intermediate(ws) / "claim_ledger.json").exists()
 
 
-def test_state_freeze_claim_ledger_cli_json_explains_invalid_claim_type(tmp_path, capsys):
+def test_state_freeze_claim_ledger_cli_json_explains_invalid_claim_type(tmp_path):
     ws = _write_workspace(tmp_path)
     initialize_runtime_state(runtime="operator", workspace=ws, repo_workdir=ROOT)
     _set_current_stage(ws, "claim-ledger")
@@ -7233,20 +7247,13 @@ def test_state_freeze_claim_ledger_cli_json_explains_invalid_claim_type(tmp_path
         + "\n",
     )
 
-    rc = main([
-        "state",
-        "freeze-claim-ledger",
-        "--workspace",
-        str(ws),
-        "--repo-workdir",
-        str(ROOT),
-        "--json",
-    ])
+    # LEGACY-DELETE: retired public `state freeze-claim-ledger --json`; contract
+    # diagnostics are asserted on the deterministic freeze transaction error.
+    with pytest.raises(RuntimeStateError) as excinfo:
+        freeze_claim_ledger_transaction(workspace=ws, repo_workdir=ROOT)
 
-    assert rc == 1
-    payload = json.loads(capsys.readouterr().out)
-    assert payload["error_code"] == "E_CLAIM_DRAFT_CONTRACT_INVALID"
-    diagnostic = payload["details"]["diagnostics"][0]
+    assert excinfo.value.error_code == "E_CLAIM_DRAFT_CONTRACT_INVALID"
+    diagnostic = excinfo.value.details["diagnostics"][0]
     assert diagnostic["field"] == "drafts[0].claim_type"
     assert diagnostic["allowed_values"] == [
         "date",
@@ -7259,7 +7266,7 @@ def test_state_freeze_claim_ledger_cli_json_explains_invalid_claim_type(tmp_path
     assert not (_intermediate(ws) / "claim_ledger.json").exists()
 
 
-def test_state_freeze_claim_ledger_human_output_explains_forbidden_claim_id(tmp_path, capsys):
+def test_state_freeze_claim_ledger_human_output_explains_forbidden_claim_id(tmp_path):
     ws = _write_workspace(tmp_path)
     initialize_runtime_state(runtime="operator", workspace=ws, repo_workdir=ROOT)
     _set_current_stage(ws, "claim-ledger")
@@ -7282,20 +7289,19 @@ def test_state_freeze_claim_ledger_human_output_explains_forbidden_claim_id(tmp_
         + "\n",
     )
 
-    rc = main([
-        "state",
-        "freeze-claim-ledger",
-        "--workspace",
-        str(ws),
-        "--repo-workdir",
-        str(ROOT),
-    ])
+    # LEGACY-DELETE: retired public `state freeze-claim-ledger` human output; the
+    # forbidden-claim_id guidance is asserted on the deterministic freeze error details.
+    with pytest.raises(RuntimeStateError) as excinfo:
+        freeze_claim_ledger_transaction(workspace=ws, repo_workdir=ROOT)
 
-    assert rc == 1
-    output = capsys.readouterr().out
-    assert "drafts[0].claim_id" in output
-    assert "forbidden_fields: claim_id" in output
-    assert "Python assigns CL-####" in output
+    assert excinfo.value.error_code == "E_CLAIM_DRAFT_CONTRACT_INVALID"
+    details = excinfo.value.details
+    assert details["field"] == "drafts[0].claim_id"
+    assert details["forbidden_fields"] == ["claim_id"]
+    diagnostic = details["diagnostics"][0]
+    assert diagnostic["field"] == "drafts[0].claim_id"
+    assert diagnostic["forbidden_fields"] == ["claim_id"]
+    assert "Python assigns CL-####" in diagnostic["hint"]
     assert not (_intermediate(ws) / "claim_ledger.json").exists()
 
 
@@ -8835,7 +8841,37 @@ def test_analyst_snapshot_mutation_after_analyst_complete_contaminates(tmp_path)
     assert workflow["run_integrity"]["reasons"][0]["reason_code"] == "frozen_artifact_changed"
 
 
-def test_scoped_repair_start_uses_current_finalize_route_over_stale_auditor(tmp_path, capsys):
+@pytest.mark.parametrize(
+    "argv",
+    [
+        ["start", "--json"],
+        [
+            "supersede-stage",
+            "--stage",
+            "editor",
+            "--artifact",
+            "output/intermediate/audited_brief.md",
+            "--reason",
+            "operator accepted contaminated edit as new editor revision",
+            "--json",
+        ],
+    ],
+    ids=["start-json", "supersede-stage-json"],
+)
+def test_retired_repair_cli_rejects_legacy_workspace_without_writes(tmp_path, capsys, argv):
+    ws = _write_workspace(tmp_path)
+    initialize_runtime_state(runtime="operator", workspace=ws, repo_workdir=ROOT)
+
+    # LEGACY-DELETE: retired public `repair ...` CLI surface; the deterministic
+    # runtime_state repair transactions are the only callers.
+    _assert_retired_cli_typed_rejection_without_writes(
+        ws,
+        capsys,
+        ["repair", argv[0], "--workspace", str(ws), "--repo-workdir", str(ROOT), *argv[1:]],
+    )
+
+
+def test_scoped_repair_start_uses_current_finalize_route_over_stale_auditor(tmp_path):
     ws = _prepare_scoped_repair_workspace(tmp_path)
     _write_current_gate_report(
         ws,
@@ -8860,29 +8896,22 @@ def test_scoped_repair_start_uses_current_finalize_route_over_stale_auditor(tmp_
     workflow = json.loads(_state_file(ws, "workflow_state").read_text(encoding="utf-8"))
     assert "active_repair" not in workflow
 
-    rc = main([
-        "repair",
-        "start",
-        "--workspace",
-        str(ws),
-        "--repo-workdir",
-        str(ROOT),
-        "--gate-stage",
-        "finalize",
-        "--gate-artifact",
-        "finalize_quality_gate_report",
-        "--json",
-    ])
+    # LEGACY-DELETE: retired public `repair start --json`; the scoped repair
+    # start transaction is driven through the deterministic module seam.
+    state = start_repair_transaction(
+        workspace=ws,
+        repo_workdir=ROOT,
+        gate_stage_id="finalize",
+        gate_artifact_id="finalize_quality_gate_report",
+    )
 
-    assert rc == 0
-    payload = json.loads(capsys.readouterr().out)
-    repair = payload["workflow_state"]["active_repair"]
+    repair = state["workflow_state"]["active_repair"]
     assert repair["repair_owner"] == "editor"
     assert repair["allowed_artifacts"] == ["output/intermediate/audited_brief.md"]
     assert repair["source"]["kind"] == "finalize_quality_gate_report"
     assert repair["source"]["stage_id"] == "finalize"
     assert repair["source"]["finding_id"] == "QG_CURRENT_EDITOR_001"
-    assert payload["transaction"]["stage_id"] == "editor"
+    assert state["transaction"]["stage_id"] == "editor"
 
 
 def test_scoped_repair_start_rejects_current_human_review_route(tmp_path):
@@ -9621,31 +9650,23 @@ def test_supersede_stage_rejects_clean_run_without_contamination(tmp_path):
     assert "only allowed after run integrity contamination" in str(excinfo.value)
 
 
-def test_repair_supersede_stage_cli_records_current_revision(tmp_path, capsys):
+def test_repair_supersede_stage_cli_records_current_revision(tmp_path):
     ws, old_sha, current_sha = _contaminated_editor_artifact_workspace(tmp_path)
 
-    rc = main([
-        "repair",
-        "supersede-stage",
-        "--workspace",
-        str(ws),
-        "--repo-workdir",
-        str(ROOT),
-        "--stage",
-        "editor",
-        "--artifact",
-        "output/intermediate/audited_brief.md",
-        "--reason",
-        "operator accepted contaminated edit as new editor revision",
-        "--json",
-    ])
+    # LEGACY-DELETE: retired public `repair supersede-stage --json`; the supersede
+    # transaction is driven through the deterministic module seam.
+    state = supersede_stage_artifact_transaction(
+        workspace=ws,
+        repo_workdir=ROOT,
+        stage_id="editor",
+        artifact="output/intermediate/audited_brief.md",
+        reason="operator accepted contaminated edit as new editor revision",
+    )
 
-    assert rc == 0
-    payload = json.loads(capsys.readouterr().out)
-    assert payload["repair"]["old_registered_sha256"] == old_sha
-    assert payload["repair"]["current_bytes_sha256"] == current_sha
-    assert payload["workflow_state"]["run_integrity"]["reference_eligible"] is False
-    assert payload["transaction"]["decision"] == "supersede_stage"
+    assert state["repair"]["old_registered_sha256"] == old_sha
+    assert state["repair"]["current_bytes_sha256"] == current_sha
+    assert state["workflow_state"]["run_integrity"]["reference_eligible"] is False
+    assert state["transaction"]["decision"] == "supersede_stage"
 
 
 def test_repair_start_contamination_event_failure_rolls_back_control_files(tmp_path, monkeypatch):
@@ -10817,32 +10838,24 @@ def test_finalize_complete_records_terminal_transaction(tmp_path):
     )
 
 
-def test_finalize_complete_cli_records_runtime_model_provenance(tmp_path, capsys):
+def test_finalize_complete_cli_records_runtime_model_provenance(tmp_path):
     ws = _write_workspace(tmp_path)
     initialize_runtime_state(runtime="operator", workspace=ws, repo_workdir=ROOT)
     _advance_to_finalize(ws)
     _write_quality_gate_report(ws, stage_id="finalize")
     _write_finalize_report(ws)
 
-    rc = main([
-        "state",
-        "finalize-complete",
-        "--workspace",
-        str(ws),
-        "--repo-workdir",
-        str(ROOT),
-        "--reason",
-        "reader artifacts finalized and clean",
-        "--runtime",
-        "codex",
-        "--model",
-        "gpt-5-codex",
-        "--json",
-    ])
+    # LEGACY-DELETE: retired public `state finalize-complete --json`; runtime/model
+    # provenance is recorded through the deterministic complete_finalize_transaction seam.
+    state = complete_finalize_transaction(
+        workspace=ws,
+        repo_workdir=ROOT,
+        reason="reader artifacts finalized and clean",
+        runtime="codex",
+        model="gpt-5-codex",
+    )
 
-    assert rc == 0
-    payload = json.loads(capsys.readouterr().out)
-    provenance = payload["workflow_state"]["stage_statuses"]["finalize"]["metadata"]["runtime_provenance"]
+    provenance = state["workflow_state"]["stage_statuses"]["finalize"]["metadata"]["runtime_provenance"]
     assert provenance["runtime"] == "codex"
     assert provenance["model"] == "gpt-5-codex"
     assert provenance["provenance_only"] is True
@@ -11819,7 +11832,7 @@ input:
     assert persisted_freshness == fast_rerun["freshness_at_finalize"]
 
 
-def test_state_show_human_output_reports_imported_stages(tmp_path, capsys):
+def test_state_show_human_output_reports_imported_stages(tmp_path):
     source_root = tmp_path / "source"
     target_root = tmp_path / "target"
     source_root.mkdir()
@@ -11836,15 +11849,19 @@ def test_state_show_human_output_reports_imported_stages(tmp_path, capsys):
         repo_workdir=ROOT,
     )
 
-    rc = main(["state", "show", "--workspace", str(target_ws)])
+    # LEGACY-DELETE: retired public `state show` human output; the imported-stage
+    # projection is asserted through the deterministic show_runtime_state seam.
+    shown = show_runtime_state(workspace=target_ws)
 
-    assert rc == 0
-    out = capsys.readouterr().out
-    assert "[state show] fact_layer_import: valid" in out
-    assert "[state show] imported_satisfied_stages:" in out
-    assert "source-discovery: complete via import" in out
-    assert "claim-ledger: complete via import" in out
-    assert "[state show] next_runtime_stage: analyst" in out
+    fact_layer_import = shown["fact_layer_import"]
+    assert fact_layer_import["status"] == "valid"
+    imported = {
+        stage["stage_id"]: stage["display_status"]
+        for stage in fact_layer_import["imported_stages"]
+    }
+    assert imported["source-discovery"] == "complete via import"
+    assert imported["claim-ledger"] == "complete via import"
+    assert shown["workflow_state"]["current_stage"] == "analyst"
 
 
 def test_import_fact_layer_transaction_rejects_incomplete_fact_layer(tmp_path):
@@ -12317,7 +12334,7 @@ def test_import_fact_layer_transaction_rejects_existing_runtime_state(tmp_path):
     assert "without existing runtime state" in str(excinfo.value)
 
 
-def test_state_import_fact_layer_cli_outputs_json(tmp_path, capsys):
+def test_state_import_fact_layer_cli_outputs_json(tmp_path):
     source_root = tmp_path / "source"
     target_root = tmp_path / "target"
     source_root.mkdir()
@@ -12328,23 +12345,17 @@ def test_state_import_fact_layer_cli_outputs_json(tmp_path, capsys):
     finalized = _complete_finalized_workspace(source_ws)
     archive_manifest = source_ws / "output" / "runs" / finalized["manifest"]["run_id"] / "manifest.json"
 
-    rc = main([
-        "state",
-        "import-fact-layer",
-        "--runtime", "operator",
-        "--workspace",
-        str(target_ws),
-        "--archive",
-        str(archive_manifest),
-        "--repo-workdir",
-        str(ROOT),
-        "--json",
-    ])
+    # LEGACY-DELETE: retired public `state import-fact-layer --json`; the import
+    # transaction is driven through the deterministic module seam.
+    state = import_fact_layer_transaction(
+        runtime="operator",
+        workspace=target_ws,
+        archive=archive_manifest,
+        repo_workdir=ROOT,
+    )
 
-    assert rc == 0
-    payload = json.loads(capsys.readouterr().out)
-    assert payload["manifest"]["recipe"] == "fast-rerun"
-    assert payload["fact_layer_import"]["source_run_id"] == finalized["manifest"]["run_id"]
+    assert state["manifest"]["recipe"] == "fast-rerun"
+    assert state["fact_layer_import"]["source_run_id"] == finalized["manifest"]["run_id"]
 
 
 def test_finalize_complete_rejects_archive_conflict_for_same_run_id(tmp_path):
@@ -12678,31 +12689,23 @@ def test_completion_transactions_preserve_manifest_extensions(tmp_path):
     assert after_finalize["improvement"] == manifest["improvement"]
 
 
-def test_state_decide_rejects_out_of_order_stage_and_leaves_workflow_unchanged(tmp_path, capsys):
+def test_state_decide_rejects_out_of_order_stage_and_leaves_workflow_unchanged(tmp_path):
     ws = _write_workspace(tmp_path)
     initialize_runtime_state(runtime="operator", workspace=ws, repo_workdir=ROOT)
     before = json.loads(_state_file(ws, "workflow_state").read_text(encoding="utf-8"))
 
-    rc = main([
-        "state",
-        "decide",
-        "--workspace",
-        str(ws),
-        "--repo-workdir",
-        str(ROOT),
-        "--stage",
-        "auditor",
-        "--decision",
-        "continue",
-        "--reason",
-        "out of order",
-        "--json",
-    ])
+    # LEGACY-DELETE: retired public `state decide --json`; the out-of-order
+    # rejection invariant is driven through the deterministic record_decision seam.
+    with pytest.raises(RuntimeStateError) as excinfo:
+        record_decision(
+            workspace=ws,
+            repo_workdir=ROOT,
+            stage_id="auditor",
+            decision="continue",
+            reason="out of order",
+        )
 
-    assert rc == 1
-    payload = json.loads(capsys.readouterr().out)
-    assert payload["ok"] is False
-    assert "does not match current stage" in payload["error"]
+    assert "does not match current stage" in str(excinfo.value)
     after = json.loads(_state_file(ws, "workflow_state").read_text(encoding="utf-8"))
     assert after == before
 
@@ -12827,7 +12830,7 @@ def test_state_check_rejects_unknown_event_actor(tmp_path):
     assert "Unknown event actor" in str(excinfo.value)
 
 
-def test_state_check_strict_json_reports_event_log_integrity_error(tmp_path, capsys):
+def test_state_check_strict_json_reports_event_log_integrity_error(tmp_path):
     ws = _write_workspace(tmp_path)
     state = initialize_runtime_state(runtime="operator", workspace=ws, repo_workdir=ROOT)
     event_log = _state_file(ws, "event_log")
@@ -12849,21 +12852,12 @@ def test_state_check_strict_json_reports_event_log_integrity_error(tmp_path, cap
         encoding="utf-8",
     )
 
-    rc = main([
-        "state",
-        "check",
-        "--workspace",
-        str(ws),
-        "--repo-workdir",
-        str(ROOT),
-        "--strict",
-        "--json",
-    ])
-    payload = json.loads(capsys.readouterr().out)
+    # LEGACY-DELETE: retired public `state check --strict --json`; the integrity
+    # error code invariant is driven through the deterministic check_runtime_state seam.
+    with pytest.raises(RuntimeStateError) as excinfo:
+        check_runtime_state(workspace=ws, repo_workdir=ROOT)
 
-    assert rc == 1
-    assert payload["ok"] is False
-    assert payload["error_code"] == runtime_state.operations.E_TRANSACTION_INTEGRITY
+    assert excinfo.value.error_code == runtime_state.operations.E_TRANSACTION_INTEGRITY
 
 
 def test_state_check_rejects_event_log_missing_schema_version(tmp_path):
@@ -12998,17 +12992,17 @@ def test_state_check_only_writes_changed_events_once(tmp_path):
     assert event_types.count("run_blocked") == 1
 
 
-def test_state_show_json_handles_corrupted_state_without_traceback(tmp_path, capsys):
+def test_state_show_json_handles_corrupted_state_without_traceback(tmp_path):
     ws = _write_workspace(tmp_path)
     initialize_runtime_state(runtime="operator", workspace=ws, repo_workdir=ROOT)
     _state_file(ws, "workflow_state").write_text("{broken", encoding="utf-8")
 
-    rc = main(["state", "show", "--workspace", str(ws), "--json"])
+    # LEGACY-DELETE: retired public `state show --json`; corrupted state surfaces
+    # as a typed RuntimeStateError through the deterministic show_runtime_state seam.
+    with pytest.raises(RuntimeStateError) as excinfo:
+        show_runtime_state(workspace=ws)
 
-    assert rc == 1
-    payload = json.loads(capsys.readouterr().out)
-    assert payload["ok"] is False
-    assert "Invalid JSON state file" in payload["error"]
+    assert "Invalid JSON state file" in str(excinfo.value)
 
 
 def test_reset_state_archives_old_event_log(tmp_path):

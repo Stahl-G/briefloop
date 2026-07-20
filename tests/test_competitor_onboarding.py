@@ -93,6 +93,7 @@ class TestMapperCompetitor:
     def test_competitor_config_written_to_workspace(self):
         profile = InitProfile(
             company="TestCo",
+            task_objective="Track material developments for TestCo management.",
             competitor_module_enabled=True,
             competitor_names=["Alpha"],
         )

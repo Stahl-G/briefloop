@@ -1,13 +1,18 @@
 """Tests for Tavily API key guidance across init, doctor, and run."""
 from __future__ import annotations
 
+import json
 import os
 from pathlib import Path
 from unittest.mock import patch
 
 import pytest
 
-from multi_agent_brief.cli.main import main
+from multi_agent_brief.cli.main import build_parser, main
+from multi_agent_brief.cli.secrets_commands import (
+    SecretImportError,
+    import_workspace_secrets,
+)
 
 
 def _write_workspace_marker(workspace: Path) -> None:
@@ -18,10 +23,70 @@ def _write_workspace_marker(workspace: Path) -> None:
     )
 
 
+def _with_task_objective_if_supported(args: list[str]) -> list[str]:
+    parser = build_parser()
+    subcommands = next(
+        action.choices
+        for action in parser._actions
+        if getattr(action, "choices", None)
+    )
+    init_options = {
+        option
+        for action in subcommands["init"]._actions
+        for option in action.option_strings
+    }
+    if "--task-objective" in init_options:
+        # LEGACY-DELETE: retain only the strict SQLite initialization contract.
+        return [
+            *args,
+            "--task-objective",
+            "Track material manufacturing developments.",
+        ]
+    return args
+
+
+def _snapshot_tree_bytes(root: Path) -> dict[str, bytes]:
+    return {
+        path.relative_to(root).as_posix(): path.read_bytes()
+        for path in sorted(root.rglob("*"))
+        if path.is_file()
+    }
+
+
 class TestSecretsImport:
     """Deterministic workspace .env import without secret disclosure."""
 
-    def test_secrets_import_writes_env_but_redacts_output(self, tmp_path, capsys):
+    @pytest.mark.parametrize("json_flag", [[], ["--json"]])
+    def test_secrets_import_public_cli_is_retired(self, tmp_path, capsys, json_flag):
+        """The retired public CLI rejects with a typed token and performs zero writes."""
+        source = tmp_path / "private.env"
+        workspace = tmp_path / "workspace"
+        _write_workspace_marker(workspace)
+        secret = "tvly-super-secret-123"
+        source.write_text(f"TAVILY_API_KEY={secret}\n", encoding="utf-8")
+        before = _snapshot_tree_bytes(workspace)
+
+        exit_code = main([
+            "secrets",
+            "import",
+            "--workspace",
+            str(workspace),
+            "--from",
+            str(source),
+            "--keys",
+            "TAVILY_API_KEY",
+            *json_flag,
+        ])
+        captured = capsys.readouterr()
+
+        # LEGACY-DELETE: remove with the retired public `secrets import` command surface.
+        assert exit_code == 1
+        assert captured.out == "runtime_command_unsupported\n"
+        assert captured.err == ""
+        assert _snapshot_tree_bytes(workspace) == before
+        assert not (workspace / ".env").exists()
+
+    def test_secrets_import_writes_env_but_redacts_output(self, tmp_path):
         source = tmp_path / "private.env"
         workspace = tmp_path / "workspace"
         _write_workspace_marker(workspace)
@@ -33,60 +98,56 @@ class TestSecretsImport:
             encoding="utf-8",
         )
 
-        exit_code = main([
-            "secrets",
-            "import",
-            "--workspace",
-            str(workspace),
-            "--from",
-            str(source),
-            "--keys",
-            "TAVILY_API_KEY",
-            "EXA_API_KEY",
-        ])
-        captured = capsys.readouterr()
+        result = import_workspace_secrets(
+            workspace=workspace,
+            source=source,
+            keys=["TAVILY_API_KEY", "EXA_API_KEY"],
+        )
+        rendered = json.dumps(result, ensure_ascii=False, sort_keys=True)
 
-        assert exit_code == 0
-        combined_output = captured.out + captured.err
-        assert "TAVILY_API_KEY=present sha256_prefix=" in captured.out
-        assert "EXA_API_KEY=present sha256_prefix=" in captured.out
-        assert tavily_secret not in combined_output
-        assert exa_secret not in combined_output
-        assert "tvly-" not in combined_output
-        assert "sk-" not in combined_output
+        statuses = {item["key"]: item for item in result["keys"]}
+        assert statuses["TAVILY_API_KEY"]["status"] == "present"
+        assert statuses["TAVILY_API_KEY"]["sha256_prefix"]
+        assert statuses["EXA_API_KEY"]["status"] == "present"
+        assert statuses["EXA_API_KEY"]["sha256_prefix"]
+        assert tavily_secret not in rendered
+        assert exa_secret not in rendered
+        assert "tvly-" not in rendered
+        assert "sk-" not in rendered
 
         env_text = (workspace / ".env").read_text(encoding="utf-8")
         assert f"TAVILY_API_KEY={tavily_secret}" in env_text
         assert f"EXA_API_KEY={exa_secret}" in env_text
 
-    def test_secrets_import_json_output_is_redacted(self, tmp_path, capsys):
+    def test_secrets_import_json_output_is_redacted(self, tmp_path):
         source = tmp_path / "private.env"
         workspace = tmp_path / "workspace"
         _write_workspace_marker(workspace)
         secret = "tvly-json-secret-123"
         source.write_text(f"TAVILY_API_KEY={secret}\n", encoding="utf-8")
 
-        exit_code = main([
-            "secrets",
-            "import",
-            "--workspace",
-            str(workspace),
-            "--from",
-            str(source),
-            "--keys",
-            "TAVILY_API_KEY",
-            "--json",
-        ])
-        captured = capsys.readouterr()
+        result = import_workspace_secrets(
+            workspace=workspace,
+            source=source,
+            keys=["TAVILY_API_KEY"],
+        )
+        rendered = json.dumps(
+            {
+                "ok": True,
+                "workspace_env": result["workspace_env"],
+                "keys": result["keys"],
+            },
+            ensure_ascii=False,
+            sort_keys=True,
+        )
 
-        assert exit_code == 0
-        assert "TAVILY_API_KEY" in captured.out
-        assert "present" in captured.out
-        assert "sha256_prefix" in captured.out
-        assert secret not in captured.out
-        assert "tvly-" not in captured.out
+        assert "TAVILY_API_KEY" in rendered
+        assert "present" in rendered
+        assert "sha256_prefix" in rendered
+        assert secret not in rendered
+        assert "tvly-" not in rendered
 
-    def test_secrets_import_rejects_unknown_key_without_leaking_values(self, tmp_path, capsys):
+    def test_secrets_import_rejects_unknown_key_without_leaking_values(self, tmp_path):
         source = tmp_path / "private.env"
         workspace = tmp_path / "workspace"
         _write_workspace_marker(workspace)
@@ -96,74 +157,53 @@ class TestSecretsImport:
             encoding="utf-8",
         )
 
-        exit_code = main([
-            "secrets",
-            "import",
-            "--workspace",
-            str(workspace),
-            "--from",
-            str(source),
-            "--keys",
-            "PRIVATE_VENDOR_TOKEN",
-        ])
-        captured = capsys.readouterr()
+        with pytest.raises(SecretImportError, match="unsupported secret key") as excinfo:
+            import_workspace_secrets(
+                workspace=workspace,
+                source=source,
+                keys=["PRIVATE_VENDOR_TOKEN"],
+            )
+        message = str(excinfo.value)
 
-        assert exit_code == 1
-        combined_output = captured.out + captured.err
-        assert "unsupported secret key" in combined_output
-        assert "not-for-briefloop" not in combined_output
-        assert "tvly-" not in combined_output
+        assert "not-for-briefloop" not in message
+        assert "tvly-" not in message
         assert not (workspace / ".env").exists()
 
-    def test_secrets_import_rejects_nonexistent_workspace_without_creating_it(self, tmp_path, capsys):
+    def test_secrets_import_rejects_nonexistent_workspace_without_creating_it(self, tmp_path):
         source = tmp_path / "private.env"
         workspace = tmp_path / "typo-workspace"
         secret = "tvly-super-secret-123"
         source.write_text(f"TAVILY_API_KEY={secret}\n", encoding="utf-8")
 
-        exit_code = main([
-            "secrets",
-            "import",
-            "--workspace",
-            str(workspace),
-            "--from",
-            str(source),
-            "--keys",
-            "TAVILY_API_KEY",
-        ])
-        captured = capsys.readouterr()
+        with pytest.raises(SecretImportError, match="workspace not found") as excinfo:
+            import_workspace_secrets(
+                workspace=workspace,
+                source=source,
+                keys=["TAVILY_API_KEY"],
+            )
+        message = str(excinfo.value)
 
-        assert exit_code == 1
-        combined_output = captured.out + captured.err
-        assert "workspace not found" in combined_output
-        assert secret not in combined_output
-        assert "tvly-" not in combined_output
+        assert secret not in message
+        assert "tvly-" not in message
         assert not workspace.exists()
 
-    def test_secrets_import_rejects_directory_without_workspace_marker(self, tmp_path, capsys):
+    def test_secrets_import_rejects_directory_without_workspace_marker(self, tmp_path):
         source = tmp_path / "private.env"
         workspace = tmp_path / "plain-dir"
         workspace.mkdir()
         secret = "tvly-super-secret-123"
         source.write_text(f"TAVILY_API_KEY={secret}\n", encoding="utf-8")
 
-        exit_code = main([
-            "secrets",
-            "import",
-            "--workspace",
-            str(workspace),
-            "--from",
-            str(source),
-            "--keys",
-            "TAVILY_API_KEY",
-        ])
-        captured = capsys.readouterr()
+        with pytest.raises(SecretImportError, match="not a BriefLoop workspace") as excinfo:
+            import_workspace_secrets(
+                workspace=workspace,
+                source=source,
+                keys=["TAVILY_API_KEY"],
+            )
+        message = str(excinfo.value)
 
-        assert exit_code == 1
-        combined_output = captured.out + captured.err
-        assert "not a BriefLoop workspace" in combined_output
-        assert secret not in combined_output
-        assert "tvly-" not in combined_output
+        assert secret not in message
+        assert "tvly-" not in message
         assert not (workspace / ".env").exists()
 
     def test_writer_surfaces_do_not_instruct_copying_api_key_values(self):
@@ -198,7 +238,7 @@ class TestInitTavilyGuidance:
         monkeypatch.delenv("TAVILY_API_KEY", raising=False)
         ws = tmp_path / "ws"
         # Use CLI args to skip interactive prompts (no --tavily flag)
-        assert main([
+        assert main(_with_task_objective_if_supported([
             "init", str(ws),
             "--language", "zh-CN",
             "--company", "Test Company",
@@ -207,7 +247,7 @@ class TestInitTavilyGuidance:
             "--audience", "management",
             "--cadence", "weekly",
             "--source-profile", "research",
-        ]) == 0
+        ])) == 0
         import yaml
         config = yaml.safe_load((ws / "sources.yaml").read_text(encoding="utf-8"))
         web_search = config["web_search"]
@@ -220,7 +260,7 @@ class TestInitTavilyGuidance:
         """Explicit Tavily selection should generate external API web_search."""
         monkeypatch.delenv("TAVILY_API_KEY", raising=False)
         ws = tmp_path / "ws"
-        assert main([
+        assert main(_with_task_objective_if_supported([
             "init", str(ws),
             "--language", "zh-CN",
             "--company", "Test Company",
@@ -230,7 +270,7 @@ class TestInitTavilyGuidance:
             "--cadence", "weekly",
             "--source-profile", "research",
             "--search-backend", "tavily",
-        ]) == 0
+        ])) == 0
         import yaml
         config = yaml.safe_load((ws / "sources.yaml").read_text(encoding="utf-8"))
         web_search = config["web_search"]
@@ -243,7 +283,7 @@ class TestInitTavilyGuidance:
         """Explicit disabled mode must override the recommended search setup."""
         monkeypatch.delenv("TAVILY_API_KEY", raising=False)
         ws = tmp_path / "ws"
-        assert main([
+        assert main(_with_task_objective_if_supported([
             "init", str(ws),
             "--language", "zh-CN",
             "--company", "Test Company",
@@ -253,7 +293,7 @@ class TestInitTavilyGuidance:
             "--cadence", "weekly",
             "--source-profile", "research",
             "--web-search-mode", "disabled",
-        ]) == 0
+        ])) == 0
         import yaml
         config = yaml.safe_load((ws / "sources.yaml").read_text(encoding="utf-8"))
         web_search = config["web_search"]
@@ -269,6 +309,7 @@ class TestInitTavilyGuidance:
         profile = InitProfile(
             interface_language="en-US",
             industry="manufacturing",
+            task_objective="Prepare the weekly manufacturing brief.",
             tavily_enabled=True,
         )
         create_workspace(ws, profile)
@@ -309,7 +350,13 @@ class TestInitTavilyGuidance:
 
         monkeypatch.delenv("TAVILY_API_KEY", raising=False)
         ws = tmp_path / "ws"
-        profile = InitProfile(tavily_enabled=False, web_search_enabled=False, web_search_mode="disabled", search_backend="")
+        profile = InitProfile(
+            task_objective="Prepare the weekly manufacturing brief.",
+            tavily_enabled=False,
+            web_search_enabled=False,
+            web_search_mode="disabled",
+            search_backend="",
+        )
         create_workspace(ws, profile)
         # .env.example is now always generated to guide users
         assert (ws / ".env.example").exists()
@@ -325,7 +372,10 @@ class TestInitTavilyGuidance:
 
         monkeypatch.setenv("TAVILY_API_KEY", "tvly-super-secret-12345")
         ws = tmp_path / "ws"
-        profile = InitProfile(tavily_enabled=True)
+        profile = InitProfile(
+            task_objective="Prepare the weekly manufacturing brief.",
+            tavily_enabled=True,
+        )
         create_workspace(ws, profile)
 
         for f in ws.rglob("*"):
@@ -427,14 +477,22 @@ class TestDoctorTavilyGuidance:
 
 
 class TestRunTavilyGuidance:
-    """Run command redirects users to subagent workflow."""
+    """Retired operator-runtime run surface rejects with a typed token."""
 
-    def test_run_surfaces_missing_key_error(self, tmp_path, monkeypatch, capsys):
-        """run command must redirect to subagent workflow, not check keys."""
+    @pytest.mark.parametrize("backend", ["tavily", "exa"])
+    def test_run_operator_runtime_is_retired(self, tmp_path, monkeypatch, capsys, backend):
+        """The operator runtime is rejected regardless of search backend or key state."""
+        import yaml
+
         monkeypatch.delenv("TAVILY_API_KEY", raising=False)
+        monkeypatch.delenv("EXA_API_KEY", raising=False)
+        if backend == "exa":
+            # Preserve the original scenario: a key for the wrong backend is present.
+            monkeypatch.setenv("TAVILY_API_KEY", "tvly-present-but-wrong-backend")
 
         ws = tmp_path / "ws"
-        assert main([
+        init_extra = ["--tavily"] if backend == "tavily" else []
+        assert main(_with_task_objective_if_supported([
             "init",
             str(ws),
             "--language",
@@ -451,50 +509,23 @@ class TestRunTavilyGuidance:
             "weekly",
             "--source-profile",
             "research",
-            "--tavily",
-        ]) == 0
+            *init_extra,
+        ])) == 0
 
-        exit_code = main(["run", "--runtime", "operator", "--config", str(ws / "config.yaml"), "--skip-doctor"])
+        if backend == "exa":
+            sources_path = ws / "sources.yaml"
+            sources = yaml.safe_load(sources_path.read_text(encoding="utf-8"))
+            sources["source_strategy"]["enabled_providers"] = ["manual", "web_search"]
+            sources["web_search"] = {"enabled": True, "mode": "external_api", "backend": "exa"}
+            sources_path.write_text(yaml.safe_dump(sources, sort_keys=False), encoding="utf-8")
+
+        before = _snapshot_tree_bytes(ws)
+        capsys.readouterr()  # drain init output so only the run rejection is captured
+        exit_code = main(["run", "--runtime", "operator", "--config", str(ws / "config.yaml")])
         captured = capsys.readouterr()
-        assert exit_code == 0
-        assert "Runtime:" in captured.out
-        assert "delegate_task" in captured.out or "hermes" in captured.out.lower()
 
-    def test_run_surfaces_exa_missing_key_error(self, tmp_path, monkeypatch, capsys):
-        """run command creates a handoff regardless of search backend."""
-        import yaml
-
-        monkeypatch.delenv("EXA_API_KEY", raising=False)
-        monkeypatch.setenv("TAVILY_API_KEY", "tvly-present-but-wrong-backend")
-
-        ws = tmp_path / "ws"
-        assert main([
-            "init",
-            str(ws),
-            "--language",
-            "en-US",
-            "--company",
-            "Test Company",
-            "--industry",
-            "manufacturing",
-            "--title",
-            "Weekly Brief",
-            "--audience",
-            "management",
-            "--cadence",
-            "weekly",
-            "--source-profile",
-            "research",
-        ]) == 0
-
-        sources_path = ws / "sources.yaml"
-        sources = yaml.safe_load(sources_path.read_text(encoding="utf-8"))
-        sources["source_strategy"]["enabled_providers"] = ["manual", "web_search"]
-        sources["web_search"] = {"enabled": True, "mode": "external_api", "backend": "exa"}
-        sources_path.write_text(yaml.safe_dump(sources, sort_keys=False), encoding="utf-8")
-
-        exit_code = main(["run", "--runtime", "operator", "--config", str(ws / "config.yaml"), "--skip-doctor"])
-        captured = capsys.readouterr()
-        assert exit_code == 0
-        assert "Runtime:" in captured.out
-        assert "delegate_task" in captured.out or "hermes" in captured.out.lower()
+        # LEGACY-DELETE: remove with the retired operator runtime handoff surface.
+        assert exit_code == 1
+        assert captured.out == "[run] runtime_adapter_unsupported\n"
+        assert captured.err == ""
+        assert _snapshot_tree_bytes(ws) == before

@@ -5,10 +5,17 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+import pytest
 import yaml
 
 from multi_agent_brief.cli.main import main
 from multi_agent_brief.sources.registry import collect_all_sources, load_sources_config
+from multi_agent_brief.sources.sourcehub import (
+    SourceHubError,
+    add_file_sources,
+    add_rss_feed,
+    add_web_search_handoff,
+)
 
 
 def _workspace(tmp_path: Path) -> Path:
@@ -31,9 +38,45 @@ def _workspace(tmp_path: Path) -> Path:
     return ws
 
 
-def test_sources_add_file_copies_text_source_without_external_path_leak(
+def _workspace_file_bytes(workspace: Path) -> dict[str, bytes]:
+    return {
+        path.relative_to(workspace).as_posix(): path.read_bytes()
+        for path in workspace.rglob("*")
+        if path.is_file()
+    }
+
+
+@pytest.mark.parametrize(
+    "subcommand_args",
+    [
+        ["add-file", "evidence.md"],
+        ["add-rss", "https://example.com/feed.xml"],
+        ["add-web-search", "--query", "solar module prices latest"],
+    ],
+)
+def test_sources_public_cli_is_retired_with_typed_rejection_and_zero_writes(
     tmp_path: Path,
     capsys,
+    subcommand_args: list[str],
+) -> None:
+    ws = _workspace(tmp_path)
+    (tmp_path / "evidence.md").write_text("# Evidence\n", encoding="utf-8")
+    before = _workspace_file_bytes(ws)
+
+    rc = main(["sources", *subcommand_args, "--workspace", str(ws)])
+    captured = capsys.readouterr()
+
+    # LEGACY-DELETE: retired public `sources ...` operator surface; the
+    # workspace authority guard rejects it before dispatch with zero writes.
+    assert rc == 1
+    assert captured.out == "runtime_command_unsupported\n"
+    assert captured.err == ""
+    assert _workspace_file_bytes(ws) == before
+    assert not (ws / "briefloop.db").exists()
+
+
+def test_sources_add_file_copies_text_source_without_external_path_leak(
+    tmp_path: Path,
 ) -> None:
     ws = _workspace(tmp_path)
     outside = tmp_path / "outside-user-folder"
@@ -41,23 +84,14 @@ def test_sources_add_file_copies_text_source_without_external_path_leak(
     source = outside / "market-note.md"
     source.write_text("# Market Note\n\nPrice moved.\n", encoding="utf-8")
 
-    rc = main(
-        [
-            "sources",
-            "add-file",
-            "--workspace",
-            str(ws),
-            "--category",
-            "market_report",
-            "--json",
-            str(source),
-        ]
+    payload = add_file_sources(
+        workspace=ws,
+        values=[str(source)],
+        source_category="market_report",
     )
-    assert rc == 0
-    output = capsys.readouterr().out
-    payload = json.loads(output)
     assert payload["ok"] is True
     assert payload["source_count"] == 1
+    output = json.dumps(payload, ensure_ascii=False)
     assert str(source) not in output
     assert "outside-user-folder" not in output
 
@@ -78,7 +112,7 @@ def test_sources_add_file_copies_text_source_without_external_path_leak(
     assert items[0].source_type == "local_file"
 
 
-def test_sources_add_file_expands_home_globs(tmp_path: Path, monkeypatch, capsys) -> None:
+def test_sources_add_file_expands_home_globs(tmp_path: Path, monkeypatch) -> None:
     ws = _workspace(tmp_path)
     home = tmp_path / "home"
     docs = home / "docs"
@@ -88,52 +122,35 @@ def test_sources_add_file_expands_home_globs(tmp_path: Path, monkeypatch, capsys
     monkeypatch.setenv("HOME", str(home))
     monkeypatch.setenv("USERPROFILE", str(home))
 
-    rc = main(
-        [
-            "sources",
-            "add-file",
-            "--workspace",
-            str(ws),
-            "~/docs/*",
-        ]
-    )
-    assert rc == 0
-    capsys.readouterr()
+    payload = add_file_sources(workspace=ws, values=["~/docs/*"])
+    assert payload["ok"] is True
+    assert payload["source_count"] == 2
     data = yaml.safe_load((ws / "sources.yaml").read_text(encoding="utf-8"))
     paths = [item["path"] for item in data["manual"]["sources"]]
     assert len(paths) == 2
     assert all(path.startswith("input/sources/sourcehub/") for path in paths)
 
 
-def test_sources_add_file_rejects_binary_without_writing(tmp_path: Path, capsys) -> None:
+def test_sources_add_file_rejects_binary_without_writing(tmp_path: Path) -> None:
     ws = _workspace(tmp_path)
     binary = tmp_path / "deck.pdf"
     binary.write_bytes(b"%PDF-1.4")
 
-    rc = main(["sources", "add-file", "--workspace", str(ws), str(binary)])
-    assert rc == 1
-    output = capsys.readouterr().out
-    assert "text evidence only" in output
+    with pytest.raises(SourceHubError, match="text evidence only"):
+        add_file_sources(workspace=ws, values=[str(binary)])
     assert not (ws / "input" / "sources" / "sourcehub").exists()
     data = yaml.safe_load((ws / "sources.yaml").read_text(encoding="utf-8"))
     assert data["manual"]["sources"] == []
 
 
-def test_sources_add_rss_registers_feed(tmp_path: Path, capsys) -> None:
+def test_sources_add_rss_registers_feed(tmp_path: Path) -> None:
     ws = _workspace(tmp_path)
-    rc = main(
-        [
-            "sources",
-            "add-rss",
-            "--workspace",
-            str(ws),
-            "--name",
-            "Industry Feed",
-            "https://example.com/feed.xml",
-        ]
+    payload = add_rss_feed(
+        workspace=ws,
+        url="https://example.com/feed.xml",
+        name="Industry Feed",
     )
-    assert rc == 0
-    capsys.readouterr()
+    assert payload["ok"] is True
     data = yaml.safe_load((ws / "sources.yaml").read_text(encoding="utf-8"))
     assert "rss" in data["source_strategy"]["enabled_providers"]
     assert data["rss"]["enabled"] is True
@@ -143,35 +160,21 @@ def test_sources_add_rss_registers_feed(tmp_path: Path, capsys) -> None:
 
 def test_sources_add_rss_duplicate_updates_and_reports_persisted_feed(
     tmp_path: Path,
-    capsys,
 ) -> None:
     ws = _workspace(tmp_path)
-    assert main([
-        "sources",
-        "add-rss",
-        "--workspace",
-        str(ws),
-        "--name",
-        "Old Feed",
-        "https://example.com/feed.xml",
-        "--json",
-    ]) == 0
-    capsys.readouterr()
+    first = add_rss_feed(
+        workspace=ws,
+        url="https://example.com/feed.xml",
+        name="Old Feed",
+    )
+    assert first["ok"] is True
 
-    rc = main([
-        "sources",
-        "add-rss",
-        "--workspace",
-        str(ws),
-        "--name",
-        "New Feed",
-        "--category",
-        "market_report",
-        "https://example.com/feed.xml",
-        "--json",
-    ])
-    assert rc == 0
-    payload = json.loads(capsys.readouterr().out)
+    payload = add_rss_feed(
+        workspace=ws,
+        url="https://example.com/feed.xml",
+        name="New Feed",
+        source_category="market_report",
+    )
     assert payload["updated"] is True
     assert payload["feed_count"] == 0
     assert payload["feed"]["name"] == "New Feed"
@@ -183,34 +186,27 @@ def test_sources_add_rss_duplicate_updates_and_reports_persisted_feed(
     assert data["rss"]["feeds"][0]["category"] == "market_report"
 
 
-def test_sources_add_rss_rejects_invalid_url(tmp_path: Path, capsys) -> None:
+def test_sources_add_rss_rejects_invalid_url(tmp_path: Path) -> None:
     ws = _workspace(tmp_path)
-    rc = main(["sources", "add-rss", "--workspace", str(ws), "not a url"])
-    assert rc == 1
-    assert "http(s)" in capsys.readouterr().out
+    with pytest.raises(SourceHubError, match=r"http\(s\)"):
+        add_rss_feed(workspace=ws, url="not a url")
     data = yaml.safe_load((ws / "sources.yaml").read_text(encoding="utf-8"))
     assert "rss" not in data.get("source_strategy", {}).get("enabled_providers", [])
 
 
-def test_sources_add_web_search_is_runtime_handoff_only(tmp_path: Path, capsys) -> None:
+def test_sources_add_web_search_is_runtime_handoff_only(tmp_path: Path) -> None:
     ws = _workspace(tmp_path)
-    rc = main(
-        [
-            "sources",
-            "add-web-search",
-            "--workspace",
-            str(ws),
-            "--query",
-            "solar module prices latest",
-            "--domain",
-            "example.com",
-            "--recency-days",
-            "7",
-        ]
+    payload = add_web_search_handoff(
+        workspace=ws,
+        query="solar module prices latest",
+        domains=["example.com"],
+        recency_days=7,
     )
-    assert rc == 0
-    output = capsys.readouterr().out
-    assert "no Python search was run" in output
+    assert payload["ok"] is True
+    # LEGACY-DELETE: the retired CLI printed the handoff boundary line; the
+    # direct payload carries the same boundary and non-claims.
+    assert payload["boundary"] == "runtime_web_search_handoff_only"
+    assert "no_python_web_search_execution" in payload["non_claims"]
     data = yaml.safe_load((ws / "sources.yaml").read_text(encoding="utf-8"))
     assert "web_search" in data["source_strategy"]["enabled_providers"]
     assert data["web_search"]["enabled"] is True
@@ -225,39 +221,22 @@ def test_sources_add_web_search_is_runtime_handoff_only(tmp_path: Path, capsys) 
 
 def test_sources_add_web_search_duplicate_updates_and_reports_persisted_task(
     tmp_path: Path,
-    capsys,
 ) -> None:
     ws = _workspace(tmp_path)
-    assert main([
-        "sources",
-        "add-web-search",
-        "--workspace",
-        str(ws),
-        "--query",
-        "solar prices",
-        "--domain",
-        "old.example",
-        "--max-results",
-        "10",
-        "--json",
-    ]) == 0
-    capsys.readouterr()
+    first = add_web_search_handoff(
+        workspace=ws,
+        query="solar prices",
+        domains=["old.example"],
+        max_results=10,
+    )
+    assert first["ok"] is True
 
-    rc = main([
-        "sources",
-        "add-web-search",
-        "--workspace",
-        str(ws),
-        "--query",
-        "solar prices",
-        "--domain",
-        "new.example",
-        "--max-results",
-        "25",
-        "--json",
-    ])
-    assert rc == 0
-    payload = json.loads(capsys.readouterr().out)
+    payload = add_web_search_handoff(
+        workspace=ws,
+        query="solar prices",
+        domains=["new.example"],
+        max_results=25,
+    )
     assert payload["updated"] is True
     assert payload["task_count"] == 0
     assert payload["task"]["domains"] == ["new.example"]
@@ -270,13 +249,12 @@ def test_sources_add_web_search_duplicate_updates_and_reports_persisted_task(
     assert tasks[0]["max_results"] == 25
 
 
-def test_sourcehub_bad_sources_yaml_fails_without_copying(tmp_path: Path, capsys) -> None:
+def test_sourcehub_bad_sources_yaml_fails_without_copying(tmp_path: Path) -> None:
     ws = _workspace(tmp_path)
     (ws / "sources.yaml").write_text("source_strategy: [\n", encoding="utf-8")
     source = tmp_path / "source.md"
     source.write_text("# Source\n", encoding="utf-8")
 
-    rc = main(["sources", "add-file", "--workspace", str(ws), str(source)])
-    assert rc == 1
-    assert "while parsing" in capsys.readouterr().out
+    with pytest.raises(yaml.YAMLError, match="while parsing"):
+        add_file_sources(workspace=ws, values=[str(source)])
     assert not (ws / "input" / "sources" / "sourcehub").exists()

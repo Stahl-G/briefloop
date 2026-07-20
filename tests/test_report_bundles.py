@@ -560,12 +560,12 @@ def test_report_bundle_manifest_rejects_missing_per_artifact_hash(tmp_path: Path
 
 def test_packs_bundle_cli_writes_manifest_without_copying_trace_to_delivery(
     tmp_path: Path,
-    capsys,
 ) -> None:
     ws = _finalized_workspace(tmp_path)
 
-    assert main(["packs", "bundle", "--workspace", str(ws), "--json"]) == 0
-    payload = json.loads(capsys.readouterr().out)
+    # LEGACY-DELETE: retired public `packs bundle` CLI; the manifest invariant
+    # runs through the direct deterministic bundle-projection seam.
+    payload = write_report_bundle_manifest(workspace=ws)
 
     manifest_path = ws / payload["manifest_path"]
     assert manifest_path.exists()
@@ -585,7 +585,6 @@ def test_packs_bundle_cli_writes_manifest_without_copying_trace_to_delivery(
 
 def test_packs_bundle_cli_writes_clean_archives_from_manifest(
     tmp_path: Path,
-    capsys,
 ) -> None:
     ws = _finalized_workspace(tmp_path)
     _write_quality_projection_artifacts(ws)
@@ -607,8 +606,9 @@ def test_packs_bundle_cli_writes_clean_archives_from_manifest(
         zf.writestr("__MACOSX/._brief.md", "junk")
         zf.writestr("output/delivery/.DS_Store", "junk")
 
-    assert main(["packs", "bundle", "--workspace", str(ws), "--write-archives", "--json"]) == 0
-    payload = json.loads(capsys.readouterr().out)
+    # LEGACY-DELETE: retired public `packs bundle --write-archives` CLI; the
+    # archive invariant runs through the direct deterministic projection seam.
+    payload = write_report_bundle_manifest(workspace=ws, write_archives=True)
 
     manifest_path = ws / payload["manifest_path"]
     manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
@@ -671,8 +671,7 @@ def test_packs_bundle_cli_writes_clean_archives_from_manifest(
     assert not any(name.endswith(".DS_Store") for name in all_names)
     assert not any(name.endswith("output.zip") for name in all_names)
 
-    assert main(["packs", "bundle", "--workspace", str(ws), "--write-archives", "--json"]) == 0
-    rerun_payload = json.loads(capsys.readouterr().out)
+    rerun_payload = write_report_bundle_manifest(workspace=ws, write_archives=True)
     rerun_manifest = json.loads((ws / rerun_payload["manifest_path"]).read_text(encoding="utf-8"))
     assert rerun_manifest["bundle_archives"]["delivery"]["sha256"] == first_delivery_sha
     assert rerun_manifest["bundle_archives"]["audit"]["sha256"] == first_audit_sha
@@ -680,7 +679,6 @@ def test_packs_bundle_cli_writes_clean_archives_from_manifest(
 
 def test_packs_bundle_rejects_manifest_output_reserved_for_archives(
     tmp_path: Path,
-    capsys,
 ) -> None:
     ws = _finalized_workspace(tmp_path)
 
@@ -689,47 +687,30 @@ def test_packs_bundle_rejects_manifest_output_reserved_for_archives(
             archive_path = ws / rel
             archive_path.parent.mkdir(parents=True, exist_ok=True)
             archive_path.write_bytes(b"existing zip bytes")
-            args = [
-                "packs",
-                "bundle",
-                "--workspace",
-                str(ws),
-                "--output",
-                rel,
-                "--json",
-            ]
-            if maybe_write_archives:
-                args.insert(4, "--write-archives")
 
-            assert main(args) == 1
-            payload = json.loads(capsys.readouterr().out)
-            assert payload["ok"] is False
-            assert "reserved for clean bundle archives" in payload["error"]
+            # LEGACY-DELETE: retired public `packs bundle --output` CLI; the
+            # reserved-output rejection runs through the direct projection seam.
+            with pytest.raises(ReportBundleProjectionError, match="reserved for clean bundle archives"):
+                write_report_bundle_manifest(
+                    workspace=ws,
+                    output_path=rel,
+                    write_archives=maybe_write_archives,
+                )
             assert archive_path.read_bytes() == b"existing zip bytes"
             archive_path.unlink()
 
 
 def test_packs_bundle_rejects_outside_output_before_writing_archives(
     tmp_path: Path,
-    capsys,
 ) -> None:
     ws = _finalized_workspace(tmp_path)
     outside = tmp_path / "outside.json"
 
-    assert main([
-        "packs",
-        "bundle",
-        "--workspace",
-        str(ws),
-        "--write-archives",
-        "--output",
-        str(outside),
-        "--json",
-    ]) == 1
-    payload = json.loads(capsys.readouterr().out)
+    # LEGACY-DELETE: retired public `packs bundle --output` CLI; the
+    # outside-workspace fail-closed ordering runs through the direct seam.
+    with pytest.raises(ReportBundleProjectionError, match="must stay inside the workspace"):
+        write_report_bundle_manifest(workspace=ws, output_path=outside, write_archives=True)
 
-    assert payload["ok"] is False
-    assert "must stay inside the workspace" in payload["error"]
     assert not outside.exists()
     assert not (ws / "output" / "delivery_bundle.zip").exists()
     assert not (ws / "output" / "audit_bundle.zip").exists()
@@ -744,6 +725,37 @@ def test_report_bundle_manifest_output_must_stay_in_workspace(tmp_path: Path) ->
         assert "must stay inside the workspace" in str(exc)
     else:  # pragma: no cover
         raise AssertionError("Expected outside manifest output rejection")
+
+
+def test_packs_bundle_public_cli_is_retired_with_zero_writes(tmp_path: Path, capsys) -> None:
+    ws = _finalized_workspace(tmp_path)
+    variants = [
+        ["packs", "bundle", "--workspace", str(ws), "--json"],
+        ["packs", "bundle", "--workspace", str(ws), "--write-archives", "--json"],
+        ["packs", "bundle", "--workspace", str(ws), "--output", "output/custom_manifest.json", "--json"],
+        ["packs", "bundle", "--workspace", str(ws), "--output", str(tmp_path / "outside.json"), "--write-archives", "--json"],
+    ]
+    for args in variants:
+        before = {
+            path.relative_to(ws).as_posix(): path.read_bytes()
+            for path in ws.rglob("*")
+            if path.is_file()
+        }
+
+        rc = main(args)
+        out = capsys.readouterr().out
+
+        # LEGACY-DELETE: retired public `packs bundle` command and its typed
+        # legacy-workspace rejection with zero writes.
+        assert rc == 1
+        assert out == "legacy_workspace_unsupported\n"
+        after = {
+            path.relative_to(ws).as_posix(): path.read_bytes()
+            for path in ws.rglob("*")
+            if path.is_file()
+        }
+        assert after == before
+    assert not (tmp_path / "outside.json").exists()
 
 
 def test_packs_templates_cli_lists_packaged_templates(capsys) -> None:

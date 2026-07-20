@@ -2885,16 +2885,27 @@ def test_migration_resource_matches_packaged_source_text() -> None:
 
 def test_only_dormant_v2_modules_import_control_store() -> None:
     package_root = Path(__file__).parents[1] / "src" / "multi_agent_brief"
+    # Post-CX activation is intentional: runtime_host_v2 is the sole runtime
+    # authority and cli/authority_guard.py enforces its fail-closed boundary;
+    # both bind control_store directly. Importers are listed exactly (no
+    # prefixes); any new importer outside this list fails the ratchet.
+    active_importers = {
+        "intake_v2/service.py",
+        "cli/core_v2_commands.py",
+        "cli/authority_guard.py",
+        "runtime_host_v2/codex.py",
+        "runtime_host_v2/initialization.py",
+        "runtime_host_v2/projections.py",
+        "runtime_host_v2/scratch.py",
+        "runtime_host_v2/service.py",
+        "runtime_host_v2/source_routes.py",
+    }
     findings: list[str] = []
     for path in sorted(package_root.rglob("*.py")):
         if "control_store" in path.relative_to(package_root).parts:
             continue
         relative = path.relative_to(package_root).as_posix()
-        if (
-            relative == "intake_v2/service.py"
-            or relative == "cli/core_v2_commands.py"
-            or relative.startswith("core_run_v2/")
-        ):
+        if relative in active_importers or relative.startswith("core_run_v2/"):
             continue
         tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
         for node in ast.walk(tree):

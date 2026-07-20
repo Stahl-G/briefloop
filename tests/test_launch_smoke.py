@@ -34,16 +34,21 @@ def test_launch_smoke_json_runs_demo_handoff_path():
     assert payload["ok"] is True
     assert "not semantic truth proof" in payload["boundary"]
     assert "output-quality improvement proof" in payload["boundary"]
+    # Post-CX launch path: the pre-CX demo handoff steps (demo_init,
+    # demo_doctor, demo_runtime_handoff, handoff_artifacts) are replaced by the
+    # strict product init, SQLite runtime bootstrap/next-action, and Store
+    # artifact checks.
     assert {step["id"] for step in payload["steps"]} >= {
         "repo_layout",
         "source_import",
         "cli_version",
         "cli_version_matches_repo",
-        "demo_init",
-        "demo_doctor",
-        "demo_runtime_handoff",
+        "product_init",
+        "demo_runtime_bootstrap",
+        "demo_runtime_next",
+        "sqlite_runtime_next_action",
         "deterministic_demo_script",
-        "handoff_artifacts",
+        "sqlite_runtime_artifacts",
         "deterministic_demo_artifacts",
     }
     by_id = {step["id"]: step for step in payload["steps"]}
@@ -54,7 +59,7 @@ def test_launch_smoke_json_runs_demo_handoff_path():
         by_id["cli_version_matches_repo"]["actual"]
         == by_id["cli_version_matches_repo"]["expected"]
     )
-    assert not by_id["handoff_artifacts"]["missing"]
+    assert not by_id["sqlite_runtime_artifacts"]["missing"]
     assert not by_id["deterministic_demo_artifacts"]["missing"]
     demo_stdout = by_id["deterministic_demo_script"]["stdout_tail"]
     assert "quality_panel.html" in demo_stdout

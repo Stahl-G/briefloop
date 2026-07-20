@@ -12,7 +12,13 @@ from multi_agent_brief.audience_memory import (
     ensure_audience_profile,
 )
 from multi_agent_brief.cli.main import main
-from multi_agent_brief.orchestrator.runtime_state import RUNTIME_STATE_FILES, initialize_runtime_state
+from multi_agent_brief.inputs.classifier import classify_input_dir
+from multi_agent_brief.orchestrator.handoff import build_handoff, write_handoff_and_state
+from multi_agent_brief.orchestrator.runtime_state import (
+    RUNTIME_STATE_FILES,
+    check_runtime_state,
+    initialize_runtime_state,
+)
 from tests.helpers import write_workspace_files_under
 
 
@@ -49,6 +55,33 @@ manual:
     )
     (ws / "input" / "sources").mkdir(parents=True, exist_ok=True)
     return ws
+
+
+def _run_operator_handoff(ws: Path) -> None:
+    # LEGACY-DELETE: retired public `run --runtime operator` launcher; the
+    # audience-memory handoff chain is driven through the direct deterministic
+    # orchestrator module seam instead of the retired public CLI.
+    handoff = build_handoff(
+        workspace=ws,
+        repo_workdir=ROOT,
+        runtime="operator",
+        run_doctor=False,
+    )
+    written = write_handoff_and_state(
+        handoff=handoff,
+        workspace=ws,
+        repo_workdir=ROOT,
+        prefix="[test]",
+    )
+    assert written is not None
+
+
+def _workspace_file_bytes(ws: Path) -> dict[str, bytes]:
+    return {
+        path.relative_to(ws).as_posix(): path.read_bytes()
+        for path in ws.rglob("*")
+        if path.is_file()
+    }
 
 
 def _event_types(ws: Path) -> list[str]:
@@ -125,16 +158,8 @@ def test_snapshot_rebuilds_when_metadata_missing_or_malformed(tmp_path):
 def test_run_creates_profile_snapshot_event_and_handoff_refs(tmp_path):
     ws = _write_workspace(tmp_path)
 
-    rc = main([
-        "run", "--runtime", "operator",
-        "--workspace",
-        str(ws),
-        "--repo-workdir",
-        str(ROOT),
-        "--skip-doctor",
-    ])
+    _run_operator_handoff(ws)
 
-    assert rc == 0
     assert (ws / "audience_profile.md").exists()
     assert (ws / AUDIENCE_MEMORY_FILES["audience_profile_snapshot"]).exists()
     data = json.loads((ws / "output" / "intermediate" / "agent_handoff.json").read_text(encoding="utf-8"))
@@ -165,16 +190,8 @@ def test_run_backfills_missing_profile_from_workspace_config(tmp_path):
     ws = _write_workspace(tmp_path)
     assert not (ws / "audience_profile.md").exists()
 
-    rc = main([
-        "run", "--runtime", "operator",
-        "--workspace",
-        str(ws),
-        "--repo-workdir",
-        str(ROOT),
-        "--skip-doctor",
-    ])
+    _run_operator_handoff(ws)
 
-    assert rc == 0
     profile = (ws / "audience_profile.md").read_text(encoding="utf-8")
     assert "TestCo" in profile
     assert "testing" in profile
@@ -189,46 +206,35 @@ def test_runtime_state_commands_do_not_overwrite_existing_audience_profile(tmp_p
     custom_profile = "# Audience Profile\n\nCUSTOM_TASTE_MARKER_DO_NOT_OVERWRITE\n"
     (ws / "audience_profile.md").write_text(custom_profile, encoding="utf-8")
 
-    assert main(["run", "--runtime", "operator", "--workspace", str(ws), "--repo-workdir", str(ROOT), "--skip-doctor"]) == 0
+    _run_operator_handoff(ws)
     assert (ws / "audience_profile.md").read_text(encoding="utf-8") == custom_profile
 
-    assert main(["state", "init", "--runtime", "operator", "--workspace", str(ws), "--repo-workdir", str(ROOT)]) == 0
+    initialize_runtime_state(runtime="operator", workspace=ws, repo_workdir=ROOT)
     assert (ws / "audience_profile.md").read_text(encoding="utf-8") == custom_profile
 
-    assert main(["state", "check", "--workspace", str(ws), "--repo-workdir", str(ROOT)]) == 0
+    check_runtime_state(workspace=ws, repo_workdir=ROOT)
     assert (ws / "audience_profile.md").read_text(encoding="utf-8") == custom_profile
 
-    assert main(["state", "init", "--runtime", "operator", "--workspace", str(ws), "--repo-workdir", str(ROOT), "--reset-state"]) == 0
+    initialize_runtime_state(runtime="operator", workspace=ws, repo_workdir=ROOT, reset_state=True)
     assert (ws / "audience_profile.md").read_text(encoding="utf-8") == custom_profile
 
 
 def test_rerun_same_run_id_does_not_duplicate_snapshot_created_event(tmp_path):
     ws = _write_workspace(tmp_path)
     for _ in range(2):
-        rc = main([
-            "run", "--runtime", "operator",
-            "--workspace",
-            str(ws),
-            "--repo-workdir",
-            str(ROOT),
-            "--skip-doctor",
-        ])
-        assert rc == 0
+        _run_operator_handoff(ws)
 
     assert _event_types(ws).count("audience_profile_snapshot_created") == 1
 
 
 def test_reset_new_run_refreshes_fixed_snapshot_path(tmp_path):
     ws = _write_workspace(tmp_path)
-    rc = main(["run", "--runtime", "operator", "--workspace", str(ws), "--repo-workdir", str(ROOT), "--skip-doctor"])
-    assert rc == 0
+    _run_operator_handoff(ws)
     first = (ws / AUDIENCE_MEMORY_FILES["audience_profile_snapshot"]).read_text(encoding="utf-8")
     first_run_id = json.loads((ws / RUNTIME_STATE_FILES["runtime_manifest"]).read_text(encoding="utf-8"))["run_id"]
 
-    rc = main(["state", "init", "--runtime", "operator", "--workspace", str(ws), "--repo-workdir", str(ROOT), "--reset-state"])
-    assert rc == 0
-    rc = main(["run", "--runtime", "operator", "--workspace", str(ws), "--repo-workdir", str(ROOT), "--skip-doctor"])
-    assert rc == 0
+    initialize_runtime_state(runtime="operator", workspace=ws, repo_workdir=ROOT, reset_state=True)
+    _run_operator_handoff(ws)
 
     second = (ws / AUDIENCE_MEMORY_FILES["audience_profile_snapshot"]).read_text(encoding="utf-8")
     second_run_id = json.loads((ws / RUNTIME_STATE_FILES["runtime_manifest"]).read_text(encoding="utf-8"))["run_id"]
@@ -250,11 +256,61 @@ def test_audience_profile_is_not_input_evidence_or_claim_ledger_source(tmp_path)
         encoding="utf-8",
     )
 
-    rc = main(["inputs", "classify", "--config", str(ws / "config.yaml"), "--quiet"])
-    assert rc == 0
-    classification = json.loads((ws / "output" / "input_classification.json").read_text(encoding="utf-8"))
+    classification = classify_input_dir(ws / "input")
     all_paths = json.dumps(classification, ensure_ascii=False)
     assert "source.md" in all_paths
     assert "audience_profile.md" not in all_paths
     assert marker not in all_paths
     assert not (ws / "output" / "intermediate" / "claim_ledger.json").exists()
+
+
+def test_retired_operator_public_surfaces_reject_without_writes(tmp_path, capsys):
+    """Bounded rejection matrix for the retired public surfaces of this file."""
+    cases = [
+        (
+            lambda ws: [
+                "run", "--runtime", "operator",
+                "--workspace", str(ws),
+                "--repo-workdir", str(ROOT),
+                "--skip-doctor",
+            ],
+            "[run] runtime_adapter_unsupported\n",
+        ),
+        (
+            lambda ws: [
+                "state", "init", "--runtime", "operator",
+                "--workspace", str(ws),
+                "--repo-workdir", str(ROOT),
+            ],
+            "runtime_command_unsupported\n",
+        ),
+        (
+            lambda ws: ["state", "check", "--workspace", str(ws), "--repo-workdir", str(ROOT)],
+            "runtime_command_unsupported\n",
+        ),
+        (
+            lambda ws: [
+                "state", "init", "--runtime", "operator",
+                "--workspace", str(ws),
+                "--repo-workdir", str(ROOT),
+                "--reset-state",
+            ],
+            "runtime_command_unsupported\n",
+        ),
+        (
+            lambda ws: ["inputs", "classify", "--config", str(ws / "config.yaml"), "--quiet"],
+            "runtime_command_unsupported\n",
+        ),
+    ]
+    for index, (argv_for, token) in enumerate(cases):
+        ws = _write_workspace(tmp_path / f"case-{index}")
+        before_files = _workspace_file_bytes(ws)
+
+        rc = main(argv_for(ws))
+
+        # LEGACY-DELETE: retired public `run --runtime operator`, `state`, and
+        # `inputs classify` surfaces; the Codex SQLite ControlStore runtime is
+        # the sole runtime authority.
+        assert rc == 1
+        assert capsys.readouterr().out == token
+        assert _workspace_file_bytes(ws) == before_files

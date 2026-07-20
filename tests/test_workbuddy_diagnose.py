@@ -10,6 +10,10 @@ import pytest
 from multi_agent_brief.cli.main import main
 from multi_agent_brief.orchestrator.runtime_state import append_event, initialize_runtime_state
 from multi_agent_brief.orchestrator.runtime_state._io import _sha256_file
+from multi_agent_brief.workbuddy.diagnose import (
+    build_workbuddy_diagnosis,
+    format_workbuddy_diagnosis,
+)
 
 
 QUALITY_GATE_SCHEMA = "multi-agent-brief-quality-gates/v1"
@@ -158,18 +162,49 @@ def _gate_report(status: str) -> dict[str, object]:
     }
 
 
-def _diagnose_json(ws: Path, capsys) -> dict:
-    rc = main(["workbuddy", "diagnose", "--workspace", str(ws), "--json"])
-    assert rc == 0
-    return json.loads(capsys.readouterr().out)
+def _diagnose_json(ws: Path) -> dict:
+    # Direct deterministic seam behind the retired public `workbuddy diagnose`
+    # CLI: the command only rendered this read-only projection.
+    return build_workbuddy_diagnosis(workspace=ws)
 
 
-def test_workbuddy_diagnose_formats_completion_projection(tmp_path: Path, capsys) -> None:
+def _workspace_file_bytes(ws: Path) -> dict[str, bytes]:
+    return {
+        path.relative_to(ws).as_posix(): path.read_bytes()
+        for path in ws.rglob("*")
+        if path.is_file()
+    }
+
+
+@pytest.mark.parametrize("json_mode", [True, False], ids=["json", "text"])
+def test_workbuddy_diagnose_public_cli_is_retired_with_zero_writes(
+    tmp_path: Path,
+    capsys,
+    json_mode: bool,
+) -> None:
+    # LEGACY-DELETE: retired public `workbuddy diagnose` CLI; the read-only
+    # Run Card projection is only reachable through the direct
+    # build_workbuddy_diagnosis/format_workbuddy_diagnosis seam.
+    ws = _workspace(tmp_path)
+    _init_runtime(ws)
+    before_files = _workspace_file_bytes(ws)
+
+    argv = ["workbuddy", "diagnose", "--workspace", str(ws)]
+    if json_mode:
+        argv.append("--json")
+    rc = main(argv)
+
+    assert rc == 1
+    assert capsys.readouterr().out.strip() == "legacy_workspace_unsupported"
+    assert _workspace_file_bytes(ws) == before_files
+
+
+def test_workbuddy_diagnose_formats_completion_projection(tmp_path: Path) -> None:
     ws = _workspace(tmp_path)
     _init_runtime(ws)
     _write_finalized_delivery(ws)
 
-    payload = _diagnose_json(ws, capsys)
+    payload = _diagnose_json(ws)
 
     projection = payload["completion_projection"]
     assert payload["schema_version"] == "briefloop.workbuddy_diagnose.v1"
@@ -201,7 +236,6 @@ def test_workbuddy_diagnose_formats_completion_projection(tmp_path: Path, capsys
 )
 def test_workbuddy_diagnose_projects_exact_current_delivery_outcome(
     tmp_path: Path,
-    capsys,
     event_type: str,
 ) -> None:
     ws = _workspace(tmp_path)
@@ -216,7 +250,7 @@ def test_workbuddy_diagnose_projects_exact_current_delivery_outcome(
         metadata={"render_transaction_id": "tx-finalize-001"},
     )
 
-    payload = _diagnose_json(ws, capsys)
+    payload = _diagnose_json(ws)
 
     assert payload["delivery_truth"]["valid"] is True
     assert payload["event_truth"]["delivery_outcome"] == event_type
@@ -224,13 +258,13 @@ def test_workbuddy_diagnose_projects_exact_current_delivery_outcome(
     assert payload["run_card"]["delivery_event"] == event_type
 
 
-def test_workbuddy_diagnose_doctor_error_overlays_completion_next_action(tmp_path: Path, capsys) -> None:
+def test_workbuddy_diagnose_doctor_error_overlays_completion_next_action(tmp_path: Path) -> None:
     ws = _workspace(tmp_path)
     _init_runtime(ws)
     _write_finalized_delivery(ws)
     (ws / "config.yaml").unlink()
 
-    payload = _diagnose_json(ws, capsys)
+    payload = _diagnose_json(ws)
 
     projection = payload["completion_projection"]
     assert projection["delivery_truth"]["valid"] is True
@@ -242,14 +276,14 @@ def test_workbuddy_diagnose_doctor_error_overlays_completion_next_action(tmp_pat
     assert payload["run_card"]["next_allowed_action"] == "stop_show_full_doctor_output"
 
 
-def test_workbuddy_diagnose_does_not_infer_delivery_from_directory(tmp_path: Path, capsys) -> None:
+def test_workbuddy_diagnose_does_not_infer_delivery_from_directory(tmp_path: Path) -> None:
     ws = _workspace(tmp_path)
     _init_runtime(ws, current_stage="finalize")
     delivery_dir = ws / "output" / "delivery"
     delivery_dir.mkdir(parents=True)
     (delivery_dir / "brief.md").write_text("# Stale orphan delivery\n", encoding="utf-8")
 
-    payload = _diagnose_json(ws, capsys)
+    payload = _diagnose_json(ws)
 
     projection = payload["completion_projection"]
     assert projection["delivery_truth"]["valid"] is False
@@ -261,14 +295,14 @@ def test_workbuddy_diagnose_does_not_infer_delivery_from_directory(tmp_path: Pat
     assert payload["run_card"]["next_allowed_action"] != "inspect_status_before_delivery_or_quality"
 
 
-def test_workbuddy_diagnose_follows_projection_for_dirty_delivery(tmp_path: Path, capsys) -> None:
+def test_workbuddy_diagnose_follows_projection_for_dirty_delivery(tmp_path: Path) -> None:
     ws = _workspace(tmp_path)
     (ws / ".env").write_text("TAVILY_API_KEY=redacted-test-secret\n", encoding="utf-8")
     _init_runtime(ws)
     _write_finalized_delivery(ws)
     (ws / "output" / "delivery" / "brief.md").write_text("# Tampered\n", encoding="utf-8")
 
-    payload = _diagnose_json(ws, capsys)
+    payload = _diagnose_json(ws)
 
     projection = payload["completion_projection"]
     assert projection["delivery_truth"]["valid"] is False
@@ -278,19 +312,19 @@ def test_workbuddy_diagnose_follows_projection_for_dirty_delivery(tmp_path: Path
     assert payload["run_card"]["secret_risk_present"] is True
 
 
-def test_workbuddy_diagnose_secret_risk_overlays_only_benign_completion_action(tmp_path: Path, capsys) -> None:
+def test_workbuddy_diagnose_secret_risk_overlays_only_benign_completion_action(tmp_path: Path) -> None:
     ws = _workspace(tmp_path)
     secret_value = "tvly-secret-value"
     (ws / ".env").write_text(f"TAVILY_API_KEY={secret_value}\n", encoding="utf-8")
     _init_runtime(ws)
     _write_finalized_delivery(ws)
 
-    rc = main(["workbuddy", "diagnose", "--workspace", str(ws), "--json"])
+    payload = _diagnose_json(ws)
 
-    assert rc == 0
-    raw = capsys.readouterr().out
+    # The serialized projection must never leak secret values (the retired CLI
+    # printed exactly this payload).
+    raw = json.dumps(payload, indent=2, sort_keys=True)
     assert secret_value not in raw
-    payload = json.loads(raw)
     projection = payload["completion_projection"]
     assert projection["next_allowed_action"] == "inspect_status_before_delivery_or_quality"
     assert payload["run_card"]["delivery_truth"] == projection["delivery_truth"]["status"]
@@ -301,12 +335,12 @@ def test_workbuddy_diagnose_secret_risk_overlays_only_benign_completion_action(t
     assert payload["secret_risk"]["secret_values_reported"] is False
 
 
-def test_workbuddy_diagnose_json_fails_soft_on_corrupt_utf8_control_json(tmp_path: Path, capsys) -> None:
+def test_workbuddy_diagnose_json_fails_soft_on_corrupt_utf8_control_json(tmp_path: Path) -> None:
     ws = _workspace(tmp_path)
     _init_runtime(ws, current_stage="doctor")
     (ws / "output" / "intermediate" / "workflow_state.json").write_bytes(b"\xff\xfe\x00")
 
-    payload = _diagnose_json(ws, capsys)
+    payload = _diagnose_json(ws)
 
     projection = payload["completion_projection"]
     assert projection["control_files"]["workflow_state"] == "unreadable_utf8"
@@ -315,14 +349,12 @@ def test_workbuddy_diagnose_json_fails_soft_on_corrupt_utf8_control_json(tmp_pat
     assert payload["run_card"]["next_allowed_action"] == "inspect_unreadable_or_missing_control_files"
 
 
-def test_workbuddy_diagnose_text_prints_projection_run_card(tmp_path: Path, capsys) -> None:
+def test_workbuddy_diagnose_text_prints_projection_run_card(tmp_path: Path) -> None:
     ws = _workspace(tmp_path)
     _init_runtime(ws, current_stage="doctor")
 
-    rc = main(["workbuddy", "diagnose", "--workspace", str(ws)])
-
-    assert rc == 0
-    output = capsys.readouterr().out
+    # Direct seam for the retired text renderer: the CLI printed exactly this.
+    output = format_workbuddy_diagnosis(_diagnose_json(ws))
     for field in (
         "runtime:",
         "current_stage:",

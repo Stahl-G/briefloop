@@ -413,7 +413,42 @@ def _bind_status_registry_view(
     )
 
 
-def test_status_command_is_read_only_for_existing_runtime_state(tmp_path, capsys):
+@pytest.mark.parametrize(
+    ("workspace_kind", "use_json", "expected_token"),
+    [
+        ("fresh", True, "runtime_command_unsupported"),
+        ("fresh", False, "runtime_command_unsupported"),
+        ("legacy", True, "legacy_workspace_unsupported"),
+        ("legacy", False, "legacy_workspace_unsupported"),
+    ],
+    ids=["fresh-json", "fresh-human", "legacy-json", "legacy-human"],
+)
+def test_status_command_public_cli_rejects_non_sqlite_workspaces_without_writes(
+    tmp_path,
+    capsys,
+    workspace_kind,
+    use_json,
+    expected_token,
+):
+    ws = _minimal_workspace(tmp_path / "ws")
+    if workspace_kind == "legacy":
+        initialize_runtime_state(workspace=ws, runtime="claude", actor="cli")
+    before = _workspace_file_snapshot(ws)
+
+    argv = ["status", "--workspace", str(ws)]
+    if use_json:
+        argv.append("--json")
+    # LEGACY-DELETE: the retired public status CLI against non-SQLite
+    # workspaces; the read-only projection contract is preserved through
+    # status_module.build_workspace_status / format_workspace_status.
+    rc = main(argv)
+
+    assert rc == 1
+    assert capsys.readouterr().out == f"{expected_token}\n"
+    assert _workspace_file_snapshot(ws) == before
+
+
+def test_status_command_is_read_only_for_existing_runtime_state(tmp_path):
     ws = _minimal_workspace(tmp_path / "ws")
     initialize_runtime_state(workspace=ws, runtime="claude", actor="cli")
     check_runtime_state(workspace=ws)
@@ -424,10 +459,7 @@ def test_status_command_is_read_only_for_existing_runtime_state(tmp_path, capsys
     before_mtime = {path: path.stat().st_mtime_ns for path in watched}
     before_event_count = len(paths["event_log"].read_text(encoding="utf-8").splitlines())
 
-    rc = main(["status", "--workspace", str(ws), "--json"])
-
-    assert rc == 0
-    payload = json.loads(capsys.readouterr().out)
+    payload = status_module.build_workspace_status(ws)
     assert payload["read_only"] is True
     assert payload["runtime"]["runtime"] == "claude"
     assert payload["workflow"]["current_stage"] == "doctor"
@@ -544,7 +576,6 @@ def test_status_command_is_read_only_for_existing_runtime_state(tmp_path, capsys
 )
 def test_status_registry_context_degrades_without_consuming_or_writing(
     tmp_path,
-    capsys,
     case_id,
     expected_status,
     expected_reason_code,
@@ -560,10 +591,7 @@ def test_status_registry_context_degrades_without_consuming_or_writing(
     before_mtime = {path: path.stat().st_mtime_ns for path in watched}
     registry_existed = paths["artifact_registry"].exists()
 
-    rc = main(["status", "--workspace", str(ws), "--json"])
-
-    assert rc == 0
-    payload = json.loads(capsys.readouterr().out)
+    payload = status_module.build_workspace_status(ws)
     artifacts = payload["artifacts"]
     assert artifacts["registry_status"] == expected_status
     assert artifacts["registry_reason_code"] == expected_reason_code
@@ -581,9 +609,9 @@ def test_status_registry_context_degrades_without_consuming_or_writing(
         for marker in payload["stale_or_unknown"]
     )
 
-    rc = main(["status", "--workspace", str(ws)])
-    assert rc == 0
-    out = capsys.readouterr().out
+    out = status_module.format_workspace_status(
+        status_module.build_workspace_status(ws)
+    )
     assert f"registry_status={expected_status}" in out
     assert f"registry_reason={expected_reason_code}" in out
 
@@ -603,7 +631,6 @@ def test_status_registry_context_degrades_without_consuming_or_writing(
 )
 def test_status_unsafe_registry_precedes_fresh_guidance_and_hides_nested_values(
     tmp_path,
-    capsys,
     manifest_state,
 ):
     ws = _minimal_workspace(tmp_path / "ws")
@@ -636,8 +663,7 @@ def test_status_unsafe_registry_precedes_fresh_guidance_and_hides_nested_values(
 
     before = _workspace_file_snapshot(ws)
 
-    assert main(["status", "--workspace", str(ws), "--json"]) == 0
-    payload = json.loads(capsys.readouterr().out)
+    payload = status_module.build_workspace_status(ws)
     artifacts = payload["artifacts"]
     assert payload["runtime"]["present"] is False
     assert artifacts["registry_status"] == "degradation"
@@ -658,8 +684,9 @@ def test_status_unsafe_registry_precedes_fresh_guidance_and_hides_nested_values(
     assert payload["progress"]["status"] == "needs_operator_action"
     assert payload["progress"]["current_work"] == "check run record"
 
-    assert main(["status", "--workspace", str(ws)]) == 0
-    human = capsys.readouterr().out
+    human = status_module.format_workspace_status(
+        status_module.build_workspace_status(ws)
+    )
     assert "registry_status=degradation" in human
     assert "registry_reason=artifact_registry_recovery_context_invalid" in human
     assert "UNTRUSTED-SECRET" not in human
@@ -811,20 +838,19 @@ def test_status_preserves_only_typed_legal_registry_absence(tmp_path):
     assert _workspace_file_snapshot(initialized_ws) == initialized_before
 
 
-def test_status_command_human_output_reports_user_progress_language(tmp_path, capsys):
+def test_status_command_human_output_reports_user_progress_language(tmp_path):
     ws = _minimal_workspace(tmp_path / "ws")
     initialize_runtime_state(workspace=ws, runtime="claude", actor="cli")
 
-    rc = main(["status", "--workspace", str(ws)])
-
-    assert rc == 0
-    out = capsys.readouterr().out
+    out = status_module.format_workspace_status(
+        status_module.build_workspace_status(ws)
+    )
     assert '[status] progress: ready_for_operator current_work="prepare sources"' in out
     assert "registry_status=missing" in out
     assert 'message="Continue the prepare sources step through the suggested command or handoff."' in out
 
 
-def test_status_command_reports_trajectory_decision_narrowing(tmp_path, capsys):
+def test_status_command_reports_trajectory_decision_narrowing(tmp_path):
     ws = _minimal_workspace(tmp_path / "ws")
     initialize_runtime_state(workspace=ws, runtime="claude", actor="cli")
     complete_stage_transaction(workspace=ws, stage_id="doctor", reason="doctor complete")
@@ -836,9 +862,7 @@ def test_status_command_reports_trajectory_decision_narrowing(tmp_path, capsys):
             reason=f"retry {idx + 1}",
         )
 
-    rc = main(["status", "--workspace", str(ws), "--json"])
-    assert rc == 0
-    payload = json.loads(capsys.readouterr().out)
+    payload = status_module.build_workspace_status(ws)
 
     assert payload["workflow"]["next_allowed_decisions"] == ["request_human_review", "block_run"]
     assert payload["workflow"]["trajectory_regulation"]["status"] == "decision_narrowed"
@@ -848,15 +872,15 @@ def test_status_command_reports_trajectory_decision_narrowing(tmp_path, capsys):
     assert payload["progress"]["current_work"] == "prepare sources"
     assert payload["progress"]["message"] == "Retry or repair budget is exhausted; request human review or block the run."
 
-    rc = main(["status", "--workspace", str(ws)])
-    assert rc == 0
-    out = capsys.readouterr().out
+    out = status_module.format_workspace_status(
+        status_module.build_workspace_status(ws)
+    )
     assert "[status] trajectory_decision_narrowing: decision_narrowed" in out
     assert "allowed=request_human_review,block_run" in out
     assert "reasons=retry_budget_exhausted" in out
 
 
-def test_status_command_reports_contaminated_run_integrity(tmp_path, capsys):
+def test_status_command_reports_contaminated_run_integrity(tmp_path):
     ws = _minimal_workspace(tmp_path / "ws")
     initialize_runtime_state(workspace=ws, runtime="claude", actor="cli")
     paths = runtime_state_paths(ws)
@@ -875,23 +899,19 @@ def test_status_command_reports_contaminated_run_integrity(tmp_path, capsys):
     }
     paths["workflow_state"].write_text(json.dumps(workflow, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
 
-    rc = main(["status", "--workspace", str(ws)])
-
-    assert rc == 0
-    out = capsys.readouterr().out
+    out = status_module.format_workspace_status(
+        status_module.build_workspace_status(ws)
+    )
     assert "[status] run_integrity: contaminated reference_eligible=False" in out
     assert "[status] timing: contaminated; elapsed buckets are not clean evidence" in out
 
 
-def test_status_command_reports_fact_layer_import_summary(tmp_path, capsys):
+def test_status_command_reports_fact_layer_import_summary(tmp_path):
     ws = _minimal_workspace(tmp_path / "ws")
     initialize_runtime_state(workspace=ws, runtime="claude", actor="cli")
     _mark_fact_layer_imported(ws)
 
-    rc = main(["status", "--workspace", str(ws), "--json"])
-
-    assert rc == 0
-    payload = json.loads(capsys.readouterr().out)
+    payload = status_module.build_workspace_status(ws)
     summary = payload["fact_layer_import"]
     assert summary["status"] == "valid"
     assert summary["source_run_id"] == "mabw-20260614T000000Z-source"
@@ -904,7 +924,7 @@ def test_status_command_reports_fact_layer_import_summary(tmp_path, capsys):
     )
 
 
-def test_status_unsafe_registry_precedes_quality_package_recommendation(tmp_path, capsys):
+def test_status_unsafe_registry_precedes_quality_package_recommendation(tmp_path):
     ws = _minimal_workspace(tmp_path / "ws")
     initialize_runtime_state(workspace=ws, runtime="claude", actor="cli")
     paths = runtime_state_paths(ws)
@@ -927,10 +947,7 @@ def test_status_unsafe_registry_precedes_quality_package_recommendation(tmp_path
         encoding="utf-8",
     )
 
-    rc = main(["status", "--workspace", str(ws), "--json"])
-
-    assert rc == 0
-    payload = json.loads(capsys.readouterr().out)
+    payload = status_module.build_workspace_status(ws)
     expected = f"briefloop state show --workspace {ws} --json"
     assert payload["quality_panel_closeout"]["status"] == "recommended"
     assert payload["workflow"]["blocked"] is False
@@ -945,37 +962,33 @@ def test_status_unsafe_registry_precedes_quality_package_recommendation(tmp_path
     assert "/briefloop deliver" not in payload["progress"]["next_command"]
 
 
-def test_status_command_reports_invalid_fact_layer_import_when_file_missing(tmp_path, capsys):
+def test_status_command_reports_invalid_fact_layer_import_when_file_missing(tmp_path):
     ws = _minimal_workspace(tmp_path / "ws")
     initialize_runtime_state(workspace=ws, runtime="claude", actor="cli")
     _mark_fact_layer_imported(ws)
     (ws / "output" / "intermediate" / "claim_ledger.json").unlink()
 
-    rc = main(["status", "--workspace", str(ws), "--json"])
-
-    assert rc == 0
-    payload = json.loads(capsys.readouterr().out)
+    payload = status_module.build_workspace_status(ws)
     summary = payload["fact_layer_import"]
     assert summary["status"] == "invalid"
     assert "Imported fact-layer file is missing: output/intermediate/claim_ledger.json." in summary["errors"]
     assert payload["suggested_next_command"] != f"briefloop run --workspace {ws} --recipe fast-rerun --skip-doctor"
 
 
-def test_status_command_human_output_reports_fact_layer_import(tmp_path, capsys):
+def test_status_command_human_output_reports_fact_layer_import(tmp_path):
     ws = _minimal_workspace(tmp_path / "ws")
     initialize_runtime_state(workspace=ws, runtime="claude", actor="cli")
     _mark_fact_layer_imported(ws)
 
-    rc = main(["status", "--workspace", str(ws)])
-
-    assert rc == 0
-    out = capsys.readouterr().out
+    out = status_module.format_workspace_status(
+        status_module.build_workspace_status(ws)
+    )
     assert "[status] fact_layer_import: valid" in out
     assert "source_run=mabw-20260614T000000Z-source" in out
     assert "satisfied=complete via import" in out
 
 
-def test_status_command_human_output_reports_topology_satisfied_stage(tmp_path, capsys):
+def test_status_command_human_output_reports_topology_satisfied_stage(tmp_path):
     ws = _minimal_workspace(tmp_path / "ws")
     initialize_runtime_state(workspace=ws, runtime="claude", actor="cli")
     paths = runtime_state_paths(ws)
@@ -1011,19 +1024,15 @@ def test_status_command_human_output_reports_topology_satisfied_stage(tmp_path, 
         encoding="utf-8",
     )
 
-    rc = main(["status", "--workspace", str(ws)])
-
-    assert rc == 0
-    out = capsys.readouterr().out
+    out = status_module.format_workspace_status(
+        status_module.build_workspace_status(ws)
+    )
     assert (
         "[status] topology: screener complete via scout "
         "(default; required=candidate_claims,screened_candidates)"
     ) in out
 
-    rc = main(["status", "--workspace", str(ws), "--json"])
-
-    assert rc == 0
-    payload = json.loads(capsys.readouterr().out)
+    payload = status_module.build_workspace_status(ws)
     screener = next(
         stage
         for stage in payload["timing"]["stages"]
@@ -1036,7 +1045,7 @@ def test_status_command_human_output_reports_topology_satisfied_stage(tmp_path, 
     assert screener["required_artifacts"] == ["candidate_claims", "screened_candidates"]
 
 
-def test_status_command_reports_auditable_target_complete(tmp_path, capsys, monkeypatch):
+def test_status_command_reports_auditable_target_complete(tmp_path, monkeypatch):
     ws = _minimal_workspace(tmp_path / "ws")
     initialize_runtime_state(workspace=ws, runtime="claude", actor="cli")
     _bind_status_registry_view(
@@ -1044,20 +1053,16 @@ def test_status_command_reports_auditable_target_complete(tmp_path, capsys, monk
         _write_auditable_target_complete_state(ws),
     )
 
-    rc = main(["status", "--workspace", str(ws), "--json"])
-
-    assert rc == 0
-    payload = json.loads(capsys.readouterr().out)
+    payload = status_module.build_workspace_status(ws)
     experiment = payload["experiment_080"]
     assert experiment["assessment_target"] == "auditable_brief"
     assert experiment["target_complete"] is True
     assert experiment["status"] == "complete"
     assert "experiments 080 register-run" in payload["suggested_next_command"]
 
-    rc = main(["status", "--workspace", str(ws)])
-
-    assert rc == 0
-    out = capsys.readouterr().out
+    out = status_module.format_workspace_status(
+        status_module.build_workspace_status(ws)
+    )
     assert "[status] experiment_080: case=solar_public_001 condition=memory assessment_target=auditable_brief" in out
     assert "[status] target_complete: auditable_brief" in out
     assert "do not finalize for this target" in out
@@ -1065,7 +1070,6 @@ def test_status_command_reports_auditable_target_complete(tmp_path, capsys, monk
 
 def test_status_command_treats_final_abstract_advisory_warning_as_auditable_target_complete(
     tmp_path,
-    capsys,
     monkeypatch,
 ):
     ws = _minimal_workspace(tmp_path / "ws")
@@ -1096,10 +1100,7 @@ def test_status_command_treats_final_abstract_advisory_warning_as_auditable_targ
     )
     gate_path.write_text(json.dumps(report, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
 
-    rc = main(["status", "--workspace", str(ws), "--json"])
-
-    assert rc == 0
-    payload = json.loads(capsys.readouterr().out)
+    payload = status_module.build_workspace_status(ws)
     experiment = payload["experiment_080"]
     assert experiment["assessment_target"] == "auditable_brief"
     assert experiment["target_complete"] is True
@@ -1109,7 +1110,6 @@ def test_status_command_treats_final_abstract_advisory_warning_as_auditable_targ
 
 def test_status_command_rejects_unknown_final_abstract_warning_type_for_auditable_target(
     tmp_path,
-    capsys,
     monkeypatch,
 ):
     ws = _minimal_workspace(tmp_path / "ws")
@@ -1140,10 +1140,7 @@ def test_status_command_rejects_unknown_final_abstract_warning_type_for_auditabl
     )
     gate_path.write_text(json.dumps(report, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
 
-    rc = main(["status", "--workspace", str(ws), "--json"])
-
-    assert rc == 0
-    payload = json.loads(capsys.readouterr().out)
+    payload = status_module.build_workspace_status(ws)
     experiment = payload["experiment_080"]
     assert experiment["assessment_target"] == "auditable_brief"
     assert experiment["target_complete"] is False
@@ -1153,7 +1150,6 @@ def test_status_command_rejects_unknown_final_abstract_warning_type_for_auditabl
 
 def test_status_command_requires_auditable_downstream_stage_completion_events(
     tmp_path,
-    capsys,
     monkeypatch,
 ):
     ws = _minimal_workspace(tmp_path / "ws")
@@ -1177,10 +1173,7 @@ def test_status_command_requires_auditable_downstream_stage_completion_events(
         encoding="utf-8",
     )
 
-    rc = main(["status", "--workspace", str(ws), "--json"])
-
-    assert rc == 0
-    payload = json.loads(capsys.readouterr().out)
+    payload = status_module.build_workspace_status(ws)
     experiment = payload["experiment_080"]
     assert experiment["target_complete"] is False
     assert "analyst stage completion decision_recorded event is missing" in experiment["reasons"]
@@ -1189,7 +1182,6 @@ def test_status_command_requires_auditable_downstream_stage_completion_events(
 
 def test_status_command_projects_recovery_without_replaying_run_integrity(
     tmp_path,
-    capsys,
     monkeypatch,
 ):
     ws = _minimal_workspace(tmp_path / "ws")
@@ -1225,10 +1217,7 @@ def test_status_command_projects_recovery_without_replaying_run_integrity(
             + "\n"
         )
 
-    rc = main(["status", "--workspace", str(ws), "--json"])
-
-    assert rc == 0
-    payload = json.loads(capsys.readouterr().out)
+    payload = status_module.build_workspace_status(ws)
     assert payload["workflow"]["run_integrity"]["status"] == "clean"
     assert payload["workflow"]["run_integrity"]["reference_eligible"] is True
     assert payload["recovery_state"]["status"] == "awaiting_recovery"
@@ -1236,17 +1225,15 @@ def test_status_command_projects_recovery_without_replaying_run_integrity(
     assert "experiments 080 register-run" not in payload["suggested_next_command"]
     assert "workbuddy diagnose" in payload["suggested_next_command"]
 
-    rc = main(["status", "--workspace", str(ws)])
-
-    assert rc == 0
-    out = capsys.readouterr().out
+    out = status_module.format_workspace_status(
+        status_module.build_workspace_status(ws)
+    )
     assert "[status] run_integrity: clean reference_eligible=True" in out
     assert "[status] recovery: awaiting_recovery action=request_recovery_decision" in out
 
 
 def test_status_command_keeps_legacy_repair_history_out_of_recovery_guidance(
     tmp_path,
-    capsys,
     monkeypatch,
 ):
     ws = _minimal_workspace(tmp_path / "ws")
@@ -1278,10 +1265,7 @@ def test_status_command_keeps_legacy_repair_history_out_of_recovery_guidance(
             + "\n"
         )
 
-    rc = main(["status", "--workspace", str(ws), "--json"])
-
-    assert rc == 0
-    payload = json.loads(capsys.readouterr().out)
+    payload = status_module.build_workspace_status(ws)
     experiment = payload["experiment_080"]
     assert experiment["target_complete"] is False
     assert "audit binding relevant_repair_transaction_ids does not match event_log" in experiment["reasons"]
@@ -1291,17 +1275,15 @@ def test_status_command_keeps_legacy_repair_history_out_of_recovery_guidance(
     assert "/mabw deliver" not in payload["suggested_next_command"]
     assert "/generate-brief" not in payload["suggested_next_command"]
 
-    rc = main(["status", "--workspace", str(ws)])
-
-    assert rc == 0
-    out = capsys.readouterr().out
+    out = status_module.format_workspace_status(
+        status_module.build_workspace_status(ws)
+    )
     assert "[status] target_complete: auditable_brief" not in out
     assert "[status] target_incomplete: auditable_brief" in out
 
 
 def test_status_command_rejects_auditable_target_with_fake_auditor_transaction(
     tmp_path,
-    capsys,
     monkeypatch,
 ):
     ws = _minimal_workspace(tmp_path / "ws")
@@ -1320,24 +1302,20 @@ def test_status_command_rejects_auditable_target_with_fake_auditor_transaction(
         encoding="utf-8",
     )
 
-    rc = main(["status", "--workspace", str(ws), "--json"])
-
-    assert rc == 0
-    payload = json.loads(capsys.readouterr().out)
+    payload = status_module.build_workspace_status(ws)
     experiment = payload["experiment_080"]
     assert experiment["target_complete"] is False
     assert "audit binding auditor_stage_transaction_id does not match event_log" in experiment["reasons"]
     assert "experiments 080 register-run" not in payload["suggested_next_command"]
 
-    rc = main(["status", "--workspace", str(ws)])
-
-    assert rc == 0
-    out = capsys.readouterr().out
+    out = status_module.format_workspace_status(
+        status_module.build_workspace_status(ws)
+    )
     assert "[status] target_complete: auditable_brief" not in out
     assert "[status] target_incomplete: auditable_brief" in out
 
 
-def test_status_command_reports_malformed_run_integrity_as_unknown(tmp_path, capsys):
+def test_status_command_reports_malformed_run_integrity_as_unknown(tmp_path):
     ws = _minimal_workspace(tmp_path / "ws")
     initialize_runtime_state(workspace=ws, runtime="claude", actor="cli")
     paths = runtime_state_paths(ws)
@@ -1345,10 +1323,7 @@ def test_status_command_reports_malformed_run_integrity_as_unknown(tmp_path, cap
     workflow["run_integrity"] = "bad"
     paths["workflow_state"].write_text(json.dumps(workflow, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
 
-    rc = main(["status", "--workspace", str(ws), "--json"])
-
-    assert rc == 0
-    payload = json.loads(capsys.readouterr().out)
+    payload = status_module.build_workspace_status(ws)
     assert payload["workflow"]["run_integrity"]["status"] == "unknown"
     assert payload["workflow"]["run_integrity"]["reference_eligible"] is False
     assert payload["workflow"]["run_integrity"]["reasons"][0]["reason_code"] == "run_integrity_malformed"
@@ -1357,14 +1332,11 @@ def test_status_command_reports_malformed_run_integrity_as_unknown(tmp_path, cap
     assert "run_integrity_unknown" in payload["timing"]["warnings"]
 
 
-def test_status_command_does_not_initialize_missing_runtime_state(tmp_path, capsys):
+def test_status_command_does_not_initialize_missing_runtime_state(tmp_path):
     ws = _minimal_workspace(tmp_path / "ws")
     paths = runtime_state_paths(ws)
 
-    rc = main(["status", "--workspace", str(ws), "--json"])
-
-    assert rc == 0
-    payload = json.loads(capsys.readouterr().out)
+    payload = status_module.build_workspace_status(ws)
     assert payload["read_only"] is True
     assert payload["runtime"]["present"] is False
     assert payload["progress"]["status"] == "not_started"
@@ -1375,7 +1347,7 @@ def test_status_command_does_not_initialize_missing_runtime_state(tmp_path, caps
         assert not path.exists()
 
 
-def test_status_timing_is_unknown_when_workflow_state_missing_even_with_event_log(tmp_path, capsys):
+def test_status_timing_is_unknown_when_workflow_state_missing_even_with_event_log(tmp_path):
     ws = _minimal_workspace(tmp_path / "ws")
     paths = runtime_state_paths(ws)
     paths["event_log"].parent.mkdir(parents=True, exist_ok=True)
@@ -1420,10 +1392,7 @@ def test_status_timing_is_unknown_when_workflow_state_missing_even_with_event_lo
         encoding="utf-8",
     )
 
-    rc = main(["status", "--workspace", str(ws), "--json"])
-
-    assert rc == 0
-    payload = json.loads(capsys.readouterr().out)
+    payload = status_module.build_workspace_status(ws)
     assert payload["workflow"]["present"] is False
     assert payload["timing"]["status"] == "unknown"
     assert payload["timing"]["run_integrity"]["status"] == "unknown"
@@ -1431,7 +1400,7 @@ def test_status_timing_is_unknown_when_workflow_state_missing_even_with_event_lo
     assert "run_integrity_unknown" in payload["timing"]["warnings"]
 
 
-def test_status_command_reports_corrupt_event_log_without_writing(tmp_path, capsys):
+def test_status_command_reports_corrupt_event_log_without_writing(tmp_path):
     ws = _minimal_workspace(tmp_path / "ws")
     event_log = ws / "output" / "intermediate" / "event_log.jsonl"
     event_log.parent.mkdir(parents=True)
@@ -1439,10 +1408,7 @@ def test_status_command_reports_corrupt_event_log_without_writing(tmp_path, caps
     before = event_log.read_bytes()
     before_mtime = event_log.stat().st_mtime_ns
 
-    rc = main(["status", "--workspace", str(ws), "--json"])
-
-    assert rc == 0
-    payload = json.loads(capsys.readouterr().out)
+    payload = status_module.build_workspace_status(ws)
     assert payload["events"]["corrupt_count"] == 1
     assert payload["progress"]["status"] == "needs_operator_action"
     assert payload["progress"]["current_work"] == "check run record"
@@ -1452,7 +1418,7 @@ def test_status_command_reports_corrupt_event_log_without_writing(tmp_path, caps
     assert event_log.stat().st_mtime_ns == before_mtime
 
 
-def test_status_command_reports_invalid_utf8_event_log_without_writing(tmp_path, capsys):
+def test_status_command_reports_invalid_utf8_event_log_without_writing(tmp_path):
     ws = _minimal_workspace(tmp_path / "ws")
     event_log = ws / "output" / "intermediate" / "event_log.jsonl"
     event_log.parent.mkdir(parents=True)
@@ -1460,10 +1426,7 @@ def test_status_command_reports_invalid_utf8_event_log_without_writing(tmp_path,
     before = event_log.read_bytes()
     before_mtime = event_log.stat().st_mtime_ns
 
-    rc = main(["status", "--workspace", str(ws), "--json"])
-
-    assert rc == 0
-    payload = json.loads(capsys.readouterr().out)
+    payload = status_module.build_workspace_status(ws)
     assert payload["events"]["corrupt_count"] == 1
     assert payload["progress"]["status"] == "needs_operator_action"
     assert payload["progress"]["current_work"] == "check run record"
@@ -1473,7 +1436,7 @@ def test_status_command_reports_invalid_utf8_event_log_without_writing(tmp_path,
     assert event_log.stat().st_mtime_ns == before_mtime
 
 
-def test_status_command_reports_malformed_quality_gate_as_unknown(tmp_path, capsys):
+def test_status_command_reports_malformed_quality_gate_as_unknown(tmp_path):
     ws = _minimal_workspace(tmp_path / "ws")
     quality_gate = ws / "output" / "intermediate" / "quality_gate_report.json"
     quality_gate.parent.mkdir(parents=True)
@@ -1491,10 +1454,7 @@ def test_status_command_reports_malformed_quality_gate_as_unknown(tmp_path, caps
     )
     before = quality_gate.read_bytes()
 
-    rc = main(["status", "--workspace", str(ws), "--json"])
-
-    assert rc == 0
-    payload = json.loads(capsys.readouterr().out)
+    payload = status_module.build_workspace_status(ws)
     assert payload["quality_gate"]["present"] is True
     assert payload["quality_gate"]["status"] == "unknown"
     assert payload["quality_gate"]["raw_status"] == "pass"

@@ -4,6 +4,7 @@ from datetime import date
 import hashlib
 import json
 from pathlib import Path
+import sys
 
 import pytest
 import yaml
@@ -601,6 +602,28 @@ def test_source_planner_writes_only_artifact_and_host_derives_accept_request(
         encoding="utf-8",
     )
 
+    if sys.platform == "win32":
+        # Windows publication boundary: the artifact accept is fail-closed
+        # before any Store write; supported platforms keep the full proof.
+        with SQLiteControlStore.open(workspace / "briefloop.db") as store:
+            before_revision = store.current_revision
+        assert (
+            main(
+                [
+                    "runtime",
+                    "invocation-accept",
+                    "--workspace",
+                    str(workspace),
+                    "--envelope",
+                    str(_envelope_path(workspace, envelope)),
+                ]
+            )
+            == 1
+        )
+        assert "checkout_publication_unsupported" in capsys.readouterr().out
+        with SQLiteControlStore.open(workspace / "briefloop.db") as store:
+            assert store.current_revision == before_revision
+        return
     assert (
         main(
             [
@@ -716,6 +739,28 @@ def test_deterministic_source_failure_exhausts_frozen_route_without_retry(
         "version: 1\ncandidates:\n  - route: web-search\n",
         encoding="utf-8",
     )
+    if sys.platform == "win32":
+        # Windows publication boundary: the artifact accept is fail-closed
+        # before any Store write; supported platforms keep the full proof.
+        with SQLiteControlStore.open(workspace / "briefloop.db") as store:
+            before_revision = store.current_revision
+        assert (
+            main(
+                [
+                    "runtime",
+                    "invocation-accept",
+                    "--workspace",
+                    str(workspace),
+                    "--envelope",
+                    str(_envelope_path(workspace, planner)),
+                ]
+            )
+            == 1
+        )
+        assert "checkout_publication_unsupported" in capsys.readouterr().out
+        with SQLiteControlStore.open(workspace / "briefloop.db") as store:
+            assert store.current_revision == before_revision
+        return
     assert (
         main(
             [
@@ -897,6 +942,28 @@ def test_cached_source_acquisition_is_claims_eligible_and_completes_discovery(
         "version: 1\ncandidates:\n  - route: cached_package\n",
         encoding="utf-8",
     )
+    if sys.platform == "win32":
+        # Windows publication boundary: the artifact accept is fail-closed
+        # before any Store write; supported platforms keep the full proof.
+        with SQLiteControlStore.open(workspace / "briefloop.db") as store:
+            before_revision = store.current_revision
+        assert (
+            main(
+                [
+                    "runtime",
+                    "invocation-accept",
+                    "--workspace",
+                    str(workspace),
+                    "--envelope",
+                    str(_envelope_path(workspace, planner)),
+                ]
+            )
+            == 1
+        )
+        assert "checkout_publication_unsupported" in capsys.readouterr().out
+        with SQLiteControlStore.open(workspace / "briefloop.db") as store:
+            assert store.current_revision == before_revision
+        return
     assert (
         main(
             [
@@ -957,6 +1024,28 @@ cached_package:
         "version: 1\ncandidates:\n  - route: cached_package\n",
         encoding="utf-8",
     )
+    if sys.platform == "win32":
+        # Windows publication boundary: the artifact accept is fail-closed
+        # before any Store write; supported platforms keep the full proof.
+        with SQLiteControlStore.open(workspace / "briefloop.db") as store:
+            before_revision = store.current_revision
+        assert (
+            main(
+                [
+                    "runtime",
+                    "invocation-accept",
+                    "--workspace",
+                    str(workspace),
+                    "--envelope",
+                    str(_envelope_path(workspace, planner)),
+                ]
+            )
+            == 1
+        )
+        assert "checkout_publication_unsupported" in capsys.readouterr().out
+        with SQLiteControlStore.open(workspace / "briefloop.db") as store:
+            assert store.current_revision == before_revision
+        return
     assert (
         main(
             [
