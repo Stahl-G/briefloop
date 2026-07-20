@@ -473,11 +473,44 @@ jobs:
       - name: Doctor check
         run: cd /tmp/mabw-llm && briefloop doctor --config config.yaml
 
-      - name: Sources decide (template)
-        run: cd /tmp/mabw-llm && briefloop sources decide --config config.yaml
+      - name: Source planning through the runtime host
+        run: |
+          cd /tmp/mabw-llm
+          briefloop run --workspace . --runtime codex
+          briefloop runtime next --workspace . | grep '"effect_kind":"doctor_check"'
+          briefloop runtime next --workspace . > runtime_action.json
+          briefloop runtime apply --workspace . --action runtime_action.json
+          briefloop runtime next --workspace . | grep '"effect_kind":"role_proposal"'
+          briefloop runtime invocation-start --workspace . > envelope.json
+          SCRATCH=$(python -c "import json; print(json.load(open('envelope.json'))['scratch_directory'])")
+          printf 'version: 1\ncandidates:\n  - route: manual\n' > "$SCRATCH/source_candidates.yaml"
+          briefloop runtime invocation-accept --workspace . --envelope "$SCRATCH/role_task_envelope.json"
+          python - <<'PY'
+          from pathlib import Path
+          from multi_agent_brief.control_store import SQLiteControlStore
+          from multi_agent_brief.runtime_host_v2.initialization import initialize_or_open_runtime
+          from multi_agent_brief.runtime_host_v2.codex import load_codex_adapter_binding
 
-      - name: Assert source_candidates.yaml exists
-        run: test -s /tmp/mabw-llm/source_candidates.yaml
+          runtime = initialize_or_open_runtime(Path("."), adapter_loader=load_codex_adapter_binding)
+          snapshot = runtime.verified.snapshot
+          artifact = next(a for a in snapshot.artifacts if a.artifact_id == "source_candidates")
+          assert artifact.current_revision == 1
+          with SQLiteControlStore.open(Path("briefloop.db")) as store:
+              data = store.read_artifact_revision_bytes(snapshot.run.run_id, "source_candidates", 1)
+          assert b"route: manual" in data
+          PY
+
+      - name: Retired sources decide CLI is rejected without writes
+        run: |
+          cd /tmp/mabw-llm
+          set +e
+          out=$(briefloop sources decide --config config.yaml 2>&1)
+          rc=$?
+          set -e
+          echo "$out"
+          test "$rc" -eq 1
+          test "$out" = "runtime_command_unsupported"
+          test ! -e source_candidates.yaml
 
       - name: Add input and assert prepare stays removed
         run: |
