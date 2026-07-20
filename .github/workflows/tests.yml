@@ -503,6 +503,7 @@ jobs:
       - name: Retired sources decide CLI is rejected without writes
         run: |
           cd /tmp/mabw-llm
+          before=$(find . -type f -exec shasum -a 256 {} + | sort | shasum -a 256 | cut -d' ' -f1)
           set +e
           out=$(briefloop sources decide --config config.yaml 2>&1)
           rc=$?
@@ -510,7 +511,8 @@ jobs:
           echo "$out"
           test "$rc" -eq 1
           test "$out" = "runtime_command_unsupported"
-          test ! -e source_candidates.yaml
+          after=$(find . -type f -exec shasum -a 256 {} + | sort | shasum -a 256 | cut -d' ' -f1)
+          test "$before" = "$after"
 
       - name: Add input and assert prepare stays removed
         run: |
