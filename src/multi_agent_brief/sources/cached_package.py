@@ -88,6 +88,7 @@ class CachedPackageProvider(SourceProvider):
                             source_type="cached",
                             title=entry[:80],
                             content=entry,
+                            metadata={"path": str(path)},
                         ))
             else:
                 items.append(self._dict_to_source_item(data, path))

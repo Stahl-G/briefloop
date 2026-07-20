@@ -172,36 +172,6 @@ This is a synthetic demo workspace for validating the reference workflow.
 All data is public-safe and fabricated for testing purposes.
 """
 
-DEMO_CONFIG = """project:
-  name: "Synthetic Market Brief Demo"
-  language: "en-US"
-  audience: "management"
-
-report:
-  date: "auto"
-  max_source_age_days: 14
-  fail_on_stale_source: true
-
-input:
-  path: "input"
-
-output:
-  path: "output"
-  formats:
-    - "markdown"
-    - "docx"
-  filename_template: "{project_name}_{report_date}"
-  named_outputs: true
-
-# Relaxed quality thresholds for synthetic demo workspace.
-# Production weekly briefs should NOT set these overrides.
-brief_quality:
-  quiet_week: true
-  allow_quiet_week_exception: true
-  expected_summary_bullets: null
-  required_metadata_labels: []
-"""
-
 WORKSPACE_GITIGNORE = """.env
 .env.*
 output/
@@ -337,7 +307,48 @@ def missing_required_direct_init_args(args: Any) -> list[str]:
     return missing
 
 
-def create_demo_workspace(target: Path, *, force: bool = False) -> None:
+def create_demo_workspace(
+    target: Path,
+    *,
+    force: bool = False,
+    report_date_factory: Callable[[], date] = date.today,
+    identity_factory: Callable[[], str] | None = None,
+) -> None:
+    if identity_factory is None:
+        identity_factory = _new_controlstore_identity
+    profile = InitProfile(
+        interface_language="en-US",
+        output_language="en-US",
+        company="Synthetic Corp",
+        role="strategy_office",
+        industry="manufacturing",
+        industry_text="Manufacturing & Industrial",
+        brief_title="Synthetic Market Brief Demo",
+        audience="management",
+        audience_profile="management",
+        focus_areas=[
+            "Manufacturing output and capacity trends",
+            "Trade regulation and policy impacts",
+            "Competitor capacity announcements",
+            "Commodity pricing and supply chain conditions",
+        ],
+        task_objective=(
+            "Validate the public-safe reference workflow with synthetic data."
+        ),
+        cadence="weekly",
+        output_formats=["markdown", "docx"],
+        source_profile="conservative",
+        web_search_enabled=False,
+        web_search_mode="disabled",
+    )
+    from multi_agent_brief.workspace.init_profile import build_controlstore_bootstrap
+
+    bootstrap = build_controlstore_bootstrap(
+        profile,
+        workspace_id=f"WS-{identity_factory()}",
+        run_id=f"RUN-{identity_factory()}",
+        report_date=report_date_factory(),
+    )
     input_dir = target / "input"
     sources_dir = input_dir / "sources"
     output_dir = target / "output"
@@ -347,7 +358,12 @@ def create_demo_workspace(target: Path, *, force: bool = False) -> None:
     for subdir in ("feedback", "instructions", "context"):
         (input_dir / subdir).mkdir(parents=True, exist_ok=True)
     files = {
-        target / "config.yaml": DEMO_CONFIG,
+        target / "config.yaml": to_yaml(
+            build_config(
+                profile,
+                controlstore_bootstrap=bootstrap.model_dump(mode="json", exclude_unset=False),
+            )
+        ),
         target / "sources.yaml": DEMO_SOURCES,
         target / "user.md": DEMO_USER_MD,
         target / "audience_profile.md": build_default_audience_profile(
