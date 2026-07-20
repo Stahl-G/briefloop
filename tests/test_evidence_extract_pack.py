@@ -642,7 +642,7 @@ def test_extract_public_cli_is_retired_with_zero_mutation(
     capsys.readouterr()
     before = _workspace_file_bytes(workspace)
 
-    # LEGACY-DELETE: retired public `extract` CLI; the typed zero-write
+    # retired public `extract` CLI; the typed zero-write
     # rejection guard disappears with the legacy command surface.
     assert (
         main(

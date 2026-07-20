@@ -66,7 +66,7 @@ def test_sources_public_cli_is_retired_with_typed_rejection_and_zero_writes(
     rc = main(["sources", *subcommand_args, "--workspace", str(ws)])
     captured = capsys.readouterr()
 
-    # LEGACY-DELETE: retired public `sources ...` operator surface; the
+    # retired public `sources ...` operator surface; the
     # workspace authority guard rejects it before dispatch with zero writes.
     assert rc == 1
     assert captured.out == "runtime_command_unsupported\n"
@@ -203,7 +203,7 @@ def test_sources_add_web_search_is_runtime_handoff_only(tmp_path: Path) -> None:
         recency_days=7,
     )
     assert payload["ok"] is True
-    # LEGACY-DELETE: the retired CLI printed the handoff boundary line; the
+    # the retired CLI printed the handoff boundary line; the
     # direct payload carries the same boundary and non-claims.
     assert payload["boundary"] == "runtime_web_search_handoff_only"
     assert "no_python_web_search_execution" in payload["non_claims"]

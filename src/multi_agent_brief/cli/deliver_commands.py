@@ -130,55 +130,17 @@ def register(subparsers: argparse._SubParsersAction) -> None:
 
 
 def handle(args: argparse.Namespace) -> int:
-    target = getattr(args, "target", "local") or "local"
-    channel = getattr(args, "channel", None) or ("local" if target == "local" else "")
-    try:
-        payload = deliver_workspace(
-            workspace=args.workspace,
-            target=target,
-            channel=channel,
-            recipient=getattr(args, "recipient", None) or "",
-            subject=getattr(args, "subject", None) or "",
-            body=getattr(args, "body", None) or "",
-        )
-    except DeliverCommandError as exc:
-        payload = exc.to_payload()
-        payload["target"] = payload.get("target") or target
-        payload["channel"] = payload.get("channel") or channel
-        if getattr(args, "json", False):
-            print(json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True))
-        else:
-            print(f"[deliver] Error: {exc}", file=sys.stderr)
-        return 1
+    """Fail-closed stub for the retired public `deliver` CLI surface.
 
-    if getattr(args, "json", False):
-        print(json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True))
-    elif target == "local":
-        print("[deliver] Delivery bundle ready:")
-        for artifact in payload["delivery_artifacts"]:
-            print(f"  - {artifact}")
-        print("[deliver] Internal audit/control records remain under output/intermediate/.")
-        _print_run_integrity_warning(payload)
-    elif target == "gmail":
-        if payload.get("sent"):
-            print(f"[deliver] Gmail message sent for {payload['artifact']}")
-        else:
-            print(f"[deliver] Gmail draft created for {payload['artifact']}")
-        _print_run_integrity_warning(payload)
-    else:
-        suffix = f" {payload['channel']}" if payload.get("channel") else ""
-        url = payload.get("url") or ""
-        if url:
-            print(f"[deliver] Delivered to {payload['target']}{suffix}: {url}")
-        else:
-            print(f"[deliver] Delivered to {payload['target']}{suffix}: {payload['artifact']}")
-        if payload.get("event_recorded") is False:
-            print(
-                "[deliver] Warning: delivery succeeded but delivery_succeeded event was not recorded; do not retry blindly.",
-                file=sys.stderr,
-            )
-        _print_run_integrity_warning(payload)
-    return 0
+    The parser registration is retained so the authority guard can return
+    the typed rejection for workspace invocations; any no-workspace bypass
+    lands here instead of executing legacy code. The connector execution
+    layer below (deliver_workspace and helpers) is retained as the tested
+    direct seam; approval and delivery run through typed Store actions.
+    """
+
+    print("runtime_command_unsupported")
+    return 1
 
 
 def deliver_workspace(

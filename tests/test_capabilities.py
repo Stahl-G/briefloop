@@ -47,7 +47,7 @@ def _strict_init_args(
         "weekly",
         "--source-profile",
         source_profile,
-        # LEGACY-DELETE: retain only the strict SQLite initialization contract.
+        # retain only the strict SQLite initialization contract.
         "--task-objective",
         "Prepare the weekly operations brief.",
     ]
@@ -328,7 +328,7 @@ class TestFeaturesCommand:
         )) == 0
         capsys.readouterr()
 
-        # LEGACY-DELETE: retired public `features <workspace>`; the activated
+        # retired public `features <workspace>`; the activated
         # capability invariant is asserted through the direct detect seam.
         from multi_agent_brief.sources.registry import load_sources_config
 
@@ -376,7 +376,7 @@ class TestRecommendCommand:
         )) == 0
         capsys.readouterr()
 
-        # LEGACY-DELETE: retired public `recommend <workspace>`; the
+        # retired public `recommend <workspace>`; the
         # recommendation invariant is asserted through the direct recommend seam.
         from multi_agent_brief.capabilities.recommend import (
             generate_setup_plan,
@@ -441,7 +441,7 @@ class TestRetiredWorkspaceCapabilityCommands:
             for path in ws.rglob("*")
             if path.is_file()
         }
-        # LEGACY-DELETE: retired workspace-aware features/recommend/setup
+        # retired workspace-aware features/recommend/setup
         # public CLI; capability state is read through direct provider seams.
         assert main([part.format(ws=ws) for part in argv]) == 1
         assert capsys.readouterr().out == "runtime_command_unsupported\n"

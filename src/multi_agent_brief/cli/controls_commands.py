@@ -60,78 +60,16 @@ def register(subparsers: argparse._SubParsersAction) -> None:
 
 
 def handle(args: argparse.Namespace) -> int:
-    try:
-        if args.controls_action == "build-switchboard":
-            state = build_control_switchboard(
-                workspace=args.workspace,
-                repo_workdir=getattr(args, "repo_workdir", None),
-                actor="cli",
-            )
-            _print_state("controls build-switchboard", state, as_json=getattr(args, "json", False))
-            return 0 if state.get("ok") else 1
+    """Fail-closed stub for the retired public CLI surface.
 
-        if args.controls_action == "show":
-            state = show_control_switchboard(workspace=args.workspace)
-            _print_state("controls show", state, as_json=getattr(args, "json", False))
-            return 0 if state.get("ok") else 1
+    The parser registration is retained so the authority guard can return
+    the typed rejection for workspace invocations; any no-workspace bypass
+    lands here instead of executing legacy code.
+    """
 
-        if args.controls_action == "select":
-            state = select_control(
-                workspace=args.workspace,
-                control_id=args.control,
-                selection=args.selection,
-                reason=args.reason,
-                approved_by_human=getattr(args, "approved_by_human", False),
-                human_approval_ref=getattr(args, "human_approval_ref", None),
-                actor="orchestrator",
-            )
-            _print_state("controls select", state, as_json=getattr(args, "json", False))
-            return 0 if state.get("ok") else 1
-
-        if args.controls_action == "validate":
-            result = validate_control_switchboard(
-                workspace=args.workspace,
-                strict=getattr(args, "strict", False),
-                actor="cli",
-            )
-            if getattr(args, "json", False):
-                print(json.dumps(result, ensure_ascii=False, indent=2, sort_keys=True))
-            else:
-                _print_validation(result)
-            return 0 if result.get("ok") else 1
-    except (ControlSwitchboardError, RuntimeStateError) as exc:
-        _print_error(exc, as_json=getattr(args, "json", False))
-        return 1
+    print("runtime_command_unsupported")
     return 1
 
-
-def _print_state(label: str, state: dict[str, Any], *, as_json: bool) -> None:
-    if as_json:
-        print(json.dumps(state, ensure_ascii=False, indent=2, sort_keys=True))
-        return
-    validation = state.get("validation") or {}
-    print(f"[{label}] ok: {state.get('ok')}")
-    print(f"[{label}] switchboard: {state.get('control_switchboard_path')}")
-    print(f"[{label}] selections: {state.get('control_selections_path')}")
-    print(f"[{label}] controls: {validation.get('control_count', 0)}")
-    print(f"[{label}] selections recorded: {validation.get('selection_count', 0)}")
-    for error in validation.get("errors") or []:
-        print(f"  - {error}")
-
-
-def _print_validation(result: dict[str, Any]) -> None:
-    print(f"[controls validate] ok: {result.get('ok')}")
-    print(f"[controls validate] switchboard_present: {result.get('switchboard_present')}")
-    print(f"[controls validate] selection_present: {result.get('selection_present')}")
-    print(f"[controls validate] controls: {result.get('control_count', 0)}")
-    print(f"[controls validate] selections: {result.get('selection_count', 0)}")
-    for error in result.get("errors") or []:
-        print(f"  - {error}")
-
-
-def _print_error(exc: Exception, *, as_json: bool) -> None:
-    payload = exc.to_dict() if hasattr(exc, "to_dict") else {"ok": False, "error": str(exc)}
-    if as_json:
-        print(json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True))
-    else:
-        print(f"[controls] {exc}")
+# NOTE: the public command surface of this module is retired. The
+# SQLite ControlStore is the sole runtime authority; only the parser
+# registration (typed rejections) and the stub below remain.

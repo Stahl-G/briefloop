@@ -9,7 +9,6 @@ from types import SimpleNamespace
 import pytest
 import yaml
 
-from multi_agent_brief.cli import sources_commands
 from multi_agent_brief.cli.main import main
 from multi_agent_brief.sources import web_search
 from multi_agent_brief.sources.decider import (
@@ -18,19 +17,6 @@ from multi_agent_brief.sources.decider import (
     load_source_discovery,
 )
 from multi_agent_brief.sources.search_backends.base import SearchResult
-
-
-def _decide_args(config_path: Path, *, search: bool = True) -> SimpleNamespace:
-    """Namespace matching the `sources decide` parser defaults for the direct seam."""
-    return SimpleNamespace(
-        config=str(config_path),
-        search=search,
-        daily_news_backfill=False,
-        backfill_days=None,
-        daily_max_results=None,
-        merge=False,
-        candidates=None,
-    )
 
 
 class FakeSearchBackend:
@@ -276,162 +262,15 @@ class TestB02CLISearchIntegration:
                 "B02 FAIL: candidate source missing 'query' field"
             )
 
-    def test_sources_decide_search_uses_workspace_env_key(self, tmp_path, monkeypatch, capsys):
-        """CLI search must use the same workspace .env key path as provider validation."""
-        monkeypatch.delenv("TAVILY_API_KEY", raising=False)
-        monkeypatch.setitem(web_search._KNOWN_BACKENDS, "tavily", EnvCliSearchBackend)
-        ws = tmp_path / "ws"
-        ws.mkdir()
-        (ws / ".env").write_text("TAVILY_API_KEY=workspace-cli-secret\n", encoding="utf-8")
-        (ws / "config.yaml").write_text(
-            "project:\n  name: test\ninput:\n  path: input\noutput:\n  path: output\n",
-            encoding="utf-8",
-        )
-        (ws / "sources.yaml").write_text(
-            "source_strategy:\n"
-            "  profile: research\n"
-            "  enabled_providers: [web_search]\n"
-            "web_search:\n"
-            "  enabled: true\n"
-            "  mode: external_api\n"
-            "  backend: tavily\n"
-            "source_discovery:\n"
-            "  company: TestCo\n"
-            "  industry: manufacturing\n"
-            "  topics: [policy]\n"
-            "  queries:\n"
-            "    - test query\n",
-            encoding="utf-8",
-        )
-
-        # LEGACY-DELETE: retired public `sources decide --search` CLI; the
-        # search-execution invariants run through the direct decider seam.
-        rc = sources_commands._sources_decide(_decide_args(ws / "config.yaml"))
-
-        captured = capsys.readouterr()
-        assert rc == 0
-        assert "workspace-cli-secret" not in captured.out
-        assert "Workspace env CLI result" in (ws / "source_candidates.yaml").read_text(encoding="utf-8")
-        assert os.environ.get("TAVILY_API_KEY") is None
-
-    def test_sources_decide_search_rejects_invalid_web_search_modes(self, tmp_path, monkeypatch, capsys):
-        """--search must reuse web_search validation and require external_api mode."""
-        monkeypatch.setitem(web_search._KNOWN_BACKENDS, "tavily", EnvCliSearchBackend)
-        invalid_configs = [
-            "web_search:\n"
-            "  enabled: true\n"
-            "  backend: tavily\n",
-            "web_search:\n"
-            "  enabled: true\n"
-            "  mode: runtime_tool\n"
-            "  backend: tavily\n",
-            "web_search:\n"
-            "  enabled: true\n"
-            "  mode: disabled\n"
-            "  backend: tavily\n",
-            "web_search:\n"
-            "  enabled: false\n"
-            "  mode: external_api\n"
-            "  backend: tavily\n",
-        ]
-        for idx, web_search_yaml in enumerate(invalid_configs):
-            ws = tmp_path / f"ws-invalid-{idx}"
-            ws.mkdir()
-            (ws / ".env").write_text("TAVILY_API_KEY=workspace-cli-secret\n", encoding="utf-8")
-            (ws / "config.yaml").write_text(
-                "project:\n  name: test\ninput:\n  path: input\noutput:\n  path: output\n",
-                encoding="utf-8",
-            )
-            (ws / "sources.yaml").write_text(
-                "source_strategy:\n"
-                "  profile: research\n"
-                "  enabled_providers: [web_search]\n"
-                f"{web_search_yaml}"
-                "source_discovery:\n"
-                "  company: TestCo\n"
-                "  industry: manufacturing\n"
-                "  topics: [policy]\n"
-                "  queries:\n"
-                "    - test query\n",
-                encoding="utf-8",
-            )
-
-            # LEGACY-DELETE: retired public `sources decide --search` CLI; the
-            # search-execution invariants run through the direct decider seam.
-            rc = sources_commands._sources_decide(_decide_args(ws / "config.yaml"))
-
-            captured = capsys.readouterr()
-            assert rc == 1
-            assert "valid external_api web_search configuration" in captured.out
-            assert not (ws / "source_candidates.yaml").exists()
-
-    def test_sources_decide_search_all_queries_failed_writes_no_candidates(self, tmp_path, monkeypatch, capsys):
-        """If every backend request fails, the CLI must fail instead of writing a plan."""
-        monkeypatch.setitem(web_search._KNOWN_BACKENDS, "tavily", FailingCliSearchBackend)
-        ws = tmp_path / "ws"
-        ws.mkdir()
-        (ws / "config.yaml").write_text(
-            "project:\n  name: test\ninput:\n  path: input\noutput:\n  path: output\n",
-            encoding="utf-8",
-        )
-        (ws / "sources.yaml").write_text(
-            "source_strategy:\n"
-            "  profile: research\n"
-            "  enabled_providers: [web_search]\n"
-            "web_search:\n"
-            "  enabled: true\n"
-            "  mode: external_api\n"
-            "  backend: tavily\n"
-            "source_discovery:\n"
-            "  company: TestCo\n"
-            "  industry: manufacturing\n"
-            "  topics: [policy]\n"
-            "  queries:\n"
-            "    - failing query\n",
-            encoding="utf-8",
-        )
-
-        # LEGACY-DELETE: retired public `sources decide --search` CLI; the
-        # search-execution invariants run through the direct decider seam.
-        rc = sources_commands._sources_decide(_decide_args(ws / "config.yaml"))
-
-        captured = capsys.readouterr()
-        assert rc == 1
-        assert "All configured search queries failed" in captured.out
-        assert not (ws / "source_candidates.yaml").exists()
-
-    def test_sources_decide_search_all_queries_zero_results_writes_no_candidates(self, tmp_path, monkeypatch, capsys):
-        """If every backend request returns zero results, the CLI must fail instead of writing a plan."""
-        monkeypatch.setitem(web_search._KNOWN_BACKENDS, "tavily", EmptyCliSearchBackend)
-        ws = tmp_path / "ws"
-        ws.mkdir()
-        (ws / "config.yaml").write_text(
-            "project:\n  name: test\ninput:\n  path: input\noutput:\n  path: output\n",
-            encoding="utf-8",
-        )
-        (ws / "sources.yaml").write_text(
-            "source_strategy:\n"
-            "  profile: research\n"
-            "  enabled_providers: [web_search]\n"
-            "web_search:\n"
-            "  enabled: true\n"
-            "  mode: external_api\n"
-            "  backend: tavily\n"
-            "source_discovery:\n"
-            "  company: TestCo\n"
-            "  industry: manufacturing\n"
-            "  topics: [policy]\n"
-            "  queries:\n"
-            "    - empty query\n",
-            encoding="utf-8",
-        )
-
-        # LEGACY-DELETE: retired public `sources decide --search` CLI; the
-        # search-execution invariants run through the direct decider seam.
-        rc = sources_commands._sources_decide(_decide_args(ws / "config.yaml"))
-
-        captured = capsys.readouterr()
-        assert rc == 1
-        assert "[0 results]" in captured.out
-        assert "returned zero results" in captured.out
-        assert not (ws / "source_candidates.yaml").exists()
+    # LD-1 TD citations for the removed rows above:
+    # - test_sources_decide_search_uses_workspace_env_key: TD-2, env-key path
+    #   owned by test_source_providers.py web_search env/backend rows.
+    # - test_sources_decide_search_rejects_invalid_web_search_modes: TD-2,
+    #   mode validation owned by test_source_providers.py
+    #   test_web_search_disabled_returns_empty /
+    #   test_web_search_external_api_without_backend_returns_registry_error /
+    #   test_web_search_runtime_tool_rejects_backend_configuration.
+    # - test_sources_decide_search_all_queries_failed/zero_results_writes_no_candidates:
+    #   TD-1, their subject (the retired `_sources_decide` mechanism) was
+    #   deleted in LEGACY-DELETE; provider failure behavior is covered by the
+    #   provider test suite.

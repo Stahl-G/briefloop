@@ -98,95 +98,16 @@ def register(subparsers: argparse._SubParsersAction) -> None:
 
 
 def handle(args: argparse.Namespace) -> int:
-    try:
-        if args.feedback_action == "ingest":
-            state = ingest_feedback(
-                workspace=args.workspace,
-                feedback_path=args.feedback,
-                source=args.source,
-                stage_id=getattr(args, "stage", None),
-                artifact_id=getattr(args, "artifact", None),
-                category=getattr(args, "category", None),
-                severity=getattr(args, "severity", None),
-                repo_workdir=getattr(args, "repo_workdir", None),
-            )
-            _print_state("feedback ingest", state, as_json=getattr(args, "json", False))
-            return 0
+    """Fail-closed stub for the retired public CLI surface.
 
-        if args.feedback_action == "plan":
-            state = plan_feedback(
-                workspace=args.workspace,
-                repo_workdir=getattr(args, "repo_workdir", None),
-            )
-            _print_state("feedback plan", state, as_json=getattr(args, "json", False))
-            return 0
+    The parser registration is retained so the authority guard can return
+    the typed rejection for workspace invocations; any no-workspace bypass
+    lands here instead of executing legacy code.
+    """
 
-        if args.feedback_action == "resolve":
-            state = resolve_feedback(
-                workspace=args.workspace,
-                issue_id=args.issue_id,
-                repair_plan_id=args.repair_plan_id,
-                reason=args.reason,
-                delta_audit=getattr(args, "delta_audit", None),
-                repo_workdir=getattr(args, "repo_workdir", None),
-            )
-            _print_state("feedback resolve", state, as_json=getattr(args, "json", False))
-            return 0
-
-        if args.feedback_action == "show":
-            state = show_feedback_state(
-                workspace=args.workspace,
-                repo_workdir=getattr(args, "repo_workdir", None),
-            )
-            _print_state("feedback show", state, as_json=getattr(args, "json", False))
-            return 0 if state.get("ok") else 1
-
-        if args.feedback_action == "validate":
-            result = validate_feedback_workspace(
-                workspace=args.workspace,
-                repo_workdir=getattr(args, "repo_workdir", None),
-            )
-            if getattr(args, "json", False):
-                print(json.dumps(result, ensure_ascii=False, indent=2, sort_keys=True))
-            else:
-                _print_validation(result)
-            return 0 if result.get("ok") else 1
-    except (RuntimeStateError, FeedbackContractError) as exc:
-        _print_error(exc, as_json=getattr(args, "json", False))
-        return 1
-
+    print("runtime_command_unsupported")
     return 1
 
-
-def _print_state(label: str, state: dict[str, Any], *, as_json: bool) -> None:
-    if as_json:
-        print(json.dumps(state, ensure_ascii=False, indent=2, sort_keys=True))
-        return
-    issues = (state.get("feedback_issues") or {}).get("issues") or []
-    plans = (state.get("repair_plan") or {}).get("repair_plans") or []
-    validation = state.get("validation") or {}
-    print(f"[{label}] issues: {len(issues)}")
-    print(f"[{label}] repair_plans: {len(plans)}")
-    print(f"[{label}] valid: {validation.get('ok')}")
-    print(f"[{label}] triage: {validation.get('triage_count', 0)}")
-    if validation.get("errors"):
-        for error in validation.get("errors") or []:
-            print(f"  - {error}")
-
-
-def _print_validation(result: dict[str, Any]) -> None:
-    print(f"[feedback validate] ok: {result.get('ok')}")
-    print(f"[feedback validate] issue_count: {result.get('issue_count', 0)}")
-    print(f"[feedback validate] triage_count: {result.get('triage_count', 0)}")
-    print(f"[feedback validate] blocking_triage_count: {result.get('blocking_triage_count', 0)}")
-    print(f"[feedback validate] repair_plan_count: {result.get('repair_plan_count', 0)}")
-    for error in result.get("errors") or []:
-        print(f"  - {error}")
-
-
-def _print_error(exc: Exception, *, as_json: bool) -> None:
-    payload = exc.to_dict() if hasattr(exc, "to_dict") else {"ok": False, "error": str(exc)}
-    if as_json:
-        print(json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True))
-    else:
-        print(f"[feedback] {exc}")
+# NOTE: the public command surface of this module is retired. The
+# SQLite ControlStore is the sole runtime authority; only the parser
+# registration (typed rejections) and the stub below remain.

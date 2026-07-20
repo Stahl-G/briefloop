@@ -93,7 +93,7 @@ def test_improve_cli_public_surface_is_retired_without_writes(tmp_path, capsys, 
 
     rc = main([*command, "--workspace", str(ws)])
 
-    # LEGACY-DELETE: retired public `improve` CLI; the Improvement Ledger is
+    # retired public `improve` CLI; the Improvement Ledger is
     # driven through the deterministic improvement.state/memory seams below.
     assert rc == 1
     assert capsys.readouterr().out == "runtime_command_unsupported\n"

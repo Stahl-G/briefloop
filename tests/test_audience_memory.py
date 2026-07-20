@@ -58,7 +58,7 @@ manual:
 
 
 def _run_operator_handoff(ws: Path) -> None:
-    # LEGACY-DELETE: retired public `run --runtime operator` launcher; the
+    # retired public `run --runtime operator` launcher; the
     # audience-memory handoff chain is driven through the direct deterministic
     # orchestrator module seam instead of the retired public CLI.
     handoff = build_handoff(
@@ -308,7 +308,7 @@ def test_retired_operator_public_surfaces_reject_without_writes(tmp_path, capsys
 
         rc = main(argv_for(ws))
 
-        # LEGACY-DELETE: retired public `run --runtime operator`, `state`, and
+        # retired public `run --runtime operator`, `state`, and
         # `inputs classify` surfaces; the Codex SQLite ControlStore runtime is
         # the sole runtime authority.
         assert rc == 1

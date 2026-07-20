@@ -701,7 +701,7 @@ def _emit_experiment_payload(payload: dict, *, ok: bool) -> int:
 
 
 def _invoke_experiment(operation, /, **kwargs) -> int:
-    # LEGACY-DELETE: retired public `experiments 080 ...` CLI dispatch; tests
+    # retired public `experiments 080 ...` CLI dispatch; tests
     # drive the deterministic multi_agent_brief.experiments module seam
     # directly with the same return-code/JSON-payload contract.
     try:
@@ -1162,7 +1162,7 @@ def test_experiments_080_validate_case_is_read_only(tmp_path, capsys):
 
 
 def test_experiments_080_public_cli_workspace_surfaces_are_retired(tmp_path, capsys):
-    # LEGACY-DELETE: retired public `experiments 080 scaffold-condition`,
+    # retired public `experiments 080 scaffold-condition`,
     # `experiments 080 register-run`, `finalize`, and `state finalize-complete`
     # workspace surfaces; the deterministic experiments module seam and the
     # runtime_state completion seam carry the invariants, while the workspace

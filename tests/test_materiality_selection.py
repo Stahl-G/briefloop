@@ -63,7 +63,7 @@ def _workspace(tmp_path: Path, *, with_policy: bool = True) -> Path:
             ),
             encoding="utf-8",
         )
-    # LEGACY-DELETE: retired public `state init --runtime operator` bootstrap;
+    # retired public `state init --runtime operator` bootstrap;
     # the projections under test read workspace files through direct
     # deterministic seams and need no runtime-state scaffold.
     (ws / "output" / "intermediate").mkdir(parents=True, exist_ok=True)
@@ -395,7 +395,7 @@ def test_state_init_operator_public_surface_is_retired_without_writes(tmp_path: 
 
     rc = main(["state", "init", "--runtime", "operator", "--workspace", str(ws)])
 
-    # LEGACY-DELETE: retired public `state init --runtime operator` bootstrap
+    # retired public `state init --runtime operator` bootstrap
     # surface and its output/intermediate runtime-state artifacts; the Codex
     # SQLite ControlStore runtime is the sole runtime authority.
     assert rc == 1

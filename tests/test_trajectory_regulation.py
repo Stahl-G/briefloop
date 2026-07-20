@@ -124,7 +124,7 @@ def test_state_operator_cli_is_retired_with_typed_rejection(tmp_path: Path, caps
     )
 
     for argv in retired_commands:
-        # LEGACY-DELETE: retired public `state` operator CLI; typed rejection
+        # retired public `state` operator CLI; typed rejection
         # with zero writes replaces the pre-CX stage/decision transactions.
         assert main(list(argv)) == 1
         assert capsys.readouterr().out == "runtime_command_unsupported\n"
@@ -193,7 +193,7 @@ def test_trajectory_regulation_enforces_retry_budget_decision_narrowing(tmp_path
     assert source_stage["recommended_decision"] == "request_human_review"
     assert source_stage["reasons"] == ["retry_budget_exhausted"]
     assert source_stage["exhausted_attempt_budget"] is True
-    # LEGACY-DELETE: workflow_state decision narrowing
+    # workflow_state decision narrowing
     # (workflow["trajectory_regulation"] / next_allowed_decisions) and the
     # "[status] trajectory_*" formatter lines belonged to the retired
     # `state decide` operator path; the read-only projection carries the
@@ -271,7 +271,7 @@ def test_trajectory_regulation_corrupt_event_log_is_not_ok(tmp_path: Path) -> No
     assert projection["status"] == "event_log_invalid"
     assert projection["event_log_corrupt_count"] == 1
     assert projection["recommended_actions"] == []
-    # LEGACY-DELETE: status["events"]/stale_or_unknown surfacing of corrupt
+    # status["events"]/stale_or_unknown surfacing of corrupt
     # event logs belonged to the retired legacy JSON status surface.
 
 
@@ -325,7 +325,7 @@ def test_quality_panel_surfaces_trajectory_action_without_state_authority(tmp_pa
         "stage_id": "source-discovery",
         "reason": "retry_budget_exhausted",
     } in projection["recommended_actions"]
-    # LEGACY-DELETE: the retired legacy quality-panel fold-in is removed; the
+    # the retired legacy quality-panel fold-in is removed; the
     # projection itself carries the no-state-authority boundary.
     assert projection["read_only"] is True
     assert projection["runtime_effect"] == "none"

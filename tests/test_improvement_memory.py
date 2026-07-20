@@ -109,7 +109,7 @@ def test_retired_runtime_public_surfaces_rejected_without_writes(
 
     rc = main([*command, "--workspace", str(ws)])
 
-    # LEGACY-DELETE: retired operator-runtime and state public CLI surfaces;
+    # retired operator-runtime and state public CLI surfaces;
     # the invariants below are driven through the deterministic
     # handoff/runtime_state/improvement seams instead.
     assert rc == 1

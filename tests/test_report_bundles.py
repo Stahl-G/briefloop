@@ -563,7 +563,7 @@ def test_packs_bundle_cli_writes_manifest_without_copying_trace_to_delivery(
 ) -> None:
     ws = _finalized_workspace(tmp_path)
 
-    # LEGACY-DELETE: retired public `packs bundle` CLI; the manifest invariant
+    # retired public `packs bundle` CLI; the manifest invariant
     # runs through the direct deterministic bundle-projection seam.
     payload = write_report_bundle_manifest(workspace=ws)
 
@@ -606,7 +606,7 @@ def test_packs_bundle_cli_writes_clean_archives_from_manifest(
         zf.writestr("__MACOSX/._brief.md", "junk")
         zf.writestr("output/delivery/.DS_Store", "junk")
 
-    # LEGACY-DELETE: retired public `packs bundle --write-archives` CLI; the
+    # retired public `packs bundle --write-archives` CLI; the
     # archive invariant runs through the direct deterministic projection seam.
     payload = write_report_bundle_manifest(workspace=ws, write_archives=True)
 
@@ -688,7 +688,7 @@ def test_packs_bundle_rejects_manifest_output_reserved_for_archives(
             archive_path.parent.mkdir(parents=True, exist_ok=True)
             archive_path.write_bytes(b"existing zip bytes")
 
-            # LEGACY-DELETE: retired public `packs bundle --output` CLI; the
+            # retired public `packs bundle --output` CLI; the
             # reserved-output rejection runs through the direct projection seam.
             with pytest.raises(ReportBundleProjectionError, match="reserved for clean bundle archives"):
                 write_report_bundle_manifest(
@@ -706,7 +706,7 @@ def test_packs_bundle_rejects_outside_output_before_writing_archives(
     ws = _finalized_workspace(tmp_path)
     outside = tmp_path / "outside.json"
 
-    # LEGACY-DELETE: retired public `packs bundle --output` CLI; the
+    # retired public `packs bundle --output` CLI; the
     # outside-workspace fail-closed ordering runs through the direct seam.
     with pytest.raises(ReportBundleProjectionError, match="must stay inside the workspace"):
         write_report_bundle_manifest(workspace=ws, output_path=outside, write_archives=True)
@@ -745,7 +745,7 @@ def test_packs_bundle_public_cli_is_retired_with_zero_writes(tmp_path: Path, cap
         rc = main(args)
         out = capsys.readouterr().out
 
-        # LEGACY-DELETE: retired public `packs bundle` command and its typed
+        # retired public `packs bundle` command and its typed
         # legacy-workspace rejection with zero writes.
         assert rc == 1
         assert out == "legacy_workspace_unsupported\n"

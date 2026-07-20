@@ -3744,7 +3744,7 @@ def test_retired_state_cli_rejects_legacy_workspace_without_writes(tmp_path, cap
     ws = _write_workspace(tmp_path)
     initialize_runtime_state(runtime="operator", workspace=ws, repo_workdir=ROOT)
 
-    # LEGACY-DELETE: retired public `state ...` CLI surface; the deterministic
+    # retired public `state ...` CLI surface; the deterministic
     # runtime_state module seams are the only callers of these transactions.
     _assert_retired_cli_typed_rejection_without_writes(
         ws,
@@ -3757,7 +3757,7 @@ def test_state_decide_validates_decision_vocabulary(tmp_path):
     ws = _write_workspace(tmp_path)
     initialize_runtime_state(runtime="operator", workspace=ws, repo_workdir=ROOT)
 
-    # LEGACY-DELETE: retired public `state decide --json`; the decision
+    # retired public `state decide --json`; the decision
     # vocabulary invariant is driven through the deterministic record_decision seam.
     with pytest.raises(RuntimeStateError) as excinfo:
         record_decision(
@@ -3838,7 +3838,7 @@ def test_state_decide_delegate_repair_human_output_points_to_repair_transaction(
     _advance_to_auditor(ws)
     _write_editor_repair_gate_report(ws)
 
-    # LEGACY-DELETE: retired public `state decide` human output; the repair
+    # retired public `state decide` human output; the repair
     # guidance invariant is asserted on the deterministic record_decision error details.
     with pytest.raises(RuntimeStateError) as excinfo:
         record_decision(
@@ -3986,7 +3986,7 @@ def test_stage_complete_records_runtime_model_provenance_from_cli(tmp_path):
     ws = _write_workspace(tmp_path)
     initialize_runtime_state(runtime="operator", workspace=ws, repo_workdir=ROOT)
 
-    # LEGACY-DELETE: retired public `state stage-complete --json`; runtime/model
+    # retired public `state stage-complete --json`; runtime/model
     # provenance is recorded through the deterministic complete_stage_transaction seam.
     state = complete_stage_transaction(
         workspace=ws,
@@ -4122,7 +4122,7 @@ def test_stage_complete_cli_json_error_includes_error_code(tmp_path):
     ws = _write_workspace(tmp_path)
     initialize_runtime_state(runtime="operator", workspace=ws, repo_workdir=ROOT)
 
-    # LEGACY-DELETE: retired public `state stage-complete --json`; the typed
+    # retired public `state stage-complete --json`; the typed
     # error code invariant is driven through the deterministic complete_stage_transaction seam.
     with pytest.raises(RuntimeStateError) as excinfo:
         complete_stage_transaction(
@@ -6865,7 +6865,7 @@ def test_state_enrich_claim_metadata_cli_json(tmp_path):
     _write_json_artifact(ws, "claim_drafts.json", _valid_claim_drafts_payload())
     freeze_claim_ledger_transaction(workspace=ws, repo_workdir=ROOT)
 
-    # LEGACY-DELETE: retired public `state enrich-claim-metadata --json`; the
+    # retired public `state enrich-claim-metadata --json`; the
     # enrichment transaction is driven through the deterministic module seam.
     state = enrich_claim_metadata_transaction(
         workspace=ws,
@@ -7213,7 +7213,7 @@ def test_state_freeze_claim_ledger_cli_json(tmp_path):
     _set_current_stage(ws, "claim-ledger")
     _write_json_artifact(ws, "claim_drafts.json", _valid_claim_drafts_payload())
 
-    # LEGACY-DELETE: retired public `state freeze-claim-ledger --json`; the
+    # retired public `state freeze-claim-ledger --json`; the
     # freeze transaction is driven through the deterministic module seam.
     state = freeze_claim_ledger_transaction(workspace=ws, repo_workdir=ROOT)
 
@@ -7247,7 +7247,7 @@ def test_state_freeze_claim_ledger_cli_json_explains_invalid_claim_type(tmp_path
         + "\n",
     )
 
-    # LEGACY-DELETE: retired public `state freeze-claim-ledger --json`; contract
+    # retired public `state freeze-claim-ledger --json`; contract
     # diagnostics are asserted on the deterministic freeze transaction error.
     with pytest.raises(RuntimeStateError) as excinfo:
         freeze_claim_ledger_transaction(workspace=ws, repo_workdir=ROOT)
@@ -7289,7 +7289,7 @@ def test_state_freeze_claim_ledger_human_output_explains_forbidden_claim_id(tmp_
         + "\n",
     )
 
-    # LEGACY-DELETE: retired public `state freeze-claim-ledger` human output; the
+    # retired public `state freeze-claim-ledger` human output; the
     # forbidden-claim_id guidance is asserted on the deterministic freeze error details.
     with pytest.raises(RuntimeStateError) as excinfo:
         freeze_claim_ledger_transaction(workspace=ws, repo_workdir=ROOT)
@@ -8862,7 +8862,7 @@ def test_retired_repair_cli_rejects_legacy_workspace_without_writes(tmp_path, ca
     ws = _write_workspace(tmp_path)
     initialize_runtime_state(runtime="operator", workspace=ws, repo_workdir=ROOT)
 
-    # LEGACY-DELETE: retired public `repair ...` CLI surface; the deterministic
+    # retired public `repair ...` CLI surface; the deterministic
     # runtime_state repair transactions are the only callers.
     _assert_retired_cli_typed_rejection_without_writes(
         ws,
@@ -8896,7 +8896,7 @@ def test_scoped_repair_start_uses_current_finalize_route_over_stale_auditor(tmp_
     workflow = json.loads(_state_file(ws, "workflow_state").read_text(encoding="utf-8"))
     assert "active_repair" not in workflow
 
-    # LEGACY-DELETE: retired public `repair start --json`; the scoped repair
+    # retired public `repair start --json`; the scoped repair
     # start transaction is driven through the deterministic module seam.
     state = start_repair_transaction(
         workspace=ws,
@@ -9653,7 +9653,7 @@ def test_supersede_stage_rejects_clean_run_without_contamination(tmp_path):
 def test_repair_supersede_stage_cli_records_current_revision(tmp_path):
     ws, old_sha, current_sha = _contaminated_editor_artifact_workspace(tmp_path)
 
-    # LEGACY-DELETE: retired public `repair supersede-stage --json`; the supersede
+    # retired public `repair supersede-stage --json`; the supersede
     # transaction is driven through the deterministic module seam.
     state = supersede_stage_artifact_transaction(
         workspace=ws,
@@ -10845,7 +10845,7 @@ def test_finalize_complete_cli_records_runtime_model_provenance(tmp_path):
     _write_quality_gate_report(ws, stage_id="finalize")
     _write_finalize_report(ws)
 
-    # LEGACY-DELETE: retired public `state finalize-complete --json`; runtime/model
+    # retired public `state finalize-complete --json`; runtime/model
     # provenance is recorded through the deterministic complete_finalize_transaction seam.
     state = complete_finalize_transaction(
         workspace=ws,
@@ -11849,7 +11849,7 @@ def test_state_show_human_output_reports_imported_stages(tmp_path):
         repo_workdir=ROOT,
     )
 
-    # LEGACY-DELETE: retired public `state show` human output; the imported-stage
+    # retired public `state show` human output; the imported-stage
     # projection is asserted through the deterministic show_runtime_state seam.
     shown = show_runtime_state(workspace=target_ws)
 
@@ -12345,7 +12345,7 @@ def test_state_import_fact_layer_cli_outputs_json(tmp_path):
     finalized = _complete_finalized_workspace(source_ws)
     archive_manifest = source_ws / "output" / "runs" / finalized["manifest"]["run_id"] / "manifest.json"
 
-    # LEGACY-DELETE: retired public `state import-fact-layer --json`; the import
+    # retired public `state import-fact-layer --json`; the import
     # transaction is driven through the deterministic module seam.
     state = import_fact_layer_transaction(
         runtime="operator",
@@ -12694,7 +12694,7 @@ def test_state_decide_rejects_out_of_order_stage_and_leaves_workflow_unchanged(t
     initialize_runtime_state(runtime="operator", workspace=ws, repo_workdir=ROOT)
     before = json.loads(_state_file(ws, "workflow_state").read_text(encoding="utf-8"))
 
-    # LEGACY-DELETE: retired public `state decide --json`; the out-of-order
+    # retired public `state decide --json`; the out-of-order
     # rejection invariant is driven through the deterministic record_decision seam.
     with pytest.raises(RuntimeStateError) as excinfo:
         record_decision(
@@ -12852,7 +12852,7 @@ def test_state_check_strict_json_reports_event_log_integrity_error(tmp_path):
         encoding="utf-8",
     )
 
-    # LEGACY-DELETE: retired public `state check --strict --json`; the integrity
+    # retired public `state check --strict --json`; the integrity
     # error code invariant is driven through the deterministic check_runtime_state seam.
     with pytest.raises(RuntimeStateError) as excinfo:
         check_runtime_state(workspace=ws, repo_workdir=ROOT)
@@ -12997,7 +12997,7 @@ def test_state_show_json_handles_corrupted_state_without_traceback(tmp_path):
     initialize_runtime_state(runtime="operator", workspace=ws, repo_workdir=ROOT)
     _state_file(ws, "workflow_state").write_text("{broken", encoding="utf-8")
 
-    # LEGACY-DELETE: retired public `state show --json`; corrupted state surfaces
+    # retired public `state show --json`; corrupted state surfaces
     # as a typed RuntimeStateError through the deterministic show_runtime_state seam.
     with pytest.raises(RuntimeStateError) as excinfo:
         show_runtime_state(workspace=ws)

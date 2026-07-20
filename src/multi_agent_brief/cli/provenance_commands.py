@@ -48,53 +48,16 @@ def register(subparsers: argparse._SubParsersAction) -> None:
 
 
 def handle(args: argparse.Namespace) -> int:
-    try:
-        if args.provenance_action == "build":
-            state = build_provenance_workspace(
-                workspace=args.workspace,
-                repo_workdir=getattr(args, "repo_workdir", None),
-                strict=getattr(args, "strict", False),
-            )
-            _print_state("provenance build", state, as_json=getattr(args, "json", False))
-            return 0 if state.get("ok") else 1
+    """Fail-closed stub for the retired public CLI surface.
 
-        if args.provenance_action == "show":
-            state = show_provenance_workspace(workspace=args.workspace)
-            _print_state("provenance show", state, as_json=getattr(args, "json", False))
-            return 0 if state.get("ok") else 1
+    The parser registration is retained so the authority guard can return
+    the typed rejection for workspace invocations; any no-workspace bypass
+    lands here instead of executing legacy code.
+    """
 
-        if args.provenance_action == "validate":
-            state = validate_provenance_workspace(
-                workspace=args.workspace,
-                strict=getattr(args, "strict", False),
-            )
-            _print_state("provenance validate", state, as_json=getattr(args, "json", False))
-            return 0 if state.get("ok") else 1
-    except (ProvenanceError, RuntimeStateError) as exc:
-        _print_error(exc, as_json=getattr(args, "json", False))
-        return 1
+    print("runtime_command_unsupported")
     return 1
 
-
-def _print_state(label: str, state: dict[str, Any], *, as_json: bool) -> None:
-    if as_json:
-        print(json.dumps(state, ensure_ascii=False, indent=2, sort_keys=True))
-        return
-    validation = state.get("validation") or {}
-    summary = (state.get("provenance_graph") or {}).get("summary") or state.get("summary") or {}
-    print(f"[{label}] ok: {state.get('ok')}")
-    print(f"[{label}] graph: {state.get('provenance_graph_path')}")
-    print(f"[{label}] nodes: {summary.get('node_count', validation.get('node_count', 0))}")
-    print(f"[{label}] edges: {summary.get('edge_count', validation.get('edge_count', 0))}")
-    print(f"[{label}] warnings: {summary.get('warning_count', validation.get('warning_count', 0))}")
-    print(f"[{label}] errors: {summary.get('error_count', validation.get('error_count', 0))}")
-    for error in validation.get("errors") or []:
-        print(f"  - {error}")
-
-
-def _print_error(exc: Exception, *, as_json: bool) -> None:
-    payload = exc.to_dict() if hasattr(exc, "to_dict") else {"ok": False, "error": str(exc)}
-    if as_json:
-        print(json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True))
-    else:
-        print(f"[provenance] {exc}")
+# NOTE: the public command surface of this module is retired. The
+# SQLite ControlStore is the sole runtime authority; only the parser
+# registration (typed rejections) and the stub below remain.

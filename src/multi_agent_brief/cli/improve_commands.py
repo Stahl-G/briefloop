@@ -112,113 +112,27 @@ def register(subparsers: argparse._SubParsersAction) -> None:
     _add_json(rebuild_parser)
 
 
-def handle(args: argparse.Namespace) -> int:
-    try:
-        if args.improve_action == "propose":
-            state = propose_improvement(
-                workspace=args.workspace,
-                guidance=args.guidance,
-                category=args.category,
-                scope=args.scope,
-                source_summary=getattr(args, "source_summary", None),
-                from_issue=getattr(args, "from_issue", None),
-                supersedes=getattr(args, "supersedes", None),
-            )
-            _print_state("improve propose", state, as_json=getattr(args, "json", False))
-            return 0
-
-        if args.improve_action == "list":
-            state = list_improvements(
-                workspace=args.workspace,
-                status=getattr(args, "status", None),
-            )
-            _print_state("improve list", state, as_json=getattr(args, "json", False))
-            return 0
-
-        if args.improve_action == "show":
-            state = show_improvement(workspace=args.workspace, entry_id=args.entry_id)
-            _print_state("improve show", state, as_json=getattr(args, "json", False))
-            return 0
-
-        if args.improve_action == "approve":
-            state = approve_improvement(
-                workspace=args.workspace,
-                entry_id=args.entry_id,
-                approved_by=args.by,
-            )
-            _print_state("improve approve", state, as_json=getattr(args, "json", False))
-            return 0
-
-        if args.improve_action == "reject":
-            state = reject_improvement(
-                workspace=args.workspace,
-                entry_id=args.entry_id,
-                rejected_by=args.by,
-                reason=args.reason,
-            )
-            _print_state("improve reject", state, as_json=getattr(args, "json", False))
-            return 0
-
-        if args.improve_action == "revert":
-            state = revert_improvement(
-                workspace=args.workspace,
-                entry_id=args.entry_id,
-                reverted_by=args.by,
-                reason=args.reason,
-            )
-            _print_state("improve revert", state, as_json=getattr(args, "json", False))
-            return 0
-
-        if args.improve_action == "stats":
-            state = improvement_stats(workspace=args.workspace)
-            _print_state("improve stats", state, as_json=getattr(args, "json", False))
-            return 0
-
-        if args.improve_action == "validate":
-            state = validate_improvement_ledger(workspace=args.workspace)
-            _print_state("improve validate", state, as_json=getattr(args, "json", False))
-            return 0 if state.get("ok") else 1
-
-        if args.improve_action == "rebuild":
-            state = rebuild_improvement_memory(workspace=args.workspace)
-            _print_state("improve rebuild", state, as_json=getattr(args, "json", False))
-            return 0
-    except ImprovementLedgerError as exc:
-        _print_error(exc, as_json=getattr(args, "json", False))
-        return 1
-    return 1
-
 
 def _add_workspace(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--workspace", required=True, help="Path to workspace directory.")
+
 
 
 def _add_json(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--json", action="store_true", help="Emit machine-readable JSON.")
 
 
-def _print_state(label: str, state: dict[str, Any], *, as_json: bool) -> None:
-    if as_json:
-        print(json.dumps(state, ensure_ascii=False, indent=2, sort_keys=True))
-        return
-    print(f"[{label}] ok: {state.get('ok')}")
-    print(f"[{label}] ledger: {state.get('ledger_path')}")
-    if "entry_id" in state:
-        print(f"[{label}] entry: {state.get('entry_id')}")
-    elif isinstance(state.get("entry"), dict):
-        print(f"[{label}] entry: {state['entry'].get('entry_id')}")
-    print(f"[{label}] entries: {state.get('entry_count', 0)}")
-    for diagnostic in state.get("diagnostics") or []:
-        print(f"  - {diagnostic.get('severity')}: {diagnostic.get('message')}")
-    for warning in state.get("warnings") or []:
-        print(f"  - warning: {warning.get('message')}")
-    if state.get("event_recorded") is False:
-        print(f"[{label}] event: {state.get('event_reason')}")
+def handle(args: argparse.Namespace) -> int:
+    """Fail-closed stub for the retired public CLI surface.
 
+    The parser registration is retained so the authority guard can return
+    the typed rejection for workspace invocations; any no-workspace bypass
+    lands here instead of executing legacy code.
+    """
 
-def _print_error(exc: Exception, *, as_json: bool) -> None:
-    payload = exc.to_dict() if hasattr(exc, "to_dict") else {"ok": False, "error": str(exc)}
-    if as_json:
-        print(json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True))
-    else:
-        print(f"[improve] {exc}")
+    print("runtime_command_unsupported")
+    return 1
+
+# NOTE: the public command surface of this module is retired. The
+# SQLite ControlStore is the sole runtime authority; only the parser
+# registration (typed rejections) and the stub below remain.

@@ -58,46 +58,68 @@ def register(subparsers: argparse._SubParsersAction) -> None:
     )
 
 
-def handle(args: argparse.Namespace) -> int:
-    """Dispatch secrets subcommands."""
-    if args.secrets_action == "import":
-        return _handle_import(args)
-    return 1
+def _normalize_keys(keys: list[str]) -> list[str]:
+    normalized: list[str] = []
+    seen: set[str] = set()
+    for raw in keys:
+        key = str(raw or "").strip()
+        if not key:
+            continue
+        if not _SAFE_ENV_KEY_RE.match(key):
+            raise SecretImportError(f"invalid secret key name: {key}")
+        if key not in seen:
+            normalized.append(key)
+            seen.add(key)
+    return normalized
 
 
-def _handle_import(args: argparse.Namespace) -> int:
+
+def _read_known_env_values(path: Path) -> dict[str, str]:
     try:
-        result = import_workspace_secrets(
-            workspace=Path(args.workspace).expanduser(),
-            source=Path(args.from_path).expanduser(),
-            keys=list(args.keys),
-        )
-    except SecretImportError as exc:
-        payload = {"ok": False, "error": str(exc)}
-        if getattr(args, "json", False):
-            print(json.dumps(payload, ensure_ascii=False, sort_keys=True))
+        lines = path.read_text(encoding="utf-8").splitlines()
+    except OSError as exc:
+        raise SecretImportError(f"unable to read source env file: {path}") from exc
+    values: dict[str, str] = {}
+    for line in lines:
+        parsed = _parse_env_line(line)
+        if not parsed:
+            continue
+        key, value = parsed
+        if value:
+            values[key] = value
+    return values
+
+
+
+def _write_workspace_env(path: Path, values: dict[str, str]) -> None:
+    existing_lines: list[str] = []
+    if path.exists():
+        try:
+            existing_lines = path.read_text(encoding="utf-8").splitlines()
+        except OSError as exc:
+            raise SecretImportError(f"unable to read workspace env file: {path}") from exc
+
+    updated_lines: list[str] = []
+    replaced: set[str] = set()
+    for line in existing_lines:
+        parsed = _parse_env_line(line)
+        if parsed and parsed[0] in values:
+            key = parsed[0]
+            updated_lines.append(f"{key}={_quote_env_value(values[key])}")
+            replaced.add(key)
         else:
-            print(f"[secrets] error: {exc}")
-        return 1
+            updated_lines.append(line)
 
-    if getattr(args, "json", False):
-        print(json.dumps(
-            {
-                "ok": True,
-                "workspace_env": result["workspace_env"],
-                "keys": result["keys"],
-            },
-            ensure_ascii=False,
-            sort_keys=True,
-        ))
-        return 0
+    for key in values:
+        if key not in replaced:
+            updated_lines.append(f"{key}={_quote_env_value(values[key])}")
 
-    for item in result["keys"]:
-        status = item["status"]
-        prefix = item.get("sha256_prefix", "")
-        prefix_part = f" sha256_prefix={prefix}" if prefix else ""
-        print(f"{item['key']}={status}{prefix_part}")
-    return 0
+    try:
+        path.write_text("\n".join(updated_lines).rstrip() + "\n", encoding="utf-8")
+        os.chmod(path, 0o600)
+    except OSError as exc:
+        raise SecretImportError(f"unable to write workspace env file: {path}") from exc
+
 
 
 def import_workspace_secrets(
@@ -230,3 +252,19 @@ def _quote_env_value(value: str) -> str:
         escaped = value.replace("\\", "\\\\").replace('"', '\\"')
         return f'"{escaped}"'
     return value
+
+
+def handle(args: argparse.Namespace) -> int:
+    """Fail-closed stub for the retired public CLI surface.
+
+    The parser registration is retained so the authority guard can return
+    the typed rejection for workspace invocations; any no-workspace bypass
+    lands here instead of executing legacy code.
+    """
+
+    print("runtime_command_unsupported")
+    return 1
+
+# NOTE: the public command surface of this module is retired. The
+# SQLite ControlStore is the sole runtime authority; only the parser
+# registration (typed rejections) and the stub below remain.

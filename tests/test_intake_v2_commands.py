@@ -268,7 +268,7 @@ def test_intake_cli_json_only_workspace_never_creates_sqlite_fallback(
         ]
     )
 
-    # LEGACY-DELETE: the control_store_not_found JSON fallback is removed with
+    # the control_store_not_found JSON fallback is removed with
     # the retired store-less intake surface; rejection is now fail-closed.
     assert exit_code == 1
     assert capsys.readouterr().out == f"{expected_token}\n"

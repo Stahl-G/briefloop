@@ -94,10 +94,7 @@ def handle(args: argparse.Namespace) -> int:
             )
         return 0
     if args.workbuddy_action == "diagnose":
-        payload = build_workbuddy_diagnosis(workspace=args.workspace)
-        if getattr(args, "json", False):
-            print(json.dumps(payload, indent=2, sort_keys=True))
-        else:
-            print(format_workbuddy_diagnosis(payload))
-        return 0
-    return 1
+        # Retired public surface: read-only diagnosis moved behind the
+        # authority guard; this branch is fail-closed by construction.
+        print("runtime_command_unsupported")
+        return 1

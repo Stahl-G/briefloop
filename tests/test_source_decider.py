@@ -390,7 +390,7 @@ def test_sources_decide_merge_rejects_source_plan_only_cli(
     ])
 
     out = capsys.readouterr().out
-    # LEGACY-DELETE: retired public `sources decide` operator CLI surface; the
+    # retired public `sources decide` operator CLI surface; the
     # plan-only rejection invariant is preserved through the direct
     # merge_candidates_to_sources seam in
     # test_merge_rejects_source_plan_only_without_writing.

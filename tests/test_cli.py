@@ -40,7 +40,7 @@ def complete_init_args(workspace, *, language="zh-CN", industry="finance", extra
         for option in action.option_strings
     }
     if "--task-objective" in init_options:
-        # LEGACY-DELETE: retain only the strict SQLite initialization contract.
+        # retain only the strict SQLite initialization contract.
         args.extend(["--task-objective", "Track material finance developments."])
     if extra:
         args.extend(extra)
@@ -345,7 +345,7 @@ def test_cli_run_command_creates_handoff(capsys):
     }
     exit_code = main(["run", "--runtime", "operator", "--config", str(config), "--skip-doctor"])
     captured = capsys.readouterr()
-    # LEGACY-DELETE: retired public `run --runtime operator` handoff surface and
+    # retired public `run --runtime operator` handoff surface and
     # its output/intermediate control artifacts; the Codex SQLite ControlStore
     # runtime is the sole runtime authority.
     assert exit_code == 1
@@ -374,7 +374,7 @@ def test_cli_prepare_is_deprecated_and_does_not_generate_outputs(tmp_path: Path,
     result = main(["prepare", "--config", str(ws / "config.yaml")])
     captured = capsys.readouterr()
 
-    # LEGACY-DELETE: retired public `prepare` surface and its deprecation
+    # retired public `prepare` surface and its deprecation
     # message; the workspace authority guard rejects it before dispatch.
     assert result == 1
     assert captured.out == "runtime_command_unsupported\n"

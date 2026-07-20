@@ -259,14 +259,14 @@ class TestReportDateAuto:
             "weekly",
             "--source-profile",
             "research",
-            # LEGACY-DELETE: retain only the strict SQLite initialization contract.
+            # retain only the strict SQLite initialization contract.
             "--task-objective",
             "Prepare the weekly operations brief.",
         ]) == 0
         config_text = (ws / "config.yaml").read_text(encoding="utf-8")
 
         config = yaml.safe_load(config_text)
-        # LEGACY-DELETE: pre-CX report.date "auto" placeholder; the ControlStore
+        # pre-CX report.date "auto" placeholder; the ControlStore
         # bootstrap stamps the resolved report date into the generated config.
         assert config["report"]["date"] == date.today().isoformat()
         config["_config_dir"] = str(ws)

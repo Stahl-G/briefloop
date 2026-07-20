@@ -411,7 +411,7 @@ def test_hermes_workspace_public_cli_is_retired_with_zero_writes(tmp_path: Path,
         rc = main(args)
         out = capsys.readouterr().out
 
-        # LEGACY-DELETE: retired public hermes cron-plan/sync-sources/prompt
+        # retired public hermes cron-plan/sync-sources/prompt
         # workspace subcommands and their typed rejection with zero writes.
         assert rc == 1
         assert out == "runtime_command_unsupported\n"
@@ -428,7 +428,7 @@ def test_cli_hermes_cron_plan_writes_json_and_markdown(tmp_path: Path):
     out = tmp_path / "plan.json"
     md = tmp_path / "plan.md"
 
-    # LEGACY-DELETE: retired public `hermes cron-plan` CLI; the plan/markdown
+    # retired public `hermes cron-plan` CLI; the plan/markdown
     # invariant runs through the direct deterministic hermes adapter seams.
     config = yaml.safe_load((ws / "config.yaml").read_text(encoding="utf-8"))
     plan = build_hermes_cron_plan(
@@ -463,7 +463,7 @@ def test_cli_hermes_skill_writes_file(tmp_path: Path):
 def test_cli_hermes_sync_sources_enables_cached_package(tmp_path: Path):
     ws = _write_workspace(tmp_path)
 
-    # LEGACY-DELETE: retired public `hermes sync-sources` CLI; the sources.yaml
+    # retired public `hermes sync-sources` CLI; the sources.yaml
     # sync invariant runs through the direct deterministic adapter seam.
     result = sync_cached_package_source(
         sources_path=ws / "sources.yaml",
@@ -491,7 +491,7 @@ def test_cli_hermes_install_skill(tmp_path: Path):
 def test_cli_hermes_prompt_generates_output(tmp_path: Path):
     ws = _write_workspace(tmp_path)
 
-    # LEGACY-DELETE: retired public `hermes prompt` CLI; prompt rendering runs
+    # retired public `hermes prompt` CLI; prompt rendering runs
     # through the direct deterministic adapter seam.
     prompt = render_hermes_prompt(
         workspace=ws,
@@ -504,7 +504,7 @@ def test_cli_hermes_prompt_generates_output(tmp_path: Path):
 def test_cli_hermes_prompt_output_contains_workflow_steps(tmp_path: Path):
     ws = _write_workspace(tmp_path)
 
-    # LEGACY-DELETE: retired public `hermes prompt` CLI; prompt content
+    # retired public `hermes prompt` CLI; prompt content
     # invariants run through the direct deterministic adapter seam.
     output = render_hermes_prompt(
         workspace=ws,

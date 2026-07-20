@@ -182,7 +182,7 @@ def test_workbuddy_diagnose_public_cli_is_retired_with_zero_writes(
     capsys,
     json_mode: bool,
 ) -> None:
-    # LEGACY-DELETE: retired public `workbuddy diagnose` CLI; the read-only
+    # retired public `workbuddy diagnose` CLI; the read-only
     # Run Card projection is only reachable through the direct
     # build_workbuddy_diagnosis/format_workbuddy_diagnosis seam.
     ws = _workspace(tmp_path)

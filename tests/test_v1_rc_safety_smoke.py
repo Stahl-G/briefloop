@@ -63,7 +63,7 @@ def test_required_rc_safety_matrix_executes_real_lifecycles(tmp_path: Path) -> N
     assert payload["boundary"] == runner.RUNNER_BOUNDARY
     by_id = {item["scenario_id"]: item for item in payload["scenarios"]}
 
-    # LEGACY-DELETE: retired public `run --runtime operator` launcher and the
+    # retired public `run --runtime operator` launcher and the
     # legacy state-CLI lifecycle driven by RC-SMOKE-01; the Codex SQLite
     # ControlStore runtime is the sole runtime authority. The runner must fail
     # closed with the typed retirement token and the retired path must write

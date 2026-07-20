@@ -34,7 +34,6 @@ TARGET_FILES = [
     "HERMES.md",
     "scripts/setup.sh",
     "scripts/setup.ps1",
-    "scripts/ci/smoke_packaged_topology_handoff.py",
     ".agents/skills/brief-onboarding/SKILL.md",
     ".agents/skills/claim-ledger/SKILL.md",
     ".agents/skills/orchestrator/SKILL.md",

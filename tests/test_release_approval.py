@@ -37,7 +37,7 @@ def _arg(argv: list[str], name: str, *, default: str | None = None) -> str | Non
 def main(argv: list[str]) -> int:
     """Exercise retired release modules directly, never the public CLI guard.
 
-    LEGACY-DELETE removes this bridge with the legacy approval/release module
+    the public approval/release CLI is retired; this bridge keeps the direct deterministic seams
     tests.  Until then it preserves their deterministic invariants without
     claiming that JSON control state remains a supported public authority.
     """

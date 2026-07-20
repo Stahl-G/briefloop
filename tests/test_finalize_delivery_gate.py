@@ -58,7 +58,7 @@ def _workspace_file_bytes(workspace: Path) -> dict[str, bytes]:
 def _finalize_via_config(config_path: Path):
     """Drive finalize through the deterministic config and finalize seams.
 
-    LEGACY-DELETE: replaces the retired public `finalize --config` handler's
+    Replaces the retired public `finalize --config` handler's
     config-to-kwargs mapping; the retired runtime preflight guards are
     exercised directly through the runtime_state module in the fail-closed
     tests below.
@@ -578,7 +578,7 @@ def test_finalize_public_cli_is_retired_with_typed_rejection_and_zero_writes(
     rc = main(["finalize", "--config", str(workspace / "config.yaml")])
     captured = capsys.readouterr()
 
-    # LEGACY-DELETE: retired public `finalize --config` operator surface; the
+    # retired public `finalize --config` operator surface; the
     # workspace authority guard rejects it before dispatch with zero writes.
     assert rc == 1
     assert captured.out == f"{expected_token}\n"
@@ -622,7 +622,7 @@ def test_finalize_cli_strips_src_markers_after_subagent_rewrite(tmp_path: Path):
     assert "[src:" not in (output_dir / "brief.md").read_text(encoding="utf-8")
     assert "[src:" not in (output_dir / "上能电气_电力设备周报_2026-06-06.md").read_text(encoding="utf-8")
     assert (output_dir / "delivery" / "brief.md").exists()
-    # LEGACY-DELETE: retired handler stdout summary; the snapshot truth is the
+    # retired handler stdout summary; the snapshot truth is the
     # deterministic finalize result.
     assert result.delivery_snapshot_dir
     assert (intermediate / "finalize_report.json").exists()
@@ -956,7 +956,7 @@ def test_finalize_cli_blocks_contaminated_delivery_run_before_writing(
     integrity = workflow.get("run_integrity") if isinstance(workflow.get("run_integrity"), dict) else {}
     recovery = evaluate_recovery_state(workspace=workspace)
 
-    # LEGACY-DELETE: the retired handler raised RuntimeStateError("Runtime
+    # the retired handler raised RuntimeStateError("Runtime
     # recovery state does not permit finalize rendering.") unless this
     # deterministic predicate held; the predicate is the invariant.
     render_permitted = recovery.get("status") == RECOVERY_FINALIZE_RENDER_REQUIRED or (
@@ -2051,7 +2051,7 @@ def test_finalize_cli_reports_missing_explicit_source_appendix_ledger_without_tr
         encoding="utf-8",
     )
 
-    # LEGACY-DELETE: retired handler stderr prefix/traceback assertions; the
+    # retired handler stderr prefix/traceback assertions; the
     # deterministic seam fails closed with a typed FileNotFoundError and no
     # partial writes.
     with pytest.raises(FileNotFoundError, match="Claim Ledger not found"):
@@ -2834,7 +2834,7 @@ def test_finalize_cli_reports_reader_clean_failure_without_traceback(
         encoding="utf-8",
     )
 
-    # LEGACY-DELETE: retired handler stderr prefix/traceback assertions; the
+    # retired handler stderr prefix/traceback assertions; the
     # deterministic seam raises a typed error pointing at the failed report.
     with pytest.raises(RuntimeError) as excinfo:
         _finalize_via_config(workspace / "config.yaml")
