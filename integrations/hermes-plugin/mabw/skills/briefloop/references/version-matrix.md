@@ -48,8 +48,9 @@ currently available commands.
   legacy `briefloop workbuddy diagnose` read-only Run Card surface is retired;
   read delivery truth from the Store-native status projection instead.
 - v1.0 release governor: `docs/v1-pilot-evidence.md` +
-  `scripts/check_v1_rc_readiness.py --require-satisfied` gate release wording
-  and release prep.
+  `scripts/check_v1_pilot_evidence.py --require-satisfied` gate release wording
+  and release prep. The separate RC readiness gate was retired in the LD2-3
+  follow-up; its scenario runner drove the deleted legacy stack.
 
 ## Pending Before v1.0
 

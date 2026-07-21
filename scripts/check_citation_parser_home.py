@@ -1,26 +1,23 @@
 #!/usr/bin/env python3
-"""v1.0 RC readiness checks.
+"""Single-citation-parser structural guard.
 
-Advisory by default (prints readiness, exit 0). Pass ``--require-satisfied`` on the
-actual v1.0 release path to make an unsatisfied item fail with a non-zero exit.
+Only the canonical citation home may define the projectable internal citation
+parser. This scanner stops a new module from hand-rolling its own ``[src:...]``
+marker regex or enumerating claim-id families (CL-/CLM-/CLAIM_/SYN_CLAIM) in a
+direct ``re.*`` pattern call. It covers static direct ``re.*`` patterns and
+simple module/function/class string constants; it does not attempt to prove
+arbitrary dynamic regex construction or aliased imports.
 
-Checks include the executable hermetic RC safety matrix and the
-``single_citation_parser`` structural guard.  The executable matrix is rerun on
-every invocation; file presence, fixture labels, or committed pass JSON cannot
-satisfy it.
+The guard currently reports SATISFIED: the parsers it was written to chase
+(finalize, reader_final_gate, reader_projection, source_appendix, and the #460
+reader residue module) have been consolidated into the canonical home, and
+those modules all still exist. Advisory by default (prints findings, exit 0);
+pass ``--require-satisfied`` to make an unsatisfied guard exit non-zero.
 
-The citation guard enforces that only the canonical citation home defines the
-projectable internal citation parser. It prevents a new module from hand-rolling
-its own ``[src:...]`` marker regex or enumerating claim-id families
-(CL-/CLM-/CLAIM_/SYN_CLAIM) in a direct ``re.*`` pattern call. The scanner covers
-static direct ``re.*`` patterns and simple module/function/class string constants;
-it does not attempt to prove arbitrary dynamic regex construction or aliased
-imports.
-
-This guard is intentionally RED until PR-2A consolidates the existing scattered
-parsers (finalize, reader_final_gate, reader_projection, source_appendix, and the
-#460 reader residue module) into the canonical home. It goes GREEN as the
-allowlist below shrinks to the single agreed home and the duplicates are deleted.
+Extracted verbatim from the retired ``check_v1_rc_readiness.py`` in the LD2-3
+follow-up (ruling §20.1). The RC readiness gate it used to live in drove the
+deleted legacy runtime-state stack; this guard never did, and scans live
+``src/`` only.
 """
 
 from __future__ import annotations
@@ -28,20 +25,11 @@ from __future__ import annotations
 import argparse
 import ast
 import re
-import sys
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
-SCRIPT_ROOT = Path(__file__).resolve().parent
-if str(SCRIPT_ROOT) not in sys.path:
-    sys.path.insert(0, str(SCRIPT_ROOT))
 
-from run_v1_rc_safety_smoke import (  # noqa: E402
-    REQUIRED_SCENARIO_IDS,
-    RUNNER_BOUNDARY,
-    run_v1_rc_safety_smoke,
-)
 
 # Modules allowed to define the internal citation/claim marker parser.
 # PR-2A finalizes the single canonical home; shrink this to one entry as the
@@ -52,10 +40,13 @@ CANONICAL_CITATION_MODULES: set[str] = {
     "src/multi_agent_brief/core/citations.py",
 }
 
+
 # Distinct claim-id family tokens. Two or more in one regex pattern means the
 # pattern is enumerating the claim-id family instead of deferring to ledger
 # membership; a single anchored token (the contract format authority) is allowed.
 _CLAIM_FAMILY_TOKENS = ("CL-", "CLM-", "SYN_CLAIM", "CLAIM_")
+
+
 _RE_PATTERN_FUNCTIONS = {
     "compile",
     "findall",
@@ -68,15 +59,20 @@ _RE_PATTERN_FUNCTIONS = {
     "subn",
 }
 
+
 # Negative lookaround assertions can reference a marker only to EXCLUDE it
 # (e.g. a number matcher using ``(?<!\\[src:)``); strip those before
 # classifying so an exclusion is not mistaken for a parser. Positive
 # lookarounds are parser syntax and must remain visible to the classifier.
 _NEGATIVE_LOOKAROUND_RE = re.compile(r"\(\?(?:!|<!)[^)]*\)")
+
+
 _BRACKETED_SRC_MARKER_RE = re.compile(
     r"\\?\[\s*src\s*:",
     re.IGNORECASE,
 )
+
+
 _BRACKETED_SOURCE_MARKER_ALTERNATION_RE = re.compile(
     r"\\?\[\s*\(\?:\s*(?:src\|source|source\|src)\s*\)\s*:",
     re.IGNORECASE,
@@ -89,15 +85,6 @@ class Violation:
     name: str
     lineno: int
     signal: str
-
-
-@dataclass
-class ReadinessItem:
-    name: str
-    satisfied: bool
-    violations: list[Violation] = field(default_factory=list)
-    detail: str = ""
-    evidence: list[str] = field(default_factory=list)
 
 
 def _is_re_pattern_call(func: ast.expr) -> bool:
@@ -253,146 +240,32 @@ def find_citation_parser_violations(
     return violations
 
 
-def check_single_citation_parser(repo_root: Path) -> ReadinessItem:
-    violations = find_citation_parser_violations(
-        repo_root / "src", CANONICAL_CITATION_MODULES, rel_to=repo_root
-    )
-    return ReadinessItem(
-        name="single_citation_parser",
-        satisfied=not violations,
-        violations=violations,
-        detail=(
-            "Internal source/claim marker parsing must live only in the canonical "
-            "citation home; resolve validity via ledger membership, not regex enumeration."
-        ),
-    )
-
-
-def check_executable_rc_safety(repo_root: Path) -> ReadinessItem:
-    """Execute and verify the exact required RC safety scenario matrix."""
-
-    try:
-        payload = run_v1_rc_safety_smoke(repo_root=repo_root)
-    except Exception as exc:
-        return ReadinessItem(
-            name="executable_rc_safety",
-            satisfied=False,
-            detail="The hermetic RC safety scenario runner could not execute.",
-            evidence=[f"runner_error={type(exc).__name__}: {exc}"],
-        )
-    if not isinstance(payload, dict):
-        return ReadinessItem(
-            name="executable_rc_safety",
-            satisfied=False,
-            detail="The hermetic RC safety scenario runner returned malformed output.",
-            evidence=[f"invalid_runner_payload_type={type(payload).__name__}"],
-        )
-
-    results = payload.get("scenarios")
-    if not isinstance(results, list):
-        results = []
-    executed_raw = payload.get("executed_scenario_ids")
-    executed = (
-        executed_raw
-        if isinstance(executed_raw, list)
-        and all(isinstance(scenario_id, str) for scenario_id in executed_raw)
-        else []
-    )
-    expected = list(REQUIRED_SCENARIO_IDS)
-    declared_required_raw = payload.get("required_scenario_ids")
-    declared_required = (
-        declared_required_raw
-        if isinstance(declared_required_raw, list)
-        and all(isinstance(scenario_id, str) for scenario_id in declared_required_raw)
-        else []
-    )
-    declared_required_matches = declared_required == expected
-    exact_ids = executed == expected
-    unique_ids = len(executed) == len(set(executed))
-    result_ids = [
-        str(result.get("scenario_id") or "")
-        for result in results
-        if isinstance(result, dict)
-    ]
-    result_ids_match = result_ids == expected
-    scenario_pass = len(results) == len(expected) and all(
-        isinstance(result, dict) and result.get("ok") is True
-        for result in results
-    )
-    boundary_matches = payload.get("boundary") == RUNNER_BOUNDARY
-    satisfied = bool(
-        payload.get("ok") is True
-        and payload.get("required_complete") is True
-        and declared_required_matches
-        and exact_ids
-        and unique_ids
-        and result_ids_match
-        and scenario_pass
-        and boundary_matches
-    )
-    evidence = []
-    for result in results:
-        if not isinstance(result, dict):
-            evidence.append("invalid_scenario_result_shape")
-            continue
-        scenario_id = str(result.get("scenario_id") or "unknown")
-        status = "pass" if result.get("ok") is True else "FAIL"
-        suffix = ""
-        if status == "FAIL":
-            suffix = f" {result.get('error_type', 'Error')}: {result.get('error', '')}"
-        evidence.append(f"{scenario_id}={status}{suffix}")
-    if not declared_required_matches:
-        evidence.append(
-            f"required_ids={expected}; declared_required_ids={declared_required_raw}"
-        )
-    if not exact_ids or not result_ids_match:
-        evidence.append(
-            f"required_ids={expected}; executed_ids={executed_raw}; result_ids={result_ids}"
-        )
-    if not boundary_matches:
-        evidence.append(f"unexpected_boundary={payload.get('boundary')!r}")
-    return ReadinessItem(
-        name="executable_rc_safety",
-        satisfied=satisfied,
-        detail=(
-            "All eight stable RC safety scenarios must execute through real "
-            "deterministic paths in fresh public-safe workspaces."
-        ),
-        evidence=evidence,
-    )
-
-
-READINESS_CHECKS = (check_executable_rc_safety, check_single_citation_parser)
-
-
-def main(argv: list[str] | None = None) -> int:
-    parser = argparse.ArgumentParser(description="v1.0 RC readiness checks.")
+def main() -> int:
+    parser = argparse.ArgumentParser(description="Single-citation-parser structural guard.")
     parser.add_argument(
         "--require-satisfied",
         action="store_true",
-        help="Exit non-zero if any readiness item is not satisfied (release path).",
+        help="Exit non-zero when the guard is unsatisfied.",
     )
-    args = parser.parse_args(argv)
+    args = parser.parse_args()
 
-    all_satisfied = True
-    for check in READINESS_CHECKS:
-        item = check(REPO_ROOT)
-        status = "satisfied" if item.satisfied else "NOT_SATISFIED"
-        print(f"[{status}] {item.name}")
-        for evidence in item.evidence:
-            print(f"  - {evidence}")
-        if not item.satisfied:
-            all_satisfied = False
-            print(f"  {item.detail}")
-            for v in item.violations:
-                print(f"  - {v.path}:{v.lineno} {v.name} ({v.signal})")
-
-    if not all_satisfied:
-        print("\nv1.0 RC readiness: not_satisfied")
-        if args.require_satisfied:
-            return 1
+    violations = find_citation_parser_violations(
+        REPO_ROOT / "src", CANONICAL_CITATION_MODULES, rel_to=REPO_ROOT
+    )
+    print("Single Citation Parser Guard")
+    print("=" * 40)
+    print(f"  canonical home: {sorted(CANONICAL_CITATION_MODULES)}")
+    if violations:
+        print(f"  [UNSATISFIED] {len(violations)} violation(s):")
+        for violation in violations:
+            print(
+                f"    {violation.path}:{violation.lineno} "
+                f"{violation.name} [{violation.signal}]"
+            )
     else:
-        print("v1.0 RC readiness: satisfied")
+        print("  [SATISFIED] no violations")
+    if violations and args.require_satisfied:
+        return 1
     return 0
 
 
