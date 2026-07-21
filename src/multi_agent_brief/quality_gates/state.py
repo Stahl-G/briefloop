@@ -36,7 +36,7 @@ from multi_agent_brief.orchestrator.runtime_state import (
     show_runtime_state,
     utc_now,
 )
-from multi_agent_brief.orchestrator.runtime_state.artifact_paths import (
+from multi_agent_brief.contracts.artifact_paths import (
     artifact_paths_from_contracts,
 )
 from multi_agent_brief.orchestrator.runtime_state.claim_support_matrix import (

@@ -82,7 +82,7 @@ def project_workspace_materiality_selection(
 ) -> dict[str, Any]:
     """Project materiality-aware screening diagnostics without side effects."""
 
-    from multi_agent_brief.orchestrator.runtime_state.artifact_paths import (
+    from multi_agent_brief.contracts.artifact_paths import (
         agent_artifact_paths_from_contracts,
     )
 

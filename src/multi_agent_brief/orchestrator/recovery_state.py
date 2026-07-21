@@ -16,7 +16,7 @@ from multi_agent_brief.orchestrator.run_integrity import (
 from multi_agent_brief.orchestrator.runtime_state.artifact_registry import (
     ARTIFACT_REGISTRY_SCHEMA,
 )
-from multi_agent_brief.orchestrator.runtime_state.contracts_loader import (
+from multi_agent_brief.contracts.runtime_contracts import (
     _stage_ids,
     load_stage_specs,
 )
