@@ -304,9 +304,100 @@ GATE_ID_VALUES = (
 )
 
 
-def _event_type_json_schema(schema: dict[str, Any]) -> None:
-    from multi_agent_brief.orchestrator.runtime_state.event_log import EVENT_TYPES
+# Event Log owner vocabulary. This is the DTO truth source; the Event Log
+# writer imports it from here.
+EVENT_TYPES = {
+    "run_initialized",
+    "handoff_written",
+    "artifact_observed",
+    "artifact_validated",
+    "stage_status_changed",
+    "stage_satisfied_by_topology",
+    "decision_recorded",
+    "feedback_issue_created",
+    "feedback_issue_planned",
+    "feedback_issue_resolved",
+    "repair_plan_created",
+    "repair_plan_completed",
+    "repair_started",
+    "repair_completed",
+    "repair_stage_superseded",
+    "quality_gate_checked",
+    "quality_gate_blocked",
+    "quality_gate_passed",
+    "provenance_graph_built",
+    "provenance_graph_validated",
+    "provenance_graph_invalid",
+    "audience_profile_snapshot_created",
+    "control_switchboard_built",
+    "control_switchboard_warning",
+    "control_selection_recorded",
+    "control_selection_validated",
+    "improvement_proposed",
+    "improvement_approved",
+    "improvement_rejected",
+    "improvement_reverted",
+    "improvement_memory_snapshot_created",
+    "delivery_attempted",
+    "delivery_bundle_prepared",
+    "delivery_draft_created",
+    "delivery_succeeded",
+    "delivery_failed",
+    "human_approval_ledger_initialized",
+    "human_approval_recorded",
+    "release_readiness_checked",
+    "fact_layer_imported",
+    "claim_ledger_frozen",
+    "claim_ledger_metadata_enriched",
+    "trajectory_decision_narrowed",
+    "run_archived",
+    "run_blocked",
+    "run_integrity_contaminated",
+    "run_reset",
+    "semantic_assessment_checked_inputs_bound",
+    "semantic_support_finding_adjudicated",
+    "source_evidence_committed",
+    "role_proposal_committed",
+    "intake_rejected",
+    "role_invocation_started",
+    "owned_artifact_accepted",
+    "audit_proposal_promoted",
+}
 
+# Release-mode approval vocabulary and boundary. DTO truth source;
+# the product approval layer imports them from here.
+APPROVAL_BOUNDARY = "internal_review_approval_records_only_not_public_release_authorization"
+
+RELEASE_MODES: dict[str, dict[str, Any]] = {
+    "internal_draft": {
+        "approval_required": False,
+        "required_roles": [],
+        "description": "Internal draft readiness. No human approval is required.",
+    },
+    "internal_management_review": {
+        "approval_required": True,
+        "required_roles": ["content_owner"],
+        "description": "Ready for internal management review when content owner approval is present.",
+    },
+    "research_review": {
+        "approval_required": True,
+        "required_roles": ["content_owner", "evidence_reviewer"],
+        "description": "Ready for research review when content and evidence approvals are present.",
+    },
+    "ir_draft": {
+        "approval_required": True,
+        "required_roles": ["ir_owner", "evidence_reviewer", "legal_or_compliance_reviewer"],
+        "description": "Ready for IR draft review when owner, evidence, and legal/compliance approvals are present.",
+    },
+    "formal_release_candidate": {
+        "approval_required": True,
+        "required_roles": ["content_owner", "evidence_reviewer", "legal_or_compliance_reviewer"],
+        "description": "Ready for formal release-candidate review when required internal approvals are present.",
+    },
+}
+
+
+def _event_type_json_schema(schema: dict[str, Any]) -> None:
     schema["enum"] = sorted(EVENT_TYPES)
 
 
@@ -854,8 +945,6 @@ class EventEnvelope(StrictModel):
     @field_validator("event_type")
     @classmethod
     def event_type_is_owned(cls, value: str) -> str:
-        from multi_agent_brief.orchestrator.runtime_state.event_log import EVENT_TYPES
-
         if value not in EVENT_TYPES:
             raise PydanticCustomError(
                 "unknown_event_type",
@@ -1016,8 +1105,6 @@ class Approval(StrictModel):
         # Import lazily so the strict contract package does not initialize the
         # product package while its own registry is still being imported. The
         # existing release-approval owner remains the mode/role authority.
-        from multi_agent_brief.product.release_approval import RELEASE_MODES
-
         if value not in RELEASE_MODES[mode]["required_roles"]:
             raise PydanticCustomError(
                 "approval_role_not_required",

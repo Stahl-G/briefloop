@@ -7,12 +7,10 @@ from pathlib import Path
 from multi_agent_brief.orchestrator.runtime_state.errors import RuntimeStateError
 
 
-RUNTIME_STATE_FILES = {
-    "runtime_manifest": "output/intermediate/runtime_manifest.json",
-    "workflow_state": "output/intermediate/workflow_state.json",
-    "artifact_registry": "output/intermediate/artifact_registry.json",
-    "event_log": "output/intermediate/event_log.jsonl",
-}
+# RUNTIME_STATE_FILES is owned by contracts.runtime_contracts (LD2-2b).
+from multi_agent_brief.contracts.runtime_contracts import (  # noqa: E402
+    RUNTIME_STATE_FILES,
+)
 
 
 def runtime_state_paths(workspace: str | Path) -> dict[str, Path]:

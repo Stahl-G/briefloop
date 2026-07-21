@@ -49,7 +49,7 @@ from multi_agent_brief.control_store.serialization import (
     canonical_json_bytes,
     sha256_hex,
 )
-from multi_agent_brief.orchestrator.runtime_state.contracts_loader import (
+from multi_agent_brief.contracts.runtime_contracts import (
     ValidatedRuntimeContractPayloads,
     load_runtime_contract_payloads,
 )

@@ -11,7 +11,7 @@ from pathlib import Path
 from typing import Any
 
 from multi_agent_brief.orchestrator.run_integrity import interpret_run_integrity, project_for_read
-from multi_agent_brief.orchestrator.runtime_state.evidence_span_registry import (
+from multi_agent_brief.outputs.evidence_span_validation import (
     EVIDENCE_SPAN_REGISTRY_VALIDATION_PREFIX,
     validate_evidence_span_registry_against_source_pack,
 )

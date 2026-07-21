@@ -16,7 +16,7 @@ from multi_agent_brief.cli.product_commands import _register_evidence_extract_sc
 from multi_agent_brief.contracts.schemas.evidence_span_registry import EvidenceSpanRegistryContract
 from multi_agent_brief.inputs.contracts import extracted_markdown_path
 from multi_agent_brief.orchestrator.runtime_state import check_runtime_state, initialize_runtime_state
-from multi_agent_brief.orchestrator.runtime_state.evidence_span_registry import (
+from multi_agent_brief.outputs.evidence_span_validation import (
     validate_evidence_span_registry_against_source_pack,
 )
 from multi_agent_brief.sources.registry import collect_all_sources, load_sources_config

@@ -458,7 +458,7 @@ def _build_source_appendix_trace(
         )
 
     ws = Path(workspace).expanduser().resolve() if workspace is not None else _workspace_from_ledger_path(ledger_path)
-    from multi_agent_brief.orchestrator.runtime_state.evidence_span_registry import (
+    from multi_agent_brief.outputs.evidence_span_validation import (
         EVIDENCE_SPAN_REGISTRY_VALIDATION_PREFIX,
         validate_evidence_span_registry_against_source_pack,
     )

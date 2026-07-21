@@ -25,6 +25,7 @@ from multi_agent_brief.orchestrator.runtime_state.claim_support_matrix import (
 )
 from multi_agent_brief.orchestrator.runtime_state.workflow import _allowed_decisions_for_stage
 from multi_agent_brief.quality_gates import state as quality_gate_state
+from multi_agent_brief.quality_gates import evaluation as quality_gate_evaluation
 from multi_agent_brief.quality_gates.contract import (
     GATE_IDS,
     interpret_quality_gate_binding,
@@ -1312,8 +1313,8 @@ def test_parallel_quality_gate_errors_wait_for_scheduled_gates(tmp_path, monkeyp
         target_called["value"] = True
         return []
 
-    monkeypatch.setattr(quality_gate_state, "_material_findings", boom)
-    monkeypatch.setattr(quality_gate_state, "_target_relevance_findings", target_relevance)
+    monkeypatch.setattr(quality_gate_evaluation, "_material_findings", boom)
+    monkeypatch.setattr(quality_gate_evaluation, "_target_relevance_findings", target_relevance)
 
     with pytest.raises(RuntimeStateError) as excinfo:
         quality_gate_state.evaluate_quality_gate_findings(

@@ -31,7 +31,7 @@ from multi_agent_brief.control_store.serialization import (
     sha256_hex,
 )
 from multi_agent_brief.intake_v2.scratch import parse_json_object
-from multi_agent_brief.orchestrator.runtime_state.contracts_loader import (
+from multi_agent_brief.contracts.runtime_contracts import (
     ValidatedRuntimeContractPayloads,
     validate_runtime_contract_payloads,
 )

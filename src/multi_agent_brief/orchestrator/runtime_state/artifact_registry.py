@@ -37,7 +37,7 @@ from multi_agent_brief.orchestrator.runtime_state._io import _sha256_file
 from multi_agent_brief.orchestrator.runtime_state.artifact_paths import (
     artifact_paths_from_contracts,
 )
-from multi_agent_brief.orchestrator.runtime_state.atomic_claim_graph import (
+from multi_agent_brief.outputs.atomic_claim_graph_validation import (
     ATOMIC_CLAIM_GRAPH_VALIDATION_PREFIX,
     validate_atomic_claim_graph_against_ledger,
 )
@@ -45,7 +45,7 @@ from multi_agent_brief.orchestrator.runtime_state.claim_support_matrix import (
     CLAIM_SUPPORT_MATRIX_VALIDATION_PREFIX,
     validate_claim_support_matrix_against_artifacts,
 )
-from multi_agent_brief.orchestrator.runtime_state.evidence_span_registry import (
+from multi_agent_brief.outputs.evidence_span_validation import (
     EVIDENCE_SPAN_REGISTRY_VALIDATION_PREFIX,
     validate_evidence_span_registry_against_source_pack,
 )

@@ -39,7 +39,7 @@ from multi_agent_brief.core.schemas import Claim
 from multi_agent_brief.intake_v2.errors import IntakeError
 from multi_agent_brief.intake_v2.scratch import parse_json_object
 from multi_agent_brief.quality_gates.contract import GATE_IDS
-from multi_agent_brief.quality_gates.state import (
+from multi_agent_brief.quality_gates.evaluation import (
     evaluate_quality_gate_findings_preloaded,
 )
 

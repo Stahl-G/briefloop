@@ -30,10 +30,12 @@ from multi_agent_brief.orchestrator.runtime_state.identity import _validate_runt
 from multi_agent_brief.orchestrator.runtime_state.manifest import RUNTIME_MANIFEST_SCHEMA
 from multi_agent_brief.orchestrator.runtime_state.paths import _require_workspace, runtime_state_paths
 from multi_agent_brief.orchestrator_contract import require_canonical_runtime
+# RELEASE_MODES / APPROVAL_BOUNDARY are owned by the DTO contract layer
+# (LD2-2b relocation).
+from multi_agent_brief.contracts.v2 import APPROVAL_BOUNDARY, RELEASE_MODES
 
 HUMAN_APPROVAL_LEDGER_SCHEMA = "briefloop.human_approval_ledger.v1"
 RELEASE_READINESS_REPORT_SCHEMA = "briefloop.release_readiness_report.v1"
-APPROVAL_BOUNDARY = "internal_review_approval_records_only_not_public_release_authorization"
 RELEASE_CHECK_BOUNDARY = "release_readiness_check_not_public_release_authorization"
 
 VALID_APPROVAL_DECISIONS = {"approve", "reject", "request_changes"}
@@ -46,33 +48,6 @@ VALID_APPROVAL_ROLES = {
 APPROVED_BRANDING_AUTHORIZATION_VALUES = {"approved", "authorized"}
 
 
-RELEASE_MODES: dict[str, dict[str, Any]] = {
-    "internal_draft": {
-        "approval_required": False,
-        "required_roles": [],
-        "description": "Internal draft readiness. No human approval is required.",
-    },
-    "internal_management_review": {
-        "approval_required": True,
-        "required_roles": ["content_owner"],
-        "description": "Ready for internal management review when content owner approval is present.",
-    },
-    "research_review": {
-        "approval_required": True,
-        "required_roles": ["content_owner", "evidence_reviewer"],
-        "description": "Ready for research review when content and evidence approvals are present.",
-    },
-    "ir_draft": {
-        "approval_required": True,
-        "required_roles": ["ir_owner", "evidence_reviewer", "legal_or_compliance_reviewer"],
-        "description": "Ready for IR draft review when owner, evidence, and legal/compliance approvals are present.",
-    },
-    "formal_release_candidate": {
-        "approval_required": True,
-        "required_roles": ["content_owner", "evidence_reviewer", "legal_or_compliance_reviewer"],
-        "description": "Ready for formal release-candidate review when required internal approvals are present.",
-    },
-}
 
 
 class ReleaseApprovalError(RuntimeError):

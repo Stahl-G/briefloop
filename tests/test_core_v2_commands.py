@@ -396,7 +396,7 @@ def test_core_v2_and_control_store_import_ownership_is_structural() -> None:
             if relative.startswith("control_store/") and any(
                 name.startswith("multi_agent_brief.core_run_v2")
                 or name.startswith(
-                    "multi_agent_brief.orchestrator.runtime_state.contracts_loader"
+                    "multi_agent_brief.contracts.runtime_contracts"
                 )
                 or name.startswith("multi_agent_brief.quality_gates")
                 for name in imports
@@ -515,7 +515,7 @@ def test_core_v2_static_authority_chokepoints_are_exact() -> None:
         item.name
         for node in ast.walk(gate_tree)
         if isinstance(node, ast.ImportFrom)
-        and node.module == "multi_agent_brief.quality_gates.state"
+        and node.module == "multi_agent_brief.quality_gates.evaluation"
         for item in node.names
     }
     assert gate_state_imports == {"evaluate_quality_gate_findings_preloaded"}
@@ -531,7 +531,7 @@ def test_core_v2_static_authority_chokepoints_are_exact() -> None:
             for node in ast.walk(tree)
             if isinstance(node, ast.ImportFrom)
             and node.module
-            == "multi_agent_brief.orchestrator.runtime_state.contracts_loader"
+            == "multi_agent_brief.contracts.runtime_contracts"
             for item in node.names
         }
     assert "load_runtime_contract_payloads" in shared_contract_imports["service.py"]

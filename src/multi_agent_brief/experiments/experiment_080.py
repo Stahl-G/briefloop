@@ -46,7 +46,7 @@ from multi_agent_brief.orchestrator.run_integrity import (
     interpret_run_integrity,
     project_for_read,
 )
-from multi_agent_brief.orchestrator.runtime_state.contracts_loader import (
+from multi_agent_brief.contracts.runtime_contracts import (
     load_artifact_contracts,
     load_stage_specs,
 )
