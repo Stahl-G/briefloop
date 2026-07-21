@@ -527,7 +527,7 @@ class CoreRunService:
                 and action.effect_kind == "source_input_required"
                 and action.stage_id == "source-discovery"
                 and action.request_schema_id
-                == "briefloop.runtime_human_source_material_request.v2"
+                == "briefloop.runtime_human_source_pack_request.v2"
                 and request.stage_id == "source-discovery"
                 and request.role_id == "source-provider"
             )

@@ -47,7 +47,7 @@ def register(subparsers: argparse._SubParsersAction) -> None:
         "--venv", help="Virtual env path (default: auto-detect)."
     )
     run_parser.add_argument(
-        "--skip-doctor", action="store_true", help="Skip doctor check."
+        "--skip-doctor", action="store_true", help=argparse.SUPPRESS
     )
     prepare_parser = subparsers.add_parser(
         "prepare",
@@ -86,7 +86,7 @@ def register(subparsers: argparse._SubParsersAction) -> None:
         "--venv", help="Virtual env path (default: auto-detect)."
     )
     start_parser.add_argument(
-        "--skip-doctor", action="store_true", help="Skip doctor check."
+        "--skip-doctor", action="store_true", help=argparse.SUPPRESS
     )
     handoff_parser = subparsers.add_parser(
         "handoff",
@@ -115,7 +115,7 @@ def register(subparsers: argparse._SubParsersAction) -> None:
         "--venv", help="Virtual env path (default: auto-detect)."
     )
     handoff_parser.add_argument(
-        "--skip-doctor", action="store_true", help="Skip doctor check."
+        "--skip-doctor", action="store_true", help=argparse.SUPPRESS
     )
 
 def handle(args: argparse.Namespace) -> int:
@@ -191,14 +191,14 @@ def _run_launcher(args: argparse.Namespace) -> int:
     if getattr(args, "skip_doctor", False):
         print(f"{prefix} runtime_command_unsupported")
         return 1
-    from multi_agent_brief.runtime_host_v2.codex import load_codex_adapter_binding
+    from multi_agent_brief.runtime_host_v2.codex import workspace_codex_adapter_loader
     from multi_agent_brief.runtime_host_v2.errors import RuntimeHostError
     from multi_agent_brief.runtime_host_v2.service import RuntimeHostService
 
     try:
         action = RuntimeHostService(
             workspace_path,
-            adapter_loader=load_codex_adapter_binding,
+            adapter_loader=workspace_codex_adapter_loader(workspace_path),
         ).next_action()
     except RuntimeHostError as exc:
         print(f"{prefix} {exc}")

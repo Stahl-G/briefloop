@@ -17,6 +17,34 @@ def register(subparsers: argparse._SubParsersAction) -> None:
     )
     experiments_sub = parser.add_subparsers(dest="experiments_action", required=True)
 
+    a2_isolation = experiments_sub.add_parser(
+        "a2-isolation-preflight",
+        help="Experimental procedural directory-isolation check; never invokes a provider.",
+    )
+    a2_isolation.add_argument("--project-root", required=True)
+    a2_isolation.add_argument(
+        "--a2-workspace",
+        required=True,
+        help="A2 workspace to inspect; this does not launch or authorize a run.",
+    )
+    a2_isolation.add_argument(
+        "--allowed-input", action="append", required=True, dest="allowed_inputs"
+    )
+    a2_isolation.add_argument("--risk-ledger", required=True)
+    a2_isolation.add_argument("--a0-run", required=True)
+    a2_isolation.add_argument("--a1-run", required=True)
+    a2_isolation.add_argument(
+        "--scoring-path", action="append", required=True, dest="scoring_paths"
+    )
+    a2_isolation.add_argument(
+        "--enumerable-parent",
+        action="append",
+        default=[],
+        dest="enumerable_parents",
+        help="Additional directory exposed by the experiment launcher.",
+    )
+    a2_isolation.add_argument("--json", action="store_true")
+
     laj = experiments_sub.add_parser(
         "laj",
         help="Experimental offline-shadow Semantic Evaluator tools.",
@@ -288,6 +316,8 @@ def register(subparsers: argparse._SubParsersAction) -> None:
 
 
 def handle(args: argparse.Namespace) -> int:
+    if args.experiments_action == "a2-isolation-preflight":
+        return _handle_a2_isolation_preflight(args)
     if args.experiments_action == "laj":
         return _handle_laj(args)
     if args.experiments_action != "080":
@@ -298,6 +328,38 @@ def handle(args: argparse.Namespace) -> int:
     # service functions, not in a public command.
     print("runtime_command_unsupported")
     return 1
+
+
+def _handle_a2_isolation_preflight(args: argparse.Namespace) -> int:
+    from pathlib import Path
+
+    from multi_agent_brief.experiments.a2_isolation import (
+        A2ForbiddenPaths,
+        preflight_a2_procedural_isolation,
+    )
+
+    result = preflight_a2_procedural_isolation(
+        project_root=Path(args.project_root),
+        workspace=Path(args.a2_workspace),
+        allowed_inputs=tuple(Path(path) for path in args.allowed_inputs),
+        forbidden=A2ForbiddenPaths(
+            risk_ledger=Path(args.risk_ledger),
+            a0_run=Path(args.a0_run),
+            a1_run=Path(args.a1_run),
+            scoring_paths=tuple(Path(path) for path in args.scoring_paths),
+        ),
+        enumerable_parents=tuple(Path(path) for path in args.enumerable_parents),
+    )
+    payload = result.to_dict()
+    if args.json:
+        print(json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True))
+    else:
+        print("Experimental / A2 procedural isolation only / No OS sandbox")
+        print(f"decision: {result.decision}")
+        print(f"reason_codes: {','.join(result.reason_codes)}")
+        print("provider_calls: 0")
+        print("runtime_authority: none")
+    return 0 if result.ok else 1
 
 
 def _handle_laj(args: argparse.Namespace) -> int:
@@ -723,5 +785,3 @@ def _print_shadow_result(
     reason_codes = payload["reason_codes"]
     if reason_codes:
         print(f"reason_codes: {','.join(reason_codes)}")
-
-

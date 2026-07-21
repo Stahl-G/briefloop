@@ -19,6 +19,7 @@ from multi_agent_brief.core_run_v2.service import CoreRunService
 from multi_agent_brief.runtime_host_v2.codex import load_codex_adapter_binding
 from multi_agent_brief.runtime_host_v2.errors import RuntimeHostError
 from multi_agent_brief.runtime_host_v2.service import RuntimeHostService
+from multi_agent_brief.runtime_assets import install_runtime_kit
 from multi_agent_brief.workspace.init_profile import InitProfile
 
 
@@ -42,6 +43,7 @@ def _workspace(tmp_path: Path) -> Path:
         report_date_factory=lambda: date(2026, 7, 19),
         identity_factory=lambda: next(values),
     )
+    install_runtime_kit(workspace=workspace, runtime="codex")
     return workspace
 
 
@@ -66,23 +68,30 @@ def _external_workspace(tmp_path: Path) -> Path:
         report_date_factory=lambda: date(2026, 7, 19),
         identity_factory=lambda: next(values),
     )
+    install_runtime_kit(workspace=workspace, runtime="codex")
     return workspace
 
 
 def _cached_workspace(tmp_path: Path) -> Path:
     workspace = _workspace(tmp_path)
-    cache = workspace / "input" / "cached-source.txt"
-    cache.write_text(
-        "Durable cached source content long enough for deterministic intake.\n",
-        encoding="utf-8",
-    )
+    cached_paths: list[str] = []
+    for position in range(1, 26):
+        relative = f"input/cached-source-{position:02d}.txt"
+        (workspace / relative).write_text(
+            f"Durable cached source {position:02d} content long enough for deterministic intake.\n",
+            encoding="utf-8",
+        )
+        cached_paths.append(relative)
     (workspace / "sources.yaml").write_text(
         """source_strategy:
   profile: conservative
   enabled_providers: [cached_package]
 cached_package:
   enabled: true
-  paths: [input/cached-source.txt]
+  paths:
+"""
+        + "".join(f"    - {item}\n" for item in cached_paths)
+        + """
   formats: [txt]
 """,
         encoding="utf-8",
@@ -802,24 +811,80 @@ def test_deterministic_source_failure_exhausts_frozen_route_without_retry(
         assert store.current_revision == revision
 
     content = b"Human-provided durable source content for deterministic intake.\n"
+    second_content = b"Second independent durable source in the same frozen pack.\n"
     manual = workspace / "input" / "manual-source.txt"
+    second_manual = workspace / "input" / "manual-source-2.txt"
     manual.write_bytes(content)
+    second_manual.write_bytes(second_content)
     action_path = _current_action_path(workspace, capsys)
     action = json.loads(action_path.read_text(encoding="utf-8"))
     request_path = workspace / "human-source-request.json"
     request_payload = {
-        "schema_version": "briefloop.runtime_human_source_material_request.v2",
-        "request_id": "REQ-HUMAN-SOURCE-001",
+        "schema_version": "briefloop.runtime_human_source_pack_request.v2",
+        "request_id": "REQ-HUMAN-SOURCE-PACK-001",
         "run_id": action["run_id"],
         "expected_store_revision": action["store_revision"],
-        "input_path": "input/manual-source.txt",
-        "expected_input_sha256": hashlib.sha256(content).hexdigest(),
-        "title": "Human supplied source",
-        "publisher": None,
-        "published_at": None,
-        "retrieved_at": "2026-07-19T00:00:00+00:00",
-        "content_media_type": "text/plain",
+        "members": [
+            {
+                "member_id": "MEMBER-0001",
+                "input_path": "input/manual-source.txt",
+                "expected_input_sha256": hashlib.sha256(content).hexdigest(),
+                "title": "Human supplied source one",
+                "publisher": None,
+                "published_at": None,
+                "retrieved_at": "2026-07-19T00:00:00+00:00",
+                "content_media_type": "text/plain",
+            },
+            {
+                "member_id": "MEMBER-0002",
+                "input_path": "input/manual-source-2.txt",
+                "expected_input_sha256": hashlib.sha256(second_content).hexdigest(),
+                "title": "Human supplied source two",
+                "publisher": None,
+                "published_at": None,
+                "retrieved_at": "2026-07-19T00:00:00+00:00",
+                "content_media_type": "text/plain",
+            },
+        ],
     }
+    request_path.write_text(
+        json.dumps(request_payload, sort_keys=True),
+        encoding="utf-8",
+    )
+    bad_members = [dict(item) for item in request_payload["members"]]
+    bad_members[1]["expected_input_sha256"] = "0" * 64
+    request_path.write_text(
+        json.dumps(
+            {
+                **request_payload,
+                "request_id": "REQ-HUMAN-SOURCE-PACK-BAD",
+                "members": bad_members,
+            },
+            sort_keys=True,
+        ),
+        encoding="utf-8",
+    )
+    with SQLiteControlStore.open(workspace / "briefloop.db") as store:
+        before_bad_pack = store.current_revision
+    assert (
+        main(
+            [
+                "runtime",
+                "apply",
+                "--workspace",
+                str(workspace),
+                "--action",
+                str(action_path),
+                "--human-request",
+                str(request_path),
+            ]
+        )
+        == 1
+    )
+    assert "runtime_human_request_invalid" in capsys.readouterr().out
+    with SQLiteControlStore.open(workspace / "briefloop.db") as store:
+        assert store.current_revision == before_bad_pack
+        assert store.load_snapshot(action["run_id"]).sources == ()
     request_path.write_text(
         json.dumps(request_payload, sort_keys=True),
         encoding="utf-8",
@@ -840,12 +905,19 @@ def test_deterministic_source_failure_exhausts_frozen_route_without_retry(
         == 0
     )
     accepted_manual = json.loads(capsys.readouterr().out)
-    assert accepted_manual["status"] == "committed"
+    assert accepted_manual["status"] == "committed", accepted_manual
     with SQLiteControlStore.open(workspace / "briefloop.db") as store:
         after_manual = store.current_revision
         snapshot = store.load_snapshot(action["run_id"])
-    assert snapshot.sources[-1].claims_eligible is True
-    assert snapshot.sources[-1].locator.path == "input/manual-source.txt"
+    assert len(snapshot.sources) == 2
+    assert all(item.claims_eligible for item in snapshot.sources)
+    assert {item.locator.path for item in snapshot.sources} == {
+        "input/manual-source.txt",
+        "input/manual-source-2.txt",
+    }
+    receipt = snapshot.transactions[-1]
+    assert len(receipt.source_ids) == 2
+    assert accepted_manual["next_action"]["effect_kind"] == "stage_complete"
 
     manual.write_text("mutated after acceptance\n", encoding="utf-8")
     assert (
@@ -887,7 +959,9 @@ def test_deterministic_source_failure_exhausts_frozen_route_without_retry(
         ("input_path", "input/missing-source.txt"),
         ("expected_input_sha256", "0" * 64),
     ):
-        changed_request = {**request_payload, field: changed_value}
+        changed_members = [dict(item) for item in request_payload["members"]]
+        changed_members[0][field] = changed_value
+        changed_request = {**request_payload, "members": changed_members}
         request_path.write_text(
             json.dumps(changed_request, sort_keys=True),
             encoding="utf-8",
@@ -987,9 +1061,13 @@ def test_cached_source_acquisition_is_claims_eligible_and_completes_discovery(
     assert acquired["next_action"]["effect_kind"] == "stage_complete"
     with SQLiteControlStore.open(workspace / "briefloop.db") as store:
         snapshot = store.load_snapshot("RUN-codex-run")
-    source = snapshot.sources[0]
-    assert source.material_kind == "full_content"
-    assert source.claims_eligible is True
+    assert len(snapshot.sources) == 25
+    assert all(source.material_kind == "full_content" for source in snapshot.sources)
+    assert all(source.claims_eligible is True for source in snapshot.sources)
+    receipt = snapshot.transactions[-1]
+    assert receipt.transaction_id == acquired["transaction_id"]
+    assert set(receipt.source_ids) == {source.source_id for source in snapshot.sources}
+    assert len(receipt.source_ids) == 25
 
 
 def test_cached_source_locator_binds_the_exact_selected_path(

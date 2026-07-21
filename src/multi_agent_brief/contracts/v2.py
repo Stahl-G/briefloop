@@ -635,6 +635,75 @@ class SourceCommitRequest(StrictModel):
         return self
 
 
+class SourcePackCommitMember(StrictModel):
+    """One ordered source member inside an atomic intake transaction."""
+
+    member_id: ContractId
+    proposal_path: WorkspacePath
+    content_path: WorkspacePath
+    raw_payload_path: Optional[WorkspacePath] = None
+
+    @model_validator(mode="after")
+    def paths_are_member_scoped(self) -> "SourcePackCommitMember":
+        proposal = PurePosixPath(self.proposal_path)
+        content = PurePosixPath(self.content_path)
+        expected_parent = proposal.parent
+        if proposal.name != "source_proposal.json":
+            raise ValueError("source pack proposal filename is invalid")
+        if (
+            content.parent != expected_parent
+            or content.stem != "source_content"
+            or content.suffix not in {".json", ".md", ".txt", ".html", ".pdf", ".bin"}
+        ):
+            raise ValueError("source pack content path is invalid")
+        if self.raw_payload_path is not None:
+            raw = PurePosixPath(self.raw_payload_path)
+            if (
+                raw.parent != expected_parent
+                or raw.stem != "source_raw"
+                or raw.suffix not in {".json", ".txt", ".bin"}
+            ):
+                raise ValueError("source pack raw payload path is invalid")
+        return self
+
+
+class SourcePackCommitRequest(StrictModel):
+    """Atomically commit one complete, ordered set of source materials."""
+
+    schema_id = "briefloop.source_pack_commit_request.v2"
+
+    schema_version: Literal["briefloop.source_pack_commit_request.v2"]
+    request_id: ContractId
+    run_id: ContractId
+    invocation_id: ContractId
+    members: list[SourcePackCommitMember] = Field(min_length=1, max_length=256)
+    expected_store_revision: NonNegativeInt
+
+    @model_validator(mode="after")
+    def pack_is_ordered_unique_and_invocation_scoped(self) -> "SourcePackCommitRequest":
+        member_ids = [item.member_id for item in self.members]
+        if member_ids != sorted(set(member_ids)):
+            raise ValueError("source pack members must be sorted and unique")
+        paths: list[str] = []
+        expected_root = PurePosixPath("scratch") / self.invocation_id / "sources"
+        for item in self.members:
+            proposal = PurePosixPath(item.proposal_path)
+            if proposal.parent.parent != expected_root or proposal.parent.name != item.member_id:
+                raise ValueError("source pack member path must be invocation scoped")
+            paths.extend(
+                value
+                for value in (
+                    item.proposal_path,
+                    item.content_path,
+                    item.raw_payload_path,
+                )
+                if value is not None
+            )
+        if len(paths) != len(set(paths)):
+            raise ValueError("source pack paths must be unique")
+        return self
+
+
 class CandidateClaimsProposal(StrictModel):
     schema_id = "briefloop.candidate_claims_proposal.v2"
 
@@ -3499,6 +3568,22 @@ SourceCommitRequest.full_example = {
     **SourceCommitRequest.minimal_example,
     "raw_payload_path": "scratch/INV-SOURCE-001/source_raw.json",
 }
+SourcePackCommitRequest.minimal_example = {
+    "schema_version": SourcePackCommitRequest.schema_id,
+    "request_id": "REQ-SOURCE-PACK-001",
+    "run_id": "RUN-001",
+    "invocation_id": "INV-SOURCE-001",
+    "members": [
+        {
+            "member_id": "SRC-MEMBER-0001",
+            "proposal_path": "scratch/INV-SOURCE-001/sources/SRC-MEMBER-0001/source_proposal.json",
+            "content_path": "scratch/INV-SOURCE-001/sources/SRC-MEMBER-0001/source_content.txt",
+            "raw_payload_path": None,
+        }
+    ],
+    "expected_store_revision": 1,
+}
+SourcePackCommitRequest.full_example = deepcopy(SourcePackCommitRequest.minimal_example)
 
 _CANDIDATE = {
     "candidate_id": "CAND-001",
@@ -4956,6 +5041,7 @@ for _model in (
 V2_CONTRACT_MODELS: tuple[type[StrictModel], ...] = (
     SourceProposal,
     SourceCommitRequest,
+    SourcePackCommitRequest,
     CandidateClaimsProposal,
     ScreenedCandidatesProposal,
     ClaimDraftsProposal,
@@ -5263,6 +5349,8 @@ __all__ = [
     "SOURCE_MATERIAL_KINDS",
     "SOURCE_ORIGIN_TYPES",
     "SourceCommitRequest",
+    "SourcePackCommitMember",
+    "SourcePackCommitRequest",
     "SourceProposal",
     "StageArtifactBinding",
     "StageCompleteRequest",

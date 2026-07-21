@@ -124,13 +124,14 @@ def handle(args: argparse.Namespace) -> int:
         "apply",
     }:
         from multi_agent_brief.runtime_host_v2.codex import (
-            load_codex_adapter_binding,
+            workspace_codex_adapter_loader,
         )
         from multi_agent_brief.runtime_host_v2.errors import RuntimeHostError
         from multi_agent_brief.runtime_host_v2.service import RuntimeHostService
         from multi_agent_brief.runtime_host_v2.scratch import read_host_contract
         from multi_agent_brief.runtime_host_v2.contracts import (
             HumanSourceMaterialRequest,
+            HumanSourcePackRequest,
             RepairContentInput,
             RoleTaskEnvelope,
         )
@@ -144,7 +145,7 @@ def handle(args: argparse.Namespace) -> int:
             workspace = Path(args.workspace).expanduser().resolve(strict=True)
             service = RuntimeHostService(
                 workspace,
-                adapter_loader=load_codex_adapter_binding,
+                adapter_loader=workspace_codex_adapter_loader(workspace),
             )
             if args.runtime_action == "next":
                 payload = service.next_action().model_dump(
@@ -201,6 +202,7 @@ def handle(args: argparse.Namespace) -> int:
                 action_input = None
                 if action.action_kind == "human_decision":
                     request_models = {
+                        HumanSourcePackRequest.schema_id: HumanSourcePackRequest,
                         HumanSourceMaterialRequest.schema_id: (
                             HumanSourceMaterialRequest
                         ),

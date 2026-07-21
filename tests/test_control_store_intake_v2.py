@@ -913,7 +913,7 @@ def test_intake_commit_sites_share_the_postcommit_observer_boundary() -> None:
         and isinstance(node.func, ast.Attribute)
         and node.func.attr == "_commit_uow"
     ]
-    assert len(calls) == 3
+    assert len(calls) == 4
     assert all(len(call.args) == 2 for call in calls)
 
 

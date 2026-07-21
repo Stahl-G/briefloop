@@ -92,8 +92,35 @@ def test_non_editable_wheel_runs_complete_dormant_core_spine(
         ).joinpath("migrations", "0005.sql")
         assert migration_0005.is_file()
         assert "PRAGMA user_version=5;" in migration_0005.read_text(encoding="utf-8")
+        migration_0006 = resources.files(
+            "multi_agent_brief.control_store"
+        ).joinpath("migrations", "0006.sql")
+        assert migration_0006.is_file()
+        assert "PRAGMA user_version=6;" in migration_0006.read_text(encoding="utf-8")
         assert callable(build_checkout_revision)
         assert CheckoutPublicationEngine.__module__.endswith(".publication")
+
+        binding_workspace = workspace.parent / "codex-binding-wheel"
+        create_demo_workspace(binding_workspace)
+        stream = io.StringIO()
+        with redirect_stdout(stream):
+            assert main([
+                "runtime", "install", "--workspace", str(binding_workspace),
+                "--runtime", "codex",
+            ]) == 0
+            assert main([
+                "run", "--workspace", str(binding_workspace),
+                "--runtime", "codex",
+            ]) == 0
+        scout = binding_workspace / ".codex/agents/briefloop-scout.toml"
+        scout.write_bytes(scout.read_bytes() + b"\n# wheel drift\n")
+        stream = io.StringIO()
+        with redirect_stdout(stream):
+            assert main([
+                "runtime", "next", "--workspace", str(binding_workspace),
+            ]) == 1
+        assert "runtime_adapter_binding_mismatch" in stream.getvalue()
+
         create_demo_workspace(workspace)
         run_id = "RUN-WHEEL-CORE-V2-001"
         workspace_id = "WS-WHEEL-CORE-V2-001"

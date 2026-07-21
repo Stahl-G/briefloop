@@ -394,7 +394,7 @@ def _source_discovery_action(verified: VerifiedCoreRun) -> CoreRunNextAction:
             effect_kind="source_input_required",
             reason_code="human_source_material_required",
             stage_id="source-discovery",
-            request_schema_id=("briefloop.runtime_human_source_material_request.v2"),
+            request_schema_id=("briefloop.runtime_human_source_pack_request.v2"),
         )
     route = min(
         routes,
@@ -423,7 +423,7 @@ def _source_discovery_action(verified: VerifiedCoreRun) -> CoreRunNextAction:
             action_kind="deterministic",
             effect_kind="source_acquire",
             reason_code="deterministic_source_route_required",
-            request_schema_id="briefloop.source_commit_request.v2",
+            request_schema_id="briefloop.source_pack_commit_request.v2",
             **common,
         )
     if route.execution_owner == "specialist":
@@ -449,7 +449,7 @@ def _source_discovery_action(verified: VerifiedCoreRun) -> CoreRunNextAction:
         action_kind="human_decision",
         effect_kind="source_input_required",
         reason_code="human_source_material_required",
-        request_schema_id="briefloop.runtime_human_source_material_request.v2",
+        request_schema_id="briefloop.runtime_human_source_pack_request.v2",
         **common,
     )
 

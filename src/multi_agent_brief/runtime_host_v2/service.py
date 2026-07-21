@@ -39,6 +39,7 @@ from multi_agent_brief.contracts.v2 import (
     RuntimeAdapterBinding,
     ScreenedCandidatesProposal,
     SourceCommitRequest,
+    SourcePackCommitRequest,
     SourceProposal,
     StageCompleteRequest,
     StrictModel,
@@ -87,6 +88,8 @@ from multi_agent_brief.outputs.reader_projection import (
 
 from .contracts import (
     HumanSourceMaterialRequest,
+    HumanSourcePackMember,
+    HumanSourcePackRequest,
     RepairContentInput,
     RoleTaskEnvelope,
     RuntimeDiagnoseReport,
@@ -816,12 +819,12 @@ class RuntimeHostService:
                     action_input,
                 )
             if (
-                isinstance(human_request, HumanSourceMaterialRequest)
+                isinstance(human_request, HumanSourcePackRequest)
                 and action_input is None
                 and expected_action.action_kind == "human_decision"
                 and expected_action.effect_kind == "source_input_required"
             ):
-                return self._apply_human_source_material(
+                return self._apply_human_source_pack(
                     current,
                     expected_action,
                     human_request,
@@ -933,9 +936,9 @@ class RuntimeHostService:
         } and isinstance(request, DeliveryAuthorizationRequest):
             result = terminal.authorize_delivery(request)
         elif action.effect_kind == "source_input_required" and isinstance(
-            request, HumanSourceMaterialRequest
+            request, HumanSourcePackRequest
         ):
-            return self._apply_human_source_material(
+            return self._apply_human_source_pack(
                 current,
                 action,
                 request,
@@ -950,7 +953,7 @@ class RuntimeHostService:
         return result
 
     def _apply_source_acquire(self, current, action: CoreRunNextAction):
-        from .source_routes import collect_frozen_source
+        from .source_routes import collect_frozen_sources
 
         route = next(
             (
@@ -966,25 +969,57 @@ class RuntimeHostService:
         dispatch = self.start_current_invocation(action)
         invocation_id = dispatch.envelope.invocation_id
         try:
-            material = collect_frozen_source(
+            materials = collect_frozen_sources(
                 self.workspace,
                 run_id=action.run_id,
                 invocation_id=invocation_id,
                 route=route,
             )
-            scratch = f"scratch/{invocation_id}"
-            self._materialize_tool_input(
-                f"{scratch}/source_content.bin",
-                material.content,
+            members: list[dict[str, object]] = []
+            for position, material in enumerate(materials, start=1):
+                member_id = f"MEMBER-{position:04d}"
+                root = f"scratch/{invocation_id}/sources/{member_id}"
+                proposal_path = f"{root}/source_proposal.json"
+                content_path = f"{root}/source_content.bin"
+                raw_path = f"{root}/source_raw.json"
+                self._materialize_tool_input(content_path, material.content)
+                self._materialize_tool_input(raw_path, material.raw_payload)
+                self._materialize_tool_input(
+                    proposal_path,
+                    canonical_json_bytes(
+                        material.proposal.model_dump(
+                            mode="json",
+                            exclude_unset=False,
+                        )
+                    ),
+                )
+                members.append(
+                    {
+                        "member_id": member_id,
+                        "proposal_path": proposal_path,
+                        "content_path": content_path,
+                        "raw_payload_path": raw_path,
+                    }
+                )
+            submit = SourcePackCommitRequest.model_validate(
+                {
+                    "schema_version": SourcePackCommitRequest.schema_id,
+                    "request_id": derived_id(
+                        "REQ-HOST-SOURCE-PACK",
+                        action.run_id,
+                        action.action_fingerprint,
+                    ),
+                    "run_id": action.run_id,
+                    "invocation_id": invocation_id,
+                    "members": members,
+                    "expected_store_revision": dispatch.envelope.store_revision,
+                },
+                strict=True,
             )
-            self._materialize_tool_input(
-                f"{scratch}/source_raw.json",
-                material.raw_payload,
-            )
-            self._materialize_tool_input(
-                f"{scratch}/source_proposal.json",
+            submit_path = self._materialize_tool_input(
+                f"scratch/{invocation_id}/submit_request.json",
                 canonical_json_bytes(
-                    material.proposal.model_dump(mode="json", exclude_unset=False)
+                    submit.model_dump(mode="json", exclude_unset=False)
                 ),
             )
         except (
@@ -1000,7 +1035,201 @@ class RuntimeHostService:
                 invocation_id,
                 reason_code="dispatch_unavailable",
             )
-        return self.accept_invocation(invocation_id)
+        relative = submit_path.relative_to(self.workspace).as_posix()
+        intake = IntakeService(self.workspace)
+        result = intake.submit_source_pack(relative)
+        if result.status == "commit_outcome_unknown":
+            result = intake.submit_source_pack(relative)
+        return self._source_pack_runtime_result(invocation_id, result)
+
+    def _apply_human_source_pack(
+        self,
+        current,
+        action: CoreRunNextAction,
+        request: HumanSourcePackRequest,
+        *,
+        replay_only: bool,
+    ):
+        request_fingerprint = canonical_fingerprint(
+            request.model_dump(mode="json", exclude_unset=False)
+        )
+        invocation_request_id = derived_id(
+            "REQ-HOST-HUMAN-SOURCE-PACK-INVOKE",
+            request.request_id,
+            action.action_fingerprint,
+        )
+        invocation_request = InvocationStartRequest.model_validate(
+            {
+                "schema_version": InvocationStartRequest.schema_id,
+                "request_id": invocation_request_id,
+                "run_id": action.run_id,
+                "stage_id": "source-discovery",
+                "role_id": "source-provider",
+                "runtime": current.verified.snapshot.run.runtime,
+                "expected_store_revision": action.store_revision,
+            },
+            strict=True,
+        )
+        invocation_id = derived_id(
+            "INV",
+            invocation_request_id,
+            canonical_fingerprint(
+                invocation_request.model_dump(mode="json", exclude_unset=False)
+            ),
+        )
+        submit_relative = f"scratch/{invocation_id}/submit_request.json"
+        submit_path = self.workspace / submit_relative
+        commit_request_id = derived_id(
+            "REQ-HOST-HUMAN-SOURCE-PACK-COMMIT",
+            request.request_id,
+            action.action_fingerprint,
+            request_fingerprint,
+        )
+        contents: list[bytes] | None = None
+        if submit_path.exists():
+            try:
+                stored = SourcePackCommitRequest.model_validate(
+                    parse_json_object(
+                        ScratchReader(self.workspace).read_request(submit_relative)
+                    ),
+                    strict=True,
+                )
+            except (IntakeError, ValidationError, ValueError) as exc:
+                raise RuntimeHostError("runtime_human_request_invalid") from exc
+            if stored.request_id != commit_request_id:
+                raise RuntimeHostError("submission_replay_conflict")
+        else:
+            if replay_only:
+                raise RuntimeHostError("runtime_action_stale")
+            contents = [self._read_human_source_bytes(item) for item in request.members]
+            if sum(len(item) for item in contents) > 256 * 1024 * 1024:
+                raise RuntimeHostError("runtime_human_request_invalid")
+        dispatch = self._start_invocation_for_action(
+            current,
+            action,
+            role_id="source-provider",
+            request_id=invocation_request_id,
+        )
+        if dispatch.envelope.invocation_id != invocation_id:
+            raise RuntimeHostError("control_store_integrity_invalid")
+        if submit_path.exists():
+            intake = IntakeService(self.workspace)
+            result = intake.submit_source_pack(submit_relative)
+            if result.status == "commit_outcome_unknown":
+                result = intake.submit_source_pack(submit_relative)
+            return self._source_pack_runtime_result(invocation_id, result)
+        if contents is None:  # pragma: no cover - guarded above
+            raise RuntimeHostError("runtime_action_stale")
+        commit_members: list[dict[str, object]] = []
+        try:
+            for member, content in zip(request.members, contents, strict=True):
+                source_id = derived_id(
+                    "SRC-HUMAN-PACK",
+                    action.run_id,
+                    request.request_id,
+                    member.member_id,
+                    member.expected_input_sha256,
+                )
+                proposal = SourceProposal.model_validate(
+                    {
+                        "schema_version": SourceProposal.schema_id,
+                        "proposal_id": derived_id(
+                            "PROP-SOURCE-HUMAN-PACK",
+                            invocation_id,
+                            source_id,
+                        ),
+                        "run_id": action.run_id,
+                        "source_id": source_id,
+                        "origin_type": "uploaded_file",
+                        "acquisition_method": "manual_upload",
+                        "material_kind": "uploaded_file",
+                        "provider": None,
+                        "locator": {"kind": "file", "path": member.input_path},
+                        "title": member.title,
+                        "publisher": member.publisher,
+                        "published_at": member.published_at,
+                        "retrieved_at": member.retrieved_at,
+                        "source_category": "other",
+                        "retrieval_source_type": "local_file",
+                        "underlying_evidence_type": "unknown",
+                        "raw_underlying_evidence_type": None,
+                        "content_sha256": member.expected_input_sha256,
+                        "content_media_type": member.content_media_type,
+                        "raw_payload_sha256": None,
+                        "raw_payload_media_type": None,
+                    },
+                    strict=True,
+                )
+                root = f"scratch/{invocation_id}/sources/{member.member_id}"
+                proposal_relative = f"{root}/source_proposal.json"
+                content_relative = f"{root}/source_content.bin"
+                self._materialize_tool_input(content_relative, content)
+                self._materialize_tool_input(
+                    proposal_relative,
+                    canonical_json_bytes(
+                        proposal.model_dump(mode="json", exclude_unset=False)
+                    ),
+                )
+                commit_members.append(
+                    {
+                        "member_id": member.member_id,
+                        "proposal_path": proposal_relative,
+                        "content_path": content_relative,
+                        "raw_payload_path": None,
+                    }
+                )
+            submit = SourcePackCommitRequest.model_validate(
+                {
+                    "schema_version": SourcePackCommitRequest.schema_id,
+                    "request_id": commit_request_id,
+                    "run_id": action.run_id,
+                    "invocation_id": invocation_id,
+                    "members": commit_members,
+                    "expected_store_revision": dispatch.envelope.store_revision,
+                },
+                strict=True,
+            )
+            self._materialize_tool_input(
+                submit_relative,
+                canonical_json_bytes(
+                    submit.model_dump(mode="json", exclude_unset=False)
+                ),
+            )
+        except (OSError, RuntimeHostError, ValidationError, ValueError):
+            self.fail_invocation(
+                invocation_id,
+                reason_code="proposal_invalid",
+                expected_envelope=dispatch.envelope,
+            )
+            raise RuntimeHostError("runtime_human_request_invalid")
+        intake = IntakeService(self.workspace)
+        result = intake.submit_source_pack(submit_relative)
+        if result.status == "commit_outcome_unknown":
+            result = intake.submit_source_pack(submit_relative)
+        return self._source_pack_runtime_result(invocation_id, result)
+
+    def _source_pack_runtime_result(self, invocation_id: str, result):
+        if result.status not in {"committed", "replayed", "rejected_recorded"}:
+            raise RuntimeHostError(
+                result.error_code or "control_store_integrity_invalid"
+            )
+        receipt = result.receipt
+        if receipt is None:
+            raise RuntimeHostError("control_store_integrity_invalid")
+        return RuntimeInvocationResult.model_validate(
+            {
+                "schema_version": RuntimeInvocationResult.schema_id,
+                "run_id": receipt.run_id,
+                "invocation_id": invocation_id,
+                "status": result.status,
+                "transaction_id": receipt.transaction_id,
+                "store_revision": receipt.committed_revision,
+                "next_action": self.next_action().model_dump(
+                    mode="json", exclude_unset=False
+                ),
+            },
+            strict=True,
+        )
 
     def _apply_human_source_material(
         self,
@@ -1151,7 +1380,7 @@ class RuntimeHostService:
 
     def _read_human_source_bytes(
         self,
-        request: HumanSourceMaterialRequest,
+        request: HumanSourceMaterialRequest | HumanSourcePackMember,
     ) -> bytes:
         candidate = self.workspace / request.input_path
         try:

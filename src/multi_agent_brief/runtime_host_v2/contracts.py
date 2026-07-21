@@ -45,6 +45,47 @@ class HumanSourceMaterialRequest(StrictModel):
         return self
 
 
+class HumanSourcePackMember(StrictModel):
+    """One explicit workspace file in a human-frozen source pack."""
+
+    member_id: ContractId
+    input_path: WorkspacePath
+    expected_input_sha256: Sha256
+    title: CleanText
+    publisher: CleanText | None = None
+    published_at: IsoDate | None = None
+    retrieved_at: IsoDateTime
+    content_media_type: MimeType
+
+    @model_validator(mode="after")
+    def input_is_explicit_workspace_material(self) -> "HumanSourcePackMember":
+        if not self.input_path.startswith("input/"):
+            raise ValueError("human source material must be under input")
+        return self
+
+
+class HumanSourcePackRequest(StrictModel):
+    """One complete ordered pack committed by the host as a single effect."""
+
+    schema_id = "briefloop.runtime_human_source_pack_request.v2"
+
+    schema_version: Literal["briefloop.runtime_human_source_pack_request.v2"]
+    request_id: ContractId
+    run_id: ContractId
+    expected_store_revision: NonNegativeInt
+    members: list[HumanSourcePackMember] = Field(min_length=1, max_length=256)
+
+    @model_validator(mode="after")
+    def members_are_sorted_and_unique(self) -> "HumanSourcePackRequest":
+        member_ids = [item.member_id for item in self.members]
+        input_paths = [item.input_path for item in self.members]
+        if member_ids != sorted(set(member_ids)):
+            raise ValueError("human source pack members must be sorted and unique")
+        if len(input_paths) != len(set(input_paths)):
+            raise ValueError("human source pack input paths must be unique")
+        return self
+
+
 class RoleTaskEnvelope(StrictModel):
     schema_id = "briefloop.role_task_envelope.v2"
 
@@ -134,6 +175,8 @@ class RepairContentInput(StrictModel):
 
 __all__ = [
     "HumanSourceMaterialRequest",
+    "HumanSourcePackMember",
+    "HumanSourcePackRequest",
     "RoleTaskEnvelope",
     "RepairContentInput",
     "RuntimeDiagnoseReport",

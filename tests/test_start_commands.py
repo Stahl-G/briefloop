@@ -103,6 +103,7 @@ def test_start_help_shows_runtime_options(capsys):
     assert "manual" not in output
     assert "{hermes,claude,opencode,codex,codebuddy,operator}" in output
     assert "--workspace" in output
+    assert "--skip-doctor" not in output
 
 
 def test_start_help_does_not_claim_to_generate_briefs(capsys):
@@ -125,6 +126,7 @@ def test_handoff_help_shows_config_required(capsys):
     output = captured.out
     assert "--config" in output
     assert "--runtime" in output
+    assert "--skip-doctor" not in output
 
 
 # ---------------------------------------------------------------------------
@@ -276,6 +278,7 @@ def test_run_help_does_not_contain_deprecated(capsys):
     assert "deprecated" not in output.lower()
     assert "deterministic pipeline" not in output.lower()
     assert "never generates" not in output.lower()
+    assert "--skip-doctor" not in output
 
 
 def test_run_requires_explicit_runtime_without_writes(tmp_path):
