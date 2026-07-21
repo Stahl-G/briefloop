@@ -38,6 +38,9 @@ EXPECTED_PACKAGE_FILES = {
     "instrument.py",
     "normalization.py",
     "parser.py",
+    # post_final_bridge.py: evaluator-owned advisory bridge into product.review_session;
+    # experiment -> product is the allowed dependency direction.
+    "post_final_bridge.py",
     "profile.py",
     "prompt_sizer.py",
     "profiles/research_design_report_zh_v1.yaml",
