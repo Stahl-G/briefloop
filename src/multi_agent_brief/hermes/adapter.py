@@ -204,7 +204,7 @@ def build_hermes_cron_plan(
                 f"briefloop state check --workspace {workspace_path} --strict\n"
                 f"briefloop state stage-complete --workspace {workspace_path} --stage auditor --reason \"Audit and quality gates passed.\"\n"
                 f"Then run briefloop finalize --config {workspace_path}/config.yaml.\n"
-                f"Finalize is transactional: a failed reader-clean does not promote output/brief.md and leaves prior delivery unchanged. Only when finalize_report.json reports delivery_promotion \"promoted\", run briefloop gates check --workspace {workspace_path} --stage finalize --brief {workspace_path}/output/brief.md, then run briefloop state finalize-complete --workspace {workspace_path} --reason \"Reader-facing artifacts passed finalize checks.\" If promotion was skipped or reader-clean failed, stop and route repair instead. Before reporting delivery, confirm briefloop workbuddy diagnose --workspace {workspace_path} --json reports delivery_truth.valid=true.\n"
+                f"Finalize is transactional: a failed reader-clean does not promote output/brief.md and leaves prior delivery unchanged. Only when finalize_report.json reports delivery_promotion \"promoted\", run briefloop gates check --workspace {workspace_path} --stage finalize --brief {workspace_path}/output/brief.md, then run briefloop state finalize-complete --workspace {workspace_path} --reason \"Reader-facing artifacts passed finalize checks.\" If promotion was skipped or reader-clean failed, stop and route repair instead. Before reporting delivery, confirm the Store-native status projection (briefloop status --workspace {workspace_path} --json) reports delivered=true for the current run; the legacy workbuddy diagnose surface is retired.\n"
                 "finalize is not a quality-gate executor.\n"
                 "Optionally run briefloop provenance build/show/validate after runtime state exists for an audit/debug projection; it is not semantic proof."
             ),
@@ -258,7 +258,7 @@ def build_hermes_cron_plan(
                 f"briefloop state check --workspace {workspace_path} --strict\n"
                 f"briefloop state stage-complete --workspace {workspace_path} --stage auditor --reason \"Audit and quality gates passed.\"\n"
                 f"Then run briefloop finalize --config {workspace_path}/config.yaml.\n"
-                f"Finalize is transactional: a failed reader-clean does not promote output/brief.md and leaves prior delivery unchanged. Only when finalize_report.json reports delivery_promotion \"promoted\", run briefloop gates check --workspace {workspace_path} --stage finalize --brief {workspace_path}/output/brief.md, then run briefloop state finalize-complete --workspace {workspace_path} --reason \"Reader-facing artifacts passed finalize checks.\" If promotion was skipped or reader-clean failed, stop and route repair instead. Before reporting delivery, confirm briefloop workbuddy diagnose --workspace {workspace_path} --json reports delivery_truth.valid=true.\n"
+                f"Finalize is transactional: a failed reader-clean does not promote output/brief.md and leaves prior delivery unchanged. Only when finalize_report.json reports delivery_promotion \"promoted\", run briefloop gates check --workspace {workspace_path} --stage finalize --brief {workspace_path}/output/brief.md, then run briefloop state finalize-complete --workspace {workspace_path} --reason \"Reader-facing artifacts passed finalize checks.\" If promotion was skipped or reader-clean failed, stop and route repair instead. Before reporting delivery, confirm the Store-native status projection (briefloop status --workspace {workspace_path} --json) reports delivered=true for the current run; the legacy workbuddy diagnose surface is retired.\n"
                 "finalize is not a quality-gate executor.\n"
                 "Optionally run briefloop provenance build/show/validate after runtime state exists for an audit/debug projection; it is not semantic proof."
             ),
@@ -468,7 +468,7 @@ briefloop finalize --config <workspace>/config.yaml
 # only when finalize_report.json reports delivery_promotion "promoted":
 briefloop gates check --workspace <workspace> --stage finalize --brief <workspace>/output/brief.md
 briefloop state finalize-complete --workspace <workspace> --reason "Reader-facing artifacts passed finalize checks."
-briefloop workbuddy diagnose --workspace <workspace> --json
+briefloop status --workspace <workspace> --json
 ```
 
 Audit warnings, overstatement findings, support-calibration findings, and
@@ -708,7 +708,7 @@ As the Hermes Orchestrator main agent, execute:
 23. Finalize is transactional: failed reader-clean does not promote delivery and leaves any prior delivery unchanged. Only when finalize_report.json reports delivery_promotion "promoted", verify completion (otherwise stop and route repair):
     briefloop gates check --workspace {workspace} --stage finalize --brief {workspace}/output/brief.md
     briefloop state finalize-complete --workspace {workspace} --reason "Reader-facing artifacts passed finalize checks."
-    briefloop workbuddy diagnose --workspace {workspace} --json  (do not report delivery unless delivery_truth.valid=true)
+    briefloop status --workspace {workspace} --json  (do not report delivery unless the Store-native status projection reports delivered=true for the current run)
 
 24. Optional audit/debug projection after runtime state exists:
     briefloop provenance build --workspace {workspace}

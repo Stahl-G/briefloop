@@ -156,9 +156,10 @@ roles:
       finalize_report.json reports delivery_promotion "promoted"; otherwise
       stop and route repair. After promotion, verify completion with
       `briefloop gates check --stage finalize --brief <workspace>/output/brief.md`
-      and then briefloop state finalize-complete, and confirm
-      briefloop workbuddy diagnose --json reports delivery_truth.valid=true
-      before reporting the run complete.
+      and then briefloop state finalize-complete, and confirm the Store-native
+      status projection (`briefloop status --workspace <workspace> --json`)
+      reports `delivered=true` for the current run before reporting the run
+      complete. The legacy `workbuddy diagnose` surface is retired.
     - Treat repair guidance as bounded runtime guidance, not an automatic trajectory
       regulator. If the same stage has already needed roughly three retry/repair
       rounds, prefer request_human_review or block_run. If a repair would touch

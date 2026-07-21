@@ -68,7 +68,7 @@ or any issue/PR comment that reports the result.
    ```
 
    - Expected: WorkBuddy reports the resolved command path and version, and
-     reuses `$BriefLoop` for doctor, run, secrets import, and diagnose.
+     reuses `$BriefLoop` for doctor, run, secrets import, status, and runtime next.
    - `py -3 --version` is diagnostic only, not executable/Python identity proof.
    - WorkBuddy does not mix or fall back to Bash, `which`, `command -v`,
      `export`, `/c/Users/...`, venv activation, or `bash scripts/setup.sh`.
@@ -119,7 +119,8 @@ or any issue/PR comment that reports the result.
      --workspace "<workspace>" `
      --runtime codebuddy `
      --repo-workdir "<canonical BriefLoop source checkout>"
-   & $BriefLoop workbuddy diagnose --workspace "<workspace>" --json
+   & $BriefLoop status --workspace "<workspace>" --json
+   & $BriefLoop runtime next --workspace "<workspace>"
    ```
 
    Expected:
@@ -158,14 +159,15 @@ or any issue/PR comment that reports the result.
    - A formal finalize-complete statement is permitted only after the current
      run has successful finalize output, structurally valid Finalize Report,
      reader-clean pass, promoted delivery, current render transaction, passed
-     finalize gate, successful finalize-complete, current finalize event,
-     valid delivery truth, and an accurately reported delivery outcome.
+     finalize gate, successful finalize-complete, the Store-native status
+     projection reporting `package_ready=true`, and an accurately reported
+     `delivered` / `terminal_state`.
 
 4. Ask WorkBuddy to inspect status and state.
 
    ```powershell
-   & $BriefLoop workbuddy diagnose --workspace "<workspace>" --json
    & $BriefLoop status --workspace "<workspace>" --json
+   & $BriefLoop runtime next --workspace "<workspace>"
    & $BriefLoop state check --workspace "<workspace>"
    ```
 
@@ -173,21 +175,17 @@ or any issue/PR comment that reports the result.
    - WorkBuddy reports only deterministic status visible in CLI output or
      generated artifacts.
    - raw workflow state, event log, Registry, timestamps, and file existence
-     are audit evidence only and never replace the handoff/diagnose action.
+     are audit evidence only and never replace the handoff/status-projection action.
    - WorkBuddy prints a Run Card with:
 
      ```text
      runtime:
      current_stage:
-     run_integrity:
-     recovery_status:
-     recovery_action:
-     blocked:
-     latest_gate_status:
-     finalize_report:
-     delivery_truth:
-     delivery_event:
-     next_allowed_action:
+     terminal_state:
+     package_ready:
+     delivered:
+     store_revision:
+     next_action:
      ```
 
    - WorkBuddy does not hand-edit `workflow_state.json`,
@@ -209,11 +207,12 @@ or any issue/PR comment that reports the result.
    - Before each stage or role-owned artifact action, WorkBuddy re-reads the
      relevant `agent_handoff.md` / `agent_handoff.json` step.
    - After every start, CLI transaction, role return, or interruption,
-     WorkBuddy rereads handoff, diagnoses, and follows the current action. It
+     WorkBuddy rereads handoff, reads the status projection and
+     `runtime next`, and follows the current action. It
      invokes the exact assigned role only when that action explicitly assigns
      role-owned draft work. For a deterministic-only action it invokes no role
-     and lets the main session run the authorized transaction, then diagnoses
-     again.
+     and lets the main session run the authorized transaction, then reads the
+     status projection again.
 
 7. Confirm blocker behavior with a public-safe blocked workspace or fixture when
    available.
@@ -225,21 +224,22 @@ or any issue/PR comment that reports the result.
    - Any `doctor` error stops the workflow and shows the full doctor output.
      Human confirmation, `request_human_review`, or a standalone pass from
      another shell/environment cannot override it; the same `$BriefLoop` must
-     pass after correction. A following diagnose may be displayed, but
-     `doctor.status=not_run_read_only` cannot clear, replace, or route around
-     that observed failure, and its completion action must not be followed.
+     pass after correction.
      After interruption or uncertain session continuity, rerun doctor with
      the same `$BriefLoop`, workspace, and config.
    - `run_integrity` never selects recovery, finalize, delivery, export, or
-     share actions. WorkBuddy follows diagnose-projected `recovery_status`,
-     `recovery_action`, `next_allowed_action`, and current
-     gate/finalize/delivery truth. `completed_non_reference` may remain
-     contaminated and permits bounded local delivery only when
-     `delivery_truth.valid=true`; invalid or nonterminal recovery remains
-     blocked.
-   - `delivery_truth.valid` not being `true` prevents WorkBuddy from saying
+     share actions. WorkBuddy follows the current action from
+     `briefloop runtime next --workspace "<workspace>"` and current
+     gate/finalize/delivery truth from the Store-native status projection.
+     `completed_non_reference` may remain
+     contaminated and permits bounded local delivery only when the status
+     projection reports `package_ready=true`; invalid or nonterminal recovery
+     remains blocked.
+   - The status projection not reporting `package_ready=true` prevents WorkBuddy
+     from saying
      delivery is complete or exporting a delivery package; it does not by
-     itself stop pre-finalize role work.
+     itself stop pre-finalize role work. Only `delivered=true` for the current
+     run permits a delivered claim.
    - Any export/share package candidate containing `.env`, tokens, private
      planning files, or machine secrets is rejected before sharing.
    - WorkBuddy does not zip or share the whole workspace.
@@ -274,9 +274,11 @@ The smoke passes only if all of these are true:
 - WorkBuddy did not silently fall back to `--runtime operator` for full
   workflow execution.
 - WorkBuddy stopped on doctor errors, never routed an action from
-  `run_integrity`, followed diagnose recovery/action/delivery truth, allowed
-  `completed_non_reference` bounded local delivery only when
-  `delivery_truth.valid=true`, blocked invalid or nonterminal recovery, and
+  `run_integrity`, followed status-projection/`runtime next`
+  recovery/action/delivery truth, allowed
+  `completed_non_reference` bounded local delivery only when the status
+  projection reported `package_ready=true`, blocked invalid or nonterminal
+  recovery, and
   rejected secret-bearing package candidates.
 - WorkBuddy did not share a whole workspace zip.
 - The operator-handoff + manual-DOCX + no-finalize-receipt incident remained

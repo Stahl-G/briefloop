@@ -65,10 +65,10 @@ briefloop finalize --config <workspace>/config.yaml
 # proceed only when finalize_report.json reports delivery_promotion "promoted":
 briefloop gates check --workspace <workspace> --stage finalize --brief <workspace>/output/brief.md
 briefloop state finalize-complete --workspace <workspace> --reason "Reader-facing artifacts passed finalize checks."
-briefloop workbuddy diagnose --workspace <workspace> --json
+briefloop status --workspace <workspace> --json
 ```
 
-`finalize` only renders reader-facing outputs; it is not a quality-gate executor. A failed reader-clean does not promote delivery and leaves any prior delivery unchanged; do not report delivery unless diagnose shows `delivery_truth.valid=true`.
+`finalize` only renders reader-facing outputs; it is not a quality-gate executor. A failed reader-clean does not promote delivery and leaves any prior delivery unchanged; do not report delivery unless the Store-native status projection reports `delivered=true` for the current run. The legacy completion projection / `workbuddy diagnose` surface is retired.
 
 Selection is not execution. `controls select --selection enable` records Orchestrator intent only; explicitly run the selected CLI, subagent, or human action afterward.
 

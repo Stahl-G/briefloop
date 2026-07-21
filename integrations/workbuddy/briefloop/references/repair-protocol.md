@@ -63,14 +63,15 @@ This records the old registered hash, current bytes hash, and reason, preserves
 the original contamination event, keeps `reference_eligible=false`, and requires
 downstream stages to rerun.
 
-When `& $BriefLoop workbuddy diagnose --workspace "<workspace>" --json` reports
-`recovery_state.status=awaiting_recovery` and
-`recovery_state.recommended_recovery_action=request_recovery_decision`, inspect
+When the Store-native status projection
+(`& $BriefLoop status --workspace "<workspace>" --json`) or handoff reports a
+pending recovery decision
+(for example `awaiting_recovery` / `request_recovery_decision`), inspect
 the bound contamination and owner revision before the operator chooses a
 controlled repair, supersede, or new run. Do not infer recovery progress from
-`run_integrity`, and do not hand-edit control files. Only WorkBuddy diagnose
-surfaces `next_allowed_action` (it formats the completion projection);
-`status --json` does not output that field.
+`run_integrity`, and do not hand-edit control files. The next action comes only
+from `briefloop runtime next --workspace <workspace>`; the legacy completion
+projection / `workbuddy diagnose` surface is retired.
 
 ## Boundaries
 

@@ -26,9 +26,13 @@ currently available commands.
 - Delivery truth: `finalize_report.json` is the single delivery-truth record
   (staged candidate promotion, `delivery_artifacts` + SHA-256, reader-clean
   results); failed reader-clean does not promote or update current delivery.
-- Completion projection: canonical finalize/delivery/next-action truth,
-  formatted by `briefloop workbuddy diagnose --workspace <workspace> --json`;
-  adapters must not reconstruct delivery truth from file existence.
+- Delivery-truth reader: the Store-native status projection
+  `briefloop status --workspace <workspace> --json` is the only canonical
+  reader of delivery truth (`terminal_state`, `package_ready`, `delivered`,
+  receipt-bound via `projection_source`); `briefloop runtime next` owns
+  workflow progression truth; adapters must not reconstruct delivery truth
+  from file existence or projection files. The legacy completion projection /
+  `workbuddy diagnose` surface is retired.
 - Current-gate scoped repair: `briefloop gates show --workspace <workspace>
   --json` emits `required_commands`; current-gate `repair start` requires
   `--gate-stage` and `--gate-artifact`; non-gate routes start from
@@ -40,8 +44,9 @@ currently available commands.
 - Shared internal citation parser: only strict `[src:<claim_id>]` tokens
   project to reader source labels; other internal-looking residue fails closed
   in the reader gate.
-- WorkBuddy surface: `briefloop workbuddy pack-skill` (local Skill zip) and
-  `briefloop workbuddy diagnose` (read-only Run Card).
+- WorkBuddy surface: `briefloop workbuddy pack-skill` (local Skill zip). The
+  legacy `briefloop workbuddy diagnose` read-only Run Card surface is retired;
+  read delivery truth from the Store-native status projection instead.
 - v1.0 release governor: `docs/v1-pilot-evidence.md` +
   `scripts/check_v1_pilot_evidence.py --require-satisfied` gate release wording
   and release prep. The separate RC readiness gate was retired in the LD2-3

@@ -297,15 +297,17 @@ edit `audited_brief.md`, `audit_report.json`, artifact registry, or workflow
 state during finalize. If reader-clean requires wording changes to the audited
 brief, stop and route repair to Editor before rerunning downstream stages.
 
-Before claiming delivery readiness, verify delivery truth from the canonical
-completion projection:
+Before claiming delivery readiness, verify delivery truth from the
+Store-native status projection (the only canonical reader of delivery truth):
 
 ```bash
-briefloop workbuddy diagnose --workspace <workspace> --json
+briefloop status --workspace <workspace> --json
 ```
 
-Only proceed when it reports `delivery_truth.valid=true`. Do not infer
-delivery from file existence.
+Only proceed when it reports `package_ready=true`, and claim delivery only
+when it reports `delivered=true` for the current run. Do not infer
+delivery from file existence or projection files. The legacy completion
+projection / `workbuddy diagnose` surface is retired.
 
 If no delivery target is specified, run:
 
@@ -336,8 +338,8 @@ Forbidden:
 - do not treat `finalize` as a quality-gate executor;
 - do not bypass quality gates;
 - do not deliver if reader final gate fails;
-- do not claim delivery unless the completion projection reports
-  `delivery_truth.valid=true`;
+- do not claim delivery unless the Store-native status projection reports
+  `delivered=true` for the current run;
 - do not send audit/control records;
 - do not silently strip process residue and call the run clean;
 - do not use `state decide --decision finalize`.
