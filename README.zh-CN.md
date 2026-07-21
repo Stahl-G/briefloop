@@ -6,9 +6,51 @@
 
 官网：[briefloop.ai](https://briefloop.ai) · 联系：[contact@briefloop.ai](mailto:contact@briefloop.ai)
 
-[15 分钟试用](docs/15-minute-pilot.zh-CN.md) · [Getting Started](docs/getting-started.md) · [Weekly Loop](docs/weekly-loop.md) · [Troubleshooting](docs/troubleshooting.md) · [Reference Workspace](examples/reference-workspaces/industry-weekly-demo/README.md) · [联系方式](docs/contact.zh-CN.md)
+[OpenAI Build Week](#openai-build-week-2026) · [15 分钟试用](docs/15-minute-pilot.zh-CN.md) · [Getting Started](docs/getting-started.md) · [Weekly Loop](docs/weekly-loop.md) · [Troubleshooting](docs/troubleshooting.md) · [Reference Workspace](examples/reference-workspaces/industry-weekly-demo/README.md) · [联系方式](docs/contact.zh-CN.md)
 
 写作入口：Claude Code 里用 `/briefloop`；命令行里用 `briefloop`。
+
+---
+
+## OpenAI Build Week 2026
+
+BriefLoop 同时使用了 **Codex** 和 **GPT-5.6**。二者承担不同职责，
+并且都不能自行把模型输出升级为项目或报告中的权威事实。
+
+| 参与者 | 如何使用 | 权力边界 |
+|---|---|---|
+| **Codex** | 作为主要工程环境，参与架构分解、Python 实现、测试、对抗审查、故障分析、文档和有范围的修复。Codex 也是 BriefLoop 当前 Experimental SQLite runtime 路径的宿主。 | Codex 可以提出并实现有边界的变更，但不能批准自己的工作、决定合并，也不能自行授权产品或研究主张。 |
+| **GPT-5.6** | 用于生成受控对照中的候选声明和行业周报草稿。在 Codex 中，GPT-5.6 Sol 的最高推理强度配合 Academic Research Skill，用于相关工作研究、候选实验设计和技术报告起草；独立的 GPT-5.6 Sol Pro 会话用于挑战对照条件、可证伪标准、引用和主张边界。 | 模型输出始终只是提案，不会自动成为来源证据、已接受的实验结果或可公开发布的结论。 |
+| **人类维护者** | 选择研究问题、核验一手来源、定义不变量和验收标准、冻结实验协议、接受或拒绝修订，并批准合并与发布。 | 最终架构、实验、风险接受、合并和发布权始终由人类掌握。 |
+
+Academic Research Skill 用于组织研究流程，本身不被当作证据。真正引用
+的来源仍然是论文、官方文档、仓库工件和一手发布材料。
+
+### 评委快速试用——不需要 API Key
+
+需要 Python 3.12。
+
+```bash
+git clone https://github.com/Stahl-G/briefloop.git
+cd briefloop
+bash scripts/setup.sh
+source .venv/bin/activate
+bash scripts/demo.sh
+```
+
+该确定性 Demo 会生成一套 public-safe 参考工作区，包括读者简报、
+Claim Ledger、Quality Panel、来源附录和事件日志摘录。它不会调用模型、
+抓取实时来源，也不证明输出质量。
+
+* [英文技术报告 v0.6.1](https://briefloop.ai/reports/briefloop-architecture-reference-v0.6.1.en.html)
+* [15 分钟试用](docs/15-minute-pilot.zh-CN.md)
+* [公开参考工作区](examples/reference-workspaces/industry-weekly-demo/README.md)
+
+### 证据边界
+
+Prompt、Skill 和 BriefLoop 的对照结果，只能依据已经冻结的工件、哈希
+和完成的审阅记录进行报告。本 README 不宣称 BriefLoop 已经赢得对照、
+能够自动解决所有知识冲突、证明语义真值或取代人工审查。
 
 ---
 
