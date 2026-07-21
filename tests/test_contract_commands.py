@@ -19,7 +19,22 @@ from multi_agent_brief.contracts import SchemaRegistry, V2_CONTRACT_IDS
 ROOT = Path(__file__).resolve().parent.parent
 
 
-@pytest.mark.parametrize("contract_id", V2_CONTRACT_IDS)
+# TEST-SLIM-1 (ruling da184ba5): the full 89-id x detail matrix renders the same
+# SchemaRegistry machinery per id; exact rendering and wheel parity are now
+# proven on a representative cross-family sample. Coverage citation (TD-2):
+# SchemaRegistry exactness is owned per contract by tests/test_contract_registry.py
+# and the non-editable wheel parity test below; the unsampled ids exercise the
+# identical code path (`contract show` -> SchemaRegistry).
+_REPRESENTATIVE_CONTRACT_IDS = [
+    "briefloop.source_proposal.v2",
+    "briefloop.claim_record.v2",
+    "briefloop.event_envelope.v2",
+    "briefloop.runtime_adapter_binding.v2",
+    "briefloop.core_run_next_action.v2",
+]
+
+
+@pytest.mark.parametrize("contract_id", _REPRESENTATIVE_CONTRACT_IDS)
 @pytest.mark.parametrize("detail", ("minimal", "full"))
 def test_contract_show_examples_are_exact_and_valid(contract_id, detail, capsys) -> None:
     assert main(["contract", "show", contract_id, "--example", detail]) == 0
@@ -29,7 +44,7 @@ def test_contract_show_examples_are_exact_and_valid(contract_id, detail, capsys)
     assert SchemaRegistry.validate(contract_id, payload) == []
 
 
-@pytest.mark.parametrize("contract_id", V2_CONTRACT_IDS)
+@pytest.mark.parametrize("contract_id", _REPRESENTATIVE_CONTRACT_IDS)
 def test_contract_show_schema_is_exact(contract_id, capsys) -> None:
     assert main(["contract", "show", contract_id, "--schema"]) == 0
     payload = json.loads(capsys.readouterr().out)
