@@ -2,6 +2,10 @@
 
 Skill contract version: `briefloop-codex-skill-v0.3.0`
 
+BriefLoop is the only current project and product name. The former project
+acronym is retired; literal compatibility identifiers may survive only on
+explicitly classified historical or compatibility surfaces.
+
 ## Release Lines
 
 - Prior release line: `v0.13.0`.

@@ -255,13 +255,12 @@ def test_workbuddy_skill_is_exposed_at_agent_skill_root() -> None:
     assert "## 首检" in text
 
 
-def test_repo_operator_skill_redirects_workbuddy_users() -> None:
+def test_repo_operator_skill_is_now_codex_only() -> None:
     text = _read(REPO_OPERATOR_SKILL)
-    compact = _compact(text)
-    assert "not the WorkBuddy first-user adapter" in text
-    assert ".agents/skills/briefloop-workbuddy/" in text
-    assert "briefloop workbuddy pack-skill" in text
-    assert "Do not point WorkBuddy users at this repo operator protocol skill" in compact
+    assert "SQLite-only and Codex-only" in text
+    assert "CoreRunNextAction" in text
+    assert "Do not route current work through" in text
+    assert "`operator`, or another runtime" in text
 
 
 def test_workbuddy_skill_references_are_linked_from_entrypoint() -> None:
@@ -308,27 +307,12 @@ def test_workbuddy_skill_uses_codebuddy_role_agent_runtime_not_operator_default(
     assert "legacy manual" not in text.lower()
 
 
-def test_workbuddy_default_runtime_matches_version_matrix() -> None:
+def test_codex_version_matrix_does_not_publish_workbuddy_runtime() -> None:
     matrix = _read(VERSION_MATRIX)
-    matrix_workbuddy = matrix.split("- WorkBuddy Skill source bundle:", 1)[1].split(
-        "- CodeBuddy project Skill adapter:", 1
-    )[0]
-    skill = _read(WORKBUDDY_SKILL / "SKILL.md")
-    skill_runtime = skill.split("## 运行模式", 1)[1].split("## Run Card 协议", 1)[0]
-    runtime_pattern = re.compile(
-        r"briefloop run --workspace <workspace> --runtime (?P<runtime>[a-z0-9-]+)"
-    )
-
-    matrix_default = runtime_pattern.search(matrix_workbuddy)
-    skill_default = re.search(
-        r"--runtime (?P<runtime>[a-z0-9-]+)", skill_runtime
-    )
-
-    assert matrix_default is not None
-    assert skill_default is not None
-    assert matrix_default.group("runtime") == skill_default.group("runtime") == "codebuddy"
-    assert "`--runtime operator` is an explicit user-approved fallback only" in matrix_workbuddy
-    assert "必须由用户明确决定" in _compact(skill_runtime)
+    assert "Codex is the only active fresh runtime" in matrix
+    assert "`operator` or another runtime as a fallback" in matrix
+    assert "briefloop run --workspace <workspace> --runtime codebuddy" not in matrix
+    assert "WorkBuddy Skill source bundle" not in matrix
 
 
 def test_workbuddy_skill_includes_required_cli_surface() -> None:
