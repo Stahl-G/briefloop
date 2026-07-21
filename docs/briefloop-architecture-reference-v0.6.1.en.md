@@ -171,7 +171,7 @@ Speed may come from reusing frozen artifacts, reducing repeated reasoning, and p
 
 ## 3. Architecture: Five Control Spines
 
-![BriefLoop's auditable closed-loop architecture from source discovery to human delivery](assets/briefloop-architecture-v0.5.0.en.svg)
+![BriefLoop's auditable closed-loop architecture from source discovery to human delivery](assets/briefloop-architecture-v0.4.0.en.svg)
 
 *Figure 1. Agents perform content work; the deterministic control plane owns state, freezing, gates, and archives; humans retain critical authorization and final delivery.*
 
