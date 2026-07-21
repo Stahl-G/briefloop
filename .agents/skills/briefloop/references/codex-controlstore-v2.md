@@ -79,14 +79,15 @@ Exactly five action kinds exist.
 
    ```bash
    briefloop contract show <proposal_schema_id> --example full
-   briefloop contract validate <proposal_schema_id> --input <scratch-proposal-path>
+   briefloop runtime invocation-validate --workspace <workspace> \
+     --envelope <workspace>/scratch/<invocation_id>/role_task_envelope.json
    ```
 
    Run the first before writing and the second after writing. Continue only
    when validation returns `status=valid`; never guess a wrapper, alias, or
-   field name. These commands inspect contracts and proposal bytes only and
-   never write the Store. The role must not call BriefLoop runtime commands,
-   write the Store, or write canonical artifacts.
+   field or invocation binding. These commands inspect the exact envelope and
+   proposal bytes only and never write the Store. Other runtime commands remain
+   root-host-only. The role must not write the Store or canonical artifacts.
 5. When the proposal is complete, the root host accepts it through:
 
    ```bash

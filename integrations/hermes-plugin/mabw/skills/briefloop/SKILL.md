@@ -85,8 +85,8 @@ Hard boundaries:
 - Never invent a role, stage, provider, request, retry, approval, or delivery
   decision.
 - For strict JSON role proposals, never guess the contract shape. Run the exact
-  `contract show` and `contract validate` preflight commands embedded in the
-  current `RoleTaskEnvelope.task_instructions` before invocation acceptance.
+  `contract show` and `runtime invocation-validate` preflight commands embedded
+  in the current `RoleTaskEnvelope.task_instructions` before acceptance.
 - Never replace exact-role delegation with root drafting, or replace
   current-session execution with a subagent.
 - Never fall back to legacy JSON, `operator`, migration, dual read/write, or

@@ -265,7 +265,7 @@ def render_packaged_codex_agent(role_name: str, role: dict) -> str:
         "sources, runtime files or another invocation's scratch. Do not call "
         "stage, gate, finalize, repair, approval or delivery transactions. "
         "When task_instructions name `briefloop contract show` and "
-        "`briefloop contract validate` preflight commands, run them exactly "
+        "`briefloop runtime invocation-validate` preflight commands, run them exactly "
         "before returning; do not guess JSON wrappers, aliases, or fields. "
         "Return control to the root host after the proposal is complete."
     )

@@ -183,7 +183,7 @@ def test_runtime_install_codex_workspace_kit_is_local(tmp_path: Path, capsys) ->
     assert scout["name"] == "scout"
     assert "RoleTaskEnvelope" in scout["developer_instructions"]
     assert "briefloop contract show" in scout["developer_instructions"]
-    assert "briefloop contract validate" in scout["developer_instructions"]
+    assert "briefloop runtime invocation-validate" in scout["developer_instructions"]
     skill_text = skill_path.read_text(encoding="utf-8")
     assert skill_text.startswith("---\n")
     assert "name: briefloop" in skill_text
@@ -204,6 +204,7 @@ def test_runtime_install_codex_workspace_kit_is_local(tmp_path: Path, capsys) ->
     for command in (
         "briefloop runtime next",
         "briefloop runtime invocation-start",
+        "briefloop runtime invocation-validate",
         "briefloop runtime invocation-accept",
         "briefloop runtime invocation-fail",
         "briefloop runtime apply",
@@ -211,7 +212,7 @@ def test_runtime_install_codex_workspace_kit_is_local(tmp_path: Path, capsys) ->
         assert command in reference_text
     assert "RoleTaskEnvelope" in reference_text
     assert "briefloop contract show" in reference_text
-    assert "briefloop contract validate" in reference_text
+    assert "briefloop runtime invocation-validate" in reference_text
     assert "allowed_output_filenames" in reference_text
     assert "runtime_action_stale" in reference_text
     assert "effect_kind=package_ready" in reference_text

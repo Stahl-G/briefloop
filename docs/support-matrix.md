@@ -55,7 +55,7 @@ validation unless that is stated separately.
 | Source appendix audit/control copy (`source_appendix.md`) | Supported |
 | `briefloop` CLI | Supported |
 | `multi-agent-brief` CLI | Supported compatibility entrypoint with identical behavior; retained for existing scripts and installs |
-| `briefloop run --workspace <path> --runtime codex` plus `runtime next/invocation-start/invocation-accept/invocation-fail/apply/diagnose`; strict JSON proposal `contract show/validate` preflight | Experimental; fresh SQLite-only, no JSON migration or fallback |
+| `briefloop run --workspace <path> --runtime codex` plus `runtime next/invocation-start/invocation-validate/invocation-accept/invocation-fail/apply/diagnose`; strict JSON proposal contract preflight | Experimental; fresh SQLite-only, no JSON migration or fallback |
 | Legacy runtime names and `operator --recipe fast-rerun` | Unsupported for the SQLite-only active path |
 | `briefloop status --workspace <path>` | Supported read-only Store projection for SQLite workspaces; JSON-only workspace unsupported |
 | Legacy `briefloop deliver` commands | Unsupported on SQLite; approval and delivery use typed Store actions through `runtime apply` |

@@ -28,5 +28,5 @@ frozen revisions. Never infer legality from JSON/JSONL, Markdown, HTML, status,
 Quality Panel, checkout files, prompts, or memory. Never fall back to a legacy
 handoff, JSON workspace, `operator`, migration, dual mode, or another runtime.
 For a strict JSON role proposal, never guess its contract shape: run the exact
-`briefloop contract show` and `briefloop contract validate` commands embedded
-in the current `RoleTaskEnvelope.task_instructions` before acceptance.
+`briefloop contract show` and `briefloop runtime invocation-validate` commands
+embedded in the current `RoleTaskEnvelope.task_instructions` before acceptance.
