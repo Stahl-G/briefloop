@@ -82,7 +82,9 @@ def test_canonical_root_and_packaged_contract_pairs_are_equivalent() -> None:
     assert packaged_stages == root_stages
     assert packaged_artifacts == root_artifacts
     assert len(root_stages) == 10
-    assert len(root_artifacts) == 30
+    # TD-1 (LD2-1 D1): guidance_manifestation_report retired from the
+    # contract universe; 30 -> 29.
+    assert len(root_artifacts) == 29
 
     raw_stages = yaml.safe_load((ROOT / "configs/stage_specs.yaml").read_text(encoding="utf-8"))
     raw_artifacts = yaml.safe_load(
@@ -116,7 +118,6 @@ def test_canonical_control_tool_classification_is_ratchet_locked() -> None:
         ("quality_panel", "quality-panel"),
         ("quality_summary", "quality-panel"),
         ("quality_panel_html", "quality-panel"),
-        ("guidance_manifestation_report", "guidance-manifestation"),
         ("analyst_draft_snapshot", "analyst"),
         ("provenance_graph", "provenance"),
     ]
@@ -842,7 +843,9 @@ def test_unlisted_external_control_owner_namespaces_remain_valid() -> None:
         and artifact["producer_stage"] not in {stage["stage_id"] for stage in stages}
     }
 
-    assert external == {"guidance-manifestation", "provenance", "quality-panel"}
+    # TD-1 (LD2-1 D1): guidance-manifestation is no longer an external
+    # control-owner namespace; its artifact contract retired with the fold-in.
+    assert external == {"provenance", "quality-panel"}
 
 
 def test_stage_consumes_may_reference_external_runtime_inputs(tmp_path: Path) -> None:

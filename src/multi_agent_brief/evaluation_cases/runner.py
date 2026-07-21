@@ -34,12 +34,6 @@ from multi_agent_brief.feedback.feedback_state import (
     plan_feedback,
     validate_feedback_workspace,
 )
-from multi_agent_brief.product.guidance_manifestation import (
-    GUIDANCE_MANIFESTATION_BOUNDARY,
-    GUIDANCE_MANIFESTATION_REPORT_SCHEMA_VERSION,
-    GUIDANCE_MANIFESTATION_REQUIRED_NON_GOALS,
-    GUIDANCE_MANIFESTATION_RUNTIME_EFFECT,
-)
 from multi_agent_brief.product.bundle_projection import write_report_bundle_manifest
 from multi_agent_brief.product.quality_panel import (
     quality_panel_path,
@@ -510,8 +504,6 @@ def _dispatch_action(command: dict[str, Any], context: dict[str, Any]) -> dict[s
             result["source_repo_mode"] = data["source_repo_mode"]
         if "trajectory_regulation" in data:
             result["trajectory_regulation"] = data["trajectory_regulation"]
-        if "guidance_manifestation" in data:
-            result["guidance_manifestation"] = data["guidance_manifestation"]
         if "quality_panel" in data:
             result["quality_panel"] = data["quality_panel"]
         if "quality_summary" in data:
@@ -643,14 +635,8 @@ def _run_action(*, action: str, args: dict[str, Any], context: dict[str, Any]) -
         return {
             "ok": bool(status.get("ok")),
             "trajectory_regulation": status.get("trajectory_regulation") or {},
-            "guidance_manifestation": status.get("guidance_manifestation") or {},
             "suggested_next_command": status.get("suggested_next_command"),
         }
-    if action == "guidance_manifestation.seed_report":
-        return _seed_guidance_manifestation_report(
-            workspace=_require_workspace(workspace),
-            args=args,
-        )
     if action == "synthetic.seed_claim_support_case":
         return _seed_claim_support_case(
             workspace=_require_workspace(workspace),
@@ -1070,75 +1056,6 @@ def _write_json(path: Path, payload: Any) -> None:
 
 def _span_hash(text: str) -> str:
     return "sha256:" + hashlib.sha256(text.encode("utf-8")).hexdigest()
-
-
-def _seed_guidance_manifestation_report(*, workspace: Path, args: dict[str, Any]) -> dict[str, Any]:
-    intermediate = workspace / "output" / "intermediate"
-    manifest_path = intermediate / "runtime_manifest.json"
-    manifest = _load_json(manifest_path)
-    run_id = str(manifest.get("run_id") or "")
-    if not run_id:
-        raise EvaluationCaseRunError("Runtime manifest has no run_id for manifestation seed.")
-
-    entry_id = str(args.get("entry_id") or "AG-0001")
-    status = str(args.get("status") or "not_observable")
-    snapshot_path = intermediate / "improvement_memory_snapshot.md"
-    snapshot_text = f"# Improvement Memory Snapshot\n\n- {entry_id}: synthetic approved guidance.\n"
-    snapshot_path.write_text(snapshot_text, encoding="utf-8")
-    snapshot_sha = hashlib.sha256(snapshot_text.encode("utf-8")).hexdigest()
-
-    improvement = manifest.get("improvement") if isinstance(manifest.get("improvement"), dict) else {}
-    materialized = improvement.get("materialized_entry_ids") if isinstance(improvement.get("materialized_entry_ids"), list) else []
-    materialized_ids = [str(item) for item in materialized if str(item)]
-    if entry_id not in materialized_ids:
-        materialized_ids.append(entry_id)
-    improvement.update(
-        {
-            "snapshot_path": "output/intermediate/improvement_memory_snapshot.md",
-            "snapshot_sha256": snapshot_sha,
-            "materialized_entry_ids": materialized_ids,
-        }
-    )
-    manifest["improvement"] = improvement
-    manifest_path.write_text(
-        json.dumps(manifest, ensure_ascii=False, indent=2, sort_keys=True) + "\n",
-        encoding="utf-8",
-    )
-
-    report = {
-        "schema_version": GUIDANCE_MANIFESTATION_REPORT_SCHEMA_VERSION,
-        "workspace": ".",
-        "run_id": run_id,
-        "generated_at": str(args.get("generated_at") or "2026-07-01T00:00:00+00:00"),
-        "read_only": True,
-        "runtime_effect": GUIDANCE_MANIFESTATION_RUNTIME_EFFECT,
-        "boundary": GUIDANCE_MANIFESTATION_BOUNDARY,
-        "assessment_method": str(args.get("assessment_method") or "synthetic_eval_human_label"),
-        "entries": [
-            {
-                "entry_id": entry_id,
-                "status": status,
-                "assessment_source": str(args.get("assessment_source") or "human"),
-                "notes": str(args.get("notes") or "Synthetic public-safe manifestation label."),
-                "artifact_refs": [
-                    {
-                        "path": "output/intermediate/improvement_memory_snapshot.md",
-                        "label": "synthetic approved guidance snapshot",
-                    }
-                ],
-            }
-        ],
-        "non_goals": sorted(GUIDANCE_MANIFESTATION_REQUIRED_NON_GOALS),
-    }
-    report_path = intermediate / "guidance_manifestation_report.json"
-    report_path.write_text(
-        json.dumps(report, ensure_ascii=False, indent=2, sort_keys=True) + "\n",
-        encoding="utf-8",
-    )
-    return {
-        "ok": True,
-        "guidance_manifestation_report": "output/intermediate/guidance_manifestation_report.json",
-    }
 
 
 def _action_exit_code(*, action: str, args: dict[str, Any], data: dict[str, Any]) -> int:

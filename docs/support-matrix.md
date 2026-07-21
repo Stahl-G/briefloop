@@ -47,7 +47,7 @@ validation unless that is stated separately.
 | Semantic Assessment Report (`semantic_assessment_report.json` schema, reference validation, proposal projection, status visibility, and optional human adjudication records in `semantic_support_acceptance_ledger.json`) | Experimental |
 | v0.11 product-facing workspace entries (`briefloop new industry-weekly`, `briefloop new management-monthly`, `briefloop new document-review`) mapped to canonical ReportPacks (`market_weekly`, `management_monthly`, `evidence_extract`) with local-first skeletons and control-spine defaults | Supported |
 | ReportSpec / ReportPack baseline contracts for the v0.11 product baseline (`report_spec.yaml`, packaged `market_weekly`, `management_monthly`, and `evidence_extract`, `packs list/show`, and `validate-report-spec`) | Supported |
-| Wider Product OS extensions: ReportTemplate / PolicyProfile registry, Citation Profile Split metadata, Reader Template Conformance warning projection, template renderer MVP, `solar-periodic` / `solar_industry_periodic`, SourceHub Lite setup, internal release-mode approval records, Quality Panel / Quality Summary / static HTML projection, Trajectory Regulation read-only projection, Guidance Manifestation diagnostic projection, Materiality Selection diagnostic projection, `extract` source/scope registration, and `packs bundle` delivery/audit manifest projection | Experimental |
+| Wider Product OS extensions: ReportTemplate / PolicyProfile registry, Citation Profile Split metadata, Reader Template Conformance warning projection, template renderer MVP, `solar-periodic` / `solar_industry_periodic`, SourceHub Lite setup, internal release-mode approval records, Quality Panel / Quality Summary / static HTML projection, Trajectory Regulation read-only projection, Materiality Selection diagnostic projection, `extract` source/scope registration, and `packs bundle` delivery/audit manifest projection | Experimental |
 | Provenance projection control file (`provenance_graph.json`) | Supported |
 | Finalize delivery bundle (`output/delivery/brief.md` + configured DOCX) | Supported |
 | Source appendix audit/control copy (`source_appendix.md`) | Supported |
@@ -60,6 +60,8 @@ validation unless that is stated separately.
 | Legacy `briefloop sources decide` command | Unsupported on SQLite; source discovery runs through the runtime-host route |
 | Legacy `briefloop deliver --target feishu\|gmail` forms | Unsupported on SQLite; no user-reachable delivery entry remains — the connector execution layer is retained only as a tested internal seam |
 | Legacy `state`, `gates`, `repair`, `finalize`, `delivery`, `controls`, and feedback mutators | Unsupported on SQLite; public handlers removed in LEGACY-DELETE with typed rejections retained; the legacy JSON runtime-state stack is declared internal debt tracked as LEGACY-DELETE-2 |
+| Guidance Manifestation diagnostic projection | Retired in LEGACY-DELETE-2 D1; `status` and Quality Panel payloads no longer carry the `guidance_manifestation` fold-in key, and the `[status] guidance_manifestation` formatter line is removed |
+| Support-Calibrated Wording diagnostic projection | Retired in LEGACY-DELETE-2 D1; `status` and Quality Panel payloads no longer carry the `support_wording` fold-in key, and the `[status] support_wording` formatter line is removed |
 | `briefloop state import-fact-layer --runtime <canonical-runtime>` | Unsupported on SQLite; retired public CLI |
 | `briefloop controls build-switchboard/show/select/validate` | Unsupported on SQLite; retired public CLI |
 | `briefloop runtime install --workspace <path> --runtime codex` | Experimental; packaged/non-editable Codex kit |
@@ -240,15 +242,11 @@ Trajectory Regulation projection reads existing `workflow_state.json` and
 patterns in status and Quality Panel recommended actions. It is read-only
 operator guidance only: it does not write workflow state, start repair, execute
 repair, run gates, block stages, approve delivery, or decide release readiness.
-Guidance Manifestation projection reads optional
-`output/intermediate/guidance_manifestation_report.json` labels for approved
-guidance entries already materialized into the run. It can surface
-`explicitly_reflected`, `partially_reflected`, `contradicted`, and
-`not_observable` counts in status and Quality Panel. These labels are
-human/imported diagnostic assessments; Python only validates and counts them.
-This does not mutate Improvement Memory, approve guidance, create a quality
-score, run gates, approve delivery, prove output improvement, or decide release
-readiness.
+Guidance Manifestation projection is retired in LEGACY-DELETE-2 D1. The
+optional `output/intermediate/guidance_manifestation_report.json` fold-in is
+no longer read, and `status`/Quality Panel payloads no longer carry the
+`guidance_manifestation` key. Improvement Memory materialization itself
+(`improvement/memory.md` and the frozen snapshot) is unaffected.
 Materiality Selection projection reads valid `screened_candidates.json`, the
 resolved PolicyProfile materiality terms, and workspace focus terms to surface
 excluded or deprioritized candidates that match explicit materiality/focus
@@ -256,13 +254,9 @@ terms after capacity or scope screening. It is deterministic keyword
 diagnostics only: Python does not infer semantic importance, mutate screening
 results, resurrect candidates, alter the Claim Ledger, run gates, approve
 delivery, or decide release readiness.
-Support-Calibrated Wording projection reads existing reader Markdown, Claim
-Ledger metadata, source taxonomy, and valid Claim-Support Matrix policy
-signals to surface warning-only `support_wording` diagnostics for strong or
-unframed wording on weak, downgrade-required, inferential, unsupported, or
-media/report-style support metadata. It does not judge claim truth, generate or
-accept support rows, run gates, block delivery, approve release, or create a
-quality score.
+Support-Calibrated Wording projection is retired in LEGACY-DELETE-2 D1. The
+warning-only `support_wording` diagnostics are no longer computed, and
+`status`/Quality Panel payloads no longer carry the `support_wording` key.
 Workspace creation may use an
 explicit `--policy-profile` or deterministic `--industry` hint, but the result
 is written into `report_spec.yaml` with its resolution source and is not
