@@ -54,7 +54,7 @@
 - 司乐师 控制台 可以给出 deterministic control recommendations，并记录 enable/defer/reject selections；selection 不会自动执行对应 control。
 - Finalize 会把 reader delivery bundle 写入 `output/delivery/`，并把来源附录追加到交付 Markdown/DOCX 末尾；`output/source_appendix.md` 继续作为 audit/control copy 保留。Reader-facing appendix 可以展示安全的 source identity 和 taxonomy labels；`output/source_appendix_trace.md` 可以承载内部 claim/source/span IDs、source paths、source byte hashes 和 metadata completeness warnings 供 audit review。交付产物不得暴露内部 claim IDs、source IDs、evidence text、本地路径或 file URL。
 - Runtime asset availability 已显式区分：package install 包含 契约 configs 和 public-safe eval fixtures；`.agents/`、`.claude/`、`.opencode/`、`.codex/` 以及 Hermes plugin 文件属于 source-clone-only，除非通过 `briefloop runtime install` 复制到 workspace。
-- Improvement Ledger lifecycle 已在 LD2-3 退役。其投影与每次 run 冻结的代码位于被删除的 legacy stack 中，因此 `improvement/ledger.jsonl`、`improvement/memory.md`、`improvement_memory_snapshot.md` 已无任何代码读写方。Store-native 替代方案属于 MU-2 工作范围。
+- Improvement Ledger lifecycle 已在 LD2-3 退役。其投影与每次 run 冻结的代码位于被删除的 legacy stack 中，因此 `improvement/ledger.jsonl`、`improvement/memory.md`、`improvement_memory_snapshot.md` 已无任何代码读写方。`contracts/v2.py` 中的 `improvement_*` 事件词汇表存活。Store-native 替代方案属于 MU-2 工作范围。
 - Packaged public-safe evaluation cases 已覆盖 Improvement Memory 控制行为：未批准 entry 不物化，已批准 guidance 会冻结，reverted entry 会从下一次 snapshot 中移除。
 - 实验性 Atomic Claim Graph 控制可以校验可选
   `output/intermediate/atomic_claim_graph.json`，检查 whole-ledger coverage 和
