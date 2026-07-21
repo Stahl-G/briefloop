@@ -165,11 +165,12 @@ and route repair. After promotion, run:
 ```bash
 briefloop gates check --workspace <workspace> --stage finalize --brief <workspace>/output/brief.md
 briefloop state finalize-complete --workspace <workspace> --reason "Reader-facing artifacts passed finalize checks."
-briefloop workbuddy diagnose --workspace <workspace> --json
+briefloop status --workspace <workspace> --json
 ```
 
-Do not report delivery unless the diagnose output shows
-`delivery_truth.valid=true`.
+Do not report delivery unless the Store-native status projection reports
+`delivered=true` for the current run. The legacy completion projection /
+`workbuddy diagnose` surface is retired.
 
 Repair best practice: repeated retry/repair budgets are enforced by `workflow_state.json.next_allowed_decisions` after `state check` or `state decide`; when trajectory regulation narrows decisions, use only `request_human_review` or `block_run`. If a repair would touch more than two sections, narrow the scope before delegating repair or request human review. Trajectory regulation narrows operator decisions only; it does not execute repair, run gates, approve delivery, or perform agent work.
 

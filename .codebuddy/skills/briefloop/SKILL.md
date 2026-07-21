@@ -51,7 +51,7 @@ CodeBuddy's official project Skill discovery can find BriefLoop at:
    git --version
    ```
 
-   Reuse `$BriefLoop` for bootstrap, doctor, run, secrets import, and diagnose.
+   Reuse `$BriefLoop` for bootstrap, doctor, run, secrets import, status, and runtime next.
    `py -3 --version` is diagnostic only. Do not mix or fall back to `bash`,
    `which`, `command -v`, `export`, `/c/Users/...`,
    `source .venv/bin/activate`, or `bash scripts/setup.sh`. If the actual shell
@@ -138,7 +138,8 @@ Generate the delegated handoff only with the bound CLI and canonical checkout:
   --workspace "<workspace>" `
   --runtime codebuddy `
   --repo-workdir "<canonical BriefLoop source checkout>"
-& $BriefLoop workbuddy diagnose --workspace "<workspace>" --json
+& $BriefLoop status --workspace "<workspace>" --json
+& $BriefLoop runtime next --workspace "<workspace>"
 ```
 
 Read both handoff files and verify handoff runtime, capability runtime,
@@ -161,14 +162,16 @@ PowerShell, or CLI; convert Markdown to DOCX; write reader delivery artifacts;
 or claim reader-clean, gate/finalize success, or delivery.
 
 Formal finalize completion requires the existing deterministic lifecycle and
-all current-run evidence: handoff/diagnose authorized and the current
+all current-run evidence: handoff/status-projection authorized and the current
 workspace-config-bound finalize transaction succeeded; structurally
 valid `finalize_report.json`; reader-clean pass;
 `delivery_promotion == promoted`; current `render_transaction_id`; finalize
-gate pass; handoff/diagnose authorized and the current-workspace-bound
-finalize-complete transaction with a recorded reason succeeded; current finalize event in
-diagnose; valid delivery truth; and literal delivery outcome. Eligibility is
-not delivery occurrence.
+gate pass; handoff/status-projection authorized and the current-workspace-bound
+finalize-complete transaction with a recorded reason succeeded; the Store-native
+status projection reporting `package_ready=true`; and a literal
+`delivered` / `terminal_state`. Eligibility is
+not delivery occurrence; claim delivery only when the projection reports
+`delivered=true` for the current run.
 
 Any Markdown/DOCX written outside that lifecycle is `draft/manual/unverified`,
 never a formal BriefLoop delivery. Do not claim residue cleanup or rendering
@@ -205,14 +208,17 @@ output/intermediate/agent_handoff.md
 output/intermediate/agent_handoff.json
 ```
 
-Then run `& $BriefLoop workbuddy diagnose --workspace "<workspace>" --json`,
-and follow the handoff/diagnose current action. Invoke only the exact assigned
+Then run `& $BriefLoop status --workspace "<workspace>" --json` and
+`& $BriefLoop runtime next --workspace "<workspace>"`,
+and follow the handoff/status-projection current action. Invoke only the exact assigned
 role when that action explicitly assigns role-owned draft work. For a
 deterministic-only action, invoke no role and let the main session run the
-authorized transaction. Then diagnose again. Raw
+authorized transaction. Then read the status projection again. Raw
 workflow state, event log, Registry, timestamps, and file existence are audit
 evidence only; never use them to reconstruct next action, gate, finalize, or
-delivery truth.
+delivery truth. The legacy completion projection / `workbuddy diagnose`
+surface is retired; delivery truth comes only from the receipt-bound
+Store-native status projection.
 
 Any doctor error remains an error until the environment/config is corrected and
 doctor passes again with the same `$BriefLoop`. `request_human_review`, user

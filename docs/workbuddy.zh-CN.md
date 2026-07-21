@@ -45,7 +45,7 @@ git --version
 ```
 
 `py -3 --version` 只是诊断，不证明 `$BriefLoop` 的 Python 身份。doctor、run、
-secrets import 和 diagnose 必须始终调用同一个 `$BriefLoop`。不要自动混用或
+secrets import、status 和 runtime next 必须始终调用同一个 `$BriefLoop`。不要自动混用或
 回退到 `bash`、`which`、`command -v`、`export`、`/c/Users/...`、
 `source .venv/bin/activate` 或 `bash scripts/setup.sh`。如果实际宿主是 Git Bash，
 报告真实 shell 并停止这条 PowerShell 路径；不要猜测转换路径或混用两种 shell。
@@ -181,7 +181,8 @@ Tavily，并且只验证 `TAVILY_API_KEY` 是否存在。不要显示 key 的值
   --workspace "<workspace>" `
   --runtime codebuddy `
   --repo-workdir "<canonical BriefLoop source checkout>"
-& $BriefLoop workbuddy diagnose --workspace "<workspace>" --json
+& $BriefLoop status --workspace "<workspace>" --json
+& $BriefLoop runtime next --workspace "<workspace>"
 ```
 
 这会写出 CodeBuddy-specific handoff，包含明确的 role-agent 名称和
@@ -203,7 +204,7 @@ briefloop-formatter
 这些 role agents 只能起草当前 handoff 分配的 artifacts。它们不运行 BriefLoop
 CLI，不完成 stage，不运行 gates，不冻结 Claim Ledger，不 finalize / complete
 finalize，不批准或汇报 delivery，也不授权 release。role 返回不等于 stage
-通过；每个 role 返回后，确定性 transactions 与 diagnose 仍由 main session 负责。
+通过；每个 role 返回后，确定性 transactions 与 status 投影读取仍由 main session 负责。
 
 角色工作前读取两个 handoff 文件，并核对 handoff runtime 与 capability runtime
 都是 `codebuddy`、`delegation_supported=true`、`subagent_names` 精确等于上述
@@ -216,13 +217,15 @@ Formatter 只是只读 finalize-readiness reporter。它不得运行 Bash/PowerS
 gate/finalize/delivery 成功。
 
 声称“正式 finalize 管线已完成”必须同时观察到当前 run 的全部确定性证据：
-handoff/diagnose 已授权且当前 workspace-config 绑定的 finalize 事务成功、结构有效的
+handoff/status 投影已授权且当前 workspace-config 绑定的 finalize 事务成功、结构有效的
 `finalize_report.json`、reader-clean
 pass、`delivery_promotion == promoted`、当前 `render_transaction_id`、finalize
-quality gate pass、handoff/diagnose 已授权且当前 workspace 绑定、记录了 reason 的
-finalize-complete 事务成功、diagnose 中当前
-finalize event、valid delivery truth，以及准确报告的 delivery outcome。
-`delivery_truth.valid=true` 只是资格，不是交付发生证据。
+quality gate pass、handoff/status 投影已授权且当前 workspace 绑定、记录了 reason 的
+finalize-complete 事务成功、Store-native status 投影
+（`& $BriefLoop status --workspace "<workspace>" --json`）报告
+`package_ready=true`，以及准确报告的 `delivered` / `terminal_state`。
+`package_ready=true` 只是资格，不是交付发生证据；只有 status 投影报告当前 run
+`delivered=true` 才能声称已交付。
 
 WorkBuddy 或 generic helper 在该生命周期之外手写的 Markdown/DOCX 只能标为
 `draft/manual/unverified`。不得移动、改名或描述为正式 BriefLoop delivery，
@@ -248,9 +251,9 @@ output/intermediate/agent_handoff.json
 每个 stage 或 role-owned artifact action 前，也要重新阅读对应 handoff step。
 这样可以避免 WorkBuddy 把 BriefLoop 当成手写 JSON 的流程。
 
-每次启动、CLI、role 返回或中断后：重读 handoff -> diagnose -> 跟随当前动作 ->
+每次启动、CLI、role 返回或中断后：重读 handoff -> status 投影与 `runtime next` -> 跟随当前动作 ->
 仅当当前动作明确指派 role-owned draft work 时调用该精确角色；如果当前动作是
-deterministic-only，不调用任何角色，由主会话直接运行获授权事务 -> 再 diagnose。
+deterministic-only，不调用任何角色，由主会话直接运行获授权事务 -> 再读 status 投影。
 raw workflow state、
 event log、Registry、时间戳和文件存在性只作审计证据，不能重构 next action、
 gate、finalize 或 delivery 真值。例如：
@@ -277,15 +280,11 @@ Panel 或打包/导出请求后，WorkBuddy 都应该展示只来自机器事实
 ```text
 runtime:
 current_stage:
-run_integrity:
-recovery_status:
-recovery_action:
-blocked:
-latest_gate_status:
-finalize_report:
-delivery_truth:
-delivery_event:
-next_allowed_action:
+terminal_state:
+package_ready:
+delivered:
+store_revision:
+next_action:
 ```
 
 硬停止条件：
@@ -294,14 +293,14 @@ next_allowed_action:
   路径、当前用户、output 路径存在/可写结果、权限或 ACL 证据；
   修复环境/配置并由同一 `$BriefLoop` 重新通过前始终是 error；
   `request_human_review`、用户确认或另一环境中的 standalone pass 不能覆盖。
-  diagnose 可以展示为证据，但 `doctor.status=not_run_read_only` 不能清除、替代
-  或绕过已观测失败，也不得执行其 completion action。中断后或会话连续性不确定
+  中断后或会话连续性不确定
   时，继续前用同一 `$BriefLoop`、workspace 和 config 重跑 doctor；
 - 不得从 `run_integrity` 推断 recovery、finalize 或 delivery 路由。只跟随
-  diagnose 投影的 `recovery_status`、`recovery_action`、
-  `next_allowed_action` 和当前 gate/finalize/delivery truth。恢复完成的
-  non-reference run 可以继续保持 contaminated，同时由 diagnose 允许有界交付；
-- completion projection 的 `delivery_truth.valid` 不是 `true`：
+  `briefloop runtime next --workspace "<workspace>"` 报告的当前动作、生成的
+  handoff，以及 Store-native status 投影给出的当前 gate/finalize/delivery
+  truth。恢复完成的
+  non-reference run 可以继续保持 contaminated，同时由 status 投影允许有界交付；
+- status 投影没有报告 `package_ready=true`：
   不能说交付完成，也不能导出 delivery package。只有
   `output/intermediate/audited_brief.md` 存在时，才能说
   有草稿；否则应说目前还没有草稿或交付产物。这是 finalize 之前的正常状态，本身
@@ -313,22 +312,24 @@ next_allowed_action:
 bundle。需要支持时，只分享人工检查过、确认不含密钥的
 `& $BriefLoop status --json` 或 doctor 输出摘录。
 
-## 只读诊断
+## 只读 Status
 
 当 WorkBuddy 需要紧凑、机器可读的 Run Card，而不是自己解释多个控制 JSON
 文件时，使用：
 
 ```powershell
-& $BriefLoop workbuddy diagnose --workspace "<workspace>" --json
+& $BriefLoop status --workspace "<workspace>" --json
+& $BriefLoop runtime next --workspace "<workspace>"
 ```
 
-这个命令是 canonical completion projection 上的只读 adapter，并且只对
-`next_allowed_action` 加 WorkBuddy-only doctor/secret safety overlay。它报告
-doctor 状态、runtime、current stage、run integrity、blocked 状态、latest gate
-status、invalid/stale artifacts、finalize truth、delivery truth、`.env` 非空 key
-等 secret-risk flags，以及 next safe action。它不根据文件存在推断 delivery；
-除非 projection 显示 `delivery_truth.valid=true`，WorkBuddy 不能把
-`output/delivery/` 或 `finalize_report.json` 存在当成交付真实状态。它不运行
+Store-native status 投影是交付真值的唯一正典读取方。它的
+`terminal_state`、`package_ready`、`delivered` 字段带 receipt 绑定：
+`projection_source` 携带 `store_revision` 与所投影事务的 receipt ids。
+流程推进真值来自 `briefloop runtime next`。legacy completion projection /
+`workbuddy diagnose` 面已退役，不要再调用它。
+status 投影不根据文件存在推断 delivery；WorkBuddy 不能把
+`output/delivery/` 或 `finalize_report.json` 存在当成交付真实状态，只有
+投影报告当前 run `delivered=true` 才能声称已交付。这些只读命令不运行
 gates、不修复 artifacts、不批准 delivery、不授权 release，也不证明语义真实。
 
 ## Assistant Trigger 模板

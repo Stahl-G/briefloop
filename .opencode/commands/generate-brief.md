@@ -137,7 +137,7 @@ Stage sequence:
     - Proceed only when `output/intermediate/finalize_report.json` reports `delivery_promotion: "promoted"`; if promotion was skipped or reader-clean failed, stop and route repair instead of running the finalize gate or finalize-complete.
     - After finalize promotes delivery artifacts, run: `briefloop gates check --workspace $ARGUMENTS --stage finalize --brief $ARGUMENTS/output/brief.md`.
     - Then run: `briefloop state finalize-complete --workspace $ARGUMENTS --reason "Reader-facing artifacts passed finalize checks."`
-    - Verify delivery truth with `briefloop workbuddy diagnose --workspace $ARGUMENTS --json`; do not claim delivery unless it reports `delivery_truth.valid=true`, and do not infer delivery from file existence.
+    - Verify delivery truth with the Store-native status projection `briefloop status --workspace $ARGUMENTS --json`; do not claim delivery unless it reports `delivered=true` for the current run, and do not infer delivery from file existence or projection files. The legacy `workbuddy diagnose` surface is retired.
     - Confirm `output/delivery/<named>.docx` exists if DOCX is configured.
     - Confirm `output/source_appendix.md` remains an audit/control copy when configured and does not expose raw claim IDs, source IDs, evidence text, local paths, or file:// URLs.
     - Do not present Claim Ledger, Audit Report, Audited Brief, named Markdown, or source appendix audit copy as user delivery files.
@@ -155,4 +155,4 @@ Stage sequence:
     - Report quality gate status.
     - Report switchboard selections.
     - Report optional provenance graph path when created.
-    - Report success only when the completion projection (briefloop workbuddy diagnose --json) reports delivery_truth.valid=true; audit status alone is not a delivery claim.
+    - Report success only when the Store-native status projection (briefloop status --workspace $ARGUMENTS --json) reports delivered=true for the current run; audit status alone is not a delivery claim.

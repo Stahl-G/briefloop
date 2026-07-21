@@ -8,7 +8,7 @@ authority layer.
 - classify missing workspace paths as existing workspace or first-time run,
   then confirm the folder path before any creation;
 - on Windows, bind one absolute `$BriefLoop` path in PowerShell and reuse it for
-  doctor, run, secrets import, and diagnose;
+  doctor, run, secrets import, status, and runtime next;
 - treat local/no live web search as the first-run default;
 - when live web search is requested, use Tavily first and verify
   `TAVILY_API_KEY` without displaying the key value;
@@ -23,7 +23,8 @@ authority layer.
 - before each stage or role-owned artifact action, re-read the relevant
   `agent_handoff.md` / `agent_handoff.json` step;
 - after every start, CLI command, role return, or interruption, re-read the
-  handoff, run diagnose, and follow only the current handoff/diagnose action;
+  handoff, read the status projection and `runtime next`, and follow only the
+  current handoff/status action;
 - keep role delegation claims literal;
 - explain Quality Panel as an audit attachment.
 
@@ -49,20 +50,20 @@ authority layer.
   and return in the current handoff step, or say its stage/audit passed without
   current deterministic transaction/verdict truth; matching artifacts, stale
   events, manual files, or prior transactions are insufficient;
-- treat `delivery_truth.valid=true` as proof that delivery occurred;
-- say `delivered`, `delivery complete`, or `交付完成` unless WorkBuddy diagnose
-  reports current-bound `event_truth.delivery_succeeded=true`;
-- describe `delivery_bundle_prepared` or `delivery_draft_created` as delivered;
-- infer recovery progress from `run_integrity` instead of following
-  `recovery_state` and `recovery_action`;
+- treat the status projection's `package_ready=true` as proof that delivery
+  occurred;
+- say `delivered`, `delivery complete`, or `交付完成` unless the Store-native
+  status projection reports `delivered=true` for the current run;
+- describe `package_ready=true` or `terminal_state=draft_created` as delivered;
+- infer recovery progress from `run_integrity` instead of following the current
+  action from `runtime next`;
 - reconstruct next action, gate, finalize, or delivery truth from raw workflow
-  state, event log, Registry, timestamps, or file existence; raw controls are
-  audit evidence only;
+  state, event log, Registry, timestamps, projection files, or file existence;
+  raw controls are audit evidence only; the legacy completion projection /
+  `workbuddy diagnose` surface is retired;
 - downgrade a `doctor` error in prose, or use `request_human_review`, user
   confirmation, or a standalone pass from another shell/environment to turn it
   into pass; fix the context and rerun doctor with the same `$BriefLoop`;
-  diagnose's `doctor.status=not_run_read_only` cannot clear or route around the
-  failure, and its completion action must not be followed;
 - let `briefloop-formatter` run shell/CLI, convert Markdown to DOCX, write reader
   delivery artifacts, or claim reader-clean, gate/finalize success, or delivery;
 - rename or describe hand-written Markdown/DOCX outside formal finalize as a
@@ -89,10 +90,13 @@ Chinese as needed, but follow the handoff literally. Preserve command names,
 artifact names, and handoff obligations exactly. Do not skip steps, hide
 blockers, or claim subagents ran because of translation.
 
-If a user asks to execute delivery, require `delivery_truth.valid=true`. After
-the action, report delivered only for `delivery_event=delivery_succeeded`;
-report local prepared and Gmail draft outcomes literally. If no valid reader
-bundle exists, say there is only a role draft when
+If a user asks to execute delivery, require `package_ready=true` in the
+status projection. After
+the action, report delivered only when the projection reports `delivered=true`
+for the current run;
+report `terminal_state=draft_created` as a draft outcome, not delivery. If the
+projection does not report `package_ready=true`, say there is only a role
+draft when
 `output/intermediate/audited_brief.md` exists; otherwise
 say no draft or delivery exists yet. If any package candidate contains `.env`,
 stop and recommend key rotation before sharing anything.

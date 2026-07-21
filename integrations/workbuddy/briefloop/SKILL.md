@@ -9,9 +9,9 @@ description: Operate BriefLoop from WorkBuddy through CodeBuddy-compatible role 
 > not the operating source of truth. The canonical WorkBuddy Skill is
 > `.agents/skills/briefloop-workbuddy/` (Chinese), packaged by
 > `& $BriefLoop workbuddy pack-skill`. For delivery-truth semantics
-> (`finalize_report.json` `delivery_promotion`,
-> `& $BriefLoop workbuddy diagnose --workspace "<workspace>" --json`
-> `delivery_truth.valid`, and current-bound `delivery_event`), follow the
+> (`finalize_report.json` `delivery_promotion`, the Store-native status
+> projection `& $BriefLoop status --workspace "<workspace>" --json`
+> `package_ready` / `delivered` fields), follow the
 > canonical skill.
 
 ## Scope
@@ -54,7 +54,7 @@ BriefLoop source code, use the repository development skill instead.
 
 - BriefLoop CLI commands that the user can inspect.
 - Deterministic progress summaries based on the current handoff and
-  `& $BriefLoop workbuddy diagnose --workspace "<workspace>" --json`.
+  `& $BriefLoop status --workspace "<workspace>" --json` and `& $BriefLoop runtime next --workspace "<workspace>"`.
 - Role-subagent draft artifacts only where the handoff assigns them.
 - No direct edits to Python-owned control files or frozen artifacts.
 
@@ -80,7 +80,7 @@ Before operating a workspace:
    git --version
    ```
 
-   Reuse `$BriefLoop` for bootstrap, doctor, run, secrets import, and diagnose.
+   Reuse `$BriefLoop` for bootstrap, doctor, run, secrets import, status, and runtime next.
    `py -3 --version` is diagnostic only. Do not mix or fall back to `bash`,
    `which`, `command -v`, `export`, `/c/Users/...`,
    `source .venv/bin/activate`, or `bash scripts/setup.sh`. If the actual shell
@@ -164,7 +164,7 @@ Run full BriefLoop workspaces through the CodeBuddy runtime:
   --workspace "<workspace>" `
   --runtime codebuddy `
   --repo-workdir "<canonical BriefLoop source checkout>"
-& $BriefLoop workbuddy diagnose --workspace "<workspace>" --json
+& $BriefLoop status --workspace "<workspace>" --json
 ```
 
 Use `--runtime codebuddy` only when the source checkout contains
@@ -236,10 +236,14 @@ handoff steps or claim that a subagent ran unless WorkBuddy/CodeBuddy actually
 delegated and recorded that role.
 
 After every start, CLI command, role return, or interruption: reread both
-handoff files, run diagnose, and follow its current action. Invoke only the exact
+handoff files, read the Store-native status projection
+(`& $BriefLoop status --workspace "<workspace>" --json`) and
+`& $BriefLoop runtime next --workspace "<workspace>"`, and follow the current
+action. Invoke only the exact
 assigned role when that action explicitly assigns role-owned draft work. For a
 deterministic-only action, invoke no role and let the main session run the
-authorized transaction. Then diagnose again. Raw workflow state, event log,
+authorized transaction. Then read the status projection again. Raw workflow
+state, event log,
 Registry, timestamps, and file existence
 are audit evidence only; they do not reconstruct next action, gate, finalize,
 or delivery truth.
@@ -256,24 +260,23 @@ guessing:
 ```text
 runtime:
 current_stage:
-run_integrity:
-recovery_status:
-recovery_action:
-blocked:
-latest_gate_status:
-finalize_report:
-delivery_truth:
-delivery_event:
-next_allowed_action:
+terminal_state:
+package_ready:
+delivered:
+store_revision:
+next_action:
 ```
 
-Read these values only from `& $BriefLoop workbuddy diagnose --workspace
-"<workspace>" --json`. `delivery_truth.valid=true` means the current reader
-bundle is eligible for a delivery action; it does not mean delivery occurred.
-Read `event_truth.delivery_outcome` as `delivery_event`:
-`delivery_bundle_prepared` means a local bundle is ready,
-`delivery_draft_created` means a draft exists, and neither is delivered. Only
-a current-bound `delivery_succeeded` permits a completed-delivery claim.
+Read these values only from `& $BriefLoop status --workspace
+"<workspace>" --json` (the Store-native status projection; its
+`terminal_state`, `package_ready`, and `delivered` fields are receipt-bound
+via `projection_source`) and `& $BriefLoop runtime next --workspace
+"<workspace>"` (workflow progression truth). The legacy completion projection /
+`workbuddy diagnose` surface is retired; do not call it.
+`package_ready=true` means the current run's reader
+package is ready for a delivery decision; it does not mean delivery occurred.
+Only `delivered=true` for the current run permits a completed-delivery claim;
+`terminal_state=draft_created` means a draft exists and is not delivered.
 
 ## Hard Stop Rules
 
@@ -287,20 +290,20 @@ workflow stop.
    keep it failed until the environment/config is corrected and doctor reruns
    successfully with the same `$BriefLoop`. `request_human_review`, user
    confirmation, or a standalone pass in another environment cannot override
-   it. Diagnose may be displayed as evidence, but
-   `doctor.status=not_run_read_only` cannot clear, replace, or route around the
-   observed failure, and its completion action must not be followed. After an
+   it. After an
    interruption or uncertain session continuity, rerun doctor with the same
    `$BriefLoop`, workspace, and config before continuing.
-2. Do not infer recovery progress from `run_integrity`. Follow only
-   `recovery_action` / `next_allowed_action`; a recovered run remains
+2. Do not infer recovery progress from `run_integrity`. Follow only the
+   current action reported by `runtime next` and the handoff; a recovered run remains
    contaminated and non-reference. Do not deliver while recovery is
    nonterminal or invalid. For `completed_non_reference`, do not rerun
-   finalize; local delivery still requires `delivery_truth.valid=true`.
-3. For delivery actions, require `delivery_truth.valid=true`. For completion
-   claims, also require `delivery_event=delivery_succeeded`. Do not say
+   finalize; local delivery still requires `package_ready=true` in the status
+   projection.
+3. For delivery actions, require `package_ready=true` in the status
+   projection. For completion
+   claims, also require `delivered=true` for the current run. Do not say
    "delivered", "交付完成", or "delivery complete" for
-   `delivery_bundle_prepared` or `delivery_draft_created`.
+   `package_ready=true` or `terminal_state=draft_created`.
    Say only that a draft exists when `output/intermediate/audited_brief.md` exists; otherwise say no draft or delivery exists yet.
    Continue earlier role-work stages only when the handoff and Run Card allow
    them.
@@ -318,16 +321,19 @@ return is not a stage pass. Only the main session may run the handoff-authorized
 finalize, finalize gate, and finalize-complete transactions.
 
 Do not say the formal finalize pipeline completed unless the current run has
-all of these deterministic observations: handoff/diagnose authorized and the
+all of these deterministic observations: handoff/status-projection authorized
+and the
 current workspace-config-bound finalize transaction succeeded; structurally
 valid `finalize_report.json`; reader-clean passed;
 `delivery_promotion == promoted`; current `render_transaction_id`; passed
-finalize quality gate; handoff/diagnose authorized and the current-workspace-bound
+finalize quality gate; handoff/status-projection authorized and the
+current-workspace-bound
 finalize-complete transaction with a recorded reason succeeded;
-diagnose reports the current finalize event; delivery truth is valid; and the
-delivery outcome is reported literally. `delivery_truth.valid=true` is only
-eligibility, not evidence that delivery occurred. Only the current
-deterministic delivery event can support a delivery claim.
+the Store-native status projection reports `package_ready=true`; and
+`delivered` / `terminal_state` is reported literally. `package_ready=true` is
+only
+eligibility, not evidence that delivery occurred. Only the status projection
+reporting `delivered=true` for the current run can support a delivery claim.
 
 Markdown or DOCX written outside the deterministic finalize lifecycle by
 WorkBuddy or a generic helper is `draft/manual/unverified`. Do not move, rename,
@@ -380,9 +386,9 @@ Read the relevant reference before acting:
   truth; audit/gate success requires the current deterministic verdict/status.
   A matching artifact, stale event, manual file, or prior transaction proves
   none of role execution, stage completion, or audit success by itself.
-- Do not say "delivered" unless WorkBuddy diagnose reports both
-  `delivery_truth.valid=true` and current-bound
-  `event_truth.delivery_succeeded=true`.
+- Do not say "delivered" unless the Store-native status projection
+  (`& $BriefLoop status --workspace "<workspace>" --json`) reports
+  `delivered=true` for the current run.
 - Do not zip or share the whole workspace. Use BriefLoop-generated delivery
   or audit bundles when present; never include `.env`. If support is needed,
   share only manually reviewed, non-secret excerpts from `& $BriefLoop status

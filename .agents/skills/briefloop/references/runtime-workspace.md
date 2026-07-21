@@ -98,10 +98,10 @@ Stop and report the exact error when:
 - `active_repair` exists
 - run integrity is contaminated
 - gate reports have blocking findings
-- a delivery action is requested while the completion projection
-  (`briefloop workbuddy diagnose --json`) does not report
-  `delivery_truth.valid=true`, or a completed-delivery claim is requested
-  without current-bound `event_truth.delivery_succeeded=true`
+- a delivery action is requested while the Store-native status projection
+  (`briefloop status --workspace <workspace> --json`) does not report
+  `package_ready=true`, or a completed-delivery claim is requested without the
+  projection reporting `delivered=true` for the current run
 - target status says `auditable_brief` complete or incomplete
 - a command asks for human review or fresh evidence setup
 - quality summary / HTML artifacts are stale or hand-edited; rerun

@@ -41,17 +41,22 @@ Examples:
 5. Use `& $BriefLoop run --workspace "<workspace>" --runtime codebuddy
    --repo-workdir "<canonical BriefLoop source checkout>"` for the full workflow,
    then read both handoff files and run
-   `& $BriefLoop workbuddy diagnose --workspace "<workspace>" --json`.
-6. Follow only the current handoff/diagnose action. When that action explicitly
+   `& $BriefLoop status --workspace "<workspace>" --json` and
+   `& $BriefLoop runtime next --workspace "<workspace>"`.
+6. Follow only the current handoff/status-projection action. When that action
+   explicitly
    assigns role-owned draft work, invoke only the exact assigned checked-in role:
    `briefloop-scout`, `briefloop-screener`, `briefloop-claim-ledger`,
    `briefloop-analyst`, `briefloop-editor`, `briefloop-auditor`, or
    `briefloop-formatter`.
 7. For a deterministic-only action, invoke no role and let the main session run
    the authorized transaction. After every start, CLI transaction, role return,
-   or interruption, reread the handoff, run diagnose, and follow the refreshed
+   or interruption, reread the handoff, read the status projection and
+   `runtime next`, and follow the refreshed
    current action. Raw workflow state, event log, Registry, timestamps, and file
-   existence are audit evidence only, not an action router.
+   existence are audit evidence only, not an action router. The legacy
+   `workbuddy diagnose` surface is retired; delivery truth comes only from the
+   Store-native status projection.
 
 ## Do Not
 

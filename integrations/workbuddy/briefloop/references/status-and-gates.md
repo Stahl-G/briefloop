@@ -6,16 +6,19 @@ into delivery or release authority.
 ## Inspect Status
 
 ```powershell
-& $BriefLoop workbuddy diagnose --workspace "<workspace>" --json
 & $BriefLoop status --workspace "<workspace>" --json
+& $BriefLoop runtime next --workspace "<workspace>"
 & $BriefLoop state check --workspace "<workspace>"
 ```
 
-Follow only handoff/diagnose for next action, gate, finalize, and delivery
-routing. Raw status, workflow state, event log, Registry, timestamps, and file
-existence are audit evidence only. If diagnose reports blockers, contamination,
+Follow only handoff, the Store-native status projection, and `runtime next`
+for next action, gate, finalize, and delivery
+routing. Raw workflow state, event log, Registry, timestamps, and file
+existence are audit evidence only. If the status projection or handoff reports
+blockers, contamination,
 active repair, stale artifacts, or invalid artifacts, stop and follow its
-indicated transaction path.
+indicated transaction path. The legacy completion projection /
+`workbuddy diagnose` surface is retired; do not call it.
 
 ## Quality Panel
 
@@ -43,8 +46,9 @@ around it.
 A formal finalize-complete claim requires every current-run observation:
 successful finalize command, structurally valid Finalize Report, reader-clean
 pass, promoted delivery, current render transaction, finalize gate pass,
-successful finalize-complete, current finalize event in diagnose, valid
-delivery truth, and literal delivery outcome. Any hand-written Markdown/DOCX is
+successful finalize-complete, the Store-native status projection reporting
+`package_ready=true`, and a literal `delivered` / `terminal_state`. Any
+hand-written Markdown/DOCX is
 `draft/manual/unverified`. If it contains `CL-*`, `SRC-*`, `Claim Ledger`, local
 paths, or other forbidden residue, stop the delivery claim and follow formal
 repair/finalize; never hand-edit a frozen artifact.
