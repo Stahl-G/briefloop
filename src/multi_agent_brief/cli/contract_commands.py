@@ -7,8 +7,10 @@ import json
 from pathlib import Path
 
 from multi_agent_brief.contracts import SchemaRegistry, V2_CONTRACT_IDS
-from multi_agent_brief.intake_v2.errors import IntakeError
-from multi_agent_brief.intake_v2.scratch import parse_json_object
+from multi_agent_brief.contracts.json import (
+    StrictJsonError,
+    parse_strict_json_object,
+)
 
 
 def register(subparsers: argparse._SubParsersAction) -> None:
@@ -50,7 +52,7 @@ def handle(args: argparse.Namespace) -> int:
     if args.contract_action != "validate":
         return 1
     try:
-        payload = parse_json_object(args.input.read_bytes())
+        payload = parse_strict_json_object(args.input.read_bytes())
     except OSError:
         result = {
             "schema_id": args.contract_id,
@@ -60,7 +62,7 @@ def handle(args: argparse.Namespace) -> int:
         }
         print(json.dumps(result, ensure_ascii=False, sort_keys=True))
         return 1
-    except (IntakeError, TypeError, ValueError):
+    except (StrictJsonError, TypeError, ValueError):
         result = {
             "schema_id": args.contract_id,
             "status": "invalid",
