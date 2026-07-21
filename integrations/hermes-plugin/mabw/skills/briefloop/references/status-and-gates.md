@@ -14,8 +14,8 @@ Status can show:
 - topology-satisfied stages
 - `auditable_brief` target complete or incomplete
 - ReportPack, PolicyProfile, ReportTemplate, source-evidence, release-mode, and
-  Quality Panel / Trajectory Regulation / Guidance Manifestation /
-  Materiality Selection / Reader Template Conformance projections when present
+  Quality Panel / Trajectory Regulation / Materiality Selection /
+  Reader Template Conformance projections when present
 - next suggested command
 
 Projection status is not authority by itself. Invalid optional artifacts must
@@ -26,14 +26,6 @@ repeated-blocker counts from `workflow_state.json` and `event_log.jsonl`, then
 may suggest `request_human_review` or `block_run` as operator actions. It does
 not write workflow state, start repair, run gates, execute repair, approve
 delivery, or decide release readiness.
-
-Guidance Manifestation is diagnostic-only. It reads optional
-`guidance_manifestation_report.json` labels for materialized approved guidance
-entries and can surface `explicitly_reflected`, `partially_reflected`,
-`contradicted`, and `not_observable` counts. The labels must come from
-human/imported assessment, not Python semantic judgment. Do not treat this as
-Improvement Memory mutation, guidance approval, quality scoring, gate authority,
-delivery approval, release readiness, or proof that guidance improved output.
 
 Materiality Selection is diagnostic-only. It reads valid
 `screened_candidates.json`, resolved PolicyProfile `materiality_terms`, and
@@ -59,15 +51,6 @@ Reader delivery must stay reader-safe and must not expose Claim Ledger IDs,
 span IDs, local paths, or hashes. Audit bundles keep trace artifacts when
 present. Citation profiles do not prove support, relax gates, remove audit
 trace, approve delivery, decide release readiness, or create a quality score.
-
-Support-Calibrated Wording is warning-only. It reads existing reader Markdown,
-Claim Ledger metadata, source taxonomy, and valid Claim-Support Matrix policy
-signals when present to surface `support_wording` risks such as weak support
-with strong wording, inference without framing, unsupported claims in reader
-text, and media/report-style sources written with strong unattributed wording.
-Treat these as operator review diagnostics, not proof. It does not judge claim
-truth, generate or accept support rows, run gates, block delivery, approve
-release, create repair authority, or create a quality score.
 
 Semantic support proposal adjudication is human-owned and event-recorded. After
 the auditor writes `semantic_assessment_report.json`, run

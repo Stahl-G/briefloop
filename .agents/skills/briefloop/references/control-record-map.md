@@ -21,7 +21,6 @@ Do not edit directly:
 - `output/intermediate/quality_panel.json`
 - `output/intermediate/quality_summary.md`
 - `output/intermediate/quality_panel.html`
-- `output/intermediate/guidance_manifestation_report.json`
 - `output/intermediate/evidence_extract_source_lock.json`
 - `output/intermediate/evidence_extract_page_inventory.json`
 - `output/runs/<run_id>/`
@@ -75,20 +74,13 @@ Owning commands for recent control-tool projections:
   still registered-only and require explicit extraction. These artifacts are
   not automatic MinerU execution, rendered-page visual checks, evidence
   ledgers, support judgments, citation gates, or delivery approvals.
-- `guidance_manifestation_report.json` is an imported/human diagnostic record
-  for approved guidance manifestation labels; it is validated and surfaced by
-  status / Quality Panel, but it is not an Improvement Memory writer and not a
-  gate or release artifact.
+
 - Materiality Selection is a status / Quality Panel projection derived from
   existing `screened_candidates.json`, PolicyProfile materiality terms, and
   workspace focus terms. It has no standalone control file and must not be
   patched into screening output, Claim Ledger, gates, delivery, or release
   records.
-- Support-Calibrated Wording is a status / Quality Panel projection derived
-  from existing reader Markdown, Claim Ledger metadata, source taxonomy, and
-  valid Claim-Support Matrix policy signals. It has no standalone control file,
-  does not create accepted support rows, and must not be patched into gates,
-  delivery, or release records.
+
 
 These files are operator/audit projections or approval records. They are not
 agent draft surfaces, not final reader content, and not repair shortcuts.

@@ -102,7 +102,6 @@ This future surface measures whether approved guidance manifested in output. It 
 
 | Surface | Role | Writer | Status | Boundary |
 |---|---|---|---|---|
-| `guidance_manifestation_report.json` | Per-run observation of whether materialized guidance is observed, contradicted, or not applicable. | Agent/human evaluation surfaced through Python schema | Planned v0.8 | Reporting only; does not block finalize and does not write ledger state. |
 
 ## Repo-Scoped Governance
 

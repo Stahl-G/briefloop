@@ -87,7 +87,6 @@ MABW 的控制面可以按不同粒度统计：
 
 | Surface | 作用 | 写者 | 状态 | 边界 |
 |---|---|---|---|---|
-| `guidance_manifestation_report.json` | 观察 materialized guidance 是否被体现、被违反或不适用。 | agent/human evaluation，经 Python schema 暴露 | 计划 v0.8 | 只报告，不阻断 finalize，也不写回 ledger state。 |
 
 ## Repo 级元治理
 

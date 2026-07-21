@@ -201,15 +201,6 @@ page describes implemented runtime capability, not a breaking deep rename.
   recommended actions. It is a read-only operator safety diagnostic: it does
   not change workflow state, start repair, run gates, block stages, approve
   delivery, or decide release readiness.
-  Experimental Guidance Manifestation projection can read optional
-  `output/intermediate/guidance_manifestation_report.json` labels for
-  materialized approved guidance entries and surface
-  `explicitly_reflected`, `partially_reflected`, `contradicted`, and
-  `not_observable` counts in status and Quality Panel. The labels are
-  human/imported diagnostic assessments; Python validates and counts them but
-  does not judge manifestation, mutate Improvement Memory, approve guidance,
-  create a quality score, run gates, approve delivery, or decide release
-  readiness.
   Experimental Materiality Selection projection can read valid
   `screened_candidates.json`, the resolved PolicyProfile materiality terms, and
   workspace focus terms to surface excluded or deprioritized candidates that
@@ -217,14 +208,6 @@ page describes implemented runtime capability, not a breaking deep rename.
   It is deterministic keyword diagnostics only: it does not infer semantic
   importance, mutate screening output, resurrect candidates, alter the Claim
   Ledger, run gates, approve delivery, or decide release readiness.
-  Experimental Support-Calibrated Wording projection can read existing reader
-  Markdown, Claim Ledger metadata, source taxonomy, and valid Claim-Support
-  Matrix policy signals to surface warning-only `support_wording` diagnostics
-  for strong or unframed wording on weak, downgrade-required, inferential,
-  unsupported, or media/report-style support records. This is deterministic
-  lexical projection only: it does not judge claim truth, generate or accept
-  support rows, run gates, block delivery, approve release, or create a quality
-  score.
   These contracts describe report type metadata over the existing Claim Ledger,
   artifact registry, gates, event log, archive, source appendix, support
   records, frozen-artifact integrity, and human delivery approval spine. These
