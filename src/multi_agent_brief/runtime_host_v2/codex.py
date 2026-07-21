@@ -50,11 +50,12 @@ def _binding_error(exc: BaseException | None = None) -> RuntimeHostError:
 
 def _read_packaged_asset(relative: str) -> bytes:
     try:
-        return (
+        text = (
             resources.files("multi_agent_brief")
             .joinpath("runtime_kits", "codex", *relative.split("/"))
-            .read_bytes()
+            .read_text(encoding="utf-8")
         )
+        return text.encode("utf-8")
     except (FileNotFoundError, OSError) as exc:
         raise _binding_error(exc)
 
