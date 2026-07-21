@@ -297,6 +297,7 @@ jobs:
             --web-search-mode disabled \
             --task-objective "Track material manufacturing developments."
           echo "- Manufacturing output improved as supply chain disruption eased in the latest reporting period." > /tmp/mabw-ci-smoke/input/smoke.md
+          briefloop runtime install --workspace /tmp/mabw-ci-smoke --runtime codex
 
       - name: Doctor check
         run: briefloop doctor --config /tmp/mabw-ci-smoke/config.yaml
@@ -343,6 +344,7 @@ jobs:
           config_path.write_text(yaml.safe_dump(config, sort_keys=False), encoding="utf-8")
           PY
             fi
+            briefloop runtime install --workspace "$ws" --runtime codex
             briefloop run --workspace "$ws" --runtime codex
             briefloop runtime next --workspace "$ws" | grep '"effect_kind":"doctor_check"'
             test -f "$ws/briefloop.db"
@@ -352,10 +354,11 @@ jobs:
           import os
           from pathlib import Path
           from multi_agent_brief.runtime_host_v2.initialization import initialize_or_open_runtime
-          from multi_agent_brief.runtime_host_v2.codex import load_codex_adapter_binding
+          from multi_agent_brief.runtime_host_v2.codex import workspace_codex_adapter_loader
 
           runtime = initialize_or_open_runtime(
-              Path(os.environ["WS"]), adapter_loader=load_codex_adapter_binding
+              Path(os.environ["WS"]),
+              adapter_loader=workspace_codex_adapter_loader(Path(os.environ["WS"])),
           )
           bound = runtime.verified.binding.role_topology
           assert bound == os.environ["EXPECTED"], f"bound topology {bound!r}"
@@ -460,6 +463,7 @@ jobs:
             --web-search-mode disabled \
             --task-objective "Track material manufacturing developments."
           echo "- Placeholder input" > /tmp/mabw-llm/input/placeholder.md
+          briefloop runtime install --workspace /tmp/mabw-llm --runtime codex
 
       - name: Doctor check
         run: cd /tmp/mabw-llm && briefloop doctor --config config.yaml
@@ -480,9 +484,11 @@ jobs:
           from pathlib import Path
           from multi_agent_brief.control_store import SQLiteControlStore
           from multi_agent_brief.runtime_host_v2.initialization import initialize_or_open_runtime
-          from multi_agent_brief.runtime_host_v2.codex import load_codex_adapter_binding
+          from multi_agent_brief.runtime_host_v2.codex import workspace_codex_adapter_loader
 
-          runtime = initialize_or_open_runtime(Path("."), adapter_loader=load_codex_adapter_binding)
+          runtime = initialize_or_open_runtime(
+              Path("."), adapter_loader=workspace_codex_adapter_loader(Path("."))
+          )
           snapshot = runtime.verified.snapshot
           artifact = next(a for a in snapshot.artifacts if a.artifact_id == "source_candidates")
           assert artifact.current_revision == 1
