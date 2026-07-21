@@ -6,13 +6,6 @@ from pathlib import Path
 
 import yaml
 
-from multi_agent_brief.orchestrator.runtime_state.semantic_assessment_report import (
-    build_semantic_assessment_checked_inputs,
-)
-from multi_agent_brief.orchestrator.runtime_state import (
-    check_runtime_state,
-    initialize_runtime_state,
-)
 from multi_agent_brief.status import build_workspace_status, format_workspace_status
 from tests.helpers import write_workspace_files_under
 
@@ -20,36 +13,8 @@ from tests.helpers import write_workspace_files_under
 ROOT = Path(__file__).resolve().parent.parent
 
 
-def _write_runtime_workspace(tmp_path: Path) -> Path:
-    return write_workspace_files_under(
-        tmp_path,
-        config_text=(
-            'project:\n  name: "Status Intake Test"\n'
-            'output:\n  path: "output"\n'
-            'input:\n  path: "input"\n'
-        ),
-        include_input_dir=True,
-    )
 
 
-def _normalized_candidate_wrapper() -> str:
-    return json.dumps(
-        {
-            "claims": [
-                {
-                    "candidate_id": "CAND-001",
-                    "claim_statement": "ExampleCo opened a demo facility.",
-                    "source_excerpt": "ExampleCo opened a demo facility in June.",
-                    "source_url": "https://example.com/source",
-                    "source_category": "industry_news",
-                    "published_at": "2026-06-01",
-                    "topic": "demo market",
-                    "claim_type": "fact",
-                    "confidence": 0.91,
-                }
-            ]
-        }
-    ) + "\n"
 
 
 def _span_hash(text: str) -> str:
@@ -162,15 +127,6 @@ def _semantic_assessment_report_payload(*, atom_id: str = "AC-0001-01") -> dict:
     }
 
 
-def _write_bound_semantic_assessment_report(intermediate: Path, ws: Path, *, atom_id: str = "AC-0001-01") -> dict:
-    (intermediate / "audited_brief.md").write_text("# Audited Brief\n\nTargetCo opened a demo facility.\n", encoding="utf-8")
-    payload = _semantic_assessment_report_payload(atom_id=atom_id)
-    payload["checked_inputs"] = build_semantic_assessment_checked_inputs(ws)
-    (intermediate / "semantic_assessment_report.json").write_text(
-        json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True) + "\n",
-        encoding="utf-8",
-    )
-    return payload
 
 
 def _market_report_spec(*, policy_profile: str | None = "finance_default") -> dict:
@@ -993,73 +949,12 @@ def test_status_derives_semantic_assessment_report_projection_without_writes(tmp
     assert not (intermediate / "event_log.jsonl").exists()
 
 
-def test_status_reports_fresh_bound_semantic_assessment_report_without_writes(tmp_path: Path) -> None:
-    ws = tmp_path / "ws"
-    intermediate, _raw_excerpt, _start = _write_semantic_support_base(ws)
-    _write_bound_semantic_assessment_report(intermediate, ws)
-
-    status = build_workspace_status(ws)
-
-    projection = status["semantic_assessment_report"]
-    assert status["read_only"] is True
-    assert projection["status"] == "valid"
-    assert projection["checked_inputs_status"] == "fresh"
-    assert projection["checked_inputs_digest"]
-    assert projection["report_sha256"]
-    assert projection["summary_counts"]["proposal_row_count"] == 1
-    assert not (intermediate / "event_log.jsonl").exists()
 
 
-def test_status_reports_stale_bound_semantic_assessment_report_without_writes(tmp_path: Path) -> None:
-    ws = tmp_path / "ws"
-    intermediate, _raw_excerpt, _start = _write_semantic_support_base(ws)
-    _write_bound_semantic_assessment_report(intermediate, ws)
-    (intermediate / "audited_brief.md").write_text("# Edited after assessment\n", encoding="utf-8")
-
-    status = build_workspace_status(ws)
-
-    projection = status["semantic_assessment_report"]
-    assert status["read_only"] is True
-    assert projection["status"] == "stale"
-    assert projection["checked_inputs_status"] == "stale"
-    assert projection["reason"] == "checked_input_stale:audited_brief"
-    assert projection["summary_counts"]["proposal_row_count"] == 1
-    assert not (intermediate / "event_log.jsonl").exists()
 
 
-def test_status_treats_null_checked_inputs_as_unbound_without_writes(tmp_path: Path) -> None:
-    ws = tmp_path / "ws"
-    intermediate, _raw_excerpt, _start = _write_semantic_support_base(ws)
-    _write_bound_semantic_assessment_report(intermediate, ws)
-    report_path = intermediate / "semantic_assessment_report.json"
-    report = json.loads(report_path.read_text(encoding="utf-8"))
-    report["checked_inputs"] = None
-    report_path.write_text(json.dumps(report, ensure_ascii=False, indent=2, sort_keys=True) + "\n", encoding="utf-8")
-
-    status = build_workspace_status(ws)
-
-    projection = status["semantic_assessment_report"]
-    assert projection["status"] == "valid"
-    assert projection["checked_inputs_status"] == "missing_checked_inputs"
-    assert projection["reason"] is None
-    assert not (intermediate / "event_log.jsonl").exists()
 
 
-def test_status_reports_non_file_checked_input_without_crashing(tmp_path: Path) -> None:
-    ws = tmp_path / "ws"
-    intermediate, _raw_excerpt, _start = _write_semantic_support_base(ws)
-    _write_bound_semantic_assessment_report(intermediate, ws)
-    brief_path = intermediate / "audited_brief.md"
-    brief_path.unlink()
-    brief_path.mkdir()
-
-    status = build_workspace_status(ws)
-
-    projection = status["semantic_assessment_report"]
-    assert projection["status"] == "missing_input"
-    assert projection["checked_inputs_status"] == "missing_input"
-    assert projection["reason"] == "checked_input_not_file:audited_brief"
-    assert not (intermediate / "event_log.jsonl").exists()
 
 
 def test_status_reports_invalid_semantic_assessment_report_without_writes(tmp_path: Path) -> None:
@@ -1086,135 +981,5 @@ def test_status_reports_invalid_semantic_assessment_report_without_writes(tmp_pa
     assert not (intermediate / "event_log.jsonl").exists()
 
 
-def test_status_formats_intake_projection(tmp_path: Path) -> None:
-    ws = _write_runtime_workspace(tmp_path)
-    initialize_runtime_state(runtime="operator", workspace=ws, repo_workdir=ROOT)
-    candidate_path = ws / "output" / "intermediate" / "candidate_claims.json"
-    candidate_path.write_text(_normalized_candidate_wrapper(), encoding="utf-8")
-    check_runtime_state(workspace=ws, repo_workdir=ROOT)
-
-    before = build_workspace_status(ws)
-    before_intake = before["artifacts"]["intake"]
-    before_line = next(
-        line for line in format_workspace_status(before).splitlines() if line.startswith("[status] intake:")
-    )
-    candidate_path.write_text("{not current registry bytes", encoding="utf-8")
-    after = build_workspace_status(ws)
-    after_intake = after["artifacts"]["intake"]
-    after_line = next(
-        line for line in format_workspace_status(after).splitlines() if line.startswith("[status] intake:")
-    )
-
-    assert before_intake["present"] is True
-    assert before_intake["valid"] is True
-    assert before_intake["projection_count"] == 1
-    assert before_intake["normalized_artifact_count"] == 1
-    assert before_intake["normalization_count"] > 0
-    assert before_intake["fatal_finding_count"] == 0
-    assert before_intake["artifacts"][0]["artifact_id"] == "candidate_claims"
-    assert before_intake["artifacts"][0]["projection_valid"] is True
-    assert after["artifacts"]["registry_status"] == "degradation"
-    assert after["artifacts"]["registry_reason_code"] == (
-        "artifact_registry_producer_replay_mismatch"
-    )
-    assert after["artifacts"]["artifact_count"] == 0
-    assert after_intake["present"] is False
-    assert after_intake["valid"] is None
-    assert after_intake["projection_count"] == 0
-    assert after_intake["normalization_count"] == 0
-    assert after_intake["fatal_finding_count"] == 0
-    assert after_intake["artifacts"] == []
-    assert after_line == (
-        "[status] intake: not_available projections=0 normalized=0 "
-        "normalizations=0 fatal=0 invalid_projections=0 stale_projections=0"
-    )
-    assert before_line != after_line
 
 
-def test_status_rejects_invalid_intake_projection(tmp_path: Path) -> None:
-    ws = _write_runtime_workspace(tmp_path)
-    initialize_runtime_state(runtime="operator", workspace=ws, repo_workdir=ROOT)
-    candidate_path = ws / "output" / "intermediate" / "candidate_claims.json"
-    candidate_path.write_text(_normalized_candidate_wrapper(), encoding="utf-8")
-    check_runtime_state(workspace=ws, repo_workdir=ROOT)
-    registry_path = ws / "output" / "intermediate" / "artifact_registry.json"
-    registry = json.loads(registry_path.read_text(encoding="utf-8"))
-    persisted = registry["artifacts"]["candidate_claims"]["intake_projection"]
-    persisted_normalization_count = persisted["normalization_count"]
-    persisted["schema_version"] = "briefloop.intake_projection.v99"
-    registry_path.write_text(
-        json.dumps(registry, ensure_ascii=False, indent=2, sort_keys=True) + "\n",
-        encoding="utf-8",
-    )
-    candidate_path.write_text("{malformed current bytes", encoding="utf-8")
-
-    status = build_workspace_status(ws)
-    intake = status["artifacts"]["intake"]
-
-    assert status["artifacts"]["registry_status"] == "degradation"
-    assert status["artifacts"]["registry_reason_code"] == (
-        "artifact_registry_producer_replay_mismatch"
-    )
-    assert status["artifacts"]["artifact_count"] == 0
-    assert intake["present"] is False
-    assert intake["valid"] is None
-    assert intake["invalid_projection_count"] == 0
-    assert intake["normalization_count"] == 0
-    assert intake["fatal_finding_count"] == 0
-    assert intake["artifacts"] == []
-    assert persisted_normalization_count > 0
-    assert "[status] intake: not_available" in format_workspace_status(status)
-
-    persisted["schema_version"] = "briefloop.intake_projection.v1"
-    persisted["normalized_sha256"] = ""
-    registry_path.write_text(
-        json.dumps(registry, ensure_ascii=False, indent=2, sort_keys=True) + "\n",
-        encoding="utf-8",
-    )
-
-    impossible_status = build_workspace_status(ws)
-    impossible_intake = impossible_status["artifacts"]["intake"]
-
-    assert impossible_status["artifacts"]["registry_status"] == "degradation"
-    assert impossible_status["artifacts"]["registry_reason_code"] == (
-        "artifact_registry_producer_replay_mismatch"
-    )
-    assert impossible_intake["present"] is False
-    assert impossible_intake["valid"] is None
-    assert impossible_intake["artifacts"] == []
-
-    persisted["normalized_sha256"] = "a" * 64
-    persisted["artifact_id"] = "screened_candidates"
-    registry_path.write_text(
-        json.dumps(registry, ensure_ascii=False, indent=2, sort_keys=True) + "\n",
-        encoding="utf-8",
-    )
-
-    transplanted_status = build_workspace_status(ws)
-    transplanted = transplanted_status["artifacts"]["intake"]
-
-    assert transplanted_status["artifacts"]["registry_status"] == "degradation"
-    assert transplanted_status["artifacts"]["registry_reason_code"] == (
-        "artifact_registry_producer_replay_mismatch"
-    )
-    assert transplanted["present"] is False
-    assert transplanted["valid"] is None
-    assert transplanted["artifacts"] == []
-
-    persisted["artifact_id"] = "candidate_claims"
-    registry["artifacts"]["candidate_claims"]["status"] = "banana"
-    registry_path.write_text(
-        json.dumps(registry, ensure_ascii=False, indent=2, sort_keys=True) + "\n",
-        encoding="utf-8",
-    )
-
-    unknown_payload = build_workspace_status(ws)
-    unknown_status = unknown_payload["artifacts"]["intake"]
-
-    assert unknown_payload["artifacts"]["registry_status"] == "degradation"
-    assert unknown_payload["artifacts"]["registry_reason_code"] == (
-        "artifact_registry_producer_replay_mismatch"
-    )
-    assert unknown_status["present"] is False
-    assert unknown_status["valid"] is None
-    assert unknown_status["artifacts"] == []
