@@ -22,7 +22,8 @@ ROOT = Path(__file__).resolve().parent.parent
 # TEST-SLIM-1 (ruling da184ba5): the full 89-id x detail matrix renders the same
 # SchemaRegistry machinery per id; exact rendering and wheel parity are now
 # proven on a representative cross-family sample. Coverage citation (TD-2):
-# SchemaRegistry exactness is owned per contract by tests/test_contract_registry.py
+# per-contract embedded-example validity and schema publication stay owned by
+# tests/test_control_contracts_v2.py::test_every_embedded_example_is_valid_and_published_in_schema
 # and the non-editable wheel parity test below; the unsampled ids exercise the
 # identical code path (`contract show` -> SchemaRegistry).
 _REPRESENTATIVE_CONTRACT_IDS = [

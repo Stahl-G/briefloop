@@ -282,6 +282,32 @@ def test_workbuddy_skill_has_natural_language_triggers() -> None:
         assert phrase in text
 
 
+def test_workbuddy_skill_uses_codebuddy_role_agent_runtime_not_operator_default() -> None:
+    text = _all_skill_text()
+    compact = _compact(text)
+    assert "--runtime codebuddy" in text
+    assert '--repo-workdir "<canonical BriefLoop source checkout>"' in text
+    # Restored after the TEST-SLIM-1 Reviewer found these groups had no
+    # surviving guard (BLOCK P1): CodeBuddy-compatible role-subagent wording,
+    # the no-handwritten-JSON-artifacts rule, the never-claim-subagents-ran
+    # rule, the frontmatter tools list, and the anti operator/manual negatives.
+    assert "兼容 CodeBuddy 的角色子代理" in compact
+    assert "只有当源码检出包含" in text
+    assert "仅有本地 WorkBuddy Skill zip 不会安装这些 CodeBuddy 项目资产" in compact
+    assert "briefloop-scout" in text
+    assert "briefloop-auditor" in text
+    assert "不要退回手写 BriefLoop JSON 工件" in compact
+    assert "静默切换到 `--runtime operator`" in compact
+    assert "必须由用户明确决定" in compact
+    assert '& $BriefLoop run --workspace "<workspace>" --runtime operator' in text
+    assert "绝不声称 子代理运行过" in compact or "绝不声称子代理运行过" in compact
+    assert "frontmatter 的 tools 清单" in compact
+    assert "Use `--runtime operator`" not in text
+    assert "use `--runtime operator` for handoff" not in text
+    assert "--runtime manual" not in text
+    assert "legacy manual" not in text.lower()
+
+
 def test_workbuddy_default_runtime_matches_version_matrix() -> None:
     matrix = _read(VERSION_MATRIX)
     matrix_workbuddy = matrix.split("- WorkBuddy Skill source bundle:", 1)[1].split(

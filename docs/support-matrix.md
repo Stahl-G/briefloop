@@ -69,7 +69,7 @@ validation unless that is stated separately.
 | `briefloop improve propose/list/show/approve/reject/revert/stats/validate/rebuild` | Unsupported on SQLite; retired public CLI |
 | `briefloop eval-cases list/validate/run` | Supported |
 | `briefloop experiments 080 validate-case` | Archived Experimental; public CLI retired, case tooling runs through deterministic `multi_agent_brief.experiments` service functions |
-| MABW-080 archived experiment test suite (`tests/test_experiment_080_*.py`) | On-demand only (`workflow_dispatch`); excluded from the default CI test matrix while the deterministic service functions remain covered there |
+| MABW-080 archived experiment test suite (`tests/test_experiment_080_*.py`) | On-demand only (`workflow_dispatch`); excluded from the default CI test matrix — behavioral coverage of the 080 service functions moves to the on-demand job |
 | `briefloop experiments 080 register-run` | Archived Experimental; public CLI retired, case tooling runs through deterministic `multi_agent_brief.experiments` service functions |
 | `briefloop experiments 080 score-run` | Archived Experimental; public CLI retired, case tooling runs through deterministic `multi_agent_brief.experiments` service functions |
 | `briefloop experiments 080 import-assessment` | Archived Experimental; public CLI retired, case tooling runs through deterministic `multi_agent_brief.experiments` service functions |
