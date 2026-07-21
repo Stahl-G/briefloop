@@ -79,10 +79,14 @@ These longer-form technical notes are design and architecture references. Treat
 `docs/architecture-status.md` and `docs/support-matrix.md` as the current
 implementation/support source of truth when they differ.
 
-- [BriefLoop architecture reference v0.4.0 — Chinese](briefloop-architecture-reference-v0.4.0.md) — latest report edition; historical code snapshot v0.11.12
-- [BriefLoop architecture reference v0.4.0 — English](briefloop-architecture-reference-v0.4.0.en.md) — full English edition
-- [BriefLoop architecture reference v0.4.0 — Chinese HTML](briefloop-architecture-reference-v0.4.0.html) — self-contained reading edition
-- [BriefLoop architecture reference v0.4.0 — English HTML](briefloop-architecture-reference-v0.4.0.en.html) — self-contained reading edition
+- [BriefLoop architecture reference v0.6.1 — Chinese](briefloop-architecture-reference-v0.6.1.md) — latest report edition; historical code snapshot main@47ae439d (v0.12.1 baseline)
+- [BriefLoop architecture reference v0.6.1 — English](briefloop-architecture-reference-v0.6.1.en.md) — full English edition
+- [BriefLoop architecture reference v0.6.1 — Chinese HTML](briefloop-architecture-reference-v0.6.1.html) — self-contained reading edition
+- [BriefLoop architecture reference v0.6.1 — English HTML](briefloop-architecture-reference-v0.6.1.en.html) — self-contained reading edition
+- [BriefLoop architecture reference v0.4.0 — Chinese](briefloop-architecture-reference-v0.4.0.md) — superseded (v0.11.12 snapshot)
+- [BriefLoop architecture reference v0.4.0 — English](briefloop-architecture-reference-v0.4.0.en.md) — superseded English edition
+- [BriefLoop architecture reference v0.4.0 — Chinese HTML](briefloop-architecture-reference-v0.4.0.html) — superseded reading edition
+- [BriefLoop architecture reference v0.4.0 — English HTML](briefloop-architecture-reference-v0.4.0.en.html) — superseded reading edition
 - [BriefLoop architecture reference v0.3.0](briefloop-architecture-reference-v0.3.0.md) — superseded (v0.8.3 snapshot)
 - [Historical architecture reference v0.2.0](archive/mabw-architecture-reference-v0.2.0.md) — archived legacy filename
 - [Historical architecture reference v0.3.0](archive/mabw-architecture-reference-v0.3.0-legacy.md) — archived legacy filename
