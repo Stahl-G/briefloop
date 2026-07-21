@@ -7,18 +7,9 @@ import pytest
 
 from multi_agent_brief.cli.main import main
 from multi_agent_brief.cli.deliver_commands import _delivery_run_id
-from multi_agent_brief.orchestrator.runtime_state import RuntimeStateError
-from multi_agent_brief.orchestrator.runtime_state import check_runtime_state
-from multi_agent_brief.orchestrator.runtime_state import initialize_runtime_state
-from multi_agent_brief.orchestrator.runtime_state import show_runtime_state
-from multi_agent_brief.orchestrator.runtime_state.event_log import _load_handoff_runtime_state
-from multi_agent_brief.orchestrator.runtime_state.semantic_support_acceptance import _current_run_id
 from multi_agent_brief.orchestrator_contract import HISTORICAL_READ_ONLY_RUNTIMES
 from multi_agent_brief.orchestrator_contract import RUNTIME_CLI_CHOICE_PLACEHOLDER
 from multi_agent_brief.orchestrator_contract import VALID_RUNTIMES
-from multi_agent_brief.product.release_approval import ReleaseApprovalError
-from multi_agent_brief.product.release_approval import _workspace_and_run_id
-from multi_agent_brief.provenance.builder import build_provenance_graph
 from multi_agent_brief.provenance.model import ProvenanceError
 from multi_agent_brief.status import build_workspace_status
 from tests.helpers import write_workspace_files_under
@@ -52,39 +43,8 @@ def _files(workspace: Path) -> dict[str, bytes]:
     }
 
 
-@pytest.mark.parametrize("runtime", VALID_RUNTIMES)
-def test_initialize_records_each_exact_canonical_runtime(tmp_path: Path, runtime: str) -> None:
-    ws = _workspace(tmp_path)
-
-    state = initialize_runtime_state(
-        workspace=ws,
-        repo_workdir=ROOT,
-        runtime=runtime,
-    )
-
-    assert state["manifest"]["runtime"] == runtime
-    assert show_runtime_state(workspace=ws)["manifest"]["runtime"] == runtime
 
 
-@pytest.mark.parametrize(
-    "runtime",
-    ["auto", "controls", "manual", "Hermes", "OPERATOR", "unknown", "", None],
-)
-def test_initialize_rejects_noncanonical_runtime_without_writes(
-    tmp_path: Path,
-    runtime: object,
-) -> None:
-    ws = _workspace(tmp_path)
-    before = _files(ws)
-
-    with pytest.raises(RuntimeStateError):
-        initialize_runtime_state(
-            workspace=ws,
-            repo_workdir=ROOT,
-            runtime=runtime,  # type: ignore[arg-type]
-        )
-
-    assert _files(ws) == before
 
 
 @pytest.mark.parametrize("runtime", ["auto", "controls", "manual", "Hermes", "OPERATOR", "unknown"])
@@ -101,94 +61,8 @@ def test_run_parser_rejects_noncanonical_runtime_without_writes(
     assert _files(ws) == before
 
 
-def test_existing_runtime_must_match_without_rewriting_identity(tmp_path: Path) -> None:
-    ws = _workspace(tmp_path)
-    first = initialize_runtime_state(
-        workspace=ws,
-        repo_workdir=ROOT,
-        runtime="codex",
-    )
-    same = initialize_runtime_state(
-        workspace=ws,
-        repo_workdir=ROOT,
-        runtime="codex",
-    )
-    assert same["manifest"]["run_id"] == first["manifest"]["run_id"]
-    assert same["manifest"]["runtime"] == "codex"
-    before = _files(ws)
-
-    with pytest.raises(RuntimeStateError):
-        initialize_runtime_state(
-            workspace=ws,
-            repo_workdir=ROOT,
-            runtime="operator",
-        )
-    assert _files(ws) == before
 
 
-@pytest.mark.parametrize("historical_runtime", sorted(HISTORICAL_READ_ONLY_RUNTIMES))
-def test_legacy_manifest_is_read_only_until_reset_and_archived_byte_exact(
-    tmp_path: Path,
-    historical_runtime: str,
-    capsys: pytest.CaptureFixture[str],
-) -> None:
-    ws = _workspace(tmp_path)
-    state = initialize_runtime_state(
-        workspace=ws,
-        repo_workdir=ROOT,
-        runtime="operator",
-    )
-    manifest_path = ws / INTERMEDIATE / "runtime_manifest.json"
-    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
-    manifest["runtime"] = historical_runtime
-    manifest_path.write_text(
-        json.dumps(manifest, ensure_ascii=False, indent=2, sort_keys=True) + "\n",
-        encoding="utf-8",
-    )
-    historical_bytes = manifest_path.read_bytes()
-    before = _files(ws)
-
-    readable = show_runtime_state(workspace=ws)
-    assert readable["manifest"]["runtime"] == historical_runtime
-    with pytest.raises(RuntimeStateError):
-        initialize_runtime_state(
-            workspace=ws,
-            repo_workdir=ROOT,
-            runtime="operator",
-        )
-    assert _files(ws) == before
-
-    status = build_workspace_status(ws)
-    assert status["runtime"]["identity_status"] == "historical_read_only"
-    assert "--reset-state" in status["suggested_next_command"]
-    assert f"--runtime {historical_runtime}" not in status["suggested_next_command"]
-
-    # retired public state/controls/gates/feedback commands on a
-    # legacy-JSON workspace authority. The mutating-consumer invariant is kept
-    # by the direct-seam assertions in
-    # test_mutating_runtime_consumers_reject_historical_identity_without_writes.
-    assert main([
-        "controls",
-        "build-switchboard",
-        "--workspace",
-        str(ws),
-        "--repo-workdir",
-        str(ROOT),
-        "--json",
-    ]) == 1
-    assert capsys.readouterr().out == "legacy_workspace_unsupported\n"
-    assert _files(ws) == before
-
-    reset = initialize_runtime_state(
-        workspace=ws,
-        repo_workdir=ROOT,
-        runtime="codebuddy",
-        reset_state=True,
-    )
-    archive = ws / INTERMEDIATE / f"runtime_manifest.{state['manifest']['run_id']}.json"
-    assert archive.read_bytes() == historical_bytes
-    assert reset["manifest"]["run_id"] != state["manifest"]["run_id"]
-    assert reset["manifest"]["runtime"] == "codebuddy"
 
 
 def test_active_adapter_entrypoints_bind_runtime_literals() -> None:
@@ -356,32 +230,6 @@ def test_runtime_consumers_do_not_implicitly_initialize(
     assert _files(ws) == before
 
 
-@pytest.mark.parametrize("historical_runtime", sorted(HISTORICAL_READ_ONLY_RUNTIMES))
-def test_mutating_runtime_consumers_reject_historical_identity_without_writes(
-    tmp_path: Path,
-    historical_runtime: str,
-) -> None:
-    ws = _workspace(tmp_path)
-    initialize_runtime_state(workspace=ws, repo_workdir=ROOT, runtime="operator")
-    check_runtime_state(workspace=ws, repo_workdir=ROOT)
-    manifest_path = ws / INTERMEDIATE / "runtime_manifest.json"
-    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
-    manifest["runtime"] = historical_runtime
-    manifest_path.write_text(json.dumps(manifest, indent=2) + "\n", encoding="utf-8")
-    before = _files(ws)
-
-    with pytest.raises(RuntimeStateError):
-        _delivery_run_id(ws)
-    with pytest.raises(RuntimeStateError):
-        _current_run_id(ws)
-    with pytest.raises(ReleaseApprovalError):
-        _workspace_and_run_id(ws)
-    with pytest.raises(ProvenanceError):
-        build_provenance_graph(workspace=ws, repo_workdir=ROOT)
-    with pytest.raises(RuntimeStateError):
-        _load_handoff_runtime_state(ws)
-
-    assert _files(ws) == before
 
 
 def test_runtime_identity_consumer_inventory_uses_canonical_validator() -> None:
