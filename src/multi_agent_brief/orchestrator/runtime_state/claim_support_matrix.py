@@ -13,11 +13,11 @@ from multi_agent_brief.contracts.schemas.claim_support_matrix import ClaimSuppor
 from multi_agent_brief.contracts.schemas.evidence_span_registry import EvidenceSpanRegistryContract
 from multi_agent_brief.core.claim_ledger import ClaimLedger
 from multi_agent_brief.core.schemas import Claim
-from multi_agent_brief.orchestrator.runtime_state.atomic_claim_graph import (
+from multi_agent_brief.outputs.atomic_claim_graph_validation import (
     ATOMIC_CLAIM_GRAPH_VALIDATION_PREFIX,
     validate_atomic_claim_graph_against_ledger,
 )
-from multi_agent_brief.orchestrator.runtime_state.evidence_span_registry import (
+from multi_agent_brief.outputs.evidence_span_validation import (
     EVIDENCE_SPAN_REGISTRY_VALIDATION_PREFIX,
     validate_evidence_span_registry_against_source_pack,
 )

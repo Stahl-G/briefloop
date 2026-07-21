@@ -9,7 +9,7 @@ from typing import Any, Mapping
 
 from multi_agent_brief.contracts.schemas.atomic_claim_graph import AtomicClaimGraphContract
 from multi_agent_brief.core.citations import extract_src_ref_ids
-from multi_agent_brief.orchestrator.runtime_state.atomic_claim_graph import (
+from multi_agent_brief.outputs.atomic_claim_graph_validation import (
     ATOMIC_CLAIM_GRAPH_VALIDATION_PREFIX,
     validate_atomic_claim_graph_against_ledger,
 )
