@@ -37,13 +37,14 @@ Skill-impact areas include:
 Run focused tests for changed areas. For skill changes, run:
 
 ```bash
-python3 -m pytest -q tests/test_skill_contracts.py tests/test_briefloop_operator_skill.py
+python3 -m pytest -q tests/test_skill_contracts.py
 python3 scripts/check_skill_contract.py
 python3 scripts/check_product_baseline.py
 python3 scripts/check_briefloop_skill_freshness.py
 python3 scripts/check_version_consistency.py
 python3 scripts/check_release_consistency.py --no-tag
 python3 scripts/check_capabilities.py
+python3 scripts/check_citation_parser_home.py
 git diff --check
 ```
 
