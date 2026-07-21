@@ -216,11 +216,7 @@ jobs:
         run: python scripts/check_terms.py
 
       - name: Tests
-        run: >-
-          python -m pytest -q -n auto --dist worksteal
-          --ignore=tests/test_experiment_080_commands.py
-          --ignore=tests/test_experiment_080_public_pilot.py
-          --ignore=tests/test_experiment_080_schemas.py
+        run: python -m pytest -q -n auto --dist worksteal
 
       - name: Agent config check
         run: python scripts/generate_agent_configs.py --check
@@ -287,11 +283,6 @@ jobs:
 
       - name: Version check
         run: briefloop version
-
-      - name: Evaluation cases smoke
-        run: |
-          briefloop eval-cases validate --json
-          briefloop eval-cases run --json
 
       - name: Init workspace
         run: |
@@ -412,7 +403,6 @@ jobs:
           /tmp/mabw-wheel-smoke/bin/briefloop init /tmp/mabw-wheel-ws --demo --force --web-search-mode disabled
           /tmp/mabw-wheel-smoke/bin/briefloop run --workspace /tmp/mabw-wheel-ws --runtime codex
           /tmp/mabw-wheel-smoke/bin/briefloop runtime next --workspace /tmp/mabw-wheel-ws | grep '"effect_kind":"doctor_check"'
-          /tmp/mabw-wheel-smoke/bin/briefloop eval-cases run --json
 
       - name: Wheel CLI entrypoint parity
         run: |
@@ -435,9 +425,6 @@ jobs:
           done
           set -e
           test "$mismatch" -eq 0
-          /tmp/mabw-wheel-smoke/bin/briefloop eval-cases list --json > /tmp/eval-list-public.json
-          /tmp/mabw-wheel-smoke/bin/multi-agent-brief eval-cases list --json > /tmp/eval-list-compat.json
-          diff /tmp/eval-list-public.json /tmp/eval-list-compat.json
 
   llm-decide-smoke:
     name: llm_decide + doctor + sources decide smoke
@@ -744,32 +731,6 @@ jobs:
 
       - name: Assert onboarding prepare stays removed
         run: python scripts/ci/smoke_pipeline.py /tmp/golden-onboarding/config.yaml /tmp/golden-onboarding/input /tmp/golden-onboarding/output
-
-  experiment-080:
-    name: MABW-080 archived experiment suite (on-demand)
-    needs: changes
-    if: github.event_name == 'workflow_dispatch'
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          ref: ${{ env.CANDIDATE_SHA }}
-
-      - uses: actions/setup-python@v5
-        with:
-          python-version: "3.12"
-          cache: "pip"
-          cache-dependency-path: pyproject.toml
-
-      - name: Install
-        run: python -m pip install -e ".[dev]"
-
-      - name: Run the archived 080 suite
-        run: >-
-          python -m pytest -q -n auto --dist worksteal
-          tests/test_experiment_080_commands.py
-          tests/test_experiment_080_public_pilot.py
-          tests/test_experiment_080_schemas.py
 
   merge-gate:
     name: >-

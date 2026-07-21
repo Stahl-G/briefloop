@@ -11,7 +11,6 @@ from multi_agent_brief.cli.main import main
 from multi_agent_brief.core.config import load_config
 from multi_agent_brief.inputs.classifier import classify_input_dir
 from multi_agent_brief.inputs.extractor import extract_input_documents
-from multi_agent_brief.orchestrator.handoff import build_handoff, write_handoff_and_state
 from multi_agent_brief.outputs.finalize import finalize_reader_outputs
 from tests.helpers import write_workspace_files_under
 
@@ -173,130 +172,6 @@ def test_inputs_classify_detects_old_output_artifact_in_root(tmp_path: Path):
     assert skipped_names["audited_brief.md"]["reason"] == "suspicious_output_artifact"
 
 
-def test_feedback_only_text_does_not_contaminate_evidence_or_reader_artifacts(tmp_path: Path):
-    """Feedback remains available to feedback workflows without becoming evidence."""
-    sentinel = "FEEDBACK_ONLY_SENTINEL_PR78_DO_NOT_TREAT_AS_FACT"
-    ws = _write_workspace(tmp_path)
-    input_dir = ws / "input"
-    sources_dir = input_dir / "sources"
-    feedback_dir = input_dir / "feedback"
-    sources_dir.mkdir(parents=True, exist_ok=True)
-    feedback_dir.mkdir(parents=True, exist_ok=True)
-    (sources_dir / "market_source.md").write_text(
-        "# Market source\n\nExampleCo opened a public demo facility in June 2026.",
-        encoding="utf-8",
-    )
-    (feedback_dir / "operator_feedback.md").write_text(
-        f"Please make the tone sharper. {sentinel}",
-        encoding="utf-8",
-    )
-
-    # Direct deterministic seam behind the retired public `inputs classify` CLI.
-    classification = classify_input_dir(input_dir)
-    assert [item["name"] for item in classification["evidence"]] == ["market_source.md"]
-    assert [item["name"] for item in classification["feedback"]] == ["operator_feedback.md"]
-    assert sentinel in (feedback_dir / "operator_feedback.md").read_text(encoding="utf-8")
-
-    # Direct deterministic seam behind the retired public `run --runtime
-    # operator` CLI: build and write the same runtime handoff artifacts.
-    handoff = build_handoff(workspace=ws, repo_workdir=ROOT, runtime="operator", run_doctor=False)
-    written = write_handoff_and_state(handoff=handoff, workspace=ws, repo_workdir=ROOT, prefix="[test]")
-    assert written is not None
-    handoff_json_path = ws / "output" / "intermediate" / "agent_handoff.json"
-    handoff_md_path = ws / "output" / "intermediate" / "agent_handoff.md"
-    handoff_payload = json.loads(handoff_json_path.read_text(encoding="utf-8"))
-    handoff_markdown = handoff_md_path.read_text(encoding="utf-8")
-    combined_handoff = json.dumps(handoff_payload, ensure_ascii=False) + "\n" + handoff_markdown
-    assert sentinel not in combined_handoff
-    assert "input/feedback" in combined_handoff
-    assert "remain non-evidence" in combined_handoff
-    assert "eligible evidence files under input/sources count as evidence" in combined_handoff
-    assert "binary inputs require extracted Markdown before use" in combined_handoff
-    assert "only extracted files under input/sources are evidence" not in combined_handoff
-
-    intermediate = ws / "output" / "intermediate"
-    intermediate.mkdir(parents=True, exist_ok=True)
-    (intermediate / "candidate_claims.json").write_text(
-        json.dumps(
-            [
-                {
-                    "candidate_id": "CAND-001",
-                    "claim": "ExampleCo opened a public demo facility in June 2026.",
-                    "source_id": "SRC-001",
-                }
-            ],
-            ensure_ascii=False,
-            indent=2,
-        )
-        + "\n",
-        encoding="utf-8",
-    )
-    (intermediate / "screened_candidates.json").write_text(
-        json.dumps(
-            [{"candidate_id": "CAND-001", "screening_status": "selected"}],
-            ensure_ascii=False,
-            indent=2,
-        )
-        + "\n",
-        encoding="utf-8",
-    )
-    (intermediate / "claim_ledger.json").write_text(
-        json.dumps(
-            [
-                {
-                    "claim_id": "CL-0001",
-                    "statement": "ExampleCo opened a public demo facility in June 2026.",
-                    "source_id": "SRC-001",
-                    "evidence_text": "ExampleCo opened a public demo facility in June 2026.",
-                    "source_url": "https://example.com/exampleco-demo",
-                    "source_type": "local_file",
-                    "metadata": {
-                        "source_title": "ExampleCo Demo Facility",
-                        "publisher": "Example News",
-                        "source_category": "news_media",
-                    },
-                }
-            ],
-            ensure_ascii=False,
-            indent=2,
-        )
-        + "\n",
-        encoding="utf-8",
-    )
-    (intermediate / "audited_brief.md").write_text(
-        "# Feedback Hygiene Brief\n\n"
-        "ExampleCo opened a public demo facility in June 2026. [src:CL-0001]\n",
-        encoding="utf-8",
-    )
-
-    result = finalize_reader_outputs(
-        output_dir=ws / "output",
-        project_name="Feedback Hygiene Brief",
-        output_formats=["markdown", "docx", "source_appendix"],
-        output_named_outputs=True,
-        output_filename_template="{project_name}_{report_date}",
-        output_filename_tokens={
-            "project_name": "Feedback_Hygiene_Brief",
-            "report_date": "2026-06-30",
-        },
-    )
-
-    text_artifacts = [
-        intermediate / "candidate_claims.json",
-        intermediate / "screened_candidates.json",
-        intermediate / "claim_ledger.json",
-        intermediate / "audited_brief.md",
-        ws / "output" / "brief.md",
-        ws / "output" / "Feedback_Hygiene_Brief_2026-06-30.md",
-        ws / "output" / "source_appendix.md",
-        ws / "output" / "delivery" / "brief.md",
-    ]
-    for path in text_artifacts:
-        assert path.exists(), f"missing expected artifact: {path}"
-        assert sentinel not in path.read_text(encoding="utf-8"), str(path)
-
-    assert result.delivery_docx
-    assert sentinel not in _docx_text(Path(result.delivery_docx))
 
 
 # ────────────────────────────────────────────────────────────────────

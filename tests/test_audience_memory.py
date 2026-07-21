@@ -13,12 +13,6 @@ from multi_agent_brief.audience_memory import (
 )
 from multi_agent_brief.cli.main import main
 from multi_agent_brief.inputs.classifier import classify_input_dir
-from multi_agent_brief.orchestrator.handoff import build_handoff, write_handoff_and_state
-from multi_agent_brief.orchestrator.runtime_state import (
-    RUNTIME_STATE_FILES,
-    check_runtime_state,
-    initialize_runtime_state,
-)
 from tests.helpers import write_workspace_files_under
 
 
@@ -57,23 +51,6 @@ manual:
     return ws
 
 
-def _run_operator_handoff(ws: Path) -> None:
-    # retired public `run --runtime operator` launcher; the
-    # audience-memory handoff chain is driven through the direct deterministic
-    # orchestrator module seam instead of the retired public CLI.
-    handoff = build_handoff(
-        workspace=ws,
-        repo_workdir=ROOT,
-        runtime="operator",
-        run_doctor=False,
-    )
-    written = write_handoff_and_state(
-        handoff=handoff,
-        workspace=ws,
-        repo_workdir=ROOT,
-        prefix="[test]",
-    )
-    assert written is not None
 
 
 def _workspace_file_bytes(ws: Path) -> dict[str, bytes]:
@@ -84,13 +61,6 @@ def _workspace_file_bytes(ws: Path) -> dict[str, bytes]:
     }
 
 
-def _event_types(ws: Path) -> list[str]:
-    event_log = ws / RUNTIME_STATE_FILES["event_log"]
-    return [
-        json.loads(line)["event_type"]
-        for line in event_log.read_text(encoding="utf-8").splitlines()
-        if line.strip()
-    ]
 
 
 def test_default_audience_profile_is_plain_markdown():
@@ -110,138 +80,18 @@ def test_default_audience_profile_is_plain_markdown():
     assert "not source evidence" in text
 
 
-def test_snapshot_created_once_per_run_id_and_ignores_mid_run_profile_edits(tmp_path):
-    ws = _write_workspace(tmp_path)
-    state = initialize_runtime_state(runtime="operator", workspace=ws, repo_workdir=ROOT)
-    run_id = state["manifest"]["run_id"]
-    ensure_audience_profile(ws, {"company": "TestCo"})
-
-    first = create_audience_profile_snapshot(workspace=ws, run_id=run_id)
-    first_text = first.path.read_text(encoding="utf-8")
-    assert first.created is True
-    assert "<!-- mabw:audience-profile-snapshot" in first_text
-    assert f"run_id: {run_id}" in first_text
-    assert "Captured Body SHA256" in first_text
-    assert "Snapshot SHA256" not in first_text
-
-    (ws / "audience_profile.md").write_text(
-        "# Audience Profile\n\nUNIQUE_TASTE_MARKER_AFTER_SNAPSHOT\n",
-        encoding="utf-8",
-    )
-    second = create_audience_profile_snapshot(workspace=ws, run_id=run_id)
-
-    assert second.created is False
-    assert second.path.read_text(encoding="utf-8") == first_text
-    assert "UNIQUE_TASTE_MARKER_AFTER_SNAPSHOT" not in second.path.read_text(encoding="utf-8")
 
 
-def test_snapshot_rebuilds_when_metadata_missing_or_malformed(tmp_path):
-    ws = _write_workspace(tmp_path)
-    state = initialize_runtime_state(runtime="operator", workspace=ws, repo_workdir=ROOT)
-    run_id = state["manifest"]["run_id"]
-    ensure_audience_profile(ws, {"company": "TestCo"})
-    snapshot_path = ws / AUDIENCE_MEMORY_FILES["audience_profile_snapshot"]
-
-    snapshot_path.parent.mkdir(parents=True, exist_ok=True)
-    snapshot_path.write_text(
-        "# Audience Profile Snapshot\n\nrun_id: not-a-real-header\n",
-        encoding="utf-8",
-    )
-
-    snapshot = create_audience_profile_snapshot(workspace=ws, run_id=run_id)
-
-    assert snapshot.created is True
-    assert snapshot.stale_rebuilt is True
-    assert snapshot.path.read_text(encoding="utf-8").startswith("<!-- mabw:audience-profile-snapshot")
 
 
-def test_run_creates_profile_snapshot_event_and_handoff_refs(tmp_path):
-    ws = _write_workspace(tmp_path)
-
-    _run_operator_handoff(ws)
-
-    assert (ws / "audience_profile.md").exists()
-    assert (ws / AUDIENCE_MEMORY_FILES["audience_profile_snapshot"]).exists()
-    data = json.loads((ws / "output" / "intermediate" / "agent_handoff.json").read_text(encoding="utf-8"))
-    assert data["audience_memory_files"] == AUDIENCE_MEMORY_FILES
-    assert "audience_profile.md" not in data["expected_artifacts"]
-    assert AUDIENCE_MEMORY_FILES["audience_profile_snapshot"] not in data["expected_artifacts"]
-
-    events = [
-        json.loads(line)
-        for line in (ws / RUNTIME_STATE_FILES["event_log"]).read_text(encoding="utf-8").splitlines()
-        if line.strip()
-    ]
-    created_events = [
-        event for event in events
-        if event["event_type"] == "audience_profile_snapshot_created"
-    ]
-    assert len(created_events) == 1
-    metadata = created_events[0]["metadata"]
-    assert metadata["audience_profile"] == "audience_profile.md"
-    assert metadata["audience_profile_snapshot"] == AUDIENCE_MEMORY_FILES["audience_profile_snapshot"]
-    assert metadata["profile_missing"] is True
-    assert metadata["profile_created"] is True
-    assert metadata["source_sha256"]
-    assert metadata["snapshot_sha256"]
 
 
-def test_run_backfills_missing_profile_from_workspace_config(tmp_path):
-    ws = _write_workspace(tmp_path)
-    assert not (ws / "audience_profile.md").exists()
-
-    _run_operator_handoff(ws)
-
-    profile = (ws / "audience_profile.md").read_text(encoding="utf-8")
-    assert "TestCo" in profile
-    assert "testing" in profile
-    assert "management" in profile
-    assert "weekly" in profile
-    assert "Unknown organization" not in profile
-    assert "Unknown industry/theme" not in profile
 
 
-def test_runtime_state_commands_do_not_overwrite_existing_audience_profile(tmp_path):
-    ws = _write_workspace(tmp_path)
-    custom_profile = "# Audience Profile\n\nCUSTOM_TASTE_MARKER_DO_NOT_OVERWRITE\n"
-    (ws / "audience_profile.md").write_text(custom_profile, encoding="utf-8")
-
-    _run_operator_handoff(ws)
-    assert (ws / "audience_profile.md").read_text(encoding="utf-8") == custom_profile
-
-    initialize_runtime_state(runtime="operator", workspace=ws, repo_workdir=ROOT)
-    assert (ws / "audience_profile.md").read_text(encoding="utf-8") == custom_profile
-
-    check_runtime_state(workspace=ws, repo_workdir=ROOT)
-    assert (ws / "audience_profile.md").read_text(encoding="utf-8") == custom_profile
-
-    initialize_runtime_state(runtime="operator", workspace=ws, repo_workdir=ROOT, reset_state=True)
-    assert (ws / "audience_profile.md").read_text(encoding="utf-8") == custom_profile
 
 
-def test_rerun_same_run_id_does_not_duplicate_snapshot_created_event(tmp_path):
-    ws = _write_workspace(tmp_path)
-    for _ in range(2):
-        _run_operator_handoff(ws)
-
-    assert _event_types(ws).count("audience_profile_snapshot_created") == 1
 
 
-def test_reset_new_run_refreshes_fixed_snapshot_path(tmp_path):
-    ws = _write_workspace(tmp_path)
-    _run_operator_handoff(ws)
-    first = (ws / AUDIENCE_MEMORY_FILES["audience_profile_snapshot"]).read_text(encoding="utf-8")
-    first_run_id = json.loads((ws / RUNTIME_STATE_FILES["runtime_manifest"]).read_text(encoding="utf-8"))["run_id"]
-
-    initialize_runtime_state(runtime="operator", workspace=ws, repo_workdir=ROOT, reset_state=True)
-    _run_operator_handoff(ws)
-
-    second = (ws / AUDIENCE_MEMORY_FILES["audience_profile_snapshot"]).read_text(encoding="utf-8")
-    second_run_id = json.loads((ws / RUNTIME_STATE_FILES["runtime_manifest"]).read_text(encoding="utf-8"))["run_id"]
-    assert second_run_id != first_run_id
-    assert second != first
-    assert f"run_id: {second_run_id}" in second
-    assert not (ws / "output" / "intermediate" / f"audience_profile_snapshot_{first_run_id}.md").exists()
 
 
 def test_audience_profile_is_not_input_evidence_or_claim_ledger_source(tmp_path):

@@ -258,9 +258,3 @@ def test_merge_gate_rejects_failed_classification(
         _execute_gate(monkeypatch, results={"changes": bad_result})
 
 
-def test_platform_selector_assertion_is_concrete_and_portable() -> None:
-    source = (ROOT / "tests" / "test_runtime_state_contracts.py").read_text(
-        encoding="utf-8"
-    )
-    assert 'details["repo_workdir_type"] == type(loop).__name__' in source
-    assert 'details["repo_workdir_type"] == "PosixPath"' not in source

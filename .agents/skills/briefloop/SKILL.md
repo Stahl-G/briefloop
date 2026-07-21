@@ -39,9 +39,9 @@ Use this skill when the user asks about any of these surfaces:
 
 - workspace operation, `/briefloop`, `briefloop`, status, gates, repair,
   finalize, delivery, or runtime handoff behavior
-- archived MABW-080 experiment setup, registration, scorecards, blind packs,
-  assessment import, summaries, or BriefLoop-090 reference-run reproduction that
-  still uses the shipped `experiments 080` command namespace
+- archived MABW-080 experiment or BriefLoop-090 reference-run questions; the
+  `experiments 080` tooling is retired (LD2-3) and reproduction is satisfied by
+  git history and run archives
 - repo-development changes that affect agent operation, control contracts,
   generated runtime assets, public docs, or release claims
 - BriefLoop naming, compatibility, or public support status
@@ -55,9 +55,6 @@ First classify the mode before acting:
 
 - `runtime-workspace`: a workspace with `config.yaml`, `sources.yaml`, `user.md`,
   `input/`, or `output/intermediate/`
-- `experiment-080-090`: an archived MABW-080 / BriefLoop-090 experiment case,
-  condition workspace, scorecard, blind pack, reveal mapping, assessment file,
-  or reference-run reproduction artifact using current 080 tooling
 - `repo-development`: this source repository, tests, runtime assets, CLI, docs,
   support matrix, generated agents, or release files
 - `public-claims`: README, release note, HN/GitHub wording, support status, or
@@ -68,7 +65,6 @@ Then read the matching reference:
 - SQLite-only Codex runtime workspaces:
   `references/codex-controlstore-v2.md`
 - runtime workspaces: `references/runtime-workspace.md`
-- experiments: `references/experiment-080-090.md`
 - owner-stage repair: `references/repair-protocol.md`
 - status, gates, finalize, and delivery boundaries:
   `references/status-and-gates.md`

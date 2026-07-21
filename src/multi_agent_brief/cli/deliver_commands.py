@@ -6,7 +6,6 @@ import argparse
 import hashlib
 import json
 import re
-import sys
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -18,23 +17,6 @@ from multi_agent_brief.delivery.artifact_policy import (
 )
 from multi_agent_brief.delivery.feishu import FeishuDeliveryConnector
 from multi_agent_brief.delivery.gws import GwsGmailDeliveryConnector
-from multi_agent_brief.orchestrator.runtime_state import (
-    E_ACTIVE_REPAIR_OPEN,
-    E_RUNTIME_STATE_NOT_INITIALIZED,
-    RuntimeStateError,
-    append_event,
-    check_runtime_state,
-    raise_if_active_repair_open,
-    runtime_state_paths,
-)
-from multi_agent_brief.orchestrator_contract import (
-    RUNTIME_CLI_CHOICE_PLACEHOLDER,
-    require_canonical_runtime,
-)
-from multi_agent_brief.orchestrator.run_integrity import (
-    interpret_run_integrity,
-    project_for_read,
-)
 from multi_agent_brief.outputs.reader_final_gate import (
     combine_reader_final_gate_results,
     detect_reader_residue,
@@ -49,11 +31,8 @@ from multi_agent_brief.product.policy_gate_adapter import (
 E_DELIVERY_BUNDLE_MISSING = "E_DELIVERY_BUNDLE_MISSING"
 E_DELIVERY_NOT_CLEAN = "E_DELIVERY_NOT_CLEAN"
 E_DELIVERY_FAILED = "E_DELIVERY_FAILED"
-E_DELIVERY_EVENT_FAILED = "E_DELIVERY_EVENT_FAILED"
-E_DELIVERY_RUNTIME_MISSING = "E_DELIVERY_RUNTIME_MISSING"
 E_DELIVERY_TARGET_INVALID = "E_DELIVERY_TARGET_INVALID"
 E_DELIVERY_ARTIFACT_MISMATCH = "E_DELIVERY_ARTIFACT_MISMATCH"
-E_DELIVERY_RUN_INTEGRITY_BLOCKED = "E_DELIVERY_RUN_INTEGRITY_BLOCKED"
 
 _RECIPIENT_ID_RE = re.compile(r"\b(?:oc|ou|on|om|cli|fld|f)[A-Za-z0-9_-]{8,}\b")
 _LONG_TOKEN_RE = re.compile(r"\b[A-Za-z0-9][A-Za-z0-9_-]{23,}\b")
@@ -155,45 +134,9 @@ def deliver_workspace(
     ws = _require_workspace(workspace)
     bundle = _load_delivery_bundle(ws)
     _verify_current_delivery_artifacts(bundle)
-    _preflight_delivery_event_surface(ws)
-    _preflight_no_active_repair(ws, target=target, channel=channel)
-    _refresh_runtime_state_before_delivery(ws, target=target, channel=channel)
-    run_integrity = _delivery_run_integrity(ws)
-    # Keep this local because recovery_state imports runtime-state modules.
-    from multi_agent_brief.orchestrator.recovery_state import evaluate_recovery_state
-
-    recovery_state = evaluate_recovery_state(workspace=ws)
-    _preflight_run_integrity_for_delivery(
-        run_integrity,
-        recovery_state=recovery_state,
-        target=target,
-        channel=channel,
-    )
-    delivery_lineage = _delivery_lineage(
-        bundle=bundle,
-        recovery_state=recovery_state,
-    )
 
     if target == "local":
         artifact = bundle.markdown or bundle.artifacts[0]
-        _record_delivery_event(
-            ws,
-            event_type="delivery_attempted",
-            target="local",
-            channel="local",
-            artifact=artifact,
-            recipient=recipient,
-            metadata=delivery_lineage,
-        )
-        _record_delivery_event(
-            ws,
-            event_type="delivery_bundle_prepared",
-            target="local",
-            channel="local",
-            artifact=artifact,
-            recipient=recipient,
-            metadata=delivery_lineage,
-        )
         return {
             "ok": True,
             "target": "local",
@@ -202,8 +145,6 @@ def deliver_workspace(
             "delivery_artifacts": bundle.relative_artifacts(),
             "delivered": False,
             "message": "Delivery bundle ready",
-            "run_integrity": run_integrity,
-            "recovery_state": recovery_state,
         }
 
     if target == "gmail":
@@ -214,9 +155,6 @@ def deliver_workspace(
             recipient=recipient,
             subject=subject,
             body=body,
-            run_integrity=run_integrity,
-            delivery_lineage=delivery_lineage,
-            recovery_state=recovery_state,
         )
 
     if target != "feishu":
@@ -242,39 +180,10 @@ def deliver_workspace(
         )
 
     artifact = _select_feishu_artifact(bundle, channel)
-    _record_delivery_event(
-        ws,
-        event_type="delivery_attempted",
-        target=target,
-        channel=channel,
-        artifact=artifact,
-        recipient=recipient,
-        metadata=delivery_lineage,
-    )
-
     result = FeishuDeliveryConnector().deliver(
         DeliveryArtifact(path=str(artifact), title=artifact.stem),
         DeliveryTarget(channel=channel, recipient=recipient),
     )
-    final_event = "delivery_succeeded" if result.delivered else "delivery_failed"
-    event_recorded = True
-    event_error = ""
-    try:
-        _record_delivery_event(
-            ws,
-            event_type=final_event,
-            target=target,
-            channel=channel,
-            artifact=artifact,
-            recipient=recipient,
-            url=str(result.metadata.get("url") or ""),
-            metadata=delivery_lineage,
-        )
-    except DeliverCommandError as exc:
-        event_recorded = False
-        event_error = str(exc)
-        if not result.delivered:
-            raise
     if not result.delivered:
         raise DeliverCommandError(
             _safe_delivery_message(result, channel, recipient=recipient),
@@ -291,10 +200,6 @@ def deliver_workspace(
         "delivered": True,
         "message": _safe_delivery_message(result, channel, recipient=recipient),
         "url": str(result.metadata.get("url") or ""),
-        "event_recorded": event_recorded,
-        "event_error": event_error,
-        "run_integrity": run_integrity,
-        "recovery_state": recovery_state,
     }
 
 
@@ -306,9 +211,6 @@ def _deliver_gmail(
     recipient: str,
     subject: str,
     body: str,
-    run_integrity: dict[str, Any],
-    delivery_lineage: dict[str, Any],
-    recovery_state: dict[str, Any],
 ) -> dict[str, Any]:
     if channel not in {"draft", "send"}:
         raise DeliverCommandError(
@@ -329,15 +231,6 @@ def _deliver_gmail(
     markdown = bundle.markdown
     gmail_subject = subject.strip() or _default_gmail_subject(bundle)
     gmail_body = body.strip() or _default_gmail_body(bundle)
-    _record_delivery_event(
-        workspace,
-        event_type="delivery_attempted",
-        target="gmail",
-        channel=channel,
-        artifact=artifact,
-        recipient=recipient,
-        metadata=delivery_lineage,
-    )
     result = GwsGmailDeliveryConnector().deliver(
         DeliveryArtifact(path=str(artifact), title=artifact.stem),
         DeliveryTarget(
@@ -351,45 +244,6 @@ def _deliver_gmail(
             },
         ),
     )
-    final_event = _gmail_success_event(channel) if result.delivered else "delivery_failed"
-    event_recorded = True
-    event_error = ""
-    try:
-        _record_delivery_event(
-            workspace,
-            event_type=final_event,
-            target="gmail",
-            channel=channel,
-            artifact=artifact,
-            recipient=recipient,
-            metadata={
-                **delivery_lineage,
-                **_gmail_event_metadata(channel, result),
-            },
-        )
-    except DeliverCommandError as exc:
-        event_recorded = False
-        event_error = str(exc)
-        if not result.delivered:
-            raise
-        side_effect = "Gmail draft was created" if channel == "draft" else "Gmail message was sent"
-        inspect_target = "Gmail Drafts" if channel == "draft" else "Gmail Sent Mail"
-        raise DeliverCommandError(
-            f"{side_effect} but {_gmail_success_event(channel)} event was not recorded. "
-            f"Inspect {inspect_target} before retrying; do not retry blindly.",
-            error_code=E_DELIVERY_EVENT_FAILED,
-            target="gmail",
-            channel=channel,
-            extra={
-                "artifact": _workspace_relative(workspace, artifact),
-                "draft_created": channel == "draft",
-                "sent": channel == "send",
-                "event_recorded": event_recorded,
-                "event_error": event_error,
-                "run_integrity": run_integrity,
-                "recovery_state": recovery_state,
-            },
-        ) from exc
     if not result.delivered:
         fallback = "Gmail draft creation failed" if channel == "draft" else "Gmail send failed"
         extra: dict[str, Any] = {}
@@ -398,14 +252,10 @@ def _deliver_gmail(
                 "artifact": _workspace_relative(workspace, artifact),
                 "draft_created": False,
                 "sent": False,
-                "event_recorded": event_recorded,
-                "event_error": event_error,
                 "outcome_unknown": True,
                 "inspect_target": result.metadata.get("inspect_target") or (
                     "Gmail Drafts" if channel == "draft" else "Gmail Sent Mail"
                 ),
-                "run_integrity": run_integrity,
-                "recovery_state": recovery_state,
             }
         raise DeliverCommandError(
             _sanitize_delivery_message(result.message or fallback, recipient=recipient),
@@ -423,29 +273,7 @@ def _deliver_gmail(
         "draft_created": channel == "draft",
         "sent": channel == "send",
         "message": "Gmail draft created" if channel == "draft" else "Gmail message sent",
-        "event_recorded": event_recorded,
-        "event_error": event_error,
-        "run_integrity": run_integrity,
-        "recovery_state": recovery_state,
     }
-
-
-def _gmail_success_event(channel: str) -> str:
-    return "delivery_draft_created" if channel == "draft" else "delivery_succeeded"
-
-
-def _gmail_event_metadata(channel: str, result: DeliveryResult) -> dict[str, Any]:
-    if channel == "draft":
-        metadata = {"draft_id_present": bool(result.metadata.get("draft_id_present"))}
-    else:
-        metadata = {"sent_message_present": bool(result.metadata.get("sent_message_present"))}
-    if result.metadata.get("outcome_unknown"):
-        metadata["outcome_unknown"] = True
-        metadata["timeout"] = bool(result.metadata.get("timeout"))
-        metadata["inspect_target"] = result.metadata.get("inspect_target") or (
-            "Gmail Drafts" if channel == "draft" else "Gmail Sent Mail"
-        )
-    return metadata
 
 
 def _require_workspace(workspace: str | Path) -> Path:
@@ -652,280 +480,12 @@ def _select_gmail_attachment(bundle: DeliveryBundle) -> Path:
     return bundle.docx or bundle.markdown or bundle.artifacts[0]
 
 
-def _record_delivery_event(
-    workspace: Path,
-    *,
-    event_type: str,
-    target: str,
-    channel: str,
-    artifact: Path,
-    recipient: str = "",
-    url: str = "",
-    metadata: dict[str, Any] | None = None,
-) -> None:
-    try:
-        run_id = _delivery_run_id(workspace)
-        append_event(
-            workspace=workspace,
-            run_id=run_id,
-            event_type=event_type,
-            actor="cli",
-            reason=_event_reason(event_type),
-            metadata={
-                "target": target,
-                "channel": channel,
-                "artifact": _workspace_relative(workspace, artifact),
-                "recipient_present": bool(recipient),
-                "recipient_sha256": _sha256(recipient) if recipient else "",
-                "url": url,
-                **(metadata or {}),
-            },
-        )
-    except (RuntimeStateError, OSError, json.JSONDecodeError) as exc:
-        raise DeliverCommandError(
-            f"Unable to record delivery event: {exc}",
-            error_code=E_DELIVERY_EVENT_FAILED,
-            target=target,
-            channel=channel,
-        ) from exc
-
-
-def _preflight_delivery_event_surface(workspace: Path) -> None:
-    try:
-        _delivery_run_id(workspace)
-        paths = runtime_state_paths(workspace)
-        event_log = paths["event_log"]
-        if event_log.exists():
-            raw = event_log.read_bytes()
-            if raw and not raw.endswith(b"\n"):
-                raise RuntimeStateError("event_log.jsonl is not newline-terminated.")
-            for lineno, line in enumerate(raw.decode("utf-8").splitlines(), start=1):
-                if not line.strip():
-                    continue
-                payload = json.loads(line)
-                if not isinstance(payload, dict):
-                    raise RuntimeStateError(f"event_log.jsonl line {lineno} is not an object.")
-    except DeliverCommandError:
-        raise
-    except (RuntimeStateError, OSError, json.JSONDecodeError) as exc:
-        raise DeliverCommandError(
-            f"Delivery event surface is not writable/readable: {exc}",
-            error_code=E_DELIVERY_EVENT_FAILED,
-        ) from exc
-
-
-def _preflight_no_active_repair(workspace: Path, *, target: str, channel: str) -> None:
-    paths = runtime_state_paths(workspace)
-    try:
-        workflow = json.loads(paths["workflow_state"].read_text(encoding="utf-8"))
-        if not isinstance(workflow, dict):
-            raise RuntimeStateError("workflow_state.json must contain an object.")
-        raise_if_active_repair_open(workspace=workspace, workflow=workflow)
-    except RuntimeStateError as exc:
-        if exc.error_code == E_ACTIVE_REPAIR_OPEN:
-            raise DeliverCommandError(
-                str(exc),
-                error_code=E_ACTIVE_REPAIR_OPEN,
-                target=target,
-                channel=channel,
-                extra={
-                    "runtime_error_code": E_ACTIVE_REPAIR_OPEN,
-                    "details": exc.details,
-                },
-            ) from exc
-        raise DeliverCommandError(
-            f"Unable to verify active repair state before delivery: {exc}",
-            error_code=E_DELIVERY_EVENT_FAILED,
-            target=target,
-            channel=channel,
-            extra={"runtime_error_code": exc.error_code or E_DELIVERY_EVENT_FAILED},
-        ) from exc
-    except (OSError, json.JSONDecodeError) as exc:
-        raise DeliverCommandError(
-            f"workflow_state.json is unreadable before delivery: {exc}",
-            error_code=E_DELIVERY_EVENT_FAILED,
-            target=target,
-            channel=channel,
-        ) from exc
-
-
-def _refresh_runtime_state_before_delivery(workspace: Path, *, target: str, channel: str) -> None:
-    paths = runtime_state_paths(workspace)
-    if not paths["runtime_manifest"].exists() or not paths["workflow_state"].exists():
-        return
-    try:
-        check_runtime_state(workspace=workspace, actor="cli")
-    except RuntimeStateError as exc:
-        raise DeliverCommandError(
-            f"Delivery blocked because runtime state integrity could not be refreshed: {exc}",
-            error_code=E_DELIVERY_RUN_INTEGRITY_BLOCKED,
-            target=target,
-            channel=channel,
-            extra={
-                "runtime_error_code": exc.error_code or E_DELIVERY_RUN_INTEGRITY_BLOCKED,
-                "run_integrity": _delivery_run_integrity(workspace),
-            },
-        ) from exc
-    except Exception as exc:
-        raise DeliverCommandError(
-            f"Delivery blocked because runtime state integrity could not be refreshed: {exc}",
-            error_code=E_DELIVERY_EVENT_FAILED,
-            target=target,
-            channel=channel,
-        ) from exc
-
-
-def _delivery_run_id(workspace: Path) -> str:
-    paths = runtime_state_paths(workspace)
-    if not paths["runtime_manifest"].exists() or not paths["workflow_state"].exists():
-        raise DeliverCommandError(
-            "Runtime state is not initialized; deliver will not create a new run trace. "
-            "Run `briefloop run --workspace <workspace> "
-            f"--runtime {RUNTIME_CLI_CHOICE_PLACEHOLDER}` first.",
-            error_code=E_DELIVERY_RUNTIME_MISSING,
-            extra={"runtime_error_code": E_RUNTIME_STATE_NOT_INITIALIZED},
-        )
-    manifest = json.loads(paths["runtime_manifest"].read_text(encoding="utf-8"))
-    try:
-        require_canonical_runtime(manifest.get("runtime"))
-    except ValueError as exc:
-        raise RuntimeStateError(
-            "runtime_manifest.json contains a historical or unsupported runtime identity; "
-            "reset the workspace with an explicit canonical --runtime before delivery."
-        ) from exc
-    run_id = manifest.get("run_id")
-    if not isinstance(run_id, str) or not run_id.strip():
-        raise RuntimeStateError("runtime_manifest.json is missing run_id.")
-    return run_id
-
-
-def _delivery_run_integrity(workspace: Path) -> dict[str, Any]:
-    paths = runtime_state_paths(workspace)
-    if not paths["workflow_state"].exists():
-        return project_for_read(
-            interpret_run_integrity(
-                None,
-                field_present=True,
-                unavailable_reason={
-                    "reason_code": "workflow_state_missing",
-                    "message": "workflow_state.json is missing.",
-                },
-            )
-        )
-    try:
-        workflow = json.loads(paths["workflow_state"].read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError) as exc:
-        raise DeliverCommandError(
-            f"workflow_state.json is unreadable; cannot verify run integrity: {exc}",
-            error_code=E_DELIVERY_EVENT_FAILED,
-        ) from exc
-    if not isinstance(workflow, dict):
-        raise DeliverCommandError(
-            "workflow_state.json must contain an object; cannot verify run integrity.",
-            error_code=E_DELIVERY_EVENT_FAILED,
-        )
-    return project_for_read(
-        interpret_run_integrity(
-            workflow.get("run_integrity"),
-            field_present="run_integrity" in workflow,
-        )
-    )
-
-
-def _preflight_run_integrity_for_delivery(
-    run_integrity: dict[str, Any],
-    *,
-    recovery_state: dict[str, Any],
-    target: str,
-    channel: str,
-) -> None:
-    from multi_agent_brief.orchestrator.recovery_state import (
-        RECOVERY_COMPLETED_NON_REFERENCE,
-        RECOVERY_NOT_APPLICABLE,
-    )
-
-    recovery_status = recovery_state.get("status")
-    if (
-        recovery_status == RECOVERY_NOT_APPLICABLE
-        and run_integrity.get("status") == "clean"
-        and run_integrity.get("reference_eligible") is True
-    ):
-        return
-    if recovery_status == RECOVERY_COMPLETED_NON_REFERENCE:
-        return
-    reasons = run_integrity.get("reasons") if isinstance(run_integrity.get("reasons"), list) else []
-    first_reason = reasons[0] if reasons and isinstance(reasons[0], dict) else {}
-    message = first_reason.get("message") or first_reason.get("reason_code") or "run integrity is not clean"
-    raise DeliverCommandError(
-        "Delivery blocked because run integrity is not clean. "
-        f"Run `briefloop status --workspace <workspace>` and resolve: {message}",
-        error_code=E_DELIVERY_RUN_INTEGRITY_BLOCKED,
-        target=target,
-        channel=channel,
-        extra={"run_integrity": run_integrity, "recovery_state": recovery_state},
-    )
-
-
-def _delivery_lineage(
-    *,
-    bundle: DeliveryBundle,
-    recovery_state: dict[str, Any],
-) -> dict[str, Any]:
-    lineage = {"render_transaction_id": bundle.render_transaction_id}
-    if recovery_state.get("status") != "completed_non_reference":
-        return lineage
-    if recovery_state.get("render_transaction_id") != bundle.render_transaction_id:
-        raise DeliverCommandError(
-            "Delivery bundle render transaction does not match the completed recovery.",
-            error_code=E_DELIVERY_RUN_INTEGRITY_BLOCKED,
-            extra={"recovery_state": recovery_state},
-        )
-    lineage.update(
-        {
-            "recovery_transaction_id": str(
-                recovery_state.get("recovery_transaction_id") or ""
-            ),
-            "contamination_event_id": str(
-                recovery_state.get("contamination_event_id") or ""
-            ),
-        }
-    )
-    return lineage
-
-
-def _print_run_integrity_warning(payload: dict[str, Any]) -> None:
-    integrity = payload.get("run_integrity")
-    if not isinstance(integrity, dict) or integrity.get("reference_eligible") is not False:
-        return
-    print(f"[deliver] Run integrity: {integrity.get('status') or 'unknown'}", file=sys.stderr)
-    print("[deliver] Reference eligible: no", file=sys.stderr)
-    reasons = integrity.get("reasons") if isinstance(integrity.get("reasons"), list) else []
-    if reasons:
-        first = reasons[0] if isinstance(reasons[0], dict) else {}
-        message = first.get("message") or first.get("reason_code") or "run is contaminated"
-        print(f"[deliver] Reason: {message}", file=sys.stderr)
-
-
-def _event_reason(event_type: str) -> str:
-    return {
-        "delivery_attempted": "Reader delivery attempted.",
-        "delivery_draft_created": "Reader delivery draft created.",
-        "delivery_bundle_prepared": "Reader delivery bundle prepared locally.",
-        "delivery_succeeded": "Reader delivery succeeded.",
-        "delivery_failed": "Reader delivery failed.",
-    }.get(event_type, "Reader delivery event.")
-
-
 def _workspace_relative(workspace: Path, path: Path) -> str:
     resolved = path.expanduser().resolve()
     try:
         return resolved.relative_to(workspace.resolve()).as_posix()
     except ValueError:
         return resolved.as_posix()
-
-
-def _sha256(value: str) -> str:
-    return hashlib.sha256(value.encode("utf-8")).hexdigest()
 
 
 def _sha256_file(path: Path) -> str:

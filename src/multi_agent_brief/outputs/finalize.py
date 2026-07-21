@@ -508,19 +508,11 @@ def finalize_reader_outputs(
         if workspace_dir is not None
         else out.resolve().parent
     )
-    from multi_agent_brief.orchestrator.recovery_state import (
-        evaluate_recovery_state,
-        finalize_recovery_binding,
-    )
-
     intermediate_dir = out / "intermediate"
     formats = set(output_formats or ["markdown"])
     appendix_path = out / "source_appendix.md"
     appendix_trace_path = out / "source_appendix_trace.md"
     finalize_transaction_id = _finalize_transaction_id()
-    recovery_binding = finalize_recovery_binding(
-        evaluate_recovery_state(workspace=workspace)
-    )
     brief_path = out / "brief.md"
     docx_path = out / "brief.docx"
     named_brief_path = _named_reader_brief_path(
@@ -551,7 +543,6 @@ def finalize_reader_outputs(
         result = FinalizeResult(
             status="fail",
             finalize_transaction_id=finalize_transaction_id,
-            recovery_binding=recovery_binding,
             audited_brief=str(intermediate_dir / "audited_brief.md"),
             reader_brief=str(brief_path),
             named_reader_brief=str(named_brief_path or ""),
@@ -588,7 +579,6 @@ def finalize_reader_outputs(
         result = FinalizeResult(
             status="pass",
             finalize_transaction_id=finalize_transaction_id,
-            recovery_binding=recovery_binding,
             audited_brief=str(audited_path),
             reader_brief=str(brief_path),
             named_reader_brief=str(named_brief_path or ""),

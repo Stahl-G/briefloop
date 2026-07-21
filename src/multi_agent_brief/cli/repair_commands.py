@@ -3,16 +3,6 @@
 from __future__ import annotations
 
 import argparse
-import json
-from typing import Any
-
-from multi_agent_brief.orchestrator.runtime_state import (
-    RuntimeStateError,
-    complete_repair_transaction,
-    start_repair_transaction,
-    supersede_stage_artifact_transaction,
-)
-from multi_agent_brief.repair.router import route_repair
 
 
 def register(subparsers: argparse._SubParsersAction) -> None:
@@ -112,106 +102,16 @@ def register(subparsers: argparse._SubParsersAction) -> None:
 
 
 def handle(args: argparse.Namespace) -> int:
-    try:
-        if args.repair_action == "route":
-            payload = route_repair(
-                workspace=args.workspace,
-                route_index=getattr(args, "route_index", None),
-                finding_id=getattr(args, "finding_id", None),
-            )
-            if getattr(args, "json", False):
-                print(json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True))
-            else:
-                _print_route(payload)
-            return 0 if payload.get("ok") else 1
-        if args.repair_action == "start":
-            payload = start_repair_transaction(
-                workspace=args.workspace,
-                repo_workdir=getattr(args, "repo_workdir", None),
-                actor=getattr(args, "actor", "orchestrator"),
-                route_index=getattr(args, "route_index", None),
-                finding_id=getattr(args, "finding_id", None),
-                gate_stage_id=getattr(args, "gate_stage", None),
-                gate_artifact_id=getattr(args, "gate_artifact", None),
-            )
-            if getattr(args, "json", False):
-                print(json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True))
-            else:
-                _print_repair_state("repair start", payload)
-            return 0
-        if args.repair_action == "complete":
-            payload = complete_repair_transaction(
-                workspace=args.workspace,
-                reason=args.reason,
-                repo_workdir=getattr(args, "repo_workdir", None),
-                actor=getattr(args, "actor", "orchestrator"),
-            )
-            if getattr(args, "json", False):
-                print(json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True))
-            else:
-                _print_repair_state("repair complete", payload)
-            return 0
-        if args.repair_action == "supersede-stage":
-            payload = supersede_stage_artifact_transaction(
-                workspace=args.workspace,
-                stage_id=args.stage,
-                artifact=args.artifact,
-                reason=args.reason,
-                repo_workdir=getattr(args, "repo_workdir", None),
-                actor=getattr(args, "actor", "orchestrator"),
-            )
-            if getattr(args, "json", False):
-                print(json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True))
-            else:
-                _print_repair_state("repair supersede-stage", payload)
-            return 0
-    except RuntimeStateError as exc:
-        if getattr(args, "json", False):
-            print(json.dumps(exc.to_dict(), ensure_ascii=False, indent=2, sort_keys=True))
-        else:
-            print(f"[repair] {exc}")
-        return 1
+    """Fail-closed stub for the retired public CLI surface.
+
+    The parser registration is retained so the authority guard can return
+    the typed rejection for workspace invocations; any no-workspace bypass
+    lands here instead of executing legacy code.
+    """
+
+    print("runtime_command_unsupported")
     return 1
 
-
-def _print_route(payload: dict[str, Any]) -> None:
-    if not payload.get("ok"):
-        print(f"[repair route] Error: {payload.get('message') or payload.get('error')}")
-        return
-    print(f"[repair route] owner: {payload.get('repair_owner')}")
-    print(f"[repair route] must_rerun_from: {payload.get('must_rerun_from') or 'none'}")
-    print(f"[repair route] reason: {payload.get('reason')}")
-    if payload.get("default_selected") is True:
-        source = payload.get("source") if isinstance(payload.get("source"), dict) else {}
-        finding_id = source.get("finding_id") or source.get("finding_type") or "selected route"
-        print(
-            f"[repair route] default: {finding_id} -> {payload.get('repair_owner')} "
-            f"-> {', '.join(payload.get('allowed_artifacts') or []) or 'none'}"
-        )
-    print("[repair route] allowed_artifacts:")
-    for artifact in payload.get("allowed_artifacts") or []:
-        print(f"  - {artifact}")
-    blocked = payload.get("blocked_direct_edits") or []
-    if blocked:
-        print("[repair route] blocked_direct_edits:")
-        for artifact in blocked:
-            print(f"  - {artifact}")
-
-
-def _print_repair_state(label: str, payload: dict[str, Any]) -> None:
-    workflow = payload.get("workflow_state") or {}
-    repair = payload.get("repair") or workflow.get("active_repair") or {}
-    print(f"[{label}] current_stage: {workflow.get('current_stage')}")
-    print(f"[{label}] repair_owner: {repair.get('repair_owner')}")
-    print(f"[{label}] must_rerun_from: {repair.get('must_rerun_from') or repair.get('next_stage') or 'none'}")
-    allowed = repair.get("allowed_artifacts") or []
-    if allowed:
-        print(f"[{label}] allowed_artifacts:")
-        for artifact in allowed:
-            print(f"  - {artifact}")
-    effect = repair.get("run_integrity_effect")
-    if isinstance(effect, dict) and effect.get("reference_eligible") is False:
-        print(f"[{label}] reference_eligible: false")
-        reason = effect.get("reason")
-        if reason:
-            print(f"[{label}] run_integrity_note: {reason}")
+# NOTE: the public command surface of this module is retired. The
+# SQLite ControlStore is the sole runtime authority; only the parser
+# registration (typed rejections) and the stub below remain.

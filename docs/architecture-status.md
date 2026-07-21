@@ -23,9 +23,11 @@ page describes implemented runtime capability, not a breaking deep rename.
 - JSON-only workspaces are unsupported and are never imported, migrated,
   dual-read, dual-written or used as fallback. JSON/JSONL and reader/status/QP
   files are replaceable projections only.
-- The former handoff/control-file runtime paths remain in the source tree only
-  until the separate legacy deletion unit; authority guards prevent them from
-  acting on SQLite or JSON-only workspaces.
+- The former handoff/control-file runtime paths were deleted in
+  LEGACY-DELETE-2-3 (the legacy `runtime_state` stack and its consumer layer);
+  retired public commands keep their fail-closed typed rejections, and the
+  authority guard remains the single classification point for workspace
+  authority.
 - Runtime identity is explicit and single-writer: dedicated adapters inject one
   fixed canonical literal, generic CLI users pass `--runtime`, and subsequent
   status/handoff/transaction consumers reuse `runtime_manifest.runtime` without

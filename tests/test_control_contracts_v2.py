@@ -21,17 +21,7 @@ from multi_agent_brief.contracts import (
     V2_CONTRACT_MODELS,
     read_contract_payload,
 )
-from multi_agent_brief.orchestrator.runtime_state.event_log import ACTORS, EVENT_TYPES
-from multi_agent_brief.orchestrator.runtime_state.workflow import (
-    PERSISTED_STAGE_STATUSES,
-)
 from multi_agent_brief.orchestrator_contract import VALID_RUNTIMES
-from multi_agent_brief.product.release_approval import (
-    APPROVAL_BOUNDARY,
-    RELEASE_MODES,
-    VALID_APPROVAL_DECISIONS,
-    VALID_APPROVAL_ROLES,
-)
 
 
 EXPECTED_V2_CONTRACT_IDS = (
@@ -403,58 +393,8 @@ def test_artifact_identity_record_and_reference_are_exact_strict_contracts() -> 
             ArtifactIdentityReference.model_validate(invalid, strict=True)
 
 
-def test_control_dto_vocabularies_match_current_authority_values() -> None:
-    def values(contract_id: str, field: str) -> set[str]:
-        model = SchemaRegistry.get(contract_id)
-        assert model is not None
-        return set(get_args(model.model_fields[field].annotation))
-
-    assert values("briefloop.run_identity.v2", "runtime") == set(VALID_RUNTIMES)
-    assert values("briefloop.stage_state.v2", "status") == set(PERSISTED_STAGE_STATUSES)
-    assert values("briefloop.approval.v2", "decision") == set(VALID_APPROVAL_DECISIONS)
-    assert values("briefloop.approval.v2", "mode") == set(RELEASE_MODES)
-    assert values("briefloop.approval.v2", "role") == set(VALID_APPROVAL_ROLES)
-    assert values("briefloop.delivery.v2", "target") == {"local", "feishu", "gmail"}
-    assert values("briefloop.artifact_record.v2", "status") == {
-        "expected",
-        "missing",
-        "present",
-        "valid",
-        "invalid",
-        "blocked",
-        "stale",
-    }
-
-    event = SchemaRegistry.example("briefloop.event_envelope.v2", "full")
-    assert event["event_type"] in EVENT_TYPES
-    assert event["actor"] in ACTORS
-    assert values("briefloop.event_envelope.v2", "actor") == set(ACTORS)
 
 
-def test_event_envelope_rejects_every_event_type_outside_the_current_owner() -> None:
-    contract_id = "briefloop.event_envelope.v2"
-    payload = SchemaRegistry.example(contract_id, "minimal")
-    intake_types = {
-        "source_evidence_committed",
-        "role_proposal_committed",
-        "intake_rejected",
-    }
-    for event_type in EVENT_TYPES - intake_types:
-        assert SchemaRegistry.validate(
-            contract_id,
-            {**payload, "event_type": event_type},
-        ) == []
-
-    payload["event_type"] = "invented_event_type"
-
-    assert [
-        (item.field, item.error)
-        for item in SchemaRegistry.validate(contract_id, payload)
-    ] == [("event_type", "must be one of the allowed values")]
-
-    schema = SchemaRegistry.json_schema(contract_id)
-    assert set(schema["properties"]["event_type"]["enum"]) == set(EVENT_TYPES)
-    assert set(schema["properties"]["actor"]["enum"]) == set(ACTORS)
 
 
 def test_intake_event_types_require_exact_typed_binding() -> None:
@@ -510,41 +450,6 @@ def test_intake_event_types_require_exact_typed_binding() -> None:
     )
 
 
-def test_approval_contract_matches_current_owner_mode_role_matrix_and_reason_limit() -> None:
-    contract_id = "briefloop.approval.v2"
-    base = SchemaRegistry.example(contract_id, "minimal")
-    accepted_pairs = {
-        (mode, role)
-        for mode, config in RELEASE_MODES.items()
-        for role in config["required_roles"]
-    }
-
-    for mode in RELEASE_MODES:
-        for role in VALID_APPROVAL_ROLES:
-            payload = {**base, "mode": mode, "role": role}
-            violations = [
-                (item.field, item.error)
-                for item in SchemaRegistry.validate(contract_id, payload)
-            ]
-            if (mode, role) in accepted_pairs:
-                assert violations == []
-            else:
-                assert violations == [
-                    ("role", "must be required for the selected mode")
-                ]
-
-    at_limit = {**base, "reason": "x" * 1000}
-    assert SchemaRegistry.validate(contract_id, at_limit) == []
-
-    over_limit = {**base, "reason": "x" * 1001}
-    assert [
-        (item.field, item.error)
-        for item in SchemaRegistry.validate(contract_id, over_limit)
-    ] == [("reason", "is too long")]
-
-    schema = SchemaRegistry.json_schema(contract_id)
-    assert schema["properties"]["reason"]["maxLength"] == 1000
-    assert schema["properties"]["boundary"]["const"] == APPROVAL_BOUNDARY
 
 
 @pytest.mark.parametrize("value", (math.nan, math.inf, -math.inf))

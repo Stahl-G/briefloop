@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import json
-from collections.abc import Mapping
 from pathlib import Path
 from typing import Any
 
@@ -17,30 +16,10 @@ from multi_agent_brief.contracts.target_contract import (
     project_assessment_target_status,
 )
 from multi_agent_brief.orchestrator.fact_layer_import import summarize_fact_layer_import
-from multi_agent_brief.orchestrator.run_integrity import (
-    interpret_run_integrity,
-    project_for_read,
-)
-from multi_agent_brief.orchestrator.runtime_state.artifact_registry_read import (
-    CanonicalRegistryView,
-    RegistryDegradation,
-    RegistryNotMaterialized,
-    RegistryReadVerdict,
-    RegistrySnapshotDrift,
-    interpret_artifact_registry,
-)
-from multi_agent_brief.orchestrator.runtime_state.claim_support_matrix import (
-    project_claim_support_matrix_from_workspace,
-)
-from multi_agent_brief.orchestrator.runtime_state import RUNTIME_MANIFEST_SCHEMA
 from multi_agent_brief.orchestrator_contract import (
     HISTORICAL_READ_ONLY_RUNTIMES,
     VALID_RUNTIMES,
 )
-from multi_agent_brief.orchestrator.runtime_state.semantic_assessment_report import (
-    project_semantic_assessment_report_from_workspace,
-)
-from multi_agent_brief.orchestrator.timing import derive_control_timing_from_path
 from multi_agent_brief.outputs.atomic_reader_projection import (
     project_atomic_reader_text_from_workspace,
 )
@@ -78,12 +57,6 @@ _STAGE_PROGRESS_LABELS = {
     "finalize": "finalize delivery",
 }
 
-_UNSAFE_REGISTRY_STATUSES = {
-    "degradation",
-    "snapshot_drift",
-}
-
-
 def build_workspace_status(workspace: str | Path) -> dict[str, Any]:
     """Return a read-only status summary without refreshing runtime state.
 
@@ -113,10 +86,7 @@ def build_workspace_status(workspace: str | Path) -> dict[str, Any]:
         "feedback": {},
         "experiment_080": {},
         "fact_layer_import": {},
-        "recovery_state": {},
         "atomic_reader_projection": {},
-        "claim_support_matrix": {},
-        "semantic_assessment_report": {},
         "policy_profile": {},
         "report_template": {},
         "report_template_conformance": {},
@@ -125,7 +95,6 @@ def build_workspace_status(workspace: str | Path) -> dict[str, Any]:
         "materiality_selection": {},
         "quality_panel_closeout": {},
         "progress": {},
-        "timing": {},
         "stale_or_unknown": [],
         "suggested_next_command": None,
     }
@@ -137,7 +106,6 @@ def build_workspace_status(workspace: str | Path) -> dict[str, Any]:
 
     manifest = _read_json(ws / INTERMEDIATE_DIR / "runtime_manifest.json")
     workflow = _read_json(ws / INTERMEDIATE_DIR / "workflow_state.json")
-    registry_verdict = interpret_artifact_registry(workspace=ws)
     quality_gate = _read_json(ws / INTERMEDIATE_DIR / "quality_gate_report.json")
     auditor_quality_gate = _read_json(
         ws / INTERMEDIATE_DIR / "gates" / "auditor_quality_gate_report.json"
@@ -158,18 +126,13 @@ def build_workspace_status(workspace: str | Path) -> dict[str, Any]:
     manifest_payload = (
         manifest.get("payload") if manifest.get("status") == "present" else None
     )
-    expected_run_id = (
-        str(manifest_payload.get("run_id") or "")
-        if isinstance(manifest_payload, dict)
-        and manifest_payload.get("schema_version") == RUNTIME_MANIFEST_SCHEMA
-        else ""
-    )
+    # The legacy artifact-registry stack is retired; without it no run identity
+    # can be trusted, so registry-bound projections see an absent registry.
+    expected_run_id = ""
     payload["runtime"] = _runtime_summary(manifest)
     payload["workflow"] = _workflow_summary(workflow)
-    payload["artifacts"] = _artifact_summary(registry_verdict)
-    registry_payload = _canonical_registry_payload(registry_verdict)
-    if isinstance(registry_verdict, CanonicalRegistryView):
-        expected_run_id = registry_verdict.run_id
+    payload["artifacts"] = _artifact_summary()
+    registry_payload = None
     payload["events"] = _event_summary(event_log_path)
     payload["quality_gate"] = _quality_gate_summary(
         _select_quality_gate_result(
@@ -203,14 +166,7 @@ def build_workspace_status(workspace: str | Path) -> dict[str, Any]:
         workflow_payload if isinstance(workflow_payload, dict) else None,
         workspace=ws,
     )
-    from multi_agent_brief.orchestrator.recovery_state import evaluate_recovery_state
-
-    payload["recovery_state"] = evaluate_recovery_state(workspace=ws)
     payload["atomic_reader_projection"] = _atomic_reader_projection_summary(ws)
-    payload["claim_support_matrix"] = project_claim_support_matrix_from_workspace(ws)
-    payload["semantic_assessment_report"] = (
-        project_semantic_assessment_report_from_workspace(ws)
-    )
     payload["policy_profile"] = project_workspace_policy_profile(ws)
     payload["materiality_selection"] = project_workspace_materiality_selection(
         ws,
@@ -232,13 +188,6 @@ def build_workspace_status(workspace: str | Path) -> dict[str, Any]:
         event_log_present=event_log_path.exists(),
         event_log_corrupt_count=int(payload["events"].get("corrupt_count") or 0),
         run_id=(manifest_payload or {}).get("run_id")
-        if isinstance(manifest_payload, dict)
-        else None,
-    )
-    payload["timing"] = derive_control_timing_from_path(
-        event_log_path,
-        workflow_state=workflow_payload if isinstance(workflow_payload, dict) else None,
-        expected_run_id=(manifest_payload or {}).get("run_id")
         if isinstance(manifest_payload, dict)
         else None,
     )
@@ -313,12 +262,9 @@ def format_workspace_status(status: dict[str, Any]) -> str:
     reader = status.get("reader_clean") or {}
     feedback = status.get("feedback") or {}
     fact_layer_import = status.get("fact_layer_import") or {}
-    recovery_state = status.get("recovery_state") or {}
     improvement = status.get("improvement") or {}
     experiment_080 = status.get("experiment_080") or {}
     atomic_projection = status.get("atomic_reader_projection") or {}
-    claim_support_matrix = status.get("claim_support_matrix") or {}
-    semantic_assessment_report = status.get("semantic_assessment_report") or {}
     policy_profile = status.get("policy_profile") or {}
     report_template = status.get("report_template") or {}
     report_template_conformance = status.get("report_template_conformance") or {}
@@ -328,12 +274,6 @@ def format_workspace_status(status: dict[str, Any]) -> str:
     quality_panel_closeout = status.get("quality_panel_closeout") or {}
     events = status.get("events") or {}
     progress = status.get("progress") or {}
-    timing = status.get("timing") or {}
-    run_integrity = (
-        workflow.get("run_integrity")
-        if isinstance(workflow.get("run_integrity"), dict)
-        else {}
-    )
 
     lines.extend(
         [
@@ -344,16 +284,6 @@ def format_workspace_status(status: dict[str, Any]) -> str:
             f"[status] current_stage: {workflow.get('current_stage') or 'unknown'}",
             f"[status] blocked: {workflow.get('blocked')}",
             f"[status] blocking_reason: {workflow.get('blocking_reason') or ''}",
-            (
-                "[status] run_integrity: "
-                f"{run_integrity.get('status') or 'unknown'} "
-                f"reference_eligible={run_integrity.get('reference_eligible')}"
-            ),
-            (
-                "[status] recovery: "
-                f"{recovery_state.get('status') or 'unknown'} "
-                f"action={recovery_state.get('recommended_recovery_action') or 'unknown'}"
-            ),
             _format_progress_line(progress),
             _format_trajectory_decision_narrowing_line(workflow),
             (
@@ -369,8 +299,6 @@ def format_workspace_status(status: dict[str, Any]) -> str:
             _format_intake_projection_line(artifacts.get("intake")),
             f"[status] events: count={events.get('event_count', 0)} corrupt={events.get('corrupt_count', 0)}",
             _format_fact_layer_import_line(fact_layer_import),
-            _format_timing_line(timing),
-            *_format_topology_satisfaction_lines(timing),
             *_format_experiment_080_lines(experiment_080),
             f"[status] quality_gate: {gate.get('status') or 'unknown'}",
             f"[status] reader_clean: {reader.get('status') or 'unknown'}",
@@ -406,37 +334,6 @@ def format_workspace_status(status: dict[str, Any]) -> str:
             f"{audited_projection.get('status')} "
             f"atom_residue={counts.get('atom_residue_count', 0)} "
             f"process_residue={counts.get('process_residue_count', 0)}"
-        )
-    if claim_support_matrix.get("status") not in {None, "not_available"}:
-        counts = claim_support_matrix.get("summary_counts")
-        counts = counts if isinstance(counts, dict) else {}
-        lines.append(
-            "[status] claim_support_matrix: "
-            f"{claim_support_matrix.get('status')} "
-            f"blocking_atoms={counts.get('blocking_atom_count', 0)} "
-            f"weak_atoms={counts.get('weak_atom_count', 0)} "
-            f"adjudication_atoms={counts.get('adjudication_required_atom_count', 0)}"
-        )
-    if semantic_assessment_report.get("status") not in {None, "not_available"}:
-        counts = semantic_assessment_report.get("summary_counts")
-        counts = counts if isinstance(counts, dict) else {}
-        label_counts = counts.get("calibration_label_counts")
-        label_counts = label_counts if isinstance(label_counts, dict) else {}
-        labels_render = (
-            ",".join(f"{label}:{count}" for label, count in label_counts.items())
-            if label_counts
-            else "none"
-        )
-        lines.append(
-            "[status] semantic_assessment_report: "
-            f"{semantic_assessment_report.get('status')} "
-            "boundary=proposal_only not_a_gate not_release_authority "
-            f"proposals={counts.get('proposal_row_count', 0)} "
-            f"labels={labels_render} "
-            f"llm_only={counts.get('llm_only_count', 0)} "
-            f"high_uncertainty={counts.get('high_uncertainty_count', 0)} "
-            f"high_disagreement={counts.get('high_disagreement_count', 0)} "
-            f"adjudication={counts.get('requires_human_adjudication_count', 0)}"
         )
     if policy_profile.get("status") not in {None, "not_available"}:
         errors = (
@@ -531,34 +428,6 @@ def format_workspace_status(status: dict[str, Any]) -> str:
     return "\n".join(lines)
 
 
-def _format_topology_satisfaction_lines(timing: dict[str, Any]) -> list[str]:
-    stages = timing.get("stages") if isinstance(timing.get("stages"), list) else []
-    lines: list[str] = []
-    for stage in stages:
-        if (
-            not isinstance(stage, dict)
-            or stage.get("status") != "satisfied_by_topology"
-        ):
-            continue
-        stage_id = str(stage.get("stage_id") or "unknown")
-        satisfied_by = str(
-            stage.get("satisfied_by") or stage.get("satisfied_by_stage") or "unknown"
-        )
-        topology = str(stage.get("topology") or "unknown")
-        required = stage.get("required_artifacts")
-        required_ids = (
-            [str(item) for item in required if item]
-            if isinstance(required, list)
-            else []
-        )
-        required_text = ",".join(required_ids) if required_ids else "unknown"
-        lines.append(
-            f"[status] topology: {stage_id} complete via {satisfied_by} "
-            f"({topology}; required={required_text})"
-        )
-    return lines
-
-
 def _format_experiment_080_lines(experiment: dict[str, Any]) -> list[str]:
     if not experiment.get("present"):
         return []
@@ -590,23 +459,6 @@ def _format_experiment_080_lines(experiment: dict[str, Any]) -> list[str]:
                 f"[status] target_incomplete: auditable_brief reason={first_reason}"
             )
     return lines
-
-
-def _format_timing_line(timing: dict[str, Any]) -> str:
-    status = timing.get("status") or "unknown"
-    if status == "available":
-        elapsed = timing.get("total_elapsed_seconds")
-        stages = timing.get("stages") if isinstance(timing.get("stages"), list) else []
-        finalized = (
-            timing.get("finalize") if isinstance(timing.get("finalize"), dict) else None
-        )
-        stage_count = len(stages) + (1 if finalized else 0)
-        return (
-            f"[status] timing: available total_elapsed={elapsed}s stages={stage_count}"
-        )
-    if status == "contaminated":
-        return "[status] timing: contaminated; elapsed buckets are not clean evidence"
-    return f"[status] timing: {status}"
 
 
 def _format_progress_line(progress: dict[str, Any]) -> str:
@@ -663,60 +515,6 @@ def _read_json(path: Path) -> dict[str, Any]:
             "error": "JSON root is not an object",
         }
     return {"status": "present", "path": str(path), "payload": payload}
-
-
-def _canonical_registry_payload(
-    verdict: RegistryReadVerdict,
-) -> dict[str, Any] | None:
-    """Project plain JSON values only from the trusted Registry view."""
-
-    if not isinstance(verdict, CanonicalRegistryView):
-        return None
-    return {
-        "run_id": verdict.run_id,
-        "artifacts": _thaw_canonical_registry_value(verdict.records),
-    }
-
-
-def _thaw_canonical_registry_value(value: Any) -> Any:
-    if isinstance(value, Mapping):
-        return {
-            str(key): _thaw_canonical_registry_value(item)
-            for key, item in value.items()
-        }
-    if isinstance(value, tuple):
-        return [_thaw_canonical_registry_value(item) for item in value]
-    return value
-
-
-def _registry_status_projection(
-    verdict: RegistryReadVerdict,
-) -> tuple[str, str | None, str | None]:
-    if isinstance(verdict, CanonicalRegistryView):
-        return "valid", None, None
-    if isinstance(verdict, RegistryNotMaterialized):
-        return (
-            "missing",
-            verdict.reason_code,
-            "The artifact registry has not been materialized.",
-        )
-    if isinstance(verdict, RegistrySnapshotDrift):
-        return (
-            "snapshot_drift",
-            verdict.reason_code,
-            "The artifact registry snapshot no longer matches the workspace.",
-        )
-    if isinstance(verdict, RegistryDegradation):
-        return (
-            "degradation",
-            verdict.reason_code,
-            "The artifact registry control context is invalid.",
-        )
-    return (
-        "degradation",
-        "artifact_registry_interpretation_failed",
-        "The artifact registry control context is invalid.",
-    )
 
 
 def _read_optional_text(path: Path) -> str | None:
@@ -806,7 +604,6 @@ def _workflow_summary(result: dict[str, Any]) -> dict[str, Any]:
         "trajectory_regulation": payload.get("trajectory_regulation")
         if isinstance(payload.get("trajectory_regulation"), dict)
         else {},
-        "run_integrity": _run_integrity_summary(payload),
     }
 
 
@@ -833,59 +630,24 @@ def _format_trajectory_decision_narrowing_line(workflow: dict[str, Any]) -> str:
     )
 
 
-def _run_integrity_summary(workflow: dict[str, Any]) -> dict[str, Any]:
-    return project_for_read(
-        interpret_run_integrity(
-            workflow.get("run_integrity"),
-            field_present="run_integrity" in workflow,
-        )
-    )
+def _artifact_summary() -> dict[str, Any]:
+    """Legacy artifact-registry interpretation is retired with the runtime-state
+    stack; the registry is reported as never materialized."""
 
-
-def _artifact_summary(verdict: RegistryReadVerdict) -> dict[str, Any]:
-    payload = _canonical_registry_payload(verdict)
-    registry_status, reason_code, reason = _registry_status_projection(verdict)
-    records = payload.get("artifacts") if isinstance(payload, dict) else None
-    if isinstance(records, dict):
-        iterable = list(records.values())
-    else:
-        iterable = []
-    counts = {
-        "present": isinstance(verdict, CanonicalRegistryView),
-        "registry_status": registry_status,
-        "registry_reason_code": reason_code,
-        "registry_reason": reason,
-        "artifact_count": len(iterable),
+    return {
+        "present": False,
+        "registry_status": "missing",
+        "registry_reason_code": "artifact_registry_not_materialized",
+        "registry_reason": "The artifact registry has not been materialized.",
+        "artifact_count": 0,
         "valid_count": 0,
         "invalid_count": 0,
         "missing_count": 0,
         "expected_count": 0,
         "ready_count": 0,
         "stale_count": 0,
-        "intake": _intake_projection_summary(
-            payload,
-            expected_run_id=(
-                verdict.run_id if isinstance(verdict, CanonicalRegistryView) else ""
-            ),
-        ),
+        "intake": _intake_projection_summary(None, expected_run_id=""),
     }
-    for record in iterable:
-        if not isinstance(record, dict):
-            continue
-        status = str(record.get("status") or "")
-        if status == "valid":
-            counts["valid_count"] += 1
-        elif status == "invalid":
-            counts["invalid_count"] += 1
-        elif status == "missing":
-            counts["missing_count"] += 1
-        elif status == "expected":
-            counts["expected_count"] += 1
-        elif status == "stale":
-            counts["stale_count"] += 1
-        elif status in {"present", "ready"}:
-            counts["ready_count"] += 1
-    return counts
 
 
 def _intake_projection_summary(
@@ -1231,11 +993,9 @@ def _feedback_summary(
 
 def _suggested_next_command(workspace: Path, status: dict[str, Any]) -> str:
     workflow = status.get("workflow") or {}
-    artifacts = status.get("artifacts") or {}
     gate = status.get("quality_gate") or {}
     fact_layer_import = status.get("fact_layer_import") or {}
     experiment_080 = status.get("experiment_080") or {}
-    recovery_state = status.get("recovery_state") or {}
     runtime = status.get("runtime") or {}
     runtime_identity = runtime.get("identity_status")
     runtime_value = runtime.get("runtime")
@@ -1247,15 +1007,8 @@ def _suggested_next_command(workspace: Path, status: dict[str, Any]) -> str:
         )
     if runtime_identity == "invalid":
         return f"briefloop state show --workspace {workspace} --json"
-    if artifacts.get("registry_status") in _UNSAFE_REGISTRY_STATUSES:
-        return f"briefloop state show --workspace {workspace} --json"
     if not runtime.get("present"):
         return f"briefloop run --workspace {workspace} --runtime <{runtime_choices}>"
-    if recovery_state.get("status") not in {
-        "not_applicable",
-        "completed_non_reference",
-    }:
-        return f"briefloop workbuddy diagnose --workspace {workspace} --json"
     if workflow.get("blocked"):
         return f"briefloop state show --workspace {workspace} --json"
     if (
@@ -1295,9 +1048,6 @@ def _progress_summary(status: dict[str, Any]) -> dict[str, Any]:
         status.get("workflow") if isinstance(status.get("workflow"), dict) else {}
     )
     runtime = status.get("runtime") if isinstance(status.get("runtime"), dict) else {}
-    artifacts = (
-        status.get("artifacts") if isinstance(status.get("artifacts"), dict) else {}
-    )
     events = status.get("events") if isinstance(status.get("events"), dict) else {}
     quality_closeout = (
         status.get("quality_panel_closeout")
@@ -1328,16 +1078,6 @@ def _progress_summary(status: dict[str, Any]) -> dict[str, Any]:
             "status": "needs_operator_action",
             "current_work": "check run record",
             "message": "The event log has unreadable records; inspect JSON status or state before continuing.",
-        }
-    if artifacts.get("registry_status") in _UNSAFE_REGISTRY_STATUSES:
-        return {
-            **base,
-            "status": "needs_operator_action",
-            "current_work": "check run record",
-            "message": (
-                "The artifact registry is unavailable or invalid; inspect runtime state "
-                "before continuing."
-            ),
         }
     if not runtime.get("present"):
         return {

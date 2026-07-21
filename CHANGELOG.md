@@ -5,6 +5,43 @@ All notable changes to the multi-agent-brief-workflow project will be documented
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Removed
+
+- **Breaking (`fix!:`):** LEGACY-DELETE-2-3 deletes the legacy JSON
+  runtime-state stack (`orchestrator/runtime_state/`, 30 modules) and its
+  dead consumer layer — `orchestrator/{handoff,run_integrity,timing,
+  recovery_state,run_archive}.py`, `controls/switchboard.py`,
+  `improvement/`, `feedback/`, `repair/`, `provenance/builder.py`,
+  `workbuddy/diagnose.py`, `product/release_approval.py`,
+  `quality_gates/state.py`, `experiments/` (MABW-080 tooling), and
+  `cli/start_commands.py` — 57 modules / ~39.8k lines. Typed rejections
+  (`runtime_command_unsupported` / `legacy_workspace_unsupported` /
+  `[run] runtime_adapter_unsupported`) remain live contracts on every
+  retired surface; the SQLite ControlStore stays the sole runtime authority.
+- **Breaking (`fix!:`):** the `eval-cases` CLI (previously Supported) is
+  retired with its legacy-runtime evaluation driver; the command now fails
+  as an unknown argparse choice. Packaged fixture data under
+  `evaluation_cases/fixtures/` is preserved for the EF-1/EF-2 Store-native
+  evaluation rebuild.
+- **Breaking (`fix!:`):** `experiments 080` tooling (previously Archived
+  Experimental) is retired with the stack; scorecard reproduction is
+  satisfied by git history and run archives. The `experiments laj` advisory
+  surface is unaffected.
+- `status` legacy file projections that depended on the deleted stack
+  (artifact-registry interpretation, claim-support-matrix,
+  semantic-assessment-report, recovery, run-integrity, and timing sections)
+  are removed from the read-only legacy projection; SQLite workspaces keep
+  the full Store-native status projection.
+- The Quality Panel `semantic_support` section now reports a constant
+  `not_available`, because its only producer was the deleted status
+  projection. On SQLite workspaces — the sole supported authority — it
+  already did: the Store projection never carried that key, so there is no
+  capability loss on any supported surface. The section stays inert until a
+  Store-native producer lands. The `semantic_assessment_report.json` schema
+  and its reference validation are unaffected.
+
 ## [0.13.0] — 2026-07-20
 
 ### Changed

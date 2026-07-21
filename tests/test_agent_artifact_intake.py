@@ -17,18 +17,10 @@ from multi_agent_brief.contracts.agent_artifact_intake import (
     validate_registry_intake_context,
     validate_workspace_intake_consumption_context,
 )
-from multi_agent_brief.orchestrator.runtime_state.artifact_paths import (
-    agent_artifact_paths_from_contracts,
-)
 from multi_agent_brief.core.claim_ledger import ClaimLedger
-from multi_agent_brief.orchestrator.runtime_state import (
-    check_runtime_state,
-    initialize_runtime_state,
-)
 from multi_agent_brief.product.materiality_selection import (
     project_workspace_materiality_selection,
 )
-from multi_agent_brief.quality_gates.state import _coverage_omission_projection
 
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -524,136 +516,8 @@ def test_workspace_intake_bundle_requires_object_universe_coverage_without_total
     )
 
 
-@pytest.mark.parametrize(
-    ("candidate_payload", "screened_payload", "expected_result"),
-    [
-        (
-            [_legacy_candidate("CAND-001")],
-            {
-                "selected": [_selected_candidate("CAND-999")],
-                "excluded": [],
-                "screening_policy": {"total_candidates": 1},
-            },
-            "screened_candidates_schema_error:selected[0].unknown_candidate_id:CAND-999",
-        ),
-        (
-            [_legacy_candidate("CAND-001"), _legacy_candidate("CAND-001")],
-            {
-                "selected": [_selected_candidate("CAND-001")],
-                "excluded": [],
-                "screening_policy": {"method": "deterministic_test"},
-            },
-            "screened_candidates_schema_error:candidate_universe_duplicate_candidate_id:CAND-001",
-        ),
-        (
-            [_legacy_candidate("CAND-001"), _legacy_candidate("CAND-002")],
-            {
-                "selected": [_selected_candidate("CAND-001")],
-                "excluded": [],
-                "screening_policy": {"total_candidates": 1},
-            },
-            "screened_candidates_schema_error:candidate_universe_count_mismatch",
-        ),
-    ],
-    ids=["INTAKE-UNIVERSE-03", "INTAKE-UNIVERSE-04", "INTAKE-UNIVERSE-05"],
-)
-def test_workspace_intake_bundle_owns_screened_universe_verdict(
-    tmp_path: Path,
-    candidate_payload: list[dict[str, str]],
-    screened_payload: dict[str, object],
-    expected_result: str,
-) -> None:
-    workspace = tmp_path / "ws"
-    workspace.mkdir()
-    (workspace / "config.yaml").write_text(
-        "project:\n  name: Intake Consumer Equivalence\n"
-        "output:\n  path: output\n"
-        "input:\n  path: input\n",
-        encoding="utf-8",
-    )
-    (workspace / "user.md").write_text("# User\n", encoding="utf-8")
-    (workspace / "input").mkdir()
-    initialize_runtime_state(runtime="operator", workspace=workspace, repo_workdir=ROOT)
-    intermediate = workspace / "output" / "intermediate"
-    _write_json(intermediate / "candidate_claims.json", candidate_payload)
-    _write_json(intermediate / "screened_candidates.json", screened_payload)
-
-    bundle = evaluate_workspace_agent_artifact_intakes(workspace)
-    state = check_runtime_state(workspace=workspace, repo_workdir=ROOT)
-    registry_record = state["artifact_registry"]["artifacts"]["screened_candidates"]
-    materiality = project_workspace_materiality_selection(workspace)
-    coverage = _coverage_omission_projection(
-        workspace=workspace,
-        markdown="## Executive Summary\n",
-        ledger=ClaimLedger(),
-    )
-
-    assert bundle.candidate_claims is not None
-    assert bundle.screened_candidates is not None
-    assert bundle.screened_candidates.status == "invalid"
-    assert bundle.screened_candidates.validation_result == expected_result
-    assert registry_record["status"] == "invalid"
-    assert materiality["status"] == "invalid_screened_candidates"
-    assert coverage["status"] == "invalid"
-    assert {
-        registry_record["validation_result"],
-        materiality["reason"],
-        coverage["screened_candidates_validation_result"],
-        coverage["not_interpreted_reason"],
-    } == {expected_result}
 
 
-def test_quality_and_materiality_bind_contract_resolved_intake_paths(
-    tmp_path: Path,
-) -> None:
-    workspace = tmp_path / "ws"
-    intermediate = workspace / "output" / "intermediate"
-    custom = workspace / "custom"
-    intermediate.mkdir(parents=True)
-    custom.mkdir()
-    (workspace / "config.yaml").write_text(
-        "project:\n  name: Contract Path Consumer Equivalence\n",
-        encoding="utf-8",
-    )
-    _write_json(intermediate / "candidate_claims.json", {"malformed": True})
-    _write_json(intermediate / "screened_candidates.json", {"malformed": True})
-    _write_json(custom / "candidate_claims.json", [_legacy_candidate("CAND-001")])
-    _write_json(
-        custom / "screened_candidates.json",
-        {
-            "selected": [_selected_candidate("CAND-001")],
-            "excluded": [],
-            "screening_policy": {"total_candidates": 1},
-        },
-    )
-    artifact_registry = {
-        "artifacts": {
-            "candidate_claims": {"path": "custom/candidate_claims.json"},
-            "screened_candidates": {"path": "custom/screened_candidates.json"},
-        }
-    }
-    artifact_paths = agent_artifact_paths_from_contracts(
-        workspace,
-        artifact_registry["artifacts"],
-    )
-
-    materiality = project_workspace_materiality_selection(
-        workspace,
-        artifact_registry=artifact_registry,
-    )
-    coverage = _coverage_omission_projection(
-        workspace=workspace,
-        markdown="## Executive Summary\n",
-        ledger=ClaimLedger(),
-        artifact_paths=artifact_paths,
-    )
-
-    assert materiality["status"] == "no_materiality_policy"
-    assert materiality["screened_candidates_present"] is True
-    assert coverage["status"] == "checked"
-    assert coverage["screened_candidates_validation_result"] == (
-        "valid_screened_candidates_schema"
-    )
 
 
 def test_claim_draft_mechanical_normalization(tmp_path: Path) -> None:

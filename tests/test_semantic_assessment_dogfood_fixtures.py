@@ -8,12 +8,6 @@ from typing import Any
 import pytest
 
 from multi_agent_brief.contracts.schemas.semantic_assessment_report import SemanticAssessmentReportContract
-from multi_agent_brief.orchestrator.runtime_state import check_runtime_state, initialize_runtime_state
-from multi_agent_brief.orchestrator.runtime_state.semantic_assessment_report import (
-    project_semantic_assessment_report_from_workspace,
-)
-from multi_agent_brief.product.quality_panel import build_quality_panel, validate_quality_panel_payload
-from multi_agent_brief.status import build_workspace_status
 
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -31,51 +25,6 @@ def _fixture_cases() -> list[dict[str, Any]]:
     return cases
 
 
-def _write_fixture_workspace(tmp_path: Path, case: dict[str, Any]) -> Path:
-    bundle = _load_fixture_bundle()
-    base = bundle["base"]
-    case_id = case["case_id"]
-    ws = tmp_path / case_id
-    intermediate = ws / "output" / "intermediate"
-    intermediate.mkdir(parents=True)
-    (ws / "input").mkdir(exist_ok=True)
-    (ws / "config.yaml").write_text(
-        """
-project:
-  name: "Semantic Assessment Fixture"
-output:
-  path: "output"
-input:
-  path: "input"
-""".strip()
-        + "\n",
-        encoding="utf-8",
-    )
-    (ws / "user.md").write_text("# User\n", encoding="utf-8")
-    (ws / "sources.yaml").write_text("manual:\n  sources: []\n", encoding="utf-8")
-    for rel_path, content in base["source_files"].items():
-        path = ws / rel_path
-        path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text(content, encoding="utf-8")
-    artifacts = {
-        "claim_ledger.json": base["claim_ledger"],
-        "atomic_claim_graph.json": base["atomic_claim_graph"],
-        "evidence_span_registry.json": base["evidence_span_registry"],
-    }
-    for name, payload in artifacts.items():
-        (intermediate / name).write_text(
-            json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True) + "\n",
-            encoding="utf-8",
-        )
-    report_path = intermediate / "semantic_assessment_report.json"
-    if "semantic_assessment_report_text" in case:
-        report_path.write_text(str(case["semantic_assessment_report_text"]), encoding="utf-8")
-    else:
-        report_path.write_text(
-            json.dumps(case["semantic_assessment_report"], ensure_ascii=False, indent=2, sort_keys=True) + "\n",
-            encoding="utf-8",
-        )
-    return ws
 
 
 def test_semantic_assessment_dogfood_fixture_bundle_is_public_safe_and_bounded() -> None:
@@ -120,88 +69,7 @@ def test_semantic_assessment_dogfood_reports_match_schema_expectation(case: dict
         assert violations != []
 
 
-@pytest.mark.parametrize("case", _fixture_cases(), ids=lambda case: case["case_id"])
-def test_semantic_assessment_dogfood_fixtures_validate_through_runtime_state(
-    tmp_path: Path,
-    case: dict[str, Any],
-) -> None:
-    ws = _write_fixture_workspace(tmp_path, case)
-    initialize_runtime_state(runtime="operator", workspace=ws, repo_workdir=ROOT)
-
-    state = check_runtime_state(workspace=ws, repo_workdir=ROOT)
-    registry = state["artifact_registry"]["artifacts"]
-    report_record = registry["semantic_assessment_report"]
-    expected = case["expected"]
-
-    assert registry["atomic_claim_graph"]["status"] == "valid"
-    assert registry["evidence_span_registry"]["status"] == "valid"
-    assert report_record["required"] is False
-    assert report_record["status"] == expected["artifact_status"]
-    assert report_record["validation_result"] == expected["validation_result"]
 
 
-@pytest.mark.parametrize("case", _fixture_cases(), ids=lambda case: case["case_id"])
-def test_semantic_assessment_dogfood_fixtures_project_expected_status(
-    tmp_path: Path,
-    case: dict[str, Any],
-) -> None:
-    ws = _write_fixture_workspace(tmp_path, case)
-
-    projection = project_semantic_assessment_report_from_workspace(ws)
-    expected = case["expected"]
-
-    assert projection["status"] == expected["projection_status"]
-    if expected["projection_status"] == "valid":
-        assert projection["summary_counts"] == expected["summary_counts"]
-        assert projection["proposal_projection"]["semantic_boundary"] == (
-            "proposal_projection_only_not_accepted_support_truth"
-        )
-        assert projection["proposal_projection"]["proposed_csm_delta"]["accepted_csm_rows"] == []
-        assert all(
-            row["accepted_support_truth"] is False and row["writes_claim_support_matrix"] is False
-            for row in projection["proposed_claim_support_rows"]
-        )
-    else:
-        if "projection_reason_prefix" in expected:
-            assert projection["reason"].startswith(expected["projection_reason_prefix"])
-        else:
-            assert projection["reason"] == expected.get("projection_reason", expected["validation_result"])
-        assert projection["proposed_claim_support_rows"] == []
 
 
-def test_semantic_assessment_dogfood_status_and_quality_panel_surface_proposal_counts(
-    tmp_path: Path,
-) -> None:
-    case = next(case for case in _fixture_cases() if case["case_id"] == "mixed_valid_proposals")
-    ws = _write_fixture_workspace(tmp_path, case)
-
-    status = build_workspace_status(ws)
-    panel = build_quality_panel(ws)
-
-    status_counts = status["semantic_assessment_report"]["summary_counts"]
-    semantic = panel["semantic_support"]
-    assert status_counts["proposal_row_count"] == 4
-    assert status_counts["requires_human_adjudication_count"] == 2
-    assert semantic["status"] == "valid"
-    assert semantic["proposal_count"] == 4
-    assert semantic["requires_human_adjudication_count"] == 2
-    assert semantic["recommended_human_review"] is True
-    assert {
-        "action": "request_human_review",
-        "reason": "semantic_support_human_adjudication_required",
-    } in panel["recommended_actions"]
-    forbidden_actions = {"approve_delivery", "auto_repair", "deliver", "release"}
-    assert not forbidden_actions.intersection(
-        str(item.get("action") or "") for item in panel["recommended_actions"]
-    )
-    for key in (
-        "accepted_support_truth",
-        "delivery_authority",
-        "gate_decision",
-        "release_authority",
-        "repair_execution",
-        "state_transition",
-        "writes_claim_support_matrix",
-    ):
-        assert key not in semantic
-    assert validate_quality_panel_payload(panel) is None

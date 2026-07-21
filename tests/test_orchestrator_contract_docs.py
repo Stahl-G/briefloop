@@ -230,13 +230,6 @@ def test_production_modules_do_not_import_experiment_target_contract():
     assert violations == []
 
 
-def test_experiment_080_imports_contract_target_contract():
-    text = (ROOT / "src" / "multi_agent_brief" / "experiments" / "experiment_080.py").read_text(
-        encoding="utf-8"
-    )
-
-    assert "from multi_agent_brief.contracts.target_contract import" in text
-    assert "from multi_agent_brief.experiments.target_contract import" not in text
 
 
 def test_evaluation_and_onboarding_modules_do_not_import_cli_layer():

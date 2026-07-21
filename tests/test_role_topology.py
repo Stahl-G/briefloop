@@ -19,54 +19,13 @@ from multi_agent_brief.contracts.validator import validate_contract_registry
 from multi_agent_brief.orchestrator.role_topology import (
     stage_satisfaction_rules_for_topology,
 )
-from multi_agent_brief.orchestrator.runtime_state.completion_gates import (
-    _role_topology_from_policy_pack,
-    _topology_satisfaction_rules,
-)
 
 
 ROOT = Path(__file__).resolve().parents[1]
 
 
-def test_default_policy_pack_selects_default_scout_satisfies_screener():
-    rules = stage_satisfaction_rules_for_topology(
-        stages=_stage_specs(),
-        policy_pack=_default_policy_pack(),
-    )
-    layer_d_rules = _topology_satisfaction_rules(
-        stages=_stage_specs(),
-        policy_pack=_default_policy_pack(),
-    )
-
-    assert resolve_role_topology(_default_policy_pack()) == ROLE_TOPOLOGY_DEFAULT
-    assert _role_topology_from_policy_pack(_default_policy_pack()) == ROLE_TOPOLOGY_DEFAULT
-    assert ROLE_TOPOLOGY_VALUES == frozenset(
-        {"single_session", "default", "strict", "human_assisted"}
-    )
-    assert ROLE_TOPOLOGY_SATISFIER_VALUES == frozenset({"scout", "writer"})
-    assert rules["screener"] == {
-        "topology": "default",
-        "satisfied_by": "scout",
-        "required_artifacts": ["candidate_claims", "screened_candidates"],
-    }
-    assert layer_d_rules == rules
 
 
-def test_strict_topology_keeps_independent_screener_stage():
-    policy_pack = {"policy": {"role_topology": "strict"}}
-
-    rules = stage_satisfaction_rules_for_topology(
-        stages=_stage_specs(),
-        policy_pack=policy_pack,
-    )
-    layer_d_rules = _topology_satisfaction_rules(
-        stages=_stage_specs(),
-        policy_pack=policy_pack,
-    )
-
-    assert resolve_role_topology(policy_pack) == "strict"
-    assert "screener" not in rules
-    assert layer_d_rules == rules
 
 
 def test_human_assisted_topology_declares_writer_satisfaction_hooks():

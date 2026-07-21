@@ -9,10 +9,6 @@ from multi_agent_brief.workbuddy.skill_pack import (
     WorkBuddySkillPackError,
     package_workbuddy_skill,
 )
-from multi_agent_brief.workbuddy.diagnose import (
-    build_workbuddy_diagnosis,
-    format_workbuddy_diagnosis,
-)
 
 
 def register(subparsers: argparse._SubParsersAction) -> None:

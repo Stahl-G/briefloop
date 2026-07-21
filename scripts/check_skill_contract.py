@@ -15,7 +15,6 @@ CLAUDE_WRAPPER = ROOT / ".claude" / "skills" / "briefloop" / "SKILL.md"
 HERMES_PLUGIN_PROJECTION = ROOT / "integrations" / "hermes-plugin" / "mabw" / "skills" / "briefloop"
 VERSION_MATRIX = CANONICAL / "references" / "version-matrix.md"
 PUBLIC_CLAIMS = CANONICAL / "references" / "public-claims.md"
-EXPERIMENT_REF = CANONICAL / "references" / "experiment-080-090.md"
 
 
 def _read(path: Path) -> str:
@@ -69,7 +68,6 @@ def main() -> int:
     wrapper_text = _read(CLAUDE_WRAPPER)
     matrix_text = _read(VERSION_MATRIX)
     public_claims_text = _read(PUBLIC_CLAIMS) if PUBLIC_CLAIMS.exists() else ""
-    experiment_text = _read(EXPERIMENT_REF) if EXPERIMENT_REF.exists() else ""
 
     references = sorted(set(re.findall(r"references/[a-z0-9-]+\.md", skill_text)))
     for reference in references:
@@ -88,10 +86,6 @@ def main() -> int:
     expected_version = f"v{version}"
     if expected_version not in matrix_text:
         errors.append(_error(f"version matrix does not mention current VERSION {expected_version}"))
-
-    for target in ("auditable_brief", "delivery_brief"):
-        if target not in experiment_text:
-            errors.append(_error(f"experiment reference does not mention {target}"))
 
     if "Planned / Not Yet Authoritative" not in matrix_text:
         errors.append(_error("version matrix does not separate planned controls"))
@@ -118,7 +112,7 @@ def main() -> int:
         "Evidence Span Registry is implemented",
         "Claim-Support Matrix is implemented",
     ]
-    joined = "\n".join([skill_text, matrix_text, experiment_text, public_claims_text])
+    joined = "\n".join([skill_text, matrix_text, public_claims_text])
     for phrase in implemented_overclaims:
         if phrase in joined:
             errors.append(_error(f"planned control described as implemented: {phrase}"))
