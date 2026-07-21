@@ -1,0 +1,33 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>BriefLoop · Post-final Review</title>
+  <link rel="stylesheet" href="/assets/style.css">
+</head>
+<body>
+  <header class="topbar">
+    <a class="brand" href="#quality" aria-label="BriefLoop">BriefLoop</a>
+    <span class="boundary" data-i18n="boundary">本地审阅 · LAJ 仅供参考 · 无运行权威</span>
+    <button id="language" type="button" aria-label="Switch language">EN</button>
+  </header>
+  <main>
+    <section class="hero">
+      <div><p class="eyebrow">POST-FINAL HUMAN REVIEW</p><h1 data-i18n="title">终稿人工审阅</h1>
+      <p id="identity" class="muted">—</p></div>
+      <div id="overall" class="status neutral">—</div>
+    </section>
+    <nav class="tabs" aria-label="Review sections">
+      <button type="button" data-tab="quality" aria-selected="true" data-i18n="tabQuality">质量状态</button>
+      <button type="button" data-tab="semantic" aria-selected="false" data-i18n="tabSemantic">AI 语义复盘</button>
+      <button type="button" data-tab="improvement" aria-selected="false" data-i18n="tabImprovement">反馈与改进</button>
+    </nav>
+    <section id="quality" class="panel" tabindex="-1"><h2 data-i18n="qualityTitle">确定性质量状态</h2><div id="metrics" class="metrics"></div><div id="quality-sections"></div></section>
+    <section id="semantic" class="panel" hidden tabindex="-1"><div class="advisory"><b data-i18n="advisory">实验性 AI 建议</b><span data-i18n="advisoryBoundary">不影响 Gate、交付、审批或下一步动作。</span></div><h2 data-i18n="semanticTitle">AI 语义复盘</h2><div id="semantic-state"></div><div id="findings"></div></section>
+    <section id="improvement" class="panel" hidden tabindex="-1"><h2 data-i18n="improvementTitle">反馈与改进</h2><div class="empty"><b data-i18n="notShipped">PF-REVIEW-2 尚未交付</b><p data-i18n="noCommands">本页没有写入、处置或 Improvement Ledger 命令。</p></div></section>
+    <div id="fatal" class="fatal" hidden role="alert"></div>
+  </main>
+  <script src="/assets/app.js" defer></script>
+</body>
+</html>
