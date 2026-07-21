@@ -37,13 +37,14 @@ Skill-impact areas include:
 Run focused tests for changed areas. For skill changes, run:
 
 ```bash
-python3 -m pytest -q tests/test_skill_contracts.py tests/test_briefloop_operator_skill.py
+python3 -m pytest -q tests/test_skill_contracts.py
 python3 scripts/check_skill_contract.py
 python3 scripts/check_product_baseline.py
 python3 scripts/check_briefloop_skill_freshness.py
 python3 scripts/check_version_consistency.py
 python3 scripts/check_release_consistency.py --no-tag
 python3 scripts/check_capabilities.py
+python3 scripts/check_citation_parser_home.py
 git diff --check
 ```
 
@@ -64,12 +65,15 @@ part of release readiness. It guards stable product entries, README boundary
 wording, `README_en.md` compatibility-pointer shape, and forbidden positive
 public claims.
 
-## v1.0 RC Readiness Gate
+## v1.0 Pilot Evidence Gate
 
-The project is in v1.0 RC hardening until the pilot evidence gate is
-satisfied. `docs/v1-pilot-evidence.md` is the release evidence record and
-`scripts/check_v1_rc_readiness.py` is its deterministic checker; the release
+The project is in v1.0 hardening until the pilot evidence gate is satisfied.
+`docs/v1-pilot-evidence.md` is the release evidence record and
+`scripts/check_v1_pilot_evidence.py` is its deterministic checker; the release
 command path runs it with `--require-satisfied`. Do not call v1.0 ready, and
 do not weaken the checker, while the gate reports `not_satisfied`. Recording
 new evidence means appending a complete public-safe record to the evidence
 doc, not editing the checker.
+
+The separate RC readiness gate was retired in the LD2-3 follow-up: its
+scenario runner drove the legacy runtime-state stack that LD2-3 deleted.

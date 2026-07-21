@@ -9,6 +9,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Removed
 
+- **Breaking (`fix!:`):** the Improvement Ledger / Memory file lifecycle
+  (`improvement/ledger.jsonl`, `improvement/memory.md`,
+  `improvement_memory_snapshot.md`) is retired. Its projection and per-run
+  freeze code lived in the stack LD2-3 deleted, so these files have no reader
+  or writer; existing workspace copies are inert. A Store-native Improvement
+  Ledger is MU-2 work. The support matrix moves the row from Supported to
+  Retired.
+- The v1.0 RC readiness release gate is retired: its scenario runner drove the
+  deleted legacy runtime-state stack, so the gate could not execute. The
+  `release.sh` v1.0 branch and the release checklist now require only the
+  pilot evidence gate, which is unaffected and still runs on every release
+  through `check_release_consistency.py`.
 - **Breaking (`fix!:`):** LEGACY-DELETE-2-3 deletes the legacy JSON
   runtime-state stack (`orchestrator/runtime_state/`, 30 modules) and its
   dead consumer layer — `orchestrator/{handoff,run_integrity,timing,

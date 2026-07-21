@@ -9,6 +9,9 @@ PACKAGE = ROOT / "src" / "multi_agent_brief" / "product" / "review_session"
 BRIDGE = ROOT / "src" / "multi_agent_brief" / "semantic_evaluator" / "post_final_bridge.py"
 
 
+# `improvement` and `orchestrator.runtime_state` below were deleted in LD2-3.
+# They stay listed on purpose: this is a reintroduction tripwire, so a prefix
+# that currently resolves to nothing is the expected state, not dead config.
 FORBIDDEN_PREFIXES = (
     "multi_agent_brief.control_store",
     "multi_agent_brief.core_run_v2",
