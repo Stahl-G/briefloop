@@ -110,10 +110,13 @@ Exactly five action kinds exist.
    reason.
 
 If an invocation is already active and the current action says
-`effect_kind=invocation_accept_or_fail`, do not call `runtime apply`. Continue
-from the already-materialized envelope. `invocation-start` without `--action`
-may only be used to recover that exact active envelope; it is not permission to
-start a different role.
+`effect_kind=invocation_accept_or_fail`, either accept through the exact
+envelope as above or apply the exact current action. `runtime apply` performs
+the same envelope-bound preflight and accepts only a valid proposal; an invalid
+proposal fails with zero Store writes. Use explicit `invocation-fail` when the
+role cannot produce a valid proposal. `invocation-start` without `--action` may
+only recover that exact active envelope; it is not permission to start another
+role.
 
 ### `deterministic`
 

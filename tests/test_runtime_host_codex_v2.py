@@ -812,6 +812,61 @@ def test_source_planner_writes_only_artifact_and_host_derives_accept_request(
     assert replay["store_revision"] == accepted["store_revision"]
 
 
+def test_runtime_apply_resolves_active_invocation_through_shared_preflight(
+    tmp_path: Path,
+    capsys,
+) -> None:
+    workspace = _workspace(tmp_path)
+    assert main(["run", "--workspace", str(workspace), "--runtime", "codex"]) == 0
+    capsys.readouterr()
+    assert _apply_current(workspace, capsys) == 0
+    capsys.readouterr()
+    assert _start_current(workspace, capsys) == 0
+    envelope = json.loads(capsys.readouterr().out)
+    scratch = workspace / str(envelope["scratch_directory"])
+    (scratch / "source_candidates.yaml").write_text(
+        "version: 1\ncandidates:\n  - route: manual\n",
+        encoding="utf-8",
+    )
+    with SQLiteControlStore.open(workspace / "briefloop.db") as store:
+        before = store.current_revision
+
+    rc = _apply_current(workspace, capsys)
+    output = capsys.readouterr().out
+    if sys.platform == "win32":
+        assert rc == 1
+        assert "checkout_publication_unsupported" in output
+        with SQLiteControlStore.open(workspace / "briefloop.db") as store:
+            assert store.current_revision == before
+        return
+
+    assert rc == 0
+    accepted = json.loads(output)
+    assert accepted["status"] == "committed"
+    assert accepted["invocation_id"] == envelope["invocation_id"]
+    assert accepted["store_revision"] == before + 1
+
+
+def test_runtime_apply_rejects_invalid_active_proposal_without_store_write(
+    tmp_path: Path,
+    capsys,
+) -> None:
+    workspace = _workspace(tmp_path)
+    assert main(["run", "--workspace", str(workspace), "--runtime", "codex"]) == 0
+    capsys.readouterr()
+    assert _apply_current(workspace, capsys) == 0
+    capsys.readouterr()
+    assert _start_current(workspace, capsys) == 0
+    capsys.readouterr()
+    with SQLiteControlStore.open(workspace / "briefloop.db") as store:
+        before = store.current_revision
+
+    assert _apply_current(workspace, capsys) == 1
+    assert "runtime_proposal_missing" in capsys.readouterr().out
+    with SQLiteControlStore.open(workspace / "briefloop.db") as store:
+        assert store.current_revision == before
+
+
 def test_child_failure_is_value_free_recorded_and_exactly_replayed(
     tmp_path: Path,
     capsys,

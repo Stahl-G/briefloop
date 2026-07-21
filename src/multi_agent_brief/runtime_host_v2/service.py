@@ -990,6 +990,15 @@ class RuntimeHostService:
             result = self._apply_artifact_supersede(current, action, action_input)
         elif action_input is not None:
             raise RuntimeHostError("runtime_action_input_invalid")
+        elif action.effect_kind == "invocation_accept_or_fail":
+            active = [
+                item
+                for item in current.verified.snapshot.invocations
+                if item.status == "active"
+            ]
+            if len(active) != 1:
+                raise RuntimeHostError("control_store_integrity_invalid")
+            result = self.accept_invocation(active[0].invocation_id)
         elif action.effect_kind == "doctor_check":
             request = IntegrityCheckRequest.model_validate(
                 {

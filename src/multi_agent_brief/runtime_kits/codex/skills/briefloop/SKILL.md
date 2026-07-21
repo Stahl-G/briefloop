@@ -14,8 +14,9 @@ snapshot the exact current action JSON, then dispatch only its `action_kind`:
   `RoleTaskEnvelope`, write only its scratch proposal, then have the root run
   `invocation-accept` or `invocation-fail`.
 - `deterministic`: have the root run `runtime apply` with the exact action;
-  never delegate deterministic authority. An already-active
-  `invocation_accept_or_fail` is completed through its envelope, not `apply`.
+  never delegate deterministic authority. For an already-active
+  `invocation_accept_or_fail`, exact-action apply and exact-envelope accept run
+  the same proposal preflight before any Store write.
 - `human_decision`: stop for the complete strict request named by
   `request_schema_id`; chat text is not approval.
 - `blocked`: report the exact reason and make no mutation or fallback.
