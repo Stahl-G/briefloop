@@ -1184,9 +1184,10 @@ def test_quality_panel_semantic_support_survives_corrupt_reader_target(tmp_path:
     status = build_workspace_status(ws)
     panel = build_quality_panel(ws)
 
-    assert status["support_wording"]["status"] == "not_available"
-    assert status["support_wording"]["reason"] == "reader_targets_unreadable"
-    assert panel["support_wording"]["status"] == "not_available"
+    # LD2-1 D1: the support_wording fold-in retires; the keys are absent from
+    # status and quality-panel payloads on every workspace.
+    assert "support_wording" not in status
+    assert "support_wording" not in panel
     assert panel["semantic_support"]["status"] == "valid"
     assert panel["semantic_support"]["proposal_count"] == 1
     assert validate_quality_panel_payload(panel) is None

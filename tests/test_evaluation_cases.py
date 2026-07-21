@@ -73,14 +73,16 @@ def test_eval_cases_validate_and_run_packaged_cases(capsys):
     assert rc == 0
     validation = json.loads(capsys.readouterr().out)
     assert validation["ok"] is True
-    assert validation["case_count"] == 25
+    # TD-1 (LD2-1 D1): guidance_manifestation_not_observable case retired with
+    # the fold-in; 25 -> 24.
+    assert validation["case_count"] == 24
 
     rc = main(["eval-cases", "run", "--repo-workdir", str(ROOT), "--json"])
 
     assert rc == 0
     result = json.loads(capsys.readouterr().out)
     assert result["ok"] is True
-    assert result["passed_count"] == 25
+    assert result["passed_count"] == 24
     assert result["failed_count"] == 0
     assert {
         "unsupported_material_fact",
@@ -102,7 +104,6 @@ def test_eval_cases_validate_and_run_packaged_cases(capsys):
         "third_party_price_snapshot_formal_block",
         "formal_release_missing_human_approval",
         "trajectory_retry_budget_exhausted",
-        "guidance_manifestation_not_observable",
         "same_evidence_reader_quality_regression",
         "final_abstract_quality_warning_surface",
         "unapproved_entry_not_materialized",

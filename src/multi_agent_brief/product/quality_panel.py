@@ -17,15 +17,11 @@ from pathlib import Path
 from typing import Any, Mapping
 
 from multi_agent_brief.core.claim_ledger import ClaimLedger
-from multi_agent_brief.product.guidance_manifestation import (
-    validate_guidance_manifestation_projection_payload,
-)
 from multi_agent_brief.product.materiality_selection import validate_materiality_selection_payload
 from multi_agent_brief.product.quality_closeout import (
     quality_panel_closeout_projection,
     validate_quality_panel_closeout_payload,
 )
-from multi_agent_brief.product.support_wording import validate_support_wording_payload
 from multi_agent_brief.product.template_conformance import validate_report_template_conformance_payload
 from multi_agent_brief.product.trajectory_regulation import validate_trajectory_regulation_payload
 from multi_agent_brief.contracts.semantic_assessment_status import SEMANTIC_ASSESSMENT_REPORT_STATUSES
@@ -87,7 +83,6 @@ _QUALITY_PANEL_RECOMMENDED_ACTIONS = {
     "block_run",
     "review_materiality_exclusions",
     "review_reader_template_conformance",
-    "review_support_wording_warnings",
 }
 _QUALITY_PANEL_HTML_LABELS = {
     "audit_attachment": ("BriefLoop audit attachment", "BriefLoop 审计附件"),
@@ -100,7 +95,6 @@ _QUALITY_PANEL_HTML_LABELS = {
     "missing_incomplete": ("Missing/incomplete", "缺失/未完成"),
     "materiality_findings": ("Materiality findings", "重要性发现"),
     "template_warnings": ("Template warnings", "模板警告"),
-    "support_wording": ("Support wording", "支持措辞"),
     "semantic_support": ("Semantic support proposals", "语义支持提案"),
     "semantic_support_proposals": ("Semantic support proposals", "语义支持提案"),
     "laj_advisory": ("Experimental AI Assessment", "实验性 AI 复盘"),
@@ -142,7 +136,6 @@ _QUALITY_PANEL_HTML_LABELS = {
     "materiality_exclusions": ("Materiality/focus exclusions", "重要性/焦点排除"),
     "reader_template_conformance": ("Reader template conformance", "读者模板一致性"),
     "reader_template_warnings": ("Reader template warnings", "读者模板警告"),
-    "support_wording_warnings": ("Support wording warnings", "支持措辞警告"),
     "semantic_support_status": ("Semantic support status", "语义支持状态"),
     "semantic_support_boundary": ("Semantic support boundary", "语义支持边界"),
     "calibration_labels": ("Calibration labels", "校准标签"),
@@ -268,7 +261,6 @@ _QUALITY_PANEL_HTML_ACTIONS_ZH = {
     "block_run": "阻断本次运行",
     "review_materiality_exclusions": "复核重要性排除项",
     "review_reader_template_conformance": "复核读者模板一致性",
-    "review_support_wording_warnings": "复核支持措辞警告",
 }
 
 # Recommended-action reason codes -> zh display text (en shows the raw code).
@@ -385,11 +377,6 @@ def build_quality_panel(
         if isinstance(workspace_status.get("trajectory_regulation"), dict)
         else {}
     )
-    guidance_manifestation = (
-        workspace_status.get("guidance_manifestation")
-        if isinstance(workspace_status.get("guidance_manifestation"), dict)
-        else {}
-    )
     materiality_selection = (
         workspace_status.get("materiality_selection")
         if isinstance(workspace_status.get("materiality_selection"), dict)
@@ -398,11 +385,6 @@ def build_quality_panel(
     report_template_conformance = (
         workspace_status.get("report_template_conformance")
         if isinstance(workspace_status.get("report_template_conformance"), dict)
-        else {}
-    )
-    support_wording = (
-        workspace_status.get("support_wording")
-        if isinstance(workspace_status.get("support_wording"), dict)
         else {}
     )
     semantic_support = _semantic_support_summary(workspace_status)
@@ -429,7 +411,6 @@ def build_quality_panel(
         trajectory=trajectory,
         materiality_selection=materiality_selection,
         report_template_conformance=report_template_conformance,
-        support_wording=support_wording,
         semantic_support=semantic_support,
     )
     overall_status = _overall_status(
@@ -442,7 +423,6 @@ def build_quality_panel(
         delivery=delivery,
         materiality_selection=materiality_selection,
         report_template_conformance=report_template_conformance,
-        support_wording=support_wording,
         semantic_support=semantic_support,
     )
 
@@ -461,10 +441,8 @@ def build_quality_panel(
         "claims": claims,
         "delivery": delivery,
         "trajectory_regulation": trajectory,
-        "guidance_manifestation": guidance_manifestation,
         "materiality_selection": materiality_selection,
         "report_template_conformance": report_template_conformance,
-        "support_wording": support_wording,
         "semantic_support": semantic_support,
         "laj_advisory": laj_advisory,
         "quality_panel_closeout": closeout,
@@ -533,8 +511,6 @@ def render_quality_summary(
     materiality = materiality if isinstance(materiality, Mapping) else {}
     template_conformance = panel_payload.get("report_template_conformance")
     template_conformance = template_conformance if isinstance(template_conformance, Mapping) else {}
-    support_wording = panel_payload.get("support_wording")
-    support_wording = support_wording if isinstance(support_wording, Mapping) else {}
     semantic_support = panel_payload.get("semantic_support")
     semantic_support = semantic_support if isinstance(semantic_support, Mapping) else {}
     laj_advisory = panel_payload.get("laj_advisory")
@@ -574,7 +550,6 @@ def render_quality_summary(
             delivery,
             materiality,
             template_conformance,
-            support_wording,
             semantic_support,
         ),
     )
@@ -613,8 +588,6 @@ def render_quality_summary(
         f"`{_text(template_conformance.get('status')) or 'unknown'}`",
         "- Reader template warnings: "
         f"`{_template_conformance_warning_count(template_conformance)}`",
-        f"- Support wording status: `{_text(support_wording.get('status')) or 'unknown'}`",
-        f"- Support wording warnings: `{_support_wording_warning_count(support_wording)}`",
         "- Semantic support status: "
         f"`{_text(semantic_support.get('status')) or 'unknown'}` "
         "(`proposal-only`, not a gate, not release authority)",
@@ -724,8 +697,6 @@ def render_quality_panel_html(
     materiality = materiality if isinstance(materiality, Mapping) else {}
     template_conformance = panel_payload.get("report_template_conformance")
     template_conformance = template_conformance if isinstance(template_conformance, Mapping) else {}
-    support_wording = panel_payload.get("support_wording")
-    support_wording = support_wording if isinstance(support_wording, Mapping) else {}
     semantic_support = panel_payload.get("semantic_support")
     semantic_support = semantic_support if isinstance(semantic_support, Mapping) else {}
     laj_advisory = panel_payload.get("laj_advisory")
@@ -756,11 +727,6 @@ def render_quality_panel_html(
                     (
                         "template_warnings",
                         _template_conformance_warning_count(template_conformance),
-                        "warning",
-                    ),
-                    (
-                        "support_wording",
-                        _support_wording_warning_count(support_wording),
                         "warning",
                     ),
                     (
@@ -866,16 +832,6 @@ def render_quality_panel_html(
                     (
                         "reader_template_warnings",
                         _template_conformance_warning_count(template_conformance),
-                        "count_warning",
-                    ),
-                    (
-                        "support_wording",
-                        _text(support_wording.get("status")) or "unknown",
-                        "status",
-                    ),
-                    (
-                        "support_wording_warnings",
-                        _support_wording_warning_count(support_wording),
                         "count_warning",
                     ),
                     (
@@ -1045,13 +1001,6 @@ def validate_quality_panel_payload(payload: Any) -> str | None:
         trajectory_error = validate_trajectory_regulation_payload(trajectory)
         if trajectory_error:
             return f"quality_panel_schema_error:trajectory_regulation:{trajectory_error}"
-    guidance = payload.get("guidance_manifestation")
-    if guidance is not None:
-        if not isinstance(guidance, dict):
-            return "quality_panel_schema_error:guidance_manifestation"
-        guidance_error = validate_guidance_manifestation_projection_payload(guidance)
-        if guidance_error:
-            return f"quality_panel_schema_error:guidance_manifestation:{guidance_error}"
     materiality = payload.get("materiality_selection")
     if materiality is not None:
         if not isinstance(materiality, dict):
@@ -1066,13 +1015,6 @@ def validate_quality_panel_payload(payload: Any) -> str | None:
         template_error = validate_report_template_conformance_payload(template_conformance)
         if template_error:
             return f"quality_panel_schema_error:report_template_conformance:{template_error}"
-    support_wording = payload.get("support_wording")
-    if support_wording is not None:
-        if not isinstance(support_wording, dict):
-            return "quality_panel_schema_error:support_wording"
-        support_wording_error = validate_support_wording_payload(support_wording)
-        if support_wording_error:
-            return f"quality_panel_schema_error:support_wording:{support_wording_error}"
     semantic_support = payload.get("semantic_support")
     if semantic_support is not None:
         if not isinstance(semantic_support, dict):
@@ -1377,7 +1319,6 @@ def _overall_status(
     delivery: Mapping[str, Any],
     materiality_selection: Mapping[str, Any],
     report_template_conformance: Mapping[str, Any],
-    support_wording: Mapping[str, Any],
     semantic_support: Mapping[str, Any],
 ) -> str:
     if not workspace_status.get("ok"):
@@ -1413,7 +1354,6 @@ def _overall_status(
         or claims.get("weak_support_count", 0) > 0
         or _materiality_selection_warning_count(materiality_selection) > 0
         or _template_conformance_warning_count(report_template_conformance) > 0
-        or _support_wording_warning_count(support_wording) > 0
         or _semantic_support_warning_count(semantic_support) > 0
     ):
         return "warning"
@@ -1431,7 +1371,6 @@ def _recommended_actions(
     trajectory: Mapping[str, Any],
     materiality_selection: Mapping[str, Any],
     report_template_conformance: Mapping[str, Any],
-    support_wording: Mapping[str, Any],
     semantic_support: Mapping[str, Any],
 ) -> list[dict[str, str]]:
     actions: list[dict[str, str]] = []
@@ -1500,21 +1439,6 @@ def _recommended_actions(
             "action": "review_reader_template_conformance",
             "reason": "reader_template_conformance_warning_only",
         })
-    support_counts = (
-        support_wording.get("summary_counts")
-        if isinstance(support_wording.get("summary_counts"), Mapping)
-        else {}
-    )
-    if int(support_counts.get("unsupported_reader_claim_count") or 0) > 0:
-        actions.append({
-            "action": "request_human_review",
-            "reason": "unsupported_claim_present_in_reader_text",
-        })
-    elif _support_wording_warning_count(support_wording) > 0:
-        actions.append({
-            "action": "review_support_wording_warnings",
-            "reason": "support_calibrated_wording_warning_only",
-        })
     if int(semantic_support.get("requires_human_adjudication_count") or 0) > 0:
         actions.append({
             "action": "request_human_review",
@@ -1555,15 +1479,6 @@ def _template_conformance_warning_count(report_template_conformance: Mapping[str
         + int(counts.get("out_of_order_section_count") or 0)
         + int(counts.get("extra_heading_count") or 0)
     )
-
-
-def _support_wording_warning_count(support_wording: Mapping[str, Any]) -> int:
-    counts = (
-        support_wording.get("summary_counts")
-        if isinstance(support_wording.get("summary_counts"), Mapping)
-        else {}
-    )
-    return int(counts.get("finding_count") or 0)
 
 
 def _semantic_support_warning_count(semantic_support: Mapping[str, Any]) -> int:
@@ -1713,7 +1628,6 @@ def _quality_summary_warning_items(
     delivery: Mapping[str, Any],
     materiality_selection: Mapping[str, Any],
     report_template_conformance: Mapping[str, Any],
-    support_wording: Mapping[str, Any],
     semantic_support: Mapping[str, Any],
 ) -> list[str]:
     items: list[str] = []
@@ -1743,11 +1657,6 @@ def _quality_summary_warning_items(
         items.append(
             "Reader template conformance projection found "
             f"`{_template_conformance_warning_count(report_template_conformance)}` warning(s)."
-        )
-    if _support_wording_warning_count(support_wording) > 0:
-        items.append(
-            "Support-calibrated wording projection found "
-            f"`{_support_wording_warning_count(support_wording)}` reader wording warning(s)."
         )
     if _text(semantic_support.get("status")) == "invalid_report":
         items.append("Semantic support proposal report is invalid and is not interpreted as authority.")

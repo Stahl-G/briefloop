@@ -44,15 +44,11 @@ from multi_agent_brief.orchestrator.timing import derive_control_timing_from_pat
 from multi_agent_brief.outputs.atomic_reader_projection import (
     project_atomic_reader_text_from_workspace,
 )
-from multi_agent_brief.product.guidance_manifestation import (
-    project_workspace_guidance_manifestation,
-)
 from multi_agent_brief.product.materiality_selection import (
     project_workspace_materiality_selection,
 )
 from multi_agent_brief.product.policy_projection import project_workspace_policy_profile
 from multi_agent_brief.product.quality_closeout import quality_panel_closeout_projection
-from multi_agent_brief.product.support_wording import project_workspace_support_wording
 from multi_agent_brief.product.template_conformance import (
     project_workspace_report_template_conformance,
 )
@@ -126,9 +122,7 @@ def build_workspace_status(workspace: str | Path) -> dict[str, Any]:
         "report_template_conformance": {},
         "report_template_render_plan": {},
         "trajectory_regulation": {},
-        "guidance_manifestation": {},
         "materiality_selection": {},
-        "support_wording": {},
         "quality_panel_closeout": {},
         "progress": {},
         "timing": {},
@@ -224,10 +218,6 @@ def build_workspace_status(workspace: str | Path) -> dict[str, Any]:
         artifact_registry=registry_payload,
         expected_run_id=expected_run_id,
     )
-    payload["support_wording"] = project_workspace_support_wording(
-        ws,
-        claim_support_matrix=payload["claim_support_matrix"],
-    )
     payload["report_template"] = project_workspace_report_template(ws)
     payload["report_template_conformance"] = (
         project_workspace_report_template_conformance(ws)
@@ -242,12 +232,6 @@ def build_workspace_status(workspace: str | Path) -> dict[str, Any]:
         event_log_present=event_log_path.exists(),
         event_log_corrupt_count=int(payload["events"].get("corrupt_count") or 0),
         run_id=(manifest_payload or {}).get("run_id")
-        if isinstance(manifest_payload, dict)
-        else None,
-    )
-    payload["guidance_manifestation"] = project_workspace_guidance_manifestation(
-        ws,
-        runtime_manifest=manifest_payload
         if isinstance(manifest_payload, dict)
         else None,
     )
@@ -340,9 +324,7 @@ def format_workspace_status(status: dict[str, Any]) -> str:
     report_template_conformance = status.get("report_template_conformance") or {}
     report_template_render_plan = status.get("report_template_render_plan") or {}
     trajectory_regulation = status.get("trajectory_regulation") or {}
-    guidance_manifestation = status.get("guidance_manifestation") or {}
     materiality_selection = status.get("materiality_selection") or {}
-    support_wording = status.get("support_wording") or {}
     quality_panel_closeout = status.get("quality_panel_closeout") or {}
     events = status.get("events") or {}
     progress = status.get("progress") or {}
@@ -532,22 +514,6 @@ def format_workspace_status(status: dict[str, Any]) -> str:
             "boundary=projection_only "
             "runtime_effect=none"
         )
-    if guidance_manifestation.get("status") not in {
-        None,
-        "not_available",
-        "no_materialized_guidance",
-    }:
-        counts = guidance_manifestation.get("summary_counts")
-        counts = counts if isinstance(counts, dict) else {}
-        lines.append(
-            "[status] guidance_manifestation: "
-            f"{guidance_manifestation.get('status')} "
-            f"assessed={counts.get('assessed_entry_count', 0)} "
-            f"not_observable={counts.get('not_observable_count', 0)} "
-            f"contradicted={counts.get('contradicted_count', 0)} "
-            "boundary=diagnostic_only "
-            "runtime_effect=none"
-        )
     if materiality_selection.get("status") not in {None, "not_available"}:
         counts = materiality_selection.get("summary_counts")
         counts = counts if isinstance(counts, dict) else {}
@@ -556,18 +522,6 @@ def format_workspace_status(status: dict[str, Any]) -> str:
             f"{materiality_selection.get('status')} "
             f"findings={counts.get('finding_count', 0)} "
             f"human_review={counts.get('human_review_recommended_count', 0)} "
-            "boundary=projection_only "
-            "runtime_effect=none"
-        )
-    if support_wording.get("status") not in {None, "not_available"}:
-        counts = support_wording.get("summary_counts")
-        counts = counts if isinstance(counts, dict) else {}
-        lines.append(
-            "[status] support_wording: "
-            f"{support_wording.get('status')} "
-            f"findings={counts.get('finding_count', 0)} "
-            f"unsupported_reader={counts.get('unsupported_reader_claim_count', 0)} "
-            f"weak_strong={counts.get('weak_support_strong_wording_count', 0)} "
             "boundary=projection_only "
             "runtime_effect=none"
         )
