@@ -1,0 +1,18 @@
+{
+  "schema_version": "briefloop.init_web.asset_provenance.v1",
+  "prototype_repository": "https://github.com/Stahl-G/briefloop-prototypes",
+  "prototype_source_path": "interactive-init",
+  "prototype_assets": {
+    "app.js_sha256": "10458a9713d58f7bbfc9f02449085b95b9b0d4629c35d93eadc29c90add32539",
+    "index.html_sha256": "97a32e2351a982e8068a7f09afa1f68c34940a7496a5b1350a86379a37d97fe6",
+    "style.css_sha256": "c53aa0904f369d7fd6325543836bc90aefc41c76fa82046fea0bb5b3edca27d1"
+  },
+  "upstream_ppt_master_commit": "619a954695d866dde970552db9fb1a6640c643c8",
+  "license": "MIT",
+  "production_assets": {
+    "THIRD_PARTY_NOTICES.txt_sha256": "0331d187f4f3fa0f5618eded51d1156845e118fd86c59610d0fc60c009ea6ecc",
+    "app.js_sha256": "f14953d749bc92e4f634b86a15332419d8603f6f46820f0178802d3ae36dc734",
+    "index.html_sha256": "df55e545d07f2f88adf14d51af895978d998fa8ceba53bb613cf5bcd05fea45c",
+    "style.css_sha256": "539607712e9fdeaccc440740142779b8dad2fd7f51fc80c79d1b0b609f74fefe"
+  }
+}

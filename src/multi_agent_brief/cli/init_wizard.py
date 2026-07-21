@@ -848,6 +848,7 @@ def build_config(
             "filename_template": "{project_name}_{report_date}",
             "named_outputs": True,
             "footer": "Confidential — Internal Use Only",
+            "html_report": {"auto_open": False},
         },
         "source": {
             "mode": profile.source_profile,

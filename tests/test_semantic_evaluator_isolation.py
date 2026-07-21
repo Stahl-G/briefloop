@@ -85,6 +85,14 @@ FORBIDDEN_PROVIDER_OR_NETWORK_IMPORTS = (
 
 EXPERIMENT_ENTRYPOINT = SRC_ROOT / "cli" / "experiments_commands.py"
 QUALITY_PANEL_READ_ONLY_CONSUMER = SRC_ROOT / "product" / "quality_panel.py"
+BRIEF_HTML_READ_ONLY_CONSUMER = (
+    SRC_ROOT / "product" / "brief_html" / "builder.py"
+)
+READ_ONLY_LAJ_CONSUMERS = {
+    EXPERIMENT_ENTRYPOINT,
+    QUALITY_PANEL_READ_ONLY_CONSUMER,
+    BRIEF_HTML_READ_ONLY_CONSUMER,
+}
 NETWORK_IMPORT_ALLOWLIST = {
     "adapters/openai_responses.py": {"openai"},
     "adapters/local_proxy_responses.py": set(),
@@ -124,7 +132,7 @@ def test_no_normal_workflow_module_imports_semantic_evaluator() -> None:
     for path in SRC_ROOT.rglob("*.py"):
         if EVALUATOR_ROOT in path.parents:
             continue
-        if path in {EXPERIMENT_ENTRYPOINT, QUALITY_PANEL_READ_ONLY_CONSUMER}:
+        if path in READ_ONLY_LAJ_CONSUMERS:
             continue
         matched = sorted(
             module

@@ -30,6 +30,21 @@ def register(subparsers: argparse._SubParsersAction) -> None:
         "--force", action="store_true", help="Overwrite existing init files."
     )
     init_parser.add_argument(
+        "--web",
+        action="store_true",
+        help=(
+            "Start a one-shot loopback web wizard that creates the workspace "
+            "through the same ControlStore bootstrap path and shows the real "
+            "TransactionReceipt."
+        ),
+    )
+    init_parser.add_argument(
+        "--port",
+        type=int,
+        default=0,
+        help="Loopback port for --web (0 = random).",
+    )
+    init_parser.add_argument(
         "--language",
         choices=["en-US", "zh-CN", "bilingual"],
         help="Wizard/interface language.",
@@ -146,6 +161,38 @@ def register(subparsers: argparse._SubParsersAction) -> None:
 def handle(args: argparse.Namespace) -> int:
     """init — create a brief workspace."""
     return _init_workspace(args)
+
+
+def _init_web_wizard(args: argparse.Namespace) -> int:
+    """init --web — one-shot loopback wizard on the single bootstrap path."""
+
+    import webbrowser
+
+    from multi_agent_brief.product.init_web import (
+        InitWebSubmitter,
+        create_init_web_server,
+    )
+
+    port = getattr(args, "port", 0) or 0
+    if port < 0 or port > 65535:
+        print("init --web: --port must be between 0 and 65535.")
+        return 1
+    server = create_init_web_server(InitWebSubmitter(), port=port)
+    print(f"[init --web] one-shot wizard: {server.url}")
+    print("[init --web] the server exits after the first successful submission or Ctrl-C.")
+    try:
+        opened = webbrowser.open(server.url)
+    except Exception:
+        opened = False
+    if not opened:
+        print("[init --web] browser unavailable; open the URL above manually.")
+    try:
+        server.serve_forever()
+    except KeyboardInterrupt:
+        print("[init --web] cancelled; no workspace was created by this server.")
+    finally:
+        server.close()
+    return 0
 
 
 def print_tavily_guidance() -> None:
@@ -377,6 +424,9 @@ def _init_workspace(args: argparse.Namespace) -> int:
     )
     from multi_agent_brief.onboarding.io import load_onboarding_result
     from multi_agent_brief.onboarding.mapper import map_onboarding_to_profile
+
+    if getattr(args, "web", False):
+        return _init_web_wizard(args)
 
     # Priority: explicit CLI target > onboarding.target > default "brief-workspace"
     if args.demo:

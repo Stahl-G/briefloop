@@ -253,6 +253,32 @@ def register_quality(subparsers: argparse._SubParsersAction) -> None:
         "--json", action="store_true", help="Emit machine-readable JSON."
     )
 
+    html_parser = actions.add_parser(
+        "html",
+        help=(
+            "Write the read-only three-page brief HTML (quality / semantic "
+            "review / improvement) as a self-contained static export."
+        ),
+    )
+    html_parser.add_argument(
+        "--workspace", required=True, help="Path to workspace directory."
+    )
+    html_parser.add_argument(
+        "--open",
+        action="store_true",
+        help="Open the exported HTML in the local browser (headless prints the path).",
+    )
+    html_parser.add_argument(
+        "--laj-view",
+        help=(
+            "Optional standalone laj.json to display as the experimental, "
+            "advisory-only semantic review page."
+        ),
+    )
+    html_parser.add_argument(
+        "--json", action="store_true", help="Emit machine-readable JSON."
+    )
+
 
 def handle_new_workspace(args: argparse.Namespace) -> int:
     registry = ReportPackRegistry.from_package()
@@ -414,6 +440,32 @@ def handle_extract(args: argparse.Namespace) -> int:
 
 def handle_quality(args: argparse.Namespace) -> int:
     action = getattr(args, "quality_action", "")
+    if action == "html":
+        from multi_agent_brief.product.brief_html import (
+            BriefHtmlError,
+            BriefPagesError,
+            write_brief_pages,
+        )
+
+        workspace = Path(args.workspace).expanduser().resolve()
+        try:
+            payload = write_brief_pages(
+                workspace,
+                open_browser=bool(getattr(args, "open", False)),
+                laj_view_path=getattr(args, "laj_view", None),
+            )
+        except (BriefHtmlError, BriefPagesError, OSError, ValueError) as exc:
+            payload = {
+                "ok": False,
+                "error": str(exc),
+                "workspace": str(workspace),
+                "boundary": "read_only_static_export",
+            }
+        _print_payload("quality html", payload, as_json=getattr(args, "json", False))
+        if payload.get("ok"):
+            print(f"[quality html] static export: {payload.get('brief_pages')}")
+            return 0
+        return 1
     if action != "summarize":
         return 1
 
