@@ -524,6 +524,19 @@ reports.
 
 ---
 
+## 🙏 Acknowledgements
+
+BriefLoop's initialization panel adapts interaction-layout and visual-system
+source from [PPT Master](https://github.com/hugohe3/ppt-master), created by
+Hugo He and distributed under the MIT License. The adaptation is pinned to
+[PPT Master commit `619a954`](https://github.com/hugohe3/ppt-master/commit/619a954695d866dde970552db9fb1a6640c643c8).
+We are grateful to Hugo He and the PPT Master contributors for making the
+source available. See the packaged
+[third-party notice](src/multi_agent_brief/product/init_web/static/THIRD_PARTY_NOTICES.txt)
+for additional provenance and licensing details.
+
+---
+
 ## 📄 License
 
 MIT
