@@ -6,9 +6,54 @@
 
 Website: [briefloop.ai](https://briefloop.ai) · Contact: [contact@briefloop.ai](mailto:contact@briefloop.ai)
 
-[15-Minute Pilot](docs/15-minute-pilot.md) · [Getting Started](docs/getting-started.md) · [Weekly Loop](docs/weekly-loop.md) · [Troubleshooting](docs/troubleshooting.md) · [Reference Workspace](examples/reference-workspaces/industry-weekly-demo/README.md) · [Contact](docs/contact.md)
+[OpenAI Build Week](#openai-build-week-2026) · [15-Minute Pilot](docs/15-minute-pilot.md) · [Getting Started](docs/getting-started.md) · [Weekly Loop](docs/weekly-loop.md) · [Troubleshooting](docs/troubleshooting.md) · [Reference Workspace](examples/reference-workspaces/industry-weekly-demo/README.md) · [Contact](docs/contact.md)
 
 Writer entry: use `/briefloop` in Claude Code, or `briefloop` in a shell.
+
+---
+
+## OpenAI Build Week 2026
+
+BriefLoop was built with both **Codex** and **GPT-5.6**. They served
+different roles, and neither could make a model output authoritative on
+its own.
+
+| Participant | How it was used | Authority boundary |
+|---|---|---|
+| **Codex** | The primary engineering environment for architecture decomposition, Python implementation, testing, adversarial review, failure analysis, documentation, and scoped repair. Codex is also the host for BriefLoop’s current Experimental SQLite runtime path. | Codex could propose and implement bounded changes, but it could not approve its own work, merge changes, or authorize product and research claims. |
+| **GPT-5.6** | Generated candidate claims and weekly-brief drafts for the controlled comparison. GPT-5.6 Sol with maximum reasoning in Codex, together with an Academic Research Skill, supported related-work research, candidate protocol design, and technical-report drafting. A separate GPT-5.6 Sol Pro discussion challenged the controls, falsification criteria, citations, and claim boundaries. | Model outputs remained proposals. They were not automatically treated as evidence, accepted experimental results, or publication-ready conclusions. |
+| **Human maintainer** | Selected the research question, verified primary sources, defined invariants and acceptance criteria, froze the experimental protocol, accepted or rejected revisions, and approved merges and publication. | Final architecture, experiment, risk-acceptance, merge, and publication authority remained human-owned. |
+
+The Academic Research Skill https://github.com/imbad0202/academic-research-skills organized the research workflow; it was not used as source evidence. The underlying papers, official documentation, repository artifacts, and primary publications remained the cited sources.
+
+### Judge quickstart — no API key required
+
+Requires Python 3.12.
+
+```bash
+git clone https://github.com/Stahl-G/briefloop.git
+cd briefloop
+bash scripts/setup.sh
+source .venv/bin/activate
+bash scripts/demo.sh
+```
+
+The deterministic demo creates a public-safe reference workspace with a
+reader brief, Claim Ledger, Quality Panel, source appendix, and event-log
+excerpt. It does not call a model, fetch live sources, or prove output
+quality.
+
+* [Technical report — Architecture Reference v0.6.1](https://briefloop.ai/reports/briefloop-architecture-reference-v0.6.1.en.html)
+* [15-Minute Pilot](docs/15-minute-pilot.md)
+* [Public reference workspace](examples/reference-workspaces/industry-weekly-demo/README.md)
+
+### Evidence boundary
+
+The Prompt, Skill, and BriefLoop comparison is reported only from frozen
+artifacts, hashes, and completed review records. This README does not
+claim that BriefLoop has already won the comparison, automatically
+resolves every knowledge conflict, or removes the need for human review.
+It does not prove semantic truth.
 
 ---
 

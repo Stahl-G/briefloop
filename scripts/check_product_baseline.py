@@ -92,6 +92,10 @@ REQUIRED_DOC_BOUNDARY_PHRASES = {
         "publish reports",
         "authorize public release",
         "The system does not publish or bypass review",
+        "## OpenAI Build Week 2026",
+        "Codex",
+        "GPT-5.6",
+        "Judge quickstart",
     ],
     "README_en.md": [
         "English README has moved to [README.md](README.md).",
@@ -110,6 +114,10 @@ REQUIRED_DOC_BOUNDARY_PHRASES = {
         "自动解析 PDF",
         "授权公开发布",
         "系统不自动发布、不绕过人",
+        "## OpenAI Build Week 2026",
+        "Codex",
+        "GPT-5.6",
+        "评委快速试用",
     ],
     "docs/roadmap.md": [
         "v0.11.0 — Stable Weekly/Monthly Brief Product",
