@@ -515,7 +515,7 @@ def test_core_v2_static_authority_chokepoints_are_exact() -> None:
         item.name
         for node in ast.walk(gate_tree)
         if isinstance(node, ast.ImportFrom)
-        and node.module == "multi_agent_brief.quality_gates.state"
+        and node.module == "multi_agent_brief.quality_gates.evaluation"
         for item in node.names
     }
     assert gate_state_imports == {"evaluate_quality_gate_findings_preloaded"}
