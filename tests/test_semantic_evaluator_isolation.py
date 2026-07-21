@@ -59,6 +59,9 @@ EXPECTED_PACKAGE_FILES = {
     "validator.py",
 }
 
+# `orchestrator.runtime_state` below was deleted in LD2-3. It stays listed on
+# purpose: this is a reintroduction tripwire, so an owner that currently
+# resolves to nothing is the expected state, not dead config.
 FORBIDDEN_EVALUATOR_OWNERS = (
     "multi_agent_brief.control_store",
     "multi_agent_brief.core_run_v2",

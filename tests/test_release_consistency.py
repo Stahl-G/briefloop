@@ -211,17 +211,19 @@ class TestCheckReleaseConsistency:
         assert "v1_pilot_evidence.boundaries" in output
         assert "pilot evidence failed" in output
 
-    def test_release_script_requires_satisfied_v1_readiness_and_pilot_evidence_for_v1_0(self):
+    def test_release_script_requires_satisfied_pilot_evidence_for_v1_0(self):
         text = RELEASE_SCRIPT.read_text(encoding="utf-8")
         assert '[[ "$VERSION" =~ ^1\\.0\\. ]]' in text
-        assert "scripts/check_v1_rc_readiness.py --require-satisfied" in text
         assert "scripts/check_v1_pilot_evidence.py --require-satisfied" in text
         assert "scripts/check_release_consistency.py --no-tag" in text
+        # The RC readiness gate was retired in the LD2-3 follow-up: its
+        # scenario runner drove the deleted legacy runtime-state stack.
+        assert "check_v1_rc_readiness.py --require-satisfied" not in text
 
-    def test_release_checklist_requires_satisfied_v1_readiness_and_pilot_evidence(self):
+    def test_release_checklist_requires_satisfied_pilot_evidence(self):
         text = RELEASE_CHECKLIST.read_text(encoding="utf-8")
-        assert "scripts/check_v1_rc_readiness.py --require-satisfied" in text
         assert "scripts/check_v1_pilot_evidence.py --require-satisfied" in text
+        assert "check_v1_rc_readiness.py --require-satisfied" not in text
 
     def test_codebuddy_adapter_smoke_failure_prints_diagnostics(self, monkeypatch, capsys):
         spec = importlib.util.spec_from_file_location("release_consistency_test", SCRIPT)

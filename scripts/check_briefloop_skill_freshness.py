@@ -116,8 +116,8 @@ REQUIRED_REFERENCE_PHRASES: dict[str, list[str]] = {
         "post-finalize closeout",
     ],
     "references/repo-development.md": [
-        "v1.0 RC Readiness Gate",
-        "check_v1_rc_readiness.py",
+        "v1.0 Pilot Evidence Gate",
+        "check_v1_pilot_evidence.py",
         ".codebuddy/agents/briefloop-*.md",
         "CodeBuddy project role agents",
         "source-clone-only",

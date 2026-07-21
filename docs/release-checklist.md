@@ -54,11 +54,9 @@ python3 scripts/check_launch_smoke.py --json
 git diff --check
 ```
 
-For a v1.0 release, also require the RC readiness and pilot evidence gates to be
-satisfied:
+For a v1.0 release, also require the pilot evidence gate to be satisfied:
 
 ```bash
-python3 scripts/check_v1_rc_readiness.py --require-satisfied
 python3 scripts/check_v1_pilot_evidence.py --require-satisfied
 ```
 

@@ -355,6 +355,10 @@ def test_core_v2_imports_are_confined_to_dormant_cli_package_and_bound_intake() 
 
 
 def test_core_v2_does_not_import_legacy_runtime_writers() -> None:
+    # LD2-3 deleted every module named below. The guard is deliberately kept
+    # after the deletion: it is the tripwire that stops a legacy writer import
+    # from being reintroduced in any form. A name resolving to nothing is the
+    # expected state here, not dead code.
     package = ROOT / "src" / "multi_agent_brief" / "core_run_v2"
     forbidden = {
         "multi_agent_brief.status",

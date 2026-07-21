@@ -36,7 +36,7 @@ validation unless that is stated separately.
 | JSON/JSONL runtime control files (`runtime_manifest.json`, `workflow_state.json`, `artifact_registry.json`, `event_log.jsonl`) | Projection/legacy only; never accepted as runtime authority |
 | Stage runtime/model provenance on completion transactions | Supported |
 | Audience profile runtime surface (`audience_profile.md` + `audience_profile_snapshot.md`) | Supported |
-| Improvement Ledger / Memory (`improvement/ledger.jsonl`, `improvement/memory.md`, `improvement_memory_snapshot.md`) | Supported |
+| Improvement Ledger / Memory (`improvement/ledger.jsonl`, `improvement/memory.md`, `improvement_memory_snapshot.md`) | Retired (LD2-3); the projection and per-run freeze paths were deleted with the legacy stack, so these files have no code reader or writer. A Store-native Improvement Ledger belongs to MU-2 |
 | Orchestrator control switchboard (`orchestrator_control_switchboard.json`, optional `control_selections.json`) | Supported |
 | Feedback control files (`feedback_issues.json`, `repair_plan.json`, conditional `delta_audit_report.json`) | Supported |
 | Stage-scoped quality gate control files (`gates/auditor_quality_gate_report.json`, `gates/finalize_quality_gate_report.json`; legacy latest projection `quality_gate_report.json`) | Supported |
@@ -103,7 +103,7 @@ Provenance commands write a deterministic workspace-local audit/debug graph from
 
 Audience profile files are workspace-local runtime context. The active run uses the frozen per-run snapshot exposed through handoff; these files are not source evidence, artifact contracts, quality gates, provenance graph nodes, or stage blockers.
 
-Improvement Ledger files are human-governed workspace memory controls. Approved materializable guidance is projected into `improvement/memory.md` and frozen into `output/intermediate/improvement_memory_snapshot.md` during `run`/`start`/`handoff`. The snapshot is taste/audience guidance only; it is not evidence, source material, Claim Ledger input, repair instruction, semantic proof, or an output-quality guarantee.
+Improvement Ledger files are retired as of LD2-3. The code that projected approved guidance into `improvement/memory.md` and froze `output/intermediate/improvement_memory_snapshot.md` during `run`/`start`/`handoff` was deleted with the legacy runtime-state stack, so these files now have no reader or writer. Existing workspace files are inert; nothing reads them and no run consumes them. A Store-native Improvement Ledger is MU-2 work. Even when it was live, the snapshot carried taste/audience guidance only — it did not serve as evidence, source material, Claim Ledger input, repair instruction, semantic proof, or an output-quality guarantee.
 
 Control switchboard files are runtime control context. Python surfaces deterministic recommendations and records Orchestrator enable/defer/reject selections; selection is not execution and does not run gates, feedback planning, provenance projection, source discovery, repair, or subagents.
 
