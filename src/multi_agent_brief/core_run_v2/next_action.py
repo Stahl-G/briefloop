@@ -7,6 +7,7 @@ from multi_agent_brief.control_store.serialization import canonical_fingerprint
 from multi_agent_brief.quality_gates.contract import GATE_IDS
 
 from .errors import CoreRunError
+from .gates import EVALUATOR_IMPLEMENTATION, EVALUATOR_VERSION
 from .lineage import classify_current_lineage
 from .policy import (
     REQUIRED_AUDITOR_GATES,
@@ -491,6 +492,19 @@ def _auditor_action(verified: VerifiedCoreRun) -> CoreRunNextAction | None:
             action_kind="deterministic",
             effect_kind="gate_evaluation",
             reason_code="current_audit_promotion_requires_gate",
+            stage_id="auditor",
+            request_schema_id="briefloop.gate_check_request.v2",
+        )
+    if any(
+        item.producer_implementation != EVALUATOR_IMPLEMENTATION
+        or item.producer_version != EVALUATOR_VERSION
+        for item in gate.evaluations
+    ):
+        return _action(
+            verified,
+            action_kind="deterministic",
+            effect_kind="gate_evaluation",
+            reason_code="current_gate_evaluator_requires_refresh",
             stage_id="auditor",
             request_schema_id="briefloop.gate_check_request.v2",
         )

@@ -57,8 +57,8 @@ from .verifier import CoreRunDomainVerifier, resolve_core_replay
 
 _Clock = Callable[[], datetime]
 _ProposalT = TypeVar("_ProposalT", bound=StrictModel)
-_EVALUATOR_IMPLEMENTATION = "core-v2-preloaded-quality-gates"
-_EVALUATOR_VERSION = "1"
+EVALUATOR_IMPLEMENTATION = "core-v2-preloaded-quality-gates"
+EVALUATOR_VERSION = "2"
 
 
 class GateEvaluationService:
@@ -278,8 +278,8 @@ class GateEvaluationService:
                             "blocking": blocking,
                             "finding_ids": finding_ids,
                             "checked_at": now,
-                            "producer_implementation": _EVALUATOR_IMPLEMENTATION,
-                            "producer_version": _EVALUATOR_VERSION,
+                            "producer_implementation": EVALUATOR_IMPLEMENTATION,
+                            "producer_version": EVALUATOR_VERSION,
                             "report_artifact": {
                                 "artifact_id": report_record.artifact_id,
                                 "revision": report_revision_number,
@@ -326,7 +326,7 @@ class GateEvaluationService:
                     "size_bytes": len(report_bytes),
                     "frozen": True,
                     "producer_kind": "control_tool",
-                    "producer_id": _EVALUATOR_IMPLEMENTATION,
+                    "producer_id": EVALUATOR_IMPLEMENTATION,
                     "created_at": now,
                 },
                 strict=True,
@@ -520,6 +520,7 @@ def _replay_gate_outcomes(
     stages: tuple[dict[str, object], ...],
     artifacts: tuple[dict[str, object], ...],
     artifact_bindings: tuple[GateArtifactBinding, ...],
+    evaluator_version: str = EVALUATOR_VERSION,
 ) -> dict[str, tuple[str | None, list[dict[str, object]]]]:
     """Replay the sole preloaded Gate evaluator from exact Store revisions."""
 
@@ -692,6 +693,17 @@ def _replay_gate_outcomes(
                 ledger_revision.revision,
             )
         )
+        if evaluator_version == "2":
+            sources_by_id = {item.source_id: item for item in snapshot.sources}
+            for claim in ledger:
+                source = sources_by_id.get(claim.source_id)
+                if (
+                    source is not None
+                    and source.document_kind == "status_incident"
+                    and source.opened_at is not None
+                    and not claim.metadata.get("published_at")
+                ):
+                    claim.metadata["published_at"] = source.opened_at
         markdown = store.read_artifact_revision_bytes(
             snapshot.run.run_id,
             brief_revision.artifact_id,
@@ -721,7 +733,14 @@ def _replay_gate_outcomes(
             markdown=markdown,
             ledger=ledger,
             config={
-                "project": {"name": direction.subject_name},
+                "project": (
+                    {"name": direction.subject_name}
+                    if evaluator_version == "1"
+                    else {
+                        "name": direction.subject_name,
+                        "target_terms": list(direction.target_terms),
+                    }
+                ),
                 "report": {"cadence": direction.cadence},
             },
             user_text=f"Target: {direction.subject_name}",
