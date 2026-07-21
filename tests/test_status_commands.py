@@ -438,7 +438,7 @@ def test_status_command_public_cli_rejects_non_sqlite_workspaces_without_writes(
     argv = ["status", "--workspace", str(ws)]
     if use_json:
         argv.append("--json")
-    # LEGACY-DELETE: the retired public status CLI against non-SQLite
+    # the retired public status CLI against non-SQLite
     # workspaces; the read-only projection contract is preserved through
     # status_module.build_workspace_status / format_workspace_status.
     rc = main(argv)

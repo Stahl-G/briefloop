@@ -1436,7 +1436,7 @@ def _with_task_objective_if_supported(args):
         for option in action.option_strings
     }
     if "--task-objective" in init_options:
-        # LEGACY-DELETE: retain only the strict SQLite initialization contract.
+        # retain only the strict SQLite initialization contract.
         return [
             *args,
             "--task-objective",

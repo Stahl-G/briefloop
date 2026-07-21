@@ -161,7 +161,7 @@ def test_sources_decide_search_no_mock_residual(capsys, tmp_path: Path):
 
     rc = main(["sources", "decide", "--config", str(ws / "config.yaml"), "--search"])
     captured = capsys.readouterr()
-    # LEGACY-DELETE: retired public `sources decide` surface; source decisions
+    # retired public `sources decide` surface; source decisions
     # now run inside the SQLite ControlStore runtime authority.
     assert rc == 1
     assert captured.out == "runtime_command_unsupported\n"

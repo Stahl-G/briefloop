@@ -166,7 +166,7 @@ def _workspace_file_bytes(ws: Path) -> dict[str, bytes]:
 
 
 def test_deliver_public_cli_is_retired_with_zero_writes(tmp_path: Path, capsys) -> None:
-    # LEGACY-DELETE: retired public `deliver` CLI surface; delivery semantics are
+    # retired public `deliver` CLI surface; delivery semantics are
     # only reachable through the direct deterministic seam (deliver_workspace).
     cases: list[tuple[Path, str, list[str]]] = []
 

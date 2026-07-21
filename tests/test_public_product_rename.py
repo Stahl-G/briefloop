@@ -172,7 +172,6 @@ def test_active_runtime_primary_cli_surface_is_ratchet_locked() -> None:
 
     expected = {
         "HERMES.md",
-        "scripts/ci/smoke_packaged_topology_handoff.py",
         ".agents/skills/brief-onboarding/SKILL.md",
         ".agents/skills/claim-ledger/SKILL.md",
         ".agents/skills/orchestrator/SKILL.md",

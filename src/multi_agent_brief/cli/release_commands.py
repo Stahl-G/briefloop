@@ -26,43 +26,16 @@ def register(subparsers: argparse._SubParsersAction) -> None:
 
 
 def handle(args: argparse.Namespace) -> int:
-    action = getattr(args, "release_action", "")
-    try:
-        if action == "check":
-            result = check_release_readiness(workspace=args.workspace, mode=args.mode)
-            payload = dict(result.payload)
-            payload["ok"] = payload.get("status") == "pass"
-            payload["report_path"] = "output/intermediate/release_readiness_report.json"
-            _print_payload("release check", payload, as_json=getattr(args, "json", False))
-            return 0 if payload["ok"] else 1
-    except (ReleaseApprovalError, RuntimeStateError, OSError, json.JSONDecodeError) as exc:
-        payload = {"ok": False, "error": str(exc)}
-        _print_payload("release check", payload, as_json=getattr(args, "json", False))
-        return 1
-    raise AssertionError(f"Unhandled release action: {action}")
+    """Fail-closed stub for the retired public CLI surface.
 
+    The parser registration is retained so the authority guard can return
+    the typed rejection for workspace invocations; any no-workspace bypass
+    lands here instead of executing legacy code.
+    """
 
-def _print_payload(label: str, payload: dict[str, Any], *, as_json: bool) -> None:
-    if as_json:
-        print(json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True))
-        return
-    print(label)
-    for key in (
-        "ok",
-        "mode",
-        "status",
-        "approval_required",
-        "missing_roles",
-        "blockers",
-        "branding_context",
-        "authorization",
-        "next_step",
-        "report_path",
-    ):
-        if key not in payload:
-            continue
-        value = payload[key]
-        if isinstance(value, (dict, list)):
-            print(f"{key}: {json.dumps(value, ensure_ascii=False, sort_keys=True)}")
-        else:
-            print(f"{key}: {value}")
+    print("runtime_command_unsupported")
+    return 1
+
+# NOTE: the public command surface of this module is retired. The
+# SQLite ControlStore is the sole runtime authority; only the parser
+# registration (typed rejections) and the stub below remain.

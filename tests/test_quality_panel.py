@@ -1326,7 +1326,7 @@ def test_quality_summarize_public_cli_retired_rejects_typed_without_writes(
     tmp_path: Path,
     capsys,
 ) -> None:
-    # LEGACY-DELETE: retired public `quality summarize` CLI on JSON control
+    # retired public `quality summarize` CLI on JSON control
     # state; the authority guard answers a typed token and performs zero writes.
     ws = _workspace(tmp_path)
     reader_target = ws / "output" / "brief.md"
@@ -1374,7 +1374,7 @@ def test_quality_summarize_public_cli_retired_rejects_typed_without_writes(
 
 
 def test_state_public_cli_retired_rejects_typed_without_writes(tmp_path: Path, capsys) -> None:
-    # LEGACY-DELETE: retired public `state` operator CLI surface; the authority
+    # retired public `state` operator CLI surface; the authority
     # guard answers a typed token and performs zero writes.
     ws = _workspace(tmp_path)
     capsys.readouterr()

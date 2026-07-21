@@ -58,35 +58,34 @@ validation unless that is stated separately.
 | `briefloop status --workspace <path>` | Supported read-only Store projection for SQLite workspaces; JSON-only workspace unsupported |
 | Legacy `briefloop deliver` commands | Unsupported on SQLite; approval and delivery use typed Store actions through `runtime apply` |
 | Legacy `briefloop sources decide` command | Unsupported on SQLite; source discovery runs through the runtime-host route |
-| `briefloop deliver --workspace <path> --target feishu` | Experimental |
-| `briefloop deliver --workspace <path> --target gmail --channel draft\|send` | Experimental |
-| Legacy `state`, `gates`, `repair`, `finalize`, `delivery`, `controls`, and feedback mutators | Unsupported on SQLite; retained only until legacy deletion |
-| `briefloop state import-fact-layer --runtime <canonical-runtime>` | Experimental |
-| `briefloop controls build-switchboard/show/select/validate` | Supported |
+| Legacy `briefloop deliver --target feishu\|gmail` forms | Unsupported on SQLite; no user-reachable delivery entry remains — the connector execution layer is retained only as a tested internal seam |
+| Legacy `state`, `gates`, `repair`, `finalize`, `delivery`, `controls`, and feedback mutators | Unsupported on SQLite; public handlers removed in LEGACY-DELETE with typed rejections retained; the legacy JSON runtime-state stack is declared internal debt tracked as LEGACY-DELETE-2 |
+| `briefloop state import-fact-layer --runtime <canonical-runtime>` | Unsupported on SQLite; retired public CLI |
+| `briefloop controls build-switchboard/show/select/validate` | Unsupported on SQLite; retired public CLI |
 | `briefloop runtime install --workspace <path> --runtime codex` | Experimental; packaged/non-editable Codex kit |
-| `briefloop feedback ingest/plan/resolve/show/validate` | Supported |
-| `briefloop gates check/show/validate` | Supported |
-| `briefloop provenance build/show/validate` | Supported |
-| `briefloop improve propose/list/show/approve/reject/revert/stats/validate/rebuild` | Supported |
+| `briefloop feedback ingest/plan/resolve/show/validate` | Unsupported on SQLite; retired public CLI |
+| `briefloop gates check/show/validate` | Unsupported on SQLite; retired public CLI |
+| `briefloop provenance build/show/validate` | Unsupported on SQLite; retired public CLI |
+| `briefloop improve propose/list/show/approve/reject/revert/stats/validate/rebuild` | Unsupported on SQLite; retired public CLI |
 | `briefloop eval-cases list/validate/run` | Supported |
-| `briefloop experiments 080 validate-case` | Archived Experimental |
-| `briefloop experiments 080 register-run` | Archived Experimental |
-| `briefloop experiments 080 score-run` | Archived Experimental |
-| `briefloop experiments 080 import-assessment` | Archived Experimental |
-| `briefloop experiments 080 summarize` | Archived Experimental |
-| `briefloop experiments 080 scaffold-condition` | Archived Experimental |
+| `briefloop experiments 080 validate-case` | Archived Experimental; public CLI retired, case tooling runs through deterministic `multi_agent_brief.experiments` service functions |
+| `briefloop experiments 080 register-run` | Archived Experimental; public CLI retired, case tooling runs through deterministic `multi_agent_brief.experiments` service functions |
+| `briefloop experiments 080 score-run` | Archived Experimental; public CLI retired, case tooling runs through deterministic `multi_agent_brief.experiments` service functions |
+| `briefloop experiments 080 import-assessment` | Archived Experimental; public CLI retired, case tooling runs through deterministic `multi_agent_brief.experiments` service functions |
+| `briefloop experiments 080 summarize` | Archived Experimental; public CLI retired, case tooling runs through deterministic `multi_agent_brief.experiments` service functions |
+| `briefloop experiments 080 scaffold-condition` | Archived Experimental; public CLI retired, case tooling runs through deterministic `multi_agent_brief.experiments` service functions |
 | `briefloop experiments laj shadow-run` | Experimental; public/synthetic offline-shadow execution and exact replay only; advisory output has zero workflow, Gate, finalize, delivery, repair, approval, or next-action authority |
 | `briefloop experiments laj present` | Experimental; deterministic standalone JSON/Markdown/HTML projection of one verified shadow archive; invalid, missing, stale, abstained, or unavailable results display no advice and have zero runtime authority |
 | `briefloop experiments laj study-preflight/budgeted-shadow-run/study-compare` | Experimental; strict target eligibility, complete-trial call/token budget, and offline exact dimension/span-overlap comparison only; advisory with zero runtime authority; utility and efficacy NOT MEASURED |
 | `briefloop init --from-onboarding` | Supported |
 | `briefloop onboard` | Supported |
 | `briefloop doctor` | Supported |
-| `briefloop extract --workspace <path> --scope <text> --source <file>` | Experimental |
-| `briefloop sources add-file/add-rss/add-web-search` | Experimental |
-| `briefloop approval init/record` and `briefloop release check` | Experimental |
-| `briefloop inputs extract` | Experimental |
-| `briefloop inputs classify` | Supported |
-| `briefloop finalize` | Supported |
+| `briefloop extract --workspace <path> --scope <text> --source <file>` | Unsupported on SQLite; retired public CLI |
+| `briefloop sources add-file/add-rss/add-web-search` | Unsupported on SQLite; retired public CLI forms; source intake runs through the runtime-host route |
+| `briefloop approval init/record` and `briefloop release check` | Unsupported on SQLite; retired public CLI; release checks run through deterministic release tooling |
+| `briefloop inputs extract` | Unsupported on SQLite; retired public CLI |
+| `briefloop inputs classify` | Unsupported on SQLite; retired public CLI |
+| `briefloop finalize` | Unsupported on SQLite; finalize runs through the Codex runtime host as typed Store actions |
 | `briefloop audit` | Supported |
 
 Feedback commands structure issues and repair plans for the Orchestrator. They do not automatically edit brief artifacts or execute repair.

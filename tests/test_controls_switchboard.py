@@ -144,7 +144,7 @@ def test_retired_controls_cli_fails_closed_without_writes(tmp_path, capsys):
         rc = main(argv)
         output = capsys.readouterr().out
 
-        # LEGACY-DELETE: retired public `controls` CLI over legacy JSON control state.
+        # retired public `controls` CLI over legacy JSON control state.
         assert rc == 1, argv
         assert output == "legacy_workspace_unsupported\n", argv
         assert _snapshot_workspace_files(ws) == before_files, argv
@@ -162,7 +162,7 @@ def test_retired_state_cli_fails_closed_without_writes(tmp_path, capsys):
         rc = main(argv)
         output = capsys.readouterr().out
 
-        # LEGACY-DELETE: retired public `state` CLI over legacy JSON control state.
+        # retired public `state` CLI over legacy JSON control state.
         assert rc == 1, argv
         assert output == "legacy_workspace_unsupported\n", argv
         assert _snapshot_workspace_files(ws) == before_files, argv
@@ -180,7 +180,7 @@ def test_retired_operator_run_cli_fails_closed_without_writes(tmp_path, capsys):
         rc = main(argv)
         output = capsys.readouterr().out
 
-        # LEGACY-DELETE: retired public `run --runtime operator` launcher.
+        # retired public `run --runtime operator` launcher.
         assert rc == 1, argv
         assert output == "legacy_workspace_unsupported\n", argv
         assert _snapshot_workspace_files(ws) == before_files, argv

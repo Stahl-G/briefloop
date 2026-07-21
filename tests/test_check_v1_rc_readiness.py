@@ -377,7 +377,7 @@ def test_real_executable_rc_safety_check_runs_all_required_scenarios() -> None:
         assert item.evidence == expected_passes
         return
 
-    # LEGACY-DELETE: remove this pre/post-CX transition branch and retain only
+    # remove this pre/post-CX transition branch and retain only
     # the SQLite-runtime acceptance contract.
     assert item.satisfied is False
     assert len(item.evidence) == len(guard.REQUIRED_SCENARIO_IDS)

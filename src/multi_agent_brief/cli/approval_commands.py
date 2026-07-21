@@ -47,61 +47,16 @@ def register(subparsers: argparse._SubParsersAction) -> None:
 
 
 def handle(args: argparse.Namespace) -> int:
-    action = getattr(args, "approval_action", "")
-    try:
-        if action == "modes":
-            payload = release_modes_payload()
-            _print_payload("approval modes", payload, as_json=getattr(args, "json", False))
-            return 0
-        if action == "init":
-            result = initialize_approval_ledger(
-                workspace=args.workspace,
-                mode=args.mode,
-                actor=getattr(args, "by", "human"),
-            )
-            payload = {
-                "ok": True,
-                "mode": args.mode,
-                "ledger_path": "output/intermediate/human_approval_ledger.json",
-                "event_id": result.event.get("event_id") if result.event else "",
-                "boundary": "internal_review_approval_records_only_not_public_release_authorization",
-            }
-            _print_payload("approval init", payload, as_json=getattr(args, "json", False))
-            return 0
-        if action == "record":
-            result = record_human_approval(
-                workspace=args.workspace,
-                mode=getattr(args, "mode", None),
-                role=args.role,
-                decision=args.decision,
-                reason=args.reason,
-                actor_id=getattr(args, "by", "human"),
-            )
-            payload = {
-                "ok": True,
-                "mode": getattr(args, "mode", None) or "resolved_from_ledger",
-                "role": args.role,
-                "decision": args.decision,
-                "ledger_path": "output/intermediate/human_approval_ledger.json",
-                "event_id": result.event.get("event_id") if result.event else "",
-                "boundary": "internal_review_approval_records_only_not_public_release_authorization",
-            }
-            _print_payload("approval record", payload, as_json=getattr(args, "json", False))
-            return 0
-    except (ReleaseApprovalError, RuntimeStateError, OSError, json.JSONDecodeError) as exc:
-        payload = {"ok": False, "error": str(exc)}
-        _print_payload("approval", payload, as_json=getattr(args, "json", False))
-        return 1
-    raise AssertionError(f"Unhandled approval action: {action}")
+    """Fail-closed stub for the retired public CLI surface.
 
+    The parser registration is retained so the authority guard can return
+    the typed rejection for workspace invocations; any no-workspace bypass
+    lands here instead of executing legacy code.
+    """
 
-def _print_payload(label: str, payload: dict[str, Any], *, as_json: bool) -> None:
-    if as_json:
-        print(json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True))
-        return
-    print(label)
-    for key, value in payload.items():
-        if isinstance(value, (dict, list)):
-            print(f"{key}: {json.dumps(value, ensure_ascii=False, sort_keys=True)}")
-        else:
-            print(f"{key}: {value}")
+    print("runtime_command_unsupported")
+    return 1
+
+# NOTE: the public command surface of this module is retired. The
+# SQLite ControlStore is the sole runtime authority; only the parser
+# registration (typed rejections) and the stub below remain.

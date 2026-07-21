@@ -100,41 +100,7 @@ def handle_analysis_blocks(args: argparse.Namespace) -> int:
 
 
 def handle_limitation_hygiene(args: argparse.Namespace) -> int:
-    """Audit limitation hygiene from a claim ledger."""
-    from multi_agent_brief.analysis_blocks.builder import build_analysis_blocks
-    from multi_agent_brief.audit.limitation_hygiene import (
-        audit_limitation_hygiene,
-        format_limitation_hygiene_report,
-    )
+    """Fail-closed stub for the retired public limitation-hygiene command."""
 
-    ledger_path = Path(args.ledger)
-    if not ledger_path.exists():
-        print(f"[error] Claim ledger not found: {ledger_path}")
-        return 1
-
-    ledger = ClaimLedger.import_json(ledger_path)
-    blocks = build_analysis_blocks(ledger)
-    report = audit_limitation_hygiene(blocks, ledger)
-
-    # Default output: same directory as ledger
-    output_path = (
-        Path(args.output)
-        if args.output
-        else ledger_path.parent / "limitation_hygiene_report.json"
-    )
-    output_path.parent.mkdir(parents=True, exist_ok=True)
-    output_path.write_text(
-        json.dumps(report.to_dict(), ensure_ascii=False, indent=2),
-        encoding="utf-8",
-    )
-
-    print(format_limitation_hygiene_report(report))
-    print(
-        f"\n[limitation-hygiene] Wrote report to {output_path}"
-    )
-
-    warnings = sum(
-        1 for f in report.findings if f.severity == "warning"
-    )
-    fails = sum(1 for f in report.findings if f.severity == "fail")
-    return 1 if fails else 0
+    print("runtime_command_unsupported")
+    return 1

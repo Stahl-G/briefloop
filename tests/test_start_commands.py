@@ -84,7 +84,7 @@ def _launch_handoff(
 ):
     """Drive the retired run/start/handoff launcher through its direct seam.
 
-    LEGACY-DELETE: the public `run`/`start`/`handoff` launcher CLI is retired;
+    The public `run`/`start`/`handoff` launcher CLI is retired;
     the handoff build + runtime-state bootstrap it wrapped stays exercised here
     through build_handoff + write_handoff_and_state.
     """
@@ -1778,7 +1778,7 @@ def test_prepare_output_points_to_run(tmp_path, capsys):
     """prepare is a retired public path: typed rejection with zero writes."""
     ws = _write_workspace(tmp_path)
     before = _snapshot_workspace_bytes(ws)
-    # LEGACY-DELETE: retired public `prepare` launcher and its legacy guidance text.
+    # retired public `prepare` launcher and its legacy guidance text.
     rc = main(["prepare", "--config", str(ws / "config.yaml")])
     assert rc == 1
     assert capsys.readouterr().out == "runtime_command_unsupported\n"
@@ -1795,14 +1795,14 @@ def test_retired_launcher_public_paths_reject_without_writes(tmp_path, monkeypat
         assert capsys.readouterr().out == expected
         assert _snapshot_workspace_bytes(ws) == before
 
-    # LEGACY-DELETE: retired public `start` launcher (explicit --workspace).
+    # retired public `start` launcher (explicit --workspace).
     ws_start = _write_workspace(tmp_path / "start-flag")
     assert_rejected(
         ws_start,
         ["start", "--runtime", "operator", "--workspace", str(ws_start), "--skip-doctor", "--venv", venv],
         "runtime_command_unsupported\n",
     )
-    # LEGACY-DELETE: retired `start` CWD workspace auto-detection.
+    # retired `start` CWD workspace auto-detection.
     ws_start_cwd = _write_workspace(tmp_path / "start-cwd")
     monkeypatch.chdir(ws_start_cwd)
     assert_rejected(
@@ -1810,7 +1810,7 @@ def test_retired_launcher_public_paths_reject_without_writes(tmp_path, monkeypat
         ["start", "--runtime", "operator", "--skip-doctor", "--venv", venv],
         "[start] runtime_command_unsupported\n",
     )
-    # LEGACY-DELETE: retired non-codex `run` runtime adapters (operator/claude).
+    # retired non-codex `run` runtime adapters (operator/claude).
     ws_run = _write_workspace(tmp_path / "run-operator")
     assert_rejected(
         ws_run,
@@ -1826,21 +1826,21 @@ def test_retired_launcher_public_paths_reject_without_writes(tmp_path, monkeypat
         ],
         "[run] runtime_adapter_unsupported\n",
     )
-    # LEGACY-DELETE: retired `run --skip-doctor` launcher path for the codex runtime.
+    # retired `run --skip-doctor` launcher path for the codex runtime.
     ws_codex = _write_workspace(tmp_path / "run-codex")
     assert_rejected(
         ws_codex,
         ["run", "--runtime", "codex", "--workspace", str(ws_codex), "--skip-doctor", "--venv", venv],
         "[run] runtime_command_unsupported\n",
     )
-    # LEGACY-DELETE: retired public `handoff` generator command.
+    # retired public `handoff` generator command.
     ws_handoff = _write_workspace(tmp_path / "handoff")
     assert_rejected(
         ws_handoff,
         ["handoff", "--config", str(ws_handoff / "config.yaml"), "--runtime", "hermes", "--skip-doctor", "--venv", venv],
         "runtime_command_unsupported\n",
     )
-    # LEGACY-DELETE: legacy JSON control-plane workspaces are refused by every command.
+    # legacy JSON control-plane workspaces are refused by every command.
     ws_legacy = _write_workspace(tmp_path / "legacy")
     initialize_runtime_state(runtime="operator", workspace=ws_legacy, repo_workdir=ROOT)
     assert_rejected(

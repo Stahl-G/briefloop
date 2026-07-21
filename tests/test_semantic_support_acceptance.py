@@ -38,7 +38,7 @@ def _arg(argv: list[str], name: str, *, default: str | None = None) -> str | Non
 def main(argv: list[str]) -> int:
     """Exercise retired semantic-support modules directly, never the public CLI guard.
 
-    LEGACY-DELETE removes this bridge with the legacy semantic-support
+    the public semantic-support CLI is retired; this bridge keeps the direct deterministic seams with the legacy semantic-support
     acceptance module tests.  Until then it preserves their deterministic
     invariants without claiming that JSON control state remains a supported
     public authority.
@@ -624,7 +624,7 @@ def test_semantic_support_public_cli_retired_rejects_typed_without_writes(
     tmp_path: Path,
     capsys,
 ) -> None:
-    # LEGACY-DELETE: retired public `semantic-support` CLI surface; the
+    # retired public `semantic-support` CLI surface; the
     # authority guard answers a typed token and performs zero writes.
     ws = _workspace(tmp_path)
     _write_fresh_semantic_support_artifacts(ws)

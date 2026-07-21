@@ -434,7 +434,7 @@ def test_provenance_cli_is_retired_with_zero_writes(tmp_path, capsys, action):
 
     rc = main(argv)
 
-    # LEGACY-DELETE: the JSON provenance CLI payloads are removed with the
+    # the JSON provenance CLI payloads are removed with the
     # retired legacy-workspace public surface; rejection is now fail-closed.
     assert rc == 1
     assert capsys.readouterr().out == "legacy_workspace_unsupported\n"

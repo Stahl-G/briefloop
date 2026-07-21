@@ -132,7 +132,7 @@ def test_state_check_cli_is_retired_with_typed_rejection(tmp_path: Path, capsys)
     _write_report(ws, _report(run_id))
     files_before = _workspace_file_bytes(ws)
 
-    # LEGACY-DELETE: retired public `state check` operator CLI; typed rejection
+    # retired public `state check` operator CLI; typed rejection
     # with zero writes replaces the pre-CX artifact-registry refresh.
     assert main(["state", "check", "--workspace", str(ws)]) == 1
     assert capsys.readouterr().out == "legacy_workspace_unsupported\n"
@@ -295,7 +295,7 @@ def test_guidance_manifestation_artifact_registry_validates_current_run(tmp_path
     run_id = _write_manifest_improvement(ws, ["AG-0001"])
     _write_report(ws, _report(run_id))
 
-    # LEGACY-DELETE: retired public `state check` CLI; the artifact-registry
+    # retired public `state check` CLI; the artifact-registry
     # refresh is driven through the direct runtime-state seam.
     check_runtime_state(workspace=ws)
     registry = _json(ws / "output" / "intermediate" / "artifact_registry.json")
@@ -305,7 +305,7 @@ def test_guidance_manifestation_artifact_registry_validates_current_run(tmp_path
 
     stale = _report("mabw-20260101T000000Z-stale")
     _write_report(ws, stale)
-    # LEGACY-DELETE: retired public `state check` CLI; the artifact-registry
+    # retired public `state check` CLI; the artifact-registry
     # refresh is driven through the direct runtime-state seam.
     check_runtime_state(workspace=ws)
     registry = _json(ws / "output" / "intermediate" / "artifact_registry.json")
@@ -324,7 +324,7 @@ def test_guidance_manifestation_artifact_registry_validates_current_run(tmp_path
         }
     )
     _write_report(ws, extra)
-    # LEGACY-DELETE: retired public `state check` CLI; the artifact-registry
+    # retired public `state check` CLI; the artifact-registry
     # refresh is driven through the direct runtime-state seam.
     check_runtime_state(workspace=ws)
     registry = _json(ws / "output" / "intermediate" / "artifact_registry.json")
@@ -335,7 +335,7 @@ def test_guidance_manifestation_artifact_registry_validates_current_run(tmp_path
     forged_method = _report(run_id)
     forged_method["assessment_method"] = "python_auto_manifestation_judge"
     _write_report(ws, forged_method)
-    # LEGACY-DELETE: retired public `state check` CLI; the artifact-registry
+    # retired public `state check` CLI; the artifact-registry
     # refresh is driven through the direct runtime-state seam.
     check_runtime_state(workspace=ws)
     registry = _json(ws / "output" / "intermediate" / "artifact_registry.json")

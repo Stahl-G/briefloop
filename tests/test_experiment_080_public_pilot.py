@@ -121,7 +121,7 @@ def test_080_public_pilot_scaffold_condition_cli_is_retired(tmp_path, capsys):
         "--json",
     ])
 
-    # LEGACY-DELETE: retired public `experiments 080 scaffold-condition` CLI
+    # retired public `experiments 080 scaffold-condition` CLI
     # surface; the deterministic scaffold_condition seam keeps the scaffold
     # invariant in test_080_public_pilot_seed_archive_scaffolds_baseline.
     assert rc == 1

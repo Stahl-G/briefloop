@@ -102,7 +102,7 @@ def test_retired_public_cli_paths_fail_closed_with_zero_writes(
     argv: list[str],
     expected_line: str,
 ) -> None:
-    # LEGACY-DELETE: retired public inputs/finalize/operator-run CLI surfaces;
+    # retired public inputs/finalize/operator-run CLI surfaces;
     # their semantics now live only in the direct deterministic seams below.
     ws = _write_workspace(tmp_path)
     before_files = _workspace_file_bytes(ws)
@@ -454,7 +454,7 @@ def test_inputs_classify_custom_output_creates_parent(tmp_path: Path):
     (ws / "input" / "sources").mkdir(parents=True, exist_ok=True)
     (ws / "input" / "sources" / "real.md").write_text("# real", encoding="utf-8")
 
-    # LEGACY-DELETE: the retired public `inputs classify --output` CLI owned
+    # the retired public `inputs classify --output` CLI owned
     # custom output path parent creation and JSON serialization; the surviving
     # seam is the read-only classify_input_dir projection.
     j = classify_input_dir(ws / "input")
@@ -473,7 +473,7 @@ def test_inputs_classify_custom_output_does_not_create_default_output_dir(tmp_pa
     (ws / "input" / "sources").mkdir(parents=True)
     (ws / "input" / "sources" / "real.md").write_text("# real", encoding="utf-8")
 
-    # LEGACY-DELETE: the retired public `inputs classify --output` CLI owned
+    # the retired public `inputs classify --output` CLI owned
     # custom output file writing; classify_input_dir is read-only and never
     # creates the configured output directory.
     assert _config_input_path(ws) == ws / "input"

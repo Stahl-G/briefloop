@@ -697,7 +697,7 @@ def test_retired_public_gate_command_surfaces_fail_closed_on_legacy_workspace(tm
     ws = _write_workspace(tmp_path)
     _write_ledger(ws, [])
     _write_audited_brief(ws, "## Executive Summary\nTargetCo update.\n")
-    # LEGACY-DELETE: retired public gates/state/feedback CLI surfaces on legacy JSON
+    # retired public gates/state/feedback CLI surfaces on legacy JSON
     # workspaces; the SQLite ControlStore runtime is the sole command authority.
     before_files = {
         path.relative_to(ws).as_posix(): path.read_bytes()

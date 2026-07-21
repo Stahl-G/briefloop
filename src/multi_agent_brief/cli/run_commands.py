@@ -1,4 +1,4 @@
-"""run / start / handoff / prepare — runtime handoff launcher commands."""
+"""run / start — runtime handoff launcher command."""
 
 from __future__ import annotations
 
@@ -6,19 +6,8 @@ import argparse
 import json
 from pathlib import Path
 
-from multi_agent_brief.orchestrator.handoff import (
-    RUNTIME_RECIPE_FAST_RERUN,
-    VALID_RUNTIME_RECIPES,
-    build_handoff,
-    render_handoff_cli,
-    write_handoff_and_state,
-)
-from multi_agent_brief.orchestrator.fact_layer_import import require_fast_rerun_handoff_ready
-from multi_agent_brief.orchestrator_contract import (
-    RUNTIME_CLI_CHOICE_PLACEHOLDER,
-    VALID_RUNTIMES,
-    resolve_repo_workdir,
-)
+from multi_agent_brief.orchestrator.handoff import VALID_RUNTIME_RECIPES
+from multi_agent_brief.orchestrator_contract import VALID_RUNTIMES
 
 
 def register(subparsers: argparse._SubParsersAction) -> None:
@@ -128,10 +117,11 @@ def register(subparsers: argparse._SubParsersAction) -> None:
 
 def handle(args: argparse.Namespace) -> int:
     """Dispatch run / start / handoff / prepare commands."""
-    if args.command == "prepare":
-        return _run_prepare(args)
-    if args.command == "handoff":
-        return _run_handoff(args)
+    if args.command in {"prepare", "handoff"}:
+        # Retired surfaces: the authority guard rejects workspace invocations;
+        # no-workspace bypasses land on this fail-closed stub.
+        print("runtime_command_unsupported")
+        return 1
     # run and start both use the launcher
     return _run_launcher(args)
 
@@ -217,108 +207,4 @@ def _run_launcher(args: argparse.Namespace) -> int:
             separators=(",", ":"),
         )
     )
-    return 0
-
-    try:
-        repo_workdir = resolve_repo_workdir(
-            getattr(args, "repo_workdir", None),
-            workspace=workspace_path,
-        )
-    except ValueError as exc:
-        print(f"{prefix} {exc}")
-        return 1
-
-    recipe = getattr(args, "recipe", "full")
-    if recipe == RUNTIME_RECIPE_FAST_RERUN:
-        try:
-            require_fast_rerun_handoff_ready(workspace_path)
-        except ValueError as exc:
-            print(f"{prefix} {exc}")
-            return 1
-
-    try:
-        handoff = build_handoff(
-            workspace=workspace_path,
-            repo_workdir=repo_workdir,
-            runtime=args.runtime,
-            recipe=recipe,
-            venv=getattr(args, "venv", None),
-            run_doctor=not getattr(args, "skip_doctor", False),
-        )
-    except ValueError as exc:
-        print(f"{prefix} {exc}")
-        return 1
-    written = write_handoff_and_state(
-        handoff=handoff,
-        workspace=workspace_path,
-        repo_workdir=repo_workdir,
-        prefix=prefix,
-    )
-    if written is None:
-        return 1
-    md_path, json_path = written
-    print(render_handoff_cli(handoff))
-    print(f"{prefix} Handoff written: {md_path}")
-    print(f"{prefix} Handoff JSON:  {json_path}")
-    return 0
-
-
-def _run_prepare(args: argparse.Namespace) -> int:
-    """[legacy] prepare — replaced by the runtime handoff launcher."""
-    print(
-        "[legacy] prepare has been replaced by:"
-        " briefloop run --workspace <workspace>"
-        f" --runtime {RUNTIME_CLI_CHOICE_PLACEHOLDER}"
-    )
-    return 1
-
-
-def _run_handoff(args: argparse.Namespace) -> int:
-    """handoff — generate runtime handoff from workspace config."""
-    config_path = Path(args.config).resolve()
-    if not config_path.exists():
-        print(f"[error] config.yaml not found: {config_path}")
-        return 1
-    workspace = config_path.parent
-    try:
-        repo_workdir = resolve_repo_workdir(
-            getattr(args, "repo_workdir", None),
-            workspace=workspace,
-        )
-    except ValueError as exc:
-        print(f"[handoff] {exc}")
-        return 1
-
-    recipe = getattr(args, "recipe", "full")
-    if recipe == RUNTIME_RECIPE_FAST_RERUN:
-        try:
-            require_fast_rerun_handoff_ready(workspace)
-        except ValueError as exc:
-            print(f"[handoff] {exc}")
-            return 1
-
-    try:
-        handoff = build_handoff(
-            workspace=workspace,
-            repo_workdir=repo_workdir,
-            runtime=args.runtime,
-            recipe=recipe,
-            venv=getattr(args, "venv", None),
-            run_doctor=not getattr(args, "skip_doctor", False),
-        )
-    except ValueError as exc:
-        print(f"[handoff] {exc}")
-        return 1
-    written = write_handoff_and_state(
-        handoff=handoff,
-        workspace=workspace,
-        repo_workdir=repo_workdir,
-        prefix="[handoff]",
-    )
-    if written is None:
-        return 1
-    md_path, json_path = written
-    print(render_handoff_cli(handoff))
-    print(f"[handoff] Written: {md_path}")
-    print(f"[handoff] JSON:   {json_path}")
     return 0

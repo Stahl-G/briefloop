@@ -333,7 +333,7 @@ def test_repair_public_cli_is_retired_with_zero_writes(tmp_path, capsys, argv):
     initialize_runtime_state(runtime="operator", workspace=ws)
     before = _workspace_file_bytes(ws)
 
-    # LEGACY-DELETE: retired public `repair` CLI rejects the legacy workspace
+    # retired public `repair` CLI rejects the legacy workspace
     # with a typed token and performs zero writes.
     rc = main([arg.format(ws=ws) for arg in argv])
 
@@ -451,7 +451,7 @@ def test_repair_route_maps_unsupported_claim_to_audited_brief(tmp_path, capsys):
     rc = main(["repair", "route", "--workspace", str(ws), "--json"])
     output = capsys.readouterr().out
 
-    # LEGACY-DELETE: retired public `repair route` CLI rejects the legacy
+    # retired public `repair route` CLI rejects the legacy
     # workspace with a typed token and performs zero writes.
     assert rc == 1
     assert output.strip() == "legacy_workspace_unsupported"

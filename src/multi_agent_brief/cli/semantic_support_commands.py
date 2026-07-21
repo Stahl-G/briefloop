@@ -45,36 +45,16 @@ def register(subparsers: argparse._SubParsersAction) -> None:
 
 
 def handle(args: argparse.Namespace) -> int:
-    action = getattr(args, "semantic_support_action", "")
-    try:
-        if action == "bind":
-            payload = bind_semantic_assessment_checked_inputs_transaction(workspace=args.workspace)
-            _print_payload("semantic-support bind", payload, as_json=getattr(args, "json", False))
-            return 0
-        if action == "adjudicate":
-            payload = record_semantic_support_adjudication(
-                workspace=args.workspace,
-                proposal_id=args.proposal_id,
-                decision=args.decision,
-                reason=args.reason,
-                actor_id=getattr(args, "by", "human"),
-            )
-            _print_payload("semantic-support adjudicate", payload, as_json=getattr(args, "json", False))
-            return 0
-    except (RuntimeStateError, OSError, json.JSONDecodeError) as exc:
-        payload = exc.to_dict() if isinstance(exc, RuntimeStateError) else {"ok": False, "error": str(exc)}
-        _print_payload("semantic-support", payload, as_json=getattr(args, "json", False))
-        return 1
-    raise AssertionError(f"Unhandled semantic-support action: {action}")
+    """Fail-closed stub for the retired public CLI surface.
 
+    The parser registration is retained so the authority guard can return
+    the typed rejection for workspace invocations; any no-workspace bypass
+    lands here instead of executing legacy code.
+    """
 
-def _print_payload(label: str, payload: dict[str, Any], *, as_json: bool) -> None:
-    if as_json:
-        print(json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True))
-        return
-    print(label)
-    for key, value in payload.items():
-        if isinstance(value, (dict, list)):
-            print(f"{key}: {json.dumps(value, ensure_ascii=False, sort_keys=True)}")
-        else:
-            print(f"{key}: {value}")
+    print("runtime_command_unsupported")
+    return 1
+
+# NOTE: the public command surface of this module is retired. The
+# SQLite ControlStore is the sole runtime authority; only the parser
+# registration (typed rejections) and the stub below remain.

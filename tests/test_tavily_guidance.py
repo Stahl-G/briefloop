@@ -36,7 +36,7 @@ def _with_task_objective_if_supported(args: list[str]) -> list[str]:
         for option in action.option_strings
     }
     if "--task-objective" in init_options:
-        # LEGACY-DELETE: retain only the strict SQLite initialization contract.
+        # retain only the strict SQLite initialization contract.
         return [
             *args,
             "--task-objective",
@@ -79,7 +79,7 @@ class TestSecretsImport:
         ])
         captured = capsys.readouterr()
 
-        # LEGACY-DELETE: remove with the retired public `secrets import` command surface.
+        # remove with the retired public `secrets import` command surface.
         assert exit_code == 1
         assert captured.out == "runtime_command_unsupported\n"
         assert captured.err == ""
@@ -524,7 +524,7 @@ class TestRunTavilyGuidance:
         exit_code = main(["run", "--runtime", "operator", "--config", str(ws / "config.yaml")])
         captured = capsys.readouterr()
 
-        # LEGACY-DELETE: remove with the retired operator runtime handoff surface.
+        # remove with the retired operator runtime handoff surface.
         assert exit_code == 1
         assert captured.out == "[run] runtime_adapter_unsupported\n"
         assert captured.err == ""

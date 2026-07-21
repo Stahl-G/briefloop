@@ -163,7 +163,7 @@ def test_legacy_manifest_is_read_only_until_reset_and_archived_byte_exact(
     assert "--reset-state" in status["suggested_next_command"]
     assert f"--runtime {historical_runtime}" not in status["suggested_next_command"]
 
-    # LEGACY-DELETE: retired public state/controls/gates/feedback commands on a
+    # retired public state/controls/gates/feedback commands on a
     # legacy-JSON workspace authority. The mutating-consumer invariant is kept
     # by the direct-seam assertions in
     # test_mutating_runtime_consumers_reject_historical_identity_without_writes.
@@ -224,7 +224,7 @@ def test_active_adapter_entrypoints_bind_runtime_literals() -> None:
     runtime_assets = (ROOT / "src/multi_agent_brief/runtime_assets.py").read_text(
         encoding="utf-8"
     )
-    # LEGACY-DELETE: the generated `_workspace_skill_text(runtime="codex", ...)`
+    # the generated `_workspace_skill_text(runtime="codex", ...)`
     # skill left with the retired pre-CX codex kit; the codex workspace kit is
     # now installed verbatim from the packaged ControlStore v2 assets.
     assert "_codex_writes" in runtime_assets
@@ -249,7 +249,7 @@ def test_active_generic_cli_guidance_requires_explicit_runtime_choice() -> None:
         ROOT / "src/multi_agent_brief/cli/init_commands.py": 2,
         ROOT / "src/multi_agent_brief/cli/onboard_commands.py": 3,
         ROOT / "src/multi_agent_brief/cli/product_commands.py": 2,
-        ROOT / "src/multi_agent_brief/cli/run_commands.py": 2,
+        ROOT / "src/multi_agent_brief/cli/run_commands.py": 0,
         ROOT / "src/multi_agent_brief/cli/deliver_commands.py": 2,
         ROOT / "src/multi_agent_brief/provenance/builder.py": 2,
     }
@@ -348,7 +348,7 @@ def test_runtime_consumers_do_not_implicitly_initialize(
     before = _files(ws)
     command = [*argv, "--workspace", str(ws)]
 
-    # LEGACY-DELETE: retired public state/controls/gates/feedback commands. The
+    # retired public state/controls/gates/feedback commands. The
     # fail-closed authority guard rejects them with zero writes on a fresh
     # workspace, so runtime state is never implicitly initialized.
     assert main(command) == 1

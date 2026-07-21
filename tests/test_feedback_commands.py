@@ -119,7 +119,7 @@ def _events(ws: Path) -> list[dict[str, object]]:
 
 @pytest.mark.parametrize("action", ["ingest", "plan", "resolve", "validate"])
 def test_feedback_public_cli_is_retired_with_typed_rejection(tmp_path, capsys, action):
-    # LEGACY-DELETE: retired public `feedback` CLI surface; feedback issue and
+    # retired public `feedback` CLI surface; feedback issue and
     # repair-plan state is driven only through the deterministic feedback_state
     # module seam used by the tests below.
     ws = _write_workspace(tmp_path)
@@ -149,7 +149,7 @@ def test_feedback_public_cli_is_retired_with_typed_rejection(tmp_path, capsys, a
     ],
 )
 def test_state_public_cli_is_retired_with_typed_rejection(tmp_path, capsys, action_args):
-    # LEGACY-DELETE: retired public `state` CLI surface; runtime-state transitions
+    # retired public `state` CLI surface; runtime-state transitions
     # are driven only through the deterministic runtime_state module seam used by
     # the tests below.
     ws = _write_workspace(tmp_path)

@@ -70,7 +70,7 @@ def test_sources_materialize_pack_public_cli_is_retired(
     ])
     output = capsys.readouterr().out
 
-    # LEGACY-DELETE: retired public `sources materialize-pack` CLI; the pack
+    # retired public `sources materialize-pack` CLI; the pack
     # materializes through the deterministic evidence_pack seam only.
     assert rc == 1
     assert output.strip() == expected_token
