@@ -1,5 +1,11 @@
 # Public-Safe Evaluation Cases
 
+> **Retired (LD2-3).** The `eval-cases` CLI and its legacy-runtime evaluation
+> driver were deleted with the legacy runtime-state stack. The packaged fixture
+> data under `evaluation_cases/fixtures/` is preserved for the EF-1/EF-2
+> Store-native evaluation rebuild. The rest of this page is a historical
+> record of the retired surface.
+
 v0.6.4 introduced packaged public-safe evaluation cases for developer and CI
 regression checks. v0.6.5 extended the packaged suite with provenance
 projection coverage. v0.7.0 adds Improvement Memory control cases. The

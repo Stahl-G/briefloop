@@ -100,7 +100,6 @@ def test_status_command_reports_corrupt_event_log_without_writing(tmp_path):
     assert payload["events"]["corrupt_count"] == 1
     assert payload["progress"]["status"] == "needs_operator_action"
     assert payload["progress"]["current_work"] == "check run record"
-    assert payload["timing"]["status"] == "invalid_event_log"
     assert "event_log contains unreadable records" in payload["stale_or_unknown"]
     assert event_log.read_bytes() == before
     assert event_log.stat().st_mtime_ns == before_mtime
@@ -118,7 +117,6 @@ def test_status_command_reports_invalid_utf8_event_log_without_writing(tmp_path)
     assert payload["events"]["corrupt_count"] == 1
     assert payload["progress"]["status"] == "needs_operator_action"
     assert payload["progress"]["current_work"] == "check run record"
-    assert payload["timing"]["status"] == "invalid_event_log"
     assert "event_log contains unreadable records" in payload["stale_or_unknown"]
     assert event_log.read_bytes() == before
     assert event_log.stat().st_mtime_ns == before_mtime

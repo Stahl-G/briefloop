@@ -98,7 +98,7 @@ MABW 的控制面可以按不同粒度统计：
 | `configs/stage_specs.yaml` | Stage order 和 stage expectations。 | Maintainers | 已实现 |
 | `configs/artifact_contracts.yaml` | Expected artifact contracts。 | Maintainers | 已实现 |
 | `configs/policy_packs/*.yaml` | Public-safe policy defaults 和 boundary metadata。 | Maintainers | 已实现 |
-| `eval-cases/` packaged cases | Control-surface behavior 的确定性回归用例。 | Maintainers | 已实现 |
+| `eval-cases/` packaged cases | Control-surface behavior 的确定性回归用例。 | Maintainers | 已退役(LD2-3);fixture 数据保留供 EF-1/EF-2 复用 |
 | `docs/support-matrix.md` | Public capability/status map。 | Maintainers | 已实现 |
 | `docs/architecture-status.md` | 当前实现状态与 roadmap goals 的区分。 | Maintainers | 已实现 |
 | `docs/red-lines-and-anti-patterns.md` | Public red lines 和 misuse patterns。 | Maintainers | 已实现 |

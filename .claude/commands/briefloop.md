@@ -45,7 +45,7 @@ verbs first:
   state finalize-complete before reader artifacts are treated as delivered.
 ```
 
-Do not put `doctor`, `runtime install`, `eval-cases`, release checks, generated
+Do not put `doctor`, `runtime install`, release checks, generated
 asset checks, or low-level state commands in first-screen writer help.
 `doctor` remains a diagnostic/maintainer command, not a sixth writer verb.
 
@@ -356,5 +356,5 @@ Agent/operator commands include `state stage-complete`, `state
 finalize-complete`, `state decide`, `gates check`, `feedback plan`, and
 `improve approve`.
 
-Maintainer commands include `runtime install`, `eval-cases`, release checks,
+Maintainer commands include `runtime install`, release checks,
 and generated asset checks.

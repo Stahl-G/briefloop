@@ -30,7 +30,6 @@ from multi_agent_brief.cli import (
     feedback_commands,
     repair_commands,
     gates_commands,
-    eval_cases_commands,
     claude_commands,
     provenance_commands,
     controls_commands,
@@ -103,9 +102,6 @@ def build_parser(*, prog: str | None = None) -> argparse.ArgumentParser:
 
     # Deterministic quality gate controls
     gates_commands.register(subparsers)
-
-    # Public-safe evaluation cases
-    eval_cases_commands.register(subparsers)
 
     # Experimental measurement harnesses
     experiments_commands.register(subparsers)
@@ -244,9 +240,6 @@ def _dispatch(args: argparse.Namespace) -> int:
 
     if cmd == "gates":
         return gates_commands.handle(args)
-
-    if cmd == "eval-cases":
-        return eval_cases_commands.handle(args)
 
     if cmd == "experiments":
         return experiments_commands.handle(args)

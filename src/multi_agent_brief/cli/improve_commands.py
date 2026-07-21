@@ -3,26 +3,6 @@
 from __future__ import annotations
 
 import argparse
-import json
-from typing import Any
-
-from multi_agent_brief.improvement.contract import (
-    ALLOWED_STATUSES,
-    AUDIENCE_GUIDANCE_CATEGORIES,
-    AUDIENCE_GUIDANCE_SCOPES,
-)
-from multi_agent_brief.improvement.memory import rebuild_improvement_memory
-from multi_agent_brief.improvement.state import (
-    ImprovementLedgerError,
-    approve_improvement,
-    improvement_stats,
-    list_improvements,
-    propose_improvement,
-    reject_improvement,
-    revert_improvement,
-    show_improvement,
-    validate_improvement_ledger,
-)
 
 
 def register(subparsers: argparse._SubParsersAction) -> None:
@@ -38,8 +18,8 @@ def register(subparsers: argparse._SubParsersAction) -> None:
     )
     _add_workspace(propose_parser)
     propose_parser.add_argument("--guidance", required=True, help="Bounded audience guidance text.")
-    propose_parser.add_argument("--category", required=True, choices=sorted(AUDIENCE_GUIDANCE_CATEGORIES))
-    propose_parser.add_argument("--scope", required=True, choices=sorted(AUDIENCE_GUIDANCE_SCOPES))
+    propose_parser.add_argument("--category", required=True, help="Audience guidance category.")
+    propose_parser.add_argument("--scope", required=True, help="Audience guidance scope.")
     propose_parser.add_argument("--source-summary", help="Required for explicit human proposals.")
     propose_parser.add_argument("--from-issue", help="Feedback issue id to freeze as source evidence.")
     propose_parser.add_argument("--supersedes", help="Approved materializable entry id replaced by this proposal.")
@@ -50,7 +30,7 @@ def register(subparsers: argparse._SubParsersAction) -> None:
         help="List current Improvement Ledger entries.",
     )
     _add_workspace(list_parser)
-    list_parser.add_argument("--status", choices=sorted(ALLOWED_STATUSES), help="Filter by current status.")
+    list_parser.add_argument("--status", help="Filter by current status.")
     _add_json(list_parser)
 
     show_parser = actions.add_parser(

@@ -186,7 +186,6 @@ def test_retired_public_gate_command_surfaces_fail_closed_on_legacy_workspace(tm
 
 def test_runtime_repair_instructions_use_scoped_current_gate_start() -> None:
     instruction_files = [
-        ROOT / "src/multi_agent_brief/orchestrator/handoff.py",
         ROOT / "src/multi_agent_brief/hermes/adapter.py",
         ROOT / "configs/agent_roles.yaml",
         ROOT / "scripts/generate_agent_configs.py",

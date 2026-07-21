@@ -6,8 +6,11 @@ import argparse
 import json
 from pathlib import Path
 
-from multi_agent_brief.orchestrator.handoff import VALID_RUNTIME_RECIPES
 from multi_agent_brief.orchestrator_contract import VALID_RUNTIMES
+
+RUNTIME_RECIPE_FULL = "full"
+RUNTIME_RECIPE_FAST_RERUN = "fast-rerun"
+VALID_RUNTIME_RECIPES = (RUNTIME_RECIPE_FULL, RUNTIME_RECIPE_FAST_RERUN)
 
 
 def register(subparsers: argparse._SubParsersAction) -> None:

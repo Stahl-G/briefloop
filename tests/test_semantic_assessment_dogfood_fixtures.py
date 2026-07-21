@@ -9,7 +9,6 @@ import pytest
 
 from multi_agent_brief.contracts.schemas.semantic_assessment_report import SemanticAssessmentReportContract
 from multi_agent_brief.product.quality_panel import build_quality_panel, validate_quality_panel_payload
-from multi_agent_brief.status import build_workspace_status
 
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -120,19 +119,15 @@ def test_semantic_assessment_dogfood_reports_match_schema_expectation(case: dict
 
 
 
-def test_semantic_assessment_dogfood_status_and_quality_panel_surface_proposal_counts(
+def test_semantic_assessment_dogfood_quality_panel_surfaces_proposal_counts(
     tmp_path: Path,
 ) -> None:
     case = next(case for case in _fixture_cases() if case["case_id"] == "mixed_valid_proposals")
     ws = _write_fixture_workspace(tmp_path, case)
 
-    status = build_workspace_status(ws)
     panel = build_quality_panel(ws)
 
-    status_counts = status["semantic_assessment_report"]["summary_counts"]
     semantic = panel["semantic_support"]
-    assert status_counts["proposal_row_count"] == 4
-    assert status_counts["requires_human_adjudication_count"] == 2
     assert semantic["status"] == "valid"
     assert semantic["proposal_count"] == 4
     assert semantic["requires_human_adjudication_count"] == 2

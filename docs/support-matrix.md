@@ -69,14 +69,14 @@ validation unless that is stated separately.
 | `briefloop gates check/show/validate` | Unsupported on SQLite; retired public CLI |
 | `briefloop provenance build/show/validate` | Unsupported on SQLite; retired public CLI |
 | `briefloop improve propose/list/show/approve/reject/revert/stats/validate/rebuild` | Unsupported on SQLite; retired public CLI |
-| `briefloop eval-cases list/validate/run` | Supported |
-| `briefloop experiments 080 validate-case` | Archived Experimental; public CLI retired, case tooling runs through deterministic `multi_agent_brief.experiments` service functions |
-| MABW-080 archived experiment test suite (`tests/test_experiment_080_*.py`) | On-demand only (`workflow_dispatch`); excluded from the default CI test matrix — behavioral coverage of the 080 service functions moves to the on-demand job |
-| `briefloop experiments 080 register-run` | Archived Experimental; public CLI retired, case tooling runs through deterministic `multi_agent_brief.experiments` service functions |
-| `briefloop experiments 080 score-run` | Archived Experimental; public CLI retired, case tooling runs through deterministic `multi_agent_brief.experiments` service functions |
-| `briefloop experiments 080 import-assessment` | Archived Experimental; public CLI retired, case tooling runs through deterministic `multi_agent_brief.experiments` service functions |
-| `briefloop experiments 080 summarize` | Archived Experimental; public CLI retired, case tooling runs through deterministic `multi_agent_brief.experiments` service functions |
-| `briefloop experiments 080 scaffold-condition` | Archived Experimental; public CLI retired, case tooling runs through deterministic `multi_agent_brief.experiments` service functions |
+| `briefloop eval-cases list/validate/run` | Retired (LD2-3); the legacy-runtime evaluation driver was deleted with the runtime-state stack. Packaged fixture data is preserved for the EF-1/EF-2 Store-native evaluation rebuild |
+| `briefloop experiments 080 validate-case` | Retired (LD2-3); the 080 tooling was deleted with the legacy runtime-state stack. Scorecard reproduction is satisfied by git history and run archives |
+| MABW-080 archived experiment test suite | Retired (LD2-3); suite and on-demand CI job deleted with the 080 tooling. Scorecard reproduction is satisfied by git history and run archives |
+| `briefloop experiments 080 register-run` | Retired (LD2-3); the 080 tooling was deleted with the legacy runtime-state stack. Scorecard reproduction is satisfied by git history and run archives |
+| `briefloop experiments 080 score-run` | Retired (LD2-3); the 080 tooling was deleted with the legacy runtime-state stack. Scorecard reproduction is satisfied by git history and run archives |
+| `briefloop experiments 080 import-assessment` | Retired (LD2-3); the 080 tooling was deleted with the legacy runtime-state stack. Scorecard reproduction is satisfied by git history and run archives |
+| `briefloop experiments 080 summarize` | Retired (LD2-3); the 080 tooling was deleted with the legacy runtime-state stack. Scorecard reproduction is satisfied by git history and run archives |
+| `briefloop experiments 080 scaffold-condition` | Retired (LD2-3); the 080 tooling was deleted with the legacy runtime-state stack. Scorecard reproduction is satisfied by git history and run archives |
 | `briefloop experiments laj shadow-run` | Experimental; public/synthetic offline-shadow execution and exact replay only; advisory output has zero workflow, Gate, finalize, delivery, repair, approval, or next-action authority |
 | `briefloop experiments laj present` | Experimental; deterministic standalone JSON/Markdown/HTML projection of one verified shadow archive; invalid, missing, stale, abstained, or unavailable results display no advice and have zero runtime authority |
 | `briefloop experiments laj study-preflight/budgeted-shadow-run/study-compare` | Experimental; strict target eligibility, complete-trial call/token budget, and offline exact dimension/span-overlap comparison only; advisory with zero runtime authority; utility and efficacy NOT MEASURED |
@@ -411,14 +411,14 @@ approval, release authority, semantic proof, or output-quality proof.
 
 | Tool | Status |
 |---|---|
-| Packaged public-safe evaluation cases (`eval-cases`) | Supported |
-| MABW-080 experiment case validator (`experiments 080 validate-case`) | Archived Experimental |
-| MABW-080 run registration (`experiments 080 register-run`) | Archived Experimental |
-| MABW-080 scorecard builder (`experiments 080 score-run`) | Archived Experimental |
-| MABW-080 assessment import (`experiments 080 import-assessment`) | Archived Experimental |
-| MABW-080 case summary builder (`experiments 080 summarize`) | Archived Experimental |
-| MABW-080 condition scaffold (`experiments 080 scaffold-condition`) | Archived Experimental |
-| Workspace provenance projection (`provenance`) | Supported |
+| Packaged public-safe evaluation cases (`eval-cases`) | Retired (LD2-3); fixture data preserved for EF-1/EF-2 |
+| MABW-080 experiment case validator (`experiments 080 validate-case`) | Retired (LD2-3) |
+| MABW-080 run registration (`experiments 080 register-run`) | Retired (LD2-3) |
+| MABW-080 scorecard builder (`experiments 080 score-run`) | Retired (LD2-3) |
+| MABW-080 assessment import (`experiments 080 import-assessment`) | Retired (LD2-3) |
+| MABW-080 case summary builder (`experiments 080 summarize`) | Retired (LD2-3) |
+| MABW-080 condition scaffold (`experiments 080 scaffold-condition`) | Retired (LD2-3) |
+| Workspace provenance projection (`provenance`) | Retired (LD2-3); the legacy workspace builder was deleted, the provenance graph contract (`provenance/model.py`, validator) remains |
 | Runtime asset parity check (`scripts/check_runtime_asset_parity.py`) | Source-clone-only |
 | Private/commercial benchmark cases | Not shipped |
 | LLM-as-judge prose scoring | Not shipped |
@@ -462,7 +462,7 @@ approval, release authority, semantic proof, or output-quality proof.
 | Runtime asset | Source clone | Wheel / sdist / PyPI package |
 |---|---|---|
 | Packaged contracts (`configs/*.yaml`) | Supported | Supported |
-| Packaged eval fixtures (`eval-cases`) | Supported | Supported |
+| Packaged eval fixtures (`evaluation_cases/fixtures/`) | Supported (data only; runner retired in LD2-3) | Supported (data only; runner retired in LD2-3) |
 | `.agents/skills/**` | Supported | Source-clone-only |
 | `.agents/hermes-skills/**` | Supported | Source-clone-only |
 | `.claude/agents/**` and `.claude/commands/**` | Supported | Source-clone-only |

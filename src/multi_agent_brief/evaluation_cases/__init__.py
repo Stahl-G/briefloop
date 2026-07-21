@@ -1,15 +1,8 @@
-"""Public-safe evaluation case runner for MABW control surfaces."""
+"""Packaged evaluation-case fixture data anchor.
 
-from __future__ import annotations
-
-from multi_agent_brief.evaluation_cases.runner import (
-    list_evaluation_cases,
-    run_evaluation_cases,
-    validate_evaluation_cases,
-)
-
-__all__ = [
-    "list_evaluation_cases",
-    "run_evaluation_cases",
-    "validate_evaluation_cases",
-]
+The evaluation-case code surface (contract/fixtures/runner and the
+`eval-cases` CLI) was retired in LD2-3 with the legacy runtime-state stack.
+This package remains only so `fixtures/` stays packaged and addressable via
+``importlib.resources``; the data is preserved for the EF-1/EF-2 Store-native
+evaluation rebuild.
+"""

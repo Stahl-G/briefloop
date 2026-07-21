@@ -113,7 +113,7 @@ These surfaces belong to the repository and change through versioned development
 | `configs/stage_specs.yaml` | Stage order and stage expectations. | Maintainers | Implemented |
 | `configs/artifact_contracts.yaml` | Expected artifact contracts. | Maintainers | Implemented |
 | `configs/policy_packs/*.yaml` | Public-safe policy defaults and boundary metadata. | Maintainers | Implemented |
-| `eval-cases/` packaged cases | Deterministic regression cases for control-surface behavior. | Maintainers | Implemented |
+| `eval-cases/` packaged cases | Deterministic regression cases for control-surface behavior. | Maintainers | Retired (LD2-3); fixture data preserved for EF-1/EF-2 |
 | `docs/support-matrix.md` | Public capability/status map. | Maintainers | Implemented |
 | `docs/architecture-status.md` | Current implementation state versus roadmap goals. | Maintainers | Implemented |
 | `docs/red-lines-and-anti-patterns.md` | Public red lines and misuse patterns. | Maintainers | Implemented |

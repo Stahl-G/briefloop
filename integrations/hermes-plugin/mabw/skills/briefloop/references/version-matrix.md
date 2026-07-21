@@ -298,8 +298,8 @@ currently available commands.
   roadmap goals as completed unless the support matrix and current CLI expose
   the exact surface.
 - BriefLoop-090 is an archived experiment/readiness label, not a current CLI namespace
-  or supported product command surface. Current experiment
-  reproduction commands remain under `briefloop experiments 080`.
+  or supported product command surface. The `experiments 080` tooling is retired
+  (LD2-3); reproduction is satisfied by git history and run archives.
 - If runtime behavior conflicts with this skill, prefer:
   - `docs/architecture-status.md`
   - `docs/support-matrix.md`

@@ -3,26 +3,10 @@
 from __future__ import annotations
 
 import argparse
-import json
 import sys
 from pathlib import Path
 
 from multi_agent_brief.core.config import build_run_settings, get_output_config, load_config
-from multi_agent_brief.orchestrator.runtime_state import (
-    E_ACTIVE_REPAIR_OPEN,
-    E_ASSESSMENT_TARGET_COMPLETE,
-    RuntimeStateError,
-    check_runtime_state,
-    raise_if_auditable_target_complete_blocks_downstream,
-    raise_if_active_repair_open,
-    runtime_state_paths,
-)
-from multi_agent_brief.orchestrator.runtime_state.errors import E_TRANSACTION_INTEGRITY
-from multi_agent_brief.orchestrator.recovery_state import (
-    RECOVERY_FINALIZE_RENDER_REQUIRED,
-    RECOVERY_NOT_APPLICABLE,
-    evaluate_recovery_state,
-)
 from multi_agent_brief.outputs.finalize import finalize_reader_outputs
 
 
@@ -61,7 +45,6 @@ def handle(args: argparse.Namespace) -> int:
     output_config = get_output_config(config)
 
     try:
-        _preflight_runtime_state_before_finalize(workspace)
         result = finalize_reader_outputs(
             output_dir=settings["output_dir"],
             project_name=settings["project_name"],
@@ -76,7 +59,7 @@ def handle(args: argparse.Namespace) -> int:
             source_appendix_config=output_config.get("source_appendix", {}),
             workspace_dir=workspace,
         )
-    except (FileNotFoundError, ValueError, RuntimeError, RuntimeStateError) as exc:
+    except (FileNotFoundError, ValueError, RuntimeError) as exc:
         print(f"[finalize] Error: {exc}", file=sys.stderr)
         return 1
 
@@ -99,75 +82,3 @@ def handle(args: argparse.Namespace) -> int:
         " reader-facing artifacts."
     )
     return 0
-
-
-def _preflight_runtime_state_before_finalize(workspace: Path) -> None:
-    paths = runtime_state_paths(workspace)
-    workflow_path = paths["workflow_state"]
-    if not workflow_path.exists():
-        return
-    try:
-        workflow = json.loads(workflow_path.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError) as exc:
-        raise RuntimeStateError(
-            f"workflow_state.json is unreadable before finalize: {exc}",
-        ) from exc
-    if not isinstance(workflow, dict):
-        raise RuntimeStateError("workflow_state.json must contain an object before finalize.")
-    try:
-        raise_if_active_repair_open(workspace=workspace, workflow=workflow)
-        if paths["runtime_manifest"].exists():
-            try:
-                check_runtime_state(workspace=workspace, actor="cli")
-            except RuntimeStateError:
-                raise
-            except Exception as exc:
-                raise RuntimeStateError(f"Unable to verify runtime state integrity before finalize: {exc}") from exc
-            try:
-                workflow = json.loads(workflow_path.read_text(encoding="utf-8"))
-            except (OSError, json.JSONDecodeError) as exc:
-                raise RuntimeStateError(
-                    f"workflow_state.json is unreadable after runtime state refresh: {exc}",
-                ) from exc
-            if not isinstance(workflow, dict):
-                raise RuntimeStateError("workflow_state.json must contain an object after runtime state refresh.")
-        raise_if_auditable_target_complete_blocks_downstream(
-            workspace=workspace,
-            workflow=workflow,
-            command="finalize",
-        )
-        if paths["runtime_manifest"].exists():
-            _raise_if_recovery_not_ready_for_finalize(
-                workspace=workspace,
-                workflow=workflow,
-            )
-    except RuntimeStateError as exc:
-        if exc.error_code == E_ACTIVE_REPAIR_OPEN:
-            raise
-        if exc.error_code == E_ASSESSMENT_TARGET_COMPLETE:
-            raise
-        if exc.error_code == E_TRANSACTION_INTEGRITY:
-            raise
-        raise RuntimeStateError(f"Unable to verify runtime state before finalize: {exc}") from exc
-
-
-def _raise_if_recovery_not_ready_for_finalize(
-    *,
-    workspace: Path,
-    workflow: dict[str, object],
-) -> None:
-    recovery = evaluate_recovery_state(workspace=workspace)
-    if recovery.get("status") == RECOVERY_FINALIZE_RENDER_REQUIRED:
-        return
-    integrity = workflow.get("run_integrity") if isinstance(workflow.get("run_integrity"), dict) else {}
-    if (
-        recovery.get("status") == RECOVERY_NOT_APPLICABLE
-        and integrity.get("status") == "clean"
-        and integrity.get("reference_eligible") is True
-    ):
-        return
-    raise RuntimeStateError(
-        "Runtime recovery state does not permit finalize rendering.",
-        details={"run_integrity": integrity, "recovery_state": recovery},
-        error_code=E_TRANSACTION_INTEGRITY,
-    )

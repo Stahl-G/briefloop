@@ -6,7 +6,6 @@ from pathlib import Path
 import pytest
 
 from multi_agent_brief.cli.main import main
-from multi_agent_brief.cli.deliver_commands import _delivery_run_id
 from multi_agent_brief.orchestrator_contract import HISTORICAL_READ_ONLY_RUNTIMES
 from multi_agent_brief.orchestrator_contract import RUNTIME_CLI_CHOICE_PLACEHOLDER
 from multi_agent_brief.orchestrator_contract import VALID_RUNTIMES
@@ -124,8 +123,7 @@ def test_active_generic_cli_guidance_requires_explicit_runtime_choice() -> None:
         ROOT / "src/multi_agent_brief/cli/onboard_commands.py": 3,
         ROOT / "src/multi_agent_brief/cli/product_commands.py": 2,
         ROOT / "src/multi_agent_brief/cli/run_commands.py": 0,
-        ROOT / "src/multi_agent_brief/cli/deliver_commands.py": 2,
-        ROOT / "src/multi_agent_brief/provenance/builder.py": 2,
+        ROOT / "src/multi_agent_brief/cli/deliver_commands.py": 0,
     }
     for path, expected_count in surfaces.items():
         text = path.read_text(encoding="utf-8")
@@ -146,22 +144,6 @@ def test_active_generic_cli_guidance_requires_explicit_runtime_choice() -> None:
         encoding="utf-8"
     )
     assert "--runtime {runtime}" in runtime_assets
-
-    experiment = (
-        ROOT / "src/multi_agent_brief/experiments/experiment_080.py"
-    ).read_text(encoding="utf-8")
-    assert 'f"--runtime {runtime} --recipe fast-rerun --skip-doctor"' in experiment
-
-    state_init_guidance = [
-        ROOT / "src/multi_agent_brief/orchestrator/runtime_state/_transactions.py",
-        ROOT / "src/multi_agent_brief/orchestrator/runtime_state/event_log.py",
-        ROOT
-        / "src/multi_agent_brief/orchestrator/runtime_state/semantic_support_acceptance.py",
-    ]
-    for path in state_init_guidance:
-        text = path.read_text(encoding="utf-8")
-        assert "state init --workspace <workspace>`" not in text, path
-        assert "RUNTIME_CLI_CHOICE_PLACEHOLDER" in text, path
 
 
 def test_active_runtime_docs_do_not_advertise_historical_aliases() -> None:
@@ -232,17 +214,3 @@ def test_runtime_consumers_do_not_implicitly_initialize(
 
 
 
-def test_runtime_identity_consumer_inventory_uses_canonical_validator() -> None:
-    surfaces = {
-        ROOT / "src/multi_agent_brief/cli/deliver_commands.py": "_delivery_run_id",
-        ROOT
-        / "src/multi_agent_brief/orchestrator/runtime_state/semantic_support_acceptance.py": "_current_run_id",
-        ROOT / "src/multi_agent_brief/product/release_approval.py": "_workspace_and_run_id",
-        ROOT / "src/multi_agent_brief/provenance/builder.py": "build_provenance_graph",
-        ROOT / "src/multi_agent_brief/experiments/experiment_080.py": "register_run_record",
-        ROOT / "src/multi_agent_brief/orchestrator/runtime_state/event_log.py": "_load_handoff_runtime_state",
-    }
-    for path, owner in surfaces.items():
-        text = path.read_text(encoding="utf-8")
-        function_body = text.split(f"def {owner}(", 1)[1].split("\ndef ", 1)[0]
-        assert "require_canonical_runtime" in function_body, (path, owner)
