@@ -123,7 +123,7 @@ jobs:
           cache-dependency-path: pyproject.toml
 
       - name: Install docs safety dependencies
-        run: python -m pip install pyyaml
+        run: python -m pip install .
 
       - name: Public safety check
         run: python scripts/check_public_safety.py
