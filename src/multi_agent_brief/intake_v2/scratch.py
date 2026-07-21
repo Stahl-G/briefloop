@@ -73,7 +73,7 @@ class ScratchReader:
         self.root = root
 
     @staticmethod
-    def _parts(relative_path: str | os.PathLike[str]) -> tuple[str, str, str]:
+    def _parts(relative_path: str | os.PathLike[str]) -> tuple[str, ...]:
         if not isinstance(relative_path, (str, Path)):
             raise IntakeError("scratch_path_invalid")
         value = relative_path.as_posix() if isinstance(relative_path, Path) else relative_path
@@ -81,25 +81,29 @@ class ScratchReader:
         if (
             path.is_absolute()
             or str(path) != value
-            or len(path.parts) != 3
+            or len(path.parts) not in {3, 5}
             or path.parts[0] != "scratch"
             or any(part in {"", ".", ".."} for part in path.parts)
             or "\\" in value
         ):
             raise IntakeError("scratch_path_invalid")
-        return path.parts[0], path.parts[1], path.parts[2]
+        if len(path.parts) == 5 and path.parts[2] != "sources":
+            raise IntakeError("scratch_path_invalid")
+        return path.parts
 
     def read_request(self, relative_path: str | os.PathLike[str]) -> bytes:
         parts = self._parts(relative_path)
-        if parts[2] != "submit_request.json":
+        if len(parts) != 3 or parts[2] != "submit_request.json":
             raise IntakeError("scratch_path_invalid")
         return self.read(relative_path)
 
     def read(self, relative_path: str | os.PathLike[str]) -> bytes:
-        _scratch, invocation_id, filename = self._parts(relative_path)
+        parts = self._parts(relative_path)
+        directory_parts = parts[1:-1]
+        filename = parts[-1]
         if os.open in os.supports_dir_fd:
-            return self._read_with_directory_descriptors(invocation_id, filename)
-        return self._read_with_absolute_path(invocation_id, filename)
+            return self._read_with_directory_descriptors(directory_parts, filename)
+        return self._read_with_absolute_path(directory_parts, filename)
 
     @staticmethod
     def _directory_flags() -> int:
@@ -131,7 +135,7 @@ class ScratchReader:
 
     def _read_with_directory_descriptors(
         self,
-        invocation_id: str,
+        directory_parts: tuple[str, ...],
         filename: str,
     ) -> bytes:
         scratch_path = self.root / "scratch"
@@ -148,25 +152,27 @@ class ScratchReader:
             scratch_open = os.fstat(scratch_fd)
             if not self._same_identity(scratch_before, scratch_open):
                 raise IntakeError("scratch_entry_unsafe")
-            invocation_before = os.stat(
-                invocation_id,
-                dir_fd=scratch_fd,
-                follow_symlinks=False,
-            )
-            if not stat.S_ISDIR(invocation_before.st_mode):
-                raise IntakeError("scratch_entry_unsafe")
-            invocation_fd = os.open(
-                invocation_id,
-                self._directory_flags(),
-                dir_fd=scratch_fd,
-            )
+            parent_fd = scratch_fd
+            opened_directories: list[int] = []
             try:
-                invocation_open = os.fstat(invocation_fd)
-                if not self._same_identity(invocation_before, invocation_open):
-                    raise IntakeError("scratch_entry_unsafe")
+                for part in directory_parts:
+                    before = os.stat(part, dir_fd=parent_fd, follow_symlinks=False)
+                    if not stat.S_ISDIR(before.st_mode):
+                        raise IntakeError("scratch_entry_unsafe")
+                    opened_fd = os.open(
+                        part,
+                        self._directory_flags(),
+                        dir_fd=parent_fd,
+                    )
+                    opened = os.fstat(opened_fd)
+                    if not self._same_identity(before, opened):
+                        os.close(opened_fd)
+                        raise IntakeError("scratch_entry_unsafe")
+                    opened_directories.append(opened_fd)
+                    parent_fd = opened_fd
                 leaf_before = os.stat(
                     filename,
-                    dir_fd=invocation_fd,
+                    dir_fd=parent_fd,
                     follow_symlinks=False,
                 )
                 if not stat.S_ISREG(leaf_before.st_mode):
@@ -174,7 +180,7 @@ class ScratchReader:
                 leaf_fd = os.open(
                     filename,
                     self._file_flags(),
-                    dir_fd=invocation_fd,
+                    dir_fd=parent_fd,
                 )
                 try:
                     leaf_open = os.fstat(leaf_fd)
@@ -184,7 +190,8 @@ class ScratchReader:
                 finally:
                     os.close(leaf_fd)
             finally:
-                os.close(invocation_fd)
+                for descriptor in reversed(opened_directories):
+                    os.close(descriptor)
         except IntakeError:
             raise
         except OSError as exc:
@@ -192,16 +199,23 @@ class ScratchReader:
         finally:
             os.close(scratch_fd)
 
-    def _read_with_absolute_path(self, invocation_id: str, filename: str) -> bytes:
-        invocation_path = self.root / "scratch" / invocation_id
-        leaf_path = invocation_path / filename
+    def _read_with_absolute_path(
+        self,
+        directory_parts: tuple[str, ...],
+        filename: str,
+    ) -> bytes:
+        parent_path = self.root / "scratch" / Path(*directory_parts)
+        leaf_path = parent_path / filename
         try:
             scratch_info = (self.root / "scratch").lstat()
-            invocation_info = invocation_path.lstat()
+            directory_infos = [
+                (self.root / "scratch" / Path(*directory_parts[:index])).lstat()
+                for index in range(1, len(directory_parts) + 1)
+            ]
             leaf_before = leaf_path.lstat()
             if (
                 not stat.S_ISDIR(scratch_info.st_mode)
-                or not stat.S_ISDIR(invocation_info.st_mode)
+                or any(not stat.S_ISDIR(item.st_mode) for item in directory_infos)
                 or not stat.S_ISREG(leaf_before.st_mode)
             ):
                 raise IntakeError("scratch_entry_unsafe")

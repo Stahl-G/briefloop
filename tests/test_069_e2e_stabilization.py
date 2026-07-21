@@ -26,6 +26,20 @@ def test_public_safe_runtime_handoff_control_selection_and_finalize_e2e(
         == 0
     )
     capsys.readouterr()
+    assert (
+        main(
+            [
+                "runtime",
+                "install",
+                "--workspace",
+                str(workspace),
+                "--runtime",
+                "codex",
+            ]
+        )
+        == 0
+    )
+    capsys.readouterr()
     public_input = workspace / "input" / "public-safe-source.md"
     public_input.write_text(
         "ExampleCo opened a synthetic public demo facility in June 2026.\n",
@@ -81,6 +95,20 @@ def test_demo_workspace_boots_into_codex_runtime(tmp_path: Path, capsys) -> None
     assert main(["init", str(workspace), "--demo", "--force"]) == 0
     capsys.readouterr()
     assert "controlstore_v2" in (workspace / "config.yaml").read_text(encoding="utf-8")
+    assert (
+        main(
+            [
+                "runtime",
+                "install",
+                "--workspace",
+                str(workspace),
+                "--runtime",
+                "codex",
+            ]
+        )
+        == 0
+    )
+    capsys.readouterr()
 
     assert main(["run", "--workspace", str(workspace), "--runtime", "codex"]) == 0
     capsys.readouterr()

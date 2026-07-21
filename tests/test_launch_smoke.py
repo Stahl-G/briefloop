@@ -44,6 +44,7 @@ def test_launch_smoke_json_runs_demo_handoff_path():
         "cli_version",
         "cli_version_matches_repo",
         "product_init",
+        "codex_runtime_install",
         "demo_runtime_bootstrap",
         "demo_runtime_next",
         "sqlite_runtime_next_action",

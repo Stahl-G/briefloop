@@ -11,6 +11,13 @@ Install the packaged workspace-local Codex kit when it is absent:
 briefloop runtime install --workspace <workspace> --runtime codex
 ```
 
+The installed `.codex/` tree is part of the frozen runtime identity. `run` and
+every `runtime` command hash the actual workspace-local config, Skill,
+reference, and all role files and compare them with the Store binding. A
+missing, extra, replaced, symlinked, or edited kit file fails closed with
+`runtime_adapter_binding_mismatch`; reinstalling is not permission to mutate an
+already initialized run.
+
 Open and trust the workspace in Codex so its project `.codex/config.toml`,
 skill, and exact role agents load. Start or reopen the run with:
 
@@ -128,10 +135,22 @@ briefloop runtime apply --workspace <workspace> \
   --human-request <workspace>/<strict-request>.json
 ```
 
-Current strict request families cover human source material, internal approval,
-and delivery authorization/reconciliation. Do not guess Store revision, run id,
-hashes, decision vocabulary, or authorization scope. Missing or mismatched
-requests fail closed.
+The human source request is
+`briefloop.runtime_human_source_pack_request.v2`: one ordered list of 1–256
+members plus the workspace-relative frozen source manifest and its exact
+SHA-256. Every member must exactly match the manifest source id, URL, title,
+publisher, content hash, and either `published_at` or the
+`status_incident/opened_at` temporal shape. The host validates the complete
+manifest and pack before starting its invocation, then commits every accepted
+source in one UoW and one Receipt. A missing, changed, duplicate, reordered, or
+mismatched member rejects the whole pack with zero partial source registration.
+Do not submit the files one at a time when they are one frozen
+experimental/source pack.
+
+Other current strict request families cover internal approval and delivery
+authorization/reconciliation. Do not guess Store revision, run id, hashes,
+decision vocabulary, or authorization scope. Missing or mismatched requests
+fail closed.
 
 ### `blocked`
 
@@ -173,3 +192,8 @@ Repeat until the action is `blocked`, `human_decision`, or `complete`.
 - `role_topology=single_session` is one shared Codex context with separate
   Receipt-backed invocations and stage-separated self-review. It is not
   independent review. Future-stage drafting before its invocation is forbidden.
+- Role envelopes constrain writes, not arbitrary local reads. For blinded A2
+  experiments, place the workspace and its allowed inputs under an isolated
+  directory whose parents do not contain the risk ledger, A0/A1 outputs, or
+  scoring files; optionally run `briefloop experiments a2-isolation-preflight`.
+  Report this honestly as procedural isolation, never as an OS sandbox.

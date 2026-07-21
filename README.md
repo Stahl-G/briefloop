@@ -251,8 +251,17 @@ Common setup helpers:
 
 ```bash
 briefloop init --from-onboarding onboarding.json <workspace>
+briefloop runtime install --workspace <workspace> --runtime codex
 briefloop run --workspace <workspace> --runtime codex
 ```
+
+When a run needs a frozen set of local materials, the runtime accepts one
+strict 1–256 member source-pack request and records all members atomically in a
+single SQLite Receipt. The request binds the frozen manifest hash and preserves
+its source IDs, canonical URLs, and incident `opened_at` metadata. It never
+silently registers only the first file. The
+workspace-local Codex kit is also hash-bound: edits, deletion, extra role files,
+or symlinks fail closed before runtime work continues.
 
 For workspaces that use the `llm_decide` source profile, source discovery runs
 through the runtime-host route (`run --runtime codex` → `runtime next`).

@@ -242,6 +242,20 @@ def run_launch_smoke() -> dict[str, Any]:
                 ],
             ),
             (
+                "codex_runtime_install",
+                [
+                    sys.executable,
+                    "-m",
+                    "multi_agent_brief.cli.main",
+                    "runtime",
+                    "install",
+                    "--workspace",
+                    str(workspace),
+                    "--runtime",
+                    "codex",
+                ],
+            ),
+            (
                 "demo_runtime_bootstrap",
                 [
                     sys.executable,

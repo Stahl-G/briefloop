@@ -5192,9 +5192,6 @@ class SQLiteControlStore:
             if item.invocation_id is not None
             and item.source_proposal_id is None
         ]
-        completed_records = (
-            source_invocations + proposal_invocations + submission_invocations
-        )
         failed_records = [
             event.intake_binding.invocation_id
             for event in snapshot.events
@@ -5209,16 +5206,33 @@ class SQLiteControlStore:
                 or start_events[0].run_id != snapshot.run.run_id
             ):
                 raise ControlStoreIntegrityError("core_run_relation_invalid")
-            explanations = completed_records.count(invocation.invocation_id)
+            source_explanations = source_invocations.count(invocation.invocation_id)
+            proposal_explanations = proposal_invocations.count(
+                invocation.invocation_id
+            )
+            submission_explanations = submission_invocations.count(
+                invocation.invocation_id
+            )
+            explanation_kinds = sum(
+                count > 0
+                for count in (
+                    source_explanations,
+                    proposal_explanations,
+                    submission_explanations,
+                )
+            )
             failures = failed_records.count(invocation.invocation_id)
-            if invocation.status == "active" and (explanations or failures):
+            if invocation.status == "active" and (explanation_kinds or failures):
                 raise ControlStoreIntegrityError("core_run_relation_invalid")
             if invocation.status == "completed" and (
-                explanations != 1 or failures
+                explanation_kinds != 1
+                or proposal_explanations > 1
+                or submission_explanations > 1
+                or failures
             ):
                 raise ControlStoreIntegrityError("core_run_relation_invalid")
             if invocation.status == "failed" and (
-                failures != 1 or explanations
+                failures != 1 or explanation_kinds
             ):
                 raise ControlStoreIntegrityError("core_run_relation_invalid")
         if set(invocation_events) != {

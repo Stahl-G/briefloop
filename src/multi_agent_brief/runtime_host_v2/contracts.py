@@ -10,6 +10,7 @@ from multi_agent_brief.contracts.v2 import (
     ContractId,
     CleanText,
     CoreRunNextAction,
+    HttpUrlString,
     IsoDate,
     IsoDateTime,
     MimeType,
@@ -42,6 +43,86 @@ class HumanSourceMaterialRequest(StrictModel):
     def input_is_explicit_workspace_material(self) -> "HumanSourceMaterialRequest":
         if not self.input_path.startswith("input/"):
             raise ValueError("human source material must be under input")
+        return self
+
+
+class HumanSourcePackMember(StrictModel):
+    """One explicit workspace file in a human-frozen source pack."""
+
+    member_id: ContractId
+    input_path: WorkspacePath
+    manifest_local_file: WorkspacePath
+    expected_input_sha256: Sha256
+    title: CleanText
+    publisher: CleanText | None = None
+    published_at: IsoDate | None = None
+    url: HttpUrlString
+    document_kind: Literal["status_incident"] | None = None
+    opened_at: IsoDateTime | None = None
+    resolved_at: IsoDateTime | None = None
+    retrieved_at: IsoDateTime
+    content_media_type: MimeType
+
+    @model_validator(mode="after")
+    def input_is_explicit_workspace_material(self) -> "HumanSourcePackMember":
+        if not self.input_path.startswith("input/"):
+            raise ValueError("human source material must be under input")
+        if self.document_kind == "status_incident":
+            if self.opened_at is None or self.published_at is not None:
+                raise ValueError("status incident requires opened_at instead of published_at")
+        elif self.opened_at is not None or self.resolved_at is not None:
+            raise ValueError("incident timestamps require status_incident")
+        return self
+
+
+class FrozenSourceManifestEntry(StrictModel):
+    """The exact metadata projection that may become source authority."""
+
+    source_id: ContractId
+    title: CleanText
+    publisher: CleanText
+    published_at: IsoDate | None = None
+    document_kind: Literal["status_incident"] | None = None
+    opened_at: IsoDateTime | None = None
+    resolved_at: IsoDateTime | None = None
+    url: HttpUrlString
+    local_file: WorkspacePath
+    sha256: Sha256
+
+    @model_validator(mode="after")
+    def temporal_shape_is_explicit(self) -> "FrozenSourceManifestEntry":
+        if self.document_kind == "status_incident":
+            if self.opened_at is None or self.published_at is not None:
+                raise ValueError("status incident requires opened_at instead of published_at")
+        elif self.published_at is None or self.opened_at is not None or self.resolved_at is not None:
+            raise ValueError("ordinary source requires published_at")
+        return self
+
+
+class HumanSourcePackRequest(StrictModel):
+    """One complete ordered pack committed by the host as a single effect."""
+
+    schema_id = "briefloop.runtime_human_source_pack_request.v2"
+
+    schema_version: Literal["briefloop.runtime_human_source_pack_request.v2"]
+    request_id: ContractId
+    run_id: ContractId
+    expected_store_revision: NonNegativeInt
+    manifest_path: WorkspacePath
+    manifest_schema_version: ContractId
+    expected_manifest_sha256: Sha256
+    members: list[HumanSourcePackMember] = Field(min_length=1, max_length=256)
+
+    @model_validator(mode="after")
+    def members_are_sorted_and_unique(self) -> "HumanSourcePackRequest":
+        if not self.manifest_path.startswith("input/"):
+            raise ValueError("source pack manifest must be under input")
+        member_ids = [item.member_id for item in self.members]
+        input_paths = [item.input_path for item in self.members]
+        if member_ids != sorted(set(member_ids)):
+            raise ValueError("human source pack members must be sorted and unique")
+        if len(input_paths) != len(set(input_paths)):
+            raise ValueError("human source pack input paths must be unique")
         return self
 
 
@@ -133,7 +214,10 @@ class RepairContentInput(StrictModel):
 
 
 __all__ = [
+    "FrozenSourceManifestEntry",
     "HumanSourceMaterialRequest",
+    "HumanSourcePackMember",
+    "HumanSourcePackRequest",
     "RoleTaskEnvelope",
     "RepairContentInput",
     "RuntimeDiagnoseReport",

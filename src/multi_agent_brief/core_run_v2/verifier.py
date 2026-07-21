@@ -649,19 +649,98 @@ def _verified_intake_receipt_effect(
     )
     events_by_id = {item.event_id: item for item in snapshot.events}
     events = [events_by_id.get(event_id) for event_id in receipt.event_ids]
-    if len(events) != 1 or events[0] is None:
+    if not events or any(event is None for event in events):
         raise CoreRunError("control_store_integrity_invalid")
-    event = events[0]
+    typed_events = [event for event in events if event is not None]
+    for item in typed_events:
+        item_binding = item.intake_binding
+        if (
+            item.run_id != receipt.run_id
+            or item.transaction_id != receipt.transaction_id
+            or item.event_type != rule.event_type
+            or item.stage_id not in rule.allowed_stages
+            or item.core_run_binding is not None
+            or item_binding is None
+            or item_binding.request_id != receipt.transaction_id
+        ):
+            raise CoreRunError("control_store_integrity_invalid")
+    if rule.effect is CoreEffect.SOURCE_INTAKE:
+        bindings = [item.intake_binding for item in typed_events]
+        if any(
+            binding is None
+            or binding.outcome != "committed"
+            or binding.reason_code is not None
+            or binding.source_id is None
+            or binding.proposal_id is not None
+            for binding in bindings
+        ):
+            raise CoreRunError("control_store_integrity_invalid")
+        source_ids = [binding.source_id for binding in bindings if binding is not None]
+        if receipt.source_ids != source_ids or receipt.proposal_ids:
+            raise CoreRunError("control_store_integrity_invalid")
+        records_by_id = {item.source_id: item for item in snapshot.sources}
+        records = [records_by_id.get(source_id) for source_id in source_ids]
+        if any(record is None for record in records):
+            raise CoreRunError("control_store_integrity_invalid")
+        expected_revisions: set[tuple[str, int]] = set()
+        invocation_ids: set[str] = set()
+        request_fingerprints: set[str] = set()
+        for event, binding, record in zip(
+            typed_events,
+            bindings,
+            records,
+            strict=True,
+        ):
+            if binding is None or record is None:
+                raise CoreRunError("control_store_integrity_invalid")
+            expected_revisions.add(
+                (record.content_artifact_id, record.content_artifact_revision)
+            )
+            if (
+                record.raw_payload_artifact_id is not None
+                and record.raw_payload_artifact_revision is not None
+            ):
+                expected_revisions.add(
+                    (
+                        record.raw_payload_artifact_id,
+                        record.raw_payload_artifact_revision,
+                    )
+                )
+            if (
+                record.accepted_transaction_id != receipt.transaction_id
+                or record.acquisition_event_id != event.event_id
+                or record.request_fingerprint != binding.request_fingerprint
+                or record.invocation_id != binding.invocation_id
+            ):
+                raise CoreRunError("control_store_integrity_invalid")
+            invocation_ids.add(record.invocation_id)
+            request_fingerprints.add(record.request_fingerprint)
+        if (
+            len(invocation_ids) != 1
+            or len(request_fingerprints) != 1
+            or {
+                (item.artifact_id, item.revision)
+                for item in receipt.artifact_revisions
+            }
+            != expected_revisions
+        ):
+            raise CoreRunError("control_store_integrity_invalid")
+        return (
+            rule.effect,
+            CoreEffectSubject(
+                stage_id=typed_events[0].stage_id,
+                artifact_id=(
+                    records[0].content_artifact_id
+                    if len(records) == 1 and records[0] is not None
+                    else None
+                ),
+            ),
+        )
+    if len(typed_events) != 1:
+        raise CoreRunError("control_store_integrity_invalid")
+    event = typed_events[0]
     binding = event.intake_binding
-    if (
-        event.run_id != receipt.run_id
-        or event.transaction_id != receipt.transaction_id
-        or event.event_type != rule.event_type
-        or event.stage_id not in rule.allowed_stages
-        or event.core_run_binding is not None
-        or binding is None
-        or binding.request_id != receipt.transaction_id
-    ):
+    if binding is None:
         raise CoreRunError("control_store_integrity_invalid")
     if rule.effect is CoreEffect.INTAKE_REJECTION:
         if (
@@ -675,48 +754,6 @@ def _verified_intake_receipt_effect(
         return rule.effect, CoreEffectSubject(stage_id=event.stage_id)
     if binding.outcome != "committed" or binding.reason_code is not None:
         raise CoreRunError("control_store_integrity_invalid")
-    if rule.effect is CoreEffect.SOURCE_INTAKE:
-        if binding.source_id is None or binding.proposal_id is not None:
-            raise CoreRunError("control_store_integrity_invalid")
-        records = [
-            item for item in snapshot.sources if item.source_id == binding.source_id
-        ]
-        if len(records) != 1:
-            raise CoreRunError("control_store_integrity_invalid")
-        record = records[0]
-        expected_revisions = {
-            (record.content_artifact_id, record.content_artifact_revision)
-        }
-        if (
-            record.raw_payload_artifact_id is not None
-            and record.raw_payload_artifact_revision is not None
-        ):
-            expected_revisions.add(
-                (
-                    record.raw_payload_artifact_id,
-                    record.raw_payload_artifact_revision,
-                )
-            )
-        if (
-            receipt.source_ids != [record.source_id]
-            or receipt.proposal_ids
-            or record.accepted_transaction_id != receipt.transaction_id
-            or record.acquisition_event_id != event.event_id
-            or record.request_fingerprint != binding.request_fingerprint
-            or record.invocation_id != binding.invocation_id
-            or {
-                (item.artifact_id, item.revision) for item in receipt.artifact_revisions
-            }
-            != expected_revisions
-        ):
-            raise CoreRunError("control_store_integrity_invalid")
-        return (
-            rule.effect,
-            CoreEffectSubject(
-                stage_id=event.stage_id,
-                artifact_id=record.content_artifact_id,
-            ),
-        )
     if binding.proposal_id is None or binding.source_id is not None:
         raise CoreRunError("control_store_integrity_invalid")
     records = [
@@ -1393,7 +1430,7 @@ class CoreRunDomainVerifier:
                     and action.effect_kind == "source_input_required"
                     and action.stage_id == "source-discovery"
                     and action.request_schema_id
-                    == "briefloop.runtime_human_source_material_request.v2"
+                    == "briefloop.runtime_human_source_pack_request.v2"
                     and event.stage_id == "source-discovery"
                     and invocation.role_id == "source-provider"
                 )

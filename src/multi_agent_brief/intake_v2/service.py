@@ -28,6 +28,8 @@ from multi_agent_brief.contracts.v2 import (
     ProposalSourceBinding,
     ScreenedCandidatesProposal,
     SourceCommitRequest,
+    SourcePackCommitMember,
+    SourcePackCommitRequest,
     SourceProposal,
     StrictModel,
     TransactionReceipt,
@@ -69,6 +71,16 @@ _SOURCE_FORMATS = {
 }
 
 
+@dataclass(frozen=True)
+class _PreparedSourcePackMember:
+    member: SourcePackCommitMember
+    proposal: SourceProposal
+    content_bytes: bytes
+    raw_bytes: bytes | None
+    claims_eligible: bool
+    eligibility_reason: str
+
+
 class IntakeService:
     """Validate one request and commit its complete accepted/rejected graph."""
 
@@ -87,6 +99,19 @@ class IntakeService:
     def submit_source(self, request_path: str | os.PathLike[str]) -> IntakeResult:
         try:
             return self._submit_source(request_path)
+        except ControlStoreCommitOutcomeUnknown:
+            return IntakeResult(
+                status="commit_outcome_unknown",
+                error_code="commit_outcome_unknown",
+            )
+        except IntakeError as exc:
+            return IntakeResult(status="failed_uncommitted", error_code=exc.code)
+
+    def submit_source_pack(self, request_path: str | os.PathLike[str]) -> IntakeResult:
+        """Validate and atomically commit every member of one source pack."""
+
+        try:
+            return self._submit_source_pack(request_path)
         except ControlStoreCommitOutcomeUnknown:
             return IntakeResult(
                 status="commit_outcome_unknown",
@@ -296,6 +321,141 @@ class IntakeService:
                 eligibility_reason=eligibility_reason,
             )
 
+    def _submit_source_pack(
+        self,
+        request_path: str | os.PathLike[str],
+    ) -> IntakeResult:
+        request = cast(
+            SourcePackCommitRequest,
+            self._read_request(SourcePackCommitRequest, request_path),
+        )
+        manifest_bytes = (
+            None
+            if request.manifest_path is None
+            else self._reader.read(request.manifest_path)
+        )
+        if manifest_bytes is not None and (
+            request.expected_manifest_sha256 != sha256_hex(manifest_bytes)
+        ):
+            raise IntakeError("source_hash_mismatch")
+        payloads: list[tuple[bytes, bytes, bytes | None]] = []
+        fingerprint_members: list[dict[str, object]] = []
+        for member in request.members:
+            proposal_bytes = self._reader.read(member.proposal_path)
+            content_bytes = self._reader.read(member.content_path)
+            raw_bytes = (
+                None
+                if member.raw_payload_path is None
+                else self._reader.read(member.raw_payload_path)
+            )
+            payloads.append((proposal_bytes, content_bytes, raw_bytes))
+            fingerprint_members.append(
+                {
+                    "member_id": member.member_id,
+                    "proposal_sha256": sha256_hex(proposal_bytes),
+                    "content_sha256": sha256_hex(content_bytes),
+                    "raw_payload_sha256": (
+                        None if raw_bytes is None else sha256_hex(raw_bytes)
+                    ),
+                }
+            )
+        request_fingerprint = canonical_fingerprint(
+            {
+                "lane": "source_pack",
+                "request": request.model_dump(mode="json", exclude_unset=False),
+                "manifest_sha256": (
+                    None if manifest_bytes is None else sha256_hex(manifest_bytes)
+                ),
+                "members": fingerprint_members,
+            }
+        )
+        with self._open_store() as store:
+            replay = self._resolve_replay(
+                store,
+                run_id=request.run_id,
+                request_id=request.request_id,
+                request_fingerprint=request_fingerprint,
+            )
+            if replay is not None:
+                return replay
+            snapshot, invocation, owner_stage, core_run_bound = (
+                self._trusted_submission_context(
+                    store,
+                    INTAKE_LANES["source"],
+                    request,
+                )
+            )
+            prepared: list[_PreparedSourcePackMember] = []
+            source_ids: set[str] = set()
+            artifact_ids: set[str] = set()
+            for member, (proposal_bytes, content_bytes, raw_bytes) in zip(
+                request.members,
+                payloads,
+                strict=True,
+            ):
+                proposal = cast(
+                    SourceProposal,
+                    self._parse_proposal(SourceProposal, proposal_bytes),
+                )
+                if proposal.run_id != request.run_id:
+                    raise IntakeError("proposal_contract_invalid")
+                if proposal.source_manifest_sha256 != request.expected_manifest_sha256:
+                    raise IntakeError("proposal_contract_invalid")
+                raw_declared = proposal.raw_payload_sha256 is not None
+                if raw_declared != (raw_bytes is not None):
+                    raise IntakeError("proposal_contract_invalid")
+                if proposal.content_sha256 != sha256_hex(content_bytes):
+                    raise IntakeError("source_hash_mismatch")
+                if raw_bytes is not None and proposal.raw_payload_sha256 != sha256_hex(
+                    raw_bytes
+                ):
+                    raise IntakeError("source_hash_mismatch")
+                try:
+                    claims_eligible, eligibility_reason = evaluate_source_eligibility(
+                        proposal,
+                        raw_payload_present=raw_bytes is not None,
+                    )
+                except SourcePolicyError as exc:
+                    raise IntakeError(str(exc)) from exc
+                content_artifact_id, raw_artifact_id = _source_artifact_ids(
+                    request.run_id,
+                    proposal.source_id,
+                )
+                new_artifact_ids = {content_artifact_id}
+                if raw_artifact_id is not None and raw_bytes is not None:
+                    new_artifact_ids.add(raw_artifact_id)
+                if (
+                    proposal.source_id in source_ids
+                    or any(item.source_id == proposal.source_id for item in snapshot.sources)
+                    or artifact_ids.intersection(new_artifact_ids)
+                    or any(
+                        item.artifact_id in new_artifact_ids
+                        for item in snapshot.artifacts
+                    )
+                ):
+                    raise IntakeError("submission_replay_conflict")
+                source_ids.add(proposal.source_id)
+                artifact_ids.update(new_artifact_ids)
+                prepared.append(
+                    _PreparedSourcePackMember(
+                        member=member,
+                        proposal=proposal,
+                        content_bytes=content_bytes,
+                        raw_bytes=raw_bytes,
+                        claims_eligible=claims_eligible,
+                        eligibility_reason=eligibility_reason,
+                    )
+                )
+            return self._commit_source_pack(
+                store,
+                request=request,
+                prepared=prepared,
+                request_fingerprint=request_fingerprint,
+                invocation=invocation,
+                owner_stage=owner_stage,
+                core_run_bound=core_run_bound,
+            )
+
     def _submit_proposal(
         self,
         lane: LanePolicy,
@@ -394,9 +554,13 @@ class IntakeService:
 
     def _read_request(
         self,
-        model_type: type[SourceCommitRequest] | type[ArtifactSubmitRequest],
+        model_type: (
+            type[SourceCommitRequest]
+            | type[SourcePackCommitRequest]
+            | type[ArtifactSubmitRequest]
+        ),
         request_path: str | os.PathLike[str],
-    ) -> SourceCommitRequest | ArtifactSubmitRequest:
+    ) -> SourceCommitRequest | SourcePackCommitRequest | ArtifactSubmitRequest:
         try:
             payload = self._reader.read_request(request_path)
             data = parse_json_object(payload)
@@ -470,12 +634,21 @@ class IntakeService:
                 and event.intake_binding is not None
                 and event.intake_binding.request_id == request_id
             ]
-            if len(bound_events) != 1:
+            if not bound_events:
                 raise IntakeError("control_store_integrity_invalid")
-            binding = cast(IntakeEventBinding, bound_events[0].intake_binding)
-            if binding.request_fingerprint != request_fingerprint:
+            bindings = [cast(IntakeEventBinding, item.intake_binding) for item in bound_events]
+            if any(
+                binding.request_fingerprint != request_fingerprint
+                for binding in bindings
+            ):
                 raise IntakeError("submission_replay_conflict")
+            outcomes = {binding.outcome for binding in bindings}
+            if len(outcomes) != 1:
+                raise IntakeError("control_store_integrity_invalid")
+            binding = bindings[0]
             if binding.outcome == "rejected":
+                if len(bindings) != 1:
+                    raise IntakeError("control_store_integrity_invalid")
                 return IntakeResult(
                     status="rejected_recorded",
                     receipt=receipt,
@@ -486,7 +659,7 @@ class IntakeService:
             return IntakeResult(
                 status="replayed",
                 receipt=receipt,
-                source_id=binding.source_id,
+                source_id=(binding.source_id if len(bindings) == 1 else None),
                 proposal_id=binding.proposal_id,
             )
         except IntakeError as exc:
@@ -502,7 +675,12 @@ class IntakeService:
         self,
         store: SQLiteControlStore,
         lane: LanePolicy,
-        request: SourceCommitRequest | ArtifactSubmitRequest | InvocationFailureRequest,
+        request: (
+            SourceCommitRequest
+            | SourcePackCommitRequest
+            | ArtifactSubmitRequest
+            | InvocationFailureRequest
+        ),
     ) -> tuple[ControlStoreSnapshot, Invocation, str, bool]:
         # A structural snapshot is sufficient only to select the dormant PR-3
         # path or the PR-4A domain-verified path.  Every subsequent bound-run
@@ -806,6 +984,11 @@ class IntakeService:
                     None if raw_bytes is None else raw_artifact_id
                 ),
                 "raw_payload_artifact_revision": (None if raw_bytes is None else 1),
+                "source_manifest_sha256": proposal.source_manifest_sha256,
+                "manifest_local_file": proposal.manifest_local_file,
+                "document_kind": proposal.document_kind,
+                "opened_at": proposal.opened_at,
+                "resolved_at": proposal.resolved_at,
                 "claims_eligible": claims_eligible,
                 "eligibility_reason": eligibility_reason,
                 "invocation_id": request.invocation_id,
@@ -861,6 +1044,160 @@ class IntakeService:
             receipt=receipt,
             source_id=source.source_id,
         )
+
+    def _commit_source_pack(
+        self,
+        store: SQLiteControlStore,
+        *,
+        request: SourcePackCommitRequest,
+        prepared: list[_PreparedSourcePackMember],
+        request_fingerprint: str,
+        invocation: Invocation,
+        owner_stage: str,
+        core_run_bound: bool,
+    ) -> IntakeResult:
+        now = self._now()
+        unit = store.begin(
+            request.run_id,
+            request.request_id,
+            "source_evidence_intake",
+            request.expected_store_revision,
+        )
+        unit.put_invocation(_completed_invocation(invocation, now))
+        sources: list[AcceptedSourceRecord] = []
+        for item in prepared:
+            proposal = item.proposal
+            member = item.member
+            content_artifact_id, raw_artifact_id = _source_artifact_ids(
+                request.run_id,
+                proposal.source_id,
+            )
+            content_path = _blob_workspace_path(proposal.content_sha256)
+            content_artifact, content_revision = _artifact_pair(
+                run_id=request.run_id,
+                artifact_id=content_artifact_id,
+                revision=1,
+                path=content_path,
+                artifact_format=_SOURCE_FORMATS[
+                    PurePosixPath(member.content_path).suffix
+                ],
+                sha256=proposal.content_sha256,
+                size_bytes=len(item.content_bytes),
+                producer_id=owner_stage,
+                created_at=now,
+            )
+            unit.put_artifact(content_artifact)
+            unit.put_artifact_revision(content_revision, item.content_bytes)
+            raw_path: str | None = None
+            if item.raw_bytes is not None:
+                if proposal.raw_payload_sha256 is None or raw_artifact_id is None:
+                    raise IntakeError("control_store_integrity_invalid")
+                raw_path = _blob_workspace_path(proposal.raw_payload_sha256)
+                raw_artifact, raw_revision = _artifact_pair(
+                    run_id=request.run_id,
+                    artifact_id=raw_artifact_id,
+                    revision=1,
+                    path=raw_path,
+                    artifact_format=_SOURCE_FORMATS[
+                        PurePosixPath(cast(str, member.raw_payload_path)).suffix
+                    ],
+                    sha256=proposal.raw_payload_sha256,
+                    size_bytes=len(item.raw_bytes),
+                    producer_id=owner_stage,
+                    created_at=now,
+                )
+                unit.put_artifact(raw_artifact)
+                unit.put_artifact_revision(raw_revision, item.raw_bytes)
+            event_id = _derived_id(
+                "EVT-SOURCE-PACK",
+                request.request_id,
+                request_fingerprint,
+                member.member_id,
+            )
+            source = AcceptedSourceRecord.model_validate(
+                {
+                    "schema_version": AcceptedSourceRecord.schema_id,
+                    "source_id": proposal.source_id,
+                    "run_id": request.run_id,
+                    "origin_type": proposal.origin_type,
+                    "acquisition_method": proposal.acquisition_method,
+                    "material_kind": proposal.material_kind,
+                    "provider": proposal.provider,
+                    "locator": proposal.locator.model_dump(mode="json"),
+                    "title": proposal.title,
+                    "publisher": proposal.publisher,
+                    "published_at": proposal.published_at,
+                    "retrieved_at": proposal.retrieved_at,
+                    "source_category": proposal.source_category,
+                    "retrieval_source_type": proposal.retrieval_source_type,
+                    "underlying_evidence_type": proposal.underlying_evidence_type,
+                    "raw_underlying_evidence_type": (
+                        proposal.raw_underlying_evidence_type
+                    ),
+                    "content_sha256": proposal.content_sha256,
+                    "content_size_bytes": len(item.content_bytes),
+                    "content_media_type": proposal.content_media_type,
+                    "content_blob_path": content_path,
+                    "content_artifact_id": content_artifact_id,
+                    "content_artifact_revision": 1,
+                    "raw_payload_sha256": proposal.raw_payload_sha256,
+                    "raw_payload_size_bytes": (
+                        None if item.raw_bytes is None else len(item.raw_bytes)
+                    ),
+                    "raw_payload_media_type": proposal.raw_payload_media_type,
+                    "raw_payload_blob_path": raw_path,
+                    "raw_payload_artifact_id": (
+                        None if item.raw_bytes is None else raw_artifact_id
+                    ),
+                    "raw_payload_artifact_revision": (
+                        None if item.raw_bytes is None else 1
+                    ),
+                    "source_manifest_sha256": proposal.source_manifest_sha256,
+                    "manifest_local_file": proposal.manifest_local_file,
+                    "document_kind": proposal.document_kind,
+                    "opened_at": proposal.opened_at,
+                    "resolved_at": proposal.resolved_at,
+                    "claims_eligible": item.claims_eligible,
+                    "eligibility_reason": item.eligibility_reason,
+                    "invocation_id": request.invocation_id,
+                    "acquisition_event_id": event_id,
+                    "accepted_transaction_id": request.request_id,
+                    "request_fingerprint": request_fingerprint,
+                    "created_at": now,
+                },
+                strict=True,
+            )
+            unit.append_event(
+                _intake_event(
+                    event_id=event_id,
+                    run_id=request.run_id,
+                    event_type="source_evidence_committed",
+                    transaction_id=request.request_id,
+                    invocation_id=request.invocation_id,
+                    request_fingerprint=request_fingerprint,
+                    outcome="committed",
+                    created_at=now,
+                    stage_id=owner_stage,
+                    artifact_id=content_artifact_id,
+                    source_id=proposal.source_id,
+                )
+            )
+            unit.put_source(source)
+            sources.append(source)
+
+        def observe(receipt: TransactionReceipt) -> None:
+            post_snapshot = (
+                self._verify_core_run(store, request.run_id) if core_run_bound else None
+            )
+            self._verify_source_pack_readback(
+                store,
+                sources,
+                receipt,
+                post_snapshot,
+            )
+
+        receipt = self._commit_uow(unit, observe)
+        return IntakeResult(status="committed", receipt=receipt)
 
     def _commit_proposal(
         self,
@@ -1055,6 +1392,30 @@ class IntakeService:
             raise IntakeError("intake_commit_failed")
 
     @staticmethod
+    def _verify_source_pack_readback(
+        store,
+        expected: list[AcceptedSourceRecord],
+        receipt: TransactionReceipt,
+        snapshot: ControlStoreSnapshot | None = None,
+    ) -> None:
+        if snapshot is None:
+            try:
+                snapshot = store.load_snapshot(expected[0].run_id)
+            except (ControlStoreError, IndexError) as exc:
+                raise IntakeError("intake_commit_failed") from exc
+        actual = {
+            item.source_id: item
+            for item in snapshot.sources
+            if item.source_id in {record.source_id for record in expected}
+        }
+        if (
+            [item.source_id for item in expected] != receipt.source_ids
+            or len(actual) != len(expected)
+            or any(actual.get(item.source_id) != item for item in expected)
+        ):
+            raise IntakeError("intake_commit_failed")
+
+    @staticmethod
     def _verify_proposal_readback(
         store,
         expected,
@@ -1242,6 +1603,13 @@ def submit_source(
     return IntakeService(workspace).submit_source(request_path)
 
 
+def submit_source_pack(
+    workspace: str | os.PathLike[str],
+    request_path: str | os.PathLike[str],
+) -> IntakeResult:
+    return IntakeService(workspace).submit_source_pack(request_path)
+
+
 def submit_proposal(
     workspace: str | os.PathLike[str],
     lane: str,
@@ -1250,4 +1618,9 @@ def submit_proposal(
     return IntakeService(workspace).submit_proposal(lane, request_path)
 
 
-__all__ = ["IntakeService", "submit_proposal", "submit_source"]
+__all__ = [
+    "IntakeService",
+    "submit_proposal",
+    "submit_source",
+    "submit_source_pack",
+]

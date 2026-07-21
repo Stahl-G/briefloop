@@ -591,11 +591,23 @@ class SourceProposal(StrictModel):
     content_media_type: MimeType
     raw_payload_sha256: Optional[Sha256] = None
     raw_payload_media_type: Optional[MimeType] = None
+    source_manifest_sha256: Optional[Sha256] = None
+    manifest_local_file: Optional[WorkspacePath] = None
+    document_kind: Optional[CleanText] = None
+    opened_at: Optional[IsoDateTime] = None
+    resolved_at: Optional[IsoDateTime] = None
 
     @model_validator(mode="after")
     def raw_payload_fields_are_paired(self) -> "SourceProposal":
         if (self.raw_payload_sha256 is None) != (self.raw_payload_media_type is None):
             raise ValueError("raw payload hash and media type must be paired")
+        if self.document_kind == "status_incident":
+            if self.opened_at is None or self.published_at is not None:
+                raise ValueError("status incident requires opened_at instead of published_at")
+        elif self.opened_at is not None or self.resolved_at is not None:
+            raise ValueError("incident timestamps require status_incident")
+        if self.resolved_at is not None and self.opened_at is None:
+            raise ValueError("resolved_at requires opened_at")
         return self
 
 
@@ -632,6 +644,85 @@ class SourceCommitRequest(StrictModel):
                 or raw.suffix not in {".json", ".txt", ".bin"}
             ):
                 raise ValueError("source raw payload path must be invocation scoped")
+        return self
+
+
+class SourcePackCommitMember(StrictModel):
+    """One ordered source member inside an atomic intake transaction."""
+
+    member_id: ContractId
+    proposal_path: WorkspacePath
+    content_path: WorkspacePath
+    raw_payload_path: Optional[WorkspacePath] = None
+
+    @model_validator(mode="after")
+    def paths_are_member_scoped(self) -> "SourcePackCommitMember":
+        proposal = PurePosixPath(self.proposal_path)
+        content = PurePosixPath(self.content_path)
+        expected_parent = proposal.parent
+        if proposal.name != "source_proposal.json":
+            raise ValueError("source pack proposal filename is invalid")
+        if (
+            content.parent != expected_parent
+            or content.stem != "source_content"
+            or content.suffix not in {".json", ".md", ".txt", ".html", ".pdf", ".bin"}
+        ):
+            raise ValueError("source pack content path is invalid")
+        if self.raw_payload_path is not None:
+            raw = PurePosixPath(self.raw_payload_path)
+            if (
+                raw.parent != expected_parent
+                or raw.stem != "source_raw"
+                or raw.suffix not in {".json", ".txt", ".bin"}
+            ):
+                raise ValueError("source pack raw payload path is invalid")
+        return self
+
+
+class SourcePackCommitRequest(StrictModel):
+    """Atomically commit one complete, ordered set of source materials."""
+
+    schema_id = "briefloop.source_pack_commit_request.v2"
+
+    schema_version: Literal["briefloop.source_pack_commit_request.v2"]
+    request_id: ContractId
+    run_id: ContractId
+    invocation_id: ContractId
+    members: list[SourcePackCommitMember] = Field(min_length=1, max_length=256)
+    manifest_path: Optional[WorkspacePath] = None
+    expected_manifest_sha256: Optional[Sha256] = None
+    expected_store_revision: NonNegativeInt
+
+    @model_validator(mode="after")
+    def pack_is_ordered_unique_and_invocation_scoped(self) -> "SourcePackCommitRequest":
+        if (self.manifest_path is None) != (self.expected_manifest_sha256 is None):
+            raise ValueError("source pack manifest path and hash must be paired")
+        if self.manifest_path is not None:
+            expected_manifest = (
+                PurePosixPath("scratch") / self.invocation_id / "source_manifest.json"
+            )
+            if PurePosixPath(self.manifest_path) != expected_manifest:
+                raise ValueError("source pack manifest path must be invocation scoped")
+        member_ids = [item.member_id for item in self.members]
+        if member_ids != sorted(set(member_ids)):
+            raise ValueError("source pack members must be sorted and unique")
+        paths: list[str] = []
+        expected_root = PurePosixPath("scratch") / self.invocation_id / "sources"
+        for item in self.members:
+            proposal = PurePosixPath(item.proposal_path)
+            if proposal.parent.parent != expected_root or proposal.parent.name != item.member_id:
+                raise ValueError("source pack member path must be invocation scoped")
+            paths.extend(
+                value
+                for value in (
+                    item.proposal_path,
+                    item.content_path,
+                    item.raw_payload_path,
+                )
+                if value is not None
+            )
+        if len(paths) != len(set(paths)):
+            raise ValueError("source pack paths must be unique")
         return self
 
 
@@ -764,6 +855,11 @@ class AcceptedSourceRecord(StrictModel):
     raw_payload_blob_path: Optional[WorkspacePath] = None
     raw_payload_artifact_id: Optional[ContractId] = None
     raw_payload_artifact_revision: Optional[Literal[1]] = None
+    source_manifest_sha256: Optional[Sha256] = None
+    manifest_local_file: Optional[WorkspacePath] = None
+    document_kind: Optional[CleanText] = None
+    opened_at: Optional[IsoDateTime] = None
+    resolved_at: Optional[IsoDateTime] = None
     claims_eligible: bool
     eligibility_reason: Literal[SOURCE_ELIGIBILITY_REASONS]
     invocation_id: ContractId
@@ -791,6 +887,13 @@ class AcceptedSourceRecord(StrictModel):
             self.eligibility_reason == "eligible_durable_source_content"
         ):
             raise ValueError("source eligibility reason does not match verdict")
+        if self.document_kind == "status_incident":
+            if self.opened_at is None or self.published_at is not None:
+                raise ValueError("status incident requires opened_at instead of published_at")
+        elif self.opened_at is not None or self.resolved_at is not None:
+            raise ValueError("incident timestamps require status_incident")
+        if self.resolved_at is not None and self.opened_at is None:
+            raise ValueError("resolved_at requires opened_at")
         return self
 
 
@@ -3499,6 +3602,22 @@ SourceCommitRequest.full_example = {
     **SourceCommitRequest.minimal_example,
     "raw_payload_path": "scratch/INV-SOURCE-001/source_raw.json",
 }
+SourcePackCommitRequest.minimal_example = {
+    "schema_version": SourcePackCommitRequest.schema_id,
+    "request_id": "REQ-SOURCE-PACK-001",
+    "run_id": "RUN-001",
+    "invocation_id": "INV-SOURCE-001",
+    "members": [
+        {
+            "member_id": "SRC-MEMBER-0001",
+            "proposal_path": "scratch/INV-SOURCE-001/sources/SRC-MEMBER-0001/source_proposal.json",
+            "content_path": "scratch/INV-SOURCE-001/sources/SRC-MEMBER-0001/source_content.txt",
+            "raw_payload_path": None,
+        }
+    ],
+    "expected_store_revision": 1,
+}
+SourcePackCommitRequest.full_example = deepcopy(SourcePackCommitRequest.minimal_example)
 
 _CANDIDATE = {
     "candidate_id": "CAND-001",
@@ -4956,6 +5075,7 @@ for _model in (
 V2_CONTRACT_MODELS: tuple[type[StrictModel], ...] = (
     SourceProposal,
     SourceCommitRequest,
+    SourcePackCommitRequest,
     CandidateClaimsProposal,
     ScreenedCandidatesProposal,
     ClaimDraftsProposal,
@@ -5263,6 +5383,8 @@ __all__ = [
     "SOURCE_MATERIAL_KINDS",
     "SOURCE_ORIGIN_TYPES",
     "SourceCommitRequest",
+    "SourcePackCommitMember",
+    "SourcePackCommitRequest",
     "SourceProposal",
     "StageArtifactBinding",
     "StageCompleteRequest",

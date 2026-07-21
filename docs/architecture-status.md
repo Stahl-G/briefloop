@@ -17,6 +17,14 @@ page describes implemented runtime capability, not a breaking deep rename.
 - SQLite ControlStore receipts and ledger relations are the sole runtime
   authority. Strict Pydantic DTOs are the write boundary; deterministic domain
   services own effects; agents write only invocation scratch proposals.
+- Runtime source intake accepts an ordered 1–256 member source pack. The host
+  validates every member before mutation and registers the full pack through
+  one Invocation, one UoW, and one Receipt. The same request hash-binds the
+  frozen manifest and preserves source IDs, URLs, and incident temporal
+  metadata; partial pack commits are forbidden.
+- The workspace-local Codex kit is execution input, not decoration: `run` and
+  runtime commands verify its exact config, Skill, reference, and role-file
+  inventory against the Store-bound adapter identity.
 - `role_topology=single_session` uses one shared Codex session with distinct
   Receipt-backed role invocations and stage-separated self-review. It is not an
   independent-review claim.

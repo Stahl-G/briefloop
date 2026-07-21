@@ -27,6 +27,7 @@ from multi_agent_brief.orchestrator_contract import VALID_RUNTIMES
 EXPECTED_V2_CONTRACT_IDS = (
     "briefloop.source_proposal.v2",
     "briefloop.source_commit_request.v2",
+    "briefloop.source_pack_commit_request.v2",
     "briefloop.candidate_claims_proposal.v2",
     "briefloop.screened_candidates_proposal.v2",
     "briefloop.claim_drafts_proposal.v2",
@@ -119,8 +120,8 @@ EXPECTED_V2_CONTRACT_IDS = (
 
 def test_v2_contract_inventory_is_exact_and_uses_existing_registry() -> None:
     assert V2_CONTRACT_IDS == EXPECTED_V2_CONTRACT_IDS
-    assert len(V2_CONTRACT_MODELS) == 89
-    assert len(set(V2_CONTRACT_IDS)) == 89
+    assert len(V2_CONTRACT_MODELS) == 90
+    assert len(set(V2_CONTRACT_IDS)) == 90
     for contract_id, model in zip(V2_CONTRACT_IDS, V2_CONTRACT_MODELS):
         assert SchemaRegistry.get(contract_id) is model
 

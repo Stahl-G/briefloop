@@ -58,15 +58,15 @@ def derive_runtime_source_plan(
     )
 
 
-def collect_frozen_source(
+def collect_frozen_sources(
     workspace: Path,
     *,
     run_id: str,
     invocation_id: str,
     route: RuntimeSourceRouteBinding,
     provider_factory: ProviderFactory | None = None,
-) -> FrozenSourceMaterial:
-    """Execute exactly one frozen deterministic route without mutable config."""
+) -> tuple[FrozenSourceMaterial, ...]:
+    """Execute one frozen route and retain every deterministically ordered result."""
 
     spec = route.acquisition_spec
     if route.execution_owner != "deterministic" or spec is None:
@@ -132,7 +132,7 @@ def collect_frozen_source(
         raise RuntimeHostError("runtime_source_plan_invalid")
     if not items:
         raise RuntimeHostError("runtime_source_acquisition_failed")
-    item = sorted(
+    ordered = sorted(
         items,
         key=lambda value: (
             value.url,
@@ -140,13 +140,16 @@ def collect_frozen_source(
             value.title,
             sha256_hex(value.content.encode("utf-8")),
         ),
-    )[0]
-    return _material_from_item(
-        workspace=workspace,
-        run_id=run_id,
-        invocation_id=invocation_id,
-        route=route,
-        item=item,
+    )
+    return tuple(
+        _material_from_item(
+            workspace=workspace,
+            run_id=run_id,
+            invocation_id=invocation_id,
+            route=route,
+            item=item,
+        )
+        for item in ordered
     )
 
 
@@ -291,6 +294,6 @@ def _published_date(value: str) -> str | None:
 
 __all__ = [
     "FrozenSourceMaterial",
-    "collect_frozen_source",
+    "collect_frozen_sources",
     "derive_runtime_source_plan",
 ]

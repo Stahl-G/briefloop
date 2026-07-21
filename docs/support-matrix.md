@@ -31,6 +31,8 @@ validation unless that is stated separately.
 |---|---|
 | Subagent workflow (default topology: Scout finds + screens; strict topology: independent Screener; Claim Ledger → Analyst → Delivery Editor → Auditor) | Supported |
 | Fresh SQLite-only Codex control path (`briefloop.db`, strict DTOs, UoW receipts, Store-derived `CoreRunNextAction`) | Experimental |
+| Manifest-bound atomic runtime source-pack intake (1–256 ordered members, stable source IDs/URLs/incident time, one Invocation/UoW/Receipt, zero partial registration) | Experimental |
+| Workspace-local Codex kit binding (config, Skill, reference, all role files; tamper/delete/extra/symlink fail closed) | Experimental |
 | Codex `single_session` topology (shared context, distinct Receipt-backed invocations, stage-separated self-review) | Experimental |
 | Legacy runtime handoff (`agent_handoff.md` + `agent_handoff.json`) | Deprecated; not an authority or new-run entrypoint |
 | JSON/JSONL runtime control files (`runtime_manifest.json`, `workflow_state.json`, `artifact_registry.json`, `event_log.jsonl`) | Projection/legacy only; never accepted as runtime authority |
@@ -469,7 +471,7 @@ approval, release authority, semantic proof, or output-quality proof.
 | `.agents/hermes-skills/**` | Supported | Source-clone-only |
 | `.claude/agents/**` and `.claude/commands/**` | Supported | Source-clone-only |
 | `.opencode/agents/**` and `.opencode/commands/**` | Supported | Source-clone-only |
-| `.codex/config.toml` and `.codex/agents/**` | Experimental | Source-clone-only; installable into a workspace with `runtime install --runtime codex` |
+| `.codex/config.toml`, Skill/reference, and `.codex/agents/**` | Experimental | Packaged and installable with `runtime install --runtime codex`; the installed workspace inventory is hash-bound and reverified before runtime actions |
 | `integrations/hermes-plugin/**` | Supported | Source-clone-only |
 | `.agents/skills/briefloop-workbuddy/**` | Experimental | Source-clone-only WorkBuddy Skill source; `workbuddy pack-skill` generates a local Skill zip from these files, but wheel/sdist installs still do not include them |
 | `.codebuddy/skills/briefloop/**` | Experimental | Source-clone-only CodeBuddy project Skill adapter. It must stay in the main session, must not use `context: fork`, and does not run gates, approve delivery, or authorize release |
