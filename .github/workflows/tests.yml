@@ -404,6 +404,7 @@ jobs:
           /tmp/mabw-wheel-smoke/bin/python -m pip install dist/*.whl
           cd /tmp
           /tmp/mabw-wheel-smoke/bin/briefloop init /tmp/mabw-wheel-ws --demo --force --web-search-mode disabled
+          /tmp/mabw-wheel-smoke/bin/briefloop runtime install --workspace /tmp/mabw-wheel-ws --runtime codex
           /tmp/mabw-wheel-smoke/bin/briefloop run --workspace /tmp/mabw-wheel-ws --runtime codex
           /tmp/mabw-wheel-smoke/bin/briefloop runtime next --workspace /tmp/mabw-wheel-ws | grep '"effect_kind":"doctor_check"'
 
