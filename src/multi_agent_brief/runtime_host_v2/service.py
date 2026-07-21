@@ -893,6 +893,17 @@ class RuntimeHostService:
             raise RuntimeHostError(
                 result.error_code or "control_store_integrity_invalid"
             )
+        if result.status == "committed" and action.effect_kind in {
+            "finalize_complete",
+            "delivery_result",
+        }:
+            # Read-only three-page brief HTML auto-open (config-gated, default
+            # off, best-effort: the hook never raises into the run).
+            from multi_agent_brief.product.brief_html import (
+                maybe_auto_open_brief_pages,
+            )
+
+            maybe_auto_open_brief_pages(self.workspace)
         return result
 
     def _apply_human_decision(

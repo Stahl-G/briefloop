@@ -329,6 +329,10 @@ def test_core_v2_imports_are_confined_to_dormant_cli_package_and_bound_intake() 
         # fail-closed boundary; both bind core_run_v2 directly. Importers
         # are listed exactly (no prefixes); any new importer fails here.
         "cli/authority_guard.py",
+        # brief_html builder is the read-only page-1 projection (C3-sanctioned);
+        # init_web submit reuses derived_id for the real bootstrap receipt id.
+        "product/brief_html/builder.py",
+        "product/init_web/submit.py",
         "runtime_host_v2/initialization.py",
         "runtime_host_v2/projections.py",
         "runtime_host_v2/service.py",

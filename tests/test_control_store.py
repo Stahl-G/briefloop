@@ -2893,6 +2893,11 @@ def test_only_dormant_v2_modules_import_control_store() -> None:
         "intake_v2/service.py",
         "cli/core_v2_commands.py",
         "cli/authority_guard.py",
+        # brief_html builder is the read-only page-1 projection (C3-sanctioned);
+        # init_web submit reads only the real bootstrap receipt after the
+        # sanctioned initialize path.
+        "product/brief_html/builder.py",
+        "product/init_web/submit.py",
         "runtime_host_v2/codex.py",
         "runtime_host_v2/initialization.py",
         "runtime_host_v2/projections.py",

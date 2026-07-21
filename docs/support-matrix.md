@@ -78,6 +78,8 @@ validation unless that is stated separately.
 | `briefloop experiments laj present` | Experimental; deterministic standalone JSON/Markdown/HTML projection of one verified shadow archive; invalid, missing, stale, abstained, or unavailable results display no advice and have zero runtime authority |
 | `briefloop experiments laj study-preflight/budgeted-shadow-run/study-compare` | Experimental; strict target eligibility, complete-trial call/token budget, and offline exact dimension/span-overlap comparison only; advisory with zero runtime authority; utility and efficacy NOT MEASURED |
 | `briefloop init --from-onboarding` | Supported |
+| `briefloop init --web [--port <n>]` | Experimental; one-shot loopback wizard that creates the workspace through the same ControlStore bootstrap path and returns the real TransactionReceipt |
+| `briefloop quality html --workspace <path> [--open] [--laj-view <laj.json>]` | Experimental; read-only self-contained three-page HTML export (quality / LAJ advisory / improvement); no write affordance; LAJ utility NOT MEASURED |
 | `briefloop onboard` | Supported |
 | `briefloop doctor` | Supported |
 | `briefloop extract --workspace <path> --scope <text> --source <file>` | Unsupported on SQLite; retired public CLI |
