@@ -160,13 +160,6 @@
   但不会放入 reader-facing delivery bundle。这些 projection 不运行 gates、不创建
   quality score、不替代 gate reports、不决定 release eligibility、不批准
   delivery、不证明 semantic truth，也不执行 repair。
-  Experimental Guidance Manifestation projection 可以读取可选
-  `output/intermediate/guidance_manifestation_report.json` 中对已 materialized
-  approved guidance entries 的 human/imported diagnostic labels，并在 status 和
-  Quality Panel 中暴露 `explicitly_reflected`、`partially_reflected`、
-  `contradicted` 和 `not_observable` counts。Python 只校验和计数这些 labels；
-  它不判断 manifestation、不修改 Improvement Memory、不批准 guidance、不创建
-  quality score、不运行 gates、不批准 delivery，也不决定 release readiness。
   Experimental Materiality Selection projection 可以读取有效
   `screened_candidates.json`、resolved PolicyProfile materiality terms 和
   workspace focus terms，提示在 capacity/scope screening 后被 excluded 或
@@ -174,13 +167,6 @@
   deterministic keyword diagnostics：不推断语义重要性、不修改 screening output、
   不 resurrect candidates、不改变 Claim Ledger、不运行 gates、不批准 delivery，
   也不决定 release readiness。
-  Experimental Support-Calibrated Wording projection 可以读取已有 reader
-  Markdown、Claim Ledger metadata、source taxonomy 和有效 Claim-Support Matrix
-  policy signals，输出 warning-only 的 `support_wording` diagnostics，用于提示
-  weak / downgrade-required / inferential / unsupported / media-report support
-  与强措辞或缺少归因/不确定性框架之间的错配。它只是确定性 lexical
-  projection，不判断 claim 真伪、不生成或接受 support rows、不运行 gates、
-  不阻断 delivery、不批准 release，也不创建 quality score。
   这些契约只在现有 Claim Ledger、artifact registry、gates、event log、
   archive、source appendix、support records、frozen-artifact integrity 和 human
   delivery approval 主链之上描述 report type metadata。这些 product-layer

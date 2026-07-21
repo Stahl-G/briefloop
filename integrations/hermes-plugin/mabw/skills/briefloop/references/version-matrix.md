@@ -251,17 +251,6 @@ currently available commands.
     - projection only; no workflow-state write, repair execution, gate
       execution, delivery approval, release readiness decision, or quality
       score
-  - Guidance Manifestation diagnostic projection:
-    - artifact: `guidance_manifestation_report.json`
-    - surfaced through `briefloop status --workspace <workspace>
-      --json` and Quality Panel
-    - allowed labels: `explicitly_reflected`, `partially_reflected`,
-      `contradicted`, `not_observable`
-    - labels are human/imported diagnostics for approved guidance entries
-      already materialized into the current run
-    - Python validates and counts labels; it does not judge manifestation,
-      mutate Improvement Memory, approve guidance, run gates, approve delivery,
-      decide release readiness, or claim output-quality improvement
   - Materiality Selection diagnostic projection:
     - surfaced through `briefloop status --workspace <workspace>
       --json` and Quality Panel
@@ -275,17 +264,6 @@ currently available commands.
       screening mutation, candidate resurrection, Claim Ledger mutation, gate
       authority, delivery approval, release readiness decision, or quality
       score
-  - Support-Calibrated Wording warning projection:
-    - surfaced through `briefloop status --workspace <workspace>
-      --json` and Quality Panel as `support_wording`
-    - reads existing reader Markdown, Claim Ledger metadata, source taxonomy,
-      and valid Claim-Support Matrix policy signals when present
-    - surfaces warning-only risks such as weak support with strong wording,
-      inference without framing, unsupported claims in reader text, and
-      media/report-style source classes written with strong unattributed wording
-    - deterministic lexical projection only; no claim-truth judgment,
-      support-row generation or acceptance, gate execution, delivery block,
-      release authority, or quality score
   - Packaged synthetic eval fixtures include a trajectory retry-budget case
     that proves repeated retry decisions narrow
     `workflow_state.next_allowed_decisions` to `request_human_review` and
