@@ -2,3 +2,4 @@ tests/fixtures/fast_rerun_*/** -text
 experiments/080/cases/*/seed_archive/** -text
 src/multi_agent_brief/evaluation_cases/fixtures/cases/*/workspace/** -text
 docs/evaluation-results/** -text
+src/multi_agent_brief/product/review_session/static/** -text
