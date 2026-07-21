@@ -72,10 +72,10 @@ promotion, run:
 ```bash
 briefloop gates check --workspace <workspace> --stage finalize --brief <workspace>/output/brief.md
 briefloop state finalize-complete --workspace <workspace> --reason "Reader-facing artifacts passed finalize checks."
-briefloop workbuddy diagnose --workspace <workspace> --json
+briefloop status --workspace <workspace> --json
 ```
 
-Do not report delivery unless diagnose shows `delivery_truth.valid=true`.
+Do not report delivery unless the Store-native status projection reports `delivered=true` for the current run. The legacy completion projection / `workbuddy diagnose` surface is retired.
 
 If audit findings or human feedback exist, use `briefloop feedback ingest`, `feedback plan`, `feedback resolve`, `feedback show --json`, and `feedback validate` to structure issues and create a bounded repair plan. These commands do not execute repair or edit brief artifacts.
 

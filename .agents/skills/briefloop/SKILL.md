@@ -101,11 +101,13 @@ Hard boundaries:
 - Do not bypass gates, stage completion, repair transactions, or
   `finalize-complete`.
 - Do not auto-deliver; delivery remains human-triggered and gated.
-- Delivery eligibility comes from `finalize_report.json`; action outcome comes
-  from the completion projection's current-bound delivery event. Never infer
-  either from file existence. `delivery_truth.valid=true` permits a delivery
-  action but does not prove it occurred; claim delivery only when
-  `event_truth.delivery_succeeded=true`.
+- Read delivery truth only from the Store-native status projection
+  (`briefloop status --workspace <workspace> --json`). Never infer it from
+  file existence or projection files. `package_ready=true` permits a delivery
+  action but does not prove it occurred; claim delivery only when the
+  projection reports `delivered=true` for the current run. Workflow
+  progression truth comes from `briefloop runtime next`. The legacy
+  completion projection / `workbuddy diagnose` surface is retired.
 - Do not approve Improvement Memory without explicit human approval.
 - Do not continue from an active owner-stage repair except through
   `repair complete` or read-only inspection.

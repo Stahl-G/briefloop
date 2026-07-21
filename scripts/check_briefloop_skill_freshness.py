@@ -89,7 +89,7 @@ REQUIRED_REFERENCE_PHRASES: dict[str, list[str]] = {
     ],
     "references/status-and-gates.md": [
         "Completion And Delivery Truth",
-        "delivery_truth.valid=true",
+        "Store-native status projection",
         "leaves any prior delivery bundle unchanged",
         "Coverage/omission findings",
         "not full-world recall checks",

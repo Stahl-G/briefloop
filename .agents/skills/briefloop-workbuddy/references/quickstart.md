@@ -122,10 +122,11 @@ Tavily 提供商，不要让用户在 Exa、Brave、Firecrawl、Serper 之间做
   --repo-workdir "<canonical BriefLoop source checkout>"
 ```
 
-然后立即运行 diagnose 并读取两个 handoff 文件：
+然后立即读取 status 投影、`runtime next` 和两个 handoff 文件：
 
 ```powershell
-& $BriefLoop workbuddy diagnose --workspace "<workspace>" --json
+& $BriefLoop status --workspace "<workspace>" --json
+& $BriefLoop runtime next --workspace "<workspace>"
 ```
 
 开始角色工作前，核对 handoff/runtime capability 都是 `codebuddy`，
@@ -135,7 +136,7 @@ Tavily 提供商，不要让用户在 Exa、Brave、Firecrawl、Serper 之间做
 角色调用与返回才是角色运行证据；generic Team、Expert、helper、Send Message
 或叙述标签都不是 BriefLoop 角色证据。
 
-handoff 之后，只报告 handoff/diagnose 给出的确定性进度，例如：
+handoff 之后，只报告 handoff/status 投影给出的确定性进度，例如：
 
 ```text
 已创建工作区。
@@ -154,35 +155,31 @@ handoff 之后，只报告 handoff/diagnose 给出的确定性进度，例如：
 ```text
 runtime:
 current_stage:
-run_integrity:
-recovery_status:
-recovery_action:
-blocked:
-latest_gate_status:
-finalize_report:
-delivery_truth:
-delivery_event:
-next_allowed_action:
+terminal_state:
+package_ready:
+delivered:
+store_revision:
+next_action:
 ```
 
 如果 `doctor` 报告任何错误，停下并展示完整 doctor 输出。环境或配置修复且
 同一 `$BriefLoop` 的 doctor 重新通过之前不得继续；用户确认不能把 error 改成
-pass，另一 shell/环境中先前的 standalone pass 也不能替代本次执行。随后
-diagnose 的 `doctor.status=not_run_read_only` 不能清除、替代或绕过该失败，
-其 completion action 也不得执行；中断后或会话连续性不确定时，用同一
+pass，另一 shell/环境中先前的 standalone pass 也不能替代本次执行；
+中断后或会话连续性不确定时，用同一
 `$BriefLoop`、workspace 和 config 重跑 doctor。不要从
-`run_integrity` 推断恢复进度；读取 diagnose 的 `recovery_state.status` 和
-`recommended_recovery_action`。恢复非终态或无效时只执行机器给出的恢复动作，
-不要交付、导出或分享。`recovery_status=finalize_render_required` 和
+`run_integrity` 推断恢复进度；恢复与下一步动作读取
+`& $BriefLoop runtime next --workspace "<workspace>"` 给出的当前动作与原因。
+恢复非终态或无效时只执行机器给出的恢复动作，
+不要交付、导出或分享。`finalize_render_required` 和
 `finalize_completion_pending` 分别只允许投影指定的 finalize / gate 完成事务。
-`recovery_status=completed_non_reference` 时不要再次运行 finalize；仅当
-`delivery_truth.valid=true` 时才可本地交付，并且永久不具备 reference 资格，
+`completed_non_reference` 时不要再次运行 finalize；仅当
+status 投影报告 `package_ready=true` 时才可本地交付，并且永久不具备 reference 资格，
 否则停止交付。对更早的角色工作阶段，报告 Run Card，并只继续 handoff
 允许的非交付工作流步骤。
-`delivery_truth.valid=true` 只表示当前 reader bundle 可进入交付动作。只有
-`delivery_event=delivery_succeeded` 才允许声称已交付；
-`delivery_bundle_prepared` 只能报告本地包已准备，`delivery_draft_created` 只能
-报告草稿已创建。如果 WorkBuddy 诊断没有报告 valid bundle，不要执行交付。
+`package_ready=true` 只表示当前 run 的 reader package 可进入交付决策。只有
+status 投影报告当前 run `delivered=true` 才允许声称已交付；
+`terminal_state=draft_created` 只能
+报告草稿已创建。如果 status 投影没有报告 `package_ready=true`，不要执行交付。
 仅当 `output/intermediate/audited_brief.md` 存在时才说
 run 里有草稿；否则说目前既没有草稿也没有交付。只有 handoff 允许时才继续
 更早的阶段。
@@ -207,18 +204,20 @@ BriefLoop JSON 工件，也不要静默切换到 `--runtime operator`。
 `agent_handoff.md/json`。不要继续 operator 并承诺以后委派；operator handoff
 不得声称任一 `briefloop-*` 角色已经运行。
 
-每次启动、每条 CLI、每个角色返回和中断后：重读 handoff -> diagnose -> 跟随
+每次启动、每条 CLI、每个角色返回和中断后：重读 handoff -> status 投影与
+`runtime next` -> 跟随
 当前动作 -> 仅当当前动作明确指派 role-owned draft work 时调用该精确角色；如果
 当前动作是 deterministic-only，不调用任何角色，由主会话直接运行获授权事务 ->
-再 diagnose。不要从 raw
+再查 status。不要从 raw
 workflow state、event log、Registry、时间戳或文件存在性重构下一步或 gate /
 finalize / delivery 真值；raw controls 仅供审计。
 
 Formatter 只报告 readiness。手写 Markdown/DOCX 一律标为
 `draft/manual/unverified`，不能冒充正式 finalize 或 delivery。只有实际 finalize、
 有效 Finalize Report、reader-clean/promoted/current-render、finalize gate、成功
-finalize-complete、当前 finalize event、valid delivery truth 和准确 delivery
-outcome 全部成立，才可声称正式 finalize 完成。发现 `CL-*`、`SRC-*`、
+finalize-complete、status 投影报告 `package_ready=true` 和准确
+`delivered`/`terminal_state`
+全部成立，才可声称正式 finalize 完成。发现 `CL-*`、`SRC-*`、
 `Claim Ledger`、本地路径等 residue 时停止交付声明并走确定性 repair/finalize。
 
 ## 5. 生成质量摘要

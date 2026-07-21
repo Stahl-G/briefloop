@@ -114,10 +114,12 @@ Run:
   --repo-workdir "<canonical BriefLoop source checkout>"
 ```
 
-Then immediately run diagnose and read both handoff files:
+Then immediately read the status projection, `runtime next`, and both handoff
+files:
 
 ```powershell
-& $BriefLoop workbuddy diagnose --workspace "<workspace>" --json
+& $BriefLoop status --workspace "<workspace>" --json
+& $BriefLoop runtime next --workspace "<workspace>"
 ```
 
 Before role work, verify that handoff runtime and runtime-capability runtime are
@@ -127,7 +129,7 @@ seven `briefloop-*` roles, and the canonical checkout contains the exact
 role-run evidence. Only a host-visible exact role invocation and return count;
 generic Team, Expert, helper, Send Message, or narrative labels do not.
 
-After handoff, report only deterministic progress from handoff/diagnose, for example:
+After handoff, report only deterministic progress from handoff/status, for example:
 
 ```text
 已创建工作区。
@@ -147,30 +149,24 @@ After every key command or role return, print this Run Card from machine facts:
 ```text
 runtime:
 current_stage:
-run_integrity:
-recovery_status:
-recovery_action:
-blocked:
-latest_gate_status:
-finalize_report:
-delivery_truth:
-delivery_event:
-next_allowed_action:
+terminal_state:
+package_ready:
+delivered:
+store_revision:
+next_action:
 ```
 
 If `doctor` reports any error, stop and show the complete doctor output. Fix
 the environment/config and rerun with the same `$BriefLoop`; user confirmation
-or a standalone pass elsewhere cannot turn it into pass. A following
-diagnose's `doctor.status=not_run_read_only` cannot clear, replace, or route
-around that failure, and its completion action must not be followed. After an
+or a standalone pass elsewhere cannot turn it into pass. After an
 interruption or uncertain session continuity, rerun doctor with the same
-`$BriefLoop`, workspace, and config. Read recovery and
-delivery fields from `& $BriefLoop workbuddy diagnose --workspace
-"<workspace>" --json`; do not infer recovery from
-`run_integrity`. `delivery_truth.valid=true` permits a delivery action but does
-not prove delivery. Report `delivery_bundle_prepared` as local ready and
-`delivery_draft_created` as draft created; claim delivered only for
-`delivery_event=delivery_succeeded`. Say the run has a role draft only when
+`$BriefLoop`, workspace, and config. Read recovery and next-action truth from
+`& $BriefLoop runtime next --workspace "<workspace>"` and delivery truth from
+`& $BriefLoop status --workspace "<workspace>" --json`; do not infer recovery from
+`run_integrity`. `package_ready=true` permits a delivery action but does
+not prove delivery. `terminal_state=draft_created` means draft created; claim
+delivered only when the status projection reports `delivered=true` for the
+current run. Say the run has a role draft only when
 `output/intermediate/audited_brief.md` exists;
 otherwise say no draft or delivery exists yet. Continue earlier stages only
 when the handoff allows them.
@@ -198,10 +194,11 @@ files. Never keep running operator while promising later dispatch, and never
 claim a `briefloop-*` role ran under an operator handoff.
 
 After every start, CLI command, role return, or interruption: reread handoff,
-run diagnose, and follow its current action. Invoke only the exact assigned role
+read the status projection and `runtime next`, and follow the current action.
+Invoke only the exact assigned role
 when that action explicitly assigns role-owned draft work. For a
 deterministic-only action, invoke no role and let the main session run the
-authorized transaction. Then diagnose again. Raw
+authorized transaction. Then read the status projection again. Raw
 workflow state, event log, Registry, timestamps, and file existence are audit
 evidence only, not next-action/gate/finalize/delivery truth.
 
@@ -209,8 +206,9 @@ Formatter reports readiness only. Hand-written Markdown/DOCX is always
 `draft/manual/unverified`, never formal finalize or delivery. Claim formal
 finalize completion only when actual finalize, valid Finalize Report,
 reader-clean/promoted/current-render truth, finalize gate, successful
-finalize-complete, current finalize event, valid delivery truth, and literal
-delivery outcome all exist. Report `CL-*`, `SRC-*`, `Claim Ledger`, local-path,
+finalize-complete, status-projection `package_ready=true`, and a literal
+`delivered` / `terminal_state` all exist. Report `CL-*`, `SRC-*`,
+`Claim Ledger`, local-path,
 or other residue and follow deterministic repair/finalize.
 
 ## 5. Summarize Quality

@@ -586,7 +586,7 @@ def test_hermes_skill_template_matches_checked_in_contract() -> None:
         "--finding-id",
         "--route-index",
         'delivery_promotion "promoted"',
-        "briefloop workbuddy diagnose --workspace <workspace> --json",
+        "briefloop status --workspace <workspace> --json",
         "briefloop repair",
         "request_human_review",
     ]:

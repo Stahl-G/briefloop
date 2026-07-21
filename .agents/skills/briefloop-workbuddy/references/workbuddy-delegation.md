@@ -46,7 +46,8 @@ allowlist.
 1. Confirm that the canonical BriefLoop source checkout contains all seven
    exact project role files.
 2. Re-read the current `agent_handoff.md` and `agent_handoff.json`, run
-   `& $BriefLoop workbuddy diagnose --workspace "<workspace>" --json`, and verify
+   `& $BriefLoop status --workspace "<workspace>" --json` and
+   `& $BriefLoop runtime next --workspace "<workspace>"`, and verify
    all of the following before role work:
    - handoff `runtime == codebuddy`;
    - `runtime_capabilities.runtime == codebuddy`;
@@ -139,7 +140,11 @@ The executable sequence is therefore two-phase at every role boundary:
 
 1. the role subagent reads or writes only its handoff-assigned artifact and returns;
 2. the main session re-reads the handoff and runs the permitted deterministic
-   CLI validation or transaction, then runs diagnose again.
+   CLI validation or transaction, then reads the Store-native status projection
+   (`& $BriefLoop status --workspace "<workspace>" --json`) and
+   `& $BriefLoop runtime next --workspace "<workspace>"` again. The legacy
+   completion projection / `workbuddy diagnose` surface is retired; delivery
+   truth comes only from the receipt-bound status projection.
 
 If the main session has no command-execution capability, full BriefLoop cannot
 run in that session; stop before role work or state advancement. The operator

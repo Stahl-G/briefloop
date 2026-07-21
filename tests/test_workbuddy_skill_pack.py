@@ -356,7 +356,7 @@ def test_workbuddy_skill_includes_required_cli_surface() -> None:
         '& $BriefLoop new solar-periodic "<workspace>" --web-search-mode disabled',
         "--runtime codebuddy",
         '--repo-workdir "<canonical BriefLoop source checkout>"',
-        "& $BriefLoop workbuddy diagnose",
+        "& $BriefLoop runtime next --workspace",
         "& $BriefLoop status --workspace",
         "& $BriefLoop state check --workspace",
         "& $BriefLoop quality summarize --workspace",
@@ -381,7 +381,7 @@ def test_workbuddy_repair_reference_documents_supersede_lane() -> None:
         assert "old registered hash, current bytes hash, and reason" in compact
         assert "original contamination event" in compact
         assert "does not make the run clean or reference-eligible" in compact
-        assert "recovery_state.status=awaiting_recovery" in compact
+        assert "awaiting_recovery" in compact
         assert "request_recovery_decision" in compact
         assert "stop_human_review_or_supersede" not in compact
 
@@ -400,7 +400,7 @@ def test_legacy_workbuddy_mirror_declares_non_authoritative_status() -> None:
     assert "Legacy mirror only" in text
     assert ".agents/skills/briefloop-workbuddy/" in text
     assert "not the operating source of truth" in compact
-    assert "delivery_truth.valid" in compact
+    assert "Store-native status" in compact
 
 
 def test_legacy_workbuddy_mirror_uses_scoped_repair_contract() -> None:
@@ -472,7 +472,7 @@ def test_workbuddy_skill_requires_stage_handoff_reread_and_deterministic_progres
     for phrase in [
         "在每个 stage 或角色工件动作之前",
         "`agent_handoff.md` / `agent_handoff.json` 步骤",
-        "每个确定性 CLI 事务之后，向用户总结 handoff/diagnose 中可见的进度",
+        "每个确定性 CLI 事务之后，向用户总结 handoff/status 投影中可见的进度",
         "已创建工作区。",
         "已生成 CodeBuddy handoff。",
         "当前状态：等待 source/scout artifact。",
@@ -493,39 +493,33 @@ def test_workbuddy_skill_requires_run_card_and_hard_stop_rules() -> None:
     for field in [
         "runtime:",
         "current_stage:",
-        "run_integrity:",
-        "recovery_status:",
-        "recovery_action:",
-        "blocked:",
-        "latest_gate_status:",
-        "finalize_report:",
-        "delivery_truth:",
-        "delivery_event:",
-        "next_allowed_action:",
+        "terminal_state:",
+        "package_ready:",
+        "delivered:",
+        "store_revision:",
+        "next_action:",
     ]:
         assert field in text
     for phrase in [
         "在每个关键 CLI 命令、角色返回、repair 动作、gate 检查、finalize",
         "`& $BriefLoop doctor` 报告任何错误",
         "展示完整 doctor 输出",
-        "`recovery_status` 为",
-        "`recovery_status=completed_non_reference`",
-        "`recovery_action` / `next_allowed_action`",
-        "`delivery_truth.valid=true` 只表示当前 reader",
-        "`event_truth.delivery_succeeded=true`",
+        "恢复状态为 `completed_non_reference`",
+        "`package_ready=true` 只表示当前 run",
+        "不表示交付已经发生",
         "才说 run 里有草稿",
         "任何导出、分享、打包、zip 或附件候选包含",
     ]:
         assert phrase in text
     for phrase in [
         "不要把 finalize 之前的正常状态当作流程停止",
-        "只执行 `recovery_action` / `next_allowed_action` 指定的受控事务",
+        "只执行 `runtime next` / handoff 给出的当前动作指定的受控事务",
         "报告 Run Card",
         "非交付工作流步骤",
         "否则说目前既没有草稿也没有交付",
         "本身不阻塞更早的 handoff 指派阶段",
-            "`& $BriefLoop workbuddy diagnose --workspace \"<workspace>\" --json` "
-            "同时报告 `delivery_truth.valid=true`",
+            "`& $BriefLoop status --workspace \"<workspace>\" --json` "
+            "报告当前 run 的 `delivered=true`",
         "不要打包或分享整个工作区",
         "绝不包含 `.env`",
         "只分享经人工确认的非敏感摘录",
@@ -553,9 +547,8 @@ def test_workbuddy_recovery_hard_stops_use_canonical_recovery_state() -> None:
     for path in paths:
         compact = _compact(_read(path))
         assert "contaminated_repaired" not in compact, path
-        assert "recovery_status" in compact, path
         assert "completed_non_reference" in compact, path
-        assert "delivery_truth.valid=true" in compact, path
+        assert "package_ready=true" in compact, path
         assert "不要再次运行 finalize" in compact, path
         assert "不要从 `run_integrity`" in compact, path
 
@@ -566,20 +559,17 @@ def test_workbuddy_delivery_outcome_contract_is_consistent() -> None:
 
     for text in (canonical, legacy):
         for token in [
-            "delivery_truth.valid=true",
-            "delivery_event",
-            "delivery_bundle_prepared",
-            "delivery_draft_created",
-            "delivery_succeeded",
-            "event_truth.delivery_succeeded=true",
+            "package_ready=true",
+            "delivered=true",
+            "terminal_state=draft_created",
         ]:
             assert token in text
 
-    assert "只表示当前 reader bundle" in canonical
+    assert "只表示当前 run 的 reader package" in canonical
     assert "不表示交付已经发生" in canonical
-    assert "这两者都不是 delivered" in canonical
+    assert "都不是" in canonical
     assert "does not mean delivery occurred" in legacy
-    assert "neither is delivered" in legacy
+    assert "not delivered" in legacy
 
 
 def test_workbuddy_skill_has_no_private_paths_or_overclaim_language() -> None:
@@ -633,7 +623,7 @@ def test_workbuddy_public_docs_declare_install_and_assistant_boundaries() -> Non
         assert "workspace zip" in text or "workspace" in text and ".env" in text
         assert "run_integrity" in text
         assert "finalize_report.json" in text
-        assert "delivery_truth.valid" in text
+        assert "package_ready=true" in text
 
 
 def test_workbuddy_docs_do_not_route_users_to_repo_operator_skill() -> None:
@@ -674,7 +664,7 @@ def test_workbuddy_manual_smoke_checklist_is_non_authoritative() -> None:
         "& $BriefLoop workbuddy pack-skill --output dist/workbuddy",
         "--runtime codebuddy",
         "--repo-workdir",
-        "& $BriefLoop workbuddy diagnose",
+        "& $BriefLoop runtime next --workspace",
         "& $BriefLoop status",
         "& $BriefLoop state check",
         ".codebuddy/skills/briefloop/",

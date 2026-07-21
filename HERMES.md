@@ -26,7 +26,7 @@ Hermes-specific runtime path:
 13. Only after `finalize_report.json` reports `delivery_promotion: "promoted"`, run:
    `briefloop gates check --workspace <workspace> --stage finalize --brief <workspace>/output/brief.md`
    `briefloop state finalize-complete --workspace <workspace> --reason "Reader-facing artifacts passed finalize checks."`
-   Then confirm `briefloop workbuddy diagnose --workspace <workspace> --json` reports `delivery_truth.valid=true` before claiming delivery; audit/gate status or artifact existence alone is not a delivery claim.
+   Then confirm the Store-native status projection (`briefloop status --workspace <workspace> --json`) reports `delivered=true` for the current run before claiming delivery; audit/gate status or artifact existence alone is not a delivery claim. The legacy `workbuddy diagnose` surface is retired.
 14. `finalize` alone is not a quality-gate executor; do not skip gates/state completion checks when quality gates are required.
 15. Optional audit/debug trace: run `briefloop provenance build --workspace <workspace>` and `briefloop provenance validate --workspace <workspace>` after runtime state exists. This projection is not semantic proof and is not required to finalize.
 16. Report `output/brief.md`, `brief.docx`, `claim_ledger.json`, `audit_report.json`, `quality_gate_report.json`, audience snapshot context, switchboard selections, and optional `provenance_graph.json` when created.
