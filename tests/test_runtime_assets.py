@@ -182,6 +182,8 @@ def test_runtime_install_codex_workspace_kit_is_local(tmp_path: Path, capsys) ->
         assert key in scout
     assert scout["name"] == "scout"
     assert "RoleTaskEnvelope" in scout["developer_instructions"]
+    assert "briefloop contract show" in scout["developer_instructions"]
+    assert "briefloop contract validate" in scout["developer_instructions"]
     skill_text = skill_path.read_text(encoding="utf-8")
     assert skill_text.startswith("---\n")
     assert "name: briefloop" in skill_text
@@ -208,6 +210,8 @@ def test_runtime_install_codex_workspace_kit_is_local(tmp_path: Path, capsys) ->
     ):
         assert command in reference_text
     assert "RoleTaskEnvelope" in reference_text
+    assert "briefloop contract show" in reference_text
+    assert "briefloop contract validate" in reference_text
     assert "allowed_output_filenames" in reference_text
     assert "runtime_action_stale" in reference_text
     assert "effect_kind=package_ready" in reference_text
@@ -337,4 +341,3 @@ def test_runtime_install_refreshes_generated_files(tmp_path: Path) -> None:
 
     assert rc == 0
     assert "old" not in (ws / "AGENTS.md").read_text(encoding="utf-8")
-

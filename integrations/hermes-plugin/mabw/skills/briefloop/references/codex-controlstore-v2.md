@@ -74,8 +74,19 @@ Exactly five action kinds exist.
      `role_id` and give it the envelope. Do not let root substitute for it.
    - `use_declared_route`: use only the declared existing route.
 4. The executing role writes only the permitted proposal files under its own
-   `scratch_directory`. It must not call BriefLoop runtime commands, write the
-   Store, or write canonical artifacts.
+   `scratch_directory`. For a strict JSON proposal, its `task_instructions`
+   include two binding, read-only preflight commands:
+
+   ```bash
+   briefloop contract show <proposal_schema_id> --example full
+   briefloop contract validate <proposal_schema_id> --input <scratch-proposal-path>
+   ```
+
+   Run the first before writing and the second after writing. Continue only
+   when validation returns `status=valid`; never guess a wrapper, alias, or
+   field name. These commands inspect contracts and proposal bytes only and
+   never write the Store. The role must not call BriefLoop runtime commands,
+   write the Store, or write canonical artifacts.
 5. When the proposal is complete, the root host accepts it through:
 
    ```bash

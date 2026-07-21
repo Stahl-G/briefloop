@@ -180,6 +180,33 @@ _ROLE_OUTPUTS: dict[str, _RoleOutputSpec] = {
 }
 
 
+def _role_task_instructions(
+    role_id: str,
+    output: _RoleOutputSpec,
+    invocation_id: str,
+) -> str:
+    base = (
+        f"Complete only the frozen {role_id} role task in this recorded "
+        "invocation."
+    )
+    if output.proposal_model is None:
+        return base
+    proposal_filename = (
+        "source_proposal.json"
+        if output.owner_kind == "source"
+        else output.filenames[0]
+    )
+    proposal_path = f"scratch/{invocation_id}/{proposal_filename}"
+    return (
+        f"{base} Before writing {proposal_filename}, run `briefloop contract "
+        f"show {output.proposal_schema_id} --example full` and follow that "
+        "exact wrapper and field contract. After writing it, run `briefloop "
+        f"contract validate {output.proposal_schema_id} --input "
+        f"{proposal_path}`. Return only after status is valid; never guess "
+        "aliases or wrapper names."
+    )
+
+
 @dataclass(frozen=True)
 class InvocationDispatch:
     envelope: RoleTaskEnvelope
@@ -427,9 +454,10 @@ class RuntimeHostService:
                 "context_mode": topology.context_mode,
                 "review_mode": topology.review_mode,
                 "dispatch_instruction": dispatch_instruction,
-                "task_instructions": (
-                    f"Complete only the frozen {role_id} role task in this "
-                    "recorded invocation."
+                "task_instructions": _role_task_instructions(
+                    role_id,
+                    output,
+                    invocation_id,
                 ),
             },
             strict=True,

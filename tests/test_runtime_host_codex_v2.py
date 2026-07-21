@@ -18,7 +18,11 @@ from multi_agent_brief.core_run_v2.policy import derived_id
 from multi_agent_brief.core_run_v2.service import CoreRunService
 from multi_agent_brief.runtime_host_v2.codex import load_codex_adapter_binding
 from multi_agent_brief.runtime_host_v2.errors import RuntimeHostError
-from multi_agent_brief.runtime_host_v2.service import RuntimeHostService
+from multi_agent_brief.runtime_host_v2.service import (
+    RuntimeHostService,
+    _ROLE_OUTPUTS,
+    _role_task_instructions,
+)
 from multi_agent_brief.runtime_assets import install_runtime_kit
 from multi_agent_brief.workspace.init_profile import InitProfile
 
@@ -45,6 +49,32 @@ def _workspace(tmp_path: Path) -> Path:
     )
     install_runtime_kit(workspace=workspace, runtime="codex")
     return workspace
+
+
+def test_strict_json_role_instructions_bind_contract_preflight_commands() -> None:
+    invocation_id = "INV-SCOUT-PREFLIGHT-001"
+    instructions = _role_task_instructions(
+        "scout",
+        _ROLE_OUTPUTS["scout"],
+        invocation_id,
+    )
+
+    assert (
+        "briefloop contract show briefloop.candidate_claims_proposal.v2 "
+        "--example full"
+    ) in instructions
+    assert (
+        "briefloop contract validate briefloop.candidate_claims_proposal.v2 "
+        "--input scratch/INV-SCOUT-PREFLIGHT-001/candidate_claims.json"
+    ) in instructions
+    assert "never guess aliases or wrapper names" in instructions
+
+    owned_instructions = _role_task_instructions(
+        "source-planner",
+        _ROLE_OUTPUTS["source-planner"],
+        "INV-PLANNER-001",
+    )
+    assert "briefloop contract" not in owned_instructions
 
 
 def _external_workspace(tmp_path: Path) -> Path:
