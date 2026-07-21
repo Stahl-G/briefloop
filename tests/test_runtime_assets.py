@@ -190,6 +190,32 @@ def test_runtime_install_codex_workspace_kit_is_local(tmp_path: Path, capsys) ->
     assert "CoreRunNextAction" in skill_text
     reference_text = reference_path.read_text(encoding="utf-8")
     assert "briefloop run --workspace <workspace> --runtime codex" in reference_text
+    for action_kind in (
+        "delegate",
+        "deterministic",
+        "human_decision",
+        "blocked",
+        "complete",
+    ):
+        assert action_kind in skill_text
+        assert f"### `{action_kind}`" in reference_text
+    for command in (
+        "briefloop runtime next",
+        "briefloop runtime invocation-start",
+        "briefloop runtime invocation-accept",
+        "briefloop runtime invocation-fail",
+        "briefloop runtime apply",
+    ):
+        assert command in reference_text
+    assert "RoleTaskEnvelope" in reference_text
+    assert "allowed_output_filenames" in reference_text
+    assert "runtime_action_stale" in reference_text
+    assert "effect_kind=package_ready" in reference_text
+    assert "effect_kind=delivered" in reference_text
+    assert "--human-request" in reference_text
+    assert "Never read them back for legality" in reference_text
+    assert "--runtime operator" not in skill_text + reference_text
+    assert "output/intermediate/workflow_state.json" not in skill_text + reference_text
 
     assert (ws / "audience_profile.md").read_text(encoding="utf-8") == "Do not overwrite me.\n"
     assert (ws / "config.yaml").read_text(encoding="utf-8") == "project:\n  name: Runtime Kit\n"
@@ -311,5 +337,4 @@ def test_runtime_install_refreshes_generated_files(tmp_path: Path) -> None:
 
     assert rc == 0
     assert "old" not in (ws / "AGENTS.md").read_text(encoding="utf-8")
-
 

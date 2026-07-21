@@ -10,6 +10,8 @@ import sys
 ROOT = Path(__file__).resolve().parent.parent
 
 REQUIRED_SOURCE_ASSETS = [
+    ".agents/skills/briefloop/SKILL.md",
+    ".agents/skills/briefloop/references/codex-controlstore-v2.md",
     ".agents/skills/orchestrator/SKILL.md",
     ".agents/hermes-skills/multi-agent-brief-hermes/SKILL.md",
     ".claude/commands/briefloop.md",
@@ -111,6 +113,30 @@ def main() -> int:
     ).read_bytes()
     if source_reference != packaged_reference:
         errors.append("packaged Codex ControlStore reference is stale")
+
+    packaged_skill = (
+        ROOT
+        / "src/multi_agent_brief/runtime_kits/codex/skills/briefloop/SKILL.md"
+    ).read_text(encoding="utf-8")
+    packaged_contract = packaged_skill + "\n" + packaged_reference.decode("utf-8")
+    for phrase in (
+        "CoreRunNextAction",
+        "RoleTaskEnvelope",
+        "delegate",
+        "deterministic",
+        "human_decision",
+        "blocked",
+        "complete",
+        "runtime_action_stale",
+        "package_ready",
+        "delivered",
+        "runtime invocation-start",
+        "runtime invocation-accept",
+        "runtime invocation-fail",
+        "runtime apply",
+    ):
+        if phrase not in packaged_contract:
+            errors.append(f"packaged Codex skill is missing runtime contract phrase: {phrase}")
 
     if errors:
         print("Runtime Asset Parity Check")

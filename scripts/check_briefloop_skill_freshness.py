@@ -1,138 +1,86 @@
 #!/usr/bin/env python3
-"""BriefLoop skill freshness guard.
-
-This is intentionally separate from check_skill_contract.py. The contract check
-guards structure and projection parity; this guard locks recent control-surface
-semantics that must stay visible to the BriefLoop operator skill.
-"""
+"""Guard the current SQLite-only Codex operating protocol and its projections."""
 
 from __future__ import annotations
 
 import argparse
 import json
-import sys
 from pathlib import Path
 
 
 ROOT = Path(__file__).resolve().parent.parent
 CANONICAL = ROOT / ".agents" / "skills" / "briefloop"
-HERMES_PLUGIN_PROJECTION = ROOT / "integrations" / "hermes-plugin" / "mabw" / "skills" / "briefloop"
+HERMES_PLUGIN_PROJECTION = (
+    ROOT / "integrations" / "hermes-plugin" / "mabw" / "skills" / "briefloop"
+)
+PACKAGED_CODEX = (
+    ROOT / "src" / "multi_agent_brief" / "runtime_kits" / "codex" / "skills" / "briefloop"
+)
 
 
 REQUIRED_REFERENCE_PHRASES: dict[str, list[str]] = {
+    "SKILL.md": [
+        "SQLite-only and Codex-only",
+        "CoreRunNextAction",
+        "delegate",
+        "deterministic",
+        "human_decision",
+        "blocked",
+        "complete",
+        "RoleTaskEnvelope",
+        "runtime_action_stale",
+        "package_ready",
+        "effect_kind=delivered",
+    ],
+    "references/codex-controlstore-v2.md": [
+        "runtime_action.json",
+        "runtime invocation-start",
+        "delegate_exact_role",
+        "allowed_output_filenames",
+        "runtime invocation-accept",
+        "runtime invocation-fail",
+        "runtime apply",
+        "--human-request",
+        "invocation_accept_or_fail",
+        "runtime_action_stale",
+        "package_ready",
+        "effect_kind=delivered",
+        "Never read them back for legality",
+    ],
     "references/version-matrix.md": [
-        "briefloop-operator-skill-v0.2.0",
-        "v1.0 RC Landed Surfaces",
-        "Pending Before v1.0",
-        "single delivery-truth record",
-        "repair supersede-stage",
-        "coverage_omission",
-        "quality summarize",
-        "quality_panel.json",
-        "quality_summary.md",
-        "quality_panel.html",
-        "quality_panel_closeout",
-        "approval init",
-        "approval record",
-        "release check",
-        "release_readiness_report.json",
-        "branding_context",
-        "Trajectory Regulation",
-        "Materiality Selection",
-        "Reader Template Conformance",
-        "Citation Profile Split",
-        "reader_contract",
-        "reader_contract.citation_profile",
-        "executive",
-        "analyst",
-        "audit",
-        "report_bundle_manifest.json",
-        "report_template_conformance",
-        "reader_block_warnings",
-        "screened_candidates.json",
-        "materiality_terms",
-        "review_materiality_exclusions",
-        "workflow_state.json",
-        "event_log.jsonl",
-        "retry-stage events",
-        "request_human_review",
-        "block_run",
-        "industry-weekly",
-        "management-monthly",
-        "document-review",
-        "solar-periodic",
-        "README_en.md",
-        "compatibility-pointer shape",
-        "v0.11.0 product-baseline readiness",
-        "WorkBuddy Skill source bundle",
-        ".agents/skills/briefloop-workbuddy/",
-        "legacy mirror",
-        "integrations/workbuddy/briefloop/",
-        "source-clone-only",
-        "--runtime operator",
-        "workbuddy pack-skill",
-        "deterministic local",
-        "Skill zip",
-        "not a WorkBuddy Marketplace publication",
-        "CodeBuddy project Skill adapter",
-        ".codebuddy/skills/briefloop/",
-        "must not use `context: fork`",
-        "used by `--runtime codebuddy` handoff",
-        "CodeBuddy project role agents",
-        ".codebuddy/agents/briefloop-*.md",
-        "must not run `briefloop` or `multi-agent-brief` CLI commands",
-        "main CodeBuddy session remains responsible for deterministic transactions",
-        "CodeBuddy runtime handoff",
-        "`--runtime codebuddy`: experimental handoff",
-        "nested_subagents_supported",
-        "role_agents_run_cli_transactions",
+        "briefloop-codex-skill-v0.3.0",
+        "Prior release line: `v0.13.0`",
+        "Prepared release line: `v0.14.0`",
+        "Codex is the only active fresh runtime",
+        "Strict Pydantic requests are the only write boundary",
+        "Experimental",
+        "NOT MEASURED",
+        "eval-cases",
+        "experiments 080",
     ],
-    "references/status-and-gates.md": [
-        "Completion And Delivery Truth",
-        "Store-native status projection",
-        "leaves any prior delivery bundle unchanged",
-        "Coverage/omission findings",
-        "not full-world recall checks",
-        "Trajectory Regulation is read-only",
-        "Materiality Selection is diagnostic-only",
-        "Reader Template Conformance is warning-only",
-        "Citation profiles split reader and audit citation surfaces",
-        "quality_panel_closeout",
-        "excluded from reader-facing delivery bundles",
+    "CHANGELOG.md": [
+        "briefloop-codex-skill-v0.3.0",
+        "SQLite-only Codex runtime state machine",
+        "package_ready",
+        "delivered",
     ],
-    "references/runtime-workspace.md": [
-        "briefloop run --workspace <workspace> --runtime codebuddy",
-        ".codebuddy/skills/briefloop/",
-        ".codebuddy/agents/briefloop-*.md",
-        "deterministic CLI transactions to the main session",
+}
+
+PACKAGED_REQUIRED_PHRASES: dict[str, list[str]] = {
+    "SKILL.md": [
+        "Use when operating this workspace",
+        "CoreRunNextAction",
+        "runtime invocation-start",
+        "runtime apply",
+        "human_decision",
+        "blocked",
+        "complete",
+        "package_ready",
+        "delivered",
+        "Never fall back",
     ],
-    "references/control-record-map.md": [
-        "quality_panel.json",
-        "quality_summary.md",
-        "quality_panel.html",
-        "Materiality Selection is a status / Quality Panel projection",
-        "release_readiness_report.json",
-        "resolved citation profile",
-        "post-finalize closeout",
-    ],
-    "references/repo-development.md": [
-        "v1.0 Pilot Evidence Gate",
-        "check_v1_pilot_evidence.py",
-        ".codebuddy/agents/briefloop-*.md",
-        "CodeBuddy project role agents",
-        "source-clone-only",
-        "check_product_baseline.py",
-        "check_skill_contract.py",
-        "check_briefloop_skill_freshness.py",
-    ],
-    "references/public-claims.md": [
-        "RC-Phase Wording",
-        "not_satisfied",
-    ],
-    "references/naming-and-compatibility.md": [
-        "README.md` is the canonical English README",
-        "README.zh-CN.md` is the canonical Chinese README",
-        "README_en.md` is only a short compatibility pointer",
+    "references/controlstore-v2.md": REQUIRED_REFERENCE_PHRASES[
+        "references/codex-controlstore-v2.md"
     ],
 }
 
@@ -144,6 +92,7 @@ def main() -> int:
 
     checks: list[dict[str, str]] = []
     _check_required_phrases(checks)
+    _check_packaged_phrases(checks)
     _check_projection_parity(checks)
 
     ok = all(item["status"] == "pass" for item in checks)
@@ -160,20 +109,44 @@ def main() -> int:
     return 0 if ok else 1
 
 
-def _check_required_phrases(checks: list[dict[str, str]]) -> None:
-    for rel_path, phrases in REQUIRED_REFERENCE_PHRASES.items():
-        path = CANONICAL / rel_path
+def _check_phrase_set(
+    checks: list[dict[str, str]],
+    *,
+    root: Path,
+    prefix: str,
+    requirements: dict[str, list[str]],
+) -> None:
+    for rel_path, phrases in requirements.items():
+        path = root / rel_path
         if not path.exists():
-            _append_check(checks, f"canonical.{rel_path}", False, "missing file")
+            _append_check(checks, f"{prefix}.{rel_path}", False, "missing file")
             continue
         text = path.read_text(encoding="utf-8")
         missing = [phrase for phrase in phrases if phrase not in text]
         _append_check(
             checks,
-            f"canonical.{rel_path}.freshness",
+            f"{prefix}.{rel_path}.freshness",
             not missing,
             f"missing={missing}",
         )
+
+
+def _check_required_phrases(checks: list[dict[str, str]]) -> None:
+    _check_phrase_set(
+        checks,
+        root=CANONICAL,
+        prefix="canonical",
+        requirements=REQUIRED_REFERENCE_PHRASES,
+    )
+
+
+def _check_packaged_phrases(checks: list[dict[str, str]]) -> None:
+    _check_phrase_set(
+        checks,
+        root=PACKAGED_CODEX,
+        prefix="packaged_codex",
+        requirements=PACKAGED_REQUIRED_PHRASES,
+    )
 
 
 def _check_projection_parity(checks: list[dict[str, str]]) -> None:
@@ -230,10 +203,7 @@ def _print_human(payload: dict[str, object]) -> None:
         status = "OK" if item["status"] == "pass" else "FAIL"
         print(f"  [{status}] {item['id']}: {item['detail']}")
     print()
-    if payload["ok"]:
-        print("ALL CHECKS PASSED.")
-    else:
-        print("FAILED.")
+    print("ALL CHECKS PASSED." if payload["ok"] else "FAILED.")
 
 
 if __name__ == "__main__":
