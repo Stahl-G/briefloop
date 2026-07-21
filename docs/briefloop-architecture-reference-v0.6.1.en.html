@@ -1,0 +1,3262 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="light">
+  <title>BriefLoop Architecture Reference v0.6.1</title>
+  <meta name="description" content="A bilingual architecture reference
+for BriefLoop dynamic knowledge conflict, evidence governance, and
+release authority.">
+  <link rel="canonical" href="https://briefloop.ai/reports/briefloop-architecture-reference-v0.6.1.en.html">
+  <meta name="citation_title" content="BriefLoop Architecture Reference
+v0.6.1">
+  <meta name="citation_author" content="BriefLoop Project">
+  <meta name="citation_publication_date" content="2026-07-19">
+    <script type="application/ld+json">
+    {
+      "@context": "https://schema.org",
+      "@type": "TechArticle",
+      "headline": "BriefLoop Architecture Reference v0.6.1",
+      "datePublished": "2026-07-19",
+      "url": "https://briefloop.ai/reports/briefloop-architecture-reference-v0.6.1.en.html",
+      "author": {"@type": "Organization", "name": "BriefLoop Project"}
+    }
+  </script>
+    <style type="text/css">:root {
+--page: #ffffff;
+--sidebar: #f3f5f8;
+--ink: #18202b;
+--muted: #5d6775;
+--line: #d8dee8;
+--blue: #1d4ed8;
+--blue-soft: #eaf1ff;
+--green: #166534;
+--green-soft: #ecfdf3;
+--amber: #854d0e;
+--amber-soft: #fff8df;
+--code: #f4f6f8;
+}
+* { box-sizing: border-box; }
+html {
+scroll-behavior: smooth;
+background: var(--page);
+}
+body {
+margin: 0;
+color: var(--ink);
+background: var(--page);
+font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", sans-serif;
+font-size: 17px;
+line-height: 1.8;
+letter-spacing: 0;
+}
+a {
+color: var(--blue);
+text-decoration-thickness: 1px;
+text-underline-offset: 3px;
+}
+a:hover { text-decoration-thickness: 2px; }
+.skip-link {
+position: absolute;
+left: 16px;
+top: -80px;
+z-index: 10;
+padding: 8px 12px;
+color: var(--ink);
+background: var(--page);
+border: 1px solid var(--line);
+}
+.skip-link:focus { top: 16px; }
+.report-layout {
+display: grid;
+grid-template-columns: 300px minmax(0, 1fr);
+align-items: start;
+}
+.report-sidebar {
+position: sticky;
+top: 0;
+height: 100vh;
+overflow-y: auto;
+padding: 34px 28px 40px;
+background: var(--sidebar);
+border-right: 1px solid var(--line);
+}
+.report-brand {
+margin: 0 0 4px;
+color: var(--ink);
+font-size: 24px;
+font-weight: 700;
+}
+.report-edition {
+margin: 0 0 28px;
+color: var(--muted);
+font-size: 13px;
+overflow-wrap: anywhere;
+}
+.report-sidebar h2 {
+margin: 0 0 10px;
+padding: 0;
+border: 0;
+color: var(--muted);
+font-size: 13px;
+text-transform: uppercase;
+}
+.report-sidebar ul {
+margin: 0;
+padding: 0;
+list-style: none;
+}
+.report-sidebar li { margin: 5px 0; }
+.report-sidebar li ul {
+margin: 4px 0 8px 12px;
+padding-left: 11px;
+border-left: 1px solid var(--line);
+}
+.report-sidebar a {
+display: block;
+color: var(--muted);
+font-size: 13px;
+line-height: 1.35;
+text-decoration: none;
+overflow-wrap: anywhere;
+}
+.report-sidebar a:hover { color: var(--blue); }
+.mobile-toc > summary { display: none; }
+.report-content {
+width: min(100%, 1040px);
+max-width: 100%;
+min-width: 0;
+margin: 0 auto;
+padding: 64px 64px 100px;
+}
+.report-content section { min-width: 0; }
+.report-content > h1:first-child {
+max-width: 860px;
+margin: 0 0 18px;
+color: var(--ink);
+font-size: 44px;
+line-height: 1.18;
+font-weight: 750;
+overflow-wrap: anywhere;
+}
+.report-content > h2:first-of-type {
+margin: 0 0 28px;
+padding: 0 0 22px;
+color: var(--muted);
+border-top: 0;
+border-bottom: 2px solid var(--ink);
+font-size: 24px;
+font-weight: 600;
+overflow-wrap: anywhere;
+}
+h2 {
+margin: 72px 0 22px;
+padding-top: 22px;
+border-top: 2px solid var(--ink);
+font-size: 30px;
+line-height: 1.3;
+overflow-wrap: anywhere;
+}
+h3 {
+margin: 42px 0 15px;
+font-size: 23px;
+line-height: 1.4;
+}
+h4 {
+margin: 32px 0 12px;
+font-size: 19px;
+}
+p { margin: 14px 0; }
+strong { font-weight: 700; }
+blockquote {
+margin: 24px 0;
+padding: 12px 18px;
+color: var(--ink);
+background: var(--blue-soft);
+border-left: 4px solid var(--blue);
+}
+blockquote p { margin: 0; }
+ul, ol { padding-left: 1.4em; }
+li { margin: 7px 0; }
+code {
+padding: 2px 5px;
+color: #293241;
+background: var(--code);
+border: 1px solid #e2e7ed;
+border-radius: 4px;
+font-family: "SFMono-Regular", Consolas, "Liberation Mono", monospace;
+font-size: .88em;
+overflow-wrap: anywhere;
+}
+pre {
+margin: 22px 0;
+padding: 18px 20px;
+overflow: visible;
+color: #202938;
+background: var(--code);
+border-left: 4px solid var(--green);
+white-space: pre-wrap;
+overflow-wrap: anywhere;
+}
+pre code {
+padding: 0;
+background: transparent;
+border: 0;
+font-size: 14px;
+}
+table {
+width: 100%;
+margin: 24px 0 34px;
+border-collapse: collapse;
+table-layout: fixed;
+font-size: 14px;
+line-height: 1.5;
+}
+th, td {
+padding: 11px 12px;
+vertical-align: top;
+border: 1px solid var(--line);
+overflow-wrap: anywhere;
+}
+th {
+color: var(--ink);
+background: var(--sidebar);
+font-weight: 700;
+text-align: left;
+}
+tbody tr:nth-child(even) { background: #fafbfc; }
+img, svg {
+display: block;
+width: 100%;
+height: auto;
+margin: 34px 0 12px;
+border: 1px solid var(--line);
+}
+.report-content p > img + em,
+.report-content p em:only-child {
+color: var(--muted);
+font-size: 14px;
+}
+hr {
+margin: 60px 0;
+border: 0;
+border-top: 1px solid var(--line);
+}
+.report-footer {
+margin-top: 80px;
+padding-top: 22px;
+color: var(--muted);
+border-top: 1px solid var(--line);
+font-size: 13px;
+}
+@media (max-width: 920px) {
+.report-layout { display: block; }
+.report-sidebar {
+position: static;
+width: 100%;
+height: auto;
+max-height: none;
+padding: 18px 22px;
+border-right: 0;
+border-bottom: 1px solid var(--line);
+}
+.mobile-toc {
+display: block;
+margin-top: 14px;
+color: var(--muted);
+font-size: 13px;
+}
+.mobile-toc summary {
+display: list-item;
+cursor: pointer;
+color: var(--ink);
+font-weight: 700;
+}
+.mobile-toc[open] summary { margin-bottom: 10px; }
+.report-brand { margin-bottom: 2px; }
+.report-edition { margin-bottom: 0; }
+.report-content {
+padding: 42px 28px 80px;
+}
+.report-content table {
+display: block;
+overflow-x: auto;
+}
+.report-content img, .report-content svg, .report-content pre {
+max-width: 100%;
+}
+.report-content > h1:first-child { font-size: 36px; }
+}
+@media (max-width: 560px) {
+body { font-size: 16px; }
+.report-content { padding: 34px 18px 64px; }
+.report-content > h1:first-child {
+font-size: 29px;
+line-height: 1.35;
+word-break: break-word;
+}
+.report-content > h2:first-of-type {
+font-size: 22px;
+line-height: 1.45;
+word-break: break-word;
+}
+h2 { margin-top: 58px; font-size: 25px; }
+h3 { font-size: 21px; }
+table { font-size: 12px; }
+th, td { padding: 8px 7px; }
+}
+@media print {
+.report-layout { display: block; }
+.report-sidebar, .skip-link { display: none; }
+.report-content {
+width: 100%;
+max-width: none;
+padding: 0;
+}
+h2, h3 { break-after: avoid; }
+table, blockquote, pre, img { break-inside: avoid; }
+a { color: inherit; text-decoration: none; }
+}
+</style>
+</head>
+<body>
+  <a class="skip-link" href="#report-main">Skip to main content</a>
+  <div class="report-layout">
+    <aside class="report-sidebar" aria-label="Report contents">
+      <p class="report-brand">BriefLoop</p>
+      <p class="report-edition">Architecture Reference v0.6.1 · Code
+Snapshot main@47ae439d</p>
+            <details class="mobile-toc">
+        <summary>Contents</summary>
+        <nav id="TOC" role="doc-toc">
+          <h2>Contents</h2>
+          <ul>
+          <li><a href="#briefloop-open-source-loop-engineering-for-auditable-business-briefings" id="toc-briefloop-open-source-loop-engineering-for-auditable-business-briefings">BriefLoop:
+          Open-Source Loop Engineering for Auditable Business
+          Briefings</a>
+          <ul>
+          <li><a href="#architecture-reference-v0.6.1-dynamic-knowledge-conflicts-evidence-governance-and-release-authority" id="toc-architecture-reference-v0.6.1-dynamic-knowledge-conflicts-evidence-governance-and-release-authority">Architecture
+          Reference v0.6.1: Dynamic Knowledge Conflicts, Evidence
+          Governance, and Release Authority</a></li>
+          <li><a href="#abstract" id="toc-abstract">Abstract</a></li>
+          <li><a href="#revision-in-this-edition" id="toc-revision-in-this-edition">Revision in This
+          Edition</a></li>
+          <li><a href="#future-study-abstract-planned-not-executed" id="toc-future-study-abstract-planned-not-executed">Future
+          Study Abstract (Planned; Not Executed)</a></li>
+          <li><a href="#core-insights" id="toc-core-insights">1. Core
+          Insights</a>
+          <ul>
+          <li><a href="#architecture-charters" id="toc-architecture-charters">1.1 Architecture
+          Charters</a></li>
+          <li><a href="#operating-disciplines" id="toc-operating-disciplines">1.2 Operating
+          Disciplines</a></li>
+          <li><a href="#why-coding-agents-improve-faster" id="toc-why-coding-agents-improve-faster">1.3 Why Coding
+          Agents Improve Faster</a></li>
+          <li><a href="#the-briefloop-thesis" id="toc-the-briefloop-thesis">1.4 The BriefLoop
+          Thesis</a></li>
+          <li><a href="#independent-convergence-with-harness-engineering" id="toc-independent-convergence-with-harness-engineering">1.5
+          Independent Convergence with Harness Engineering</a></li>
+          <li><a href="#from-agent-engineering-to-loop-engineering" id="toc-from-agent-engineering-to-loop-engineering">1.6 From
+          Agent Engineering to Loop Engineering</a></li>
+          </ul></li>
+          <li><a href="#design-philosophy" id="toc-design-philosophy">2.
+          Design Philosophy</a>
+          <ul>
+          <li><a href="#a-three-layer-quality-model" id="toc-a-three-layer-quality-model">2.1 A Three-Layer Quality
+          Model</a></li>
+          <li><a href="#correctness-taste-and-evidence" id="toc-correctness-taste-and-evidence">2.2 Correctness,
+          Taste, and Evidence</a></li>
+          <li><a href="#governance-domains-and-control-surfaces" id="toc-governance-domains-and-control-surfaces">2.3
+          Governance Domains and Control Surfaces</a></li>
+          <li><a href="#the-single-writer-principle" id="toc-the-single-writer-principle">2.4 The Single-Writer
+          Principle</a></li>
+          <li><a href="#the-speed-principle" id="toc-the-speed-principle">2.5 The Speed Principle</a></li>
+          </ul></li>
+          <li><a href="#architecture-five-control-spines" id="toc-architecture-five-control-spines">3. Architecture:
+          Five Control Spines</a>
+          <ul>
+          <li><a href="#runtime-state-spine" id="toc-runtime-state-spine">3.1 Runtime-State Spine</a></li>
+          <li><a href="#evidence-and-claim-spine" id="toc-evidence-and-claim-spine">3.2 Evidence-and-Claim
+          Spine</a></li>
+          <li><a href="#gate-spine" id="toc-gate-spine">3.3 Gate
+          Spine</a></li>
+          <li><a href="#memory-and-improvement-spine" id="toc-memory-and-improvement-spine">3.4
+          Memory-and-Improvement Spine</a></li>
+          <li><a href="#delivery-and-archive-spine" id="toc-delivery-and-archive-spine">3.5 Delivery-and-Archive
+          Spine</a></li>
+          <li><a href="#product-layer-and-support-sufficiency-experimental-stack" id="toc-product-layer-and-support-sufficiency-experimental-stack">3.6
+          Product Layer and Support-Sufficiency Experimental
+          Stack</a></li>
+          </ul></li>
+          <li><a href="#control-transactions" id="toc-control-transactions">4. Control Transactions</a>
+          <ul>
+          <li><a href="#stage-completion-transactions" id="toc-stage-completion-transactions">4.1 Stage-Completion
+          Transactions</a></li>
+          <li><a href="#claim-ledger-freeze-transaction" id="toc-claim-ledger-freeze-transaction">4.2 Claim-Ledger
+          Freeze Transaction</a></li>
+          <li><a href="#run-integrity-and-contamination" id="toc-run-integrity-and-contamination">4.3 Run Integrity and
+          Contamination</a></li>
+          <li><a href="#immutable-archives" id="toc-immutable-archives">4.4 Immutable Archives</a></li>
+          <li><a href="#fast-rerun-import" id="toc-fast-rerun-import">4.5 Fast-Rerun Import</a></li>
+          </ul></li>
+          <li><a href="#evidence-and-claim-governance" id="toc-evidence-and-claim-governance">5. Evidence and Claim
+          Governance</a>
+          <ul>
+          <li><a href="#from-source-to-claim" id="toc-from-source-to-claim">5.1 From Source to
+          Claim</a></li>
+          <li><a href="#claim-draft-contract" id="toc-claim-draft-contract">5.2 Claim-Draft
+          Contract</a></li>
+          <li><a href="#support-strength-calibration" id="toc-support-strength-calibration">5.3 Support-Strength
+          Calibration</a></li>
+          <li><a href="#boundary-of-the-source-appendix" id="toc-boundary-of-the-source-appendix">5.4 Boundary of the
+          Source Appendix</a></li>
+          </ul></li>
+          <li><a href="#gates-and-repair" id="toc-gates-and-repair">6.
+          Gates and Repair</a>
+          <ul>
+          <li><a href="#stage-scoped-gates" id="toc-stage-scoped-gates">6.1 Stage-Scoped Gates</a></li>
+          <li><a href="#deterministic-audit-stack" id="toc-deterministic-audit-stack">6.2 Deterministic Audit
+          Stack</a></li>
+          <li><a href="#repair-routing" id="toc-repair-routing">6.3
+          Repair Routing</a></li>
+          <li><a href="#anti-goodhart-principle" id="toc-anti-goodhart-principle">6.4 Anti-Goodhart
+          Principle</a></li>
+          <li><a href="#coverage-and-omission-continuity" id="toc-coverage-and-omission-continuity">6.5 Coverage and
+          Omission Continuity</a></li>
+          </ul></li>
+          <li><a href="#controlled-memory-and-improvement" id="toc-controlled-memory-and-improvement">7. Controlled
+          Memory and Improvement</a>
+          <ul>
+          <li><a href="#audience-profile" id="toc-audience-profile">7.1
+          Audience Profile</a></li>
+          <li><a href="#improvement-ledger" id="toc-improvement-ledger">7.2 Improvement Ledger</a></li>
+          <li><a href="#whether-guidance-was-manifested" id="toc-whether-guidance-was-manifested">7.3 Whether Guidance
+          Was Manifested</a></li>
+          <li><a href="#memory-surfaces-not-yet-shipped" id="toc-memory-surfaces-not-yet-shipped">7.4 Memory Surfaces
+          Not Yet Shipped</a></li>
+          <li><a href="#controlled-harness-improvement-protocol-proposed" id="toc-controlled-harness-improvement-protocol-proposed">7.5
+          Controlled Harness-Improvement Protocol (Proposed)</a></li>
+          </ul></li>
+          <li><a href="#v0.12.1-post-tag-main-implementation-baseline" id="toc-v0.12.1-post-tag-main-implementation-baseline">8.
+          v0.12.1 / Post-Tag <code>main</code> Implementation
+          Baseline</a>
+          <ul>
+          <li><a href="#version-evolution" id="toc-version-evolution">8.1 Version Evolution</a></li>
+          <li><a href="#supported" id="toc-supported">8.2
+          Supported</a></li>
+          <li><a href="#experimental" id="toc-experimental">8.3
+          Experimental</a></li>
+          <li><a href="#not-shipped" id="toc-not-shipped">8.4 Not
+          Shipped</a></li>
+          <li><a href="#v1.0-evidence-gate" id="toc-v1.0-evidence-gate">8.5 v1.0 Evidence Gate</a></li>
+          </ul></li>
+          <li><a href="#reference-evidence-and-failure-studies" id="toc-reference-evidence-and-failure-studies">9. Reference
+          Evidence and Failure Studies</a>
+          <ul>
+          <li><a href="#v0.7.2-public-solar-integration-run" id="toc-v0.7.2-public-solar-integration-run">9.1 v0.7.2 Public
+          Solar Integration Run</a></li>
+          <li><a href="#v0.7.4-failure-study" id="toc-v0.7.4-failure-study">9.2 v0.7.4 Failure
+          Study</a></li>
+          <li><a href="#decoupling-content-and-control" id="toc-decoupling-content-and-control">9.3 Decoupling Content
+          and Control</a></li>
+          <li><a href="#evidence-boundaries" id="toc-evidence-boundaries">9.4 Evidence Boundaries</a></li>
+          <li><a href="#synthetic-pilot-and-product-layer-reference-bundle" id="toc-synthetic-pilot-and-product-layer-reference-bundle">9.5
+          Synthetic Pilot and Product-Layer Reference Bundle</a></li>
+          </ul></li>
+          <li><a href="#related-research-and-industry-practice" id="toc-related-research-and-industry-practice">10. Related
+          Research and Industry Practice</a>
+          <ul>
+          <li><a href="#harness-adaptation-and-optimization" id="toc-harness-adaptation-and-optimization">10.1 Harness
+          Adaptation and Optimization</a></li>
+          <li><a href="#multi-turn-feedback-and-regression" id="toc-multi-turn-feedback-and-regression">10.2 Multi-Turn
+          Feedback and Regression</a></li>
+          <li><a href="#auditable-human-agent-collaboration" id="toc-auditable-human-agent-collaboration">10.3 Auditable
+          Human-Agent Collaboration</a></li>
+          <li><a href="#evaluation-method" id="toc-evaluation-method">10.4 Evaluation Method</a></li>
+          <li><a href="#multi-agent-frameworks" id="toc-multi-agent-frameworks">10.5 Multi-Agent
+          Frameworks</a></li>
+          <li><a href="#memory-and-preference" id="toc-memory-and-preference">10.6 Memory and
+          Preference</a></li>
+          <li><a href="#enterprise-knowledge-work-agents" id="toc-enterprise-knowledge-work-agents">10.7 Enterprise
+          Knowledge-Work Agents</a></li>
+          </ul></li>
+          <li><a href="#limitations-and-future-work" id="toc-limitations-and-future-work">11. Limitations and
+          Future Work</a>
+          <ul>
+          <li><a href="#known-boundaries" id="toc-known-boundaries">11.1
+          Known Boundaries</a></li>
+          <li><a href="#v1.0-focus" id="toc-v1.0-focus">11.2 v1.0
+          Focus</a></li>
+          <li><a href="#support-sufficiency-direction" id="toc-support-sufficiency-direction">11.3
+          Support-Sufficiency Direction</a></li>
+          <li><a href="#from-failure-to-improvement" id="toc-from-failure-to-improvement">11.4 From Failure to
+          Improvement</a></li>
+          <li><a href="#non-goals" id="toc-non-goals">11.5
+          Non-Goals</a></li>
+          </ul></li>
+          <li><a href="#appendix-a-contract-categories" id="toc-appendix-a-contract-categories">Appendix A: Contract
+          Categories</a></li>
+          <li><a href="#appendix-b-decision-vocabulary" id="toc-appendix-b-decision-vocabulary">Appendix B: Decision
+          Vocabulary</a></li>
+          <li><a href="#appendix-c-control-surface-index" id="toc-appendix-c-control-surface-index">Appendix C:
+          Control-Surface Index</a></li>
+          <li><a href="#appendix-d-roles-and-stages" id="toc-appendix-d-roles-and-stages">Appendix D: Roles and
+          Stages</a></li>
+          <li><a href="#appendix-e-evaluation-framework" id="toc-appendix-e-evaluation-framework">Appendix E:
+          Evaluation Framework</a></li>
+          <li><a href="#appendix-f-terminology" id="toc-appendix-f-terminology">Appendix F:
+          Terminology</a></li>
+          <li><a href="#appendix-g-research-and-industry-practice-reference-matrix" id="toc-appendix-g-research-and-industry-practice-reference-matrix">Appendix
+          G: Research and Industry-Practice Reference Matrix</a></li>
+          <li><a href="#appendix-h-issue-candidate-boundary-not-shipped" id="toc-appendix-h-issue-candidate-boundary-not-shipped">Appendix
+          H: Issue Candidate Boundary (Not Shipped)</a></li>
+          <li><a href="#appendix-i-legacy-identifier-quarantine" id="toc-appendix-i-legacy-identifier-quarantine">Appendix I:
+          Legacy-Identifier Quarantine</a></li>
+          </ul></li>
+          </ul>
+        </nav>
+      </details>
+      <script>
+        (() => {
+          const toc = document.querySelector(".mobile-toc");
+          const mobile = window.matchMedia("(max-width: 920px)");
+          const sync = () => { toc.open = !mobile.matches; };
+          sync();
+          mobile.addEventListener?.("change", sync);
+        })();
+      </script>
+          </aside>
+    <main id="report-main" class="report-content">
+      <section id="briefloop-open-source-loop-engineering-for-auditable-business-briefings" class="level1">
+      <h1>BriefLoop: Open-Source Loop Engineering for Auditable Business
+      Briefings</h1>
+      <section id="architecture-reference-v0.6.1-dynamic-knowledge-conflicts-evidence-governance-and-release-authority" class="level2">
+      <h2>Architecture Reference v0.6.1: Dynamic Knowledge Conflicts,
+      Evidence Governance, and Release Authority</h2>
+      <table>
+      <colgroup>
+      <col style="width: 50%" />
+      <col style="width: 50%" />
+      </colgroup>
+      <thead>
+      <tr>
+      <th>Field</th>
+      <th>Value</th>
+      </tr>
+      </thead>
+      <tbody>
+      <tr>
+      <td>Report edition</td>
+      <td>v0.6.1</td>
+      </tr>
+      <tr>
+      <td>Product baseline</td>
+      <td>v0.12.1, including merged changes #513–#515 after the
+      <code>v0.12.1</code> tag (<code>c2a09157</code>)</td>
+      </tr>
+      <tr>
+      <td>Code snapshot</td>
+      <td><code>main@47ae439d0206a852a2a223db4051d28f39b54c38</code></td>
+      </tr>
+      <tr>
+      <td>Branch</td>
+      <td><code>main</code></td>
+      </tr>
+      <tr>
+      <td>Report date</td>
+      <td>2026-07-19</td>
+      </tr>
+      <tr>
+      <td>Evaluation status</td>
+      <td>Planned; not executed or frozen</td>
+      </tr>
+      <tr>
+      <td>v1.0 first-user evidence</td>
+      <td><code>not_satisfied</code></td>
+      </tr>
+      <tr>
+      <td>Formal reference set</td>
+      <td>42 entries; 2 new 2026 preprints in this edition</td>
+      </tr>
+      </tbody>
+      </table>
+      <blockquote>
+      <p><strong>Version boundary.</strong> This report describes the
+      implementation state at
+      <code>main@47ae439d0206a852a2a223db4051d28f39b54c38</code>. The
+      version file is v0.12.1, but this exact head is later than the
+      <code>v0.12.1</code> tag: it additionally includes a unified
+      internal-citation parser, citation-span boundary repairs, and
+      closure of the WorkBuddy pilot contract. The report therefore
+      distinguishes release-tag capabilities from
+      current-<code>main</code> capabilities and does not back-port
+      post-tag repairs as evidence for the tag. <code>run</code> remains
+      a handoff launcher for an external runtime, not a Python briefing
+      generator. Test count describes regression surface area; it does
+      not prove prose quality, semantic truth, or first-user success.
+      <code>docs/architecture-status.md</code> and
+      <code>docs/support-matrix.md</code> remain authoritative for
+      stability. <code>docs/v1-pilot-evidence.md</code> still records
+      <code>not_satisfied</code>; approaching 1.0 does not prove output
+      quality, first-user usability, or management readiness.</p>
+      </blockquote>
+      </section>
+      <section id="abstract" class="level2">
+      <h2>Abstract</h2>
+      <p>Periodic enterprise briefings are time-bounded release
+      judgments made where stale parametric memory, newly retrieved
+      evidence, and mutually inconsistent sources may disagree.
+      BriefLoop is an open-source control system for this setting. It
+      treats AI-assisted reporting not as one-shot document generation
+      but as governed production of claims, evidence, failures, repairs,
+      and release decisions that can be inspected, traced, and
+      reviewed.</p>
+      <p>The system separates agentic interpretation from authority.
+      Agents may discover sources and propose claims; deterministic
+      transactions validate schemas, preserve frozen artifacts, record
+      state transitions, apply gates, and expose unresolved gaps; humans
+      adjudicate semantic conflicts and authorize delivery. The current
+      snapshot includes runtime state, claim and evidence surfaces,
+      quality gates, recovery, auditable delivery artifacts, and
+      product-oriented report packs. Experimental support-sufficiency
+      surfaces can record claim-evidence proposals and human decisions,
+      but they do not prove semantic truth or grant release
+      authority.</p>
+      <p>This edition frames dynamic knowledge conflict as a structural
+      risk for recurring briefings. Prior work shows that recent context
+      may fail to override parametric memory and that retrieved sources
+      may conflict. BriefLoop does not claim automatic conflict
+      detection, temporal truth adjudication, or measured
+      content-quality gains. It provides traceability, limited temporal
+      checks, deterministic control for mechanically decidable
+      conditions, and explicit escalation for unresolved cases. The
+      planned evaluation has not been executed or frozen; v1.0
+      first-user evidence remains <code>not_satisfied</code>.</p>
+      </section>
+      <section id="revision-in-this-edition" class="level2">
+      <h2>Revision in This Edition</h2>
+      <p>v0.6.1 is a research-quality revision of the frozen v0.6.0
+      report. It retains the same code snapshot and does not rewrite the
+      historical edition. This edition:</p>
+      <ul>
+      <li>retains the 12 peer-reviewed knowledge-conflict papers added
+      in v0.6.0 and adds two high-relevance 2026 preprints:
+      deterministic freshness aggregation <a href="#ref-p34">P34</a> and
+      ConflictRAG <a href="#ref-p35">P35</a>, expanding the formal set
+      from 40 to 42 references;</li>
+      <li>upgrades P12, P14, P16, and P17 from older preprint metadata
+      to their formal EMNLP 2023 or NeurIPS 2023 records;</li>
+      <li>narrows the future-study abstract, conflict-precedence
+      language, and evaluation tense so that an unexecuted protocol is
+      not presented as a completed experiment; and</li>
+      <li>adds vanilla RAG, deterministic freshness, and conflict-aware
+      RAG to the planned baselines while preserving human adjudication
+      and release-authority boundaries.</li>
+      </ul>
+      <p>The <a href="tech-report-v0.6.1/reference-index.md">single
+      reference index</a> records inclusion rationale, permitted
+      support, and prohibited extrapolations. The <a href="tech-report-v0.6.1/reference-screening.md">reference-screening
+      record</a> records candidate decisions and exclusions.</p>
+      <blockquote>
+      <p><strong>Naming convention.</strong> BriefLoop is the project&#39;s
+      only current name. Historical literals may remain in old commands,
+      schemas, archive filenames, and experiment IDs for compatibility
+      or reproducibility. They are not alternate product names. See
+      <code>docs/briefloop-naming.md</code>.</p>
+      </blockquote>
+      </section>
+      <section id="future-study-abstract-planned-not-executed" class="level2">
+      <h2>Future Study Abstract (Planned; Not Executed)</h2>
+      <blockquote>
+      <p>Large language models can fail to reconstruct recent change
+      when parametric memory, retrieved evidence, and the timestamps of
+      publication, event occurrence, availability, and adjudication
+      disagree. For enterprise intelligence workflows, this is a
+      recurring operating risk rather than a universal failure mode. A
+      model may retrieve a recent document while retaining an older
+      world state, mistake a follow-up announcement for an initial
+      launch, merge distinct product states, or repeat a superseded
+      claim with greater confidence than the available evidence permits.
+      Many vanilla prompt-only and retrieval-augmented pipelines leave
+      these conflicts to implicit model judgment.</p>
+      <p>BriefLoop treats temporal knowledge conflict as a
+      systems-governance problem. It operates over frozen source
+      evidence, separates agentic interpretation from authoritative
+      state changes, binds material claims to identifiable evidence,
+      records conflicts, failures, and revisions, and subjects delivery
+      to deterministic controls and human adjudication. This report
+      defines a protocol intended for preregistration that compares
+      direct prompting, skill or agent workflows, vanilla RAG, a
+      deterministic-freshness baseline, conflict-aware RAG, and
+      BriefLoop. The planned source packs cover publication-event
+      mismatches, stale status, preview-to-GA transitions,
+      vendor-reported metrics, and similar-entity collisions.</p>
+      <p>BriefLoop does not claim that architecture makes generated
+      claims inherently true. It provides an enterprise control layer in
+      which evidence, conflicts, decisions, unresolved uncertainty, and
+      subsequent repairs can be inspected, challenged, and governed. The
+      protocol may be called preregistered only after its task pack,
+      decision rules, and hashes are frozen; comparative findings may be
+      stated only after execution.</p>
+      </blockquote>
+      </section>
+      <section id="core-insights" class="level2">
+      <h2>1. Core Insights</h2>
+      <section id="architecture-charters" class="level3">
+      <h3>1.1 Architecture Charters</h3>
+      <p>The following principles were extracted from failures in real
+      runs. They are engineering constraints, not slogans.</p>
+      <ol type="1">
+      <li><strong>Smart components have no authority; authoritative
+      components are deterministic; effective changes pass through
+      people; exceptional actions leave a trace.</strong> LLMs and
+      agents may interpret, recommend, decompose, and draft. They may
+      not directly write authoritative state, advance a stage, freeze
+      evidence, pass a gate, or approve delivery. Effects must be
+      executed by the deterministic control plane, confirmed where
+      required by a human, and recorded.</li>
+      <li><strong>What machines can enforce should not be delegated to
+      memory.</strong> Rules that can be checked through schemas,
+      validators, gates, transactions, events, or tests must not exist
+      only in prompts or handoff prose.</li>
+      <li><strong>Every field has one writer.</strong> Python writes
+      state, ledgers, events, hashes, gates, and archives. LLMs write
+      content drafts. Humans approve preferences and delivery decisions.
+      Derived projections may not overwrite authoritative records.</li>
+      <li><strong>A source is not support; traceability is not
+      proof.</strong> Retrieval plans, source candidates, search
+      summaries, and model summaries are discovery material. Whether a
+      source supports a claim must be recorded separately by support
+      strength, source tier, scope, and freshness.</li>
+      <li><strong>Frozen artifacts cannot be silently rewritten, and
+      gaps cannot be hidden.</strong> Legitimate change must create a
+      new revision, artifact, event, or explicit supersession, revert,
+      or contamination record. Failed gates, missing evidence, rejected
+      claims, and unresolved human decisions must remain queryable.</li>
+      <li><strong>Mechanically resolvable conflicts follow declared
+      precedence rather than model persuasion; semantically unresolved
+      conflicts remain explicit and require human adjudication.</strong>
+      Fact contracts and deterministic gates outrank style preferences;
+      repairs for the current run outrank cross-run taste memory;
+      changes to objective, audience, time window, source policy, or
+      delivery standard require explicit configuration or a new run.
+      Declared precedence cannot by itself determine which competing
+      source is true in the world.</li>
+      <li><strong>Cross-module invariants must close
+      structurally.</strong> When a rule spans transactions, state
+      recomputation, registries, gates, projections, and runtime
+      adapters, it needs one authoritative record and coverage over
+      every writer, recomputer, and reader. The system cannot rely on
+      each path independently remembering the same fact.</li>
+      </ol>
+      </section>
+      <section id="operating-disciplines" class="level3">
+      <h3>1.2 Operating Disciplines</h3>
+      <ul>
+      <li><strong>Product spine: acceleration must not remove
+      accountability.</strong> BriefLoop may reuse frozen evidence,
+      avoid repeated reasoning, and parallelize independent work. It may
+      not remove ledgers, gates, approvals, events, snapshots, or
+      archives to run faster.</li>
+      <li><strong>Public claims: do not say more than the artifacts can
+      support.</strong> Unmeasured capabilities must be labeled
+      unmeasured. Traceability must not be described as semantic proof
+      or demonstrated quality improvement.</li>
+      <li><strong>Data boundary: private facts cannot validate a public
+      mechanism.</strong> Real business workflows may contribute failure
+      categories and test shapes, but private business facts, customer
+      materials, employer data, and non-public information must not
+      enter the public repository, fixtures, or demos.</li>
+      </ul>
+      </section>
+      <section id="why-coding-agents-improve-faster" class="level3">
+      <h3>1.3 Why Coding Agents Improve Faster</h3>
+      <p>The progress of coding agents comes not only from model
+      capability but also from the closed feedback loops already
+      established in software engineering. Anthropic&#39;s distinction
+      between workflows and agents provides an engineering coordinate:
+      fixed, decomposable tasks are better served by explicit inputs,
+      outputs, and programmatic checks, while open-ended paths warrant
+      greater autonomy.<a href="#ref-e21">E21</a></p>
+      <table>
+      <colgroup>
+      <col style="width: 50%" />
+      <col style="width: 50%" />
+      </colgroup>
+      <thead>
+      <tr>
+      <th>Software-engineering mechanism</th>
+      <th>Improvement signal</th>
+      </tr>
+      </thead>
+      <tbody>
+      <tr>
+      <td>Test suite</td>
+      <td>Explicit pass or fail</td>
+      </tr>
+      <tr>
+      <td>Git history</td>
+      <td>Author, rationale, and diff for each change</td>
+      </tr>
+      <tr>
+      <td>Defect-to-commit trace</td>
+      <td>The change that introduced a failure can be located</td>
+      </tr>
+      <tr>
+      <td>Continuous integration</td>
+      <td>Automated validation before merge</td>
+      </tr>
+      <tr>
+      <td>Code review</td>
+      <td>Important changes receive human approval</td>
+      </tr>
+      </tbody>
+      </table>
+      <p>Models provide capability; infrastructure provides repeatable
+      feedback. Business briefing rarely has equivalent machinery.
+      Quality defects are difficult to turn into tests, stale data is
+      difficult to locate in the retrieval chain, verbal feedback does
+      not accumulate, and “this section feels wrong” rarely becomes a
+      reusable engineering task. Improvement therefore depends on
+      individual craft and remains difficult to transfer.</p>
+      </section>
+      <section id="the-briefloop-thesis" class="level3">
+      <h3>1.4 The BriefLoop Thesis</h3>
+      <p>BriefLoop does not attempt to make one model intrinsically
+      smarter. It brings software-engineering accountability
+      infrastructure to business briefing:</p>
+      <table>
+      <colgroup>
+      <col style="width: 50%" />
+      <col style="width: 50%" />
+      </colgroup>
+      <thead>
+      <tr>
+      <th>Software-engineering mechanism</th>
+      <th>BriefLoop counterpart</th>
+      </tr>
+      </thead>
+      <tbody>
+      <tr>
+      <td>Test suite</td>
+      <td>Artifact validation and stage quality gates</td>
+      </tr>
+      <tr>
+      <td>Git history</td>
+      <td>Decisions, timestamps, actors, and reasons in
+      <code>event_log.jsonl</code></td>
+      </tr>
+      <tr>
+      <td>Defect trace</td>
+      <td>Producer stage, role, and artifact relationships in
+      <code>artifact_registry.json</code></td>
+      </tr>
+      <tr>
+      <td>Continuous integration</td>
+      <td>Orchestrator control loop and stage-completion
+      transactions</td>
+      </tr>
+      <tr>
+      <td>Code review</td>
+      <td><code>request_human_review</code>, RepairPlan, human
+      adjudication, and the Improvement Ledger</td>
+      </tr>
+      </tbody>
+      </table>
+      <p>The v0.7.1 reference run exposed a decisive failure: the agent
+      completed the content pipeline while almost entirely skipping the
+      control pipeline. It produced eight content artifacts but invoked
+      no decision transactions, ran no gates, and left
+      <code>workflow_state.json</code> at its initial stage. In its
+      postmortem, the agent acknowledged that it had treated the
+      Orchestrator contract as background information rather than an API
+      it was required to execute.</p>
+      <p>That failure drove BriefLoop to move critical bookkeeping from
+      prompts into transactions. Agents still propose what to do and
+      explain why. The Python control plane determines whether a
+      decision has taken legal effect under the required conditions and
+      artifacts. Important rules must live in schemas, validators,
+      gates, transactions, events, or tests rather than instructions
+      alone.</p>
+      </section>
+      <section id="independent-convergence-with-harness-engineering" class="level3">
+      <h3>1.5 Independent Convergence with Harness Engineering</h3>
+      <p>Three 2026 studies of harness optimization and one research
+      synthesis provide external coordinates that are comparable with
+      BriefLoop from different directions, but are not interchangeable
+      with it.</p>
+      <ul>
+      <li><strong>LIFE-HARNESS</strong> treats the runtime interface
+      outside a frozen model as an optimization target, but its findings
+      come from deterministic environments with computable rewards and
+      cannot be extrapolated into gains in open-domain briefing
+      quality.<a href="#ref-p01">P01</a></li>
+      <li><strong>Self-Harness</strong> uses failure mining, bounded
+      modification, and held-in/held-out regression. It supports the
+      proposition that a harness can be improved through engineering; it
+      does not support allowing a candidate modification to approve its
+      own activation.<a href="#ref-p02">P02</a></li>
+      <li><strong>Meta-Harness</strong> further places models, tools,
+      and environments within an end-to-end optimization scope. It
+      strengthens both the case for evaluating the entire operating
+      system and the requirement to keep permissions and acceptance
+      protocols outside the editable loop.<a href="#ref-p05">P05</a></li>
+      <li><strong>Weng (2026)</strong> synthesizes harness components
+      including workflows, context lifecycle, persistent state, tools,
+      subagents, permissions, and evaluation, and systematically
+      discusses evaluator, reward-hacking, and human-oversight risks. It
+      is a research synthesis and technical essay, not experimental
+      evidence for BriefLoop.<a href="#ref-e19">E19</a></li>
+      </ul>
+      <p>The chronology also matters. BriefLoop&#39;s human-gated
+      Improvement Ledger and per-run snapshots entered v0.7.0 on
+      2026-06-10, and its Python-owned claim-freeze transaction entered
+      v0.8.3 on 2026-06-16, both before Weng&#39;s synthesis. The defensible
+      description is therefore <strong>retrospective independent
+      convergence</strong>: Weng provides a unifying research language
+      and risk boundary, while BriefLoop&#39;s repository history shows an
+      early engineering instance of these principles in open-domain
+      business briefing. Chronology does not substitute for evaluation
+      and does not establish priority or performance superiority.</p>
+      </section>
+      <section id="from-agent-engineering-to-loop-engineering" class="level3">
+      <h3>1.6 From Agent Engineering to Loop Engineering</h3>
+      <p>Loop Engineering is concerned not with writing a better prompt
+      once, but with designing a system that continuously discovers
+      tasks, assigns work, checks outcomes, records state, and decides
+      what happens next. This report borrows the term and attributes the
+      paradigm; it does not treat the technical essay as experimental
+      evidence.<a href="#ref-e20">E20</a> BriefLoop applies this method
+      to recurring business briefings: the control units are no longer
+      code diffs, but material claims, evidence spans, support records,
+      <code>FeedbackIssue</code> records, repair tasks, and delivery
+      decisions.</p>
+      <table>
+      <colgroup>
+      <col style="width: 33%" />
+      <col style="width: 33%" />
+      <col style="width: 33%" />
+      </colgroup>
+      <thead>
+      <tr>
+      <th>Loop-engineering element</th>
+      <th>Coding context</th>
+      <th>BriefLoop context</th>
+      </tr>
+      </thead>
+      <tbody>
+      <tr>
+      <td>Scheduled discovery</td>
+      <td>Periodic issue scanning</td>
+      <td>Weekly reports, monthly reports, recurring research</td>
+      </tr>
+      <tr>
+      <td>Isolated workspace</td>
+      <td>Git worktree</td>
+      <td>Independent run workspace</td>
+      </tr>
+      <tr>
+      <td>Skills</td>
+      <td>Repository-level <code>SKILL.md</code></td>
+      <td>Audience profile, policy profile, role contracts</td>
+      </tr>
+      <tr>
+      <td>Connectors</td>
+      <td>Issue tracker, database, API</td>
+      <td>Source providers and delivery connectors</td>
+      </tr>
+      <tr>
+      <td>Subagents</td>
+      <td>Producer and checker separation</td>
+      <td>Author and auditor separation</td>
+      </tr>
+      <tr>
+      <td>Persistent memory</td>
+      <td>Files and commit history</td>
+      <td>Improvement Ledger, Claim Ledger, Event Log</td>
+      </tr>
+      <tr>
+      <td>Validation</td>
+      <td>Unit and regression tests</td>
+      <td>Quality gates and same-evidence regression</td>
+      </tr>
+      <tr>
+      <td>Human review</td>
+      <td>Pull Request review</td>
+      <td>Human adjudication and delivery approval</td>
+      </tr>
+      </tbody>
+      </table>
+      </section>
+      </section>
+      <section id="design-philosophy" class="level2">
+      <h2>2. Design Philosophy</h2>
+      <section id="a-three-layer-quality-model" class="level3">
+      <h3>2.1 A Three-Layer Quality Model</h3>
+      <p>BriefLoop separates quality into three layers so that process
+      compliance, clean delivery, and analytical excellence are not
+      conflated.</p>
+      <ol type="1">
+      <li><strong>Law:</strong> Machine-checkable requirements such as
+      citation presence, source freshness, numerical consistency with
+      the ledger, and absence of internal identifiers in the reader
+      edition. Hashes, events, and gate reports can verify this layer,
+      but only for formalizable defects.</li>
+      <li><strong>Honesty:</strong> Whether the reader artifact is
+      clean, readable, and free of internal workflow residue or blank
+      citations. This measures delivery discipline, not analytical
+      depth.</li>
+      <li><strong>Wisdom:</strong> Whether the briefing identifies what
+      truly matters, provides insight, and outperforms a single-model
+      baseline. This remains <strong>NOT MEASURED</strong>. Claim-layer
+      artifacts differ across runs, so causal attribution is not yet
+      valid.</li>
+      </ol>
+      <p>The correct sequence is to stabilize Law first, then Honesty,
+      and only then measure Wisdom against controlled baselines.
+      Content-quality comparisons are heavily confounded while delivery
+      itself remains unstable.</p>
+      </section>
+      <section id="correctness-taste-and-evidence" class="level3">
+      <h3>2.2 Correctness, Taste, and Evidence</h3>
+      <table>
+      <colgroup>
+      <col style="width: 25%" />
+      <col style="width: 25%" />
+      <col style="width: 25%" />
+      <col style="width: 25%" />
+      </colgroup>
+      <thead>
+      <tr>
+      <th>Dimension</th>
+      <th>Concern</th>
+      <th>Governance mechanism</th>
+      <th>Authoritative writer</th>
+      </tr>
+      </thead>
+      <tbody>
+      <tr>
+      <td>Correctness</td>
+      <td>Factual errors, stale data, attribution mismatch, structural
+      violations</td>
+      <td>Schemas, stage validation, deterministic gates</td>
+      <td>Python control plane</td>
+      </tr>
+      <tr>
+      <td>Taste</td>
+      <td>Department preferences, cultural norms, implicit audience
+      expectations</td>
+      <td>Audience Profile and human-approved Improvement Ledger</td>
+      <td>Human; model interprets and applies</td>
+      </tr>
+      <tr>
+      <td>Evidence</td>
+      <td>Source-claim binding, support strength, freshness, authority
+      tier</td>
+      <td>Claim drafts, frozen ledger, evidence spans, source
+      appendix</td>
+      <td>Model drafts; Python freezes and validates</td>
+      </tr>
+      </tbody>
+      </table>
+      <p>Correctness can be partly mechanized. Taste must remain
+      human-editable. Evidence lies between them. Models may discover
+      and draft claims, but claim IDs, freeze records, hashes, and
+      support metadata must be owned by the deterministic control
+      plane.</p>
+      </section>
+      <section id="governance-domains-and-control-surfaces" class="level3">
+      <h3>2.3 Governance Domains and Control Surfaces</h3>
+      <p>Four contract categories answer <strong>what is
+      governed</strong>:</p>
+      <table>
+      <colgroup>
+      <col style="width: 50%" />
+      <col style="width: 50%" />
+      </colgroup>
+      <thead>
+      <tr>
+      <th>Contract category</th>
+      <th>Governance scope</th>
+      </tr>
+      </thead>
+      <tbody>
+      <tr>
+      <td>Behavior</td>
+      <td>Authority boundaries for the Orchestrator and specialist
+      roles</td>
+      </tr>
+      <tr>
+      <td>Process / Artifact</td>
+      <td>Stage readiness and expected artifacts</td>
+      </tr>
+      <tr>
+      <td>Fact-Grounding / Evidence</td>
+      <td>Whether material claims trace to registered evidence</td>
+      </tr>
+      <tr>
+      <td>Quality / Audience</td>
+      <td>Whether delivery meets reader and quality requirements</td>
+      </tr>
+      </tbody>
+      </table>
+      <p>Control surfaces answer <strong>who writes, when the result
+      freezes, how it is validated, and what happens on
+      failure</strong>. Their theoretical lineage can be understood
+      through workflow patterns, blackboard architectures, and Design by
+      Contract: the first describes control-flow expressiveness, the
+      shared blackboard describes specialized roles collaborating around
+      common state, and contract-based design emphasizes preconditions,
+      postconditions, and invariants.<a href="#ref-t01">T01</a> <a href="#ref-t02">T02</a> <a href="#ref-t03">T03</a> BriefLoop&#39;s
+      provenance relations also borrow the W3C PROV vocabulary of
+      entities, activities, agents, and derivation, but the project does
+      not claim full compatibility or conformance testing.<a href="#ref-t06">T06</a> Contract categories and control surfaces
+      are not competing architectures: the former describes governance
+      content, while the latter realizes that content as files, single
+      writers, transactions, and failure states. See
+      <code>docs/control-surfaces.md</code> for the complete current
+      inventory.</p>
+      <p>Northstar is a product-governance and prioritization advisory
+      surface, not a runtime role, architecture authority, Merge
+      Governor, or workspace control plane. It may recommend building,
+      deferring, or rejecting scope based on user evidence, but it
+      cannot write runtime state, execute gates or finalization, approve
+      delivery, merge code, or approve public release. Humans retain
+      authority over subjective tradeoffs, commercial commitments, pilot
+      participation, outcome acceptance, and product decisions that take
+      effect. A change to the current run&#39;s objective, reader, time
+      window, source policy, or delivery standard must become an
+      explicit configuration change or a new run.</p>
+      </section>
+      <section id="the-single-writer-principle" class="level3">
+      <h3>2.4 The Single-Writer Principle</h3>
+      <ul>
+      <li>Python writes control state, ledgers, events, hashes, gates,
+      transactions, and archives.</li>
+      <li>Runtime agents write candidate claims, screening results,
+      claim drafts, brief content, and semantic audit opinions.</li>
+      <li>Humans write approvals, audience guidance, delivery decisions,
+      and explicit run direction.</li>
+      </ul>
+      <p>The separation between <code>claim_drafts.json</code> and
+      <code>claim_ledger.json</code> exists to enforce this rule. The
+      model may write drafts without authoritative IDs. Python assigns
+      stable IDs and freezes the ledger. Neither side may
+      opportunistically rewrite the other&#39;s artifact.</p>
+      </section>
+      <section id="the-speed-principle" class="level3">
+      <h3>2.5 The Speed Principle</h3>
+      <p>Speed may come from reusing frozen artifacts, reducing repeated
+      reasoning, and parallelizing independent work. It may not come
+      from weaker records, fewer gates, fewer approvals, or weaker
+      archives. A fast rerun imports and validates an existing fact
+      layer, then resumes from analysis. It still performs writing,
+      audit, gates, finalization, and human delivery. Acceleration comes
+      from reuse, not omission.</p>
+      </section>
+      </section>
+      <section id="architecture-five-control-spines" class="level2">
+      <h2>3. Architecture: Five Control Spines</h2>
+      <figure>
+      <img role="img" aria-label="BriefLoop&#39;s auditable closed-loop architecture from source discovery to human delivery" src="data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCAxNjAwIDExMjAiIHJvbGU9ImltZyIgYXJpYS1sYWJlbGxlZGJ5PSJ0aXRsZSBkZXNjIj4KICA8dGl0bGUgaWQ9InRpdGxlIj5CcmllZkxvb3AncyBhdWRpdGFibGUgY2xvc2VkLWxvb3AgYXJjaGl0ZWN0dXJlIGZyb20gc291cmNlIGRpc2NvdmVyeSB0byBodW1hbiBkZWxpdmVyeTwvdGl0bGU+CiAgPGRlc2MgaWQ9ImRlc2MiPlRocmVlIGxhbmVzIHNob3cgYWdlbnQgY29udGVudCB3b3JrLCB0aGUgYXVkaXRhYmxlIGFydGlmYWN0IGNoYWluLCBhbmQgZGV0ZXJtaW5pc3RpYyBjb250cm9sIHdpdGggaHVtYW4gYXV0aG9yaXR5LiBFYWNoIHN0YWdlIHdyaXRlcyBhcnRpZmFjdHMgYW5kIGlzIHZhbGlkYXRlZCBieSB0aGUgY29udHJvbCBwbGFuZS4gRmluYWxpemF0aW9uIGNoZWNrcyBhIGNhbmRpZGF0ZSBkZWxpdmVyeSBiZWZvcmUgaHVtYW5zIGRlY2lkZSB3aGV0aGVyIHRvIGRlbGl2ZXIgaXQsIGFuZCBmZWVkYmFjayBhZmZlY3RzIGZ1dHVyZSBydW5zIG9ubHkuPC9kZXNjPgogIDxkZWZzPgogICAgPG1hcmtlciBpZD0iYXJyb3ciIHZpZXdCb3g9IjAgMCAxMCAxMCIgcmVmWD0iOSIgcmVmWT0iNSIgbWFya2VyV2lkdGg9IjciIG1hcmtlckhlaWdodD0iNyIgb3JpZW50PSJhdXRvLXN0YXJ0LXJldmVyc2UiPgogICAgICA8cGF0aCBkPSJNIDAgMCBMIDEwIDUgTCAwIDEwIHoiIGZpbGw9IiMzMzQxNTUiLz4KICAgIDwvbWFya2VyPgogICAgPG1hcmtlciBpZD0iYXJyb3ctZ3JlZW4iIHZpZXdCb3g9IjAgMCAxMCAxMCIgcmVmWD0iOSIgcmVmWT0iNSIgbWFya2VyV2lkdGg9IjciIG1hcmtlckhlaWdodD0iNyIgb3JpZW50PSJhdXRvLXN0YXJ0LXJldmVyc2UiPgogICAgICA8cGF0aCBkPSJNIDAgMCBMIDEwIDUgTCAwIDEwIHoiIGZpbGw9IiMxNTgwM2QiLz4KICAgIDwvbWFya2VyPgogICAgPHN0eWxlPgogICAgICB0ZXh0IHsgZm9udC1mYW1pbHk6IC1hcHBsZS1zeXN0ZW0sIEJsaW5rTWFjU3lzdGVtRm9udCwgIlNlZ29lIFVJIiwgIlBpbmdGYW5nIFNDIiwgIk1pY3Jvc29mdCBZYUhlaSIsIHNhbnMtc2VyaWY7IGZpbGw6ICMxNzIwMzM7IH0KICAgICAgLnRpdGxlIHsgZm9udC1zaXplOiAzNHB4OyBmb250LXdlaWdodDogNzAwOyB9CiAgICAgIC5zdWJ0aXRsZSB7IGZvbnQtc2l6ZTogMThweDsgZmlsbDogIzQ3NTU2OTsgfQogICAgICAubGFuZS10aXRsZSB7IGZvbnQtc2l6ZTogMjJweDsgZm9udC13ZWlnaHQ6IDcwMDsgfQogICAgICAubm9kZS10aXRsZSB7IGZvbnQtc2l6ZTogMjBweDsgZm9udC13ZWlnaHQ6IDcwMDsgfQogICAgICAubm9kZS1zdWIgeyBmb250LXNpemU6IDE1cHg7IGZpbGw6ICM0NzU1Njk7IH0KICAgICAgLm1pY3JvIHsgZm9udC1zaXplOiAxM3B4OyBmaWxsOiAjNjQ3NDhiOyB9CiAgICAgIC5hZ2VudCB7IGZpbGw6ICNkYmVhZmU7IHN0cm9rZTogIzI1NjNlYjsgc3Ryb2tlLXdpZHRoOiAyOyB9CiAgICAgIC5hcnRpZmFjdCB7IGZpbGw6ICNmMWY1Zjk7IHN0cm9rZTogIzY0NzQ4Yjsgc3Ryb2tlLXdpZHRoOiAyOyB9CiAgICAgIC5jb250cm9sIHsgZmlsbDogI2RjZmNlNzsgc3Ryb2tlOiAjMTU4MDNkOyBzdHJva2Utd2lkdGg6IDI7IH0KICAgICAgLmh1bWFuIHsgZmlsbDogI2ZlZjNjNzsgc3Ryb2tlOiAjYTE2MjA3OyBzdHJva2Utd2lkdGg6IDI7IH0KICAgICAgLmZlZWRiYWNrIHsgZmlsbDogI2ZjZTdmMzsgc3Ryb2tlOiAjYmUxODVkOyBzdHJva2Utd2lkdGg6IDI7IH0KICAgICAgLmxhbmUgeyBmaWxsOiAjZmZmZmZmOyBzdHJva2U6ICNkOGRlZTg7IHN0cm9rZS13aWR0aDogMjsgfQogICAgICAucm93LWxpbmUgeyBzdHJva2U6ICNlMmU4ZjA7IHN0cm9rZS13aWR0aDogMS41OyB9CiAgICAgIC5mbG93IHsgZmlsbDogbm9uZTsgc3Ryb2tlOiAjMzM0MTU1OyBzdHJva2Utd2lkdGg6IDIuNDsgbWFya2VyLWVuZDogdXJsKCNhcnJvdyk7IH0KICAgICAgLmNvbnRyb2wtZmxvdyB7IGZpbGw6IG5vbmU7IHN0cm9rZTogIzE1ODAzZDsgc3Ryb2tlLXdpZHRoOiAyLjI7IHN0cm9rZS1kYXNoYXJyYXk6IDggNzsgbWFya2VyLWVuZDogdXJsKCNhcnJvdy1ncmVlbik7IH0KICAgICAgLmZlZWRiYWNrLWZsb3cgeyBmaWxsOiBub25lOyBzdHJva2U6ICNiZTE4NWQ7IHN0cm9rZS13aWR0aDogMi4zOyBzdHJva2UtZGFzaGFycmF5OiAxMCA3OyBtYXJrZXItZW5kOiB1cmwoI2Fycm93KTsgfQogICAgICAucGlsbCB7IGZvbnQtc2l6ZTogMTJweDsgZm9udC13ZWlnaHQ6IDcwMDsgbGV0dGVyLXNwYWNpbmc6IC4wNGVtOyB9CiAgICAgIC5mZWVkYmFjay10aXRsZSB7IGZvbnQtc2l6ZTogMTdweDsgZm9udC13ZWlnaHQ6IDcwMDsgfQogICAgPC9zdHlsZT4KICA8L2RlZnM+CgogIDxyZWN0IHdpZHRoPSIxNjAwIiBoZWlnaHQ9IjExMjAiIGZpbGw9IiNmOGZhZmMiLz4KICA8dGV4dCB4PSI3MCIgeT0iNjIiIGNsYXNzPSJ0aXRsZSI+QnJpZWZMb29wIEFyY2hpdGVjdHVyZTogQWdlbnRzIERyYWZ0IENvbnRlbnQ7IHRoZSBDb250cm9sIFBsYW5lIEhvbGRzIEF1dGhvcml0eTwvdGV4dD4KICA8dGV4dCB4PSI3MCIgeT0iOTYiIGNsYXNzPSJzdWJ0aXRsZSI+U291cmNlIGRpc2NvdmVyeSwgY2xhaW0gZnJlZXppbmcsIGF1ZGl0LCBmaW5hbGl6YXRpb24sIGFuZCBodW1hbiBkZWxpdmVyeTsgZmVlZGJhY2sgYWZmZWN0cyBmdXR1cmUgcnVucyBvbmx5PC90ZXh0PgoKICA8cmVjdCB4PSI1NSIgeT0iMTI1IiB3aWR0aD0iNDU1IiBoZWlnaHQ9IjgyMCIgcng9IjgiIGNsYXNzPSJsYW5lIi8+CiAgPHJlY3QgeD0iNTcwIiB5PSIxMjUiIHdpZHRoPSI0NTUiIGhlaWdodD0iODIwIiByeD0iOCIgY2xhc3M9ImxhbmUiLz4KICA8cmVjdCB4PSIxMDg1IiB5PSIxMjUiIHdpZHRoPSI0NjAiIGhlaWdodD0iODIwIiByeD0iOCIgY2xhc3M9ImxhbmUiLz4KCiAgPGNpcmNsZSBjeD0iOTAiIGN5PSIxNjQiIHI9IjExIiBmaWxsPSIjMjU2M2ViIi8+CiAgPHRleHQgeD0iMTE1IiB5PSIxNzIiIGNsYXNzPSJsYW5lLXRpdGxlIj5BZ2VudCBDb250ZW50IFdvcms8L3RleHQ+CiAgPGNpcmNsZSBjeD0iNjA1IiBjeT0iMTY0IiByPSIxMSIgZmlsbD0iIzY0NzQ4YiIvPgogIDx0ZXh0IHg9IjYzMCIgeT0iMTcyIiBjbGFzcz0ibGFuZS10aXRsZSI+QXVkaXRhYmxlIEFydGlmYWN0IENoYWluPC90ZXh0PgogIDxjaXJjbGUgY3g9IjExMjAiIGN5PSIxNjQiIHI9IjExIiBmaWxsPSIjMTU4MDNkIi8+CiAgPHRleHQgeD0iMTE0NSIgeT0iMTcyIiBjbGFzcz0ibGFuZS10aXRsZSI+Q29udHJvbCBQbGFuZSAmYW1wOyBIdW1hbiBBdXRob3JpdHk8L3RleHQ+CgogIDxsaW5lIHgxPSI3MCIgeTE9IjE5NyIgeDI9IjQ5NSIgeTI9IjE5NyIgY2xhc3M9InJvdy1saW5lIi8+CiAgPGxpbmUgeDE9IjU4NSIgeTE9IjE5NyIgeDI9IjEwMTAiIHkyPSIxOTciIGNsYXNzPSJyb3ctbGluZSIvPgogIDxsaW5lIHgxPSIxMTAwIiB5MT0iMTk3IiB4Mj0iMTUzMCIgeTI9IjE5NyIgY2xhc3M9InJvdy1saW5lIi8+CgogIDwhLS0gUm93IDEgLS0+CiAgPHJlY3QgeD0iOTAiIHk9IjIyNSIgd2lkdGg9IjM4NSIgaGVpZ2h0PSIxMDUiIHJ4PSI4IiBjbGFzcz0iYWdlbnQiLz4KICA8dGV4dCB4PSIyODIiIHk9IjI2NiIgdGV4dC1hbmNob3I9Im1pZGRsZSIgY2xhc3M9Im5vZGUtdGl0bGUiPlNvdXJjZSBEaXNjb3ZlcnkgwrcgU2NvdXQ8L3RleHQ+CiAgPHRleHQgeD0iMjgyIiB5PSIyOTUiIHRleHQtYW5jaG9yPSJtaWRkbGUiIGNsYXNzPSJub2RlLXN1YiI+U2VhcmNoLCByZWFkLCBwcm9wb3NlIGNhbmRpZGF0ZSBjbGFpbXM8L3RleHQ+CgogIDxyZWN0IHg9IjYwNSIgeT0iMjI1IiB3aWR0aD0iMzg1IiBoZWlnaHQ9IjEwNSIgcng9IjgiIGNsYXNzPSJhcnRpZmFjdCIvPgogIDx0ZXh0IHg9Ijc5NyIgeT0iMjYzIiB0ZXh0LWFuY2hvcj0ibWlkZGxlIiBjbGFzcz0ibm9kZS10aXRsZSI+U291cmNlIEV2aWRlbmNlICZhbXA7IENhbmRpZGF0ZSBDbGFpbXM8L3RleHQ+CiAgPHRleHQgeD0iNzk3IiB5PSIyOTIiIHRleHQtYW5jaG9yPSJtaWRkbGUiIGNsYXNzPSJub2RlLXN1YiI+c291cmNlcyDCtyBjYW5kaWRhdGVfY2xhaW1zLmpzb248L3RleHQ+CgogIDxyZWN0IHg9IjExMjAiIHk9IjIxNSIgd2lkdGg9IjM5MCIgaGVpZ2h0PSIxMjUiIHJ4PSI4IiBjbGFzcz0iY29udHJvbCIvPgogIDx0ZXh0IHg9IjEzMTUiIHk9IjI1NCIgdGV4dC1hbmNob3I9Im1pZGRsZSIgY2xhc3M9Im5vZGUtdGl0bGUiPlJ1biBJbml0aWFsaXphdGlvbiAmYW1wOyBJbnB1dCBHb3Zlcm5hbmNlPC90ZXh0PgogIDx0ZXh0IHg9IjEzMTUiIHk9IjI4MyIgdGV4dC1hbmNob3I9Im1pZGRsZSIgY2xhc3M9Im5vZGUtc3ViIj5kb2N0b3IgwrcgY29udHJhY3Qgwrcgc291cmNlIHBvbGljeTwvdGV4dD4KICA8dGV4dCB4PSIxMzE1IiB5PSIzMDkiIHRleHQtYW5jaG9yPSJtaWRkbGUiIGNsYXNzPSJtaWNybyI+UHl0aG9uIHdyaXRlcyBzdGF0ZTsgaHVtYW5zIHNldCBvYmplY3RpdmVzIGFuZCBib3VuZGFyaWVzPC90ZXh0PgoKICA8IS0tIFJvdyAyIC0tPgogIDxyZWN0IHg9IjkwIiB5PSIzNzUiIHdpZHRoPSIzODUiIGhlaWdodD0iMTA1IiByeD0iOCIgY2xhc3M9ImFnZW50Ii8+CiAgPHRleHQgeD0iMjgyIiB5PSI0MTYiIHRleHQtYW5jaG9yPSJtaWRkbGUiIGNsYXNzPSJub2RlLXRpdGxlIj5TY3JlZW5pbmcgwrcgU2NyZWVuZXI8L3RleHQ+CiAgPHRleHQgeD0iMjgyIiB5PSI0NDUiIHRleHQtYW5jaG9yPSJtaWRkbGUiIGNsYXNzPSJub2RlLXN1YiI+UmVsZXZhbmNlLCBtYXRlcmlhbGl0eSwgZHVwbGljYXRlczwvdGV4dD4KCiAgPHJlY3QgeD0iNjA1IiB5PSIzNzUiIHdpZHRoPSIzODUiIGhlaWdodD0iMTA1IiByeD0iOCIgY2xhc3M9ImFydGlmYWN0Ii8+CiAgPHRleHQgeD0iNzk3IiB5PSI0MTYiIHRleHQtYW5jaG9yPSJtaWRkbGUiIGNsYXNzPSJub2RlLXRpdGxlIj5TY3JlZW5lZCBDYW5kaWRhdGVzPC90ZXh0PgogIDx0ZXh0IHg9Ijc5NyIgeT0iNDQ1IiB0ZXh0LWFuY2hvcj0ibWlkZGxlIiBjbGFzcz0ibm9kZS1zdWIiPnNjcmVlbmVkX2NhbmRpZGF0ZXMuanNvbjwvdGV4dD4KCiAgPHJlY3QgeD0iMTEyMCIgeT0iMzc1IiB3aWR0aD0iMzkwIiBoZWlnaHQ9IjEwNSIgcng9IjgiIGNsYXNzPSJjb250cm9sIi8+CiAgPHRleHQgeD0iMTMxNSIgeT0iNDE2IiB0ZXh0LWFuY2hvcj0ibWlkZGxlIiBjbGFzcz0ibm9kZS10aXRsZSI+U3RhZ2UgQ2hlY2tzICZhbXA7IEV2ZW50IFJlY29yZGluZzwvdGV4dD4KICA8dGV4dCB4PSIxMzE1IiB5PSI0NDUiIHRleHQtYW5jaG9yPSJtaWRkbGUiIGNsYXNzPSJub2RlLXN1YiI+YXJ0aWZhY3QgY2hlY2sgwrcgc3RhZ2UtY29tcGxldGUgwrcgZXZlbnQ8L3RleHQ+CgogIDwhLS0gUm93IDMgLS0+CiAgPHJlY3QgeD0iOTAiIHk9IjUyNSIgd2lkdGg9IjM4NSIgaGVpZ2h0PSIxMDUiIHJ4PSI4IiBjbGFzcz0iYWdlbnQiLz4KICA8dGV4dCB4PSIyODIiIHk9IjU2NiIgdGV4dC1hbmNob3I9Im1pZGRsZSIgY2xhc3M9Im5vZGUtdGl0bGUiPkNsYWltIFJvbGU8L3RleHQ+CiAgPHRleHQgeD0iMjgyIiB5PSI1OTUiIHRleHQtYW5jaG9yPSJtaWRkbGUiIGNsYXNzPSJub2RlLXN1YiI+RHJhZnQgY2xhaW1zOyBuZXZlciBhc3NpZ24gYXV0aG9yaXRhdGl2ZSBJRHM8L3RleHQ+CgogIDxyZWN0IHg9IjYwNSIgeT0iNTE1IiB3aWR0aD0iMzg1IiBoZWlnaHQ9IjEyNSIgcng9IjgiIGNsYXNzPSJhcnRpZmFjdCIvPgogIDx0ZXh0IHg9Ijc5NyIgeT0iNTUzIiB0ZXh0LWFuY2hvcj0ibWlkZGxlIiBjbGFzcz0ibm9kZS10aXRsZSI+Q2xhaW0gRHJhZnRzIOKGkiBGcm96ZW4gTGVkZ2VyPC90ZXh0PgogIDx0ZXh0IHg9Ijc5NyIgeT0iNTgyIiB0ZXh0LWFuY2hvcj0ibWlkZGxlIiBjbGFzcz0ibm9kZS1zdWIiPmNsYWltX2RyYWZ0cy5qc29uPC90ZXh0PgogIDxsaW5lIHgxPSI2NzAiIHkxPSI1OTgiIHgyPSI5MjUiIHkyPSI1OTgiIGNsYXNzPSJyb3ctbGluZSIvPgogIDx0ZXh0IHg9Ijc5NyIgeT0iNjIzIiB0ZXh0LWFuY2hvcj0ibWlkZGxlIiBjbGFzcz0ibm9kZS1zdWIiPmNsYWltX2xlZGdlci5qc29uIMK3IENMLSMjIyM8L3RleHQ+CgogIDxyZWN0IHg9IjExMjAiIHk9IjUxNSIgd2lkdGg9IjM5MCIgaGVpZ2h0PSIxMjUiIHJ4PSI4IiBjbGFzcz0iY29udHJvbCIvPgogIDx0ZXh0IHg9IjEzMTUiIHk9IjU1MyIgdGV4dC1hbmNob3I9Im1pZGRsZSIgY2xhc3M9Im5vZGUtdGl0bGUiPkNsYWltLUZyZWV6ZSBUcmFuc2FjdGlvbjwvdGV4dD4KICA8dGV4dCB4PSIxMzE1IiB5PSI1ODIiIHRleHQtYW5jaG9yPSJtaWRkbGUiIGNsYXNzPSJub2RlLXN1YiI+dmFsaWRhdGUgwrcgYXNzaWduIElEcyDCtyBoYXNoIMK3IGZyZWV6ZTwvdGV4dD4KICA8dGV4dCB4PSIxMzE1IiB5PSI2MTAiIHRleHQtYW5jaG9yPSJtaWRkbGUiIGNsYXNzPSJtaWNybyI+RnJvemVuIGxlZGdlciBpcyBhZ2VudC1yZWFkLW9ubHk7IGNoYW5nZXMgbGVhdmUgYSB0cmFjZTwvdGV4dD4KCiAgPCEtLSBSb3cgNCAtLT4KICA8cmVjdCB4PSI5MCIgeT0iNjg1IiB3aWR0aD0iMzg1IiBoZWlnaHQ9IjExNSIgcng9IjgiIGNsYXNzPSJhZ2VudCIvPgogIDx0ZXh0IHg9IjI4MiIgeT0iNzI4IiB0ZXh0LWFuY2hvcj0ibWlkZGxlIiBjbGFzcz0ibm9kZS10aXRsZSI+QW5hbHlzaXMgwrcgRGVsaXZlcnkgRWRpdGluZzwvdGV4dD4KICA8dGV4dCB4PSIyODIiIHk9Ijc1NyIgdGV4dC1hbmNob3I9Im1pZGRsZSIgY2xhc3M9Im5vZGUtc3ViIj5BbmFseXN0IOKGkiBEZWxpdmVyeSBFZGl0b3I8L3RleHQ+CiAgPHRleHQgeD0iMjgyIiB5PSI3ODEiIHRleHQtYW5jaG9yPSJtaWRkbGUiIGNsYXNzPSJtaWNybyI+UmVhZCBmcm96ZW4gZmFjdHM7IGRvIG5vdCBhZGQgdW5yZWdpc3RlcmVkIGNsYWltczwvdGV4dD4KCiAgPHJlY3QgeD0iNjA1IiB5PSI2ODUiIHdpZHRoPSIzODUiIGhlaWdodD0iMTE1IiByeD0iOCIgY2xhc3M9ImFydGlmYWN0Ii8+CiAgPHRleHQgeD0iNzk3IiB5PSI3MjgiIHRleHQtYW5jaG9yPSJtaWRkbGUiIGNsYXNzPSJub2RlLXRpdGxlIj5CcmllZiBmb3IgSW5kZXBlbmRlbnQgQXVkaXQ8L3RleHQ+CiAgPHRleHQgeD0iNzk3IiB5PSI3NTciIHRleHQtYW5jaG9yPSJtaWRkbGUiIGNsYXNzPSJub2RlLXN1YiI+YXVkaXRlZF9icmllZi5tZDwvdGV4dD4KICA8dGV4dCB4PSI3OTciIHk9Ijc4MSIgdGV4dC1hbmNob3I9Im1pZGRsZSIgY2xhc3M9Im1pY3JvIj5JbnRlcm5hbCByZWZlcmVuY2VzIHJlbWFpbiBmb3IgYXVkaXQgYW5kIGZpbmFsaXphdGlvbjwvdGV4dD4KCiAgPHJlY3QgeD0iMTEyMCIgeT0iNjc1IiB3aWR0aD0iMzkwIiBoZWlnaHQ9IjEzNSIgcng9IjgiIGNsYXNzPSJjb250cm9sIi8+CiAgPHRleHQgeD0iMTMxNSIgeT0iNzE2IiB0ZXh0LWFuY2hvcj0ibWlkZGxlIiBjbGFzcz0ibm9kZS10aXRsZSI+QXVkaXQgJmFtcDsgU3RhZ2UgR2F0ZXM8L3RleHQ+CiAgPHRleHQgeD0iMTMxNSIgeT0iNzQ1IiB0ZXh0LWFuY2hvcj0ibWlkZGxlIiBjbGFzcz0ibm9kZS1zdWIiPnN1cHBvcnQgwrcgZnJlc2huZXNzIMK3IHJlbGV2YW5jZSDCtyBjb3ZlcmFnZTwvdGV4dD4KICA8dGV4dCB4PSIxMzE1IiB5PSI3NzQiIHRleHQtYW5jaG9yPSJtaWRkbGUiIGNsYXNzPSJtaWNybyI+RmFpbHVyZTogcmV0cnksIHNjb3BlZCByZXBhaXIsIGh1bWFuIHJldmlldywgb3IgYmxvY2s8L3RleHQ+CgogIDwhLS0gUm93IDUgLS0+CiAgPHJlY3QgeD0iOTAiIHk9Ijg1MCIgd2lkdGg9IjM4NSIgaGVpZ2h0PSI3MCIgcng9IjgiIGNsYXNzPSJhZ2VudCIvPgogIDx0ZXh0IHg9IjI4MiIgeT0iODgxIiB0ZXh0LWFuY2hvcj0ibWlkZGxlIiBjbGFzcz0ibm9kZS10aXRsZSI+QXVkaXRvcjwvdGV4dD4KICA8dGV4dCB4PSIyODIiIHk9IjkwNiIgdGV4dC1hbmNob3I9Im1pZGRsZSIgY2xhc3M9Im5vZGUtc3ViIj5SZXBvcnRzIGZpbmRpbmdzOyBjYW5ub3QgYXBwcm92ZSBkZWxpdmVyeTwvdGV4dD4KCiAgPHJlY3QgeD0iNjA1IiB5PSI4NDAiIHdpZHRoPSIzODUiIGhlaWdodD0iOTAiIHJ4PSI4IiBjbGFzcz0iYXJ0aWZhY3QiLz4KICA8dGV4dCB4PSI3OTciIHk9Ijg3NCIgdGV4dC1hbmNob3I9Im1pZGRsZSIgY2xhc3M9Im5vZGUtdGl0bGUiPkF1ZGl0ICZhbXA7IERlbGl2ZXJ5IEFydGlmYWN0czwvdGV4dD4KICA8dGV4dCB4PSI3OTciIHk9IjkwMiIgdGV4dC1hbmNob3I9Im1pZGRsZSIgY2xhc3M9Im5vZGUtc3ViIj5hdWRpdF9yZXBvcnQgwrcgc291cmNlIGFwcGVuZGl4IMK3IGJ1bmRsZXM8L3RleHQ+CgogIDxyZWN0IHg9IjExMjAiIHk9IjgzMCIgd2lkdGg9IjIzNSIgaGVpZ2h0PSIxMTAiIHJ4PSI4IiBjbGFzcz0iY29udHJvbCIvPgogIDx0ZXh0IHg9IjEyMzciIHk9Ijg2OSIgdGV4dC1hbmNob3I9Im1pZGRsZSIgY2xhc3M9Im5vZGUtdGl0bGUiPkZpbmFsaXplIFRyYW5zYWN0aW9uPC90ZXh0PgogIDx0ZXh0IHg9IjEyMzciIHk9Ijg5OCIgdGV4dC1hbmNob3I9Im1pZGRsZSIgY2xhc3M9Im5vZGUtc3ViIj5yZWFkZXItY2xlYW4gwrcgYXJjaGl2ZTwvdGV4dD4KICA8dGV4dCB4PSIxMjM3IiB5PSI5MjMiIHRleHQtYW5jaG9yPSJtaWRkbGUiIGNsYXNzPSJtaWNybyI+UHl0aG9uPC90ZXh0PgoKICA8cmVjdCB4PSIxMzgwIiB5PSI4MzAiIHdpZHRoPSIxMzAiIGhlaWdodD0iMTEwIiByeD0iOCIgY2xhc3M9Imh1bWFuIi8+CiAgPHRleHQgeD0iMTQ0NSIgeT0iODY1IiB0ZXh0LWFuY2hvcj0ibWlkZGxlIiBjbGFzcz0ibm9kZS10aXRsZSI+SHVtYW48L3RleHQ+CiAgPHRleHQgeD0iMTQ0NSIgeT0iODkyIiB0ZXh0LWFuY2hvcj0ibWlkZGxlIiBjbGFzcz0ibm9kZS1zdWIiPkRlbGl2ZXJ5IGRlY2lzaW9uPC90ZXh0PgogIDx0ZXh0IHg9IjE0NDUiIHk9IjkxNyIgdGV4dC1hbmNob3I9Im1pZGRsZSIgY2xhc3M9Im1pY3JvIj5hcHByb3ZlIC8gYmxvY2s8L3RleHQ+CgogIDwhLS0gSG9yaXpvbnRhbCByZWxhdGlvbnNoaXBzIC0tPgogIDxwYXRoIGQ9Ik00NzUgMjc3IEg2MDUiIGNsYXNzPSJmbG93Ii8+CiAgPHBhdGggZD0iTTk5MCAyNzcgSDExMjAiIGNsYXNzPSJmbG93Ii8+CiAgPHBhdGggZD0iTTQ3NSA0MjcgSDYwNSIgY2xhc3M9ImZsb3ciLz4KICA8cGF0aCBkPSJNOTkwIDQyNyBIMTEyMCIgY2xhc3M9ImZsb3ciLz4KICA8cGF0aCBkPSJNNDc1IDU3NyBINjA1IiBjbGFzcz0iZmxvdyIvPgogIDxwYXRoIGQ9Ik05OTAgNTc3IEgxMTIwIiBjbGFzcz0iZmxvdyIvPgogIDxwYXRoIGQ9Ik00NzUgNzQyIEg2MDUiIGNsYXNzPSJmbG93Ii8+CiAgPHBhdGggZD0iTTk5MCA3NDIgSDExMjAiIGNsYXNzPSJmbG93Ii8+CiAgPHBhdGggZD0iTTQ3NSA4ODUgSDYwNSIgY2xhc3M9ImZsb3ciLz4KICA8cGF0aCBkPSJNOTkwIDg4NSBIMTEyMCIgY2xhc3M9ImZsb3ciLz4KICA8cGF0aCBkPSJNMTM1NSA4ODUgSDEzODAiIGNsYXNzPSJmbG93Ii8+CgogIDwhLS0gVmVydGljYWwgc3RhZ2UgcHJvZ3Jlc3Npb24gLS0+CiAgPHBhdGggZD0iTTI4MiAzMzAgVjM3NSIgY2xhc3M9ImZsb3ciLz4KICA8cGF0aCBkPSJNMjgyIDQ4MCBWNTI1IiBjbGFzcz0iZmxvdyIvPgogIDxwYXRoIGQ9Ik0yODIgNjMwIFY2ODUiIGNsYXNzPSJmbG93Ii8+CiAgPHBhdGggZD0iTTI4MiA4MDAgVjg1MCIgY2xhc3M9ImZsb3ciLz4KICA8cGF0aCBkPSJNNzk3IDMzMCBWMzc1IiBjbGFzcz0iZmxvdyIvPgogIDxwYXRoIGQ9Ik03OTcgNDgwIFY1MTUiIGNsYXNzPSJmbG93Ii8+CiAgPHBhdGggZD0iTTc5NyA2NDAgVjY4NSIgY2xhc3M9ImZsb3ciLz4KICA8cGF0aCBkPSJNNzk3IDgwMCBWODQwIiBjbGFzcz0iZmxvdyIvPgoKICA8IS0tIEdsb2JhbCBjb250cm9sIHBsYW5lIC0tPgogIDxyZWN0IHg9IjU1IiB5PSI5ODUiIHdpZHRoPSIxNDkwIiBoZWlnaHQ9IjkwIiByeD0iOCIgZmlsbD0iI2VjZmRmNSIgc3Ryb2tlPSIjMTU4MDNkIiBzdHJva2Utd2lkdGg9IjIiLz4KICA8dGV4dCB4PSI4NSIgeT0iMTAyMSIgY2xhc3M9ImxhbmUtdGl0bGUiPkRldGVybWluaXN0aWMgQ29udHJvbCBQbGFuZSBBY3Jvc3MgQWxsIFN0YWdlczwvdGV4dD4KICA8dGV4dCB4PSI4NSIgeT0iMTA1MyIgY2xhc3M9Im5vZGUtc3ViIj53b3JrZmxvd19zdGF0ZSDCtyBhcnRpZmFjdF9yZWdpc3RyeSDCtyBldmVudF9sb2cgwrcgcnVudGltZV9tYW5pZmVzdCDCtyBjb250cmFjdHMgwrcgaW1tdXRhYmxlIGFyY2hpdmU8L3RleHQ+CiAgPHJlY3QgeD0iMTA1MCIgeT0iMTAwNSIgd2lkdGg9IjQ2MCIgaGVpZ2h0PSI0OCIgcng9IjgiIGNsYXNzPSJmZWVkYmFjayIvPgogIDx0ZXh0IHg9IjEyODAiIHk9IjEwMzUiIHRleHQtYW5jaG9yPSJtaWRkbGUiIGNsYXNzPSJmZWVkYmFjay10aXRsZSI+SHVtYW4gZmVlZGJhY2sg4oaSIEltcHJvdmVtZW50IExlZGdlciDihpIgbmV4dCBydW48L3RleHQ+CgogIDxwYXRoIGQ9Ik0xMzE1IDk4NSBWOTQwIiBjbGFzcz0iY29udHJvbC1mbG93Ii8+CiAgPHBhdGggZD0iTTE0NDUgOTQwIFY5NjUgQzE0NDUgOTc1IDE0MjUgOTgwIDEzODAgOTg1IiBjbGFzcz0iZmVlZGJhY2stZmxvdyIvPgoKICA8IS0tIExlZ2VuZCAtLT4KICA8cmVjdCB4PSI3MCIgeT0iMTA5MCIgd2lkdGg9IjE4IiBoZWlnaHQ9IjE4IiByeD0iNCIgY2xhc3M9ImFnZW50Ii8+CiAgPHRleHQgeD0iOTgiIHk9IjExMDQiIGNsYXNzPSJtaWNybyI+QWdlbnQgZHJhZnQ8L3RleHQ+CiAgPHJlY3QgeD0iMjA1IiB5PSIxMDkwIiB3aWR0aD0iMTgiIGhlaWdodD0iMTgiIHJ4PSI0IiBjbGFzcz0iYXJ0aWZhY3QiLz4KICA8dGV4dCB4PSIyMzMiIHk9IjExMDQiIGNsYXNzPSJtaWNybyI+QXVkaXRhYmxlIGFydGlmYWN0PC90ZXh0PgogIDxyZWN0IHg9IjM2MCIgeT0iMTA5MCIgd2lkdGg9IjE4IiBoZWlnaHQ9IjE4IiByeD0iNCIgY2xhc3M9ImNvbnRyb2wiLz4KICA8dGV4dCB4PSIzODgiIHk9IjExMDQiIGNsYXNzPSJtaWNybyI+UHl0aG9uIGNvbnRyb2wgcGxhbmU8L3RleHQ+CiAgPHJlY3QgeD0iNTI1IiB5PSIxMDkwIiB3aWR0aD0iMTgiIGhlaWdodD0iMTgiIHJ4PSI0IiBjbGFzcz0iaHVtYW4iLz4KICA8dGV4dCB4PSI1NTMiIHk9IjExMDQiIGNsYXNzPSJtaWNybyI+SHVtYW4gYXV0aG9yaXR5PC90ZXh0Pgo8L3N2Zz4K" alt="BriefLoop&#39;s auditable closed-loop architecture from source discovery to human delivery" />
+      <figcaption aria-hidden="true">BriefLoop&#39;s auditable closed-loop
+      architecture from source discovery to human delivery</figcaption>
+      </figure>
+      <p><em>Figure 1. Agents perform content work; the deterministic
+      control plane owns state, freezing, gates, and archives; humans
+      retain critical authorization and final delivery.</em></p>
+      <section id="runtime-state-spine" class="level3">
+      <h3>3.1 Runtime-State Spine</h3>
+      <pre class="text"><code>runtime_manifest.json
+→ workflow_state.json
+→ artifact_registry.json
+→ event_log.jsonl</code></pre>
+      <p>The Python control plane is the sole authoritative writer.
+      v0.12 binds recovery reads for the Manifest, Workflow, Registry,
+      Event Log, and Finalize Report to the same opened workspace
+      session. POSIX uses descriptor-bound, no-follow reads; Windows
+      uses handle-bound reads with reparse-point handling. Legitimate
+      optional absence remains a typed absence, while unsafe, stale, or
+      non-canonical Registry state projects no value. This design
+      realizes Architecture Charter 7 through a shared fail-closed read
+      boundary, preventing different consumers from reopening paths
+      independently and interpreting the same control file in different
+      ways.</p>
+      </section>
+      <section id="evidence-and-claim-spine" class="level3">
+      <h3>3.2 Evidence-and-Claim Spine</h3>
+      <pre class="text"><code>source evidence
+→ persistent source evidence
+→ input classification
+→ candidate_claims.json
+→ screened_candidates.json
+→ claim_drafts.json
+→ freeze transaction
+→ claim_ledger.json
+→ audited_brief.md
+→ audit_report.json
+→ source_appendix.md</code></pre>
+      <p>Runtime agents produce candidates, screening results, claim
+      drafts, and briefing content. Python validates and freezes the
+      boundary between <code>claim_drafts.json</code> and
+      <code>claim_ledger.json</code>. A provenance projection can
+      connect claims, sources, artifacts, decisions, and gate findings,
+      but traceable relations do not establish that a source
+      semantically supports a claim, nor do they establish full W3C PROV
+      compatibility.<a href="#ref-t06">T06</a></p>
+      <p>The claim-freeze transaction proceeds as follows:</p>
+      <ol type="1">
+      <li>The claim role writes <code>claim_drafts.json</code> without
+      <code>claim_id</code>. A preassigned ID at any nesting level is
+      rejected.</li>
+      <li><code>briefloop state freeze-claim-ledger</code> reads
+      validated drafts, assigns <code>CL-####</code> in deterministic
+      order, writes the authoritative <code>claim_ledger.json</code>,
+      records hashes and freeze metadata, and appends a
+      <code>claim_ledger_frozen</code> event.</li>
+      <li><code>briefloop state stage-complete --stage claim-ledger</code>
+      requires a matching freeze record. Hash drift, missing freeze
+      metadata, or stale ledger bytes fail closed.</li>
+      <li>Analyst and auditor roles read only the frozen ledger. They
+      may not treat the draft as authoritative input or modify the
+      ledger.</li>
+      </ol>
+      </section>
+      <section id="gate-spine" class="level3">
+      <h3>3.3 Gate Spine</h3>
+      <pre class="text"><code>CompositeAuditAgent
+├── DeterministicAuditAgent
+├── QualityHarnessAuditAgent
+└── NoOpSemanticAuditAgent
+    → gates/auditor_quality_gate_report.json
+    → gates/finalize_quality_gate_report.json</code></pre>
+      <p>The first two audit components are Python implementations and
+      do not call an LLM. The semantic-audit slot remains a placeholder.
+      The runtime Auditor is expected to examine whether wording matches
+      support strength, but the project does not ship a model-based
+      semantic auditor with release authority. Auditor and finalize
+      stages consume their own stage-scoped gate reports. The legacy
+      <code>quality_gate_report.json</code> is a compatibility
+      projection, not frozen authority.</p>
+      </section>
+      <section id="memory-and-improvement-spine" class="level3">
+      <h3>3.4 Memory-and-Improvement Spine</h3>
+      <pre class="text"><code>audience_profile.md
+→ audience_profile_snapshot.md
+
+improvement/ledger.jsonl
+→ improvement/memory.md
+→ improvement_memory_snapshot.md</code></pre>
+      <p>Humans maintain the Audience Profile and approve improvement
+      guidance. Python materializes memory from the ledger, freezes the
+      per-run snapshot, and records effective entries and their SHA-256
+      in the Runtime Manifest. An approval or revert during a run
+      affects only future runs; it cannot alter already-frozen input for
+      the current run. Each ledger revision links to its predecessor
+      hash.</p>
+      </section>
+      <section id="delivery-and-archive-spine" class="level3">
+      <h3>3.5 Delivery-and-Archive Spine</h3>
+      <pre class="text"><code>output/intermediate/finalize_report.json   # single delivery truth
+output/delivery/brief.md
+output/delivery/&lt;name&gt;.docx
+output/source_appendix.md
+output/runs/&lt;run_id&gt;/</code></pre>
+      <p>Finalization first renders reader artifacts in a candidate
+      location and runs reader-clean checks; only a passing candidate is
+      promoted to <code>output/brief.md</code> and
+      <code>output/delivery/</code>. A failure writes a failed
+      <code>finalize_report.json</code> while preserving the previous
+      delivery bundle. A success report records the delivery artifacts
+      bound to the current run and their SHA-256 hashes. Delivery
+      eligibility is not delivery success: the latter also requires a
+      delivery-outcome event bound to the current run. File presence
+      alone is not delivery truth. The archive continues to retain
+      delivery artifacts, intermediate artifacts, control records, and a
+      hash manifest; a historical run may not be overwritten in
+      place.</p>
+      </section>
+      <section id="product-layer-and-support-sufficiency-experimental-stack" class="level3">
+      <h3>3.6 Product Layer and Support-Sufficiency Experimental
+      Stack</h3>
+      <pre class="text"><code>report_spec.yaml
+→ ReportPack / ReportTemplate / PolicyProfile
+→ atomic_claim_graph.json
+→ evidence_span_registry.json
+→ claim_support_matrix.json
+→ semantic_assessment_report.json
+→ semantic_support_acceptance_ledger.json
+→ quality_panel.json / quality_summary.md / quality_panel.html
+→ delivery_bundle.zip / audit_bundle.zip</code></pre>
+      <p>Authority is bounded as follows:</p>
+      <ul>
+      <li>Specialist roles may draft Atomic Claim Graphs, evidence
+      spans, Claim-Support Matrix rows, and semantic-assessment
+      proposals.</li>
+      <li>Python validates only schemas, reference integrity, hash
+      bindings, required-row coverage, and adjudication-record
+      format.</li>
+      <li><code>semantic-support adjudicate</code> records human
+      acceptance or rejection, but the adjudication record does not
+      rewrite the Claim-Support Matrix automatically.</li>
+      <li><code>briefloop new</code>, <code>packs bundle</code>,
+      <code>quality summarize</code>, <code>extract</code>, and
+      <code>sources materialize-pack</code> write only workspace
+      structure or projections. They do not run specialist roles,
+      approve delivery, or prove semantic correctness.</li>
+      <li>The experimental WorkBuddy/CodeBuddy path uses two-stage
+      permissions: a checked-in role agent drafts only the artifacts
+      named in the handoff; a command-capable main session must reread
+      the handoff before executing the permitted CLI transaction. Seeing
+      an artifact or a generic-helper narrative cannot substitute for a
+      host-visible record of the exact role invocation and return.</li>
+      </ul>
+      <p>The supported product entrypoints are:</p>
+      <table>
+      <colgroup>
+      <col style="width: 33%" />
+      <col style="width: 33%" />
+      <col style="width: 33%" />
+      </colgroup>
+      <thead>
+      <tr>
+      <th>User command</th>
+      <th>Internal ReportPack</th>
+      <th>Purpose</th>
+      </tr>
+      </thead>
+      <tbody>
+      <tr>
+      <td><code>briefloop new industry-weekly</code></td>
+      <td><code>market_weekly</code></td>
+      <td>Industry weekly report</td>
+      </tr>
+      <tr>
+      <td><code>briefloop new management-monthly</code></td>
+      <td><code>management_monthly</code></td>
+      <td>Management monthly report</td>
+      </tr>
+      <tr>
+      <td><code>briefloop new document-review</code></td>
+      <td><code>evidence_extract</code></td>
+      <td>Document evidence-extraction workspace</td>
+      </tr>
+      </tbody>
+      </table>
+      </section>
+      </section>
+      <section id="control-transactions" class="level2">
+      <h2>4. Control Transactions</h2>
+      <section id="stage-completion-transactions" class="level3">
+      <h3>4.1 Stage-Completion Transactions</h3>
+      <p><code>stage-complete</code>, <code>finalize</code>, and
+      <code>finalize-complete</code> move stage bookkeeping, candidate
+      promotion, and completion decisions from prompt obligations into
+      deterministic execution. A transaction:</p>
+      <ul>
+      <li>checks that expected artifacts are registered and valid in the
+      trusted interpretation of the Registry;</li>
+      <li>updates stage status in <code>workflow_state.json</code> and
+      appends an event to <code>event_log.jsonl</code>;</li>
+      <li>enforces stage-specific preconditions, such as a matching
+      freeze record for Claim Ledger completion;</li>
+      <li>during finalization, checks the candidate reader artifact
+      before atomic promotion and writes delivery-artifact hashes to
+      <code>finalize_report.json</code>;</li>
+      <li>distinguishes eligibility, finalization success, and delivery
+      outcome in completion and delivery projections, rather than
+      inferring success from file presence.</li>
+      </ul>
+      <p>The Orchestrator decides what action to take and why. Python
+      records whether that decision has legally taken effect under the
+      required conditions.</p>
+      </section>
+      <section id="claim-ledger-freeze-transaction" class="level3">
+      <h3>4.2 Claim-Ledger Freeze Transaction</h3>
+      <table>
+      <colgroup>
+      <col style="width: 33%" />
+      <col style="width: 33%" />
+      <col style="width: 33%" />
+      </colgroup>
+      <thead>
+      <tr>
+      <th>Operation</th>
+      <th>Authoritative writer</th>
+      <th>Artifact or result</th>
+      </tr>
+      </thead>
+      <tbody>
+      <tr>
+      <td>Draft claims</td>
+      <td>Claim role</td>
+      <td><code>claim_drafts.json</code>, without
+      <code>claim_id</code></td>
+      </tr>
+      <tr>
+      <td>Validate drafts</td>
+      <td>Python</td>
+      <td>Reject preassigned IDs and invalid structure</td>
+      </tr>
+      <tr>
+      <td>Assign IDs</td>
+      <td>Python</td>
+      <td>Stable <code>CL-####</code> identifiers</td>
+      </tr>
+      <tr>
+      <td>Freeze ledger</td>
+      <td>Python</td>
+      <td><code>claim_ledger.json</code>, freeze metadata, and
+      event</td>
+      </tr>
+      <tr>
+      <td>Complete stage</td>
+      <td>Python</td>
+      <td>Refuse completion without a matching freeze record</td>
+      </tr>
+      </tbody>
+      </table>
+      <p>After freezing, analyst and auditor roles may only read the
+      ledger. Any change requires a new run or an explicit
+      contamination, supersession, and repair record.</p>
+      </section>
+      <section id="run-integrity-and-contamination" class="level3">
+      <h3>4.3 Run Integrity and Contamination</h3>
+      <p><code>workflow_state.json.run_integrity</code> records whether
+      a run remains usable as clean reference evidence. Resetting an
+      executed run, replaying a stage against stale state, or modifying
+      a frozen artifact writes a contamination event and reason. The
+      v0.12 recovery context must read five classes of control input
+      through the same trusted workspace session; supersede marks
+      downstream artifacts stale until they are regenerated. A
+      contaminated run may continue to a constrained delivery, but it
+      may not be presented as an A-grade controlled experiment. Missing,
+      stale, and unsafe inputs must remain visible.</p>
+      </section>
+      <section id="immutable-archives" class="level3">
+      <h3>4.4 Immutable Archives</h3>
+      <p>The archive at <code>output/runs/&lt;run_id&gt;/</code>
+      preserves:</p>
+      <ul>
+      <li>delivery artifacts such as Markdown and DOCX;</li>
+      <li>intermediate artifacts such as the Claim Ledger, gate reports,
+      and audit report;</li>
+      <li>control records such as workflow state, Event Log, and Runtime
+      Manifest;</li>
+      <li>SHA-256 values for every artifact in the manifest.</li>
+      </ul>
+      <p>The archive is append-only and cannot be rewritten in
+      place.</p>
+      </section>
+      <section id="fast-rerun-import" class="level3">
+      <h3>4.5 Fast-Rerun Import</h3>
+      <p><code>briefloop state import-fact-layer</code> can copy
+      archived source evidence, input classification, candidate claims,
+      screening results, and the Claim Ledger into a new workspace. The
+      transaction copies original bytes, verifies hashes, records the
+      import relationship, and marks satisfied upstream stages as
+      completed by import.
+      <code>briefloop run --recipe fast-rerun</code> begins at analysis.
+      Finalization still reevaluates freshness against the new
+      workspace&#39;s time. A fast rerun reuses the fact layer; it does not
+      reuse the previous brief, audit result, finalization record, or
+      delivery approval.</p>
+      </section>
+      </section>
+      <section id="evidence-and-claim-governance" class="level2">
+      <h2>5. Evidence and Claim Governance</h2>
+      <section id="from-source-to-claim" class="level3">
+      <h3>5.1 From Source to Claim</h3>
+      <pre class="text"><code>source discovery
+→ persistent source evidence
+→ input classification
+→ candidate claims
+→ screening results
+→ claim drafts
+→ deterministic freeze
+→ Claim Ledger</code></pre>
+      <p>Only materialized source files and supported entries in source
+      configuration can serve as evidence.
+      <code>source_candidates.yaml</code> is for planning and review. It
+      cannot replace <code>sources.yaml</code>, and its presence does
+      not establish that source discovery is complete. Retrieval plans,
+      search summaries, and model summaries are discovery material, not
+      evidence.</p>
+      <p>Current source records require at least a source ID, name,
+      type, title, and content. Evidence spans, retrieval time, source
+      tier, and excerpt hashes belong to the support-sufficiency
+      direction. They strengthen traceability but still do not prove
+      automatically that a source semantically supports a claim.</p>
+      </section>
+      <section id="claim-draft-contract" class="level3">
+      <h3>5.2 Claim-Draft Contract</h3>
+      <p><code>claim_drafts.json</code> is the input to the claim-freeze
+      transaction. Neither a draft entry nor its metadata may contain a
+      preassigned <code>claim_id</code>. The
+      <code>sorted_sequential_v1</code> algorithm sorts by stable keys
+      and assigns <code>CL-####</code>. Identical freeze input produces
+      identical IDs, but the system does not promise ID stability across
+      freezes when claims are added, removed, or reordered.</p>
+      <p>This design prevents the model from fabricating authoritative
+      identity. The model owns claim content; the system owns claim
+      identity and freeze status.</p>
+      </section>
+      <section id="support-strength-calibration" class="level3">
+      <h3>5.3 Support-Strength Calibration</h3>
+      <p>The v0.7.4 failure study exposed five recurring problems:</p>
+      <ol type="1">
+      <li><strong>Support inflation:</strong> a source reports
+      regulatory discussion, while the brief describes formal
+      approval.</li>
+      <li><strong>Authority inflation:</strong> a conference item or
+      media report is presented as a government plan or official
+      fact.</li>
+      <li><strong>Claim conflation:</strong> a supported core fact and
+      an unverified implication appear in the same sentence.</li>
+      <li><strong>Attribution mismatch:</strong> one source is made to
+      carry several conclusions it does not independently support.</li>
+      <li><strong>Forecast-as-evidence:</strong> a secondary-market
+      forecast or commentary is used as the basis for a core fact.</li>
+      </ol>
+      <p>These are not missing-source failures. They are calibration
+      failures between evidence and language. The Auditor must examine
+      overstatement, support strength, confidence, evidence
+      relationships, and limitations. Experimental support records may
+      use labels such as <code>explicitly_supported</code>,
+      <code>partially_supported</code>,
+      <code>supportive_but_overextended</code>,
+      <code>attribution_mismatch</code>,
+      <code>needs_primary_source</code>, and <code>unsupported</code>.
+      The labels still require human adjudication and cannot become
+      release authority on their own.</p>
+      <p>Dynamic knowledge adds four adjacent but distinct calibration
+      risks:</p>
+      <ol start="6" type="1">
+      <li><strong>Temporal-validity inflation:</strong> a fact that was
+      historically true is written as if it remains true at the current
+      freeze point.</li>
+      <li><strong>Version conflation:</strong> an original item,
+      correction, update, and republication are treated as independent
+      and equally current evidence.</li>
+      <li><strong>Repetition-as-corroboration:</strong> multiple copies
+      of an older report create a numerical majority over one newer
+      primary source.</li>
+      <li><strong>Loss of source fidelity:</strong> the model uses its
+      own knowledge to “correct” the input, producing text that may be
+      more factually accurate in the world but is no longer faithful to
+      the source it purports to summarize.<a href="#ref-p29">P29</a></li>
+      </ol>
+      <p>Temporal-knowledge research shows that facts may have validity
+      periods, while credibility-aware generation shows that source
+      credibility can be made an explicit signal. Neither result means
+      that a date or a high source tier automatically determines
+      truth.<a href="#ref-p30">P30</a> <a href="#ref-p33">P33</a> The
+      current exact head can record source <code>published_at</code> and
+      <code>retrieved_at</code> values and apply deterministic freshness
+      checks; the policy-regulatory module also has a local
+      <code>effective_date</code>. It does not provide a general
+      <code>valid_time</code> or <code>as_of</code> model for claims,
+      source-correction, retraction, or supersession relations, or a
+      general conflict finding and resolution state. These four items
+      are therefore architecture requirements and planned evaluations in
+      this edition, not shipped conflict-governance capabilities.</p>
+      </section>
+      <section id="boundary-of-the-source-appendix" class="level3">
+      <h3>5.4 Boundary of the Source Appendix</h3>
+      <p>During finalization, <code>output/source_appendix.md</code> is
+      generated from claims actually cited by the reader brief. It is
+      embedded into Markdown and DOCX delivery artifacts while an audit
+      copy is retained. The Source Appendix gives readers a route for
+      follow-up. It is not a certificate of factual correctness. It
+      establishes where a claim can be traced, not that the claim has
+      been proven true.</p>
+      </section>
+      </section>
+      <section id="gates-and-repair" class="level2">
+      <h2>6. Gates and Repair</h2>
+      <section id="stage-scoped-gates" class="level3">
+      <h3>6.1 Stage-Scoped Gates</h3>
+      <table>
+      <colgroup>
+      <col style="width: 33%" />
+      <col style="width: 33%" />
+      <col style="width: 33%" />
+      </colgroup>
+      <thead>
+      <tr>
+      <th>Gate report</th>
+      <th>Constrained stage</th>
+      <th>Primary checks</th>
+      </tr>
+      </thead>
+      <tbody>
+      <tr>
+      <td><code>gates/auditor_quality_gate_report.json</code></td>
+      <td>Auditor completion</td>
+      <td>Material facts, freshness, target relevance, coverage
+      omissions</td>
+      </tr>
+      <tr>
+      <td><code>gates/finalize_quality_gate_report.json</code></td>
+      <td>Finalize completion</td>
+      <td>Reader residue, internal IDs, process language, delivery
+      hygiene</td>
+      </tr>
+      </tbody>
+      </table>
+      <p>Stage-scoped reports are authoritative. The legacy
+      <code>quality_gate_report.json</code> is retained only as a
+      compatibility projection. Completion transactions have no
+      <code>--force</code> path around the gates.</p>
+      </section>
+      <section id="deterministic-audit-stack" class="level3">
+      <h3>6.2 Deterministic Audit Stack</h3>
+      <pre class="text"><code>runtime Auditor role
+→ CompositeAuditAgent
+→ DeterministicAuditAgent
+→ QualityHarnessAuditAgent
+→ NoOpSemanticAuditAgent
+→ audit_report.json</code></pre>
+      <p>The deterministic audit checks sources, freshness, numbers,
+      dates, safe wording, process residue, and redaction. The Quality
+      Harness audit checks rules around material facts, target
+      relevance, and reader residue. The semantic-audit slot remains a
+      placeholder. A future model-based semantic evaluator still may not
+      overwrite deterministic findings or decide support truth or
+      delivery eligibility by itself.</p>
+      </section>
+      <section id="repair-routing" class="level3">
+      <h3>6.3 Repair Routing</h3>
+      <p><code>briefloop repair route</code> is a read-only diagnostic
+      command. It maps gate, audit, registry, and workflow findings to
+      the responsible stage and allowed artifact class. It tells the
+      Orchestrator who should repair an issue and what may be changed.
+      It does not create prose, execute repair, or replace a
+      RepairPlan.</p>
+      </section>
+      <section id="anti-goodhart-principle" class="level3">
+      <h3>6.4 Anti-Goodhart Principle</h3>
+      <p><em>Precision Is Not Faithfulness</em> shows that optimizing
+      precision alone may reward a system for deleting important but
+      difficult-to-verify content.<a href="#ref-p08">P08</a> Before a
+      blocking precision gate is introduced, BriefLoop must ask:
+      <strong>What is the cheapest way for the system to pass?</strong>
+      If omission is the cheapest strategy, a coverage or omission check
+      must accompany the gate so that silence cannot earn a high
+      score.</p>
+      </section>
+      <section id="coverage-and-omission-continuity" class="level3">
+      <h3>6.5 Coverage and Omission Continuity</h3>
+      <p>The current supported gate checks whether high-priority items
+      in <code>screened_candidates.json</code> disappear silently before
+      the Claim Ledger or cited brief. It captures the path in which an
+      item passes screening but is omitted during analysis or editing.
+      It does not provide complete recall over all relevant facts and
+      does not prove that the report has sufficient overall
+      coverage.</p>
+      </section>
+      </section>
+      <section id="controlled-memory-and-improvement" class="level2">
+      <h2>7. Controlled Memory and Improvement</h2>
+      <section id="audience-profile" class="level3">
+      <h3>7.1 Audience Profile</h3>
+      <p><code>audience_profile.md</code> is a human-editable workspace
+      file for structural preferences, departmental vocabulary, tone,
+      and durable feedback. A run reads only its frozen
+      <code>audience_profile_snapshot.md</code>. Changes to the live
+      profile during a run affect future runs only. The profile is
+      semantic guidance, not evidence, and has no gate authority.</p>
+      </section>
+      <section id="improvement-ledger" class="level3">
+      <h3>7.2 Improvement Ledger</h3>
+      <p><code>improvement/ledger.jsonl</code> is an append-only,
+      revision-chained workspace ledger that requires human approval.
+      Its lifecycle is:</p>
+      <pre class="text"><code>propose
+→ human approve
+→ Python rebuilds improvement/memory.md
+→ next run freezes improvement_memory_snapshot.md
+→ revert when necessary</code></pre>
+      <p>Key invariants are:</p>
+      <ul>
+      <li>a proposed entry affects no run;</li>
+      <li>approval appends state and does not alter the current
+      run;</li>
+      <li>materialization occurs at the beginning of the next run;</li>
+      <li>reverted entries disappear from the next memory and
+      snapshot;</li>
+      <li><code>materialized_entry_ids</code> and the hash in
+      <code>runtime_manifest.json</code> record exactly which guidance
+      the run consumed.</li>
+      </ul>
+      </section>
+      <section id="whether-guidance-was-manifested" class="level3">
+      <h3>7.3 Whether Guidance Was Manifested</h3>
+      <p>The experimental
+      <code>guidance_manifestation_report.json</code> can record
+      observable status for approved guidance in an output: explicitly
+      manifested, partially manifested, contradicted, or not observable.
+      Python validates labels and counts them. It does not decide
+      whether a label is semantically correct, modify improvement
+      memory, or block finalization.</p>
+      <p>The archived BriefLoop-090 experiment can import manifestation
+      ratings from an external evaluator. That measurement is outside
+      the ordinary product path and does not establish improved output
+      quality.</p>
+      </section>
+      <section id="memory-surfaces-not-yet-shipped" class="level3">
+      <h3>7.4 Memory Surfaces Not Yet Shipped</h3>
+      <table>
+      <colgroup>
+      <col style="width: 33%" />
+      <col style="width: 33%" />
+      <col style="width: 33%" />
+      </colgroup>
+      <thead>
+      <tr>
+      <th>Planned artifact</th>
+      <th>Status</th>
+      <th>Purpose</th>
+      </tr>
+      </thead>
+      <tbody>
+      <tr>
+      <td><code>improvement/intake.jsonl</code></td>
+      <td>Deferred</td>
+      <td>Receive raw feedback with source relationships</td>
+      </tr>
+      <tr>
+      <td><code>improvement/candidates.jsonl</code></td>
+      <td>Deferred</td>
+      <td>Stage unapproved rule or preference candidates</td>
+      </tr>
+      <tr>
+      <td><code>reference_samples/manifest.jsonl</code></td>
+      <td>Planned</td>
+      <td>Preserve human-accepted examples of taste</td>
+      </tr>
+      </tbody>
+      </table>
+      <p>These surfaces should be introduced only after the core
+      propose-approve-materialize-freeze-revert lifecycle is stable.</p>
+      </section>
+      <section id="controlled-harness-improvement-protocol-proposed" class="level3">
+      <h3>7.5 Controlled Harness-Improvement Protocol (Proposed)</h3>
+      <p>The current exact head has event traces, gate findings,
+      <code>FeedbackIssue</code>, <code>RepairPlan</code>, evaluation
+      fixtures, the Improvement Ledger, run snapshots, trusted control
+      reads, and transactional delivery records, but it does not yet
+      form an end-to-end self-improving harness. A future protocol must
+      preserve these authority boundaries:</p>
+      <table>
+      <colgroup>
+      <col style="width: 33%" />
+      <col style="width: 33%" />
+      <col style="width: 33%" />
+      </colgroup>
+      <thead>
+      <tr>
+      <th>Phase</th>
+      <th>Permitted action</th>
+      <th>Authority constraint</th>
+      </tr>
+      </thead>
+      <tbody>
+      <tr>
+      <td>Observe weaknesses</td>
+      <td>Form structured candidates from events, gates, audits, and
+      human feedback</td>
+      <td>Observation does not become modification automatically</td>
+      </tr>
+      <tr>
+      <td>Propose a bounded change</td>
+      <td>An agent proposes a narrow modification for a repeated,
+      localizable issue and declares editable scope and behavior to
+      preserve</td>
+      <td>The agent cannot write the active harness</td>
+      </tr>
+      <tr>
+      <td>Regression validation</td>
+      <td>Held-in cases confirm the target issue is fixed; held-out
+      cases and same-evidence reruns check side effects</td>
+      <td>Evaluators and permission controls stay outside the editable
+      loop</td>
+      </tr>
+      <tr>
+      <td>Authorization</td>
+      <td>A human accepts or rejects; a deterministic transaction
+      records inputs, version, outcome, and decision</td>
+      <td>Only an approval transaction may create a candidate new
+      version</td>
+      </tr>
+      <tr>
+      <td>Activation</td>
+      <td>The new version affects future runs only; rejected proposals
+      and negative outcomes remain recorded</td>
+      <td>No writeback into the current run or frozen historical
+      runs</td>
+      </tr>
+      </tbody>
+      </table>
+      <p>“Improvement” in BriefLoop therefore does not mean an agent
+      rewriting its own control plane. It means converting production
+      failures into engineering changes that are localizable,
+      proposable, regression-tested, approvable, and reversible.
+      Materiality, analytical taste, and management value still require
+      human judgment. Deterministic gates provide only local, auditable
+      weak-reward surfaces.</p>
+      </section>
+      </section>
+      <section id="v0.12.1-post-tag-main-implementation-baseline" class="level2">
+      <h2>8. v0.12.1 / Post-Tag <code>main</code> Implementation
+      Baseline</h2>
+      <section id="version-evolution" class="level3">
+      <h3>8.1 Version Evolution</h3>
+      <table>
+      <colgroup>
+      <col style="width: 33%" />
+      <col style="width: 33%" />
+      <col style="width: 33%" />
+      </colgroup>
+      <thead>
+      <tr>
+      <th>Version</th>
+      <th>Theme</th>
+      <th>Core capability boundary</th>
+      </tr>
+      </thead>
+      <tbody>
+      <tr>
+      <td>v0.8.3</td>
+      <td>Claim-freeze transaction</td>
+      <td>Python assigns stable IDs to draft claims and freezes
+      them</td>
+      </tr>
+      <tr>
+      <td>v0.9.x</td>
+      <td>Experimental support-sufficiency core</td>
+      <td>Atomic Claim Graph, Evidence Span Registry, Claim-Support
+      Matrix, semantic proposals, and human adjudication records</td>
+      </tr>
+      <tr>
+      <td>v0.10.x</td>
+      <td>Product layer and delivery hardening</td>
+      <td>Report specification, bundle projections, finalization
+      transaction, and the five-step authoring path</td>
+      </tr>
+      <tr>
+      <td>v0.11.x</td>
+      <td>Product baseline</td>
+      <td>Three product entrypoints, policy/template diagnostics, and
+      runtime/operator surfaces</td>
+      </tr>
+      <tr>
+      <td>v0.12.0</td>
+      <td>Trusted reads and delivery truth</td>
+      <td>Descriptor/handle-bound control reads, same-session recovery,
+      candidate-before-promotion, and <code>finalize_report.json</code>
+      as the single delivery truth</td>
+      </tr>
+      <tr>
+      <td>v0.12.1 tag</td>
+      <td>Delegation and product-governance boundaries</td>
+      <td>Two-stage WorkBuddy/CodeBuddy permissions, exact delegation
+      evidence, the Northstar advisory boundary, and the historical v0.4
+      report</td>
+      </tr>
+      <tr>
+      <td>post-tag <code>main</code></td>
+      <td>Citation parsing and pilot-contract closure</td>
+      <td>#513–#515; not back-ported as v0.12.1-tag capability</td>
+      </tr>
+      <tr>
+      <td>v1.0.0 (target)</td>
+      <td>Product freeze</td>
+      <td>Freeze commitments and satisfy the first-user evidence gate
+      rather than expand scope</td>
+      </tr>
+      </tbody>
+      </table>
+      </section>
+      <section id="supported" class="level3">
+      <h3>8.2 Supported</h3>
+      <ul>
+      <li>Default, strict, and <code>human_assisted</code> role
+      topologies, plus Delivery Editor.</li>
+      <li>Hermes, Claude Code, and OpenCode runtimes; <code>run</code>
+      generates a handoff and does not replace external role
+      execution.</li>
+      <li>Runtime state, a trusted Registry, the Event Log, claim
+      freezing, stage completion, transactional finalization,
+      contamination/supersede records, and immutable archives.</li>
+      <li>Audit and finalization stage gates, coverage-and-omission
+      continuity checks, feedback and repair plans, and the Orchestrator
+      control switchboard.</li>
+      <li>The Improvement Ledger, audience snapshots, per-run
+      improvement snapshots, and provenance projection.</li>
+      <li>Reader delivery bundles under <code>output/delivery/</code>,
+      audit copies of the Source Appendix, delivery truth in
+      <code>finalize_report.json</code>, and a current-run delivery
+      outcome.</li>
+      <li>Four-way input governance and market-competition, policy, and
+      regulatory-analysis modules.</li>
+      <li>Twenty-five public-safe evaluation cases; 3,710 pytest items
+      are locally collectable at this snapshot.</li>
+      <li>The <code>industry-weekly</code>,
+      <code>management-monthly</code>, and <code>document-review</code>
+      product entrypoints.</li>
+      </ul>
+      </section>
+      <section id="experimental" class="level3">
+      <h3>8.3 Experimental</h3>
+      <ul>
+      <li>Atomic Claim Graph, Evidence Span Registry, Claim-Support
+      Matrix, semantic assessment, and human adjudication.</li>
+      <li>Broader Product OS extensions: template rendering,
+      policy-profile gate adaptation, the Quality Panel, and materiality
+      and support-wording diagnostics.</li>
+      <li>UTF-8 text evidence-span seeding, persistent source evidence
+      packs, SourceHub Lite, and fast-rerun fact-layer import.</li>
+      <li>Paths involving Codex custom agents, source-clone
+      WorkBuddy/CodeBuddy role assets, Feishu, Gmail, PDF, and
+      MinerU.</li>
+      <li>Archived experiment tooling for BriefLoop-090 and its frozen
+      historical ID <code>MABW-080</code>.</li>
+      </ul>
+      </section>
+      <section id="not-shipped" class="level3">
+      <h3>8.4 Not Shipped</h3>
+      <ul>
+      <li>An end-to-end Issue Candidate system and an approval
+      transaction that safely promotes a candidate into a new harness
+      version.</li>
+      <li>A complete semantic-coverage gate, regression harness, and
+      release-eligibility summary with release-blocking authority.</li>
+      <li>Demonstrated cross-model output-quality gains, complete
+      fact-checking, private commercial benchmarks, and autonomous
+      learning.</li>
+      <li>External runtime evidence that establishes actual
+      WorkBuddy/CodeBuddy role delegation and result quality.</li>
+      <li>A primary <code>pipx install briefloop</code> path
+      smoke-tested against a real package-index artifact.</li>
+      <li>First-user pilot evidence satisfying the v1.0
+      requirement.</li>
+      </ul>
+      </section>
+      <section id="v1.0-evidence-gate" class="level3">
+      <h3>8.5 v1.0 Evidence Gate</h3>
+      <p>The freeze inventory in <code>docs/control-surfaces.md</code>
+      identifies surfaces eligible for backward-compatibility
+      commitments. v1.0 also requires at least one publicly reproducible
+      first-user evidence record, such as an external fresh clone, first
+      use through WorkBuddy, a pilot checklist, or recurring
+      weekly-report dogfood. At the current exact head,
+      <code>docs/v1-pilot-evidence.md</code> still records
+      <code>Status: not_satisfied</code>. It is a release-readiness
+      evidence ledger, not semantic proof, proof of output quality,
+      delivery approval, or release authority.</p>
+      <p>BriefLoop-090 completed one synthetic
+      <code>auditable_brief</code> pilot. It can support the narrow
+      statement that guidance patterns differed in one case. It cannot
+      support generalized claims about output quality, management
+      readiness, or delivery quality.</p>
+      </section>
+      </section>
+      <section id="reference-evidence-and-failure-studies" class="level2">
+      <h2>9. Reference Evidence and Failure Studies</h2>
+      <section id="v0.7.2-public-solar-integration-run" class="level3">
+      <h3>9.1 v0.7.2 Public Solar Integration Run</h3>
+      <p>Two runs over public materials demonstrated that the following
+      mechanisms can close end to end:</p>
+      <ul>
+      <li>approved guidance can be materialized into frozen per-run
+      improvement memory;</li>
+      <li>quality gates blocked stage progression three times and passed
+      after repair;</li>
+      <li>the Orchestrator reads a frozen snapshot rather than live
+      mutable workspace memory;</li>
+      <li><code>runtime_manifest.json</code> records effective entry IDs
+      and their hashes.</li>
+      </ul>
+      <p>The run does not prove improved output quality or a causal
+      effect from guidance. Candidate claims, screening results, and
+      Claim Ledger hashes differed between the two runs, so guidance was
+      not the only variable. The run is appropriate as B+ integration
+      evidence, not as an A-grade controlled experiment.</p>
+      </section>
+      <section id="v0.7.4-failure-study" class="level3">
+      <h3>9.2 v0.7.4 Failure Study</h3>
+      <p>An industry-research run produced a complete, readable briefing
+      and preserved the full workflow artifact chain. External review
+      still found support inflation, authority-tier mismatch, claim
+      conflation, attribution mismatch, and forecasts presented as
+      facts.</p>
+      <p>This did not show that BriefLoop produced a better report. It
+      demonstrated a narrower but important capability. In direct model
+      drafting, an error often survives only in the final text. In
+      BriefLoop, the error can be traced through source summary,
+      candidate claim, screening result, Claim Ledger, audited brief,
+      and reader artifact. The failure was not repaired automatically,
+      but its propagation path was preserved.</p>
+      </section>
+      <section id="decoupling-content-and-control" class="level3">
+      <h3>9.3 Decoupling Content and Control</h3>
+      <p>The v0.7.1 run showed that a model can complete all content
+      work while skipping almost every control obligation. That failure
+      directly motivated stage-completion, finalization-completion, and
+      claim-freeze transactions. It supports one conclusion: <strong>a
+      prompt obligation is not an execution guarantee.</strong> An
+      important rule needs a machine-verifiable execution path.</p>
+      </section>
+      <section id="evidence-boundaries" class="level3">
+      <h3>9.4 Evidence Boundaries</h3>
+      <table>
+      <colgroup>
+      <col style="width: 33%" />
+      <col style="width: 33%" />
+      <col style="width: 33%" />
+      </colgroup>
+      <thead>
+      <tr>
+      <th>Evidence</th>
+      <th>Supports</th>
+      <th>Does not support</th>
+      </tr>
+      </thead>
+      <tbody>
+      <tr>
+      <td>Solar B+ run</td>
+      <td>Gates executed; Improvement Memory chain closed</td>
+      <td>Improved output quality; causal guidance effect</td>
+      </tr>
+      <tr>
+      <td>Failure study</td>
+      <td>Error-propagation path preserved; failures classifiable</td>
+      <td>BriefLoop outperforms a single-model baseline</td>
+      </tr>
+      <tr>
+      <td>Content/control decoupling</td>
+      <td>Models are poor owners of low-level authoritative
+      bookkeeping</td>
+      <td>Every model will fail in the same way</td>
+      </tr>
+      <tr>
+      <td>BriefLoop-090</td>
+      <td>Observable guidance-pattern differences under one frozen fact
+      layer</td>
+      <td>Generalized quality, management readiness, or DOCX
+      quality</td>
+      </tr>
+      </tbody>
+      </table>
+      </section>
+      <section id="synthetic-pilot-and-product-layer-reference-bundle" class="level3">
+      <h3>9.5 Synthetic Pilot and Product-Layer Reference Bundle</h3>
+      <p>BriefLoop-090 uses one public-safe synthetic case with three
+      conditions: <code>baseline</code>, <code>memory</code>, and
+      <code>prompt-only</code>. It applies blind assessment and
+      hash-bound import. The observation matched the intended pattern:
+      the baseline did not manifest the target guidance, the memory
+      condition was more stable, and prompt-only over-applied the same
+      guidance. This result is specific to one case.</p>
+      <p>The v0.11.3 product-layer reference bundle demonstrates
+      deterministic
+      <code>same_evidence_reader_quality_regression</code>: the reader
+      artifact contains no internal claim markers, the audit bundle
+      preserves trace records, and the Quality Panel summarizes
+      materiality, template, wording, and trajectory diagnostics. The
+      bundle does not call a model, so it cannot establish model-output
+      quality or delivery approval.</p>
+      </section>
+      </section>
+      <section id="related-research-and-industry-practice" class="level2">
+      <h2>10. Related Research and Industry Practice</h2>
+      <section id="harness-adaptation-and-optimization" class="level3">
+      <h3>10.1 Harness Adaptation and Optimization</h3>
+      <p>LIFE-HARNESS, Self-Harness, and Meta-Harness jointly show that
+      the harness between a model and its environment can be an
+      independent optimization target.<a href="#ref-p01">P01</a> <a href="#ref-p02">P02</a> <a href="#ref-p05">P05</a> Their tasks,
+      rewards, and acceptance mechanisms, however, cannot be
+      extrapolated directly to open-domain business briefings. BriefLoop
+      therefore adopts only the methodology that failures can be
+      structured, modifications should be bounded, and regression must
+      cover held-out behavior. The active control plane, evaluators,
+      permissions, and approval transactions must remain outside
+      candidate modifications.</p>
+      <p>Weng&#39;s synthesis expands the harness into an operating system
+      composed of workflows, context lifecycle, persistent state, tools,
+      subagents, permissions, and evaluation, and emphasizes that
+      recursive structures, vague evaluation, reward hacking, and
+      long-horizon maintenance objectives remain risks.<a href="#ref-e19">E19</a> This report uses it for domain definition
+      and risk synthesis; mechanism and performance claims still return
+      to primary papers, and the synthesis is not presented as a
+      peer-reviewed experiment.</p>
+      <p>BriefLoop has a supported subset of trajectory regulation. When
+      retries, repair loops, or repeated blocks exceed budget, Python
+      narrows the legal decisions for the current stage to
+      <code>request_human_review</code> and <code>block_run</code> and
+      records the change in the Event Log. This is control-state
+      narrowing, not automated repair.</p>
+      </section>
+      <section id="multi-turn-feedback-and-regression" class="level3">
+      <h3>10.2 Multi-Turn Feedback and Regression</h3>
+      <p>DRA Multi-Turn finds that process-level feedback can produce
+      meaningful single-turn gains, but later revision can regress
+      constraints that were previously satisfied.<a href="#ref-p06">P06</a> This supports BriefLoop&#39;s targeted repair,
+      frozen snapshots, and external gates. It also explains why
+      same-evidence regression must ask both whether the target defect
+      disappeared and whether previously passing behavior was preserved.
+      The study does not provide an estimate of BriefLoop&#39;s own quality
+      improvement.</p>
+      </section>
+      <section id="auditable-human-agent-collaboration" class="level3">
+      <h3>10.3 Auditable Human-Agent Collaboration</h3>
+      <p>CHAP describes human–multi-agent collaboration through
+      workspaces, tasks, artifacts, and append-only evidence logs.<a href="#ref-p07">P07</a> CHAP focuses on a communication protocol;
+      BriefLoop focuses on governance and release accountability inside
+      business briefing. Both require collaborative results to land in
+      inspectable artifacts rather than exist only in transient
+      conversation. This report does not claim protocol or schema
+      compatibility.</p>
+      </section>
+      <section id="evaluation-method" class="level3">
+      <h3>10.4 Evaluation Method</h3>
+      <p>FActScore decomposes long-form text into atomic facts, while
+      ALCE separates citation quality from general fluency. Together
+      they show why “has a citation” and “is fully supported” must be
+      evaluated separately.<a href="#ref-p12">P12</a> <a href="#ref-p13">P13</a> <em>Precision Is Not Faithfulness</em>
+      further warns that a single precision metric may reward a system
+      for saying less, so a precision gate needs a continuity
+      constraint.<a href="#ref-p08">P08</a> ResearchLoop provides an
+      adjacent-system comparison for an externalized evidence gate and
+      persistent claim binding.<a href="#ref-p20">P20</a> BriefLoop
+      keeps freezing, hashing, coverage checks, stage state, and
+      delivery hygiene in a non-model control plane while leaving
+      semantic judgment as a proposal or an input to human adjudication.
+      It does not claim that atomization or provenance itself
+      establishes truth.</p>
+      </section>
+      <section id="multi-agent-frameworks" class="level3">
+      <h3>10.5 Multi-Agent Frameworks</h3>
+      <p>AutoGen, CAMEL, and MetaGPT respectively represent
+      conversational agents, role-playing collaboration, and SOP-encoded
+      pipelines.<a href="#ref-p09">P09</a> <a href="#ref-p10">P10</a> <a href="#ref-p11">P11</a> EvoMAS frames multi-agent-system
+      generation as execution-feedback-driven evolution over a
+      structured configuration space and reports performance and
+      executability results on its benchmark.<a href="#ref-p21">P21</a>
+      These works study how agents can be organized; BriefLoop&#39;s
+      distinction is who has authority to make a result take effect. In
+      this report, EvoMAS supports only the proposition that candidate
+      topologies or configurations can be searched. It does not support
+      a claim that BriefLoop has implemented automatic architecture
+      evolution. In engineering practice, multiple agents are warranted
+      only when context isolation, parallel exploration, or
+      specialization provides a real benefit.<a href="#ref-e10">E10</a></p>
+      </section>
+      <section id="memory-and-preference" class="level3">
+      <h3>10.6 Memory and Preference</h3>
+      <p>Self-Refine and Reflexion show how model self-feedback,
+      linguistic feedback, and episodic memory can affect later outputs
+      or trials.<a href="#ref-p16">P16</a> <a href="#ref-p17">P17</a>
+      Hermes Agent&#39;s persistent-memory documentation provides a
+      human-readable <code>USER.md</code>/<code>MEMORY.md</code> file
+      surface with optional write approval.<a href="#ref-e22">E22</a>
+      BriefLoop borrows the readable file surface, not its authority
+      model: audience guidance also passes through a workspace ledger,
+      human approval, per-run freezing, hash chaining, and a manifest of
+      effective entries. Live memory cannot silently alter the current
+      run, preference cannot override fact gates, and projections cannot
+      write back to the source ledger.</p>
+      </section>
+      <section id="enterprise-knowledge-work-agents" class="level3">
+      <h3>10.7 Enterprise Knowledge-Work Agents</h3>
+      <p>This section retains only first-party engineering materials
+      that support a specific architectural argument: the workflow/agent
+      distinction, the boundary for when multi-agent systems are useful,
+      attribution of the Loop Engineering term, a persistent-memory
+      surface, and the Tax AI production loop. Other product launches,
+      aggregation pages, and duplicate cases are excluded from the
+      formal bibliography. Engineering articles can describe patterns of
+      practice; they cannot establish that BriefLoop is implemented
+      correctly, produces higher quality, or is production-ready.</p>
+      <section id="from-conversation-to-deliverables" class="level4">
+      <h4>10.7.1 From Conversation to Deliverables</h4>
+      <p>Recurring briefing contains two kinds of work. The parts with
+      explicit objectives, stages, and delivery formats suit predictable
+      workflows; source exploration, materiality judgment, and
+      interpretation of conflicts still require an agent with tools and
+      context. Anthropic&#39;s engineering article explicitly distinguishes
+      workflows that follow predefined code paths from agents that
+      dynamically direct their own process.<a href="#ref-e21">E21</a>
+      BriefLoop accordingly assigns content work to external runtime
+      roles and state transitions, freezing, and delivery transactions
+      to the Python control plane.</p>
+      </section>
+      <section id="enterprise-analysis-is-first-a-dynamic-knowledge-conflict-and-validation-problem" class="level4">
+      <h4>10.7.2 Enterprise Analysis Is First a Dynamic-Knowledge,
+      Conflict, and Validation Problem</h4>
+      <p>The first problem in business analysis is not making paragraphs
+      look more like a report, but keeping entities, time, scope, source
+      tier, and support relationships clear at a declared freeze point.
+      FActScore and ALCE illustrate the importance of intermediate
+      objects through atomic facts and citation quality, respectively.<a href="#ref-p12">P12</a> <a href="#ref-p13">P13</a> For periodic
+      briefing, this is also a dynamic-knowledge problem: one model can
+      simultaneously face stale training-time knowledge, newly retrieved
+      material from the current week, and inconsistent announcements,
+      republications, and corrections.</p>
+      <p>The knowledge-conflict literature commonly distinguishes three
+      cases: <code>context-memory conflict</code> between current
+      context and parametric knowledge,
+      <code>inter-context conflict</code> among external contexts, and
+      <code>intra-memory conflict</code> where parametric memory encodes
+      competing answers.<a href="#ref-p22">P22</a> Briefing and
+      summarization require a fourth distinction between factual
+      correctness and source fidelity. A model can produce a statement
+      that is correct in the world while silently “correcting” its input
+      and breaking the claim-evidence relationship.<a href="#ref-p29">P29</a></p>
+      <p>Research on news streams shows that expanding the retrieval
+      space with new articles can support rapid adaptation, yet a system
+      with an outdated underlying language model still underperforms one
+      whose parametric model is also updated.<a href="#ref-p23">P23</a>
+      DYNAMICQA further finds that dynamic facts exhibit more internal
+      conflict and that facts with such conflict are harder to update
+      from context.<a href="#ref-p24">P24</a> This is consistent with
+      the foundational observation in temporal-knowledge research that
+      many facts expire while most language models are trained on data
+      snapshots.<a href="#ref-p30">P30</a></p>
+      <p>Retrieval can introduce conflicts of its own. Controlled
+      experiments show that some retrieval-augmented models persist with
+      faulty internal memory even when given correct evidence and can be
+      influenced by evidence counts and confirmation bias.<a href="#ref-p25">P25</a> In the QACC study&#39;s open-domain Google
+      Search setting, as many as roughly one quarter of unambiguous
+      questions retrieved conflicting contexts. That proportion must not
+      be generalized into a conflict rate for news briefings or
+      enterprise data.<a href="#ref-p26">P26</a></p>
+      <p>Prompting a model to “consider the latest facts” is not
+      reliable control. In a temporal-conflict benchmark, explicitly
+      prompting for fact mutability increased references to temporal
+      change but did not improve factual accuracy in that setting.
+      Verbalized temporal awareness is not equivalent to correct final
+      prediction.<a href="#ref-p27">P27</a> When available evidence is
+      insufficient for adjudication, exposing the disagreement rather
+      than letting a model choose silently is the more appropriate
+      behavior for an auditable system.<a href="#ref-p28">P28</a></p>
+      <p>A 2026 preprint further separates current-value conflict
+      handling into semantic candidate extraction and deterministic
+      aggregation. On the single-hop MemoryAgentBench FactConsolidation
+      task with explicit version serials, the candidate-extraction plus
+      Python <code>max(serial)</code> pipeline exceeded free-text LLM
+      judgment by 10.8 percentage points, with a 21-point gap at 262K
+      context. The reported gain is a pipeline-level effect: prompt,
+      output format, temperature, and resolver changed together, and a
+      <code>max(timestamp)</code> pipeline did not outperform LLM
+      judgment on 45 LongMemEval knowledge-update samples. The result
+      supports a deterministic microbaseline for safely total-ordered
+      current-value conflicts; it does not make the newest source a
+      general truth rule.<a href="#ref-p34">P34</a></p>
+      <p>The ConflictRAG preprint proposes a
+      <code>detect → classify → resolve → generate</code> pipeline that
+      distinguishes inter-document from parametric-contextual conflicts
+      before generation and preserves source attribution and conflict
+      annotations. It is a useful adjacent method and planned
+      conflict-aware RAG baseline, not an enterprise release-authority
+      model: it defers to retrieved evidence for parametric-contextual
+      disagreement, ranks temporal conflict by recency, relies on
+      LLM-extracted source criteria, and acknowledges that CARS
+      structurally favors systems with explicit conflict modules.<a href="#ref-p35">P35</a></p>
+      <p>These results do not imply that retrieval augmentation lacks
+      value. FreshLLMs shows that organized search context can improve
+      question answering over rapidly changing knowledge; Astute RAG and
+      credibility-aware generation show that conflict-aware and
+      source-aware post-retrieval methods are active, useful research
+      directions.<a href="#ref-p31">P31</a> <a href="#ref-p32">P32</a>
+      <a href="#ref-p33">P33</a> Benchmark gains, however, do not
+      automatically establish the latest source, complete a supersession
+      decision, or grant enterprise release authority.</p>
+      <p>BriefLoop&#39;s source packs, Claim Ledger, evidence spans, and
+      support records are engineering representations of these
+      intermediate objects. The current system can preserve source
+      times, claim relationships, support proposals, and
+      human-adjudication records. It does not claim to detect every
+      knowledge conflict, determine which source is true, recognize
+      every correction or supersession relation, or independently
+      fact-check dynamic claims.</p>
+      <p>Models therefore discover, draft, propose conflict labels, and
+      challenge; Python freezes, validates, records, and executes
+      deterministic gates; humans own semantic disagreement that cannot
+      be deterministically resolved, run direction, and final delivery.
+      This is a division of authority, not a ranking of capability.</p>
+      </section>
+      <section id="from-prompts-to-operating-harnesses" class="level4">
+      <h4>10.7.3 From Prompts to Operating Harnesses</h4>
+      <p>Loop Engineering moves attention from a single prompt to a
+      system that continuously discovers, assigns, checks, and
+      remembers; Building Effective Agents emphasizes simple, composable
+      patterns and clear stage boundaries.<a href="#ref-e20">E20</a> <a href="#ref-e21">E21</a> BriefLoop&#39;s contracts, control plane,
+      gates, frozen artifacts, Event Log, and human approvals are
+      concrete implementation choices for briefing. The two technical
+      articles are not test evidence for those choices.</p>
+      </section>
+      <section id="when-multiple-agents-are-appropriate" class="level4">
+      <h4>10.7.4 When Multiple Agents Are Appropriate</h4>
+      <p>Multi-agent systems are most valuable in three cases: isolating
+      subtasks that would pollute the main context, exploring a large
+      search space in parallel, and assigning specialized tools and
+      context to distinct responsibilities. Outside these cases,
+      coordination cost often exceeds the benefit.<a href="#ref-e10">E10</a> BriefLoop therefore does not market “more
+      agents” as the contribution. Role topology may change; artifact
+      contracts, single writers, and control responsibilities do
+      not.</p>
+      </section>
+      <section id="from-quality-governance-to-security-governance" class="level4">
+      <h4>10.7.5 From Quality Governance to Security Governance</h4>
+      <p>v0.5 does not generalize quality controls into a complete
+      security proof. What can currently be stated is that control reads
+      use a fail-closed descriptor/handle boundary; experimental roles
+      have no CLI transaction authority; and human approvals, the Event
+      Log, frozen snapshots, and delivery records remain auditable. The
+      project has not published a complete threat model and does not
+      claim conformance with zero-trust architecture, organizational
+      security standards, or regulatory requirements.</p>
+      </section>
+      <section id="production-traceability-and-controlled-improvement" class="level4">
+      <h4>10.7.6 Production Traceability and Controlled Improvement</h4>
+      <p>OpenAI and Thrive Holdings&#39; Tax AI case organizes a
+      production-improvement loop around corrections from expert
+      practitioners, product tracing from source materials through final
+      filings, and conversion of repeated issues into custom evaluations
+      and bounded engineering tasks.<a href="#ref-e01">E01</a> The
+      article also states that ambiguous cases or cases that cannot be
+      automated safely return to the product team, while engineers
+      remain responsible for architecture, product decisions, and
+      deployment. It therefore supports a controlled loop, not unbounded
+      autonomous improvement.</p>
+      <p>BriefLoop takes a corresponding position: human edits, audit
+      findings, citation mismatches, and insufficient support first
+      become structured issues. Only repeated, localizable, testable
+      issues become repair candidates. Self-improvement is not a model
+      reflecting alone; it is a production system converting failures
+      into engineering changes that are verifiable, approvable,
+      reversible, and effective only for future runs. The project has
+      not yet completed this end-to-end improvement path.</p>
+      <table>
+      <thead>
+      <tr>
+      <th>Tax AI practice</th>
+      <th>BriefLoop counterpart</th>
+      </tr>
+      </thead>
+      <tbody>
+      <tr>
+      <td>Source document</td>
+      <td>Source pack</td>
+      </tr>
+      <tr>
+      <td>Field extraction</td>
+      <td>Atomic claim extraction</td>
+      </tr>
+      <tr>
+      <td>Field citation</td>
+      <td>Evidence span</td>
+      </tr>
+      <tr>
+      <td>Expert correction</td>
+      <td>Human adjudication and FeedbackIssue</td>
+      </tr>
+      <tr>
+      <td>Field-level review row</td>
+      <td>Support record and <code>FeedbackIssue</code></td>
+      </tr>
+      <tr>
+      <td>Repeated correction pattern</td>
+      <td>Evaluation target</td>
+      </tr>
+      <tr>
+      <td>Bounded code repair</td>
+      <td>Scoped workflow repair</td>
+      </tr>
+      <tr>
+      <td>Regression evaluation</td>
+      <td>Semantic regression and same-evidence rerun</td>
+      </tr>
+      <tr>
+      <td>Filed result</td>
+      <td>Human-approved briefing delivery</td>
+      </tr>
+      </tbody>
+      </table>
+      </section>
+      </section>
+      </section>
+      <section id="limitations-and-future-work" class="level2">
+      <h2>11. Limitations and Future Work</h2>
+      <section id="known-boundaries" class="level3">
+      <h3>11.1 Known Boundaries</h3>
+      <p>The current exact head does not claim to provide:</p>
+      <ul>
+      <li>automatic proof of semantic truth or complete
+      fact-checking;</li>
+      <li>automatic detection or adjudication of all
+      <code>context-memory</code>, <code>inter-context</code>, and
+      <code>intra-memory</code> knowledge conflicts, including dynamic
+      facts, source corrections, version supersession, retractions,
+      disputed facts, and source-fidelity conflicts;</li>
+      <li>demonstrated improvement in briefing content quality,
+      management value, or cross-model stability;</li>
+      <li>autonomous repair execution, autonomous modification of the
+      active harness, or self-approval of policy for future runs;</li>
+      <li>management-ready deliverables by default;</li>
+      <li>proof of actual delegation from file presence, a
+      generic-helper narrative, or the presence of role assets
+      alone;</li>
+      <li>stable production readiness for WorkBuddy/CodeBuddy, Codex,
+      Gmail, Feishu, PDF, or PyPI paths;</li>
+      <li>satisfaction of the v1.0 first-user evidence gate;</li>
+      <li>an end-to-end self-improving harness.</li>
+      </ul>
+      <p>The precise capability boundary is narrower. Material claims
+      can be connected to registered sources, artifacts, and control
+      records. Optional support records and semantic-assessment
+      proposals can be observed and human-adjudicated. Sources can carry
+      publication and retrieval times and undergo freshness checks.
+      These surfaces provide traceability, limited temporal signals, and
+      support-sufficiency records; they do not provide general valid
+      time, source-supersession relations, complete conflict detection,
+      or truth proof.</p>
+      <p>The current version does not automatically cluster
+      validator-confirmed weaknesses, does not ship an
+      approval/promotion transaction for harness candidates, and has not
+      shown that a modified harness avoids regression on held-out
+      briefing cases. The Improvement Ledger manages human-approved
+      reader guidance. It does not authorize agents to change code,
+      contracts, gates, policies, or control state consumed by future
+      runs. The v0.12 advance is to close the boundaries around reads,
+      recovery, finalization, and delegation more reliably, not to grant
+      models more authority.</p>
+      </section>
+      <section id="v1.0-focus" class="level3">
+      <h3>11.2 v1.0 Focus</h3>
+      <p>The priority for v1.0 should be to freeze the product promise
+      and obtain first-user evidence, not expand the experimental
+      surface. The product layer already provides three workspace
+      entrypoints, report specification, a five-step authoring path,
+      state projections, reader and audit bundles, and the Quality
+      Panel, but <code>docs/v1-pilot-evidence.md</code> still records
+      <code>not_satisfied</code>. The next requirement is for a
+      non-maintainer to complete a reproducible run in a fresh
+      environment and leave evidence of success, confusion, failure,
+      repair, and remaining limitations, rather than for the maintainer
+      to infer usability on the user&#39;s behalf.</p>
+      </section>
+      <section id="support-sufficiency-direction" class="level3">
+      <h3>11.3 Support-Sufficiency Direction</h3>
+      <p>Existing experimental surfaces include the Atomic Claim Graph,
+      Evidence Span Registry, Claim-Support Matrix, semantic-assessment
+      proposals, human adjudication, persistent source evidence packs,
+      and the Quality Panel. The remaining path is:</p>
+      <pre class="text"><code>blocking coverage gate
+→ held-in/held-out regression acceptance protocol
+→ regression harness with release authority
+→ release-eligibility summary
+→ Issue Candidate system</code></pre>
+      <p>A semantic model may propose support labels, conflict types,
+      candidate supersession relations, source differences, and
+      uncertainty explanations. It may not directly determine which
+      dynamic fact is true, silently discard competing sources, or
+      authorize release merely from source count, model confidence, or
+      agreement with parametric memory. It also may not decide repair
+      ownership, archive grade, future-run policy, or release
+      eligibility. Release authority remains in schemas, hashes, policy,
+      human adjudication, and deterministic blocking rules.</p>
+      </section>
+      <section id="from-failure-to-improvement" class="level3">
+      <h3>11.4 From Failure to Improvement</h3>
+      <p>A future Issue Candidate system should follow this path:</p>
+      <pre class="text"><code>report failure
+→ claim-level trace
+→ structured issue
+→ evaluation target
+→ scoped repair
+→ same-evidence regression
+→ human review
+→ updated release eligibility</code></pre>
+      <p>Not every correction should enter the engineering queue
+      automatically. Further harness modification requires the editable
+      scope to be declared in advance, evaluators and permission control
+      to remain outside the editable loop, held-in cases to confirm the
+      target fix, held-out cases to test side effects, and an approved
+      version to affect future runs only. EvoMAS shows that a
+      multi-agent topology can be searched within a structured
+      configuration space using execution traces.<a href="#ref-p21">P21</a> For BriefLoop, the only acceptable future
+      path is “generate a candidate configuration → deterministic schema
+      and invariant validation → held-in and held-out regression → human
+      approval → recorded activation as a new version,” not an in-run
+      agent directly rewriting its own authority.</p>
+      </section>
+      <section id="non-goals" class="level3">
+      <h3>11.5 Non-Goals</h3>
+      <p>BriefLoop does not use one global semantic score as release
+      authority, let a model reviewer decide final support truth, ask
+      Python to pretend it has semantic judgment, or weaken ledgers,
+      Event Logs, archives, human delivery, and frozen-artifact rules in
+      the name of speed.</p>
+      <p>The most accurate public statement is:</p>
+      <blockquote>
+      <p>BriefLoop puts the claims, evidence, and delivery decisions in
+      business briefings into an auditable engineering loop. It does not
+      prove truth or eliminate hallucination.</p>
+      </blockquote>
+      </section>
+      </section>
+      <section id="appendix-a-contract-categories" class="level2">
+      <h2>Appendix A: Contract Categories</h2>
+      <p><code>configs/orchestrator_contract.yaml</code> defines four
+      contract categories:</p>
+      <table>
+      <colgroup>
+      <col style="width: 50%" />
+      <col style="width: 50%" />
+      </colgroup>
+      <thead>
+      <tr>
+      <th>Category</th>
+      <th>Meaning</th>
+      </tr>
+      </thead>
+      <tbody>
+      <tr>
+      <td><code>behavior</code></td>
+      <td>Role authority and behavioral boundaries</td>
+      </tr>
+      <tr>
+      <td><code>process_artifact</code></td>
+      <td>Stage order, readiness, and expected artifacts</td>
+      </tr>
+      <tr>
+      <td><code>fact_grounding_evidence</code></td>
+      <td>Relationships among claims, sources, evidence, and support
+      records</td>
+      </tr>
+      <tr>
+      <td><code>quality_audience</code></td>
+      <td>Quality requirements, reader requirements, and delivery
+      boundaries</td>
+      </tr>
+      </tbody>
+      </table>
+      </section>
+      <section id="appendix-b-decision-vocabulary" class="level2">
+      <h2>Appendix B: Decision Vocabulary</h2>
+      <p>The Orchestrator&#39;s legal decisions are:</p>
+      <table>
+      <colgroup>
+      <col style="width: 50%" />
+      <col style="width: 50%" />
+      </colgroup>
+      <thead>
+      <tr>
+      <th>Decision</th>
+      <th>Meaning</th>
+      </tr>
+      </thead>
+      <tbody>
+      <tr>
+      <td><code>continue</code></td>
+      <td>Current-stage requirements are satisfied; proceed</td>
+      </tr>
+      <tr>
+      <td><code>retry_stage</code></td>
+      <td>Re-execute the current stage</td>
+      </tr>
+      <tr>
+      <td><code>delegate_repair</code></td>
+      <td>Delegate a bounded repair to the responsible role</td>
+      </tr>
+      <tr>
+      <td><code>request_human_review</code></td>
+      <td>Request human judgment or approval</td>
+      </tr>
+      <tr>
+      <td><code>block_run</code></td>
+      <td>Prevent the run from advancing</td>
+      </tr>
+      <tr>
+      <td><code>finalize</code></td>
+      <td>Enter finalization after audit and gates are satisfied</td>
+      </tr>
+      </tbody>
+      </table>
+      <p>Allowed decisions by stage are defined in
+      <code>configs/stage_specs.yaml</code>.</p>
+      </section>
+      <section id="appendix-c-control-surface-index" class="level2">
+      <h2>Appendix C: Control-Surface Index</h2>
+      <p>Authoritative control surfaces fall into four groups:</p>
+      <ul>
+      <li>runtime state: Runtime Manifest, Workflow State, Artifact
+      Registry, and Event Log;</li>
+      <li>evidence and correctness: source evidence, Claim Ledger, gate
+      reports, Audit Report, and support records;</li>
+      <li>taste and improvement: Audience Profile, Improvement Ledger,
+      frozen snapshots, and manifestation diagnostics;</li>
+      <li>delivery and archive: Finalize Report, reader delivery bundle,
+      audit bundle, and immutable run archive.</li>
+      </ul>
+      <p>Field-level authority is defined in
+      <code>docs/control-surfaces.md</code> and
+      <code>src/multi_agent_brief/orchestrator/runtime_state/</code>.</p>
+      </section>
+      <section id="appendix-d-roles-and-stages" class="level2">
+      <h2>Appendix D: Roles and Stages</h2>
+      <pre class="text"><code>doctor (Python)
+→ source-discovery
+→ input-governance (Python)
+→ scout
+→ screener
+→ claim-ledger
+→ analyst
+→ delivery-editor
+→ auditor
+→ finalize (Python)</code></pre>
+      <p>The default topology allows Scout to perform both discovery and
+      screening. Strict topology uses an independent Screener.
+      <code>human_assisted</code> topology can introduce people at
+      designated points. Topology changes role assignment, not artifact
+      contracts or control responsibility.</p>
+      </section>
+      <section id="appendix-e-evaluation-framework" class="level2">
+      <h2>Appendix E: Evaluation Framework</h2>
+      <p>The repository currently packages 25 public-safe evaluation
+      cases. At the exact head, <code>pytest --collect-only</code>
+      collects 3,710 test items. The former are control-plane behavior
+      fixtures and the latter is a test-discovery count; neither is a
+      model-prose quality score. The evaluation design follows the
+      orientation of <em>AI Agents That Matter</em>: measure real system
+      behavior, cost, reproducibility, and failure modes rather than
+      comparing only an accuracy score.<a href="#ref-p19">P19</a> G-Eval
+      and MT-Bench show that LLM judging can be a scalable auxiliary
+      measurement, but position, verbosity, self-preference, and model
+      bias mean it cannot be release authority.<a href="#ref-p14">P14</a> <a href="#ref-p15">P15</a></p>
+      <p><strong>Deterministic layers currently covered:</strong>
+      quality gates, feedback classification, runtime blocking,
+      trajectory budgets, provenance projection, source evidence packs,
+      improvement memory, reader residue, delivery truth, forged events,
+      and Hermes static invariants.</p>
+      <p><strong>Measurement layers required after v0.5, but not claimed
+      as complete in this report:</strong></p>
+      <ul>
+      <li>Claim-level support and citation completeness: check atomic
+      facts and citation quality separately, retaining human
+      adjudication.<a href="#ref-p12">P12</a> <a href="#ref-p13">P13</a></li>
+      <li>Same-evidence comparison: freeze the source pack, claim
+      candidates, cutoff time, and model conditions, then compare direct
+      prompting, a skill or agent workflow, vanilla RAG, deterministic
+      freshness, conflict-aware RAG, and BriefLoop.</li>
+      <li>Blinded reader quality: use at least two independent human
+      reviewers, predeclare the rubric, and measure materiality,
+      clarity, calibration, and actionability separately.</li>
+      <li>LLM-judge sensitivity: use only as a secondary analysis, swap
+      answer positions, control length, use multiple judges, and report
+      disagreement.</li>
+      <li>Cost and time: record tokens, model calls, human minutes,
+      rework cycles, and failure-recovery time.</li>
+      <li>First-user path: fresh clone, install/doctor, actual role
+      delegation, understanding of blocks, delivery judgment, and points
+      of confusion.</li>
+      <li>Dynamic knowledge and conflict: hold questions and source
+      packs fixed while constructing stale parametric knowledge against
+      a new official source, multiple old republications against one new
+      primary source, corrections or retractions that supersede earlier
+      versions, two credible sources that cannot be adjudicated
+      automatically, silent model correction of a source, and same-name
+      entity ambiguity. Planned metrics include
+      <code>conflict_detection_recall</code>,
+      <code>stale_fact_adoption_rate</code>,
+      <code>unsupported_resolution_rate</code>,
+      <code>transparent_conflict_disclosure_rate</code>,
+      <code>source_fidelity_error_rate</code>,
+      <code>supersession_resolution_accuracy</code>,
+      <code>correct_human_escalation_rate</code>,
+      <code>current_value_resolution_accuracy</code>,
+      <code>as_of_state_reconstruction_accuracy</code>,
+      <code>temporal_operator_selection_accuracy</code>,
+      <code>deterministic_resolvability_coverage</code>, and
+      <code>unsafe_automatic_resolution_rate</code>, together with
+      human-adjudication time, model-call cost, and rework cycles.<a href="#ref-p22">P22</a> <a href="#ref-p23">P23</a> <a href="#ref-p26">P26</a> <a href="#ref-p28">P28</a> <a href="#ref-p29">P29</a> <a href="#ref-p34">P34</a> <a href="#ref-p35">P35</a></li>
+      </ul>
+      <p><strong>Planned comparison conditions:</strong></p>
+      <table>
+      <colgroup>
+      <col style="width: 50%" />
+      <col style="width: 50%" />
+      </colgroup>
+      <thead>
+      <tr>
+      <th>Condition</th>
+      <th>Question answered</th>
+      </tr>
+      </thead>
+      <tbody>
+      <tr>
+      <td>Direct prompt</td>
+      <td>What can one model call accomplish?</td>
+      </tr>
+      <tr>
+      <td>Skill or agent workflow</td>
+      <td>Are longer instructions and role decomposition
+      sufficient?</td>
+      </tr>
+      <tr>
+      <td>Vanilla RAG</td>
+      <td>Is external retrieval alone sufficient?</td>
+      </tr>
+      <tr>
+      <td>Deterministic-freshness baseline</td>
+      <td>What can simple version aggregation do for safely
+      total-ordered current-value cases?</td>
+      </tr>
+      <tr>
+      <td>Conflict-aware RAG</td>
+      <td>What does explicit conflict detection and resolution
+      improve?</td>
+      </tr>
+      <tr>
+      <td>BriefLoop</td>
+      <td>Do freezing, transparent disclosure, human escalation, and
+      release controls add value?</td>
+      </tr>
+      </tbody>
+      </table>
+      <p><strong>Deterministic-resolution eligibility (planned protocol,
+      not a current capability):</strong></p>
+      <pre class="text"><code>same normalized claim scope
+AND explicit version or supersession marker
+AND a valid total ordering
+AND a current-value question
+AND no source-authority conflict
+AND no disclosure-policy conflict
+→ eligible for deterministic-resolution candidacy
+
+otherwise
+→ remain unresolved / require human adjudication</code></pre>
+      <p>All dynamic-knowledge metrics above are planned evaluations;
+      they have not been executed or frozen. Every measurement must
+      distinguish mechanism regression, output quality, runtime
+      delegation, and user usability. Passing one layer cannot stand as
+      evidence for another.</p>
+      <p>Historical experiment commands use the frozen identifier
+      <code>MABW-080</code>. Their status is Archived Experimental, and
+      they are not part of the product path.</p>
+      </section>
+      <section id="appendix-f-terminology" class="level2">
+      <h2>Appendix F: Terminology</h2>
+      <table>
+      <colgroup>
+      <col style="width: 50%" />
+      <col style="width: 50%" />
+      </colgroup>
+      <thead>
+      <tr>
+      <th>Term</th>
+      <th>Definition in this report</th>
+      </tr>
+      </thead>
+      <tbody>
+      <tr>
+      <td>Harness</td>
+      <td>The operating system around the model: workflow, context,
+      tools, state, artifacts, permissions, and evaluation</td>
+      </tr>
+      <tr>
+      <td>control surface</td>
+      <td>A governed field or artifact with a declared writer, freeze
+      point, validation rule, and failure behavior</td>
+      </tr>
+      <tr>
+      <td>artifact</td>
+      <td>A persisted workflow output or control record</td>
+      </tr>
+      <tr>
+      <td>claim</td>
+      <td>A factual or analytical statement tracked by the workflow</td>
+      </tr>
+      <tr>
+      <td>Claim Ledger</td>
+      <td>The Python-frozen authoritative list of claims</td>
+      </tr>
+      <tr>
+      <td>evidence span</td>
+      <td>A bounded excerpt from source evidence</td>
+      </tr>
+      <tr>
+      <td>Claim-Support Matrix</td>
+      <td>Records connecting atomic claims to evidence spans and
+      proposed support status</td>
+      </tr>
+      <tr>
+      <td>stage-completion transaction</td>
+      <td>Deterministic transaction that validates and records stage
+      completion</td>
+      </tr>
+      <tr>
+      <td>claim-freeze transaction</td>
+      <td>Deterministic transaction that assigns IDs and freezes claim
+      drafts</td>
+      </tr>
+      <tr>
+      <td>run integrity</td>
+      <td>Whether a run remains usable as clean reference evidence</td>
+      </tr>
+      <tr>
+      <td>immutable archive</td>
+      <td>Append-only run archive with artifact hashes</td>
+      </tr>
+      <tr>
+      <td>support calibration</td>
+      <td>Alignment between wording strength and evidence strength</td>
+      </tr>
+      <tr>
+      <td>guidance manifestation</td>
+      <td>Observable presence or absence of approved guidance in
+      output</td>
+      </tr>
+      <tr>
+      <td>bounded harness proposal</td>
+      <td>A proposed harness modification with declared scope and
+      preserved behavior</td>
+      </tr>
+      <tr>
+      <td>held-in / held-out regression</td>
+      <td>Target-case verification paired with unseen-case no-regression
+      checks</td>
+      </tr>
+      <tr>
+      <td>same-evidence rerun</td>
+      <td>Comparison in which the frozen fact layer is held
+      constant</td>
+      </tr>
+      <tr>
+      <td>release eligibility</td>
+      <td>Whether declared release conditions have been satisfied</td>
+      </tr>
+      <tr>
+      <td>parametric knowledge</td>
+      <td>Knowledge encoded in model parameters during training</td>
+      </tr>
+      <tr>
+      <td>contextual knowledge</td>
+      <td>Knowledge supplied in the inference context</td>
+      </tr>
+      <tr>
+      <td>context-memory conflict</td>
+      <td>Conflict between contextual and parametric knowledge</td>
+      </tr>
+      <tr>
+      <td>inter-context conflict</td>
+      <td>Conflict among external contexts or sources</td>
+      </tr>
+      <tr>
+      <td>intra-memory conflict</td>
+      <td>Competing answers encoded within parametric memory</td>
+      </tr>
+      <tr>
+      <td>temporal knowledge conflict</td>
+      <td>Conflict caused by facts changing across time</td>
+      </tr>
+      <tr>
+      <td>source fidelity</td>
+      <td>Faithfulness of an output to the source it claims to
+      represent</td>
+      </tr>
+      <tr>
+      <td>supersession</td>
+      <td>An explicit relation by which a later source or record
+      replaces an earlier one</td>
+      </tr>
+      </tbody>
+      </table>
+      </section>
+      <section id="appendix-g-research-and-industry-practice-reference-matrix" class="level2">
+      <h2>Appendix G: Research and Industry-Practice Reference
+      Matrix</h2>
+      <p>This edition retains v0.6.0&#39;s 61 candidates and 40 formal
+      references, then adds and screens two 2026 preprints, producing 63
+      candidates and 42 formal references. The <a href="tech-report-v0.6.1/reference-index.md">single reference
+      index</a> governs author, version, type, <code>supports</code>,
+      <code>does_not_support</code>, and <code>used_in</code> metadata;
+      screening and exclusion rationales are recorded in the <a href="tech-report-v0.6.1/reference-screening.md">reference-screening
+      record</a>. P34 and P35 are preprints and do not count as
+      peer-reviewed evidence.</p>
+      <table>
+      <colgroup>
+      <col style="width: 33%" />
+      <col style="width: 33%" />
+      <col style="width: 33%" />
+      </colgroup>
+      <thead>
+      <tr>
+      <th>ID</th>
+      <th>Full reference</th>
+      <th>Type</th>
+      </tr>
+      </thead>
+      <tbody>
+      <tr>
+      <td><a id="ref-p01"></a>P01</td>
+      <td>Xu, T., Wen, H., &amp; Li, M. (2026). <a href="https://arxiv.org/abs/2605.22166"><em>Adapting the
+      Interface, Not the Model: Runtime Harness Adaptation for
+      Deterministic LLM Agents</em></a>. arXiv:2605.22166v2.</td>
+      <td>Preprint</td>
+      </tr>
+      <tr>
+      <td><a id="ref-p02"></a>P02</td>
+      <td>Zhang, H., Zhang, S., Li, K., Zhang, C., Chen, Y., Zhang, Y.,
+      Bai, L., &amp; Hu, S. (2026). <a href="https://arxiv.org/abs/2606.09498"><em>Self-Harness:
+      Harnesses That Improve Themselves</em></a>.
+      arXiv:2606.09498v1.</td>
+      <td>Preprint</td>
+      </tr>
+      <tr>
+      <td><a id="ref-p05"></a>P05</td>
+      <td>Lee, Y., Nair, R., Zhang, Q., Lee, K., Khattab, O., &amp;
+      Finn, C. (2026). <a href="https://arxiv.org/abs/2603.28052"><em>Meta-Harness:
+      End-to-End Optimization of Model Harnesses</em></a>.
+      arXiv:2603.28052v1.</td>
+      <td>Preprint</td>
+      </tr>
+      <tr>
+      <td><a id="ref-p06"></a>P06</td>
+      <td>Sabharwal, R., Wang, H., Storkey, A., &amp; Pan, J. Z. (2026).
+      <a href="https://arxiv.org/abs/2606.09748"><em>Multi-Turn
+      Evaluation of Deep Research Agents Under Process-Level
+      Feedback</em></a>. SCALE-ICML 2026 workshop paper;
+      arXiv:2606.09748v1.</td>
+      <td>Workshop paper / preprint</td>
+      </tr>
+      <tr>
+      <td><a id="ref-p07"></a>P07</td>
+      <td>Shahid, A., Suttie, G., &amp; Black, P. (2026). <a href="https://arxiv.org/abs/2606.09751"><em>Collaborative
+      Human-Agent Protocol (CHAP)</em></a>. arXiv:2606.09751v2.</td>
+      <td>Preprint</td>
+      </tr>
+      <tr>
+      <td><a id="ref-p08"></a>P08</td>
+      <td>Santillana, J. S. (2026). <a href="https://arxiv.org/abs/2606.09376"><em>Precision Is Not
+      Faithfulness: Coverage-Aware Evaluation of Grounded Generation
+      with a Complete Oracle</em></a>. arXiv:2606.09376v2.</td>
+      <td>Preprint</td>
+      </tr>
+      <tr>
+      <td><a id="ref-p09"></a>P09</td>
+      <td>Wu, Q., et al. (2023). <a href="https://arxiv.org/abs/2308.08155"><em>AutoGen: Enabling
+      Next-Gen LLM Applications via Multi-Agent Conversation</em></a>.
+      arXiv:2308.08155v2.</td>
+      <td>Preprint</td>
+      </tr>
+      <tr>
+      <td><a id="ref-p10"></a>P10</td>
+      <td>Li, G., Hammoud, H. A. A. K., Itani, H., Khizbullin, D., &amp;
+      Ghanem, B. (2023). <a href="https://arxiv.org/abs/2303.17760"><em>CAMEL: Communicative
+      Agents for “Mind” Exploration of Large Language Model
+      Society</em></a>. NeurIPS 2023; arXiv:2303.17760v2.</td>
+      <td>Peer-reviewed paper</td>
+      </tr>
+      <tr>
+      <td><a id="ref-p11"></a>P11</td>
+      <td>Hong, S., et al. (2024). <a href="https://arxiv.org/abs/2308.00352"><em>MetaGPT: Meta
+      Programming for a Multi-Agent Collaborative Framework</em></a>.
+      arXiv:2308.00352v7.</td>
+      <td>Academic paper / preprint</td>
+      </tr>
+      <tr>
+      <td><a id="ref-p12"></a>P12</td>
+      <td>Min, S., Krishna, K., Lyu, X., et al. (2023). <a href="https://aclanthology.org/2023.emnlp-main.741/"><em>FActScore:
+      Fine-grained Atomic Evaluation of Factual Precision in Long Form
+      Text Generation</em></a>. EMNLP 2023, 12076–12100. DOI:
+      10.18653/v1/2023.emnlp-main.741.</td>
+      <td>Peer-reviewed paper</td>
+      </tr>
+      <tr>
+      <td><a id="ref-p13"></a>P13</td>
+      <td>Gao, T., Yen, H., Yu, J., &amp; Chen, D. (2023). <a href="https://arxiv.org/abs/2305.14627"><em>Enabling Large
+      Language Models to Generate Text with Citations</em></a>. EMNLP
+      2023; arXiv:2305.14627v2.</td>
+      <td>Peer-reviewed paper</td>
+      </tr>
+      <tr>
+      <td><a id="ref-p14"></a>P14</td>
+      <td>Liu, Y., Iter, D., Xu, Y., Wang, S., Xu, R., &amp; Zhu, C.
+      (2023). <a href="https://aclanthology.org/2023.emnlp-main.153/"><em>G-Eval:
+      NLG Evaluation using GPT-4 with Better Human Alignment</em></a>.
+      EMNLP 2023, 2511–2522. DOI: 10.18653/v1/2023.emnlp-main.153.</td>
+      <td>Peer-reviewed paper</td>
+      </tr>
+      <tr>
+      <td><a id="ref-p15"></a>P15</td>
+      <td>Zheng, L., et al. (2023). <a href="https://arxiv.org/abs/2306.05685"><em>Judging LLM-as-a-Judge
+      with MT-Bench and Chatbot Arena</em></a>. NeurIPS 2023 Datasets
+      and Benchmarks; arXiv:2306.05685v4.</td>
+      <td>Peer-reviewed paper</td>
+      </tr>
+      <tr>
+      <td><a id="ref-p16"></a>P16</td>
+      <td>Madaan, A., Tandon, N., Gupta, P., et al. (2023). <a href="https://proceedings.neurips.cc/paper_files/paper/2023/hash/91edff07232fb1b55a505a9e9f6c0ff3-Abstract-Conference.html"><em>Self-Refine:
+      Iterative Refinement with Self-Feedback</em></a>. NeurIPS 2023,
+      Main Conference Track.</td>
+      <td>Peer-reviewed paper</td>
+      </tr>
+      <tr>
+      <td><a id="ref-p17"></a>P17</td>
+      <td>Shinn, N., Cassano, F., Gopinath, A., Narasimhan, K., &amp;
+      Yao, S. (2023). <a href="https://proceedings.neurips.cc/paper_files/paper/2023/hash/1b44b878bb782e6954cd888628510e90-Abstract-Conference.html"><em>Reflexion:
+      Language Agents with Verbal Reinforcement Learning</em></a>.
+      NeurIPS 2023, Main Conference Track.</td>
+      <td>Peer-reviewed paper</td>
+      </tr>
+      <tr>
+      <td><a id="ref-p19"></a>P19</td>
+      <td>Kapoor, S., Stroebl, B., Siegel, Z. S., Nadgir, N., &amp;
+      Narayanan, A. (2024). <a href="https://arxiv.org/abs/2407.01502"><em>AI Agents That
+      Matter</em></a>. arXiv:2407.01502v1.</td>
+      <td>Preprint</td>
+      </tr>
+      <tr>
+      <td><a id="ref-p20"></a>P20</td>
+      <td>Xia, Y., &amp; Wang, T. (2026). <a href="https://arxiv.org/abs/2605.28282"><em>ResearchLoop: An
+      Evidence-Gated Control Plane for AI-Assisted Research</em></a>.
+      arXiv:2605.28282v1.</td>
+      <td>Technical report / preprint</td>
+      </tr>
+      <tr>
+      <td><a id="ref-p21"></a>P21</td>
+      <td>Hu, Y., Zhang, Y., Trager, M., Zhang, Y., Yang, S., Xia, W.,
+      &amp; Soatto, S. (2026). <a href="https://arxiv.org/abs/2602.06511"><em>EvoMAS: Evolutionary
+      Generation of Multi-Agent Systems</em></a>. ICML 2026;
+      arXiv:2602.06511v4.</td>
+      <td>Peer-reviewed paper</td>
+      </tr>
+      <tr>
+      <td><a id="ref-p22"></a>P22</td>
+      <td>Xu, R., Qi, Z., Guo, Z., Wang, C., Wang, H., Zhang, Y., &amp;
+      Xu, W. (2024). <a href="https://aclanthology.org/2024.emnlp-main.486/"><em>Knowledge
+      Conflicts for LLMs: A Survey</em></a>. EMNLP 2024, 8541–8565. DOI:
+      10.18653/v1/2024.emnlp-main.486.</td>
+      <td>Peer-reviewed paper</td>
+      </tr>
+      <tr>
+      <td><a id="ref-p23"></a>P23</td>
+      <td>Liska, A., Kocisky, T., Gribovskaya, E., et al. (2022). <a href="https://proceedings.mlr.press/v162/liska22a.html"><em>StreamingQA:
+      A Benchmark for Adaptation to New Knowledge over Time in Question
+      Answering Models</em></a>. ICML 2022, PMLR 162, 13604–13622.</td>
+      <td>Peer-reviewed paper</td>
+      </tr>
+      <tr>
+      <td><a id="ref-p24"></a>P24</td>
+      <td>Marjanovic, S. V., Yu, H., Atanasova, P., Maistro, M., Lioma,
+      C., &amp; Augenstein, I. (2024). <a href="https://aclanthology.org/2024.findings-emnlp.838/"><em>DYNAMICQA:
+      Tracing Internal Knowledge Conflicts in Language Models</em></a>.
+      Findings of EMNLP 2024, 14346–14360. DOI:
+      10.18653/v1/2024.findings-emnlp.838.</td>
+      <td>Peer-reviewed paper</td>
+      </tr>
+      <tr>
+      <td><a id="ref-p25"></a>P25</td>
+      <td>Jin, Z., Cao, P., Chen, Y., et al. (2024). <a href="https://aclanthology.org/2024.lrec-main.1466/"><em>Tug-of-War
+      between Knowledge: Exploring and Resolving Knowledge Conflicts in
+      Retrieval-Augmented Language Models</em></a>. LREC-COLING 2024,
+      16867–16878.</td>
+      <td>Peer-reviewed paper</td>
+      </tr>
+      <tr>
+      <td><a id="ref-p26"></a>P26</td>
+      <td>Liu, S., Ning, Q., Halder, K., et al. (2025). <a href="https://aclanthology.org/2025.findings-naacl.99/"><em>Open
+      Domain Question Answering with Conflicting Contexts</em></a>.
+      Findings of NAACL 2025, 1838–1854. DOI:
+      10.18653/v1/2025.findings-naacl.99.</td>
+      <td>Peer-reviewed paper</td>
+      </tr>
+      <tr>
+      <td><a id="ref-p27"></a>P27</td>
+      <td>Wallat, J., Nejdl, W., &amp; Sikdar, S. (2026). <a href="https://aclanthology.org/2026.findings-acl.103/"><em>When
+      Facts Change: Temporal Knowledge Conflict Resolution in
+      LLMs</em></a>. Findings of ACL 2026, 2154–2184. DOI:
+      10.18653/v1/2026.findings-acl.103.</td>
+      <td>Peer-reviewed paper</td>
+      </tr>
+      <tr>
+      <td><a id="ref-p28"></a>P28</td>
+      <td>Pham, Q. H., Ngo, H., Luu, A. T., &amp; Nguyen, D. Q. (2024).
+      <a href="https://aclanthology.org/2024.findings-emnlp.593/"><em>Who’s
+      Who: Large Language Models Meet Knowledge Conflicts in
+      Practice</em></a>. Findings of EMNLP 2024, 10142–10151. DOI:
+      10.18653/v1/2024.findings-emnlp.593.</td>
+      <td>Peer-reviewed paper</td>
+      </tr>
+      <tr>
+      <td><a id="ref-p29"></a>P29</td>
+      <td>Li, M., Zhang, H., Fan, H., Ding, J., &amp; Feng, Y. (2026).
+      <a href="https://aclanthology.org/2026.findings-eacl.46/"><em>Harmful
+      Factuality: LLMs Correcting What They Shouldn’t</em></a>. Findings
+      of EACL 2026, 896–912. DOI:
+      10.18653/v1/2026.findings-eacl.46.</td>
+      <td>Peer-reviewed paper</td>
+      </tr>
+      <tr>
+      <td><a id="ref-p30"></a>P30</td>
+      <td>Dhingra, B., Cole, J. R., Eisenschlos, J. M., Gillick, D.,
+      Eisenstein, J., &amp; Cohen, W. W. (2022). <a href="https://aclanthology.org/2022.tacl-1.15/"><em>Time-Aware
+      Language Models as Temporal Knowledge Bases</em></a>. TACL 10,
+      257–273. DOI: 10.1162/tacl_a_00459.</td>
+      <td>Peer-reviewed journal paper</td>
+      </tr>
+      <tr>
+      <td><a id="ref-p31"></a>P31</td>
+      <td>Vu, T., Iyyer, M., Wang, X., et al. (2024). <a href="https://aclanthology.org/2024.findings-acl.813/"><em>FreshLLMs:
+      Refreshing Large Language Models with Search Engine
+      Augmentation</em></a>. Findings of ACL 2024, 13697–13720. DOI:
+      10.18653/v1/2024.findings-acl.813.</td>
+      <td>Peer-reviewed paper</td>
+      </tr>
+      <tr>
+      <td><a id="ref-p32"></a>P32</td>
+      <td>Wang, F., Wan, X., Sun, R., Chen, J., &amp; Arik, S. O.
+      (2025). <a href="https://aclanthology.org/2025.acl-long.1476/"><em>Astute
+      RAG: Overcoming Imperfect Retrieval Augmentation and Knowledge
+      Conflicts for Large Language Models</em></a>. ACL 2025,
+      30553–30571. DOI: 10.18653/v1/2025.acl-long.1476.</td>
+      <td>Peer-reviewed paper</td>
+      </tr>
+      <tr>
+      <td><a id="ref-p33"></a>P33</td>
+      <td>Pan, R., Cao, B., Lin, H., et al. (2024). <a href="https://aclanthology.org/2024.emnlp-main.1109/"><em>Not All
+      Contexts Are Equal: Teaching LLMs Credibility-aware
+      Generation</em></a>. EMNLP 2024, 19844–19863. DOI:
+      10.18653/v1/2024.emnlp-main.1109.</td>
+      <td>Peer-reviewed paper</td>
+      </tr>
+      <tr>
+      <td><a id="ref-p34"></a>P34</td>
+      <td>Reddy, V., &amp; Challaram, S. (2026). <a href="https://arxiv.org/abs/2606.01435"><em>Don’t Ask the LLM to
+      Track Freshness: A Deterministic Recipe for Memory Conflict
+      Resolution</em></a>. arXiv:2606.01435v1.</td>
+      <td>Preprint; no peer-reviewed status stated</td>
+      </tr>
+      <tr>
+      <td><a id="ref-p35"></a>P35</td>
+      <td>Wang, C., Li, Y., Liu, Y., &amp; Shu, Y. (2026). <a href="https://arxiv.org/abs/2605.17301"><em>ConflictRAG: Detecting
+      and Resolving Knowledge Conflicts in Retrieval-Augmented
+      Generation</em></a>. arXiv:2605.17301v2; submitted to IEEE SMC
+      2026.</td>
+      <td>Preprint; acceptance not stated</td>
+      </tr>
+      <tr>
+      <td><a id="ref-t01"></a>T01</td>
+      <td>van der Aalst, W. M. P., ter Hofstede, A. H. M., Kiepuszewski,
+      B., &amp; Barros, A. P. (2003). <a href="https://doi.org/10.1023/A:1022883727209"><em>Workflow
+      Patterns</em></a>. <em>Distributed and Parallel Databases</em>,
+      14, 5–51.</td>
+      <td>Peer-reviewed journal article</td>
+      </tr>
+      <tr>
+      <td><a id="ref-t02"></a>T02</td>
+      <td>Nii, H. P. (1986). <a href="https://doi.org/10.1609/aimag.v7i2.537"><em>The Blackboard
+      Model of Problem Solving and the Evolution of Blackboard
+      Architectures</em></a>. <em>AI Magazine</em>, 7(2).</td>
+      <td>Peer-reviewed journal article</td>
+      </tr>
+      <tr>
+      <td><a id="ref-t03"></a>T03</td>
+      <td>Meyer, B. (1992). <a href="https://ieeexplore.ieee.org/document/161279/"><em>Applying
+      “Design by Contract”</em></a>. <em>Computer</em>, 25(10).</td>
+      <td>Peer-reviewed journal article</td>
+      </tr>
+      <tr>
+      <td><a id="ref-t06"></a>T06</td>
+      <td>Moreau, L., &amp; Missier, P. (Eds.). (2013). <a href="https://www.w3.org/TR/prov-dm/"><em>PROV-DM: The PROV Data
+      Model</em></a>. W3C Recommendation, 30 April 2013.</td>
+      <td>Technical standard</td>
+      </tr>
+      <tr>
+      <td><a id="ref-e01"></a>E01</td>
+      <td>Srinivasan, A., Shamdasani, S., Araujo, A. F., &amp; de
+      Wasseige, J.; OpenAI &amp; Thrive Holdings. (2026, May 27). <a href="https://openai.com/index/building-self-improving-tax-agents-with-codex/"><em>Building
+      Self-Improving Tax Agents with Codex</em></a>.</td>
+      <td>First-party engineering case study</td>
+      </tr>
+      <tr>
+      <td><a id="ref-e10"></a>E10</td>
+      <td>Anthropic. (2026, January 23). <a href="https://claude.com/blog/building-multi-agent-systems-when-and-how-to-use-them"><em>Building
+      Multi-Agent Systems: When and How to Use Them</em></a>.</td>
+      <td>First-party engineering article</td>
+      </tr>
+      <tr>
+      <td><a id="ref-e19"></a>E19</td>
+      <td>Weng, L. (2026, July 4). <a href="https://lilianweng.github.io/posts/2026-07-04-harness/"><em>Harness
+      Engineering for Self-Improvement</em></a>.</td>
+      <td>Research synthesis / technical essay</td>
+      </tr>
+      <tr>
+      <td><a id="ref-e20"></a>E20</td>
+      <td>Osmani, A. (2026, June 8). <a href="https://addyo.substack.com/p/loop-engineering"><em>Loop
+      Engineering</em></a>.</td>
+      <td>Engineering article</td>
+      </tr>
+      <tr>
+      <td><a id="ref-e21"></a>E21</td>
+      <td>Anthropic. (2024, December 19). <a href="https://www.anthropic.com/engineering/building-effective-agents"><em>Building
+      Effective Agents</em></a>.</td>
+      <td>First-party engineering article</td>
+      </tr>
+      <tr>
+      <td><a id="ref-e22"></a>E22</td>
+      <td>Nous Research. (n.d.). <a href="https://hermes-agent.nousresearch.com/docs/user-guide/features/memory"><em>Persistent
+      Memory — Hermes Agent</em></a>. Accessed 2026-07-14.</td>
+      <td>Project documentation</td>
+      </tr>
+      </tbody>
+      </table>
+      </section>
+      <section id="appendix-h-issue-candidate-boundary-not-shipped" class="level2">
+      <h2>Appendix H: Issue Candidate Boundary (Not Shipped)</h2>
+      <p>The Issue Candidate system has not shipped. This report retains
+      only the product boundary: if implemented later, the mechanism
+      must follow the existing principles of deterministic control,
+      frozen artifacts, single writers, structural closure, and human
+      adjudication, and it must not grant agents self-approval or
+      release authority.</p>
+      <p>This report does not define its fields, schema, categories,
+      state machine, migration, or failure taxonomy. Any concrete
+      contract must be established with its authoritative owner,
+      validators, tests, and current documentation when implementation
+      actually begins.</p>
+      </section>
+      <section id="appendix-i-legacy-identifier-quarantine" class="level2">
+      <h2>Appendix I: Legacy-Identifier Quarantine</h2>
+      <p>BriefLoop is the only current project name. Old commands,
+      module paths, workspace schemas, archived experiment IDs, and
+      historical filenames remain only where compatibility or
+      reproducibility requires them.
+      <code>docs/briefloop-naming.md</code> defines the exact literals
+      and their allowed placement.</p>
+      <p>These literals may not appear in current titles, project
+      descriptions, architecture names, recommended commands, or public
+      branding, and may not imply that two parallel project names exist.
+      Frozen archives and historical IDs must not be rewritten in place.
+      A future migration of technical identifiers requires a
+      compatibility layer and migration tests.</p>
+      <hr />
+      <p><em>BriefLoop Architecture Reference v0.6.1. Code snapshot
+      <code>main@47ae439d0206a852a2a223db4051d28f39b54c38</code>
+      (version file v0.12.1; includes post-tag changes #513–#515),
+      2026-07-19.</em></p>
+      </section>
+      </section>
+      <footer class="report-footer">
+        BriefLoop Architecture Reference
+v0.6.1 · 2026-07-19 · Current capability boundaries are defined by architecture-status and support-matrix.
+      </footer>
+    </main>
+  </div>
+</body>
+</html>
