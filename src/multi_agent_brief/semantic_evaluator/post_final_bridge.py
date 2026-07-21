@@ -13,6 +13,7 @@ from multi_agent_brief.product.review_session.contracts import (
     POST_FINAL_REVIEW_CONTEXT_SCHEMA_ID,
     SEMANTIC_REVIEW_SCHEMA_ID,
     PostFinalReviewContext,
+    ReviewFinding,
     SemanticReviewBinding,
     SemanticReviewProjection,
     SemanticReviewStatus,
@@ -114,7 +115,14 @@ def build_post_final_semantic_review(
         authority_effect="none",
         binding=binding,
         reason_codes=reader_view.reason_codes,
-        findings=reader_view.findings if status == "available" else [],
+        findings=(
+            [
+                ReviewFinding.model_validate(finding.model_dump())
+                for finding in reader_view.findings
+            ]
+            if status == "available"
+            else []
+        ),
         abstention_count=reader_view.abstention_count,
         assessed_unit_count=reader_view.assessed_unit_count,
     )

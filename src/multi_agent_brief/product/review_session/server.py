@@ -13,7 +13,7 @@ from threading import Event, Lock, Thread
 from typing import Callable
 from urllib.parse import parse_qs, urlsplit
 
-from multi_agent_brief.semantic_evaluator.serialization import canonical_json_bytes
+from .serialization import canonical_json_bytes
 
 from .contracts import (
     REVIEW_SESSION_DESCRIPTOR_SCHEMA_ID,

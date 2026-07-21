@@ -3,7 +3,7 @@
   "prototype_repository": "https://github.com/Stahl-G/briefloop-prototypes",
   "prototype_source_path": "quality-panel",
   "prototype_assets": {
-    "app.js_sha256_chunks": [
+    "app.js_sha256": [
       "fdfa",
       "02cb591ec5232b19d52df93ec85a9",
       "8842a6642cd36c4c725bdc5e2c9f043"

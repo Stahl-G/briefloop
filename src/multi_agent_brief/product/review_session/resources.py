@@ -6,7 +6,7 @@ from importlib.resources import files
 import json
 from typing import Any
 
-from multi_agent_brief.semantic_evaluator.serialization import sha256_bytes
+from .serialization import sha256_bytes
 
 
 _ROOT = "static"
