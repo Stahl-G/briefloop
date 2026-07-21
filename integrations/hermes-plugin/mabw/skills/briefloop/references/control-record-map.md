@@ -55,14 +55,18 @@ Owning commands for recent control-tool projections:
   record: staged-candidate reader projection results, `delivery_artifacts`,
   their SHA-256 hashes, promotion status, reader-clean results, and the
   resolved citation profile (`executive`, `analyst`, or `audit`). `deliver`,
-  `state finalize-complete`, and the completion projection verify delivery
-  against this record. There is no separate delivery manifest; do not create a
+  `state finalize-complete`, and the Store-native status projection verify
+  delivery against this record. There is no separate delivery manifest; do not create a
   second record carrying delivery artifacts or hashes, and do not patch this
   one by hand.
-- `briefloop workbuddy diagnose --workspace <workspace> --json` formats the
-  canonical completion projection (finalize truth, delivery truth, next allowed
-  action). It is read-only; adapters must not substitute their own delivery
-  reconstruction for it.
+- `briefloop status --workspace <workspace> --json` is the only canonical
+  reader of delivery truth: the Store-native status projection reports
+  receipt-bound `terminal_state`, `package_ready`, and `delivered` fields
+  (`projection_source` carries `store_revision` and receipt ids), and
+  `briefloop runtime next --workspace <workspace>` reports workflow
+  progression truth. Both are read-only; adapters must not substitute their
+  own delivery reconstruction for them. The legacy completion projection /
+  `workbuddy diagnose` surface is retired.
 - `briefloop extract` / `briefloop extract` writes
   `evidence_extract_source_lock.json`, `evidence_extract_page_inventory.json`,
   and audit copies for `document-review` / `evidence_extract` workspaces. The

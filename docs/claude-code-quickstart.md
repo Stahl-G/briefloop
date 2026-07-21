@@ -138,8 +138,9 @@ Use this wording when the requested behavior is already enforced:
 
 > This is already enforced: finalize only promotes delivery when
 > `finalize_report.json` reports `delivery_promotion: "promoted"`, and delivery
-> truth comes from `briefloop workbuddy diagnose --json`
-> (`delivery_truth.valid=true`), never from file existence. Before each
+> truth comes from the Store-native status projection
+> (`briefloop status --workspace <workspace> --json`, `delivered=true` for the
+> current run), never from file existence. Before each
 > delivery, BriefLoop checks the reader-final
 > output for internal IDs, source residue, local paths, and delivery gate
 > failures. If the check fails, delivery is not marked complete. You can see the

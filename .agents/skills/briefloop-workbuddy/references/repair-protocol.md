@@ -66,13 +66,13 @@ contamination event），保持 `reference_eligible=false`，并要求下游 sta
 stage 无法完成。冻结事务拥有的工件（例如 `claim_ledger.json`）不能绕过其
 冻结事务被 supersede。
 
-当 `& $BriefLoop workbuddy diagnose --workspace "<workspace>" --json` 报告
-`recovery_state.status=awaiting_recovery` 且
-`recovery_state.recommended_recovery_action=request_recovery_decision` 时，先读取
+当 Store-native status 投影（`& $BriefLoop status --workspace "<workspace>"
+--json`）或 handoff 报告恢复待决（例如 `awaiting_recovery` /
+`request_recovery_decision`）时，先读取
 其 contamination / owner-revision 绑定，再由操作者决定受控 repair、
 supersede 或新 run；不要从 `run_integrity` 猜恢复通道，也不要手改控制文件。
-`next_allowed_action` 只由 WorkBuddy diagnose 透传 completion projection；
-`status --json` 不输出该字段。
+下一步动作只由 `briefloop runtime next --workspace <workspace>` 给出；
+legacy completion projection / `workbuddy diagnose` 面已退役。
 
 ## 边界
 

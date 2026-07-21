@@ -84,7 +84,7 @@ def handle_mabw(ctx, argstr: str):
             "Step 7 — Proceed only when finalize_report.json reports delivery_promotion \"promoted\" (otherwise stop and route repair), then verify completion:\n"
             "  briefloop gates check --workspace <workspace> --stage finalize --brief <workspace>/output/brief.md\n"
             "  briefloop state finalize-complete --workspace <workspace> --reason \"Reader-facing artifacts passed finalize checks.\"\n"
-            "  briefloop workbuddy diagnose --workspace <workspace> --json  # delivery_truth.valid must be true before reporting delivery"
+            "  briefloop status --workspace <workspace> --json  # status projection must report delivered=true for the current run before reporting delivery"
         )
 
     if sub == "run":
@@ -137,7 +137,7 @@ def handle_mabw(ctx, argstr: str):
             lines.append("Proceed only when finalize_report.json reports delivery_promotion \"promoted\" (otherwise stop and route repair), then verify completion:")
             lines.append(f"  briefloop gates check --workspace {ws_path} --stage finalize --brief {ws_path}/output/brief.md")
             lines.append(f"  briefloop state finalize-complete --workspace {ws_path} --reason \"Reader-facing artifacts passed finalize checks.\"")
-            lines.append(f"  briefloop workbuddy diagnose --workspace {ws_path} --json  # delivery_truth.valid must be true before reporting delivery")
+            lines.append(f"  briefloop status --workspace {ws_path} --json  # status projection must report delivered=true for the current run before reporting delivery")
             lines.append("")
             lines.append("Optional provenance projection after runtime state exists:")
             lines.append(f"  briefloop provenance build --workspace {ws_path}")
@@ -188,7 +188,7 @@ def handle_mabw(ctx, argstr: str):
             "Proceed only when finalize_report.json reports delivery_promotion \"promoted\" (otherwise stop and route repair), then verify completion:",
             f"  briefloop gates check --workspace {ws_path} --stage finalize --brief {ws_path}/output/brief.md",
             f"  briefloop state finalize-complete --workspace {ws_path} --reason \"Reader-facing artifacts passed finalize checks.\"",
-            f"  briefloop workbuddy diagnose --workspace {ws_path} --json  # delivery_truth.valid must be true before reporting delivery",
+            f"  briefloop status --workspace {ws_path} --json  # status projection must report delivered=true for the current run before reporting delivery",
             "",
             "Optional provenance projection after runtime state exists:",
             f"  briefloop provenance build --workspace {ws_path}",

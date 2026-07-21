@@ -143,7 +143,9 @@ For `assessment_target=auditable_brief`:
 
 ## Completion And Delivery Truth
 
-Delivery truth is a single authoritative record: `finalize_report.json`.
+Finalize writes a single authoritative delivery record: `finalize_report.json`.
+Read delivery truth only through the Store-native status projection, never by
+reconstructing it from files.
 
 - Finalize is a transactional reader projection: it renders and checks a
   staged candidate first, and only successful reader-clean promotes
@@ -153,21 +155,25 @@ Delivery truth is a single authoritative record: `finalize_report.json`.
   `delivery_promotion: "promoted"` in `finalize_report.json`. `deliver` and
   `state finalize-complete` verify those recorded artifacts; run them only
   after promotion, never against unpromoted output.
-- The canonical completion projection owns finalize truth, delivery truth, and
-  the next allowed action, and reports stale, missing, or malformed delivery
-  findings. Read it through `briefloop workbuddy diagnose --workspace
-  <workspace> --json`; runtime adapters format it and must not reconstruct
-  delivery truth from `workflow_state.json`, `event_log.jsonl`, or file
-  existence.
-- `delivery_truth.valid=true` means the current reader bundle is eligible for a
-  delivery action; it is not an action outcome. Claim completed delivery only
-  when the projection also reports current-bound
-  `event_truth.delivery_succeeded=true`. `delivery_bundle_prepared` and
-  `delivery_draft_created` are ready/draft outcomes, not delivery success.
-- After a `repair supersede-stage` recovery, the completion projection keeps
-  reporting the contamination and the required downstream reruns; delivery may
-  become valid again after reruns, but the run stays
-  `reference_eligible=false`.
+- The only canonical reader of delivery truth is the Store-native status
+  projection `briefloop status --workspace <workspace> --json`. Its
+  `terminal_state`, `package_ready`, and `delivered` fields are receipt-bound:
+  `projection_source` carries the `store_revision` and the receipt ids of the
+  transactions it projects. Workflow progression truth comes from
+  `briefloop runtime next --workspace <workspace>`. Runtime adapters format
+  these projections and must not reconstruct delivery truth from
+  `workflow_state.json`, `event_log.jsonl`, projection files, or file
+  existence. The legacy completion projection / `workbuddy diagnose` surface
+  is retired; do not route agents to it.
+- `package_ready=true` means the current run's reader package is ready for a
+  delivery decision; it is not an action outcome. Claim completed delivery
+  only when the status projection reports `delivered=true` for the current
+  run. A `draft_created` terminal state is a draft outcome, not delivery
+  success.
+- After a `repair supersede-stage` recovery, the status projection and the
+  generated handoff keep reporting the contamination and the required
+  downstream reruns; delivery may become valid again after reruns, but the
+  run stays `reference_eligible=false`.
 - Recovery progress comes only from `recovery_state.status` and
   `recovery_state.recommended_recovery_action`. Do not derive it from
   `run_integrity`: a recovered run remains contaminated and non-reference even

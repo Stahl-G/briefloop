@@ -74,8 +74,8 @@ ROLE_ACTION_SEQUENCE_SURFACES = (
     ASSISTANT,
 )
 ACTION_SURFACES = ACTIVE_INSTRUCTION_SURFACES
-CANONICAL_DIAGNOSE_COMMAND = (
-    '& $BriefLoop workbuddy diagnose --workspace "<workspace>" --json'
+CANONICAL_STATUS_COMMAND = (
+    '& $BriefLoop status --workspace "<workspace>" --json'
 )
 DIAGNOSE_INSTRUCTION_SURFACES = (
     CANONICAL / "SKILL.md",
@@ -226,7 +226,7 @@ def test_windows_commands_reuse_bound_cli_and_persist_tavily_secret() -> None:
         "& $BriefLoop run",
         "--runtime codebuddy",
         '--repo-workdir "<canonical BriefLoop source checkout>"',
-        "& $BriefLoop workbuddy diagnose",
+        "& $BriefLoop runtime next",
     ):
         assert phrase in combined
 
@@ -289,11 +289,20 @@ def test_finalize_evidence_inventory_does_not_publish_incomplete_commands() -> N
         ), path
 
 
-def test_current_workbuddy_diagnose_instruction_inventory_contains_canonical_command(
+def test_current_workbuddy_status_instruction_inventory_contains_canonical_command(
 ) -> None:
     assert set(DIAGNOSE_INSTRUCTION_SURFACES) <= set(ACTIVE_INSTRUCTION_SURFACES)
     for path in DIAGNOSE_INSTRUCTION_SURFACES:
-        assert CANONICAL_DIAGNOSE_COMMAND in _compact(path), path
+        assert CANONICAL_STATUS_COMMAND in _compact(path), path
+        compact = _compact(path)
+        start = 0
+        while True:
+            idx = compact.find("workbuddy diagnose", start)
+            if idx == -1:
+                break
+            window = compact[idx : idx + 120]
+            assert "retired" in window or "退役" in window, (path, window)
+            start = idx + 1
 
 
 def test_current_action_inventory_invokes_roles_only_when_assigned() -> None:
@@ -457,7 +466,7 @@ def test_role_invocation_stage_and_audit_truth_are_distinct() -> None:
     assert "unless the matching artifact, event" not in combined
 
 
-def test_public_run_cards_use_diagnose_recovery_and_delivery_truth() -> None:
+def test_public_run_cards_use_status_projection_delivery_truth() -> None:
     for path in (
         ROOT / "docs" / "workbuddy.md",
         ROOT / "docs" / "workbuddy.zh-CN.md",
@@ -465,18 +474,17 @@ def test_public_run_cards_use_diagnose_recovery_and_delivery_truth() -> None:
     ):
         text = _read(path)
         for field in (
-            "run_integrity:",
-            "recovery_status:",
-            "recovery_action:",
-            "delivery_truth:",
-            "delivery_event:",
-            "next_allowed_action:",
+            "terminal_state:",
+            "package_ready:",
+            "delivered:",
+            "store_revision:",
+            "next_action:",
         ):
             assert field in text, (path, field)
         compact = re.sub(r"\s+", " ", text).lower()
         assert "run_integrity" in compact
         assert "recovery" in compact
-        assert "next_allowed_action" in compact
+        assert "next_action" in compact
 
 def test_doctor_error_cannot_be_human_overridden() -> None:
     combined = "\n".join(_read(path) for path in ACTION_SURFACES).lower()
@@ -486,8 +494,6 @@ def test_doctor_error_cannot_be_human_overridden() -> None:
         "standalone pass",
         "cannot override",
         "same `$briefloop`",
-        "doctor.status=not_run_read_only",
-        "completion action",
         "interruption",
     ):
         assert phrase in combined
@@ -501,7 +507,7 @@ def test_run_integrity_never_routes_completed_non_reference_delivery() -> None:
     for phrase in (
         "run_integrity` never selects",
         "completed_non_reference",
-        "delivery_truth.valid=true",
+        "package_ready=true",
         "invalid or nonterminal recovery",
     ):
         assert phrase in checklist
@@ -561,9 +567,8 @@ def test_formatter_and_formal_finalize_require_deterministic_truth() -> None:
                 "promoted",
                 "render_transaction",
                 "finalize-complete",
-            "finalize event",
-            "delivery truth",
-            "delivery outcome",
+            "package_ready=true",
+            "delivered",
             "draft/manual/unverified",
             ):
                 assert phrase in text, (path, phrase)
@@ -616,7 +621,7 @@ def test_workbuddy_english_and_chinese_docs_share_pilot_boundary() -> None:
         "draft/manual/unverified",
         "finalize_report.json",
         "reader-clean",
-        "delivery_truth.valid=true",
+        "package_ready=true",
     ):
         assert token in english, token
         assert token in chinese, token

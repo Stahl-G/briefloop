@@ -47,7 +47,7 @@ git --version
 ```
 
 `py -3 --version` is diagnostic only and does not prove `$BriefLoop`'s Python
-identity. Reuse `$BriefLoop` for doctor, run, secrets import, and diagnose. Do
+identity. Reuse `$BriefLoop` for doctor, run, secrets import, status, and runtime next. Do
 not automatically mix or fall back to `bash`, `which`, `command -v`, `export`,
 `/c/Users/...`, `source .venv/bin/activate`, or `bash scripts/setup.sh`. If the
 host is actually Git Bash, report that shell and stop this documented
@@ -194,7 +194,8 @@ checkout:
   --workspace "<workspace>" `
   --runtime codebuddy `
   --repo-workdir "<canonical BriefLoop source checkout>"
-& $BriefLoop workbuddy diagnose --workspace "<workspace>" --json
+& $BriefLoop status --workspace "<workspace>" --json
+& $BriefLoop runtime next --workspace "<workspace>"
 ```
 
 This writes a CodeBuddy-specific handoff with explicit role-agent names and
@@ -217,7 +218,7 @@ Those role agents may draft only the artifacts assigned by the current
 handoff. They do not run CLI, complete stages, run gates, freeze the Claim
 Ledger, finalize, complete finalize, approve/report delivery, or authorize
 release. A role return is not a stage pass. The main CodeBuddy session remains
-responsible for deterministic transactions and diagnose after each return.
+responsible for deterministic transactions and for re-reading the status projection after each return.
 
 Before role work, read both handoff files and verify handoff runtime and
 capability runtime are `codebuddy`, `delegation_supported=true`,
@@ -231,14 +232,16 @@ Bash/PowerShell/CLI, convert Markdown to DOCX, write reader delivery artifacts,
 or claim reader-clean, gate/finalize success, or delivery.
 
 A formal finalize-complete statement requires every current-run deterministic
-observation: handoff/diagnose authorized and the current workspace-config-bound
+observation: handoff/status-projection authorized and the current workspace-config-bound
 finalize transaction succeeded; structurally valid
 `finalize_report.json`; reader-clean pass; `delivery_promotion == promoted`;
-current `render_transaction_id`; finalize quality-gate pass; handoff/diagnose
+current `render_transaction_id`; finalize quality-gate pass; handoff/status-projection
 authorized and the current-workspace-bound finalize-complete
-transaction with a recorded reason succeeded; current finalize event in diagnose;
-valid delivery truth; and an accurately reported delivery outcome.
-`delivery_truth.valid=true` is eligibility only, not delivery occurrence.
+transaction with a recorded reason succeeded; the Store-native status projection
+(`& $BriefLoop status --workspace "<workspace>" --json`) reporting
+`package_ready=true`; and an accurately reported `delivered` / `terminal_state`.
+`package_ready=true` is eligibility only, not delivery occurrence; claim
+delivery only when the projection reports `delivered=true` for the current run.
 
 Markdown or DOCX written outside that lifecycle by WorkBuddy or a generic
 helper is `draft/manual/unverified`. It must not be moved, renamed, or described
@@ -271,10 +274,13 @@ step again. This prevents WorkBuddy from treating BriefLoop as a hand-authored
 JSON workflow.
 
 After every start, CLI transaction, role return, or interruption: reread both
-handoff files, run diagnose, and follow its current action. Invoke only the
+handoff files, read the Store-native status projection
+(`& $BriefLoop status --workspace "<workspace>" --json`) and
+`& $BriefLoop runtime next --workspace "<workspace>"`, and follow the current
+action. Invoke only the
 exact assigned role when that action explicitly assigns role-owned draft work.
 For a deterministic-only action, invoke no role and let the main session run
-the authorized transaction. Then diagnose again. Raw
+the authorized transaction. Then read the status projection again. Raw
 workflow state, event log, Registry, timestamps, and file existence are audit
 evidence only; they must not reconstruct next action, gate, finalize, or
 delivery truth. For example:
@@ -303,15 +309,11 @@ Run Card populated only from machine facts:
 ```text
 runtime:
 current_stage:
-run_integrity:
-recovery_status:
-recovery_action:
-blocked:
-latest_gate_status:
-finalize_report:
-delivery_truth:
-delivery_event:
-next_allowed_action:
+terminal_state:
+package_ready:
+delivered:
+store_revision:
+next_action:
 ```
 
 The hard stops are:
@@ -320,17 +322,17 @@ The hard stops are:
   workspace path, user, output path existence/writability, and permission/ACL
   evidence. It remains failed until the environment/config is fixed and the
   same `$BriefLoop` reruns successfully; `request_human_review`, user
-  confirmation, or a standalone pass elsewhere cannot override it. Diagnose
-  may be displayed as evidence, but `doctor.status=not_run_read_only` cannot
-  clear, replace, or route around the observed failure, and its completion
-  action must not be followed. After interruption or uncertain session
+  confirmation, or a standalone pass elsewhere cannot override it. After
+  interruption or uncertain session
   continuity, rerun doctor with the same `$BriefLoop`, workspace, and config;
 - do not derive recovery, finalize, or delivery routing from `run_integrity`.
-  Follow only diagnose-projected `recovery_status`, `recovery_action`,
-  `next_allowed_action`, and current gate/finalize/delivery truth. A recovered
-  non-reference run can remain contaminated while diagnose allows a bounded
-  delivery action;
-- completion projection `delivery_truth.valid` is not `true`: do not claim
+  Follow only the current action reported by
+  `briefloop runtime next --workspace "<workspace>"`, the generated handoff,
+  and current gate/finalize/delivery truth from the Store-native status
+  projection. A recovered
+  non-reference run can remain contaminated while the status projection allows
+  a bounded delivery action;
+- the status projection does not report `package_ready=true`: do not claim
   delivery or export a delivery package. Report draft-only status only when
   `output/intermediate/audited_brief.md` exists;
   otherwise report that no draft or delivery exists yet. This is normal before
@@ -343,23 +345,27 @@ Do not share a whole workspace zip. Use BriefLoop-generated delivery or audit
 bundles when present. If support is needed, share only manually reviewed,
 non-secret excerpts from `& $BriefLoop status --json` or doctor output.
 
-## Read-Only Diagnosis
+## Read-Only Status
 
-Use this command when WorkBuddy needs a compact machine-readable Run Card
+Use these commands when WorkBuddy needs compact machine-readable run facts
 instead of interpreting multiple control JSON files itself:
 
 ```powershell
-& $BriefLoop workbuddy diagnose --workspace "<workspace>" --json
+& $BriefLoop status --workspace "<workspace>" --json
+& $BriefLoop runtime next --workspace "<workspace>"
 ```
 
-The command is a read-only adapter over the canonical completion projection
-with a WorkBuddy-only doctor/secret safety overlay for `next_allowed_action`.
-It reports doctor status, runtime, current stage, run integrity, blocked state,
-latest gate status, invalid/stale artifacts, finalize truth, delivery truth,
-secret-risk flags such as `.env` with nonempty keys, and the next safe action.
-It does not infer delivery from file presence, and WorkBuddy must not treat
-`output/delivery/` or `finalize_report.json` existence as delivery truth unless
-the projection says `delivery_truth.valid=true`. It does not run gates,
+The Store-native status projection is the only canonical reader of delivery
+truth. Its `terminal_state`, `package_ready`, and `delivered` fields are
+receipt-bound: `projection_source` carries the `store_revision` and the
+receipt ids of the transactions it projects. Workflow progression truth comes
+from `briefloop runtime next`. The legacy completion projection /
+`workbuddy diagnose` surface is retired; do not call it.
+The status projection does not infer delivery from file presence, and WorkBuddy
+must not treat
+`output/delivery/` or `finalize_report.json` existence as delivery truth; claim
+delivery only when the projection reports `delivered=true` for the current run.
+These read-only commands do not run gates,
 repair artifacts, approve delivery, authorize release, or prove semantic truth.
 
 ## Assistant Trigger Template
