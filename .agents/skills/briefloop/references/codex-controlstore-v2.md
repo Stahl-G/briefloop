@@ -74,8 +74,20 @@ Exactly five action kinds exist.
      `role_id` and give it the envelope. Do not let root substitute for it.
    - `use_declared_route`: use only the declared existing route.
 4. The executing role writes only the permitted proposal files under its own
-   `scratch_directory`. It must not call BriefLoop runtime commands, write the
-   Store, or write canonical artifacts.
+   `scratch_directory`. For a strict JSON proposal, its `task_instructions`
+   include two binding, read-only preflight commands:
+
+   ```bash
+   briefloop contract show <proposal_schema_id> --example full
+   briefloop runtime invocation-validate --workspace <workspace> \
+     --envelope <workspace>/scratch/<invocation_id>/role_task_envelope.json
+   ```
+
+   Run the first before writing and the second after writing. Continue only
+   when validation returns `status=valid`; never guess a wrapper, alias, or
+   field or invocation binding. These commands inspect the exact envelope and
+   proposal bytes only and never write the Store. Other runtime commands remain
+   root-host-only. The role must not write the Store or canonical artifacts.
 5. When the proposal is complete, the root host accepts it through:
 
    ```bash
@@ -98,10 +110,13 @@ Exactly five action kinds exist.
    reason.
 
 If an invocation is already active and the current action says
-`effect_kind=invocation_accept_or_fail`, do not call `runtime apply`. Continue
-from the already-materialized envelope. `invocation-start` without `--action`
-may only be used to recover that exact active envelope; it is not permission to
-start a different role.
+`effect_kind=invocation_accept_or_fail`, either accept through the exact
+envelope as above or apply the exact current action. `runtime apply` performs
+the same envelope-bound preflight and accepts only a valid proposal; an invalid
+proposal fails with zero Store writes. Use explicit `invocation-fail` when the
+role cannot produce a valid proposal. `invocation-start` without `--action` may
+only recover that exact active envelope; it is not permission to start another
+role.
 
 ### `deterministic`
 

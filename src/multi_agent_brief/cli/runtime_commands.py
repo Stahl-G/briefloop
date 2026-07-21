@@ -55,6 +55,7 @@ def register(subparsers: argparse._SubParsersAction) -> None:
         "next",
         "diagnose",
         "invocation-start",
+        "invocation-validate",
         "invocation-accept",
         "invocation-fail",
         "apply",
@@ -68,7 +69,7 @@ def register(subparsers: argparse._SubParsersAction) -> None:
             command.add_argument("--action")
         if action == "apply":
             command.add_argument("--action", required=True)
-        if action in {"invocation-accept", "invocation-fail"}:
+        if action in {"invocation-validate", "invocation-accept", "invocation-fail"}:
             command.add_argument("--envelope", required=True)
         if action == "apply":
             command.add_argument("--human-request")
@@ -119,6 +120,7 @@ def handle(args: argparse.Namespace) -> int:
         "next",
         "diagnose",
         "invocation-start",
+        "invocation-validate",
         "invocation-accept",
         "invocation-fail",
         "apply",
@@ -168,6 +170,17 @@ def handle(args: argparse.Namespace) -> int:
                 )
                 dispatch = service.start_current_invocation(action)
                 payload = dispatch.envelope.model_dump(mode="json", exclude_unset=False)
+            elif args.runtime_action == "invocation-validate":
+                envelope = read_host_contract(
+                    workspace,
+                    args.envelope,
+                    RoleTaskEnvelope,
+                    error_code="runtime_envelope_invalid",
+                )
+                payload = service.validate_invocation(
+                    envelope.invocation_id,
+                    expected_envelope=envelope,
+                ).model_dump(mode="json", exclude_unset=False)
             elif args.runtime_action == "invocation-accept":
                 envelope = read_host_contract(
                     workspace,
@@ -249,5 +262,10 @@ def handle(args: argparse.Namespace) -> int:
             print(f"[runtime {args.runtime_action}] {exc}")
             return 1
         print(json.dumps(payload, sort_keys=True, separators=(",", ":")))
+        if (
+            args.runtime_action == "invocation-validate"
+            and payload.get("status") != "valid"
+        ):
+            return 1
         return 0
     return 1

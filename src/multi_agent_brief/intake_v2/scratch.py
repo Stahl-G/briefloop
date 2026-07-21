@@ -2,61 +2,22 @@
 
 from __future__ import annotations
 
-import json
-import math
 import os
 from pathlib import Path, PurePosixPath
 import stat
 from typing import Any
 
 from multi_agent_brief.intake_v2.errors import IntakeError
-
-
-class _DuplicateKey(ValueError):
-    pass
-
-
-def _object_without_duplicates(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
-    result: dict[str, Any] = {}
-    for key, value in pairs:
-        if key in result:
-            raise _DuplicateKey
-        result[key] = value
-    return result
-
-
-def _reject_non_finite_constant(_token: str) -> None:
-    raise ValueError
+from multi_agent_brief.contracts.json import StrictJsonError, parse_strict_json_object
 
 
 def parse_json_object(payload: bytes) -> dict[str, Any]:
     """Parse one strict scratch JSON object without exposing input values."""
 
-    if type(payload) is not bytes:
-        raise TypeError("scratch JSON payload must be bytes")
     try:
-        text = payload.decode("utf-8", errors="strict")
-        value = json.loads(
-            text,
-            object_pairs_hook=_object_without_duplicates,
-            parse_constant=_reject_non_finite_constant,
-        )
-    except (UnicodeDecodeError, json.JSONDecodeError, _DuplicateKey, ValueError):
+        return parse_strict_json_object(payload)
+    except StrictJsonError:
         raise IntakeError("scratch_payload_unreadable") from None
-    except RecursionError:
-        raise IntakeError("scratch_payload_unreadable") from None
-    stack = [value]
-    while stack:
-        current = stack.pop()
-        if type(current) is float and not math.isfinite(current):
-            raise IntakeError("scratch_payload_unreadable")
-        if isinstance(current, dict):
-            stack.extend(current.values())
-        elif isinstance(current, list):
-            stack.extend(current)
-    if not isinstance(value, dict):
-        raise IntakeError("scratch_payload_unreadable")
-    return value
 
 
 class ScratchReader:

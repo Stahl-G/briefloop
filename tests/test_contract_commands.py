@@ -72,6 +72,100 @@ def test_contract_show_rejects_legacy_or_unknown_ids() -> None:
         assert exc.value.code == 2
 
 
+def test_contract_validate_reports_value_free_field_failures(
+    tmp_path: Path,
+    capsys,
+) -> None:
+    contract_id = "briefloop.candidate_claims_proposal.v2"
+    invalid = tmp_path / "candidate_claims.json"
+    invalid.write_text(
+        json.dumps(
+            {
+                "schema_version": contract_id,
+                "claims": [
+                    {
+                        "candidate_id": "CAND-SECRET-001",
+                        "claim": "private candidate text",
+                        "source_ids": ["SRC-SECRET-001"],
+                    }
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    assert main(["contract", "validate", contract_id, "--input", str(invalid)]) == 1
+    payload = json.loads(capsys.readouterr().out)
+
+    assert payload["status"] == "invalid"
+    assert payload["reason_code"] == "contract_validation_failed"
+    assert {item["field"] for item in payload["violations"]} == {
+        "candidates",
+        "claims",
+        "created_at",
+        "proposal_id",
+        "run_id",
+    }
+    serialized = json.dumps(payload, sort_keys=True)
+    assert "private candidate text" not in serialized
+    assert "CAND-SECRET-001" not in serialized
+    assert "SRC-SECRET-001" not in serialized
+    assert str(invalid) not in serialized
+
+
+def test_contract_validate_accepts_exact_registered_example(
+    tmp_path: Path,
+    capsys,
+) -> None:
+    contract_id = "briefloop.candidate_claims_proposal.v2"
+    valid = tmp_path / "candidate_claims.json"
+    valid.write_text(
+        json.dumps(SchemaRegistry.example(contract_id, "full")),
+        encoding="utf-8",
+    )
+
+    assert main(["contract", "validate", contract_id, "--input", str(valid)]) == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload == {
+        "schema_id": contract_id,
+        "status": "valid",
+        "reason_code": None,
+        "violations": [],
+    }
+
+
+@pytest.mark.parametrize(
+    "contents",
+    [
+        '{"schema_version":"x","schema_version":"y"}',
+        "not-json",
+    ],
+)
+def test_contract_validate_rejects_unreadable_or_duplicate_json(
+    tmp_path: Path,
+    capsys,
+    contents: str,
+) -> None:
+    invalid = tmp_path / "invalid.json"
+    invalid.write_text(contents, encoding="utf-8")
+
+    assert (
+        main(
+            [
+                "contract",
+                "validate",
+                "briefloop.candidate_claims_proposal.v2",
+                "--input",
+                str(invalid),
+            ]
+        )
+        == 1
+    )
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["reason_code"] == "contract_input_invalid"
+    assert payload["violations"] == []
+
+
 def test_built_wheel_exposes_identical_schema_and_examples(tmp_path: Path) -> None:
     build_root = tmp_path / "build-root"
     build_root.mkdir()

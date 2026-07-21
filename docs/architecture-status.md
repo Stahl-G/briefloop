@@ -17,6 +17,10 @@ page describes implemented runtime capability, not a breaking deep rename.
 - SQLite ControlStore receipts and ledger relations are the sole runtime
   authority. Strict Pydantic DTOs are the write boundary; deterministic domain
   services own effects; agents write only invocation scratch proposals.
+- Strict JSON proposal envelopes include exact read-only contract example and
+  validation commands. Roles validate proposal shape locally before acceptance;
+  validation reports stable field paths without echoing proposal values or
+  writing Store state.
 - Runtime source intake accepts an ordered 1–256 member source pack. The host
   validates every member before mutation and registers the full pack through
   one Invocation, one UoW, and one Receipt. The same request hash-binds the

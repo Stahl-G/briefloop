@@ -11,6 +11,7 @@ import yaml
 
 from multi_agent_brief.cli.init_wizard import create_workspace
 from multi_agent_brief.cli.main import main
+from multi_agent_brief.contracts import SchemaRegistry
 from multi_agent_brief.contracts.v2 import InvocationStartRequest
 from multi_agent_brief.control_store import SQLiteControlStore
 from multi_agent_brief.core_run_v2.errors import CoreRunResult
@@ -18,7 +19,12 @@ from multi_agent_brief.core_run_v2.policy import derived_id
 from multi_agent_brief.core_run_v2.service import CoreRunService
 from multi_agent_brief.runtime_host_v2.codex import load_codex_adapter_binding
 from multi_agent_brief.runtime_host_v2.errors import RuntimeHostError
-from multi_agent_brief.runtime_host_v2.service import RuntimeHostService
+from multi_agent_brief.runtime_host_v2.service import (
+    RuntimeHostService,
+    _ROLE_OUTPUTS,
+    _role_task_instructions,
+    _strict_proposal_violations,
+)
 from multi_agent_brief.runtime_assets import install_runtime_kit
 from multi_agent_brief.workspace.init_profile import InitProfile
 
@@ -45,6 +51,55 @@ def _workspace(tmp_path: Path) -> Path:
     )
     install_runtime_kit(workspace=workspace, runtime="codex")
     return workspace
+
+
+def test_strict_json_role_instructions_bind_contract_preflight_commands() -> None:
+    invocation_id = "INV-SCOUT-PREFLIGHT-001"
+    instructions = _role_task_instructions(
+        "scout",
+        _ROLE_OUTPUTS["scout"],
+        invocation_id,
+    )
+
+    assert (
+        "briefloop contract show briefloop.candidate_claims_proposal.v2 "
+        "--example full"
+    ) in instructions
+    assert (
+        "briefloop runtime invocation-validate --workspace . --envelope "
+        "scratch/INV-SCOUT-PREFLIGHT-001/role_task_envelope.json"
+    ) in instructions
+    assert "never guess aliases, wrapper names, or invocation bindings" in instructions
+
+    owned_instructions = _role_task_instructions(
+        "source-planner",
+        _ROLE_OUTPUTS["source-planner"],
+        "INV-PLANNER-001",
+    )
+    assert "briefloop contract" not in owned_instructions
+
+
+def test_strict_proposal_preflight_rejects_schema_valid_cross_run_binding() -> None:
+    payload = SchemaRegistry.example(
+        "briefloop.candidate_claims_proposal.v2",
+        "full",
+    )
+    payload["run_id"] = "RUN-WRONG-BINDING"
+
+    violations = _strict_proposal_violations(
+        _ROLE_OUTPUTS["scout"],
+        {
+            "candidate_claims.json": json.dumps(
+                payload,
+                sort_keys=True,
+            ).encode("utf-8")
+        },
+        expected_run_id="RUN-CURRENT-001",
+    )
+
+    assert [(item.field, item.error) for item in violations] == [
+        ("run_id", "must match the current invocation run")
+    ]
 
 
 def _external_workspace(tmp_path: Path) -> Path:
@@ -302,6 +357,85 @@ def test_invocation_start_unknown_immediately_replays_one_committed_request(
         snapshot = store.load_snapshot("RUN-codex-run")
     assert len(snapshot.invocations) == 1
     assert snapshot.invocations[0].invocation_id == dispatch.envelope.invocation_id
+
+
+def test_invocation_validate_is_read_only_and_envelope_bound(
+    tmp_path: Path,
+    capsys,
+) -> None:
+    workspace = _workspace(tmp_path)
+    assert main(["run", "--workspace", str(workspace), "--runtime", "codex"]) == 0
+    capsys.readouterr()
+    assert _apply_current(workspace, capsys) == 0
+    capsys.readouterr()
+    assert _start_current(workspace, capsys) == 0
+    envelope = json.loads(capsys.readouterr().out)
+    scratch = workspace / envelope["scratch_directory"]
+    (scratch / "source_candidates.yaml").write_text(
+        "version: 1\ncandidates: []\n",
+        encoding="utf-8",
+    )
+    envelope_path = _envelope_path(workspace, envelope)
+    with SQLiteControlStore.open(workspace / "briefloop.db") as store:
+        before = store.current_revision
+
+    assert (
+        main(
+            [
+                "runtime",
+                "invocation-validate",
+                "--workspace",
+                str(workspace),
+                "--envelope",
+                str(envelope_path),
+            ]
+        )
+        == 0
+    )
+    result = json.loads(capsys.readouterr().out)
+
+    assert result["status"] == "valid"
+    assert result["reason_code"] is None
+    assert result["checked_filenames"] == ["source_candidates.yaml"]
+    with SQLiteControlStore.open(workspace / "briefloop.db") as store:
+        assert store.current_revision == before
+
+
+def test_invocation_validate_blocks_missing_output_without_writing_store(
+    tmp_path: Path,
+    capsys,
+) -> None:
+    workspace = _workspace(tmp_path)
+    assert main(["run", "--workspace", str(workspace), "--runtime", "codex"]) == 0
+    capsys.readouterr()
+    assert _apply_current(workspace, capsys) == 0
+    capsys.readouterr()
+    assert _start_current(workspace, capsys) == 0
+    envelope = json.loads(capsys.readouterr().out)
+    envelope_path = _envelope_path(workspace, envelope)
+    with SQLiteControlStore.open(workspace / "briefloop.db") as store:
+        before = store.current_revision
+
+    assert (
+        main(
+            [
+                "runtime",
+                "invocation-validate",
+                "--workspace",
+                str(workspace),
+                "--envelope",
+                str(envelope_path),
+            ]
+        )
+        == 1
+    )
+    result = json.loads(capsys.readouterr().out)
+
+    assert result["status"] == "invalid"
+    assert result["reason_code"] == "runtime_proposal_missing"
+    assert result["violations"] == []
+    with SQLiteControlStore.open(workspace / "briefloop.db") as store:
+        assert store.current_revision == before
 
 
 def test_restart_recovers_original_invocation_action_and_envelope(
@@ -676,6 +810,61 @@ def test_source_planner_writes_only_artifact_and_host_derives_accept_request(
     assert replay["status"] == "replayed"
     assert replay["transaction_id"] == accepted["transaction_id"]
     assert replay["store_revision"] == accepted["store_revision"]
+
+
+def test_runtime_apply_resolves_active_invocation_through_shared_preflight(
+    tmp_path: Path,
+    capsys,
+) -> None:
+    workspace = _workspace(tmp_path)
+    assert main(["run", "--workspace", str(workspace), "--runtime", "codex"]) == 0
+    capsys.readouterr()
+    assert _apply_current(workspace, capsys) == 0
+    capsys.readouterr()
+    assert _start_current(workspace, capsys) == 0
+    envelope = json.loads(capsys.readouterr().out)
+    scratch = workspace / str(envelope["scratch_directory"])
+    (scratch / "source_candidates.yaml").write_text(
+        "version: 1\ncandidates:\n  - route: manual\n",
+        encoding="utf-8",
+    )
+    with SQLiteControlStore.open(workspace / "briefloop.db") as store:
+        before = store.current_revision
+
+    rc = _apply_current(workspace, capsys)
+    output = capsys.readouterr().out
+    if sys.platform == "win32":
+        assert rc == 1
+        assert "checkout_publication_unsupported" in output
+        with SQLiteControlStore.open(workspace / "briefloop.db") as store:
+            assert store.current_revision == before
+        return
+
+    assert rc == 0
+    accepted = json.loads(output)
+    assert accepted["status"] == "committed"
+    assert accepted["invocation_id"] == envelope["invocation_id"]
+    assert accepted["store_revision"] == before + 1
+
+
+def test_runtime_apply_rejects_invalid_active_proposal_without_store_write(
+    tmp_path: Path,
+    capsys,
+) -> None:
+    workspace = _workspace(tmp_path)
+    assert main(["run", "--workspace", str(workspace), "--runtime", "codex"]) == 0
+    capsys.readouterr()
+    assert _apply_current(workspace, capsys) == 0
+    capsys.readouterr()
+    assert _start_current(workspace, capsys) == 0
+    capsys.readouterr()
+    with SQLiteControlStore.open(workspace / "briefloop.db") as store:
+        before = store.current_revision
+
+    assert _apply_current(workspace, capsys) == 1
+    assert "runtime_proposal_missing" in capsys.readouterr().out
+    with SQLiteControlStore.open(workspace / "briefloop.db") as store:
+        assert store.current_revision == before
 
 
 def test_child_failure_is_value_free_recorded_and_exactly_replayed(

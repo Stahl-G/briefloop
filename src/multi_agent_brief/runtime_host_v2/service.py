@@ -11,6 +11,10 @@ from typing import Literal
 
 from pydantic import ValidationError
 
+from multi_agent_brief.contracts.errors import (
+    FieldViolation,
+    pydantic_error_violations,
+)
 from multi_agent_brief.contracts.v2 import (
     ArtifactRevisionReference,
     ArtifactSubmitRequest,
@@ -95,6 +99,7 @@ from .contracts import (
     RoleTaskEnvelope,
     RuntimeDiagnoseReport,
     RuntimeInvocationResult,
+    RuntimeProposalValidationResult,
 )
 from .errors import RuntimeHostError
 from .initialization import AdapterLoader, initialize_or_open_runtime
@@ -178,6 +183,65 @@ _ROLE_OUTPUTS: dict[str, _RoleOutputSpec] = {
         proposal_model=AuditProposal,
     ),
 }
+
+
+def _role_task_instructions(
+    role_id: str,
+    output: _RoleOutputSpec,
+    invocation_id: str,
+) -> str:
+    base = (
+        f"Complete only the frozen {role_id} role task in this recorded "
+        "invocation."
+    )
+    if output.proposal_model is None:
+        return base
+    proposal_filename = (
+        "source_proposal.json"
+        if output.owner_kind == "source"
+        else output.filenames[0]
+    )
+    return (
+        f"{base} Before writing {proposal_filename}, run `briefloop contract "
+        f"show {output.proposal_schema_id} --example full` and follow that "
+        "exact wrapper and field contract. After writing all allowed outputs, "
+        "run `briefloop runtime invocation-validate --workspace . --envelope "
+        f"scratch/{invocation_id}/role_task_envelope.json`. Return only after "
+        "status is valid; never guess aliases, wrapper names, or invocation "
+        "bindings."
+    )
+
+
+def _strict_proposal_violations(
+    output: _RoleOutputSpec,
+    outputs: dict[str, bytes],
+    *,
+    expected_run_id: str,
+) -> list[FieldViolation]:
+    if output.proposal_model is None:
+        return []
+    proposal_name = (
+        "source_proposal.json"
+        if output.owner_kind == "source"
+        else output.filenames[0]
+    )
+    try:
+        parsed = parse_json_object(outputs[proposal_name])
+        proposal = output.proposal_model.model_validate(parsed, strict=True)
+    except IntakeError:
+        return [FieldViolation(field="$", error="proposal payload is unreadable")]
+    except ValidationError as exc:
+        return pydantic_error_violations(exc)
+    except (KeyError, TypeError, ValueError):
+        return [FieldViolation(field="$", error="proposal payload is invalid")]
+    if getattr(proposal, "run_id", None) != expected_run_id:
+        return [
+            FieldViolation(
+                field="run_id",
+                error="must match the current invocation run",
+            )
+        ]
+    return []
 
 
 @dataclass(frozen=True)
@@ -427,9 +491,10 @@ class RuntimeHostService:
                 "context_mode": topology.context_mode,
                 "review_mode": topology.review_mode,
                 "dispatch_instruction": dispatch_instruction,
-                "task_instructions": (
-                    f"Complete only the frozen {role_id} role task in this "
-                    "recorded invocation."
+                "task_instructions": _role_task_instructions(
+                    role_id,
+                    output,
+                    invocation_id,
                 ),
             },
             strict=True,
@@ -524,6 +589,91 @@ class RuntimeHostService:
         except ValidationError as exc:
             raise RuntimeHostError("runtime_failure_reason_invalid") from exc
         return IntakeService(self.workspace).fail_invocation(request)
+
+    def validate_invocation(
+        self,
+        invocation_id: str,
+        *,
+        expected_envelope: RoleTaskEnvelope | None = None,
+    ) -> RuntimeProposalValidationResult:
+        """Validate exact invocation outputs without writing Store state."""
+
+        envelope = read_role_envelope(self.workspace, invocation_id)
+        if expected_envelope is not None and expected_envelope != envelope:
+            raise RuntimeHostError("runtime_envelope_invalid")
+        spec = _ROLE_OUTPUTS.get(envelope.role_id)
+        if spec is None:
+            raise RuntimeHostError("runtime_envelope_invalid")
+        current = initialize_or_open_runtime(
+            self.workspace,
+            adapter_loader=self._adapter_loader,
+        )
+        self._validate_envelope(current, envelope, spec)
+        invocation = next(
+            (
+                item
+                for item in current.verified.snapshot.invocations
+                if item.invocation_id == invocation_id
+            ),
+            None,
+        )
+        if invocation is None or invocation.status not in {"active", "completed"}:
+            raise RuntimeHostError("runtime_envelope_invalid")
+        host_files = (
+            ("submit_request.json",) if invocation.status == "completed" else ()
+        )
+        try:
+            outputs = read_role_outputs(
+                self.workspace,
+                envelope,
+                host_filenames=host_files,
+            )
+        except RuntimeHostError as exc:
+            code = str(exc)
+            if code not in {"runtime_proposal_missing", "runtime_scratch_invalid"}:
+                raise
+            return self._proposal_validation_result(
+                envelope,
+                spec,
+                reason_code=code,
+                violations=[],
+            )
+        violations = _strict_proposal_violations(
+            spec,
+            outputs,
+            expected_run_id=envelope.run_id,
+        )
+        return self._proposal_validation_result(
+            envelope,
+            spec,
+            reason_code=("runtime_proposal_invalid" if violations else None),
+            violations=violations,
+        )
+
+    @staticmethod
+    def _proposal_validation_result(
+        envelope: RoleTaskEnvelope,
+        spec: _RoleOutputSpec,
+        *,
+        reason_code: str | None,
+        violations: list[FieldViolation],
+    ) -> RuntimeProposalValidationResult:
+        return RuntimeProposalValidationResult.model_validate(
+            {
+                "schema_version": RuntimeProposalValidationResult.schema_id,
+                "run_id": envelope.run_id,
+                "invocation_id": envelope.invocation_id,
+                "proposal_schema_id": envelope.proposal_schema_id,
+                "status": "invalid" if reason_code is not None else "valid",
+                "reason_code": reason_code,
+                "checked_filenames": sorted(spec.filenames),
+                "violations": [
+                    {"field": item.field, "reason": item.error}
+                    for item in violations
+                ],
+            },
+            strict=True,
+        )
 
     def accept_invocation(
         self,
@@ -697,17 +847,11 @@ class RuntimeHostService:
         )
         scratch = f"scratch/{envelope.invocation_id}"
         if spec.proposal_model is not None:
-            proposal_name = (
-                "source_proposal.json"
-                if spec.owner_kind == "source"
-                else spec.filenames[0]
-            )
-            try:
-                parsed = parse_json_object(outputs[proposal_name])
-                proposal = spec.proposal_model.model_validate(parsed, strict=True)
-            except (IntakeError, ValidationError, ValueError) as exc:
-                raise RuntimeHostError("runtime_proposal_invalid") from exc
-            if getattr(proposal, "run_id", None) != envelope.run_id:
+            if _strict_proposal_violations(
+                spec,
+                outputs,
+                expected_run_id=envelope.run_id,
+            ):
                 raise RuntimeHostError("runtime_proposal_invalid")
         if spec.owner_kind == "source":
             return (
@@ -846,6 +990,15 @@ class RuntimeHostService:
             result = self._apply_artifact_supersede(current, action, action_input)
         elif action_input is not None:
             raise RuntimeHostError("runtime_action_input_invalid")
+        elif action.effect_kind == "invocation_accept_or_fail":
+            active = [
+                item
+                for item in current.verified.snapshot.invocations
+                if item.status == "active"
+            ]
+            if len(active) != 1:
+                raise RuntimeHostError("control_store_integrity_invalid")
+            result = self.accept_invocation(active[0].invocation_id)
         elif action.effect_kind == "doctor_check":
             request = IntegrityCheckRequest.model_validate(
                 {

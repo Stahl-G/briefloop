@@ -202,6 +202,28 @@ class RuntimeInvocationResult(StrictModel):
     next_action: CoreRunNextAction
 
 
+class RuntimeProposalViolation(StrictModel):
+    """One value-free proposal preflight failure."""
+
+    field: CleanText
+    reason: CleanText
+
+
+class RuntimeProposalValidationResult(StrictModel):
+    """Read-only validation of the current invocation scratch proposal."""
+
+    schema_id = "briefloop.runtime_proposal_validation_result.v2"
+
+    schema_version: Literal["briefloop.runtime_proposal_validation_result.v2"]
+    run_id: ContractId
+    invocation_id: ContractId
+    proposal_schema_id: ContractId
+    status: Literal["valid", "invalid"]
+    reason_code: ContractId | None = None
+    checked_filenames: list[ContractId]
+    violations: list[RuntimeProposalViolation]
+
+
 class RepairContentInput(StrictModel):
     """Non-authoritative bytes locator for one deterministic repair effect."""
 
@@ -222,4 +244,6 @@ __all__ = [
     "RepairContentInput",
     "RuntimeDiagnoseReport",
     "RuntimeInvocationResult",
+    "RuntimeProposalValidationResult",
+    "RuntimeProposalViolation",
 ]
