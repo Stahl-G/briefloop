@@ -134,11 +134,11 @@ Think of BriefLoop as a briefing pipeline with ledgers.
 | 3. Draft by roles | Scout, Analyst, Editor, Auditor, and related roles work within boundaries | Writing becomes staged work, not one giant prompt |
 | 4. Run gates | Quality gates check source age, new facts, missing support, and delivery state | Deterministic checks do not rely on prompt memory |
 | 5. Deliver by human action | Final delivery is explicitly triggered by a human | The system does not publish or bypass review |
-| 6. Keep approved feedback | Only human-approved reader preferences are reused | “Do this next time” becomes visible and reversible |
+| 6. Inspect the audit trail | Accepted actions leave SQLite receipts; JSON, Markdown, and HTML views remain replaceable projections | Reviewability does not create a second runtime authority |
 
 The design rule is simple:
 
-> Smart parts may write and propose. Authoritative parts must be checkable. Nothing takes effect without a human decision.
+> Agents may write and propose. Deterministic services accept authoritative effects, and delivery remains human-triggered.
 
 ---
 
@@ -146,12 +146,14 @@ The design rule is simple:
 
 | Question | What BriefLoop records | Where to look |
 |---|---|---|
-| Where is this run? | Current stage, missing artifacts, blockers, next safe action | `/briefloop status`, `workflow_state.json`, `agent_handoff.md` |
+| Where is this run? | Current Store revision, stage, blockers, and next safe action | `briefloop status`, `briefloop runtime next`, SQLite ControlStore receipts |
 | Where did each number come from? | Claim Ledger entries, source dates, source appendix, gate findings | `claim_ledger.json`, `source_appendix.md`, `quality_gate_report.json` |
-| What has it learned? | Human-approved reader preferences only | `improvement/ledger.jsonl`, `improvement_memory_snapshot.md` |
-| What guards delivery? | Stage-completion records, reader-final gate, delivery checks | `finalize_report.json`, `state finalize-complete` |
+| What took effect? | Accepted strict requests, transaction receipts, and invocation lineage | `briefloop.db` through supported status and runtime views |
+| What guards delivery? | Store-backed gate evaluations, package readiness, and explicit human approval | Receipt-backed runtime actions and read-only status projections |
 
-It can observe and propose. Only what you approve is remembered, and it is remembered in a ledger you can open, audit, and undo.
+Agents can observe and propose. Only strict requests accepted by deterministic
+services change the Store, and delivery stays human-controlled. A Store-native
+reusable-guidance or Improvement Ledger surface is not shipped yet.
 
 ---
 
@@ -162,15 +164,18 @@ A normal delivered brief is usually:
 - `output/delivery/brief.md`
 - `output/delivery/<report-name>.docx`
 
-The workflow also keeps audit artifacts, such as:
+The SQLite ControlStore is the sole runtime authority for a fresh Codex run,
+stored in the workspace-local `briefloop.db`. Depending on the run stage,
+BriefLoop may also write replaceable audit and reader projections such as:
 
 - `output/intermediate/claim_ledger.json`
 - `output/source_appendix.md`
 - `output/intermediate/quality_gate_report.json`
-- `event_log.jsonl`
-- `improvement/ledger.jsonl`
+- `output/intermediate/quality_panel.html`
 
-Those audit files are not meant to be read by every end user. They exist so a team can answer questions, debug failures, review decisions, and hand the process to someone else.
+Those projections are not meant to be read by every end user, and they are not
+read back as runtime legality. They help a team answer questions, debug
+failures, review decisions, and hand the process to someone else.
 
 ---
 
@@ -454,8 +459,8 @@ The goal is not to remove human judgment. The goal is to let humans spend more t
 | Claim Ledger | A record of important claims, numbers, sources, and dates |
 | Source Pack | The set of materials available to a run |
 | Quality Gate | A check that must pass before a stage or delivery can proceed |
-| Reader Preference | Human-approved guidance such as “lead with business impact” |
-| Improvement Ledger | The record of approved feedback |
+| ControlStore | The authoritative SQLite state for a fresh Codex run |
+| Transaction Receipt | A deterministic record of an accepted Store action |
 | Orchestrator / 司乐师 | The runtime role that coordinates stages and boundaries |
 | Delivery Bundle | The Markdown / Word files meant for readers |
 | Audit Artifacts | Intermediate records used for review, debugging, and accountability |
