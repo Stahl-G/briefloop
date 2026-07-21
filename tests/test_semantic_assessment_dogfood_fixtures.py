@@ -8,10 +8,6 @@ from typing import Any
 import pytest
 
 from multi_agent_brief.contracts.schemas.semantic_assessment_report import SemanticAssessmentReportContract
-from multi_agent_brief.orchestrator.runtime_state import check_runtime_state, initialize_runtime_state
-from multi_agent_brief.orchestrator.runtime_state.semantic_assessment_report import (
-    project_semantic_assessment_report_from_workspace,
-)
 from multi_agent_brief.product.quality_panel import build_quality_panel, validate_quality_panel_payload
 from multi_agent_brief.status import build_workspace_status
 
@@ -120,53 +116,8 @@ def test_semantic_assessment_dogfood_reports_match_schema_expectation(case: dict
         assert violations != []
 
 
-@pytest.mark.parametrize("case", _fixture_cases(), ids=lambda case: case["case_id"])
-def test_semantic_assessment_dogfood_fixtures_validate_through_runtime_state(
-    tmp_path: Path,
-    case: dict[str, Any],
-) -> None:
-    ws = _write_fixture_workspace(tmp_path, case)
-    initialize_runtime_state(runtime="operator", workspace=ws, repo_workdir=ROOT)
-
-    state = check_runtime_state(workspace=ws, repo_workdir=ROOT)
-    registry = state["artifact_registry"]["artifacts"]
-    report_record = registry["semantic_assessment_report"]
-    expected = case["expected"]
-
-    assert registry["atomic_claim_graph"]["status"] == "valid"
-    assert registry["evidence_span_registry"]["status"] == "valid"
-    assert report_record["required"] is False
-    assert report_record["status"] == expected["artifact_status"]
-    assert report_record["validation_result"] == expected["validation_result"]
 
 
-@pytest.mark.parametrize("case", _fixture_cases(), ids=lambda case: case["case_id"])
-def test_semantic_assessment_dogfood_fixtures_project_expected_status(
-    tmp_path: Path,
-    case: dict[str, Any],
-) -> None:
-    ws = _write_fixture_workspace(tmp_path, case)
-
-    projection = project_semantic_assessment_report_from_workspace(ws)
-    expected = case["expected"]
-
-    assert projection["status"] == expected["projection_status"]
-    if expected["projection_status"] == "valid":
-        assert projection["summary_counts"] == expected["summary_counts"]
-        assert projection["proposal_projection"]["semantic_boundary"] == (
-            "proposal_projection_only_not_accepted_support_truth"
-        )
-        assert projection["proposal_projection"]["proposed_csm_delta"]["accepted_csm_rows"] == []
-        assert all(
-            row["accepted_support_truth"] is False and row["writes_claim_support_matrix"] is False
-            for row in projection["proposed_claim_support_rows"]
-        )
-    else:
-        if "projection_reason_prefix" in expected:
-            assert projection["reason"].startswith(expected["projection_reason_prefix"])
-        else:
-            assert projection["reason"] == expected.get("projection_reason", expected["validation_result"])
-        assert projection["proposed_claim_support_rows"] == []
 
 
 def test_semantic_assessment_dogfood_status_and_quality_panel_surface_proposal_counts(

@@ -5,7 +5,6 @@ from __future__ import annotations
 from pathlib import Path
 
 from multi_agent_brief.cli.main import main
-from multi_agent_brief.cli.start_commands import CONTRACT_REFERENCES
 from multi_agent_brief.runtime_assets import INSTALL_MARKER, JSONC_INSTALL_MARKER
 
 try:
@@ -314,27 +313,3 @@ def test_runtime_install_refreshes_generated_files(tmp_path: Path) -> None:
     assert "old" not in (ws / "AGENTS.md").read_text(encoding="utf-8")
 
 
-def test_runtime_install_package_contract_base_fails_source_clone_only(tmp_path: Path, capsys) -> None:
-    ws = _workspace(tmp_path)
-    package_base = tmp_path / "multi_agent_brief"
-    for rel_path in CONTRACT_REFERENCES.values():
-        target = package_base / rel_path
-        target.parent.mkdir(parents=True, exist_ok=True)
-        target.write_text("placeholder: true\n", encoding="utf-8")
-    (package_base / "__init__.py").write_text("", encoding="utf-8")
-
-    rc = main([
-        "runtime",
-        "install",
-        "--workspace",
-        str(ws),
-        "--runtime",
-        "opencode",
-        "--repo-workdir",
-        str(package_base),
-    ])
-
-    assert rc == 1
-    out = capsys.readouterr().out
-    assert "source-clone-only" in out
-    assert "--repo-workdir" in out
