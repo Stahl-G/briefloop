@@ -96,6 +96,8 @@ REQUIRED_DOC_BOUNDARY_PHRASES = {
         "Codex",
         "GPT-5.6",
         "Judge quickstart",
+        "SQLite ControlStore is the sole runtime authority",
+        "Improvement Ledger surface is not shipped yet",
     ],
     "README_en.md": [
         "English README has moved to [README.md](README.md).",
@@ -118,6 +120,8 @@ REQUIRED_DOC_BOUNDARY_PHRASES = {
         "Codex",
         "GPT-5.6",
         "评委快速试用",
+        "briefloop.db` 是唯一运行时权威",
+        "当前尚未交付 Store-native 的可复用 guidance 或 Improvement Ledger",
     ],
     "docs/roadmap.md": [
         "v0.11.0 — Stable Weekly/Monthly Brief Product",
@@ -288,6 +292,27 @@ README_FIRST_SCREEN_FORBIDDEN_LINKS = [
     "docs/architecture-status.md",
     "docs/roadmap.md",
 ]
+README_RETIRED_CURRENT_SURFACE_TERMS = {
+    "README.md": (
+        "workflow_state.json",
+        "agent_handoff.md",
+        "improvement/ledger.jsonl",
+        "improvement_memory_snapshot.md",
+        "finalize_report.json",
+        "state finalize-complete",
+    ),
+    "README.zh-CN.md": (
+        "workflow_state.json",
+        "agent_handoff.md",
+        "improvement/ledger.jsonl",
+        "improvement_memory_snapshot.md",
+        "finalize_report.json",
+        "state finalize-complete",
+        "## 🤖 Claude Code 路径",
+        "/briefloop feedback <workspace>",
+        "/briefloop deliver <workspace>",
+    ),
+}
 README_FIRST_USER_DOC_BLOCKS = {
     "README.md": ("First-user path:", "Architecture reference and contributor docs:"),
     "README.zh-CN.md": ("## 🗂️ 文档入口", "架构参考和贡献者文档："),
@@ -876,6 +901,16 @@ def _check_cli_and_docs_boundaries(checks: list[dict[str, str]]) -> None:
             public_overclaims.extend(
                 _public_overclaim_findings(rel_path, path.read_text(encoding="utf-8"))
             )
+
+    for rel_path, forbidden_terms in README_RETIRED_CURRENT_SURFACE_TERMS.items():
+        text = (ROOT / rel_path).read_text(encoding="utf-8")
+        present = [term for term in forbidden_terms if term in text]
+        _append_check(
+            checks,
+            f"docs.{rel_path}.retired_current_surfaces",
+            not present,
+            f"retired current-capability terms present={present}",
+        )
 
     readme_en_text = (ROOT / "README_en.md").read_text(encoding="utf-8")
     _append_check(
