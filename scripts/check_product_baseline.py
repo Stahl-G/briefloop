@@ -129,7 +129,7 @@ REQUIRED_DOC_BOUNDARY_PHRASES = {
     ],
     "docs/features.md": [
         "Current product baseline:",
-        "v0.12.1 supported baseline entries",
+        "v0.13.0 supported baseline entries",
         "industry-weekly",
         "management-monthly",
         "document-review",
@@ -138,7 +138,7 @@ REQUIRED_DOC_BOUNDARY_PHRASES = {
     ],
     "docs/features.zh-CN.md": [
         "当前产品基线",
-        "v0.12.1 支持的 baseline 入口",
+        "v0.13.0 支持的 baseline 入口",
         "industry-weekly",
         "management-monthly",
         "document-review",

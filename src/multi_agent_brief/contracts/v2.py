@@ -3804,7 +3804,7 @@ _RUNTIME_ADAPTER_BINDING = {
     "runtime": "operator",
     "adapter_id": "briefloop-operator-controlstore",
     "adapter_version": "1",
-    "briefloop_version": "0.12.1",
+    "briefloop_version": "0.13.0",
     "control_protocol": "controlstore_v2",
     "action_protocol": "core_run_next_action_v2",
     "proposal_protocol": "pydantic_scratch_v2",

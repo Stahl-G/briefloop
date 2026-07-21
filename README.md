@@ -295,7 +295,7 @@ The demos use synthetic materials. They show the evidence chain and gate behavio
 
 ## 🧭 Current status
 
-Current version: **v0.12.1**
+Current version: **v0.13.0**
 
 Current main entrypoints:
 
@@ -310,16 +310,20 @@ Current main entrypoints:
   current-report-bound `laj.json` may be displayed read-only with
   `briefloop quality summarize --laj-view <laj.json>`
 
-v0.12.1 carries forward the v0.12.0 product baseline and adds:
+v0.13.0 makes the SQLite ControlStore the sole runtime authority:
 
-- an explicit WorkBuddy / CodeBuddy two-phase permission boundary: checked-in
-  role agents draft only handoff-assigned artifacts, while a command-capable
-  main session runs deterministic BriefLoop CLI transactions
-- the repo-local Northstar product-governance Skill, whose recommendations do
-  not become effective product or release decisions by themselves
-- bilingual Architecture Reference v0.4.0 reading editions bound to the
-  historical v0.11.12 snapshot; current status and support documents remain
-  authoritative for the live product
+- JSON-only workspaces are classified unsupported (no importer, no migration,
+  no dual read/write); the Codex runtime host (`briefloop run --workspace
+  <path> --runtime codex` followed by `briefloop runtime next`,
+  `invocation-start`, `invocation-accept|fail`, and `apply`) is the active
+  execution path, verified green on macOS and Windows without fail-fast
+- retired JSON/operator public commands fail closed with typed rejections
+  (`runtime_command_unsupported` / `legacy_workspace_unsupported`) and zero
+  writes; LEGACY-DELETE tier-1 removes their handler layer, six unreachable
+  modules, and three unreferenced scripts while the legacy JSON runtime-state
+  stack remains as declared internal debt tracked for LEGACY-DELETE-2
+- source discovery runs through the runtime-host route (`sources decide` is
+  retired by design); finalize and delivery run as typed Store actions
 
 The carried-forward v0.11 product-baseline, WorkBuddy adapter,
 operator-runtime, and semantic-support auditor hardening line includes:
