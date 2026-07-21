@@ -102,6 +102,37 @@ def test_strict_proposal_preflight_rejects_schema_valid_cross_run_binding() -> N
     ]
 
 
+def test_proposal_accept_request_starts_missing_dynamic_artifact_at_revision_zero(
+    tmp_path: Path,
+    capsys,
+) -> None:
+    workspace = _workspace(tmp_path)
+    assert main(["run", "--workspace", str(workspace), "--runtime", "codex"]) == 0
+    capsys.readouterr()
+    assert _apply_current(workspace, capsys) == 0
+    capsys.readouterr()
+    host = RuntimeHostService(
+        workspace,
+        adapter_loader=load_codex_adapter_binding,
+    )
+    dispatch = host.start_current_invocation()
+    payload = SchemaRegistry.example(
+        "briefloop.candidate_claims_proposal.v2",
+        "full",
+    )
+    payload["run_id"] = dispatch.envelope.run_id
+
+    request, lane = host._derive_acceptance_request(
+        dispatch.envelope,
+        _ROLE_OUTPUTS["scout"],
+        {"candidate_claims.json": json.dumps(payload).encode("utf-8")},
+    )
+
+    assert lane == "candidate"
+    assert request.artifact_id == "candidate_claims"
+    assert request.expected_artifact_revision == 0
+
+
 def _external_workspace(tmp_path: Path) -> Path:
     workspace = tmp_path / "external-workspace"
     values = iter(("external-codex-workspace", "external-codex-run"))
@@ -218,6 +249,7 @@ def test_codex_run_initializes_store_and_returns_exact_action(
     assert action["run_id"] == "RUN-codex-run"
     assert action["stage_id"] == "doctor"
     assert action["effect_kind"] == "doctor_check"
+
     with SQLiteControlStore.open(workspace / "briefloop.db") as store:
         assert store.current_revision == action["store_revision"]
         assert store.load_workspace_run_head().current_run_id == "RUN-codex-run"
