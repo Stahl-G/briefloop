@@ -7,6 +7,8 @@ import uuid
 from pathlib import Path
 from typing import Any
 
+# EVENT_TYPES is owned by the DTO contract layer (LD2-2b relocation).
+from multi_agent_brief.contracts.v2 import EVENT_TYPES
 from multi_agent_brief.orchestrator.run_integrity import (
     workflow_with_persistable_run_integrity as _workflow_with_persistable_run_integrity,
 )
@@ -35,63 +37,6 @@ from multi_agent_brief.orchestrator.runtime_state.workflow import WORKFLOW_STATE
 
 EVENT_LOG_SCHEMA = "multi-agent-brief-event-log/v1"
 
-EVENT_TYPES = {
-    "run_initialized",
-    "handoff_written",
-    "artifact_observed",
-    "artifact_validated",
-    "stage_status_changed",
-    "stage_satisfied_by_topology",
-    "decision_recorded",
-    "feedback_issue_created",
-    "feedback_issue_planned",
-    "feedback_issue_resolved",
-    "repair_plan_created",
-    "repair_plan_completed",
-    "repair_started",
-    "repair_completed",
-    "repair_stage_superseded",
-    "quality_gate_checked",
-    "quality_gate_blocked",
-    "quality_gate_passed",
-    "provenance_graph_built",
-    "provenance_graph_validated",
-    "provenance_graph_invalid",
-    "audience_profile_snapshot_created",
-    "control_switchboard_built",
-    "control_switchboard_warning",
-    "control_selection_recorded",
-    "control_selection_validated",
-    "improvement_proposed",
-    "improvement_approved",
-    "improvement_rejected",
-    "improvement_reverted",
-    "improvement_memory_snapshot_created",
-    "delivery_attempted",
-    "delivery_bundle_prepared",
-    "delivery_draft_created",
-    "delivery_succeeded",
-    "delivery_failed",
-    "human_approval_ledger_initialized",
-    "human_approval_recorded",
-    "release_readiness_checked",
-    "fact_layer_imported",
-    "claim_ledger_frozen",
-    "claim_ledger_metadata_enriched",
-    "trajectory_decision_narrowed",
-    "run_archived",
-    "run_blocked",
-    "run_integrity_contaminated",
-    "run_reset",
-    "semantic_assessment_checked_inputs_bound",
-    "semantic_support_finding_adjudicated",
-    "source_evidence_committed",
-    "role_proposal_committed",
-    "intake_rejected",
-    "role_invocation_started",
-    "owned_artifact_accepted",
-    "audit_proposal_promoted",
-}
 
 ACTORS = {"cli", "orchestrator", "runtime", "system"}
 

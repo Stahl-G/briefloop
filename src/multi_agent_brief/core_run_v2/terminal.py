@@ -45,7 +45,7 @@ from multi_agent_brief.control_store.serialization import (
 from multi_agent_brief.intake_v2.errors import IntakeError
 from multi_agent_brief.intake_v2.scratch import ScratchReader, parse_json_object
 from multi_agent_brief.control_store.sqlite_store import ControlStoreSnapshot
-from multi_agent_brief.product.release_approval import RELEASE_MODES
+from multi_agent_brief.contracts.v2 import RELEASE_MODES
 
 from .errors import CoreRunError
 from .recovery import CoreEffect
@@ -940,7 +940,7 @@ class CoreRunTerminalService:
         return store, (verifier, verified), fingerprint, None
 
     def _record_internal_approval(self, request: InternalApprovalRequest):
-        from multi_agent_brief.product.release_approval import APPROVAL_BOUNDARY
+        from multi_agent_brief.contracts.v2 import APPROVAL_BOUNDARY
 
         from .checkout import prepare_checkout_effect, stage_checkout_effect
         from .errors import CoreRunResult
