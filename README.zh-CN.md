@@ -321,35 +321,38 @@ demo 用的是合成材料，主要用来展示证据链和门禁行为。真实
 
 ## 🧭 当前状态
 
-当前版本：**v0.13.0**
+当前版本：**v0.14.0**
 
 当前主要入口：
 
 - CLI：`briefloop`
-- Claude command：`/briefloop`
-- 实验性 WorkBuddy 指南：[docs/workbuddy.zh-CN.md](docs/workbuddy.zh-CN.md)
+- Experimental SQLite-only Codex runtime：`briefloop run --workspace <path>
+  --runtime codex`，随后使用 `briefloop runtime next`、
+  `invocation-start`、`invocation-accept|fail` 和 `apply`
+- Experimental 一次性网页初始化：`briefloop init <path> --web`
+- 只读三页报告视图：`briefloop quality html --workspace <path> [--open]`
 - 实验性 offline-shadow LAJ：`briefloop experiments laj shadow-run` 与
   `briefloop experiments laj present`；仅用于公开/合成材料的 advisory 评估及
   独立 JSON/Markdown/HTML 展示；也可通过
   `briefloop quality summarize --laj-view <laj.json>` 只读展示显式提供且与当前
   报告绑定的 `laj.json`
 
-v0.13.0 使 SQLite ControlStore 成为唯一运行时权威：
+v0.14.0 完成 SQLite-only 切换，并增加只读交互面：
 
-- JSON-only workspace 一律不受支持（无导入器、无迁移、无回退）；Codex
-  runtime host（`briefloop run --workspace <path> --runtime codex`，随后
-  `briefloop runtime next`、`invocation-start`、`invocation-accept|fail`
-  和 `apply`）是现行执行路径，已在 macOS 与 Windows 上非 fail-fast 验证全绿
-- 已退役的 JSON/operator 公共命令一律 fail-closed，返回 typed rejection
-  （`runtime_command_unsupported` / `legacy_workspace_unsupported`）且零写入；
-  LEGACY-DELETE tier-1 移除了它们的 handler 层、6 个不可达模块和 3 个无引用
-  脚本；legacy JSON runtime-state 栈作为已声明内部债务保留，由
-  LEGACY-DELETE-2 跟进
-- 来源发现经 runtime-host 路由进行（`sources decide` 按设计退役）；finalize
-  与 delivery 以 typed Store action 执行
+- SQLite ControlStore（`briefloop.db`）、已接受的 strict request、Receipt 与
+  ledger relation 是唯一运行时权威。JSON-only workspace 不受支持；没有导入、
+  迁移、dual read/write 或 fallback。
+- legacy JSON runtime-state 栈及其 dead consumer 已删除。legacy control file
+  与 report/status/Quality Panel export 都是非权威投影；strict action、envelope
+  和 human-request JSON payload 必须由 Store 重验，本身不是权威。
+- 打包的 Codex Skill 只执行 Store 派生的精确下一动作与 Receipt-backed
+  invocation，不回退到 `operator` 或其他 runtime。
+- loopback init wizard 与三页 HTML 都是只读交互面。LAJ 仍为 Experimental，
+  效用 NOT MEASURED；Improvement Ledger 页面如实显示 unavailable，不能把
+  guidance 写入下一 run。
+- v0.14 工程改动由 Codex 实现和测试；人类维护者授权合并与发布。
 
-延续的 v0.11 产品基线、WorkBuddy adapter、operator runtime 和
-semantic-support auditor hardening line 包括：
+延续的受支持报告工具与 advisory quality surface 包括：
 
 - `ReportSpec`、`ReportPack`、`ReportTemplate` 和 `PolicyProfile` contract
 - workspace skeleton 和确定性的 PolicyProfile 解析
@@ -370,11 +373,6 @@ semantic-support auditor hardening line 包括：
   coverage/omission 和 scoped final-abstract diagnostics
 - repeated retry / repair / blocker loop 的 trajectory-regulation decision
   narrowing
-- 实验性的 source-clone WorkBuddy Skill packaging 和 first-use routing
-- 实验性的 source-clone CodeBuddy project Skill 与 role-agent handoff，通过
-  `--runtime codebuddy` 使用
-- 用于 host-agnostic compact operation 的 `operator` runtime；历史 `manual`
-  manifest 仅可读，必须显式 reset 到 canonical runtime 才能继续
 - proposal-only Semantic Support Auditor surface 和 human adjudication record；
   这些记录不创建 support truth、gate、delivery approval 或 release authority
 - 公开安全的 reference、synthetic regression、minimal comparative evaluation、

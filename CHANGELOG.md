@@ -5,7 +5,31 @@ All notable changes to the multi-agent-brief-workflow project will be documented
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [0.14.0] — 2026-07-22
+
+### Added
+
+- Added an Experimental one-shot loopback initialization wizard through
+  `briefloop init <workspace> --web`. It uses the same strict ControlStore
+  bootstrap path as terminal initialization and shows the real receipt.
+- Added `briefloop quality html --workspace <workspace>` for a self-contained,
+  read-only three-page HTML export covering quality status, optional LAJ
+  advisory findings, and the honest unavailable state of the Improvement
+  Ledger. The pages contain no workflow or write authority.
+- Rewrote the canonical and packaged Codex Skill around the SQLite-only
+  `CoreRunNextAction` protocol, Receipt-backed invocations, strict human
+  requests, and the distinction between `package_ready` and `delivered`.
+
+### Changed
+
+- Codex implemented and tested the v0.14 engineering changes in scoped
+  branches; human maintainers authorized merges and this release. Codex output
+  did not approve itself or create product, research, or delivery authority.
+- The SQLite ControlStore, accepted strict requests, Receipts, and ledger
+  relations are the sole runtime authority for new runs. Legacy control files
+  and report/status/Quality Panel exports are non-authoritative projections;
+  strict action, envelope, and human-request JSON payloads are revalidated
+  against the Store and are not authority by themselves.
 
 ### Removed
 
@@ -16,7 +40,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   or writer; existing workspace copies are inert. A Store-native Improvement
   Ledger is MU-2 work. The support matrix moves the row from Supported to
   Retired.
-- The v1.0 RC readiness release gate is retired: its scenario runner drove the
+- **Breaking (`fix!:`):** the v1.0 RC readiness release gate is retired: its
+  scenario runner drove the
   deleted legacy runtime-state stack, so the gate could not execute. The
   `release.sh` v1.0 branch and the release checklist now require only the
   pilot evidence gate, which is unaffected and still runs on every release
@@ -41,12 +66,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   Experimental) is retired with the stack; scorecard reproduction is
   satisfied by git history and run archives. The `experiments laj` advisory
   surface is unaffected.
+- **Breaking (`fix!:`):** the retired D1 status/Quality Panel fold-in keys
+  `guidance_manifestation` and `support_wording` are removed from the public
+  projection contract. No supported Store-native writer or reader consumes
+  them.
 - `status` legacy file projections that depended on the deleted stack
   (artifact-registry interpretation, claim-support-matrix,
   semantic-assessment-report, recovery, run-integrity, and timing sections)
   are removed from the read-only legacy projection; SQLite workspaces keep
   the full Store-native status projection.
-- The Quality Panel `semantic_support` section now reports a constant
+- **Breaking (`fix!:`):** the Quality Panel `semantic_support` section now
+  reports a constant
   `not_available`, because its only producer was the deleted status
   projection. On SQLite workspaces — the sole supported authority — it
   already did: the Store projection never carried that key, so there is no
