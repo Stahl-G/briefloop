@@ -34,6 +34,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   semantic-assessment-report, recovery, run-integrity, and timing sections)
   are removed from the read-only legacy projection; SQLite workspaces keep
   the full Store-native status projection.
+- The Quality Panel `semantic_support` section now reports a constant
+  `not_available`, because its only producer was the deleted status
+  projection. On SQLite workspaces — the sole supported authority — it
+  already did: the Store projection never carried that key, so there is no
+  capability loss on any supported surface. The section stays inert until a
+  Store-native producer lands. The `semantic_assessment_report.json` schema
+  and its reference validation are unaffected.
 
 ## [0.13.0] — 2026-07-20
 

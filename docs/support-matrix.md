@@ -44,7 +44,7 @@ validation unless that is stated separately.
 | Evidence Span Registry (`evidence_span_registry.json` schema, source-pack byte binding, archive projection, and Source Appendix trace view) | Experimental |
 | Durable Source Evidence Pack materialization (`sources materialize-pack`, `input/sources/*.json`, optional `source_evidence_pack_manifest.json` hash validation, and source taxonomy normalization) | Experimental |
 | Claim-Support Matrix (`claim_support_matrix.json` schema, cross-artifact validation, and gate/status projection from explicit support records) | Experimental |
-| Semantic Assessment Report (`semantic_assessment_report.json` schema, reference validation, proposal projection, status visibility, and optional human adjudication records in `semantic_support_acceptance_ledger.json`) | Experimental |
+| Semantic Assessment Report (`semantic_assessment_report.json` schema and reference validation) | Experimental; schema/contract only. The proposal projection, status visibility, and human adjudication records were deleted with the legacy stack in LD2-3. The Quality Panel `semantic_support` section reports a constant `not_available` until a Store-native producer lands — on SQLite workspaces it already did, since the Store projection never carried this key |
 | v0.11 product-facing workspace entries (`briefloop new industry-weekly`, `briefloop new management-monthly`, `briefloop new document-review`) mapped to canonical ReportPacks (`market_weekly`, `management_monthly`, `evidence_extract`) with local-first skeletons and control-spine defaults | Supported |
 | ReportSpec / ReportPack baseline contracts for the v0.11 product baseline (`report_spec.yaml`, packaged `market_weekly`, `management_monthly`, and `evidence_extract`, `packs list/show`, and `validate-report-spec`) | Supported |
 | Wider Product OS extensions: ReportTemplate / PolicyProfile registry, Citation Profile Split metadata, Reader Template Conformance warning projection, template renderer MVP, `solar-periodic` / `solar_industry_periodic`, SourceHub Lite setup, internal release-mode approval records, Quality Panel / Quality Summary / static HTML projection, Trajectory Regulation read-only projection, Materiality Selection diagnostic projection, `extract` source/scope registration, and `packs bundle` delivery/audit manifest projection | Experimental |
@@ -152,20 +152,22 @@ not consumed for support projection findings. This does not assess semantic
 support, create automatic support records, decide release eligibility, or prove
 truth.
 
-Semantic Assessment Report support is experimental in the v0.9.4 release.
-When present, `semantic_assessment_report.json` is validated as an optional
-proposal artifact; Python checks schema, assessor/row provenance,
-Claim Ledger / Atomic Claim Graph / Evidence Span Registry references, and
-high-materiality `llm_only` adjudication flags. Present valid reports can
-project proposal-only Claim-Support Matrix delta candidates and read-only status
-counts. Missing reports remain non-blocking, and invalid reports are not
-projected. Before human adjudication, `semantic-support bind` seals the report's
-checked-input metadata so later input drift is visible. Humans may then record
-accept/reject adjudication decisions for fresh, bound proposal rows through
-`semantic-support adjudicate`, which writes
-`semantic_support_acceptance_ledger.json` and an event-log record. These records
-do not by themselves create support truth, write the Claim-Support Matrix, route
-repair, gate delivery, decide release eligibility, or prove truth.
+Semantic Assessment Report support is experimental and, as of LD2-3, reduced to
+the schema and its reference validation. `semantic_assessment_report.json` is
+still validated as an optional proposal artifact — schema, assessor/row
+provenance, Claim Ledger / Atomic Claim Graph / Evidence Span Registry
+references, and high-materiality `llm_only` adjudication flags — but the
+projection layer that turned a valid report into status counts, proposal-only
+Claim-Support Matrix delta candidates, and the Quality Panel `semantic_support`
+section was deleted with the legacy runtime-state stack. That section now
+reports a constant `not_available`; on SQLite workspaces it already did, because
+the Store projection never carried this key. Missing reports remain
+non-blocking. The `semantic-support bind` / `adjudicate` commands and the
+`semantic_support_acceptance_ledger.json` records they wrote are retired with
+the stack. A Store-native producer would have to land before any of this
+projects again. None of this did, or was ever able to, create support truth,
+write the Claim-Support Matrix, route repair, gate delivery, decide release
+eligibility, or prove truth.
 
 ReportSpec / ReportPack baseline support is stable for the v0.11.0 product
 baseline target when used through the product-facing entries
