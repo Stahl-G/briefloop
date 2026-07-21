@@ -345,7 +345,7 @@ The demos use synthetic materials. They show the evidence chain and gate behavio
 
 ## 🧭 Current status
 
-Current version: **v0.13.0**
+Current version: **v0.14.0**
 
 Current main entrypoints:
 
@@ -353,30 +353,37 @@ Current main entrypoints:
 - Experimental SQLite-only Codex runtime: `briefloop run --workspace <path>
   --runtime codex`, followed by `briefloop runtime next`,
   `invocation-start`, `invocation-accept|fail`, and `apply`
-- experimental WorkBuddy / CodeBuddy guide: [docs/workbuddy.md](docs/workbuddy.md)
+- Experimental one-shot web initialization: `briefloop init <path> --web`
+- read-only three-page report view: `briefloop quality html --workspace <path>
+  [--open]`
 - experimental offline-shadow LAJ: `briefloop experiments laj shadow-run` and
   `briefloop experiments laj present` for public/synthetic advisory evaluation
   and standalone JSON/Markdown/HTML presentation; an explicitly supplied
   current-report-bound `laj.json` may be displayed read-only with
   `briefloop quality summarize --laj-view <laj.json>`
 
-v0.13.0 makes the SQLite ControlStore the sole runtime authority:
+v0.14.0 completes the SQLite-only cutover and adds read-only interaction
+surfaces:
 
-- JSON-only workspaces are classified unsupported (no importer, no migration,
-  no dual read/write); the Codex runtime host (`briefloop run --workspace
-  <path> --runtime codex` followed by `briefloop runtime next`,
-  `invocation-start`, `invocation-accept|fail`, and `apply`) is the active
-  execution path, verified green on macOS and Windows without fail-fast
-- retired JSON/operator public commands fail closed with typed rejections
-  (`runtime_command_unsupported` / `legacy_workspace_unsupported`) and zero
-  writes; LEGACY-DELETE tier-1 removes their handler layer, six unreachable
-  modules, and three unreferenced scripts while the legacy JSON runtime-state
-  stack remains as declared internal debt tracked for LEGACY-DELETE-2
-- source discovery runs through the runtime-host route (`sources decide` is
-  retired by design); finalize and delivery run as typed Store actions
+- SQLite ControlStore (`briefloop.db`), accepted strict requests, Receipts, and
+  ledger relations are the sole runtime authority. JSON-only workspaces are
+  unsupported, with no importer, migration, dual read/write, or fallback.
+- the legacy JSON runtime-state stack and its dead consumers are deleted;
+  legacy control files and report/status/Quality Panel exports are
+  non-authoritative projections. Strict action, envelope, and human-request
+  JSON payloads are revalidated against the Store and are not authority by
+  themselves.
+- the packaged Codex Skill follows the exact Store-derived next action and
+  Receipt-backed invocation protocol. It does not fall back to `operator` or
+  another runtime.
+- the loopback init wizard and three-page HTML are read-only interaction
+  surfaces. LAJ remains Experimental and NOT MEASURED; the Improvement Ledger
+  page reports unavailable and cannot write guidance into a later run.
+- the v0.14 engineering changes were implemented and tested with Codex. Human
+  maintainers authorized the merges and release.
 
-The carried-forward v0.11 product-baseline, WorkBuddy adapter,
-operator-runtime, and semantic-support auditor hardening line includes:
+The carried-forward supported report tooling and advisory quality surfaces
+include:
 
 - `ReportSpec`, `ReportPack`, `ReportTemplate`, and `PolicyProfile` contracts
 - workspace skeletons and deterministic PolicyProfile resolution
@@ -399,11 +406,6 @@ operator-runtime, and semantic-support auditor hardening line includes:
   coverage/omission, and scoped final-abstract diagnostics
 - trajectory-regulation decision narrowing for repeated retry/repair/blocker
   loops
-- experimental source-clone WorkBuddy Skill packaging and first-use routing
-- experimental source-clone CodeBuddy project Skill and role-agent handoff
-  through `--runtime codebuddy`
-- `operator` runtime for host-agnostic compact operation; historical `manual`
-  manifests are read-only and require an explicit reset to a canonical runtime
 - proposal-only Semantic Support Auditor surfaces and human adjudication records
   that do not create support truth, gates, delivery approval, or release
   authority
