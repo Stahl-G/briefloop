@@ -31,7 +31,7 @@ validation unless that is stated separately.
 |---|---|
 | Subagent workflow (default topology: Scout finds + screens; strict topology: independent Screener; Claim Ledger → Analyst → Delivery Editor → Auditor) | Supported |
 | Fresh SQLite-only Codex control path (`briefloop.db`, strict DTOs, UoW receipts, Store-derived `CoreRunNextAction`) | Experimental |
-| Atomic runtime source-pack intake (1–256 ordered members, one Invocation/UoW/Receipt, zero partial registration) | Experimental |
+| Manifest-bound atomic runtime source-pack intake (1–256 ordered members, stable source IDs/URLs/incident time, one Invocation/UoW/Receipt, zero partial registration) | Experimental |
 | Workspace-local Codex kit binding (config, Skill, reference, all role files; tamper/delete/extra/symlink fail closed) | Experimental |
 | Codex `single_session` topology (shared context, distinct Receipt-backed invocations, stage-separated self-review) | Experimental |
 | Legacy runtime handoff (`agent_handoff.md` + `agent_handoff.json`) | Deprecated; not an authority or new-run entrypoint |

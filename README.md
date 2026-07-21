@@ -257,7 +257,9 @@ briefloop run --workspace <workspace> --runtime codex
 
 When a run needs a frozen set of local materials, the runtime accepts one
 strict 1–256 member source-pack request and records all members atomically in a
-single SQLite Receipt. It never silently registers only the first file. The
+single SQLite Receipt. The request binds the frozen manifest hash and preserves
+its source IDs, canonical URLs, and incident `opened_at` metadata. It never
+silently registers only the first file. The
 workspace-local Codex kit is also hash-bound: edits, deletion, extra role files,
 or symlinks fail closed before runtime work continues.
 

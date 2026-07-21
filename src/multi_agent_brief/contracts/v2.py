@@ -591,11 +591,23 @@ class SourceProposal(StrictModel):
     content_media_type: MimeType
     raw_payload_sha256: Optional[Sha256] = None
     raw_payload_media_type: Optional[MimeType] = None
+    source_manifest_sha256: Optional[Sha256] = None
+    manifest_local_file: Optional[WorkspacePath] = None
+    document_kind: Optional[CleanText] = None
+    opened_at: Optional[IsoDateTime] = None
+    resolved_at: Optional[IsoDateTime] = None
 
     @model_validator(mode="after")
     def raw_payload_fields_are_paired(self) -> "SourceProposal":
         if (self.raw_payload_sha256 is None) != (self.raw_payload_media_type is None):
             raise ValueError("raw payload hash and media type must be paired")
+        if self.document_kind == "status_incident":
+            if self.opened_at is None or self.published_at is not None:
+                raise ValueError("status incident requires opened_at instead of published_at")
+        elif self.opened_at is not None or self.resolved_at is not None:
+            raise ValueError("incident timestamps require status_incident")
+        if self.resolved_at is not None and self.opened_at is None:
+            raise ValueError("resolved_at requires opened_at")
         return self
 
 
@@ -677,10 +689,20 @@ class SourcePackCommitRequest(StrictModel):
     run_id: ContractId
     invocation_id: ContractId
     members: list[SourcePackCommitMember] = Field(min_length=1, max_length=256)
+    manifest_path: Optional[WorkspacePath] = None
+    expected_manifest_sha256: Optional[Sha256] = None
     expected_store_revision: NonNegativeInt
 
     @model_validator(mode="after")
     def pack_is_ordered_unique_and_invocation_scoped(self) -> "SourcePackCommitRequest":
+        if (self.manifest_path is None) != (self.expected_manifest_sha256 is None):
+            raise ValueError("source pack manifest path and hash must be paired")
+        if self.manifest_path is not None:
+            expected_manifest = (
+                PurePosixPath("scratch") / self.invocation_id / "source_manifest.json"
+            )
+            if PurePosixPath(self.manifest_path) != expected_manifest:
+                raise ValueError("source pack manifest path must be invocation scoped")
         member_ids = [item.member_id for item in self.members]
         if member_ids != sorted(set(member_ids)):
             raise ValueError("source pack members must be sorted and unique")
@@ -833,6 +855,11 @@ class AcceptedSourceRecord(StrictModel):
     raw_payload_blob_path: Optional[WorkspacePath] = None
     raw_payload_artifact_id: Optional[ContractId] = None
     raw_payload_artifact_revision: Optional[Literal[1]] = None
+    source_manifest_sha256: Optional[Sha256] = None
+    manifest_local_file: Optional[WorkspacePath] = None
+    document_kind: Optional[CleanText] = None
+    opened_at: Optional[IsoDateTime] = None
+    resolved_at: Optional[IsoDateTime] = None
     claims_eligible: bool
     eligibility_reason: Literal[SOURCE_ELIGIBILITY_REASONS]
     invocation_id: ContractId
@@ -860,6 +887,13 @@ class AcceptedSourceRecord(StrictModel):
             self.eligibility_reason == "eligible_durable_source_content"
         ):
             raise ValueError("source eligibility reason does not match verdict")
+        if self.document_kind == "status_incident":
+            if self.opened_at is None or self.published_at is not None:
+                raise ValueError("status incident requires opened_at instead of published_at")
+        elif self.opened_at is not None or self.resolved_at is not None:
+            raise ValueError("incident timestamps require status_incident")
+        if self.resolved_at is not None and self.opened_at is None:
+            raise ValueError("resolved_at requires opened_at")
         return self
 
 

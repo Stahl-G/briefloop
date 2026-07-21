@@ -231,7 +231,8 @@ briefloop run --workspace <workspace> --runtime codex
 
 如需使用一组冻结的本地材料，runtime 接受一份包含 1–256 个成员的严格
 source-pack request，并在一个 SQLite Receipt 中原子登记全部成员，不会静默只取
-第一份文件。workspace 内的 Codex kit 也会被哈希绑定；修改、删除、增加角色文件
+第一份文件。request 同时绑定冻结 manifest 的哈希，并保留其中的 source ID、原始
+URL 与事件 `opened_at` 元数据。workspace 内的 Codex kit 也会被哈希绑定；修改、删除、增加角色文件
 或使用符号链接都会在继续运行前 fail closed。
 
 旧的 `briefloop sources decide` 仅作为退役命令名保留；SQLite Codex run 的来源

@@ -329,6 +329,15 @@ class IntakeService:
             SourcePackCommitRequest,
             self._read_request(SourcePackCommitRequest, request_path),
         )
+        manifest_bytes = (
+            None
+            if request.manifest_path is None
+            else self._reader.read(request.manifest_path)
+        )
+        if manifest_bytes is not None and (
+            request.expected_manifest_sha256 != sha256_hex(manifest_bytes)
+        ):
+            raise IntakeError("source_hash_mismatch")
         payloads: list[tuple[bytes, bytes, bytes | None]] = []
         fingerprint_members: list[dict[str, object]] = []
         for member in request.members:
@@ -354,6 +363,9 @@ class IntakeService:
             {
                 "lane": "source_pack",
                 "request": request.model_dump(mode="json", exclude_unset=False),
+                "manifest_sha256": (
+                    None if manifest_bytes is None else sha256_hex(manifest_bytes)
+                ),
                 "members": fingerprint_members,
             }
         )
@@ -386,6 +398,8 @@ class IntakeService:
                     self._parse_proposal(SourceProposal, proposal_bytes),
                 )
                 if proposal.run_id != request.run_id:
+                    raise IntakeError("proposal_contract_invalid")
+                if proposal.source_manifest_sha256 != request.expected_manifest_sha256:
                     raise IntakeError("proposal_contract_invalid")
                 raw_declared = proposal.raw_payload_sha256 is not None
                 if raw_declared != (raw_bytes is not None):
@@ -970,6 +984,11 @@ class IntakeService:
                     None if raw_bytes is None else raw_artifact_id
                 ),
                 "raw_payload_artifact_revision": (None if raw_bytes is None else 1),
+                "source_manifest_sha256": proposal.source_manifest_sha256,
+                "manifest_local_file": proposal.manifest_local_file,
+                "document_kind": proposal.document_kind,
+                "opened_at": proposal.opened_at,
+                "resolved_at": proposal.resolved_at,
                 "claims_eligible": claims_eligible,
                 "eligibility_reason": eligibility_reason,
                 "invocation_id": request.invocation_id,
@@ -1133,6 +1152,11 @@ class IntakeService:
                     "raw_payload_artifact_revision": (
                         None if item.raw_bytes is None else 1
                     ),
+                    "source_manifest_sha256": proposal.source_manifest_sha256,
+                    "manifest_local_file": proposal.manifest_local_file,
+                    "document_kind": proposal.document_kind,
+                    "opened_at": proposal.opened_at,
+                    "resolved_at": proposal.resolved_at,
                     "claims_eligible": item.claims_eligible,
                     "eligibility_reason": item.eligibility_reason,
                     "invocation_id": request.invocation_id,

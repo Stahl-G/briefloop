@@ -87,6 +87,7 @@ from multi_agent_brief.outputs.reader_projection import (
 )
 
 from .contracts import (
+    FrozenSourceManifestEntry,
     HumanSourceMaterialRequest,
     HumanSourcePackMember,
     HumanSourcePackRequest,
@@ -1086,6 +1087,8 @@ class RuntimeHostService:
             request_fingerprint,
         )
         contents: list[bytes] | None = None
+        manifest_bytes: bytes | None = None
+        manifest_entries: list[FrozenSourceManifestEntry] | None = None
         if submit_path.exists():
             try:
                 stored = SourcePackCommitRequest.model_validate(
@@ -1102,6 +1105,33 @@ class RuntimeHostService:
             if replay_only:
                 raise RuntimeHostError("runtime_action_stale")
             contents = [self._read_human_source_bytes(item) for item in request.members]
+            manifest_bytes = self._read_workspace_input_bytes(
+                request.manifest_path,
+                request.expected_manifest_sha256,
+                max_size=4 * 1024 * 1024,
+            )
+            manifest_entries = _frozen_manifest_entries(
+                manifest_bytes, request.manifest_schema_version
+            )
+            if [item.source_id for item in manifest_entries] != [
+                item.member_id for item in request.members
+            ]:
+                raise RuntimeHostError("runtime_human_request_invalid")
+            for member, entry in zip(
+                request.members, manifest_entries, strict=True
+            ):
+                if (
+                    member.expected_input_sha256 != entry.sha256
+                    or member.manifest_local_file != entry.local_file
+                    or member.title != entry.title
+                    or member.publisher != entry.publisher
+                    or member.published_at != entry.published_at
+                    or member.url != entry.url
+                    or member.document_kind != entry.document_kind
+                    or member.opened_at != entry.opened_at
+                    or member.resolved_at != entry.resolved_at
+                ):
+                    raise RuntimeHostError("runtime_human_request_invalid")
             if sum(len(item) for item in contents) > 256 * 1024 * 1024:
                 raise RuntimeHostError("runtime_human_request_invalid")
         dispatch = self._start_invocation_for_action(
@@ -1118,18 +1148,20 @@ class RuntimeHostService:
             if result.status == "commit_outcome_unknown":
                 result = intake.submit_source_pack(submit_relative)
             return self._source_pack_runtime_result(invocation_id, result)
-        if contents is None:  # pragma: no cover - guarded above
+        if (
+            contents is None
+            or manifest_bytes is None
+            or manifest_entries is None
+        ):  # pragma: no cover - guarded above
             raise RuntimeHostError("runtime_action_stale")
         commit_members: list[dict[str, object]] = []
         try:
-            for member, content in zip(request.members, contents, strict=True):
-                source_id = derived_id(
-                    "SRC-HUMAN-PACK",
-                    action.run_id,
-                    request.request_id,
-                    member.member_id,
-                    member.expected_input_sha256,
-                )
+            manifest_relative = f"scratch/{invocation_id}/source_manifest.json"
+            self._materialize_tool_input(manifest_relative, manifest_bytes)
+            for member, entry, content in zip(
+                request.members, manifest_entries, contents, strict=True
+            ):
+                source_id = entry.source_id
                 proposal = SourceProposal.model_validate(
                     {
                         "schema_version": SourceProposal.schema_id,
@@ -1144,19 +1176,24 @@ class RuntimeHostService:
                         "acquisition_method": "manual_upload",
                         "material_kind": "uploaded_file",
                         "provider": None,
-                        "locator": {"kind": "file", "path": member.input_path},
-                        "title": member.title,
-                        "publisher": member.publisher,
-                        "published_at": member.published_at,
+                        "locator": {"kind": "web", "url": entry.url},
+                        "title": entry.title,
+                        "publisher": entry.publisher,
+                        "published_at": entry.published_at,
                         "retrieved_at": member.retrieved_at,
                         "source_category": "other",
                         "retrieval_source_type": "local_file",
                         "underlying_evidence_type": "unknown",
-                        "raw_underlying_evidence_type": None,
+                        "raw_underlying_evidence_type": entry.document_kind,
                         "content_sha256": member.expected_input_sha256,
                         "content_media_type": member.content_media_type,
                         "raw_payload_sha256": None,
                         "raw_payload_media_type": None,
+                        "source_manifest_sha256": request.expected_manifest_sha256,
+                        "manifest_local_file": entry.local_file,
+                        "document_kind": entry.document_kind,
+                        "opened_at": entry.opened_at,
+                        "resolved_at": entry.resolved_at,
                     },
                     strict=True,
                 )
@@ -1185,6 +1222,8 @@ class RuntimeHostService:
                     "run_id": action.run_id,
                     "invocation_id": invocation_id,
                     "members": commit_members,
+                    "manifest_path": manifest_relative,
+                    "expected_manifest_sha256": request.expected_manifest_sha256,
                     "expected_store_revision": dispatch.envelope.store_revision,
                 },
                 strict=True,
@@ -1382,10 +1421,23 @@ class RuntimeHostService:
         self,
         request: HumanSourceMaterialRequest | HumanSourcePackMember,
     ) -> bytes:
-        candidate = self.workspace / request.input_path
+        return self._read_workspace_input_bytes(
+            request.input_path,
+            request.expected_input_sha256,
+            max_size=16 * 1024 * 1024,
+        )
+
+    def _read_workspace_input_bytes(
+        self,
+        input_path: str,
+        expected_sha256: str,
+        *,
+        max_size: int,
+    ) -> bytes:
+        candidate = self.workspace / input_path
         try:
             current = self.workspace
-            for part in Path(request.input_path).parts:
+            for part in Path(input_path).parts:
                 current = current / part
                 metadata = current.lstat()
                 if current.is_symlink():
@@ -1393,7 +1445,7 @@ class RuntimeHostService:
             if (
                 not stat.S_ISREG(metadata.st_mode)
                 or metadata.st_nlink != 1
-                or metadata.st_size > 16 * 1024 * 1024
+                or metadata.st_size > max_size
             ):
                 raise RuntimeHostError("runtime_human_request_invalid")
             descriptor = os.open(
@@ -1405,17 +1457,17 @@ class RuntimeHostService:
                 if (
                     (opened.st_dev, opened.st_ino) != (metadata.st_dev, metadata.st_ino)
                     or opened.st_nlink != 1
-                    or opened.st_size > 16 * 1024 * 1024
+                    or opened.st_size > max_size
                 ):
                     raise RuntimeHostError("runtime_human_request_invalid")
-                payload = os.read(descriptor, 16 * 1024 * 1024 + 1)
+                payload = os.read(descriptor, max_size + 1)
             finally:
                 os.close(descriptor)
         except RuntimeHostError:
             raise
         except OSError as exc:
             raise RuntimeHostError("runtime_human_request_invalid") from exc
-        if not payload or sha256_hex(payload) != request.expected_input_sha256:
+        if not payload or sha256_hex(payload) != expected_sha256:
             raise RuntimeHostError("runtime_human_request_invalid")
         return payload
 
@@ -2210,6 +2262,28 @@ class RuntimeHostService:
             payload,
             error_code="runtime_deterministic_input_invalid",
         )
+
+
+def _frozen_manifest_entries(
+    payload: bytes,
+    expected_schema_version: str,
+) -> list[FrozenSourceManifestEntry]:
+    try:
+        manifest = parse_json_object(payload)
+        if manifest.get("schema_version") != expected_schema_version:
+            raise ValueError
+        raw = manifest.get("sources")
+        if not isinstance(raw, list) or not 1 <= len(raw) <= 256:
+            raise ValueError
+        entries = [
+            FrozenSourceManifestEntry.model_validate(item, strict=True) for item in raw
+        ]
+        source_ids = [item.source_id for item in entries]
+        if source_ids != sorted(set(source_ids)):
+            raise ValueError
+        return entries
+    except (IntakeError, ValidationError, TypeError, ValueError) as exc:
+        raise RuntimeHostError("runtime_human_request_invalid") from exc
 
 
 __all__ = ["InvocationDispatch", "RuntimeHostService"]

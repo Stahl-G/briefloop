@@ -819,29 +819,72 @@ def test_deterministic_source_failure_exhausts_frozen_route_without_retry(
     action_path = _current_action_path(workspace, capsys)
     action = json.loads(action_path.read_text(encoding="utf-8"))
     request_path = workspace / "human-source-request.json"
+    manifest_path = workspace / "input" / "source_manifest.json"
+    manifest_payload = {
+        "schema_version": "example.source_manifest.v1",
+        "sources": [
+            {
+                "source_id": "SRC-001",
+                "title": "Human supplied source one",
+                "publisher": "Publisher One",
+                "published_at": "2026-07-18",
+                "url": "https://example.com/source-one",
+                "local_file": "documents/manual-source.txt",
+                "sha256": hashlib.sha256(content).hexdigest(),
+            },
+            {
+                "source_id": "SRC-002",
+                "title": "Human supplied incident source",
+                "publisher": "Publisher Two",
+                "document_kind": "status_incident",
+                "opened_at": "2026-07-17T18:32:00Z",
+                "resolved_at": "2026-07-17T19:43:00Z",
+                "url": "https://status.example.com/incidents/001",
+                "local_file": "documents/manual-source-2.txt",
+                "sha256": hashlib.sha256(second_content).hexdigest(),
+            },
+        ],
+    }
+    manifest_bytes = json.dumps(
+        manifest_payload, sort_keys=True, separators=(",", ":")
+    ).encode("utf-8")
+    manifest_path.write_bytes(manifest_bytes)
     request_payload = {
         "schema_version": "briefloop.runtime_human_source_pack_request.v2",
         "request_id": "REQ-HUMAN-SOURCE-PACK-001",
         "run_id": action["run_id"],
         "expected_store_revision": action["store_revision"],
+        "manifest_path": "input/source_manifest.json",
+        "manifest_schema_version": "example.source_manifest.v1",
+        "expected_manifest_sha256": hashlib.sha256(manifest_bytes).hexdigest(),
         "members": [
             {
-                "member_id": "MEMBER-0001",
+                "member_id": "SRC-001",
                 "input_path": "input/manual-source.txt",
+                "manifest_local_file": "documents/manual-source.txt",
                 "expected_input_sha256": hashlib.sha256(content).hexdigest(),
                 "title": "Human supplied source one",
-                "publisher": None,
-                "published_at": None,
+                "publisher": "Publisher One",
+                "published_at": "2026-07-18",
+                "url": "https://example.com/source-one",
+                "document_kind": None,
+                "opened_at": None,
+                "resolved_at": None,
                 "retrieved_at": "2026-07-19T00:00:00+00:00",
                 "content_media_type": "text/plain",
             },
             {
-                "member_id": "MEMBER-0002",
+                "member_id": "SRC-002",
                 "input_path": "input/manual-source-2.txt",
+                "manifest_local_file": "documents/manual-source-2.txt",
                 "expected_input_sha256": hashlib.sha256(second_content).hexdigest(),
-                "title": "Human supplied source two",
-                "publisher": None,
+                "title": "Human supplied incident source",
+                "publisher": "Publisher Two",
                 "published_at": None,
+                "url": "https://status.example.com/incidents/001",
+                "document_kind": "status_incident",
+                "opened_at": "2026-07-17T18:32:00Z",
+                "resolved_at": "2026-07-17T19:43:00Z",
                 "retrieved_at": "2026-07-19T00:00:00+00:00",
                 "content_media_type": "text/plain",
             },
@@ -885,6 +928,34 @@ def test_deterministic_source_failure_exhausts_frozen_route_without_retry(
     with SQLiteControlStore.open(workspace / "briefloop.db") as store:
         assert store.current_revision == before_bad_pack
         assert store.load_snapshot(action["run_id"]).sources == ()
+    manifest_path.write_bytes(manifest_bytes + b"\n")
+    request_path.write_text(
+        json.dumps(
+            {**request_payload, "request_id": "REQ-HUMAN-SOURCE-PACK-MANIFEST-BAD"},
+            sort_keys=True,
+        ),
+        encoding="utf-8",
+    )
+    assert (
+        main(
+            [
+                "runtime",
+                "apply",
+                "--workspace",
+                str(workspace),
+                "--action",
+                str(action_path),
+                "--human-request",
+                str(request_path),
+            ]
+        )
+        == 1
+    )
+    assert "runtime_human_request_invalid" in capsys.readouterr().out
+    with SQLiteControlStore.open(workspace / "briefloop.db") as store:
+        assert store.current_revision == before_bad_pack
+        assert store.load_snapshot(action["run_id"]).sources == ()
+    manifest_path.write_bytes(manifest_bytes)
     request_path.write_text(
         json.dumps(request_payload, sort_keys=True),
         encoding="utf-8",
@@ -911,10 +982,23 @@ def test_deterministic_source_failure_exhausts_frozen_route_without_retry(
         snapshot = store.load_snapshot(action["run_id"])
     assert len(snapshot.sources) == 2
     assert all(item.claims_eligible for item in snapshot.sources)
-    assert {item.locator.path for item in snapshot.sources} == {
-        "input/manual-source.txt",
-        "input/manual-source-2.txt",
+    assert [item.source_id for item in snapshot.sources] == ["SRC-001", "SRC-002"]
+    assert {str(item.locator.url) for item in snapshot.sources} == {
+        "https://example.com/source-one",
+        "https://status.example.com/incidents/001",
     }
+    assert all(
+        item.source_manifest_sha256 == hashlib.sha256(manifest_bytes).hexdigest()
+        for item in snapshot.sources
+    )
+    assert [item.manifest_local_file for item in snapshot.sources] == [
+        "documents/manual-source.txt",
+        "documents/manual-source-2.txt",
+    ]
+    incident = next(item for item in snapshot.sources if item.source_id == "SRC-002")
+    assert incident.document_kind == "status_incident"
+    assert incident.opened_at == "2026-07-17T18:32:00Z"
+    assert incident.resolved_at == "2026-07-17T19:43:00Z"
     receipt = snapshot.transactions[-1]
     assert len(receipt.source_ids) == 2
     assert accepted_manual["next_action"]["effect_kind"] == "stage_complete"

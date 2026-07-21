@@ -19,7 +19,9 @@ page describes implemented runtime capability, not a breaking deep rename.
   services own effects; agents write only invocation scratch proposals.
 - Runtime source intake accepts an ordered 1–256 member source pack. The host
   validates every member before mutation and registers the full pack through
-  one Invocation, one UoW, and one Receipt; partial pack commits are forbidden.
+  one Invocation, one UoW, and one Receipt. The same request hash-binds the
+  frozen manifest and preserves source IDs, URLs, and incident temporal
+  metadata; partial pack commits are forbidden.
 - The workspace-local Codex kit is execution input, not decoration: `run` and
   runtime commands verify its exact config, Skill, reference, and role-file
   inventory against the Store-bound adapter identity.

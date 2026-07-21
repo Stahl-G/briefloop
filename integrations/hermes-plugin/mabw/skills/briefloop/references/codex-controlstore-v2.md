@@ -137,12 +137,15 @@ briefloop runtime apply --workspace <workspace> \
 
 The human source request is
 `briefloop.runtime_human_source_pack_request.v2`: one ordered list of 1–256
-members, each with a workspace-relative input path, exact SHA-256, title,
-retrieval time, and media type. The host reads and validates the complete pack
-before starting its invocation, then commits every accepted source in one UoW
-and one Receipt. A missing, changed, duplicate, or invalid member rejects the
-whole pack with zero partial source registration. Do not submit the files one
-at a time when they are one frozen experimental/source pack.
+members plus the workspace-relative frozen source manifest and its exact
+SHA-256. Every member must exactly match the manifest source id, URL, title,
+publisher, content hash, and either `published_at` or the
+`status_incident/opened_at` temporal shape. The host validates the complete
+manifest and pack before starting its invocation, then commits every accepted
+source in one UoW and one Receipt. A missing, changed, duplicate, reordered, or
+mismatched member rejects the whole pack with zero partial source registration.
+Do not submit the files one at a time when they are one frozen
+experimental/source pack.
 
 Other current strict request families cover internal approval and delivery
 authorization/reconciliation. Do not guess Store revision, run id, hashes,
