@@ -227,13 +227,14 @@ def test_quality_panel_contract_is_optional_product_projection():
         panel = registry.artifact("quality_panel")
         summary = registry.artifact("quality_summary")
         html = registry.artifact("quality_panel_html")
-        guidance = registry.artifact("guidance_manifestation_report")
         finalize_stage = registry.stage("finalize")
         assert panel is not None
         assert summary is not None
         assert html is not None
-        assert guidance is not None
         assert finalize_stage is not None
+        # TD-1 (LD2-1 D1): the guidance_manifestation_report artifact contract
+        # retires with the fold-in machinery; its type must no longer register.
+        assert registry.artifact("guidance_manifestation_report") is None
         assert panel.required is False
         assert panel.producer_kind == "control_tool"
         assert panel.producer_stage == "quality-panel"
@@ -252,12 +253,6 @@ def test_quality_panel_contract_is_optional_product_projection():
         assert html.path == "output/intermediate/quality_panel.html"
         assert html.validation_result == "experimental_quality_panel_html"
         assert html.consumer_stages == ()
-        assert guidance.required is False
-        assert guidance.producer_kind == "control_tool"
-        assert guidance.producer_stage == "guidance-manifestation"
-        assert guidance.path == "output/intermediate/guidance_manifestation_report.json"
-        assert guidance.validation_result == "experimental_guidance_manifestation_report"
-        assert guidance.consumer_stages == ()
         assert "quality_panel" not in finalize_stage.produces
         assert "quality_panel" not in finalize_stage.expected_artifacts
         assert "quality_summary" not in finalize_stage.produces

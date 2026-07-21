@@ -78,9 +78,6 @@ from multi_agent_brief.product.quality_panel import (
     validate_quality_panel_payload,
     validate_quality_summary_markdown,
 )
-from multi_agent_brief.product.guidance_manifestation import (
-    validate_guidance_manifestation_report_payload,
-)
 from multi_agent_brief.provenance.contract import provenance_artifact_activated
 from multi_agent_brief.quality_gates.contract import quality_gate_artifact_activated
 
@@ -259,8 +256,6 @@ def _validate_artifact(
                 return _validate_release_readiness_report_payload(payload, artifact_path=path)
             if artifact_id == "quality_panel":
                 return _validate_quality_panel_payload(payload)
-            if artifact_id == "guidance_manifestation_report":
-                return _validate_guidance_manifestation_report_payload(payload, artifact_path=path)
         elif fmt in {"yaml", "yml"}:
             yaml.safe_load(text)
         elif fmt == "markdown":
@@ -1160,31 +1155,6 @@ def _validate_quality_panel_payload(payload: Any) -> tuple[str, str]:
     if reason:
         return ARTIFACT_INVALID, reason
     return ARTIFACT_VALID, "experimental_quality_panel"
-
-
-def _validate_guidance_manifestation_report_payload(payload: Any, *, artifact_path: Path) -> tuple[str, str]:
-    current_run_id = ""
-    manifest_path = artifact_path.with_name("runtime_manifest.json")
-    try:
-        manifest_payload = json.loads(manifest_path.read_text(encoding="utf-8"))
-    except (OSError, UnicodeDecodeError, json.JSONDecodeError):
-        manifest_payload = {}
-    if isinstance(manifest_payload, dict):
-        current_run_id = str(manifest_payload.get("run_id") or "").strip()
-    improvement = manifest_payload.get("improvement") if isinstance(manifest_payload, dict) else {}
-    materialized_entry_ids = (
-        [str(item).strip() for item in improvement.get("materialized_entry_ids") if str(item).strip()]
-        if isinstance(improvement, dict) and isinstance(improvement.get("materialized_entry_ids"), list)
-        else []
-    )
-    reason = validate_guidance_manifestation_report_payload(
-        payload,
-        current_run_id=current_run_id or None,
-        materialized_entry_ids=materialized_entry_ids,
-    )
-    if reason:
-        return ARTIFACT_INVALID, reason
-    return ARTIFACT_VALID, "experimental_guidance_manifestation_report"
 
 
 def _validate_quality_summary_markdown(text: str, *, artifact_path: Path) -> tuple[str, str]:

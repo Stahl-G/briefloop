@@ -653,46 +653,6 @@ cases:
           file: output/intermediate/workflow_state.json
           text: retry_budget_exhausted
 
-  - case_id: guidance_manifestation_not_observable
-    case_type: workspace
-    synthetic: true
-    description: Approved guidance manifestation can be reported as not observable without mutating memory or gates.
-    initial_stage: doctor
-    commands:
-      - action: guidance_manifestation.seed_report
-        args:
-          entry_id: AG-0001
-          status: not_observable
-      - action: state.check
-        args: {}
-      - action: status.show
-        args: {}
-    expected:
-      exit_code: 0
-      expected_actions:
-        - action: guidance_manifestation.seed_report
-          exit_code: 0
-        - action: state.check
-          exit_code: 0
-        - action: status.show
-          exit_code: 0
-          result_contains:
-            guidance_manifestation:
-              status: present
-              summary_counts:
-                not_observable_count: 1
-                materialized_entry_count: 1
-              python_judged_manifestation: false
-      artifacts_exist:
-        - output/intermediate/guidance_manifestation_report.json
-      artifact_statuses:
-        - artifact_id: guidance_manifestation_report
-          status: valid
-          validation_result_contains: experimental_guidance_manifestation_report
-      workflow_state:
-        current_stage: doctor
-        blocked: false
-
   - case_id: same_evidence_reader_quality_regression
     case_type: workspace
     synthetic: true
@@ -759,9 +719,6 @@ cases:
           text: materiality_selection
         - scope: workspace
           file: output/intermediate/quality_panel.json
-          text: support_wording
-        - scope: workspace
-          file: output/intermediate/quality_panel.json
           text: report_template_conformance
         - scope: workspace
           file: output/intermediate/quality_panel.json
@@ -772,9 +729,6 @@ cases:
         - scope: workspace
           file: output/intermediate/quality_summary.md
           text: "Reader template warnings:"
-        - scope: workspace
-          file: output/intermediate/quality_summary.md
-          text: "Support wording warnings:"
         - scope: workspace
           file: output/intermediate/quality_panel.html
           text: "Quality Panel"

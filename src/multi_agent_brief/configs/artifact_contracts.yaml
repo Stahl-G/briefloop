@@ -327,21 +327,6 @@ artifacts:
       - request_human_review
       - block_run
     retry_or_human_review_decision: request_human_review
-  - artifact_id: guidance_manifestation_report
-    path: output/intermediate/guidance_manifestation_report.json
-    format: json
-    required: false
-    producer_kind: control_tool
-    producer_stage: guidance-manifestation
-    producer_role: python_tool_or_human_import
-    consumer_stages: []
-    validation_result: experimental_guidance_manifestation_report
-    blocking_reason: ""
-    allowed_decisions:
-      - continue
-      - request_human_review
-      - block_run
-    retry_or_human_review_decision: request_human_review
   - artifact_id: audited_brief
     path: output/intermediate/audited_brief.md
     format: markdown
