@@ -6,6 +6,8 @@ from pathlib import Path
 
 import yaml
 
+from multi_agent_brief.cli.authority_guard import LEGACY_CONTROL_PATHS
+
 
 def sha256_file(path: Path) -> str:
     h = hashlib.sha256()
@@ -122,6 +124,30 @@ def write_minimal_workspace_under(base_path: Path, name: str = "ws", **kwargs: o
 
 def write_workspace_files_under(base_path: Path, name: str = "ws", **kwargs: object) -> Path:
     return write_workspace_files(base_path / name, **kwargs)
+
+
+def write_legacy_control_files(workspace: Path) -> Path:
+    """Materialize the legacy control surface `classify_workspace_authority` keys on.
+
+    Retired-surface probes assert that a legacy workspace is rejected with a typed
+    token and zero writes. Building that precondition used to go through the
+    runtime-state writers, which LD2-3 deletes; this seam writes the control files
+    directly instead.
+
+    Paths come from `LEGACY_CONTROL_PATHS` rather than literals so the fixture
+    follows the guard whenever the guard's paths change.
+
+    The workspace must not already carry `briefloop.db` -- SQLite authority is
+    classified first and would mask the legacy classification.
+    """
+
+    for relative in LEGACY_CONTROL_PATHS:
+        target = workspace / relative
+        target.parent.mkdir(parents=True, exist_ok=True)
+        # `.jsonl` records are newline-delimited, so an empty file is the
+        # minimal valid document; the rest are minimal valid JSON objects.
+        target.write_text("" if target.suffix == ".jsonl" else "{}\n", encoding="utf-8")
+    return workspace
 
 
 def initialized_workspace_writer(
