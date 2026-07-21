@@ -41,7 +41,7 @@ def apply_planned_writes(
 
     for write in writes:
         write.destination.parent.mkdir(parents=True, exist_ok=True)
-        write.destination.write_text(write.content, encoding="utf-8")
+        write.destination.write_text(write.content, encoding="utf-8", newline="")
         written.append(write.destination)
     return written
 
