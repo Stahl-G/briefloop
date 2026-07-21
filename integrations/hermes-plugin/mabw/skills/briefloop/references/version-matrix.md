@@ -2,11 +2,19 @@
 
 Skill contract version: `briefloop-operator-skill-v0.2.0`
 Written for: the v1.0 RC hardening line (post v0.11.12)
-Last verified against BriefLoop runtime: `v0.12.1`
+Last verified against BriefLoop runtime: `v0.13.0`
 BriefLoop is the only current project and product name.
 The former project acronym is retired. It is not a current project or
 implementation-lineage name; literal compatibility identifiers remain only
 where listed below.
+
+Since v0.13.0 the SQLite ControlStore is the sole runtime authority:
+JSON-only workspaces are unsupported, and the retired legacy public commands
+(gates/repair/state/finalize/operator runtime and the other retired CLI
+forms) fail closed with typed rejections and zero writes. Command-level
+references to those retired forms below describe the historical v1.0 RC
+contract shape; the live authority model and current support truth are
+`docs/support-matrix.md` and `docs/architecture-status.md`.
 
 This skill describes the v1.0 RC operating contract. Landed RC surfaces are
 authoritative now; the "Pending Before v1.0" section lists target behavior

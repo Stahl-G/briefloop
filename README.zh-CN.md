@@ -279,7 +279,7 @@ demo 用的是合成材料，主要用来展示证据链和门禁行为。真实
 
 ## 🧭 当前状态
 
-当前版本：**v0.12.1**
+当前版本：**v0.13.0**
 
 当前主要入口：
 
@@ -292,15 +292,19 @@ demo 用的是合成材料，主要用来展示证据链和门禁行为。真实
   `briefloop quality summarize --laj-view <laj.json>` 只读展示显式提供且与当前
   报告绑定的 `laj.json`
 
-v0.12.1 延续 v0.12.0 产品基线，并新增：
+v0.13.0 使 SQLite ControlStore 成为唯一运行时权威：
 
-- 明确的 WorkBuddy / CodeBuddy 两阶段权限边界：checked-in role agent 只起草
-  handoff 分配的 artifact，由具备命令能力的主会话运行确定性的 BriefLoop CLI
-  transaction
-- repo-local Northstar 产品治理 Skill；它的建议不会自行成为有效的产品或 release
-  决策
-- 绑定历史 v0.11.12 snapshot 的双语 Architecture Reference v0.4.0 阅读版；live
-  产品仍以当前 architecture status 和 support matrix 为准
+- JSON-only workspace 一律不受支持（无导入器、无迁移、无回退）；Codex
+  runtime host（`briefloop run --workspace <path> --runtime codex`，随后
+  `briefloop runtime next`、`invocation-start`、`invocation-accept|fail`
+  和 `apply`）是现行执行路径，已在 macOS 与 Windows 上非 fail-fast 验证全绿
+- 已退役的 JSON/operator 公共命令一律 fail-closed，返回 typed rejection
+  （`runtime_command_unsupported` / `legacy_workspace_unsupported`）且零写入；
+  LEGACY-DELETE tier-1 移除了它们的 handler 层、6 个不可达模块和 3 个无引用
+  脚本；legacy JSON runtime-state 栈作为已声明内部债务保留，由
+  LEGACY-DELETE-2 跟进
+- 来源发现经 runtime-host 路由进行（`sources decide` 按设计退役）；finalize
+  与 delivery 以 typed Store action 执行
 
 延续的 v0.11 产品基线、WorkBuddy adapter、operator runtime 和
 semantic-support auditor hardening line 包括：

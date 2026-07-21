@@ -12,7 +12,7 @@ Status labels:
 - **Experimental**: implemented but not yet a stable v0.11.0 contract.
 - **Roadmap**: planned or scoped, not an implemented capability.
 
-Current product baseline: **v0.12.1 supported baseline entries for
+Current product baseline: **v0.13.0 supported baseline entries for
 `industry-weekly`, `management-monthly`, and `document-review`**. Wider
 Product OS surfaces remain experimental unless this page or the support matrix
 marks them supported.

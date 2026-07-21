@@ -5,10 +5,31 @@ All notable changes to the multi-agent-brief-workflow project will be documented
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [0.13.0] — 2026-07-20
 
 ### Changed
 
+- **Breaking:** the SQLite ControlStore is now the sole runtime authority.
+  JSON-only workspaces are classified unsupported — there is no importer,
+  migration, dual read/write, or fallback. The Codex runtime host
+  (`briefloop run --workspace <path> --runtime codex`, followed by
+  `briefloop runtime next`, `invocation-start`, `invocation-accept|fail`, and
+  `apply`) is the active execution path, and deterministic source acquisition
+  executes only the initialization-frozen provider plan (post-initialization
+  reads of mutable `sources.yaml` are rejected).
+- **Breaking:** retired JSON/operator public commands fail closed with typed
+  rejections (`runtime_command_unsupported` / `legacy_workspace_unsupported`)
+  and zero writes. LEGACY-DELETE tier-1 removes their handler layer, six
+  import-graph-unreachable modules (`core/previous`, `outputs/docx`,
+  `outputs/pdf`, `sources/coverage`, `experiments/schemas`,
+  `experiments/target_contract`), and three unreferenced scripts; parser
+  registrations are retained so the typed rejections keep working. The legacy
+  JSON runtime-state stack remains as declared internal debt tracked for
+  LEGACY-DELETE-2.
+- **Breaking:** `sources decide` is retired by design; source discovery runs
+  through the runtime-host route. Finalize, approval, and delivery run as
+  typed Store actions through `runtime apply`; the public `deliver` command
+  forms have no user-reachable entry.
 - **Breaking:** the supported Python floor is now 3.12. `requires-python`
   moves from `>=3.9` to `>=3.12`, so the next release refuses to install on
   Python 3.9-3.11. Setup and install scripts enforce the same floor at
