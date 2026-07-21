@@ -15,6 +15,10 @@ CLAUDE_WRAPPER = ROOT / ".claude" / "skills" / "briefloop" / "SKILL.md"
 HERMES_PLUGIN_PROJECTION = ROOT / "integrations" / "hermes-plugin" / "mabw" / "skills" / "briefloop"
 VERSION_MATRIX = CANONICAL / "references" / "version-matrix.md"
 PUBLIC_CLAIMS = CANONICAL / "references" / "public-claims.md"
+CODEX_REFERENCE = CANONICAL / "references" / "codex-controlstore-v2.md"
+PACKAGED_CODEX = (
+    ROOT / "src" / "multi_agent_brief" / "runtime_kits" / "codex" / "skills" / "briefloop"
+)
 
 
 def _read(path: Path) -> str:
@@ -58,6 +62,10 @@ def main() -> int:
         errors.append(_error("Hermes plugin briefloop skill projection is missing"))
     if not VERSION_MATRIX.exists():
         errors.append(_error("version-matrix.md is missing"))
+    if not CODEX_REFERENCE.exists():
+        errors.append(_error("codex-controlstore-v2.md is missing"))
+    if not PACKAGED_CODEX.exists():
+        errors.append(_error("packaged Codex skill is missing"))
 
     if errors:
         for error in errors:
@@ -67,6 +75,10 @@ def main() -> int:
     skill_text = _read(SKILL)
     wrapper_text = _read(CLAUDE_WRAPPER)
     matrix_text = _read(VERSION_MATRIX)
+    codex_reference_text = _read(CODEX_REFERENCE)
+    packaged_skill_text = _read(PACKAGED_CODEX / "SKILL.md")
+    packaged_reference = PACKAGED_CODEX / "references" / "controlstore-v2.md"
+    packaged_reference_text = _read(packaged_reference)
     public_claims_text = _read(PUBLIC_CLAIMS) if PUBLIC_CLAIMS.exists() else ""
 
     references = sorted(set(re.findall(r"references/[a-z0-9-]+\.md", skill_text)))
@@ -87,15 +99,54 @@ def main() -> int:
     if expected_version not in matrix_text:
         errors.append(_error(f"version matrix does not mention current VERSION {expected_version}"))
 
-    if "Planned / Not Yet Authoritative" not in matrix_text:
-        errors.append(_error("version matrix does not separate planned controls"))
-    if "MABW-080 / BriefLoop-090 experiment operations" in matrix_text:
-        errors.append(_error("version matrix lists BriefLoop-090 as a current experiment operation surface"))
-    if (
-        "BriefLoop-090 is an archived experiment/readiness label" not in matrix_text
-        or "not a current CLI namespace" not in matrix_text
-    ):
-        errors.append(_error("version matrix does not explain BriefLoop-090 is archived and not a current CLI namespace"))
+    if "Prior release line: `v0.13.0`" not in matrix_text:
+        errors.append(_error("version matrix does not retain the prior v0.13.0 release line"))
+    if "Prepared release line: `v0.14.0`" not in matrix_text:
+        errors.append(_error("version matrix does not bind the prepared v0.14.0 release line"))
+
+    required_runtime_phrases = (
+        "CoreRunNextAction",
+        "RoleTaskEnvelope",
+        "delegate",
+        "deterministic",
+        "human_decision",
+        "blocked",
+        "complete",
+        "runtime_action_stale",
+        "package_ready",
+        "delivered",
+    )
+    current_contract = "\n".join(
+        (skill_text, codex_reference_text, matrix_text, packaged_skill_text)
+    )
+    for phrase in required_runtime_phrases:
+        if phrase not in current_contract:
+            errors.append(_error(f"Codex runtime protocol is missing: {phrase}"))
+
+    required_commands = (
+        "briefloop runtime next",
+        "briefloop runtime invocation-start",
+        "briefloop runtime invocation-accept",
+        "briefloop runtime invocation-fail",
+        "briefloop runtime apply",
+        "--human-request",
+    )
+    for command in required_commands:
+        if command not in codex_reference_text:
+            errors.append(_error(f"Codex runtime reference is missing command: {command}"))
+
+    if CODEX_REFERENCE.read_bytes() != packaged_reference.read_bytes():
+        errors.append(_error("packaged Codex ControlStore reference differs from canonical"))
+
+    retired_current_guidance = (
+        "briefloop run --workspace <workspace> --runtime operator",
+        "output/intermediate/workflow_state.json",
+        "briefloop gates check --workspace",
+        "briefloop finalize --config",
+    )
+    for phrase in retired_current_guidance:
+        if phrase in "\n".join((skill_text, codex_reference_text, packaged_skill_text)):
+            errors.append(_error(f"Codex skill restores retired current guidance: {phrase}"))
 
     forbidden_positive_claims = [
         "BriefLoop proves truth.",

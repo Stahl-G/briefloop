@@ -1,12 +1,29 @@
 ---
 name: briefloop
-description: Operate one SQLite-only BriefLoop workspace through exact CoreRunNextAction and invocation scratch contracts.
+description: Use when operating this workspace through the SQLite-only BriefLoop Codex runtime.
 ---
 
 # BriefLoop Codex Runtime
 
-Read `references/controlstore-v2.md` before acting. The Store-derived action is
-the only sequence authority. Start the exact recorded invocation before role
-work; follow the envelope's current-session or exact-delegate instruction;
-execute deterministic actions through the root host; require a typed request
-for human decisions.
+Read `references/controlstore-v2.md` completely before acting.
+
+The Store-derived `CoreRunNextAction` is the only sequence authority. Always
+snapshot the exact current action JSON, then dispatch only its `action_kind`:
+
+- `delegate`: run `runtime invocation-start`, obey the exact
+  `RoleTaskEnvelope`, write only its scratch proposal, then have the root run
+  `invocation-accept` or `invocation-fail`.
+- `deterministic`: have the root run `runtime apply` with the exact action;
+  never delegate deterministic authority. An already-active
+  `invocation_accept_or_fail` is completed through its envelope, not `apply`.
+- `human_decision`: stop for the complete strict request named by
+  `request_schema_id`; chat text is not approval.
+- `blocked`: report the exact reason and make no mutation or fallback.
+- `complete`: report the exact terminal effect; `package_ready` is not
+  `delivered`.
+
+Agents write only the filenames allowed inside the current invocation scratch
+directory. Never write SQLite, receipts, ledger rows, canonical artifacts, or
+frozen revisions. Never infer legality from JSON/JSONL, Markdown, HTML, status,
+Quality Panel, checkout files, prompts, or memory. Never fall back to a legacy
+handoff, JSON workspace, `operator`, migration, dual mode, or another runtime.

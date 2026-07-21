@@ -1,5 +1,21 @@
 # BriefLoop Operator Skill Changelog
 
+## briefloop-codex-skill-v0.3.0 — 2026-07-22
+
+- Replaced the legacy operator/JSON-control workflow with the fresh
+  SQLite-only Codex runtime state machine.
+- Made Store-derived `CoreRunNextAction` the sole sequence authority and
+  documented all five action kinds.
+- Added exact action snapshot, Receipt-backed invocation, `RoleTaskEnvelope`,
+  scratch-only proposal, accept/fail, deterministic apply, and strict human
+  request procedures.
+- Added fail-closed stale-action handling and the terminal distinction between
+  `package_ready` and `delivered`.
+- Removed operator fallback and retired JSON handoff/state/gate/repair/finalize/
+  delivery paths from current operating guidance.
+- Bound the skill to current v0.13.0 and the not-yet-released v0.14.0 target so
+  version-only release cutting does not invalidate the protocol guard.
+
 ## briefloop-operator-skill-v0.2.0 — 2026-07-08
 
 - Rewrote the skill to the v1.0 RC operating contract: delivery truth is
