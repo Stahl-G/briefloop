@@ -111,6 +111,16 @@ from .scratch import (
     read_role_envelope,
     read_role_outputs,
 )
+from .submission import (
+    HumanSourceStageInput,
+    SourceStageBytesInput,
+    VerifiedSourceStage,
+    discard_source_stage,
+    load_source_stage,
+    read_verified_staged_bytes,
+    stage_human_source_pack,
+    stage_source_pack_bytes,
+)
 
 
 @dataclass(frozen=True)
@@ -190,16 +200,11 @@ def _role_task_instructions(
     output: _RoleOutputSpec,
     invocation_id: str,
 ) -> str:
-    base = (
-        f"Complete only the frozen {role_id} role task in this recorded "
-        "invocation."
-    )
+    base = f"Complete only the frozen {role_id} role task in this recorded invocation."
     if output.proposal_model is None:
         return base
     proposal_filename = (
-        "source_proposal.json"
-        if output.owner_kind == "source"
-        else output.filenames[0]
+        "source_proposal.json" if output.owner_kind == "source" else output.filenames[0]
     )
     return (
         f"{base} Before writing {proposal_filename}, run `briefloop contract "
@@ -221,9 +226,7 @@ def _strict_proposal_violations(
     if output.proposal_model is None:
         return []
     proposal_name = (
-        "source_proposal.json"
-        if output.owner_kind == "source"
-        else output.filenames[0]
+        "source_proposal.json" if output.owner_kind == "source" else output.filenames[0]
     )
     try:
         parsed = parse_json_object(outputs[proposal_name])
@@ -241,13 +244,40 @@ def _strict_proposal_violations(
                 error="must match the current invocation run",
             )
         ]
-    return []
+    if output.owner_kind != "source" or not isinstance(proposal, SourceProposal):
+        return []
+    violations: list[FieldViolation] = []
+    content = outputs.get("source_content.bin")
+    raw_payload = outputs.get("source_raw.json")
+    if content is None or proposal.content_sha256 != sha256_hex(content):
+        violations.append(
+            FieldViolation(
+                field="content_sha256",
+                error="must match source_content.bin",
+            )
+        )
+    if raw_payload is None or proposal.raw_payload_sha256 != sha256_hex(raw_payload):
+        violations.append(
+            FieldViolation(
+                field="raw_payload_sha256",
+                error="must match source_raw.json",
+            )
+        )
+    return violations
 
 
 @dataclass(frozen=True)
 class InvocationDispatch:
     envelope: RoleTaskEnvelope
     envelope_path: Path
+
+
+@dataclass(frozen=True)
+class _VerifiedRoleSubmission:
+    envelope: RoleTaskEnvelope
+    spec: _RoleOutputSpec
+    outputs: dict[str, bytes]
+    violations: tuple[FieldViolation, ...]
 
 
 class RuntimeHostService:
@@ -435,6 +465,146 @@ class RuntimeHostService:
             strict=True,
         )
 
+    @staticmethod
+    def _build_role_envelope(
+        verified,
+        action: CoreRunNextAction,
+        *,
+        invocation_id: str,
+        committed_revision: int,
+        role_id: str,
+    ) -> RoleTaskEnvelope:
+        if action.stage_id is None:
+            raise RuntimeHostError("runtime_envelope_invalid")
+        output = _ROLE_OUTPUTS.get(role_id)
+        if output is None:
+            raise RuntimeHostError("runtime_envelope_invalid")
+        topology = core_role_topology_policy(verified.binding.role_topology)
+        dispatch_instruction = {
+            "main_session": "execute_in_current_session",
+            "delegated_specialist": "delegate_exact_role",
+            "declared_existing_route": "use_declared_route",
+        }[topology.role_executor_route]
+        return RoleTaskEnvelope.model_validate(
+            {
+                "schema_version": RoleTaskEnvelope.schema_id,
+                "run_id": action.run_id,
+                "invocation_id": invocation_id,
+                "store_revision": committed_revision,
+                "action": action.model_dump(mode="json", exclude_unset=False),
+                "action_fingerprint": action.action_fingerprint,
+                "role_id": role_id,
+                "stage_id": action.stage_id,
+                "scratch_directory": f"scratch/{invocation_id}",
+                "allowed_output_filenames": sorted(output.filenames),
+                "proposal_schema_id": output.proposal_schema_id,
+                "adapter_binding_fingerprint": (
+                    verified.runtime_adapter.binding_fingerprint
+                ),
+                "source_plan_fingerprint": (
+                    verified.source_plan.source_plan_fingerprint
+                ),
+                "executor_kind": topology.role_executor_route,
+                "context_mode": topology.context_mode,
+                "review_mode": topology.review_mode,
+                "dispatch_instruction": dispatch_instruction,
+                "task_instructions": _role_task_instructions(
+                    role_id,
+                    output,
+                    invocation_id,
+                ),
+            },
+            strict=True,
+        )
+
+    def _expected_invocation_envelope(
+        self,
+        invocation_id: str,
+        *,
+        current=None,
+    ) -> RoleTaskEnvelope:
+        if current is None:
+            current = initialize_or_open_runtime(
+                self.workspace,
+                adapter_loader=self._adapter_loader,
+            )
+        invocation = next(
+            (
+                item
+                for item in current.verified.snapshot.invocations
+                if item.invocation_id == invocation_id
+            ),
+            None,
+        )
+        starts = [
+            item
+            for item in current.verified.snapshot.events
+            if item.event_type == "role_invocation_started"
+            and item.core_run_binding is not None
+            and item.core_run_binding.effect_kind == "invocation_start"
+            and item.core_run_binding.primary_record_id == invocation_id
+        ]
+        if invocation is None or len(starts) != 1:
+            raise RuntimeHostError("runtime_envelope_invalid")
+        start = starts[0]
+        try:
+            with SQLiteControlStore.open(self.workspace / "briefloop.db") as store:
+                history = store.load_history()
+                receipt = store.load_transaction_receipt(
+                    invocation.run_id,
+                    start.transaction_id,
+                )
+            if (
+                receipt is None
+                or history.store_revision != current.verified.snapshot.store_revision
+                or receipt.committed_revision <= 1
+                or receipt.prior_revision != receipt.committed_revision - 1
+                or start.event_id not in receipt.event_ids
+            ):
+                raise RuntimeHostError("runtime_envelope_invalid")
+            verifier = CoreRunDomainVerifier()
+            verifier.verify_history(
+                history,
+                through_revision=receipt.committed_revision,
+            )
+            pre_snapshot = history.snapshot_at_revision(
+                invocation.run_id,
+                receipt.prior_revision,
+            )
+            pre_verified = verifier._verify_snapshot(history, pre_snapshot)
+            pre_verified = replace(
+                pre_verified,
+                exhausted_source_route_keys=verifier._source_route_exhaustion_as_of(
+                    history,
+                    pre_snapshot,
+                ),
+            )
+            action = classify_core_run_next_action(pre_verified)
+        except RuntimeHostError:
+            raise
+        except Exception as exc:
+            raise RuntimeHostError("runtime_envelope_invalid") from exc
+        role_id = self._invocation_role_for_action(action)
+        if (
+            role_id is None
+            and action.action_kind == "human_decision"
+            and action.effect_kind == "source_input_required"
+        ):
+            role_id = "source-provider"
+        if (
+            role_id != invocation.role_id
+            or action.stage_id != start.stage_id
+            or action.run_id != invocation.run_id
+        ):
+            raise RuntimeHostError("runtime_envelope_invalid")
+        return self._build_role_envelope(
+            pre_verified,
+            action,
+            invocation_id=invocation_id,
+            committed_revision=receipt.committed_revision,
+            role_id=role_id,
+        )
+
     def _start_invocation_for_action(
         self,
         current,
@@ -461,43 +631,12 @@ class RuntimeHostService:
         if result.primary_record_id is None:
             raise RuntimeHostError("control_store_integrity_invalid")
         invocation_id = result.primary_record_id
-        output = _ROLE_OUTPUTS[role_id]
-        topology = core_role_topology_policy(current.verified.binding.role_topology)
-        dispatch_instruction = {
-            "main_session": "execute_in_current_session",
-            "delegated_specialist": "delegate_exact_role",
-            "declared_existing_route": "use_declared_route",
-        }[topology.role_executor_route]
-        envelope = RoleTaskEnvelope.model_validate(
-            {
-                "schema_version": RoleTaskEnvelope.schema_id,
-                "run_id": action.run_id,
-                "invocation_id": invocation_id,
-                "store_revision": result.receipt.committed_revision,
-                "action": action.model_dump(mode="json", exclude_unset=False),
-                "action_fingerprint": action.action_fingerprint,
-                "role_id": role_id,
-                "stage_id": action.stage_id,
-                "scratch_directory": f"scratch/{invocation_id}",
-                "allowed_output_filenames": sorted(output.filenames),
-                "proposal_schema_id": output.proposal_schema_id,
-                "adapter_binding_fingerprint": (
-                    current.verified.runtime_adapter.binding_fingerprint
-                ),
-                "source_plan_fingerprint": (
-                    current.verified.source_plan.source_plan_fingerprint
-                ),
-                "executor_kind": topology.role_executor_route,
-                "context_mode": topology.context_mode,
-                "review_mode": topology.review_mode,
-                "dispatch_instruction": dispatch_instruction,
-                "task_instructions": _role_task_instructions(
-                    role_id,
-                    output,
-                    invocation_id,
-                ),
-            },
-            strict=True,
+        envelope = self._build_role_envelope(
+            current.verified,
+            action,
+            invocation_id=invocation_id,
+            committed_revision=result.receipt.committed_revision,
+            role_id=role_id,
         )
         try:
             envelope_path = materialize_role_envelope(self.workspace, envelope)
@@ -604,29 +743,10 @@ class RuntimeHostService:
         spec = _ROLE_OUTPUTS.get(envelope.role_id)
         if spec is None:
             raise RuntimeHostError("runtime_envelope_invalid")
-        current = initialize_or_open_runtime(
-            self.workspace,
-            adapter_loader=self._adapter_loader,
-        )
-        self._validate_envelope(current, envelope, spec)
-        invocation = next(
-            (
-                item
-                for item in current.verified.snapshot.invocations
-                if item.invocation_id == invocation_id
-            ),
-            None,
-        )
-        if invocation is None or invocation.status not in {"active", "completed"}:
-            raise RuntimeHostError("runtime_envelope_invalid")
-        host_files = (
-            ("submit_request.json",) if invocation.status == "completed" else ()
-        )
         try:
-            outputs = read_role_outputs(
-                self.workspace,
+            verified = self._verify_role_submission(
                 envelope,
-                host_filenames=host_files,
+                spec,
             )
         except RuntimeHostError as exc:
             code = str(exc)
@@ -638,16 +758,11 @@ class RuntimeHostService:
                 reason_code=code,
                 violations=[],
             )
-        violations = _strict_proposal_violations(
-            spec,
-            outputs,
-            expected_run_id=envelope.run_id,
-        )
         return self._proposal_validation_result(
             envelope,
             spec,
-            reason_code=("runtime_proposal_invalid" if violations else None),
-            violations=violations,
+            reason_code=("runtime_proposal_invalid" if verified.violations else None),
+            violations=list(verified.violations),
         )
 
     @staticmethod
@@ -668,8 +783,7 @@ class RuntimeHostService:
                 "reason_code": reason_code,
                 "checked_filenames": sorted(spec.filenames),
                 "violations": [
-                    {"field": item.field, "reason": item.error}
-                    for item in violations
+                    {"field": item.field, "reason": item.error} for item in violations
                 ],
             },
             strict=True,
@@ -687,30 +801,14 @@ class RuntimeHostService:
         spec = _ROLE_OUTPUTS.get(envelope.role_id)
         if spec is None:
             raise RuntimeHostError("runtime_envelope_invalid")
-        current = initialize_or_open_runtime(
-            self.workspace,
-            adapter_loader=self._adapter_loader,
+        verified = self._verify_role_submission(envelope, spec)
+        if verified.violations:
+            raise RuntimeHostError("runtime_proposal_invalid")
+        request, lane = self._derive_acceptance_request(
+            verified.envelope,
+            verified.spec,
+            verified.outputs,
         )
-        self._validate_envelope(current, envelope, spec)
-        invocation = next(
-            (
-                item
-                for item in current.verified.snapshot.invocations
-                if item.invocation_id == invocation_id
-            ),
-            None,
-        )
-        if invocation is None or invocation.status not in {"active", "completed"}:
-            raise RuntimeHostError("runtime_envelope_invalid")
-        host_files = (
-            ("submit_request.json",) if invocation.status == "completed" else ()
-        )
-        outputs = read_role_outputs(
-            self.workspace,
-            envelope,
-            host_filenames=host_files,
-        )
-        request, lane = self._derive_acceptance_request(envelope, spec, outputs)
         request_path = materialize_host_request(
             self.workspace,
             envelope,
@@ -766,28 +864,23 @@ class RuntimeHostService:
         )
 
     def _validate_envelope(self, current, envelope, spec: _RoleOutputSpec) -> None:
-        topology = core_role_topology_policy(current.verified.binding.role_topology)
-        dispatch_instruction = {
-            "main_session": "execute_in_current_session",
-            "delegated_specialist": "delegate_exact_role",
-            "declared_existing_route": "use_declared_route",
-        }[topology.role_executor_route]
-        if (
-            envelope.run_id != current.verified.snapshot.run.run_id
-            or envelope.adapter_binding_fingerprint
-            != current.verified.runtime_adapter.binding_fingerprint
-            or envelope.source_plan_fingerprint
-            != current.verified.source_plan.source_plan_fingerprint
-            or envelope.allowed_output_filenames != sorted(spec.filenames)
-            or envelope.proposal_schema_id != spec.proposal_schema_id
-            or envelope.scratch_directory != f"scratch/{envelope.invocation_id}"
-            or envelope.store_revision != envelope.action.store_revision + 1
-            or envelope.executor_kind != topology.role_executor_route
-            or envelope.context_mode != topology.context_mode
-            or envelope.review_mode != topology.review_mode
-            or envelope.dispatch_instruction != dispatch_instruction
-        ):
+        expected = self._expected_invocation_envelope(
+            envelope.invocation_id,
+            current=current,
+        )
+        if _ROLE_OUTPUTS.get(expected.role_id) is not spec or envelope != expected:
             raise RuntimeHostError("runtime_envelope_invalid")
+
+    def _verify_role_submission(
+        self,
+        envelope: RoleTaskEnvelope,
+        spec: _RoleOutputSpec,
+    ) -> _VerifiedRoleSubmission:
+        current = initialize_or_open_runtime(
+            self.workspace,
+            adapter_loader=self._adapter_loader,
+        )
+        self._validate_envelope(current, envelope, spec)
         invocation = next(
             (
                 item
@@ -796,31 +889,29 @@ class RuntimeHostService:
             ),
             None,
         )
-        if (
-            invocation is None
-            or invocation.run_id != envelope.run_id
-            or invocation.role_id != envelope.role_id
-        ):
+        if invocation is None or invocation.status not in {"active", "completed"}:
             raise RuntimeHostError("runtime_envelope_invalid")
-        start_events = [
-            item
-            for item in current.verified.snapshot.events
-            if item.core_run_binding is not None
-            and item.core_run_binding.effect_kind == "invocation_start"
-            and item.core_run_binding.primary_record_id == envelope.invocation_id
-        ]
-        if len(start_events) != 1:
-            raise RuntimeHostError("runtime_envelope_invalid")
-        start = start_events[0]
-        if start.stage_id != envelope.stage_id:
-            raise RuntimeHostError("runtime_envelope_invalid")
-        with SQLiteControlStore.open(self.workspace / "briefloop.db") as store:
-            receipt = store.load_transaction_receipt(
-                envelope.run_id,
-                start.transaction_id,
+        host_files = (
+            ("submit_request.json",) if invocation.status == "completed" else ()
+        )
+        outputs = read_role_outputs(
+            self.workspace,
+            envelope,
+            host_filenames=host_files,
+        )
+        violations = tuple(
+            _strict_proposal_violations(
+                spec,
+                outputs,
+                expected_run_id=envelope.run_id,
             )
-        if receipt is None or receipt.committed_revision != envelope.store_revision:
-            raise RuntimeHostError("runtime_envelope_invalid")
+        )
+        return _VerifiedRoleSubmission(
+            envelope=envelope,
+            spec=spec,
+            outputs=outputs,
+            violations=violations,
+        )
 
     def _derive_acceptance_request(
         self,
@@ -977,6 +1068,17 @@ class RuntimeHostService:
                     human_request,
                     replay_only=True,
                 )
+            if (
+                human_request is None
+                and action_input is None
+                and expected_action.action_kind == "deterministic"
+                and expected_action.effect_kind == "source_acquire"
+            ):
+                return self._apply_source_acquire(
+                    current,
+                    expected_action,
+                    replay_only=True,
+                )
             raise RuntimeHostError("runtime_action_stale")
         if action.action_kind == "human_decision":
             if action_input is not None:
@@ -1019,7 +1121,7 @@ class RuntimeHostService:
         elif action.effect_kind == "owned_artifact_acceptance":
             result = self._apply_input_governance(current, action)
         elif action.effect_kind == "source_acquire":
-            result = self._apply_source_acquire(current, action)
+            result = self._apply_source_acquire(current, action, replay_only=False)
         elif action.effect_kind == "claim_freeze":
             result = self._apply_claim_freeze(current, action)
         elif action.effect_kind == "audit_promotion":
@@ -1108,7 +1210,291 @@ class RuntimeHostService:
             )
         return result
 
-    def _apply_source_acquire(self, current, action: CoreRunNextAction):
+    def _planned_invocation(
+        self,
+        current,
+        action: CoreRunNextAction,
+        *,
+        request_id: str,
+    ) -> tuple[InvocationStartRequest, str]:
+        request = self._invocation_start_request(
+            current,
+            action,
+            role_id="source-provider",
+            request_id=request_id,
+        )
+        fingerprint = canonical_fingerprint(
+            request.model_dump(mode="json", exclude_unset=False)
+        )
+        return request, derived_id("INV", request_id, fingerprint)
+
+    def _invocation_for_id(self, current, invocation_id: str):
+        return next(
+            (
+                item
+                for item in current.verified.snapshot.invocations
+                if item.invocation_id == invocation_id
+            ),
+            None,
+        )
+
+    def _source_pack_store_replay(
+        self,
+        current,
+        *,
+        invocation_id: str,
+        commit_request_id: str,
+    ) -> RuntimeInvocationResult | None:
+        try:
+            with SQLiteControlStore.open(self.workspace / "briefloop.db") as store:
+                receipt = store.load_transaction_receipt(
+                    current.verified.snapshot.run.run_id,
+                    commit_request_id,
+                )
+                failure_request_id = derived_id(
+                    "REQ-HOST-INVOCATION-FAILURE",
+                    invocation_id,
+                    "dispatch_unavailable",
+                )
+                failure_receipt = store.load_transaction_receipt(
+                    current.verified.snapshot.run.run_id,
+                    failure_request_id,
+                )
+        except ControlStoreError as exc:
+            raise RuntimeHostError("control_store_integrity_invalid") from exc
+        if receipt is not None:
+            bindings = [
+                item.intake_binding
+                for item in current.verified.snapshot.events
+                if item.event_id in receipt.event_ids
+                and item.intake_binding is not None
+                and item.intake_binding.request_id == commit_request_id
+            ]
+            outcomes = {item.outcome for item in bindings}
+            if not bindings or len(outcomes) != 1:
+                raise RuntimeHostError("control_store_integrity_invalid")
+            return self._source_pack_replay_result(
+                current,
+                invocation_id=invocation_id,
+                transaction_id=receipt.transaction_id,
+                store_revision=receipt.committed_revision,
+                rejected=outcomes == {"rejected"},
+            )
+        invocation = self._invocation_for_id(current, invocation_id)
+        if invocation is None:
+            return None
+        if invocation.status == "active":
+            return None
+        if invocation.status == "failed" and failure_receipt is not None:
+            return self._source_pack_replay_result(
+                current,
+                invocation_id=invocation_id,
+                transaction_id=failure_receipt.transaction_id,
+                store_revision=failure_receipt.committed_revision,
+                rejected=True,
+            )
+        raise RuntimeHostError("submission_replay_conflict")
+
+    @staticmethod
+    def _source_pack_replay_result(
+        current,
+        *,
+        invocation_id: str,
+        transaction_id: str,
+        store_revision: int,
+        rejected: bool,
+    ) -> RuntimeInvocationResult:
+        return RuntimeInvocationResult.model_validate(
+            {
+                "schema_version": RuntimeInvocationResult.schema_id,
+                "run_id": current.verified.snapshot.run.run_id,
+                "invocation_id": invocation_id,
+                "status": "rejected_recorded" if rejected else "replayed",
+                "transaction_id": transaction_id,
+                "store_revision": store_revision,
+                "next_action": current.action.model_dump(
+                    mode="json",
+                    exclude_unset=False,
+                ),
+            },
+            strict=True,
+        )
+
+    def _record_staged_invocation_failure(
+        self,
+        current,
+        action: CoreRunNextAction,
+        *,
+        request_id: str,
+        invocation_id: str,
+    ) -> RuntimeInvocationResult:
+        invocation = self._invocation_for_id(current, invocation_id)
+        if invocation is None:
+            request, expected_invocation_id = self._planned_invocation(
+                current,
+                action,
+                request_id=request_id,
+            )
+            if expected_invocation_id != invocation_id:
+                raise RuntimeHostError("control_store_integrity_invalid")
+            result = CoreRunService(self.workspace).start_invocation(request)
+            if result.status == "commit_outcome_unknown":
+                result = CoreRunService(self.workspace).start_invocation(request)
+            if (
+                result.status not in {"committed", "replayed"}
+                or result.receipt is None
+                or result.primary_record_id != invocation_id
+            ):
+                raise RuntimeHostError(
+                    result.error_code or "control_store_integrity_invalid"
+                )
+            envelope = self._build_role_envelope(
+                current.verified,
+                action,
+                invocation_id=invocation_id,
+                committed_revision=result.receipt.committed_revision,
+                role_id="source-provider",
+            )
+        else:
+            envelope = self._expected_invocation_envelope(invocation_id)
+        result = self._record_invocation_failure(
+            envelope,
+            reason_code="dispatch_unavailable",
+            expected_store_revision=envelope.store_revision,
+        )
+        if result.status == "commit_outcome_unknown":
+            result = self._record_invocation_failure(
+                envelope,
+                reason_code="dispatch_unavailable",
+                expected_store_revision=envelope.store_revision,
+            )
+        return self._source_pack_runtime_result(invocation_id, result)
+
+    def _materialize_staged_source_pack(
+        self,
+        dispatch: InvocationDispatch,
+        stage: VerifiedSourceStage,
+        *,
+        commit_request_id: str,
+    ) -> str:
+        invocation_id = dispatch.envelope.invocation_id
+        if stage.manifest_path is not None:
+            if stage.manifest_sha256 is None:
+                raise RuntimeHostError("runtime_source_staging_invalid")
+            self._materialize_tool_input(
+                f"scratch/{invocation_id}/source_manifest.json",
+                read_verified_staged_bytes(
+                    stage.manifest_path,
+                    expected_sha256=stage.manifest_sha256,
+                    max_size=4 * 1024 * 1024,
+                ),
+            )
+        members: list[dict[str, object]] = []
+        for member in stage.members:
+            root = f"scratch/{invocation_id}/sources/{member.member_id}"
+            proposal_path = f"{root}/source_proposal.json"
+            content_path = f"{root}/source_content.bin"
+            raw_path = (
+                None if member.raw_payload_path is None else f"{root}/source_raw.json"
+            )
+            self._materialize_tool_input(
+                proposal_path,
+                read_verified_staged_bytes(
+                    member.proposal_path,
+                    expected_sha256=member.proposal_sha256,
+                ),
+            )
+            self._materialize_tool_input(
+                content_path,
+                read_verified_staged_bytes(
+                    member.content_path,
+                    expected_sha256=member.content_sha256,
+                ),
+            )
+            if member.raw_payload_path is not None and raw_path is not None:
+                if member.raw_payload_sha256 is None:
+                    raise RuntimeHostError("runtime_source_staging_invalid")
+                self._materialize_tool_input(
+                    raw_path,
+                    read_verified_staged_bytes(
+                        member.raw_payload_path,
+                        expected_sha256=member.raw_payload_sha256,
+                    ),
+                )
+            members.append(
+                {
+                    "member_id": member.member_id,
+                    "proposal_path": proposal_path,
+                    "content_path": content_path,
+                    "raw_payload_path": raw_path,
+                }
+            )
+        submit = SourcePackCommitRequest.model_validate(
+            {
+                "schema_version": SourcePackCommitRequest.schema_id,
+                "request_id": commit_request_id,
+                "run_id": dispatch.envelope.run_id,
+                "invocation_id": invocation_id,
+                "members": members,
+                "manifest_path": (
+                    None
+                    if stage.manifest_path is None
+                    else f"scratch/{invocation_id}/source_manifest.json"
+                ),
+                "expected_manifest_sha256": stage.manifest_sha256,
+                "expected_store_revision": dispatch.envelope.store_revision,
+            },
+            strict=True,
+        )
+        submit_path = self._materialize_tool_input(
+            f"scratch/{invocation_id}/submit_request.json",
+            canonical_json_bytes(submit.model_dump(mode="json", exclude_unset=False)),
+        )
+        return submit_path.relative_to(self.workspace).as_posix()
+
+    def _submit_staged_source_pack(
+        self,
+        dispatch: InvocationDispatch,
+        stage: VerifiedSourceStage,
+        *,
+        commit_request_id: str,
+        stage_identity: str,
+    ) -> RuntimeInvocationResult:
+        try:
+            relative = self._materialize_staged_source_pack(
+                dispatch,
+                stage,
+                commit_request_id=commit_request_id,
+            )
+        except (OSError, RuntimeHostError, ValidationError, ValueError):
+            result = self._record_staged_invocation_failure(
+                initialize_or_open_runtime(
+                    self.workspace,
+                    adapter_loader=self._adapter_loader,
+                ),
+                dispatch.envelope.action,
+                request_id=dispatch.envelope.action_fingerprint,
+                invocation_id=dispatch.envelope.invocation_id,
+            )
+            return result
+        intake = IntakeService(self.workspace)
+        result = intake.submit_source_pack(relative)
+        if result.status == "commit_outcome_unknown":
+            result = intake.submit_source_pack(relative)
+        runtime_result = self._source_pack_runtime_result(
+            dispatch.envelope.invocation_id,
+            result,
+        )
+        discard_source_stage(self.workspace, stage_identity=stage_identity)
+        return runtime_result
+
+    def _apply_source_acquire(
+        self,
+        current,
+        action: CoreRunNextAction,
+        *,
+        replay_only: bool,
+    ):
         from .source_routes import collect_frozen_sources
 
         route = next(
@@ -1122,81 +1508,137 @@ class RuntimeHostService:
         )
         if route is None or route.execution_owner != "deterministic":
             raise RuntimeHostError("runtime_source_plan_invalid")
-        dispatch = self.start_current_invocation(action)
-        invocation_id = dispatch.envelope.invocation_id
+        invocation_request_id = derived_id(
+            "REQ-HOST-INVOKE",
+            action.run_id,
+            action.action_fingerprint,
+        )
+        _, invocation_id = self._planned_invocation(
+            current,
+            action,
+            request_id=invocation_request_id,
+        )
+        commit_request_id = derived_id(
+            "REQ-HOST-SOURCE-PACK",
+            action.run_id,
+            action.action_fingerprint,
+        )
+        replay = self._source_pack_store_replay(
+            current,
+            invocation_id=invocation_id,
+            commit_request_id=commit_request_id,
+        )
+        if replay is not None:
+            return replay
+        invocation = self._invocation_for_id(current, invocation_id)
+        if replay_only and invocation is None:
+            raise RuntimeHostError("runtime_action_stale")
+        stage_identity = canonical_fingerprint(
+            {
+                "kind": "deterministic_source_pack",
+                "run_id": action.run_id,
+                "invocation_id": invocation_id,
+            }
+        )
+        stage_fingerprint = canonical_fingerprint(
+            {
+                "action": action.model_dump(mode="json", exclude_unset=False),
+                "route_fingerprint": route.route_fingerprint,
+            }
+        )
         try:
-            materials = collect_frozen_sources(
+            stage = load_source_stage(
                 self.workspace,
-                run_id=action.run_id,
+                stage_identity=stage_identity,
+                request_fingerprint=stage_fingerprint,
+                expected_manifest_sha256=None,
+            )
+        except RuntimeHostError as exc:
+            if str(exc) == "submission_replay_conflict":
+                raise
+            if invocation is not None and invocation.status == "active":
+                return self._record_staged_invocation_failure(
+                    current,
+                    action,
+                    request_id=invocation_request_id,
+                    invocation_id=invocation_id,
+                )
+            raise
+        if invocation is not None and invocation.status == "active" and stage is None:
+            return self._record_staged_invocation_failure(
+                current,
+                action,
+                request_id=invocation_request_id,
                 invocation_id=invocation_id,
-                route=route,
             )
-            members: list[dict[str, object]] = []
-            for position, material in enumerate(materials, start=1):
-                member_id = f"MEMBER-{position:04d}"
-                root = f"scratch/{invocation_id}/sources/{member_id}"
-                proposal_path = f"{root}/source_proposal.json"
-                content_path = f"{root}/source_content.bin"
-                raw_path = f"{root}/source_raw.json"
-                self._materialize_tool_input(content_path, material.content)
-                self._materialize_tool_input(raw_path, material.raw_payload)
-                self._materialize_tool_input(
-                    proposal_path,
-                    canonical_json_bytes(
-                        material.proposal.model_dump(
-                            mode="json",
-                            exclude_unset=False,
-                        )
-                    ),
+        if stage is None:
+            try:
+                materials = collect_frozen_sources(
+                    self.workspace,
+                    run_id=action.run_id,
+                    invocation_id=invocation_id,
+                    route=route,
                 )
-                members.append(
-                    {
-                        "member_id": member_id,
-                        "proposal_path": proposal_path,
-                        "content_path": content_path,
-                        "raw_payload_path": raw_path,
-                    }
+                staged_inputs = tuple(
+                    SourceStageBytesInput(
+                        member_id=f"MEMBER-{position:04d}",
+                        proposal_bytes=canonical_json_bytes(
+                            material.proposal.model_dump(
+                                mode="json",
+                                exclude_unset=False,
+                            )
+                        ),
+                        content_bytes=material.content,
+                        raw_payload_bytes=material.raw_payload,
+                    )
+                    for position, material in enumerate(materials, start=1)
                 )
-            submit = SourcePackCommitRequest.model_validate(
-                {
-                    "schema_version": SourcePackCommitRequest.schema_id,
-                    "request_id": derived_id(
-                        "REQ-HOST-SOURCE-PACK",
-                        action.run_id,
-                        action.action_fingerprint,
-                    ),
-                    "run_id": action.run_id,
-                    "invocation_id": invocation_id,
-                    "members": members,
-                    "expected_store_revision": dispatch.envelope.store_revision,
-                },
-                strict=True,
-            )
-            submit_path = self._materialize_tool_input(
-                f"scratch/{invocation_id}/submit_request.json",
-                canonical_json_bytes(
-                    submit.model_dump(mode="json", exclude_unset=False)
-                ),
-            )
-        except (
-            OSError,
-            NotImplementedError,
-            RuntimeError,
-            RuntimeHostError,
-            SearchBackendError,
-            ValidationError,
-            ValueError,
-        ):
-            return self.fail_invocation(
-                invocation_id,
-                reason_code="dispatch_unavailable",
-            )
-        relative = submit_path.relative_to(self.workspace).as_posix()
-        intake = IntakeService(self.workspace)
-        result = intake.submit_source_pack(relative)
-        if result.status == "commit_outcome_unknown":
-            result = intake.submit_source_pack(relative)
-        return self._source_pack_runtime_result(invocation_id, result)
+                stage = stage_source_pack_bytes(
+                    self.workspace,
+                    stage_identity=stage_identity,
+                    request_fingerprint=stage_fingerprint,
+                    members=staged_inputs,
+                )
+            except RuntimeHostError as exc:
+                if str(exc) in {
+                    "runtime_source_pack_invalid",
+                    "runtime_source_staging_invalid",
+                }:
+                    raise
+                return self._record_staged_invocation_failure(
+                    current,
+                    action,
+                    request_id=invocation_request_id,
+                    invocation_id=invocation_id,
+                )
+            except (
+                OSError,
+                NotImplementedError,
+                RuntimeError,
+                SearchBackendError,
+                ValidationError,
+                ValueError,
+            ):
+                return self._record_staged_invocation_failure(
+                    current,
+                    action,
+                    request_id=invocation_request_id,
+                    invocation_id=invocation_id,
+                )
+        dispatch = self._start_invocation_for_action(
+            current,
+            action,
+            role_id="source-provider",
+            request_id=invocation_request_id,
+        )
+        if dispatch.envelope.invocation_id != invocation_id:
+            raise RuntimeHostError("control_store_integrity_invalid")
+        return self._submit_staged_source_pack(
+            dispatch,
+            stage,
+            commit_request_id=commit_request_id,
+            stage_identity=stage_identity,
+        )
 
     def _apply_human_source_pack(
         self,
@@ -1214,66 +1656,79 @@ class RuntimeHostService:
             request.request_id,
             action.action_fingerprint,
         )
-        invocation_request = InvocationStartRequest.model_validate(
-            {
-                "schema_version": InvocationStartRequest.schema_id,
-                "request_id": invocation_request_id,
-                "run_id": action.run_id,
-                "stage_id": "source-discovery",
-                "role_id": "source-provider",
-                "runtime": current.verified.snapshot.run.runtime,
-                "expected_store_revision": action.store_revision,
-            },
-            strict=True,
+        _, invocation_id = self._planned_invocation(
+            current,
+            action,
+            request_id=invocation_request_id,
         )
-        invocation_id = derived_id(
-            "INV",
-            invocation_request_id,
-            canonical_fingerprint(
-                invocation_request.model_dump(mode="json", exclude_unset=False)
-            ),
-        )
-        submit_relative = f"scratch/{invocation_id}/submit_request.json"
-        submit_path = self.workspace / submit_relative
         commit_request_id = derived_id(
             "REQ-HOST-HUMAN-SOURCE-PACK-COMMIT",
             request.request_id,
             action.action_fingerprint,
             request_fingerprint,
         )
-        contents: list[bytes] | None = None
-        manifest_bytes: bytes | None = None
-        manifest_entries: list[FrozenSourceManifestEntry] | None = None
-        if submit_path.exists():
-            try:
-                stored = SourcePackCommitRequest.model_validate(
-                    parse_json_object(
-                        ScratchReader(self.workspace).read_request(submit_relative)
-                    ),
-                    strict=True,
+        replay = self._source_pack_store_replay(
+            current,
+            invocation_id=invocation_id,
+            commit_request_id=commit_request_id,
+        )
+        if replay is not None:
+            return replay
+        invocation = self._invocation_for_id(current, invocation_id)
+        if replay_only and invocation is None:
+            raise RuntimeHostError("runtime_action_stale")
+        stage_identity = canonical_fingerprint(
+            {
+                "kind": "human_source_pack",
+                "run_id": action.run_id,
+                "request_id": request.request_id,
+                "action_fingerprint": action.action_fingerprint,
+            }
+        )
+        try:
+            stage = load_source_stage(
+                self.workspace,
+                stage_identity=stage_identity,
+                request_fingerprint=request_fingerprint,
+                expected_manifest_sha256=request.expected_manifest_sha256,
+            )
+        except RuntimeHostError as exc:
+            if str(exc) == "submission_replay_conflict":
+                raise
+            if invocation is not None and invocation.status == "active":
+                return self._record_staged_invocation_failure(
+                    current,
+                    action,
+                    request_id=invocation_request_id,
+                    invocation_id=invocation_id,
                 )
-            except (IntakeError, ValidationError, ValueError) as exc:
-                raise RuntimeHostError("runtime_human_request_invalid") from exc
-            if stored.request_id != commit_request_id:
-                raise RuntimeHostError("submission_replay_conflict")
-        else:
-            if replay_only:
-                raise RuntimeHostError("runtime_action_stale")
-            contents = [self._read_human_source_bytes(item) for item in request.members]
+            raise RuntimeHostError("runtime_human_request_invalid") from exc
+        if invocation is not None and invocation.status == "active" and stage is None:
+            return self._record_staged_invocation_failure(
+                current,
+                action,
+                request_id=invocation_request_id,
+                invocation_id=invocation_id,
+            )
+        if stage is None:
             manifest_bytes = self._read_workspace_input_bytes(
                 request.manifest_path,
                 request.expected_manifest_sha256,
                 max_size=4 * 1024 * 1024,
             )
             manifest_entries = _frozen_manifest_entries(
-                manifest_bytes, request.manifest_schema_version
+                manifest_bytes,
+                request.manifest_schema_version,
             )
             if [item.source_id for item in manifest_entries] != [
                 item.member_id for item in request.members
             ]:
                 raise RuntimeHostError("runtime_human_request_invalid")
+            staged_inputs: list[HumanSourceStageInput] = []
             for member, entry in zip(
-                request.members, manifest_entries, strict=True
+                request.members,
+                manifest_entries,
+                strict=True,
             ):
                 if (
                     member.expected_input_sha256 != entry.sha256
@@ -1287,46 +1742,16 @@ class RuntimeHostService:
                     or member.resolved_at != entry.resolved_at
                 ):
                     raise RuntimeHostError("runtime_human_request_invalid")
-            if sum(len(item) for item in contents) > 256 * 1024 * 1024:
-                raise RuntimeHostError("runtime_human_request_invalid")
-        dispatch = self._start_invocation_for_action(
-            current,
-            action,
-            role_id="source-provider",
-            request_id=invocation_request_id,
-        )
-        if dispatch.envelope.invocation_id != invocation_id:
-            raise RuntimeHostError("control_store_integrity_invalid")
-        if submit_path.exists():
-            intake = IntakeService(self.workspace)
-            result = intake.submit_source_pack(submit_relative)
-            if result.status == "commit_outcome_unknown":
-                result = intake.submit_source_pack(submit_relative)
-            return self._source_pack_runtime_result(invocation_id, result)
-        if (
-            contents is None
-            or manifest_bytes is None
-            or manifest_entries is None
-        ):  # pragma: no cover - guarded above
-            raise RuntimeHostError("runtime_action_stale")
-        commit_members: list[dict[str, object]] = []
-        try:
-            manifest_relative = f"scratch/{invocation_id}/source_manifest.json"
-            self._materialize_tool_input(manifest_relative, manifest_bytes)
-            for member, entry, content in zip(
-                request.members, manifest_entries, contents, strict=True
-            ):
-                source_id = entry.source_id
                 proposal = SourceProposal.model_validate(
                     {
                         "schema_version": SourceProposal.schema_id,
                         "proposal_id": derived_id(
                             "PROP-SOURCE-HUMAN-PACK",
                             invocation_id,
-                            source_id,
+                            entry.source_id,
                         ),
                         "run_id": action.run_id,
-                        "source_id": source_id,
+                        "source_id": entry.source_id,
                         "origin_type": "uploaded_file",
                         "acquisition_method": "manual_upload",
                         "material_kind": "uploaded_file",
@@ -1352,55 +1777,43 @@ class RuntimeHostService:
                     },
                     strict=True,
                 )
-                root = f"scratch/{invocation_id}/sources/{member.member_id}"
-                proposal_relative = f"{root}/source_proposal.json"
-                content_relative = f"{root}/source_content.bin"
-                self._materialize_tool_input(content_relative, content)
-                self._materialize_tool_input(
-                    proposal_relative,
-                    canonical_json_bytes(
-                        proposal.model_dump(mode="json", exclude_unset=False)
-                    ),
+                staged_inputs.append(
+                    HumanSourceStageInput(
+                        member_id=member.member_id,
+                        input_path=member.input_path,
+                        expected_content_sha256=member.expected_input_sha256,
+                        proposal_bytes=canonical_json_bytes(
+                            proposal.model_dump(mode="json", exclude_unset=False)
+                        ),
+                    )
                 )
-                commit_members.append(
-                    {
-                        "member_id": member.member_id,
-                        "proposal_path": proposal_relative,
-                        "content_path": content_relative,
-                        "raw_payload_path": None,
-                    }
+            try:
+                stage = stage_human_source_pack(
+                    self.workspace,
+                    stage_identity=stage_identity,
+                    request_fingerprint=request_fingerprint,
+                    manifest_bytes=manifest_bytes,
+                    expected_manifest_sha256=request.expected_manifest_sha256,
+                    members=tuple(staged_inputs),
                 )
-            submit = SourcePackCommitRequest.model_validate(
-                {
-                    "schema_version": SourcePackCommitRequest.schema_id,
-                    "request_id": commit_request_id,
-                    "run_id": action.run_id,
-                    "invocation_id": invocation_id,
-                    "members": commit_members,
-                    "manifest_path": manifest_relative,
-                    "expected_manifest_sha256": request.expected_manifest_sha256,
-                    "expected_store_revision": dispatch.envelope.store_revision,
-                },
-                strict=True,
-            )
-            self._materialize_tool_input(
-                submit_relative,
-                canonical_json_bytes(
-                    submit.model_dump(mode="json", exclude_unset=False)
-                ),
-            )
-        except (OSError, RuntimeHostError, ValidationError, ValueError):
-            self.fail_invocation(
-                invocation_id,
-                reason_code="proposal_invalid",
-                expected_envelope=dispatch.envelope,
-            )
-            raise RuntimeHostError("runtime_human_request_invalid")
-        intake = IntakeService(self.workspace)
-        result = intake.submit_source_pack(submit_relative)
-        if result.status == "commit_outcome_unknown":
-            result = intake.submit_source_pack(submit_relative)
-        return self._source_pack_runtime_result(invocation_id, result)
+            except RuntimeHostError as exc:
+                if str(exc) == "submission_replay_conflict":
+                    raise
+                raise RuntimeHostError("runtime_human_request_invalid") from exc
+        dispatch = self._start_invocation_for_action(
+            current,
+            action,
+            role_id="source-provider",
+            request_id=invocation_request_id,
+        )
+        if dispatch.envelope.invocation_id != invocation_id:
+            raise RuntimeHostError("control_store_integrity_invalid")
+        return self._submit_staged_source_pack(
+            dispatch,
+            stage,
+            commit_request_id=commit_request_id,
+            stage_identity=stage_identity,
+        )
 
     def _source_pack_runtime_result(self, invocation_id: str, result):
         if result.status not in {"committed", "replayed", "rejected_recorded"}:
