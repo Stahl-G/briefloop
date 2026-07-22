@@ -331,12 +331,18 @@ def test_core_v2_imports_are_confined_to_dormant_cli_package_and_bound_intake() 
         "cli/authority_guard.py",
         # brief_html builder is the read-only page-1 projection (C3-sanctioned);
         # init_web submit reuses derived_id for the real bootstrap receipt id.
+        # RUN-UX-1A strict RunDirection validation verifies the frozen output
+        # contract against the sole Core-owned catalog.
+        "contracts/v2.py",
         "product/brief_html/builder.py",
         "product/init_web/submit.py",
         "runtime_host_v2/initialization.py",
         "runtime_host_v2/projections.py",
         "runtime_host_v2/service.py",
         "runtime_host_v2/source_routes.py",
+        # Bootstrap resolves the Human semantic extent once before freezing it
+        # into the Store-bound RunDirection.
+        "workspace/init_profile.py",
     }
     findings: list[str] = []
     for path in sorted(package_root.rglob("*.py")):
