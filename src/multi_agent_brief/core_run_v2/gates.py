@@ -21,6 +21,7 @@ from multi_agent_brief.contracts.v2 import (
     GateEvaluationRecord,
     GateFindingRecord,
     RunContractBinding,
+    RunOutputContract,
     ScreenedCandidatesProposal,
     StrictModel,
 )
@@ -51,6 +52,7 @@ from .checkout import (
     stage_checkout_effect,
 )
 from .lineage import classify_current_audit_promotion, classify_current_lineage
+from .output_contract import measure_reader_body, verify_output_contract
 from .policy import derived_id, transaction_type_for
 from .verifier import CoreRunDomainVerifier, resolve_core_replay
 
@@ -776,10 +778,66 @@ def _replay_gate_outcomes(
         raise
     except (ControlStoreError, IntakeError, UnicodeDecodeError, ValidationError) as exc:
         raise CoreRunError("gate_input_binding_invalid") from exc
+    contract = binding.run_direction.output_contract
+    if contract is not None:
+        try:
+            verify_output_contract(contract, binding.run_direction.output_language)
+        except ValueError as exc:
+            raise CoreRunError("gate_input_binding_invalid") from exc
+        _append_output_contract_finding(
+            raw,
+            markdown=markdown,
+            contract=contract,
+            stage_id=stage_id,
+            artifact_id=target_artifact,
+        )
     return _classify_gate_outcomes(
         raw,
         stage_id=stage_id,
         gate_artifact_id=gate_artifact_id,
+    )
+
+
+def _append_output_contract_finding(
+    raw: object,
+    *,
+    markdown: str,
+    contract: RunOutputContract,
+    stage_id: Literal["auditor", "finalize"],
+    artifact_id: str,
+) -> None:
+    """Append one catalog-bound length blocker before finding-shape validation."""
+
+    if not isinstance(raw, dict):
+        return
+    findings = raw.get("final_abstract_quality")
+    if not isinstance(findings, list) or not all(isinstance(item, dict) for item in findings):
+        return
+    measurement = measure_reader_body(markdown, contract)
+    if measurement.in_bounds:
+        return
+    findings.append(
+        {
+            "finding_type": "reader_body_length_out_of_bounds",
+            "severity": "high",
+            "blocking_level": "blocking",
+            "repair_owner": stage_id,
+            "stage_id": stage_id,
+            "artifact_id": artifact_id,
+            "description": "Reader body length is outside the Store-frozen output extent contract.",
+            "recommendation": "Submit a new in-bounds artifact revision and rerun the current Gate.",
+            "category": "run_output_contract",
+            "evidence_ref": "run-output-contract",
+            "metadata": {
+                "output_extent": measurement.output_extent,
+                "extent_catalog_id": measurement.extent_catalog_id,
+                "basis": measurement.basis,
+                "unit": measurement.unit,
+                "resolved_minimum": measurement.resolved_minimum,
+                "resolved_maximum": measurement.resolved_maximum,
+                "actual": measurement.actual,
+            },
+        }
     )
 
 

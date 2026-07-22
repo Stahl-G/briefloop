@@ -63,7 +63,9 @@
             sec_presentation: "版式风格",
             custom_base_title: "基底风格",
             custom_base_note: "自定义 = 基底风格 + 有界覆盖（密度、强调色等为独立字段）。",
-            sec_density: "信息密度",
+            sec_density: "报告篇幅 / 阅读深度",
+            note_output_contract: "确认后，服务端会冻结此篇幅选择及其可衡量的正文预算；来源/参考文献附录不计入正文。",
+            review_output_contract: "已解析的正文预算",
             sec_tables: "数据表处理",
             sec_citations: "来源与引用展示",
             sec_accent: "品牌强调色（可选，仅装饰）",
@@ -98,13 +100,14 @@
             field_source: "来源姿态",
             field_formats: "交付格式",
             field_presentation: "版式风格",
-            field_density: "信息密度",
+            field_density: "报告篇幅 / 阅读深度",
             field_tables: "数据表",
             field_citations: "引用展示",
             field_accent: "强调色",
             field_freetext: "原始文字",
             err_required: "还有必选项未完成：",
             err_pending: "请先处置每条 Agent 提议（接受或丢弃）。",
+            err_output_contract_preview: "正在核验当前篇幅预算，请稍候。",
             err_session: "缺少会话令牌：请使用初始化命令给出的完整链接打开本页。",
             status_ready: "可以确认创建。",
             status_fill: "完成必选项后即可创建。",
@@ -155,7 +158,9 @@
             sec_presentation: "Presentation style",
             custom_base_title: "Base style",
             custom_base_note: "Custom = base style + bounded overrides (density, accent — separate fields).",
-            sec_density: "Information density",
+            sec_density: "Report amount / reading depth",
+            note_output_contract: "On confirmation, the server freezes this selection and its measurable reader-body budget; source/reference appendices are excluded.",
+            review_output_contract: "Resolved reader-body budget",
             sec_tables: "Table treatment",
             sec_citations: "Source & citation display",
             sec_accent: "Brand accent (optional, decorative only)",
@@ -190,13 +195,14 @@
             field_source: "Source posture",
             field_formats: "Formats",
             field_presentation: "Style",
-            field_density: "Density",
+            field_density: "Report amount / reading depth",
             field_tables: "Tables",
             field_citations: "Citations",
             field_accent: "Accent",
             field_freetext: "Raw text",
             err_required: "Missing required choices: ",
             err_pending: "Dispose of every agent proposal first (accept or discard).",
+            err_output_contract_preview: "Validating the current report-amount budget…",
             err_session: "Missing session token: open this page via the full link printed by the init command.",
             status_ready: "Ready to create.",
             status_fill: "Complete the required choices to continue.",
@@ -404,6 +410,9 @@
         dispositions: {}, // "field:value" -> "accepted" | "discarded"
         requestId: genRequestId(), // generated ONCE per page load; reused for resubmits
         workspaceTarget: "./market-weekly",
+        outputContractPreview: null,
+        outputContractPreviewKey: null,
+        outputContractPreviewRequest: 0,
         submitting: false
     };
 
@@ -884,6 +893,14 @@
         path.appendChild(targetInput);
         sectionsHost.appendChild(path);
 
+        var contract = el("div", "review-path");
+        contract.appendChild(el("span", "k", t("review_output_contract")));
+        var budget = el("span", null, "…");
+        budget.id = "output-contract-budget";
+        contract.appendChild(budget);
+        sectionsHost.appendChild(contract);
+        requestOutputContractPreview();
+
         sectionsHost.appendChild(el("p", "review-warning", t("review_statement")));
     }
 
@@ -1058,6 +1075,10 @@
                 btnConfirm.disabled = true;
                 confirmStatus.textContent = t("err_pending");
                 confirmStatus.classList.add("err");
+            } else if (!hasCurrentOutputContractPreview()) {
+                btnConfirm.disabled = true;
+                confirmStatus.textContent = t("err_output_contract_preview");
+                confirmStatus.classList.add("err");
             } else {
                 btnConfirm.disabled = false;
                 confirmStatus.textContent = t("status_ready");
@@ -1086,6 +1107,80 @@
         if (n === 3) renderStage3();
         updateActionbar();
         document.getElementById("form").scrollTop = 0;
+    }
+
+    function outputLanguageForSubmission() {
+        return STATE.selections.language === "en" ? "en" : "zh";
+    }
+
+    function currentOutputContractPreviewKey() {
+        return String(STATE.selections.density || "") + "|" + outputLanguageForSubmission();
+    }
+
+    function hasCurrentOutputContractPreview() {
+        return Boolean(
+            STATE.outputContractPreview &&
+            STATE.outputContractPreview.ok === true &&
+            STATE.outputContractPreviewKey === currentOutputContractPreviewKey() &&
+            STATE.outputContractPreview.output_extent === STATE.selections.density
+        );
+    }
+
+    function paintOutputContractPreview() {
+        var target = document.getElementById("output-contract-budget");
+        if (!target) return;
+        var preview = STATE.outputContractPreview;
+        if (!preview) {
+            target.textContent = "…";
+            return;
+        }
+        target.textContent = String(preview.resolved_minimum) + "–" + String(preview.resolved_maximum) + " " + String(preview.body_length_unit);
+    }
+
+    function requestOutputContractPreview() {
+        if (!SESSION.token || !SESSION.sessionId || !STATE.selections.density) return;
+        var previewKey = currentOutputContractPreviewKey();
+        var requestNumber = STATE.outputContractPreviewRequest + 1;
+        STATE.outputContractPreviewRequest = requestNumber;
+        STATE.outputContractPreview = null;
+        STATE.outputContractPreviewKey = null;
+        paintOutputContractPreview();
+        updateActionbar();
+        fetch("/api/v1/output-contract-preview?session_id=" + encodeURIComponent(SESSION.sessionId), {
+            method: "POST",
+            headers: {
+                "Content-Type": "application/json",
+                "X-BriefLoop-Session-Token": SESSION.token
+            },
+            body: JSON.stringify({
+                output_extent: STATE.selections.density,
+                output_language: outputLanguageForSubmission()
+            })
+        }).then(function (res) {
+            return res.json().then(function (body) {
+                if (
+                    requestNumber !== STATE.outputContractPreviewRequest ||
+                    previewKey !== currentOutputContractPreviewKey()
+                ) {
+                    return;
+                }
+                if (res.status === 200 && body && body.ok === true) {
+                    STATE.outputContractPreview = body;
+                    STATE.outputContractPreviewKey = previewKey;
+                }
+                paintOutputContractPreview();
+                updateActionbar();
+            });
+        }).catch(function () {
+            if (
+                requestNumber !== STATE.outputContractPreviewRequest ||
+                previewKey !== currentOutputContractPreviewKey()
+            ) {
+                return;
+            }
+            paintOutputContractPreview();
+            updateActionbar();
+        });
     }
 
     btnBack.addEventListener("click", function () { if (STATE.stage > 1) goStage(STATE.stage - 1); });
@@ -1121,7 +1216,8 @@
                     focus_areas: [reportLabel],
                     output_formats: (c.formats || []).slice(),
                     forbidden_sources: c.source === "local_only" ? ["public_web"] : [],
-                    web_search_mode: "disabled"
+                    web_search_mode: "disabled",
+                    output_extent: c.density
                 },
                 raw_free_text: STATE.freeText.trim(),
                 discarded: STATE.interpretation.mapped.filter(function (m) {

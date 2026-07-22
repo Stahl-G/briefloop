@@ -48,12 +48,12 @@ from .policy import (
     CLAIM_EPISTEMIC,
     CORE_ARTIFACT_IDS,
     INTERNAL_CONTRACT_ARTIFACT_IDS,
-    REQUIRED_AUDITOR_GATES,
     TERMINAL_INTERNAL_ARTIFACT_IDS,
     archive_artifact_usage,
     core_role_topology_policy,
     derived_id,
     normalize_text,
+    required_auditor_gates,
     require_topology_runtime,
     run_contract_fingerprint,
     transaction_type_for,
@@ -2847,20 +2847,21 @@ class CoreRunDomainVerifier:
                 except CoreRunError as exc:
                     raise CoreRunError("control_store_integrity_invalid") from exc
                 gate_report = current_revision("auditor_quality_gate_report")
+                required_gate_ids = required_auditor_gates(binding.run_direction)
                 required = {
                     (
                         item.gate_id,
                         item.evaluation_id,
                     )
                     for item in snapshot.gate_evaluations
-                    if item.gate_id in REQUIRED_AUDITOR_GATES
+                    if item.gate_id in required_gate_ids
                     and item.report_artifact.artifact_id == gate_report.artifact_id
                     and item.report_artifact.revision == gate_report.revision
                     and item.status in {"pass", "warning"}
                     and not item.blocking
                 }
                 if {gate_id for gate_id, _evaluation_id in required} != set(
-                    REQUIRED_AUDITOR_GATES
+                    required_gate_ids
                 ):
                     raise CoreRunError("control_store_integrity_invalid")
                 expected_gates = required

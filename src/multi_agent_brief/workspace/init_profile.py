@@ -10,6 +10,12 @@ from multi_agent_brief.contracts.v2 import (
     RunDirection,
     WorkspaceControlStoreBootstrapV2,
 )
+from multi_agent_brief.core_run_v2.output_contract import (
+    BODY_LENGTH_BASIS,
+    BODY_LENGTH_UNIT,
+    OUTPUT_EXTENT_CATALOG_ID,
+    resolve_output_extent,
+)
 
 
 @dataclass
@@ -50,6 +56,7 @@ class InitProfile:
     excluded_news_domains: list[str] = field(default_factory=list)
     competitor_module_enabled: bool = False
     competitor_names: list[str] = field(default_factory=list)
+    output_extent: str | None = None
 
 
 def _ordered_unique_nonempty(values: list[str], *, field_name: str) -> list[str]:
@@ -90,6 +97,21 @@ def build_controlstore_bootstrap(
         if profile.web_search_mode == "external_api"
         else None
     )
+    output_contract = None
+    if profile.output_extent is not None:
+        resolved = resolve_output_extent(
+            profile.output_extent,
+            profile.output_language,
+        )
+        output_contract = {
+            "schema_version": "briefloop.run_output_contract.v2",
+            "output_extent": resolved.output_extent,
+            "extent_catalog_id": OUTPUT_EXTENT_CATALOG_ID,
+            "body_length_basis": BODY_LENGTH_BASIS,
+            "body_length_unit": BODY_LENGTH_UNIT,
+            "resolved_minimum": resolved.resolved_minimum,
+            "resolved_maximum": resolved.resolved_maximum,
+        }
     direction = RunDirection.model_validate(
         {
             "schema_version": RunDirection.schema_id,
@@ -117,6 +139,7 @@ def build_controlstore_bootstrap(
             "report_window_end": None,
             "max_source_age_days": profile.max_source_age_days,
             "target_terms": list(focus_areas),
+            "output_contract": output_contract,
         }
     )
     return WorkspaceControlStoreBootstrapV2.model_validate(

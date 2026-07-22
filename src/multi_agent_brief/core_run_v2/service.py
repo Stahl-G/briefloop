@@ -74,7 +74,6 @@ from .policy import (
     DOCTOR_IMPLEMENTATION,
     DOCTOR_VERSION,
     INTERNAL_CONTRACT_ARTIFACT_IDS,
-    REQUIRED_AUDITOR_GATES,
     SOURCE_ROUTE_IDS,
     SOURCE_WEB_PROVIDER_IDS,
     STAGE_ROLES,
@@ -83,6 +82,7 @@ from .policy import (
     derived_id,
     run_contract_fingerprint,
     require_topology_runtime,
+    required_auditor_gates,
     transaction_type_for,
 )
 from .verifier import (
@@ -1157,9 +1157,10 @@ class CoreRunService:
                 )
             except CoreRunError as exc:
                 raise CoreRunError("stage_gate_binding_invalid") from exc
-            if set(REQUIRED_AUDITOR_GATES) - set(evaluations):
+            required_gate_ids = required_auditor_gates(verified.binding.run_direction)
+            if set(required_gate_ids) - set(evaluations):
                 raise CoreRunError("stage_gate_binding_invalid")
-            required = [evaluations[gate_id] for gate_id in REQUIRED_AUDITOR_GATES]
+            required = [evaluations[gate_id] for gate_id in required_gate_ids]
             if any(
                 item.status not in {"pass", "warning"} or item.blocking
                 for item in required

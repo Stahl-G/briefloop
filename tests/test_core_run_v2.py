@@ -35,6 +35,7 @@ from multi_agent_brief.contracts.v2 import (
     InvocationStartRequest,
     OwnedArtifactSubmitRequest,
     ReceiptCheckoutBinding,
+    RunOutputContract,
     SourceCommitRequest,
     StageState,
     StageCompleteRequest,
@@ -69,6 +70,7 @@ from multi_agent_brief.core_run_v2.lineage import (
 from multi_agent_brief.core_run_v2.policy import (
     REQUIRED_AUDITOR_GATES,
     derived_id,
+    required_auditor_gates,
     transaction_type_for,
 )
 from multi_agent_brief.core_run_v2.errors import CoreRunError, CoreRunResult
@@ -235,11 +237,14 @@ def _initialize(
     topology: str = "default",
     input_governance_required: bool = False,
     role_ids: list[str] | None = None,
+    output_contract: dict[str, object] | None = None,
 ) -> CoreRunService:
     service = CoreRunService(workspace, clock=CLOCK)
     request = deepcopy(CoreRunInitializeRequest.minimal_example)
     if role_ids is not None:
         request["runtime_adapter_binding"]["role_ids"] = role_ids
+    if output_contract is not None:
+        request["run_direction"]["output_contract"] = output_contract
     request.update(
         request_id="REQ-INIT-001",
         workspace_id=WORKSPACE_ID,
@@ -431,9 +436,15 @@ def _advance_to_scout_ready(
     *,
     topology: str = "default",
     role_ids: list[str] | None = None,
+    output_contract: dict[str, object] | None = None,
 ) -> CoreRunService:
     _require_supported_working_projection()
-    service = _initialize(workspace, topology=topology, role_ids=role_ids)
+    service = _initialize(
+        workspace,
+        topology=topology,
+        role_ids=role_ids,
+        output_contract=output_contract,
+    )
     doctor = service.doctor_check(
         _record(
             IntegrityCheckRequest,
@@ -909,8 +920,14 @@ def _advance_to_claim_ledger_ready(
     *,
     topology: str = "default",
     role_ids: list[str] | None = None,
+    output_contract: dict[str, object] | None = None,
 ) -> CoreRunService:
-    service = _advance_to_scout_ready(workspace, topology=topology, role_ids=role_ids)
+    service = _advance_to_scout_ready(
+        workspace,
+        topology=topology,
+        role_ids=role_ids,
+        output_contract=output_contract,
+    )
     scout = _start_invocation(
         service,
         workspace,
@@ -1174,9 +1191,13 @@ def _advance_to_analyst_ready(
     *,
     topology: str = "default",
     role_ids: list[str] | None = None,
+    output_contract: dict[str, object] | None = None,
 ) -> CoreRunService:
     service = _advance_to_claim_ledger_ready(
-        workspace, topology=topology, role_ids=role_ids
+        workspace,
+        topology=topology,
+        role_ids=role_ids,
+        output_contract=output_contract,
     )
     claim_ledger = _start_invocation(
         service,
@@ -1234,8 +1255,12 @@ def _advance_to_analyst_ready(
     return service
 
 
-def _advance_before_auditor(workspace: Path) -> CoreRunService:
-    service = _advance_to_analyst_ready(workspace)
+def _advance_before_auditor(
+    workspace: Path,
+    *,
+    output_contract: dict[str, object] | None = None,
+) -> CoreRunService:
+    service = _advance_to_analyst_ready(workspace, output_contract=output_contract)
     analyst = _start_invocation(
         service,
         workspace,
@@ -1326,8 +1351,9 @@ def _advance_to_auditor_ready(
     *,
     audit_decision: str = "pass",
     audit_findings: list[dict[str, object]] | None = None,
+    output_contract: dict[str, object] | None = None,
 ) -> CoreRunService:
-    service = _advance_before_auditor(workspace)
+    service = _advance_before_auditor(workspace, output_contract=output_contract)
     auditor = _start_invocation(
         service,
         workspace,
@@ -1389,6 +1415,100 @@ def _gate_request(workspace: Path, *, request_id: str = "REQ-GATE-001"):
             {"artifact_id": "candidate_claims", "revision": 1},
         ],
     )
+
+
+def _balanced_output_contract() -> dict[str, object]:
+    return RunOutputContract.model_validate(
+        {
+            "schema_version": RunOutputContract.schema_id,
+            "output_extent": "balanced",
+            "extent_catalog_id": "briefloop.output_extent_catalog.v1",
+            "body_length_basis": "reader_body_excluding_source_reference_sections",
+            "body_length_unit": "word_equivalent_tokens",
+            "resolved_minimum": 600,
+            "resolved_maximum": 800,
+        },
+        strict=True,
+    ).model_dump(mode="json", exclude_unset=False)
+
+
+def test_store_frozen_output_contract_blocks_auditor_gate_and_stage_completion(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    workspace = _workspace(tmp_path)
+    service = _advance_to_auditor_ready(
+        workspace,
+        output_contract=_balanced_output_contract(),
+    )
+
+    monkeypatch.setattr(
+        "multi_agent_brief.core_run_v2.gates.evaluate_quality_gate_findings_preloaded",
+        lambda **_kwargs: {gate_id: [] for gate_id in GATE_IDS},
+    )
+    result = GateEvaluationService(workspace, clock=CLOCK).evaluate(
+        _gate_request(workspace, request_id="REQ-GATE-OUTPUT-CONTRACT")
+    )
+    assert result.status == "committed", result.to_dict()
+
+    with SQLiteControlStore.open(workspace / "briefloop.db") as store:
+        snapshot = store.load_snapshot(RUN_ID)
+    required_gate_ids = required_auditor_gates(
+        snapshot.run_contract_bindings[0].run_direction
+    )
+    assert required_gate_ids == (*REQUIRED_AUDITOR_GATES, "final_abstract_quality")
+    final_quality = next(
+        item
+        for item in snapshot.gate_evaluations
+        if item.gate_id == "final_abstract_quality"
+    )
+    assert final_quality.blocking is True
+    finding = next(
+        item
+        for item in snapshot.gate_findings
+        if item.evaluation_id == final_quality.evaluation_id
+    )
+    assert finding.finding_type == "reader_body_length_out_of_bounds"
+    assert finding.repair_owner == "auditor"
+    assert finding.metadata == {
+        "output_extent": "balanced",
+        "extent_catalog_id": "briefloop.output_extent_catalog.v1",
+        "basis": "reader_body_excluding_source_reference_sections",
+        "unit": "word_equivalent_tokens",
+        "resolved_minimum": 600,
+        "resolved_maximum": 800,
+        "actual": finding.metadata["actual"],
+    }
+    assert finding.metadata["actual"] < 600
+
+    auditor = _stage(workspace, "auditor")
+    completion = service.complete_stage(
+        _record(
+            StageCompleteRequest,
+            request_id="REQ-COMPLETE-AUDITOR-OUTPUT-CONTRACT",
+            run_id=RUN_ID,
+            stage_id="auditor",
+            reason="out-of-bounds reader contract must block completion",
+            expected_stage_revision=auditor.revision,
+            expected_store_revision=snapshot.store_revision,
+            expected_artifact_revisions=[
+                {"artifact_id": "claim_ledger", "revision": 1},
+                {"artifact_id": "audited_brief", "revision": 1},
+                {"artifact_id": "audit_report", "revision": 1},
+                {"artifact_id": "auditor_quality_gate_report", "revision": 1},
+                {"artifact_id": "analyst_draft_snapshot", "revision": 1},
+            ],
+            expected_gate_evaluation_ids=[
+                item.evaluation_id
+                for item in snapshot.gate_evaluations
+                if item.gate_id in required_gate_ids
+            ],
+        )
+    )
+    assert completion.to_dict() == {
+        "status": "failed_uncommitted",
+        "error_code": "stage_gate_binding_invalid",
+    }
 
 
 def test_gate_batches_append_and_old_request_exactly_replays(

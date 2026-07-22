@@ -95,6 +95,10 @@ def test_get_assets_and_security_headers(server) -> None:
 
     status, _headers, body = _request(server, "GET", "/assets/app.js")
     assert status == 200 and b"submit" in body
+    assert b"function hasCurrentOutputContractPreview()" in body
+    assert b"STATE.outputContractPreviewKey === currentOutputContractPreviewKey()" in body
+    assert b"requestNumber !== STATE.outputContractPreviewRequest" in body
+    assert b"else if (!hasCurrentOutputContractPreview())" in body
     status, _headers, _body = _request(server, "GET", "/assets/style.css")
     assert status == 200
     assert server._server.server_address[0] == "127.0.0.1"
@@ -191,6 +195,45 @@ def test_post_success_returns_real_response(server) -> None:
     assert payload["transaction_id"] == "REQ-CX-INIT-x"
 
 
+def test_output_contract_preview_is_session_bound_and_zero_write(server) -> None:
+    token, session = _credentials(server.url)
+    body = json.dumps(
+        {"output_extent": "balanced", "output_language": "en"}
+    ).encode("utf-8")
+    status, _headers, raw = _request(
+        server,
+        "POST",
+        f"/api/v1/output-contract-preview?session_id={session}",
+        body=body,
+        headers={"Content-Type": "application/json", SESSION_TOKEN_HEADER: token},
+    )
+    assert status == 200
+    assert json.loads(raw) == {
+        "ok": True,
+        "output_extent": "balanced",
+        "extent_catalog_id": "briefloop.output_extent_catalog.v1",
+        "body_length_basis": "reader_body_excluding_source_reference_sections",
+        "body_length_unit": "word_equivalent_tokens",
+        "resolved_minimum": 600,
+        "resolved_maximum": 800,
+    }
+
+    status, _headers, raw = _request(
+        server,
+        "POST",
+        f"/api/v1/output-contract-preview?session_id={session}",
+        body=json.dumps(
+            {"output_extent": "balanced", "output_language": "en", "minimum": 1}
+        ).encode("utf-8"),
+        headers={"Content-Type": "application/json", SESSION_TOKEN_HEADER: token},
+    )
+    assert status == 422
+    assert json.loads(raw) == {
+        "ok": False,
+        "reason_code": "submission_output_extent_invalid",
+    }
+
+
 def test_submission_error_maps_to_status_and_reason(server) -> None:
     conflict = create_init_web_server(
         _StubSubmitter(response_status="conflict"), exit_on_success=False
@@ -268,6 +311,7 @@ def test_real_submitter_end_to_end(tmp_path: Path) -> None:
                         "focus_areas": ["operations"],
                         "output_formats": ["markdown"],
                         "web_search_mode": "disabled",
+                        "output_extent": "balanced",
                     },
                     "raw_free_text": "",
                     "discarded": [],

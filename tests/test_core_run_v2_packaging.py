@@ -182,6 +182,7 @@ def test_non_editable_wheel_runs_complete_dormant_core_spine(
                     "focus_areas": ["operations"],
                     "output_formats": ["markdown"],
                     "web_search_mode": "disabled",
+                    "output_extent": "balanced",
                 },
                 "human_confirmation": True,
             },
