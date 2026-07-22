@@ -1358,6 +1358,13 @@ def _target_terms(config: dict[str, Any], *, user_text: str = "") -> list[str]:
             value = project.get(key)
             if isinstance(value, str) and value.strip():
                 terms.append(value.strip())
+        target_terms = project.get("target_terms")
+        if isinstance(target_terms, list):
+            terms.extend(
+                value.strip()
+                for value in target_terms
+                if isinstance(value, str) and value.strip()
+            )
     for key in ("target", "company", "organization"):
         value = config.get(key)
         if isinstance(value, str) and value.strip():

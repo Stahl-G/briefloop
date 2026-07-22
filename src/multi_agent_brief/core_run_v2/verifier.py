@@ -3531,11 +3531,18 @@ class CoreRunDomainVerifier:
                 or len({item.accepted_transaction_id for item in ordered_evaluations})
                 != 1
                 or len({item.request_fingerprint for item in ordered_evaluations}) != 1
+                or len(
+                    {
+                        (item.producer_implementation, item.producer_version)
+                        for item in ordered_evaluations
+                    }
+                )
+                != 1
                 or any(
                     item.policy_version != policy_version
                     or item.run_contract_fingerprint != binding.contract_fingerprint
                     or item.producer_implementation != "core-v2-preloaded-quality-gates"
-                    or item.producer_version != "1"
+                    or item.producer_version not in {"1", "2"}
                     for item in ordered_evaluations
                 )
             ):
@@ -3623,6 +3630,7 @@ class CoreRunDomainVerifier:
                     stages=tuple(dict(item) for item in contracts.stages),
                     artifacts=tuple(dict(item) for item in contracts.artifacts),
                     artifact_bindings=first_bindings,  # type: ignore[arg-type]
+                    evaluator_version=ordered_evaluations[0].producer_version,
                 )
             except Exception as exc:
                 raise CoreRunError("control_store_integrity_invalid") from exc

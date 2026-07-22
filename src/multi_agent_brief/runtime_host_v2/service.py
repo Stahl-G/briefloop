@@ -880,8 +880,6 @@ class RuntimeHostService:
             ),
             None,
         )
-        if artifact is None:
-            raise RuntimeHostError("runtime_envelope_invalid")
         if spec.owner_kind == "proposal":
             return (
                 ArtifactSubmitRequest.model_validate(
@@ -893,12 +891,16 @@ class RuntimeHostService:
                         "invocation_id": envelope.invocation_id,
                         "input_path": f"{scratch}/{spec.filenames[0]}",
                         "expected_store_revision": envelope.store_revision,
-                        "expected_artifact_revision": artifact.current_revision,
+                        "expected_artifact_revision": (
+                            0 if artifact is None else artifact.current_revision
+                        ),
                     },
                     strict=True,
                 ),
                 spec.proposal_lane,
             )
+        if artifact is None:
+            raise RuntimeHostError("runtime_envelope_invalid")
         parent: ArtifactRevisionReference | None = None
         if spec.artifact_id == "audited_brief":
             analyst = next(
