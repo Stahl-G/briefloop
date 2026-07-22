@@ -5,6 +5,7 @@ import json
 from pathlib import Path
 
 import pytest
+import yaml
 
 from multi_agent_brief.cli.init_wizard import create_workspace
 from multi_agent_brief.cli.main import main
@@ -141,6 +142,35 @@ def test_cli_init_prepares_exact_kit_without_committing_store(
     action = json.loads(capsys.readouterr().out)
     assert action["run_id"].startswith("RUN-")
     assert (workspace / "briefloop.db").is_file()
+
+
+def test_cli_initial_news_backfill_prepares_exact_kit_without_store(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    workspace = tmp_path / "cli-backfill-workspace"
+    args = [
+        *_direct_init_args(workspace),
+        "--source-profile",
+        "llm_decide",
+        "--web-search-mode",
+        "external_api",
+        "--search-backend",
+        "tavily",
+        "--initial-news-backfill",
+    ]
+
+    assert main(args) == 0
+    capsys.readouterr()
+    config = yaml.safe_load((workspace / "config.yaml").read_text(encoding="utf-8"))
+    sources = yaml.safe_load((workspace / "sources.yaml").read_text(encoding="utf-8"))
+    run_id = config["controlstore_v2"]["run_id"]
+
+    assert sources["web_search"]["initial_news_backfill"]["enabled"] is True
+    assert load_workspace_codex_adapter_binding(
+        workspace, run_id
+    ) == load_codex_adapter_binding(run_id)
+    assert not (workspace / "briefloop.db").exists()
 
 
 def test_cli_init_force_never_rewrites_existing_store_workspace(

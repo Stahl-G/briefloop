@@ -14,14 +14,13 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any, Callable
 
-from multi_agent_brief.cli.authority_guard import classify_workspace_authority
 from multi_agent_brief.cli.init_wizard import create_workspace
 from multi_agent_brief.control_store import SQLiteControlStore
 from multi_agent_brief.control_store.serialization import canonical_fingerprint
 from multi_agent_brief.core_run_v2.policy import derived_id
 from multi_agent_brief.runtime_host_v2.codex import load_codex_adapter_binding
-from multi_agent_brief.runtime_host_v2.errors import RuntimeHostError
 from multi_agent_brief.runtime_host_v2.initialization import (
+    RuntimeHostError,
     WorkspaceBootstrap,
 )
 from multi_agent_brief.workspace.init_profile import InitProfile
@@ -227,15 +226,16 @@ class InitWebSubmitter:
         workspace_id, run_id, request_workspace_prefix = self._submission_identities(
             request_id, fingerprint
         )
-        authority = classify_workspace_authority(target)
-        if authority.kind == "sqlite":
+        bootstrap = WorkspaceBootstrap(target)
+        authority_kind = bootstrap.classify_target()
+        if authority_kind == "sqlite":
             return 200, self._replay_existing_store(
                 target=target,
                 expected_workspace_id=workspace_id,
                 expected_run_id=run_id,
                 request_workspace_prefix=request_workspace_prefix,
             )
-        if authority.kind == "invalid_sqlite":
+        if authority_kind == "invalid_sqlite":
             raise SubmissionError("control_store_integrity_invalid", 500)
         if self._target_has_content(target):
             raise SubmissionError("workspace_target_exists", 409)
@@ -249,7 +249,7 @@ class InitWebSubmitter:
             identity_factory=lambda: next(identities),
         )
         try:
-            initialized = WorkspaceBootstrap(target).initialize_runnable_codex(
+            initialized = bootstrap.initialize_runnable_codex(
                 expected_adapter_loader=self._adapter_loader
             )
         except RuntimeHostError as exc:

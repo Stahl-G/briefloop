@@ -387,14 +387,9 @@ def _print_profile_option_errors(errors: list[str]) -> None:
 def _existing_store_init_error(target: Path) -> str | None:
     """Return a fixed rejection before init can write an authoritative target."""
 
-    from multi_agent_brief.cli.authority_guard import classify_workspace_authority
+    from multi_agent_brief.runtime_host_v2.initialization import WorkspaceBootstrap
 
-    authority = classify_workspace_authority(target.expanduser().resolve(strict=False))
-    if authority.kind == "sqlite":
-        return "workspace_already_initialized"
-    if authority.kind == "invalid_sqlite":
-        return "control_store_integrity_invalid"
-    return None
+    return WorkspaceBootstrap(target).init_write_error()
 
 
 def _init_workspace(args: argparse.Namespace) -> int:
@@ -539,11 +534,13 @@ def _init_workspace(args: argparse.Namespace) -> int:
         print(f"[error] {error_code}")
         return 1
     create_workspace(target, profile, force=args.force)
-    from multi_agent_brief.runtime_host_v2.errors import RuntimeHostError
-    from multi_agent_brief.runtime_host_v2.initialization import WorkspaceBootstrap
+    from multi_agent_brief.runtime_host_v2.initialization import (
+        RuntimeHostError,
+        WorkspaceBootstrap,
+    )
 
     try:
-        WorkspaceBootstrap(target).prepare_codex_runtime()
+        WorkspaceBootstrap(target).install_codex_kit()
     except RuntimeHostError as exc:
         print(f"[error] {exc}")
         return 1

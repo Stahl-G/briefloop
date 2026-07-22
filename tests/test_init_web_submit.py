@@ -22,6 +22,7 @@ from multi_agent_brief.product.init_web.submit import (
     _profile_from_payload,
 )
 from multi_agent_brief.runtime_assets import RuntimeAssetInstallError
+from multi_agent_brief.runtime_host_v2.initialization import WorkspaceBootstrap
 
 
 def _body(request_id: str, target: str, **overrides: object) -> dict[str, object]:
@@ -204,6 +205,36 @@ def test_identical_resubmit_is_replayed_with_zero_writes(tmp_path: Path) -> None
     assert second["committed_revision"] == first["committed_revision"]
     assert second["receipt"] == first["receipt"]
     assert _revision(workspace) == revision_before
+
+
+def test_fresh_and_existing_submit_targets_use_bootstrap_facade(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    observed: list[str] = []
+    original = WorkspaceBootstrap.classify_target
+
+    def _recording_classification(self: WorkspaceBootstrap) -> str:
+        authority_kind = original(self)
+        observed.append(authority_kind)
+        return authority_kind
+
+    monkeypatch.setattr(
+        WorkspaceBootstrap, "classify_target", _recording_classification
+    )
+    body = _body("REQ-AAAA0012", "web-ws")
+    first = _submit_ok(InitWebSubmitter(base_dir=tmp_path), body)
+    workspace = tmp_path / "web-ws"
+    revision_before = _revision(workspace)
+
+    second = _submit_ok(InitWebSubmitter(base_dir=tmp_path), body)
+
+    assert first["status"] == "committed"
+    assert second["status"] == "replayed"
+    assert second["receipt"] == first["receipt"]
+    assert _revision(workspace) == revision_before
+    assert "fresh" in observed
+    assert "sqlite" in observed
 
 
 def test_same_request_id_with_different_payload_conflicts_with_zero_writes(

@@ -6,7 +6,7 @@ from dataclasses import dataclass
 import hashlib
 from pathlib import Path
 import stat
-from typing import Callable
+from typing import Callable, Literal
 
 from pydantic import ValidationError
 import yaml
@@ -201,15 +201,32 @@ class WorkspaceBootstrap:
     def __init__(self, workspace: str | Path) -> None:
         self.workspace = Path(workspace).expanduser().resolve(strict=False)
 
+    def classify_target(
+        self,
+    ) -> Literal["fresh", "sqlite", "legacy", "invalid_sqlite"]:
+        """Classify target authority behind the bootstrap facade."""
+
+        return classify_workspace_authority(self.workspace).kind
+
+    def init_write_error(self) -> str | None:
+        """Return the fixed pre-write rejection for CLI workspace creation."""
+
+        authority_kind = self.classify_target()
+        if authority_kind == "sqlite":
+            return "workspace_already_initialized"
+        if authority_kind == "invalid_sqlite":
+            return "control_store_integrity_invalid"
+        return None
+
     def install_codex_kit(self, *, dry_run: bool = False) -> dict[str, object]:
         """Materialize a fresh kit or verify the Store-bound installed kit."""
 
-        authority = classify_workspace_authority(self.workspace)
-        if authority.kind == "legacy":
+        authority_kind = self.classify_target()
+        if authority_kind == "legacy":
             raise RuntimeHostError("legacy_workspace_unsupported")
-        if authority.kind == "invalid_sqlite":
+        if authority_kind == "invalid_sqlite":
             raise RuntimeHostError("control_store_integrity_invalid")
-        if authority.kind == "sqlite":
+        if authority_kind == "sqlite":
             current = _verify_existing(
                 self.workspace,
                 adapter_loader=workspace_codex_adapter_loader(self.workspace),
@@ -244,8 +261,8 @@ class WorkspaceBootstrap:
     ) -> _PreparedCodexRuntime:
         """Validate bootstrap inputs, then prepare and bind the exact kit."""
 
-        authority = classify_workspace_authority(self.workspace)
-        if authority.kind == "sqlite":
+        authority_kind = self.classify_target()
+        if authority_kind == "sqlite":
             current = _verify_existing(
                 self.workspace,
                 adapter_loader=workspace_codex_adapter_loader(self.workspace),
@@ -254,9 +271,9 @@ class WorkspaceBootstrap:
                 inputs=None,
                 adapter=current.verified.runtime_adapter,
             )
-        if authority.kind == "legacy":
+        if authority_kind == "legacy":
             raise RuntimeHostError("legacy_workspace_unsupported")
-        if authority.kind == "invalid_sqlite":
+        if authority_kind == "invalid_sqlite":
             raise RuntimeHostError("control_store_integrity_invalid")
 
         inputs = _load_initialization_inputs(self.workspace)
@@ -280,8 +297,8 @@ class WorkspaceBootstrap:
     ) -> InitializedRuntime:
         """Prepare the kit first and commit SQLite last for a fresh workspace."""
 
-        authority = classify_workspace_authority(self.workspace)
-        if authority.kind == "sqlite":
+        authority_kind = self.classify_target()
+        if authority_kind == "sqlite":
             return _verify_existing(
                 self.workspace,
                 adapter_loader=workspace_codex_adapter_loader(self.workspace),
@@ -318,12 +335,12 @@ class WorkspaceBootstrap:
     ) -> InitializedRuntime:
         """Existing injected-loader boundary used by RuntimeHostService."""
 
-        authority = classify_workspace_authority(self.workspace)
-        if authority.kind == "sqlite":
+        authority_kind = self.classify_target()
+        if authority_kind == "sqlite":
             return _verify_existing(self.workspace, adapter_loader=adapter_loader)
-        if authority.kind == "legacy":
+        if authority_kind == "legacy":
             raise RuntimeHostError("legacy_workspace_unsupported")
-        if authority.kind == "invalid_sqlite":
+        if authority_kind == "invalid_sqlite":
             raise RuntimeHostError("control_store_integrity_invalid")
 
         inputs = _load_initialization_inputs(self.workspace)
@@ -360,6 +377,7 @@ def initialize_or_open_runtime(
 __all__ = [
     "AdapterLoader",
     "InitializedRuntime",
+    "RuntimeHostError",
     "WorkspaceBootstrap",
     "initialize_or_open_runtime",
 ]
