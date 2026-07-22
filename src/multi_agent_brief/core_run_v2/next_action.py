@@ -190,6 +190,13 @@ def classify_core_run_next_action(verified: VerifiedCoreRun) -> CoreRunNextActio
             effect_kind="delivered",
             reason_code="delivery_succeeded",
         )
+    if terminal.terminal_state == "finalized_local":
+        return _action(
+            verified,
+            action_kind="complete",
+            effect_kind="finalized_local",
+            reason_code="local_finalization_complete",
+        )
     if (
         terminal.terminal_state == "package_ready"
         and terminal.current_result_status == "bundle_prepared"
@@ -358,6 +365,14 @@ def classify_core_run_next_action(verified: VerifiedCoreRun) -> CoreRunNextActio
 
 def _source_discovery_action(verified: VerifiedCoreRun) -> CoreRunNextAction:
     snapshot = verified.snapshot
+    if snapshot.run_execution_authorizations and not snapshot.sources:
+        return _action(
+            verified,
+            action_kind="deterministic",
+            effect_kind="authorized_source_pack_commit",
+            reason_code="authorized_source_pack_commit_required",
+            stage_id="source-discovery",
+        )
     artifacts = {item.artifact_id: item for item in snapshot.artifacts}
     candidates = artifacts.get("source_candidates")
     if candidates is None or candidates.current_revision == 0:

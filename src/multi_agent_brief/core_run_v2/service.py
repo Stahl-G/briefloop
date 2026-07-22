@@ -16,11 +16,14 @@ from multi_agent_brief.contracts.v2 import (
     ArtifactRevision,
     CoreRunEventBinding,
     CoreRunInitializeRequest,
+    ExecutionSourceManifest,
     EventEnvelope,
     IntegrityCheckRequest,
     Invocation,
     InvocationStartRequest,
     RunContractBinding,
+    RunExecutionAuthorization,
+    canonical_run_direction_for_binding,
     RunDirection,
     RunIdentity,
     RunIntegrityRecord,
@@ -74,6 +77,7 @@ from .policy import (
     DOCTOR_IMPLEMENTATION,
     DOCTOR_VERSION,
     INTERNAL_CONTRACT_ARTIFACT_IDS,
+    EXECUTION_AUTHORIZATION_MANIFEST_ARTIFACT_ID,
     SOURCE_ROUTE_IDS,
     SOURCE_WEB_PROVIDER_IDS,
     STAGE_ROLES,
@@ -135,11 +139,106 @@ class CoreRunService:
         except (CoreRunError, ControlStoreError) as exc:
             return core_run_failure_result(exc)
 
+    def apply_authorized_source_pack(self) -> CoreRunResult:
+        """Apply the one Store-authorized local source pack without host DTOs."""
+
+        try:
+            return self._apply_authorized_source_pack()
+        except (CoreRunError, ControlStoreError) as exc:
+            return core_run_failure_result(exc)
+
     def complete_stage(self, request: StageCompleteRequest) -> CoreRunResult:
         try:
             return self._complete_stage(request)
         except (CoreRunError, ControlStoreError) as exc:
             return core_run_failure_result(exc)
+
+    def _apply_authorized_source_pack(self) -> CoreRunResult:
+        with self._open_store() as store:
+            verified = self._verifier.verify(store, store.load_workspace_run_head().current_run_id)
+            if len(verified.snapshot.run_execution_authorizations) != 1:
+                raise CoreRunError("core_run_head_mismatch")
+            authorization = verified.snapshot.run_execution_authorizations[0]
+            pack_request_id = derived_id(
+                "REQ-AUTHORIZED-SOURCE-PACK",
+                verified.snapshot.run.run_id,
+                authorization.request_fingerprint,
+            )
+            existing = store.load_transaction_receipt(
+                verified.snapshot.run.run_id, pack_request_id
+            )
+            if existing is not None:
+                return CoreRunResult(status="replayed", receipt=existing)
+            action = classify_core_run_next_action(verified)
+            if (
+                action.action_kind != "deterministic"
+                or action.effect_kind != "authorized_source_pack_commit"
+                or action.stage_id != "source-discovery"
+            ):
+                raise CoreRunError("core_run_head_mismatch")
+            try:
+                manifest_bytes = store.read_artifact_revision_bytes(
+                    verified.snapshot.run.run_id,
+                    authorization.source_manifest_artifact.artifact_id,
+                    authorization.source_manifest_artifact.revision,
+                )
+                manifest = ExecutionSourceManifest.model_validate_json(
+                    manifest_bytes, strict=True
+                )
+            except Exception as exc:
+                raise CoreRunError("control_store_integrity_invalid") from exc
+            invocation_request = InvocationStartRequest.model_validate(
+                {
+                    "schema_version": InvocationStartRequest.schema_id,
+                    "request_id": derived_id(
+                        "REQ-AUTHORIZED-SOURCE-PROVIDER", pack_request_id
+                    ),
+                    "run_id": verified.snapshot.run.run_id,
+                    "stage_id": "source-discovery",
+                    "role_id": "source-provider",
+                    "runtime": verified.snapshot.run.runtime,
+                    "expected_store_revision": verified.snapshot.store_revision,
+                },
+                strict=True,
+            )
+        started = self._start_invocation(invocation_request)
+        if started.status not in {"committed", "replayed"} or started.primary_record_id is None:
+            return started
+        contents: list[bytes] = []
+        for member in manifest.members:
+            observed = read_workspace_file(self.workspace, member.input_path)
+            if observed.entry_kind != "regular_file" or observed.content is None:
+                raise CoreRunError("source_pack_authorization_invalid")
+            if observed.sha256 != member.content_sha256:
+                raise CoreRunError("source_hash_mismatch")
+            contents.append(observed.content)
+        from multi_agent_brief.intake_v2.service import (
+            IntakeError,
+            IntakeService,
+            _CoreAuthorizedSourcePack,
+        )
+
+        try:
+            result = IntakeService(self.workspace, clock=self._clock)._commit_authorized_source_pack_from_core(
+                _CoreAuthorizedSourcePack(
+                    request_id=pack_request_id,
+                    run_id=invocation_request.run_id,
+                    invocation_id=started.primary_record_id,
+                    expected_store_revision=invocation_request.expected_store_revision + 1,
+                    manifest=manifest,
+                    source_manifest_sha256=authorization.source_manifest_sha256,
+                    contents=tuple(contents),
+                )
+            )
+        except IntakeError as exc:
+            raise CoreRunError(exc.code) from exc
+        if result.receipt is None:
+            raise CoreRunError(result.error_code or "control_store_integrity_invalid")
+        return CoreRunResult(
+            status=result.status,
+            receipt=result.receipt,
+            primary_record_id=(result.source_id or started.primary_record_id),
+        )
 
     def _initialize(self, request: CoreRunInitializeRequest) -> CoreRunResult:
         database = self.workspace / "briefloop.db"
@@ -205,6 +304,18 @@ class CoreRunService:
         )
         adapter_hash = sha256_hex(adapter_bytes)
         source_plan_hash = sha256_hex(source_plan_bytes)
+        authorization_input = request.execution_authorization
+        execution_manifest_bytes: bytes | None = None
+        if authorization_input is not None:
+            execution_manifest_bytes = canonical_json_bytes(
+                authorization_input.source_manifest.model_dump(
+                    mode="json", exclude_unset=False
+                )
+            )
+            if sha256_hex(execution_manifest_bytes) != (
+                authorization_input.source_manifest_sha256
+            ):
+                raise CoreRunError("core_run_contract_mismatch")
         fingerprint = run_contract_fingerprint(
             runtime=request.runtime,
             stage_specs_schema=str(contracts.stage_specs["schema_version"]),
@@ -288,6 +399,24 @@ class CoreRunService:
                     )
                     + (payload,)
                 )
+            if execution_manifest_bytes is not None:
+                contract_artifacts.append(
+                    _artifact_pair(
+                        run_id=request.run_id,
+                        artifact_id=EXECUTION_AUTHORIZATION_MANIFEST_ARTIFACT_ID,
+                        revision=1,
+                        path=blob_workspace_path(
+                            authorization_input.source_manifest_sha256
+                        ),
+                        artifact_format="json",
+                        content=execution_manifest_bytes,
+                        producer_kind="control_tool",
+                        producer_id="core-v2-initializer",
+                        created_at=now,
+                        required=True,
+                    )
+                    + (execution_manifest_bytes,)
+                )
             binding = RunContractBinding.model_validate(
                 {
                     "schema_version": RunContractBinding.schema_id,
@@ -344,6 +473,41 @@ class CoreRunService:
                 },
                 strict=True,
             )
+            execution_authorization = (
+                None
+                if authorization_input is None
+                else RunExecutionAuthorization.model_validate(
+                    {
+                        "schema_version": RunExecutionAuthorization.schema_id,
+                        "authorization_id": derived_id(
+                            "EXEC-AUTH", request.request_id, request_fingerprint
+                        ),
+                        "run_id": request.run_id,
+                        "workspace_id": request.workspace_id,
+                        "run_contract_fingerprint": binding.contract_fingerprint,
+                        "run_direction_fingerprint": canonical_fingerprint(
+                            canonical_run_direction_for_binding(
+                                request.run_direction.model_dump(
+                                    mode="json", exclude_unset=False
+                                )
+                            )
+                        ),
+                        "completion_target": authorization_input.completion_target,
+                        "source_manifest_artifact": {
+                            "artifact_id": EXECUTION_AUTHORIZATION_MANIFEST_ARTIFACT_ID,
+                            "revision": 1,
+                        },
+                        "source_manifest_sha256": authorization_input.source_manifest_sha256,
+                        "source_manifest_member_count": authorization_input.source_manifest_member_count,
+                        "repair_budget": authorization_input.repair_budget,
+                        "authorization_event_id": event_id,
+                        "accepted_transaction_id": request.request_id,
+                        "request_fingerprint": request_fingerprint,
+                        "created_at": now,
+                    },
+                    strict=True,
+                )
+            )
             event = _core_event(
                 event_id=event_id,
                 run_id=request.run_id,
@@ -373,6 +537,8 @@ class CoreRunService:
                 unit.put_artifact(artifact)
                 unit.put_artifact_revision(revision, payload)
             unit.put_run_contract_binding(binding)
+            if execution_authorization is not None:
+                unit.put_run_execution_authorization(execution_authorization)
             artifact_contracts = {
                 str(item["artifact_id"]): item for item in contracts.artifacts
             }
@@ -522,6 +688,13 @@ class CoreRunService:
                 and request.stage_id == "source-discovery"
                 and request.role_id == "source-provider"
             )
+            authorized_source_pack_reservation = (
+                action.action_kind == "deterministic"
+                and action.effect_kind == "authorized_source_pack_commit"
+                and action.stage_id == "source-discovery"
+                and request.stage_id == "source-discovery"
+                and request.role_id == "source-provider"
+            )
             human_source_reservation = (
                 action.action_kind == "human_decision"
                 and action.effect_kind == "source_input_required"
@@ -534,6 +707,7 @@ class CoreRunService:
             if not (
                 delegate_reservation
                 or source_acquire_reservation
+                or authorized_source_pack_reservation
                 or human_source_reservation
             ):
                 raise CoreRunError("invocation_owner_mismatch")
@@ -1558,6 +1732,10 @@ _SECRET_BEARING_INPUT_KEYS = frozenset(
 _SECRET_BEARING_INPUT_SUFFIXES = tuple(
     f"_{name}" for name in sorted(_SECRET_BEARING_INPUT_KEYS)
 )
+# The bootstrap's strict, non-secret control DTO uses this historical suffix;
+# it is validated separately as a Pydantic authorization input, never treated
+# as a credential selector or persisted secret.
+_NON_SECRET_CONTROL_INPUT_KEYS = frozenset({"execution_authorization"})
 _LEGACY_CONTROL_PATHS = (
     "output/intermediate/runtime_manifest.json",
     "output/intermediate/workflow_state.json",
@@ -1615,8 +1793,9 @@ def _require_non_secret_mapping(content: bytes) -> None:
                 if type(key) is not str:
                     raise CoreRunError("core_run_contract_mismatch")
                 normalized = key.strip().casefold().replace("-", "_")
-                if normalized in _SECRET_BEARING_INPUT_KEYS or normalized.endswith(
-                    _SECRET_BEARING_INPUT_SUFFIXES
+                if normalized not in _NON_SECRET_CONTROL_INPUT_KEYS and (
+                    normalized in _SECRET_BEARING_INPUT_KEYS
+                    or normalized.endswith(_SECRET_BEARING_INPUT_SUFFIXES)
                 ):
                     raise CoreRunError("core_run_contract_mismatch")
                 pending.append(child)

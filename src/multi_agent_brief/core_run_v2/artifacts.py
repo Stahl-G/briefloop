@@ -104,18 +104,23 @@ class ArtifactAcceptanceService:
             )
             if replay is not None:
                 return replay
+            if PurePosixPath(request.input_path).suffix != policy.input_suffix:
+                raise CoreRunError("artifact_input_unsafe")
+            verified = self._verifier.verify(store, request.run_id)
+            if (
+                request.artifact_id == "input_classification"
+                and verified.snapshot.run_execution_authorizations
+            ):
+                raise CoreRunError("artifact_owner_mismatch")
             try:
                 content = self._reader.read(request.input_path)
             except IntakeError as exc:
                 raise CoreRunError("artifact_input_unsafe") from exc
-            if PurePosixPath(request.input_path).suffix != policy.input_suffix:
-                raise CoreRunError("artifact_input_unsafe")
             if request.artifact_id == "input_classification":
                 expected_content = _input_classification_bytes(self.workspace)
                 if content != expected_content:
                     raise CoreRunError("artifact_input_unsafe")
                 content = expected_content
-            verified = self._verifier.verify(store, request.run_id)
             lineage = classify_current_lineage(verified.snapshot)
             self._require_store_revision(
                 verified.snapshot.store_revision,

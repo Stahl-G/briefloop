@@ -1064,8 +1064,9 @@ def test_schema_settings_and_exact_table_universe(tmp_path: Path) -> None:
         "sources",
         "accepted_proposals",
         "proposal_source_bindings",
-        "run_contract_bindings",
-        "owned_artifact_submissions",
+            "run_contract_bindings",
+            "run_execution_authorizations",
+            "owned_artifact_submissions",
         "stage_transitions",
         "stage_artifact_bindings",
         "stage_gate_bindings",
@@ -1076,7 +1077,8 @@ def test_schema_settings_and_exact_table_universe(tmp_path: Path) -> None:
         "gate_findings",
         "gate_artifact_bindings",
         "run_integrity_records",
-        "transaction_run_contract_bindings",
+            "transaction_run_contract_bindings",
+            "transaction_run_execution_authorizations",
         "transaction_owned_artifact_submissions",
         "transaction_stage_transitions",
         "transaction_stage_artifact_bindings",
@@ -1141,7 +1143,7 @@ def test_schema_settings_and_exact_table_universe(tmp_path: Path) -> None:
         assert store._connection.execute("PRAGMA foreign_keys").fetchone()[0] == 1
         assert store._connection.execute("PRAGMA journal_mode").fetchone()[0] == "wal"
         assert store._connection.execute("PRAGMA synchronous").fetchone()[0] == 2
-        assert store._connection.execute("PRAGMA user_version").fetchone()[0] == 6
+        assert store._connection.execute("PRAGMA user_version").fetchone()[0] == 7
         tables = {
             row[0]
             for row in store._connection.execute(
@@ -2590,7 +2592,7 @@ def test_future_schema_fails_closed(tmp_path: Path) -> None:
     store = _create_store(tmp_path)
     store.close()
     connection = sqlite3.connect(tmp_path / "control.db")
-    connection.execute("PRAGMA user_version = 7")
+    connection.execute("PRAGMA user_version = 8")
     connection.close()
     with pytest.raises(ControlStoreSchemaError) as error:
         SQLiteControlStore.open(tmp_path / "control.db")
@@ -2886,6 +2888,13 @@ def test_migration_resource_matches_packaged_source_text() -> None:
         "migrations", "0006.sql"
     )
     assert packaged_6.read_text(encoding="utf-8") == migration_6.read_text(
+        encoding="utf-8"
+    )
+    migration_7 = source.with_name("0007.sql")
+    packaged_7 = resources.files("multi_agent_brief.control_store").joinpath(
+        "migrations", "0007.sql"
+    )
+    assert packaged_7.read_text(encoding="utf-8") == migration_7.read_text(
         encoding="utf-8"
     )
 

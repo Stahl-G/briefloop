@@ -437,6 +437,15 @@ def classify_terminal_effect_authorization(
     def allow() -> TerminalEffectAuthorization:
         return TerminalEffectAuthorization("allow")
 
+    # An M2 execution authorization has one local terminal target.  It may
+    # render/finalize, but it must never enter the package/approval/delivery
+    # authority graph.
+    if snapshot.run_execution_authorizations and effect not in {
+        CoreEffect.FINALIZE_RENDER,
+        CoreEffect.FINALIZE_COMPLETE,
+    }:
+        return deny()
+
     if effect is CoreEffect.FINALIZE_RENDER:
         finalize = next(
             (item for item in snapshot.stage_states if item.stage_id == "finalize"),
@@ -651,6 +660,23 @@ def classify_terminal_legality(
             next_effects=("finalize_gate", "finalize_complete")
             if state == "rendered"
             else (),
+        )
+    if snapshot.run_execution_authorizations:
+        if len(snapshot.run_execution_authorizations) != 1:
+            return TerminalLegality("invalid")
+        if (
+            snapshot.run_execution_authorizations[0].completion_target
+            != "finalized_local"
+            or snapshot.package_ready_records
+            or snapshot.approvals
+            or snapshot.delivery_authorizations
+            or snapshot.delivery_attempts
+            or snapshot.delivery_results
+        ):
+            return TerminalLegality("invalid")
+        return TerminalLegality(
+            "finalized_local",
+            terminal_state="finalized_local",
         )
     if not snapshot.package_ready_records:
         return TerminalLegality("finalized", terminal_state="finalized")
@@ -1354,6 +1380,17 @@ class CoreRunTerminalService:
                 or request.recovery_id != expected_recovery_id
             ):
                 raise CoreRunError("finalize_gate_blocked")
+            if snapshot.run_execution_authorizations:
+                return self._complete_finalize_local(
+                    store=store,
+                    verifier=verifier,
+                    verified=verified,
+                    request=request,
+                    fingerprint=fingerprint,
+                    stage=stage,
+                    render=renders[0],
+                    selected=selected,
+                )
             render = renders[0]
             now = self._now()
             finalization_id = derived_id("FINALIZATION", request.request_id, fingerprint)
@@ -1558,6 +1595,131 @@ class CoreRunTerminalService:
             return CoreRunResult(status="committed", receipt=receipt, primary_record_id=finalization_id)
         finally:
             store.close()
+
+    def _complete_finalize_local(
+        self,
+        *,
+        store: SQLiteControlStore,
+        verifier,
+        verified,
+        request: FinalizeCompleteRequest,
+        fingerprint: str,
+        stage: StageState,
+        render: FinalizeRenderRecord,
+        selected,
+    ):
+        """Commit the authorization-bound local terminal without a package path."""
+
+        from .errors import CoreRunResult
+        from .policy import derived_id, transaction_type_for
+
+        snapshot = verified.snapshot
+        now = self._now()
+        finalization_id = derived_id("FINALIZATION", request.request_id, fingerprint)
+        transition_id = derived_id("TRANSITION-FINALIZE", request.request_id, fingerprint)
+        event_id = derived_id("EVT-FINALIZED", request.request_id, fingerprint)
+        transition = StageTransitionRecord.model_validate(
+            {
+                "schema_version": StageTransitionRecord.schema_id,
+                "transition_id": transition_id,
+                "run_id": request.run_id,
+                "stage_id": "finalize",
+                "transition_kind": "complete",
+                "requested_decision": "continue",
+                "prior_status": stage.status,
+                "prior_revision": stage.revision,
+                "result_status": "complete",
+                "result_revision": stage.revision + 1,
+                "reason": "Finalize Gate passed for the authorized local target",
+                "run_contract_fingerprint": verified.binding.contract_fingerprint,
+                "actor": "system",
+                "producer_invocation_id": None,
+                "producer_tool_id": "core-v2-finalize-complete",
+                "producer_result_status": None,
+                "producer_result_fingerprint": None,
+                "producer_implementation": None,
+                "producer_version": None,
+                "topology": None,
+                "satisfaction_source_kind": None,
+                "satisfied_by_id": None,
+                "created_at": now,
+                "transition_event_id": event_id,
+                "accepted_transaction_id": request.request_id,
+                "request_fingerprint": fingerprint,
+            },
+            strict=True,
+        )
+        finalization = FinalizationRecord.model_validate(
+            {
+                "schema_version": FinalizationRecord.schema_id,
+                "finalization_id": finalization_id,
+                "run_id": request.run_id,
+                "render_id": render.render_id,
+                "finalize_transition_id": transition_id,
+                "finalize_gate_batch_id": selected[0].gate_batch_id,
+                "finalize_gate_evaluation_ids": request.gate_evaluation_ids,
+                "recovery_id": request.recovery_id,
+                "integrity_revision": snapshot.run_integrity_records[-1].integrity_revision,
+                "finalized_at": now,
+                "finalization_event_id": event_id,
+                "accepted_transaction_id": request.request_id,
+                "request_fingerprint": fingerprint,
+            },
+            strict=True,
+        )
+        unit = store.begin(
+            request.run_id,
+            request.request_id,
+            transaction_type_for("finalize_complete"),
+            request.expected_store_revision,
+        )
+        unit.put_stage_state(
+            StageState.model_validate(
+                {
+                    "schema_version": StageState.schema_id,
+                    "run_id": request.run_id,
+                    "stage_id": "finalize",
+                    "status": "complete",
+                    "revision": stage.revision + 1,
+                    "updated_at": now,
+                },
+                strict=True,
+            )
+        )
+        unit.append_stage_transition(transition)
+        for evaluation in selected:
+            unit.put_stage_gate_binding(
+                StageGateBinding.model_validate(
+                    {
+                        "schema_version": StageGateBinding.schema_id,
+                        "run_id": request.run_id,
+                        "transition_id": transition_id,
+                        "gate_id": evaluation.gate_id,
+                        "evaluation_id": evaluation.evaluation_id,
+                        "accepted_transaction_id": request.request_id,
+                    },
+                    strict=True,
+                )
+            )
+        unit.put_finalization(finalization)
+        unit.append_event(
+            self._event(
+                event_id=event_id,
+                event_type="stage_status_changed",
+                request=request,
+                fingerprint=fingerprint,
+                effect_kind="finalize_complete",
+                primary_record_id=finalization_id,
+            )
+        )
+        receipt = unit.commit(
+            _postcommit_observer=lambda _receipt: verifier.verify(store, request.run_id)
+        )
+        return CoreRunResult(
+            status="committed",
+            receipt=receipt,
+            primary_record_id=finalization_id,
+        )
 
     def _record_delivery_attempt(self, request: DeliveryAttemptRequest):
         from .checkout import prepare_checkout_effect, stage_checkout_effect

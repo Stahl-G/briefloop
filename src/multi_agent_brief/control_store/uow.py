@@ -44,6 +44,7 @@ from multi_agent_brief.contracts.v2 import (
     ReceiptCheckoutBinding,
     ArtifactSupersessionRecord,
     RunContractBinding,
+    RunExecutionAuthorization,
     RunIdentity,
     RunIntegrityRecord,
     RunArchiveArtifactBinding,
@@ -125,6 +126,7 @@ class ControlUnitOfWork:
             tuple[str, str], ProposalSourceBinding
         ] = {}
         self._run_contract_binding: RunContractBinding | None = None
+        self._run_execution_authorization: RunExecutionAuthorization | None = None
         self._owned_artifact_submissions: dict[
             str, OwnedArtifactSubmissionRecord
         ] = {}
@@ -332,6 +334,18 @@ class ControlUnitOfWork:
         if self._run_contract_binding is not None:
             raise ControlStoreConflict("duplicate_staged_record")
         self._run_contract_binding = snapshot
+
+    def put_run_execution_authorization(
+        self,
+        record: RunExecutionAuthorization,
+    ) -> None:
+        snapshot = self._snapshot_record(record, RunExecutionAuthorization)
+        self._require_run(snapshot)
+        if snapshot.workspace_id != self._store.workspace_id:
+            raise ControlStoreConflict("control_record_workspace_mismatch")
+        if self._run_execution_authorization is not None:
+            raise ControlStoreConflict("duplicate_staged_record")
+        self._run_execution_authorization = snapshot
 
     def put_owned_artifact_submission(
         self,
@@ -630,6 +644,11 @@ class ControlUnitOfWork:
             "run_contract_binding": (
                 self._record_payload(self._run_contract_binding)
                 if self._run_contract_binding is not None
+                else None
+            ),
+            "run_execution_authorization": (
+                self._record_payload(self._run_execution_authorization)
+                if self._run_execution_authorization is not None
                 else None
             ),
             "owned_artifact_submissions": [
