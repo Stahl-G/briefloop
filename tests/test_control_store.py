@@ -2910,6 +2910,8 @@ def test_only_dormant_v2_modules_import_control_store() -> None:
         "runtime_host_v2/projections.py",
         "runtime_host_v2/scratch.py",
         "runtime_host_v2/service.py",
+        # Unit A admission/staging consumes deterministic serialization helpers.
+        "runtime_host_v2/submission.py",
         "runtime_host_v2/source_routes.py",
     }
     findings: list[str] = []

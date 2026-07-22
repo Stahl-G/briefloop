@@ -29,6 +29,7 @@ from multi_agent_brief.sources.cached_package import CachedPackageProvider
 from multi_agent_brief.sources.web_search import WebSearchProvider
 
 from .errors import RuntimeHostError
+from .submission import MAX_SOURCE_PACK_MEMBERS
 
 
 @dataclass(frozen=True)
@@ -132,6 +133,7 @@ def collect_frozen_sources(
         raise RuntimeHostError("runtime_source_plan_invalid")
     if not items:
         raise RuntimeHostError("runtime_source_acquisition_failed")
+    items = _canonical_source_items(items)
     ordered = sorted(
         items,
         key=lambda value: (
@@ -165,6 +167,11 @@ def _provider(kind: str) -> SourceProvider:
 
 def _validated_cached_paths(workspace: Path, paths: list[str]) -> list[Path]:
     result: list[Path] = []
+    logical_paths = [Path(value) for value in paths]
+    for position, left in enumerate(logical_paths):
+        for right in logical_paths[position + 1 :]:
+            if left == right or left in right.parents or right in left.parents:
+                raise RuntimeHostError("runtime_source_pack_invalid")
     for relative in paths:
         current = workspace
         for part in Path(relative).parts:
@@ -179,6 +186,25 @@ def _validated_cached_paths(workspace: Path, paths: list[str]) -> list[Path]:
                 raise RuntimeHostError("runtime_source_acquisition_failed")
         result.append(current)
     return result
+
+
+def _canonical_source_items(items: list[SourceItem]) -> list[SourceItem]:
+    """Close count and duplicate identity before any authoritative mutation."""
+
+    if len(items) > MAX_SOURCE_PACK_MEMBERS:
+        raise RuntimeHostError("runtime_source_pack_invalid")
+    by_identity: dict[str, tuple[bytes, SourceItem]] = {}
+    for item in items:
+        payload = canonical_json_bytes(item.to_dict())
+        previous = by_identity.get(item.source_id)
+        if previous is None:
+            by_identity[item.source_id] = (payload, item)
+        elif previous[0] != payload:
+            raise RuntimeHostError("runtime_source_pack_invalid")
+    canonical = [value[1] for value in by_identity.values()]
+    if len(canonical) > MAX_SOURCE_PACK_MEMBERS:
+        raise RuntimeHostError("runtime_source_pack_invalid")
+    return canonical
 
 
 def _material_from_item(

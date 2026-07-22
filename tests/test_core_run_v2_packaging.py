@@ -71,6 +71,7 @@ def test_non_editable_wheel_runs_complete_dormant_core_spine(
             InvocationStartRequest,
             OwnedArtifactSubmitRequest,
             SourceCommitRequest,
+            SourceProposal,
             StageCompleteRequest,
         )
         from multi_agent_brief.control_store import SQLiteControlStore
@@ -81,6 +82,15 @@ def test_non_editable_wheel_runs_complete_dormant_core_spine(
         from multi_agent_brief.product.init_web.submit import (
             SUBMISSION_SCHEMA,
             InitWebSubmitter,
+        )
+        from multi_agent_brief.runtime_host_v2.service import (
+            _ROLE_OUTPUTS,
+            _strict_proposal_violations,
+        )
+        from multi_agent_brief.runtime_host_v2.submission import (
+            MAX_SOURCE_MEMBER_BYTES,
+            MAX_SOURCE_PACK_BYTES,
+            MAX_SOURCE_PACK_MEMBERS,
         )
 
         workspace = Path(sys.argv[1])
@@ -103,6 +113,38 @@ def test_non_editable_wheel_runs_complete_dormant_core_spine(
         assert "PRAGMA user_version=6;" in migration_0006.read_text(encoding="utf-8")
         assert callable(build_checkout_revision)
         assert CheckoutPublicationEngine.__module__.endswith(".publication")
+        assert MAX_SOURCE_PACK_MEMBERS == 256
+        assert MAX_SOURCE_MEMBER_BYTES == 16 * 1024 * 1024
+        assert MAX_SOURCE_PACK_BYTES == 256 * 1024 * 1024
+        verifier_content = b"packaged exact source bytes\n"
+        verifier_raw = b'{"packaged":true}\n'
+        verifier_proposal = deepcopy(SourceProposal.full_example)
+        verifier_proposal.update(
+            content_sha256=hashlib.sha256(verifier_content).hexdigest(),
+            raw_payload_sha256=hashlib.sha256(verifier_raw).hexdigest(),
+        )
+        verifier_outputs = {
+            "source_proposal.json": json.dumps(
+                verifier_proposal,
+                sort_keys=True,
+            ).encode("utf-8"),
+            "source_content.bin": verifier_content,
+            "source_raw.json": verifier_raw,
+        }
+        assert _strict_proposal_violations(
+            _ROLE_OUTPUTS["source-provider"],
+            verifier_outputs,
+            expected_run_id=verifier_proposal["run_id"],
+        ) == []
+        verifier_outputs["source_content.bin"] += b"tampered"
+        assert [
+            item.field
+            for item in _strict_proposal_violations(
+                _ROLE_OUTPUTS["source-provider"],
+                verifier_outputs,
+                expected_run_id=verifier_proposal["run_id"],
+            )
+        ] == ["content_sha256"]
 
         binding_workspace = workspace.parent / "codex-binding-wheel"
         create_demo_workspace(binding_workspace)
