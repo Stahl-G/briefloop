@@ -1463,6 +1463,36 @@ def test_gate_batches_append_and_old_request_exactly_replays(
     assert report_path.read_bytes() == second_report_bytes
 
 
+def test_gate_batch_rejects_mixed_evaluator_versions(tmp_path: Path) -> None:
+    workspace = _workspace(tmp_path)
+    _advance_to_finalize_ready(workspace)
+    with SQLiteControlStore.open(workspace / "briefloop.db") as store:
+        history = store.load_history()
+        verified = CoreRunDomainVerifier().verify(store, RUN_ID)
+
+    snapshot = verified.snapshot
+    target = snapshot.gate_evaluations[-1]
+    forged = replace(
+        snapshot,
+        gate_evaluations=tuple(
+            item.model_copy(update={"producer_version": "1"})
+            if item.evaluation_id == target.evaluation_id
+            else item
+            for item in snapshot.gate_evaluations
+        ),
+    )
+    forged_history = replace(
+        history,
+        snapshots=tuple(
+            forged if item.run.run_id == RUN_ID else item
+            for item in history.snapshots
+        ),
+    )
+
+    with pytest.raises(CoreRunError, match="control_store_integrity_invalid"):
+        CoreRunDomainVerifier()._verify_snapshot(forged_history, forged)
+
+
 def test_gate_rejects_finalize_stage_before_render_without_writes(
     tmp_path: Path,
 ) -> None:

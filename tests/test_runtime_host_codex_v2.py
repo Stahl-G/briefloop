@@ -102,12 +102,38 @@ def test_strict_proposal_preflight_rejects_schema_valid_cross_run_binding() -> N
     ]
 
 
-def test_proposal_accept_request_starts_missing_dynamic_artifact_at_revision_zero(
+def test_first_dynamic_proposal_is_created_and_advances_the_runtime(
     tmp_path: Path,
     capsys,
 ) -> None:
-    workspace = _workspace(tmp_path)
+    if sys.platform == "win32":
+        pytest.skip("working-checkout publication is precommit unsupported on Windows")
+    workspace = _cached_workspace(tmp_path)
     assert main(["run", "--workspace", str(workspace), "--runtime", "codex"]) == 0
+    capsys.readouterr()
+    assert _apply_current(workspace, capsys) == 0
+    capsys.readouterr()
+    assert _start_current(workspace, capsys) == 0
+    planner = json.loads(capsys.readouterr().out)
+    assert planner["role_id"] == "source-planner"
+    planner_scratch = workspace / planner["scratch_directory"]
+    (planner_scratch / "source_candidates.yaml").write_text(
+        "version: 1\ncandidates:\n  - route: cached_package\n",
+        encoding="utf-8",
+    )
+    assert (
+        main(
+            [
+                "runtime",
+                "invocation-accept",
+                "--workspace",
+                str(workspace),
+                "--envelope",
+                str(_envelope_path(workspace, planner)),
+            ]
+        )
+        == 0
+    )
     capsys.readouterr()
     assert _apply_current(workspace, capsys) == 0
     capsys.readouterr()
@@ -115,12 +141,32 @@ def test_proposal_accept_request_starts_missing_dynamic_artifact_at_revision_zer
         workspace,
         adapter_loader=load_codex_adapter_binding,
     )
+    for _ in range(4):
+        action = host.next_action()
+        if action.role_id == "scout":
+            break
+        assert action.action_kind == "deterministic"
+        assert _apply_current(workspace, capsys) == 0
+        capsys.readouterr()
+    assert host.next_action().role_id == "scout"
     dispatch = host.start_current_invocation()
+    assert dispatch.envelope.role_id == "scout"
     payload = SchemaRegistry.example(
         "briefloop.candidate_claims_proposal.v2",
         "full",
     )
     payload["run_id"] = dispatch.envelope.run_id
+    with SQLiteControlStore.open(workspace / "briefloop.db") as store:
+        source = store.load_snapshot(dispatch.envelope.run_id).sources[0]
+    evidence_text = (workspace / str(source.locator.path)).read_text(
+        encoding="utf-8"
+    ).strip()
+    payload["candidates"][0].update(
+        source_id=source.source_id,
+        statement=evidence_text,
+        evidence_text=evidence_text,
+    )
+    payload["candidates"] = [payload["candidates"][0]]
 
     request, lane = host._derive_acceptance_request(
         dispatch.envelope,
@@ -131,6 +177,51 @@ def test_proposal_accept_request_starts_missing_dynamic_artifact_at_revision_zer
     assert lane == "candidate"
     assert request.artifact_id == "candidate_claims"
     assert request.expected_artifact_revision == 0
+
+    envelope_path = (
+        workspace
+        / dispatch.envelope.scratch_directory
+        / "role_task_envelope.json"
+    )
+    (envelope_path.parent / "candidate_claims.json").write_text(
+        json.dumps(payload, sort_keys=True),
+        encoding="utf-8",
+    )
+    with SQLiteControlStore.open(workspace / "briefloop.db") as store:
+        before_revision = store.current_revision
+    rc = main(
+        [
+            "runtime",
+            "invocation-accept",
+            "--workspace",
+            str(workspace),
+            "--envelope",
+            str(envelope_path),
+        ]
+    )
+    output = capsys.readouterr().out
+    assert rc == 0, output
+    accepted = json.loads(output)
+    assert accepted["status"] == "committed", accepted
+    assert accepted["store_revision"] == before_revision + 1
+    assert accepted["next_action"]["effect_kind"] == "stage_complete"
+    with SQLiteControlStore.open(workspace / "briefloop.db") as store:
+        snapshot = store.load_snapshot(dispatch.envelope.run_id)
+    artifact = next(
+        item for item in snapshot.artifacts if item.artifact_id == "candidate_claims"
+    )
+    assert artifact.current_revision == 1
+    assert any(
+        item.artifact_id == "candidate_claims" and item.revision == 1
+        for item in snapshot.artifact_revisions
+    )
+
+    assert _apply_current(workspace, capsys) == 0
+    completed = json.loads(capsys.readouterr().out)
+    assert completed["status"] == "committed"
+    next_action = host.next_action()
+    assert next_action.action_kind == "delegate"
+    assert next_action.role_id == "screener"
 
 
 def _external_workspace(tmp_path: Path) -> Path:

@@ -3531,6 +3531,13 @@ class CoreRunDomainVerifier:
                 or len({item.accepted_transaction_id for item in ordered_evaluations})
                 != 1
                 or len({item.request_fingerprint for item in ordered_evaluations}) != 1
+                or len(
+                    {
+                        (item.producer_implementation, item.producer_version)
+                        for item in ordered_evaluations
+                    }
+                )
+                != 1
                 or any(
                     item.policy_version != policy_version
                     or item.run_contract_fingerprint != binding.contract_fingerprint
