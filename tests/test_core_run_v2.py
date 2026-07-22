@@ -405,7 +405,9 @@ def test_authorized_source_pack_replay_shape_is_store_derived(tmp_path: Path) ->
     )
 
 
-def test_core_applies_authorized_source_pack_without_a_host_dto(tmp_path: Path) -> None:
+def test_core_applies_authorized_source_pack_without_a_host_dto(
+    tmp_path: Path,
+) -> None:
     workspace = _workspace(tmp_path)
     service = _initialize(
         workspace, execution_authorization=_execution_authorization(workspace)
@@ -425,12 +427,97 @@ def test_core_applies_authorized_source_pack_without_a_host_dto(tmp_path: Path) 
     assert len(verified.snapshot.sources) == 1
     assert len(verified.snapshot.owned_artifact_submissions) == 1
     assert verified.snapshot.owned_artifact_submissions[0].artifact_id == "input_classification"
+    assert result.receipt is not None
+    assert result.receipt.checkout_publication_intents == []
+    projection = workspace / "output" / "input_classification.json"
+    assert not projection.exists()
+    projection.parent.mkdir(parents=True, exist_ok=True)
+    projection.write_text('{"forged":true}', encoding="utf-8")
+    with SQLiteControlStore.open(workspace / "briefloop.db", clock=CLOCK) as store:
+        verified = CoreRunDomainVerifier().verify(store, RUN_ID)
+    assert classify_core_run_next_action(verified).effect_kind == "stage_complete"
+    revision_after_commit = _store_revision(workspace)
     (workspace / "input" / "authorized-source.txt").unlink()
     replayed = service.apply_authorized_source_pack()
     assert replayed.status == "replayed"
     assert result.receipt is not None
     assert replayed.receipt is not None
     assert replayed.receipt.transaction_id == result.receipt.transaction_id
+    assert _store_revision(workspace) == revision_after_commit
+    assert projection.read_text(encoding="utf-8") == '{"forged":true}'
+
+
+def test_authorized_store_classification_tampering_fails_before_projection_checks(
+    tmp_path: Path,
+) -> None:
+    workspace = _workspace(tmp_path)
+    service = _initialize(
+        workspace, execution_authorization=_execution_authorization(workspace)
+    )
+    assert service.doctor_check(
+        _record(
+            IntegrityCheckRequest,
+            request_id="REQ-AUTHORIZED-TAMPER-DOCTOR-001",
+            run_id=RUN_ID,
+            expected_store_revision=_store_revision(workspace),
+        )
+    ).status == "committed"
+    assert service.apply_authorized_source_pack().status == "committed"
+
+    with SQLiteControlStore.open(workspace / "briefloop.db", clock=CLOCK) as store:
+        row = store._connection.execute(
+            "SELECT submission_id, payload_json FROM owned_artifact_submissions "
+            "WHERE run_id = ? AND artifact_id = 'input_classification'",
+            (RUN_ID,),
+        ).fetchone()
+        assert row is not None
+        submission_id, payload_json = row
+        payload = json.loads(payload_json)
+        payload["artifact_sha256"] = "0" * 64
+        trigger_sql = store._connection.execute(
+            "SELECT sql FROM sqlite_master WHERE type = 'trigger' "
+            "AND name = 'owned_artifact_submissions_no_update'"
+        ).fetchone()
+        assert trigger_sql is not None
+        store._connection.execute("DROP TRIGGER owned_artifact_submissions_no_update")
+        store._connection.execute(
+            "UPDATE owned_artifact_submissions "
+            "SET artifact_sha256 = ?, payload_json = ? "
+            "WHERE run_id = ? AND submission_id = ?",
+            (
+                "0" * 64,
+                json.dumps(payload, sort_keys=True, separators=(",", ":")),
+                RUN_ID,
+                submission_id,
+            ),
+        )
+        store._connection.execute(trigger_sql[0])
+        store._connection.commit()
+        with pytest.raises(CoreRunError, match="control_store_integrity_invalid"):
+            CoreRunDomainVerifier().verify(store, RUN_ID)
+
+
+def test_authorized_source_pack_is_platform_neutral(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    workspace = _workspace(tmp_path)
+    service = _initialize(
+        workspace, execution_authorization=_execution_authorization(workspace)
+    )
+    assert service.doctor_check(
+        _record(
+            IntegrityCheckRequest,
+            request_id="REQ-AUTHORIZED-WINDOWS-DOCTOR-001",
+            run_id=RUN_ID,
+            expected_store_revision=_store_revision(workspace),
+        )
+    ).status == "committed"
+    monkeypatch.setattr(sys, "platform", "win32")
+    result = service.apply_authorized_source_pack()
+    assert result.status == "committed", result.to_dict()
+    assert result.receipt is not None
+    assert result.receipt.checkout_publication_intents == []
 
 
 def test_authorized_source_pack_resumes_the_reserved_invocation(

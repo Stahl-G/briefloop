@@ -53,11 +53,6 @@ from multi_agent_brief.control_store.serialization import (
     canonical_json_bytes,
     sha256_hex,
 )
-from multi_agent_brief.core_run_v2.checkout import (
-    publish_checkout_effect,
-    prepare_checkout_effect,
-    stage_checkout_effect,
-)
 from multi_agent_brief.intake_v2.errors import IntakeError, IntakeResult
 from multi_agent_brief.intake_v2.policy import (
     INTAKE_LANES,
@@ -1430,12 +1425,8 @@ class IntakeService:
             sources.append(source)
 
         classification_submission: OwnedArtifactSubmissionRecord | None = None
-        classification_revision: ArtifactRevision | None = None
         if authorization_manifest is not None:
-            (
-                classification_submission,
-                classification_revision,
-            ) = _stage_authorized_input_classification(
+            classification_submission = _stage_authorized_input_classification(
                 unit,
                 snapshot_artifacts=snapshot.artifacts,
                 request=request,
@@ -1445,16 +1436,6 @@ class IntakeService:
                 run_contract_fingerprint=snapshot.run_contract_bindings[0].contract_fingerprint,
                 created_at=now,
             )
-        checkout = None
-        if classification_revision is not None:
-            checkout = prepare_checkout_effect(
-                workspace=self.workspace,
-                snapshot=snapshot,
-                transaction_id=request.request_id,
-                created_at=self._clock(),
-                additional_revisions=(classification_revision,),
-            )
-            stage_checkout_effect(unit, checkout)
 
         def observe(receipt: TransactionReceipt) -> None:
             post_snapshot = (
@@ -1469,18 +1450,6 @@ class IntakeService:
             )
 
         receipt = self._commit_uow(unit, observe)
-        if checkout is not None:
-            published, _warnings = publish_checkout_effect(
-                workspace=self.workspace,
-                store=store,
-                prepared=checkout,
-            )
-            if not published:
-                return IntakeResult(
-                    status="commit_outcome_unknown",
-                    receipt=receipt,
-                    error_code="commit_outcome_unknown",
-                )
         return IntakeResult(status="committed", receipt=receipt)
 
     def _commit_proposal(
@@ -1861,7 +1830,7 @@ def _stage_authorized_input_classification(
     manifest: ExecutionSourceManifest,
     run_contract_fingerprint: str,
     created_at: str,
-) -> tuple[OwnedArtifactSubmissionRecord, ArtifactRevision]:
+) -> OwnedArtifactSubmissionRecord:
     """Attach the sole Store-derived classification to the source-pack receipt."""
 
     artifact = _by_id(snapshot_artifacts, "artifact_id", "input_classification")
@@ -1942,7 +1911,7 @@ def _stage_authorized_input_classification(
             strict=True,
         )
     )
-    return submission, revision
+    return submission
 
 
 def _derived_id(prefix: str, *parts: str) -> str:
