@@ -321,8 +321,59 @@ def test_runtime_install_codex_refuses_non_mabw_agent_file(tmp_path: Path, capsy
 
     assert rc == 1
     out = capsys.readouterr().out
-    assert "Refusing to overwrite existing non-generated file without --force" in out
+    assert "runtime_adapter_binding_mismatch" in out
     assert target.read_text(encoding="utf-8") == "name = \"user-owned\"\n"
+
+
+def test_runtime_install_codex_force_never_overwrites_user_content(
+    tmp_path: Path,
+    capsys,
+) -> None:
+    ws = _workspace(tmp_path)
+    target = ws / ".codex" / "agents" / "briefloop-scout.toml"
+    target.parent.mkdir(parents=True)
+    target.write_text("name = \"user-owned\"\n", encoding="utf-8")
+
+    rc = main([
+        "runtime",
+        "install",
+        "--workspace",
+        str(ws),
+        "--runtime",
+        "codex",
+        "--force",
+    ])
+
+    assert rc == 1
+    assert "runtime_adapter_binding_mismatch" in capsys.readouterr().out
+    assert target.read_text(encoding="utf-8") == "name = \"user-owned\"\n"
+
+
+def test_runtime_install_codex_resumes_exact_partial_generated_kit(
+    tmp_path: Path,
+) -> None:
+    ws = _workspace(tmp_path)
+    assert main([
+        "runtime",
+        "install",
+        "--workspace",
+        str(ws),
+        "--runtime",
+        "codex",
+    ]) == 0
+    missing = ws / ".codex" / "agents" / "briefloop-scout.toml"
+    expected = missing.read_bytes()
+    missing.unlink()
+
+    assert main([
+        "runtime",
+        "install",
+        "--workspace",
+        str(ws),
+        "--runtime",
+        "codex",
+    ]) == 0
+    assert missing.read_bytes() == expected
 
 
 def test_runtime_install_refreshes_generated_files(tmp_path: Path) -> None:

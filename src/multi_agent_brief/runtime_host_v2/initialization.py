@@ -27,7 +27,16 @@ from multi_agent_brief.core_run_v2.verifier import (
     CoreRunDomainVerifier,
     VerifiedCoreRun,
 )
+from multi_agent_brief.runtime_assets import (
+    RuntimeAssetInstallError,
+    install_runtime_kit,
+)
 
+from .codex import (
+    load_codex_adapter_binding,
+    load_workspace_codex_adapter_binding,
+    workspace_codex_adapter_loader,
+)
 from .errors import RuntimeHostError
 from .source_routes import derive_runtime_source_plan
 
@@ -60,6 +69,19 @@ class InitializedRuntime:
 
 
 AdapterLoader = Callable[[str], RuntimeAdapterBinding]
+
+
+@dataclass(frozen=True)
+class _InitializationInputs:
+    bootstrap: WorkspaceControlStoreBootstrapV2
+    config_bytes: bytes
+    sources_sha256: str
+
+
+@dataclass(frozen=True)
+class _PreparedCodexRuntime:
+    inputs: _InitializationInputs | None
+    adapter: RuntimeAdapterBinding
 
 
 def _read_regular_file(path: Path) -> bytes:
@@ -108,19 +130,7 @@ def _verify_existing(
         raise RuntimeHostError("control_store_integrity_invalid") from exc
 
 
-def initialize_or_open_runtime(
-    workspace: Path,
-    *,
-    adapter_loader: AdapterLoader,
-) -> InitializedRuntime:
-    authority = classify_workspace_authority(workspace)
-    if authority.kind == "sqlite":
-        return _verify_existing(workspace, adapter_loader=adapter_loader)
-    if authority.kind == "legacy":
-        raise RuntimeHostError("legacy_workspace_unsupported")
-    if authority.kind == "invalid_sqlite":
-        raise RuntimeHostError("control_store_integrity_invalid")
-
+def _load_initialization_inputs(workspace: Path) -> _InitializationInputs:
     config_bytes = _read_regular_file(workspace / "config.yaml")
     sources_bytes = _read_regular_file(workspace / "sources.yaml")
     config = _load_yaml_mapping(config_bytes)
@@ -130,7 +140,6 @@ def initialize_or_open_runtime(
             config.get("controlstore_v2"),
             strict=True,
         )
-        adapter = adapter_loader(bootstrap.run_id)
         sources_sha256 = hashlib.sha256(sources_bytes).hexdigest()
         derive_runtime_source_plan(
             sources_bytes,
@@ -139,7 +148,22 @@ def initialize_or_open_runtime(
             run_direction=bootstrap.run_direction,
             workspace_root=workspace,
         )
-        request = CoreRunInitializeRequest.model_validate(
+    except (CoreRunError, ValidationError, ValueError) as exc:
+        raise RuntimeHostError("runtime_initialization_input_invalid") from exc
+    return _InitializationInputs(
+        bootstrap=bootstrap,
+        config_bytes=config_bytes,
+        sources_sha256=sources_sha256,
+    )
+
+
+def _initialize_request(
+    inputs: _InitializationInputs,
+    adapter: RuntimeAdapterBinding,
+) -> CoreRunInitializeRequest:
+    bootstrap = inputs.bootstrap
+    try:
+        return CoreRunInitializeRequest.model_validate(
             {
                 "schema_version": CoreRunInitializeRequest.schema_id,
                 "request_id": derived_id(
@@ -154,8 +178,10 @@ def initialize_or_open_runtime(
                 "run_direction": bootstrap.run_direction.model_dump(
                     mode="json", exclude_unset=False
                 ),
-                "workspace_config_sha256": hashlib.sha256(config_bytes).hexdigest(),
-                "sources_config_sha256": sources_sha256,
+                "workspace_config_sha256": hashlib.sha256(
+                    inputs.config_bytes
+                ).hexdigest(),
+                "sources_config_sha256": inputs.sources_sha256,
                 "role_topology": bootstrap.role_topology,
                 "gate_strictness": bootstrap.gate_strictness,
                 "input_governance_required": bootstrap.input_governance_required,
@@ -165,17 +191,175 @@ def initialize_or_open_runtime(
             },
             strict=True,
         )
-    except (CoreRunError, ValidationError, ValueError) as exc:
+    except (ValidationError, ValueError) as exc:
         raise RuntimeHostError("runtime_initialization_input_invalid") from exc
-    result = CoreRunService(workspace).initialize(request)
-    if result.status not in {"committed", "replayed"}:
-        raise RuntimeHostError(result.error_code or "control_store_integrity_invalid")
-    current = _verify_existing(workspace, adapter_loader=adapter_loader)
-    return InitializedRuntime(
-        verified=current.verified,
-        action=current.action,
-        initialized=result.status == "committed",
+
+
+class WorkspaceBootstrap:
+    """Phase-aware owner of Codex kit preparation and Store initialization."""
+
+    def __init__(self, workspace: str | Path) -> None:
+        self.workspace = Path(workspace).expanduser().resolve(strict=False)
+
+    def install_codex_kit(self, *, dry_run: bool = False) -> dict[str, object]:
+        """Materialize a fresh kit or verify the Store-bound installed kit."""
+
+        authority = classify_workspace_authority(self.workspace)
+        if authority.kind == "legacy":
+            raise RuntimeHostError("legacy_workspace_unsupported")
+        if authority.kind == "invalid_sqlite":
+            raise RuntimeHostError("control_store_integrity_invalid")
+        if authority.kind == "sqlite":
+            current = _verify_existing(
+                self.workspace,
+                adapter_loader=workspace_codex_adapter_loader(self.workspace),
+            )
+            return {
+                "runtime": "codex",
+                "workspace": str(self.workspace),
+                "repo_workdir": None,
+                "dry_run": dry_run,
+                "written": [],
+                "count": len(current.verified.runtime_adapter.adapter_asset_sha256),
+                "phase": "verified",
+            }
+        try:
+            result = install_runtime_kit(
+                workspace=self.workspace,
+                runtime="codex",
+                force=False,
+                dry_run=dry_run,
+            )
+        except RuntimeAssetInstallError as exc:
+            raise RuntimeHostError("runtime_adapter_binding_mismatch") from exc
+        return {
+            **result,
+            "phase": "planned" if dry_run else "prepared",
+        }
+
+    def prepare_codex_runtime(
+        self,
+        *,
+        expected_adapter_loader: AdapterLoader = load_codex_adapter_binding,
+    ) -> _PreparedCodexRuntime:
+        """Validate bootstrap inputs, then prepare and bind the exact kit."""
+
+        authority = classify_workspace_authority(self.workspace)
+        if authority.kind == "sqlite":
+            current = _verify_existing(
+                self.workspace,
+                adapter_loader=workspace_codex_adapter_loader(self.workspace),
+            )
+            return _PreparedCodexRuntime(
+                inputs=None,
+                adapter=current.verified.runtime_adapter,
+            )
+        if authority.kind == "legacy":
+            raise RuntimeHostError("legacy_workspace_unsupported")
+        if authority.kind == "invalid_sqlite":
+            raise RuntimeHostError("control_store_integrity_invalid")
+
+        inputs = _load_initialization_inputs(self.workspace)
+        self.install_codex_kit()
+        installed = load_workspace_codex_adapter_binding(
+            self.workspace,
+            inputs.bootstrap.run_id,
+        )
+        expected = expected_adapter_loader(inputs.bootstrap.run_id)
+        if installed != expected:
+            raise RuntimeHostError("runtime_adapter_binding_mismatch")
+        return _PreparedCodexRuntime(
+            inputs=inputs,
+            adapter=installed,
+        )
+
+    def initialize_runnable_codex(
+        self,
+        *,
+        expected_adapter_loader: AdapterLoader = load_codex_adapter_binding,
+    ) -> InitializedRuntime:
+        """Prepare the kit first and commit SQLite last for a fresh workspace."""
+
+        authority = classify_workspace_authority(self.workspace)
+        if authority.kind == "sqlite":
+            return _verify_existing(
+                self.workspace,
+                adapter_loader=workspace_codex_adapter_loader(self.workspace),
+            )
+        prepared = self.prepare_codex_runtime(
+            expected_adapter_loader=expected_adapter_loader
+        )
+        if prepared.inputs is None:
+            raise RuntimeHostError("control_store_integrity_invalid")
+        request = _initialize_request(prepared.inputs, prepared.adapter)
+        result = CoreRunService(self.workspace).initialize(request)
+        if result.status == "commit_outcome_unknown":
+            result = CoreRunService(self.workspace).initialize(request)
+        if result.status not in {"committed", "replayed"}:
+            raise RuntimeHostError(
+                result.error_code or "control_store_integrity_invalid"
+            )
+        current = _verify_existing(
+            self.workspace,
+            adapter_loader=workspace_codex_adapter_loader(self.workspace),
+        )
+        if current.verified.runtime_adapter != prepared.adapter:
+            raise RuntimeHostError("runtime_adapter_binding_mismatch")
+        return InitializedRuntime(
+            verified=current.verified,
+            action=current.action,
+            initialized=True,
+        )
+
+    def initialize_or_open(
+        self,
+        *,
+        adapter_loader: AdapterLoader,
+    ) -> InitializedRuntime:
+        """Existing injected-loader boundary used by RuntimeHostService."""
+
+        authority = classify_workspace_authority(self.workspace)
+        if authority.kind == "sqlite":
+            return _verify_existing(self.workspace, adapter_loader=adapter_loader)
+        if authority.kind == "legacy":
+            raise RuntimeHostError("legacy_workspace_unsupported")
+        if authority.kind == "invalid_sqlite":
+            raise RuntimeHostError("control_store_integrity_invalid")
+
+        inputs = _load_initialization_inputs(self.workspace)
+        adapter = adapter_loader(inputs.bootstrap.run_id)
+        request = _initialize_request(inputs, adapter)
+        result = CoreRunService(self.workspace).initialize(request)
+        if result.status == "commit_outcome_unknown":
+            result = CoreRunService(self.workspace).initialize(request)
+        if result.status not in {"committed", "replayed"}:
+            raise RuntimeHostError(
+                result.error_code or "control_store_integrity_invalid"
+            )
+        current = _verify_existing(
+            self.workspace,
+            adapter_loader=adapter_loader,
+        )
+        return InitializedRuntime(
+            verified=current.verified,
+            action=current.action,
+            initialized=result.status == "committed",
+        )
+
+
+def initialize_or_open_runtime(
+    workspace: Path,
+    *,
+    adapter_loader: AdapterLoader,
+) -> InitializedRuntime:
+    return WorkspaceBootstrap(workspace).initialize_or_open(
+        adapter_loader=adapter_loader
     )
 
 
-__all__ = ["AdapterLoader", "InitializedRuntime", "initialize_or_open_runtime"]
+__all__ = [
+    "AdapterLoader",
+    "InitializedRuntime",
+    "WorkspaceBootstrap",
+    "initialize_or_open_runtime",
+]

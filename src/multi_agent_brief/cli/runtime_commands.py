@@ -10,6 +10,7 @@ from multi_agent_brief.runtime_assets import (
     RuntimeAssetInstallError,
     install_runtime_kit,
 )
+from multi_agent_brief.runtime_host_v2.errors import RuntimeHostError
 
 
 def register(subparsers: argparse._SubParsersAction) -> None:
@@ -92,20 +93,67 @@ def register(subparsers: argparse._SubParsersAction) -> None:
 def handle(args: argparse.Namespace) -> int:
     if args.runtime_action == "install":
         try:
-            result = install_runtime_kit(
-                workspace=args.workspace,
-                runtime=args.runtime,
-                repo_workdir=getattr(args, "repo_workdir", None),
-                force=bool(getattr(args, "force", False)),
-                dry_run=bool(getattr(args, "dry_run", False)),
-            )
-        except RuntimeAssetInstallError as exc:
+            dry_run = bool(getattr(args, "dry_run", False))
+            if args.runtime == "codex":
+                from multi_agent_brief.runtime_host_v2.initialization import (
+                    WorkspaceBootstrap,
+                )
+
+                result = WorkspaceBootstrap(args.workspace).install_codex_kit(
+                    dry_run=dry_run
+                )
+            elif args.runtime == "all":
+                from multi_agent_brief.runtime_host_v2.initialization import (
+                    WorkspaceBootstrap,
+                )
+
+                results = [
+                    WorkspaceBootstrap(args.workspace).install_codex_kit(
+                        dry_run=dry_run
+                    ),
+                    *(
+                        install_runtime_kit(
+                            workspace=args.workspace,
+                            runtime=runtime,
+                            repo_workdir=getattr(args, "repo_workdir", None),
+                            force=bool(getattr(args, "force", False)),
+                            dry_run=dry_run,
+                        )
+                        for runtime in ("opencode", "claude")
+                    ),
+                ]
+                written = list(
+                    dict.fromkeys(path for item in results for path in item["written"])
+                )
+                result = {
+                    "runtime": "all",
+                    "workspace": str(Path(args.workspace).expanduser().resolve()),
+                    "repo_workdir": getattr(args, "repo_workdir", None),
+                    "dry_run": dry_run,
+                    "written": written,
+                    "count": len(written),
+                    "phase": "planned" if dry_run else "prepared",
+                }
+            else:
+                result = install_runtime_kit(
+                    workspace=args.workspace,
+                    runtime=args.runtime,
+                    repo_workdir=getattr(args, "repo_workdir", None),
+                    force=bool(getattr(args, "force", False)),
+                    dry_run=dry_run,
+                )
+        except (RuntimeAssetInstallError, RuntimeHostError) as exc:
             print(f"[runtime install] {exc}")
             return 1
-        verb = "would write" if result["dry_run"] else "wrote"
+        phase = result.get("phase")
+        if phase == "verified":
+            verb, status = "verified", "Verified"
+        elif result["dry_run"]:
+            verb, status = "would write", "Planned"
+        else:
+            verb, status = "wrote", "Installed"
         for path in result["written"]:
             print(f"[runtime install] {verb} {path}")
-        status = "Planned" if result["dry_run"] else "Installed"
         print(
             f"[runtime install] {status} workspace runtime kit "
             f"for {result['runtime']} ({result['count']} files)."
@@ -128,7 +176,6 @@ def handle(args: argparse.Namespace) -> int:
         from multi_agent_brief.runtime_host_v2.codex import (
             workspace_codex_adapter_loader,
         )
-        from multi_agent_brief.runtime_host_v2.errors import RuntimeHostError
         from multi_agent_brief.runtime_host_v2.service import RuntimeHostService
         from multi_agent_brief.runtime_host_v2.scratch import read_host_contract
         from multi_agent_brief.runtime_host_v2.contracts import (

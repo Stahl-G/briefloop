@@ -556,6 +556,14 @@ def _init_workspace(args: argparse.Namespace) -> int:
         return 1
 
     create_workspace(target, profile, force=args.force)
+    from multi_agent_brief.runtime_host_v2.errors import RuntimeHostError
+    from multi_agent_brief.runtime_host_v2.initialization import WorkspaceBootstrap
+
+    try:
+        WorkspaceBootstrap(target).prepare_codex_runtime()
+    except RuntimeHostError as exc:
+        print(f"[error] {exc}")
+        return 1
     print(f"Created brief workspace: {target}")
     print_context_reference_guidance(target, profile.interface_language)
     print(

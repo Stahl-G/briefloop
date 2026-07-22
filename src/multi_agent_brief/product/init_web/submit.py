@@ -19,8 +19,9 @@ from multi_agent_brief.control_store import SQLiteControlStore
 from multi_agent_brief.control_store.serialization import canonical_fingerprint
 from multi_agent_brief.core_run_v2.policy import derived_id
 from multi_agent_brief.runtime_host_v2.codex import load_codex_adapter_binding
+from multi_agent_brief.runtime_host_v2.errors import RuntimeHostError
 from multi_agent_brief.runtime_host_v2.initialization import (
-    initialize_or_open_runtime,
+    WorkspaceBootstrap,
 )
 from multi_agent_brief.workspace.init_profile import InitProfile
 
@@ -35,6 +36,20 @@ class SubmissionError(ValueError):
         super().__init__(error_code)
         self.error_code = error_code
         self.http_status = http_status
+
+
+def _runtime_submission_error(exc: RuntimeHostError) -> SubmissionError:
+    error_code = str(exc)
+    if error_code == "runtime_initialization_input_invalid":
+        http_status = 422
+    elif error_code in {
+        "legacy_workspace_unsupported",
+        "runtime_adapter_binding_mismatch",
+    }:
+        http_status = 409
+    else:
+        http_status = 500
+    return SubmissionError(error_code, http_status)
 
 
 def _require_text(value: Any, error_code: str) -> str:
@@ -112,9 +127,14 @@ class InitWebSubmitter:
         return resolved
 
     def submit(self, body: Any) -> tuple[int, dict[str, Any]]:
-        if not isinstance(body, dict) or body.get("schema_version") != SUBMISSION_SCHEMA:
+        if (
+            not isinstance(body, dict)
+            or body.get("schema_version") != SUBMISSION_SCHEMA
+        ):
             raise SubmissionError("submission_payload_invalid", 422)
-        request_id = _require_text(body.get("request_id"), "submission_request_id_invalid")
+        request_id = _require_text(
+            body.get("request_id"), "submission_request_id_invalid"
+        )
         payload = body.get("payload")
         if not isinstance(payload, dict):
             raise SubmissionError("submission_payload_invalid", 422)
@@ -125,6 +145,14 @@ class InitWebSubmitter:
             prior_fingerprint, prior_response = prior
             if prior_fingerprint != fingerprint:
                 raise SubmissionError("submission_replay_conflict", 409)
+            try:
+                WorkspaceBootstrap(
+                    str(prior_response["workspace"])
+                ).initialize_runnable_codex(
+                    expected_adapter_loader=self._adapter_loader
+                )
+            except RuntimeHostError as exc:
+                raise _runtime_submission_error(exc) from exc
             return 200, {**prior_response, "status": "replayed"}
 
         if payload.get("human_confirmation") is not True:
@@ -145,9 +173,12 @@ class InitWebSubmitter:
 
         create_workspace(target, profile, force=False, identity_factory=_identity)
         workspace_id, run_id = f"WS-{identity_log[0]}", f"RUN-{identity_log[1]}"
-        initialized = initialize_or_open_runtime(
-            target, adapter_loader=self._adapter_loader
-        )
+        try:
+            initialized = WorkspaceBootstrap(target).initialize_runnable_codex(
+                expected_adapter_loader=self._adapter_loader
+            )
+        except RuntimeHostError as exc:
+            raise _runtime_submission_error(exc) from exc
         receipt_id = derived_id("REQ-CX-INIT", workspace_id, run_id)
         with SQLiteControlStore.open(target / "briefloop.db") as store:
             receipt = store.load_transaction_receipt(run_id, receipt_id)
