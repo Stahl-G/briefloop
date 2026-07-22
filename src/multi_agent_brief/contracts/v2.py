@@ -144,6 +144,24 @@ def _contract_fingerprint(payload: dict[str, Any], *, field: str) -> str:
     ).hexdigest()
 
 
+def canonical_run_direction_for_binding(
+    payload: dict[str, Any],
+) -> dict[str, Any]:
+    """Normalize the one backward-compatible frozen RunDirection shape.
+
+    ``output_contract`` was introduced after already-valid v2 run bindings had
+    been frozen.  An absent field in those bindings and an explicitly null
+    field both retain the unconstrained-output semantics, so neither belongs
+    in serialized bindings or their fingerprints.  A present contract remains
+    exact input.
+    """
+
+    canonical = dict(payload)
+    if canonical.get("output_contract") is None:
+        canonical.pop("output_contract", None)
+    return canonical
+
+
 def _clean_text(value: str) -> str:
     if re.fullmatch(_CLEAN_TEXT_PATTERN, value) is None:
         raise ValueError("invalid text")
@@ -1241,6 +1259,24 @@ class ArtifactIdentityReference(StrictModel):
     artifact_id: ContractId
 
 
+class RunOutputContract(StrictModel):
+    schema_id = "briefloop.run_output_contract.v2"
+
+    schema_version: Literal["briefloop.run_output_contract.v2"]
+    output_extent: Literal["compact", "balanced", "detailed"]
+    extent_catalog_id: Literal["briefloop.output_extent_catalog.v1"]
+    body_length_basis: Literal["reader_body_excluding_source_reference_sections"]
+    body_length_unit: Literal["word_equivalent_tokens"]
+    resolved_minimum: int = Field(ge=1, le=100000)
+    resolved_maximum: int = Field(ge=1, le=100000)
+
+    @model_validator(mode="after")
+    def bounds_are_ordered(self) -> "RunOutputContract":
+        if self.resolved_minimum > self.resolved_maximum:
+            raise ValueError("resolved output contract bounds are not ordered")
+        return self
+
+
 class RunDirection(StrictModel):
     schema_id = "briefloop.run_direction.v2"
 
@@ -1274,6 +1310,7 @@ class RunDirection(StrictModel):
     report_window_end: Optional[IsoDate] = None
     max_source_age_days: Optional[PositiveInt] = None
     target_terms: list[CleanText] = Field(min_length=1)
+    output_contract: Optional[RunOutputContract] = None
 
     @model_validator(mode="after")
     def direction_is_canonical(self) -> "RunDirection":
@@ -1299,6 +1336,17 @@ class RunDirection(StrictModel):
                 raise ValueError("external API search requires a backend")
         elif self.search_backend is not None:
             raise ValueError("search backend is allowed only for external API mode")
+        if self.output_contract is not None:
+            try:
+                # Lazy import avoids initializing the Core package while the
+                # strict contract registry itself is still being constructed.
+                from multi_agent_brief.core_run_v2.output_contract import (
+                    verify_output_contract,
+                )
+
+                verify_output_contract(self.output_contract, self.output_language)
+            except ValueError as exc:
+                raise ValueError("output contract catalog resolution is invalid") from exc
         return self
 
 

@@ -10,9 +10,9 @@ from .errors import CoreRunError
 from .gates import EVALUATOR_IMPLEMENTATION, EVALUATOR_VERSION
 from .lineage import classify_current_lineage
 from .policy import (
-    REQUIRED_AUDITOR_GATES,
     SOURCE_ROUTE_OWNER_ORDER,
     core_role_topology_policy,
+    required_auditor_gates,
 )
 from .recovery import classify_recovery_legality
 from .terminal import classify_terminal_legality
@@ -508,12 +508,13 @@ def _auditor_action(verified: VerifiedCoreRun) -> CoreRunNextAction | None:
             stage_id="auditor",
             request_schema_id="briefloop.gate_check_request.v2",
         )
+    required_gate_ids = required_auditor_gates(verified.binding.run_direction)
     required = {
         item.gate_id: item
         for item in gate.evaluations
-        if item.gate_id in REQUIRED_AUDITOR_GATES
+        if item.gate_id in required_gate_ids
     }
-    if set(required) != set(REQUIRED_AUDITOR_GATES):
+    if set(required) != set(required_gate_ids):
         raise CoreRunError("control_store_integrity_invalid")
     if any(
         item.status not in {"pass", "warning"} or item.blocking

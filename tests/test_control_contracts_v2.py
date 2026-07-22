@@ -21,6 +21,7 @@ from multi_agent_brief.contracts import (
     V2_CONTRACT_MODELS,
     read_contract_payload,
 )
+from multi_agent_brief.contracts.v2 import canonical_run_direction_for_binding
 from multi_agent_brief.orchestrator_contract import VALID_RUNTIMES
 
 
@@ -649,3 +650,21 @@ def test_legacy_contract_class_remains_registered_and_compatible() -> None:
         )
         == []
     )
+
+
+def test_run_direction_binding_normalization_only_omits_null_output_contract() -> None:
+    absent = {"task_objective": "Review the market."}
+    null_contract = {**absent, "output_contract": None}
+    present_contract = {
+        **absent,
+        "output_contract": {
+            "schema_version": "briefloop.run_output_contract.v2",
+            "catalog_id": "briefloop.output_extent_catalog.v1",
+            "output_extent": "balanced",
+        },
+    }
+
+    assert canonical_run_direction_for_binding(absent) == absent
+    assert canonical_run_direction_for_binding(null_contract) == absent
+    assert null_contract["output_contract"] is None
+    assert canonical_run_direction_for_binding(present_contract) == present_contract

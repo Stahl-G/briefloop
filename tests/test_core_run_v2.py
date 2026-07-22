@@ -35,6 +35,7 @@ from multi_agent_brief.contracts.v2 import (
     InvocationStartRequest,
     OwnedArtifactSubmitRequest,
     ReceiptCheckoutBinding,
+    RunOutputContract,
     SourceCommitRequest,
     StageState,
     StageCompleteRequest,
@@ -69,6 +70,8 @@ from multi_agent_brief.core_run_v2.lineage import (
 from multi_agent_brief.core_run_v2.policy import (
     REQUIRED_AUDITOR_GATES,
     derived_id,
+    required_auditor_gates,
+    run_contract_fingerprint,
     transaction_type_for,
 )
 from multi_agent_brief.core_run_v2.errors import CoreRunError, CoreRunResult
@@ -235,11 +238,14 @@ def _initialize(
     topology: str = "default",
     input_governance_required: bool = False,
     role_ids: list[str] | None = None,
+    output_contract: dict[str, object] | None = None,
 ) -> CoreRunService:
     service = CoreRunService(workspace, clock=CLOCK)
     request = deepcopy(CoreRunInitializeRequest.minimal_example)
     if role_ids is not None:
         request["runtime_adapter_binding"]["role_ids"] = role_ids
+    if output_contract is not None:
+        request["run_direction"]["output_contract"] = output_contract
     request.update(
         request_id="REQ-INIT-001",
         workspace_id=WORKSPACE_ID,
@@ -431,9 +437,15 @@ def _advance_to_scout_ready(
     *,
     topology: str = "default",
     role_ids: list[str] | None = None,
+    output_contract: dict[str, object] | None = None,
 ) -> CoreRunService:
     _require_supported_working_projection()
-    service = _initialize(workspace, topology=topology, role_ids=role_ids)
+    service = _initialize(
+        workspace,
+        topology=topology,
+        role_ids=role_ids,
+        output_contract=output_contract,
+    )
     doctor = service.doctor_check(
         _record(
             IntegrityCheckRequest,
@@ -909,8 +921,14 @@ def _advance_to_claim_ledger_ready(
     *,
     topology: str = "default",
     role_ids: list[str] | None = None,
+    output_contract: dict[str, object] | None = None,
 ) -> CoreRunService:
-    service = _advance_to_scout_ready(workspace, topology=topology, role_ids=role_ids)
+    service = _advance_to_scout_ready(
+        workspace,
+        topology=topology,
+        role_ids=role_ids,
+        output_contract=output_contract,
+    )
     scout = _start_invocation(
         service,
         workspace,
@@ -1174,9 +1192,13 @@ def _advance_to_analyst_ready(
     *,
     topology: str = "default",
     role_ids: list[str] | None = None,
+    output_contract: dict[str, object] | None = None,
 ) -> CoreRunService:
     service = _advance_to_claim_ledger_ready(
-        workspace, topology=topology, role_ids=role_ids
+        workspace,
+        topology=topology,
+        role_ids=role_ids,
+        output_contract=output_contract,
     )
     claim_ledger = _start_invocation(
         service,
@@ -1234,8 +1256,12 @@ def _advance_to_analyst_ready(
     return service
 
 
-def _advance_before_auditor(workspace: Path) -> CoreRunService:
-    service = _advance_to_analyst_ready(workspace)
+def _advance_before_auditor(
+    workspace: Path,
+    *,
+    output_contract: dict[str, object] | None = None,
+) -> CoreRunService:
+    service = _advance_to_analyst_ready(workspace, output_contract=output_contract)
     analyst = _start_invocation(
         service,
         workspace,
@@ -1326,8 +1352,9 @@ def _advance_to_auditor_ready(
     *,
     audit_decision: str = "pass",
     audit_findings: list[dict[str, object]] | None = None,
+    output_contract: dict[str, object] | None = None,
 ) -> CoreRunService:
-    service = _advance_before_auditor(workspace)
+    service = _advance_before_auditor(workspace, output_contract=output_contract)
     auditor = _start_invocation(
         service,
         workspace,
@@ -1389,6 +1416,211 @@ def _gate_request(workspace: Path, *, request_id: str = "REQ-GATE-001"):
             {"artifact_id": "candidate_claims", "revision": 1},
         ],
     )
+
+
+def _balanced_output_contract() -> dict[str, object]:
+    return RunOutputContract.model_validate(
+        {
+            "schema_version": RunOutputContract.schema_id,
+            "output_extent": "balanced",
+            "extent_catalog_id": "briefloop.output_extent_catalog.v1",
+            "body_length_basis": "reader_body_excluding_source_reference_sections",
+            "body_length_unit": "word_equivalent_tokens",
+            "resolved_minimum": 600,
+            "resolved_maximum": 800,
+        },
+        strict=True,
+    ).model_dump(mode="json", exclude_unset=False)
+
+
+def _compact_output_contract() -> dict[str, object]:
+    return RunOutputContract.model_validate(
+        {
+            "schema_version": RunOutputContract.schema_id,
+            "output_extent": "compact",
+            "extent_catalog_id": "briefloop.output_extent_catalog.v1",
+            "body_length_basis": "reader_body_excluding_source_reference_sections",
+            "body_length_unit": "word_equivalent_tokens",
+            "resolved_minimum": 350,
+            "resolved_maximum": 550,
+        },
+        strict=True,
+    ).model_dump(mode="json", exclude_unset=False)
+
+
+def test_legacy_run_direction_binding_without_output_contract_remains_verifiable(
+    tmp_path: Path,
+) -> None:
+    legacy_workspace = _workspace(tmp_path / "legacy")
+    _initialize(legacy_workspace)
+    database = legacy_workspace / "briefloop.db"
+
+    with sqlite3.connect(database) as connection:
+        # This isolated fixture emulates a pre-output-contract frozen row.
+        connection.execute("DROP TRIGGER run_contract_bindings_no_update")
+        row = connection.execute(
+            "SELECT payload_json FROM run_contract_bindings WHERE run_id = ?",
+            (RUN_ID,),
+        ).fetchone()
+        assert row is not None
+        payload = json.loads(row[0])
+        payload["run_direction"].pop("output_contract", None)
+        connection.execute(
+            "UPDATE run_contract_bindings SET payload_json = ? WHERE run_id = ?",
+            (
+                json.dumps(payload, sort_keys=True, separators=(",", ":")),
+                RUN_ID,
+            ),
+        )
+        connection.execute(
+            "CREATE TRIGGER run_contract_bindings_no_update "
+            "BEFORE UPDATE ON run_contract_bindings "
+            "BEGIN SELECT RAISE(ABORT, 'append_only'); END"
+        )
+
+    with SQLiteControlStore.open(database, clock=CLOCK) as store:
+        revision = store.current_revision
+        verified = CoreRunDomainVerifier().verify(store, RUN_ID)
+        assert verified.binding.run_direction.output_contract is None
+        assert store.current_revision == revision
+
+    bound_workspace = _workspace(tmp_path / "bound")
+    _initialize(bound_workspace, output_contract=_balanced_output_contract())
+    bound_database = bound_workspace / "briefloop.db"
+    with SQLiteControlStore.open(bound_database, clock=CLOCK) as store:
+        binding = store.load_snapshot(RUN_ID).run_contract_bindings[0]
+        absent_fingerprint = run_contract_fingerprint(
+            runtime=binding.runtime,
+            stage_specs_schema=binding.stage_specs_schema,
+            stage_specs_sha256=binding.stage_specs_sha256,
+            artifact_contracts_schema=binding.artifact_contracts_schema,
+            artifact_contracts_sha256=binding.artifact_contracts_sha256,
+            policy_pack_schema=binding.policy_pack_schema,
+            policy_pack_name=binding.policy_pack_name,
+            policy_pack_sha256=binding.policy_pack_sha256,
+            runtime_adapter_sha256=binding.runtime_adapter_sha256,
+            runtime_adapter_fingerprint=binding.runtime_adapter_fingerprint,
+            runtime_source_plan_sha256=binding.runtime_source_plan_sha256,
+            runtime_source_plan_fingerprint=binding.runtime_source_plan_fingerprint,
+            run_direction={
+                key: value
+                for key, value in binding.run_direction.model_dump(
+                    mode="json", exclude_unset=False
+                ).items()
+                if key != "output_contract"
+            },
+            workspace_config_sha256=binding.workspace_config_sha256,
+            sources_config_sha256=binding.sources_config_sha256,
+            role_topology=binding.role_topology,
+            gate_strictness=binding.gate_strictness,
+            input_governance_required=binding.input_governance_required,
+        )
+        assert binding.contract_fingerprint != absent_fingerprint
+
+    with sqlite3.connect(bound_database) as connection:
+        # Forge only the frozen fixture payload; the production Store stays append-only.
+        connection.execute("DROP TRIGGER run_contract_bindings_no_update")
+        row = connection.execute(
+            "SELECT payload_json FROM run_contract_bindings WHERE run_id = ?",
+            (RUN_ID,),
+        ).fetchone()
+        assert row is not None
+        forged = json.loads(row[0])
+        forged["run_direction"]["output_contract"] = _compact_output_contract()
+        connection.execute(
+            "UPDATE run_contract_bindings SET payload_json = ? WHERE run_id = ?",
+            (
+                json.dumps(forged, sort_keys=True, separators=(",", ":")),
+                RUN_ID,
+            ),
+        )
+        connection.execute(
+            "CREATE TRIGGER run_contract_bindings_no_update "
+            "BEFORE UPDATE ON run_contract_bindings "
+            "BEGIN SELECT RAISE(ABORT, 'append_only'); END"
+        )
+
+    with pytest.raises(ControlStoreIntegrityError, match="core_run_relation_invalid"):
+        SQLiteControlStore.open(bound_database, clock=CLOCK)
+
+
+def test_store_frozen_output_contract_blocks_auditor_gate_and_stage_completion(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    workspace = _workspace(tmp_path)
+    service = _advance_to_auditor_ready(
+        workspace,
+        output_contract=_balanced_output_contract(),
+    )
+
+    monkeypatch.setattr(
+        "multi_agent_brief.core_run_v2.gates.evaluate_quality_gate_findings_preloaded",
+        lambda **_kwargs: {gate_id: [] for gate_id in GATE_IDS},
+    )
+    result = GateEvaluationService(workspace, clock=CLOCK).evaluate(
+        _gate_request(workspace, request_id="REQ-GATE-OUTPUT-CONTRACT")
+    )
+    assert result.status == "committed", result.to_dict()
+
+    with SQLiteControlStore.open(workspace / "briefloop.db") as store:
+        snapshot = store.load_snapshot(RUN_ID)
+    required_gate_ids = required_auditor_gates(
+        snapshot.run_contract_bindings[0].run_direction
+    )
+    assert required_gate_ids == (*REQUIRED_AUDITOR_GATES, "final_abstract_quality")
+    final_quality = next(
+        item
+        for item in snapshot.gate_evaluations
+        if item.gate_id == "final_abstract_quality"
+    )
+    assert final_quality.blocking is True
+    finding = next(
+        item
+        for item in snapshot.gate_findings
+        if item.evaluation_id == final_quality.evaluation_id
+    )
+    assert finding.finding_type == "reader_body_length_out_of_bounds"
+    assert finding.repair_owner == "auditor"
+    assert finding.metadata == {
+        "output_extent": "balanced",
+        "extent_catalog_id": "briefloop.output_extent_catalog.v1",
+        "basis": "reader_body_excluding_source_reference_sections",
+        "unit": "word_equivalent_tokens",
+        "resolved_minimum": 600,
+        "resolved_maximum": 800,
+        "actual": finding.metadata["actual"],
+    }
+    assert finding.metadata["actual"] < 600
+
+    auditor = _stage(workspace, "auditor")
+    completion = service.complete_stage(
+        _record(
+            StageCompleteRequest,
+            request_id="REQ-COMPLETE-AUDITOR-OUTPUT-CONTRACT",
+            run_id=RUN_ID,
+            stage_id="auditor",
+            reason="out-of-bounds reader contract must block completion",
+            expected_stage_revision=auditor.revision,
+            expected_store_revision=snapshot.store_revision,
+            expected_artifact_revisions=[
+                {"artifact_id": "claim_ledger", "revision": 1},
+                {"artifact_id": "audited_brief", "revision": 1},
+                {"artifact_id": "audit_report", "revision": 1},
+                {"artifact_id": "auditor_quality_gate_report", "revision": 1},
+                {"artifact_id": "analyst_draft_snapshot", "revision": 1},
+            ],
+            expected_gate_evaluation_ids=[
+                item.evaluation_id
+                for item in snapshot.gate_evaluations
+                if item.gate_id in required_gate_ids
+            ],
+        )
+    )
+    assert completion.to_dict() == {
+        "status": "failed_uncommitted",
+        "error_code": "stage_gate_binding_invalid",
+    }
 
 
 def test_gate_batches_append_and_old_request_exactly_replays(

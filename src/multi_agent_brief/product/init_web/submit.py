@@ -23,6 +23,7 @@ from multi_agent_brief.runtime_host_v2.initialization import (
     RuntimeHostError,
     WorkspaceBootstrap,
 )
+from multi_agent_brief.core_run_v2.output_contract import resolve_output_extent
 from multi_agent_brief.workspace.init_profile import InitProfile
 
 SUBMISSION_SCHEMA = "briefloop.init_web.submission.v1"
@@ -74,9 +75,17 @@ def _profile_from_payload(payload: dict[str, Any]) -> InitProfile:
         _require_text(selections.get(key), f"submission_{key}_required")
     formats = selections.get("output_formats") or ["markdown"]
     company = _require_text(selections["company"], "submission_company_required")
+    output_language = selections.get("output_language") or "zh"
+    output_extent = selections.get("output_extent")
+    if output_extent not in {"compact", "balanced", "detailed"}:
+        raise SubmissionError("submission_output_extent_invalid", 422)
+    try:
+        resolve_output_extent(output_extent, str(output_language))
+    except ValueError as exc:
+        raise SubmissionError("submission_output_extent_invalid", 422) from exc
     profile = InitProfile(
         interface_language=selections.get("interface_language") or "zh",
-        output_language=selections.get("output_language") or "zh",
+        output_language=output_language,
         company=company,
         industry=_require_text(
             selections["industry_or_theme"], "submission_industry_or_theme_required"
@@ -100,8 +109,33 @@ def _profile_from_payload(payload: dict[str, Any]) -> InitProfile:
         web_search_mode=selections.get("web_search_mode") or "disabled",
         web_search_enabled=(selections.get("web_search_mode") or "disabled")
         != "disabled",
+        output_extent=output_extent,
     )
     return profile
+
+
+def preview_output_contract(body: Any) -> dict[str, object]:
+    """Resolve only an init-web semantic extent; this path never writes state."""
+
+    if not isinstance(body, dict) or set(body) != {"output_extent", "output_language"}:
+        raise SubmissionError("submission_output_extent_invalid", 422)
+    output_extent = body.get("output_extent")
+    output_language = body.get("output_language")
+    if not isinstance(output_extent, str) or not isinstance(output_language, str):
+        raise SubmissionError("submission_output_extent_invalid", 422)
+    try:
+        resolved = resolve_output_extent(output_extent, output_language)
+    except ValueError as exc:
+        raise SubmissionError("submission_output_extent_invalid", 422) from exc
+    return {
+        "ok": True,
+        "output_extent": resolved.output_extent,
+        "extent_catalog_id": resolved.extent_catalog_id,
+        "body_length_basis": resolved.body_length_basis,
+        "body_length_unit": resolved.body_length_unit,
+        "resolved_minimum": resolved.resolved_minimum,
+        "resolved_maximum": resolved.resolved_maximum,
+    }
 
 
 class InitWebSubmitter:
@@ -262,4 +296,9 @@ class InitWebSubmitter:
         )
 
 
-__all__ = ["SUBMISSION_SCHEMA", "InitWebSubmitter", "SubmissionError"]
+__all__ = [
+    "SUBMISSION_SCHEMA",
+    "InitWebSubmitter",
+    "SubmissionError",
+    "preview_output_contract",
+]

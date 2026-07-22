@@ -47,6 +47,9 @@ ALLOWED_IMPORTS = {
         "multi_agent_brief.cli.init_wizard",
         "multi_agent_brief.control_store",
         "multi_agent_brief.control_store.serialization",
+        # RUN-UX-1A uses the sole Core-owned catalog only for bounded,
+        # zero-write semantic extent validation and preview resolution.
+        "multi_agent_brief.core_run_v2.output_contract",
         "multi_agent_brief.core_run_v2.policy",
         "multi_agent_brief.runtime_host_v2.codex",
         "multi_agent_brief.runtime_host_v2.initialization",

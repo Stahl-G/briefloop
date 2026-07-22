@@ -41,6 +41,7 @@ def _body(request_id: str, target: str, **overrides: object) -> dict[str, object
             "output_formats": ["markdown", "docx"],
             "forbidden_sources": [],
             "web_search_mode": "disabled",
+            "output_extent": "balanced",
         },
         "raw_free_text": "weekly manufacturing brief for management",
         "discarded": [],
@@ -289,6 +290,43 @@ def test_missing_required_selection_is_rejected(tmp_path: Path) -> None:
         submitter.submit(body)
     assert exc_info.value.error_code == "submission_company_required"
     assert not (tmp_path / "web-ws").exists()
+
+
+@pytest.mark.parametrize("extent", ["unknown", None])
+def test_unknown_output_extent_is_rejected_before_workspace_writes(
+    tmp_path: Path,
+    extent: object,
+) -> None:
+    body = _body("REQ-OUTPUT-EXTENT", "web-ws")
+    body["payload"]["selections"]["output_extent"] = extent  # type: ignore[index]
+
+    with pytest.raises(SubmissionError, match="submission_output_extent_invalid"):
+        InitWebSubmitter(base_dir=tmp_path).submit(body)
+
+    assert not (tmp_path / "web-ws").exists()
+
+
+def test_output_extent_is_store_frozen_and_part_of_replay_identity(
+    tmp_path: Path,
+) -> None:
+    body = _body("REQ-OUTPUT-EXTENT-REPLAY", "web-ws")
+    body["payload"]["selections"]["output_language"] = "en"  # type: ignore[index]
+    first = _submit_ok(InitWebSubmitter(base_dir=tmp_path), body)
+    workspace = tmp_path / "web-ws"
+    revision_before = _revision(workspace)
+    with SQLiteControlStore.open(workspace / "briefloop.db") as store:
+        binding = store.load_snapshot(first["run_id"]).run_contract_bindings[0]
+    assert binding.run_direction.output_contract is not None
+    assert binding.run_direction.output_contract.output_extent == "balanced"
+    assert binding.run_direction.output_contract.resolved_minimum == 600
+    assert binding.run_direction.output_contract.resolved_maximum == 800
+
+    changed = _body("REQ-OUTPUT-EXTENT-REPLAY", "web-ws")
+    changed["payload"]["selections"]["output_language"] = "en"  # type: ignore[index]
+    changed["payload"]["selections"]["output_extent"] = "detailed"  # type: ignore[index]
+    with pytest.raises(SubmissionError, match="submission_replay_conflict"):
+        InitWebSubmitter(base_dir=tmp_path).submit(changed)
+    assert _revision(workspace) == revision_before
 
 
 def test_existing_non_empty_target_conflicts(tmp_path: Path) -> None:

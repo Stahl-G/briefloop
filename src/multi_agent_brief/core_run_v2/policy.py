@@ -10,6 +10,8 @@ from multi_agent_brief.contracts.v2 import (
     RUNTIME_SOURCE_PROVIDER_IDS,
     RUNTIME_SOURCE_ROUTE_IDS,
     RUNTIME_SOURCE_WEB_PROVIDER_IDS,
+    RunDirection,
+    canonical_run_direction_for_binding,
 )
 from multi_agent_brief.control_store.serialization import canonical_fingerprint
 
@@ -68,6 +70,14 @@ class ArtifactPolicy:
     invocation_required: bool
     producer_tool_id: str | None = None
     invocation_role_id: str | None = None
+
+
+def required_auditor_gates(run_direction: RunDirection) -> tuple[str, ...]:
+    """Return the sole Store-bound required Gate policy for this run."""
+
+    if run_direction.output_contract is None:
+        return REQUIRED_AUDITOR_GATES
+    return (*REQUIRED_AUDITOR_GATES, "final_abstract_quality")
 
 
 @dataclass(frozen=True)
@@ -265,7 +275,9 @@ def run_contract_fingerprint(
             "runtime_adapter_fingerprint": runtime_adapter_fingerprint,
             "runtime_source_plan_sha256": runtime_source_plan_sha256,
             "runtime_source_plan_fingerprint": runtime_source_plan_fingerprint,
-            "run_direction": run_direction,
+            "run_direction": canonical_run_direction_for_binding(
+                run_direction
+            ),
             "workspace_config_sha256": workspace_config_sha256,
             "sources_config_sha256": sources_config_sha256,
             "role_topology": role_topology,
@@ -335,6 +347,7 @@ __all__ = [
     "core_role_topology_policy",
     "derived_id",
     "normalize_text",
+    "required_auditor_gates",
     "run_contract_fingerprint",
     "require_topology_runtime",
     "transaction_type_for",

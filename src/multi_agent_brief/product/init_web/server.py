@@ -22,7 +22,7 @@ from urllib.parse import parse_qs, urlsplit
 
 from multi_agent_brief.product.review_session.serialization import canonical_json_bytes
 
-from .submit import InitWebSubmitter, SubmissionError
+from .submit import InitWebSubmitter, SubmissionError, preview_output_contract
 
 SESSION_TOKEN_HEADER = "X-BriefLoop-Session-Token"
 MAX_JSON_BODY_BYTES = 64 * 1024
@@ -183,7 +183,7 @@ def create_init_web_server(
                 self._reject(HTTPStatus.FORBIDDEN, "init_web_origin_invalid")
                 return
             target = urlsplit(self.path)
-            if target.path != "/api/v1/submit":
+            if target.path not in {"/api/v1/submit", "/api/v1/output-contract-preview"}:
                 self._reject(HTTPStatus.NOT_FOUND, "init_web_route_not_found")
                 return
             query = parse_qs(target.query, keep_blank_values=True)
@@ -207,7 +207,10 @@ def create_init_web_server(
                 self._reject(HTTPStatus.BAD_REQUEST, "init_web_body_invalid")
                 return
             try:
-                status, response = submitter.submit(body)
+                if target.path == "/api/v1/output-contract-preview":
+                    status, response = HTTPStatus.OK, preview_output_contract(body)
+                else:
+                    status, response = submitter.submit(body)
             except SubmissionError as exc:
                 status, response = exc.http_status, {
                     "ok": False,
@@ -217,7 +220,7 @@ def create_init_web_server(
             self._send(HTTPStatus(status), payload, "application/json; charset=utf-8")
             if (
                 exit_on_success
-                and status == 200
+                and status == HTTPStatus.OK
                 and response.get("status") == "committed"
             ):
                 _shutdown_soon()
