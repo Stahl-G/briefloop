@@ -74,6 +74,7 @@ from multi_agent_brief.contracts.v2 import (
     WorkspaceRunHead,
     _CheckoutStructureError,
     _build_checkout_revision_structure,
+    canonical_run_direction_for_binding,
     _derive_publication_structure,
     _publication_identity_digest,
 )
@@ -148,6 +149,10 @@ def _canonical_record_text(record: StrictModel) -> str:
     if type(record) not in _EXTENDED_RECORD_MODELS:
         return canonical_model_text(record)
     payload = record.model_dump(mode="json", exclude_unset=False)
+    if type(record) is RunContractBinding:
+        payload["run_direction"] = canonical_run_direction_for_binding(
+            payload["run_direction"]
+        )
     return canonical_json_bytes(payload).decode("utf-8")
 
 
@@ -5003,9 +5008,11 @@ class SQLiteControlStore:
                 "runtime_adapter_fingerprint": binding.runtime_adapter_fingerprint,
                 "runtime_source_plan_sha256": binding.runtime_source_plan_sha256,
                 "runtime_source_plan_fingerprint": binding.runtime_source_plan_fingerprint,
-                "run_direction": binding.run_direction.model_dump(
-                    mode="json",
-                    exclude_unset=False,
+                "run_direction": canonical_run_direction_for_binding(
+                    binding.run_direction.model_dump(
+                        mode="json",
+                        exclude_unset=False,
+                    )
                 ),
                 "workspace_config_sha256": binding.workspace_config_sha256,
                 "sources_config_sha256": binding.sources_config_sha256,

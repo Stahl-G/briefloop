@@ -71,6 +71,7 @@ from multi_agent_brief.core_run_v2.policy import (
     REQUIRED_AUDITOR_GATES,
     derived_id,
     required_auditor_gates,
+    run_contract_fingerprint,
     transaction_type_for,
 )
 from multi_agent_brief.core_run_v2.errors import CoreRunError, CoreRunResult
@@ -1430,6 +1431,117 @@ def _balanced_output_contract() -> dict[str, object]:
         },
         strict=True,
     ).model_dump(mode="json", exclude_unset=False)
+
+
+def _compact_output_contract() -> dict[str, object]:
+    return RunOutputContract.model_validate(
+        {
+            "schema_version": RunOutputContract.schema_id,
+            "output_extent": "compact",
+            "extent_catalog_id": "briefloop.output_extent_catalog.v1",
+            "body_length_basis": "reader_body_excluding_source_reference_sections",
+            "body_length_unit": "word_equivalent_tokens",
+            "resolved_minimum": 350,
+            "resolved_maximum": 550,
+        },
+        strict=True,
+    ).model_dump(mode="json", exclude_unset=False)
+
+
+def test_legacy_run_direction_binding_without_output_contract_remains_verifiable(
+    tmp_path: Path,
+) -> None:
+    legacy_workspace = _workspace(tmp_path / "legacy")
+    _initialize(legacy_workspace)
+    database = legacy_workspace / "briefloop.db"
+
+    with sqlite3.connect(database) as connection:
+        # This isolated fixture emulates a pre-output-contract frozen row.
+        connection.execute("DROP TRIGGER run_contract_bindings_no_update")
+        row = connection.execute(
+            "SELECT payload_json FROM run_contract_bindings WHERE run_id = ?",
+            (RUN_ID,),
+        ).fetchone()
+        assert row is not None
+        payload = json.loads(row[0])
+        payload["run_direction"].pop("output_contract", None)
+        connection.execute(
+            "UPDATE run_contract_bindings SET payload_json = ? WHERE run_id = ?",
+            (
+                json.dumps(payload, sort_keys=True, separators=(",", ":")),
+                RUN_ID,
+            ),
+        )
+        connection.execute(
+            "CREATE TRIGGER run_contract_bindings_no_update "
+            "BEFORE UPDATE ON run_contract_bindings "
+            "BEGIN SELECT RAISE(ABORT, 'append_only'); END"
+        )
+
+    with SQLiteControlStore.open(database, clock=CLOCK) as store:
+        revision = store.current_revision
+        verified = CoreRunDomainVerifier().verify(store, RUN_ID)
+        assert verified.binding.run_direction.output_contract is None
+        assert store.current_revision == revision
+
+    bound_workspace = _workspace(tmp_path / "bound")
+    _initialize(bound_workspace, output_contract=_balanced_output_contract())
+    bound_database = bound_workspace / "briefloop.db"
+    with SQLiteControlStore.open(bound_database, clock=CLOCK) as store:
+        binding = store.load_snapshot(RUN_ID).run_contract_bindings[0]
+        absent_fingerprint = run_contract_fingerprint(
+            runtime=binding.runtime,
+            stage_specs_schema=binding.stage_specs_schema,
+            stage_specs_sha256=binding.stage_specs_sha256,
+            artifact_contracts_schema=binding.artifact_contracts_schema,
+            artifact_contracts_sha256=binding.artifact_contracts_sha256,
+            policy_pack_schema=binding.policy_pack_schema,
+            policy_pack_name=binding.policy_pack_name,
+            policy_pack_sha256=binding.policy_pack_sha256,
+            runtime_adapter_sha256=binding.runtime_adapter_sha256,
+            runtime_adapter_fingerprint=binding.runtime_adapter_fingerprint,
+            runtime_source_plan_sha256=binding.runtime_source_plan_sha256,
+            runtime_source_plan_fingerprint=binding.runtime_source_plan_fingerprint,
+            run_direction={
+                key: value
+                for key, value in binding.run_direction.model_dump(
+                    mode="json", exclude_unset=False
+                ).items()
+                if key != "output_contract"
+            },
+            workspace_config_sha256=binding.workspace_config_sha256,
+            sources_config_sha256=binding.sources_config_sha256,
+            role_topology=binding.role_topology,
+            gate_strictness=binding.gate_strictness,
+            input_governance_required=binding.input_governance_required,
+        )
+        assert binding.contract_fingerprint != absent_fingerprint
+
+    with sqlite3.connect(bound_database) as connection:
+        # Forge only the frozen fixture payload; the production Store stays append-only.
+        connection.execute("DROP TRIGGER run_contract_bindings_no_update")
+        row = connection.execute(
+            "SELECT payload_json FROM run_contract_bindings WHERE run_id = ?",
+            (RUN_ID,),
+        ).fetchone()
+        assert row is not None
+        forged = json.loads(row[0])
+        forged["run_direction"]["output_contract"] = _compact_output_contract()
+        connection.execute(
+            "UPDATE run_contract_bindings SET payload_json = ? WHERE run_id = ?",
+            (
+                json.dumps(forged, sort_keys=True, separators=(",", ":")),
+                RUN_ID,
+            ),
+        )
+        connection.execute(
+            "CREATE TRIGGER run_contract_bindings_no_update "
+            "BEFORE UPDATE ON run_contract_bindings "
+            "BEGIN SELECT RAISE(ABORT, 'append_only'); END"
+        )
+
+    with pytest.raises(ControlStoreIntegrityError, match="core_run_relation_invalid"):
+        SQLiteControlStore.open(bound_database, clock=CLOCK)
 
 
 def test_store_frozen_output_contract_blocks_auditor_gate_and_stage_completion(

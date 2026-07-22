@@ -11,6 +11,7 @@ from multi_agent_brief.contracts.v2 import (
     RUNTIME_SOURCE_ROUTE_IDS,
     RUNTIME_SOURCE_WEB_PROVIDER_IDS,
     RunDirection,
+    canonical_run_direction_for_binding,
 )
 from multi_agent_brief.control_store.serialization import canonical_fingerprint
 
@@ -274,7 +275,9 @@ def run_contract_fingerprint(
             "runtime_adapter_fingerprint": runtime_adapter_fingerprint,
             "runtime_source_plan_sha256": runtime_source_plan_sha256,
             "runtime_source_plan_fingerprint": runtime_source_plan_fingerprint,
-            "run_direction": run_direction,
+            "run_direction": canonical_run_direction_for_binding(
+                run_direction
+            ),
             "workspace_config_sha256": workspace_config_sha256,
             "sources_config_sha256": sources_config_sha256,
             "role_topology": role_topology,

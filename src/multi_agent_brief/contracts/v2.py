@@ -144,6 +144,24 @@ def _contract_fingerprint(payload: dict[str, Any], *, field: str) -> str:
     ).hexdigest()
 
 
+def canonical_run_direction_for_binding(
+    payload: dict[str, Any],
+) -> dict[str, Any]:
+    """Normalize the one backward-compatible frozen RunDirection shape.
+
+    ``output_contract`` was introduced after already-valid v2 run bindings had
+    been frozen.  An absent field in those bindings and an explicitly null
+    field both retain the unconstrained-output semantics, so neither belongs
+    in serialized bindings or their fingerprints.  A present contract remains
+    exact input.
+    """
+
+    canonical = dict(payload)
+    if canonical.get("output_contract") is None:
+        canonical.pop("output_contract", None)
+    return canonical
+
+
 def _clean_text(value: str) -> str:
     if re.fullmatch(_CLEAN_TEXT_PATTERN, value) is None:
         raise ValueError("invalid text")
