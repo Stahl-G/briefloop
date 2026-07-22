@@ -5647,6 +5647,7 @@ def test_core_effect_receipt_binding_table_is_exact() -> None:
                 "artifact_revisions",
                 "artifact_identities",
                 "run_contract_bindings",
+                "run_execution_authorizations",
                 "stage_transitions",
                 "run_integrity_records",
             }
@@ -5737,9 +5738,14 @@ def test_core_effect_receipt_binding_table_is_exact() -> None:
         transaction_type: rule.authoritative_relation_families
         for transaction_type, rule in _INTAKE_EFFECT_RULES.items()
     } == {
-        "source_evidence_intake": frozenset(
-            {"artifact_revisions", "artifact_identities", "source_ids"}
-        ),
+            "source_evidence_intake": frozenset(
+                {
+                    "artifact_revisions",
+                    "artifact_identities",
+                    "source_ids",
+                    "owned_artifact_submissions",
+                }
+            ),
         "candidate_claims_intake": frozenset(
             {"artifact_revisions", "artifact_identities", "proposal_ids"}
         ),

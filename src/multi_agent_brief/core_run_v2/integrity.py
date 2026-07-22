@@ -29,7 +29,11 @@ from multi_agent_brief.control_store.serialization import (
 )
 
 from .errors import CoreRunError, CoreRunResult, core_run_error_code
-from .checkout import prepare_checkout_effect, stage_checkout_effect
+from .checkout import (
+    prepare_checkout_effect,
+    stage_checkout_effect,
+    store_resident_revision_keys,
+)
 from .publication_platform import CapabilityProfile, open_retained_parent
 from .policy import derived_id, transaction_type_for
 from .verifier import (
@@ -256,7 +260,7 @@ class RunIntegrityService:
         protected_keys = protected_revision_keys(verified)
         checkout_keys = current_checkout_revision_keys(verified)
         protected_keys.update(checkout_keys)
-        store_resident_keys = store_resident_revision_keys(verified)
+        store_resident_keys = store_resident_revision_keys(verified.snapshot)
         revisions = {
             (item.artifact_id, item.revision): item
             for item in verified.snapshot.artifact_revisions
@@ -556,106 +560,6 @@ def current_checkout_revision_keys(
         for item in verified.snapshot.checkout_revision_members
         if item.checkout_revision_id == current.post_checkout_revision_id
     }
-
-
-def store_resident_revision_keys(
-    verified: VerifiedCoreRun,
-) -> set[tuple[str, int]]:
-    """Return only the verifier-proven authorized classification revision.
-
-    The authorized source-pack receipt writes this one classification directly
-    to ControlStore.  It has no M2 workspace projection, so its canonical path
-    is not an integrity observation target.  Every condition below is a
-    relation, not an artifact-id or path allowlist; the domain verifier has
-    already validated the same receipt graph and Store bytes before this helper
-    is reached.
-    """
-
-    snapshot = verified.snapshot
-    if len(snapshot.run_execution_authorizations) != 1:
-        return set()
-    authorization = snapshot.run_execution_authorizations[0]
-    source_receipt_ids = {item.accepted_transaction_id for item in snapshot.sources}
-    if len(source_receipt_ids) != 1:
-        return set()
-    source_receipt_id = next(iter(source_receipt_ids))
-    receipt = next(
-        (
-            item
-            for item in snapshot.transactions
-            if item.transaction_id == source_receipt_id
-        ),
-        None,
-    )
-    if receipt is None:
-        return set()
-    events_by_id = {item.event_id: item for item in snapshot.events}
-    classification_events = [
-        events_by_id.get(event_id)
-        for event_id in receipt.event_ids
-        if events_by_id.get(event_id) is not None
-        and events_by_id[event_id].event_type == "input_classification_committed"
-    ]
-    if len(classification_events) != 1:
-        return set()
-    submissions = [
-        item
-        for item in snapshot.owned_artifact_submissions
-        if item.accepted_transaction_id == receipt.transaction_id
-        and item.accepted_event_id == classification_events[0].event_id
-    ]
-    if len(submissions) != 1:
-        return set()
-    submission = submissions[0]
-    if (
-        receipt.transaction_type != "source_evidence_intake"
-        or receipt.run_id != authorization.run_id
-        or sorted(receipt.source_ids)
-        != sorted(item.source_id for item in snapshot.sources)
-        or any(
-            item.run_id != authorization.run_id
-            or item.source_manifest_sha256 != authorization.source_manifest_sha256
-            for item in snapshot.sources
-        )
-        or submission.run_id != authorization.run_id
-        or submission.accepted_transaction_id != receipt.transaction_id
-        or submission.owner_stage_id != "input-governance"
-        or submission.owner_role_id != "python_tool"
-        or submission.producer_tool_id != "input-governance-v2"
-        or submission.invocation_id is not None
-        or submission.run_contract_fingerprint != verified.binding.contract_fingerprint
-        or [item.submission_id for item in receipt.owned_artifact_submissions]
-        != [submission.submission_id]
-        or submission.accepted_event_id not in receipt.event_ids
-    ):
-        return set()
-    matching_revision = next(
-        (
-            item
-            for item in snapshot.artifact_revisions
-            if item.artifact_id == submission.artifact_id
-            and item.revision == submission.artifact_revision
-            and item.sha256 == submission.artifact_sha256
-        ),
-        None,
-    )
-    if matching_revision is None:
-        return set()
-    # A legacy source-pack receipt that explicitly prepared this revision for
-    # checkout publication keeps its workspace observation obligation.  A later
-    # stage checkout membership alone is historical topology, not evidence that
-    # this Store-only receipt published a file.
-    published_checkout_ids = {
-        item.checkout_revision_id for item in receipt.checkout_publication_intents
-    }
-    if any(
-        item.checkout_revision_id in published_checkout_ids
-        and item.artifact_id == submission.artifact_id
-        and item.artifact_revision == submission.artifact_revision
-        for item in snapshot.checkout_revision_members
-    ):
-        return set()
-    return {(submission.artifact_id, submission.artifact_revision)}
 
 
 def _workspace_root(workspace: str | os.PathLike[str]) -> Path:
