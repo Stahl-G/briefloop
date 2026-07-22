@@ -150,14 +150,16 @@ def test_non_editable_wheel_runs_complete_dormant_core_spine(
         create_demo_workspace(binding_workspace)
         stream = io.StringIO()
         with redirect_stdout(stream):
-            assert main([
+            install_exit = main([
                 "runtime", "install", "--workspace", str(binding_workspace),
                 "--runtime", "codex",
-            ]) == 0
-            assert main([
+            ])
+            run_exit = main([
                 "run", "--workspace", str(binding_workspace),
                 "--runtime", "codex",
-            ]) == 0
+            ])
+        assert install_exit == 0
+        assert run_exit == 0
         scout = binding_workspace / ".codex/agents/briefloop-scout.toml"
         scout.write_bytes(scout.read_bytes() + b"\n# wheel drift\n")
         stream = io.StringIO()
