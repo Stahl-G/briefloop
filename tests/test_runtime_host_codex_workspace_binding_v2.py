@@ -5,6 +5,7 @@ import json
 from pathlib import Path
 
 import pytest
+import yaml
 
 from multi_agent_brief.cli.init_wizard import create_workspace
 from multi_agent_brief.cli.main import main
@@ -15,6 +16,7 @@ from multi_agent_brief.runtime_host_v2.codex import (
     load_workspace_codex_adapter_binding,
 )
 from multi_agent_brief.runtime_host_v2.errors import RuntimeHostError
+from multi_agent_brief.runtime_host_v2.initialization import WorkspaceBootstrap
 from multi_agent_brief.workspace.init_profile import InitProfile
 
 
@@ -61,7 +63,9 @@ def _workspace(tmp_path: Path, *, install: bool = True) -> Path:
     return workspace
 
 
-def _initialize(workspace: Path, capsys: pytest.CaptureFixture[str]) -> dict[str, object]:
+def _initialize(
+    workspace: Path, capsys: pytest.CaptureFixture[str]
+) -> dict[str, object]:
     assert main(["run", "--workspace", str(workspace), "--runtime", "codex"]) == 0
     return json.loads(capsys.readouterr().out)
 
@@ -72,6 +76,37 @@ def _assert_revision(
 ) -> None:
     with SQLiteControlStore.open(workspace / "briefloop.db") as store:
         assert store.current_revision == expected
+
+
+def _direct_init_args(
+    workspace: Path,
+    *,
+    company: str = "ExampleCo",
+) -> list[str]:
+    return [
+        "init",
+        str(workspace),
+        "--language",
+        "en-US",
+        "--company",
+        company,
+        "--industry",
+        "manufacturing",
+        "--title",
+        f"{company} brief",
+        "--task-objective",
+        f"Prepare the {company} brief.",
+        "--audience",
+        "management",
+        "--cadence",
+        "weekly",
+        "--source-profile",
+        "conservative",
+    ]
+
+
+def _file_evidence(paths: tuple[Path, ...]) -> dict[Path, tuple[bytes, int]]:
+    return {path: (path.read_bytes(), path.stat().st_mtime_ns) for path in paths}
 
 
 def test_installed_workspace_binding_equals_packaged_binding(tmp_path: Path) -> None:
@@ -91,6 +126,159 @@ def test_run_fails_closed_when_workspace_kit_is_missing(
     assert main(["run", "--workspace", str(workspace), "--runtime", "codex"]) == 1
     assert "runtime_adapter_binding_mismatch" in capsys.readouterr().out
     assert not (workspace / "briefloop.db").exists()
+
+
+def test_cli_init_prepares_exact_kit_without_committing_store(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    workspace = tmp_path / "cli-workspace"
+    assert main(_direct_init_args(workspace)) == 0
+    capsys.readouterr()
+    assert (workspace / ".codex" / "config.toml").is_file()
+    assert not (workspace / "briefloop.db").exists()
+
+    assert main(["runtime", "next", "--workspace", str(workspace)]) == 0
+    action = json.loads(capsys.readouterr().out)
+    assert action["run_id"].startswith("RUN-")
+    assert (workspace / "briefloop.db").is_file()
+
+
+def test_cli_initial_news_backfill_prepares_exact_kit_without_store(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    workspace = tmp_path / "cli-backfill-workspace"
+    args = [
+        *_direct_init_args(workspace),
+        "--source-profile",
+        "llm_decide",
+        "--web-search-mode",
+        "external_api",
+        "--search-backend",
+        "tavily",
+        "--initial-news-backfill",
+    ]
+
+    assert main(args) == 0
+    capsys.readouterr()
+    config = yaml.safe_load((workspace / "config.yaml").read_text(encoding="utf-8"))
+    sources = yaml.safe_load((workspace / "sources.yaml").read_text(encoding="utf-8"))
+    run_id = config["controlstore_v2"]["run_id"]
+
+    assert sources["web_search"]["initial_news_backfill"]["enabled"] is True
+    assert load_workspace_codex_adapter_binding(
+        workspace, run_id
+    ) == load_codex_adapter_binding(run_id)
+    assert not (workspace / "briefloop.db").exists()
+
+
+def test_cli_init_force_never_rewrites_existing_store_workspace(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    workspace = tmp_path / "cli-workspace"
+    assert main(_direct_init_args(workspace)) == 0
+    capsys.readouterr()
+    assert main(["runtime", "next", "--workspace", str(workspace)]) == 0
+    capsys.readouterr()
+
+    protected_paths = (
+        workspace / "config.yaml",
+        workspace / "sources.yaml",
+        *(workspace / ".codex" / relative for relative in ASSET_PATHS),
+    )
+    before_files = _file_evidence(protected_paths)
+    with SQLiteControlStore.open(workspace / "briefloop.db") as store:
+        before_revision = store.current_revision
+        before_head = store.load_workspace_run_head()
+        assert before_head is not None
+
+    assert main([*_direct_init_args(workspace, company="ChangedCo"), "--force"]) == 1
+    assert capsys.readouterr().out.strip() == "[error] workspace_already_initialized"
+    assert _file_evidence(protected_paths) == before_files
+    with SQLiteControlStore.open(workspace / "briefloop.db") as store:
+        assert store.current_revision == before_revision
+        assert store.load_workspace_run_head() == before_head
+
+
+def test_bootstrap_validates_strict_inputs_before_materializing_kit(
+    tmp_path: Path,
+) -> None:
+    workspace = _workspace(tmp_path, install=False)
+    (workspace / "config.yaml").write_text(
+        "controlstore_v2: []\n",
+        encoding="utf-8",
+    )
+
+    with pytest.raises(RuntimeHostError, match="runtime_initialization_input_invalid"):
+        WorkspaceBootstrap(workspace).prepare_codex_runtime()
+    assert not (workspace / ".codex").exists()
+    assert not (workspace / "briefloop.db").exists()
+
+
+def test_runtime_install_existing_store_is_verify_only(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    workspace = _workspace(tmp_path)
+    _initialize(workspace, capsys)
+    asset = workspace / ".codex" / "agents" / "briefloop-scout.toml"
+    before_bytes = asset.read_bytes()
+    before_mtime = asset.stat().st_mtime_ns
+    (workspace / "config.yaml").write_text("not: [valid\n", encoding="utf-8")
+    with SQLiteControlStore.open(workspace / "briefloop.db") as store:
+        revision_before = store.current_revision
+
+    assert (
+        main(
+            [
+                "runtime",
+                "install",
+                "--workspace",
+                str(workspace),
+                "--runtime",
+                "codex",
+                "--force",
+            ]
+        )
+        == 0
+    )
+    assert "Verified workspace runtime kit for codex" in capsys.readouterr().out
+    assert asset.read_bytes() == before_bytes
+    assert asset.stat().st_mtime_ns == before_mtime
+    _assert_revision(workspace, revision_before)
+
+
+def test_runtime_install_existing_store_never_repairs_drift(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    workspace = _workspace(tmp_path)
+    _initialize(workspace, capsys)
+    asset = workspace / ".codex" / "agents" / "briefloop-scout.toml"
+    asset.write_bytes(asset.read_bytes() + b"\n# drift\n")
+    drifted = asset.read_bytes()
+    with SQLiteControlStore.open(workspace / "briefloop.db") as store:
+        revision_before = store.current_revision
+
+    assert (
+        main(
+            [
+                "runtime",
+                "install",
+                "--workspace",
+                str(workspace),
+                "--runtime",
+                "codex",
+                "--force",
+            ]
+        )
+        == 1
+    )
+    assert "runtime_adapter_binding_mismatch" in capsys.readouterr().out
+    assert asset.read_bytes() == drifted
+    _assert_revision(workspace, revision_before)
 
 
 @pytest.mark.parametrize("relative", ASSET_PATHS, ids=lambda path: path.as_posix())

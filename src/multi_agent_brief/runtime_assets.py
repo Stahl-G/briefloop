@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 from importlib import resources
+import os
 from pathlib import Path
+import stat
 from typing import Any
 
 from multi_agent_brief.install.writer import (
@@ -67,6 +69,8 @@ def install_runtime_kit(
         elif runtime_name == "codex":
             all_writes.extend(_codex_writes(workspace=ws))
     all_writes = _deduplicate_writes(all_writes)
+    if "codex" in runtimes:
+        _validate_existing_codex_kit_subset(workspace=ws, writes=all_writes)
 
     try:
         apply_planned_writes(
@@ -74,10 +78,17 @@ def install_runtime_kit(
             root=ws,
             force=force,
             dry_run=dry_run,
-            generated_markers=(INSTALL_MARKER, JSONC_INSTALL_MARKER, TOML_INSTALL_MARKER),
+            generated_markers=(
+                INSTALL_MARKER,
+                JSONC_INSTALL_MARKER,
+                TOML_INSTALL_MARKER,
+            ),
         )
     except InstallWriteError as exc:
         raise RuntimeAssetInstallError(str(exc)) from exc
+
+    if "codex" in runtimes and not dry_run:
+        _verify_materialized_codex_runtime_kit(ws)
 
     return {
         "runtime": runtime,
@@ -87,6 +98,103 @@ def install_runtime_kit(
         "written": [str(write.destination) for write in all_writes],
         "count": len(all_writes),
     }
+
+
+def _validate_existing_codex_kit_subset(
+    *,
+    workspace: Path,
+    writes: list[PlannedWrite],
+) -> None:
+    """Allow only an exact, resumable subset of the packaged Codex kit."""
+
+    kit_root = workspace / ".codex"
+    expected: dict[str, bytes] = {}
+    for write in writes:
+        try:
+            relative = write.destination.relative_to(kit_root).as_posix()
+        except ValueError:
+            continue
+        expected[relative] = write.content.encode("utf-8")
+    expected_directories = {
+        parent.as_posix()
+        for relative in expected
+        for parent in Path(relative).parents
+        if parent != Path(".")
+    }
+
+    try:
+        root_mode = kit_root.lstat().st_mode
+    except FileNotFoundError:
+        return
+    except OSError as exc:
+        raise _codex_existing_content_error(exc)
+    if not stat.S_ISDIR(root_mode):
+        raise _codex_existing_content_error()
+
+    pending = [kit_root]
+    while pending:
+        directory = pending.pop()
+        try:
+            entries = list(os.scandir(directory))
+        except OSError as exc:
+            raise _codex_existing_content_error(exc)
+        for entry in entries:
+            relative = Path(entry.path).relative_to(kit_root).as_posix()
+            try:
+                if entry.is_symlink():
+                    raise _codex_existing_content_error()
+                if entry.is_dir(follow_symlinks=False):
+                    if relative not in expected_directories:
+                        raise _codex_existing_content_error()
+                    pending.append(Path(entry.path))
+                    continue
+                if not entry.is_file(follow_symlinks=False):
+                    raise _codex_existing_content_error()
+                expected_bytes = expected.get(relative)
+                if (
+                    expected_bytes is None
+                    or Path(entry.path).read_bytes() != expected_bytes
+                ):
+                    raise _codex_existing_content_error()
+            except RuntimeAssetInstallError:
+                raise
+            except OSError as exc:
+                raise _codex_existing_content_error(exc)
+
+
+def _codex_existing_content_error(
+    exc: BaseException | None = None,
+) -> RuntimeAssetInstallError:
+    error = RuntimeAssetInstallError(
+        "Workspace Codex runtime kit contains non-generated or mismatched content."
+    )
+    if exc is not None:
+        error.__cause__ = exc
+    return error
+
+
+def _verify_materialized_codex_runtime_kit(workspace: Path) -> None:
+    from multi_agent_brief.runtime_host_v2.codex import (
+        load_codex_adapter_binding,
+        load_workspace_codex_adapter_binding,
+    )
+    from multi_agent_brief.runtime_host_v2.errors import RuntimeHostError
+
+    verification_run_id = "RUN-CODEX-KIT-VERIFY"
+    try:
+        workspace_binding = load_workspace_codex_adapter_binding(
+            workspace,
+            verification_run_id,
+        )
+        packaged_binding = load_codex_adapter_binding(verification_run_id)
+    except RuntimeHostError as exc:
+        raise RuntimeAssetInstallError(
+            "Installed Codex runtime kit failed exact verification."
+        ) from exc
+    if workspace_binding != packaged_binding:
+        raise RuntimeAssetInstallError(
+            "Installed Codex runtime kit failed exact verification."
+        )
 
 
 def _deduplicate_writes(writes: list[PlannedWrite]) -> list[PlannedWrite]:
@@ -112,7 +220,12 @@ def _resolve_source_repo(*, repo_workdir: str | Path | None, workspace: Path) ->
         raise RuntimeAssetInstallError(SOURCE_CLONE_ONLY_MESSAGE) from exc
     if not is_source_repo(repo):
         raise RuntimeAssetInstallError(SOURCE_CLONE_ONLY_MESSAGE)
-    required = [repo / ".agents" / "skills", repo / ".opencode", repo / ".claude", repo / ".codex"]
+    required = [
+        repo / ".agents" / "skills",
+        repo / ".opencode",
+        repo / ".claude",
+        repo / ".codex",
+    ]
     missing = [str(path) for path in required if not path.exists()]
     if missing:
         raise RuntimeAssetInstallError(
@@ -287,8 +400,7 @@ def _with_install_marker(text: str) -> str:
 def _workspace_command_text(*, runtime: str) -> str:
     runtime_label = "OpenCode" if runtime == "opencode" else "Claude Code"
     frontmatter = (
-        "---\n"
-        "description: Generate a real source-grounded brief from this workspace\n"
+        "---\ndescription: Generate a real source-grounded brief from this workspace\n"
     )
     if runtime == "opencode":
         frontmatter += "agent: brief-orchestrator\nsubtask: false\n"

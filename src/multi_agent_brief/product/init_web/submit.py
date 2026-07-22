@@ -20,7 +20,8 @@ from multi_agent_brief.control_store.serialization import canonical_fingerprint
 from multi_agent_brief.core_run_v2.policy import derived_id
 from multi_agent_brief.runtime_host_v2.codex import load_codex_adapter_binding
 from multi_agent_brief.runtime_host_v2.initialization import (
-    initialize_or_open_runtime,
+    RuntimeHostError,
+    WorkspaceBootstrap,
 )
 from multi_agent_brief.workspace.init_profile import InitProfile
 
@@ -35,6 +36,20 @@ class SubmissionError(ValueError):
         super().__init__(error_code)
         self.error_code = error_code
         self.http_status = http_status
+
+
+def _runtime_submission_error(exc: RuntimeHostError) -> SubmissionError:
+    error_code = str(exc)
+    if error_code == "runtime_initialization_input_invalid":
+        http_status = 422
+    elif error_code in {
+        "legacy_workspace_unsupported",
+        "runtime_adapter_binding_mismatch",
+    }:
+        http_status = 409
+    else:
+        http_status = 500
+    return SubmissionError(error_code, http_status)
 
 
 def _require_text(value: Any, error_code: str) -> str:
@@ -90,7 +105,7 @@ def _profile_from_payload(payload: dict[str, Any]) -> InitProfile:
 
 
 class InitWebSubmitter:
-    """One-lifetime submission log with real replay/conflict semantics."""
+    """Submit one strict init request through durable Store replay semantics."""
 
     def __init__(
         self,
@@ -100,62 +115,61 @@ class InitWebSubmitter:
     ) -> None:
         self._base_dir = Path(base_dir).expanduser().resolve() if base_dir else None
         self._adapter_loader = adapter_loader
-        self._submissions: dict[str, tuple[str, dict[str, Any]]] = {}
 
     def _resolve_target(self, raw_target: str) -> Path:
         target = Path(raw_target).expanduser()
         if not target.is_absolute():
             target = (self._base_dir or Path.cwd()) / target
-        resolved = target.resolve(strict=False)
-        if resolved.exists() and any(resolved.iterdir()):
-            raise SubmissionError("workspace_target_exists", 409)
-        return resolved
+        return target.resolve(strict=False)
 
-    def submit(self, body: Any) -> tuple[int, dict[str, Any]]:
-        if not isinstance(body, dict) or body.get("schema_version") != SUBMISSION_SCHEMA:
-            raise SubmissionError("submission_payload_invalid", 422)
-        request_id = _require_text(body.get("request_id"), "submission_request_id_invalid")
-        payload = body.get("payload")
-        if not isinstance(payload, dict):
-            raise SubmissionError("submission_payload_invalid", 422)
-        fingerprint = canonical_fingerprint(body)
-
-        prior = self._submissions.get(request_id)
-        if prior is not None:
-            prior_fingerprint, prior_response = prior
-            if prior_fingerprint != fingerprint:
-                raise SubmissionError("submission_replay_conflict", 409)
-            return 200, {**prior_response, "status": "replayed"}
-
-        if payload.get("human_confirmation") is not True:
-            raise SubmissionError("human_confirmation_required", 422)
-        target = self._resolve_target(
-            _require_text(payload.get("workspace_target"), "workspace_target_invalid")
+    @staticmethod
+    def _submission_identities(
+        request_id: str,
+        request_fingerprint: str,
+    ) -> tuple[str, str, str]:
+        request_namespace = canonical_fingerprint(
+            {
+                "schema_version": SUBMISSION_SCHEMA,
+                "request_id": request_id,
+            }
         )
-        profile = _profile_from_payload(payload)
-
-        identity_log: list[str] = []
-
-        def _identity() -> str:
-            import uuid
-
-            value = uuid.uuid4().hex
-            identity_log.append(value)
-            return value
-
-        create_workspace(target, profile, force=False, identity_factory=_identity)
-        workspace_id, run_id = f"WS-{identity_log[0]}", f"RUN-{identity_log[1]}"
-        initialized = initialize_or_open_runtime(
-            target, adapter_loader=self._adapter_loader
+        identity_suffix = f"INITWEB-{request_namespace}-{request_fingerprint}"
+        return (
+            f"WS-{identity_suffix}",
+            f"RUN-{identity_suffix}",
+            f"WS-INITWEB-{request_namespace}-",
         )
+
+    @staticmethod
+    def _target_has_content(target: Path) -> bool:
+        if not target.exists():
+            return False
+        if not target.is_dir():
+            return True
+        try:
+            next(target.iterdir())
+        except StopIteration:
+            return False
+        except OSError:
+            return True
+        return True
+
+    @staticmethod
+    def _receipt_response(
+        *,
+        target: Path,
+        workspace_id: str,
+        run_id: str,
+        status: str,
+    ) -> dict[str, Any]:
         receipt_id = derived_id("REQ-CX-INIT", workspace_id, run_id)
         with SQLiteControlStore.open(target / "briefloop.db") as store:
             receipt = store.load_transaction_receipt(run_id, receipt_id)
         if receipt is None:
             raise SubmissionError("bootstrap_receipt_unavailable", 500)
-        response = {
+        return {
             "ok": True,
-            "status": "committed" if initialized.initialized else "replayed",
+            "status": status,
             "workspace_id": workspace_id,
             "run_id": run_id,
             "workspace": str(target),
@@ -163,8 +177,89 @@ class InitWebSubmitter:
             "committed_revision": receipt.committed_revision,
             "receipt": receipt.model_dump(mode="json", exclude_unset=False),
         }
-        self._submissions[request_id] = (fingerprint, response)
-        return 200, response
+
+    def _replay_existing_store(
+        self,
+        *,
+        target: Path,
+        expected_workspace_id: str,
+        expected_run_id: str,
+        request_workspace_prefix: str,
+    ) -> dict[str, Any]:
+        try:
+            initialized = WorkspaceBootstrap(target).initialize_runnable_codex(
+                expected_adapter_loader=self._adapter_loader
+            )
+        except RuntimeHostError as exc:
+            raise _runtime_submission_error(exc) from exc
+        actual_workspace_id = initialized.verified.snapshot.workspace_id
+        if actual_workspace_id != expected_workspace_id:
+            if actual_workspace_id.startswith(request_workspace_prefix):
+                raise SubmissionError("submission_replay_conflict", 409)
+            raise SubmissionError("workspace_target_exists", 409)
+        return self._receipt_response(
+            target=target,
+            workspace_id=expected_workspace_id,
+            run_id=expected_run_id,
+            status="replayed",
+        )
+
+    def submit(self, body: Any) -> tuple[int, dict[str, Any]]:
+        if (
+            not isinstance(body, dict)
+            or body.get("schema_version") != SUBMISSION_SCHEMA
+        ):
+            raise SubmissionError("submission_payload_invalid", 422)
+        request_id = _require_text(
+            body.get("request_id"), "submission_request_id_invalid"
+        )
+        payload = body.get("payload")
+        if not isinstance(payload, dict):
+            raise SubmissionError("submission_payload_invalid", 422)
+        fingerprint = canonical_fingerprint(body)
+        if payload.get("human_confirmation") is not True:
+            raise SubmissionError("human_confirmation_required", 422)
+        target = self._resolve_target(
+            _require_text(payload.get("workspace_target"), "workspace_target_invalid")
+        )
+        profile = _profile_from_payload(payload)
+        workspace_id, run_id, request_workspace_prefix = self._submission_identities(
+            request_id, fingerprint
+        )
+        bootstrap = WorkspaceBootstrap(target)
+        authority_kind = bootstrap.classify_target()
+        if authority_kind == "sqlite":
+            return 200, self._replay_existing_store(
+                target=target,
+                expected_workspace_id=workspace_id,
+                expected_run_id=run_id,
+                request_workspace_prefix=request_workspace_prefix,
+            )
+        if authority_kind == "invalid_sqlite":
+            raise SubmissionError("control_store_integrity_invalid", 500)
+        if self._target_has_content(target):
+            raise SubmissionError("workspace_target_exists", 409)
+
+        identity_suffix = workspace_id.removeprefix("WS-")
+        identities = iter((identity_suffix, identity_suffix))
+        create_workspace(
+            target,
+            profile,
+            force=False,
+            identity_factory=lambda: next(identities),
+        )
+        try:
+            initialized = bootstrap.initialize_runnable_codex(
+                expected_adapter_loader=self._adapter_loader
+            )
+        except RuntimeHostError as exc:
+            raise _runtime_submission_error(exc) from exc
+        return 200, self._receipt_response(
+            target=target,
+            workspace_id=workspace_id,
+            run_id=run_id,
+            status="committed" if initialized.initialized else "replayed",
+        )
 
 
 __all__ = ["SUBMISSION_SCHEMA", "InitWebSubmitter", "SubmissionError"]

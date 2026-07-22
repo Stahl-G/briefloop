@@ -47,7 +47,7 @@ def test_non_editable_wheel_runs_complete_dormant_core_spine(
         archive.extractall(installed)
 
     script = textwrap.dedent(
-        r'''
+        r"""
         from contextlib import redirect_stdout
         from copy import deepcopy
         import hashlib
@@ -78,6 +78,10 @@ def test_non_editable_wheel_runs_complete_dormant_core_spine(
         from multi_agent_brief.core_run_v2.checkout import build_checkout_revision
         from multi_agent_brief.core_run_v2.publication import CheckoutPublicationEngine
         from multi_agent_brief.core_run_v2.policy import REQUIRED_AUDITOR_GATES
+        from multi_agent_brief.product.init_web.submit import (
+            SUBMISSION_SCHEMA,
+            InitWebSubmitter,
+        )
 
         workspace = Path(sys.argv[1])
         installed = Path(sys.argv[2]).resolve()
@@ -120,6 +124,36 @@ def test_non_editable_wheel_runs_complete_dormant_core_spine(
                 "runtime", "next", "--workspace", str(binding_workspace),
             ]) == 1
         assert "runtime_adapter_binding_mismatch" in stream.getvalue()
+
+        init_web_root = workspace.parent / "init-web-wheel"
+        init_web_root.mkdir()
+        status, response = InitWebSubmitter(base_dir=init_web_root).submit({
+            "schema_version": SUBMISSION_SCHEMA,
+            "request_id": "REQ-WHEEL-INIT-WEB-001",
+            "payload": {
+                "workspace_target": "workspace",
+                "selections": {
+                    "company": "Wheel ExampleCo",
+                    "industry_or_theme": "manufacturing",
+                    "task_objective": "Prepare a packaged runtime brief.",
+                    "audience": "management",
+                    "focus_areas": ["operations"],
+                    "output_formats": ["markdown"],
+                    "web_search_mode": "disabled",
+                },
+                "human_confirmation": True,
+            },
+        })
+        assert status == 200
+        init_web_workspace = init_web_root / "workspace"
+        assert (init_web_workspace / ".codex/config.toml").is_file()
+        assert (init_web_workspace / "briefloop.db").is_file()
+        stream = io.StringIO()
+        with redirect_stdout(stream):
+            assert main([
+                "runtime", "next", "--workspace", str(init_web_workspace),
+            ]) == 0
+        assert json.loads(stream.getvalue())["run_id"] == response["run_id"]
 
         create_demo_workspace(workspace)
         run_id = "RUN-WHEEL-CORE-V2-001"
@@ -759,7 +793,7 @@ def test_non_editable_wheel_runs_complete_dormant_core_spine(
             "contamination_blocked": blocked["status"] == "blocked",
             "receipt_count": len(clean.transactions),
         }, sort_keys=True))
-        '''
+        """
     )
     env = dict(os.environ)
     env["PYTHONPATH"] = str(installed)
