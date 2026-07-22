@@ -54,24 +54,16 @@ def register(subparsers: argparse._SubParsersAction) -> None:
         choices=["en-US", "zh-CN", "bilingual"],
         help="Generated brief language.",
     )
-    init_parser.add_argument(
-        "--company", help="Company or organization name."
-    )
-    init_parser.add_argument(
-        "--role", help="User role, e.g. strategy_office."
-    )
-    init_parser.add_argument(
-        "--industry", help="Industry slug, e.g. manufacturing."
-    )
+    init_parser.add_argument("--company", help="Company or organization name.")
+    init_parser.add_argument("--role", help="User role, e.g. strategy_office.")
+    init_parser.add_argument("--industry", help="Industry slug, e.g. manufacturing.")
     init_parser.add_argument("--title", help="Brief title.")
     init_parser.add_argument(
         "--task-objective",
         help="Explicit objective for the brief run.",
     )
     init_parser.add_argument("--audience", help="Target reader group.")
-    init_parser.add_argument(
-        "--focus-areas", help="Comma-separated focus areas."
-    )
+    init_parser.add_argument("--focus-areas", help="Comma-separated focus areas.")
     init_parser.add_argument(
         "--cadence",
         choices=["weekly", "biweekly", "monthly", "ad_hoc"],
@@ -92,9 +84,7 @@ def register(subparsers: argparse._SubParsersAction) -> None:
         choices=["ollama", "gemini"],
         help="Retrieval provider.",
     )
-    init_parser.add_argument(
-        "--output-formats", help="Comma-separated output formats."
-    )
+    init_parser.add_argument("--output-formats", help="Comma-separated output formats.")
     init_parser.add_argument(
         "--source-profile",
         choices=[
@@ -148,9 +138,7 @@ def register(subparsers: argparse._SubParsersAction) -> None:
     )
     init_parser.add_argument(
         "--excluded-news-domains",
-        help=(
-            "Comma-separated news domains to exclude from discovered candidates."
-        ),
+        help=("Comma-separated news domains to exclude from discovered candidates."),
     )
     init_parser.add_argument(
         "--from-onboarding",
@@ -179,7 +167,9 @@ def _init_web_wizard(args: argparse.Namespace) -> int:
         return 1
     server = create_init_web_server(InitWebSubmitter(), port=port)
     print(f"[init --web] one-shot wizard: {server.url}")
-    print("[init --web] the server exits after the first successful submission or Ctrl-C.")
+    print(
+        "[init --web] the server exits after the first successful submission or Ctrl-C."
+    )
     try:
         opened = webbrowser.open(server.url)
     except Exception:
@@ -198,20 +188,13 @@ def _init_web_wizard(args: argparse.Namespace) -> int:
 def print_tavily_guidance() -> None:
     """Print setup guidance for Tavily live search."""
     print()
-    print(
-        "Tavily live search is enabled. To use it, set the TAVILY_API_KEY"
-    )
+    print("Tavily live search is enabled. To use it, set the TAVILY_API_KEY")
     print("environment variable before running the pipeline.")
     print()
-    print(
-        "  Do not paste API keys into chat, config files, README, or GitHub."
-    )
+    print("  Do not paste API keys into chat, config files, README, or GitHub.")
     print("  Keys should be stored in environment variables only.")
     print()
-    print(
-        "  Check configuration: briefloop doctor"
-        " --config <workspace>/config.yaml"
-    )
+    print("  Check configuration: briefloop doctor --config <workspace>/config.yaml")
 
 
 def print_search_backend_guidance(profile) -> None:
@@ -234,25 +217,19 @@ def print_search_backend_guidance(profile) -> None:
             " provides a web-search tool."
         )
         print(
-            "  Check configuration: briefloop doctor"
-            " --config <workspace>/config.yaml"
+            "  Check configuration: briefloop doctor --config <workspace>/config.yaml"
         )
         return
     if mode == "configure_later":
         print()
         print("Web search is marked for later configuration.")
         print("  Recommended backend: tavily (TAVILY_API_KEY).")
-        print(
-            "  Supported backends: tavily, exa, brave, firecrawl, serper"
-        )
+        print("  Supported backends: tavily, exa, brave, firecrawl, serper")
         print(
             "  Set one API key in .env or export it in your shell, then set"
             " web_search.backend in sources.yaml."
         )
-        print(
-            "  Do not paste API keys into chat, config files, README, or"
-            " GitHub."
-        )
+        print("  Do not paste API keys into chat, config files, README, or GitHub.")
         return
     if mode == "external_api" and backend:
         env_var = backend_env.get(backend, "the backend API key env var")
@@ -261,16 +238,10 @@ def print_search_backend_guidance(profile) -> None:
             f"Web search backend '{backend}' is enabled. Set {env_var} in"
             " .env or your shell before running the pipeline."
         )
+        print("  Supported backends: tavily, exa, brave, firecrawl, serper")
+        print("  Do not paste API keys into chat, config files, README, or GitHub.")
         print(
-            "  Supported backends: tavily, exa, brave, firecrawl, serper"
-        )
-        print(
-            "  Do not paste API keys into chat, config files, README, or"
-            " GitHub."
-        )
-        print(
-            "  Check configuration: briefloop doctor"
-            " --config <workspace>/config.yaml"
+            "  Check configuration: briefloop doctor --config <workspace>/config.yaml"
         )
 
 
@@ -295,7 +266,9 @@ def print_context_reference_guidance(target: Path, language: str = "en-US") -> N
         "Tip: add example brief Markdown files, such as prior weekly reports,"
         f" to {context_dir}."
     )
-    print("     They are style/context references only and do not enter the Claim Ledger.")
+    print(
+        "     They are style/context references only and do not enter the Claim Ledger."
+    )
 
 
 def _apply_cli_overrides(profile, args: argparse.Namespace) -> None:
@@ -411,6 +384,19 @@ def _print_profile_option_errors(errors: list[str]) -> None:
         print(f"        {error}")
 
 
+def _existing_store_init_error(target: Path) -> str | None:
+    """Return a fixed rejection before init can write an authoritative target."""
+
+    from multi_agent_brief.cli.authority_guard import classify_workspace_authority
+
+    authority = classify_workspace_authority(target.expanduser().resolve(strict=False))
+    if authority.kind == "sqlite":
+        return "workspace_already_initialized"
+    if authority.kind == "invalid_sqlite":
+        return "control_store_integrity_invalid"
+    return None
+
+
 def _init_workspace(args: argparse.Namespace) -> int:
     """Create a brief workspace from onboarding or CLI args."""
     from multi_agent_brief.cli.init_wizard import (
@@ -431,6 +417,9 @@ def _init_workspace(args: argparse.Namespace) -> int:
     # Priority: explicit CLI target > onboarding.target > default "brief-workspace"
     if args.demo:
         target = Path(args.target)
+        if error_code := _existing_store_init_error(target):
+            print(f"[error] {error_code}")
+            return 1
         create_demo_workspace(target, force=args.force)
         print(f"Created demo workspace: {target}")
         print_context_reference_guidance(target, "en-US")
@@ -440,10 +429,7 @@ def _init_workspace(args: argparse.Namespace) -> int:
         )
         print("For a real brief workspace:")
         print("  briefloop onboard")
-        print(
-            "  briefloop init <workspace> --from-onboarding"
-            " onboarding.json"
-        )
+        print("  briefloop init <workspace> --from-onboarding onboarding.json")
         return 0
 
     from_onboarding = getattr(args, "from_onboarding", None)
@@ -486,8 +472,7 @@ def _init_workspace(args: argparse.Namespace) -> int:
             print("          briefloop onboard")
             print("        Then create the workspace:")
             print(
-                "          briefloop init <workspace>"
-                " --from-onboarding onboarding.json"
+                "          briefloop init <workspace> --from-onboarding onboarding.json"
             )
             return 1
 
@@ -510,30 +495,25 @@ def _init_workspace(args: argparse.Namespace) -> int:
             print("          briefloop onboard")
             print("        Then create the workspace:")
             print(
-                "          briefloop init <workspace>"
-                " --from-onboarding onboarding.json"
+                "          briefloop init <workspace> --from-onboarding onboarding.json"
             )
             print(
-                "        Developer-only direct init must provide all"
-                " business fields:"
+                "        Developer-only direct init must provide all business fields:"
             )
             print(f"        missing: {', '.join(missing)}")
             return 1
         if not _is_interactive() and missing:
             print(
-                "[error] Non-interactive init cannot create a workspace from"
-                " defaults."
+                "[error] Non-interactive init cannot create a workspace from defaults."
             )
             print("        Run conversational onboarding:")
             print("          briefloop onboard")
             print("        Then create the workspace:")
             print(
-                "          briefloop init <workspace>"
-                " --from-onboarding onboarding.json"
+                "          briefloop init <workspace> --from-onboarding onboarding.json"
             )
             print(
-                "        Developer-only direct init must provide all"
-                " business fields:"
+                "        Developer-only direct init must provide all business fields:"
             )
             print(f"        missing: {', '.join(missing)}")
             return 1
@@ -555,6 +535,9 @@ def _init_workspace(args: argparse.Namespace) -> int:
         _print_profile_option_errors(option_errors)
         return 1
 
+    if error_code := _existing_store_init_error(target):
+        print(f"[error] {error_code}")
+        return 1
     create_workspace(target, profile, force=args.force)
     from multi_agent_brief.runtime_host_v2.errors import RuntimeHostError
     from multi_agent_brief.runtime_host_v2.initialization import WorkspaceBootstrap
@@ -570,10 +553,7 @@ def _init_workspace(args: argparse.Namespace) -> int:
         f"Next: briefloop run --workspace {target}"
         f" --runtime {RUNTIME_CLI_CHOICE_PLACEHOLDER}"
     )
-    print(
-        "Hermes prompt: briefloop hermes prompt"
-        f" --config {target}/config.yaml"
-    )
+    print(f"Hermes prompt: briefloop hermes prompt --config {target}/config.yaml")
 
     # Print web-search setup guidance if enabled
     if getattr(profile, "web_search_enabled", False) or getattr(

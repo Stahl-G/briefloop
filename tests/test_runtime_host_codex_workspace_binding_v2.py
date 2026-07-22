@@ -77,6 +77,37 @@ def _assert_revision(
         assert store.current_revision == expected
 
 
+def _direct_init_args(
+    workspace: Path,
+    *,
+    company: str = "ExampleCo",
+) -> list[str]:
+    return [
+        "init",
+        str(workspace),
+        "--language",
+        "en-US",
+        "--company",
+        company,
+        "--industry",
+        "manufacturing",
+        "--title",
+        f"{company} brief",
+        "--task-objective",
+        f"Prepare the {company} brief.",
+        "--audience",
+        "management",
+        "--cadence",
+        "weekly",
+        "--source-profile",
+        "conservative",
+    ]
+
+
+def _file_evidence(paths: tuple[Path, ...]) -> dict[Path, tuple[bytes, int]]:
+    return {path: (path.read_bytes(), path.stat().st_mtime_ns) for path in paths}
+
+
 def test_installed_workspace_binding_equals_packaged_binding(tmp_path: Path) -> None:
     workspace = _workspace(tmp_path)
 
@@ -101,31 +132,7 @@ def test_cli_init_prepares_exact_kit_without_committing_store(
     capsys: pytest.CaptureFixture[str],
 ) -> None:
     workspace = tmp_path / "cli-workspace"
-    assert (
-        main(
-            [
-                "init",
-                str(workspace),
-                "--language",
-                "en-US",
-                "--company",
-                "ExampleCo",
-                "--industry",
-                "manufacturing",
-                "--title",
-                "ExampleCo brief",
-                "--task-objective",
-                "Prepare the ExampleCo brief.",
-                "--audience",
-                "management",
-                "--cadence",
-                "weekly",
-                "--source-profile",
-                "conservative",
-            ]
-        )
-        == 0
-    )
+    assert main(_direct_init_args(workspace)) == 0
     capsys.readouterr()
     assert (workspace / ".codex" / "config.toml").is_file()
     assert not (workspace / "briefloop.db").exists()
@@ -134,6 +141,35 @@ def test_cli_init_prepares_exact_kit_without_committing_store(
     action = json.loads(capsys.readouterr().out)
     assert action["run_id"].startswith("RUN-")
     assert (workspace / "briefloop.db").is_file()
+
+
+def test_cli_init_force_never_rewrites_existing_store_workspace(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    workspace = tmp_path / "cli-workspace"
+    assert main(_direct_init_args(workspace)) == 0
+    capsys.readouterr()
+    assert main(["runtime", "next", "--workspace", str(workspace)]) == 0
+    capsys.readouterr()
+
+    protected_paths = (
+        workspace / "config.yaml",
+        workspace / "sources.yaml",
+        *(workspace / ".codex" / relative for relative in ASSET_PATHS),
+    )
+    before_files = _file_evidence(protected_paths)
+    with SQLiteControlStore.open(workspace / "briefloop.db") as store:
+        before_revision = store.current_revision
+        before_head = store.load_workspace_run_head()
+        assert before_head is not None
+
+    assert main([*_direct_init_args(workspace, company="ChangedCo"), "--force"]) == 1
+    assert capsys.readouterr().out.strip() == "[error] workspace_already_initialized"
+    assert _file_evidence(protected_paths) == before_files
+    with SQLiteControlStore.open(workspace / "briefloop.db") as store:
+        assert store.current_revision == before_revision
+        assert store.load_workspace_run_head() == before_head
 
 
 def test_bootstrap_validates_strict_inputs_before_materializing_kit(

@@ -132,8 +132,9 @@ def test_replay_verifies_existing_store_kit_without_reinstall(
     skill = workspace / ".codex" / "skills" / "briefloop" / "SKILL.md"
     skill.write_bytes(skill.read_bytes() + b"\n# drift\n")
 
+    restarted = InitWebSubmitter(base_dir=tmp_path)
     with pytest.raises(SubmissionError) as exc_info:
-        submitter.submit(body)
+        restarted.submit(body)
     assert exc_info.value.error_code == "runtime_adapter_binding_mismatch"
     assert skill.read_bytes().endswith(b"\n# drift\n")
     assert _revision(workspace) == revision_before
@@ -193,11 +194,15 @@ def test_identical_resubmit_is_replayed_with_zero_writes(tmp_path: Path) -> None
     workspace = tmp_path / "web-ws"
     revision_before = _revision(workspace)
 
-    status, second = submitter.submit(body)
+    restarted = InitWebSubmitter(base_dir=tmp_path)
+    status, second = restarted.submit(body)
     assert status == 200
     assert second["status"] == "replayed"
+    assert second["workspace_id"] == first["workspace_id"]
+    assert second["run_id"] == first["run_id"]
     assert second["transaction_id"] == first["transaction_id"]
     assert second["committed_revision"] == first["committed_revision"]
+    assert second["receipt"] == first["receipt"]
     assert _revision(workspace) == revision_before
 
 
@@ -211,9 +216,26 @@ def test_same_request_id_with_different_payload_conflicts_with_zero_writes(
     revision_before = _revision(workspace)
 
     changed = _body("REQ-AAAA0004", "web-ws", raw_free_text="changed mind")
+    restarted = InitWebSubmitter(base_dir=tmp_path)
     with pytest.raises(SubmissionError) as exc_info:
-        submitter.submit(changed)
+        restarted.submit(changed)
     assert exc_info.value.error_code == "submission_replay_conflict"
+    assert exc_info.value.http_status == 409
+    assert _revision(workspace) == revision_before
+
+
+def test_unrelated_request_to_initialized_target_is_not_replay(
+    tmp_path: Path,
+) -> None:
+    submitter = InitWebSubmitter(base_dir=tmp_path)
+    _submit_ok(submitter, _body("REQ-AAAA0011", "web-ws"))
+    workspace = tmp_path / "web-ws"
+    revision_before = _revision(workspace)
+
+    restarted = InitWebSubmitter(base_dir=tmp_path)
+    with pytest.raises(SubmissionError) as exc_info:
+        restarted.submit(_body("REQ-BBBB0011", "web-ws"))
+    assert exc_info.value.error_code == "workspace_target_exists"
     assert exc_info.value.http_status == 409
     assert _revision(workspace) == revision_before
 
