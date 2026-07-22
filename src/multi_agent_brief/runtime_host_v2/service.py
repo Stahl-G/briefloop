@@ -325,6 +325,11 @@ class RuntimeHostService:
         action = current.action
         if expected_action is not None and expected_action != action:
             raise RuntimeHostError("runtime_action_stale")
+        if (
+            action.action_kind == "deterministic"
+            and action.effect_kind == "source_acquire"
+        ):
+            raise RuntimeHostError("runtime_action_not_invocable")
         role_id = self._invocation_role_for_action(action)
         if role_id is None or action.stage_id is None:
             raise RuntimeHostError("runtime_action_not_invocable")
@@ -407,6 +412,11 @@ class RuntimeHostService:
             raise RuntimeHostError("runtime_envelope_invalid") from exc
         historical = replace(current.verified, snapshot=pre_snapshot)
         action = classify_core_run_next_action(historical)
+        if (
+            action.action_kind == "deterministic"
+            and action.effect_kind == "source_acquire"
+        ):
+            raise RuntimeHostError("runtime_action_not_invocable")
         role_id = self._invocation_role_for_action(action)
         if role_id is None or action.stage_id is None:
             raise RuntimeHostError("runtime_envelope_invalid")

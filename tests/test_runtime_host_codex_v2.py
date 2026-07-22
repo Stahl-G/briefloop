@@ -1556,6 +1556,70 @@ def _provider_item(position: int, *, content: str | None = None) -> SourceItem:
     )
 
 
+def test_deterministic_source_acquire_rejects_public_invocation_start_before_mutation(
+    tmp_path: Path,
+    capsys,
+    monkeypatch,
+) -> None:
+    if sys.platform == "win32":
+        pytest.skip("source-candidate publication is precommit unsupported on Windows")
+    monkeypatch.setenv("TAVILY_API_KEY", "test-only")
+    workspace = _external_workspace(tmp_path)
+    host, action = _advance_to_source_route(workspace, capsys, route="web-search")
+    provider_calls = 0
+
+    def should_not_run(_provider, _query, _config):
+        nonlocal provider_calls
+        provider_calls += 1
+        return [_provider_item(1)]
+
+    monkeypatch.setattr(
+        "multi_agent_brief.sources.web_search.WebSearchProvider.collect",
+        should_not_run,
+    )
+    action_path = workspace / "source-acquire-action.json"
+    action_path.write_text(
+        action.model_dump_json(exclude_unset=False),
+        encoding="utf-8",
+    )
+    with SQLiteControlStore.open(workspace / "briefloop.db") as store:
+        before_revision = store.current_revision
+        before_invocations = store.load_snapshot(action.run_id).invocations
+    scratch_before = sorted(
+        path.relative_to(workspace).as_posix()
+        for path in (workspace / "scratch").rglob("*")
+    )
+
+    with pytest.raises(RuntimeHostError, match="runtime_action_not_invocable"):
+        host.start_current_invocation(expected_action=action)
+    assert (
+        main(
+            [
+                "runtime",
+                "invocation-start",
+                "--workspace",
+                str(workspace),
+                "--action",
+                str(action_path),
+            ]
+        )
+        == 1
+    )
+    assert "runtime_action_not_invocable" in capsys.readouterr().out
+
+    assert provider_calls == 0
+    with SQLiteControlStore.open(workspace / "briefloop.db") as store:
+        assert store.current_revision == before_revision
+        assert store.load_snapshot(action.run_id).invocations == before_invocations
+    assert (
+        sorted(
+            path.relative_to(workspace).as_posix()
+            for path in (workspace / "scratch").rglob("*")
+        )
+        == scratch_before
+    )
+
+
 def test_provider_result_257_is_zero_mutation_before_invocation(
     tmp_path: Path,
     capsys,
@@ -1808,6 +1872,9 @@ def test_source_pack_resume_reuses_staged_set_and_same_invocation(
     ]
     assert len(provider_invocations) == 1
     assert provider_invocations[0].status == "active"
+    assert not (workspace / "scratch" / provider_invocations[0].invocation_id).exists()
+    with pytest.raises(RuntimeHostError, match="runtime_action_not_invocable"):
+        host.start_current_invocation(expected_action=action)
     assert not (workspace / "scratch" / provider_invocations[0].invocation_id).exists()
     if corrupt_stage:
         stage_identity = canonical_fingerprint(
