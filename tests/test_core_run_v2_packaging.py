@@ -111,6 +111,11 @@ def test_non_editable_wheel_runs_complete_dormant_core_spine(
         ).joinpath("migrations", "0006.sql")
         assert migration_0006.is_file()
         assert "PRAGMA user_version=6;" in migration_0006.read_text(encoding="utf-8")
+        migration_0007 = resources.files(
+            "multi_agent_brief.control_store"
+        ).joinpath("migrations", "0007.sql")
+        assert migration_0007.is_file()
+        assert "PRAGMA user_version=7;" in migration_0007.read_text(encoding="utf-8")
         assert callable(build_checkout_revision)
         assert CheckoutPublicationEngine.__module__.endswith(".publication")
         assert MAX_SOURCE_PACK_MEMBERS == 256

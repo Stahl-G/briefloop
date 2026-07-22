@@ -60,6 +60,7 @@ from multi_agent_brief.contracts.v2 import (
     ReceiptCheckoutBindingReference,
     ArtifactSupersessionRecord,
     RunContractBinding,
+    RunExecutionAuthorization,
     RunIdentity,
     RunIntegrityRecord,
     RunArchiveArtifactBinding,
@@ -109,6 +110,7 @@ _EXTENDED_RECORD_MODELS = (
     AcceptedProposalRecord,
     ProposalSourceBinding,
     RunContractBinding,
+    RunExecutionAuthorization,
     OwnedArtifactSubmissionRecord,
     StageTransitionRecord,
     StageArtifactBinding,
@@ -339,6 +341,7 @@ class ControlStoreSnapshot:
     accepted_proposals: tuple[AcceptedProposalRecord, ...]
     proposal_source_bindings: tuple[ProposalSourceBinding, ...]
     run_contract_bindings: tuple[RunContractBinding, ...]
+    run_execution_authorizations: tuple[RunExecutionAuthorization, ...]
     owned_artifact_submissions: tuple[OwnedArtifactSubmissionRecord, ...]
     stage_transitions: tuple[StageTransitionRecord, ...]
     stage_artifact_bindings: tuple[StageArtifactBinding, ...]
@@ -635,6 +638,11 @@ class ControlStoreHistory:
         run_contract_bindings = selected(
             "run_contract_bindings", ("run_id",), full.run_contract_bindings
         )
+        run_execution_authorizations = selected(
+            "run_execution_authorizations",
+            ("authorization_id",),
+            full.run_execution_authorizations,
+        )
         stage_artifact_bindings = selected(
             "stage_artifact_bindings",
             ("transition_id", "position"),
@@ -783,6 +791,7 @@ class ControlStoreHistory:
             accepted_proposals=accepted_proposals,
             proposal_source_bindings=proposal_source_bindings,
             run_contract_bindings=run_contract_bindings,
+            run_execution_authorizations=run_execution_authorizations,
             owned_artifact_submissions=owned_artifact_submissions,
             stage_transitions=stage_transitions,
             stage_artifact_bindings=stage_artifact_bindings,
@@ -1458,6 +1467,9 @@ class SQLiteControlStore:
                     uow._proposal_source_bindings.values()
                 )
                 self._insert_run_contract_binding(uow._run_contract_binding)
+                self._insert_run_execution_authorization(
+                    uow._run_execution_authorization
+                )
                 self._insert_owned_artifact_submissions(
                     uow._owned_artifact_submissions.values()
                 )
@@ -1845,6 +1857,23 @@ class SQLiteControlStore:
             ):
                 raise ControlStoreConflict("relational_integrity_conflict")
 
+        execution_authorization = uow._run_execution_authorization
+        if execution_authorization is not None:
+            if (
+                execution_authorization.accepted_transaction_id
+                != uow.transaction_id
+                or execution_authorization.authorization_event_id not in staged_events
+                or (
+                    execution_authorization.source_manifest_artifact.artifact_id,
+                    execution_authorization.source_manifest_artifact.revision,
+                )
+                not in available_revisions
+                or binding is None
+                or execution_authorization.run_contract_fingerprint
+                != binding.contract_fingerprint
+            ):
+                raise ControlStoreConflict("relational_integrity_conflict")
+
         for record in uow._owned_artifact_submissions.values():
             if (
                 record.accepted_transaction_id != uow.transaction_id
@@ -1894,6 +1923,7 @@ class SQLiteControlStore:
         core_run_effect = any(
             (
                 uow._run_contract_binding is not None,
+                uow._run_execution_authorization is not None,
                 bool(uow._owned_artifact_submissions),
                 bool(uow._stage_transitions),
                 bool(uow._claims),
@@ -2118,6 +2148,11 @@ class SQLiteControlStore:
                     "run_contract_bindings": (
                         [{"run_id": uow._run_contract_binding.run_id}]
                         if uow._run_contract_binding is not None
+                        else []
+                    ),
+                    "run_execution_authorizations": (
+                        [{"authorization_id": uow._run_execution_authorization.authorization_id}]
+                        if uow._run_execution_authorization is not None
                         else []
                     ),
                     "owned_artifact_submissions": [
@@ -2845,6 +2880,45 @@ class SQLiteControlStore:
             ),
         )
 
+    def _insert_run_execution_authorization(
+        self,
+        record: RunExecutionAuthorization | None,
+    ) -> None:
+        if record is None:
+            return
+        self._connection.execute(
+            """
+            INSERT INTO run_execution_authorizations(
+                run_id, authorization_id, workspace_id, schema_version,
+                run_contract_fingerprint, run_direction_fingerprint,
+                completion_target, source_manifest_artifact_id,
+                source_manifest_revision, source_manifest_sha256,
+                source_manifest_member_count, repair_budget,
+                authorization_event_id, accepted_transaction_id,
+                request_fingerprint, created_at, payload_json
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                record.run_id,
+                record.authorization_id,
+                record.workspace_id,
+                record.schema_version,
+                record.run_contract_fingerprint,
+                record.run_direction_fingerprint,
+                record.completion_target,
+                record.source_manifest_artifact.artifact_id,
+                record.source_manifest_artifact.revision,
+                record.source_manifest_sha256,
+                record.source_manifest_member_count,
+                record.repair_budget,
+                record.authorization_event_id,
+                record.accepted_transaction_id,
+                record.request_fingerprint,
+                record.created_at,
+                _canonical_record_text(record),
+            ),
+        )
+
     def _insert_owned_artifact_submissions(
         self,
         records: Iterable[OwnedArtifactSubmissionRecord],
@@ -3441,6 +3515,20 @@ class SQLiteControlStore:
                     receipt.transaction_id,
                     position,
                     reference.run_id,
+                ),
+            )
+        for position, reference in enumerate(receipt.run_execution_authorizations):
+            self._connection.execute(
+                """
+                INSERT INTO transaction_run_execution_authorizations(
+                    run_id, transaction_id, position, authorization_id
+                ) VALUES (?, ?, ?, ?)
+                """,
+                (
+                    receipt.run_id,
+                    receipt.transaction_id,
+                    position,
+                    reference.authorization_id,
                 ),
             )
         for position, reference in enumerate(receipt.owned_artifact_submissions):
@@ -4293,6 +4381,34 @@ class SQLiteControlStore:
                     "initialization_event_id": "initialization_event_id",
                     "accepted_transaction_id": "accepted_transaction_id",
                     "request_fingerprint": "request_fingerprint",
+                },
+            ),
+            run_execution_authorizations=self._load_for_run(
+                RunExecutionAuthorization,
+                "run_execution_authorizations",
+                run_id,
+                "authorization_id",
+                {
+                    "run_id": "run_id",
+                    "authorization_id": "authorization_id",
+                    "workspace_id": "workspace_id",
+                    "schema_version": "schema_version",
+                    "run_contract_fingerprint": "run_contract_fingerprint",
+                    "run_direction_fingerprint": "run_direction_fingerprint",
+                    "completion_target": "completion_target",
+                    "source_manifest_artifact_id": (
+                        "source_manifest_artifact.artifact_id"
+                    ),
+                    "source_manifest_revision": (
+                        "source_manifest_artifact.revision"
+                    ),
+                    "source_manifest_sha256": "source_manifest_sha256",
+                    "source_manifest_member_count": "source_manifest_member_count",
+                    "repair_budget": "repair_budget",
+                    "authorization_event_id": "authorization_event_id",
+                    "accepted_transaction_id": "accepted_transaction_id",
+                    "request_fingerprint": "request_fingerprint",
+                    "created_at": "created_at",
                 },
             ),
             owned_artifact_submissions=self._load_for_run(
@@ -5265,6 +5381,12 @@ class SQLiteControlStore:
                 revision_number,
                 initialization.transaction_id,
             )
+        for authorization in snapshot.run_execution_authorizations:
+            add_producer(
+                authorization.source_manifest_artifact.artifact_id,
+                authorization.source_manifest_artifact.revision,
+                authorization.accepted_transaction_id,
+            )
         for source in snapshot.sources:
             add_producer(
                 source.content_artifact_id,
@@ -5876,6 +5998,14 @@ class SQLiteControlStore:
                 tuple((item.run_id,) for item in receipt.run_contract_bindings),
             ),
             (
+                "transaction_run_execution_authorizations",
+                ("authorization_id",),
+                tuple(
+                    (item.authorization_id,)
+                    for item in receipt.run_execution_authorizations
+                ),
+            ),
+            (
                 "transaction_owned_artifact_submissions",
                 ("submission_id",),
                 tuple(
@@ -6346,6 +6476,13 @@ class SQLiteControlStore:
                 "run_contract_bindings",
                 ("run_id",),
                 False,
+            ),
+            (
+                "transaction_run_execution_authorizations",
+                ("authorization_id",),
+                "run_execution_authorizations",
+                ("authorization_id",),
+                True,
             ),
             (
                 "transaction_owned_artifact_submissions",

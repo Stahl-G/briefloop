@@ -375,6 +375,7 @@ EVENT_TYPES = {
     "semantic_assessment_checked_inputs_bound",
     "semantic_support_finding_adjudicated",
     "source_evidence_committed",
+    "input_classification_committed",
     "role_proposal_committed",
     "intake_rejected",
     "role_invocation_started",
@@ -1350,6 +1351,174 @@ class RunDirection(StrictModel):
         return self
 
 
+class ExecutionSourceManifestMember(StrictModel):
+    """One Human-confirmed source row frozen before an authorized run starts."""
+
+    source_id: ContractId
+    input_path: WorkspacePath
+    content_sha256: Sha256
+    content_media_type: MimeType
+    origin_type: Literal[SOURCE_ORIGIN_TYPES]
+    acquisition_method: Literal[SOURCE_ACQUISITION_METHODS]
+    material_kind: Literal[SOURCE_MATERIAL_KINDS]
+    provider: Optional[ContractId] = None
+    locator: SourceLocator
+    title: CleanText
+    publisher: Optional[CleanText] = None
+    published_at: Optional[IsoDate] = None
+    retrieved_at: IsoDateTime
+    source_category: Literal[tuple(sorted(VALID_SOURCE_CATEGORIES))]
+    retrieval_source_type: Literal[tuple(sorted(VALID_RETRIEVAL_SOURCE_TYPES))]
+    underlying_evidence_type: Literal[tuple(sorted(VALID_UNDERLYING_EVIDENCE_TYPES))]
+    raw_underlying_evidence_type: Optional[CleanText] = None
+    document_kind: Optional[CleanText] = None
+    opened_at: Optional[IsoDateTime] = None
+    resolved_at: Optional[IsoDateTime] = None
+
+    @model_validator(mode="after")
+    def frozen_member_shape_is_explicit(self) -> "ExecutionSourceManifestMember":
+        if not self.input_path.startswith("input/"):
+            raise ValueError("execution source input must be under input")
+        if self.document_kind == "status_incident":
+            if self.opened_at is None or self.published_at is not None:
+                raise ValueError("status incident requires opened_at instead of published_at")
+        elif self.opened_at is not None or self.resolved_at is not None:
+            raise ValueError("incident timestamps require status_incident")
+        if self.resolved_at is not None and self.opened_at is None:
+            raise ValueError("resolved_at requires opened_at")
+        return self
+
+
+class ExecutionSourceManifest(StrictModel):
+    """The canonical, Human-confirmed source set for an authorized run."""
+
+    schema_id = "briefloop.execution_source_manifest.v2"
+
+    schema_version: Literal["briefloop.execution_source_manifest.v2"]
+    members: list[ExecutionSourceManifestMember] = Field(min_length=1, max_length=256)
+
+    @model_validator(mode="after")
+    def members_are_ordered_and_unique(self) -> "ExecutionSourceManifest":
+        source_ids = [member.source_id for member in self.members]
+        input_paths = [member.input_path for member in self.members]
+        if source_ids != sorted(set(source_ids)):
+            raise ValueError("execution source members must be sorted and unique")
+        if len(input_paths) != len(set(input_paths)):
+            raise ValueError("execution source input paths must be unique")
+        return self
+
+
+class RunExecutionAuthorizationInput(StrictModel):
+    """Strict bootstrap input; Core turns it into the sole durable authority."""
+
+    schema_id = "briefloop.run_execution_authorization_input.v2"
+
+    schema_version: Literal["briefloop.run_execution_authorization_input.v2"]
+    completion_target: Literal["finalized_local"]
+    source_manifest: ExecutionSourceManifest
+    source_manifest_sha256: Sha256
+    source_manifest_member_count: PositiveInt
+    repair_budget: Literal[1]
+
+    @model_validator(mode="after")
+    def manifest_identity_is_exact(self) -> "RunExecutionAuthorizationInput":
+        payload = self.source_manifest.model_dump(mode="json", exclude_unset=False)
+        encoded = json.dumps(
+            payload,
+            ensure_ascii=False,
+            sort_keys=True,
+            separators=(",", ":"),
+        ).encode("utf-8")
+        if hashlib.sha256(encoded).hexdigest() != self.source_manifest_sha256:
+            raise ValueError("execution source manifest hash mismatch")
+        if len(self.source_manifest.members) != self.source_manifest_member_count:
+            raise ValueError("execution source manifest member count mismatch")
+        return self
+
+
+class RunExecutionAuthorizationBootstrap(StrictModel):
+    """The non-authoritative init-file pointer for an explicit manifest."""
+
+    schema_id = "briefloop.run_execution_authorization_bootstrap.v2"
+
+    schema_version: Literal["briefloop.run_execution_authorization_bootstrap.v2"]
+    completion_target: Literal["finalized_local"]
+    source_manifest_path: WorkspacePath
+    source_manifest_sha256: Sha256
+    source_manifest_member_count: PositiveInt
+    repair_budget: Literal[1]
+
+    @model_validator(mode="after")
+    def manifest_path_is_explicit_input(self) -> "RunExecutionAuthorizationBootstrap":
+        if not self.source_manifest_path.startswith("input/"):
+            raise ValueError("execution source manifest must be under input")
+        return self
+
+
+class RunExecutionAuthorization(StrictModel):
+    """Receipt-owned authorization for the automated local completion path."""
+
+    schema_id = "briefloop.run_execution_authorization.v2"
+
+    schema_version: Literal["briefloop.run_execution_authorization.v2"]
+    authorization_id: ContractId
+    run_id: ContractId
+    workspace_id: ContractId
+    run_contract_fingerprint: Sha256
+    run_direction_fingerprint: Sha256
+    completion_target: Literal["finalized_local"]
+    source_manifest_artifact: ArtifactRevisionReference
+    source_manifest_sha256: Sha256
+    source_manifest_member_count: PositiveInt
+    repair_budget: Literal[1]
+    authorization_event_id: ContractId
+    accepted_transaction_id: ContractId
+    request_fingerprint: Sha256
+    created_at: IsoDateTime
+
+
+def authorized_input_classification_bytes(
+    manifest: ExecutionSourceManifest,
+    sources: list[AcceptedSourceRecord],
+) -> bytes:
+    """Serialize the single deterministic classification for an authorized pack.
+
+    This is deliberately a pure projection: the receipt-owned intake transaction
+    remains the only writer of the artifact which carries these bytes.
+    """
+
+    payload = {
+        "schema_version": "briefloop.input_classification.v2",
+        "source_manifest_sha256": hashlib.sha256(
+            json.dumps(
+                manifest.model_dump(mode="json", exclude_unset=False),
+                ensure_ascii=False,
+                sort_keys=True,
+                separators=(",", ":"),
+            ).encode("utf-8")
+        ).hexdigest(),
+        "sources": [
+            {
+                "source_id": source.source_id,
+                "content_sha256": source.content_sha256,
+                "title": source.title,
+                "locator": source.locator.model_dump(mode="json"),
+                "manifest_local_file": source.manifest_local_file,
+                "document_kind": source.document_kind,
+                "opened_at": source.opened_at,
+                "resolved_at": source.resolved_at,
+            }
+            for source in sorted(sources, key=lambda item: item.source_id)
+        ],
+    }
+    return json.dumps(
+        payload,
+        ensure_ascii=False,
+        sort_keys=True,
+        separators=(",", ":"),
+    ).encode("utf-8") + b"\n"
+
+
 class CoreRunInitializeRequest(StrictModel):
     schema_id = "briefloop.core_run_initialize_request.v2"
 
@@ -1366,6 +1535,7 @@ class CoreRunInitializeRequest(StrictModel):
     gate_strictness: dict[GateId, bool]
     input_governance_required: bool
     runtime_adapter_binding: "RuntimeAdapterBinding"
+    execution_authorization: "RunExecutionAuthorizationInput | None" = None
 
     @field_validator("gate_strictness")
     @classmethod
@@ -1388,6 +1558,7 @@ class WorkspaceControlStoreBootstrapV2(StrictModel):
     input_governance_required: bool
     gate_strictness: dict[GateId, bool]
     run_direction: RunDirection
+    execution_authorization: "RunExecutionAuthorizationBootstrap | None" = None
 
     @field_validator("gate_strictness")
     @classmethod
@@ -3331,6 +3502,10 @@ class RunContractBindingReference(StrictModel):
     run_id: ContractId
 
 
+class RunExecutionAuthorizationReference(StrictModel):
+    authorization_id: ContractId
+
+
 class OwnedArtifactSubmissionReference(StrictModel):
     submission_id: ContractId
 
@@ -3478,6 +3653,9 @@ class TransactionReceipt(StrictModel):
     run_contract_bindings: list[RunContractBindingReference] = Field(
         default_factory=list
     )
+    run_execution_authorizations: list[RunExecutionAuthorizationReference] = Field(
+        default_factory=list
+    )
     owned_artifact_submissions: list[OwnedArtifactSubmissionReference] = Field(
         default_factory=list
     )
@@ -3553,6 +3731,7 @@ class TransactionReceipt(StrictModel):
             raise ValueError("duplicate proposal identity")
         relation_lists = (
             self.run_contract_bindings,
+            self.run_execution_authorizations,
             self.owned_artifact_submissions,
             self.stage_transitions,
             self.stage_artifact_bindings,
@@ -4039,6 +4218,91 @@ RunDirection.minimal_example = deepcopy(_RUN_DIRECTION)
 RunDirection.full_example = deepcopy(_RUN_DIRECTION)
 
 _GATE_STRICTNESS = {gate_id: True for gate_id in GATE_ID_VALUES}
+_EXECUTION_SOURCE_MEMBER = {
+    "source_id": "SRC-INIT-001",
+    "input_path": "input/evidence/source-001.txt",
+    "content_sha256": _SHA_A,
+    "content_media_type": "text/plain",
+    "origin_type": "manual_evidence",
+    "acquisition_method": "manual_evidence",
+    "material_kind": "full_content",
+    "provider": None,
+    "locator": {"kind": "file", "path": "input/evidence/source-001.txt"},
+    "title": "Public example source",
+    "publisher": "Example publisher",
+    "published_at": "2026-07-14",
+    "retrieved_at": _NOW,
+    "source_category": "other",
+    "retrieval_source_type": "local_file",
+    "underlying_evidence_type": "unknown",
+    "raw_underlying_evidence_type": None,
+    "document_kind": None,
+    "opened_at": None,
+    "resolved_at": None,
+}
+ExecutionSourceManifestMember.minimal_example = deepcopy(_EXECUTION_SOURCE_MEMBER)
+ExecutionSourceManifestMember.full_example = deepcopy(_EXECUTION_SOURCE_MEMBER)
+_EXECUTION_SOURCE_MANIFEST = {
+    "schema_version": ExecutionSourceManifest.schema_id,
+    "members": [deepcopy(_EXECUTION_SOURCE_MEMBER)],
+}
+ExecutionSourceManifest.minimal_example = deepcopy(_EXECUTION_SOURCE_MANIFEST)
+ExecutionSourceManifest.full_example = deepcopy(_EXECUTION_SOURCE_MANIFEST)
+_EXECUTION_SOURCE_MANIFEST_SHA = hashlib.sha256(
+    json.dumps(
+        _EXECUTION_SOURCE_MANIFEST,
+        ensure_ascii=False,
+        sort_keys=True,
+        separators=(",", ":"),
+    ).encode("utf-8")
+).hexdigest()
+_EXECUTION_AUTHORIZATION_INPUT = {
+    "schema_version": RunExecutionAuthorizationInput.schema_id,
+    "completion_target": "finalized_local",
+    "source_manifest": deepcopy(_EXECUTION_SOURCE_MANIFEST),
+    "source_manifest_sha256": _EXECUTION_SOURCE_MANIFEST_SHA,
+    "source_manifest_member_count": 1,
+    "repair_budget": 1,
+}
+RunExecutionAuthorizationInput.minimal_example = deepcopy(_EXECUTION_AUTHORIZATION_INPUT)
+RunExecutionAuthorizationInput.full_example = deepcopy(_EXECUTION_AUTHORIZATION_INPUT)
+_EXECUTION_AUTHORIZATION_BOOTSTRAP = {
+    "schema_version": RunExecutionAuthorizationBootstrap.schema_id,
+    "completion_target": "finalized_local",
+    "source_manifest_path": "input/execution-source-manifest.json",
+    "source_manifest_sha256": _EXECUTION_SOURCE_MANIFEST_SHA,
+    "source_manifest_member_count": 1,
+    "repair_budget": 1,
+}
+RunExecutionAuthorizationBootstrap.minimal_example = deepcopy(
+    _EXECUTION_AUTHORIZATION_BOOTSTRAP
+)
+RunExecutionAuthorizationBootstrap.full_example = deepcopy(
+    _EXECUTION_AUTHORIZATION_BOOTSTRAP
+)
+RunExecutionAuthorization.minimal_example = {
+    "schema_version": RunExecutionAuthorization.schema_id,
+    "authorization_id": "EXEC-AUTH-001",
+    "run_id": _RUN,
+    "workspace_id": "WS-PUBLIC-DEMO",
+    "run_contract_fingerprint": _SHA_A,
+    "run_direction_fingerprint": _SHA_B,
+    "completion_target": "finalized_local",
+    "source_manifest_artifact": {
+        "artifact_id": "run_execution_source_manifest",
+        "revision": 1,
+    },
+    "source_manifest_sha256": _EXECUTION_SOURCE_MANIFEST_SHA,
+    "source_manifest_member_count": 1,
+    "repair_budget": 1,
+    "authorization_event_id": "EVT-EXEC-AUTH-001",
+    "accepted_transaction_id": "TXN-001",
+    "request_fingerprint": _SHA_A,
+    "created_at": _NOW,
+}
+RunExecutionAuthorization.full_example = deepcopy(
+    RunExecutionAuthorization.minimal_example
+)
 WorkspaceControlStoreBootstrapV2.minimal_example = {
     "schema_version": WorkspaceControlStoreBootstrapV2.schema_id,
     "workspace_id": "WS-PUBLIC-DEMO",
@@ -5144,6 +5408,10 @@ V2_CONTRACT_MODELS: tuple[type[StrictModel], ...] = (
     Delivery,
     TransactionReceipt,
     RunDirection,
+    ExecutionSourceManifest,
+    RunExecutionAuthorizationInput,
+    RunExecutionAuthorizationBootstrap,
+    RunExecutionAuthorization,
     WorkspaceControlStoreBootstrapV2,
     RuntimeAdapterBinding,
     RuntimeWebSearchRequestSpec,
@@ -5333,6 +5601,7 @@ __all__ = [
     "ArtifactRevision",
     "ArtifactRevisionReference",
     "ArtifactSubmitRequest",
+    "authorized_input_classification_bytes",
     "AuditPromotionRequest",
     "AuditProposal",
     "AuditReportArtifact",
@@ -5353,6 +5622,8 @@ __all__ = [
     "CoreRunEventBinding",
     "CoreRunInitializeRequest",
     "CoreRunNextAction",
+    "ExecutionSourceManifest",
+    "ExecutionSourceManifestMember",
     "Delivery",
     "DeliveryAttemptRecord",
     "DeliveryAttemptReference",
@@ -5407,7 +5678,11 @@ __all__ = [
     "RunArchiveRecord",
     "RunArchiveReference",
     "RunContractBinding",
+    "RunExecutionAuthorizationReference",
     "RunDirection",
+    "RunExecutionAuthorization",
+    "RunExecutionAuthorizationBootstrap",
+    "RunExecutionAuthorizationInput",
     "RuntimeAdapterBinding",
     "RuntimeCachedPackageAcquisitionSpec",
     "RuntimeNewsApiAcquisitionSpec",

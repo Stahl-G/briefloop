@@ -15,10 +15,13 @@ from multi_agent_brief.cli.authority_guard import classify_workspace_authority
 from multi_agent_brief.contracts.v2 import (
     CoreRunInitializeRequest,
     CoreRunNextAction,
+    ExecutionSourceManifest,
+    RunExecutionAuthorizationInput,
     RuntimeAdapterBinding,
     WorkspaceControlStoreBootstrapV2,
 )
 from multi_agent_brief.control_store.sqlite_store import SQLiteControlStore
+from multi_agent_brief.control_store.serialization import canonical_json_bytes
 from multi_agent_brief.core_run_v2.next_action import classify_core_run_next_action
 from multi_agent_brief.core_run_v2.errors import CoreRunError
 from multi_agent_brief.core_run_v2.policy import derived_id
@@ -76,6 +79,7 @@ class _InitializationInputs:
     bootstrap: WorkspaceControlStoreBootstrapV2
     config_bytes: bytes
     sources_sha256: str
+    execution_authorization: RunExecutionAuthorizationInput | None
 
 
 @dataclass(frozen=True)
@@ -90,6 +94,24 @@ def _read_regular_file(path: Path) -> bytes:
         if not stat.S_ISREG(mode):
             raise RuntimeHostError("runtime_initialization_input_invalid")
         return path.read_bytes()
+    except RuntimeHostError:
+        raise
+    except OSError as exc:
+        raise RuntimeHostError("runtime_initialization_input_invalid") from exc
+
+
+def _read_regular_file_limited(path: Path, *, maximum_size: int) -> bytes:
+    """Read one explicit bootstrap input without unbounded allocation."""
+
+    try:
+        mode = path.lstat().st_mode
+        if not stat.S_ISREG(mode):
+            raise RuntimeHostError("runtime_initialization_input_invalid")
+        with path.open("rb") as handle:
+            content = handle.read(maximum_size + 1)
+        if len(content) > maximum_size:
+            raise RuntimeHostError("runtime_initialization_input_invalid")
+        return content
     except RuntimeHostError:
         raise
     except OSError as exc:
@@ -150,10 +172,51 @@ def _load_initialization_inputs(workspace: Path) -> _InitializationInputs:
         )
     except (CoreRunError, ValidationError, ValueError) as exc:
         raise RuntimeHostError("runtime_initialization_input_invalid") from exc
+    execution_authorization: RunExecutionAuthorizationInput | None = None
+    bootstrap_authorization = bootstrap.execution_authorization
+    if bootstrap_authorization is not None:
+        manifest_bytes = _read_regular_file_limited(
+            workspace / bootstrap_authorization.source_manifest_path,
+            maximum_size=4 * 1024 * 1024,
+        )
+        if (
+            hashlib.sha256(manifest_bytes).hexdigest()
+            != bootstrap_authorization.source_manifest_sha256
+        ):
+            raise RuntimeHostError("runtime_initialization_input_invalid")
+        try:
+            manifest_payload = _load_yaml_mapping(manifest_bytes)
+            manifest = ExecutionSourceManifest.model_validate(
+                manifest_payload,
+                strict=True,
+            )
+            canonical = canonical_json_bytes(
+                manifest.model_dump(mode="json", exclude_unset=False)
+            )
+            if canonical != manifest_bytes:
+                raise RuntimeHostError("runtime_initialization_input_invalid")
+            execution_authorization = RunExecutionAuthorizationInput.model_validate(
+                {
+                    "schema_version": RunExecutionAuthorizationInput.schema_id,
+                    "completion_target": bootstrap_authorization.completion_target,
+                    "source_manifest": manifest.model_dump(
+                        mode="json", exclude_unset=False
+                    ),
+                    "source_manifest_sha256": bootstrap_authorization.source_manifest_sha256,
+                    "source_manifest_member_count": (
+                        bootstrap_authorization.source_manifest_member_count
+                    ),
+                    "repair_budget": bootstrap_authorization.repair_budget,
+                },
+                strict=True,
+            )
+        except (ValidationError, ValueError) as exc:
+            raise RuntimeHostError("runtime_initialization_input_invalid") from exc
     return _InitializationInputs(
         bootstrap=bootstrap,
         config_bytes=config_bytes,
         sources_sha256=sources_sha256,
+        execution_authorization=execution_authorization,
     )
 
 
@@ -187,6 +250,13 @@ def _initialize_request(
                 "input_governance_required": bootstrap.input_governance_required,
                 "runtime_adapter_binding": adapter.model_dump(
                     mode="json", exclude_unset=False
+                ),
+                "execution_authorization": (
+                    None
+                    if inputs.execution_authorization is None
+                    else inputs.execution_authorization.model_dump(
+                        mode="json", exclude_unset=False
+                    )
                 ),
             },
             strict=True,

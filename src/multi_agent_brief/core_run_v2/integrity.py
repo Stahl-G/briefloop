@@ -29,7 +29,11 @@ from multi_agent_brief.control_store.serialization import (
 )
 
 from .errors import CoreRunError, CoreRunResult, core_run_error_code
-from .checkout import prepare_checkout_effect, stage_checkout_effect
+from .checkout import (
+    prepare_checkout_effect,
+    stage_checkout_effect,
+    store_resident_revision_keys,
+)
 from .publication_platform import CapabilityProfile, open_retained_parent
 from .policy import derived_id, transaction_type_for
 from .verifier import (
@@ -254,7 +258,9 @@ class RunIntegrityService:
         additional_revisions: Iterable[ArtifactRevision] = (),
     ) -> tuple[ArtifactRevision, CheckoutObservation] | None:
         protected_keys = protected_revision_keys(verified)
-        protected_keys.update(current_checkout_revision_keys(verified))
+        checkout_keys = current_checkout_revision_keys(verified)
+        protected_keys.update(checkout_keys)
+        store_resident_keys = store_resident_revision_keys(verified.snapshot)
         revisions = {
             (item.artifact_id, item.revision): item
             for item in verified.snapshot.artifact_revisions
@@ -263,6 +269,8 @@ class RunIntegrityService:
             revisions[(item.artifact_id, item.revision)] = item
             protected_keys.add((item.artifact_id, item.revision))
         for key in sorted(protected_keys):
+            if key in store_resident_keys:
+                continue
             revision = revisions.get(key)
             if revision is None:
                 raise CoreRunError("control_store_integrity_invalid")

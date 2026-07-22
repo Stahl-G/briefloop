@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from multi_agent_brief.contracts.v2 import CoreRunNextAction
+from multi_agent_brief.contracts.v2 import CoreRunNextAction, InvocationStartRequest
 from multi_agent_brief.control_store.serialization import canonical_fingerprint
 from multi_agent_brief.quality_gates.contract import GATE_IDS
 
@@ -13,6 +13,8 @@ from .policy import (
     SOURCE_ROUTE_OWNER_ORDER,
     core_role_topology_policy,
     required_auditor_gates,
+    derived_id,
+    transaction_type_for,
 )
 from .recovery import classify_recovery_legality
 from .terminal import classify_terminal_legality
@@ -167,6 +169,14 @@ def classify_core_run_next_action(verified: VerifiedCoreRun) -> CoreRunNextActio
         )
         if event is None or event.stage_id is None:
             raise CoreRunError("control_store_integrity_invalid")
+        if _is_authorized_source_pack_reservation(verified, invocation, event):
+            return _action(
+                verified,
+                action_kind="deterministic",
+                effect_kind="authorized_source_pack_commit",
+                reason_code="authorized_source_pack_commit_required",
+                stage_id="source-discovery",
+            )
         return _action(
             verified,
             action_kind="deterministic",
@@ -189,6 +199,13 @@ def classify_core_run_next_action(verified: VerifiedCoreRun) -> CoreRunNextActio
             action_kind="complete",
             effect_kind="delivered",
             reason_code="delivery_succeeded",
+        )
+    if terminal.terminal_state == "finalized_local":
+        return _action(
+            verified,
+            action_kind="complete",
+            effect_kind="finalized_local",
+            reason_code="local_finalization_complete",
         )
     if (
         terminal.terminal_state == "package_ready"
@@ -358,6 +375,23 @@ def classify_core_run_next_action(verified: VerifiedCoreRun) -> CoreRunNextActio
 
 def _source_discovery_action(verified: VerifiedCoreRun) -> CoreRunNextAction:
     snapshot = verified.snapshot
+    if snapshot.run_execution_authorizations:
+        if snapshot.sources:
+            return _action(
+                verified,
+                action_kind="deterministic",
+                effect_kind="stage_complete",
+                reason_code="current_stage_effect_ready_for_completion",
+                stage_id="source-discovery",
+                request_schema_id="briefloop.stage_complete_request.v2",
+            )
+        return _action(
+            verified,
+            action_kind="deterministic",
+            effect_kind="authorized_source_pack_commit",
+            reason_code="authorized_source_pack_commit_required",
+            stage_id="source-discovery",
+        )
     artifacts = {item.artifact_id: item for item in snapshot.artifacts}
     candidates = artifacts.get("source_candidates")
     if candidates is None or candidates.current_revision == 0:
@@ -452,6 +486,69 @@ def _source_discovery_action(verified: VerifiedCoreRun) -> CoreRunNextAction:
         reason_code="human_source_material_required",
         request_schema_id="briefloop.runtime_human_source_pack_request.v2",
         **common,
+    )
+
+
+def _is_authorized_source_pack_reservation(
+    verified: VerifiedCoreRun,
+    invocation,
+    event,
+) -> bool:
+    """Recognize the one active Core-owned source-pack reservation.
+
+    This is intentionally derived from the receipt-bound authorization and
+    invocation-start receipt.  An arbitrary active source-provider invocation
+    remains the ordinary accept-or-fail path.
+    """
+
+    snapshot = verified.snapshot
+    if (
+        len(snapshot.run_execution_authorizations) != 1
+        or invocation.role_id != "source-provider"
+        or invocation.runtime != snapshot.run.runtime
+        or event.stage_id != "source-discovery"
+        or event.core_run_binding is None
+    ):
+        return False
+    authorization = snapshot.run_execution_authorizations[0]
+    pack_request_id = derived_id(
+        "REQ-AUTHORIZED-SOURCE-PACK",
+        snapshot.run.run_id,
+        authorization.request_fingerprint,
+    )
+    request_id = derived_id("REQ-AUTHORIZED-SOURCE-PROVIDER", pack_request_id)
+    receipt = next(
+        (item for item in snapshot.transactions if item.transaction_id == request_id),
+        None,
+    )
+    if receipt is None or receipt.transaction_type != transaction_type_for("invocation_start"):
+        return False
+    try:
+        request = InvocationStartRequest.model_validate(
+            {
+                "schema_version": InvocationStartRequest.schema_id,
+                "request_id": request_id,
+                "run_id": snapshot.run.run_id,
+                "stage_id": "source-discovery",
+                "role_id": "source-provider",
+                "runtime": snapshot.run.runtime,
+                "expected_store_revision": receipt.prior_revision,
+            },
+            strict=True,
+        )
+    except Exception:
+        return False
+    fingerprint = canonical_fingerprint(
+        request.model_dump(mode="json", exclude_unset=False)
+    )
+    return (
+        event.transaction_id == request_id
+        and event.core_run_binding.request_id == request_id
+        and event.core_run_binding.request_fingerprint == fingerprint
+        and event.core_run_binding.effect_kind == "invocation_start"
+        and event.core_run_binding.primary_record_id
+        == derived_id("INV", request_id, fingerprint)
+        and invocation.invocation_id == event.core_run_binding.primary_record_id
     )
 
 

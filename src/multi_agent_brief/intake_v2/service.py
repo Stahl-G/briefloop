@@ -22,9 +22,11 @@ from multi_agent_brief.contracts.v2 import (
     CandidateClaimsProposal,
     ClaimDraftsProposal,
     EventEnvelope,
+    ExecutionSourceManifest,
     IntakeEventBinding,
     Invocation,
     InvocationFailureRequest,
+    OwnedArtifactSubmissionRecord,
     ProposalSourceBinding,
     ScreenedCandidatesProposal,
     SourceCommitRequest,
@@ -33,6 +35,7 @@ from multi_agent_brief.contracts.v2 import (
     SourceProposal,
     StrictModel,
     TransactionReceipt,
+    authorized_input_classification_bytes,
 )
 from multi_agent_brief.control_store import (
     ControlStoreCommitOutcomeUnknown,
@@ -47,6 +50,7 @@ from multi_agent_brief.control_store import (
 )
 from multi_agent_brief.control_store.serialization import (
     canonical_fingerprint,
+    canonical_json_bytes,
     sha256_hex,
 )
 from multi_agent_brief.intake_v2.errors import IntakeError, IntakeResult
@@ -79,6 +83,19 @@ class _PreparedSourcePackMember:
     raw_bytes: bytes | None
     claims_eligible: bool
     eligibility_reason: str
+
+
+@dataclass(frozen=True)
+class _CoreAuthorizedSourcePack:
+    """Core-derived, non-file input for the authorized atomic source writer."""
+
+    request_id: str
+    run_id: str
+    invocation_id: str
+    expected_store_revision: int
+    manifest: ExecutionSourceManifest
+    source_manifest_sha256: str
+    contents: tuple[bytes, ...]
 
 
 class IntakeService:
@@ -119,6 +136,99 @@ class IntakeService:
             )
         except IntakeError as exc:
             return IntakeResult(status="failed_uncommitted", error_code=exc.code)
+
+    def _commit_authorized_source_pack_from_core(
+        self,
+        input: _CoreAuthorizedSourcePack,
+    ) -> IntakeResult:
+        """Commit only Core-derived authorized material; never reads scratch files."""
+
+        if len(input.contents) != len(input.manifest.members):
+            raise IntakeError("source_pack_authorization_invalid")
+        members: list[SourcePackCommitMember] = []
+        prepared: list[_PreparedSourcePackMember] = []
+        for frozen, content in zip(input.manifest.members, input.contents, strict=True):
+            if sha256_hex(content) != frozen.content_sha256:
+                raise IntakeError("source_hash_mismatch")
+            root = f"scratch/{input.invocation_id}/sources/{frozen.source_id}"
+            member = SourcePackCommitMember.model_validate(
+                {
+                    "member_id": frozen.source_id,
+                    "proposal_path": f"{root}/source_proposal.json",
+                    "content_path": f"{root}/source_content.bin",
+                    "raw_payload_path": None,
+                },
+                strict=True,
+            )
+            proposal = SourceProposal.model_validate(
+                {
+                    "schema_version": SourceProposal.schema_id,
+                    "proposal_id": _derived_id("PROP-AUTHORIZED", input.request_id, frozen.source_id),
+                    "run_id": input.run_id,
+                    "source_id": frozen.source_id,
+                    "origin_type": frozen.origin_type,
+                    "acquisition_method": frozen.acquisition_method,
+                    "material_kind": frozen.material_kind,
+                    "provider": frozen.provider,
+                    "locator": frozen.locator.model_dump(mode="json"),
+                    "title": frozen.title,
+                    "publisher": frozen.publisher,
+                    "published_at": frozen.published_at,
+                    "retrieved_at": frozen.retrieved_at,
+                    "source_category": frozen.source_category,
+                    "retrieval_source_type": frozen.retrieval_source_type,
+                    "underlying_evidence_type": frozen.underlying_evidence_type,
+                    "raw_underlying_evidence_type": frozen.raw_underlying_evidence_type,
+                    "content_sha256": frozen.content_sha256,
+                    "content_media_type": frozen.content_media_type,
+                    "raw_payload_sha256": None,
+                    "raw_payload_media_type": None,
+                    "source_manifest_sha256": input.source_manifest_sha256,
+                    "manifest_local_file": frozen.input_path,
+                    "document_kind": frozen.document_kind,
+                    "opened_at": frozen.opened_at,
+                    "resolved_at": frozen.resolved_at,
+                },
+                strict=True,
+            )
+            eligible, reason = evaluate_source_eligibility(proposal, raw_payload_present=False)
+            members.append(member)
+            prepared.append(_PreparedSourcePackMember(member, proposal, content, None, eligible, reason))
+        request = SourcePackCommitRequest.model_validate(
+            {
+                "schema_version": SourcePackCommitRequest.schema_id,
+                "request_id": input.request_id,
+                "run_id": input.run_id,
+                "invocation_id": input.invocation_id,
+                "members": [item.model_dump(mode="json") for item in members],
+                "manifest_path": f"scratch/{input.invocation_id}/source_manifest.json",
+                "expected_manifest_sha256": input.source_manifest_sha256,
+                "expected_store_revision": input.expected_store_revision,
+            },
+            strict=True,
+        )
+        fingerprint = canonical_fingerprint(
+            {
+                "lane": "source_pack",
+                "request": request.model_dump(mode="json", exclude_unset=False),
+                "members": [
+                    {"member_id": item.member.member_id, "content_sha256": item.proposal.content_sha256}
+                    for item in prepared
+                ],
+            }
+        )
+        with self._open_store() as store:
+            snapshot, invocation, owner_stage, core_run_bound = self._trusted_submission_context(
+                store, INTAKE_LANES["source"], request
+            )
+            manifest = _authorized_execution_manifest(store, snapshot)
+            if manifest is None or manifest != input.manifest:
+                raise IntakeError("source_pack_authorization_invalid")
+            return self._commit_source_pack(
+                store, request=request, prepared=prepared, request_fingerprint=fingerprint,
+                snapshot=snapshot, invocation=invocation, owner_stage=owner_stage,
+                core_run_bound=core_run_bound, authorization_manifest=manifest,
+            )
 
     def submit_proposal(
         self,
@@ -212,6 +322,13 @@ class IntakeService:
 
     def _submit_source(self, request_path: str | os.PathLike[str]) -> IntakeResult:
         request = self._read_request(SourceCommitRequest, request_path)
+        # The public file entrypoint is intentionally unavailable for an
+        # authorized run.  Check Store authority before opening any proposal
+        # or payload sibling, including on a later replay attempt.
+        with self._open_store() as store:
+            self._reject_authorized_source_file_entrypoint(
+                store, request.run_id, request.request_id
+            )
         proposal_bytes = self._reader.read(request.proposal_path)
         content_bytes = self._reader.read(request.content_path)
         raw_bytes = (
@@ -249,6 +366,10 @@ class IntakeService:
                 INTAKE_LANES["source"],
                 request,
             )
+            if snapshot.run_execution_authorizations:
+                # An authorized run accepts its complete, frozen set only by
+                # the single pack transaction that also derives classification.
+                raise IntakeError("source_pack_authorization_invalid")
             proposal: SourceProposal | None = None
             try:
                 proposal = self._parse_proposal(SourceProposal, proposal_bytes)
@@ -329,6 +450,13 @@ class IntakeService:
             SourcePackCommitRequest,
             self._read_request(SourcePackCommitRequest, request_path),
         )
+        # Authorized replay belongs exclusively to the parameter-free Core
+        # effect.  This public/file entrypoint always fails before opening a
+        # manifest or member sibling.
+        with self._open_store() as store:
+            self._reject_authorized_source_file_entrypoint(
+                store, request.run_id, request.request_id
+            )
         manifest_bytes = (
             None
             if request.manifest_path is None
@@ -385,6 +513,15 @@ class IntakeService:
                     request,
                 )
             )
+            authorization_manifest = _authorized_execution_manifest(store, snapshot)
+            if authorization_manifest is not None and (
+                request.expected_manifest_sha256
+                != snapshot.run_execution_authorizations[0].source_manifest_sha256
+                or len(request.members) != len(authorization_manifest.members)
+                or [item.member_id for item in request.members]
+                != [item.source_id for item in authorization_manifest.members]
+            ):
+                raise IntakeError("source_pack_authorization_invalid")
             prepared: list[_PreparedSourcePackMember] = []
             source_ids: set[str] = set()
             artifact_ids: set[str] = set()
@@ -401,6 +538,23 @@ class IntakeService:
                     raise IntakeError("proposal_contract_invalid")
                 if proposal.source_manifest_sha256 != request.expected_manifest_sha256:
                     raise IntakeError("proposal_contract_invalid")
+                if authorization_manifest is not None:
+                    expected = next(
+                        (
+                            item
+                            for item in authorization_manifest.members
+                            if item.source_id == proposal.source_id
+                        ),
+                        None,
+                    )
+                    if (
+                        expected is None
+                        or member.member_id != expected.source_id
+                        or not _proposal_matches_execution_manifest(
+                            proposal, expected
+                        )
+                    ):
+                        raise IntakeError("source_pack_authorization_invalid")
                 raw_declared = proposal.raw_payload_sha256 is not None
                 if raw_declared != (raw_bytes is not None):
                     raise IntakeError("proposal_contract_invalid")
@@ -451,10 +605,93 @@ class IntakeService:
                 request=request,
                 prepared=prepared,
                 request_fingerprint=request_fingerprint,
+                snapshot=snapshot,
                 invocation=invocation,
                 owner_stage=owner_stage,
                 core_run_bound=core_run_bound,
+                authorization_manifest=authorization_manifest,
             )
+
+    def _resolve_authorized_source_pack_replay(
+        self,
+        store: SQLiteControlStore,
+        request: SourcePackCommitRequest,
+    ) -> IntakeResult | None:
+        """Return an authorized exact replay without reopening staged inputs."""
+
+        try:
+            receipt = store.load_transaction_receipt(request.run_id, request.request_id)
+            snapshot = self._verify_core_run(store, request.run_id)
+        except (ControlStoreError, IntakeError) as exc:
+            raise IntakeError("control_store_integrity_invalid") from exc
+        authorization_manifest = _authorized_execution_manifest(store, snapshot)
+        if authorization_manifest is None:
+            return None
+        if not _authorized_source_pack_request_matches(
+            request,
+            authorization_manifest,
+            expected_store_revision=(
+                receipt.prior_revision if receipt is not None else snapshot.store_revision
+            ),
+        ):
+            if receipt is not None:
+                raise IntakeError("submission_replay_conflict")
+            raise IntakeError("source_pack_authorization_invalid")
+        if receipt is None:
+            # The authorized path is parameter-free Core effect only.  The
+            # file API must stop before opening any supplied source bytes.
+            raise IntakeError("source_pack_authorization_invalid")
+        events = [
+            event
+            for event in snapshot.events
+            if event.event_id in receipt.event_ids
+            and event.intake_binding is not None
+            and event.intake_binding.request_id == request.request_id
+        ]
+        if not events:
+            raise IntakeError("control_store_integrity_invalid")
+        bindings = [cast(IntakeEventBinding, event.intake_binding) for event in events]
+        outcomes = {binding.outcome for binding in bindings}
+        if len(outcomes) != 1:
+            raise IntakeError("control_store_integrity_invalid")
+        binding = bindings[0]
+        if binding.outcome == "rejected":
+            if len(bindings) != 1:
+                raise IntakeError("control_store_integrity_invalid")
+            return IntakeResult(
+                status="rejected_recorded",
+                receipt=receipt,
+                error_code=binding.reason_code,
+                source_id=binding.source_id,
+                proposal_id=binding.proposal_id,
+            )
+        return IntakeResult(status="replayed", receipt=receipt)
+
+    def _reject_authorized_source_file_entrypoint(
+        self,
+        store: SQLiteControlStore,
+        run_id: str,
+        request_id: str,
+    ) -> None:
+        """Fail closed before public request paths can read source bytes."""
+
+        try:
+            snapshot = store.load_snapshot(run_id)
+        except (ControlStoreError, IntakeError) as exc:
+            try:
+                receipt = store.load_transaction_receipt(run_id, request_id)
+            except ControlStoreError as receipt_exc:
+                raise IntakeError("control_store_integrity_invalid") from receipt_exc
+            if receipt is not None:
+                raise ControlStoreCommitOutcomeUnknown("commit_outcome_unknown") from exc
+            raise IntakeError("control_store_integrity_invalid") from exc
+        if not snapshot.run_execution_authorizations:
+            return
+        try:
+            self._verify_core_run(store, run_id)
+        except (ControlStoreError, IntakeError) as exc:
+            raise IntakeError("control_store_integrity_invalid") from exc
+        raise IntakeError("source_pack_authorization_invalid")
 
     def _submit_proposal(
         self,
@@ -1052,9 +1289,11 @@ class IntakeService:
         request: SourcePackCommitRequest,
         prepared: list[_PreparedSourcePackMember],
         request_fingerprint: str,
+        snapshot: ControlStoreSnapshot,
         invocation: Invocation,
         owner_stage: str,
         core_run_bound: bool,
+        authorization_manifest: ExecutionSourceManifest | None,
     ) -> IntakeResult:
         now = self._now()
         unit = store.begin(
@@ -1185,6 +1424,19 @@ class IntakeService:
             unit.put_source(source)
             sources.append(source)
 
+        classification_submission: OwnedArtifactSubmissionRecord | None = None
+        if authorization_manifest is not None:
+            classification_submission = _stage_authorized_input_classification(
+                unit,
+                snapshot_artifacts=snapshot.artifacts,
+                request=request,
+                request_fingerprint=request_fingerprint,
+                sources=sources,
+                manifest=authorization_manifest,
+                run_contract_fingerprint=snapshot.run_contract_bindings[0].contract_fingerprint,
+                created_at=now,
+            )
+
         def observe(receipt: TransactionReceipt) -> None:
             post_snapshot = (
                 self._verify_core_run(store, request.run_id) if core_run_bound else None
@@ -1194,6 +1446,7 @@ class IntakeService:
                 sources,
                 receipt,
                 post_snapshot,
+                classification_submission,
             )
 
         receipt = self._commit_uow(unit, observe)
@@ -1397,6 +1650,7 @@ class IntakeService:
         expected: list[AcceptedSourceRecord],
         receipt: TransactionReceipt,
         snapshot: ControlStoreSnapshot | None = None,
+        classification_submission: OwnedArtifactSubmissionRecord | None = None,
     ) -> None:
         if snapshot is None:
             try:
@@ -1412,6 +1666,14 @@ class IntakeService:
             [item.source_id for item in expected] != receipt.source_ids
             or len(actual) != len(expected)
             or any(actual.get(item.source_id) != item for item in expected)
+            or (
+                classification_submission is not None
+                and [
+                    item.submission_id
+                    for item in receipt.owned_artifact_submissions
+                ]
+                != [classification_submission.submission_id]
+            )
         ):
             raise IntakeError("intake_commit_failed")
 
@@ -1471,6 +1733,185 @@ def _by_id(records: Iterable[object], attribute: str, value: str):
 
 def _ordered_unique(values: Iterable[str]) -> tuple[str, ...]:
     return tuple(dict.fromkeys(values))
+
+
+def _authorized_execution_manifest(
+    store: SQLiteControlStore,
+    snapshot: ControlStoreSnapshot,
+) -> ExecutionSourceManifest | None:
+    if not snapshot.run_execution_authorizations:
+        return None
+    if len(snapshot.run_execution_authorizations) != 1:
+        raise IntakeError("source_pack_authorization_invalid")
+    authorization = snapshot.run_execution_authorizations[0]
+    try:
+        payload = store.read_artifact_revision_bytes(
+            snapshot.run.run_id,
+            authorization.source_manifest_artifact.artifact_id,
+            authorization.source_manifest_artifact.revision,
+        )
+        manifest = ExecutionSourceManifest.model_validate_json(payload, strict=True)
+    except (ControlStoreError, ValidationError, ValueError) as exc:
+        raise IntakeError("source_pack_authorization_invalid") from exc
+    if (
+        sha256_hex(payload) != authorization.source_manifest_sha256
+        or len(manifest.members) != authorization.source_manifest_member_count
+    ):
+        raise IntakeError("source_pack_authorization_invalid")
+    return manifest
+
+
+def _proposal_matches_execution_manifest(proposal: SourceProposal, expected) -> bool:
+    return (
+        proposal.source_manifest_sha256 is not None
+        and proposal.manifest_local_file == expected.input_path
+        and proposal.content_sha256 == expected.content_sha256
+        and proposal.content_media_type == expected.content_media_type
+        and proposal.origin_type == expected.origin_type
+        and proposal.acquisition_method == expected.acquisition_method
+        and proposal.material_kind == expected.material_kind
+        and proposal.provider == expected.provider
+        and proposal.locator == expected.locator
+        and proposal.title == expected.title
+        and proposal.publisher == expected.publisher
+        and proposal.published_at == expected.published_at
+        and proposal.retrieved_at == expected.retrieved_at
+        and proposal.source_category == expected.source_category
+        and proposal.retrieval_source_type == expected.retrieval_source_type
+        and proposal.underlying_evidence_type == expected.underlying_evidence_type
+        and proposal.raw_underlying_evidence_type
+        == expected.raw_underlying_evidence_type
+        and proposal.document_kind == expected.document_kind
+        and proposal.opened_at == expected.opened_at
+        and proposal.resolved_at == expected.resolved_at
+        and proposal.raw_payload_sha256 is None
+        and proposal.raw_payload_media_type is None
+    )
+
+
+def _authorized_source_pack_request_matches(
+    request: SourcePackCommitRequest,
+    manifest: ExecutionSourceManifest,
+    *,
+    expected_store_revision: int,
+) -> bool:
+    """Match only the strict declared pack shape against frozen Store truth."""
+
+    if (
+        request.expected_store_revision != expected_store_revision
+        or request.expected_manifest_sha256
+        != sha256_hex(
+            canonical_json_bytes(manifest.model_dump(mode="json", exclude_unset=False))
+        )
+        or request.manifest_path
+        != f"scratch/{request.invocation_id}/source_manifest.json"
+        or [item.member_id for item in request.members]
+        != [item.source_id for item in manifest.members]
+    ):
+        return False
+    for member, frozen in zip(request.members, manifest.members, strict=True):
+        root = f"scratch/{request.invocation_id}/sources/{frozen.source_id}"
+        if (
+            member.proposal_path != f"{root}/source_proposal.json"
+            or member.content_path != f"{root}/source_content.bin"
+            or member.raw_payload_path is not None
+        ):
+            return False
+    return True
+
+
+def _stage_authorized_input_classification(
+    unit: ControlUnitOfWork,
+    *,
+    snapshot_artifacts: tuple[ArtifactRecord, ...],
+    request: SourcePackCommitRequest,
+    request_fingerprint: str,
+    sources: list[AcceptedSourceRecord],
+    manifest: ExecutionSourceManifest,
+    run_contract_fingerprint: str,
+    created_at: str,
+) -> OwnedArtifactSubmissionRecord:
+    """Attach the sole Store-derived classification to the source-pack receipt."""
+
+    artifact = _by_id(snapshot_artifacts, "artifact_id", "input_classification")
+    if artifact is None or artifact.current_revision != 0:
+        raise IntakeError("source_pack_authorization_invalid")
+    members = {item.source_id: item for item in manifest.members}
+    if set(members) != {item.source_id for item in sources}:
+        raise IntakeError("source_pack_authorization_invalid")
+    content = authorized_input_classification_bytes(manifest, sources)
+    digest = sha256_hex(content)
+    updated = ArtifactRecord.model_validate(
+        {
+            **artifact.model_dump(mode="json", exclude_unset=False),
+            "current_revision": 1,
+            "status": "valid",
+        },
+        strict=True,
+    )
+    revision = ArtifactRevision.model_validate(
+        {
+            "schema_version": ArtifactRevision.schema_id,
+            "run_id": request.run_id,
+            "artifact_id": artifact.artifact_id,
+            "revision": 1,
+            "path": artifact.path,
+            "sha256": digest,
+            "size_bytes": len(content),
+            "frozen": True,
+            "producer_kind": "control_tool",
+            "producer_id": "input-governance-v2",
+            "created_at": created_at,
+        },
+        strict=True,
+    )
+    event_id = _derived_id("EVT-SOURCE-PACK-CLASSIFICATION", request.request_id, request_fingerprint)
+    submission = OwnedArtifactSubmissionRecord.model_validate(
+        {
+            "schema_version": OwnedArtifactSubmissionRecord.schema_id,
+            "submission_id": _derived_id("SUBMISSION-SOURCE-PACK-CLASSIFICATION", request.request_id, digest),
+            "run_id": request.run_id,
+            "artifact_id": artifact.artifact_id,
+            "artifact_revision": 1,
+            "artifact_sha256": digest,
+            "owner_stage_id": "input-governance",
+            "owner_role_id": "python_tool",
+            "run_contract_fingerprint": run_contract_fingerprint,
+            "invocation_id": None,
+            "producer_tool_id": "input-governance-v2",
+            "parent_artifact": None,
+            "source_proposal_id": None,
+            "canonical_workspace_path": artifact.path,
+            "request_fingerprint": request_fingerprint,
+            "accepted_event_id": event_id,
+            "accepted_transaction_id": request.request_id,
+            "created_at": created_at,
+        },
+        strict=True,
+    )
+    unit.put_artifact(updated)
+    unit.put_artifact_revision(revision, content)
+    unit.put_owned_artifact_submission(submission)
+    unit.append_event(
+        EventEnvelope.model_validate(
+            {
+                "schema_version": EventEnvelope.schema_id,
+                "event_id": event_id,
+                "run_id": request.run_id,
+                "event_type": "input_classification_committed",
+                "created_at": created_at,
+                "actor": "system",
+                "transaction_id": request.request_id,
+                "stage_id": "input-governance",
+                "artifact_id": artifact.artifact_id,
+                "decision": "committed",
+                "reason": "authorized source-pack classification committed",
+                "metadata": {},
+            },
+            strict=True,
+        )
+    )
+    return submission
 
 
 def _derived_id(prefix: str, *parts: str) -> str:

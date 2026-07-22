@@ -32,6 +32,7 @@ INTERNAL_CONTRACT_ARTIFACT_IDS = (
     "run_contract_runtime_adapter",
     "run_contract_runtime_source_plan",
 )
+EXECUTION_AUTHORIZATION_MANIFEST_ARTIFACT_ID = "run_execution_source_manifest"
 REQUIRED_AUDITOR_GATES = (
     "coverage_omission",
     "freshness",
@@ -334,6 +335,7 @@ __all__ = [
     "DOCTOR_IMPLEMENTATION",
     "DOCTOR_VERSION",
     "INTERNAL_CONTRACT_ARTIFACT_IDS",
+    "EXECUTION_AUTHORIZATION_MANIFEST_ARTIFACT_ID",
     "REQUIRED_AUDITOR_GATES",
     "STAGE_ROLES",
     "SOURCE_PROVIDER_IDS",
