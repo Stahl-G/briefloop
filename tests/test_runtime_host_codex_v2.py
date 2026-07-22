@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import date
+from copy import deepcopy
 import hashlib
 import json
 from pathlib import Path
@@ -12,11 +13,14 @@ import yaml
 from multi_agent_brief.cli.init_wizard import create_workspace
 from multi_agent_brief.cli.main import main
 from multi_agent_brief.contracts import SchemaRegistry
-from multi_agent_brief.contracts.v2 import InvocationStartRequest
+from multi_agent_brief.contracts.v2 import InvocationStartRequest, SourceProposal
 from multi_agent_brief.control_store import SQLiteControlStore
+from multi_agent_brief.control_store.serialization import canonical_fingerprint
 from multi_agent_brief.core_run_v2.errors import CoreRunResult
 from multi_agent_brief.core_run_v2.policy import derived_id
 from multi_agent_brief.core_run_v2.service import CoreRunService
+from multi_agent_brief.intake_v2.errors import IntakeResult
+from multi_agent_brief.intake_v2.service import IntakeService
 from multi_agent_brief.runtime_host_v2.codex import load_codex_adapter_binding
 from multi_agent_brief.runtime_host_v2.errors import RuntimeHostError
 from multi_agent_brief.runtime_host_v2.service import (
@@ -25,7 +29,9 @@ from multi_agent_brief.runtime_host_v2.service import (
     _role_task_instructions,
     _strict_proposal_violations,
 )
+from multi_agent_brief.runtime_host_v2.submission import source_stage_root
 from multi_agent_brief.runtime_assets import install_runtime_kit
+from multi_agent_brief.sources.base import SourceItem
 from multi_agent_brief.workspace.init_profile import InitProfile
 
 
@@ -62,8 +68,7 @@ def test_strict_json_role_instructions_bind_contract_preflight_commands() -> Non
     )
 
     assert (
-        "briefloop contract show briefloop.candidate_claims_proposal.v2 "
-        "--example full"
+        "briefloop contract show briefloop.candidate_claims_proposal.v2 --example full"
     ) in instructions
     assert (
         "briefloop runtime invocation-validate --workspace . --envelope "
@@ -158,9 +163,9 @@ def test_first_dynamic_proposal_is_created_and_advances_the_runtime(
     payload["run_id"] = dispatch.envelope.run_id
     with SQLiteControlStore.open(workspace / "briefloop.db") as store:
         source = store.load_snapshot(dispatch.envelope.run_id).sources[0]
-    evidence_text = (workspace / str(source.locator.path)).read_text(
-        encoding="utf-8"
-    ).strip()
+    evidence_text = (
+        (workspace / str(source.locator.path)).read_text(encoding="utf-8").strip()
+    )
     payload["candidates"][0].update(
         source_id=source.source_id,
         statement=evidence_text,
@@ -179,9 +184,7 @@ def test_first_dynamic_proposal_is_created_and_advances_the_runtime(
     assert request.expected_artifact_revision == 0
 
     envelope_path = (
-        workspace
-        / dispatch.envelope.scratch_directory
-        / "role_task_envelope.json"
+        workspace / dispatch.envelope.scratch_directory / "role_task_envelope.json"
     )
     (envelope_path.parent / "candidate_claims.json").write_text(
         json.dumps(payload, sort_keys=True),
@@ -274,6 +277,43 @@ cached_package:
         encoding="utf-8",
     )
     return workspace
+
+
+def _specialist_workspace(tmp_path: Path) -> Path:
+    workspace = _workspace(tmp_path)
+    (workspace / "sources.yaml").write_text(
+        """source_strategy:
+  profile: research
+  enabled_providers: [rss]
+""",
+        encoding="utf-8",
+    )
+    return workspace
+
+
+def _advance_to_source_route(
+    workspace: Path,
+    capsys,
+    *,
+    route: str,
+) -> tuple[RuntimeHostService, object]:
+    assert main(["run", "--workspace", str(workspace), "--runtime", "codex"]) == 0
+    capsys.readouterr()
+    assert _apply_current(workspace, capsys) == 0
+    capsys.readouterr()
+    host = RuntimeHostService(
+        workspace,
+        adapter_loader=load_codex_adapter_binding,
+    )
+    planner = host.start_current_invocation()
+    (
+        workspace / planner.envelope.scratch_directory / "source_candidates.yaml"
+    ).write_text(
+        f"version: 1\ncandidates:\n  - route: {route}\n",
+        encoding="utf-8",
+    )
+    accepted = host.accept_invocation(planner.envelope.invocation_id)
+    return host, accepted.next_action
 
 
 def _current_action_path(workspace: Path, capsys) -> Path:
@@ -559,6 +599,112 @@ def test_invocation_validate_blocks_missing_output_without_writing_store(
     assert result["violations"] == []
     with SQLiteControlStore.open(workspace / "briefloop.db") as store:
         assert store.current_revision == before
+
+
+def test_role_submission_reconstructs_every_envelope_field_from_store(
+    tmp_path: Path,
+    capsys,
+) -> None:
+    workspace = _workspace(tmp_path)
+    assert main(["run", "--workspace", str(workspace), "--runtime", "codex"]) == 0
+    capsys.readouterr()
+    assert _apply_current(workspace, capsys) == 0
+    capsys.readouterr()
+    host = RuntimeHostService(
+        workspace,
+        adapter_loader=load_codex_adapter_binding,
+    )
+    dispatch = host.start_current_invocation()
+    scratch = workspace / dispatch.envelope.scratch_directory
+    (scratch / "source_candidates.yaml").write_text(
+        "version: 1\ncandidates: []\n",
+        encoding="utf-8",
+    )
+    envelope_path = scratch / "role_task_envelope.json"
+    original = json.loads(envelope_path.read_text(encoding="utf-8"))
+    mutations = {
+        "schema_version": "briefloop.role_task_envelope.invalid",
+        "run_id": "RUN-FORGED",
+        "invocation_id": "INV-FORGED",
+        "store_revision": original["store_revision"] + 1,
+        "action_fingerprint": "0" * 64,
+        "role_id": "scout",
+        "stage_id": "scout",
+        "scratch_directory": "scratch/INV-FORGED",
+        "allowed_output_filenames": ["forged.json"],
+        "proposal_schema_id": "briefloop.forged.v2",
+        "adapter_binding_fingerprint": "1" * 64,
+        "source_plan_fingerprint": "2" * 64,
+        "executor_kind": "delegated_specialist",
+        "context_mode": "independent_stage_context",
+        "review_mode": "independent_stage_context",
+        "dispatch_instruction": "delegate_exact_role",
+        "task_instructions": "Forged mutable task instructions.",
+    }
+    with SQLiteControlStore.open(workspace / "briefloop.db") as store:
+        before_revision = store.current_revision
+    for field, value in mutations.items():
+        tampered = deepcopy(original)
+        tampered[field] = value
+        envelope_path.write_text(json.dumps(tampered, sort_keys=True), encoding="utf-8")
+        with pytest.raises(RuntimeHostError, match="runtime_envelope_invalid"):
+            host.validate_invocation(dispatch.envelope.invocation_id)
+        envelope_path.write_text(json.dumps(original, sort_keys=True), encoding="utf-8")
+    assert host.validate_invocation(dispatch.envelope.invocation_id).status == "valid"
+    with SQLiteControlStore.open(workspace / "briefloop.db") as store:
+        assert store.current_revision == before_revision
+
+
+def test_source_submission_verifier_binds_content_raw_and_advisory_race(
+    tmp_path: Path,
+    capsys,
+) -> None:
+    if sys.platform == "win32":
+        pytest.skip("source-candidate publication is precommit unsupported on Windows")
+    workspace = _specialist_workspace(tmp_path)
+    host, action = _advance_to_source_route(workspace, capsys, route="rss")
+    assert action.action_kind == "delegate"
+    assert action.role_id == "source-provider"
+    dispatch = host.start_current_invocation(expected_action=action)
+    scratch = workspace / dispatch.envelope.scratch_directory
+    content = b"Exact source content for sibling verification.\n"
+    raw_payload = b'{"provider":"rss","result":"exact"}\n'
+    payload = SchemaRegistry.example(SourceProposal.schema_id, "full")
+    payload.update(
+        proposal_id="PROP-SOURCE-RSS-001",
+        run_id=action.run_id,
+        source_id="SRC-RSS-001",
+        content_sha256=hashlib.sha256(content).hexdigest(),
+        raw_payload_sha256=hashlib.sha256(raw_payload).hexdigest(),
+    )
+    (scratch / "source_proposal.json").write_text(
+        json.dumps(payload, sort_keys=True),
+        encoding="utf-8",
+    )
+    content_path = scratch / "source_content.bin"
+    raw_path = scratch / "source_raw.json"
+    content_path.write_bytes(content)
+    raw_path.write_bytes(raw_payload)
+    with SQLiteControlStore.open(workspace / "briefloop.db") as store:
+        before_revision = store.current_revision
+
+    assert host.validate_invocation(dispatch.envelope.invocation_id).status == "valid"
+    content_path.write_bytes(content + b"tampered")
+    content_result = host.validate_invocation(dispatch.envelope.invocation_id)
+    assert content_result.status == "invalid"
+    assert [item.field for item in content_result.violations] == ["content_sha256"]
+    with pytest.raises(RuntimeHostError, match="runtime_proposal_invalid"):
+        host.accept_invocation(dispatch.envelope.invocation_id)
+    content_path.write_bytes(content)
+    assert host.validate_invocation(dispatch.envelope.invocation_id).status == "valid"
+    raw_path.write_bytes(raw_payload + b"tampered")
+    raw_result = host.validate_invocation(dispatch.envelope.invocation_id)
+    assert raw_result.status == "invalid"
+    assert [item.field for item in raw_result.violations] == ["raw_payload_sha256"]
+    with pytest.raises(RuntimeHostError, match="runtime_proposal_invalid"):
+        host.accept_invocation(dispatch.envelope.invocation_id)
+    with SQLiteControlStore.open(workspace / "briefloop.db") as store:
+        assert store.current_revision == before_revision
 
 
 def test_restart_recovers_original_invocation_action_and_envelope(
@@ -1394,6 +1540,417 @@ def test_deterministic_source_failure_exhausts_frozen_route_without_retry(
             for path in sorted((workspace / "scratch").rglob("*"))
             if path.is_file()
         } == scratch_before_conflicts
+
+
+def _provider_item(position: int, *, content: str | None = None) -> SourceItem:
+    return SourceItem(
+        source_id=f"WEB-{position:04d}",
+        source_name="Example Search",
+        source_type="web_search",
+        title=f"Search result {position:04d}",
+        content=content or f"Bounded discovery result {position:04d}.",
+        url=f"https://example.com/result/{position:04d}",
+        published_at="2026-07-20T00:00:00Z",
+        retrieved_at="2026-07-22T00:00:00Z",
+        metadata={"rank": position},
+    )
+
+
+def test_provider_result_257_is_zero_mutation_before_invocation(
+    tmp_path: Path,
+    capsys,
+    monkeypatch,
+) -> None:
+    if sys.platform == "win32":
+        pytest.skip("source-candidate publication is precommit unsupported on Windows")
+    monkeypatch.setenv("TAVILY_API_KEY", "test-only")
+    workspace = _external_workspace(tmp_path)
+    host, action = _advance_to_source_route(workspace, capsys, route="web-search")
+    calls = 0
+
+    def oversized(_provider, _query, _config):
+        nonlocal calls
+        calls += 1
+        return [_provider_item(position) for position in range(257)]
+
+    monkeypatch.setattr(
+        "multi_agent_brief.sources.web_search.WebSearchProvider.collect",
+        oversized,
+    )
+    with SQLiteControlStore.open(workspace / "briefloop.db") as store:
+        before_revision = store.current_revision
+        before_snapshot = store.load_snapshot(action.run_id)
+    scratch_before = sorted(
+        path.relative_to(workspace).as_posix()
+        for path in (workspace / "scratch").rglob("*")
+    )
+
+    with pytest.raises(RuntimeHostError, match="runtime_source_pack_invalid"):
+        host.apply_current(expected_action=action)
+
+    assert calls == 1
+    with SQLiteControlStore.open(workspace / "briefloop.db") as store:
+        after_snapshot = store.load_snapshot(action.run_id)
+        assert store.current_revision == before_revision
+    assert len(after_snapshot.invocations) == len(before_snapshot.invocations)
+    assert len(after_snapshot.transactions) == len(before_snapshot.transactions)
+    assert (
+        sorted(
+            path.relative_to(workspace).as_posix()
+            for path in (workspace / "scratch").rglob("*")
+        )
+        == scratch_before
+    )
+
+
+def test_provider_256_commits_once_and_store_replay_skips_second_call(
+    tmp_path: Path,
+    capsys,
+    monkeypatch,
+) -> None:
+    if sys.platform == "win32":
+        pytest.skip("source-candidate publication is precommit unsupported on Windows")
+    monkeypatch.setenv("TAVILY_API_KEY", "test-only")
+    workspace = _external_workspace(tmp_path)
+    host, action = _advance_to_source_route(workspace, capsys, route="web-search")
+    calls = 0
+
+    def bounded(_provider, _query, _config):
+        nonlocal calls
+        calls += 1
+        return [_provider_item(position) for position in range(256)]
+
+    monkeypatch.setattr(
+        "multi_agent_brief.sources.web_search.WebSearchProvider.collect",
+        bounded,
+    )
+
+    committed = host.apply_current(expected_action=action)
+    replayed = host.apply_current(expected_action=action)
+
+    assert committed.status == "committed"
+    assert replayed.status == "replayed"
+    assert replayed.transaction_id == committed.transaction_id
+    assert replayed.store_revision == committed.store_revision
+    assert calls == 1
+    with SQLiteControlStore.open(workspace / "briefloop.db") as store:
+        snapshot = store.load_snapshot(action.run_id)
+    provider_invocations = [
+        item for item in snapshot.invocations if item.role_id == "source-provider"
+    ]
+    receipt = next(
+        item
+        for item in snapshot.transactions
+        if item.transaction_id == committed.transaction_id
+    )
+    assert len(provider_invocations) == 1
+    assert len(snapshot.sources) == 256
+    assert len(receipt.source_ids) == 256
+
+
+def test_provider_duplicate_identity_is_deduped_or_conflicts_before_invocation(
+    tmp_path: Path,
+    capsys,
+    monkeypatch,
+) -> None:
+    if sys.platform == "win32":
+        pytest.skip("source-candidate publication is precommit unsupported on Windows")
+    monkeypatch.setenv("TAVILY_API_KEY", "test-only")
+    workspace = _external_workspace(tmp_path / "identical")
+    host, action = _advance_to_source_route(workspace, capsys, route="web-search")
+    item = _provider_item(1)
+    monkeypatch.setattr(
+        "multi_agent_brief.sources.web_search.WebSearchProvider.collect",
+        lambda _provider, _query, _config: [item, item],
+    )
+    committed = host.apply_current(expected_action=action)
+    assert committed.status == "committed"
+    with SQLiteControlStore.open(workspace / "briefloop.db") as store:
+        assert len(store.load_snapshot(action.run_id).sources) == 1
+
+    conflicting_workspace = _external_workspace(tmp_path / "conflicting")
+    conflicting_host, conflicting_action = _advance_to_source_route(
+        conflicting_workspace,
+        capsys,
+        route="web-search",
+    )
+    first = _provider_item(2)
+    second = _provider_item(2, content="Different bytes under one source identity.")
+    monkeypatch.setattr(
+        "multi_agent_brief.sources.web_search.WebSearchProvider.collect",
+        lambda _provider, _query, _config: [first, second],
+    )
+    with SQLiteControlStore.open(conflicting_workspace / "briefloop.db") as store:
+        before_revision = store.current_revision
+        before_invocations = len(
+            store.load_snapshot(conflicting_action.run_id).invocations
+        )
+    with pytest.raises(RuntimeHostError, match="runtime_source_pack_invalid"):
+        conflicting_host.apply_current(expected_action=conflicting_action)
+    with SQLiteControlStore.open(conflicting_workspace / "briefloop.db") as store:
+        snapshot = store.load_snapshot(conflicting_action.run_id)
+        assert store.current_revision == before_revision
+    assert len(snapshot.invocations) == before_invocations
+
+
+def test_overlapping_cached_roots_fail_before_provider_and_invocation(
+    tmp_path: Path,
+    capsys,
+    monkeypatch,
+) -> None:
+    if sys.platform == "win32":
+        pytest.skip("source-candidate publication is precommit unsupported on Windows")
+    workspace = _workspace(tmp_path)
+    cache = workspace / "input" / "cache"
+    cache.mkdir()
+    selected = cache / "source.txt"
+    selected.write_text("A bounded cached source payload.\n", encoding="utf-8")
+    (workspace / "sources.yaml").write_text(
+        """source_strategy:
+  profile: conservative
+  enabled_providers: [cached_package]
+cached_package:
+  enabled: true
+  paths: [input/cache, input/cache/source.txt]
+  formats: [txt]
+""",
+        encoding="utf-8",
+    )
+    host, action = _advance_to_source_route(
+        workspace,
+        capsys,
+        route="cached_package",
+    )
+    calls = 0
+
+    def should_not_run(_provider, _query, _config):
+        nonlocal calls
+        calls += 1
+        return []
+
+    monkeypatch.setattr(
+        "multi_agent_brief.sources.cached_package.CachedPackageProvider.collect",
+        should_not_run,
+    )
+    with SQLiteControlStore.open(workspace / "briefloop.db") as store:
+        before_revision = store.current_revision
+        before_invocations = len(store.load_snapshot(action.run_id).invocations)
+
+    with pytest.raises(RuntimeHostError, match="runtime_source_pack_invalid"):
+        host.apply_current(expected_action=action)
+
+    assert calls == 0
+    with SQLiteControlStore.open(workspace / "briefloop.db") as store:
+        snapshot = store.load_snapshot(action.run_id)
+        assert store.current_revision == before_revision
+    assert len(snapshot.invocations) == before_invocations
+
+
+@pytest.mark.parametrize("corrupt_stage", [False, True])
+def test_source_pack_resume_reuses_staged_set_and_same_invocation(
+    tmp_path: Path,
+    capsys,
+    monkeypatch,
+    corrupt_stage: bool,
+) -> None:
+    if sys.platform == "win32":
+        pytest.skip("source-candidate publication is precommit unsupported on Windows")
+    monkeypatch.setenv("TAVILY_API_KEY", "test-only")
+    workspace = _external_workspace(tmp_path)
+    host, action = _advance_to_source_route(workspace, capsys, route="web-search")
+    provider_calls = 0
+
+    def one_result(_provider, _query, _config):
+        nonlocal provider_calls
+        provider_calls += 1
+        return [_provider_item(1)]
+
+    monkeypatch.setattr(
+        "multi_agent_brief.sources.web_search.WebSearchProvider.collect",
+        one_result,
+    )
+    original_start = RuntimeHostService._start_invocation_for_action
+
+    def crash_after_authoritative_start(
+        self,
+        current,
+        current_action,
+        *,
+        role_id,
+        request_id,
+    ):
+        request = self._invocation_start_request(
+            current,
+            current_action,
+            role_id=role_id,
+            request_id=request_id,
+        )
+        committed = CoreRunService(self.workspace).start_invocation(request)
+        assert committed.status == "committed"
+        raise RuntimeError("simulated host stop after invocation start")
+
+    monkeypatch.setattr(
+        RuntimeHostService,
+        "_start_invocation_for_action",
+        crash_after_authoritative_start,
+    )
+    with pytest.raises(RuntimeError, match="simulated host stop"):
+        host.apply_current(expected_action=action)
+    monkeypatch.setattr(
+        RuntimeHostService,
+        "_start_invocation_for_action",
+        original_start,
+    )
+    with SQLiteControlStore.open(workspace / "briefloop.db") as store:
+        interrupted = store.load_snapshot(action.run_id)
+    provider_invocations = [
+        item for item in interrupted.invocations if item.role_id == "source-provider"
+    ]
+    assert len(provider_invocations) == 1
+    assert provider_invocations[0].status == "active"
+    assert not (workspace / "scratch" / provider_invocations[0].invocation_id).exists()
+    if corrupt_stage:
+        stage_identity = canonical_fingerprint(
+            {
+                "kind": "deterministic_source_pack",
+                "run_id": action.run_id,
+                "invocation_id": provider_invocations[0].invocation_id,
+            }
+        )
+        (
+            source_stage_root(workspace, stage_identity) / "stage_attestation.json"
+        ).write_text(
+            "{}",
+            encoding="utf-8",
+        )
+
+    resumed = host.apply_current(expected_action=action)
+
+    assert resumed.status == ("rejected_recorded" if corrupt_stage else "committed")
+    assert provider_calls == 1
+    with SQLiteControlStore.open(workspace / "briefloop.db") as store:
+        final = store.load_snapshot(action.run_id)
+    assert (
+        len([item for item in final.invocations if item.role_id == "source-provider"])
+        == 1
+    )
+    assert next(
+        item for item in final.invocations if item.role_id == "source-provider"
+    ).status == ("failed" if corrupt_stage else "completed")
+
+
+def test_missing_stage_after_invocation_records_one_failure_without_provider(
+    tmp_path: Path,
+    capsys,
+    monkeypatch,
+) -> None:
+    if sys.platform == "win32":
+        pytest.skip("source-candidate publication is precommit unsupported on Windows")
+    monkeypatch.setenv("TAVILY_API_KEY", "test-only")
+    workspace = _external_workspace(tmp_path)
+    host, action = _advance_to_source_route(workspace, capsys, route="web-search")
+    request_id = derived_id(
+        "REQ-HOST-INVOKE",
+        action.run_id,
+        action.action_fingerprint,
+    )
+    request = InvocationStartRequest.model_validate(
+        {
+            "schema_version": InvocationStartRequest.schema_id,
+            "request_id": request_id,
+            "run_id": action.run_id,
+            "stage_id": action.stage_id,
+            "role_id": "source-provider",
+            "runtime": "codex",
+            "expected_store_revision": action.store_revision,
+        },
+        strict=True,
+    )
+    started = CoreRunService(workspace).start_invocation(request)
+    assert started.status == "committed"
+    provider_calls = 0
+
+    def should_not_run(_provider, _query, _config):
+        nonlocal provider_calls
+        provider_calls += 1
+        return [_provider_item(1)]
+
+    monkeypatch.setattr(
+        "multi_agent_brief.sources.web_search.WebSearchProvider.collect",
+        should_not_run,
+    )
+
+    failed = host.apply_current(expected_action=action)
+    replayed = host.apply_current(expected_action=action)
+
+    assert failed.status == "rejected_recorded"
+    assert replayed.status == "rejected_recorded"
+    assert replayed.transaction_id == failed.transaction_id
+    assert provider_calls == 0
+    with SQLiteControlStore.open(workspace / "briefloop.db") as store:
+        snapshot = store.load_snapshot(action.run_id)
+    provider_invocations = [
+        item for item in snapshot.invocations if item.role_id == "source-provider"
+    ]
+    assert len(provider_invocations) == 1
+    assert provider_invocations[0].status == "failed"
+
+
+def test_source_pack_commit_outcome_unknown_replays_identical_request(
+    tmp_path: Path,
+    capsys,
+    monkeypatch,
+) -> None:
+    if sys.platform == "win32":
+        pytest.skip("source-candidate publication is precommit unsupported on Windows")
+    monkeypatch.setenv("TAVILY_API_KEY", "test-only")
+    workspace = _external_workspace(tmp_path)
+    host, action = _advance_to_source_route(workspace, capsys, route="web-search")
+    provider_calls = 0
+
+    def one_result(_provider, _query, _config):
+        nonlocal provider_calls
+        provider_calls += 1
+        return [_provider_item(1)]
+
+    monkeypatch.setattr(
+        "multi_agent_brief.sources.web_search.WebSearchProvider.collect",
+        one_result,
+    )
+    original_submit = IntakeService.submit_source_pack
+    submit_calls = 0
+
+    def unknown_after_commit(self, request_path):
+        nonlocal submit_calls
+        submit_calls += 1
+        result = original_submit(self, request_path)
+        if submit_calls == 1:
+            assert result.status == "committed"
+            return IntakeResult(
+                status="commit_outcome_unknown",
+                error_code="commit_outcome_unknown",
+            )
+        return result
+
+    monkeypatch.setattr(IntakeService, "submit_source_pack", unknown_after_commit)
+    with SQLiteControlStore.open(workspace / "briefloop.db") as store:
+        before_revision = store.current_revision
+
+    result = host.apply_current(expected_action=action)
+
+    assert result.status == "replayed"
+    assert provider_calls == 1
+    assert submit_calls == 2
+    with SQLiteControlStore.open(workspace / "briefloop.db") as store:
+        snapshot = store.load_snapshot(action.run_id)
+        assert store.current_revision == before_revision + 2
+    assert (
+        len(
+            [item for item in snapshot.invocations if item.role_id == "source-provider"]
+        )
+        == 1
+    )
+    assert len(snapshot.sources) == 1
 
 
 def test_cached_source_acquisition_is_claims_eligible_and_completes_discovery(
