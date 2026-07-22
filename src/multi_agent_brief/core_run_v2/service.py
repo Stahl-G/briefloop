@@ -154,6 +154,8 @@ class CoreRunService:
             return core_run_failure_result(exc)
 
     def _apply_authorized_source_pack(self) -> CoreRunResult:
+        resumed_invocation_id: str | None = None
+        intake_expected_revision: int | None = None
         with self._open_store() as store:
             verified = self._verifier.verify(store, store.load_workspace_run_head().current_run_id)
             if len(verified.snapshot.run_execution_authorizations) != 1:
@@ -169,12 +171,75 @@ class CoreRunService:
             )
             if existing is not None:
                 return CoreRunResult(status="replayed", receipt=existing)
+            invocation_request_id = derived_id(
+                "REQ-AUTHORIZED-SOURCE-PROVIDER", pack_request_id
+            )
             action = classify_core_run_next_action(verified)
-            if (
-                action.action_kind != "deterministic"
-                or action.effect_kind != "authorized_source_pack_commit"
-                or action.stage_id != "source-discovery"
-            ):
+            active_invocations = [
+                item for item in verified.snapshot.invocations if item.status == "active"
+            ]
+            fresh_reservation = (
+                action.action_kind == "deterministic"
+                and action.effect_kind == "authorized_source_pack_commit"
+                and action.stage_id == "source-discovery"
+                and not active_invocations
+            )
+            start_receipt = store.load_transaction_receipt(
+                verified.snapshot.run.run_id, invocation_request_id
+            )
+            if fresh_reservation:
+                invocation_expected_revision = verified.snapshot.store_revision
+            else:
+                if (
+                    start_receipt is None
+                    or start_receipt.transaction_type
+                    != transaction_type_for("invocation_start")
+                ):
+                    raise CoreRunError("core_run_head_mismatch")
+                invocation_expected_revision = start_receipt.prior_revision
+            invocation_request = InvocationStartRequest.model_validate(
+                {
+                    "schema_version": InvocationStartRequest.schema_id,
+                    "request_id": invocation_request_id,
+                    "run_id": verified.snapshot.run.run_id,
+                    "stage_id": "source-discovery",
+                    "role_id": "source-provider",
+                    "runtime": verified.snapshot.run.runtime,
+                    "expected_store_revision": invocation_expected_revision,
+                },
+                strict=True,
+            )
+            invocation_fingerprint = canonical_fingerprint(
+                invocation_request.model_dump(mode="json", exclude_unset=False)
+            )
+            expected_invocation_id = derived_id(
+                "INV", invocation_request_id, invocation_fingerprint
+            )
+            if not fresh_reservation:
+                events = [
+                    item
+                    for item in verified.snapshot.events
+                    if item.transaction_id == invocation_request_id
+                    and item.core_run_binding is not None
+                ]
+                if (
+                    start_receipt is None
+                    or len(active_invocations) != 1
+                    or active_invocations[0].invocation_id != expected_invocation_id
+                    or active_invocations[0].role_id != "source-provider"
+                    or len(events) != 1
+                    or events[0].stage_id != "source-discovery"
+                    or events[0].core_run_binding.request_id != invocation_request_id
+                    or events[0].core_run_binding.request_fingerprint
+                    != invocation_fingerprint
+                    or events[0].core_run_binding.effect_kind != "invocation_start"
+                    or events[0].core_run_binding.primary_record_id
+                    != expected_invocation_id
+                ):
+                    raise CoreRunError("control_store_integrity_invalid")
+                resumed_invocation_id = expected_invocation_id
+                intake_expected_revision = start_receipt.committed_revision
+            if not fresh_reservation and resumed_invocation_id is None:
                 raise CoreRunError("core_run_head_mismatch")
             try:
                 manifest_bytes = store.read_artifact_revision_bytes(
@@ -187,23 +252,20 @@ class CoreRunService:
                 )
             except Exception as exc:
                 raise CoreRunError("control_store_integrity_invalid") from exc
-            invocation_request = InvocationStartRequest.model_validate(
-                {
-                    "schema_version": InvocationStartRequest.schema_id,
-                    "request_id": derived_id(
-                        "REQ-AUTHORIZED-SOURCE-PROVIDER", pack_request_id
-                    ),
-                    "run_id": verified.snapshot.run.run_id,
-                    "stage_id": "source-discovery",
-                    "role_id": "source-provider",
-                    "runtime": verified.snapshot.run.runtime,
-                    "expected_store_revision": verified.snapshot.store_revision,
-                },
-                strict=True,
-            )
-        started = self._start_invocation(invocation_request)
-        if started.status not in {"committed", "replayed"} or started.primary_record_id is None:
-            return started
+        if resumed_invocation_id is None:
+            started = self._start_invocation(invocation_request)
+            if (
+                started.status not in {"committed", "replayed"}
+                or started.primary_record_id is None
+                or started.receipt is None
+            ):
+                return started
+            invocation_id = started.primary_record_id
+            intake_expected_revision = started.receipt.committed_revision
+        else:
+            invocation_id = resumed_invocation_id
+        if intake_expected_revision is None:
+            raise CoreRunError("control_store_integrity_invalid")
         contents: list[bytes] = []
         for member in manifest.members:
             observed = read_workspace_file(self.workspace, member.input_path)
@@ -223,8 +285,8 @@ class CoreRunService:
                 _CoreAuthorizedSourcePack(
                     request_id=pack_request_id,
                     run_id=invocation_request.run_id,
-                    invocation_id=started.primary_record_id,
-                    expected_store_revision=invocation_request.expected_store_revision + 1,
+                    invocation_id=invocation_id,
+                    expected_store_revision=intake_expected_revision,
                     manifest=manifest,
                     source_manifest_sha256=authorization.source_manifest_sha256,
                     contents=tuple(contents),
@@ -237,7 +299,7 @@ class CoreRunService:
         return CoreRunResult(
             status=result.status,
             receipt=result.receipt,
-            primary_record_id=(result.source_id or started.primary_record_id),
+            primary_record_id=(result.source_id or invocation_id),
         )
 
     def _initialize(self, request: CoreRunInitializeRequest) -> CoreRunResult:
@@ -1070,6 +1132,63 @@ class CoreRunService:
 
         gate_ids: tuple[str, ...] = ()
         if stage_id == "source-discovery":
+            if snapshot.run_execution_authorizations:
+                if len(snapshot.run_execution_authorizations) != 1:
+                    raise CoreRunError("control_store_integrity_invalid")
+                authorization = snapshot.run_execution_authorizations[0]
+                manifest_revision = revisions.get(
+                    (
+                        authorization.source_manifest_artifact.artifact_id,
+                        authorization.source_manifest_artifact.revision,
+                    )
+                )
+                if manifest_revision is None:
+                    raise CoreRunError("control_store_integrity_invalid")
+                try:
+                    manifest = ExecutionSourceManifest.model_validate_json(
+                        store.read_artifact_revision_bytes(
+                            snapshot.run.run_id,
+                            authorization.source_manifest_artifact.artifact_id,
+                            authorization.source_manifest_artifact.revision,
+                        ),
+                        strict=True,
+                    )
+                except Exception as exc:
+                    raise CoreRunError("control_store_integrity_invalid") from exc
+                sources = sorted(snapshot.sources, key=lambda item: item.source_id)
+                expected = sorted(manifest.members, key=lambda item: item.source_id)
+                if not sources or (
+                    len(sources) != len(expected)
+                    or [item.source_id for item in sources]
+                    != [item.source_id for item in expected]
+                    or len({item.accepted_transaction_id for item in sources}) != 1
+                ):
+                    raise CoreRunError("stage_artifact_binding_invalid")
+                if any(
+                    source.content_sha256 != member.content_sha256
+                    or source.invocation_id != sources[0].invocation_id
+                    for source, member in zip(sources, expected, strict=True)
+                ):
+                    raise CoreRunError("stage_artifact_binding_invalid")
+                receipt = store.load_transaction_receipt(
+                    snapshot.run.run_id, sources[0].accepted_transaction_id
+                )
+                if receipt is None or set(receipt.source_ids) != {
+                    item.source_id for item in sources
+                }:
+                    raise CoreRunError("stage_artifact_binding_invalid")
+                selected.append((manifest_revision, "consumed"))
+                for source in sources:
+                    revision = revisions.get(
+                        (source.content_artifact_id, source.content_artifact_revision)
+                    )
+                    if revision is None or revision.sha256 != source.content_sha256:
+                        raise CoreRunError("control_store_integrity_invalid")
+                    selected.append((revision, "produced"))
+                producer_invocation_id = require_invocation(
+                    sources[0].invocation_id, role_id="source-provider"
+                )
+                return tuple(selected), gate_ids, producer_invocation_id, producer_tool_id
             candidates = require_artifact("source_candidates", "produced")
             submission = require_submission(
                 candidates,

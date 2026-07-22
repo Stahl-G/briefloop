@@ -433,6 +433,145 @@ def test_core_applies_authorized_source_pack_without_a_host_dto(tmp_path: Path) 
     assert replayed.receipt.transaction_id == result.receipt.transaction_id
 
 
+def test_authorized_source_pack_resumes_the_reserved_invocation(
+    tmp_path: Path,
+) -> None:
+    workspace = _workspace(tmp_path)
+    service = _initialize(
+        workspace, execution_authorization=_execution_authorization(workspace)
+    )
+    assert service.doctor_check(
+        _record(
+            IntegrityCheckRequest,
+            request_id="REQ-AUTHORIZED-RESUME-DOCTOR-001",
+            run_id=RUN_ID,
+            expected_store_revision=_store_revision(workspace),
+        )
+    ).status == "committed"
+    with SQLiteControlStore.open(workspace / "briefloop.db", clock=CLOCK) as store:
+        verified = CoreRunDomainVerifier().verify(store, RUN_ID)
+    authorization = verified.snapshot.run_execution_authorizations[0]
+    pack_request_id = derived_id(
+        "REQ-AUTHORIZED-SOURCE-PACK", RUN_ID, authorization.request_fingerprint
+    )
+    reservation = service.start_invocation(
+        _record(
+            InvocationStartRequest,
+            request_id=derived_id("REQ-AUTHORIZED-SOURCE-PROVIDER", pack_request_id),
+            run_id=RUN_ID,
+            stage_id="source-discovery",
+            role_id="source-provider",
+            runtime=verified.snapshot.run.runtime,
+            expected_store_revision=verified.snapshot.store_revision,
+        )
+    )
+    assert reservation.status == "committed", reservation.to_dict()
+    assert reservation.primary_record_id is not None
+    with SQLiteControlStore.open(workspace / "briefloop.db", clock=CLOCK) as store:
+        resumed = CoreRunDomainVerifier().verify(store, RUN_ID)
+    action = classify_core_run_next_action(resumed)
+    assert (action.action_kind, action.effect_kind, action.stage_id) == (
+        "deterministic",
+        "authorized_source_pack_commit",
+        "source-discovery",
+    )
+    result = service.apply_authorized_source_pack()
+    assert result.status == "committed", result.to_dict()
+    with SQLiteControlStore.open(workspace / "briefloop.db", clock=CLOCK) as store:
+        snapshot = CoreRunDomainVerifier().verify(store, RUN_ID).snapshot
+    assert snapshot.sources[0].invocation_id == reservation.primary_record_id
+    assert result.receipt is not None
+    assert result.receipt.prior_revision == reservation.receipt.committed_revision
+    (workspace / "input" / "authorized-source.txt").unlink()
+    replayed = service.apply_authorized_source_pack()
+    assert replayed.status == "replayed"
+    assert replayed.receipt == result.receipt
+
+
+def test_authorized_source_pack_rejects_mismatched_active_reservation(
+    tmp_path: Path,
+) -> None:
+    workspace = _workspace(tmp_path)
+    service = _initialize(
+        workspace, execution_authorization=_execution_authorization(workspace)
+    )
+    assert service.doctor_check(
+        _record(
+            IntegrityCheckRequest,
+            request_id="REQ-AUTHORIZED-MISMATCH-DOCTOR-001",
+            run_id=RUN_ID,
+            expected_store_revision=_store_revision(workspace),
+        )
+    ).status == "committed"
+    wrong = _start_invocation(
+        service,
+        workspace,
+        request_id="REQ-WRONG-AUTHORIZED-RESERVATION-001",
+        stage_id="source-discovery",
+        role_id="source-provider",
+    )
+    assert wrong
+    result = service.apply_authorized_source_pack()
+    assert result.status == "failed_uncommitted"
+    assert result.error_code == "core_run_head_mismatch"
+
+
+def test_authorized_source_pack_advances_without_source_candidates(
+    tmp_path: Path,
+) -> None:
+    workspace = _workspace(tmp_path)
+    service = _initialize(
+        workspace,
+        execution_authorization=_execution_authorization(workspace),
+        input_governance_required=True,
+    )
+    assert service.doctor_check(
+        _record(
+            IntegrityCheckRequest,
+            request_id="REQ-AUTHORIZED-PROGRESSION-DOCTOR-001",
+            run_id=RUN_ID,
+            expected_store_revision=_store_revision(workspace),
+        )
+    ).status == "committed"
+    assert service.apply_authorized_source_pack().status == "committed"
+    with SQLiteControlStore.open(workspace / "briefloop.db", clock=CLOCK) as store:
+        snapshot = CoreRunDomainVerifier().verify(store, RUN_ID).snapshot
+        source = snapshot.sources[0]
+        authorization = snapshot.run_execution_authorizations[0]
+    _complete_stage(
+        service,
+        workspace,
+        stage_id="source-discovery",
+        artifacts=[
+            (
+                authorization.source_manifest_artifact.artifact_id,
+                authorization.source_manifest_artifact.revision,
+            ),
+            (source.content_artifact_id, source.content_artifact_revision),
+        ],
+    )
+    with SQLiteControlStore.open(workspace / "briefloop.db", clock=CLOCK) as store:
+        verified = CoreRunDomainVerifier().verify(store, RUN_ID)
+    candidates = next(
+        item
+        for item in verified.snapshot.artifacts
+        if item.artifact_id == "source_candidates"
+    )
+    assert candidates.current_revision == 0
+    assert classify_core_run_next_action(verified).effect_kind == "stage_complete"
+    _complete_stage(
+        service,
+        workspace,
+        stage_id="input-governance",
+        artifacts=[("input_classification", 1)],
+    )
+    with SQLiteControlStore.open(workspace / "briefloop.db", clock=CLOCK) as store:
+        verified = CoreRunDomainVerifier().verify(store, RUN_ID)
+    assert _stage(workspace, "source-discovery").status == "complete"
+    assert _stage(workspace, "input-governance").status == "complete"
+    assert classify_core_run_next_action(verified).stage_id == "scout"
+
+
 def test_authorized_file_source_pack_is_rejected_before_member_reads(
     tmp_path: Path,
 ) -> None:
@@ -479,6 +618,32 @@ def test_authorized_file_source_pack_is_rejected_before_member_reads(
     )
     assert result.status == "failed_uncommitted"
     assert result.error_code == "source_pack_authorization_invalid"
+    source_request = workspace / "scratch" / "INV-SOURCE-ENTRY-001" / "submit_request.json"
+    source_request.parent.mkdir(parents=True)
+    _write_json(
+        source_request,
+        _record(
+            SourceCommitRequest,
+            request_id="REQ-FILE-SOURCE-001",
+            run_id=RUN_ID,
+            invocation_id="INV-SOURCE-ENTRY-001",
+            proposal_path="scratch/INV-SOURCE-ENTRY-001/source_proposal.json",
+            content_path="scratch/INV-SOURCE-ENTRY-001/source_content.bin",
+            raw_payload_path=None,
+            expected_store_revision=_store_revision(workspace),
+        ).model_dump(mode="json", exclude_unset=False),
+    )
+    standalone = IntakeService(workspace, clock=CLOCK).submit_source(
+        source_request.relative_to(workspace).as_posix()
+    )
+    assert standalone.status == "failed_uncommitted"
+    assert standalone.error_code == "source_pack_authorization_invalid"
+    assert service.apply_authorized_source_pack().status == "committed"
+    replay_entrypoint = IntakeService(workspace, clock=CLOCK).submit_source_pack(
+        request_path.relative_to(workspace).as_posix()
+    )
+    assert replay_entrypoint.status == "failed_uncommitted"
+    assert replay_entrypoint.error_code == "source_pack_authorization_invalid"
 
 
 def test_finalized_local_classifier_rejects_package_or_delivery_residue() -> None:

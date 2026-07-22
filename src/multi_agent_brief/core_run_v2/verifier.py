@@ -2821,6 +2821,33 @@ class CoreRunDomainVerifier:
             if stage_id == "doctor":
                 return ()
             if stage_id == "source-discovery":
+                if snapshot.run_execution_authorizations:
+                    if len(snapshot.run_execution_authorizations) != 1:
+                        raise CoreRunError("control_store_integrity_invalid")
+                    authorization = snapshot.run_execution_authorizations[0]
+                    manifest_revision = revisions.get(
+                        (
+                            authorization.source_manifest_artifact.artifact_id,
+                            authorization.source_manifest_artifact.revision,
+                        )
+                    )
+                    sources = sorted(snapshot.sources, key=lambda item: item.source_id)
+                    if (
+                        manifest_revision is None
+                        or not sources
+                        or len({item.accepted_transaction_id for item in sources}) != 1
+                        or len({item.invocation_id for item in sources}) != 1
+                    ):
+                        raise CoreRunError("control_store_integrity_invalid")
+                    source_revisions = []
+                    for source in sources:
+                        revision = revisions.get(
+                            (source.content_artifact_id, source.content_artifact_revision)
+                        )
+                        if revision is None or revision.sha256 != source.content_sha256:
+                            raise CoreRunError("control_store_integrity_invalid")
+                        source_revisions.append((revision, "produced"))
+                    return ((manifest_revision, "consumed"), *source_revisions)
                 eligible_sources = sorted(
                     (item for item in snapshot.sources if item.claims_eligible),
                     key=lambda item: item.source_id,
@@ -3235,7 +3262,11 @@ class CoreRunDomainVerifier:
         }
         invocations = {item.invocation_id: item for item in snapshot.invocations}
         producer_roles = {
-            "source-discovery": {"source-planner"},
+            "source-discovery": (
+                {"source-provider"}
+                if snapshot.run_execution_authorizations
+                else {"source-planner"}
+            ),
             "scout": {"scout"},
             "screener": {"screener"},
             "claim-ledger": {"claim-ledger"},

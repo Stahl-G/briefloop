@@ -53,6 +53,11 @@ from multi_agent_brief.control_store.serialization import (
     canonical_json_bytes,
     sha256_hex,
 )
+from multi_agent_brief.core_run_v2.checkout import (
+    publish_checkout_effect,
+    prepare_checkout_effect,
+    stage_checkout_effect,
+)
 from multi_agent_brief.intake_v2.errors import IntakeError, IntakeResult
 from multi_agent_brief.intake_v2.policy import (
     INTAKE_LANES,
@@ -322,6 +327,13 @@ class IntakeService:
 
     def _submit_source(self, request_path: str | os.PathLike[str]) -> IntakeResult:
         request = self._read_request(SourceCommitRequest, request_path)
+        # The public file entrypoint is intentionally unavailable for an
+        # authorized run.  Check Store authority before opening any proposal
+        # or payload sibling, including on a later replay attempt.
+        with self._open_store() as store:
+            self._reject_authorized_source_file_entrypoint(
+                store, request.run_id, request.request_id
+            )
         proposal_bytes = self._reader.read(request.proposal_path)
         content_bytes = self._reader.read(request.content_path)
         raw_bytes = (
@@ -443,15 +455,13 @@ class IntakeService:
             SourcePackCommitRequest,
             self._read_request(SourcePackCommitRequest, request_path),
         )
-        # An execution-authorized pack has a Store-derived routing identity.
-        # Resolve it before opening any mutable member bytes; the existing
-        # payload fingerprint remains the first-commit integrity identity.
+        # Authorized replay belongs exclusively to the parameter-free Core
+        # effect.  This public/file entrypoint always fails before opening a
+        # manifest or member sibling.
         with self._open_store() as store:
-            authorized_replay = self._resolve_authorized_source_pack_replay(
-                store, request
+            self._reject_authorized_source_file_entrypoint(
+                store, request.run_id, request.request_id
             )
-            if authorized_replay is not None:
-                return authorized_replay
         manifest_bytes = (
             None
             if request.manifest_path is None
@@ -661,6 +671,32 @@ class IntakeService:
                 proposal_id=binding.proposal_id,
             )
         return IntakeResult(status="replayed", receipt=receipt)
+
+    def _reject_authorized_source_file_entrypoint(
+        self,
+        store: SQLiteControlStore,
+        run_id: str,
+        request_id: str,
+    ) -> None:
+        """Fail closed before public request paths can read source bytes."""
+
+        try:
+            snapshot = store.load_snapshot(run_id)
+        except (ControlStoreError, IntakeError) as exc:
+            try:
+                receipt = store.load_transaction_receipt(run_id, request_id)
+            except ControlStoreError as receipt_exc:
+                raise IntakeError("control_store_integrity_invalid") from receipt_exc
+            if receipt is not None:
+                raise ControlStoreCommitOutcomeUnknown("commit_outcome_unknown") from exc
+            raise IntakeError("control_store_integrity_invalid") from exc
+        if not snapshot.run_execution_authorizations:
+            return
+        try:
+            self._verify_core_run(store, run_id)
+        except (ControlStoreError, IntakeError) as exc:
+            raise IntakeError("control_store_integrity_invalid") from exc
+        raise IntakeError("source_pack_authorization_invalid")
 
     def _submit_proposal(
         self,
@@ -1394,8 +1430,12 @@ class IntakeService:
             sources.append(source)
 
         classification_submission: OwnedArtifactSubmissionRecord | None = None
+        classification_revision: ArtifactRevision | None = None
         if authorization_manifest is not None:
-            classification_submission = _stage_authorized_input_classification(
+            (
+                classification_submission,
+                classification_revision,
+            ) = _stage_authorized_input_classification(
                 unit,
                 snapshot_artifacts=snapshot.artifacts,
                 request=request,
@@ -1405,6 +1445,16 @@ class IntakeService:
                 run_contract_fingerprint=snapshot.run_contract_bindings[0].contract_fingerprint,
                 created_at=now,
             )
+        checkout = None
+        if classification_revision is not None:
+            checkout = prepare_checkout_effect(
+                workspace=self.workspace,
+                snapshot=snapshot,
+                transaction_id=request.request_id,
+                created_at=self._clock(),
+                additional_revisions=(classification_revision,),
+            )
+            stage_checkout_effect(unit, checkout)
 
         def observe(receipt: TransactionReceipt) -> None:
             post_snapshot = (
@@ -1419,6 +1469,18 @@ class IntakeService:
             )
 
         receipt = self._commit_uow(unit, observe)
+        if checkout is not None:
+            published, _warnings = publish_checkout_effect(
+                workspace=self.workspace,
+                store=store,
+                prepared=checkout,
+            )
+            if not published:
+                return IntakeResult(
+                    status="commit_outcome_unknown",
+                    receipt=receipt,
+                    error_code="commit_outcome_unknown",
+                )
         return IntakeResult(status="committed", receipt=receipt)
 
     def _commit_proposal(
@@ -1799,7 +1861,7 @@ def _stage_authorized_input_classification(
     manifest: ExecutionSourceManifest,
     run_contract_fingerprint: str,
     created_at: str,
-) -> OwnedArtifactSubmissionRecord:
+) -> tuple[OwnedArtifactSubmissionRecord, ArtifactRevision]:
     """Attach the sole Store-derived classification to the source-pack receipt."""
 
     artifact = _by_id(snapshot_artifacts, "artifact_id", "input_classification")
@@ -1880,7 +1942,7 @@ def _stage_authorized_input_classification(
             strict=True,
         )
     )
-    return submission
+    return submission, revision
 
 
 def _derived_id(prefix: str, *parts: str) -> str:
