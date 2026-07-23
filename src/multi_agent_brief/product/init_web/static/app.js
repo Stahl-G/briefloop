@@ -38,7 +38,7 @@
             panel_title: "创建报告工作区",
             top_banner: "一次性初始化向导 · 预览为固定合成内容",
             step_1: "报告方向",
-            step_2: "交付与版式",
+            step_2: "本地输出设置",
             step_3: "预览与确认",
             btn_back: "← 上一步",
             btn_next: "下一步 →",
@@ -59,7 +59,7 @@
             placeholder_purpose: "例如：跟踪组件价格，支撑采购议价",
             placeholder_freetext: "例如：给董事会看，十分钟读完，保留完整数据表，同时给我 DOCX 和网页版。",
             placeholder_window: "例如：近 14 天",
-            sec_formats: "读者收到什么文件？（可多选）",
+            sec_formats: "本地输出格式（可多选）",
             sec_presentation: "版式风格",
             custom_base_title: "基底风格",
             custom_base_note: "自定义 = 基底风格 + 有界覆盖（密度、强调色等为独立字段）。",
@@ -83,7 +83,10 @@
             review_proposed: "来自文字的提议 · 待你处置",
             review_unresolved: "未解决 · 不生效",
             review_path_k: "工作区位置",
-            review_statement: "确认后，将在此位置创建 fresh-v2 工作区：一次确定性事务提交报告方向与交付选择，并返回 ControlStore 收据。",
+            review_statement: "这将创建并授权一个本地 run，返回初始化 Receipt，并把控制权交回当前 Codex 会话。它不会对外交付，也不会显示最终报告。",
+            review_authorized_boundary: "本地授权终点：finalized_local · 预授权编辑修复预算：1 · 仅初始化与授权，不是交付、最终报告或实时进度。",
+            review_manual_boundary: "手动继续：没有 RunExecutionAuthorization；不会显示 finalized_local 或修复预算。",
+            review_manifest_hash: "已确认 canonical manifest SHA-256",
             review_accept: "接受",
             review_discard: "丢弃",
             review_accepted: "已接受",
@@ -98,7 +101,7 @@
             field_window: "时间窗",
             field_language: "语言",
             field_source: "来源姿态",
-            field_formats: "交付格式",
+            field_formats: "本地输出格式",
             field_presentation: "版式风格",
             field_density: "报告篇幅 / 阅读深度",
             field_tables: "数据表",
@@ -123,7 +126,7 @@
             status_fill: "完成必选项后即可创建。",
             preview_fidelity_html: "HTML 为示意预览",
             preview_fidelity_docx: "DOCX 为近似版式预览",
-            preview_formats: "交付：",
+            preview_formats: "本地输出：",
             cf_committed: "已提交 · committed",
             cf_replayed: "重放 · replayed",
             cf_replayed_badge: "replayed · 无新写入",
@@ -137,13 +140,14 @@
             cf_next: "本地终点与第一步：",
             cf_again: "再次提交同一请求（replay）",
             cf_close: "关闭，修改后重试",
-            cf_note: "目标为 finalized_local，预授权编辑修复预算为 1。此页仅确认初始化；已启动的 Codex 控制器会在命令行继续。"
+            cf_note: "目标为 finalized_local，预授权编辑修复预算为 1。此页仅确认初始化；已启动的 Codex 控制器会在命令行继续。",
+            cf_note_manual: "本次初始化没有 RunExecutionAuthorization；后续为手动继续，不声明 finalized_local 或修复预算。"
         },
         en: {
             panel_title: "Create report workspace",
             top_banner: "One-shot init wizard · fixed synthetic preview",
             step_1: "Direction",
-            step_2: "Delivery & style",
+            step_2: "Local output setup",
             step_3: "Review & confirm",
             btn_back: "← Back",
             btn_next: "Next →",
@@ -164,7 +168,7 @@
             placeholder_purpose: "e.g. track component prices to support procurement",
             placeholder_freetext: "e.g. for the board, a ten-minute read, keep full data tables, and give me both DOCX and a web page.",
             placeholder_window: "e.g. last 14 days",
-            sec_formats: "What should readers receive? (multi-select)",
+            sec_formats: "Local output formats (multi-select)",
             sec_presentation: "Presentation style",
             custom_base_title: "Base style",
             custom_base_note: "Custom = base style + bounded overrides (density, accent — separate fields).",
@@ -188,7 +192,10 @@
             review_proposed: "Proposed from your text · awaiting disposition",
             review_unresolved: "Unresolved · no effect",
             review_path_k: "Workspace location",
-            review_statement: "Confirming creates a fresh-v2 workspace here: one deterministic transaction commits the direction and delivery choices and returns a ControlStore receipt.",
+            review_statement: "This creates and authorizes a local run, returns an initialization Receipt and hands control back to the current Codex session. It does not deliver externally or display the final report.",
+            review_authorized_boundary: "Local authorization target: finalized_local · preauthorized editor repair budget: 1 · setup/authorization only, not delivery, a final report, or live progress.",
+            review_manual_boundary: "Manual continuation: no RunExecutionAuthorization; finalized_local and repair budget do not apply.",
+            review_manifest_hash: "Confirmed canonical manifest SHA-256",
             review_accept: "Accept",
             review_discard: "Discard",
             review_accepted: "Accepted",
@@ -203,7 +210,7 @@
             field_window: "Time window",
             field_language: "Language",
             field_source: "Source posture",
-            field_formats: "Formats",
+            field_formats: "Local output formats",
             field_presentation: "Style",
             field_density: "Report amount / reading depth",
             field_tables: "Tables",
@@ -228,7 +235,7 @@
             status_fill: "Complete the required choices to continue.",
             preview_fidelity_html: "HTML preview is representative",
             preview_fidelity_docx: "DOCX preview is approximate",
-            preview_formats: "Delivery: ",
+            preview_formats: "Local output: ",
             cf_committed: "Committed",
             cf_replayed: "Replayed",
             cf_replayed_badge: "replayed · no new writes",
@@ -242,7 +249,8 @@
             cf_next: "Local target and first action: ",
             cf_again: "Resubmit the same request (replay)",
             cf_close: "Close, change something, retry",
-            cf_note: "The target is finalized_local with one preauthorized editor repair. This page confirms initialization only; the initiating Codex controller continues in the terminal."
+            cf_note: "The target is finalized_local with one preauthorized editor repair. This page confirms initialization only; the initiating Codex controller continues in the terminal.",
+            cf_note_manual: "This initialization has no RunExecutionAuthorization; continuation is manual and does not claim finalized_local or a repair budget."
         }
     };
 
@@ -282,7 +290,7 @@
         ],
         formats: [
             { id: "docx", zh: ["DOCX", "可打印、可批注"], en: ["DOCX", "Printable, annotatable"] },
-            { id: "html", zh: ["网页版 HTML", "浏览器阅读，自包含"], en: ["HTML page", "Self-contained web reading"] },
+            { id: "html", zh: ["本地 HTML", "本地输出格式"], en: ["Local HTML", "Local output format"] },
             { id: "markdown", zh: ["Markdown", "可移植、给下游工具"], en: ["Markdown", "Portable, for downstream tools"] }
         ],
         presentations: [
@@ -438,6 +446,9 @@
         sourceManifestText: "",
         sourceCanonicalManifest: null,
         sourceCanonicalPreview: [],
+        sourceCanonicalBindings: [],
+        sourceConfirmedMetadata: [],
+        sourceManifestSha256: null,
         sourceRoutingHashes: [],
         sourcePackValid: false,
         sourcePreviewing: false,
@@ -891,6 +902,9 @@
                 STATE.sourceManifestText = JSON.stringify(metadataFromImportedManifest(imported), null, 2);
                 STATE.sourceCanonicalManifest = null;
                 STATE.sourceCanonicalPreview = [];
+                STATE.sourceCanonicalBindings = [];
+                STATE.sourceConfirmedMetadata = [];
+                STATE.sourceManifestSha256 = null;
                 previewSourceManifest();
                 renderStage3();
                 updateActionbar();
@@ -907,6 +921,9 @@
             STATE.sourceManifestText = manifestEditor.value;
             STATE.sourceCanonicalManifest = null;
             STATE.sourceCanonicalPreview = [];
+            STATE.sourceCanonicalBindings = [];
+            STATE.sourceConfirmedMetadata = [];
+            STATE.sourceManifestSha256 = null;
             STATE.sourcePackValid = false;
             updateActionbar();
         });
@@ -931,13 +948,18 @@
             STATE.sourceCanonicalPreview.forEach(function (member) {
                 var tr = el("tr");
                 tr.appendChild(el("th", null, String(member.source_id)));
-                var details = String(member.title) + " · " + String(member.content_media_type) + " · " + String(member.byte_count) + " bytes";
+                var details = String(member.title) + " · observed file: " + String(member.observed_filename) +
+                    " · SHA-256: " + String(member.observed_sha256) +
+                    " · " + String(member.content_media_type) + " · " + String(member.byte_count) + " bytes";
                 if (member.original_url) details += " · " + String(member.original_url);
                 if (member.opened_at) details += " · opened " + String(member.opened_at);
                 tr.appendChild(el("td", null, details));
                 previewTable.appendChild(tr);
             });
             sources.appendChild(previewTable);
+            var manifestHash = el("p", "source-pack-status ok");
+            manifestHash.textContent = t("review_manifest_hash") + ": " + String(STATE.sourceManifestSha256);
+            sources.appendChild(manifestHash);
         }
         sectionsHost.appendChild(sources);
 
@@ -1011,6 +1033,11 @@
         sectionsHost.appendChild(contract);
         requestOutputContractPreview();
 
+        sectionsHost.appendChild(el(
+            "p",
+            "review-warning",
+            t(STATE.sourcePackValid ? "review_authorized_boundary" : "review_manual_boundary")
+        ));
         sectionsHost.appendChild(el("p", "review-warning", t("review_statement")));
     }
 
@@ -1313,9 +1340,6 @@
         var objective = String(c.purpose || "").trim() || STATE.freeText.trim();
         var cadence = c.cadence === "one_time" ? "ad_hoc" : String(c.cadence || "weekly");
         if (["weekly", "biweekly", "monthly", "ad_hoc"].indexOf(cadence) < 0) cadence = "weekly";
-        var metadata = JSON.parse(STATE.sourceManifestText);
-        var routed = routedMetadata(metadata);
-        var bindings = bindingsForMetadata(metadata);
         return {
             schema_version: "briefloop.init_web.submission.v1",
             request_id: STATE.requestId,
@@ -1343,32 +1367,21 @@
                 completion_target: "finalized_local",
                 repair_budget: 1,
                 source_manifest_mode: STATE.sourceManifestMode,
-                source_metadata: routed,
+                source_metadata: STATE.sourceConfirmedMetadata,
                 source_manifest: STATE.sourceCanonicalManifest,
                 upload_session_id: SESSION.sessionId,
-                upload_bindings: bindings,
+                upload_bindings: STATE.sourceCanonicalBindings,
                 human_confirmation: true // set only here, from the explicit confirm button
             }
         };
     }
 
     function generatedMetadata(uploads) {
-        var now = new Date();
-        var retrieved = now.toISOString().replace(/\.\d{3}Z$/, "Z");
         return uploads.map(function (upload) {
                 return {
-                    origin_type: "uploaded_file",
-                    acquisition_method: "manual_upload",
-                    material_kind: "uploaded_file",
-                    provider: null,
                     title: upload.filename,
                     publisher: null,
                     published_at: null,
-                    retrieved_at: retrieved,
-                    source_category: "other",
-                    retrieval_source_type: "local_file",
-                    underlying_evidence_type: "unknown",
-                    raw_underlying_evidence_type: null,
                     document_kind: null,
                     opened_at: null,
                     resolved_at: null
@@ -1405,9 +1418,14 @@
         if (!Array.isArray(metadata) || metadata.length !== STATE.sourceUploads.length) throw new Error("metadata");
         var unused = STATE.sourceUploads.slice();
         return metadata.map(function (member, index) {
-            var selected = index;
+            if (STATE.sourceManifestMode === "generated") {
+                return {
+                    metadata_index: index,
+                    upload_handle: STATE.sourceUploads[index].upload_handle
+                };
+            }
+            var selected = -1;
             if (STATE.sourceManifestMode === "imported") {
-                selected = -1;
                 for (var i = 0; i < unused.length; i++) {
                     if (unused[i].sha256 === STATE.sourceRoutingHashes[index]) {
                         selected = i;
@@ -1446,6 +1464,9 @@
         }
         STATE.sourcePreviewing = true;
         STATE.sourcePackValid = false;
+        STATE.sourceCanonicalBindings = [];
+        STATE.sourceConfirmedMetadata = [];
+        STATE.sourceManifestSha256 = null;
         renderStage3();
         updateActionbar();
         fetch("/api/v1/source-manifest-preview?session_id=" + encodeURIComponent(SESSION.sessionId), {
@@ -1464,6 +1485,9 @@
                 if (response.status !== 200 || !body.ok) throw new Error(body.reason_code || "preview");
                 STATE.sourceCanonicalManifest = body.source_manifest;
                 STATE.sourceCanonicalPreview = body.source_preview || [];
+                STATE.sourceCanonicalBindings = body.routing_bindings || [];
+                STATE.sourceConfirmedMetadata = body.source_metadata || [];
+                STATE.sourceManifestSha256 = body.source_manifest_sha256 || null;
                 STATE.sourcePreviewing = false;
                 STATE.sourcePackValid = true;
                 renderStage3();
@@ -1472,6 +1496,9 @@
         }).catch(function () {
             STATE.sourcePreviewing = false;
             STATE.sourcePackValid = false;
+            STATE.sourceCanonicalBindings = [];
+            STATE.sourceConfirmedMetadata = [];
+            STATE.sourceManifestSha256 = null;
             renderStage3();
             updateActionbar();
         });
@@ -1481,6 +1508,9 @@
         STATE.sourceUploading = true;
         STATE.sourcePackValid = false;
         STATE.sourceUploads = [];
+        STATE.sourceCanonicalBindings = [];
+        STATE.sourceConfirmedMetadata = [];
+        STATE.sourceManifestSha256 = null;
         updateActionbar();
         var chain = Promise.resolve();
         files.forEach(function (file) {
@@ -1574,11 +1604,14 @@
         cfBody.appendChild(el("p", "cf-sub", t(replayed ? "cf_sub_replayed" : "cf_sub_committed")));
 
         var box = el("div", "cf-receipt");
-        [["workspace_id", response.workspace_id],
+        var receiptRows = [["workspace_id", response.workspace_id],
          ["run_id", response.run_id],
-         ["transaction_id", response.transaction_id],
-         ["completion_target", response.completion_target],
-         ["repair_budget", response.repair_budget]].forEach(function (kv) {
+         ["transaction_id", response.transaction_id]];
+        if (response.execution_authorized === true) {
+            receiptRows.push(["completion_target", response.completion_target]);
+            receiptRows.push(["repair_budget", response.repair_budget]);
+        }
+        receiptRows.forEach(function (kv) {
             var line = el("div");
             line.appendChild(el("span", "k", kv[0] + "  "));
             line.appendChild(el("span", null, String(kv[1])));
@@ -1589,7 +1622,8 @@
         var next = el("p", "cf-next");
         next.appendChild(el("span", null, t("cf_next")));
         var firstAction = response.first_action || {};
-        next.appendChild(el("code", null, String(response.completion_target) + " · " +
+        next.appendChild(el("code", null,
+            (response.execution_authorized === true ? "finalized_local · " : "manual continuation · ") +
             String(firstAction.reason_code || firstAction.effect_kind || "initialized")));
         cfBody.appendChild(next);
 
@@ -1607,7 +1641,11 @@
         close.addEventListener("click", function () { overlay.hidden = true; });
         actions.appendChild(close);
         cfBody.appendChild(actions);
-        cfBody.appendChild(el("p", "cf-note", t("cf_note")));
+        cfBody.appendChild(el(
+            "p",
+            "cf-note",
+            t(response.execution_authorized === true ? "cf_note" : "cf_note_manual")
+        ));
     }
 
     function paintError(reasonCode) {

@@ -1104,14 +1104,9 @@ class RuntimeHostService:
             )
         status = result.status
         if status == "commit_outcome_unknown":
-            refreshed = initialize_or_open_runtime(
-                self.workspace,
-                adapter_loader=self._adapter_loader,
-            )
-            if refreshed.action.action_kind != "deterministic" or (
-                refreshed.action.effect_kind != "invocation_accept_or_fail"
-            ):
-                raise RuntimeHostError("runtime_action_stale")
+            # Resolve the exact acceptance identity through the owning service
+            # before refreshing action classification.  If the first commit
+            # succeeded, this call returns the receipt replay for that commit.
             if spec.owner_kind == "source":
                 result = IntakeService(self.workspace).submit_source(relative_request)
             elif spec.owner_kind == "proposal":

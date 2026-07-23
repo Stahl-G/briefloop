@@ -11,7 +11,7 @@
   "license": "MIT",
   "production_assets": {
     "THIRD_PARTY_NOTICES.txt_sha256": "0331d187f4f3fa0f5618eded51d1156845e118fd86c59610d0fc60c009ea6ecc",
-    "app.js_sha256": "ebab9ca43836d9663d379393d2a90168e69b408c0bbb087ba3719684ab606e4d",
+    "app.js_sha256": "55bcd7dec5a09a578fa3d9ea8277354e451228dc6a7a99560b4899e0c00ae692",
     "index.html_sha256": "df55e545d07f2f88adf14d51af895978d998fa8ceba53bb613cf5bcd05fea45c",
     "style.css_sha256": "5f612588384dbf8afa84829c4fb2b252ecb0f3ec0899022bdf52ff11547463ff"
   }

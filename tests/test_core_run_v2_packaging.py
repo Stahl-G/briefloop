@@ -248,10 +248,10 @@ def test_non_editable_wheel_runs_complete_dormant_core_spine(
                 "completion_target": "finalized_local",
                 "repair_budget": 1,
                 "source_manifest_mode": "imported",
-                "source_metadata": [init_metadata],
+                "source_metadata": init_preview["source_metadata"],
                 "source_manifest": init_preview["source_manifest"],
                 "upload_session_id": "wheel-init-session",
-                "upload_bindings": init_bindings,
+                "upload_bindings": init_preview["routing_bindings"],
                 "human_confirmation": True,
             },
         })

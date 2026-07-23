@@ -138,10 +138,10 @@ def _authorized_body(
             "completion_target": "finalized_local",
             "repair_budget": 1,
             "source_manifest_mode": "imported",
-            "source_metadata": source_metadata,
+            "source_metadata": preview["source_metadata"],
             "source_manifest": preview["source_manifest"],
             "upload_session_id": "init-session",
-            "upload_bindings": bindings,
+            "upload_bindings": preview["routing_bindings"],
         }
     )
     return body
@@ -165,6 +165,9 @@ def test_committed_submission_creates_runnable_workspace_and_real_receipt(
     )
     assert response["transaction_id"] == expected_receipt_id
     assert response["committed_revision"] >= 1
+    assert response["execution_authorized"] is False
+    assert response["completion_target"] is None
+    assert response["repair_budget"] is None
     receipt = response["receipt"]
     assert receipt["transaction_id"] == expected_receipt_id
     assert receipt["run_id"] == response["run_id"]
@@ -193,6 +196,9 @@ def test_authorized_submission_freezes_manifest_and_returns_first_action(
 
     workspace = tmp_path / "authorized-ws"
     assert response["next_action"]["effect_kind"] == "doctor_check"
+    assert response["execution_authorized"] is True
+    assert response["completion_target"] == "finalized_local"
+    assert response["repair_budget"] == 1
     assert (workspace / "input" / "execution-source-manifest.json").is_file()
     config = yaml.safe_load((workspace / "config.yaml").read_text(encoding="utf-8"))
     authorization = config["controlstore_v2"]["execution_authorization"]
@@ -224,6 +230,13 @@ def test_source_manifest_preview_is_server_canonical_and_zero_workspace_write(
     assert preview["ok"] is True
     assert preview["member_count"] == 1
     assert len(str(preview["source_manifest_sha256"])) == 64
+    assert preview["routing_bindings"] == payload["upload_bindings"]
+    observed = preview["source_preview"][0]
+    assert observed["observed_filename"] == "source-000.txt"
+    assert observed["observed_sha256"] == payload["source_metadata"][0][
+        "expected_content_sha256"
+    ]
+    assert observed["byte_count"] == len(b"public source 0\n")
     assert not (tmp_path / "authorized-ws").exists()
 
     bindings = payload["upload_bindings"]
@@ -329,14 +342,22 @@ def test_authorized_25_member_manifest_preserves_url_and_incident_semantics(
     assert stored["members"][14]["opened_at"] == "2026-07-21T00:00:00Z"
 
 
-def test_generated_manifest_ids_are_server_stable_across_random_handles(
+@pytest.mark.parametrize("member_count", [2, 25, 256])
+def test_generated_manifest_maps_every_member_once_with_stable_server_ids(
     tmp_path: Path,
+    member_count: int,
 ) -> None:
-    manifests: list[object] = []
-    for suffix in ("a", "b"):
+    projections: list[list[tuple[str, str, str, str]]] = []
+    for suffix, reverse in (("a", False), ("b", True)):
         submitter = InitWebSubmitter(base_dir=tmp_path / suffix)
         uploads = []
-        for filename, content in (("zeta.txt", b"zeta"), ("alpha.txt", b"alpha")):
+        inputs = [
+            (f"source-{index:03d}.txt", f"content-{index:03d}".encode())
+            for index in range(member_count)
+        ]
+        if reverse:
+            inputs.reverse()
+        for filename, content in inputs:
             uploads.append(
                 submitter.stage_upload(
                     session_id="session",
@@ -349,7 +370,6 @@ def test_generated_manifest_ids_are_server_stable_across_random_handles(
             {
                 "title": upload["filename"],
                 "published_at": None,
-                "retrieved_at": "2026-07-23T00:00:00Z",
             }
             for upload in uploads
         ]
@@ -364,13 +384,157 @@ def test_generated_manifest_ids_are_server_stable_across_random_handles(
                 ],
             },
         )
-        manifests.append(preview["source_manifest"])
-    assert manifests[0] == manifests[1]
-    assert [item["source_id"] for item in manifests[0]["members"]] == [
+        assert len(preview["routing_bindings"]) == member_count
+        assert len({item["upload_handle"] for item in preview["routing_bindings"]}) == member_count
+        projections.append(
+            [
+                (
+                    item["source_id"],
+                    item["input_path"],
+                    item["title"],
+                    item["content_sha256"],
+                )
+                for item in preview["source_manifest"]["members"]
+            ]
+        )
+        assert all(
+            item["published_at"] is None
+            for item in preview["source_manifest"]["members"]
+        )
+    assert projections[0] == projections[1]
+    assert [item[0] for item in projections[0]] == [
+        f"SRC-INIT-{index:03d}" for index in range(1, member_count + 1)
+    ]
+
+
+@pytest.mark.parametrize(
+    ("forbidden_key", "value"),
+    [
+        ("source_id", "SRC-CLIENT-001"),
+        ("input_path", "input/client.txt"),
+        ("locator", {"kind": "file", "path": "input/client.txt"}),
+        ("content_sha256", "0" * 64),
+        ("expected_content_sha256", "0" * 64),
+        ("retrieved_at", "2026-07-23T00:00:00Z"),
+        ("origin_type", "uploaded_file"),
+    ],
+)
+def test_generated_manifest_rejects_imported_or_server_derived_fields(
+    tmp_path: Path,
+    forbidden_key: str,
+    value: object,
+) -> None:
+    submitter = InitWebSubmitter(base_dir=tmp_path)
+    staged = submitter.stage_upload(
+        session_id="session",
+        filename="source.txt",
+        stream=BytesIO(b"source"),
+        declared_length=6,
+    )
+    metadata: dict[str, object] = {"title": "Source", forbidden_key: value}
+
+    with pytest.raises(SubmissionError, match="init_web_source_manifest_invalid"):
+        submitter.preview_source_manifest(
+            session_id="session",
+            body={
+                "source_manifest_mode": "generated",
+                "source_metadata": [metadata],
+                "upload_bindings": [
+                    {
+                        "metadata_index": 0,
+                        "upload_handle": staged["upload_handle"],
+                    }
+                ],
+            },
+        )
+
+
+def test_generated_preview_routing_is_reused_for_exact_first_commit(
+    tmp_path: Path,
+) -> None:
+    submitter = InitWebSubmitter(base_dir=tmp_path)
+    uploads = [
+        submitter.stage_upload(
+            session_id="session",
+            filename=filename,
+            stream=BytesIO(content),
+            declared_length=len(content),
+        )
+        for filename, content in (("zeta.txt", b"zeta"), ("alpha.txt", b"alpha"))
+    ]
+    preview = submitter.preview_source_manifest(
+        session_id="session",
+        body={
+            "source_manifest_mode": "generated",
+            "source_metadata": [
+                {"title": upload["filename"], "published_at": None}
+                for upload in uploads
+            ],
+            "upload_bindings": [
+                {
+                    "metadata_index": index,
+                    "upload_handle": upload["upload_handle"],
+                }
+                for index, upload in enumerate(uploads)
+            ],
+        },
+    )
+    body = _body(
+        "REQ-GENERATED-COMMIT",
+        "generated-ws",
+        completion_target="finalized_local",
+        repair_budget=1,
+        source_manifest_mode="generated",
+        source_metadata=preview["source_metadata"],
+        source_manifest=preview["source_manifest"],
+        upload_session_id="session",
+        upload_bindings=preview["routing_bindings"],
+    )
+
+    response = _submit_ok(submitter, body)
+
+    assert response["execution_authorized"] is True
+    stored = json.loads(
+        (tmp_path / "generated-ws" / "input/execution-source-manifest.json").read_text()
+    )
+    assert stored == preview["source_manifest"]
+    assert [member["source_id"] for member in stored["members"]] == [
         "SRC-INIT-001",
         "SRC-INIT-002",
     ]
-    assert all(item["published_at"] is None for item in manifests[0]["members"])
+
+
+def test_imported_manifest_expected_hash_must_match_staged_observation(
+    tmp_path: Path,
+) -> None:
+    submitter = InitWebSubmitter(base_dir=tmp_path)
+    staged = submitter.stage_upload(
+        session_id="session",
+        filename="source.txt",
+        stream=BytesIO(b"source"),
+        declared_length=6,
+    )
+    metadata = {
+        "source_id": "SRC-001",
+        "expected_content_sha256": "0" * 64,
+        "title": "Source",
+        "retrieved_at": "2026-07-23T00:00:00Z",
+    }
+
+    with pytest.raises(SubmissionError, match="init_web_source_hash_mismatch"):
+        submitter.preview_source_manifest(
+            session_id="session",
+            body={
+                "source_manifest_mode": "imported",
+                "source_metadata": [metadata],
+                "upload_bindings": [
+                    {
+                        "metadata_index": 0,
+                        "upload_handle": staged["upload_handle"],
+                    }
+                ],
+            },
+        )
 
 
 def test_browser_hash_rewrite_fails_before_store_commit(tmp_path: Path) -> None:

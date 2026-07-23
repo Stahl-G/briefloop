@@ -219,11 +219,13 @@ class InitWebSubmitter:
         }:
             raise SubmissionError("submission_source_manifest_invalid", 422)
         try:
-            confirmed, ordered_uploads = self._staging.canonical_manifest_details(
+            confirmed, ordered_uploads, ordered_metadata = (
+                self._staging.canonical_manifest_details(
                 session_id=session_id,
                 mode=body.get("source_manifest_mode"),
                 source_metadata=body.get("source_metadata"),
                 upload_bindings=body.get("upload_bindings"),
+                )
             )
         except InitWebStagingError as exc:
             raise SubmissionError(str(exc), 422) from exc
@@ -233,6 +235,14 @@ class InitWebSubmitter:
             "source_manifest": canonical,
             "source_manifest_sha256": sha256_hex(canonical_json_bytes(canonical)),
             "member_count": len(confirmed.members),
+            "source_metadata": list(ordered_metadata),
+            "routing_bindings": [
+                {
+                    "metadata_index": index,
+                    "upload_handle": staged.handle,
+                }
+                for index, staged in enumerate(ordered_uploads)
+            ],
             "source_preview": [
                 {
                     "source_id": member.source_id,
@@ -248,6 +258,8 @@ class InitWebSubmitter:
                     "opened_at": member.opened_at,
                     "resolved_at": member.resolved_at,
                     "content_media_type": member.content_media_type,
+                    "observed_filename": staged.filename,
+                    "observed_sha256": staged.sha256,
                     "byte_count": staged.byte_count,
                 }
                 for member, staged in zip(
@@ -310,6 +322,10 @@ class InitWebSubmitter:
         initialized = WorkspaceBootstrap(target).initialize_runnable_codex(
             expected_adapter_loader=self._adapter_loader
         )
+        authorizations = initialized.verified.snapshot.run_execution_authorizations
+        if len(authorizations) > 1:
+            raise SubmissionError("control_store_integrity_invalid", 500)
+        authorization = authorizations[0] if authorizations else None
         return {
             "ok": True,
             "status": status,
@@ -329,8 +345,13 @@ class InitWebSubmitter:
                 "reason_code": initialized.action.reason_code,
             },
             "next_command": f"briefloop runtime continue --workspace {target}",
-            "completion_target": "finalized_local",
-            "repair_budget": 1,
+            "execution_authorized": authorization is not None,
+            "completion_target": (
+                authorization.completion_target if authorization is not None else None
+            ),
+            "repair_budget": (
+                authorization.repair_budget if authorization is not None else None
+            ),
         }
 
     @staticmethod

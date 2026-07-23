@@ -25,7 +25,7 @@ from multi_agent_brief.product.review_session.serialization import canonical_jso
 from .submit import InitWebSubmitter, SubmissionError, preview_output_contract
 
 SESSION_TOKEN_HEADER = "X-BriefLoop-Session-Token"
-MAX_JSON_BODY_BYTES = 64 * 1024
+MAX_JSON_BODY_BYTES = 512 * 1024
 MAX_UPLOAD_BODY_BYTES = 16 * 1024 * 1024
 CONTENT_SECURITY_POLICY = (
     "default-src 'none'; script-src 'self'; style-src 'self'; "
@@ -142,14 +142,13 @@ def create_init_web_server(
         progress = response.get("progress")
         action_payload = action if isinstance(action, dict) else {}
         progress_payload = progress if isinstance(progress, dict) else {}
-        return {
+        friendly = {
             "ok": True,
             "status": response.get("status"),
             "workspace_id": response.get("workspace_id"),
             "run_id": response.get("run_id"),
             "transaction_id": response.get("transaction_id"),
-            "completion_target": "finalized_local",
-            "repair_budget": 1,
+            "execution_authorized": response.get("execution_authorized") is True,
             "first_action": {
                 "action_kind": action_payload.get("action_kind"),
                 "effect_kind": action_payload.get("effect_kind"),
@@ -164,6 +163,10 @@ def create_init_web_server(
                 "reason_code": progress_payload.get("reason_code"),
             },
         }
+        if response.get("execution_authorized") is True:
+            friendly["completion_target"] = response.get("completion_target")
+            friendly["repair_budget"] = response.get("repair_budget")
+        return friendly
 
     def _shutdown_soon() -> None:
         import threading

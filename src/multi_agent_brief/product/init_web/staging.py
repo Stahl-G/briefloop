@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from datetime import datetime, timezone
 import hashlib
 import json
 import os
@@ -40,6 +41,7 @@ class StagedUpload:
     sha256: str
     device: int
     inode: int
+    observed_at: str
 
 
 class InitWebStaging:
@@ -106,6 +108,10 @@ class InitWebStaging:
                 sha256=digest.hexdigest(),
                 device=target.stat().st_dev,
                 inode=target.stat().st_ino,
+                observed_at=datetime.now(timezone.utc)
+                .replace(microsecond=0)
+                .isoformat()
+                .replace("+00:00", "Z"),
             )
             self._uploads[handle] = staged
             self._session_sizes[session_id] = current_total + observed
@@ -138,11 +144,13 @@ class InitWebStaging:
     ) -> None:
         """Regenerate and materialize the exact server-confirmed source set."""
 
-        regenerated, ordered_uploads = self._canonical_manifest_and_uploads(
+        regenerated, ordered_uploads, _ordered_metadata = (
+            self._canonical_manifest_and_uploads(
             session_id=session_id,
             mode=mode,
             source_metadata=source_metadata,
             upload_bindings=upload_bindings,
+            )
         )
         if regenerated != manifest:
             raise InitWebStagingError("init_web_source_manifest_invalid")
@@ -221,7 +229,7 @@ class InitWebStaging:
     ) -> ExecutionSourceManifest:
         """Derive the only canonical manifest from semantic metadata and staging."""
 
-        manifest, _uploads = self._canonical_manifest_and_uploads(
+        manifest, _uploads, _metadata = self._canonical_manifest_and_uploads(
             session_id=session_id,
             mode=mode,
             source_metadata=source_metadata,
@@ -236,14 +244,22 @@ class InitWebStaging:
         mode: str,
         source_metadata: object,
         upload_bindings: object,
-    ) -> tuple[ExecutionSourceManifest, tuple[StagedUpload, ...]]:
-        manifest, uploads = self._canonical_manifest_and_uploads(
+    ) -> tuple[
+        ExecutionSourceManifest,
+        tuple[StagedUpload, ...],
+        tuple[dict[str, object], ...],
+    ]:
+        manifest, uploads, metadata = self._canonical_manifest_and_uploads(
             session_id=session_id,
             mode=mode,
             source_metadata=source_metadata,
             upload_bindings=upload_bindings,
         )
-        return manifest, tuple(uploads)
+        return (
+            manifest,
+            tuple(uploads),
+            tuple(metadata),
+        )
 
     def _canonical_manifest_and_uploads(
         self,
@@ -252,7 +268,11 @@ class InitWebStaging:
         mode: str,
         source_metadata: object,
         upload_bindings: object,
-    ) -> tuple[ExecutionSourceManifest, list[StagedUpload]]:
+    ) -> tuple[
+        ExecutionSourceManifest,
+        list[StagedUpload],
+        list[dict[str, object]],
+    ]:
         if mode not in {"imported", "generated"} or not isinstance(
             source_metadata, list
         ):
@@ -276,7 +296,7 @@ class InitWebStaging:
         if set(by_index) != set(range(len(source_metadata))):
             raise InitWebStagingError("init_web_source_bindings_invalid")
 
-        semantic_keys = {
+        imported_keys = {
             "source_id",
             "expected_content_sha256",
             "title",
@@ -296,9 +316,19 @@ class InitWebStaging:
             "opened_at",
             "resolved_at",
         }
+        generated_keys = {
+            "title",
+            "publisher",
+            "published_at",
+            "original_url",
+            "document_kind",
+            "opened_at",
+            "resolved_at",
+        }
         rows: list[tuple[dict[str, object], StagedUpload, str]] = []
         for index, raw in enumerate(source_metadata):
-            if type(raw) is not dict or not set(raw).issubset(semantic_keys):
+            allowed_keys = imported_keys if mode == "imported" else generated_keys
+            if type(raw) is not dict or not set(raw).issubset(allowed_keys):
                 raise InitWebStagingError("init_web_source_manifest_invalid")
             metadata = dict(raw)
             source_id = metadata.get("source_id")
@@ -307,7 +337,7 @@ class InitWebStaging:
                     raise InitWebStagingError("init_web_source_manifest_invalid")
                 if metadata.get("expected_content_sha256") != by_index[index].sha256:
                     raise InitWebStagingError("init_web_source_hash_mismatch")
-            elif source_id is not None:
+            elif source_id is not None or "expected_content_sha256" in metadata:
                 raise InitWebStagingError("init_web_source_manifest_invalid")
             stable = json.dumps(
                 metadata,
@@ -321,10 +351,38 @@ class InitWebStaging:
             if source_ids != sorted(set(source_ids)):
                 raise InitWebStagingError("init_web_source_manifest_invalid")
         else:
-            keys = [(row[2], row[1].filename, row[1].sha256) for row in rows]
+            keys = [
+                (row[2], row[1].filename, row[1].sha256, row[1].byte_count)
+                for row in rows
+            ]
             if len(keys) != len(set(keys)):
                 raise InitWebStagingError("init_web_source_manifest_invalid")
-            rows.sort(key=lambda row: (row[2], row[1].filename, row[1].sha256))
+            rows.sort(
+                key=lambda row: (
+                    row[2],
+                    row[1].filename,
+                    row[1].sha256,
+                    row[1].byte_count,
+                )
+            )
+
+        if mode == "generated":
+            rows = [
+                (
+                    {
+                        "title": metadata.get("title") or staged.filename,
+                        "publisher": metadata.get("publisher"),
+                        "published_at": metadata.get("published_at"),
+                        "original_url": metadata.get("original_url"),
+                        "document_kind": metadata.get("document_kind"),
+                        "opened_at": metadata.get("opened_at"),
+                        "resolved_at": metadata.get("resolved_at"),
+                    },
+                    staged,
+                    stable,
+                )
+                for metadata, staged, stable in rows
+            ]
 
         members: list[dict[str, object]] = []
         for ordinal, (metadata, staged, _stable) in enumerate(rows, start=1):
@@ -356,7 +414,7 @@ class InitWebStaging:
                     "title": metadata.get("title") or staged.filename,
                     "publisher": metadata.get("publisher"),
                     "published_at": metadata.get("published_at"),
-                    "retrieved_at": metadata.get("retrieved_at"),
+                    "retrieved_at": metadata.get("retrieved_at") or staged.observed_at,
                     "source_category": metadata.get("source_category", "other"),
                     "retrieval_source_type": metadata.get(
                         "retrieval_source_type", "local_file"
@@ -385,7 +443,11 @@ class InitWebStaging:
             ):
                 descriptor = self._open_verified(member.content_sha256, staged)
                 os.close(descriptor)
-            return manifest, [row[1] for row in rows]
+            return (
+                manifest,
+                [row[1] for row in rows],
+                [dict(row[0]) for row in rows],
+            )
         except InitWebStagingError:
             raise
         except Exception as exc:

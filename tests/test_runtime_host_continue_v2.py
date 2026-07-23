@@ -96,10 +96,10 @@ def _authorized_workspace(tmp_path: Path) -> Path:
             "completion_target": "finalized_local",
             "repair_budget": 1,
             "source_manifest_mode": "imported",
-            "source_metadata": [metadata],
+            "source_metadata": preview["source_metadata"],
             "source_manifest": preview["source_manifest"],
             "upload_session_id": "init-session",
-            "upload_bindings": bindings,
+            "upload_bindings": preview["routing_bindings"],
         }
     )
     status, response = submitter.submit(body)
@@ -277,6 +277,39 @@ def test_persistent_proposal_accept_unknown_returns_typed_attention(
 
     assert result.status == "needs_attention"
     assert result.reason_code == "commit_outcome_unknown"
+
+
+def test_committed_proposal_accept_unknown_replays_identity_before_refresh(
+    tmp_path: Path, monkeypatch
+) -> None:
+    workspace = _authorized_workspace(tmp_path)
+    service = _service(workspace)
+    required = service.continue_authorized()
+    assert required.status == "role_work_required"
+    _write_current_role_proposal(workspace, required)
+    original = IntakeService.submit_proposal
+    calls: list[tuple[str, str]] = []
+    committed_transaction_id: str | None = None
+
+    def _commit_then_unknown(instance, lane, request_path):
+        nonlocal committed_transaction_id
+        calls.append((lane, request_path))
+        result = original(instance, lane, request_path)
+        if len(calls) == 1:
+            assert result.receipt is not None
+            committed_transaction_id = result.receipt.transaction_id
+            return SimpleNamespace(status="commit_outcome_unknown")
+        return result
+
+    monkeypatch.setattr(IntakeService, "submit_proposal", _commit_then_unknown)
+
+    result = service.continue_authorized()
+
+    assert len(calls) == 2
+    assert calls[0] == calls[1]
+    assert committed_transaction_id is not None
+    assert committed_transaction_id in result.trace.transaction_ids
+    assert result.status == "role_work_required"
 
 
 def test_finalize_continuation_uses_core_effect_without_reader_html_hook(
