@@ -101,6 +101,7 @@ def test_non_editable_wheel_runs_complete_dormant_core_spine(
         from multi_agent_brief.core_run_v2.checkout import build_checkout_revision
         from multi_agent_brief.core_run_v2.publication import CheckoutPublicationEngine
         from multi_agent_brief.core_run_v2.policy import REQUIRED_AUDITOR_GATES
+        from multi_agent_brief.core_run_v2.verifier import CoreRunDomainVerifier
         from multi_agent_brief.product.init_web.submit import (
             SUBMISSION_SCHEMA,
             InitWebSubmitter,
@@ -391,24 +392,70 @@ def test_non_editable_wheel_runs_complete_dormant_core_spine(
             ))
             if current_result.status == "finalized_local":
                 break
+            if (
+                sys.platform == "win32"
+                and current_result.status == "needs_attention"
+            ):
+                break
             assert current_result.status == "role_work_required", sequence
             write_role_proposal(current_result)
             current_result = init_service.continue_authorized()
         else:
             raise AssertionError("packaged init run did not reach finalized_local")
-        assert current_result.reason_code == "local_finalization_complete"
-        assert current_result.trace.next_action.effect_kind == "finalized_local"
-        assert [item[0] for item in sequence] == [
-            "role_work_required",
-            "role_work_required",
-            "role_work_required",
-            "role_work_required",
-            "role_work_required",
-            "role_work_required",
-            "finalized_local",
-        ]
-        with SQLiteControlStore.open(init_web_workspace / "briefloop.db") as store:
-            init_snapshot = store.load_snapshot(response["run_id"])
+
+        if sys.platform == "win32":
+            assert [item[0] for item in sequence] == [
+                "role_work_required",
+                "role_work_required",
+                "role_work_required",
+                "needs_attention",
+            ]
+            assert [item[1] for item in sequence] == [
+                "role_work_required",
+                "role_work_required",
+                "role_work_required",
+                "checkout_publication_unsupported",
+            ]
+            assert current_result.trace.next_action.effect_kind != "finalized_local"
+            blocked_action_fingerprint = sequence[-1][2]
+            with SQLiteControlStore.open(init_web_workspace / "briefloop.db") as store:
+                verified_before_retry = CoreRunDomainVerifier().verify(
+                    store,
+                    response["run_id"],
+                )
+            init_snapshot = verified_before_retry.snapshot
+            blocked_revision = init_snapshot.store_revision
+
+            retry_result = init_service.continue_authorized()
+            assert retry_result.status == "needs_attention"
+            assert retry_result.reason_code == "checkout_publication_unsupported"
+            assert (
+                retry_result.trace.next_action.action_fingerprint
+                == blocked_action_fingerprint
+            )
+            with SQLiteControlStore.open(init_web_workspace / "briefloop.db") as store:
+                verified_after_retry = CoreRunDomainVerifier().verify(
+                    store,
+                    response["run_id"],
+                )
+            assert verified_after_retry.snapshot.store_revision == blocked_revision
+        else:
+            assert current_result.reason_code == "local_finalization_complete"
+            assert current_result.trace.next_action.effect_kind == "finalized_local"
+            assert [item[0] for item in sequence] == [
+                "role_work_required",
+                "role_work_required",
+                "role_work_required",
+                "role_work_required",
+                "role_work_required",
+                "role_work_required",
+                "finalized_local",
+            ]
+            with SQLiteControlStore.open(init_web_workspace / "briefloop.db") as store:
+                init_snapshot = store.load_snapshot(response["run_id"])
+
+        if sys.platform == "win32":
+            assert not init_snapshot.finalizations
         assert not init_snapshot.package_ready_records
         assert not init_snapshot.approvals
         assert not init_snapshot.delivery_authorizations
