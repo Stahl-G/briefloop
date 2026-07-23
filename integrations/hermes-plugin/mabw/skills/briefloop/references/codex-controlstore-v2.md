@@ -28,6 +28,30 @@ briefloop run --workspace <workspace> --runtime codex
 The command emits one strict `CoreRunNextAction`. It does not emit a legacy
 handoff and does not authorize work beyond that action.
 
+The kit written during init is verified Store-bound adapter material for
+reopened/future sessions. It does not hot-load itself into a Codex process that
+was already running. An already-active controller that invoked `init --web`
+continues using the protocol it already loaded.
+
+### Authorized local continuation
+
+When the Store contains the M2 `RunExecutionAuthorization` for
+`completion_target=finalized_local`, use:
+
+```bash
+briefloop runtime continue --workspace <workspace>
+```
+
+The command re-verifies Store and a fresh action before every effect. It may
+commit the parameter-free authorized source pack and other existing
+deterministic effects. `role_work_required` names the exact envelope whose
+scratch proposal the current session must produce; call the command again
+after proposal validation. `proposal_invalid`, `needs_human`, and
+`needs_attention` are stop/attention results. `finalized_local` is terminal and
+never implies approval, packaging, delivery, or repair. Runs without the
+authorization retain the granular protocol below and receive a zero-write
+unsupported/manual result from `runtime continue`.
+
 ## 2. Snapshot The Exact Action
 
 Before executing an action, write the exact command output to a regular file

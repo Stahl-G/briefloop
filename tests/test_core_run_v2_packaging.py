@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import os
-from pathlib import Path
+from pathlib import Path, PureWindowsPath
 import shutil
 import subprocess
 import sys
@@ -10,6 +10,27 @@ import zipfile
 
 
 ROOT = Path(__file__).parents[1]
+
+
+def _wheel_e2e_command(
+    *,
+    script_path: os.PathLike[str],
+    workspace: os.PathLike[str],
+    installed: os.PathLike[str],
+) -> list[str]:
+    return [sys.executable, str(script_path), str(workspace), str(installed)]
+
+
+def test_wheel_e2e_command_uses_a_script_file_on_windows() -> None:
+    script_path = PureWindowsPath(r"C:\tmp\wheel_e2e.py")
+    command = _wheel_e2e_command(
+        script_path=script_path,
+        workspace=PureWindowsPath(r"C:\tmp\workspace"),
+        installed=PureWindowsPath(r"C:\tmp\installed"),
+    )
+
+    assert command[1] == str(script_path)
+    assert "-c" not in command
 
 
 def test_non_editable_wheel_runs_complete_dormant_core_spine(
@@ -1034,16 +1055,16 @@ def test_non_editable_wheel_runs_complete_dormant_core_spine(
         }, sort_keys=True))
         """
     )
+    script_path = tmp_path / "wheel_core_e2e.py"
+    script_path.write_bytes(script.encode("utf-8"))
     env = dict(os.environ)
     env["PYTHONPATH"] = str(installed)
     run = subprocess.run(
-        [
-            sys.executable,
-            "-c",
-            script,
-            str(tmp_path / "wheel-core-workspace"),
-            str(installed),
-        ],
+        _wheel_e2e_command(
+            script_path=script_path,
+            workspace=tmp_path / "wheel-core-workspace",
+            installed=installed,
+        ),
         cwd=tmp_path,
         env=env,
         check=False,
