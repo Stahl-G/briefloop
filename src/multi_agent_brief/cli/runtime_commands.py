@@ -60,6 +60,7 @@ def register(subparsers: argparse._SubParsersAction) -> None:
         "invocation-accept",
         "invocation-fail",
         "apply",
+        "continue",
     ):
         command = actions.add_parser(
             action,
@@ -87,6 +88,12 @@ def register(subparsers: argparse._SubParsersAction) -> None:
                     "proposal_missing",
                     "proposal_invalid",
                 ),
+            )
+        if action == "continue":
+            command.add_argument(
+                "--trace",
+                action="store_true",
+                help="Include the read-only Store action trace.",
             )
 
 
@@ -172,6 +179,7 @@ def handle(args: argparse.Namespace) -> int:
         "invocation-accept",
         "invocation-fail",
         "apply",
+        "continue",
     }:
         from multi_agent_brief.runtime_host_v2.codex import (
             workspace_codex_adapter_loader,
@@ -200,6 +208,12 @@ def handle(args: argparse.Namespace) -> int:
                 payload = service.next_action().model_dump(
                     mode="json", exclude_unset=False
                 )
+            elif args.runtime_action == "continue":
+                payload = service.continue_authorized().model_dump(
+                    mode="json", exclude_unset=False
+                )
+                if not bool(getattr(args, "trace", False)):
+                    payload.pop("trace", None)
             elif args.runtime_action == "diagnose":
                 payload = service.diagnose().model_dump(
                     mode="json", exclude_unset=False

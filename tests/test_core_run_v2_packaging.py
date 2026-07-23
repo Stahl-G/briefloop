@@ -83,6 +83,11 @@ def test_non_editable_wheel_runs_complete_dormant_core_spine(
             SUBMISSION_SCHEMA,
             InitWebSubmitter,
         )
+        from multi_agent_brief.product.init_web.staging import (
+            MAX_SOURCE_AGGREGATE_BYTES as INIT_MAX_SOURCE_AGGREGATE_BYTES,
+            MAX_SOURCE_MEMBER_BYTES as INIT_MAX_SOURCE_MEMBER_BYTES,
+            MAX_SOURCE_MEMBERS as INIT_MAX_SOURCE_MEMBERS,
+        )
         from multi_agent_brief.runtime_host_v2.service import (
             _ROLE_OUTPUTS,
             _strict_proposal_violations,
@@ -121,6 +126,9 @@ def test_non_editable_wheel_runs_complete_dormant_core_spine(
         assert MAX_SOURCE_PACK_MEMBERS == 256
         assert MAX_SOURCE_MEMBER_BYTES == 16 * 1024 * 1024
         assert MAX_SOURCE_PACK_BYTES == 256 * 1024 * 1024
+        assert INIT_MAX_SOURCE_MEMBERS == MAX_SOURCE_PACK_MEMBERS
+        assert INIT_MAX_SOURCE_MEMBER_BYTES == MAX_SOURCE_MEMBER_BYTES
+        assert INIT_MAX_SOURCE_AGGREGATE_BYTES == MAX_SOURCE_PACK_BYTES
         verifier_content = b"packaged exact source bytes\n"
         verifier_raw = b'{"packaged":true}\n'
         verifier_proposal = deepcopy(SourceProposal.full_example)
@@ -176,7 +184,38 @@ def test_non_editable_wheel_runs_complete_dormant_core_spine(
 
         init_web_root = workspace.parent / "init-web-wheel"
         init_web_root.mkdir()
-        status, response = InitWebSubmitter(base_dir=init_web_root).submit({
+        init_submitter = InitWebSubmitter(base_dir=init_web_root)
+        init_content = b"packaged init source\n"
+        init_upload = init_submitter.stage_upload(
+            session_id="wheel-init-session",
+            filename="source.txt",
+            stream=io.BytesIO(init_content),
+            declared_length=len(init_content),
+        )
+        init_path = "input/sources/001-source.txt"
+        init_member = {
+            "source_id": "SRC-WHEEL-INIT-001",
+            "input_path": init_path,
+            "content_sha256": hashlib.sha256(init_content).hexdigest(),
+            "content_media_type": "text/plain",
+            "origin_type": "uploaded_file",
+            "acquisition_method": "manual_upload",
+            "material_kind": "uploaded_file",
+            "provider": None,
+            "locator": {"kind": "file", "path": init_path},
+            "title": "Packaged init source",
+            "publisher": "Example publisher",
+            "published_at": "2026-07-22",
+            "retrieved_at": "2026-07-23T00:00:00Z",
+            "source_category": "other",
+            "retrieval_source_type": "local_file",
+            "underlying_evidence_type": "unknown",
+            "raw_underlying_evidence_type": None,
+            "document_kind": None,
+            "opened_at": None,
+            "resolved_at": None,
+        }
+        status, response = init_submitter.submit({
             "schema_version": SUBMISSION_SCHEMA,
             "request_id": "REQ-WHEEL-INIT-WEB-001",
             "payload": {
@@ -191,6 +230,17 @@ def test_non_editable_wheel_runs_complete_dormant_core_spine(
                     "web_search_mode": "disabled",
                     "output_extent": "balanced",
                 },
+                "completion_target": "finalized_local",
+                "repair_budget": 1,
+                "source_manifest": {
+                    "schema_version": "briefloop.execution_source_manifest.v2",
+                    "members": [init_member],
+                },
+                "upload_session_id": "wheel-init-session",
+                "upload_bindings": [{
+                    "input_path": init_path,
+                    "upload_handle": init_upload["upload_handle"],
+                }],
                 "human_confirmation": True,
             },
         })
@@ -204,6 +254,15 @@ def test_non_editable_wheel_runs_complete_dormant_core_spine(
                 "runtime", "next", "--workspace", str(init_web_workspace),
             ]) == 0
         assert json.loads(stream.getvalue())["run_id"] == response["run_id"]
+        stream = io.StringIO()
+        with redirect_stdout(stream):
+            assert main([
+                "runtime", "continue", "--workspace", str(init_web_workspace),
+            ]) == 0
+        continuation = json.loads(stream.getvalue())
+        assert continuation["status"] == "role_work_required"
+        assert continuation["current_stage"] == "scout"
+        assert "trace" not in continuation
 
         create_demo_workspace(workspace)
         run_id = "RUN-WHEEL-CORE-V2-001"

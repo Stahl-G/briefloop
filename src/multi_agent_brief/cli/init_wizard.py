@@ -5,13 +5,16 @@ import os
 import uuid
 from datetime import date
 from pathlib import Path
-from typing import Any, Callable
+from typing import TYPE_CHECKING, Any, Callable
 
 from multi_agent_brief.audience_memory import (
     build_default_audience_profile,
     profile_data_from_object,
 )
 from multi_agent_brief.workspace.init_profile import InitProfile
+
+if TYPE_CHECKING:
+    from multi_agent_brief.contracts.v2 import RunExecutionAuthorizationBootstrap
 
 try:
     from dotenv import load_dotenv
@@ -418,6 +421,7 @@ def create_workspace(
     force: bool = False,
     report_date_factory: Callable[[], date] = date.today,
     identity_factory: Callable[[], str] = _new_controlstore_identity,
+    execution_authorization: RunExecutionAuthorizationBootstrap | None = None,
 ) -> None:
     # Set decision mode based on source profile
     if profile.source_profile == "llm_decide":
@@ -439,6 +443,7 @@ def create_workspace(
         workspace_id=f"WS-{identity_factory()}",
         run_id=f"RUN-{identity_factory()}",
         report_date=report_date_factory(),
+        execution_authorization=execution_authorization,
     )
     lang = profile.interface_language
     files = {

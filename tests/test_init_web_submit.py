@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import json
+from io import BytesIO
+import hashlib
 import yaml
 
 from pathlib import Path
@@ -71,6 +73,81 @@ def _submit_ok(
     return response
 
 
+def _authorized_body(
+    submitter: InitWebSubmitter,
+    *,
+    request_id: str,
+    target: str,
+    members: int = 1,
+) -> dict[str, object]:
+    body = _body(request_id, target)
+    payload = body["payload"]
+    assert isinstance(payload, dict)
+    manifest_members: list[dict[str, object]] = []
+    bindings: list[dict[str, str]] = []
+    for index in range(members):
+        content = f"public source {index}\n".encode()
+        staged = submitter.stage_upload(
+            session_id="init-session",
+            filename=f"source-{index:03d}.txt",
+            stream=BytesIO(content),
+            declared_length=len(content),
+        )
+        source_id = f"SRC-INIT-{index + 1:03d}"
+        input_path = f"input/sources/{index + 1:03d}-source.txt"
+        incident = index == members - 1 and members > 1
+        manifest_members.append(
+            {
+                "source_id": source_id,
+                "input_path": input_path,
+                "content_sha256": hashlib.sha256(content).hexdigest(),
+                "content_media_type": "text/plain",
+                "origin_type": "uploaded_file",
+                "acquisition_method": "manual_upload",
+                "material_kind": "uploaded_file",
+                "provider": None,
+                "locator": {
+                    "kind": "web" if incident else "file",
+                    **(
+                        {"url": f"https://example.com/{index}"}
+                        if incident
+                        else {"path": input_path}
+                    ),
+                },
+                "title": f"Public source {index}",
+                "publisher": "Example publisher",
+                "published_at": None if incident else "2026-07-22",
+                "retrieved_at": "2026-07-23T00:00:00Z",
+                "source_category": "other",
+                "retrieval_source_type": "local_file",
+                "underlying_evidence_type": "unknown",
+                "raw_underlying_evidence_type": None,
+                "document_kind": "status_incident" if incident else None,
+                "opened_at": "2026-07-21T00:00:00Z" if incident else None,
+                "resolved_at": None,
+            }
+        )
+        bindings.append(
+            {
+                "input_path": input_path,
+                "upload_handle": str(staged["upload_handle"]),
+            }
+        )
+    payload.update(
+        {
+            "completion_target": "finalized_local",
+            "repair_budget": 1,
+            "source_manifest": {
+                "schema_version": "briefloop.execution_source_manifest.v2",
+                "members": manifest_members,
+            },
+            "upload_session_id": "init-session",
+            "upload_bindings": bindings,
+        }
+    )
+    return body
+
+
 def test_committed_submission_creates_runnable_workspace_and_real_receipt(
     tmp_path: Path,
     capsys: pytest.CaptureFixture[str],
@@ -101,6 +178,143 @@ def test_committed_submission_creates_runnable_workspace_and_real_receipt(
     action = json.loads(capsys.readouterr().out)
     assert action["run_id"] == response["run_id"]
     assert _revision(workspace) == revision_before
+
+
+def test_authorized_submission_freezes_manifest_and_returns_first_action(
+    tmp_path: Path,
+) -> None:
+    submitter = InitWebSubmitter(base_dir=tmp_path)
+    body = _authorized_body(
+        submitter,
+        request_id="REQ-AUTH0001",
+        target="authorized-ws",
+    )
+
+    response = _submit_ok(submitter, body)
+
+    workspace = tmp_path / "authorized-ws"
+    assert response["next_action"]["effect_kind"] == "doctor_check"
+    assert (workspace / "input" / "execution-source-manifest.json").is_file()
+    config = yaml.safe_load((workspace / "config.yaml").read_text(encoding="utf-8"))
+    authorization = config["controlstore_v2"]["execution_authorization"]
+    assert authorization["completion_target"] == "finalized_local"
+    assert authorization["source_manifest_member_count"] == 1
+
+
+def test_source_manifest_preview_is_server_canonical_and_zero_workspace_write(
+    tmp_path: Path,
+) -> None:
+    submitter = InitWebSubmitter(base_dir=tmp_path)
+    body = _authorized_body(
+        submitter,
+        request_id="REQ-PREVIEW01",
+        target="authorized-ws",
+    )
+    payload = body["payload"]
+    assert isinstance(payload, dict)
+
+    preview = submitter.preview_source_manifest(
+        session_id="init-session",
+        body={
+            "source_manifest": payload["source_manifest"],
+            "upload_bindings": payload["upload_bindings"],
+        },
+    )
+
+    assert preview["ok"] is True
+    assert preview["member_count"] == 1
+    assert len(str(preview["source_manifest_sha256"])) == 64
+    assert not (tmp_path / "authorized-ws").exists()
+
+    manifest = payload["source_manifest"]
+    assert isinstance(manifest, dict)
+    members = manifest["members"]
+    assert isinstance(members, list)
+    members[0]["content_sha256"] = "0" * 64
+    with pytest.raises(SubmissionError) as exc_info:
+        submitter.preview_source_manifest(
+            session_id="init-session",
+            body={
+                "source_manifest": manifest,
+                "upload_bindings": payload["upload_bindings"],
+            },
+        )
+    assert exc_info.value.error_code == "init_web_source_hash_mismatch"
+    assert not (tmp_path / "authorized-ws").exists()
+
+
+def test_authorized_replay_precedes_deleted_staging_and_handle_lookup(
+    tmp_path: Path,
+) -> None:
+    submitter = InitWebSubmitter(base_dir=tmp_path)
+    body = _authorized_body(
+        submitter,
+        request_id="REQ-AUTH0002",
+        target="authorized-ws",
+    )
+    first = _submit_ok(submitter, body)
+    submitter.close()
+
+    restarted = InitWebSubmitter(base_dir=tmp_path)
+    payload = body["payload"]
+    assert isinstance(payload, dict)
+    bindings = payload["upload_bindings"]
+    assert isinstance(bindings, list)
+    bindings[0]["upload_handle"] = "upload-routing-handle-can-change"
+    second = _submit_ok(restarted, body)
+
+    assert second["status"] == "replayed"
+    assert second["receipt"] == first["receipt"]
+
+
+def test_authorized_changed_semantic_manifest_conflicts_before_source_reads(
+    tmp_path: Path,
+) -> None:
+    submitter = InitWebSubmitter(base_dir=tmp_path)
+    body = _authorized_body(
+        submitter,
+        request_id="REQ-AUTH0003",
+        target="authorized-ws",
+    )
+    _submit_ok(submitter, body)
+    submitter.close()
+    payload = body["payload"]
+    assert isinstance(payload, dict)
+    manifest = payload["source_manifest"]
+    assert isinstance(manifest, dict)
+    members = manifest["members"]
+    assert isinstance(members, list)
+    members[0]["title"] = "Changed confirmed title"
+
+    with pytest.raises(SubmissionError) as exc_info:
+        InitWebSubmitter(base_dir=tmp_path).submit(body)
+
+    assert exc_info.value.error_code == "submission_replay_conflict"
+
+
+def test_authorized_25_member_manifest_preserves_url_and_incident_semantics(
+    tmp_path: Path,
+) -> None:
+    submitter = InitWebSubmitter(base_dir=tmp_path)
+    body = _authorized_body(
+        submitter,
+        request_id="REQ-AUTH0025",
+        target="authorized-ws",
+        members=25,
+    )
+
+    _submit_ok(submitter, body)
+
+    stored = json.loads(
+        (tmp_path / "authorized-ws" / "input" / "execution-source-manifest.json").read_text()
+    )
+    assert len(stored["members"]) == 25
+    assert stored["members"][-1]["locator"] == {
+        "kind": "web",
+        "url": "https://example.com/24",
+    }
+    assert stored["members"][-1]["document_kind"] == "status_incident"
+    assert stored["members"][-1]["opened_at"] == "2026-07-21T00:00:00Z"
 
 
 def test_kit_materialization_failure_never_commits_store(
@@ -247,7 +461,12 @@ def test_same_request_id_with_different_payload_conflicts_with_zero_writes(
     workspace = tmp_path / "web-ws"
     revision_before = _revision(workspace)
 
-    changed = _body("REQ-AAAA0004", "web-ws", raw_free_text="changed mind")
+    changed = _body("REQ-AAAA0004", "web-ws")
+    changed_payload = changed["payload"]
+    assert isinstance(changed_payload, dict)
+    changed_selections = changed_payload["selections"]
+    assert isinstance(changed_selections, dict)
+    changed_selections["task_objective"] = "Prepare a different confirmed brief."
     restarted = InitWebSubmitter(base_dir=tmp_path)
     with pytest.raises(SubmissionError) as exc_info:
         restarted.submit(changed)

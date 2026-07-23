@@ -108,6 +108,16 @@
             err_required: "还有必选项未完成：",
             err_pending: "请先处置每条 Agent 提议（接受或丢弃）。",
             err_output_contract_preview: "正在核验当前篇幅预算，请稍候。",
+            source_pack_title: "确认本地来源清单",
+            source_pack_note: "选择文件后，服务器计算哈希。你可以导入已有 ExecutionSourceManifest，或编辑下方规范清单；确认前不会写入工作区。",
+            source_files: "选择来源文件",
+            source_manifest_import: "导入清单（可选）",
+            source_manifest_edit: "规范来源清单",
+            source_manifest_validate: "由服务器校验并规范化",
+            source_uploading: "正在核验来源文件……",
+            source_validating: "服务器正在校验来源清单……",
+            source_ready: "来源文件与清单已逐项匹配",
+            err_source_pack: "请先选择来源文件并确认有效清单。",
             err_session: "缺少会话令牌：请使用初始化命令给出的完整链接打开本页。",
             status_ready: "可以确认创建。",
             status_fill: "完成必选项后即可创建。",
@@ -203,6 +213,16 @@
             err_required: "Missing required choices: ",
             err_pending: "Dispose of every agent proposal first (accept or discard).",
             err_output_contract_preview: "Validating the current report-amount budget…",
+            source_pack_title: "Confirm local source manifest",
+            source_pack_note: "The server hashes selected files. Import an existing ExecutionSourceManifest or edit the canonical manifest below; no workspace is written before confirmation.",
+            source_files: "Select source files",
+            source_manifest_import: "Import manifest (optional)",
+            source_manifest_edit: "Canonical source manifest",
+            source_manifest_validate: "Validate and canonicalize on server",
+            source_uploading: "Verifying source files…",
+            source_validating: "Server is validating the source manifest…",
+            source_ready: "Every manifest member matches one selected file",
+            err_source_pack: "Select source files and confirm a valid manifest first.",
             err_session: "Missing session token: open this page via the full link printed by the init command.",
             status_ready: "Ready to create.",
             status_fill: "Complete the required choices to continue.",
@@ -413,6 +433,11 @@
         outputContractPreview: null,
         outputContractPreviewKey: null,
         outputContractPreviewRequest: 0,
+        sourceUploads: [],
+        sourceManifestText: "",
+        sourcePackValid: false,
+        sourcePreviewing: false,
+        sourceUploading: false,
         submitting: false
     };
 
@@ -831,6 +856,67 @@
         g1.appendChild(tb1);
         sectionsHost.appendChild(g1);
 
+        var sources = el("div", "review-group explicit source-pack-editor");
+        var sourceHead = el("div", "review-group-head");
+        sourceHead.appendChild(el("span", "dot"));
+        sourceHead.appendChild(el("span", null, t("source_pack_title")));
+        sources.appendChild(sourceHead);
+        sources.appendChild(el("p", "section-note", t("source_pack_note")));
+
+        var fileLabel = el("label", "source-input-label", t("source_files"));
+        var fileInput = el("input", "source-file-input");
+        fileInput.type = "file";
+        fileInput.multiple = true;
+        fileInput.addEventListener("change", function () {
+            uploadSourceFiles(Array.prototype.slice.call(fileInput.files || []));
+        });
+        fileLabel.appendChild(fileInput);
+        sources.appendChild(fileLabel);
+
+        var importLabel = el("label", "source-input-label", t("source_manifest_import"));
+        var importInput = el("input", "source-manifest-file");
+        importInput.type = "file";
+        importInput.accept = ".json,application/json";
+        importInput.addEventListener("change", function () {
+            var selected = importInput.files && importInput.files[0];
+            if (!selected) return;
+            selected.text().then(function (text) {
+                STATE.sourceManifestText = text;
+                previewSourceManifest();
+                renderStage3();
+                updateActionbar();
+            });
+        });
+        importLabel.appendChild(importInput);
+        sources.appendChild(importLabel);
+
+        sources.appendChild(el("div", "source-input-label", t("source_manifest_edit")));
+        var manifestEditor = el("textarea", "source-manifest-editor");
+        manifestEditor.value = STATE.sourceManifestText;
+        manifestEditor.spellcheck = false;
+        manifestEditor.addEventListener("input", function () {
+            STATE.sourceManifestText = manifestEditor.value;
+            STATE.sourcePackValid = false;
+            updateActionbar();
+        });
+        sources.appendChild(manifestEditor);
+        var validateButton = el("button", "btn-ghost", t("source_manifest_validate"));
+        validateButton.type = "button";
+        validateButton.disabled = STATE.sourceUploading || STATE.sourcePreviewing;
+        validateButton.addEventListener("click", previewSourceManifest);
+        sources.appendChild(validateButton);
+        var sourceStatus = el(
+            "p",
+            STATE.sourcePackValid ? "source-pack-status ok" : "source-pack-status",
+            STATE.sourceUploading
+                ? t("source_uploading")
+                : (STATE.sourcePreviewing
+                    ? t("source_validating")
+                    : (STATE.sourcePackValid ? t("source_ready") : t("err_source_pack")))
+        );
+        sources.appendChild(sourceStatus);
+        sectionsHost.appendChild(sources);
+
         var g2 = el("div", "review-group proposed");
         var h2 = el("div", "review-group-head");
         h2.appendChild(el("span", "dot"));
@@ -1079,6 +1165,10 @@
                 btnConfirm.disabled = true;
                 confirmStatus.textContent = t("err_output_contract_preview");
                 confirmStatus.classList.add("err");
+            } else if (!STATE.sourcePackValid || STATE.sourceUploading) {
+                btnConfirm.disabled = true;
+                confirmStatus.textContent = t("err_source_pack");
+                confirmStatus.classList.add("err");
             } else {
                 btnConfirm.disabled = false;
                 confirmStatus.textContent = t("status_ready");
@@ -1199,6 +1289,8 @@
         var objective = String(c.purpose || "").trim() || STATE.freeText.trim();
         var cadence = c.cadence === "one_time" ? "ad_hoc" : String(c.cadence || "weekly");
         if (["weekly", "biweekly", "monthly", "ad_hoc"].indexOf(cadence) < 0) cadence = "weekly";
+        var manifest = JSON.parse(STATE.sourceManifestText);
+        var bindings = bindingsForManifest(manifest);
         return {
             schema_version: "briefloop.init_web.submission.v1",
             request_id: STATE.requestId,
@@ -1223,9 +1315,152 @@
                 discarded: STATE.interpretation.mapped.filter(function (m) {
                     return STATE.dispositions[m.field + ":" + m.value] === "discarded";
                 }).map(function (m) { return m.field + "=" + m.value; }),
+                completion_target: "finalized_local",
+                repair_budget: 1,
+                source_manifest: manifest,
+                upload_session_id: SESSION.sessionId,
+                upload_bindings: bindings,
                 human_confirmation: true // set only here, from the explicit confirm button
             }
         };
+    }
+
+    function safeSourceName(name) {
+        var cleaned = String(name || "source.bin").replace(/[^A-Za-z0-9._-]+/g, "-");
+        return cleaned || "source.bin";
+    }
+
+    function generatedManifest(uploads) {
+        var now = new Date();
+        var retrieved = now.toISOString().replace(/\.\d{3}Z$/, "Z");
+        var published = retrieved.slice(0, 10);
+        return {
+            schema_version: "briefloop.execution_source_manifest.v2",
+            members: uploads.map(function (upload, index) {
+                var sourceId = "SRC-INIT-" + String(index + 1).padStart(3, "0");
+                var path = "input/sources/" + String(index + 1).padStart(3, "0") + "-" + safeSourceName(upload.filename);
+                return {
+                    source_id: sourceId,
+                    input_path: path,
+                    content_sha256: upload.sha256,
+                    content_media_type: "application/octet-stream",
+                    origin_type: "uploaded_file",
+                    acquisition_method: "manual_upload",
+                    material_kind: "uploaded_file",
+                    provider: null,
+                    locator: {kind: "file", path: path},
+                    title: upload.filename,
+                    publisher: null,
+                    published_at: published,
+                    retrieved_at: retrieved,
+                    source_category: "other",
+                    retrieval_source_type: "local_file",
+                    underlying_evidence_type: "unknown",
+                    raw_underlying_evidence_type: null,
+                    document_kind: null,
+                    opened_at: null,
+                    resolved_at: null
+                };
+            })
+        };
+    }
+
+    function bindingsForManifest(manifest) {
+        if (!manifest || !Array.isArray(manifest.members)) throw new Error("manifest");
+        var unused = STATE.sourceUploads.slice();
+        return manifest.members.map(function (member) {
+            var found = -1;
+            for (var i = 0; i < unused.length; i++) {
+                if (unused[i].sha256 === member.content_sha256) {
+                    found = i;
+                    break;
+                }
+            }
+            if (found < 0) throw new Error("missing source hash");
+            var upload = unused.splice(found, 1)[0];
+            return {input_path: member.input_path, upload_handle: upload.upload_handle};
+        });
+    }
+
+    function previewSourceManifest() {
+        if (STATE.sourcePreviewing || STATE.sourceUploading) return;
+        var manifest;
+        var bindings;
+        try {
+            manifest = JSON.parse(STATE.sourceManifestText);
+            bindings = bindingsForManifest(manifest);
+        } catch (e) {
+            STATE.sourcePackValid = false;
+            renderStage3();
+            updateActionbar();
+            return;
+        }
+        STATE.sourcePreviewing = true;
+        STATE.sourcePackValid = false;
+        renderStage3();
+        updateActionbar();
+        fetch("/api/v1/source-manifest-preview?session_id=" + encodeURIComponent(SESSION.sessionId), {
+            method: "POST",
+            headers: {
+                "Content-Type": "application/json",
+                "X-BriefLoop-Session-Token": SESSION.token
+            },
+            body: JSON.stringify({source_manifest: manifest, upload_bindings: bindings})
+        }).then(function (response) {
+            return response.json().then(function (body) {
+                if (response.status !== 200 || !body.ok) throw new Error(body.reason_code || "preview");
+                STATE.sourceManifestText = JSON.stringify(body.source_manifest, null, 2);
+                STATE.sourcePreviewing = false;
+                STATE.sourcePackValid = true;
+                renderStage3();
+                updateActionbar();
+            });
+        }).catch(function () {
+            STATE.sourcePreviewing = false;
+            STATE.sourcePackValid = false;
+            renderStage3();
+            updateActionbar();
+        });
+    }
+
+    function uploadSourceFiles(files) {
+        STATE.sourceUploading = true;
+        STATE.sourcePackValid = false;
+        STATE.sourceUploads = [];
+        updateActionbar();
+        var chain = Promise.resolve();
+        files.forEach(function (file) {
+            chain = chain.then(function () {
+                return fetch("/api/v1/source-upload?session_id=" + encodeURIComponent(SESSION.sessionId), {
+                    method: "POST",
+                    headers: {
+                        "Content-Type": "application/octet-stream",
+                        "X-BriefLoop-Session-Token": SESSION.token,
+                        "X-BriefLoop-Upload-Name": file.name
+                    },
+                    body: file
+                }).then(function (response) {
+                    return response.json().then(function (body) {
+                        if (response.status !== 200 || !body.ok) throw new Error(body.reason_code || "upload");
+                        STATE.sourceUploads.push(body);
+                    });
+                });
+            });
+        });
+        chain.then(function () {
+            STATE.sourceUploading = false;
+            if (!STATE.sourceManifestText.trim()) {
+                STATE.sourceManifestText = JSON.stringify(generatedManifest(STATE.sourceUploads), null, 2);
+            }
+            previewSourceManifest();
+            renderStage3();
+            updateActionbar();
+        }).catch(function () {
+            STATE.sourceUploading = false;
+            STATE.sourcePackValid = false;
+            renderStage3();
+            updateActionbar();
+        });
     }
 
     function submitRequest() {
@@ -1298,8 +1533,14 @@
         var next = el("p", "cf-next");
         next.appendChild(el("span", null, t("cf_next")));
         next.appendChild(el("code", null,
-            "briefloop run --workspace " + String(response.workspace || STATE.workspaceTarget)));
+            String(response.next_command || ("briefloop runtime continue --workspace " + String(response.workspace || STATE.workspaceTarget)))));
         cfBody.appendChild(next);
+
+        if (response.next_action) {
+            var progress = el("p", "cf-note");
+            progress.textContent = String(response.next_action.reason_code || response.next_action.effect_kind || "");
+            cfBody.appendChild(progress);
+        }
 
         var actions = el("div", "cf-actions");
         var again = el("button", "btn-ghost", t("cf_again"));

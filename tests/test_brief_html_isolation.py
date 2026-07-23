@@ -45,6 +45,7 @@ ALLOWED_IMPORTS = {
     },
     "init_web/submit.py": {
         "multi_agent_brief.cli.init_wizard",
+        "multi_agent_brief.contracts.v2",
         "multi_agent_brief.control_store",
         "multi_agent_brief.control_store.serialization",
         # RUN-UX-1A uses the sole Core-owned catalog only for bounded,
@@ -54,6 +55,10 @@ ALLOWED_IMPORTS = {
         "multi_agent_brief.runtime_host_v2.codex",
         "multi_agent_brief.runtime_host_v2.initialization",
         "multi_agent_brief.workspace.init_profile",
+        "multi_agent_brief.product.init_web.staging",
+    },
+    "init_web/staging.py": {
+        "multi_agent_brief.contracts.v2",
     },
     "init_web/__init__.py": {
         "multi_agent_brief.product.init_web.server",

@@ -11,12 +11,23 @@ receipt and zero writes; same request_id with a different payload →
 
 from __future__ import annotations
 
+from dataclasses import asdict
 from pathlib import Path
 from typing import Any, Callable
 
+from pydantic import ValidationError
+
 from multi_agent_brief.cli.init_wizard import create_workspace
+from multi_agent_brief.contracts.v2 import (
+    ExecutionSourceManifest,
+    RunExecutionAuthorizationBootstrap,
+)
 from multi_agent_brief.control_store import SQLiteControlStore
-from multi_agent_brief.control_store.serialization import canonical_fingerprint
+from multi_agent_brief.control_store.serialization import (
+    canonical_fingerprint,
+    canonical_json_bytes,
+    sha256_hex,
+)
 from multi_agent_brief.core_run_v2.policy import derived_id
 from multi_agent_brief.runtime_host_v2.codex import load_codex_adapter_binding
 from multi_agent_brief.runtime_host_v2.initialization import (
@@ -25,6 +36,8 @@ from multi_agent_brief.runtime_host_v2.initialization import (
 )
 from multi_agent_brief.core_run_v2.output_contract import resolve_output_extent
 from multi_agent_brief.workspace.init_profile import InitProfile
+
+from .staging import InitWebStaging, InitWebStagingError
 
 SUBMISSION_SCHEMA = "briefloop.init_web.submission.v1"
 _REQUIRED_SELECTION_KEYS = ("company", "industry_or_theme", "task_objective")
@@ -149,6 +162,77 @@ class InitWebSubmitter:
     ) -> None:
         self._base_dir = Path(base_dir).expanduser().resolve() if base_dir else None
         self._adapter_loader = adapter_loader
+        self._staging = InitWebStaging()
+
+    def close(self) -> None:
+        """Remove only inert host-private staging bytes."""
+
+        self._staging.close()
+
+    def stage_upload(
+        self,
+        *,
+        session_id: str,
+        filename: str,
+        stream,
+        declared_length: int,
+    ) -> dict[str, object]:
+        try:
+            staged = self._staging.stage(
+                session_id=session_id,
+                filename=filename,
+                stream=stream,
+                declared_length=declared_length,
+            )
+        except InitWebStagingError as exc:
+            raise SubmissionError(str(exc), 422) from exc
+        return {
+            "ok": True,
+            "upload_handle": staged.handle,
+            "filename": staged.filename,
+            "byte_count": staged.byte_count,
+            "sha256": staged.sha256,
+        }
+
+    def preview_source_manifest(
+        self,
+        *,
+        session_id: str,
+        body: Any,
+    ) -> dict[str, object]:
+        """Strictly canonicalize and reverify a Human-reviewable source set."""
+
+        if not isinstance(body, dict) or set(body) != {
+            "source_manifest",
+            "upload_bindings",
+        }:
+            raise SubmissionError("submission_source_manifest_invalid", 422)
+        try:
+            manifest = ExecutionSourceManifest.model_validate(
+                body.get("source_manifest"), strict=True
+            )
+        except ValidationError as exc:
+            raise SubmissionError("submission_source_manifest_invalid", 422) from exc
+        if any(
+            not member.input_path.startswith("input/sources/")
+            for member in manifest.members
+        ):
+            raise SubmissionError("submission_source_manifest_invalid", 422)
+        try:
+            confirmed = self._staging.preview_confirmed(
+                session_id=session_id,
+                manifest=manifest,
+                upload_bindings=body.get("upload_bindings"),
+            )
+        except InitWebStagingError as exc:
+            raise SubmissionError(str(exc), 422) from exc
+        canonical = confirmed.model_dump(mode="json", exclude_unset=False)
+        return {
+            "ok": True,
+            "source_manifest": canonical,
+            "source_manifest_sha256": sha256_hex(canonical_json_bytes(canonical)),
+            "member_count": len(confirmed.members),
+        }
 
     def _resolve_target(self, raw_target: str) -> Path:
         target = Path(raw_target).expanduser()
@@ -188,8 +272,8 @@ class InitWebSubmitter:
             return True
         return True
 
-    @staticmethod
     def _receipt_response(
+        self,
         *,
         target: Path,
         workspace_id: str,
@@ -201,6 +285,9 @@ class InitWebSubmitter:
             receipt = store.load_transaction_receipt(run_id, receipt_id)
         if receipt is None:
             raise SubmissionError("bootstrap_receipt_unavailable", 500)
+        initialized = WorkspaceBootstrap(target).initialize_runnable_codex(
+            expected_adapter_loader=self._adapter_loader
+        )
         return {
             "ok": True,
             "status": status,
@@ -210,7 +297,81 @@ class InitWebSubmitter:
             "transaction_id": receipt.transaction_id,
             "committed_revision": receipt.committed_revision,
             "receipt": receipt.model_dump(mode="json", exclude_unset=False),
+            "next_action": initialized.action.model_dump(
+                mode="json", exclude_unset=False
+            ),
+            "progress": {
+                "store_revision": initialized.verified.snapshot.store_revision,
+                "current_stage": initialized.action.stage_id,
+                "current_role": initialized.action.role_id,
+                "reason_code": initialized.action.reason_code,
+            },
+            "next_command": f"briefloop runtime continue --workspace {target}",
         }
+
+    @staticmethod
+    def _semantic_submission(
+        *,
+        request_id: str,
+        profile: InitProfile,
+        payload: dict[str, Any],
+    ) -> tuple[str, ExecutionSourceManifest | None, RunExecutionAuthorizationBootstrap | None]:
+        raw_manifest = payload.get("source_manifest")
+        if raw_manifest is None:
+            if any(
+                key in payload
+                for key in ("upload_bindings", "completion_target", "repair_budget")
+            ):
+                raise SubmissionError("submission_source_manifest_required", 422)
+            semantic = {
+                "schema_version": SUBMISSION_SCHEMA,
+                "request_id_namespace": canonical_fingerprint(
+                    {"schema_version": SUBMISSION_SCHEMA, "request_id": request_id}
+                ),
+                "selections": asdict(profile),
+                "execution_authorization": None,
+            }
+            return canonical_fingerprint(semantic), None, None
+        try:
+            manifest = ExecutionSourceManifest.model_validate(raw_manifest, strict=True)
+        except ValidationError as exc:
+            raise SubmissionError("submission_source_manifest_invalid", 422) from exc
+        if any(
+            not member.input_path.startswith("input/sources/")
+            for member in manifest.members
+        ):
+            raise SubmissionError("submission_source_manifest_invalid", 422)
+        if payload.get("completion_target") != "finalized_local":
+            raise SubmissionError("submission_completion_target_invalid", 422)
+        if payload.get("repair_budget") != 1:
+            raise SubmissionError("submission_repair_budget_invalid", 422)
+        canonical_manifest = canonical_json_bytes(
+            manifest.model_dump(mode="json", exclude_unset=False)
+        )
+        authorization = RunExecutionAuthorizationBootstrap.model_validate(
+            {
+                "schema_version": RunExecutionAuthorizationBootstrap.schema_id,
+                "completion_target": "finalized_local",
+                "source_manifest_path": "input/execution-source-manifest.json",
+                "source_manifest_sha256": sha256_hex(canonical_manifest),
+                "source_manifest_member_count": len(manifest.members),
+                "repair_budget": 1,
+            },
+            strict=True,
+        )
+        semantic = {
+            "schema_version": SUBMISSION_SCHEMA,
+            "request_id_namespace": canonical_fingerprint(
+                {"schema_version": SUBMISSION_SCHEMA, "request_id": request_id}
+            ),
+            "selections": asdict(profile),
+            "completion_target": "finalized_local",
+            "repair_budget": 1,
+            "source_manifest": manifest.model_dump(
+                mode="json", exclude_unset=False
+            ),
+        }
+        return canonical_fingerprint(semantic), manifest, authorization
 
     def _replay_existing_store(
         self,
@@ -250,13 +411,17 @@ class InitWebSubmitter:
         payload = body.get("payload")
         if not isinstance(payload, dict):
             raise SubmissionError("submission_payload_invalid", 422)
-        fingerprint = canonical_fingerprint(body)
         if payload.get("human_confirmation") is not True:
             raise SubmissionError("human_confirmation_required", 422)
         target = self._resolve_target(
             _require_text(payload.get("workspace_target"), "workspace_target_invalid")
         )
         profile = _profile_from_payload(payload)
+        fingerprint, manifest, execution_authorization = self._semantic_submission(
+            request_id=request_id,
+            profile=profile,
+            payload=payload,
+        )
         workspace_id, run_id, request_workspace_prefix = self._submission_identities(
             request_id, fingerprint
         )
@@ -274,6 +439,30 @@ class InitWebSubmitter:
         if self._target_has_content(target):
             raise SubmissionError("workspace_target_exists", 409)
 
+        if manifest is not None:
+            session_id = _require_text(
+                payload.get("upload_session_id"),
+                "submission_upload_session_invalid",
+            )
+            try:
+                self._staging.materialize_confirmed(
+                    session_id=session_id,
+                    manifest=manifest,
+                    upload_bindings=payload.get("upload_bindings"),
+                    target=target,
+                )
+                manifest_path = target / "input" / "execution-source-manifest.json"
+                manifest_path.parent.mkdir(parents=True, exist_ok=True)
+                with manifest_path.open("xb") as manifest_stream:
+                    manifest_stream.write(
+                        canonical_json_bytes(
+                            manifest.model_dump(mode="json", exclude_unset=False)
+                        )
+                    )
+            except (InitWebStagingError, OSError) as exc:
+                code = str(exc) if isinstance(exc, InitWebStagingError) else "init_web_source_materialization_failed"
+                raise SubmissionError(code, 422) from exc
+
         identity_suffix = workspace_id.removeprefix("WS-")
         identities = iter((identity_suffix, identity_suffix))
         create_workspace(
@@ -281,6 +470,7 @@ class InitWebSubmitter:
             profile,
             force=False,
             identity_factory=lambda: next(identities),
+            execution_authorization=execution_authorization,
         )
         try:
             initialized = bootstrap.initialize_runnable_codex(

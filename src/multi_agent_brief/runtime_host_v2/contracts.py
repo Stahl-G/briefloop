@@ -224,6 +224,39 @@ class RuntimeProposalValidationResult(StrictModel):
     violations: list[RuntimeProposalViolation]
 
 
+class RuntimeContinuationTrace(StrictModel):
+    """Explicit read-only control trace, omitted from friendly CLI output."""
+
+    next_action: CoreRunNextAction
+    envelope_path: WorkspacePath | None = None
+    transaction_ids: list[ContractId]
+
+
+class RuntimeContinuationResult(StrictModel):
+    """One bounded, Store-derived authorized continuation observation."""
+
+    schema_id = "briefloop.runtime_continuation_result.v2"
+
+    schema_version: Literal["briefloop.runtime_continuation_result.v2"]
+    run_id: ContractId
+    store_revision: NonNegativeInt
+    status: Literal[
+        "progressed",
+        "role_work_required",
+        "proposal_invalid",
+        "needs_human",
+        "needs_attention",
+        "finalized_local",
+    ]
+    reason_code: ContractId | None = None
+    current_stage: ContractId | None = None
+    current_role: ContractId | None = None
+    completed_stages: NonNegativeInt
+    total_stages: NonNegativeInt
+    violations: list[RuntimeProposalViolation]
+    trace: RuntimeContinuationTrace
+
+
 class RepairContentInput(StrictModel):
     """Non-authoritative bytes locator for one deterministic repair effect."""
 
@@ -243,6 +276,8 @@ __all__ = [
     "RoleTaskEnvelope",
     "RepairContentInput",
     "RuntimeDiagnoseReport",
+    "RuntimeContinuationResult",
+    "RuntimeContinuationTrace",
     "RuntimeInvocationResult",
     "RuntimeProposalValidationResult",
     "RuntimeProposalViolation",

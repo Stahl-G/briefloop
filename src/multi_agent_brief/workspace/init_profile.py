@@ -8,6 +8,7 @@ from datetime import date
 from multi_agent_brief.contracts.v2 import (
     GATE_ID_VALUES,
     RunDirection,
+    RunExecutionAuthorizationBootstrap,
     WorkspaceControlStoreBootstrapV2,
 )
 from multi_agent_brief.core_run_v2.output_contract import (
@@ -72,6 +73,7 @@ def build_controlstore_bootstrap(
     workspace_id: str,
     run_id: str,
     report_date: date,
+    execution_authorization: RunExecutionAuthorizationBootstrap | None = None,
 ) -> WorkspaceControlStoreBootstrapV2:
     """Map one validated init profile into the exact fresh-v2 bootstrap."""
 
@@ -152,5 +154,12 @@ def build_controlstore_bootstrap(
             "input_governance_required": True,
             "gate_strictness": {gate_id: True for gate_id in GATE_ID_VALUES},
             "run_direction": direction.model_dump(mode="json", exclude_unset=False),
+            "execution_authorization": (
+                None
+                if execution_authorization is None
+                else execution_authorization.model_dump(
+                    mode="json", exclude_unset=False
+                )
+            ),
         }
     )

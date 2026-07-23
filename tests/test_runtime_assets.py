@@ -203,6 +203,7 @@ def test_runtime_install_codex_workspace_kit_is_local(tmp_path: Path, capsys) ->
         assert f"### `{action_kind}`" in reference_text
     for command in (
         "briefloop runtime next",
+        "briefloop runtime continue",
         "briefloop runtime invocation-start",
         "briefloop runtime invocation-validate",
         "briefloop runtime invocation-accept",

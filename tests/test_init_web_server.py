@@ -195,6 +195,88 @@ def test_post_success_returns_real_response(server) -> None:
     assert payload["transaction_id"] == "REQ-CX-INIT-x"
 
 
+def test_source_upload_is_session_bound_and_server_hashed(tmp_path: Path) -> None:
+    instance = create_init_web_server(
+        InitWebSubmitter(base_dir=tmp_path), exit_on_success=False
+    )
+    instance.start()
+    try:
+        token, session = _credentials(instance.url)
+        content = b"bounded public source\n"
+        status, _headers, body = _request(
+            instance,
+            "POST",
+            f"/api/v1/source-upload?session_id={session}",
+            body=content,
+            headers={
+                "Content-Type": "application/octet-stream",
+                "X-BriefLoop-Upload-Name": "source.txt",
+                SESSION_TOKEN_HEADER: token,
+            },
+        )
+        payload = json.loads(body)
+        assert status == 200
+        assert payload["filename"] == "source.txt"
+        assert payload["byte_count"] == len(content)
+        assert len(payload["sha256"]) == 64
+        assert payload["upload_handle"].startswith("upload-")
+
+        manifest = {
+            "schema_version": "briefloop.execution_source_manifest.v2",
+            "members": [
+                {
+                    "source_id": "SRC-INIT-001",
+                    "input_path": "input/sources/source.txt",
+                    "content_sha256": payload["sha256"],
+                    "content_media_type": "text/plain",
+                    "origin_type": "uploaded_file",
+                    "acquisition_method": "manual_upload",
+                    "material_kind": "uploaded_file",
+                    "provider": None,
+                    "locator": {"kind": "file", "path": "input/sources/source.txt"},
+                    "title": "Public source",
+                    "publisher": None,
+                    "published_at": "2026-07-22",
+                    "retrieved_at": "2026-07-23T00:00:00Z",
+                    "source_category": "other",
+                    "retrieval_source_type": "local_file",
+                    "underlying_evidence_type": "unknown",
+                    "raw_underlying_evidence_type": None,
+                    "document_kind": None,
+                    "opened_at": None,
+                    "resolved_at": None,
+                }
+            ],
+        }
+        preview_body = json.dumps(
+            {
+                "source_manifest": manifest,
+                "upload_bindings": [
+                    {
+                        "input_path": "input/sources/source.txt",
+                        "upload_handle": payload["upload_handle"],
+                    }
+                ],
+            }
+        ).encode("utf-8")
+        status, _headers, body = _request(
+            instance,
+            "POST",
+            f"/api/v1/source-manifest-preview?session_id={session}",
+            body=preview_body,
+            headers={
+                "Content-Type": "application/json",
+                SESSION_TOKEN_HEADER: token,
+            },
+        )
+        preview = json.loads(body)
+        assert status == 200
+        assert preview["member_count"] == 1
+        assert preview["source_manifest"]["members"][0]["source_id"] == "SRC-INIT-001"
+    finally:
+        instance.close()
+
+
 def test_output_contract_preview_is_session_bound_and_zero_write(server) -> None:
     token, session = _credentials(server.url)
     body = json.dumps(

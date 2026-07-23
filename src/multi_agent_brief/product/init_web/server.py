@@ -26,6 +26,7 @@ from .submit import InitWebSubmitter, SubmissionError, preview_output_contract
 
 SESSION_TOKEN_HEADER = "X-BriefLoop-Session-Token"
 MAX_JSON_BODY_BYTES = 64 * 1024
+MAX_UPLOAD_BODY_BYTES = 16 * 1024 * 1024
 CONTENT_SECURITY_POLICY = (
     "default-src 'none'; script-src 'self'; style-src 'self'; "
     "img-src 'self' data:; connect-src 'self'; font-src 'none'; "
@@ -70,6 +71,7 @@ class InitWebServer:
     port: int
     _token: str = field(repr=False)
     _server: ThreadingHTTPServer = field(repr=False)
+    _cleanup: Callable[[], None] = field(repr=False)
     _thread: Thread | None = field(default=None, repr=False)
 
     def start(self) -> None:
@@ -89,6 +91,7 @@ class InitWebServer:
         self._server.server_close()
         if self._thread is not None:
             self._thread.join(timeout=2)
+        self._cleanup()
 
     def __enter__(self) -> "InitWebServer":
         self.start()
@@ -183,7 +186,12 @@ def create_init_web_server(
                 self._reject(HTTPStatus.FORBIDDEN, "init_web_origin_invalid")
                 return
             target = urlsplit(self.path)
-            if target.path not in {"/api/v1/submit", "/api/v1/output-contract-preview"}:
+            if target.path not in {
+                "/api/v1/submit",
+                "/api/v1/output-contract-preview",
+                "/api/v1/source-manifest-preview",
+                "/api/v1/source-upload",
+            }:
                 self._reject(HTTPStatus.NOT_FOUND, "init_web_route_not_found")
                 return
             query = parse_qs(target.query, keep_blank_values=True)
@@ -194,8 +202,44 @@ def create_init_web_server(
             except ValueError:
                 self._reject(HTTPStatus.BAD_REQUEST, "init_web_body_invalid")
                 return
-            if length < 1 or length > MAX_JSON_BODY_BYTES:
+            maximum = (
+                MAX_UPLOAD_BODY_BYTES
+                if target.path == "/api/v1/source-upload"
+                else MAX_JSON_BODY_BYTES
+            )
+            if length < 1 or length > maximum:
                 self._reject(HTTPStatus.REQUEST_ENTITY_TOO_LARGE, "init_web_body_too_large")
+                return
+            if target.path == "/api/v1/source-upload":
+                if self.headers.get("Content-Type") != "application/octet-stream":
+                    self._reject(
+                        HTTPStatus.UNSUPPORTED_MEDIA_TYPE,
+                        "init_web_content_type_invalid",
+                    )
+                    return
+                filename = self.headers.get("X-BriefLoop-Upload-Name", "")
+                try:
+                    response = submitter.stage_upload(
+                        session_id=session_id,
+                        filename=filename,
+                        stream=self.rfile,
+                        declared_length=length,
+                    )
+                except (AttributeError, SubmissionError) as exc:
+                    reason = (
+                        exc.error_code
+                        if isinstance(exc, SubmissionError)
+                        else "init_web_source_upload_unsupported"
+                    )
+                    status = (
+                        exc.http_status
+                        if isinstance(exc, SubmissionError)
+                        else HTTPStatus.UNPROCESSABLE_ENTITY
+                    )
+                    self._reject(HTTPStatus(status), reason)
+                    return
+                payload = canonical_json_bytes(response) + b"\n"
+                self._send(HTTPStatus.OK, payload, "application/json; charset=utf-8")
                 return
             if self.headers.get("Content-Type") != "application/json":
                 self._reject(HTTPStatus.UNSUPPORTED_MEDIA_TYPE, "init_web_content_type_invalid")
@@ -209,6 +253,11 @@ def create_init_web_server(
             try:
                 if target.path == "/api/v1/output-contract-preview":
                     status, response = HTTPStatus.OK, preview_output_contract(body)
+                elif target.path == "/api/v1/source-manifest-preview":
+                    status, response = HTTPStatus.OK, submitter.preview_source_manifest(
+                        session_id=session_id,
+                        body=body,
+                    )
                 else:
                     status, response = submitter.submit(body)
             except SubmissionError as exc:
@@ -234,6 +283,7 @@ def create_init_web_server(
         port=bound_port,
         _token=token,
         _server=server,
+        _cleanup=getattr(submitter, "close", lambda: None),
     )
 
 
@@ -242,6 +292,7 @@ __all__ = [
     "InitWebError",
     "InitWebServer",
     "MAX_JSON_BODY_BYTES",
+    "MAX_UPLOAD_BODY_BYTES",
     "SESSION_TOKEN_HEADER",
     "create_init_web_server",
 ]

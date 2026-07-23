@@ -98,11 +98,13 @@ from .contracts import (
     RepairContentInput,
     RoleTaskEnvelope,
     RuntimeDiagnoseReport,
+    RuntimeContinuationResult,
     RuntimeInvocationResult,
     RuntimeProposalValidationResult,
 )
 from .errors import RuntimeHostError
 from .initialization import AdapterLoader, initialize_or_open_runtime
+from .projections import build_runtime_continuation_result
 from .scratch import (
     attest_host_directory,
     materialize_host_bytes,
@@ -310,6 +312,218 @@ class RuntimeHostService:
             },
             strict=True,
         )
+
+    def continue_authorized(
+        self,
+        *,
+        maximum_progress_attempts: int = 32,
+    ) -> RuntimeContinuationResult:
+        """Advance only one M2-authorized run through existing typed effects."""
+
+        if maximum_progress_attempts < 1:
+            raise RuntimeHostError("runtime_progress_limit_invalid")
+        transaction_ids: list[str] = []
+        attempts = 0
+        while True:
+            current = initialize_or_open_runtime(
+                self.workspace,
+                adapter_loader=self._adapter_loader,
+            )
+            action = current.action
+            if len(current.verified.snapshot.run_execution_authorizations) != 1:
+                return build_runtime_continuation_result(
+                    current.verified,
+                    action,
+                    status="needs_human",
+                    reason_code="runtime_continuation_unsupported",
+                    transaction_ids=tuple(transaction_ids),
+                )
+            if action.action_kind == "complete":
+                if (
+                    action.effect_kind != "finalized_local"
+                    or action.reason_code != "local_finalization_complete"
+                ):
+                    return build_runtime_continuation_result(
+                        current.verified,
+                        action,
+                        status="needs_attention",
+                        reason_code="terminal_state_incomplete",
+                        transaction_ids=tuple(transaction_ids),
+                    )
+                return build_runtime_continuation_result(
+                    current.verified,
+                    action,
+                    status="finalized_local",
+                    reason_code=action.reason_code,
+                    transaction_ids=tuple(transaction_ids),
+                )
+            if action.action_kind == "human_decision":
+                return build_runtime_continuation_result(
+                    current.verified,
+                    action,
+                    status="needs_human",
+                    reason_code=action.reason_code,
+                    transaction_ids=tuple(transaction_ids),
+                )
+            if action.action_kind == "blocked":
+                return build_runtime_continuation_result(
+                    current.verified,
+                    action,
+                    status="needs_attention",
+                    reason_code=action.reason_code,
+                    transaction_ids=tuple(transaction_ids),
+                )
+            if action.action_kind == "delegate":
+                try:
+                    dispatch = self.start_current_invocation(action)
+                except RuntimeHostError as exc:
+                    if str(exc) == "runtime_action_stale":
+                        continue
+                    raise
+                refreshed = initialize_or_open_runtime(
+                    self.workspace,
+                    adapter_loader=self._adapter_loader,
+                )
+                return build_runtime_continuation_result(
+                    refreshed.verified,
+                    refreshed.action,
+                    status="role_work_required",
+                    reason_code="role_work_required",
+                    envelope_path=dispatch.envelope_path.relative_to(
+                        self.workspace
+                    ).as_posix(),
+                    transaction_ids=tuple(transaction_ids),
+                )
+            if action.action_kind != "deterministic":
+                return build_runtime_continuation_result(
+                    current.verified,
+                    action,
+                    status="needs_attention",
+                    reason_code=action.reason_code,
+                    transaction_ids=tuple(transaction_ids),
+                )
+            if action.effect_kind in {
+                "repair_start",
+                "repair_complete",
+                "recovery_complete",
+                "delivery_attempt",
+                "delivery_result",
+            }:
+                return build_runtime_continuation_result(
+                    current.verified,
+                    action,
+                    status="needs_attention",
+                    reason_code=action.reason_code,
+                    transaction_ids=tuple(transaction_ids),
+                )
+            if attempts >= maximum_progress_attempts:
+                return build_runtime_continuation_result(
+                    current.verified,
+                    action,
+                    status="needs_attention",
+                    reason_code="runtime_progress_stalled",
+                    transaction_ids=tuple(transaction_ids),
+                )
+            attempts += 1
+            if action.effect_kind == "invocation_accept_or_fail":
+                active = [
+                    item
+                    for item in current.verified.snapshot.invocations
+                    if item.status == "active"
+                ]
+                if len(active) != 1:
+                    raise RuntimeHostError("control_store_integrity_invalid")
+                envelope = self._expected_invocation_envelope(
+                    active[0].invocation_id,
+                    current=current,
+                )
+                validation = self.validate_invocation(
+                    envelope.invocation_id,
+                    expected_envelope=envelope,
+                )
+                if validation.status != "valid":
+                    status = (
+                        "role_work_required"
+                        if validation.reason_code == "runtime_proposal_missing"
+                        else "proposal_invalid"
+                    )
+                    return build_runtime_continuation_result(
+                        current.verified,
+                        action,
+                        status=status,
+                        reason_code=(
+                            "role_work_required"
+                            if status == "role_work_required"
+                            else "runtime_proposal_invalid"
+                        ),
+                        envelope_path=(
+                            Path(envelope.scratch_directory)
+                            / "role_task_envelope.json"
+                        ).as_posix(),
+                        transaction_ids=tuple(transaction_ids),
+                        violations=tuple(
+                            item.model_dump(mode="json", exclude_unset=False)
+                            for item in validation.violations
+                        ),
+                    )
+                try:
+                    result = self.accept_invocation(
+                        envelope.invocation_id,
+                        expected_envelope=envelope,
+                    )
+                except RuntimeHostError as exc:
+                    if str(exc) == "runtime_action_stale":
+                        attempts -= 1
+                        continue
+                    raise
+                transaction_ids.append(result.transaction_id)
+                continue
+            try:
+                result = self.apply_current(action, presentation_hook=False)
+            except RuntimeHostError as exc:
+                code = str(exc)
+                if code == "runtime_action_stale":
+                    attempts -= 1
+                    continue
+                if code == "commit_outcome_unknown":
+                    refreshed = initialize_or_open_runtime(
+                        self.workspace,
+                        adapter_loader=self._adapter_loader,
+                    )
+                    if refreshed.action != action:
+                        continue
+                    try:
+                        result = self.apply_current(action, presentation_hook=False)
+                    except RuntimeHostError as retry_exc:
+                        if str(retry_exc) != "commit_outcome_unknown":
+                            raise
+                        return build_runtime_continuation_result(
+                            refreshed.verified,
+                            refreshed.action,
+                            status="needs_attention",
+                            reason_code="commit_outcome_unknown",
+                            transaction_ids=tuple(transaction_ids),
+                        )
+                elif code in {
+                    "checkout_publication_unsupported",
+                    "runtime_adapter_binding_mismatch",
+                    "control_store_integrity_invalid",
+                }:
+                    return build_runtime_continuation_result(
+                        current.verified,
+                        action,
+                        status="needs_attention",
+                        reason_code=code,
+                        transaction_ids=tuple(transaction_ids),
+                    )
+                else:
+                    raise
+            receipt = getattr(result, "receipt", None)
+            transaction_id = getattr(result, "transaction_id", None)
+            if receipt is not None:
+                transaction_id = receipt.transaction_id
+            if isinstance(transaction_id, str):
+                transaction_ids.append(transaction_id)
 
     def start_current_invocation(
         self,
@@ -1049,6 +1263,8 @@ class RuntimeHostService:
         expected_action: CoreRunNextAction | None = None,
         human_request: StrictModel | None = None,
         action_input: StrictModel | None = None,
+        *,
+        presentation_hook: bool = True,
     ):
         current = initialize_or_open_runtime(
             self.workspace,
@@ -1113,6 +1329,8 @@ class RuntimeHostService:
             if len(active) != 1:
                 raise RuntimeHostError("control_store_integrity_invalid")
             result = self.accept_invocation(active[0].invocation_id)
+        elif action.effect_kind == "authorized_source_pack_commit":
+            result = CoreRunService(self.workspace).apply_authorized_source_pack()
         elif action.effect_kind == "doctor_check":
             request = IntegrityCheckRequest.model_validate(
                 {
@@ -1164,7 +1382,7 @@ class RuntimeHostService:
             raise RuntimeHostError(
                 result.error_code or "control_store_integrity_invalid"
             )
-        if result.status == "committed" and action.effect_kind in {
+        if presentation_hook and result.status == "committed" and action.effect_kind in {
             "finalize_complete",
             "delivery_result",
         }:
