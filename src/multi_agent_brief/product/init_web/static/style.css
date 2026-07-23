@@ -527,6 +527,24 @@ textarea.text-input { min-height: 86px; resize: vertical; line-height: 1.6; }
     color: var(--bl-ink-soft);
 }
 
+.source-pack-editor { padding: 16px; border: 1px solid var(--bl-line); border-radius: 10px; }
+.source-input-label { display: block; margin: 10px 0 6px; color: var(--bl-muted); font-size: 12px; }
+.source-file-input, .source-manifest-file { display: block; margin-top: 6px; max-width: 100%; }
+.source-manifest-editor {
+    box-sizing: border-box;
+    width: 100%;
+    min-height: 180px;
+    resize: vertical;
+    border: 1px solid var(--bl-line);
+    border-radius: 8px;
+    padding: 10px;
+    font: 11px/1.45 ui-monospace, SFMono-Regular, Menlo, monospace;
+    color: var(--bl-ink-soft);
+    background: var(--bl-paper);
+}
+.source-pack-status { margin: 8px 0 0; color: var(--sem-block); font-size: 12px; }
+.source-pack-status.ok { color: var(--sem-action); }
+
 /* actionbar */
 #actionbar {
     display: flex;

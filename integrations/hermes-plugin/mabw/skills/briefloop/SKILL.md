@@ -32,7 +32,7 @@ next release target.
 Use this skill for:
 
 - `briefloop run --workspace <workspace> --runtime codex`
-- `briefloop runtime next`, `diagnose`, `invocation-start`,
+- `briefloop runtime next`, `continue`, `diagnose`, `invocation-start`,
   `invocation-accept`, `invocation-fail`, or `apply`
 - Codex role dispatch and invocation scratch proposals
 - package-ready, human approval, delivery authorization, or delivery status
@@ -73,6 +73,18 @@ action snapshot as the next instruction.
 ## Work
 
 Follow `references/codex-controlstore-v2.md` as an executable state machine.
+
+For a run with the Store-frozen M2 execution authorization, use
+`briefloop runtime continue --workspace <workspace>` as the bounded controller
+seam. On `role_work_required`, perform only the exact current-session envelope
+work and call it again. Stop on `proposal_invalid`, `needs_human`,
+`needs_attention`, or `finalized_local` as directed; never invent the missing
+request or repair. Unauthorized runs retain the granular/manual protocol.
+
+An init-web response does not hot-load the newly installed workspace kit into
+the initiating Codex process. The uninterrupted path is an already-active
+controller continuing under its already-loaded BriefLoop protocol; the kit is
+Store-bound for verification and reopened/future workspace sessions.
 
 Hard boundaries:
 

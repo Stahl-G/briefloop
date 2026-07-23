@@ -2,6 +2,7 @@
 
 from .contracts import (
     RoleTaskEnvelope,
+    RuntimeContinuationResult,
     RuntimeDiagnoseReport,
     RuntimeInvocationResult,
 )
@@ -13,6 +14,7 @@ __all__ = [
     "InitializedRuntime",
     "InvocationDispatch",
     "RoleTaskEnvelope",
+    "RuntimeContinuationResult",
     "RuntimeDiagnoseReport",
     "RuntimeHostError",
     "RuntimeInvocationResult",

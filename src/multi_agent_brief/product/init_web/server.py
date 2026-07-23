@@ -16,7 +16,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from importlib.resources import files
 import json
 import secrets
-from threading import Thread
+from threading import Lock, Thread
 from typing import Any, Callable
 from urllib.parse import parse_qs, urlsplit
 
@@ -25,7 +25,8 @@ from multi_agent_brief.product.review_session.serialization import canonical_jso
 from .submit import InitWebSubmitter, SubmissionError, preview_output_contract
 
 SESSION_TOKEN_HEADER = "X-BriefLoop-Session-Token"
-MAX_JSON_BODY_BYTES = 64 * 1024
+MAX_JSON_BODY_BYTES = 512 * 1024
+MAX_UPLOAD_BODY_BYTES = 16 * 1024 * 1024
 CONTENT_SECURITY_POLICY = (
     "default-src 'none'; script-src 'self'; style-src 'self'; "
     "img-src 'self' data:; connect-src 'self'; font-src 'none'; "
@@ -64,12 +65,27 @@ def _verify_assets() -> None:
 
 
 @dataclass
+class InitWebSubmissionOutcome:
+    """In-memory handoff to the already-active initiating controller."""
+
+    workspace: str
+    workspace_id: str
+    run_id: str
+    transaction_id: str
+    status: str
+
+
+@dataclass
 class InitWebServer:
     session_id: str
     url: str
     port: int
     _token: str = field(repr=False)
     _server: ThreadingHTTPServer = field(repr=False)
+    _cleanup: Callable[[], None] = field(repr=False)
+    _outcome_getter: Callable[[], InitWebSubmissionOutcome | None] = field(
+        repr=False
+    )
     _thread: Thread | None = field(default=None, repr=False)
 
     def start(self) -> None:
@@ -84,11 +100,16 @@ class InitWebServer:
     def serve_forever(self) -> None:
         self._server.serve_forever()
 
+    @property
+    def outcome(self) -> InitWebSubmissionOutcome | None:
+        return self._outcome_getter()
+
     def close(self) -> None:
         self._server.shutdown()
         self._server.server_close()
         if self._thread is not None:
             self._thread.join(timeout=2)
+        self._cleanup()
 
     def __enter__(self) -> "InitWebServer":
         self.start()
@@ -109,6 +130,43 @@ def create_init_web_server(
     _verify_assets()
     token = secrets.token_urlsafe(32)
     session_id = f"init-{secrets.token_hex(16)}"
+    outcome_lock = Lock()
+    successful_outcome: InitWebSubmissionOutcome | None = None
+
+    def _outcome() -> InitWebSubmissionOutcome | None:
+        with outcome_lock:
+            return successful_outcome
+
+    def _friendly_response(response: dict[str, Any]) -> dict[str, Any]:
+        action = response.get("next_action")
+        progress = response.get("progress")
+        action_payload = action if isinstance(action, dict) else {}
+        progress_payload = progress if isinstance(progress, dict) else {}
+        friendly = {
+            "ok": True,
+            "status": response.get("status"),
+            "workspace_id": response.get("workspace_id"),
+            "run_id": response.get("run_id"),
+            "transaction_id": response.get("transaction_id"),
+            "execution_authorized": response.get("execution_authorized") is True,
+            "first_action": {
+                "action_kind": action_payload.get("action_kind"),
+                "effect_kind": action_payload.get("effect_kind"),
+                "reason_code": action_payload.get("reason_code"),
+                "stage_id": action_payload.get("stage_id"),
+                "role_id": action_payload.get("role_id"),
+            },
+            "progress": {
+                "status": "initialized",
+                "current_stage": progress_payload.get("current_stage"),
+                "current_role": progress_payload.get("current_role"),
+                "reason_code": progress_payload.get("reason_code"),
+            },
+        }
+        if response.get("execution_authorized") is True:
+            friendly["completion_target"] = response.get("completion_target")
+            friendly["repair_budget"] = response.get("repair_budget")
+        return friendly
 
     def _shutdown_soon() -> None:
         import threading
@@ -183,7 +241,12 @@ def create_init_web_server(
                 self._reject(HTTPStatus.FORBIDDEN, "init_web_origin_invalid")
                 return
             target = urlsplit(self.path)
-            if target.path not in {"/api/v1/submit", "/api/v1/output-contract-preview"}:
+            if target.path not in {
+                "/api/v1/submit",
+                "/api/v1/output-contract-preview",
+                "/api/v1/source-manifest-preview",
+                "/api/v1/source-upload",
+            }:
                 self._reject(HTTPStatus.NOT_FOUND, "init_web_route_not_found")
                 return
             query = parse_qs(target.query, keep_blank_values=True)
@@ -194,8 +257,44 @@ def create_init_web_server(
             except ValueError:
                 self._reject(HTTPStatus.BAD_REQUEST, "init_web_body_invalid")
                 return
-            if length < 1 or length > MAX_JSON_BODY_BYTES:
+            maximum = (
+                MAX_UPLOAD_BODY_BYTES
+                if target.path == "/api/v1/source-upload"
+                else MAX_JSON_BODY_BYTES
+            )
+            if length < 1 or length > maximum:
                 self._reject(HTTPStatus.REQUEST_ENTITY_TOO_LARGE, "init_web_body_too_large")
+                return
+            if target.path == "/api/v1/source-upload":
+                if self.headers.get("Content-Type") != "application/octet-stream":
+                    self._reject(
+                        HTTPStatus.UNSUPPORTED_MEDIA_TYPE,
+                        "init_web_content_type_invalid",
+                    )
+                    return
+                filename = self.headers.get("X-BriefLoop-Upload-Name", "")
+                try:
+                    response = submitter.stage_upload(
+                        session_id=session_id,
+                        filename=filename,
+                        stream=self.rfile,
+                        declared_length=length,
+                    )
+                except (AttributeError, SubmissionError) as exc:
+                    reason = (
+                        exc.error_code
+                        if isinstance(exc, SubmissionError)
+                        else "init_web_source_upload_unsupported"
+                    )
+                    status = (
+                        exc.http_status
+                        if isinstance(exc, SubmissionError)
+                        else HTTPStatus.UNPROCESSABLE_ENTITY
+                    )
+                    self._reject(HTTPStatus(status), reason)
+                    return
+                payload = canonical_json_bytes(response) + b"\n"
+                self._send(HTTPStatus.OK, payload, "application/json; charset=utf-8")
                 return
             if self.headers.get("Content-Type") != "application/json":
                 self._reject(HTTPStatus.UNSUPPORTED_MEDIA_TYPE, "init_web_content_type_invalid")
@@ -209,6 +308,11 @@ def create_init_web_server(
             try:
                 if target.path == "/api/v1/output-contract-preview":
                     status, response = HTTPStatus.OK, preview_output_contract(body)
+                elif target.path == "/api/v1/source-manifest-preview":
+                    status, response = HTTPStatus.OK, submitter.preview_source_manifest(
+                        session_id=session_id,
+                        body=body,
+                    )
                 else:
                     status, response = submitter.submit(body)
             except SubmissionError as exc:
@@ -216,12 +320,35 @@ def create_init_web_server(
                     "ok": False,
                     "reason_code": exc.error_code,
                 }
+            if (
+                target.path == "/api/v1/submit"
+                and status == HTTPStatus.OK
+                and response.get("status") in {"committed", "replayed"}
+            ):
+                workspace = response.get("workspace")
+                if not isinstance(workspace, str):
+                    self._reject(
+                        HTTPStatus.INTERNAL_SERVER_ERROR,
+                        "init_web_handoff_unavailable",
+                    )
+                    return
+                outcome = InitWebSubmissionOutcome(
+                    workspace=workspace,
+                    workspace_id=str(response.get("workspace_id")),
+                    run_id=str(response.get("run_id")),
+                    transaction_id=str(response.get("transaction_id")),
+                    status=str(response.get("status")),
+                )
+                with outcome_lock:
+                    nonlocal successful_outcome
+                    successful_outcome = outcome
+                response = _friendly_response(response)
             payload = canonical_json_bytes(response) + b"\n"
             self._send(HTTPStatus(status), payload, "application/json; charset=utf-8")
             if (
                 exit_on_success
                 and status == HTTPStatus.OK
-                and response.get("status") == "committed"
+                and response.get("status") in {"committed", "replayed"}
             ):
                 _shutdown_soon()
 
@@ -234,6 +361,8 @@ def create_init_web_server(
         port=bound_port,
         _token=token,
         _server=server,
+        _cleanup=getattr(submitter, "close", lambda: None),
+        _outcome_getter=_outcome,
     )
 
 
@@ -241,7 +370,9 @@ __all__ = [
     "CONTENT_SECURITY_POLICY",
     "InitWebError",
     "InitWebServer",
+    "InitWebSubmissionOutcome",
     "MAX_JSON_BODY_BYTES",
+    "MAX_UPLOAD_BODY_BYTES",
     "SESSION_TOKEN_HEADER",
     "create_init_web_server",
 ]

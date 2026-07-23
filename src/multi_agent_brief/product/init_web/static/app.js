@@ -38,7 +38,7 @@
             panel_title: "创建报告工作区",
             top_banner: "一次性初始化向导 · 预览为固定合成内容",
             step_1: "报告方向",
-            step_2: "交付与版式",
+            step_2: "本地输出设置",
             step_3: "预览与确认",
             btn_back: "← 上一步",
             btn_next: "下一步 →",
@@ -59,7 +59,7 @@
             placeholder_purpose: "例如：跟踪组件价格，支撑采购议价",
             placeholder_freetext: "例如：给董事会看，十分钟读完，保留完整数据表，同时给我 DOCX 和网页版。",
             placeholder_window: "例如：近 14 天",
-            sec_formats: "读者收到什么文件？（可多选）",
+            sec_formats: "本地输出格式（可多选）",
             sec_presentation: "版式风格",
             custom_base_title: "基底风格",
             custom_base_note: "自定义 = 基底风格 + 有界覆盖（密度、强调色等为独立字段）。",
@@ -83,7 +83,9 @@
             review_proposed: "来自文字的提议 · 待你处置",
             review_unresolved: "未解决 · 不生效",
             review_path_k: "工作区位置",
-            review_statement: "确认后，将在此位置创建 fresh-v2 工作区：一次确定性事务提交报告方向与交付选择，并返回 ControlStore 收据。",
+            review_authorized_boundary: "这将创建并授权一个本地 run，完成目标为 finalized_local，修复预算为 1。它会返回初始化 Receipt，并把控制权交回当前 Codex 会话。它不会对外交付，也不会显示最终报告。",
+            review_manual_boundary: "这将创建一个没有 RunExecutionAuthorization 的本地工作区/run。后续保持手动继续。它不会对外交付，也不会显示最终报告。",
+            review_manifest_hash: "已确认 canonical manifest SHA-256",
             review_accept: "接受",
             review_discard: "丢弃",
             review_accepted: "已接受",
@@ -98,7 +100,7 @@
             field_window: "时间窗",
             field_language: "语言",
             field_source: "来源姿态",
-            field_formats: "交付格式",
+            field_formats: "本地输出格式",
             field_presentation: "版式风格",
             field_density: "报告篇幅 / 阅读深度",
             field_tables: "数据表",
@@ -108,32 +110,43 @@
             err_required: "还有必选项未完成：",
             err_pending: "请先处置每条 Agent 提议（接受或丢弃）。",
             err_output_contract_preview: "正在核验当前篇幅预算，请稍候。",
+            source_pack_title: "确认本地来源清单",
+            source_pack_note: "选择文件后，服务器计算哈希。你可以导入已有 ExecutionSourceManifest，或编辑来源元数据；服务器会生成下方安全规范预览，确认前不会写入工作区。",
+            source_files: "选择来源文件",
+            source_manifest_import: "导入清单（可选）",
+            source_manifest_edit: "来源元数据（路径、哈希与来源 ID 由服务器生成或核验）",
+            source_manifest_validate: "由服务器校验并规范化",
+            source_uploading: "正在核验来源文件……",
+            source_validating: "服务器正在校验来源清单……",
+            source_ready: "来源文件与清单已逐项匹配",
+            err_source_pack: "请先选择来源文件并确认有效清单。",
             err_session: "缺少会话令牌：请使用初始化命令给出的完整链接打开本页。",
             status_ready: "可以确认创建。",
             status_fill: "完成必选项后即可创建。",
             preview_fidelity_html: "HTML 为示意预览",
             preview_fidelity_docx: "DOCX 为近似版式预览",
-            preview_formats: "交付：",
+            preview_formats: "本地输出：",
             cf_committed: "已提交 · committed",
             cf_replayed: "重放 · replayed",
             cf_replayed_badge: "replayed · 无新写入",
             cf_conflict: "冲突 · submission_replay_conflict",
             cf_error: "提交被拒绝",
-            cf_sub_committed: "报告工作区已初始化。以下是 ControlStore 事务返回的真实收据：",
-            cf_sub_replayed: "相同请求已提交过——返回原收据，不产生第二个工作区。",
+            cf_sub_committed: "工作区初始化已提交。以下是初始化收据与第一步状态（不是最终报告、交付页或实时进度）：",
+            cf_sub_replayed: "相同初始化请求已提交过——返回原收据，不产生第二个工作区。",
             cf_sub_conflict: "同一 request_id 提交了不同内容。已拒绝，零写入。",
             cf_sub_error: "服务端拒绝了本次提交，未产生任何写入。原因码如上所示。",
             cf_submitting: "正在提交……",
-            cf_next: "下一步：",
+            cf_next: "本地终点与第一步：",
             cf_again: "再次提交同一请求（replay）",
             cf_close: "关闭，修改后重试",
-            cf_note: "此收据由 ControlStore 事务确定性返回；重放返回原收据，冲突请求零写入。"
+            cf_note: "目标为 finalized_local，预授权编辑修复预算为 1。此页仅确认初始化；已启动的 Codex 控制器会在命令行继续。",
+            cf_note_manual: "本次初始化没有 RunExecutionAuthorization；后续为手动继续，不声明 finalized_local 或修复预算。"
         },
         en: {
             panel_title: "Create report workspace",
             top_banner: "One-shot init wizard · fixed synthetic preview",
             step_1: "Direction",
-            step_2: "Delivery & style",
+            step_2: "Local output setup",
             step_3: "Review & confirm",
             btn_back: "← Back",
             btn_next: "Next →",
@@ -154,7 +167,7 @@
             placeholder_purpose: "e.g. track component prices to support procurement",
             placeholder_freetext: "e.g. for the board, a ten-minute read, keep full data tables, and give me both DOCX and a web page.",
             placeholder_window: "e.g. last 14 days",
-            sec_formats: "What should readers receive? (multi-select)",
+            sec_formats: "Local output formats (multi-select)",
             sec_presentation: "Presentation style",
             custom_base_title: "Base style",
             custom_base_note: "Custom = base style + bounded overrides (density, accent — separate fields).",
@@ -178,7 +191,9 @@
             review_proposed: "Proposed from your text · awaiting disposition",
             review_unresolved: "Unresolved · no effect",
             review_path_k: "Workspace location",
-            review_statement: "Confirming creates a fresh-v2 workspace here: one deterministic transaction commits the direction and delivery choices and returns a ControlStore receipt.",
+            review_authorized_boundary: "This creates and authorizes a local run with completion target finalized_local and repair budget 1. It returns an initialization Receipt and hands control back to the current Codex session. It does not deliver externally or display the final report.",
+            review_manual_boundary: "This creates a local workspace/run without RunExecutionAuthorization. Continuation remains manual. It does not deliver externally or display the final report.",
+            review_manifest_hash: "Confirmed canonical manifest SHA-256",
             review_accept: "Accept",
             review_discard: "Discard",
             review_accepted: "Accepted",
@@ -193,7 +208,7 @@
             field_window: "Time window",
             field_language: "Language",
             field_source: "Source posture",
-            field_formats: "Formats",
+            field_formats: "Local output formats",
             field_presentation: "Style",
             field_density: "Report amount / reading depth",
             field_tables: "Tables",
@@ -203,26 +218,37 @@
             err_required: "Missing required choices: ",
             err_pending: "Dispose of every agent proposal first (accept or discard).",
             err_output_contract_preview: "Validating the current report-amount budget…",
+            source_pack_title: "Confirm local source manifest",
+            source_pack_note: "The server hashes selected files. Import an ExecutionSourceManifest or edit source metadata; the server builds the safe canonical preview below. No workspace is written before confirmation.",
+            source_files: "Select source files",
+            source_manifest_import: "Import manifest (optional)",
+            source_manifest_edit: "Source metadata (server derives or verifies paths, hashes, and IDs)",
+            source_manifest_validate: "Validate and canonicalize on server",
+            source_uploading: "Verifying source files…",
+            source_validating: "Server is validating the source manifest…",
+            source_ready: "Every manifest member matches one selected file",
+            err_source_pack: "Select source files and confirm a valid manifest first.",
             err_session: "Missing session token: open this page via the full link printed by the init command.",
             status_ready: "Ready to create.",
             status_fill: "Complete the required choices to continue.",
             preview_fidelity_html: "HTML preview is representative",
             preview_fidelity_docx: "DOCX preview is approximate",
-            preview_formats: "Delivery: ",
+            preview_formats: "Local output: ",
             cf_committed: "Committed",
             cf_replayed: "Replayed",
             cf_replayed_badge: "replayed · no new writes",
             cf_conflict: "submission_replay_conflict",
             cf_error: "Submission rejected",
-            cf_sub_committed: "The workspace is initialized. Real receipt returned by the ControlStore transaction:",
-            cf_sub_replayed: "This exact request was already committed — original receipt returned, no second workspace.",
+            cf_sub_committed: "Workspace initialization committed. This is the initialization receipt and first action only, not the final report, delivery page, or live progress:",
+            cf_sub_replayed: "This exact initialization request was already committed — original receipt returned, no second workspace.",
             cf_sub_conflict: "Same request_id with a different payload. Rejected with zero writes.",
             cf_sub_error: "The server rejected this submission; nothing was written. The reason code is shown above.",
             cf_submitting: "Submitting…",
-            cf_next: "Next: ",
+            cf_next: "Local target and first action: ",
             cf_again: "Resubmit the same request (replay)",
             cf_close: "Close, change something, retry",
-            cf_note: "This receipt is returned deterministically by a ControlStore transaction; replays return the original receipt and conflicting requests write nothing."
+            cf_note: "The target is finalized_local with one preauthorized editor repair. This page confirms initialization only; the initiating Codex controller continues in the terminal.",
+            cf_note_manual: "This initialization has no RunExecutionAuthorization; continuation is manual and does not claim finalized_local or a repair budget."
         }
     };
 
@@ -262,7 +288,7 @@
         ],
         formats: [
             { id: "docx", zh: ["DOCX", "可打印、可批注"], en: ["DOCX", "Printable, annotatable"] },
-            { id: "html", zh: ["网页版 HTML", "浏览器阅读，自包含"], en: ["HTML page", "Self-contained web reading"] },
+            { id: "html", zh: ["本地 HTML", "本地输出格式"], en: ["Local HTML", "Local output format"] },
             { id: "markdown", zh: ["Markdown", "可移植、给下游工具"], en: ["Markdown", "Portable, for downstream tools"] }
         ],
         presentations: [
@@ -413,6 +439,18 @@
         outputContractPreview: null,
         outputContractPreviewKey: null,
         outputContractPreviewRequest: 0,
+        sourceUploads: [],
+        sourceManifestMode: "generated",
+        sourceManifestText: "",
+        sourceCanonicalManifest: null,
+        sourceCanonicalPreview: [],
+        sourceCanonicalBindings: [],
+        sourceConfirmedMetadata: [],
+        sourceManifestSha256: null,
+        sourceRoutingHashes: [],
+        sourcePackValid: false,
+        sourcePreviewing: false,
+        sourceUploading: false,
         submitting: false
     };
 
@@ -831,6 +869,98 @@
         g1.appendChild(tb1);
         sectionsHost.appendChild(g1);
 
+        var sources = el("div", "review-group explicit source-pack-editor");
+        var sourceHead = el("div", "review-group-head");
+        sourceHead.appendChild(el("span", "dot"));
+        sourceHead.appendChild(el("span", null, t("source_pack_title")));
+        sources.appendChild(sourceHead);
+        sources.appendChild(el("p", "section-note", t("source_pack_note")));
+
+        var fileLabel = el("label", "source-input-label", t("source_files"));
+        var fileInput = el("input", "source-file-input");
+        fileInput.type = "file";
+        fileInput.multiple = true;
+        fileInput.addEventListener("change", function () {
+            uploadSourceFiles(Array.prototype.slice.call(fileInput.files || []));
+        });
+        fileLabel.appendChild(fileInput);
+        sources.appendChild(fileLabel);
+
+        var importLabel = el("label", "source-input-label", t("source_manifest_import"));
+        var importInput = el("input", "source-manifest-file");
+        importInput.type = "file";
+        importInput.accept = ".json,application/json";
+        importInput.addEventListener("change", function () {
+            var selected = importInput.files && importInput.files[0];
+            if (!selected) return;
+            selected.text().then(function (text) {
+                var imported = JSON.parse(text);
+                STATE.sourceManifestMode = "imported";
+                STATE.sourceRoutingHashes = imported.members.map(function (member) { return member.content_sha256; });
+                STATE.sourceManifestText = JSON.stringify(metadataFromImportedManifest(imported), null, 2);
+                STATE.sourceCanonicalManifest = null;
+                STATE.sourceCanonicalPreview = [];
+                STATE.sourceCanonicalBindings = [];
+                STATE.sourceConfirmedMetadata = [];
+                STATE.sourceManifestSha256 = null;
+                previewSourceManifest();
+                renderStage3();
+                updateActionbar();
+            });
+        });
+        importLabel.appendChild(importInput);
+        sources.appendChild(importLabel);
+
+        sources.appendChild(el("div", "source-input-label", t("source_manifest_edit")));
+        var manifestEditor = el("textarea", "source-manifest-editor");
+        manifestEditor.value = STATE.sourceManifestText;
+        manifestEditor.spellcheck = false;
+        manifestEditor.addEventListener("input", function () {
+            STATE.sourceManifestText = manifestEditor.value;
+            STATE.sourceCanonicalManifest = null;
+            STATE.sourceCanonicalPreview = [];
+            STATE.sourceCanonicalBindings = [];
+            STATE.sourceConfirmedMetadata = [];
+            STATE.sourceManifestSha256 = null;
+            STATE.sourcePackValid = false;
+            updateActionbar();
+        });
+        sources.appendChild(manifestEditor);
+        var validateButton = el("button", "btn-ghost", t("source_manifest_validate"));
+        validateButton.type = "button";
+        validateButton.disabled = STATE.sourceUploading || STATE.sourcePreviewing;
+        validateButton.addEventListener("click", previewSourceManifest);
+        sources.appendChild(validateButton);
+        var sourceStatus = el(
+            "p",
+            STATE.sourcePackValid ? "source-pack-status ok" : "source-pack-status",
+            STATE.sourceUploading
+                ? t("source_uploading")
+                : (STATE.sourcePreviewing
+                    ? t("source_validating")
+                    : (STATE.sourcePackValid ? t("source_ready") : t("err_source_pack")))
+        );
+        sources.appendChild(sourceStatus);
+        if (STATE.sourcePackValid && STATE.sourceCanonicalPreview.length) {
+            var previewTable = el("table", "review-table");
+            STATE.sourceCanonicalPreview.forEach(function (member) {
+                var tr = el("tr");
+                tr.appendChild(el("th", null, String(member.source_id)));
+                var details = String(member.title) + " · observed file: " + String(member.observed_filename) +
+                    " · SHA-256: " + String(member.observed_sha256) +
+                    " · " + String(member.content_media_type) + " · " + String(member.byte_count) + " bytes";
+                if (member.original_url) details += " · " + String(member.original_url);
+                if (member.opened_at) details += " · opened " + String(member.opened_at);
+                tr.appendChild(el("td", null, details));
+                previewTable.appendChild(tr);
+            });
+            sources.appendChild(previewTable);
+            var manifestHash = el("p", "source-pack-status ok");
+            manifestHash.textContent = t("review_manifest_hash") + ": " + String(STATE.sourceManifestSha256);
+            sources.appendChild(manifestHash);
+        }
+        sectionsHost.appendChild(sources);
+
         var g2 = el("div", "review-group proposed");
         var h2 = el("div", "review-group-head");
         h2.appendChild(el("span", "dot"));
@@ -901,7 +1031,11 @@
         sectionsHost.appendChild(contract);
         requestOutputContractPreview();
 
-        sectionsHost.appendChild(el("p", "review-warning", t("review_statement")));
+        sectionsHost.appendChild(el(
+            "p",
+            "review-warning",
+            t(STATE.sourcePackValid ? "review_authorized_boundary" : "review_manual_boundary")
+        ));
     }
 
     /* ---- synthetic preview (fixed public-safe sample) ---- */
@@ -1079,6 +1213,10 @@
                 btnConfirm.disabled = true;
                 confirmStatus.textContent = t("err_output_contract_preview");
                 confirmStatus.classList.add("err");
+            } else if (!STATE.sourcePackValid || STATE.sourceUploading) {
+                btnConfirm.disabled = true;
+                confirmStatus.textContent = t("err_source_pack");
+                confirmStatus.classList.add("err");
             } else {
                 btnConfirm.disabled = false;
                 confirmStatus.textContent = t("status_ready");
@@ -1223,9 +1361,189 @@
                 discarded: STATE.interpretation.mapped.filter(function (m) {
                     return STATE.dispositions[m.field + ":" + m.value] === "discarded";
                 }).map(function (m) { return m.field + "=" + m.value; }),
+                completion_target: "finalized_local",
+                repair_budget: 1,
+                source_manifest_mode: STATE.sourceManifestMode,
+                source_metadata: STATE.sourceConfirmedMetadata,
+                source_manifest: STATE.sourceCanonicalManifest,
+                upload_session_id: SESSION.sessionId,
+                upload_bindings: STATE.sourceCanonicalBindings,
                 human_confirmation: true // set only here, from the explicit confirm button
             }
         };
+    }
+
+    function generatedMetadata(uploads) {
+        return uploads.map(function (upload) {
+                return {
+                    title: upload.filename,
+                    publisher: null,
+                    published_at: null,
+                    document_kind: null,
+                    opened_at: null,
+                    resolved_at: null
+                };
+            });
+    }
+
+    function metadataFromImportedManifest(manifest) {
+        if (!manifest || !Array.isArray(manifest.members)) throw new Error("manifest");
+        return manifest.members.map(function (member) {
+            return {
+                source_id: member.source_id,
+                title: member.title,
+                publisher: member.publisher == null ? null : member.publisher,
+                published_at: member.published_at == null ? null : member.published_at,
+                retrieved_at: member.retrieved_at,
+                origin_type: member.origin_type,
+                acquisition_method: member.acquisition_method,
+                material_kind: member.material_kind,
+                provider: member.provider == null ? null : member.provider,
+                original_url: member.locator && member.locator.kind === "web" ? member.locator.url : null,
+                source_category: member.source_category,
+                retrieval_source_type: member.retrieval_source_type,
+                underlying_evidence_type: member.underlying_evidence_type,
+                raw_underlying_evidence_type: member.raw_underlying_evidence_type == null ? null : member.raw_underlying_evidence_type,
+                document_kind: member.document_kind == null ? null : member.document_kind,
+                opened_at: member.opened_at == null ? null : member.opened_at,
+                resolved_at: member.resolved_at == null ? null : member.resolved_at
+            };
+        });
+    }
+
+    function bindingsForMetadata(metadata) {
+        if (!Array.isArray(metadata) || metadata.length !== STATE.sourceUploads.length) throw new Error("metadata");
+        var unused = STATE.sourceUploads.slice();
+        return metadata.map(function (member, index) {
+            if (STATE.sourceManifestMode === "generated") {
+                return {
+                    metadata_index: index,
+                    upload_handle: STATE.sourceUploads[index].upload_handle
+                };
+            }
+            var selected = -1;
+            if (STATE.sourceManifestMode === "imported") {
+                for (var i = 0; i < unused.length; i++) {
+                    if (unused[i].sha256 === STATE.sourceRoutingHashes[index]) {
+                        selected = i;
+                        break;
+                    }
+                }
+                if (selected < 0) throw new Error("missing imported source hash");
+            }
+            var upload = unused.splice(selected, 1)[0];
+            return {metadata_index: index, upload_handle: upload.upload_handle};
+        });
+    }
+
+    function routedMetadata(metadata) {
+        return metadata.map(function (member, index) {
+            var routed = Object.assign({}, member);
+            if (STATE.sourceManifestMode === "imported") {
+                routed.expected_content_sha256 = STATE.sourceRoutingHashes[index];
+            }
+            return routed;
+        });
+    }
+
+    function previewSourceManifest() {
+        if (STATE.sourcePreviewing || STATE.sourceUploading) return;
+        var metadata;
+        var bindings;
+        try {
+            metadata = JSON.parse(STATE.sourceManifestText);
+            bindings = bindingsForMetadata(metadata);
+        } catch (e) {
+            STATE.sourcePackValid = false;
+            renderStage3();
+            updateActionbar();
+            return;
+        }
+        STATE.sourcePreviewing = true;
+        STATE.sourcePackValid = false;
+        STATE.sourceCanonicalBindings = [];
+        STATE.sourceConfirmedMetadata = [];
+        STATE.sourceManifestSha256 = null;
+        renderStage3();
+        updateActionbar();
+        fetch("/api/v1/source-manifest-preview?session_id=" + encodeURIComponent(SESSION.sessionId), {
+            method: "POST",
+            headers: {
+                "Content-Type": "application/json",
+                "X-BriefLoop-Session-Token": SESSION.token
+            },
+            body: JSON.stringify({
+                source_manifest_mode: STATE.sourceManifestMode,
+                source_metadata: routedMetadata(metadata),
+                upload_bindings: bindings
+            })
+        }).then(function (response) {
+            return response.json().then(function (body) {
+                if (response.status !== 200 || !body.ok) throw new Error(body.reason_code || "preview");
+                STATE.sourceCanonicalManifest = body.source_manifest;
+                STATE.sourceCanonicalPreview = body.source_preview || [];
+                STATE.sourceCanonicalBindings = body.routing_bindings || [];
+                STATE.sourceConfirmedMetadata = body.source_metadata || [];
+                STATE.sourceManifestSha256 = body.source_manifest_sha256 || null;
+                STATE.sourcePreviewing = false;
+                STATE.sourcePackValid = true;
+                renderStage3();
+                updateActionbar();
+            });
+        }).catch(function () {
+            STATE.sourcePreviewing = false;
+            STATE.sourcePackValid = false;
+            STATE.sourceCanonicalBindings = [];
+            STATE.sourceConfirmedMetadata = [];
+            STATE.sourceManifestSha256 = null;
+            renderStage3();
+            updateActionbar();
+        });
+    }
+
+    function uploadSourceFiles(files) {
+        STATE.sourceUploading = true;
+        STATE.sourcePackValid = false;
+        STATE.sourceUploads = [];
+        STATE.sourceCanonicalBindings = [];
+        STATE.sourceConfirmedMetadata = [];
+        STATE.sourceManifestSha256 = null;
+        updateActionbar();
+        var chain = Promise.resolve();
+        files.forEach(function (file) {
+            chain = chain.then(function () {
+                return fetch("/api/v1/source-upload?session_id=" + encodeURIComponent(SESSION.sessionId), {
+                    method: "POST",
+                    headers: {
+                        "Content-Type": "application/octet-stream",
+                        "X-BriefLoop-Session-Token": SESSION.token,
+                        "X-BriefLoop-Upload-Name": file.name
+                    },
+                    body: file
+                }).then(function (response) {
+                    return response.json().then(function (body) {
+                        if (response.status !== 200 || !body.ok) throw new Error(body.reason_code || "upload");
+                        STATE.sourceUploads.push(body);
+                    });
+                });
+            });
+        });
+        chain.then(function () {
+            STATE.sourceUploading = false;
+            if (!STATE.sourceManifestText.trim()) {
+                STATE.sourceManifestMode = "generated";
+                STATE.sourceRoutingHashes = [];
+                STATE.sourceManifestText = JSON.stringify(generatedMetadata(STATE.sourceUploads), null, 2);
+            }
+            previewSourceManifest();
+            renderStage3();
+            updateActionbar();
+        }).catch(function () {
+            STATE.sourceUploading = false;
+            STATE.sourcePackValid = false;
+            renderStage3();
+            updateActionbar();
+        });
     }
 
     function submitRequest() {
@@ -1283,11 +1601,14 @@
         cfBody.appendChild(el("p", "cf-sub", t(replayed ? "cf_sub_replayed" : "cf_sub_committed")));
 
         var box = el("div", "cf-receipt");
-        [["workspace_id", response.workspace_id],
+        var receiptRows = [["workspace_id", response.workspace_id],
          ["run_id", response.run_id],
-         ["transaction_id", response.transaction_id],
-         ["committed_revision", response.committed_revision],
-         ["workspace", response.workspace]].forEach(function (kv) {
+         ["transaction_id", response.transaction_id]];
+        if (response.execution_authorized === true) {
+            receiptRows.push(["completion_target", response.completion_target]);
+            receiptRows.push(["repair_budget", response.repair_budget]);
+        }
+        receiptRows.forEach(function (kv) {
             var line = el("div");
             line.appendChild(el("span", "k", kv[0] + "  "));
             line.appendChild(el("span", null, String(kv[1])));
@@ -1297,9 +1618,17 @@
 
         var next = el("p", "cf-next");
         next.appendChild(el("span", null, t("cf_next")));
+        var firstAction = response.first_action || {};
         next.appendChild(el("code", null,
-            "briefloop run --workspace " + String(response.workspace || STATE.workspaceTarget)));
+            (response.execution_authorized === true ? "finalized_local · " : "manual continuation · ") +
+            String(firstAction.reason_code || firstAction.effect_kind || "initialized")));
         cfBody.appendChild(next);
+
+        if (response.progress) {
+            var progress = el("p", "cf-note");
+            progress.textContent = String(response.progress.reason_code || response.progress.status || "initialized");
+            cfBody.appendChild(progress);
+        }
 
         var actions = el("div", "cf-actions");
         var again = el("button", "btn-ghost", t("cf_again"));
@@ -1309,7 +1638,11 @@
         close.addEventListener("click", function () { overlay.hidden = true; });
         actions.appendChild(close);
         cfBody.appendChild(actions);
-        cfBody.appendChild(el("p", "cf-note", t("cf_note")));
+        cfBody.appendChild(el(
+            "p",
+            "cf-note",
+            t(response.execution_authorized === true ? "cf_note" : "cf_note_manual")
+        ));
     }
 
     function paintError(reasonCode) {

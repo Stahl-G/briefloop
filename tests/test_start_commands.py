@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import json
 import re
+from types import SimpleNamespace
 from functools import partial
 from pathlib import Path
 
@@ -10,6 +11,7 @@ import yaml
 import pytest
 
 from multi_agent_brief.cli.main import main
+from multi_agent_brief.cli.init_commands import _init_web_wizard
 from multi_agent_brief.orchestrator.fact_layer_import import require_fast_rerun_handoff_ready
 from multi_agent_brief.orchestrator_contract import contract_references_exist
 from multi_agent_brief.orchestrator_contract import resolve_repo_workdir
@@ -22,6 +24,66 @@ from tests.helpers import write_workspace_files_under
 
 
 ROOT = Path(__file__).resolve().parent.parent
+
+
+class _InitWebServerDouble:
+    def __init__(self, *, outcome=None, interrupt: bool = False) -> None:
+        self.url = "http://127.0.0.1:12345/#token=test"
+        self.outcome = outcome
+        self._interrupt = interrupt
+        self.closed = False
+
+    def serve_forever(self) -> None:
+        if self._interrupt:
+            raise KeyboardInterrupt
+
+    def close(self) -> None:
+        self.closed = True
+
+
+def test_init_web_handoff_prints_exact_browser_selected_target(
+    monkeypatch, capsys, tmp_path: Path
+) -> None:
+    selected = tmp_path / "human-selected"
+    server = _InitWebServerDouble(
+        outcome=SimpleNamespace(
+            status="committed",
+            workspace=str(selected),
+            run_id="RUN-SELECTED",
+            transaction_id="TX-SELECTED",
+        )
+    )
+    monkeypatch.setattr(
+        "multi_agent_brief.product.init_web.create_init_web_server",
+        lambda *_args, **_kwargs: server,
+    )
+    monkeypatch.setattr("webbrowser.open", lambda _url: True)
+
+    assert _init_web_wizard(SimpleNamespace(port=0)) == 0
+
+    output = capsys.readouterr().out
+    assert f"briefloop runtime continue --workspace {selected}" in output
+    assert "RUN-SELECTED" in output and "TX-SELECTED" in output
+    assert server.closed is True
+
+
+@pytest.mark.parametrize(
+    ("server", "expected"),
+    [
+        (_InitWebServerDouble(interrupt=True), 130),
+        (_InitWebServerDouble(outcome=None), 1),
+    ],
+)
+def test_init_web_cancel_or_no_success_is_nonzero(
+    monkeypatch, server: _InitWebServerDouble, expected: int
+) -> None:
+    monkeypatch.setattr(
+        "multi_agent_brief.product.init_web.create_init_web_server",
+        lambda *_args, **_kwargs: server,
+    )
+    monkeypatch.setattr("webbrowser.open", lambda _url: True)
+
+    assert _init_web_wizard(SimpleNamespace(port=0)) == expected
 
 
 _write_workspace = partial(

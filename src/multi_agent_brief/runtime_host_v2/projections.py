@@ -15,6 +15,8 @@ from multi_agent_brief.core_run_v2.policy import core_role_topology_policy
 from multi_agent_brief.core_run_v2.terminal import classify_terminal_legality
 from multi_agent_brief.core_run_v2.verifier import CoreRunDomainVerifier
 
+from .contracts import RuntimeContinuationResult
+
 from .errors import RuntimeHostError
 
 
@@ -81,6 +83,44 @@ def build_store_status_projection(workspace: str | Path) -> dict[str, object]:
             ],
         },
     }
+
+
+def build_runtime_continuation_result(
+    verified,
+    action,
+    *,
+    status: str,
+    reason_code: str | None = None,
+    envelope_path: str | None = None,
+    transaction_ids: tuple[str, ...] = (),
+    violations: tuple[dict[str, str], ...] = (),
+) -> RuntimeContinuationResult:
+    """Build one friendly result from the same verified snapshot and action."""
+
+    stages = verified.snapshot.stage_states
+    completed = sum(item.status in {"complete", "skipped"} for item in stages)
+    return RuntimeContinuationResult.model_validate(
+        {
+            "schema_version": RuntimeContinuationResult.schema_id,
+            "run_id": verified.snapshot.run.run_id,
+            "store_revision": verified.snapshot.store_revision,
+            "status": status,
+            "reason_code": reason_code,
+            "current_stage": action.stage_id,
+            "current_role": action.role_id,
+            "completed_stages": completed,
+            "total_stages": len(stages),
+            "violations": list(violations),
+            "trace": {
+                "next_action": action.model_dump(
+                    mode="json", exclude_unset=False
+                ),
+                "envelope_path": envelope_path,
+                "transaction_ids": list(transaction_ids),
+            },
+        },
+        strict=True,
+    )
 
 
 def build_store_quality_projection(workspace: str | Path) -> dict[str, object]:
@@ -168,5 +208,6 @@ def _replace_projection(path: Path, payload: bytes) -> None:
 __all__ = [
     "build_store_quality_projection",
     "build_store_status_projection",
+    "build_runtime_continuation_result",
     "write_store_quality_projection",
 ]

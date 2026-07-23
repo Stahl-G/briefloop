@@ -11,6 +11,7 @@ from urllib.parse import parse_qs, urlsplit
 import pytest
 
 from multi_agent_brief.product.init_web.server import (
+    MAX_JSON_BODY_BYTES,
     SESSION_TOKEN_HEADER,
     create_init_web_server,
 )
@@ -21,15 +22,18 @@ from multi_agent_brief.product.init_web.submit import (
 
 
 class _StubSubmitter:
-    def __init__(self, response_status: str = "committed") -> None:
+    def __init__(
+        self, response_status: str = "committed", *, authorized: bool = True
+    ) -> None:
         self.calls: list[object] = []
         self._response_status = response_status
+        self._authorized = authorized
 
     def submit(self, body: object) -> tuple[int, dict[str, object]]:
         self.calls.append(body)
         if self._response_status == "conflict":
             raise SubmissionError("submission_replay_conflict", 409)
-        return 200, {
+        response: dict[str, object] = {
             "ok": True,
             "status": self._response_status,
             "workspace_id": "WS-1",
@@ -37,7 +41,24 @@ class _StubSubmitter:
             "transaction_id": "REQ-CX-INIT-x",
             "committed_revision": 1,
             "receipt": {},
+            "workspace": "/private/secret/workspace",
+            "execution_authorized": self._authorized,
+            "next_action": {
+                "action_kind": "deterministic",
+                "effect_kind": "doctor_check",
+                "reason_code": "doctor_check_required",
+                "stage_id": None,
+                "role_id": None,
+            },
+            "progress": {"reason_code": "doctor_check_required"},
         }
+        if self._authorized:
+            response["completion_target"] = "finalized_local"
+            response["repair_budget"] = 1
+        else:
+            response["completion_target"] = None
+            response["repair_budget"] = None
+        return 200, response
 
 
 def _credentials(url: str) -> tuple[str, str]:
@@ -99,6 +120,22 @@ def test_get_assets_and_security_headers(server) -> None:
     assert b"STATE.outputContractPreviewKey === currentOutputContractPreviewKey()" in body
     assert b"requestNumber !== STATE.outputContractPreviewRequest" in body
     assert b"else if (!hasCurrentOutputContractPreview())" in body
+    assert b"finalized_local" in body
+    assert b"repair_budget: 1" in body
+    assert b"runtime continue --workspace" not in body
+    assert b"response.workspace ||" not in body
+    assert b"published_at: null" in body
+    assert b"observed_filename" in body
+    assert b"observed_sha256" in body
+    assert b"source_manifest_sha256" in body
+    assert b"Self-contained web reading" not in body
+    assert b"Delivery & style" not in body
+    assert b"This creates and authorizes a local run" in body
+    assert b"It does not deliver externally or display the final report" in body
+    assert b"no RunExecutionAuthorization" in body
+    assert b"This creates a local workspace/run without RunExecutionAuthorization" in body
+    assert b't(STATE.sourcePackValid ? "review_authorized_boundary" : "review_manual_boundary")' in body
+    assert b"review_statement" not in body
     status, _headers, _body = _request(server, "GET", "/assets/style.css")
     assert status == 200
     assert server._server.server_address[0] == "127.0.0.1"
@@ -173,8 +210,8 @@ def test_post_rejects_other_routes_and_bad_envelope(server) -> None:
         server,
         "POST",
         f"/api/v1/submit?session_id={session}",
-        body=b" " * (64 * 1024 + 1),
-        headers=auth,
+        body=b"x",
+        headers={**auth, "Content-Length": str(MAX_JSON_BODY_BYTES + 1)},
     )
     assert status == 413
 
@@ -193,6 +230,125 @@ def test_post_success_returns_real_response(server) -> None:
     assert payload["ok"] is True
     assert payload["status"] == "committed"
     assert payload["transaction_id"] == "REQ-CX-INIT-x"
+    assert payload["execution_authorized"] is True
+    assert payload["completion_target"] == "finalized_local"
+    assert payload["repair_budget"] == 1
+    assert "workspace" not in payload
+    assert "next_command" not in payload
+    assert "/private/secret" not in body.decode("utf-8")
+    assert server.outcome is not None
+    assert server.outcome.workspace == "/private/secret/workspace"
+
+
+def test_manual_success_never_claims_authorized_terminal_or_budget() -> None:
+    instance = create_init_web_server(
+        _StubSubmitter(authorized=False), exit_on_success=False
+    )
+    instance.start()
+    try:
+        token, session = _credentials(instance.url)
+        status, _headers, body = _request(
+            instance,
+            "POST",
+            f"/api/v1/submit?session_id={session}",
+            body=_submit_body(),
+            headers={
+                "Content-Type": "application/json",
+                SESSION_TOKEN_HEADER: token,
+            },
+        )
+        payload = json.loads(body)
+        assert status == 200
+        assert payload["execution_authorized"] is False
+        assert "completion_target" not in payload
+        assert "repair_budget" not in payload
+        assert b"finalized_local" not in body
+    finally:
+        instance.close()
+
+
+def test_source_upload_is_session_bound_and_server_hashed(tmp_path: Path) -> None:
+    instance = create_init_web_server(
+        InitWebSubmitter(base_dir=tmp_path), exit_on_success=False
+    )
+    instance.start()
+    try:
+        token, session = _credentials(instance.url)
+        content = b"bounded public source\n"
+        status, _headers, body = _request(
+            instance,
+            "POST",
+            f"/api/v1/source-upload?session_id={session}",
+            body=content,
+            headers={
+                "Content-Type": "application/octet-stream",
+                "X-BriefLoop-Upload-Name": "source.txt",
+                SESSION_TOKEN_HEADER: token,
+            },
+        )
+        payload = json.loads(body)
+        assert status == 200
+        assert payload["filename"] == "source.txt"
+        assert payload["byte_count"] == len(content)
+        assert len(payload["sha256"]) == 64
+        assert payload["upload_handle"].startswith("upload-")
+
+        source_metadata = [
+                {
+                    "source_id": "SRC-INIT-001",
+                    "expected_content_sha256": payload["sha256"],
+                    "origin_type": "uploaded_file",
+                    "acquisition_method": "manual_upload",
+                    "material_kind": "uploaded_file",
+                    "provider": None,
+                    "original_url": None,
+                    "title": "Public source",
+                    "publisher": None,
+                    "published_at": "2026-07-22",
+                    "retrieved_at": "2026-07-23T00:00:00Z",
+                    "source_category": "other",
+                    "retrieval_source_type": "local_file",
+                    "underlying_evidence_type": "unknown",
+                    "raw_underlying_evidence_type": None,
+                    "document_kind": None,
+                    "opened_at": None,
+                    "resolved_at": None,
+                }
+            ]
+        preview_body = json.dumps(
+            {
+                "source_manifest_mode": "imported",
+                "source_metadata": source_metadata,
+                "upload_bindings": [
+                    {
+                        "metadata_index": 0,
+                        "upload_handle": payload["upload_handle"],
+                    }
+                ],
+            }
+        ).encode("utf-8")
+        status, _headers, body = _request(
+            instance,
+            "POST",
+            f"/api/v1/source-manifest-preview?session_id={session}",
+            body=preview_body,
+            headers={
+                "Content-Type": "application/json",
+                SESSION_TOKEN_HEADER: token,
+            },
+        )
+        preview = json.loads(body)
+        assert status == 200
+        assert preview["member_count"] == 1
+        assert preview["source_manifest"]["members"][0]["source_id"] == "SRC-INIT-001"
+        assert preview["source_preview"][0]["observed_filename"] == "source.txt"
+        assert preview["source_preview"][0]["observed_sha256"] == payload["sha256"]
+        assert preview["source_preview"][0]["byte_count"] == len(content)
+        assert preview["routing_bindings"] == [
+            {"metadata_index": 0, "upload_handle": payload["upload_handle"]}
+        ]
+    finally:
+        instance.close()
 
 
 def test_output_contract_preview_is_session_bound_and_zero_write(server) -> None:
@@ -330,6 +486,10 @@ def test_real_submitter_end_to_end(tmp_path: Path) -> None:
         payload = json.loads(raw)
         assert payload["status"] == "committed"
         assert (tmp_path / "web-ws" / "briefloop.db").is_file()
-        assert payload["receipt"]["transaction_id"] == payload["transaction_id"]
+        assert "receipt" not in payload
+        assert "workspace" not in payload
+        assert "next_command" not in payload
+        assert instance.outcome is not None
+        assert instance.outcome.workspace == str(tmp_path / "web-ws")
     finally:
         instance.close()
