@@ -339,6 +339,17 @@ class InitWebStaging:
                     raise InitWebStagingError("init_web_source_hash_mismatch")
             elif source_id is not None or "expected_content_sha256" in metadata:
                 raise InitWebStagingError("init_web_source_manifest_invalid")
+            else:
+                staged = by_index[index]
+                metadata = {
+                    "title": metadata.get("title") or staged.filename,
+                    "publisher": metadata.get("publisher"),
+                    "published_at": metadata.get("published_at"),
+                    "original_url": metadata.get("original_url"),
+                    "document_kind": metadata.get("document_kind"),
+                    "opened_at": metadata.get("opened_at"),
+                    "resolved_at": metadata.get("resolved_at"),
+                }
             stable = json.dumps(
                 metadata,
                 ensure_ascii=False,
@@ -365,24 +376,6 @@ class InitWebStaging:
                     row[1].byte_count,
                 )
             )
-
-        if mode == "generated":
-            rows = [
-                (
-                    {
-                        "title": metadata.get("title") or staged.filename,
-                        "publisher": metadata.get("publisher"),
-                        "published_at": metadata.get("published_at"),
-                        "original_url": metadata.get("original_url"),
-                        "document_kind": metadata.get("document_kind"),
-                        "opened_at": metadata.get("opened_at"),
-                        "resolved_at": metadata.get("resolved_at"),
-                    },
-                    staged,
-                    stable,
-                )
-                for metadata, staged, stable in rows
-            ]
 
         members: list[dict[str, object]] = []
         for ordinal, (metadata, staged, _stable) in enumerate(rows, start=1):

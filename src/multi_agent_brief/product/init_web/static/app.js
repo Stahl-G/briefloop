@@ -83,9 +83,8 @@
             review_proposed: "来自文字的提议 · 待你处置",
             review_unresolved: "未解决 · 不生效",
             review_path_k: "工作区位置",
-            review_statement: "这将创建并授权一个本地 run，返回初始化 Receipt，并把控制权交回当前 Codex 会话。它不会对外交付，也不会显示最终报告。",
-            review_authorized_boundary: "本地授权终点：finalized_local · 预授权编辑修复预算：1 · 仅初始化与授权，不是交付、最终报告或实时进度。",
-            review_manual_boundary: "手动继续：没有 RunExecutionAuthorization；不会显示 finalized_local 或修复预算。",
+            review_authorized_boundary: "这将创建并授权一个本地 run，完成目标为 finalized_local，修复预算为 1。它会返回初始化 Receipt，并把控制权交回当前 Codex 会话。它不会对外交付，也不会显示最终报告。",
+            review_manual_boundary: "这将创建一个没有 RunExecutionAuthorization 的本地工作区/run。后续保持手动继续。它不会对外交付，也不会显示最终报告。",
             review_manifest_hash: "已确认 canonical manifest SHA-256",
             review_accept: "接受",
             review_discard: "丢弃",
@@ -192,9 +191,8 @@
             review_proposed: "Proposed from your text · awaiting disposition",
             review_unresolved: "Unresolved · no effect",
             review_path_k: "Workspace location",
-            review_statement: "This creates and authorizes a local run, returns an initialization Receipt and hands control back to the current Codex session. It does not deliver externally or display the final report.",
-            review_authorized_boundary: "Local authorization target: finalized_local · preauthorized editor repair budget: 1 · setup/authorization only, not delivery, a final report, or live progress.",
-            review_manual_boundary: "Manual continuation: no RunExecutionAuthorization; finalized_local and repair budget do not apply.",
+            review_authorized_boundary: "This creates and authorizes a local run with completion target finalized_local and repair budget 1. It returns an initialization Receipt and hands control back to the current Codex session. It does not deliver externally or display the final report.",
+            review_manual_boundary: "This creates a local workspace/run without RunExecutionAuthorization. Continuation remains manual. It does not deliver externally or display the final report.",
             review_manifest_hash: "Confirmed canonical manifest SHA-256",
             review_accept: "Accept",
             review_discard: "Discard",
@@ -1038,7 +1036,6 @@
             "review-warning",
             t(STATE.sourcePackValid ? "review_authorized_boundary" : "review_manual_boundary")
         ));
-        sectionsHost.appendChild(el("p", "review-warning", t("review_statement")));
     }
 
     /* ---- synthetic preview (fixed public-safe sample) ---- */

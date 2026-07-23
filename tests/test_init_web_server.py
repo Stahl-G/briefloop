@@ -133,6 +133,9 @@ def test_get_assets_and_security_headers(server) -> None:
     assert b"This creates and authorizes a local run" in body
     assert b"It does not deliver externally or display the final report" in body
     assert b"no RunExecutionAuthorization" in body
+    assert b"This creates a local workspace/run without RunExecutionAuthorization" in body
+    assert b't(STATE.sourcePackValid ? "review_authorized_boundary" : "review_manual_boundary")' in body
+    assert b"review_statement" not in body
     status, _headers, _body = _request(server, "GET", "/assets/style.css")
     assert status == 200
     assert server._server.server_address[0] == "127.0.0.1"

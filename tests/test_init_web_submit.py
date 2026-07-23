@@ -467,8 +467,8 @@ def test_generated_preview_routing_is_reused_for_exact_first_commit(
         body={
             "source_manifest_mode": "generated",
             "source_metadata": [
-                {"title": upload["filename"], "published_at": None}
-                for upload in uploads
+                {"title": "Same source", "publisher": None},
+                {"title": "Same source"},
             ],
             "upload_bindings": [
                 {
@@ -502,6 +502,110 @@ def test_generated_preview_routing_is_reused_for_exact_first_commit(
         "SRC-INIT-001",
         "SRC-INIT-002",
     ]
+
+
+def test_generated_optional_omission_and_null_normalize_identically(
+    tmp_path: Path,
+) -> None:
+    submitter = InitWebSubmitter(base_dir=tmp_path)
+    staged = submitter.stage_upload(
+        session_id="session",
+        filename="source.txt",
+        stream=BytesIO(b"source"),
+        declared_length=6,
+    )
+    binding = [{"metadata_index": 0, "upload_handle": staged["upload_handle"]}]
+
+    omitted = submitter.preview_source_manifest(
+        session_id="session",
+        body={
+            "source_manifest_mode": "generated",
+            "source_metadata": [{"title": "Source"}],
+            "upload_bindings": binding,
+        },
+    )
+    explicit_null = submitter.preview_source_manifest(
+        session_id="session",
+        body={
+            "source_manifest_mode": "generated",
+            "source_metadata": [{"title": "Source", "publisher": None}],
+            "upload_bindings": binding,
+        },
+    )
+
+    assert omitted["source_metadata"] == explicit_null["source_metadata"]
+    assert omitted["source_manifest"] == explicit_null["source_manifest"]
+
+
+def test_generated_canonical_manifest_ignores_upload_and_binding_order(
+    tmp_path: Path,
+) -> None:
+    submitter = InitWebSubmitter(base_dir=tmp_path)
+    uploads = [
+        submitter.stage_upload(
+            session_id="session",
+            filename=f"source-{index}.txt",
+            stream=BytesIO(f"content-{index}".encode()),
+            declared_length=len(f"content-{index}".encode()),
+        )
+        for index in range(3)
+    ]
+
+    def _preview(ordered: list[dict[str, object]]) -> dict[str, object]:
+        return submitter.preview_source_manifest(
+            session_id="session",
+            body={
+                "source_manifest_mode": "generated",
+                "source_metadata": [
+                    {"title": str(upload["filename"])} for upload in ordered
+                ],
+                "upload_bindings": [
+                    {
+                        "metadata_index": index,
+                        "upload_handle": upload["upload_handle"],
+                    }
+                    for index, upload in enumerate(ordered)
+                ],
+            },
+        )
+
+    forward = _preview(uploads)
+    reverse = _preview(list(reversed(uploads)))
+
+    assert forward["source_manifest"] == reverse["source_manifest"]
+    assert forward["source_metadata"] == reverse["source_metadata"]
+
+
+def test_generated_normalized_duplicate_is_rejected(tmp_path: Path) -> None:
+    submitter = InitWebSubmitter(base_dir=tmp_path)
+    uploads = [
+        submitter.stage_upload(
+            session_id="session",
+            filename="same.txt",
+            stream=BytesIO(b"same"),
+            declared_length=4,
+        )
+        for _index in range(2)
+    ]
+
+    with pytest.raises(SubmissionError, match="init_web_source_manifest_invalid"):
+        submitter.preview_source_manifest(
+            session_id="session",
+            body={
+                "source_manifest_mode": "generated",
+                "source_metadata": [
+                    {"title": "Same"},
+                    {"title": "Same", "publisher": None},
+                ],
+                "upload_bindings": [
+                    {
+                        "metadata_index": index,
+                        "upload_handle": upload["upload_handle"],
+                    }
+                    for index, upload in enumerate(uploads)
+                ],
+            },
+        )
 
 
 def test_imported_manifest_expected_hash_must_match_staged_observation(
