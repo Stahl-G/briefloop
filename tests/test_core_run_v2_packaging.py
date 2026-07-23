@@ -416,7 +416,7 @@ def test_non_editable_wheel_runs_complete_dormant_core_spine(
                 "role_work_required",
                 "checkout_publication_unsupported",
             ]
-            assert current_result.trace.next_action.effect_kind != "finalized_local"
+            assert current_result.trace.next_action.effect_kind == "claim_freeze"
             blocked_action_fingerprint = sequence[-1][2]
             with SQLiteControlStore.open(init_web_workspace / "briefloop.db") as store:
                 verified_before_retry = CoreRunDomainVerifier().verify(
