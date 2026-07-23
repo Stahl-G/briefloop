@@ -3978,6 +3978,13 @@ class CoreRunDomainVerifier:
             if bindings or outcomes:
                 raise CoreRunError("control_store_integrity_invalid")
             return
+        if (
+            snapshot.repair_cycles
+            or snapshot.artifact_supersessions
+            or snapshot.repair_completions
+            or snapshot.recovery_completions
+        ):
+            raise CoreRunError("control_store_integrity_invalid")
         if len(cycles) != 1 or len(bindings) > 1 or len(outcomes) > 1:
             raise CoreRunError("control_store_integrity_invalid")
         cycle = cycles[0]

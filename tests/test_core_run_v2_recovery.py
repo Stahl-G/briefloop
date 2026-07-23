@@ -7,8 +7,10 @@ import hashlib
 import json
 from pathlib import Path
 import sys
+from types import SimpleNamespace
 
 import pytest
+from tests import test_runtime_host_continue_v2 as gate_runtime_fixture
 
 from multi_agent_brief.cli.init_wizard import create_demo_workspace
 from multi_agent_brief.contracts.v2 import (
@@ -1532,6 +1534,131 @@ def test_typed_recovery_service_starts_one_repair_after_exact_replay_probe(
         snapshot = store.load_snapshot(RUN_ID)
         assert classify_recovery_legality(snapshot).state == "active_repair"
         assert len(snapshot.receipt_checkout_bindings) >= 2
+
+
+def test_gate_repair_contamination_rejects_direct_legacy_repair_zero_write(
+    tmp_path: Path,
+) -> None:
+    if sys.platform == "win32":
+        return
+    workspace = gate_runtime_fixture._authorized_workspace(tmp_path)
+    runtime = gate_runtime_fixture._service(workspace)
+
+    for _ in range(10):
+        result = runtime.continue_authorized()
+        assert result.status == "role_work_required"
+        assert result.trace.envelope_path is not None
+        envelope = json.loads(
+            (workspace / result.trace.envelope_path).read_text(encoding="utf-8")
+        )
+        with SQLiteControlStore.open(workspace / "briefloop.db") as store:
+            snapshot = store.load_snapshot(envelope["run_id"])
+        gate_runtime_fixture._write_current_role_proposal(
+            workspace,
+            result,
+            initial_editor_repetitions=20,
+            repair_editor_repetitions=210,
+        )
+        if envelope["role_id"] == "editor" and snapshot.gate_repair_cycles:
+            break
+    else:
+        raise AssertionError("authorized Gate repair was not reserved")
+
+    audited = next(
+        item for item in snapshot.artifacts if item.artifact_id == "audited_brief"
+    )
+    audited_revision = next(
+        item
+        for item in snapshot.artifact_revisions
+        if item.artifact_id == audited.artifact_id
+        and item.revision == audited.current_revision
+    )
+    (workspace / audited_revision.path).write_text(
+        "tampered while Gate repair is active\n",
+        encoding="utf-8",
+    )
+    contamination = RunIntegrityService(workspace).inspect(
+        IntegrityCheckRequest.model_validate(
+            {
+                **IntegrityCheckRequest.minimal_example,
+                "request_id": "REQ-GATE-RECOVERY-CONTAMINATION-001",
+                "run_id": envelope["run_id"],
+                "expected_store_revision": snapshot.store_revision,
+            },
+            strict=True,
+        )
+    )
+    assert contamination["status"] == "blocked"
+
+    with SQLiteControlStore.open(workspace / "briefloop.db") as store:
+        contaminated = store.load_snapshot(envelope["run_id"])
+        before = store.current_revision
+    integrity_record = contaminated.run_integrity_records[-1]
+    request = _record(
+        RepairStartRequest,
+        request_id="REQ-GATE-LEGACY-REPAIR-START-001",
+        run_id=envelope["run_id"],
+        contamination_revision=integrity_record.integrity_revision,
+        owner_stage_id="editor",
+        permitted_artifact_ids=["audited_brief"],
+        reason_code="frozen_artifact_contaminated",
+        expected_store_revision=before,
+    )
+    service = CoreRunRecoveryService(workspace, clock=CLOCK)
+
+    first = service.start_repair(request)
+    second = service.start_repair(request)
+
+    assert first.error_code == "repair_scope_invalid"
+    assert second == first
+    with SQLiteControlStore.open(workspace / "briefloop.db") as store:
+        after = store.load_snapshot(envelope["run_id"])
+        assert store.current_revision == before
+    assert not after.repair_cycles
+    assert not after.artifact_supersessions
+    assert not after.repair_completions
+    assert not after.recovery_completions
+
+
+def test_gate_repair_and_each_legacy_recovery_family_is_invalid() -> None:
+    snapshot = SimpleNamespace(
+        gate_repair_cycles=(SimpleNamespace(gate_repair_id="GATE-REPAIR-1"),),
+        gate_repair_artifact_bindings=(),
+        gate_repair_outcomes=(),
+        repair_cycles=(),
+        artifact_supersessions=(),
+        repair_completions=(),
+        recovery_completions=(),
+    )
+    for field in (
+        "repair_cycles",
+        "artifact_supersessions",
+        "repair_completions",
+        "recovery_completions",
+    ):
+        forged = SimpleNamespace(
+            **{
+                **vars(snapshot),
+                field: (SimpleNamespace(),),
+            }
+        )
+        assert classify_recovery_legality(forged).state == "invalid"
+        with pytest.raises(CoreRunError, match="control_store_integrity_invalid"):
+            CoreRunDomainVerifier._verify_gate_repair_chain(forged)
+
+    complete = SimpleNamespace(
+        **{
+            **vars(snapshot),
+            "repair_cycles": (SimpleNamespace(),),
+            "artifact_supersessions": (SimpleNamespace(),),
+            "repair_completions": (SimpleNamespace(),),
+            "recovery_completions": (SimpleNamespace(),),
+        }
+    )
+    assert classify_recovery_legality(complete).state == "invalid"
+    with pytest.raises(CoreRunError, match="control_store_integrity_invalid"):
+        CoreRunDomainVerifier._verify_gate_repair_chain(complete)
+
 
 def test_active_repair_authorization_is_bounded_by_canonical_artifact_scope(
     tmp_path: Path,

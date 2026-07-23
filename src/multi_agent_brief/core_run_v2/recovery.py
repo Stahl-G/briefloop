@@ -130,6 +130,14 @@ class RecoveryLegality:
 def classify_recovery_legality(snapshot: ControlStoreSnapshot) -> RecoveryLegality:
     """Replay exact per-contamination repair and recovery closure without I/O."""
 
+    if snapshot.gate_repair_cycles and (
+        snapshot.repair_cycles
+        or snapshot.artifact_supersessions
+        or snapshot.repair_completions
+        or snapshot.recovery_completions
+    ):
+        return RecoveryLegality("invalid")
+
     tx_revision = {
         item.transaction_id: item.committed_revision for item in snapshot.transactions
     }
@@ -763,6 +771,8 @@ class CoreRunRecoveryService:
                 return replay
             verifier = CoreRunDomainVerifier()
             verified = verifier.verify(store, request.run_id)
+            if verified.snapshot.gate_repair_cycles:
+                raise CoreRunError("repair_scope_invalid")
             if verified.snapshot.store_revision != request.expected_store_revision:
                 raise CoreRunError("store_revision_conflict")
             legality = classify_recovery_legality(verified.snapshot)
