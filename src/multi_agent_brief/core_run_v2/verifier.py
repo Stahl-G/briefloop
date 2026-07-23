@@ -4093,6 +4093,72 @@ class CoreRunDomainVerifier:
             raise CoreRunError("control_store_integrity_invalid")
 
 
+def _verify_authorized_local_finalize_checkout(
+    snapshot: ControlStoreSnapshot,
+    receipt: TransactionReceipt,
+) -> None:
+    """Require a projection-identical, non-publishing local terminal checkout."""
+
+    if (
+        len(receipt.checkout_revisions) != 1
+        or len(receipt.receipt_checkout_bindings) != 1
+        or receipt.receipt_checkout_bindings[0].transaction_id
+        != receipt.transaction_id
+    ):
+        raise CoreRunError("control_store_integrity_invalid")
+    child_id = receipt.checkout_revisions[0].checkout_revision_id
+    bindings = [
+        item
+        for item in snapshot.receipt_checkout_bindings
+        if item.transaction_id == receipt.transaction_id
+    ]
+    children = [
+        item
+        for item in snapshot.checkout_revisions
+        if item.checkout_revision_id == child_id
+    ]
+    if len(bindings) != 1 or len(children) != 1:
+        raise CoreRunError("control_store_integrity_invalid")
+    binding = bindings[0]
+    child = children[0]
+    parent_id = binding.pre_checkout_revision_id
+    parents = [
+        item
+        for item in snapshot.checkout_revisions
+        if item.checkout_revision_id == parent_id
+    ]
+    if (
+        parent_id is None
+        or len(parents) != 1
+        or binding.post_checkout_revision_id != child_id
+        or child.parent_checkout_revision_id != parent_id
+    ):
+        raise CoreRunError("control_store_integrity_invalid")
+
+    def member_signatures(checkout_revision_id: str) -> tuple[tuple[object, ...], ...]:
+        return tuple(
+            (
+                item.ordinal,
+                item.artifact_id,
+                item.artifact_revision,
+                item.canonical_path,
+                item.blob_sha256,
+                item.byte_size,
+            )
+            for item in sorted(
+                (
+                    member
+                    for member in snapshot.checkout_revision_members
+                    if member.checkout_revision_id == checkout_revision_id
+                ),
+                key=lambda member: member.ordinal,
+            )
+        )
+
+    if member_signatures(parent_id) != member_signatures(child_id):
+        raise CoreRunError("control_store_integrity_invalid")
+
+
 def _verified_core_receipt_binding(
     snapshot: ControlStoreSnapshot,
     receipt: TransactionReceipt,
@@ -4129,8 +4195,14 @@ def _verified_core_receipt_binding(
     allowed_relations = rule.authoritative_relation_families
     if binding.effect_kind == "finalize_complete" and snapshot.run_execution_authorizations:
         allowed_relations = frozenset(
-            {"stage_transitions", "stage_gate_bindings", "finalizations"}
+            {
+                "stage_transitions",
+                "stage_artifact_bindings",
+                "stage_gate_bindings",
+                "finalizations",
+            }
         )
+        _verify_authorized_local_finalize_checkout(snapshot, receipt)
     _verify_authoritative_receipt_relation_families(receipt, allowed_relations)
     _verify_core_receipt_event_set(
         snapshot,
