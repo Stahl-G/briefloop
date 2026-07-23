@@ -4129,7 +4129,12 @@ def _verified_core_receipt_binding(
     allowed_relations = rule.authoritative_relation_families
     if binding.effect_kind == "finalize_complete" and snapshot.run_execution_authorizations:
         allowed_relations = frozenset(
-            {"stage_transitions", "stage_gate_bindings", "finalizations"}
+            {
+                "stage_transitions",
+                "stage_artifact_bindings",
+                "stage_gate_bindings",
+                "finalizations",
+            }
         )
     _verify_authoritative_receipt_relation_families(receipt, allowed_relations)
     _verify_core_receipt_event_set(

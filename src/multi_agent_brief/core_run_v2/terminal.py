@@ -1610,6 +1610,7 @@ class CoreRunTerminalService:
     ):
         """Commit the authorization-bound local terminal without a package path."""
 
+        from .checkout import prepare_checkout_effect, stage_checkout_effect
         from .errors import CoreRunResult
         from .policy import derived_id, transaction_type_for
 
@@ -1667,6 +1668,32 @@ class CoreRunTerminalService:
             },
             strict=True,
         )
+        checkout = prepare_checkout_effect(
+            workspace=self.workspace,
+            snapshot=snapshot,
+            transaction_id=request.request_id,
+            created_at=self._clock(),
+        )
+        revisions = {
+            (item.artifact_id, item.revision): item
+            for item in snapshot.artifact_revisions
+        }
+        first_gate = selected[0].evaluation_id
+        consumed = {
+            (item.artifact_id, item.artifact_revision): revisions[
+                (item.artifact_id, item.artifact_revision)
+            ]
+            for item in snapshot.gate_artifact_bindings
+            if item.evaluation_id == first_gate
+        }
+        consumed.update(
+            {
+                (item.artifact_id, item.revision): revisions[
+                    (item.artifact_id, item.revision)
+                ]
+                for item in render.reader_artifacts
+            }
+        )
         unit = store.begin(
             request.run_id,
             request.request_id,
@@ -1687,6 +1714,25 @@ class CoreRunTerminalService:
             )
         )
         unit.append_stage_transition(transition)
+        for position, revision in enumerate(
+            sorted(consumed.values(), key=lambda item: (item.artifact_id, item.revision))
+        ):
+            unit.put_stage_artifact_binding(
+                StageArtifactBinding.model_validate(
+                    {
+                        "schema_version": StageArtifactBinding.schema_id,
+                        "run_id": request.run_id,
+                        "transition_id": transition_id,
+                        "position": position,
+                        "artifact_id": revision.artifact_id,
+                        "artifact_revision": revision.revision,
+                        "artifact_sha256": revision.sha256,
+                        "usage": "consumed",
+                        "accepted_transaction_id": request.request_id,
+                    },
+                    strict=True,
+                )
+            )
         for evaluation in selected:
             unit.put_stage_gate_binding(
                 StageGateBinding.model_validate(
@@ -1712,6 +1758,7 @@ class CoreRunTerminalService:
                 primary_record_id=finalization_id,
             )
         )
+        stage_checkout_effect(unit, checkout)
         receipt = unit.commit(
             _postcommit_observer=lambda _receipt: verifier.verify(store, request.run_id)
         )
