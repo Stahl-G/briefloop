@@ -7,6 +7,7 @@ from multi_agent_brief.control_store.serialization import canonical_fingerprint
 from multi_agent_brief.quality_gates.contract import GATE_IDS
 
 from .errors import CoreRunError
+from .gate_repair import classify_gate_repair_legality
 from .gates import EVALUATOR_IMPLEMENTATION, EVALUATOR_VERSION
 from .lineage import classify_current_lineage
 from .policy import (
@@ -152,6 +153,38 @@ def classify_core_run_next_action(verified: VerifiedCoreRun) -> CoreRunNextActio
             raise CoreRunError("control_store_integrity_invalid")
         rerun_stage_id = repairs[0].owner_stage_id
 
+    gate_repair = classify_gate_repair_legality(snapshot)
+    if gate_repair.state == "invalid":
+        raise CoreRunError("control_store_integrity_invalid")
+    if gate_repair.state == "eligible":
+        return _action(
+            verified,
+            action_kind="deterministic",
+            effect_kind="gate_repair_start",
+            reason_code="preauthorized_editor_gate_repair_required",
+            stage_id="editor",
+        )
+    if gate_repair.state in {
+        "not_authorized",
+        "budget_exhausted",
+        "source_or_non_editor_block",
+        "mixed_or_ambiguous_scope",
+        "failed_after_attempt",
+    }:
+        if gate_repair.reason_code is None:
+            raise CoreRunError("control_store_integrity_invalid")
+        return _action(
+            verified,
+            action_kind="human_decision",
+            effect_kind="gate_repair_human_review",
+            reason_code=gate_repair.reason_code,
+            stage_id=(
+                None
+                if gate_repair.current_block is None
+                else gate_repair.current_block.stage_id
+            ),
+        )
+
     active = [item for item in snapshot.invocations if item.status == "active"]
     if len(active) > 1:
         raise CoreRunError("control_store_integrity_invalid")
@@ -217,7 +250,7 @@ def classify_core_run_next_action(verified: VerifiedCoreRun) -> CoreRunNextActio
             effect_kind="package_ready",
             reason_code="local_delivery_bundle_prepared",
         )
-    if terminal.terminal_state in {
+    if gate_repair.state != "active" and terminal.terminal_state in {
         "auditor_ready",
         "rendered",
         "gate_blocked",
@@ -325,7 +358,11 @@ def classify_core_run_next_action(verified: VerifiedCoreRun) -> CoreRunNextActio
         action = _auditor_action(verified)
         if action is not None:
             return action
-    if _stage_has_current_effect(verified, stage_id):
+    gate_repair_stage_pending = gate_repair.state == "active" and (
+        (stage_id == "editor" and not snapshot.gate_repair_artifact_bindings)
+        or stage_id == "auditor"
+    )
+    if not gate_repair_stage_pending and _stage_has_current_effect(verified, stage_id):
         return _action(
             verified,
             action_kind="deterministic",
@@ -572,6 +609,23 @@ def _auditor_action(verified: VerifiedCoreRun) -> CoreRunNextAction | None:
     lineage = classify_current_lineage(snapshot)
     if lineage.proposals.audit is None:
         return None
+    gate_repair = classify_gate_repair_legality(snapshot)
+    if gate_repair.state == "active":
+        brief = next(
+            (
+                item
+                for item in snapshot.artifacts
+                if item.artifact_id == "audited_brief"
+            ),
+            None,
+        )
+        audit = lineage.proposals.audit
+        if (
+            brief is None
+            or audit.target_artifact_id != brief.artifact_id
+            or audit.target_artifact_revision != brief.current_revision
+        ):
+            return None
     promotion_revision = _current_audit_promotion_revision(verified)
     if promotion_revision is None:
         return _action(

@@ -338,6 +338,8 @@ EVENT_TYPES = {
     "repair_plan_created",
     "repair_plan_completed",
     "repair_started",
+    "gate_repair_started",
+    "gate_repair_outcome_recorded",
     "repair_completed",
     "repair_stage_superseded",
     "quality_gate_checked",
@@ -574,6 +576,7 @@ class CoreRunEventBinding(StrictModel):
         "artifact_supersession",
         "repair_complete",
         "recovery_complete",
+        "gate_repair_start",
         "run_head_transition",
         "finalize_render",
         "finalize_complete",
@@ -1114,6 +1117,7 @@ class EventEnvelope(StrictModel):
                     "stage_satisfied_by_topology",
                 },
                 "integrity_contamination": {"run_integrity_contaminated"},
+                "gate_repair_start": {"gate_repair_started"},
                 "repair_start": {"repair_started"},
                 "artifact_supersession": {
                     "repair_stage_superseded",
@@ -2247,7 +2251,13 @@ class StageTransitionRecord(StrictModel):
     run_id: ContractId
     stage_id: ContractId
     transition_kind: Literal[
-        "initialize", "activate", "complete", "satisfied_by_topology", "repair_reopen"
+        "initialize",
+        "activate",
+        "complete",
+        "satisfied_by_topology",
+        "repair_reopen",
+        "gate_repair_reopen",
+        "gate_repair_reset",
     ]
     requested_decision: Optional[Literal["continue"]] = None
     prior_status: Optional[
@@ -2576,6 +2586,98 @@ class RepairCycleRecord(StrictModel):
     def scope_is_canonical(self) -> "RepairCycleRecord":
         if self.permitted_artifact_ids != sorted(set(self.permitted_artifact_ids)):
             raise ValueError("repair artifact scope must be sorted and unique")
+        return self
+
+
+class GateRepairCycleRecord(StrictModel):
+    """One preauthorized, bounded editor-only Gate repair attempt."""
+
+    schema_id = "briefloop.gate_repair_cycle_record.v2"
+
+    schema_version: Literal["briefloop.gate_repair_cycle_record.v2"]
+    gate_repair_id: ContractId
+    run_id: ContractId
+    authorization_id: ContractId
+    repair_ordinal: Literal[1]
+    source_gate_batch_id: ContractId
+    source_stage_id: Literal["auditor", "finalize"]
+    blocking_evaluation_ids: list[ContractId] = Field(min_length=1)
+    blocking_findings: list["GateFindingReference"] = Field(min_length=1)
+    repair_owner: Literal["editor"]
+    target_artifact: ArtifactRevisionReference
+    reopened_transition_ids: list[ContractId] = Field(min_length=1)
+    started_at: IsoDateTime
+    start_event_id: ContractId
+    accepted_transaction_id: ContractId
+    request_fingerprint: Sha256
+
+    @model_validator(mode="after")
+    def scope_is_canonical(self) -> "GateRepairCycleRecord":
+        if self.blocking_evaluation_ids != sorted(set(self.blocking_evaluation_ids)):
+            raise ValueError("Gate repair evaluations must be sorted and unique")
+        finding_keys = [
+            (item.evaluation_id, item.finding_id) for item in self.blocking_findings
+        ]
+        if finding_keys != sorted(set(finding_keys)):
+            raise ValueError("Gate repair findings must be sorted and unique")
+        if self.target_artifact.artifact_id != "audited_brief":
+            raise ValueError("Gate repair target must be audited_brief")
+        if self.reopened_transition_ids != sorted(set(self.reopened_transition_ids)):
+            raise ValueError("Gate repair transitions must be sorted and unique")
+        return self
+
+
+class GateRepairArtifactBinding(StrictModel):
+    """Bind the sole repaired audited-brief revision to its Gate repair cycle."""
+
+    schema_id = "briefloop.gate_repair_artifact_binding.v2"
+
+    schema_version: Literal["briefloop.gate_repair_artifact_binding.v2"]
+    run_id: ContractId
+    gate_repair_id: ContractId
+    prior_artifact: ArtifactRevisionReference
+    successor_artifact: ArtifactRevisionReference
+    owned_artifact_submission_id: ContractId
+    accepted_event_id: ContractId
+    accepted_transaction_id: ContractId
+    request_fingerprint: Sha256
+
+    @model_validator(mode="after")
+    def revision_advances_once(self) -> "GateRepairArtifactBinding":
+        if (
+            self.prior_artifact.artifact_id != "audited_brief"
+            or self.successor_artifact.artifact_id != "audited_brief"
+        ):
+            raise ValueError("Gate repair binding must name audited_brief")
+        if self.successor_artifact.revision != self.prior_artifact.revision + 1:
+            raise ValueError("Gate repair artifact revision must advance once")
+        return self
+
+
+class GateRepairOutcomeRecord(StrictModel):
+    """Terminal result of the sole bounded Gate repair attempt."""
+
+    schema_id = "briefloop.gate_repair_outcome_record.v2"
+
+    schema_version: Literal["briefloop.gate_repair_outcome_record.v2"]
+    outcome_id: ContractId
+    run_id: ContractId
+    gate_repair_id: ContractId
+    replacement_gate_batch_id: ContractId
+    replacement_stage_id: Literal["auditor", "finalize"]
+    evaluation_ids: list[ContractId] = Field(min_length=1)
+    disposition: Literal["passed", "blocked"]
+    completed_at: IsoDateTime
+    completion_event_id: ContractId
+    accepted_transaction_id: ContractId
+    request_fingerprint: Sha256
+
+    @model_validator(mode="after")
+    def evaluations_are_canonical(self) -> "GateRepairOutcomeRecord":
+        if self.evaluation_ids != sorted(set(self.evaluation_ids)):
+            raise ValueError(
+                "Gate repair outcome evaluations must be sorted and unique"
+            )
         return self
 
 
@@ -3559,6 +3661,18 @@ class RepairCycleReference(StrictModel):
     repair_id: ContractId
 
 
+class GateRepairCycleReference(StrictModel):
+    gate_repair_id: ContractId
+
+
+class GateRepairArtifactBindingReference(StrictModel):
+    gate_repair_id: ContractId
+
+
+class GateRepairOutcomeReference(StrictModel):
+    outcome_id: ContractId
+
+
 class ArtifactSupersessionReference(StrictModel):
     supersession_id: ContractId
 
@@ -3676,6 +3790,11 @@ class TransactionReceipt(StrictModel):
     )
     run_integrity_records: list[RunIntegrityReference] = Field(default_factory=list)
     repair_cycles: list[RepairCycleReference] = Field(default_factory=list)
+    gate_repair_cycles: list[GateRepairCycleReference] = Field(default_factory=list)
+    gate_repair_artifact_bindings: list[GateRepairArtifactBindingReference] = Field(
+        default_factory=list
+    )
+    gate_repair_outcomes: list[GateRepairOutcomeReference] = Field(default_factory=list)
     artifact_supersessions: list[ArtifactSupersessionReference] = Field(
         default_factory=list
     )
@@ -3744,6 +3863,9 @@ class TransactionReceipt(StrictModel):
             self.gate_artifact_bindings,
             self.run_integrity_records,
             self.repair_cycles,
+            self.gate_repair_cycles,
+            self.gate_repair_artifact_bindings,
+            self.gate_repair_outcomes,
             self.artifact_supersessions,
             self.repair_completions,
             self.recovery_completions,
@@ -4884,6 +5006,54 @@ RepairCycleRecord.minimal_example = {
     "accepted_transaction_id": "REQ-REPAIR-001",
     "request_fingerprint": _SHA_A,
 }
+GateRepairCycleRecord.minimal_example = {
+    "schema_version": GateRepairCycleRecord.schema_id,
+    "gate_repair_id": "GATE-REPAIR-001",
+    "run_id": _RUN,
+    "authorization_id": "AUTH-RUN-001",
+    "repair_ordinal": 1,
+    "source_gate_batch_id": "GATE-BATCH-001",
+    "source_stage_id": "auditor",
+    "blocking_evaluation_ids": ["EVAL-MATERIAL-001"],
+    "blocking_findings": [
+        {
+            "evaluation_id": "EVAL-MATERIAL-001",
+            "finding_id": "FINDING-MATERIAL-001",
+        }
+    ],
+    "repair_owner": "editor",
+    "target_artifact": _AR1,
+    "reopened_transition_ids": ["TRANS-EDITOR-REOPEN-001"],
+    "started_at": _NOW,
+    "start_event_id": "EVT-GATE-REPAIR-001",
+    "accepted_transaction_id": "REQ-GATE-REPAIR-001",
+    "request_fingerprint": _SHA_A,
+}
+GateRepairArtifactBinding.minimal_example = {
+    "schema_version": GateRepairArtifactBinding.schema_id,
+    "run_id": _RUN,
+    "gate_repair_id": "GATE-REPAIR-001",
+    "prior_artifact": _AR1,
+    "successor_artifact": {"artifact_id": "audited_brief", "revision": 2},
+    "owned_artifact_submission_id": "SUBMISSION-AUDITED-BRIEF-002",
+    "accepted_event_id": "EVT-GATE-REPAIR-ARTIFACT-001",
+    "accepted_transaction_id": "REQ-GATE-REPAIR-ARTIFACT-001",
+    "request_fingerprint": _SHA_A,
+}
+GateRepairOutcomeRecord.minimal_example = {
+    "schema_version": GateRepairOutcomeRecord.schema_id,
+    "outcome_id": "GATE-REPAIR-OUTCOME-001",
+    "run_id": _RUN,
+    "gate_repair_id": "GATE-REPAIR-001",
+    "replacement_gate_batch_id": "GATE-BATCH-002",
+    "replacement_stage_id": "auditor",
+    "evaluation_ids": ["EVAL-MATERIAL-002"],
+    "disposition": "passed",
+    "completed_at": _NOW,
+    "completion_event_id": "EVT-GATE-REPAIR-OUTCOME-001",
+    "accepted_transaction_id": "REQ-GATE-REPAIR-OUTCOME-001",
+    "request_fingerprint": _SHA_A,
+}
 ArtifactSupersessionRecord.minimal_example = {
     "schema_version": ArtifactSupersessionRecord.schema_id,
     "supersession_id": "SUPERSEDE-001",
@@ -5246,6 +5416,9 @@ DeliveryResultRequest.minimal_example = {
 
 for _model in (
     RepairCycleRecord,
+    GateRepairCycleRecord,
+    GateRepairArtifactBinding,
+    GateRepairOutcomeRecord,
     ArtifactSupersessionRecord,
     RepairCompletionRecord,
     RecoveryCompletionRecord,
@@ -5444,6 +5617,9 @@ V2_CONTRACT_MODELS: tuple[type[StrictModel], ...] = (
     RunIntegrityRecord,
     IntegrityCheckRequest,
     RepairCycleRecord,
+    GateRepairCycleRecord,
+    GateRepairArtifactBinding,
+    GateRepairOutcomeRecord,
     ArtifactSupersessionRecord,
     RepairCompletionRecord,
     RecoveryCompletionRecord,
@@ -5641,6 +5817,12 @@ __all__ = [
     "GateCheckRequest",
     "GateEvaluationRecord",
     "GateFindingRecord",
+    "GateRepairArtifactBinding",
+    "GateRepairArtifactBindingReference",
+    "GateRepairCycleRecord",
+    "GateRepairCycleReference",
+    "GateRepairOutcomeRecord",
+    "GateRepairOutcomeReference",
     "FinalizeCompleteRequest",
     "FinalizeRenderRecord",
     "FinalizeRenderReference",

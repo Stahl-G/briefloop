@@ -60,6 +60,10 @@ from multi_agent_brief.core_run_v2.artifacts import (
 )
 from multi_agent_brief.core_run_v2.claims import ClaimFreezeService
 from multi_agent_brief.core_run_v2.gates import GateEvaluationService
+from multi_agent_brief.core_run_v2.gate_repair import (
+    GateRepairService,
+    active_gate_repair_context,
+)
 from multi_agent_brief.core_run_v2.lineage import (
     classify_current_audit_promotion,
     classify_current_lineage,
@@ -92,6 +96,7 @@ from multi_agent_brief.outputs.reader_projection import (
 
 from .contracts import (
     FrozenSourceManifestEntry,
+    GateRepairStartRequest,
     HumanSourceMaterialRequest,
     HumanSourcePackMember,
     HumanSourcePackRequest,
@@ -735,6 +740,21 @@ class RuntimeHostService:
             "delegated_specialist": "delegate_exact_role",
             "declared_existing_route": "use_declared_route",
         }[topology.role_executor_route]
+        gate_repair_context = (
+            active_gate_repair_context(verified.snapshot)
+            if role_id == "editor"
+            else None
+        )
+        task_instructions = _role_task_instructions(
+            role_id,
+            output,
+            invocation_id,
+        )
+        if gate_repair_context is not None:
+            task_instructions = (
+                f"{task_instructions} Repair only the exact audited_brief scope "
+                "in gate_repair_context; do not change sources, claims, or run direction."
+            )
         return RoleTaskEnvelope.model_validate(
             {
                 "schema_version": RoleTaskEnvelope.schema_id,
@@ -758,11 +778,8 @@ class RuntimeHostService:
                 "context_mode": topology.context_mode,
                 "review_mode": topology.review_mode,
                 "dispatch_instruction": dispatch_instruction,
-                "task_instructions": _role_task_instructions(
-                    role_id,
-                    output,
-                    invocation_id,
-                ),
+                "task_instructions": task_instructions,
+                "gate_repair_context": gate_repair_context,
             },
             strict=True,
         )
@@ -1273,23 +1290,30 @@ class RuntimeHostService:
             raise RuntimeHostError("runtime_envelope_invalid")
         parent: ArtifactRevisionReference | None = None
         if spec.artifact_id == "audited_brief":
-            analyst = next(
-                (
-                    item
-                    for item in snapshot.artifacts
-                    if item.artifact_id == "analyst_draft_snapshot"
-                ),
-                None,
-            )
-            if analyst is None or analyst.current_revision < 1:
-                raise RuntimeHostError("runtime_proposal_invalid")
-            parent = ArtifactRevisionReference.model_validate(
-                {
-                    "artifact_id": analyst.artifact_id,
-                    "revision": analyst.current_revision,
-                },
-                strict=True,
-            )
+            repair_context = active_gate_repair_context(snapshot)
+            if repair_context is not None:
+                parent = ArtifactRevisionReference.model_validate(
+                    repair_context["target_artifact"],
+                    strict=True,
+                )
+            else:
+                analyst = next(
+                    (
+                        item
+                        for item in snapshot.artifacts
+                        if item.artifact_id == "analyst_draft_snapshot"
+                    ),
+                    None,
+                )
+                if analyst is None or analyst.current_revision < 1:
+                    raise RuntimeHostError("runtime_proposal_invalid")
+                parent = ArtifactRevisionReference.model_validate(
+                    {
+                        "artifact_id": analyst.artifact_id,
+                        "revision": analyst.current_revision,
+                    },
+                    strict=True,
+                )
         return (
             OwnedArtifactSubmitRequest.model_validate(
                 {
@@ -1413,6 +1437,27 @@ class RuntimeHostService:
             result = self._apply_gate_evaluation(current, action)
         elif action.effect_kind == "stage_complete":
             result = self._apply_stage_complete(current, action)
+        elif action.effect_kind == "gate_repair_start":
+            request = GateRepairStartRequest.model_validate(
+                {
+                    "schema_version": GateRepairStartRequest.schema_id,
+                    "request_id": derived_id(
+                        "REQ-HOST-GATE-REPAIR",
+                        action.run_id,
+                        action.action_fingerprint,
+                    ),
+                    "run_id": action.run_id,
+                    "action_fingerprint": action.action_fingerprint,
+                    "expected_store_revision": action.store_revision,
+                },
+                strict=True,
+            )
+            result = GateRepairService(self.workspace).start(
+                request_id=request.request_id,
+                run_id=request.run_id,
+                action_fingerprint=request.action_fingerprint,
+                expected_store_revision=request.expected_store_revision,
+            )
         elif action.effect_kind == "repair_start":
             result = self._apply_repair_start(current, action)
         elif action.effect_kind == "repair_complete":

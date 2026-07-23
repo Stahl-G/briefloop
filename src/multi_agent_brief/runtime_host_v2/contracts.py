@@ -7,6 +7,7 @@ from typing import Literal
 from pydantic import Field, model_validator
 
 from multi_agent_brief.contracts.v2 import (
+    ArtifactRevisionReference,
     ContractId,
     CleanText,
     CoreRunNextAction,
@@ -20,6 +21,47 @@ from multi_agent_brief.contracts.v2 import (
     StrictModel,
     WorkspacePath,
 )
+
+
+class GateRepairFindingContext(StrictModel):
+    """Value-free deterministic finding scope for the repair editor."""
+
+    evaluation_id: ContractId
+    finding_id: ContractId
+    finding_type: ContractId
+    category: ContractId
+    recommendation: CleanText
+
+
+class GateRepairContext(StrictModel):
+    """The exact Store-derived scope of one active bounded Gate repair."""
+
+    gate_repair_id: ContractId
+    source_stage_id: Literal["auditor", "finalize"]
+    source_gate_batch_id: ContractId
+    target_artifact: ArtifactRevisionReference
+    findings: list[GateRepairFindingContext] = Field(min_length=1)
+
+    @model_validator(mode="after")
+    def findings_are_canonical(self) -> "GateRepairContext":
+        keys = [(item.evaluation_id, item.finding_id) for item in self.findings]
+        if keys != sorted(set(keys)):
+            raise ValueError("Gate repair findings must be sorted and unique")
+        if self.target_artifact.artifact_id != "audited_brief":
+            raise ValueError("Gate repair target must be audited_brief")
+        return self
+
+
+class GateRepairStartRequest(StrictModel):
+    """Parameter-free Host request bound only to the current Core action."""
+
+    schema_id = "briefloop.gate_repair_start_request.v2"
+
+    schema_version: Literal["briefloop.gate_repair_start_request.v2"]
+    request_id: ContractId
+    run_id: ContractId
+    action_fingerprint: Sha256
+    expected_store_revision: NonNegativeInt
 
 
 class HumanSourceMaterialRequest(StrictModel):
@@ -161,6 +203,7 @@ class RoleTaskEnvelope(StrictModel):
         "execute_in_current_session", "delegate_exact_role", "use_declared_route"
     ]
     task_instructions: CleanText
+    gate_repair_context: GateRepairContext | None = None
 
     @model_validator(mode="after")
     def exact_action_binding(self) -> "RoleTaskEnvelope":
@@ -175,6 +218,10 @@ class RoleTaskEnvelope(StrictModel):
             raise ValueError("envelope owner does not match action")
         if self.allowed_output_filenames != sorted(set(self.allowed_output_filenames)):
             raise ValueError("allowed output filenames must be sorted and unique")
+        if self.gate_repair_context is not None and (
+            self.stage_id != "editor" or self.role_id != "editor"
+        ):
+            raise ValueError("Gate repair context belongs only to the editor")
         return self
 
 
@@ -270,6 +317,9 @@ class RepairContentInput(StrictModel):
 
 __all__ = [
     "FrozenSourceManifestEntry",
+    "GateRepairContext",
+    "GateRepairFindingContext",
+    "GateRepairStartRequest",
     "HumanSourceMaterialRequest",
     "HumanSourcePackMember",
     "HumanSourcePackRequest",

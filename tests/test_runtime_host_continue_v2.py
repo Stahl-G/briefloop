@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from copy import deepcopy
+from dataclasses import replace
 import hashlib
 from io import BytesIO
 import json
@@ -10,12 +11,20 @@ from pathlib import Path
 import sys
 from types import SimpleNamespace
 
+import pytest
+
 from multi_agent_brief.cli.main import main
 from multi_agent_brief.contracts import SchemaRegistry
 from multi_agent_brief.contracts.v2 import CoreRunNextAction
 from multi_agent_brief.control_store import SQLiteControlStore
 from multi_agent_brief.control_store.serialization import canonical_fingerprint
-from multi_agent_brief.core_run_v2.errors import CoreRunResult
+from multi_agent_brief.core_run_v2.errors import CoreRunError, CoreRunResult
+from multi_agent_brief.core_run_v2.integrity import (
+    RunIntegrityService,
+    protected_revision_keys,
+    workspace_observation_revision_keys,
+)
+from multi_agent_brief.core_run_v2.verifier import CoreRunDomainVerifier
 from multi_agent_brief.intake_v2.service import IntakeService
 from multi_agent_brief.product.init_web.submit import InitWebSubmitter
 from multi_agent_brief.runtime_host_v2.codex import workspace_codex_adapter_loader
@@ -387,7 +396,13 @@ def test_finalize_continuation_uses_core_effect_without_reader_html_hook(
     assert presentation_flags == [False]
 
 
-def _write_current_role_proposal(workspace: Path, result) -> None:
+def _write_current_role_proposal(
+    workspace: Path,
+    result,
+    *,
+    initial_editor_repetitions: int = 210,
+    repair_editor_repetitions: int = 210,
+) -> None:
     assert result.trace.envelope_path is not None
     envelope_path = workspace / result.trace.envelope_path
     envelope = json.loads(envelope_path.read_text(encoding="utf-8"))
@@ -441,9 +456,13 @@ def _write_current_role_proposal(workspace: Path, result) -> None:
         payload["drafts"][0]["source_ids"] = [snapshot.sources[0].source_id]
         filename = "claim_drafts.json"
     elif role_id in {"analyst", "editor"}:
+        repairing = role_id == "editor" and bool(snapshot.gate_repair_cycles)
+        repetitions = (
+            repair_editor_repetitions if repairing else initial_editor_repetitions
+        )
         body = (
             "# ExampleCo public brief\n\n## Executive Summary\n\n"
-            + " ".join(["ExampleCo operations context"] * 210)
+            + " ".join(["ExampleCo operations context"] * repetitions)
             + " ExampleCo opened a public pilot facility. [src:CL-0001]\n"
         )
         (scratch / ("analyst_draft.md" if role_id == "analyst" else "audited_brief.md")).write_text(
@@ -457,9 +476,17 @@ def _write_current_role_proposal(workspace: Path, result) -> None:
         )
         payload.update(
             run_id=run_id,
-            proposal_id="PROP-M3-AUDIT",
+            proposal_id=(
+                "PROP-M4-AUDIT-REPAIR"
+                if snapshot.gate_repair_cycles
+                else "PROP-M3-AUDIT"
+            ),
             artifact_id="audited_brief",
-            artifact_revision=1,
+            artifact_revision=next(
+                item.current_revision
+                for item in snapshot.artifacts
+                if item.artifact_id == "audited_brief"
+            ),
             decision="pass",
             findings=[],
         )
@@ -525,3 +552,284 @@ def test_authorized_current_session_reaches_truthful_finalized_local(
     assert not snapshot.delivery_authorizations
     assert not snapshot.delivery_attempts
     assert not snapshot.delivery_results
+
+
+def test_authorized_editor_gate_repair_runs_once_then_finalizes_local(
+    tmp_path: Path,
+) -> None:
+    if sys.platform == "win32":
+        return
+    workspace = _authorized_workspace(tmp_path)
+    service = _service(workspace)
+    role_sequence: list[str] = []
+
+    for _ in range(12):
+        result = service.continue_authorized()
+        if result.status == "finalized_local":
+            break
+        assert result.status == "role_work_required", (
+            result.reason_code,
+            result.trace.next_action.action_kind,
+            result.trace.next_action.effect_kind,
+            result.trace.next_action.reason_code,
+            result.trace.transaction_ids,
+        )
+        assert result.trace.envelope_path is not None
+        envelope = json.loads(
+            (workspace / result.trace.envelope_path).read_text(encoding="utf-8")
+        )
+        role_sequence.append(envelope["role_id"])
+        _write_current_role_proposal(
+            workspace,
+            result,
+            initial_editor_repetitions=20,
+            repair_editor_repetitions=210,
+        )
+    else:
+        raise AssertionError("authorized Gate repair did not terminate")
+
+    assert role_sequence == [
+        "scout",
+        "screener",
+        "claim-ledger",
+        "analyst",
+        "editor",
+        "auditor",
+        "editor",
+        "auditor",
+    ]
+    assert result.reason_code == "local_finalization_complete"
+    with SQLiteControlStore.open(workspace / "briefloop.db") as store:
+        head = store.load_workspace_run_head()
+        assert head is not None
+        snapshot = store.load_snapshot(head.current_run_id)
+    assert len(snapshot.gate_repair_cycles) == 1
+    assert len(snapshot.gate_repair_artifact_bindings) == 1
+    assert len(snapshot.gate_repair_outcomes) == 1
+    cycle = snapshot.gate_repair_cycles[0]
+    binding = snapshot.gate_repair_artifact_bindings[0]
+    outcome = snapshot.gate_repair_outcomes[0]
+    assert cycle.repair_ordinal == 1
+    assert binding.prior_artifact.revision == 1
+    assert binding.successor_artifact.revision == 2
+    assert outcome.disposition == "passed"
+    assert not snapshot.repair_cycles
+    assert not snapshot.artifact_supersessions
+    assert not snapshot.repair_completions
+    assert not snapshot.recovery_completions
+    assert not snapshot.package_ready_records
+    assert not snapshot.approvals
+    assert not snapshot.delivery_authorizations
+    assert not snapshot.delivery_attempts
+    assert not snapshot.delivery_results
+
+    editor_completions = sorted(
+        (
+            item
+            for item in snapshot.stage_transitions
+            if item.stage_id == "editor" and item.transition_kind == "complete"
+        ),
+        key=lambda item: item.result_revision,
+    )
+    assert len(editor_completions) == 2
+
+    def editor_binding_signature(transition_id: str):
+        return {
+            (item.artifact_id, item.artifact_revision, item.usage)
+            for item in snapshot.stage_artifact_bindings
+            if item.transition_id == transition_id
+        }
+
+    assert editor_binding_signature(editor_completions[0].transition_id) == {
+        ("analyst_draft_snapshot", 1, "consumed"),
+        ("audited_brief", 1, "produced"),
+    }
+    assert editor_binding_signature(editor_completions[1].transition_id) == {
+        ("audited_brief", 1, "consumed"),
+        ("audited_brief", 2, "produced"),
+    }
+
+    with SQLiteControlStore.open(workspace / "briefloop.db") as store:
+        verified = CoreRunDomainVerifier().verify(store, snapshot.run.run_id)
+        history = store.load_history()
+    revisions = {
+        (item.artifact_id, item.revision): item for item in snapshot.artifact_revisions
+    }
+    prior = revisions[("audited_brief", 1)]
+    successor = revisions[("audited_brief", 2)]
+    prior_key = ("audited_brief", 1)
+    successor_key = ("audited_brief", 2)
+    analyst = revisions[("analyst_draft_snapshot", 1)]
+
+    repair_consumed = next(
+        item
+        for item in snapshot.stage_artifact_bindings
+        if item.transition_id == editor_completions[1].transition_id
+        and item.usage == "consumed"
+    )
+    ordinary_consumed = next(
+        item
+        for item in snapshot.stage_artifact_bindings
+        if item.transition_id == editor_completions[0].transition_id
+        and item.usage == "consumed"
+    )
+    submission = next(
+        item
+        for item in snapshot.owned_artifact_submissions
+        if item.submission_id == binding.owned_artifact_submission_id
+    )
+    lineage_forgeries = (
+        replace(snapshot, gate_repair_artifact_bindings=()),
+        replace(
+            snapshot,
+            gate_repair_artifact_bindings=(
+                binding.model_copy(
+                    update={
+                        "gate_repair_id": "GATE-REPAIR-CROSS",
+                    }
+                ),
+            ),
+        ),
+        replace(
+            snapshot,
+            gate_repair_artifact_bindings=(
+                binding.model_copy(
+                    update={
+                        "prior_artifact": binding.prior_artifact.model_copy(
+                            update={"revision": 2}
+                        ),
+                    }
+                ),
+            ),
+        ),
+        replace(
+            snapshot,
+            gate_repair_artifact_bindings=(
+                binding.model_copy(
+                    update={
+                        "successor_artifact": binding.successor_artifact.model_copy(
+                            update={"revision": 1}
+                        ),
+                    }
+                ),
+            ),
+        ),
+        replace(
+            snapshot,
+            owned_artifact_submissions=tuple(
+                item.model_copy(update={"parent_artifact": binding.successor_artifact})
+                if item.submission_id == submission.submission_id
+                else item
+                for item in snapshot.owned_artifact_submissions
+            ),
+        ),
+        replace(
+            snapshot,
+            stage_artifact_bindings=tuple(
+                item.model_copy(
+                    update={
+                        "artifact_id": analyst.artifact_id,
+                        "artifact_revision": analyst.revision,
+                        "artifact_sha256": analyst.sha256,
+                    }
+                )
+                if (
+                    item.transition_id == repair_consumed.transition_id
+                    and item.position == repair_consumed.position
+                )
+                else item
+                for item in snapshot.stage_artifact_bindings
+            ),
+        ),
+        replace(
+            snapshot,
+            stage_artifact_bindings=tuple(
+                item.model_copy(
+                    update={
+                        "artifact_id": prior.artifact_id,
+                        "artifact_revision": prior.revision,
+                        "artifact_sha256": prior.sha256,
+                    }
+                )
+                if (
+                    item.transition_id == ordinary_consumed.transition_id
+                    and item.position == ordinary_consumed.position
+                )
+                else item
+                for item in snapshot.stage_artifact_bindings
+            ),
+        ),
+    )
+    for forged_snapshot in lineage_forgeries:
+        with pytest.raises(CoreRunError, match="control_store_integrity_invalid"):
+            CoreRunDomainVerifier()._verify_snapshot(history, forged_snapshot)
+
+    integrity = RunIntegrityService(workspace)
+    assert prior_key in protected_revision_keys(verified)
+    observed = workspace_observation_revision_keys(
+        verified,
+        additional_revisions=(prior,),
+    )
+    assert prior_key not in observed
+    assert successor_key in observed
+    assert (
+        integrity.first_mismatch(
+            verified,
+            additional_revisions=(prior,),
+        )
+        is None
+    )
+
+    forged_snapshots = (
+        replace(snapshot, gate_repair_artifact_bindings=()),
+        replace(
+            snapshot,
+            artifacts=tuple(
+                item.model_copy(update={"current_revision": 1})
+                if item.artifact_id == "audited_brief"
+                else item
+                for item in snapshot.artifacts
+            ),
+        ),
+        replace(
+            snapshot,
+            artifact_revisions=tuple(
+                item.model_copy(update={"path": "output/intermediate/other.md"})
+                if (item.artifact_id, item.revision) == successor_key
+                else item
+                for item in snapshot.artifact_revisions
+            ),
+        ),
+        replace(
+            snapshot,
+            gate_repair_artifact_bindings=(
+                binding.model_copy(update={"gate_repair_id": "GATE-REPAIR-CROSS"}),
+            ),
+        ),
+        replace(
+            snapshot,
+            checkout_revision_members=tuple(
+                item.model_copy(
+                    update={
+                        "artifact_revision": 1,
+                        "blob_sha256": prior.sha256,
+                        "byte_size": prior.size_bytes,
+                    }
+                )
+                if (item.artifact_id == "audited_brief" and item.artifact_revision == 2)
+                else item
+                for item in snapshot.checkout_revision_members
+            ),
+        ),
+    )
+    for forged_snapshot in forged_snapshots:
+        forged = replace(verified, snapshot=forged_snapshot)
+        assert prior_key in workspace_observation_revision_keys(forged)
+        mismatch = integrity.first_mismatch(forged)
+        assert mismatch is not None
+
+    repaired_path = workspace / successor.path
+    repaired_path.write_text("tampered repaired brief\n", encoding="utf-8")
+    mismatch = integrity.first_mismatch(verified)
+    assert mismatch is not None
+    assert (mismatch[0].artifact_id, mismatch[0].revision) == successor_key

@@ -13,6 +13,9 @@ from multi_agent_brief.contracts.v2 import (
     CoreRunEventBinding,
     EventEnvelope,
     ExecutionSourceManifest,
+    GateRepairArtifactBinding,
+    GateRepairCycleRecord,
+    GateRepairOutcomeRecord,
     InvocationStartRequest,
     RunContractBinding,
     RunExecutionAuthorization,
@@ -341,6 +344,9 @@ _AUTHORITATIVE_RECEIPT_RELATION_FAMILIES = frozenset(
         "artifact_supersessions",
         "repair_completions",
         "recovery_completions",
+        "gate_repair_cycles",
+        "gate_repair_artifact_bindings",
+        "gate_repair_outcomes",
         "run_head_transitions",
         "finalize_renders",
         "finalizations",
@@ -386,7 +392,13 @@ _CORE_EFFECT_BINDING_RULES = {
         frozenset({"owned_artifact_accepted"}),
         "owned_artifact_submission",
         (("owned_artifact_accepted", 1),),
-        frozenset({"artifact_revisions", "owned_artifact_submissions"}),
+        frozenset(
+            {
+                "artifact_revisions",
+                "owned_artifact_submissions",
+                "gate_repair_artifact_bindings",
+            }
+        ),
     ),
     "claim_freeze": _CoreEffectBindingRule(
         transaction_type_for("claim_freeze"),
@@ -421,6 +433,7 @@ _CORE_EFFECT_BINDING_RULES = {
                 "gate_evaluations",
                 "gate_findings",
                 "gate_artifact_bindings",
+                "gate_repair_outcomes",
             }
         ),
     ),
@@ -473,6 +486,13 @@ _CORE_EFFECT_BINDING_RULES = {
         "recovery_completion",
         (("decision_recorded", 1),),
         frozenset({"recovery_completions", "run_integrity_records"}),
+    ),
+    "gate_repair_start": _CoreEffectBindingRule(
+        transaction_type_for("gate_repair_start"),
+        frozenset({"gate_repair_started"}),
+        "gate_repair_cycle",
+        None,
+        frozenset({"stage_transitions", "gate_repair_cycles"}),
     ),
     "run_head_transition": _CoreEffectBindingRule(
         transaction_type_for("run_head_transition"),
@@ -839,7 +859,7 @@ def _receipt_effect_authorization_subject(
     receipt: TransactionReceipt,
     event: EventEnvelope,
     binding: CoreRunEventBinding,
-) -> tuple[CoreEffect, CoreEffectSubject, TerminalEffectSubject | None]:
+) -> tuple[CoreEffect | None, CoreEffectSubject, TerminalEffectSubject | None]:
     """Map one exact receipt primary to its closed semantic effect vocabulary."""
 
     effect_kind = binding.effect_kind
@@ -1009,6 +1029,15 @@ def _receipt_effect_authorization_subject(
             ),
             None,
         )
+    if effect_kind == "gate_repair_start":
+        records = [
+            item
+            for item in snapshot.gate_repair_cycles
+            if item.gate_repair_id == primary_id
+        ]
+        if len(records) != 1 or event.stage_id != "editor":
+            raise CoreRunError("control_store_integrity_invalid")
+        return None, CoreEffectSubject(stage_id="editor"), None
     if effect_kind == "run_head_transition":
         return CoreEffect.RUN_RESET, CoreEffectSubject(), None
     if effect_kind == "finalize_render":
@@ -1172,6 +1201,78 @@ def _require_no_unowned_legacy_deliveries(
         raise CoreRunError("historical_prefix_invalid")
 
 
+def _verify_no_post_seal_records_with_gate_repair(
+    snapshot: ControlStoreSnapshot,
+) -> None:
+    """Preserve the legacy seal ratchet while recognizing one exact repair epoch."""
+
+    if not snapshot.gate_repair_cycles:
+        verify_no_post_seal_records(snapshot)
+        return
+    if len(snapshot.gate_repair_cycles) != 1:
+        raise CoreRunError("control_store_integrity_invalid")
+    cycle = snapshot.gate_repair_cycles[0]
+    receipts = {
+        item.transaction_id: item.committed_revision for item in snapshot.transactions
+    }
+    start_revision = receipts.get(cycle.accepted_transaction_id)
+    if start_revision is None:
+        raise CoreRunError("control_store_integrity_invalid")
+    pre_transactions = tuple(
+        item
+        for item in snapshot.transactions
+        if item.committed_revision < start_revision
+    )
+    pre_ids = {item.transaction_id for item in pre_transactions}
+    invocation_start_transaction = {
+        item.core_run_binding.primary_record_id: item.transaction_id
+        for item in snapshot.events
+        if item.core_run_binding is not None
+        and item.core_run_binding.effect_kind == "invocation_start"
+    }
+    pre = replace(
+        snapshot,
+        transactions=pre_transactions,
+        events=tuple(
+            item for item in snapshot.events if item.transaction_id in pre_ids
+        ),
+        stage_transitions=tuple(
+            item
+            for item in snapshot.stage_transitions
+            if item.accepted_transaction_id in pre_ids
+        ),
+        invocations=tuple(
+            item
+            for item in snapshot.invocations
+            if invocation_start_transaction.get(item.invocation_id) in pre_ids
+        ),
+        sources=tuple(
+            item for item in snapshot.sources if item.accepted_transaction_id in pre_ids
+        ),
+        accepted_proposals=tuple(
+            item
+            for item in snapshot.accepted_proposals
+            if item.accepted_transaction_id in pre_ids
+        ),
+        owned_artifact_submissions=tuple(
+            item
+            for item in snapshot.owned_artifact_submissions
+            if item.accepted_transaction_id in pre_ids
+        ),
+        gate_evaluations=tuple(
+            item
+            for item in snapshot.gate_evaluations
+            if item.accepted_transaction_id in pre_ids
+        ),
+        claim_freezes=tuple(
+            item
+            for item in snapshot.claim_freezes
+            if item.accepted_transaction_id in pre_ids
+        ),
+    )
+    verify_no_post_seal_records(pre)
+
+
 class CoreRunDomainVerifier:
     """Replay business legality from one structurally verified Store snapshot."""
 
@@ -1268,12 +1369,13 @@ class CoreRunDomainVerifier:
         self._verify_checkout_revisions(history, snapshot)
         self._verify_invocation_ownership(snapshot, binding)
         classify_current_lineage(snapshot)
-        verify_no_post_seal_records(snapshot)
+        _verify_no_post_seal_records_with_gate_repair(snapshot)
         self._verify_artifact_graph(snapshot, contracts, binding)
         self._verify_stage_chain(reader, snapshot, contracts, binding)
         self._verify_integrity_chain(snapshot)
         self._verify_claim_chain(reader, snapshot, binding)
         self._verify_gate_chain(reader, snapshot, binding, contracts)
+        self._verify_gate_repair_chain(snapshot)
         return VerifiedCoreRun(
             snapshot=snapshot,
             binding=binding,
@@ -1604,6 +1706,26 @@ class CoreRunDomainVerifier:
             except Exception as exc:
                 raise CoreRunError("historical_prefix_invalid") from exc
             pre_verified = self._verify_snapshot(history, pre)
+            if effect is None:
+                from .gate_repair import gate_repair_request_fingerprint
+                from .next_action import classify_core_run_next_action
+
+                action = classify_core_run_next_action(pre_verified)
+                expected_fingerprint = gate_repair_request_fingerprint(
+                    request_id=receipt.transaction_id,
+                    run_id=receipt.run_id,
+                    action_fingerprint=action.action_fingerprint,
+                    expected_store_revision=receipt.prior_revision,
+                )
+                if (
+                    binding.effect_kind != "gate_repair_start"
+                    or action.action_kind != "deterministic"
+                    or action.effect_kind != "gate_repair_start"
+                    or action.stage_id != "editor"
+                    or action.store_revision != receipt.prior_revision
+                    or binding.request_fingerprint != expected_fingerprint
+                ):
+                    raise CoreRunError("historical_prefix_invalid")
             if effect is CoreEffect.INVOCATION_START:
                 from .next_action import classify_core_run_next_action
 
@@ -1662,11 +1784,35 @@ class CoreRunDomainVerifier:
                     or human_source_reservation
                 ):
                     raise CoreRunError("historical_prefix_invalid")
-            classify_effect_authorization(
-                pre,
-                effect,
-                subject,
-            ).require_allowed()
+            gate_repair_acceptance = (
+                effect is CoreEffect.OWNED_ARTIFACT_ACCEPT
+                and bool(receipt.gate_repair_artifact_bindings)
+            )
+            if gate_repair_acceptance:
+                from .gate_repair import classify_gate_repair_legality
+                from .next_action import classify_core_run_next_action
+
+                legality = classify_gate_repair_legality(pre)
+                action = classify_core_run_next_action(pre_verified)
+                if (
+                    legality.state != "active"
+                    or legality.cycle is None
+                    or len(receipt.gate_repair_artifact_bindings) != 1
+                    or receipt.gate_repair_artifact_bindings[0].gate_repair_id
+                    != legality.cycle.gate_repair_id
+                    or subject.stage_id != "editor"
+                    or subject.artifact_id != "audited_brief"
+                    or action.action_kind != "deterministic"
+                    or action.effect_kind != "invocation_accept_or_fail"
+                    or action.stage_id != "editor"
+                ):
+                    raise CoreRunError("historical_prefix_invalid")
+            elif effect is not None:
+                classify_effect_authorization(
+                    pre,
+                    effect,
+                    subject,
+                ).require_allowed()
             if terminal_subject is not None:
                 classify_terminal_effect_authorization(
                     pre,
@@ -2768,6 +2914,7 @@ class CoreRunDomainVerifier:
             )
 
         artifacts = {item.artifact_id: item for item in snapshot.artifacts}
+        receipts = {item.transaction_id: item for item in snapshot.transactions}
 
         def current_revision(artifact_id: str):
             artifact = artifacts.get(artifact_id)
@@ -2797,6 +2944,85 @@ class CoreRunDomainVerifier:
             if revision is None:
                 raise CoreRunError("control_store_integrity_invalid")
             return revision
+
+        def editor_completion_artifacts(transition):
+            transition_receipt = receipts.get(transition.accepted_transaction_id)
+            submissions = [
+                item
+                for item in snapshot.owned_artifact_submissions
+                if item.owner_stage_id == "editor"
+                and item.owner_role_id == "editor"
+                and item.invocation_id == transition.producer_invocation_id
+            ]
+            if len(submissions) != 1 or transition_receipt is None:
+                raise CoreRunError("control_store_integrity_invalid")
+            submission = submissions[0]
+            submission_receipt = receipts.get(submission.accepted_transaction_id)
+            produced = revisions.get(
+                (submission.artifact_id, submission.artifact_revision)
+            )
+            if (
+                submission_receipt is None
+                or produced is None
+                or produced.sha256 != submission.artifact_sha256
+                or transition_receipt.committed_revision
+                <= submission_receipt.committed_revision
+                or [
+                    item.submission_id
+                    for item in submission_receipt.owned_artifact_submissions
+                ]
+                != [submission.submission_id]
+                or submission.parent_artifact is None
+            ):
+                raise CoreRunError("control_store_integrity_invalid")
+            binding_references = submission_receipt.gate_repair_artifact_bindings
+            if not binding_references:
+                parent = revisions.get(
+                    (
+                        submission.parent_artifact.artifact_id,
+                        submission.parent_artifact.revision,
+                    )
+                )
+                if (
+                    submission.artifact_id != "audited_brief"
+                    or submission.parent_artifact.artifact_id
+                    != "analyst_draft_snapshot"
+                    or parent is None
+                ):
+                    raise CoreRunError("control_store_integrity_invalid")
+                return ((produced, "produced"), (parent, "consumed"))
+            if len(binding_references) != 1:
+                raise CoreRunError("control_store_integrity_invalid")
+            matching_bindings = [
+                item
+                for item in snapshot.gate_repair_artifact_bindings
+                if item.gate_repair_id == binding_references[0].gate_repair_id
+                and item.accepted_transaction_id == submission.accepted_transaction_id
+                and item.owned_artifact_submission_id == submission.submission_id
+            ]
+            cycles = [
+                item
+                for item in snapshot.gate_repair_cycles
+                if item.gate_repair_id == binding_references[0].gate_repair_id
+            ]
+            if len(matching_bindings) != 1 or len(cycles) != 1:
+                raise CoreRunError("control_store_integrity_invalid")
+            repair_binding = matching_bindings[0]
+            parent = revisions.get(
+                (
+                    repair_binding.prior_artifact.artifact_id,
+                    repair_binding.prior_artifact.revision,
+                )
+            )
+            if (
+                repair_binding.prior_artifact != cycles[0].target_artifact
+                or repair_binding.successor_artifact.artifact_id != produced.artifact_id
+                or repair_binding.successor_artifact.revision != produced.revision
+                or submission.parent_artifact != repair_binding.prior_artifact
+                or parent is None
+            ):
+                raise CoreRunError("control_store_integrity_invalid")
+            return ((produced, "produced"), (parent, "consumed"))
 
         def expected_artifacts_for(transition):
             stage_id = transition.stage_id
@@ -2956,10 +3182,7 @@ class CoreRunDomainVerifier:
                     raise CoreRunError("control_store_integrity_invalid")
                 return ((current_revision("analyst_draft_snapshot"), "produced"),)
             if stage_id == "editor":
-                return (
-                    (current_revision("audited_brief"), "produced"),
-                    (current_revision("analyst_draft_snapshot"), "consumed"),
-                )
+                return editor_completion_artifacts(transition)
             if stage_id == "auditor":
                 selected = [
                     (current_revision("claim_ledger"), "consumed"),
@@ -3113,36 +3336,9 @@ class CoreRunDomainVerifier:
                 transition.stage_id == "editor"
                 and transition.transition_kind == "complete"
             ):
-                produced = [
-                    revision
-                    for revision, usage in expected
-                    if revision.artifact_id == "audited_brief" and usage == "produced"
-                ]
-                consumed = [
-                    revision
-                    for revision, usage in expected
-                    if revision.artifact_id == "analyst_draft_snapshot"
-                    and usage == "consumed"
-                ]
-                submissions = [
-                    item
-                    for item in snapshot.owned_artifact_submissions
-                    if len(produced) == 1
-                    and item.artifact_id == produced[0].artifact_id
-                    and item.artifact_revision == produced[0].revision
-                    and item.owner_stage_id == "editor"
-                    and item.owner_role_id == "editor"
-                ]
-                if (
-                    len(produced) != 1
-                    or len(consumed) != 1
-                    or len(submissions) != 1
-                    or submissions[0].parent_artifact is None
-                    or submissions[0].parent_artifact.artifact_id
-                    != consumed[0].artifact_id
-                    or submissions[0].parent_artifact.revision != consumed[0].revision
-                ):
-                    raise CoreRunError("control_store_integrity_invalid")
+                # The receipt-owned submission and optional Gate repair binding
+                # above are the sole source of editor completion lineage.
+                editor_completion_artifacts(transition)
 
             actual_gates = {
                 (item.gate_id, item.evaluation_id)
@@ -3284,7 +3480,11 @@ class CoreRunDomainVerifier:
                 ):
                     raise CoreRunError("control_store_integrity_invalid")
                 continue
-            if transition.transition_kind == "repair_reopen":
+            if transition.transition_kind in {
+                "repair_reopen",
+                "gate_repair_reopen",
+                "gate_repair_reset",
+            }:
                 if (
                     transition.producer_invocation_id is not None
                     or transition.producer_tool_id is not None
@@ -3768,6 +3968,270 @@ class CoreRunDomainVerifier:
             raise CoreRunError("control_store_integrity_invalid")
 
     @staticmethod
+    def _verify_gate_repair_chain(snapshot: ControlStoreSnapshot) -> None:
+        """Verify the sole bounded Gate-repair authority graph."""
+
+        cycles = list(snapshot.gate_repair_cycles)
+        bindings = list(snapshot.gate_repair_artifact_bindings)
+        outcomes = list(snapshot.gate_repair_outcomes)
+        if not cycles:
+            if bindings or outcomes:
+                raise CoreRunError("control_store_integrity_invalid")
+            return
+        if len(cycles) != 1 or len(bindings) > 1 or len(outcomes) > 1:
+            raise CoreRunError("control_store_integrity_invalid")
+        cycle = cycles[0]
+        authorizations = list(snapshot.run_execution_authorizations)
+        if (
+            len(authorizations) != 1
+            or cycle.run_id != snapshot.run.run_id
+            or cycle.authorization_id != authorizations[0].authorization_id
+            or authorizations[0].completion_target != "finalized_local"
+            or authorizations[0].repair_budget != 1
+            or cycle.repair_ordinal != 1
+            or cycle.repair_owner != "editor"
+            or cycle.target_artifact.artifact_id != "audited_brief"
+        ):
+            raise CoreRunError("control_store_integrity_invalid")
+        receipts = {item.transaction_id: item for item in snapshot.transactions}
+        start_receipt = receipts.get(cycle.accepted_transaction_id)
+        if (
+            start_receipt is None
+            or start_receipt.transaction_type
+            != transaction_type_for("gate_repair_start")
+            or [item.gate_repair_id for item in start_receipt.gate_repair_cycles]
+            != [cycle.gate_repair_id]
+            or cycle.start_event_id not in start_receipt.event_ids
+        ):
+            raise CoreRunError("control_store_integrity_invalid")
+        revisions = {
+            (item.artifact_id, item.revision): item
+            for item in snapshot.artifact_revisions
+        }
+        target_revision = revisions.get(
+            (
+                cycle.target_artifact.artifact_id,
+                cycle.target_artifact.revision,
+            )
+        )
+        if target_revision is None:
+            raise CoreRunError("control_store_integrity_invalid")
+        evaluations = {item.evaluation_id: item for item in snapshot.gate_evaluations}
+        selected_evaluations = [
+            evaluations.get(item) for item in cycle.blocking_evaluation_ids
+        ]
+        if (
+            any(item is None for item in selected_evaluations)
+            or not selected_evaluations
+        ):
+            raise CoreRunError("control_store_integrity_invalid")
+        typed_evaluations = [item for item in selected_evaluations if item is not None]
+        source_transaction_ids = {
+            item.accepted_transaction_id for item in typed_evaluations
+        }
+        if (
+            {item.gate_batch_id for item in typed_evaluations}
+            != {cycle.source_gate_batch_id}
+            or {item.stage_id for item in typed_evaluations} != {cycle.source_stage_id}
+            or not all(item.blocking for item in typed_evaluations)
+            or len(source_transaction_ids) != 1
+            or receipts.get(next(iter(source_transaction_ids))) is None
+            or receipts[next(iter(source_transaction_ids))].committed_revision
+            >= start_receipt.committed_revision
+        ):
+            raise CoreRunError("control_store_integrity_invalid")
+        findings = {
+            (item.evaluation_id, item.finding_id): item
+            for item in snapshot.gate_findings
+        }
+        referenced = [
+            findings.get((item.evaluation_id, item.finding_id))
+            for item in cycle.blocking_findings
+        ]
+        if any(item is None for item in referenced) or not referenced:
+            raise CoreRunError("control_store_integrity_invalid")
+        typed_findings = [item for item in referenced if item is not None]
+        expected_finding_keys = sorted(
+            (evaluation.evaluation_id, finding_id)
+            for evaluation in typed_evaluations
+            for finding_id in evaluation.finding_ids
+            if findings.get((evaluation.evaluation_id, finding_id)) is not None
+            and findings[(evaluation.evaluation_id, finding_id)].blocking_level
+            == "blocking"
+        )
+        if [
+            (item.evaluation_id, item.finding_id) for item in cycle.blocking_findings
+        ] != expected_finding_keys or any(
+            item.blocking_level != "blocking"
+            or item.repair_owner != "editor"
+            or item.stage_id != "editor"
+            or item.artifact_id != "audited_brief"
+            or item.claim_id is not None
+            or item.source_id is not None
+            for item in typed_findings
+        ):
+            raise CoreRunError("control_store_integrity_invalid")
+        if cycle.source_stage_id == "auditor":
+            source_bindings = [
+                item
+                for item in snapshot.gate_artifact_bindings
+                if item.evaluation_id in cycle.blocking_evaluation_ids
+                and item.artifact_id == cycle.target_artifact.artifact_id
+                and item.artifact_revision == cycle.target_artifact.revision
+                and item.artifact_sha256 == target_revision.sha256
+            ]
+            if len(source_bindings) != len(typed_evaluations):
+                raise CoreRunError("control_store_integrity_invalid")
+        else:
+            for evaluation in typed_evaluations:
+                bound_keys = {
+                    (item.artifact_id, item.artifact_revision)
+                    for item in snapshot.gate_artifact_bindings
+                    if item.evaluation_id == evaluation.evaluation_id
+                }
+                renders = [
+                    item
+                    for item in snapshot.finalize_renders
+                    if item.audited_brief == cycle.target_artifact
+                    and {
+                        (reference.artifact_id, reference.revision)
+                        for reference in item.reader_artifacts
+                    }.issubset(bound_keys)
+                    and (
+                        item.audit_report.artifact_id,
+                        item.audit_report.revision,
+                    )
+                    in bound_keys
+                ]
+                if len(renders) != 1:
+                    raise CoreRunError("control_store_integrity_invalid")
+        transitions = {item.transition_id: item for item in snapshot.stage_transitions}
+        reopened = [transitions.get(item) for item in cycle.reopened_transition_ids]
+        if any(item is None for item in reopened):
+            raise CoreRunError("control_store_integrity_invalid")
+        typed_reopened = [item for item in reopened if item is not None]
+        if (
+            [item.transition_id for item in start_receipt.stage_transitions]
+            != [item.transition_id for item in typed_reopened]
+            or len({item.stage_id for item in typed_reopened}) != len(typed_reopened)
+            or {item.stage_id for item in typed_reopened}
+            not in ({"editor", "auditor"}, {"editor", "auditor", "finalize"})
+            or any(
+                item.accepted_transaction_id != start_receipt.transaction_id
+                or item.request_fingerprint != cycle.request_fingerprint
+                for item in typed_reopened
+            )
+        ):
+            raise CoreRunError("control_store_integrity_invalid")
+        for transition in typed_reopened:
+            expected = (
+                ("gate_repair_reopen", "ready")
+                if transition.stage_id == "editor"
+                else ("gate_repair_reset", "pending")
+            )
+            if (
+                transition.transition_kind,
+                transition.result_status,
+            ) != expected:
+                raise CoreRunError("control_store_integrity_invalid")
+        if not bindings:
+            if outcomes:
+                raise CoreRunError("control_store_integrity_invalid")
+            return
+        binding = bindings[0]
+        binding_receipt = receipts.get(binding.accepted_transaction_id)
+        submissions = [
+            item
+            for item in snapshot.owned_artifact_submissions
+            if item.submission_id == binding.owned_artifact_submission_id
+        ]
+        successor = revisions.get(
+            (
+                binding.successor_artifact.artifact_id,
+                binding.successor_artifact.revision,
+            )
+        )
+        if (
+            binding.gate_repair_id != cycle.gate_repair_id
+            or binding.prior_artifact != cycle.target_artifact
+            or binding.successor_artifact.revision
+            != binding.prior_artifact.revision + 1
+            or binding_receipt is None
+            or binding_receipt.committed_revision <= start_receipt.committed_revision
+            or len(submissions) != 1
+            or successor is None
+        ):
+            raise CoreRunError("control_store_integrity_invalid")
+        submission = submissions[0]
+        if (
+            submission.accepted_transaction_id != binding.accepted_transaction_id
+            or submission.accepted_event_id != binding.accepted_event_id
+            or submission.request_fingerprint != binding.request_fingerprint
+            or submission.artifact_id != binding.successor_artifact.artifact_id
+            or submission.artifact_revision != binding.successor_artifact.revision
+            or submission.artifact_sha256 != successor.sha256
+            or submission.owner_stage_id != "editor"
+            or submission.owner_role_id != "editor"
+            or submission.parent_artifact != binding.prior_artifact
+            or submission.invocation_id is None
+            or [
+                item.gate_repair_id
+                for item in binding_receipt.gate_repair_artifact_bindings
+            ]
+            != [cycle.gate_repair_id]
+        ):
+            raise CoreRunError("control_store_integrity_invalid")
+        starts = [
+            item
+            for item in snapshot.events
+            if item.core_run_binding is not None
+            and item.core_run_binding.effect_kind == "invocation_start"
+            and item.core_run_binding.primary_record_id == submission.invocation_id
+        ]
+        if (
+            len(starts) != 1
+            or starts[0].stage_id != "editor"
+            or receipts.get(starts[0].transaction_id) is None
+            or receipts[starts[0].transaction_id].committed_revision
+            <= start_receipt.committed_revision
+        ):
+            raise CoreRunError("control_store_integrity_invalid")
+        if not outcomes:
+            return
+        outcome = outcomes[0]
+        outcome_receipt = receipts.get(outcome.accepted_transaction_id)
+        replacement = [
+            evaluations.get(evaluation_id) for evaluation_id in outcome.evaluation_ids
+        ]
+        if (
+            outcome.gate_repair_id != cycle.gate_repair_id
+            or outcome_receipt is None
+            or outcome_receipt.committed_revision <= binding_receipt.committed_revision
+            or any(item is None for item in replacement)
+            or not replacement
+        ):
+            raise CoreRunError("control_store_integrity_invalid")
+        typed_replacement = [item for item in replacement if item is not None]
+        expected_disposition = (
+            "blocked" if any(item.blocking for item in typed_replacement) else "passed"
+        )
+        if (
+            {item.gate_batch_id for item in typed_replacement}
+            != {outcome.replacement_gate_batch_id}
+            or {item.stage_id for item in typed_replacement}
+            != {outcome.replacement_stage_id}
+            or outcome.disposition != expected_disposition
+            or (
+                outcome.disposition == "passed"
+                and outcome.replacement_stage_id != cycle.source_stage_id
+            )
+            or [item.outcome_id for item in outcome_receipt.gate_repair_outcomes]
+            != [outcome.outcome_id]
+            or outcome.completion_event_id not in outcome_receipt.event_ids
+        ):
+            raise CoreRunError("control_store_integrity_invalid")
+
+    @staticmethod
     def _verify_gate_chain(
         store: _AsOfArtifactReader,
         snapshot: ControlStoreSnapshot,
@@ -4016,9 +4480,21 @@ class CoreRunDomainVerifier:
             events = [
                 item for item in batch_snapshot.events if item.event_id == event_id
             ]
+            outcome_event_ids: list[str] = []
+            if receipt.gate_repair_outcomes:
+                outcomes = [
+                    item
+                    for item in batch_snapshot.gate_repair_outcomes
+                    if len(receipt.gate_repair_outcomes) == 1
+                    and item.outcome_id == receipt.gate_repair_outcomes[0].outcome_id
+                    and item.accepted_transaction_id == transaction_id
+                ]
+                if len(outcomes) != 1:
+                    raise CoreRunError("control_store_integrity_invalid")
+                outcome_event_ids.append(outcomes[0].completion_event_id)
             if (
                 receipt.transaction_type != transaction_type_for("gate_evaluation")
-                or receipt.event_ids != [event_id]
+                or receipt.event_ids != [event_id, *outcome_event_ids]
                 or sorted(item.evaluation_id for item in receipt.gate_evaluations)
                 != sorted(evaluation_ids)
                 or sorted(
@@ -4285,6 +4761,24 @@ def _verified_core_receipt_binding(
             )
         ):
             raise CoreRunError("control_store_integrity_invalid")
+        repair_refs = [
+            item.gate_repair_id for item in receipt.gate_repair_artifact_bindings
+        ]
+        repair_bindings = [
+            item
+            for item in snapshot.gate_repair_artifact_bindings
+            if item.accepted_transaction_id == transaction_id
+        ]
+        if repair_refs or repair_bindings:
+            if (
+                rule.primary_family != "owned_artifact_submission"
+                or repair_refs != [item.gate_repair_id for item in repair_bindings]
+                or len(repair_bindings) != 1
+                or repair_bindings[0].owned_artifact_submission_id != primary_id
+                or repair_bindings[0].accepted_event_id != event.event_id
+                or repair_bindings[0].request_fingerprint != fingerprint
+            ):
+                raise CoreRunError("control_store_integrity_invalid")
     elif rule.primary_family == "claim_freeze":
         refs = [item.freeze_id for item in receipt.claim_freezes]
         records = [
@@ -4317,6 +4811,22 @@ def _verified_core_receipt_binding(
             )
         ):
             raise CoreRunError("control_store_integrity_invalid")
+        outcome_refs = [item.outcome_id for item in receipt.gate_repair_outcomes]
+        outcomes = [
+            item
+            for item in snapshot.gate_repair_outcomes
+            if item.accepted_transaction_id == transaction_id
+        ]
+        if outcome_refs or outcomes:
+            if (
+                outcome_refs != [item.outcome_id for item in outcomes]
+                or len(outcomes) != 1
+                or outcomes[0].replacement_gate_batch_id != primary_id
+                or outcomes[0].evaluation_ids != sorted(evaluation_ids)
+                or outcomes[0].request_fingerprint != fingerprint
+                or outcomes[0].completion_event_id not in receipt.event_ids
+            ):
+                raise CoreRunError("control_store_integrity_invalid")
     elif rule.primary_family == "stage_transition":
         transition_ids = [item.transition_id for item in receipt.stage_transitions]
         records = [
@@ -4437,6 +4947,23 @@ def _verified_core_receipt_binding(
             or clean_records[0].prior_integrity_revision
             != records[0].contamination_revision
             or clean_records[0].request_fingerprint != fingerprint
+        ):
+            raise CoreRunError("control_store_integrity_invalid")
+    elif rule.primary_family == "gate_repair_cycle":
+        refs = [item.gate_repair_id for item in receipt.gate_repair_cycles]
+        records = [
+            item
+            for item in snapshot.gate_repair_cycles
+            if item.gate_repair_id == primary_id
+        ]
+        if (
+            refs != [primary_id]
+            or len(records) != 1
+            or records[0].accepted_transaction_id != transaction_id
+            or records[0].request_fingerprint != fingerprint
+            or records[0].start_event_id != event.event_id
+            or sorted(item.transition_id for item in receipt.stage_transitions)
+            != sorted(records[0].reopened_transition_ids)
         ):
             raise CoreRunError("control_store_integrity_invalid")
     elif rule.primary_family == "run_head_transition":
@@ -4572,6 +5099,40 @@ def _verify_core_receipt_event_set(
     if len(by_id) != len(events) or set(by_id) != set(receipt.event_ids):
         raise CoreRunError("control_store_integrity_invalid")
     expected_counts = rule.receipt_event_counts
+    if rule.primary_family == "gate_repair_cycle":
+        cycles = [
+            item
+            for item in snapshot.gate_repair_cycles
+            if item.accepted_transaction_id == receipt.transaction_id
+        ]
+        transitions = [
+            item
+            for item in snapshot.stage_transitions
+            if item.accepted_transaction_id == receipt.transaction_id
+        ]
+        if (
+            len(cycles) != 1
+            or not transitions
+            or actual_counts
+            != Counter(
+                {
+                    "gate_repair_started": 1,
+                    "stage_status_changed": len(transitions),
+                }
+            )
+            or set(receipt.event_ids)
+            != {
+                cycles[0].start_event_id,
+                *{item.transition_event_id for item in transitions},
+            }
+        ):
+            raise CoreRunError("control_store_integrity_invalid")
+        return
+    if rule.primary_family == "gate_batch" and receipt.gate_repair_outcomes:
+        expected_counts = (
+            ("quality_gate_checked", 1),
+            ("gate_repair_outcome_recorded", 1),
+        )
     if rule.primary_family == "finalization" and snapshot.run_execution_authorizations:
         expected_counts = (("stage_status_changed", 1),)
     if expected_counts is not None:
@@ -4662,12 +5223,37 @@ def _verify_core_receipt_event_set(
                 if item.accepted_transaction_id == receipt.transaction_id
             ]
             if len(events) != 1 or not evaluations:
+                if not (len(events) == 2 and len(receipt.gate_repair_outcomes) == 1):
+                    raise CoreRunError("control_store_integrity_invalid")
+            gate_events = [
+                item for item in events if item.event_type == "quality_gate_checked"
+            ]
+            if len(gate_events) != 1 or not evaluations:
                 raise CoreRunError("control_store_integrity_invalid")
             expected_decision = (
                 "block" if any(item.blocking for item in evaluations) else "continue"
             )
-            if events[0].decision != expected_decision:
+            if gate_events[0].decision != expected_decision:
                 raise CoreRunError("control_store_integrity_invalid")
+            if receipt.gate_repair_outcomes:
+                outcome = next(
+                    item
+                    for item in snapshot.gate_repair_outcomes
+                    if item.outcome_id == receipt.gate_repair_outcomes[0].outcome_id
+                )
+                outcome_events = [
+                    item
+                    for item in events
+                    if item.event_type == "gate_repair_outcome_recorded"
+                ]
+                if (
+                    len(outcome_events) != 1
+                    or outcome_events[0].event_id != outcome.completion_event_id
+                    or outcome_events[0].core_run_binding is not None
+                    or outcome_events[0].decision
+                    != ("block" if outcome.disposition == "blocked" else "continue")
+                ):
+                    raise CoreRunError("control_store_integrity_invalid")
         return
     if rule.primary_family == "repair_completion":
         repair_events = [

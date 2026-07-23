@@ -31,6 +31,9 @@ from multi_agent_brief.contracts.v2 import (
     GateArtifactBinding,
     GateEvaluationRecord,
     GateFindingRecord,
+    GateRepairArtifactBinding,
+    GateRepairCycleRecord,
+    GateRepairOutcomeRecord,
     FinalizationRecord,
     FinalizeRenderRecord,
     Invocation,
@@ -147,6 +150,9 @@ class ControlUnitOfWork:
         ] = {}
         self._run_integrity_records: dict[int, RunIntegrityRecord] = {}
         self._repair_cycles: dict[str, RepairCycleRecord] = {}
+        self._gate_repair_cycles: dict[str, GateRepairCycleRecord] = {}
+        self._gate_repair_artifact_bindings: dict[str, GateRepairArtifactBinding] = {}
+        self._gate_repair_outcomes: dict[str, GateRepairOutcomeRecord] = {}
         self._artifact_supersessions: dict[str, ArtifactSupersessionRecord] = {}
         self._repair_completions: dict[str, RepairCompletionRecord] = {}
         self._recovery_completions: dict[str, RecoveryCompletionRecord] = {}
@@ -446,6 +452,36 @@ class ControlUnitOfWork:
         self._require_run(snapshot)
         self._put_unique(self._repair_cycles, snapshot.repair_id, snapshot)
 
+    def put_gate_repair_cycle(self, record: GateRepairCycleRecord) -> None:
+        snapshot = self._snapshot_record(record, GateRepairCycleRecord)
+        self._require_run(snapshot)
+        self._put_unique(
+            self._gate_repair_cycles,
+            snapshot.gate_repair_id,
+            snapshot,
+        )
+
+    def put_gate_repair_artifact_binding(
+        self,
+        record: GateRepairArtifactBinding,
+    ) -> None:
+        snapshot = self._snapshot_record(record, GateRepairArtifactBinding)
+        self._require_run(snapshot)
+        self._put_unique(
+            self._gate_repair_artifact_bindings,
+            snapshot.gate_repair_id,
+            snapshot,
+        )
+
+    def put_gate_repair_outcome(self, record: GateRepairOutcomeRecord) -> None:
+        snapshot = self._snapshot_record(record, GateRepairOutcomeRecord)
+        self._require_run(snapshot)
+        self._put_unique(
+            self._gate_repair_outcomes,
+            snapshot.outcome_id,
+            snapshot,
+        )
+
     def put_artifact_supersession(self, record: ArtifactSupersessionRecord) -> None:
         snapshot = self._snapshot_record(record, ArtifactSupersessionRecord)
         self._require_run(snapshot)
@@ -696,6 +732,18 @@ class ControlUnitOfWork:
                 for key in sorted(self._run_integrity_records)
             ],
             "repair_cycles": [self._record_payload(self._repair_cycles[key]) for key in sorted(self._repair_cycles)],
+            "gate_repair_cycles": [
+                self._record_payload(self._gate_repair_cycles[key])
+                for key in sorted(self._gate_repair_cycles)
+            ],
+            "gate_repair_artifact_bindings": [
+                self._record_payload(self._gate_repair_artifact_bindings[key])
+                for key in sorted(self._gate_repair_artifact_bindings)
+            ],
+            "gate_repair_outcomes": [
+                self._record_payload(self._gate_repair_outcomes[key])
+                for key in sorted(self._gate_repair_outcomes)
+            ],
             "artifact_supersessions": [self._record_payload(self._artifact_supersessions[key]) for key in sorted(self._artifact_supersessions)],
             "repair_completions": [self._record_payload(self._repair_completions[key]) for key in sorted(self._repair_completions)],
             "recovery_completions": [self._record_payload(self._recovery_completions[key]) for key in sorted(self._recovery_completions)],

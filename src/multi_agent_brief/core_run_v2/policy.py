@@ -302,6 +302,7 @@ def transaction_type_for(effect_kind: str) -> str:
         "artifact_supersession": "core-v2-artifact-supersession",
         "repair_complete": "core-v2-repair-complete",
         "recovery_complete": "core-v2-recovery-complete",
+        "gate_repair_start": "core-v2-gate-repair-start",
         "run_head_transition": "core-v2-run-reset",
         "finalize_render": "core-v2-finalize-render",
         "finalize_complete": "core-v2-finalize-complete",

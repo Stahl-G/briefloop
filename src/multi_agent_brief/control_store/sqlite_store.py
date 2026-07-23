@@ -46,6 +46,9 @@ from multi_agent_brief.contracts.v2 import (
     GateArtifactBinding,
     GateEvaluationRecord,
     GateFindingRecord,
+    GateRepairArtifactBinding,
+    GateRepairCycleRecord,
+    GateRepairOutcomeRecord,
     FinalizationRecord,
     FinalizeRenderRecord,
     Invocation,
@@ -121,6 +124,9 @@ _EXTENDED_RECORD_MODELS = (
     GateEvaluationRecord,
     GateFindingRecord,
     GateArtifactBinding,
+    GateRepairCycleRecord,
+    GateRepairArtifactBinding,
+    GateRepairOutcomeRecord,
     RunIntegrityRecord,
     RepairCycleRecord,
     ArtifactSupersessionRecord,
@@ -354,6 +360,9 @@ class ControlStoreSnapshot:
     gate_artifact_bindings: tuple[GateArtifactBinding, ...]
     run_integrity_records: tuple[RunIntegrityRecord, ...]
     repair_cycles: tuple[RepairCycleRecord, ...]
+    gate_repair_cycles: tuple[GateRepairCycleRecord, ...]
+    gate_repair_artifact_bindings: tuple[GateRepairArtifactBinding, ...]
+    gate_repair_outcomes: tuple[GateRepairOutcomeRecord, ...]
     artifact_supersessions: tuple[ArtifactSupersessionRecord, ...]
     repair_completions: tuple[RepairCompletionRecord, ...]
     recovery_completions: tuple[RecoveryCompletionRecord, ...]
@@ -679,6 +688,21 @@ class ControlStoreHistory:
             full.run_integrity_records,
         )
         repair_cycles = selected("repair_cycles", ("repair_id",), full.repair_cycles)
+        gate_repair_cycles = selected(
+            "gate_repair_cycles",
+            ("gate_repair_id",),
+            full.gate_repair_cycles,
+        )
+        gate_repair_artifact_bindings = selected(
+            "gate_repair_artifact_bindings",
+            ("gate_repair_id",),
+            full.gate_repair_artifact_bindings,
+        )
+        gate_repair_outcomes = selected(
+            "gate_repair_outcomes",
+            ("outcome_id",),
+            full.gate_repair_outcomes,
+        )
         artifact_supersessions = selected(
             "artifact_supersessions",
             ("supersession_id",),
@@ -804,6 +828,9 @@ class ControlStoreHistory:
             gate_artifact_bindings=gate_artifact_bindings,
             run_integrity_records=run_integrity_records,
             repair_cycles=repair_cycles,
+            gate_repair_cycles=gate_repair_cycles,
+            gate_repair_artifact_bindings=gate_repair_artifact_bindings,
+            gate_repair_outcomes=gate_repair_outcomes,
             artifact_supersessions=artifact_supersessions,
             repair_completions=repair_completions,
             recovery_completions=recovery_completions,
@@ -1493,6 +1520,7 @@ class SQLiteControlStore:
                 self._insert_run_integrity_records(
                     uow._run_integrity_records.values()
                 )
+                self._insert_gate_repair_records(uow)
                 self._insert_pr4b_records(uow)
                 self._insert_checkout_records(uow)
                 self._insert_transaction_relations(receipt)
@@ -1930,6 +1958,9 @@ class SQLiteControlStore:
                 bool(uow._claim_freezes),
                 bool(uow._gate_evaluations),
                 bool(uow._run_integrity_records),
+                bool(uow._gate_repair_cycles),
+                bool(uow._gate_repair_artifact_bindings),
+                bool(uow._gate_repair_outcomes),
             )
         )
         if core_run_effect:
@@ -2024,6 +2055,103 @@ class SQLiteControlStore:
                     )
                     not in available_revisions
                 )
+            ):
+                raise ControlStoreConflict("relational_integrity_conflict")
+
+        self._preflight_gate_repair_subgraph(
+            uow,
+            run_id,
+            staged_events=staged_events,
+            available_revisions=available_revisions,
+            available_evaluations=available_evaluations,
+            available_transitions=available_transitions,
+        )
+
+    def _preflight_gate_repair_subgraph(
+        self,
+        uow: "ControlUnitOfWork",
+        run_id: str,
+        *,
+        staged_events: set[str],
+        available_revisions: set[tuple[str, int]],
+        available_evaluations: set[str],
+        available_transitions: set[str],
+    ) -> None:
+        """Validate ownership links for the distinct bounded Gate-repair graph."""
+
+        staged_cycles = set(uow._gate_repair_cycles)
+        existing_cycles = {
+            str(row[0])
+            for row in self._connection.execute(
+                "SELECT gate_repair_id FROM gate_repair_cycles WHERE run_id=?",
+                (run_id,),
+            ).fetchall()
+        }
+        existing_authorizations = {
+            str(row[0])
+            for row in self._connection.execute(
+                "SELECT authorization_id FROM run_execution_authorizations WHERE run_id=?",
+                (run_id,),
+            ).fetchall()
+        }
+        available_findings = {
+            (str(row[0]), str(row[1]))
+            for row in self._connection.execute(
+                "SELECT evaluation_id,finding_id FROM gate_findings WHERE run_id=?",
+                (run_id,),
+            ).fetchall()
+        } | set(uow._gate_findings)
+        available_submissions = {
+            str(row[0])
+            for row in self._connection.execute(
+                "SELECT submission_id FROM owned_artifact_submissions WHERE run_id=?",
+                (run_id,),
+            ).fetchall()
+        } | set(uow._owned_artifact_submissions)
+        for record in uow._gate_repair_cycles.values():
+            finding_keys = {
+                (item.evaluation_id, item.finding_id)
+                for item in record.blocking_findings
+            }
+            if (
+                record.accepted_transaction_id != uow.transaction_id
+                or record.start_event_id not in staged_events
+                or record.authorization_id not in existing_authorizations
+                or not set(record.blocking_evaluation_ids) <= available_evaluations
+                or not finding_keys <= available_findings
+                or not set(record.reopened_transition_ids) <= available_transitions
+                or (
+                    record.target_artifact.artifact_id,
+                    record.target_artifact.revision,
+                )
+                not in available_revisions
+                or existing_cycles
+            ):
+                raise ControlStoreConflict("relational_integrity_conflict")
+        for record in uow._gate_repair_artifact_bindings.values():
+            if (
+                record.accepted_transaction_id != uow.transaction_id
+                or record.accepted_event_id not in staged_events
+                or record.gate_repair_id not in (staged_cycles | existing_cycles)
+                or record.owned_artifact_submission_id not in available_submissions
+                or (
+                    record.prior_artifact.artifact_id,
+                    record.prior_artifact.revision,
+                )
+                not in available_revisions
+                or (
+                    record.successor_artifact.artifact_id,
+                    record.successor_artifact.revision,
+                )
+                not in available_revisions
+            ):
+                raise ControlStoreConflict("relational_integrity_conflict")
+        for record in uow._gate_repair_outcomes.values():
+            if (
+                record.accepted_transaction_id != uow.transaction_id
+                or record.completion_event_id not in staged_events
+                or record.gate_repair_id not in (staged_cycles | existing_cycles)
+                or not set(record.evaluation_ids) <= available_evaluations
             ):
                 raise ControlStoreConflict("relational_integrity_conflict")
 
@@ -2199,6 +2327,17 @@ class SQLiteControlStore:
                         for key in sorted(uow._run_integrity_records)
                     ],
                     "repair_cycles": [{"repair_id": key} for key in sorted(uow._repair_cycles)],
+                    "gate_repair_cycles": [
+                        {"gate_repair_id": key}
+                        for key in sorted(uow._gate_repair_cycles)
+                    ],
+                    "gate_repair_artifact_bindings": [
+                        {"gate_repair_id": key}
+                        for key in sorted(uow._gate_repair_artifact_bindings)
+                    ],
+                    "gate_repair_outcomes": [
+                        {"outcome_id": key} for key in sorted(uow._gate_repair_outcomes)
+                    ],
                     "artifact_supersessions": [{"supersession_id": key} for key in sorted(uow._artifact_supersessions)],
                     "repair_completions": [{"repair_completion_id": key} for key in sorted(uow._repair_completions)],
                     "recovery_completions": [{"recovery_id": key} for key in sorted(uow._recovery_completions)],
@@ -2229,14 +2368,17 @@ class SQLiteControlStore:
                     ],
                     "receipt_checkout_bindings": (
                         [{"transaction_id": uow.transaction_id}]
-                        if uow._receipt_checkout_binding is not None else []
+                        if uow._receipt_checkout_binding is not None
+                        else []
                     ),
                     "checkout_publication_intents": (
-                        [{
-                            "checkout_revision_id":
-                                uow._checkout_publication_intent.identity.checkout_revision_id
-                        }]
-                        if uow._checkout_publication_intent is not None else []
+                        [
+                            {
+                                "checkout_revision_id": uow._checkout_publication_intent.identity.checkout_revision_id
+                            }
+                        ]
+                        if uow._checkout_publication_intent is not None
+                        else []
                     ),
                 }
             )
@@ -3268,6 +3410,101 @@ class SQLiteControlStore:
                 ),
             )
 
+    def _insert_gate_repair_records(self, uow: "ControlUnitOfWork") -> None:
+        for record in uow._gate_repair_cycles.values():
+            self._connection.execute(
+                "INSERT INTO gate_repair_cycles VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                (
+                    record.run_id,
+                    record.gate_repair_id,
+                    record.schema_version,
+                    record.authorization_id,
+                    record.repair_ordinal,
+                    record.source_gate_batch_id,
+                    record.source_stage_id,
+                    record.repair_owner,
+                    record.target_artifact.artifact_id,
+                    record.target_artifact.revision,
+                    record.started_at,
+                    record.start_event_id,
+                    record.accepted_transaction_id,
+                    record.request_fingerprint,
+                    _canonical_record_text(record),
+                ),
+            )
+            for position, evaluation_id in enumerate(record.blocking_evaluation_ids):
+                self._connection.execute(
+                    "INSERT INTO gate_repair_cycle_evaluations VALUES (?,?,?,?)",
+                    (
+                        record.run_id,
+                        record.gate_repair_id,
+                        position,
+                        evaluation_id,
+                    ),
+                )
+            for position, finding in enumerate(record.blocking_findings):
+                self._connection.execute(
+                    "INSERT INTO gate_repair_cycle_findings VALUES (?,?,?,?,?)",
+                    (
+                        record.run_id,
+                        record.gate_repair_id,
+                        position,
+                        finding.evaluation_id,
+                        finding.finding_id,
+                    ),
+                )
+            for position, transition_id in enumerate(record.reopened_transition_ids):
+                self._connection.execute(
+                    "INSERT INTO gate_repair_cycle_transitions VALUES (?,?,?,?)",
+                    (
+                        record.run_id,
+                        record.gate_repair_id,
+                        position,
+                        transition_id,
+                    ),
+                )
+        for record in uow._gate_repair_artifact_bindings.values():
+            self._connection.execute(
+                "INSERT INTO gate_repair_artifact_bindings VALUES (?,?,?,?,?,?,?,?,?,?,?,?)",
+                (
+                    record.run_id,
+                    record.gate_repair_id,
+                    record.schema_version,
+                    record.prior_artifact.artifact_id,
+                    record.prior_artifact.revision,
+                    record.successor_artifact.artifact_id,
+                    record.successor_artifact.revision,
+                    record.owned_artifact_submission_id,
+                    record.accepted_event_id,
+                    record.accepted_transaction_id,
+                    record.request_fingerprint,
+                    _canonical_record_text(record),
+                ),
+            )
+        for record in uow._gate_repair_outcomes.values():
+            self._connection.execute(
+                "INSERT INTO gate_repair_outcomes VALUES (?,?,?,?,?,?,?,?,?,?,?,?)",
+                (
+                    record.run_id,
+                    record.outcome_id,
+                    record.schema_version,
+                    record.gate_repair_id,
+                    record.replacement_gate_batch_id,
+                    record.replacement_stage_id,
+                    record.disposition,
+                    record.completed_at,
+                    record.completion_event_id,
+                    record.accepted_transaction_id,
+                    record.request_fingerprint,
+                    _canonical_record_text(record),
+                ),
+            )
+            for position, evaluation_id in enumerate(record.evaluation_ids):
+                self._connection.execute(
+                    "INSERT INTO gate_repair_outcome_evaluations VALUES (?,?,?,?)",
+                    (record.run_id, record.outcome_id, position, evaluation_id),
+                )
+
     def _insert_pr4b_records(self, uow: "ControlUnitOfWork") -> None:
         for record in uow._repair_cycles.values():
             self._connection.execute(
@@ -3694,6 +3931,21 @@ class SQLiteControlStore:
             )
         simple_relations = (
             ("transaction_repair_cycles", receipt.repair_cycles, "repair_id"),
+            (
+                "transaction_gate_repair_cycles",
+                receipt.gate_repair_cycles,
+                "gate_repair_id",
+            ),
+            (
+                "transaction_gate_repair_artifact_bindings",
+                receipt.gate_repair_artifact_bindings,
+                "gate_repair_id",
+            ),
+            (
+                "transaction_gate_repair_outcomes",
+                receipt.gate_repair_outcomes,
+                "outcome_id",
+            ),
             ("transaction_artifact_supersessions", receipt.artifact_supersessions, "supersession_id"),
             ("transaction_repair_completions", receipt.repair_completions, "repair_completion_id"),
             ("transaction_recovery_completions", receipt.recovery_completions, "recovery_id"),
@@ -4633,6 +4885,66 @@ class SQLiteControlStore:
                 },
             ),
             repair_cycles=self._load_for_run(RepairCycleRecord, "repair_cycles", run_id, "started_at, repair_id", {"run_id":"run_id","repair_id":"repair_id","schema_version":"schema_version","contamination_revision":"contamination_revision","owner_stage_id":"owner_stage_id","reason_code":"reason_code","started_at":"started_at","start_event_id":"start_event_id","accepted_transaction_id":"accepted_transaction_id","request_fingerprint":"request_fingerprint"}),
+            gate_repair_cycles=self._load_for_run(
+                GateRepairCycleRecord,
+                "gate_repair_cycles",
+                run_id,
+                "started_at, gate_repair_id",
+                {
+                    "run_id": "run_id",
+                    "gate_repair_id": "gate_repair_id",
+                    "schema_version": "schema_version",
+                    "authorization_id": "authorization_id",
+                    "repair_ordinal": "repair_ordinal",
+                    "source_gate_batch_id": "source_gate_batch_id",
+                    "source_stage_id": "source_stage_id",
+                    "repair_owner": "repair_owner",
+                    "target_artifact_id": "target_artifact.artifact_id",
+                    "target_artifact_revision": "target_artifact.revision",
+                    "started_at": "started_at",
+                    "start_event_id": "start_event_id",
+                    "accepted_transaction_id": "accepted_transaction_id",
+                    "request_fingerprint": "request_fingerprint",
+                },
+            ),
+            gate_repair_artifact_bindings=self._load_for_run(
+                GateRepairArtifactBinding,
+                "gate_repair_artifact_bindings",
+                run_id,
+                "gate_repair_id",
+                {
+                    "run_id": "run_id",
+                    "gate_repair_id": "gate_repair_id",
+                    "schema_version": "schema_version",
+                    "prior_artifact_id": "prior_artifact.artifact_id",
+                    "prior_artifact_revision": "prior_artifact.revision",
+                    "successor_artifact_id": "successor_artifact.artifact_id",
+                    "successor_artifact_revision": "successor_artifact.revision",
+                    "owned_artifact_submission_id": ("owned_artifact_submission_id"),
+                    "accepted_event_id": "accepted_event_id",
+                    "accepted_transaction_id": "accepted_transaction_id",
+                    "request_fingerprint": "request_fingerprint",
+                },
+            ),
+            gate_repair_outcomes=self._load_for_run(
+                GateRepairOutcomeRecord,
+                "gate_repair_outcomes",
+                run_id,
+                "completed_at, outcome_id",
+                {
+                    "run_id": "run_id",
+                    "outcome_id": "outcome_id",
+                    "schema_version": "schema_version",
+                    "gate_repair_id": "gate_repair_id",
+                    "replacement_gate_batch_id": "replacement_gate_batch_id",
+                    "replacement_stage_id": "replacement_stage_id",
+                    "disposition": "disposition",
+                    "completed_at": "completed_at",
+                    "completion_event_id": "completion_event_id",
+                    "accepted_transaction_id": "accepted_transaction_id",
+                    "request_fingerprint": "request_fingerprint",
+                },
+            ),
             artifact_supersessions=self._load_for_run(ArtifactSupersessionRecord, "artifact_supersessions", run_id, "created_at, supersession_id", {"run_id":"run_id","supersession_id":"supersession_id","repair_id":"repair_id","schema_version":"schema_version","mode":"mode","artifact_id":"prior_artifact.artifact_id","prior_revision":"prior_artifact.revision","successor_revision":"successor_artifact.revision","reason_code":"reason_code","created_at":"created_at","accepted_event_id":"accepted_event_id","accepted_transaction_id":"accepted_transaction_id","request_fingerprint":"request_fingerprint"}),
             repair_completions=self._load_for_run(RepairCompletionRecord, "repair_completions", run_id, "completed_at, repair_completion_id", {"run_id":"run_id","repair_completion_id":"repair_completion_id","repair_id":"repair_id","schema_version":"schema_version","contamination_revision":"contamination_revision","completed_at":"completed_at","completion_event_id":"completion_event_id","accepted_transaction_id":"accepted_transaction_id","request_fingerprint":"request_fingerprint"}),
             recovery_completions=self._load_for_run(RecoveryCompletionRecord, "recovery_completions", run_id, "completed_at, recovery_id", {"run_id":"run_id","recovery_id":"recovery_id","repair_completion_id":"repair_completion_id","schema_version":"schema_version","contamination_revision":"contamination_revision","disposition":"disposition","completed_at":"completed_at","completion_event_id":"completion_event_id","accepted_transaction_id":"accepted_transaction_id","request_fingerprint":"request_fingerprint"}),
@@ -4686,8 +4998,86 @@ class SQLiteControlStore:
             transactions=self._load_transactions(run_id),
         )
         self._verify_core_snapshot_structure(snapshot)
+        self._verify_gate_repair_snapshot_structure(snapshot)
         self._verify_checkout_snapshot_structure(snapshot)
         return snapshot
+
+    def _verify_gate_repair_snapshot_structure(
+        self,
+        snapshot: ControlStoreSnapshot,
+    ) -> None:
+        """Verify exact list relations for the distinct Gate-repair lifecycle."""
+
+        cycles = {item.gate_repair_id: item for item in snapshot.gate_repair_cycles}
+        bindings = {
+            item.gate_repair_id: item for item in snapshot.gate_repair_artifact_bindings
+        }
+        outcomes = {item.outcome_id: item for item in snapshot.gate_repair_outcomes}
+        if len(cycles) != len(snapshot.gate_repair_cycles):
+            raise ControlStoreIntegrityError("gate_repair_relation_invalid")
+        if len(bindings) != len(snapshot.gate_repair_artifact_bindings):
+            raise ControlStoreIntegrityError("gate_repair_relation_invalid")
+        if len(outcomes) != len(snapshot.gate_repair_outcomes):
+            raise ControlStoreIntegrityError("gate_repair_relation_invalid")
+        for cycle in cycles.values():
+            evaluation_rows = self._connection.execute(
+                """
+                SELECT position,evaluation_id
+                FROM gate_repair_cycle_evaluations
+                WHERE run_id=? AND gate_repair_id=? ORDER BY position
+                """,
+                (snapshot.run.run_id, cycle.gate_repair_id),
+            ).fetchall()
+            finding_rows = self._connection.execute(
+                """
+                SELECT position,evaluation_id,finding_id
+                FROM gate_repair_cycle_findings
+                WHERE run_id=? AND gate_repair_id=? ORDER BY position
+                """,
+                (snapshot.run.run_id, cycle.gate_repair_id),
+            ).fetchall()
+            transition_rows = self._connection.execute(
+                """
+                SELECT position,transition_id
+                FROM gate_repair_cycle_transitions
+                WHERE run_id=? AND gate_repair_id=? ORDER BY position
+                """,
+                (snapshot.run.run_id, cycle.gate_repair_id),
+            ).fetchall()
+            if (
+                [row[0] for row in evaluation_rows] != list(range(len(evaluation_rows)))
+                or [row[0] for row in finding_rows] != list(range(len(finding_rows)))
+                or [row[0] for row in transition_rows]
+                != list(range(len(transition_rows)))
+                or [str(row[1]) for row in evaluation_rows]
+                != cycle.blocking_evaluation_ids
+                or [(str(row[1]), str(row[2])) for row in finding_rows]
+                != [
+                    (item.evaluation_id, item.finding_id)
+                    for item in cycle.blocking_findings
+                ]
+                or [str(row[1]) for row in transition_rows]
+                != cycle.reopened_transition_ids
+            ):
+                raise ControlStoreIntegrityError("gate_repair_relation_invalid")
+        for binding in bindings.values():
+            if binding.gate_repair_id not in cycles:
+                raise ControlStoreIntegrityError("gate_repair_relation_invalid")
+        for outcome in outcomes.values():
+            rows = self._connection.execute(
+                """
+                SELECT position,evaluation_id
+                FROM gate_repair_outcome_evaluations
+                WHERE run_id=? AND outcome_id=? ORDER BY position
+                """,
+                (snapshot.run.run_id, outcome.outcome_id),
+            ).fetchall()
+            if (
+                outcome.gate_repair_id not in cycles
+                or [row[0] for row in rows] != list(range(len(rows)))
+                or [str(row[1]) for row in rows] != outcome.evaluation_ids
+            ):
+                raise ControlStoreIntegrityError("gate_repair_relation_invalid")
 
     def _verify_checkout_snapshot_structure(
         self, snapshot: ControlStoreSnapshot
@@ -5075,6 +5465,9 @@ class SQLiteControlStore:
                 snapshot.gate_artifact_bindings,
                 snapshot.run_integrity_records,
                 snapshot.repair_cycles,
+                snapshot.gate_repair_cycles,
+                snapshot.gate_repair_artifact_bindings,
+                snapshot.gate_repair_outcomes,
                 snapshot.artifact_supersessions,
                 snapshot.repair_completions,
                 snapshot.recovery_completions,
@@ -6077,29 +6470,146 @@ class SQLiteControlStore:
                 "transaction_run_integrity_records",
                 ("integrity_revision",),
                 tuple(
-                    (item.integrity_revision,)
-                    for item in receipt.run_integrity_records
+                    (item.integrity_revision,) for item in receipt.run_integrity_records
                 ),
             ),
-            ("transaction_repair_cycles", ("repair_id",), tuple((item.repair_id,) for item in receipt.repair_cycles)),
-            ("transaction_artifact_supersessions", ("supersession_id",), tuple((item.supersession_id,) for item in receipt.artifact_supersessions)),
-            ("transaction_repair_completions", ("repair_completion_id",), tuple((item.repair_completion_id,) for item in receipt.repair_completions)),
-            ("transaction_recovery_completions", ("recovery_id",), tuple((item.recovery_id,) for item in receipt.recovery_completions)),
-            ("transaction_run_head_transitions", ("head_transition_id",), tuple((item.head_transition_id,) for item in receipt.run_head_transitions)),
-            ("transaction_finalize_renders", ("render_id",), tuple((item.render_id,) for item in receipt.finalize_renders)),
-            ("transaction_finalizations", ("finalization_id",), tuple((item.finalization_id,) for item in receipt.finalizations)),
-            ("transaction_run_archives", ("archive_id",), tuple((item.archive_id,) for item in receipt.run_archives)),
-            ("transaction_run_archive_artifact_bindings", ("archive_id", "binding_position"), tuple((item.archive_id, item.position) for item in receipt.run_archive_artifact_bindings)),
-            ("transaction_package_ready_records", ("package_id",), tuple((item.package_id,) for item in receipt.package_ready_records)),
-            ("transaction_package_artifact_bindings", ("package_id", "binding_position"), tuple((item.package_id, item.position) for item in receipt.package_artifact_bindings)),
-            ("transaction_approvals", ("approval_id",), tuple((item.approval_id,) for item in receipt.approvals)),
-            ("transaction_approval_package_bindings", ("approval_id", "package_id"), tuple((item.approval_id, item.package_id) for item in receipt.approval_package_bindings)),
-            ("transaction_delivery_authorizations", ("authorization_id",), tuple((item.authorization_id,) for item in receipt.delivery_authorizations)),
-            ("transaction_delivery_attempts", ("attempt_id",), tuple((item.attempt_id,) for item in receipt.delivery_attempts)),
-            ("transaction_delivery_results", ("result_id",), tuple((item.result_id,) for item in receipt.delivery_results)),
-            ("transaction_checkout_revisions", ("checkout_revision_id",), tuple((item.checkout_revision_id,) for item in receipt.checkout_revisions)),
-            ("transaction_receipt_checkout_bindings", ("binding_transaction_id",), tuple((item.transaction_id,) for item in receipt.receipt_checkout_bindings)),
-            ("transaction_checkout_publication_intents", ("checkout_revision_id",), tuple((item.checkout_revision_id,) for item in receipt.checkout_publication_intents)),
+            (
+                "transaction_repair_cycles",
+                ("repair_id",),
+                tuple((item.repair_id,) for item in receipt.repair_cycles),
+            ),
+            (
+                "transaction_gate_repair_cycles",
+                ("gate_repair_id",),
+                tuple((item.gate_repair_id,) for item in receipt.gate_repair_cycles),
+            ),
+            (
+                "transaction_gate_repair_artifact_bindings",
+                ("gate_repair_id",),
+                tuple(
+                    (item.gate_repair_id,)
+                    for item in receipt.gate_repair_artifact_bindings
+                ),
+            ),
+            (
+                "transaction_gate_repair_outcomes",
+                ("outcome_id",),
+                tuple((item.outcome_id,) for item in receipt.gate_repair_outcomes),
+            ),
+            (
+                "transaction_artifact_supersessions",
+                ("supersession_id",),
+                tuple(
+                    (item.supersession_id,) for item in receipt.artifact_supersessions
+                ),
+            ),
+            (
+                "transaction_repair_completions",
+                ("repair_completion_id",),
+                tuple(
+                    (item.repair_completion_id,) for item in receipt.repair_completions
+                ),
+            ),
+            (
+                "transaction_recovery_completions",
+                ("recovery_id",),
+                tuple((item.recovery_id,) for item in receipt.recovery_completions),
+            ),
+            (
+                "transaction_run_head_transitions",
+                ("head_transition_id",),
+                tuple(
+                    (item.head_transition_id,) for item in receipt.run_head_transitions
+                ),
+            ),
+            (
+                "transaction_finalize_renders",
+                ("render_id",),
+                tuple((item.render_id,) for item in receipt.finalize_renders),
+            ),
+            (
+                "transaction_finalizations",
+                ("finalization_id",),
+                tuple((item.finalization_id,) for item in receipt.finalizations),
+            ),
+            (
+                "transaction_run_archives",
+                ("archive_id",),
+                tuple((item.archive_id,) for item in receipt.run_archives),
+            ),
+            (
+                "transaction_run_archive_artifact_bindings",
+                ("archive_id", "binding_position"),
+                tuple(
+                    (item.archive_id, item.position)
+                    for item in receipt.run_archive_artifact_bindings
+                ),
+            ),
+            (
+                "transaction_package_ready_records",
+                ("package_id",),
+                tuple((item.package_id,) for item in receipt.package_ready_records),
+            ),
+            (
+                "transaction_package_artifact_bindings",
+                ("package_id", "binding_position"),
+                tuple(
+                    (item.package_id, item.position)
+                    for item in receipt.package_artifact_bindings
+                ),
+            ),
+            (
+                "transaction_approvals",
+                ("approval_id",),
+                tuple((item.approval_id,) for item in receipt.approvals),
+            ),
+            (
+                "transaction_approval_package_bindings",
+                ("approval_id", "package_id"),
+                tuple(
+                    (item.approval_id, item.package_id)
+                    for item in receipt.approval_package_bindings
+                ),
+            ),
+            (
+                "transaction_delivery_authorizations",
+                ("authorization_id",),
+                tuple(
+                    (item.authorization_id,) for item in receipt.delivery_authorizations
+                ),
+            ),
+            (
+                "transaction_delivery_attempts",
+                ("attempt_id",),
+                tuple((item.attempt_id,) for item in receipt.delivery_attempts),
+            ),
+            (
+                "transaction_delivery_results",
+                ("result_id",),
+                tuple((item.result_id,) for item in receipt.delivery_results),
+            ),
+            (
+                "transaction_checkout_revisions",
+                ("checkout_revision_id",),
+                tuple(
+                    (item.checkout_revision_id,) for item in receipt.checkout_revisions
+                ),
+            ),
+            (
+                "transaction_receipt_checkout_bindings",
+                ("binding_transaction_id",),
+                tuple(
+                    (item.transaction_id,) for item in receipt.receipt_checkout_bindings
+                ),
+            ),
+            (
+                "transaction_checkout_publication_intents",
+                ("checkout_revision_id",),
+                tuple(
+                    (item.checkout_revision_id,)
+                    for item in receipt.checkout_publication_intents
+                ),
+            ),
         )
         for table, columns, expected in specs:
             selected = ", ".join(("position", *columns))
@@ -6600,46 +7110,165 @@ class SQLiteControlStore:
                     )
                 domain_keys.add(key)
             if domain_keys != set(owners):
-                raise ControlStoreIntegrityError(
-                    "transaction_ledger_integrity_invalid"
-                )
+                raise ControlStoreIntegrityError("transaction_ledger_integrity_invalid")
 
     def _verify_pr4b_relation_coverage(self) -> None:
         """Prove every PR-4B authoritative row has one receipt owner."""
 
         specs = (
-            ("transaction_repair_cycles", ("repair_id",), "repair_cycles", "run_id", ("repair_id",)),
-            ("transaction_artifact_supersessions", ("supersession_id",), "artifact_supersessions", "run_id", ("supersession_id",)),
-            ("transaction_repair_completions", ("repair_completion_id",), "repair_completions", "run_id", ("repair_completion_id",)),
-            ("transaction_recovery_completions", ("recovery_id",), "recovery_completions", "run_id", ("recovery_id",)),
-            ("transaction_run_head_transitions", ("head_transition_id",), "run_head_transitions", "successor_run_id", ("head_transition_id",)),
-            ("transaction_finalize_renders", ("render_id",), "finalize_renders", "run_id", ("render_id",)),
-            ("transaction_finalizations", ("finalization_id",), "finalizations", "run_id", ("finalization_id",)),
-            ("transaction_run_archives", ("archive_id",), "run_archives", "run_id", ("archive_id",)),
-            ("transaction_run_archive_artifact_bindings", ("archive_id", "binding_position"), "run_archive_artifact_bindings", "run_id", ("archive_id", "position")),
-            ("transaction_package_ready_records", ("package_id",), "package_ready_records", "run_id", ("package_id",)),
-            ("transaction_package_artifact_bindings", ("package_id", "binding_position"), "package_artifact_bindings", "run_id", ("package_id", "position")),
-            ("transaction_approval_package_bindings", ("approval_id", "package_id"), "approval_package_bindings", "run_id", ("approval_id", "package_id")),
-            ("transaction_delivery_authorizations", ("authorization_id",), "delivery_authorizations", "run_id", ("authorization_id",)),
-            ("transaction_delivery_attempts", ("attempt_id",), "delivery_attempts", "run_id", ("attempt_id",)),
-            ("transaction_delivery_results", ("result_id",), "delivery_results", "run_id", ("result_id",)),
+            (
+                "transaction_repair_cycles",
+                ("repair_id",),
+                "repair_cycles",
+                "run_id",
+                ("repair_id",),
+            ),
+            (
+                "transaction_gate_repair_cycles",
+                ("gate_repair_id",),
+                "gate_repair_cycles",
+                "run_id",
+                ("gate_repair_id",),
+            ),
+            (
+                "transaction_gate_repair_artifact_bindings",
+                ("gate_repair_id",),
+                "gate_repair_artifact_bindings",
+                "run_id",
+                ("gate_repair_id",),
+            ),
+            (
+                "transaction_gate_repair_outcomes",
+                ("outcome_id",),
+                "gate_repair_outcomes",
+                "run_id",
+                ("outcome_id",),
+            ),
+            (
+                "transaction_artifact_supersessions",
+                ("supersession_id",),
+                "artifact_supersessions",
+                "run_id",
+                ("supersession_id",),
+            ),
+            (
+                "transaction_repair_completions",
+                ("repair_completion_id",),
+                "repair_completions",
+                "run_id",
+                ("repair_completion_id",),
+            ),
+            (
+                "transaction_recovery_completions",
+                ("recovery_id",),
+                "recovery_completions",
+                "run_id",
+                ("recovery_id",),
+            ),
+            (
+                "transaction_run_head_transitions",
+                ("head_transition_id",),
+                "run_head_transitions",
+                "successor_run_id",
+                ("head_transition_id",),
+            ),
+            (
+                "transaction_finalize_renders",
+                ("render_id",),
+                "finalize_renders",
+                "run_id",
+                ("render_id",),
+            ),
+            (
+                "transaction_finalizations",
+                ("finalization_id",),
+                "finalizations",
+                "run_id",
+                ("finalization_id",),
+            ),
+            (
+                "transaction_run_archives",
+                ("archive_id",),
+                "run_archives",
+                "run_id",
+                ("archive_id",),
+            ),
+            (
+                "transaction_run_archive_artifact_bindings",
+                ("archive_id", "binding_position"),
+                "run_archive_artifact_bindings",
+                "run_id",
+                ("archive_id", "position"),
+            ),
+            (
+                "transaction_package_ready_records",
+                ("package_id",),
+                "package_ready_records",
+                "run_id",
+                ("package_id",),
+            ),
+            (
+                "transaction_package_artifact_bindings",
+                ("package_id", "binding_position"),
+                "package_artifact_bindings",
+                "run_id",
+                ("package_id", "position"),
+            ),
+            (
+                "transaction_approval_package_bindings",
+                ("approval_id", "package_id"),
+                "approval_package_bindings",
+                "run_id",
+                ("approval_id", "package_id"),
+            ),
+            (
+                "transaction_delivery_authorizations",
+                ("authorization_id",),
+                "delivery_authorizations",
+                "run_id",
+                ("authorization_id",),
+            ),
+            (
+                "transaction_delivery_attempts",
+                ("attempt_id",),
+                "delivery_attempts",
+                "run_id",
+                ("attempt_id",),
+            ),
+            (
+                "transaction_delivery_results",
+                ("result_id",),
+                "delivery_results",
+                "run_id",
+                ("result_id",),
+            ),
         )
         for relation_table, relation_ids, domain_table, domain_run, domain_ids in specs:
             relation_columns = ", ".join(("run_id", "transaction_id", *relation_ids))
             owners: dict[tuple[object, ...], str] = {}
-            for row in self._connection.execute(f"SELECT {relation_columns} FROM {relation_table}").fetchall():
+            for row in self._connection.execute(
+                f"SELECT {relation_columns} FROM {relation_table}"
+            ).fetchall():
                 key = (row[0], *(row[index + 2] for index in range(len(relation_ids))))
                 if key in owners:
-                    raise ControlStoreIntegrityError("transaction_ledger_integrity_invalid")
+                    raise ControlStoreIntegrityError(
+                        "transaction_ledger_integrity_invalid"
+                    )
                 owners[key] = str(row[1])
 
-            domain_columns = ", ".join((domain_run, *domain_ids, "accepted_transaction_id"))
+            domain_columns = ", ".join(
+                (domain_run, *domain_ids, "accepted_transaction_id")
+            )
             domain_keys: set[tuple[object, ...]] = set()
-            for row in self._connection.execute(f"SELECT {domain_columns} FROM {domain_table}").fetchall():
+            for row in self._connection.execute(
+                f"SELECT {domain_columns} FROM {domain_table}"
+            ).fetchall():
                 key = tuple(row[index] for index in range(len(domain_ids) + 1))
                 owner = str(row[len(domain_ids) + 1])
                 if key in domain_keys or owners.get(key) != owner:
-                    raise ControlStoreIntegrityError("transaction_ledger_integrity_invalid")
+                    raise ControlStoreIntegrityError(
+                        "transaction_ledger_integrity_invalid"
+                    )
                 domain_keys.add(key)
             if domain_keys != set(owners):
                 raise ControlStoreIntegrityError("transaction_ledger_integrity_invalid")

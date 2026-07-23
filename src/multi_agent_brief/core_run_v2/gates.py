@@ -45,6 +45,7 @@ from multi_agent_brief.quality_gates.evaluation import (
 )
 
 from .errors import CoreRunError, CoreRunResult, core_run_failure_result
+from .gate_repair import gate_repair_outcome_for_batch
 from .integrity import RunIntegrityService
 from .checkout import (
     prepare_checkout_effect,
@@ -359,6 +360,21 @@ class GateEvaluationService:
                 },
                 strict=True,
             )
+            outcome_event_id = derived_id(
+                "EVT-GATE-REPAIR-OUTCOME",
+                request.request_id,
+                fingerprint,
+            )
+            gate_repair_outcome = gate_repair_outcome_for_batch(
+                verified.snapshot,
+                stage_id=request.stage_id,
+                gate_batch_id=batch_id,
+                evaluations=tuple(evaluations),
+                request_id=request.request_id,
+                request_fingerprint=fingerprint,
+                completed_at=now,
+                completion_event_id=outcome_event_id,
+            )
             checkout = prepare_checkout_effect(
                 workspace=self.workspace,
                 snapshot=verified.snapshot,
@@ -395,7 +411,33 @@ class GateEvaluationService:
                     )
             for finding in findings:
                 unit.put_gate_finding(finding)
+            if gate_repair_outcome is not None:
+                unit.put_gate_repair_outcome(gate_repair_outcome)
             unit.append_event(event)
+            if gate_repair_outcome is not None:
+                unit.append_event(
+                    EventEnvelope.model_validate(
+                        {
+                            "schema_version": EventEnvelope.schema_id,
+                            "event_id": outcome_event_id,
+                            "run_id": request.run_id,
+                            "event_type": "gate_repair_outcome_recorded",
+                            "created_at": now,
+                            "actor": "system",
+                            "transaction_id": request.request_id,
+                            "stage_id": request.stage_id,
+                            "artifact_id": "audited_brief",
+                            "decision": (
+                                "block"
+                                if gate_repair_outcome.disposition == "blocked"
+                                else "continue"
+                            ),
+                            "reason": "bounded Gate repair outcome recorded",
+                            "metadata": {},
+                        },
+                        strict=True,
+                    )
+                )
             stage_checkout_effect(unit, checkout)
             receipt = unit.commit(
                 _postcommit_observer=lambda _receipt: self._verifier.verify(
@@ -482,6 +524,16 @@ def _gate_finding_record(
         str(position),
         str(raw.get("finding_type") or "finding"),
     )
+    finding_type = str(raw.get("finding_type") or "gate_finding")
+    repair_fields: dict[str, object] = {}
+    if finding_type == "reader_body_length_out_of_bounds":
+        repair_fields = {
+            "repair_owner": "editor",
+            "stage_id": "editor",
+            "artifact_id": "audited_brief",
+            "claim_id": None,
+            "source_id": None,
+        }
     return GateFindingRecord.model_validate(
         {
             "schema_version": GateFindingRecord.schema_id,
@@ -489,7 +541,7 @@ def _gate_finding_record(
             "evaluation_id": evaluation_id,
             "finding_id": finding_id,
             "gate_id": gate_id,
-            "finding_type": str(raw.get("finding_type") or "gate_finding"),
+            "finding_type": finding_type,
             "severity": str(raw.get("severity") or "medium"),
             "blocking_level": str(raw.get("blocking_level") or "warning"),
             "repair_owner": str(raw.get("repair_owner") or "auditor"),
@@ -508,6 +560,7 @@ def _gate_finding_record(
             "evidence_ref": str(raw.get("evidence_ref") or finding_id),
             "metadata": raw.get("metadata") or {},
             "accepted_transaction_id": accepted_transaction_id,
+            **repair_fields,
         },
         strict=True,
     )

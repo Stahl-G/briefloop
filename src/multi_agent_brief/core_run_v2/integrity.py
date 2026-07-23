@@ -257,18 +257,19 @@ class RunIntegrityService:
         *,
         additional_revisions: Iterable[ArtifactRevision] = (),
     ) -> tuple[ArtifactRevision, CheckoutObservation] | None:
-        protected_keys = protected_revision_keys(verified)
-        checkout_keys = current_checkout_revision_keys(verified)
-        protected_keys.update(checkout_keys)
-        store_resident_keys = store_resident_revision_keys(verified.snapshot)
         revisions = {
             (item.artifact_id, item.revision): item
             for item in verified.snapshot.artifact_revisions
         }
-        for item in additional_revisions:
+        additional = tuple(additional_revisions)
+        for item in additional:
             revisions[(item.artifact_id, item.revision)] = item
-            protected_keys.add((item.artifact_id, item.revision))
-        for key in sorted(protected_keys):
+        observed_keys = workspace_observation_revision_keys(
+            verified,
+            additional_revisions=additional,
+        )
+        store_resident_keys = store_resident_revision_keys(verified.snapshot)
+        for key in sorted(observed_keys):
             if key in store_resident_keys:
                 continue
             revision = revisions.get(key)
@@ -560,6 +561,64 @@ def current_checkout_revision_keys(
         for item in verified.snapshot.checkout_revision_members
         if item.checkout_revision_id == current.post_checkout_revision_id
     }
+
+
+def workspace_observation_revision_keys(
+    verified: VerifiedCoreRun,
+    *,
+    additional_revisions: Iterable[ArtifactRevision] = (),
+) -> set[tuple[str, int]]:
+    """Project frozen Store history onto the one current workspace checkout."""
+
+    observed = protected_revision_keys(verified)
+    checkout_keys = current_checkout_revision_keys(verified)
+    observed.update(checkout_keys)
+    for item in additional_revisions:
+        observed.add((item.artifact_id, item.revision))
+
+    snapshot = verified.snapshot
+    if (
+        len(snapshot.gate_repair_cycles) != 1
+        or len(snapshot.gate_repair_artifact_bindings) != 1
+    ):
+        return observed
+    cycle = snapshot.gate_repair_cycles[0]
+    binding = snapshot.gate_repair_artifact_bindings[0]
+    if binding.gate_repair_id != cycle.gate_repair_id:
+        return observed
+
+    revisions = {
+        (item.artifact_id, item.revision): item for item in snapshot.artifact_revisions
+    }
+    artifacts = {item.artifact_id: item for item in snapshot.artifacts}
+    prior_key = (
+        binding.prior_artifact.artifact_id,
+        binding.prior_artifact.revision,
+    )
+    successor_key = (
+        binding.successor_artifact.artifact_id,
+        binding.successor_artifact.revision,
+    )
+    prior = revisions.get(prior_key)
+    successor = revisions.get(successor_key)
+    artifact = artifacts.get(binding.successor_artifact.artifact_id)
+    if (
+        binding.prior_artifact != cycle.target_artifact
+        or prior is None
+        or successor is None
+        or prior.path != successor.path
+        or artifact is None
+        or artifact.current_revision != successor.revision
+        or successor_key not in checkout_keys
+        or prior_key in checkout_keys
+    ):
+        return observed
+
+    # The prior remains protected and Store-verified. Only workspace observation
+    # is shadowed because one canonical path cannot equal both frozen hashes.
+    observed.discard(prior_key)
+    observed.add(successor_key)
+    return observed
 
 
 def _workspace_root(workspace: str | os.PathLike[str]) -> Path:

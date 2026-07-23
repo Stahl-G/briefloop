@@ -1077,6 +1077,13 @@ def test_schema_settings_and_exact_table_universe(tmp_path: Path) -> None:
         "gate_findings",
         "gate_artifact_bindings",
         "run_integrity_records",
+        "gate_repair_cycles",
+        "gate_repair_cycle_evaluations",
+        "gate_repair_cycle_findings",
+        "gate_repair_cycle_transitions",
+        "gate_repair_artifact_bindings",
+        "gate_repair_outcomes",
+        "gate_repair_outcome_evaluations",
             "transaction_run_contract_bindings",
             "transaction_run_execution_authorizations",
         "transaction_owned_artifact_submissions",
@@ -1090,6 +1097,9 @@ def test_schema_settings_and_exact_table_universe(tmp_path: Path) -> None:
         "transaction_gate_findings",
         "transaction_gate_artifact_bindings",
         "transaction_run_integrity_records",
+        "transaction_gate_repair_cycles",
+        "transaction_gate_repair_artifact_bindings",
+        "transaction_gate_repair_outcomes",
         "repair_cycles",
         "artifact_supersessions",
         "repair_completions",
@@ -1143,7 +1153,7 @@ def test_schema_settings_and_exact_table_universe(tmp_path: Path) -> None:
         assert store._connection.execute("PRAGMA foreign_keys").fetchone()[0] == 1
         assert store._connection.execute("PRAGMA journal_mode").fetchone()[0] == "wal"
         assert store._connection.execute("PRAGMA synchronous").fetchone()[0] == 2
-        assert store._connection.execute("PRAGMA user_version").fetchone()[0] == 7
+        assert store._connection.execute("PRAGMA user_version").fetchone()[0] == 8
         tables = {
             row[0]
             for row in store._connection.execute(
@@ -2592,7 +2602,7 @@ def test_future_schema_fails_closed(tmp_path: Path) -> None:
     store = _create_store(tmp_path)
     store.close()
     connection = sqlite3.connect(tmp_path / "control.db")
-    connection.execute("PRAGMA user_version = 8")
+    connection.execute("PRAGMA user_version = 9")
     connection.close()
     with pytest.raises(ControlStoreSchemaError) as error:
         SQLiteControlStore.open(tmp_path / "control.db")

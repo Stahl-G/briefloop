@@ -148,6 +148,11 @@ def test_non_editable_wheel_runs_complete_dormant_core_spine(
         ).joinpath("migrations", "0007.sql")
         assert migration_0007.is_file()
         assert "PRAGMA user_version=7;" in migration_0007.read_text(encoding="utf-8")
+        migration_0008 = resources.files(
+            "multi_agent_brief.control_store"
+        ).joinpath("migrations", "0008.sql")
+        assert migration_0008.is_file()
+        assert "PRAGMA user_version=8;" in migration_0008.read_text(encoding="utf-8")
         assert callable(build_checkout_revision)
         assert CheckoutPublicationEngine.__module__.endswith(".publication")
         assert MAX_SOURCE_PACK_MEMBERS == 256
@@ -353,9 +358,15 @@ def test_non_editable_wheel_runs_complete_dormant_core_spine(
                 payload["drafts"][0]["source_ids"] = [current.sources[0].source_id]
                 filename = "claim_drafts.json"
             elif role_id in {"analyst", "editor"}:
+                repairing = role_id == "editor" and bool(
+                    current.gate_repair_cycles
+                )
+                repetitions = 160 if repairing else 20
                 body = (
                     "# ExampleCo public brief\n\n## Executive Summary\n\n"
-                    + " ".join(["Wheel ExampleCo operations context"] * 160)
+                    + " ".join(
+                        ["Wheel ExampleCo operations context"] * repetitions
+                    )
                     + " ExampleCo opened a public pilot facility. [src:CL-0001]\n"
                 )
                 filename = (
@@ -370,9 +381,17 @@ def test_non_editable_wheel_runs_complete_dormant_core_spine(
                 ))
                 payload.update(
                     run_id=run_id,
-                    proposal_id="PROP-WHEEL-AUDIT",
+                    proposal_id=(
+                        "PROP-WHEEL-AUDIT-REPAIR"
+                        if current.gate_repair_cycles
+                        else "PROP-WHEEL-AUDIT"
+                    ),
                     artifact_id="audited_brief",
-                    artifact_revision=1,
+                    artifact_revision=next(
+                        item.current_revision
+                        for item in current.artifacts
+                        if item.artifact_id == "audited_brief"
+                    ),
                     decision="pass",
                     findings=[],
                 )
@@ -384,7 +403,7 @@ def test_non_editable_wheel_runs_complete_dormant_core_spine(
             )
 
         current_result = init_service.continue_authorized()
-        for _ in range(8):
+        for _ in range(12):
             sequence.append((
                 current_result.status,
                 current_result.reason_code,
@@ -449,10 +468,19 @@ def test_non_editable_wheel_runs_complete_dormant_core_spine(
                 "role_work_required",
                 "role_work_required",
                 "role_work_required",
+                "role_work_required",
+                "role_work_required",
                 "finalized_local",
             ]
             with SQLiteControlStore.open(init_web_workspace / "briefloop.db") as store:
                 init_snapshot = store.load_snapshot(response["run_id"])
+            assert len(init_snapshot.gate_repair_cycles) == 1
+            assert len(init_snapshot.gate_repair_artifact_bindings) == 1
+            assert len(init_snapshot.gate_repair_outcomes) == 1
+            repair_binding = init_snapshot.gate_repair_artifact_bindings[0]
+            assert repair_binding.prior_artifact.revision == 1
+            assert repair_binding.successor_artifact.revision == 2
+            assert init_snapshot.gate_repair_outcomes[0].disposition == "passed"
 
         if sys.platform == "win32":
             assert not init_snapshot.finalizations
