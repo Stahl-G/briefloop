@@ -38,6 +38,7 @@ from multi_agent_brief.contracts.v2 import (
     GateEvaluationRecord,
     PackageArtifactBinding,
     PackageReadyRecord,
+    PublicationIdentityV1,
     RunArchiveArtifactBinding,
     RunArchiveRecord,
     StageArtifactBinding,
@@ -656,7 +657,11 @@ def test_authorized_finalize_local_commits_nonpublishing_checkout_and_replays(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    from multi_agent_brief.core_run_v2.checkout import prepare_checkout_effect
+    from multi_agent_brief.core_run_v2.checkout import (
+        build_checkout_revision,
+        build_publication_intent,
+        prepare_checkout_effect,
+    )
 
     workspace, run_id, clock = _authorized_finalize_ready_workspace(
         tmp_path, monkeypatch
@@ -800,6 +805,148 @@ def test_authorized_finalize_local_commits_nonpublishing_checkout_and_replays(
         (item.canonical_path, item.blob_sha256, item.byte_size)
         for item in prior_members
     }
+
+    revisions = {
+        (item.artifact_id, item.revision): item for item in after.artifact_revisions
+    }
+
+    def forged_checkout_snapshot(artifact_revisions):
+        rebuilt = build_checkout_revision(
+            workspace_id=after.workspace_id,
+            run_id=run_id,
+            transaction_id=request.request_id,
+            created_at=datetime.fromisoformat(
+                checkout.created_at.replace("Z", "+00:00")
+            ),
+            artifact_revisions=artifact_revisions,
+            parent_checkout_revision_id=prior_binding.post_checkout_revision_id,
+        )
+        forged_binding = binding.model_copy(
+            update={"post_checkout_revision_id": rebuilt.record.checkout_revision_id}
+        )
+        receipt_payload = result.receipt.model_dump(
+            mode="json", exclude_unset=False
+        )
+        receipt_payload["checkout_revisions"] = [
+            {"checkout_revision_id": rebuilt.record.checkout_revision_id}
+        ]
+        forged_receipt = TransactionReceipt.model_validate(
+            receipt_payload, strict=True
+        )
+        forged_snapshot = replace(
+            after,
+            checkout_revisions=tuple(
+                rebuilt.record
+                if item.checkout_revision_id == checkout.checkout_revision_id
+                else item
+                for item in after.checkout_revisions
+            ),
+            checkout_revision_members=tuple(
+                item
+                for item in after.checkout_revision_members
+                if item.checkout_revision_id != checkout.checkout_revision_id
+            )
+            + rebuilt.members,
+            receipt_checkout_bindings=tuple(
+                forged_binding if item == binding else item
+                for item in after.receipt_checkout_bindings
+            ),
+        )
+        return forged_snapshot, forged_receipt, rebuilt
+
+    parent_revisions = tuple(
+        revisions[(item.artifact_id, item.artifact_revision)]
+        for item in prior_members
+    )
+    omitted_snapshot, omitted_receipt, _omitted_checkout = forged_checkout_snapshot(
+        parent_revisions[:-1]
+    )
+    with pytest.raises(CoreRunError, match="control_store_integrity_invalid"):
+        _verified_core_receipt_binding(omitted_snapshot, omitted_receipt)
+
+    parent_keys = {
+        (item.artifact_id, item.artifact_revision) for item in prior_members
+    }
+    extra_revision = next(
+        item
+        for item in after.artifact_revisions
+        if (item.artifact_id, item.revision) not in parent_keys
+    )
+    added_snapshot, added_receipt, added_checkout = forged_checkout_snapshot(
+        (*parent_revisions, extra_revision)
+    )
+    with pytest.raises(CoreRunError, match="control_store_integrity_invalid"):
+        _verified_core_receipt_binding(added_snapshot, added_receipt)
+
+    reordered_members = tuple(
+        item.model_copy(update={"ordinal": len(post_members) - item.ordinal - 1})
+        if item.checkout_revision_id == checkout.checkout_revision_id
+        else item
+        for item in after.checkout_revision_members
+    )
+    with pytest.raises(CoreRunError, match="control_store_integrity_invalid"):
+        _verified_core_receipt_binding(
+            replace(after, checkout_revision_members=reordered_members),
+            result.receipt,
+        )
+
+    parent_record = next(
+        item
+        for item in after.checkout_revisions
+        if item.checkout_revision_id == prior_binding.post_checkout_revision_id
+    )
+    parent_checkout = build_checkout_revision(
+        workspace_id=after.workspace_id,
+        run_id=run_id,
+        transaction_id=parent_record.creator_transaction_id,
+        created_at=datetime.fromisoformat(
+            parent_record.created_at.replace("Z", "+00:00")
+        ),
+        artifact_revisions=parent_revisions,
+        parent_checkout_revision_id=parent_record.parent_checkout_revision_id,
+    )
+    assert parent_checkout.record == parent_record
+    publication_identity = PublicationIdentityV1.model_validate(
+        {
+            "schema_version": "briefloop-publication-identity/v1",
+            "workspace_id": after.workspace_id,
+            "run_id": run_id,
+            "transaction_id": request.request_id,
+            "checkout_revision_id": added_checkout.record.checkout_revision_id,
+        },
+        strict=True,
+    )
+    forged_intent, forged_publication_members = build_publication_intent(
+        identity=publication_identity,
+        pre=parent_checkout,
+        post=added_checkout,
+        capability_profile_sha256="0" * 64,
+    )
+    assert forged_publication_members
+    publication_receipt_payload = added_receipt.model_dump(
+        mode="json", exclude_unset=False
+    )
+    publication_receipt_payload["checkout_publication_intents"] = [
+        {"checkout_revision_id": added_checkout.record.checkout_revision_id}
+    ]
+    publication_receipt = TransactionReceipt.model_validate(
+        publication_receipt_payload, strict=True
+    )
+    with pytest.raises(CoreRunError, match="control_store_integrity_invalid"):
+        _verified_core_receipt_binding(
+            replace(
+                added_snapshot,
+                checkout_publication_intents=(
+                    *added_snapshot.checkout_publication_intents,
+                    forged_intent,
+                ),
+                checkout_publication_members=(
+                    *added_snapshot.checkout_publication_members,
+                    *forged_publication_members,
+                ),
+            ),
+            publication_receipt,
+        )
     assert not any(
         item.identity.checkout_revision_id == checkout.checkout_revision_id
         for item in after.checkout_publication_intents
