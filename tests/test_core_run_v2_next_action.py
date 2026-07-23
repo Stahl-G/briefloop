@@ -1,9 +1,15 @@
 from __future__ import annotations
 
+from types import SimpleNamespace
+
+import pytest
+
 from tests import test_core_run_v2 as core_fixture
+from tests import test_core_run_v2_gate_repair as gate_repair_fixture
 from tests import test_core_run_v2_recovery as recovery_fixture
 
 from multi_agent_brief.control_store import SQLiteControlStore
+from multi_agent_brief.core_run_v2.errors import CoreRunError
 from multi_agent_brief.core_run_v2.next_action import classify_core_run_next_action
 from multi_agent_brief.core_run_v2.verifier import CoreRunDomainVerifier
 
@@ -92,6 +98,61 @@ def test_next_action_recovery_precedes_normal_workflow(tmp_path) -> None:
     )
     assert action.action_kind == "deterministic"
     assert action.effect_kind == "repair_start"
+
+
+def test_active_gate_repair_contamination_precedes_legacy_recovery() -> None:
+    cycle = SimpleNamespace(
+        gate_repair_id="GATE-REPAIR-1",
+        run_id="RUN-1",
+        source_gate_batch_id="GATE-BATCH-1",
+    )
+    snapshot = gate_repair_fixture._snapshot(
+        (gate_repair_fixture._finding("FINDING-EDITOR"),),
+        cycle=cycle,
+        contaminated=True,
+    )
+    snapshot.store_revision = 12
+    verified = SimpleNamespace(
+        snapshot=snapshot,
+        runtime_adapter=SimpleNamespace(binding_fingerprint="a" * 64),
+        source_plan=SimpleNamespace(source_plan_fingerprint="b" * 64),
+    )
+
+    first = classify_core_run_next_action(verified)
+    second = classify_core_run_next_action(verified)
+
+    assert first == second
+    assert (
+        first.action_kind,
+        first.effect_kind,
+        first.reason_code,
+    ) == (
+        "human_decision",
+        "gate_repair_human_review",
+        "gate_repair_failed_after_attempt",
+    )
+
+
+def test_mixed_gate_and_legacy_repair_authority_is_invalid() -> None:
+    cycle = SimpleNamespace(
+        gate_repair_id="GATE-REPAIR-1",
+        run_id="RUN-1",
+        source_gate_batch_id="GATE-BATCH-1",
+    )
+    snapshot = gate_repair_fixture._snapshot(
+        (gate_repair_fixture._finding("FINDING-EDITOR"),),
+        cycle=cycle,
+        legacy_repair=True,
+    )
+    snapshot.store_revision = 12
+    verified = SimpleNamespace(
+        snapshot=snapshot,
+        runtime_adapter=SimpleNamespace(binding_fingerprint="a" * 64),
+        source_plan=SimpleNamespace(source_plan_fingerprint="b" * 64),
+    )
+
+    with pytest.raises(CoreRunError, match="control_store_integrity_invalid"):
+        classify_core_run_next_action(verified)
 
 
 def test_next_action_routes_repair_rerun_before_recovery_complete(tmp_path) -> None:

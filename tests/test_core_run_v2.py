@@ -2083,7 +2083,7 @@ def test_store_frozen_output_contract_blocks_auditor_gate_and_stage_completion(
         if item.evaluation_id == final_quality.evaluation_id
     )
     assert finding.finding_type == "reader_body_length_out_of_bounds"
-    assert finding.repair_owner == "auditor"
+    assert finding.repair_owner == "editor"
     assert finding.metadata == {
         "output_extent": "balanced",
         "extent_catalog_id": "briefloop.output_extent_catalog.v1",
@@ -5574,6 +5574,7 @@ def test_core_effect_receipt_binding_table_is_exact() -> None:
         "gate_evaluation",
         "stage_transition",
         "integrity_contamination",
+        "gate_repair_start",
         "repair_start",
         "artifact_supersession",
         "repair_complete",
@@ -5601,6 +5602,7 @@ def test_core_effect_receipt_binding_table_is_exact() -> None:
             ("run_integrity_contaminated", 1),
             ("run_blocked", 1),
         ),
+        "gate_repair_start": None,
         "repair_start": (("repair_started", 1),),
         "artifact_supersession": (
             ("owned_artifact_accepted", 1),
@@ -5654,7 +5656,11 @@ def test_core_effect_receipt_binding_table_is_exact() -> None:
         ),
         "invocation_start": frozenset(),
         "owned_artifact_acceptance": frozenset(
-            {"artifact_revisions", "owned_artifact_submissions"}
+            {
+                "artifact_revisions",
+                "owned_artifact_submissions",
+                "gate_repair_artifact_bindings",
+            }
         ),
         "claim_freeze": frozenset(
             {
@@ -5674,12 +5680,14 @@ def test_core_effect_receipt_binding_table_is_exact() -> None:
                 "gate_evaluations",
                 "gate_findings",
                 "gate_artifact_bindings",
+                "gate_repair_outcomes",
             }
         ),
         "stage_transition": frozenset(
             {"stage_transitions", "stage_artifact_bindings", "stage_gate_bindings"}
         ),
         "integrity_contamination": frozenset({"run_integrity_records"}),
+        "gate_repair_start": frozenset({"stage_transitions", "gate_repair_cycles"}),
         "repair_start": frozenset({"repair_cycles"}),
         "artifact_supersession": frozenset(
             {

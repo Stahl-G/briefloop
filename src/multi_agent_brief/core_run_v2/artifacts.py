@@ -13,9 +13,11 @@ from pydantic import ValidationError
 from multi_agent_brief.contracts.v2 import (
     ArtifactRecord,
     ArtifactRevision,
+    ArtifactRevisionReference,
     AuditPromotionRequest,
     CoreRunEventBinding,
     EventEnvelope,
+    GateRepairArtifactBinding,
     Invocation,
     OwnedArtifactSubmissionRecord,
     OwnedArtifactSubmitRequest,
@@ -32,6 +34,7 @@ from multi_agent_brief.inputs.classifier import classify_input_dir
 
 from .errors import CoreRunError, CoreRunResult, core_run_failure_result
 from .integrity import RunIntegrityService
+from .gate_repair import classify_gate_repair_legality
 from .checkout import (
     prepare_checkout_effect,
     publish_checkout_effect,
@@ -122,6 +125,9 @@ class ArtifactAcceptanceService:
                     raise CoreRunError("artifact_input_unsafe")
                 content = expected_content
             lineage = classify_current_lineage(verified.snapshot)
+            gate_repair = classify_gate_repair_legality(verified.snapshot)
+            if gate_repair.state == "invalid":
+                raise CoreRunError("control_store_integrity_invalid")
             self._require_store_revision(
                 verified.snapshot.store_revision,
                 request.expected_store_revision,
@@ -207,10 +213,29 @@ class ArtifactAcceptanceService:
                 raise CoreRunError("artifact_owner_mismatch")
             if artifact.current_revision != request.expected_artifact_revision:
                 raise CoreRunError("artifact_revision_conflict")
-            if artifact.current_revision > 0 and self._integrity.revision_is_protected(
-                verified,
-                artifact.artifact_id,
-                artifact.current_revision,
+            active_gate_repair = (
+                gate_repair.cycle
+                if (
+                    gate_repair.state == "active"
+                    and gate_repair.cycle is not None
+                    and not verified.snapshot.gate_repair_artifact_bindings
+                    and request.artifact_id == "audited_brief"
+                    and stage_id == "editor"
+                    and owner_role == "editor"
+                    and request.invocation_id is not None
+                    and artifact.current_revision
+                    == gate_repair.cycle.target_artifact.revision
+                )
+                else None
+            )
+            if (
+                artifact.current_revision > 0
+                and self._integrity.revision_is_protected(
+                    verified,
+                    artifact.artifact_id,
+                    artifact.current_revision,
+                )
+                and active_gate_repair is None
             ):
                 raise CoreRunError("artifact_revision_conflict")
             parent = self._validate_parent(
@@ -219,6 +244,11 @@ class ArtifactAcceptanceService:
                 artifact.artifact_id,
                 owner_stage_id=stage_id,
                 owner_role_id=owner_role,
+                gate_repair_target=(
+                    None
+                    if active_gate_repair is None
+                    else active_gate_repair.target_artifact
+                ),
             )
             blocked = self._integrity.require_clean(
                 store,
@@ -289,7 +319,8 @@ class ArtifactAcceptanceService:
                 else None
             )
             if (
-                verified.binding.role_topology == "human_assisted"
+                active_gate_repair is None
+                and verified.binding.role_topology == "human_assisted"
                 and request.artifact_id
                 in {"analyst_draft_snapshot", "audited_brief"}
             ):
@@ -315,6 +346,32 @@ class ArtifactAcceptanceService:
                     classify_human_assisted_analyst_route(proposed)
                 except CoreRunError as exc:
                     raise CoreRunError("artifact_revision_conflict") from exc
+            gate_repair_binding = (
+                None
+                if active_gate_repair is None
+                else GateRepairArtifactBinding.model_validate(
+                    {
+                        "schema_version": GateRepairArtifactBinding.schema_id,
+                        "run_id": request.run_id,
+                        "gate_repair_id": active_gate_repair.gate_repair_id,
+                        "prior_artifact": (
+                            active_gate_repair.target_artifact.model_dump(
+                                mode="json",
+                                exclude_unset=False,
+                            )
+                        ),
+                        "successor_artifact": {
+                            "artifact_id": artifact.artifact_id,
+                            "revision": revision_number,
+                        },
+                        "owned_artifact_submission_id": submission_id,
+                        "accepted_event_id": event_id,
+                        "accepted_transaction_id": request.request_id,
+                        "request_fingerprint": fingerprint,
+                    },
+                    strict=True,
+                )
+            )
             event = _event(
                 event_id=event_id,
                 run_id=request.run_id,
@@ -350,6 +407,8 @@ class ArtifactAcceptanceService:
             unit.put_artifact(updated)
             unit.put_artifact_revision(revision, content)
             unit.put_owned_artifact_submission(submission)
+            if gate_repair_binding is not None:
+                unit.put_gate_repair_artifact_binding(gate_repair_binding)
             unit.append_event(event)
             stage_checkout_effect(unit, checkout)
             receipt = unit.commit(
@@ -610,6 +669,7 @@ class ArtifactAcceptanceService:
         *,
         owner_stage_id: str,
         owner_role_id: str,
+        gate_repair_target: ArtifactRevisionReference | None = None,
     ):
         expected = request.expected_parent_artifact
         if artifact_id != "audited_brief":
@@ -639,6 +699,16 @@ class ArtifactAcceptanceService:
             ),
             None,
         )
+        if gate_repair_target is not None:
+            if (
+                expected != gate_repair_target
+                or revision is None
+                or artifact is None
+                or artifact.artifact_id != "audited_brief"
+                or artifact.current_revision != expected.revision
+            ):
+                raise CoreRunError("artifact_revision_conflict")
+            return revision
         if (
             revision is None
             or artifact is None

@@ -1002,7 +1002,9 @@ class CoreRunService:
                 recovery_authorization.require_allowed()
                 mismatch = self._integrity.first_mismatch(
                     verified,
-                    additional_revisions=(item for item, _usage in required_revisions),
+                    completion_lineage_revisions=(
+                        item for item, _usage in required_revisions
+                    ),
                 )
                 if mismatch is not None:
                     raise CoreRunError("core_run_integrity_blocked")
@@ -1015,7 +1017,9 @@ class CoreRunService:
                     request_id=request.request_id,
                     request_fingerprint=fingerprint,
                     expected_store_revision=request.expected_store_revision,
-                    additional_revisions=(item for item, _usage in required_revisions),
+                    completion_lineage_revisions=(
+                        item for item, _usage in required_revisions
+                    ),
                 )
                 advance_workflow = True
             if blocked is not None:
@@ -1377,24 +1381,73 @@ class CoreRunService:
                 owner_role_id="editor",
             )
             producer_invocation_id = submission.invocation_id
-            snapshot_revision = require_artifact(
-                "analyst_draft_snapshot",
-                "consumed",
-            )
-            submissions = [
+            matching_bindings = [
                 item
-                for item in snapshot.owned_artifact_submissions
-                if item.artifact_id == brief.artifact_id
-                and item.artifact_revision == brief.revision
+                for item in snapshot.gate_repair_artifact_bindings
+                if item.owned_artifact_submission_id == submission.submission_id
+                and item.successor_artifact.artifact_id == brief.artifact_id
+                and item.successor_artifact.revision == brief.revision
             ]
-            if (
-                len(submissions) != 1
-                or submissions[0].parent_artifact is None
-                or submissions[0].parent_artifact.artifact_id
-                != snapshot_revision.artifact_id
-                or submissions[0].parent_artifact.revision != snapshot_revision.revision
-            ):
-                raise CoreRunError("stage_artifact_binding_invalid")
+            if matching_bindings:
+                from .gate_repair import classify_gate_repair_legality
+
+                legality = classify_gate_repair_legality(snapshot)
+                if (
+                    len(matching_bindings) != 1
+                    or len(snapshot.gate_repair_cycles) != 1
+                    or len(snapshot.gate_repair_artifact_bindings) != 1
+                    or legality.state != "active"
+                    or legality.cycle is None
+                ):
+                    raise CoreRunError("stage_artifact_binding_invalid")
+                repair_binding = matching_bindings[0]
+                submission_receipt = store.load_transaction_receipt(
+                    snapshot.run.run_id,
+                    submission.accepted_transaction_id,
+                )
+                prior_revision = revisions.get(
+                    (
+                        repair_binding.prior_artifact.artifact_id,
+                        repair_binding.prior_artifact.revision,
+                    )
+                )
+                if (
+                    repair_binding.gate_repair_id != legality.cycle.gate_repair_id
+                    or repair_binding.prior_artifact != legality.cycle.target_artifact
+                    or repair_binding.accepted_transaction_id
+                    != submission.accepted_transaction_id
+                    or submission.parent_artifact != repair_binding.prior_artifact
+                    or submission_receipt is None
+                    or [
+                        item.submission_id
+                        for item in submission_receipt.owned_artifact_submissions
+                    ]
+                    != [submission.submission_id]
+                    or [
+                        item.gate_repair_id
+                        for item in submission_receipt.gate_repair_artifact_bindings
+                    ]
+                    != [repair_binding.gate_repair_id]
+                    or prior_revision is None
+                ):
+                    raise CoreRunError("stage_artifact_binding_invalid")
+                selected.append((prior_revision, "consumed"))
+            else:
+                if (
+                    snapshot.gate_repair_cycles
+                    or snapshot.gate_repair_artifact_bindings
+                ):
+                    raise CoreRunError("stage_artifact_binding_invalid")
+                snapshot_revision = require_artifact(
+                    "analyst_draft_snapshot",
+                    "consumed",
+                )
+                if submission.parent_artifact is None or (
+                    submission.parent_artifact.artifact_id
+                    != snapshot_revision.artifact_id
+                    or submission.parent_artifact.revision != snapshot_revision.revision
+                ):
+                    raise CoreRunError("stage_artifact_binding_invalid")
         elif stage_id == "auditor":
             ledger = require_artifact("claim_ledger", "consumed")
             brief = require_artifact("audited_brief", "consumed")
@@ -1838,7 +1891,7 @@ _SECRET_BEARING_INPUT_KEYS = frozenset(
         "access_key",
         "api_key",
         "authorization",
-        "client" "_secret",
+        "client" + "_secret",
         "credential",
         "credentials",
         "password",
