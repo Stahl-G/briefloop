@@ -42,6 +42,7 @@ def _snapshot(
     cycle: SimpleNamespace | None = None,
     outcome: SimpleNamespace | None = None,
     contaminated: bool = False,
+    legacy_repair: bool = False,
 ) -> SimpleNamespace:
     evaluation = SimpleNamespace(
         evaluation_id="EVAL-1",
@@ -110,7 +111,11 @@ def _snapshot(
         run_integrity_records=(
             SimpleNamespace(status="contaminated" if contaminated else "clean"),
         ),
-        repair_cycles=(),
+        repair_cycles=(
+            (SimpleNamespace(repair_id="REPAIR-LEGACY"),)
+            if legacy_repair
+            else ()
+        ),
         artifact_supersessions=(),
         repair_completions=(),
         recovery_completions=(),
@@ -243,3 +248,41 @@ def test_gate_repair_cycle_is_single_attempt(
     )
     assert result.state == expected_state
     assert result.reason_code == expected_reason
+
+
+def test_active_gate_repair_contamination_is_human_block_not_legacy_repair() -> None:
+    cycle = SimpleNamespace(
+        gate_repair_id="GATE-REPAIR-1",
+        run_id="RUN-1",
+        source_gate_batch_id="GATE-BATCH-1",
+    )
+    result = classify_gate_repair_legality(
+        _snapshot(
+            (_finding("FINDING-EDITOR"),),
+            cycle=cycle,
+            contaminated=True,
+        )
+    )
+    assert (result.state, result.reason_code) == (
+        "failed_after_attempt",
+        "gate_repair_failed_after_attempt",
+    )
+
+
+def test_gate_repair_and_legacy_repair_graph_is_invalid() -> None:
+    cycle = SimpleNamespace(
+        gate_repair_id="GATE-REPAIR-1",
+        run_id="RUN-1",
+        source_gate_batch_id="GATE-BATCH-1",
+    )
+    result = classify_gate_repair_legality(
+        _snapshot(
+            (_finding("FINDING-EDITOR"),),
+            cycle=cycle,
+            legacy_repair=True,
+        )
+    )
+    assert (result.state, result.reason_code) == (
+        "invalid",
+        "control_store_integrity_invalid",
+    )

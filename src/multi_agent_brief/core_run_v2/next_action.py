@@ -99,6 +99,25 @@ def classify_core_run_next_action(verified: VerifiedCoreRun) -> CoreRunNextActio
     """Return exactly one legal category without consulting mutable files."""
 
     snapshot = verified.snapshot
+    gate_repair = None
+    if snapshot.gate_repair_cycles:
+        gate_repair = classify_gate_repair_legality(snapshot)
+        if gate_repair.state == "invalid":
+            raise CoreRunError("control_store_integrity_invalid")
+        if gate_repair.state == "failed_after_attempt":
+            if gate_repair.reason_code is None:
+                raise CoreRunError("control_store_integrity_invalid")
+            return _action(
+                verified,
+                action_kind="human_decision",
+                effect_kind="gate_repair_human_review",
+                reason_code=gate_repair.reason_code,
+                stage_id=(
+                    None
+                    if gate_repair.current_block is None
+                    else gate_repair.current_block.stage_id
+                ),
+            )
     recovery = classify_recovery_legality(snapshot)
     if recovery.state == "invalid":
         raise CoreRunError("control_store_integrity_invalid")
@@ -153,7 +172,8 @@ def classify_core_run_next_action(verified: VerifiedCoreRun) -> CoreRunNextActio
             raise CoreRunError("control_store_integrity_invalid")
         rerun_stage_id = repairs[0].owner_stage_id
 
-    gate_repair = classify_gate_repair_legality(snapshot)
+    if gate_repair is None:
+        gate_repair = classify_gate_repair_legality(snapshot)
     if gate_repair.state == "invalid":
         raise CoreRunError("control_store_integrity_invalid")
     if gate_repair.state == "eligible":

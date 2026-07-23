@@ -1002,7 +1002,9 @@ class CoreRunService:
                 recovery_authorization.require_allowed()
                 mismatch = self._integrity.first_mismatch(
                     verified,
-                    additional_revisions=(item for item, _usage in required_revisions),
+                    completion_lineage_revisions=(
+                        item for item, _usage in required_revisions
+                    ),
                 )
                 if mismatch is not None:
                     raise CoreRunError("core_run_integrity_blocked")
@@ -1015,7 +1017,9 @@ class CoreRunService:
                     request_id=request.request_id,
                     request_fingerprint=fingerprint,
                     expected_store_revision=request.expected_store_revision,
-                    additional_revisions=(item for item, _usage in required_revisions),
+                    completion_lineage_revisions=(
+                        item for item, _usage in required_revisions
+                    ),
                 )
                 advance_workflow = True
             if blocked is not None:

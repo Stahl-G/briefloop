@@ -230,6 +230,7 @@ class RunIntegrityService:
         request_fingerprint: str,
         expected_store_revision: int,
         additional_revisions: Iterable[ArtifactRevision] = (),
+        completion_lineage_revisions: Iterable[ArtifactRevision] = (),
     ) -> CoreRunResult | None:
         current = verified.snapshot.run_integrity_records[-1]
         if current.status == "contaminated":
@@ -237,6 +238,7 @@ class RunIntegrityService:
         mismatch = self.first_mismatch(
             verified,
             additional_revisions=additional_revisions,
+            completion_lineage_revisions=completion_lineage_revisions,
         )
         if mismatch is None:
             return None
@@ -256,17 +258,22 @@ class RunIntegrityService:
         verified: VerifiedCoreRun,
         *,
         additional_revisions: Iterable[ArtifactRevision] = (),
+        completion_lineage_revisions: Iterable[ArtifactRevision] = (),
     ) -> tuple[ArtifactRevision, CheckoutObservation] | None:
         revisions = {
             (item.artifact_id, item.revision): item
             for item in verified.snapshot.artifact_revisions
         }
         additional = tuple(additional_revisions)
+        completion_lineage = tuple(completion_lineage_revisions)
         for item in additional:
+            revisions[(item.artifact_id, item.revision)] = item
+        for item in completion_lineage:
             revisions[(item.artifact_id, item.revision)] = item
         observed_keys = workspace_observation_revision_keys(
             verified,
             additional_revisions=additional,
+            completion_lineage_revisions=completion_lineage,
         )
         store_resident_keys = store_resident_revision_keys(verified.snapshot)
         for key in sorted(observed_keys):
@@ -567,13 +574,17 @@ def workspace_observation_revision_keys(
     verified: VerifiedCoreRun,
     *,
     additional_revisions: Iterable[ArtifactRevision] = (),
+    completion_lineage_revisions: Iterable[ArtifactRevision] = (),
 ) -> set[tuple[str, int]]:
-    """Project frozen Store history onto the one current workspace checkout."""
+    """Project history, completion lineage, and hard observation obligations."""
 
     observed = protected_revision_keys(verified)
     checkout_keys = current_checkout_revision_keys(verified)
+    hard_additional_keys = {
+        (item.artifact_id, item.revision) for item in additional_revisions
+    }
     observed.update(checkout_keys)
-    for item in additional_revisions:
+    for item in completion_lineage_revisions:
         observed.add((item.artifact_id, item.revision))
 
     snapshot = verified.snapshot
@@ -581,11 +592,11 @@ def workspace_observation_revision_keys(
         len(snapshot.gate_repair_cycles) != 1
         or len(snapshot.gate_repair_artifact_bindings) != 1
     ):
-        return observed
+        return observed | hard_additional_keys
     cycle = snapshot.gate_repair_cycles[0]
     binding = snapshot.gate_repair_artifact_bindings[0]
     if binding.gate_repair_id != cycle.gate_repair_id:
-        return observed
+        return observed | hard_additional_keys
 
     revisions = {
         (item.artifact_id, item.revision): item for item in snapshot.artifact_revisions
@@ -612,13 +623,13 @@ def workspace_observation_revision_keys(
         or successor_key not in checkout_keys
         or prior_key in checkout_keys
     ):
-        return observed
+        return observed | hard_additional_keys
 
     # The prior remains protected and Store-verified. Only workspace observation
     # is shadowed because one canonical path cannot equal both frozen hashes.
     observed.discard(prior_key)
     observed.add(successor_key)
-    return observed
+    return observed | hard_additional_keys
 
 
 def _workspace_root(workspace: str | os.PathLike[str]) -> Path:

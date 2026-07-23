@@ -15,7 +15,7 @@ import pytest
 
 from multi_agent_brief.cli.main import main
 from multi_agent_brief.contracts import SchemaRegistry
-from multi_agent_brief.contracts.v2 import CoreRunNextAction
+from multi_agent_brief.contracts.v2 import CoreRunNextAction, IntegrityCheckRequest
 from multi_agent_brief.control_store import SQLiteControlStore
 from multi_agent_brief.control_store.serialization import canonical_fingerprint
 from multi_agent_brief.core_run_v2.errors import CoreRunError, CoreRunResult
@@ -770,12 +770,25 @@ def test_authorized_editor_gate_repair_runs_once_then_finalizes_local(
         verified,
         additional_revisions=(prior,),
     )
-    assert prior_key not in observed
+    assert prior_key in observed
     assert successor_key in observed
+    hard_mismatch = integrity.first_mismatch(
+        verified,
+        additional_revisions=(prior,),
+    )
+    assert hard_mismatch is not None
+    assert (hard_mismatch[0].artifact_id, hard_mismatch[0].revision) == prior_key
+
+    lineage_observed = workspace_observation_revision_keys(
+        verified,
+        completion_lineage_revisions=(prior, successor),
+    )
+    assert prior_key not in lineage_observed
+    assert successor_key in lineage_observed
     assert (
         integrity.first_mismatch(
             verified,
-            additional_revisions=(prior,),
+            completion_lineage_revisions=(prior, successor),
         )
         is None
     )
@@ -833,3 +846,87 @@ def test_authorized_editor_gate_repair_runs_once_then_finalizes_local(
     mismatch = integrity.first_mismatch(verified)
     assert mismatch is not None
     assert (mismatch[0].artifact_id, mismatch[0].revision) == successor_key
+
+
+def test_active_gate_repair_contamination_is_zero_write_human_block(
+    tmp_path: Path,
+) -> None:
+    if sys.platform == "win32":
+        return
+    workspace = _authorized_workspace(tmp_path)
+    service = _service(workspace)
+
+    for _ in range(10):
+        result = service.continue_authorized()
+        assert result.status == "role_work_required"
+        assert result.trace.envelope_path is not None
+        envelope = json.loads(
+            (workspace / result.trace.envelope_path).read_text(encoding="utf-8")
+        )
+        with SQLiteControlStore.open(workspace / "briefloop.db") as store:
+            snapshot = store.load_snapshot(envelope["run_id"])
+        _write_current_role_proposal(
+            workspace,
+            result,
+            initial_editor_repetitions=20,
+            repair_editor_repetitions=210,
+        )
+        if envelope["role_id"] == "editor" and snapshot.gate_repair_cycles:
+            break
+    else:
+        raise AssertionError("authorized Gate repair was not reserved")
+
+    audited = next(
+        item for item in snapshot.artifacts if item.artifact_id == "audited_brief"
+    )
+    audited_revision = next(
+        item
+        for item in snapshot.artifact_revisions
+        if item.artifact_id == audited.artifact_id
+        and item.revision == audited.current_revision
+    )
+    (workspace / audited_revision.path).write_text(
+        "tampered while Gate repair is active\n",
+        encoding="utf-8",
+    )
+
+    contamination = RunIntegrityService(workspace).inspect(
+        IntegrityCheckRequest.model_validate(
+            {
+                **IntegrityCheckRequest.minimal_example,
+                "request_id": "REQ-GATE-REPAIR-CONTAMINATION-001",
+                "run_id": envelope["run_id"],
+                "expected_store_revision": snapshot.store_revision,
+            },
+            strict=True,
+        )
+    )
+    assert contamination["status"] == "blocked"
+    with SQLiteControlStore.open(workspace / "briefloop.db") as store:
+        blocked_revision = store.current_revision
+
+    blocked = service.continue_authorized()
+    assert (
+        blocked.status,
+        blocked.reason_code,
+        blocked.trace.next_action.action_kind,
+        blocked.trace.next_action.effect_kind,
+    ) == (
+        "needs_human",
+        "gate_repair_failed_after_attempt",
+        "human_decision",
+        "gate_repair_human_review",
+    )
+    with SQLiteControlStore.open(workspace / "briefloop.db") as store:
+        after = store.load_snapshot(envelope["run_id"])
+        assert store.current_revision == blocked_revision
+    assert after.run_integrity_records[-1].status == "contaminated"
+    assert not after.repair_cycles
+    assert not after.artifact_supersessions
+    assert not after.repair_completions
+    assert not after.recovery_completions
+
+    replay = service.continue_authorized()
+    assert replay == blocked
+    with SQLiteControlStore.open(workspace / "briefloop.db") as store:
+        assert store.current_revision == blocked_revision

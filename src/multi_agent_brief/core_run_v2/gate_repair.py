@@ -223,6 +223,24 @@ def classify_gate_repair_legality(
             or cycle.run_id != snapshot.run.run_id
         ):
             return GateRepairLegality("invalid", "control_store_integrity_invalid")
+        if (
+            snapshot.repair_cycles
+            or snapshot.artifact_supersessions
+            or snapshot.repair_completions
+            or snapshot.recovery_completions
+        ):
+            return GateRepairLegality("invalid", "control_store_integrity_invalid")
+        if (
+            not outcomes
+            and snapshot.run_integrity_records
+            and snapshot.run_integrity_records[-1].status == "contaminated"
+        ):
+            return GateRepairLegality(
+                "failed_after_attempt",
+                "gate_repair_failed_after_attempt",
+                current,
+                cycle,
+            )
         if outcomes:
             outcome = outcomes[0]
             if outcome.disposition == "blocked":
