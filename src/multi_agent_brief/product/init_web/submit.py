@@ -13,6 +13,7 @@ from __future__ import annotations
 
 from dataclasses import asdict
 from pathlib import Path
+from threading import Lock, RLock
 from typing import Any, Callable
 
 from pydantic import ValidationError
@@ -154,6 +155,9 @@ def preview_output_contract(body: Any) -> dict[str, object]:
 class InitWebSubmitter:
     """Submit one strict init request through durable Store replay semantics."""
 
+    _target_locks_guard = Lock()
+    _target_locks: dict[str, RLock] = {}
+
     def __init__(
         self,
         *,
@@ -163,6 +167,12 @@ class InitWebSubmitter:
         self._base_dir = Path(base_dir).expanduser().resolve() if base_dir else None
         self._adapter_loader = adapter_loader
         self._staging = InitWebStaging()
+
+    @classmethod
+    def _target_lock(cls, target: Path) -> RLock:
+        key = str(target)
+        with cls._target_locks_guard:
+            return cls._target_locks.setdefault(key, RLock())
 
     def close(self) -> None:
         """Remove only inert host-private staging bytes."""
@@ -203,25 +213,16 @@ class InitWebSubmitter:
         """Strictly canonicalize and reverify a Human-reviewable source set."""
 
         if not isinstance(body, dict) or set(body) != {
-            "source_manifest",
+            "source_manifest_mode",
+            "source_metadata",
             "upload_bindings",
         }:
             raise SubmissionError("submission_source_manifest_invalid", 422)
         try:
-            manifest = ExecutionSourceManifest.model_validate(
-                body.get("source_manifest"), strict=True
-            )
-        except ValidationError as exc:
-            raise SubmissionError("submission_source_manifest_invalid", 422) from exc
-        if any(
-            not member.input_path.startswith("input/sources/")
-            for member in manifest.members
-        ):
-            raise SubmissionError("submission_source_manifest_invalid", 422)
-        try:
-            confirmed = self._staging.preview_confirmed(
+            confirmed, ordered_uploads = self._staging.canonical_manifest_details(
                 session_id=session_id,
-                manifest=manifest,
+                mode=body.get("source_manifest_mode"),
+                source_metadata=body.get("source_metadata"),
                 upload_bindings=body.get("upload_bindings"),
             )
         except InitWebStagingError as exc:
@@ -232,6 +233,27 @@ class InitWebSubmitter:
             "source_manifest": canonical,
             "source_manifest_sha256": sha256_hex(canonical_json_bytes(canonical)),
             "member_count": len(confirmed.members),
+            "source_preview": [
+                {
+                    "source_id": member.source_id,
+                    "title": member.title,
+                    "publisher": member.publisher,
+                    "published_at": member.published_at,
+                    "original_url": (
+                        member.locator.url
+                        if member.locator.kind == "web"
+                        else None
+                    ),
+                    "document_kind": member.document_kind,
+                    "opened_at": member.opened_at,
+                    "resolved_at": member.resolved_at,
+                    "content_media_type": member.content_media_type,
+                    "byte_count": staged.byte_count,
+                }
+                for member, staged in zip(
+                    confirmed.members, ordered_uploads, strict=True
+                )
+            ],
         }
 
     def _resolve_target(self, raw_target: str) -> Path:
@@ -307,6 +329,8 @@ class InitWebSubmitter:
                 "reason_code": initialized.action.reason_code,
             },
             "next_command": f"briefloop runtime continue --workspace {target}",
+            "completion_target": "finalized_local",
+            "repair_budget": 1,
         }
 
     @staticmethod
@@ -320,7 +344,13 @@ class InitWebSubmitter:
         if raw_manifest is None:
             if any(
                 key in payload
-                for key in ("upload_bindings", "completion_target", "repair_budget")
+                for key in (
+                    "source_manifest_mode",
+                    "source_metadata",
+                    "upload_bindings",
+                    "completion_target",
+                    "repair_budget",
+                )
             ):
                 raise SubmissionError("submission_source_manifest_required", 422)
             semantic = {
@@ -340,6 +370,8 @@ class InitWebSubmitter:
             not member.input_path.startswith("input/sources/")
             for member in manifest.members
         ):
+            raise SubmissionError("submission_source_manifest_invalid", 422)
+        if payload.get("source_manifest_mode") not in {"imported", "generated"}:
             raise SubmissionError("submission_source_manifest_invalid", 422)
         if payload.get("completion_target") != "finalized_local":
             raise SubmissionError("submission_completion_target_invalid", 422)
@@ -425,65 +457,87 @@ class InitWebSubmitter:
         workspace_id, run_id, request_workspace_prefix = self._submission_identities(
             request_id, fingerprint
         )
-        bootstrap = WorkspaceBootstrap(target)
-        authority_kind = bootstrap.classify_target()
-        if authority_kind == "sqlite":
-            return 200, self._replay_existing_store(
-                target=target,
-                expected_workspace_id=workspace_id,
-                expected_run_id=run_id,
-                request_workspace_prefix=request_workspace_prefix,
-            )
-        if authority_kind == "invalid_sqlite":
-            raise SubmissionError("control_store_integrity_invalid", 500)
-        if self._target_has_content(target):
-            raise SubmissionError("workspace_target_exists", 409)
+        with self._target_lock(target):
+            bootstrap = WorkspaceBootstrap(target)
+            authority_kind = bootstrap.classify_target()
+            if authority_kind == "sqlite":
+                return 200, self._replay_existing_store(
+                    target=target,
+                    expected_workspace_id=workspace_id,
+                    expected_run_id=run_id,
+                    request_workspace_prefix=request_workspace_prefix,
+                )
+            if authority_kind == "invalid_sqlite":
+                raise SubmissionError("control_store_integrity_invalid", 500)
+            if self._target_has_content(target):
+                raise SubmissionError("workspace_target_exists", 409)
 
-        if manifest is not None:
-            session_id = _require_text(
-                payload.get("upload_session_id"),
-                "submission_upload_session_invalid",
+            if manifest is not None:
+                session_id = _require_text(
+                    payload.get("upload_session_id"),
+                    "submission_upload_session_invalid",
+                )
+                mode = payload.get("source_manifest_mode")
+                if mode not in {"imported", "generated"}:
+                    raise SubmissionError("submission_source_manifest_invalid", 422)
+                metadata = payload.get("source_metadata")
+                try:
+                    regenerated = self._staging.canonical_manifest(
+                        session_id=session_id,
+                        mode=mode,
+                        source_metadata=metadata,
+                        upload_bindings=payload.get("upload_bindings"),
+                    )
+                except InitWebStagingError as exc:
+                    raise SubmissionError(str(exc), 422) from exc
+                if regenerated != manifest:
+                    raise SubmissionError("submission_source_manifest_invalid", 422)
+                try:
+                    self._staging.materialize_canonical(
+                        session_id=session_id,
+                        mode=mode,
+                        source_metadata=metadata,
+                        upload_bindings=payload.get("upload_bindings"),
+                        manifest=manifest,
+                        target=target,
+                    )
+                    manifest_path = target / "input" / "execution-source-manifest.json"
+                    manifest_path.parent.mkdir(parents=True, exist_ok=True)
+                    with manifest_path.open("xb") as manifest_stream:
+                        manifest_stream.write(
+                            canonical_json_bytes(
+                                manifest.model_dump(mode="json", exclude_unset=False)
+                            )
+                        )
+                except (InitWebStagingError, OSError) as exc:
+                    code = (
+                        str(exc)
+                        if isinstance(exc, InitWebStagingError)
+                        else "init_web_source_materialization_failed"
+                    )
+                    raise SubmissionError(code, 422) from exc
+
+            identity_suffix = workspace_id.removeprefix("WS-")
+            identities = iter((identity_suffix, identity_suffix))
+            create_workspace(
+                target,
+                profile,
+                force=False,
+                identity_factory=lambda: next(identities),
+                execution_authorization=execution_authorization,
             )
             try:
-                self._staging.materialize_confirmed(
-                    session_id=session_id,
-                    manifest=manifest,
-                    upload_bindings=payload.get("upload_bindings"),
-                    target=target,
+                initialized = bootstrap.initialize_runnable_codex(
+                    expected_adapter_loader=self._adapter_loader
                 )
-                manifest_path = target / "input" / "execution-source-manifest.json"
-                manifest_path.parent.mkdir(parents=True, exist_ok=True)
-                with manifest_path.open("xb") as manifest_stream:
-                    manifest_stream.write(
-                        canonical_json_bytes(
-                            manifest.model_dump(mode="json", exclude_unset=False)
-                        )
-                    )
-            except (InitWebStagingError, OSError) as exc:
-                code = str(exc) if isinstance(exc, InitWebStagingError) else "init_web_source_materialization_failed"
-                raise SubmissionError(code, 422) from exc
-
-        identity_suffix = workspace_id.removeprefix("WS-")
-        identities = iter((identity_suffix, identity_suffix))
-        create_workspace(
-            target,
-            profile,
-            force=False,
-            identity_factory=lambda: next(identities),
-            execution_authorization=execution_authorization,
-        )
-        try:
-            initialized = bootstrap.initialize_runnable_codex(
-                expected_adapter_loader=self._adapter_loader
+            except RuntimeHostError as exc:
+                raise _runtime_submission_error(exc) from exc
+            return 200, self._receipt_response(
+                target=target,
+                workspace_id=workspace_id,
+                run_id=run_id,
+                status="committed" if initialized.initialized else "replayed",
             )
-        except RuntimeHostError as exc:
-            raise _runtime_submission_error(exc) from exc
-        return 200, self._receipt_response(
-            target=target,
-            workspace_id=workspace_id,
-            run_id=run_id,
-            status="committed" if initialized.initialized else "replayed",
-        )
 
 
 __all__ = [

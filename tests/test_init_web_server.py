@@ -37,6 +37,17 @@ class _StubSubmitter:
             "transaction_id": "REQ-CX-INIT-x",
             "committed_revision": 1,
             "receipt": {},
+            "workspace": "/private/secret/workspace",
+            "completion_target": "finalized_local",
+            "repair_budget": 1,
+            "next_action": {
+                "action_kind": "deterministic",
+                "effect_kind": "doctor_check",
+                "reason_code": "doctor_check_required",
+                "stage_id": None,
+                "role_id": None,
+            },
+            "progress": {"reason_code": "doctor_check_required"},
         }
 
 
@@ -99,6 +110,11 @@ def test_get_assets_and_security_headers(server) -> None:
     assert b"STATE.outputContractPreviewKey === currentOutputContractPreviewKey()" in body
     assert b"requestNumber !== STATE.outputContractPreviewRequest" in body
     assert b"else if (!hasCurrentOutputContractPreview())" in body
+    assert b"finalized_local" in body
+    assert b"repair_budget: 1" in body
+    assert b"runtime continue --workspace" not in body
+    assert b"response.workspace ||" not in body
+    assert b"published_at: null" in body
     status, _headers, _body = _request(server, "GET", "/assets/style.css")
     assert status == 200
     assert server._server.server_address[0] == "127.0.0.1"
@@ -193,6 +209,13 @@ def test_post_success_returns_real_response(server) -> None:
     assert payload["ok"] is True
     assert payload["status"] == "committed"
     assert payload["transaction_id"] == "REQ-CX-INIT-x"
+    assert payload["completion_target"] == "finalized_local"
+    assert payload["repair_budget"] == 1
+    assert "workspace" not in payload
+    assert "next_command" not in payload
+    assert "/private/secret" not in body.decode("utf-8")
+    assert server.outcome is not None
+    assert server.outcome.workspace == "/private/secret/workspace"
 
 
 def test_source_upload_is_session_bound_and_server_hashed(tmp_path: Path) -> None:
@@ -221,19 +244,15 @@ def test_source_upload_is_session_bound_and_server_hashed(tmp_path: Path) -> Non
         assert len(payload["sha256"]) == 64
         assert payload["upload_handle"].startswith("upload-")
 
-        manifest = {
-            "schema_version": "briefloop.execution_source_manifest.v2",
-            "members": [
+        source_metadata = [
                 {
                     "source_id": "SRC-INIT-001",
-                    "input_path": "input/sources/source.txt",
-                    "content_sha256": payload["sha256"],
-                    "content_media_type": "text/plain",
+                    "expected_content_sha256": payload["sha256"],
                     "origin_type": "uploaded_file",
                     "acquisition_method": "manual_upload",
                     "material_kind": "uploaded_file",
                     "provider": None,
-                    "locator": {"kind": "file", "path": "input/sources/source.txt"},
+                    "original_url": None,
                     "title": "Public source",
                     "publisher": None,
                     "published_at": "2026-07-22",
@@ -246,14 +265,14 @@ def test_source_upload_is_session_bound_and_server_hashed(tmp_path: Path) -> Non
                     "opened_at": None,
                     "resolved_at": None,
                 }
-            ],
-        }
+            ]
         preview_body = json.dumps(
             {
-                "source_manifest": manifest,
+                "source_manifest_mode": "imported",
+                "source_metadata": source_metadata,
                 "upload_bindings": [
                     {
-                        "input_path": "input/sources/source.txt",
+                        "metadata_index": 0,
                         "upload_handle": payload["upload_handle"],
                     }
                 ],
@@ -412,6 +431,10 @@ def test_real_submitter_end_to_end(tmp_path: Path) -> None:
         payload = json.loads(raw)
         assert payload["status"] == "committed"
         assert (tmp_path / "web-ws" / "briefloop.db").is_file()
-        assert payload["receipt"]["transaction_id"] == payload["transaction_id"]
+        assert "receipt" not in payload
+        assert "workspace" not in payload
+        assert "next_command" not in payload
+        assert instance.outcome is not None
+        assert instance.outcome.workspace == str(tmp_path / "web-ws")
     finally:
         instance.close()

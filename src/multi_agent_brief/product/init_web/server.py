@@ -16,7 +16,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from importlib.resources import files
 import json
 import secrets
-from threading import Thread
+from threading import Lock, Thread
 from typing import Any, Callable
 from urllib.parse import parse_qs, urlsplit
 
@@ -65,6 +65,17 @@ def _verify_assets() -> None:
 
 
 @dataclass
+class InitWebSubmissionOutcome:
+    """In-memory handoff to the already-active initiating controller."""
+
+    workspace: str
+    workspace_id: str
+    run_id: str
+    transaction_id: str
+    status: str
+
+
+@dataclass
 class InitWebServer:
     session_id: str
     url: str
@@ -72,6 +83,9 @@ class InitWebServer:
     _token: str = field(repr=False)
     _server: ThreadingHTTPServer = field(repr=False)
     _cleanup: Callable[[], None] = field(repr=False)
+    _outcome_getter: Callable[[], InitWebSubmissionOutcome | None] = field(
+        repr=False
+    )
     _thread: Thread | None = field(default=None, repr=False)
 
     def start(self) -> None:
@@ -85,6 +99,10 @@ class InitWebServer:
 
     def serve_forever(self) -> None:
         self._server.serve_forever()
+
+    @property
+    def outcome(self) -> InitWebSubmissionOutcome | None:
+        return self._outcome_getter()
 
     def close(self) -> None:
         self._server.shutdown()
@@ -112,6 +130,40 @@ def create_init_web_server(
     _verify_assets()
     token = secrets.token_urlsafe(32)
     session_id = f"init-{secrets.token_hex(16)}"
+    outcome_lock = Lock()
+    successful_outcome: InitWebSubmissionOutcome | None = None
+
+    def _outcome() -> InitWebSubmissionOutcome | None:
+        with outcome_lock:
+            return successful_outcome
+
+    def _friendly_response(response: dict[str, Any]) -> dict[str, Any]:
+        action = response.get("next_action")
+        progress = response.get("progress")
+        action_payload = action if isinstance(action, dict) else {}
+        progress_payload = progress if isinstance(progress, dict) else {}
+        return {
+            "ok": True,
+            "status": response.get("status"),
+            "workspace_id": response.get("workspace_id"),
+            "run_id": response.get("run_id"),
+            "transaction_id": response.get("transaction_id"),
+            "completion_target": "finalized_local",
+            "repair_budget": 1,
+            "first_action": {
+                "action_kind": action_payload.get("action_kind"),
+                "effect_kind": action_payload.get("effect_kind"),
+                "reason_code": action_payload.get("reason_code"),
+                "stage_id": action_payload.get("stage_id"),
+                "role_id": action_payload.get("role_id"),
+            },
+            "progress": {
+                "status": "initialized",
+                "current_stage": progress_payload.get("current_stage"),
+                "current_role": progress_payload.get("current_role"),
+                "reason_code": progress_payload.get("reason_code"),
+            },
+        }
 
     def _shutdown_soon() -> None:
         import threading
@@ -265,12 +317,35 @@ def create_init_web_server(
                     "ok": False,
                     "reason_code": exc.error_code,
                 }
+            if (
+                target.path == "/api/v1/submit"
+                and status == HTTPStatus.OK
+                and response.get("status") in {"committed", "replayed"}
+            ):
+                workspace = response.get("workspace")
+                if not isinstance(workspace, str):
+                    self._reject(
+                        HTTPStatus.INTERNAL_SERVER_ERROR,
+                        "init_web_handoff_unavailable",
+                    )
+                    return
+                outcome = InitWebSubmissionOutcome(
+                    workspace=workspace,
+                    workspace_id=str(response.get("workspace_id")),
+                    run_id=str(response.get("run_id")),
+                    transaction_id=str(response.get("transaction_id")),
+                    status=str(response.get("status")),
+                )
+                with outcome_lock:
+                    nonlocal successful_outcome
+                    successful_outcome = outcome
+                response = _friendly_response(response)
             payload = canonical_json_bytes(response) + b"\n"
             self._send(HTTPStatus(status), payload, "application/json; charset=utf-8")
             if (
                 exit_on_success
                 and status == HTTPStatus.OK
-                and response.get("status") == "committed"
+                and response.get("status") in {"committed", "replayed"}
             ):
                 _shutdown_soon()
 
@@ -284,6 +359,7 @@ def create_init_web_server(
         _token=token,
         _server=server,
         _cleanup=getattr(submitter, "close", lambda: None),
+        _outcome_getter=_outcome,
     )
 
 
@@ -291,6 +367,7 @@ __all__ = [
     "CONTENT_SECURITY_POLICY",
     "InitWebError",
     "InitWebServer",
+    "InitWebSubmissionOutcome",
     "MAX_JSON_BODY_BYTES",
     "MAX_UPLOAD_BODY_BYTES",
     "SESSION_TOKEN_HEADER",

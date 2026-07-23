@@ -73,6 +73,7 @@ def test_non_editable_wheel_runs_complete_dormant_core_spine(
             SourceCommitRequest,
             SourceProposal,
             StageCompleteRequest,
+            SchemaRegistry,
         )
         from multi_agent_brief.control_store import SQLiteControlStore
         from multi_agent_brief.control_store.serialization import canonical_fingerprint
@@ -89,8 +90,12 @@ def test_non_editable_wheel_runs_complete_dormant_core_spine(
             MAX_SOURCE_MEMBERS as INIT_MAX_SOURCE_MEMBERS,
         )
         from multi_agent_brief.runtime_host_v2.service import (
+            RuntimeHostService,
             _ROLE_OUTPUTS,
             _strict_proposal_violations,
+        )
+        from multi_agent_brief.runtime_host_v2.codex import (
+            workspace_codex_adapter_loader,
         )
         from multi_agent_brief.runtime_host_v2.submission import (
             MAX_SOURCE_MEMBER_BYTES,
@@ -192,17 +197,14 @@ def test_non_editable_wheel_runs_complete_dormant_core_spine(
             stream=io.BytesIO(init_content),
             declared_length=len(init_content),
         )
-        init_path = "input/sources/001-source.txt"
-        init_member = {
+        init_metadata = {
             "source_id": "SRC-WHEEL-INIT-001",
-            "input_path": init_path,
-            "content_sha256": hashlib.sha256(init_content).hexdigest(),
-            "content_media_type": "text/plain",
+            "expected_content_sha256": init_upload["sha256"],
             "origin_type": "uploaded_file",
             "acquisition_method": "manual_upload",
             "material_kind": "uploaded_file",
             "provider": None,
-            "locator": {"kind": "file", "path": init_path},
+            "original_url": None,
             "title": "Packaged init source",
             "publisher": "Example publisher",
             "published_at": "2026-07-22",
@@ -215,6 +217,18 @@ def test_non_editable_wheel_runs_complete_dormant_core_spine(
             "opened_at": None,
             "resolved_at": None,
         }
+        init_bindings = [{
+            "metadata_index": 0,
+            "upload_handle": init_upload["upload_handle"],
+        }]
+        init_preview = init_submitter.preview_source_manifest(
+            session_id="wheel-init-session",
+            body={
+                "source_manifest_mode": "imported",
+                "source_metadata": [init_metadata],
+                "upload_bindings": init_bindings,
+            },
+        )
         status, response = init_submitter.submit({
             "schema_version": SUBMISSION_SCHEMA,
             "request_id": "REQ-WHEEL-INIT-WEB-001",
@@ -229,18 +243,15 @@ def test_non_editable_wheel_runs_complete_dormant_core_spine(
                     "output_formats": ["markdown"],
                     "web_search_mode": "disabled",
                     "output_extent": "balanced",
+                    "output_language": "en",
                 },
                 "completion_target": "finalized_local",
                 "repair_budget": 1,
-                "source_manifest": {
-                    "schema_version": "briefloop.execution_source_manifest.v2",
-                    "members": [init_member],
-                },
+                "source_manifest_mode": "imported",
+                "source_metadata": [init_metadata],
+                "source_manifest": init_preview["source_manifest"],
                 "upload_session_id": "wheel-init-session",
-                "upload_bindings": [{
-                    "input_path": init_path,
-                    "upload_handle": init_upload["upload_handle"],
-                }],
+                "upload_bindings": init_bindings,
                 "human_confirmation": True,
             },
         })
@@ -263,6 +274,125 @@ def test_non_editable_wheel_runs_complete_dormant_core_spine(
         assert continuation["status"] == "role_work_required"
         assert continuation["current_stage"] == "scout"
         assert "trace" not in continuation
+
+        init_service = RuntimeHostService(
+            init_web_workspace,
+            adapter_loader=workspace_codex_adapter_loader(init_web_workspace),
+        )
+        sequence = []
+
+        def write_role_proposal(result):
+            envelope_path = init_web_workspace / result.trace.envelope_path
+            envelope = json.loads(envelope_path.read_text(encoding="utf-8"))
+            scratch = init_web_workspace / envelope["scratch_directory"]
+            role_id = envelope["role_id"]
+            run_id = envelope["run_id"]
+            with SQLiteControlStore.open(init_web_workspace / "briefloop.db") as store:
+                current = store.load_snapshot(run_id)
+            if role_id == "scout":
+                payload = deepcopy(SchemaRegistry.example(
+                    "briefloop.candidate_claims_proposal.v2", "minimal"
+                ))
+                payload.update(run_id=run_id, proposal_id="PROP-WHEEL-CANDIDATES")
+                payload["candidates"][0].update(
+                    source_id=current.sources[0].source_id,
+                    statement="ExampleCo opened a public pilot facility.",
+                    evidence_text="packaged init source",
+                )
+                filename = "candidate_claims.json"
+            elif role_id == "screener":
+                candidate = next(
+                    item for item in current.accepted_proposals
+                    if item.proposal_kind == "candidate"
+                )
+                payload = deepcopy(SchemaRegistry.example(
+                    "briefloop.screened_candidates_proposal.v2", "minimal"
+                ))
+                payload.update(
+                    run_id=run_id,
+                    proposal_id="PROP-WHEEL-SCREENED",
+                    candidate_claims_proposal_id=candidate.proposal_id,
+                )
+                payload["decisions"][0]["candidate_id"] = "CAND-001"
+                filename = "screened_candidates.json"
+            elif role_id == "claim-ledger":
+                screened = next(
+                    item for item in current.accepted_proposals
+                    if item.proposal_kind == "screened"
+                )
+                payload = deepcopy(SchemaRegistry.example(
+                    "briefloop.claim_drafts_proposal.v2", "minimal"
+                ))
+                payload.update(
+                    run_id=run_id,
+                    proposal_id="PROP-WHEEL-DRAFTS",
+                    screened_candidates_proposal_id=screened.proposal_id,
+                )
+                payload["drafts"][0]["source_ids"] = [current.sources[0].source_id]
+                filename = "claim_drafts.json"
+            elif role_id in {"analyst", "editor"}:
+                body = (
+                    "# ExampleCo public brief\n\n## Executive Summary\n\n"
+                    + " ".join(["Wheel ExampleCo operations context"] * 160)
+                    + " ExampleCo opened a public pilot facility. [src:CL-0001]\n"
+                )
+                filename = (
+                    "analyst_draft.md" if role_id == "analyst"
+                    else "audited_brief.md"
+                )
+                (scratch / filename).write_text(body, encoding="utf-8")
+                return
+            elif role_id == "auditor":
+                payload = deepcopy(SchemaRegistry.example(
+                    "briefloop.audit_proposal.v2", "minimal"
+                ))
+                payload.update(
+                    run_id=run_id,
+                    proposal_id="PROP-WHEEL-AUDIT",
+                    artifact_id="audited_brief",
+                    artifact_revision=1,
+                    decision="pass",
+                    findings=[],
+                )
+                filename = "audit_proposal.json"
+            else:
+                raise AssertionError(role_id)
+            (scratch / filename).write_text(
+                json.dumps(payload, sort_keys=True), encoding="utf-8"
+            )
+
+        current_result = init_service.continue_authorized()
+        for _ in range(8):
+            sequence.append((
+                current_result.status,
+                current_result.reason_code,
+                current_result.trace.next_action.action_fingerprint,
+            ))
+            if current_result.status == "finalized_local":
+                break
+            assert current_result.status == "role_work_required", sequence
+            write_role_proposal(current_result)
+            current_result = init_service.continue_authorized()
+        else:
+            raise AssertionError("packaged init run did not reach finalized_local")
+        assert current_result.reason_code == "local_finalization_complete"
+        assert current_result.trace.next_action.effect_kind == "finalized_local"
+        assert [item[0] for item in sequence] == [
+            "role_work_required",
+            "role_work_required",
+            "role_work_required",
+            "role_work_required",
+            "role_work_required",
+            "role_work_required",
+            "finalized_local",
+        ]
+        with SQLiteControlStore.open(init_web_workspace / "briefloop.db") as store:
+            init_snapshot = store.load_snapshot(response["run_id"])
+        assert not init_snapshot.package_ready_records
+        assert not init_snapshot.approvals
+        assert not init_snapshot.delivery_authorizations
+        assert not init_snapshot.delivery_attempts
+        assert not init_snapshot.delivery_results
 
         create_demo_workspace(workspace)
         run_id = "RUN-WHEEL-CORE-V2-001"

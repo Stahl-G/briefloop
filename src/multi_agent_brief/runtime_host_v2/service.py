@@ -377,8 +377,21 @@ class RuntimeHostService:
                 try:
                     dispatch = self.start_current_invocation(action)
                 except RuntimeHostError as exc:
-                    if str(exc) == "runtime_action_stale":
+                    code = str(exc)
+                    if code == "runtime_action_stale":
                         continue
+                    if code == "commit_outcome_unknown":
+                        refreshed = initialize_or_open_runtime(
+                            self.workspace,
+                            adapter_loader=self._adapter_loader,
+                        )
+                        return build_runtime_continuation_result(
+                            refreshed.verified,
+                            refreshed.action,
+                            status="needs_attention",
+                            reason_code="commit_outcome_unknown",
+                            transaction_ids=tuple(transaction_ids),
+                        )
                     raise
                 refreshed = initialize_or_open_runtime(
                     self.workspace,
@@ -472,9 +485,22 @@ class RuntimeHostService:
                         expected_envelope=envelope,
                     )
                 except RuntimeHostError as exc:
-                    if str(exc) == "runtime_action_stale":
+                    code = str(exc)
+                    if code == "runtime_action_stale":
                         attempts -= 1
                         continue
+                    if code == "commit_outcome_unknown":
+                        refreshed = initialize_or_open_runtime(
+                            self.workspace,
+                            adapter_loader=self._adapter_loader,
+                        )
+                        return build_runtime_continuation_result(
+                            refreshed.verified,
+                            refreshed.action,
+                            status="needs_attention",
+                            reason_code="commit_outcome_unknown",
+                            transaction_ids=tuple(transaction_ids),
+                        )
                     raise
                 transaction_ids.append(result.transaction_id)
                 continue
@@ -847,7 +873,31 @@ class RuntimeHostService:
         )
         result = CoreRunService(self.workspace).start_invocation(request)
         if result.status == "commit_outcome_unknown":
-            result = CoreRunService(self.workspace).start_invocation(request)
+            refreshed = initialize_or_open_runtime(
+                self.workspace,
+                adapter_loader=self._adapter_loader,
+            )
+            active = [
+                item
+                for item in refreshed.verified.snapshot.invocations
+                if item.status == "active"
+            ]
+            if active:
+                if len(active) != 1:
+                    raise RuntimeHostError("control_store_integrity_invalid")
+                envelope = self._expected_invocation_envelope(
+                    active[0].invocation_id,
+                    current=refreshed,
+                )
+                if envelope.action != action:
+                    raise RuntimeHostError("runtime_action_stale")
+                result = CoreRunService(self.workspace).start_invocation(request)
+            else:
+                if refreshed.action != action:
+                    raise RuntimeHostError("runtime_action_stale")
+                result = CoreRunService(self.workspace).start_invocation(request)
+            if result.status == "commit_outcome_unknown":
+                raise RuntimeHostError("commit_outcome_unknown")
         if result.status not in {"committed", "replayed"}:
             raise RuntimeHostError(
                 result.error_code or "control_store_integrity_invalid"
@@ -1054,6 +1104,14 @@ class RuntimeHostService:
             )
         status = result.status
         if status == "commit_outcome_unknown":
+            refreshed = initialize_or_open_runtime(
+                self.workspace,
+                adapter_loader=self._adapter_loader,
+            )
+            if refreshed.action.action_kind != "deterministic" or (
+                refreshed.action.effect_kind != "invocation_accept_or_fail"
+            ):
+                raise RuntimeHostError("runtime_action_stale")
             if spec.owner_kind == "source":
                 result = IntakeService(self.workspace).submit_source(relative_request)
             elif spec.owner_kind == "proposal":
@@ -1066,6 +1124,8 @@ class RuntimeHostService:
                     self.workspace
                 ).submit_owned_artifact(request)
             status = result.status
+            if status == "commit_outcome_unknown":
+                raise RuntimeHostError("commit_outcome_unknown")
         if status not in {"committed", "replayed", "rejected_recorded"}:
             raise RuntimeHostError(
                 getattr(result, "error_code", None) or "control_store_integrity_invalid"

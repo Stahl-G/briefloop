@@ -180,8 +180,22 @@ def _init_web_wizard(args: argparse.Namespace) -> int:
         server.serve_forever()
     except KeyboardInterrupt:
         print("[init --web] cancelled; no workspace was created by this server.")
+        return_code = 130
+    else:
+        return_code = 0
     finally:
         server.close()
+    if return_code:
+        return return_code
+    outcome = server.outcome
+    if outcome is None:
+        print("[init --web] stopped without a committed or replayed initialization.")
+        return 1
+    print(
+        f"[init --web] {outcome.status}: workspace={outcome.workspace} "
+        f"run_id={outcome.run_id} transaction_id={outcome.transaction_id}"
+    )
+    print(f"briefloop runtime continue --workspace {outcome.workspace}")
     return 0
 
 

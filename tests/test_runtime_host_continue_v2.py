@@ -15,6 +15,8 @@ from multi_agent_brief.contracts import SchemaRegistry
 from multi_agent_brief.contracts.v2 import CoreRunNextAction
 from multi_agent_brief.control_store import SQLiteControlStore
 from multi_agent_brief.control_store.serialization import canonical_fingerprint
+from multi_agent_brief.core_run_v2.errors import CoreRunResult
+from multi_agent_brief.intake_v2.service import IntakeService
 from multi_agent_brief.product.init_web.submit import InitWebSubmitter
 from multi_agent_brief.runtime_host_v2.codex import workspace_codex_adapter_loader
 from multi_agent_brief.runtime_host_v2.errors import RuntimeHostError
@@ -60,16 +62,14 @@ def _authorized_workspace(tmp_path: Path) -> Path:
     body = _body(authorized=True)
     payload = body["payload"]
     assert isinstance(payload, dict)
-    member = {
+    metadata = {
         "source_id": "SRC-INIT-001",
-        "input_path": "input/sources/001-source.txt",
-        "content_sha256": hashlib.sha256(content).hexdigest(),
-        "content_media_type": "text/plain",
+        "expected_content_sha256": staged["sha256"],
         "origin_type": "uploaded_file",
         "acquisition_method": "manual_upload",
         "material_kind": "uploaded_file",
         "provider": None,
-        "locator": {"kind": "file", "path": "input/sources/001-source.txt"},
+        "original_url": None,
         "title": "Public durable source",
         "publisher": "Example publisher",
         "published_at": "2026-07-22",
@@ -82,21 +82,24 @@ def _authorized_workspace(tmp_path: Path) -> Path:
         "opened_at": None,
         "resolved_at": None,
     }
+    bindings = [{"metadata_index": 0, "upload_handle": staged["upload_handle"]}]
+    preview = submitter.preview_source_manifest(
+        session_id="init-session",
+        body={
+            "source_manifest_mode": "imported",
+            "source_metadata": [metadata],
+            "upload_bindings": bindings,
+        },
+    )
     payload.update(
         {
             "completion_target": "finalized_local",
             "repair_budget": 1,
-            "source_manifest": {
-                "schema_version": "briefloop.execution_source_manifest.v2",
-                "members": [member],
-            },
+            "source_manifest_mode": "imported",
+            "source_metadata": [metadata],
+            "source_manifest": preview["source_manifest"],
             "upload_session_id": "init-session",
-            "upload_bindings": [
-                {
-                    "input_path": member["input_path"],
-                    "upload_handle": staged["upload_handle"],
-                }
-            ],
+            "upload_bindings": bindings,
         }
     )
     status, response = submitter.submit(body)
@@ -238,6 +241,44 @@ def test_stale_deterministic_action_refreshes_without_spending_progress_budget(
     assert result.current_stage == "scout"
 
 
+def test_persistent_invocation_reservation_unknown_returns_typed_attention(
+    tmp_path: Path, monkeypatch
+) -> None:
+    workspace = _authorized_workspace(tmp_path)
+    monkeypatch.setattr(
+        "multi_agent_brief.core_run_v2.service.CoreRunService.start_invocation",
+        lambda *_args, **_kwargs: CoreRunResult(
+            status="commit_outcome_unknown",
+            error_code="commit_outcome_unknown",
+        ),
+    )
+
+    result = _service(workspace).continue_authorized()
+
+    assert result.status == "needs_attention"
+    assert result.reason_code == "commit_outcome_unknown"
+
+
+def test_persistent_proposal_accept_unknown_returns_typed_attention(
+    tmp_path: Path, monkeypatch
+) -> None:
+    workspace = _authorized_workspace(tmp_path)
+    service = _service(workspace)
+    required = service.continue_authorized()
+    assert required.status == "role_work_required"
+    _write_current_role_proposal(workspace, required)
+    monkeypatch.setattr(
+        IntakeService,
+        "submit_proposal",
+        lambda *_args, **_kwargs: SimpleNamespace(status="commit_outcome_unknown"),
+    )
+
+    result = service.continue_authorized()
+
+    assert result.status == "needs_attention"
+    assert result.reason_code == "commit_outcome_unknown"
+
+
 def test_finalize_continuation_uses_core_effect_without_reader_html_hook(
     tmp_path: Path,
     monkeypatch,
@@ -369,7 +410,7 @@ def _write_current_role_proposal(workspace: Path, result) -> None:
     elif role_id in {"analyst", "editor"}:
         body = (
             "# ExampleCo public brief\n\n## Executive Summary\n\n"
-            + " ".join(["Evidence-informed context"] * 320)
+            + " ".join(["ExampleCo operations context"] * 210)
             + " ExampleCo opened a public pilot facility. [src:CL-0001]\n"
         )
         (scratch / ("analyst_draft.md" if role_id == "analyst" else "audited_brief.md")).write_text(
@@ -405,9 +446,17 @@ def test_authorized_current_session_reaches_truthful_finalized_local(
         return
     workspace = _authorized_workspace(tmp_path)
     service = _service(workspace)
+    sequence: list[tuple[str, str, str]] = []
 
     for _ in range(8):
         result = service.continue_authorized()
+        sequence.append(
+            (
+                result.status,
+                result.reason_code,
+                result.trace.next_action.action_fingerprint,
+            )
+        )
         if result.status == "finalized_local":
             break
         assert result.status == "role_work_required", (
@@ -422,6 +471,16 @@ def test_authorized_current_session_reaches_truthful_finalized_local(
         raise AssertionError("authorized current-session run did not terminate")
 
     assert result.reason_code == "local_finalization_complete"
+    assert [item[0] for item in sequence] == [
+        "role_work_required",
+        "role_work_required",
+        "role_work_required",
+        "role_work_required",
+        "role_work_required",
+        "role_work_required",
+        "finalized_local",
+    ]
+    assert all(len(item[2]) == 64 for item in sequence)
     assert result.trace.next_action.action_kind == "complete"
     assert result.trace.next_action.effect_kind == "finalized_local"
     with SQLiteControlStore.open(workspace / "briefloop.db") as store:

@@ -2,9 +2,10 @@
 
 from __future__ import annotations
 
+from concurrent.futures import ThreadPoolExecutor
+from copy import deepcopy
 import json
 from io import BytesIO
-import hashlib
 import yaml
 
 from pathlib import Path
@@ -23,6 +24,7 @@ from multi_agent_brief.product.init_web.submit import (
     SubmissionError,
     _profile_from_payload,
 )
+from multi_agent_brief.product.init_web.staging import InitWebStaging
 from multi_agent_brief.runtime_assets import RuntimeAssetInstallError
 from multi_agent_brief.runtime_host_v2.initialization import WorkspaceBootstrap
 
@@ -83,8 +85,8 @@ def _authorized_body(
     body = _body(request_id, target)
     payload = body["payload"]
     assert isinstance(payload, dict)
-    manifest_members: list[dict[str, object]] = []
-    bindings: list[dict[str, str]] = []
+    source_metadata: list[dict[str, object]] = []
+    bindings: list[dict[str, object]] = []
     for index in range(members):
         content = f"public source {index}\n".encode()
         staged = submitter.stage_upload(
@@ -93,27 +95,17 @@ def _authorized_body(
             stream=BytesIO(content),
             declared_length=len(content),
         )
-        source_id = f"SRC-INIT-{index + 1:03d}"
-        input_path = f"input/sources/{index + 1:03d}-source.txt"
-        incident = index == members - 1 and members > 1
-        manifest_members.append(
+        source_id = f"SRC-{index + 1:03d}"
+        incident = index == 14 and members >= 15
+        source_metadata.append(
             {
                 "source_id": source_id,
-                "input_path": input_path,
-                "content_sha256": hashlib.sha256(content).hexdigest(),
-                "content_media_type": "text/plain",
+                "expected_content_sha256": staged["sha256"],
                 "origin_type": "uploaded_file",
                 "acquisition_method": "manual_upload",
                 "material_kind": "uploaded_file",
                 "provider": None,
-                "locator": {
-                    "kind": "web" if incident else "file",
-                    **(
-                        {"url": f"https://example.com/{index}"}
-                        if incident
-                        else {"path": input_path}
-                    ),
-                },
+                "original_url": f"https://example.com/{index}",
                 "title": f"Public source {index}",
                 "publisher": "Example publisher",
                 "published_at": None if incident else "2026-07-22",
@@ -129,18 +121,25 @@ def _authorized_body(
         )
         bindings.append(
             {
-                "input_path": input_path,
+                "metadata_index": index,
                 "upload_handle": str(staged["upload_handle"]),
             }
         )
+    preview = submitter.preview_source_manifest(
+        session_id="init-session",
+        body={
+            "source_manifest_mode": "imported",
+            "source_metadata": source_metadata,
+            "upload_bindings": bindings,
+        },
+    )
     payload.update(
         {
             "completion_target": "finalized_local",
             "repair_budget": 1,
-            "source_manifest": {
-                "schema_version": "briefloop.execution_source_manifest.v2",
-                "members": manifest_members,
-            },
+            "source_manifest_mode": "imported",
+            "source_metadata": source_metadata,
+            "source_manifest": preview["source_manifest"],
             "upload_session_id": "init-session",
             "upload_bindings": bindings,
         }
@@ -216,7 +215,8 @@ def test_source_manifest_preview_is_server_canonical_and_zero_workspace_write(
     preview = submitter.preview_source_manifest(
         session_id="init-session",
         body={
-            "source_manifest": payload["source_manifest"],
+            "source_manifest_mode": payload["source_manifest_mode"],
+            "source_metadata": payload["source_metadata"],
             "upload_bindings": payload["upload_bindings"],
         },
     )
@@ -226,20 +226,26 @@ def test_source_manifest_preview_is_server_canonical_and_zero_workspace_write(
     assert len(str(preview["source_manifest_sha256"])) == 64
     assert not (tmp_path / "authorized-ws").exists()
 
-    manifest = payload["source_manifest"]
-    assert isinstance(manifest, dict)
-    members = manifest["members"]
-    assert isinstance(members, list)
-    members[0]["content_sha256"] = "0" * 64
+    bindings = payload["upload_bindings"]
+    assert isinstance(bindings, list)
+    handle = bindings[0]["upload_handle"]
+    staged = submitter._staging._uploads[handle]
+    replacement = staged.path.with_name(staged.path.name + "-replacement")
+    replacement.write_bytes(staged.path.read_bytes())
+    replacement.replace(staged.path)
     with pytest.raises(SubmissionError) as exc_info:
         submitter.preview_source_manifest(
             session_id="init-session",
             body={
-                "source_manifest": manifest,
+                "source_manifest_mode": payload["source_manifest_mode"],
+                "source_metadata": payload["source_metadata"],
                 "upload_bindings": payload["upload_bindings"],
             },
         )
-    assert exc_info.value.error_code == "init_web_source_hash_mismatch"
+    assert exc_info.value.error_code in {
+        "init_web_source_handle_invalid",
+        "init_web_source_hash_mismatch",
+    }
     assert not (tmp_path / "authorized-ws").exists()
 
 
@@ -309,12 +315,176 @@ def test_authorized_25_member_manifest_preserves_url_and_incident_semantics(
         (tmp_path / "authorized-ws" / "input" / "execution-source-manifest.json").read_text()
     )
     assert len(stored["members"]) == 25
-    assert stored["members"][-1]["locator"] == {
+    assert [item["source_id"] for item in stored["members"]] == [
+        f"SRC-{index:03d}" for index in range(1, 26)
+    ]
+    assert [item["locator"]["url"] for item in stored["members"]] == [
+        f"https://example.com/{index}" for index in range(25)
+    ]
+    assert stored["members"][14]["locator"] == {
         "kind": "web",
-        "url": "https://example.com/24",
+        "url": "https://example.com/14",
     }
-    assert stored["members"][-1]["document_kind"] == "status_incident"
-    assert stored["members"][-1]["opened_at"] == "2026-07-21T00:00:00Z"
+    assert stored["members"][14]["document_kind"] == "status_incident"
+    assert stored["members"][14]["opened_at"] == "2026-07-21T00:00:00Z"
+
+
+def test_generated_manifest_ids_are_server_stable_across_random_handles(
+    tmp_path: Path,
+) -> None:
+    manifests: list[object] = []
+    for suffix in ("a", "b"):
+        submitter = InitWebSubmitter(base_dir=tmp_path / suffix)
+        uploads = []
+        for filename, content in (("zeta.txt", b"zeta"), ("alpha.txt", b"alpha")):
+            uploads.append(
+                submitter.stage_upload(
+                    session_id="session",
+                    filename=filename,
+                    stream=BytesIO(content),
+                    declared_length=len(content),
+                )
+            )
+        metadata = [
+            {
+                "title": upload["filename"],
+                "published_at": None,
+                "retrieved_at": "2026-07-23T00:00:00Z",
+            }
+            for upload in uploads
+        ]
+        preview = submitter.preview_source_manifest(
+            session_id="session",
+            body={
+                "source_manifest_mode": "generated",
+                "source_metadata": metadata,
+                "upload_bindings": [
+                    {"metadata_index": index, "upload_handle": upload["upload_handle"]}
+                    for index, upload in enumerate(uploads)
+                ],
+            },
+        )
+        manifests.append(preview["source_manifest"])
+    assert manifests[0] == manifests[1]
+    assert [item["source_id"] for item in manifests[0]["members"]] == [
+        "SRC-INIT-001",
+        "SRC-INIT-002",
+    ]
+    assert all(item["published_at"] is None for item in manifests[0]["members"])
+
+
+def test_browser_hash_rewrite_fails_before_store_commit(tmp_path: Path) -> None:
+    submitter = InitWebSubmitter(base_dir=tmp_path)
+    body = _authorized_body(
+        submitter, request_id="REQ-BROWSER-HASH", target="authorized-ws"
+    )
+    payload = body["payload"]
+    payload["source_manifest"]["members"][0]["content_sha256"] = "0" * 64
+
+    with pytest.raises(SubmissionError, match="submission_source_manifest_invalid"):
+        submitter.submit(body)
+
+    assert not (tmp_path / "authorized-ws" / "briefloop.db").exists()
+
+
+@pytest.mark.parametrize("phase", ["copy", "post_copy"])
+def test_source_mutation_during_or_after_copy_fails_before_store_commit(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, phase: str
+) -> None:
+    submitter = InitWebSubmitter(base_dir=tmp_path)
+    body = _authorized_body(
+        submitter, request_id=f"REQ-MUTATE-{phase}", target=f"ws-{phase}"
+    )
+    payload = body["payload"]
+    binding = payload["upload_bindings"][0]
+    staged = submitter._staging._uploads[binding["upload_handle"]]
+    if phase == "copy":
+        original_open = InitWebStaging._open_verified
+        open_calls = 0
+
+        def _mutate_after_open(expected_sha256, selected):
+            nonlocal open_calls
+            open_calls += 1
+            descriptor = original_open(expected_sha256, selected)
+            if open_calls == 3:
+                selected.path.write_bytes(b"Y" * selected.byte_count)
+            return descriptor
+
+        monkeypatch.setattr(
+            InitWebStaging, "_open_verified", staticmethod(_mutate_after_open)
+        )
+    else:
+        original_verify = InitWebStaging._verify_materialized
+
+        def _mutate_before_post_copy(destination, selected, member):
+            destination.write_bytes(b"Z" * selected.byte_count)
+            return original_verify(destination, selected, member)
+
+        monkeypatch.setattr(
+            InitWebStaging,
+            "_verify_materialized",
+            staticmethod(_mutate_before_post_copy),
+        )
+
+    with pytest.raises(SubmissionError, match="init_web_source_hash_mismatch"):
+        submitter.submit(body)
+
+    assert not (tmp_path / f"ws-{phase}" / "briefloop.db").exists()
+
+
+@pytest.mark.parametrize("changed", [False, True])
+def test_same_target_concurrent_submission_is_linearized_before_second_read(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, changed: bool
+) -> None:
+    submitter = InitWebSubmitter(base_dir=tmp_path)
+    first_body = _authorized_body(
+        submitter, request_id="REQ-CONCURRENT", target="authorized-ws"
+    )
+    second_body = deepcopy(first_body)
+    if changed:
+        second_payload = second_body["payload"]
+        second_payload["source_metadata"][0]["title"] = "Changed source title"
+        preview = submitter.preview_source_manifest(
+            session_id="init-session",
+            body={
+                "source_manifest_mode": "imported",
+                "source_metadata": second_payload["source_metadata"],
+                "upload_bindings": second_payload["upload_bindings"],
+            },
+        )
+        second_payload["source_manifest"] = preview["source_manifest"]
+
+    entered = __import__("threading").Event()
+    release = __import__("threading").Event()
+    original = submitter._staging.materialize_canonical
+    materializations = 0
+
+    def _pause_winner(**kwargs):
+        nonlocal materializations
+        materializations += 1
+        entered.set()
+        assert release.wait(timeout=5)
+        return original(**kwargs)
+
+    monkeypatch.setattr(submitter._staging, "materialize_canonical", _pause_winner)
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        winner = executor.submit(submitter.submit, first_body)
+        assert entered.wait(timeout=5)
+        loser = executor.submit(submitter.submit, second_body)
+        release.set()
+        first = winner.result(timeout=20)
+        if changed:
+            with pytest.raises(SubmissionError, match="submission_replay_conflict"):
+                loser.result(timeout=20)
+        else:
+            second = loser.result(timeout=20)
+            assert {first[1]["status"], second[1]["status"]} == {
+                "committed",
+                "replayed",
+            }
+            assert first[1]["transaction_id"] == second[1]["transaction_id"]
+    assert materializations == 1
+    assert _revision(tmp_path / "authorized-ws") == 1
 
 
 def test_kit_materialization_failure_never_commits_store(

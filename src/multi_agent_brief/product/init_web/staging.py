@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 import hashlib
+import json
 import os
 from pathlib import Path
 import secrets
@@ -37,6 +38,8 @@ class StagedUpload:
     path: Path
     byte_count: int
     sha256: str
+    device: int
+    inode: int
 
 
 class InitWebStaging:
@@ -101,6 +104,8 @@ class InitWebStaging:
                 path=target,
                 byte_count=observed,
                 sha256=digest.hexdigest(),
+                device=target.stat().st_dev,
+                inode=target.stat().st_ino,
             )
             self._uploads[handle] = staged
             self._session_sizes[session_id] = current_total + observed
@@ -119,17 +124,63 @@ class InitWebStaging:
             manifest=manifest,
             upload_bindings=upload_bindings,
         )
+        self._materialize_bound(bound, target=target)
+
+    def materialize_canonical(
+        self,
+        *,
+        session_id: str,
+        mode: str,
+        source_metadata: object,
+        upload_bindings: object,
+        manifest: ExecutionSourceManifest,
+        target: Path,
+    ) -> None:
+        """Regenerate and materialize the exact server-confirmed source set."""
+
+        regenerated, ordered_uploads = self._canonical_manifest_and_uploads(
+            session_id=session_id,
+            mode=mode,
+            source_metadata=source_metadata,
+            upload_bindings=upload_bindings,
+        )
+        if regenerated != manifest:
+            raise InitWebStagingError("init_web_source_manifest_invalid")
+        self._materialize_bound(
+            list(zip(manifest.members, ordered_uploads, strict=True)),
+            target=target,
+        )
+
+    @staticmethod
+    def _materialize_bound(
+        bound: list[tuple[ExecutionSourceManifestMember, StagedUpload]],
+        *,
+        target: Path,
+    ) -> None:
         for member, staged in bound:
-            descriptor = self._open_verified(member.content_sha256, staged)
+            descriptor = InitWebStaging._open_verified(
+                member.content_sha256, staged
+            )
             destination = target / member.input_path
             destination.parent.mkdir(parents=True, exist_ok=True)
             try:
                 with os.fdopen(descriptor, "rb", closefd=True) as incoming:
                     descriptor = -1
                     with destination.open("xb") as outgoing:
-                        shutil.copyfileobj(incoming, outgoing, length=_CHUNK_BYTES)
+                        digest = hashlib.sha256()
+                        copied = 0
+                        while True:
+                            chunk = incoming.read(_CHUNK_BYTES)
+                            if not chunk:
+                                break
+                            copied += len(chunk)
+                            digest.update(chunk)
+                            outgoing.write(chunk)
                         outgoing.flush()
                         os.fsync(outgoing.fileno())
+                if copied != staged.byte_count or digest.hexdigest() != staged.sha256:
+                    raise InitWebStagingError("init_web_source_hash_mismatch")
+                InitWebStaging._verify_materialized(destination, staged, member)
             except OSError as exc:
                 raise InitWebStagingError(
                     "init_web_source_materialization_failed"
@@ -137,6 +188,208 @@ class InitWebStaging:
             finally:
                 if descriptor >= 0:
                     os.close(descriptor)
+
+    @staticmethod
+    def _verify_materialized(
+        destination: Path,
+        staged: StagedUpload,
+        member: ExecutionSourceManifestMember,
+    ) -> None:
+        destination_digest = hashlib.sha256()
+        destination_size = 0
+        with destination.open("rb") as materialized:
+            while True:
+                chunk = materialized.read(_CHUNK_BYTES)
+                if not chunk:
+                    break
+                destination_size += len(chunk)
+                destination_digest.update(chunk)
+        if (
+            destination_size != staged.byte_count
+            or destination_digest.hexdigest() != staged.sha256
+            or member.content_sha256 != staged.sha256
+        ):
+            raise InitWebStagingError("init_web_source_hash_mismatch")
+
+    def canonical_manifest(
+        self,
+        *,
+        session_id: str,
+        mode: str,
+        source_metadata: object,
+        upload_bindings: object,
+    ) -> ExecutionSourceManifest:
+        """Derive the only canonical manifest from semantic metadata and staging."""
+
+        manifest, _uploads = self._canonical_manifest_and_uploads(
+            session_id=session_id,
+            mode=mode,
+            source_metadata=source_metadata,
+            upload_bindings=upload_bindings,
+        )
+        return manifest
+
+    def canonical_manifest_details(
+        self,
+        *,
+        session_id: str,
+        mode: str,
+        source_metadata: object,
+        upload_bindings: object,
+    ) -> tuple[ExecutionSourceManifest, tuple[StagedUpload, ...]]:
+        manifest, uploads = self._canonical_manifest_and_uploads(
+            session_id=session_id,
+            mode=mode,
+            source_metadata=source_metadata,
+            upload_bindings=upload_bindings,
+        )
+        return manifest, tuple(uploads)
+
+    def _canonical_manifest_and_uploads(
+        self,
+        *,
+        session_id: str,
+        mode: str,
+        source_metadata: object,
+        upload_bindings: object,
+    ) -> tuple[ExecutionSourceManifest, list[StagedUpload]]:
+        if mode not in {"imported", "generated"} or not isinstance(
+            source_metadata, list
+        ):
+            raise InitWebStagingError("init_web_source_manifest_invalid")
+        if not isinstance(upload_bindings, list) or len(upload_bindings) != len(
+            source_metadata
+        ):
+            raise InitWebStagingError("init_web_source_bindings_invalid")
+        by_index: dict[int, StagedUpload] = {}
+        for raw in upload_bindings:
+            if type(raw) is not dict or set(raw) != {"metadata_index", "upload_handle"}:
+                raise InitWebStagingError("init_web_source_bindings_invalid")
+            index = raw.get("metadata_index")
+            handle = raw.get("upload_handle")
+            if type(index) is not int or not isinstance(handle, str) or index in by_index:
+                raise InitWebStagingError("init_web_source_bindings_invalid")
+            staged = self._uploads.get(handle)
+            if staged is None or staged.session_id != session_id:
+                raise InitWebStagingError("init_web_source_handle_invalid")
+            by_index[index] = staged
+        if set(by_index) != set(range(len(source_metadata))):
+            raise InitWebStagingError("init_web_source_bindings_invalid")
+
+        semantic_keys = {
+            "source_id",
+            "expected_content_sha256",
+            "title",
+            "publisher",
+            "published_at",
+            "retrieved_at",
+            "origin_type",
+            "acquisition_method",
+            "material_kind",
+            "provider",
+            "original_url",
+            "source_category",
+            "retrieval_source_type",
+            "underlying_evidence_type",
+            "raw_underlying_evidence_type",
+            "document_kind",
+            "opened_at",
+            "resolved_at",
+        }
+        rows: list[tuple[dict[str, object], StagedUpload, str]] = []
+        for index, raw in enumerate(source_metadata):
+            if type(raw) is not dict or not set(raw).issubset(semantic_keys):
+                raise InitWebStagingError("init_web_source_manifest_invalid")
+            metadata = dict(raw)
+            source_id = metadata.get("source_id")
+            if mode == "imported":
+                if not isinstance(source_id, str):
+                    raise InitWebStagingError("init_web_source_manifest_invalid")
+                if metadata.get("expected_content_sha256") != by_index[index].sha256:
+                    raise InitWebStagingError("init_web_source_hash_mismatch")
+            elif source_id is not None:
+                raise InitWebStagingError("init_web_source_manifest_invalid")
+            stable = json.dumps(
+                metadata,
+                ensure_ascii=False,
+                sort_keys=True,
+                separators=(",", ":"),
+            )
+            rows.append((metadata, by_index[index], stable))
+        if mode == "imported":
+            source_ids = [str(row[0]["source_id"]) for row in rows]
+            if source_ids != sorted(set(source_ids)):
+                raise InitWebStagingError("init_web_source_manifest_invalid")
+        else:
+            keys = [(row[2], row[1].filename, row[1].sha256) for row in rows]
+            if len(keys) != len(set(keys)):
+                raise InitWebStagingError("init_web_source_manifest_invalid")
+            rows.sort(key=lambda row: (row[2], row[1].filename, row[1].sha256))
+
+        members: list[dict[str, object]] = []
+        for ordinal, (metadata, staged, _stable) in enumerate(rows, start=1):
+            filename = _safe_source_name(staged.filename)
+            input_path = f"input/sources/{ordinal:03d}-{filename}"
+            original_url = metadata.get("original_url")
+            locator = (
+                {"kind": "web", "url": original_url}
+                if isinstance(original_url, str) and original_url
+                else {"kind": "file", "path": input_path}
+            )
+            members.append(
+                {
+                    "source_id": (
+                        metadata["source_id"]
+                        if mode == "imported"
+                        else f"SRC-INIT-{ordinal:03d}"
+                    ),
+                    "input_path": input_path,
+                    "content_sha256": staged.sha256,
+                    "content_media_type": _observed_media_type(staged.filename),
+                    "origin_type": metadata.get("origin_type", "uploaded_file"),
+                    "acquisition_method": metadata.get(
+                        "acquisition_method", "manual_upload"
+                    ),
+                    "material_kind": metadata.get("material_kind", "uploaded_file"),
+                    "provider": metadata.get("provider"),
+                    "locator": locator,
+                    "title": metadata.get("title") or staged.filename,
+                    "publisher": metadata.get("publisher"),
+                    "published_at": metadata.get("published_at"),
+                    "retrieved_at": metadata.get("retrieved_at"),
+                    "source_category": metadata.get("source_category", "other"),
+                    "retrieval_source_type": metadata.get(
+                        "retrieval_source_type", "local_file"
+                    ),
+                    "underlying_evidence_type": metadata.get(
+                        "underlying_evidence_type", "unknown"
+                    ),
+                    "raw_underlying_evidence_type": metadata.get(
+                        "raw_underlying_evidence_type"
+                    ),
+                    "document_kind": metadata.get("document_kind"),
+                    "opened_at": metadata.get("opened_at"),
+                    "resolved_at": metadata.get("resolved_at"),
+                }
+            )
+        try:
+            manifest = ExecutionSourceManifest.model_validate(
+                {
+                    "schema_version": ExecutionSourceManifest.schema_id,
+                    "members": members,
+                },
+                strict=True,
+            )
+            for member, staged in zip(
+                manifest.members, (row[1] for row in rows), strict=True
+            ):
+                descriptor = self._open_verified(member.content_sha256, staged)
+                os.close(descriptor)
+            return manifest, [row[1] for row in rows]
+        except InitWebStagingError:
+            raise
+        except Exception as exc:
+            raise InitWebStagingError("init_web_source_manifest_invalid") from exc
 
     def preview_confirmed(
         self,
@@ -204,6 +457,8 @@ class InitWebStaging:
             observed = os.fstat(descriptor)
             if not stat.S_ISREG(observed.st_mode):
                 raise InitWebStagingError("init_web_source_handle_invalid")
+            if observed.st_dev != staged.device or observed.st_ino != staged.inode:
+                raise InitWebStagingError("init_web_source_handle_invalid")
             if observed.st_size > MAX_SOURCE_MEMBER_BYTES:
                 raise InitWebStagingError("init_web_source_member_too_large")
             digest = hashlib.sha256()
@@ -216,7 +471,12 @@ class InitWebStaging:
                 if size > MAX_SOURCE_MEMBER_BYTES:
                     raise InitWebStagingError("init_web_source_member_too_large")
                 digest.update(chunk)
-            if size != staged.byte_count or digest.hexdigest() != expected_sha256:
+            actual_sha256 = digest.hexdigest()
+            if (
+                size != staged.byte_count
+                or actual_sha256 != staged.sha256
+                or actual_sha256 != expected_sha256
+            ):
                 raise InitWebStagingError("init_web_source_hash_mismatch")
             os.lseek(descriptor, 0, os.SEEK_SET)
             return descriptor
@@ -228,6 +488,25 @@ class InitWebStaging:
             if descriptor >= 0:
                 os.close(descriptor)
             raise InitWebStagingError("init_web_source_handle_invalid") from exc
+
+
+def _safe_source_name(name: str) -> str:
+    cleaned = "".join(
+        character if character.isalnum() or character in {".", "_", "-"} else "-"
+        for character in Path(name).name
+    )
+    return cleaned or "source.bin"
+
+
+def _observed_media_type(name: str) -> str:
+    return {
+        ".csv": "text/csv",
+        ".html": "text/html",
+        ".json": "application/json",
+        ".md": "text/markdown",
+        ".pdf": "application/pdf",
+        ".txt": "text/plain",
+    }.get(Path(name).suffix.lower(), "application/octet-stream")
 
 
 __all__ = [
