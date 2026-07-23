@@ -4104,7 +4104,6 @@ def _verify_authorized_local_finalize_checkout(
         or len(receipt.receipt_checkout_bindings) != 1
         or receipt.receipt_checkout_bindings[0].transaction_id
         != receipt.transaction_id
-        or receipt.checkout_publication_intents
     ):
         raise CoreRunError("control_store_integrity_invalid")
     child_id = receipt.checkout_revisions[0].checkout_revision_id
@@ -4157,16 +4156,6 @@ def _verify_authorized_local_finalize_checkout(
         )
 
     if member_signatures(parent_id) != member_signatures(child_id):
-        raise CoreRunError("control_store_integrity_invalid")
-    if any(
-        item.identity.transaction_id == receipt.transaction_id
-        or item.identity.checkout_revision_id == child_id
-        for item in snapshot.checkout_publication_intents
-    ) or any(
-        item.identity.transaction_id == receipt.transaction_id
-        or item.identity.checkout_revision_id == child_id
-        for item in snapshot.checkout_publication_members
-    ):
         raise CoreRunError("control_store_integrity_invalid")
 
 
