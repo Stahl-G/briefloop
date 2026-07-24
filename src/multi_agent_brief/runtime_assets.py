@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 from importlib import resources
 import os
 from pathlib import Path
@@ -32,6 +33,17 @@ class RuntimeAssetInstallError(RuntimeError):
     """Raised when workspace runtime assets cannot be installed."""
 
 
+@dataclass(frozen=True)
+class RuntimeAssetPlan:
+    """Frozen in-memory rendered plan for one or more runtime kits."""
+
+    runtime: str
+    runtimes: tuple[str, ...]
+    workspace: Path
+    repo_workdir: Path | None
+    writes: tuple[PlannedWrite, ...]
+
+
 def install_runtime_kit(
     *,
     workspace: str | Path,
@@ -41,6 +53,26 @@ def install_runtime_kit(
     dry_run: bool = False,
 ) -> dict[str, Any]:
     """Install runtime-discoverable assets into a user workspace."""
+    plan = plan_runtime_kit(
+        workspace=workspace,
+        runtime=runtime,
+        repo_workdir=repo_workdir,
+    )
+    preflighted = preflight_runtime_kit_plans(plans=(plan,), force=force)
+    return apply_runtime_kit_plan(
+        preflighted,
+        force=force,
+        dry_run=dry_run,
+    )
+
+
+def plan_runtime_kit(
+    *,
+    workspace: str | Path,
+    runtime: str,
+    repo_workdir: str | Path | None = None,
+) -> RuntimeAssetPlan:
+    """Render one runtime selection without applying filesystem changes."""
     ws = Path(workspace).expanduser().resolve()
     if not ws.exists() or not ws.is_dir():
         raise RuntimeAssetInstallError(f"Workspace directory not found: {ws}")
@@ -72,10 +104,58 @@ def install_runtime_kit(
     if "codex" in runtimes:
         _validate_existing_codex_kit_subset(workspace=ws, writes=all_writes)
 
+    return RuntimeAssetPlan(
+        runtime=runtime,
+        runtimes=runtimes,
+        workspace=ws,
+        repo_workdir=repo,
+        writes=tuple(all_writes),
+    )
+
+
+def preflight_runtime_kit_plans(
+    *,
+    plans: tuple[RuntimeAssetPlan, ...],
+    force: bool,
+    runtime: str | None = None,
+) -> RuntimeAssetPlan:
+    """Validate a complete selected set of rendered plans without writing."""
+    if not plans:
+        raise RuntimeAssetInstallError("No runtime kit plans were selected.")
+
+    workspace = plans[0].workspace
+    if any(plan.workspace != workspace for plan in plans):
+        raise RuntimeAssetInstallError("Runtime kit plans must share one workspace.")
+
+    runtimes = tuple(runtime_name for plan in plans for runtime_name in plan.runtimes)
+    combined = RuntimeAssetPlan(
+        runtime=runtime or (plans[0].runtime if len(plans) == 1 else "all"),
+        runtimes=runtimes,
+        workspace=workspace,
+        repo_workdir=next(
+            (plan.repo_workdir for plan in plans if plan.repo_workdir is not None),
+            None,
+        ),
+        writes=tuple(
+            _deduplicate_writes([write for plan in plans for write in plan.writes])
+        ),
+    )
+    _validate_runtime_kit_plan(combined, force=force)
+    return combined
+
+
+def apply_runtime_kit_plan(
+    plan: RuntimeAssetPlan,
+    *,
+    force: bool,
+    dry_run: bool = False,
+) -> dict[str, Any]:
+    """Apply already-rendered writes, rechecking safety immediately before use."""
+
     try:
         apply_planned_writes(
-            writes=all_writes,
-            root=ws,
+            writes=list(plan.writes),
+            root=plan.workspace,
             force=force,
             dry_run=dry_run,
             generated_markers=(
@@ -87,17 +167,35 @@ def install_runtime_kit(
     except InstallWriteError as exc:
         raise RuntimeAssetInstallError(str(exc)) from exc
 
-    if "codex" in runtimes and not dry_run:
-        _verify_materialized_codex_runtime_kit(ws)
+    if "codex" in plan.runtimes and not dry_run:
+        _verify_materialized_codex_runtime_kit(plan.workspace)
 
     return {
-        "runtime": runtime,
-        "workspace": str(ws),
-        "repo_workdir": None if repo is None else str(repo),
+        "runtime": plan.runtime,
+        "workspace": str(plan.workspace),
+        "repo_workdir": (None if plan.repo_workdir is None else str(plan.repo_workdir)),
         "dry_run": dry_run,
-        "written": [str(write.destination) for write in all_writes],
-        "count": len(all_writes),
+        "written": [str(write.destination) for write in plan.writes],
+        "count": len(plan.writes),
     }
+
+
+def _validate_runtime_kit_plan(plan: RuntimeAssetPlan, *, force: bool) -> None:
+    """Run the shared writer's complete safety checks with zero writes."""
+    try:
+        apply_planned_writes(
+            writes=list(plan.writes),
+            root=plan.workspace,
+            force=force,
+            dry_run=True,
+            generated_markers=(
+                INSTALL_MARKER,
+                JSONC_INSTALL_MARKER,
+                TOML_INSTALL_MARKER,
+            ),
+        )
+    except InstallWriteError as exc:
+        raise RuntimeAssetInstallError(str(exc)) from exc
 
 
 def _validate_existing_codex_kit_subset(

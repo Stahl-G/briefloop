@@ -8,7 +8,10 @@ from pathlib import Path
 
 from multi_agent_brief.runtime_assets import (
     RuntimeAssetInstallError,
+    apply_runtime_kit_plan,
     install_runtime_kit,
+    plan_runtime_kit,
+    preflight_runtime_kit_plans,
 )
 from multi_agent_brief.runtime_host_v2.errors import RuntimeHostError
 
@@ -114,20 +117,34 @@ def handle(args: argparse.Namespace) -> int:
                     WorkspaceBootstrap,
                 )
 
-                results = [
-                    WorkspaceBootstrap(args.workspace).install_codex_kit(
-                        dry_run=dry_run
-                    ),
-                    *(
-                        install_runtime_kit(
+                bootstrap = WorkspaceBootstrap(args.workspace)
+                force = bool(getattr(args, "force", False))
+                codex_preflight = bootstrap.install_codex_kit(dry_run=True)
+                retained_plan = preflight_runtime_kit_plans(
+                    plans=tuple(
+                        plan_runtime_kit(
                             workspace=args.workspace,
                             runtime=runtime,
                             repo_workdir=getattr(args, "repo_workdir", None),
-                            force=bool(getattr(args, "force", False)),
-                            dry_run=dry_run,
                         )
                         for runtime in ("opencode", "claude")
                     ),
+                    force=force,
+                    runtime="all",
+                )
+                codex_result = (
+                    codex_preflight
+                    if dry_run
+                    else bootstrap.install_codex_kit(dry_run=False)
+                )
+                retained_result = apply_runtime_kit_plan(
+                    retained_plan,
+                    force=force,
+                    dry_run=dry_run,
+                )
+                results = [
+                    codex_result,
+                    retained_result,
                 ]
                 written = list(
                     dict.fromkeys(path for item in results for path in item["written"])

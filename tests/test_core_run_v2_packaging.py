@@ -37,6 +37,92 @@ def test_wheel_e2e_command_uses_a_script_file_on_windows() -> None:
     assert "-c" not in command
 
 
+def test_non_editable_wheel_runtime_install_all_uses_explicit_source_repo(
+    tmp_path: Path,
+) -> None:
+    build_root = tmp_path / "build-root"
+    build_root.mkdir()
+    shutil.copy2(ROOT / "pyproject.toml", build_root / "pyproject.toml")
+    shutil.copy2(ROOT / "README.md", build_root / "README.md")
+    shutil.copytree(ROOT / "src", build_root / "src")
+    wheel_dir = tmp_path / "wheel"
+    wheel_dir.mkdir()
+    build = subprocess.run(
+        [
+            sys.executable,
+            "-m",
+            "pip",
+            "wheel",
+            ".",
+            "--no-deps",
+            "--no-build-isolation",
+            "--wheel-dir",
+            str(wheel_dir),
+        ],
+        cwd=build_root,
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    assert build.returncode == 0, build.stdout + build.stderr
+    wheel_path = next(wheel_dir.glob("briefloop-*.whl"))
+    installed = tmp_path / "installed"
+    installed.mkdir()
+    with zipfile.ZipFile(wheel_path) as archive:
+        archive.extractall(installed)
+
+    script = textwrap.dedent(
+        """
+        from contextlib import redirect_stdout
+        import io
+        from pathlib import Path
+        import sys
+
+        import multi_agent_brief
+        from multi_agent_brief.cli.init_wizard import create_demo_workspace
+        from multi_agent_brief.cli.main import main
+
+        workspace = Path(sys.argv[1])
+        installed = Path(sys.argv[2]).resolve()
+        source_repo = Path(sys.argv[3]).resolve()
+        assert Path(multi_agent_brief.__file__).resolve().is_relative_to(installed)
+        create_demo_workspace(workspace)
+        stream = io.StringIO()
+        with redirect_stdout(stream):
+            result = main([
+                "runtime", "install", "--workspace", str(workspace),
+                "--runtime", "all", "--repo-workdir", str(source_repo),
+            ])
+        assert result == 0, stream.getvalue()
+        assert (workspace / ".codex/config.toml").is_file()
+        assert (workspace / ".opencode").is_dir()
+        assert (workspace / ".claude").is_dir()
+        assert (workspace / "AGENTS.md").is_file()
+        assert (workspace / "CLAUDE.md").is_file()
+        assert "Installed workspace runtime kit for all" in stream.getvalue()
+        """
+    )
+    script_path = tmp_path / "wheel_runtime_all.py"
+    script_path.write_bytes(script.encode("utf-8"))
+    env = dict(os.environ)
+    env["PYTHONPATH"] = str(installed)
+    run = subprocess.run(
+        [
+            sys.executable,
+            str(script_path),
+            str(tmp_path / "wheel-runtime-all-workspace"),
+            str(installed),
+            str(ROOT),
+        ],
+        cwd=tmp_path,
+        env=env,
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    assert run.returncode == 0, run.stdout + run.stderr
+
+
 def test_non_editable_wheel_runs_complete_dormant_core_spine(
     tmp_path: Path,
 ) -> None:
