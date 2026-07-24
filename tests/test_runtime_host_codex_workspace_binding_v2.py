@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from datetime import date
 import json
+import os
 from pathlib import Path
 
 import pytest
@@ -396,6 +397,70 @@ def test_runtime_install_all_store_bound_ancestry_failure_preserves_codex(
     assert not (workspace / "AGENTS.md").exists()
     assert not (workspace / "CLAUDE.md").exists()
     assert not (workspace / ".opencode").exists()
+
+
+@pytest.mark.parametrize("force", (False, True), ids=("without_force", "force"))
+@pytest.mark.parametrize("dry_run", (False, True), ids=("install", "dry_run"))
+def test_runtime_install_all_store_bound_hardlink_alias_preserves_codex(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+    force: bool,
+    dry_run: bool,
+) -> None:
+    workspace = _workspace(tmp_path)
+    _initialize(workspace, capsys)
+    protected_paths = tuple(workspace / ".codex" / relative for relative in ASSET_PATHS)
+    protected = workspace / ".codex" / "skills" / "briefloop" / "SKILL.md"
+    retained = (
+        workspace / ".opencode" / "skills" / "multi-agent-brief-workflow" / "SKILL.md"
+    )
+    retained.parent.mkdir(parents=True)
+    os.link(protected, retained)
+    before_files = _file_evidence(protected_paths)
+    before_identity = (
+        protected.stat().st_dev,
+        protected.stat().st_ino,
+        protected.stat().st_mtime_ns,
+        protected.stat().st_nlink,
+    )
+    with SQLiteControlStore.open(workspace / "briefloop.db") as store:
+        revision_before = store.current_revision
+
+    args = [
+        "runtime",
+        "install",
+        "--workspace",
+        str(workspace),
+        "--runtime",
+        "all",
+        "--repo-workdir",
+        str(ROOT),
+    ]
+    if force:
+        args.append("--force")
+    if dry_run:
+        args.append("--dry-run")
+
+    assert main(args) == 1
+    output = capsys.readouterr().out
+    assert "Conflicting protected Codex and writable runtime destinations" in output
+    assert "Installed workspace runtime kit for all" not in output
+    assert "Planned workspace runtime kit for all" not in output
+    assert _file_evidence(protected_paths) == before_files
+    assert (
+        protected.stat().st_dev,
+        protected.stat().st_ino,
+        protected.stat().st_mtime_ns,
+        protected.stat().st_nlink,
+    ) == before_identity
+    assert retained.samefile(protected)
+    _assert_revision(workspace, revision_before)
+    assert not (workspace / "AGENTS.md").exists()
+    assert not (workspace / "CLAUDE.md").exists()
+    assert not (workspace / "opencode.jsonc").exists()
+    assert not (workspace / ".opencode" / "agents").exists()
+    assert not (workspace / ".opencode" / "commands").exists()
+    assert not (workspace / ".claude").exists()
 
 
 @pytest.mark.parametrize("relative", ASSET_PATHS, ids=lambda path: path.as_posix())

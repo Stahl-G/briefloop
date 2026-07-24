@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 from pathlib import Path
 
 import multi_agent_brief.runtime_assets as runtime_assets
@@ -444,6 +445,144 @@ def test_runtime_install_all_rejects_unsafe_destination_topology_before_any_writ
         ) == "user-owned file\n"
     else:
         assert (workspace / "CLAUDE.md").is_dir()
+
+
+@pytest.mark.parametrize("force", (False, True), ids=("without_force", "force"))
+@pytest.mark.parametrize("dry_run", (False, True), ids=("install", "dry_run"))
+def test_runtime_install_all_retains_hardlink_alias_rejection_before_any_write(
+    tmp_path: Path,
+    capsys,
+    force: bool,
+    dry_run: bool,
+) -> None:
+    workspace = _workspace(tmp_path)
+    agents = workspace / "AGENTS.md"
+    claude = workspace / "CLAUDE.md"
+    agents.write_text("User-owned shared instructions.\n", encoding="utf-8")
+    os.link(agents, claude)
+    before = (agents.read_bytes(), agents.stat().st_mtime_ns, agents.stat().st_nlink)
+
+    args = [
+        "runtime",
+        "install",
+        "--workspace",
+        str(workspace),
+        "--runtime",
+        "all",
+        "--repo-workdir",
+        str(ROOT),
+    ]
+    if force:
+        args.append("--force")
+    if dry_run:
+        args.append("--dry-run")
+
+    assert main(args) == 1
+    output = capsys.readouterr().out
+    assert "Conflicting aliased runtime install destinations" in output
+    assert "Planned workspace runtime kit for all" not in output
+    assert agents.samefile(claude)
+    assert (
+        agents.read_bytes(),
+        agents.stat().st_mtime_ns,
+        agents.stat().st_nlink,
+    ) == before
+    assert not (workspace / ".codex").exists()
+    assert not (workspace / "opencode.jsonc").exists()
+    assert not (workspace / ".opencode").exists()
+    assert not (workspace / ".claude").exists()
+
+
+@pytest.mark.parametrize("dry_run", (False, True), ids=("install", "dry_run"))
+def test_runtime_install_all_allows_distinct_equal_bytes_with_force(
+    tmp_path: Path,
+    capsys,
+    dry_run: bool,
+) -> None:
+    workspace = _workspace(tmp_path)
+    agents = workspace / "AGENTS.md"
+    claude = workspace / "CLAUDE.md"
+    shared = "User-owned equal instructions.\n"
+    agents.write_text(shared, encoding="utf-8")
+    claude.write_text(shared, encoding="utf-8")
+    assert not agents.samefile(claude)
+
+    args = [
+        "runtime",
+        "install",
+        "--workspace",
+        str(workspace),
+        "--runtime",
+        "all",
+        "--repo-workdir",
+        str(ROOT),
+        "--force",
+    ]
+    if dry_run:
+        args.append("--dry-run")
+
+    assert main(args) == 0
+    output = capsys.readouterr().out
+    assert "Conflicting aliased runtime install destinations" not in output
+    assert (
+        "Planned workspace runtime kit for all"
+        if dry_run
+        else "Installed workspace runtime kit for all"
+    ) in output
+    assert not agents.samefile(claude)
+
+
+@pytest.mark.parametrize("dry_run", (False, True), ids=("install", "dry_run"))
+def test_runtime_install_all_rejects_fresh_partial_codex_hardlink_alias_before_any_write(
+    tmp_path: Path,
+    capsys,
+    dry_run: bool,
+) -> None:
+    workspace = _workspace(tmp_path)
+    runtime_assets.install_runtime_kit(workspace=workspace, runtime="codex")
+    protected = workspace / ".codex" / "skills" / "briefloop" / "SKILL.md"
+    missing = workspace / ".codex" / "agents" / "briefloop-scout.toml"
+    missing.unlink()
+    retained = workspace / ".opencode" / "skills" / SKILL_NAME / "SKILL.md"
+    retained.parent.mkdir(parents=True)
+    os.link(protected, retained)
+    existing_codex_paths = tuple(
+        path for path in (workspace / ".codex").rglob("*") if path.is_file()
+    )
+    before_files = {
+        path: (path.read_bytes(), path.stat().st_mtime_ns, path.stat().st_nlink)
+        for path in existing_codex_paths
+    }
+
+    args = [
+        "runtime",
+        "install",
+        "--workspace",
+        str(workspace),
+        "--runtime",
+        "all",
+        "--repo-workdir",
+        str(ROOT),
+    ]
+    if dry_run:
+        args.append("--dry-run")
+
+    assert main(args) == 1
+    output = capsys.readouterr().out
+    assert "Conflicting protected Codex and writable runtime destinations" in output
+    assert "Planned workspace runtime kit for all" not in output
+    assert not missing.exists()
+    assert retained.samefile(protected)
+    assert {
+        path: (path.read_bytes(), path.stat().st_mtime_ns, path.stat().st_nlink)
+        for path in existing_codex_paths
+    } == before_files
+    assert not (workspace / "AGENTS.md").exists()
+    assert not (workspace / "CLAUDE.md").exists()
+    assert not (workspace / "opencode.jsonc").exists()
+    assert not (workspace / ".opencode" / "agents").exists()
+    assert not (workspace / ".opencode" / "commands").exists()
+    assert not (workspace / ".claude").exists()
 
 
 def test_runtime_install_all_rejects_missing_retained_source_before_any_write(

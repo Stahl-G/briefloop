@@ -11,6 +11,7 @@ from multi_agent_brief.runtime_assets import (
     apply_runtime_kit_plan,
     install_runtime_kit,
     plan_runtime_kit,
+    plan_protected_codex_observations,
     preflight_runtime_kit_plans,
 )
 from multi_agent_brief.runtime_host_v2.errors import RuntimeHostError
@@ -120,6 +121,9 @@ def handle(args: argparse.Namespace) -> int:
                 bootstrap = WorkspaceBootstrap(args.workspace)
                 force = bool(getattr(args, "force", False))
                 codex_preflight = bootstrap.install_codex_kit(dry_run=True)
+                protected_observations = plan_protected_codex_observations(
+                    workspace=args.workspace
+                )
                 retained_plan = preflight_runtime_kit_plans(
                     plans=tuple(
                         plan_runtime_kit(
@@ -131,6 +135,7 @@ def handle(args: argparse.Namespace) -> int:
                     ),
                     force=force,
                     runtime="all",
+                    protected_observations=protected_observations,
                 )
                 codex_result = (
                     codex_preflight

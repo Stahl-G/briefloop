@@ -34,6 +34,13 @@ class RuntimeAssetInstallError(RuntimeError):
 
 
 @dataclass(frozen=True)
+class ProtectedRuntimeAssetObservation:
+    """A verified runtime destination that participates only in safety checks."""
+
+    destination: Path
+
+
+@dataclass(frozen=True)
 class RuntimeAssetPlan:
     """Frozen in-memory rendered plan for one or more runtime kits."""
 
@@ -42,6 +49,7 @@ class RuntimeAssetPlan:
     workspace: Path
     repo_workdir: Path | None
     writes: tuple[PlannedWrite, ...]
+    protected_observations: tuple[ProtectedRuntimeAssetObservation, ...] = ()
 
 
 def install_runtime_kit(
@@ -118,6 +126,7 @@ def preflight_runtime_kit_plans(
     plans: tuple[RuntimeAssetPlan, ...],
     force: bool,
     runtime: str | None = None,
+    protected_observations: tuple[ProtectedRuntimeAssetObservation, ...] = (),
 ) -> RuntimeAssetPlan:
     """Validate a complete selected set of rendered plans without writing."""
     if not plans:
@@ -138,6 +147,16 @@ def preflight_runtime_kit_plans(
         ),
         writes=tuple(
             _deduplicate_writes([write for plan in plans for write in plan.writes])
+        ),
+        protected_observations=tuple(
+            _deduplicate_protected_observations(
+                [
+                    observation
+                    for plan in plans
+                    for observation in plan.protected_observations
+                ]
+                + list(protected_observations)
+            )
         ),
     )
     _validate_runtime_kit_plan(combined, force=force)
@@ -203,15 +222,50 @@ def _validate_runtime_kit_plan(plan: RuntimeAssetPlan, *, force: bool) -> None:
 def _validate_runtime_kit_destination_topology(plan: RuntimeAssetPlan) -> None:
     """Reject unmaterializable destination ancestry before any selected write."""
 
-    destinations = [write.destination for write in plan.writes]
-    _validate_planned_destination_graph(destinations)
-    existing_leaves: dict[tuple[int, int], Path] = {}
-    for destination in destinations:
-        _validate_destination_ancestry(
+    writable_destinations = [write.destination for write in plan.writes]
+    protected_destinations = [
+        observation.destination for observation in plan.protected_observations
+    ]
+    protected_set = set(protected_destinations)
+    for destination in writable_destinations:
+        if destination in protected_set:
+            raise RuntimeAssetInstallError(
+                "Conflicting protected Codex and writable runtime destinations: "
+                f"{destination}"
+            )
+
+    _validate_planned_destination_graph(
+        [*protected_destinations, *writable_destinations]
+    )
+    protected_leaves: dict[tuple[int, int], Path] = {}
+    for destination in protected_destinations:
+        identity = _validate_destination_ancestry(
             workspace=plan.workspace,
             destination=destination,
-            existing_leaves=existing_leaves,
         )
+        if identity is not None:
+            protected_leaves.setdefault(identity, destination)
+
+    writable_leaves: dict[tuple[int, int], Path] = {}
+    for destination in writable_destinations:
+        identity = _validate_destination_ancestry(
+            workspace=plan.workspace,
+            destination=destination,
+        )
+        if identity is None:
+            continue
+        protected = protected_leaves.get(identity)
+        if protected is not None:
+            raise RuntimeAssetInstallError(
+                "Conflicting protected Codex and writable runtime destinations: "
+                f"{protected} and {destination}"
+            )
+        existing = writable_leaves.setdefault(identity, destination)
+        if existing != destination:
+            raise RuntimeAssetInstallError(
+                "Conflicting aliased runtime install destinations: "
+                f"{existing} and {destination}"
+            )
 
 
 def _validate_planned_destination_graph(destinations: list[Path]) -> None:
@@ -243,15 +297,14 @@ def _validate_destination_ancestry(
     *,
     workspace: Path,
     destination: Path,
-    existing_leaves: dict[tuple[int, int], Path],
-) -> None:
+) -> tuple[int, int] | None:
     """Classify every existing parent and leaf without following symlinks."""
 
     try:
         relative = destination.relative_to(workspace)
     except ValueError:
         # The shared writer owns the existing resolved-containment error.
-        return
+        return None
 
     ancestor = workspace
     for component in relative.parts[:-1]:
@@ -270,7 +323,7 @@ def _validate_destination_ancestry(
 
     leaf_metadata = _runtime_asset_lstat(destination)
     if leaf_metadata is None:
-        return
+        return None
     if stat.S_ISLNK(leaf_metadata.st_mode):
         raise RuntimeAssetInstallError(
             f"Refusing to use symlinked runtime install destination: {destination}"
@@ -284,13 +337,7 @@ def _validate_destination_ancestry(
             f"Refusing to overwrite non-regular runtime install destination: {destination}"
         )
 
-    leaf_identity = (leaf_metadata.st_dev, leaf_metadata.st_ino)
-    existing = existing_leaves.setdefault(leaf_identity, destination)
-    if existing != destination:
-        raise RuntimeAssetInstallError(
-            "Conflicting aliased runtime install destinations: "
-            f"{existing} and {destination}"
-        )
+    return (leaf_metadata.st_dev, leaf_metadata.st_ino)
 
 
 def _runtime_asset_lstat(path: Path) -> os.stat_result | None:
@@ -417,6 +464,19 @@ def _deduplicate_writes(writes: list[PlannedWrite]) -> list[PlannedWrite]:
     return unique
 
 
+def _deduplicate_protected_observations(
+    observations: list[ProtectedRuntimeAssetObservation],
+) -> list[ProtectedRuntimeAssetObservation]:
+    unique: list[ProtectedRuntimeAssetObservation] = []
+    seen: set[Path] = set()
+    for observation in observations:
+        if observation.destination in seen:
+            continue
+        seen.add(observation.destination)
+        unique.append(observation)
+    return unique
+
+
 def _resolve_source_repo(*, repo_workdir: str | Path | None, workspace: Path) -> Path:
     try:
         repo = resolve_repo_workdir(repo_workdir, workspace=workspace)
@@ -508,6 +568,19 @@ def _codex_writes(*, workspace: Path) -> list[PlannedWrite]:
             for role_id in role_ids
         ),
     ]
+
+
+def plan_protected_codex_observations(
+    *,
+    workspace: str | Path,
+) -> tuple[ProtectedRuntimeAssetObservation, ...]:
+    """Project the packaged Codex kit into read-only topology observations."""
+
+    resolved_workspace = Path(workspace).expanduser().resolve()
+    return tuple(
+        ProtectedRuntimeAssetObservation(destination=write.destination)
+        for write in _codex_writes(workspace=resolved_workspace)
+    )
 
 
 def _runtime_writes(
