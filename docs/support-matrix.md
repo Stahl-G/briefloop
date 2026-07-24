@@ -49,7 +49,9 @@ validation unless that is stated separately.
 | Semantic Assessment Report (`semantic_assessment_report.json` schema and reference validation) | Experimental; schema/contract only. The proposal projection, status visibility, and human adjudication records were deleted with the legacy stack in LD2-3. The Quality Panel `semantic_support` section reports a constant `not_available` until a Store-native producer lands — on SQLite workspaces it already did, since the Store projection never carried this key |
 | v0.11 product-facing workspace entries (`briefloop new industry-weekly`, `briefloop new management-monthly`, `briefloop new document-review`) mapped to canonical ReportPacks (`market_weekly`, `management_monthly`, `evidence_extract`) with local-first skeletons and control-spine defaults | Supported |
 | ReportSpec / ReportPack baseline contracts for the v0.11 product baseline (`report_spec.yaml`, packaged `market_weekly`, `management_monthly`, and `evidence_extract`, `packs list/show`, and `validate-report-spec`) | Supported |
-| Wider Product OS extensions: ReportTemplate / PolicyProfile registry, Citation Profile Split metadata, Reader Template Conformance warning projection, template renderer MVP, `solar-periodic` / `solar_industry_periodic`, SourceHub Lite setup, internal release-mode approval records, Quality Panel / Quality Summary / static HTML projection, Trajectory Regulation read-only projection, Materiality Selection diagnostic projection, `extract` source/scope registration, and `packs bundle` delivery/audit manifest projection | Experimental |
+| Wider Product OS extensions: ReportTemplate / PolicyProfile registry, Citation Profile Split metadata, Reader Template Conformance warning projection, template renderer MVP, `solar-periodic` / `solar_industry_periodic`, SourceHub Lite setup, internal release-mode approval records, Quality Panel / Quality Summary / static HTML projection, Trajectory Regulation read-only projection, Materiality Selection diagnostic projection, and `extract` source/scope registration | Experimental |
+| Public `briefloop packs bundle` command | Unsupported/retired on SQLite workspaces; the authority guard returns `runtime_command_unsupported` before bundle, file, or Store effects |
+| Internal deterministic ReportBundle seam | Experimental/internal and independently safe-read/publication capability-gated; not a CLI, Gate, approval, package-ready, delivery, or publication authority |
 | Provenance projection control file (`provenance_graph.json`) | Supported |
 | Finalize delivery bundle (`output/delivery/brief.md` + configured DOCX) | Supported |
 | Source appendix audit/control copy (`source_appendix.md`) | Supported |
@@ -84,7 +86,7 @@ validation unless that is stated separately.
 | `briefloop experiments laj study-preflight/budgeted-shadow-run/study-compare` | Experimental; strict target eligibility, complete-trial call/token budget, and offline exact dimension/span-overlap comparison only; advisory with zero runtime authority; utility and efficacy NOT MEASURED |
 | `briefloop init --from-onboarding` | Supported |
 | `briefloop init --web [--port <n>]` | Experimental; one-shot loopback wizard that creates the workspace through the same ControlStore bootstrap path and returns the real TransactionReceipt |
-| `briefloop quality html --workspace <path> [--open] [--laj-view <laj.json>]` | Experimental; read-only self-contained three-page HTML export (quality / LAJ advisory / improvement); no write affordance; LAJ utility NOT MEASURED |
+| `briefloop quality html --workspace <path> [--open] [--laj-view <laj.json>]` | Experimental; local static read-only four-tab surface: verified Store-bound `finalized_local` Brief, deterministic Quality, optional advisory LAJ (NOT MEASURED), and unavailable Improvement; no write, approval, package, delivery, publication, persistent-server, automatic-evaluation, or learning affordance |
 | `briefloop onboard` | Supported |
 | `briefloop doctor` | Supported |
 | `briefloop extract --workspace <path> --scope <text> --source <file>` | Unsupported on SQLite; retired public CLI |
@@ -198,9 +200,9 @@ read-only status and generated handoff artifacts, report read-only
 section-conformance diagnostics for existing audited/final reader Markdown in
 status and generated handoff artifacts, project read-only render-plan
 diagnostics that name the future render source artifact, section heading
-mapping, unresolved sections, and planned delivery targets, apply the resolved
-ReportTemplate section order during finalize for already-present reader
-Markdown sections, or write a bundle manifest with `packs bundle`.
+mapping, unresolved sections, and planned delivery targets, or apply the
+resolved ReportTemplate section order during finalize for already-present
+reader Markdown sections.
 For `evidence_extract` workspaces, `extract` can copy explicit local source
 files into `input/sources/evidence_extract/`, write `extraction_scope.yaml`,
 update `sources.yaml` manual source entries, write

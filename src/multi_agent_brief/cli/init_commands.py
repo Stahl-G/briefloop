@@ -419,13 +419,21 @@ def _init_workspace(args: argparse.Namespace) -> int:
     )
     from multi_agent_brief.onboarding.io import load_onboarding_result
     from multi_agent_brief.onboarding.mapper import map_onboarding_to_profile
+    from multi_agent_brief.product.workspace_hygiene import (
+        NestedWorkspaceTargetError,
+        canonical_workspace_target,
+    )
 
     if getattr(args, "web", False):
         return _init_web_wizard(args)
 
     # Priority: explicit CLI target > onboarding.target > default "brief-workspace"
     if args.demo:
-        target = Path(args.target)
+        try:
+            target = canonical_workspace_target(Path(args.target))
+        except NestedWorkspaceTargetError as exc:
+            print(f"[error] {exc.code}")
+            return 1
         if error_code := _existing_store_init_error(target):
             print(f"[error] {error_code}")
             return 1
@@ -544,10 +552,20 @@ def _init_workspace(args: argparse.Namespace) -> int:
         _print_profile_option_errors(option_errors)
         return 1
 
+    try:
+        target = canonical_workspace_target(target)
+    except NestedWorkspaceTargetError as exc:
+        print(f"[error] {exc.code}")
+        return 1
     if error_code := _existing_store_init_error(target):
         print(f"[error] {error_code}")
         return 1
-    create_workspace(target, profile, force=args.force)
+
+    try:
+        create_workspace(target, profile, force=args.force)
+    except NestedWorkspaceTargetError as exc:
+        print(f"[error] {exc.code}")
+        return 1
     from multi_agent_brief.runtime_host_v2.initialization import (
         RuntimeHostError,
         WorkspaceBootstrap,

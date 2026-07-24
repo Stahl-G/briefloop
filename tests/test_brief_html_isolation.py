@@ -56,6 +56,9 @@ ALLOWED_IMPORTS = {
         "multi_agent_brief.runtime_host_v2.initialization",
         "multi_agent_brief.workspace.init_profile",
         "multi_agent_brief.product.init_web.staging",
+        # M5 routes nested-target checks through the sole shared hygiene
+        # classifier; init-web still reaches authority only through bootstrap.
+        "multi_agent_brief.product.workspace_hygiene",
     },
     "init_web/staging.py": {
         "multi_agent_brief.contracts.v2",

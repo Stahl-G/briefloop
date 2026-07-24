@@ -112,7 +112,7 @@ class RetainedParent:
             (info.st_dev, info.st_ino),
         )
 
-    def create_and_flush(self, leaf: str, content: bytes) -> None:
+    def create_and_flush(self, leaf: str, content: bytes) -> tuple[int, int]:
         _validate_leaf(leaf)
         flags = (
             os.O_WRONLY
@@ -124,6 +124,9 @@ class RetainedParent:
         try:
             fd = os.open(leaf, flags, 0o600, dir_fd=self.fd)
             try:
+                created = os.fstat(fd)
+                if not stat.S_ISREG(created.st_mode) or created.st_nlink != 1:
+                    raise OSError(errno.EIO, "created probe leaf is not regular")
                 view = memoryview(content)
                 while view:
                     written = os.write(fd, view)
@@ -131,6 +134,13 @@ class RetainedParent:
                         raise OSError(errno.EIO, "short write")
                     view = view[written:]
                 self._flush_file(fd)
+                current = os.fstat(fd)
+                if (current.st_dev, current.st_ino) != (
+                    created.st_dev,
+                    created.st_ino,
+                ):
+                    raise OSError(errno.EIO, "created probe leaf identity changed")
+                identity = (created.st_dev, created.st_ino)
             finally:
                 os.close(fd)
         except FileExistsError:
@@ -139,6 +149,36 @@ class RetainedParent:
             raise
         except OSError as exc:
             raise CoreRunError("checkout_publication_io_error") from exc
+        return identity
+
+    def open_verified_child_directory(
+        self,
+        leaf: str,
+        expected_identity: tuple[int, int],
+    ) -> "RetainedParent":
+        """Open one child relative to this retained parent before any mutation."""
+
+        _validate_leaf(leaf)
+        flags = (
+            os.O_RDONLY
+            | getattr(os, "O_DIRECTORY", 0)
+            | getattr(os, "O_NOFOLLOW", 0)
+            | getattr(os, "O_CLOEXEC", 0)
+        )
+        try:
+            fd = os.open(leaf, flags, dir_fd=self.fd)
+            opened = os.fstat(fd)
+            if (
+                not stat.S_ISDIR(opened.st_mode)
+                or (opened.st_dev, opened.st_ino) != expected_identity
+            ):
+                os.close(fd)
+                raise CoreRunError("checkout_publication_probe_cleanup_failed")
+        except CoreRunError:
+            raise
+        except OSError as exc:
+            raise CoreRunError("checkout_publication_probe_cleanup_failed") from exc
+        return RetainedParent(self.path / leaf, fd, self.profile)
 
     def no_clobber_rename(self, old_leaf: str, new_leaf: str) -> None:
         _validate_leaf(old_leaf)
@@ -341,38 +381,127 @@ def open_retained_parent(parent: Path, profile: CapabilityProfile | None = None)
 
 
 def probe_publication_capability(parent: Path) -> CapabilityProfile:
-    """Prove the exact live v1 primitives; residue is deliberately retained."""
+    """Prove live primitives and remove only the exact probe inode tree."""
 
     profile = capability_profile(parent)
     name = f".briefloop-pub-probe-{secrets.token_hex(16)}"
     with open_retained_parent(parent, profile) as outer:
+        directory_created = False
+        directory_identity: tuple[int, int] | None = None
+        probe: RetainedParent | None = None
+        owned_leaves: dict[str, tuple[int, int]] = {}
+        failure: BaseException | None = None
         try:
             os.mkdir(name, 0o700, dir_fd=outer.fd)
+            directory_created = True
+            directory_info = os.stat(name, dir_fd=outer.fd, follow_symlinks=False)
+            if not stat.S_ISDIR(directory_info.st_mode):
+                raise CoreRunError("checkout_publication_unsupported")
+            directory_identity = (directory_info.st_dev, directory_info.st_ino)
             outer.sync_parent()
-            probe_path = outer.path / name
-            with open_retained_parent(probe_path, profile) as probe:
-                data = b"briefloop-publication-probe-v1\n"
-                digest = hashlib.sha256(data).hexdigest()
-                probe.create_and_flush("source", data)
-                probe.create_and_flush("occupied", b"occupied\n")
-                try:
-                    probe.no_clobber_rename("source", "occupied")
-                except CoreRunError as exc:
-                    if exc.code != "checkout_projection_conflict":
-                        raise
-                else:
-                    raise CoreRunError("checkout_publication_unsupported")
-                if probe.observe("occupied").sha256 != hashlib.sha256(b"occupied\n").hexdigest():
-                    raise CoreRunError("checkout_publication_unsupported")
-                probe.no_clobber_rename("source", "canonical")
-                probe.sync_parent()
-                probe.attest_canonical_blob("canonical", digest, len(data))
-                probe.sync_parent()
-        except CoreRunError:
-            raise
-        except OSError as exc:
-            raise CoreRunError("checkout_publication_unsupported") from exc
+            probe = outer.open_verified_child_directory(name, directory_identity)
+            data = b"briefloop-publication-probe-v1\n"
+            digest = hashlib.sha256(data).hexdigest()
+            owned_leaves["source"] = probe.create_and_flush("source", data)
+            source = probe.observe("source")
+            if source.identity != owned_leaves["source"]:
+                raise CoreRunError("checkout_publication_probe_cleanup_failed")
+            owned_leaves["occupied"] = probe.create_and_flush(
+                "occupied", b"occupied\n"
+            )
+            occupied = probe.observe("occupied")
+            if occupied.identity is None:
+                raise CoreRunError("checkout_publication_unsupported")
+            if occupied.identity != owned_leaves["occupied"]:
+                raise CoreRunError("checkout_publication_unsupported")
+            try:
+                probe.no_clobber_rename("source", "occupied")
+            except CoreRunError as exc:
+                if exc.code != "checkout_projection_conflict":
+                    raise
+            else:
+                raise CoreRunError("checkout_publication_unsupported")
+            if probe.observe("occupied").sha256 != hashlib.sha256(
+                b"occupied\n"
+            ).hexdigest():
+                raise CoreRunError("checkout_publication_unsupported")
+            probe.no_clobber_rename("source", "canonical")
+            owned_leaves["canonical"] = owned_leaves.pop("source")
+            probe.sync_parent()
+            probe.attest_canonical_blob("canonical", digest, len(data))
+            probe.sync_parent()
+        except CoreRunError as exc:
+            failure = exc
+        except OSError:
+            failure = CoreRunError("checkout_publication_unsupported")
+        finally:
+            try:
+                _cleanup_owned_probe(
+                    outer=outer,
+                    probe=probe,
+                    name=name,
+                    directory_created=directory_created,
+                    directory_identity=directory_identity,
+                    owned_leaves=owned_leaves,
+                )
+            except (CoreRunError, OSError) as exc:
+                if probe is not None:
+                    probe.close()
+                raise CoreRunError(
+                    "checkout_publication_probe_cleanup_failed"
+                ) from exc
+            if probe is not None:
+                probe.close()
+        if failure is not None:
+            raise failure
     return profile
+
+
+def _cleanup_owned_probe(
+    *,
+    outer: RetainedParent,
+    probe: RetainedParent | None,
+    name: str,
+    directory_created: bool,
+    directory_identity: tuple[int, int] | None,
+    owned_leaves: dict[str, tuple[int, int]],
+) -> None:
+    """Remove only names whose live inode is the one created by this probe."""
+
+    if not directory_created:
+        return
+    if directory_identity is None:
+        raise CoreRunError("checkout_publication_probe_cleanup_failed")
+    named = os.stat(name, dir_fd=outer.fd, follow_symlinks=False)
+    if (
+        not stat.S_ISDIR(named.st_mode)
+        or (named.st_dev, named.st_ino) != directory_identity
+    ):
+        raise CoreRunError("checkout_publication_probe_cleanup_failed")
+    if probe is None:
+        os.rmdir(name, dir_fd=outer.fd)
+        outer.sync_parent()
+        return
+    opened = os.fstat(probe.fd)
+    if (opened.st_dev, opened.st_ino) != directory_identity:
+        raise CoreRunError("checkout_publication_probe_cleanup_failed")
+    for leaf, identity in sorted(owned_leaves.items()):
+        try:
+            info = os.stat(leaf, dir_fd=probe.fd, follow_symlinks=False)
+        except FileNotFoundError:
+            continue
+        if (
+            not stat.S_ISREG(info.st_mode)
+            or (info.st_dev, info.st_ino) != identity
+        ):
+            raise CoreRunError("checkout_publication_probe_cleanup_failed")
+        os.unlink(leaf, dir_fd=probe.fd)
+    probe.sync_parent()
+    current = os.stat(name, dir_fd=outer.fd, follow_symlinks=False)
+    if (current.st_dev, current.st_ino) != directory_identity:
+        raise CoreRunError("checkout_publication_probe_cleanup_failed")
+    os.rmdir(name, dir_fd=outer.fd)
+    outer.sync_parent()
 
 
 __all__ = [

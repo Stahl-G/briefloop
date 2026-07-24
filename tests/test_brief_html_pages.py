@@ -3,6 +3,9 @@
 from __future__ import annotations
 
 from pathlib import Path
+import hashlib
+
+import pytest
 
 from multi_agent_brief.semantic_evaluator.serialization import canonical_sha256
 from multi_agent_brief.product.brief_html import build_brief_pages_data
@@ -13,13 +16,15 @@ from multi_agent_brief.product.brief_html.builder import (
     LAJ_EXPERIMENTAL_BANNER,
 )
 from multi_agent_brief.runtime_host_v2.projections import (
+    build_local_run_presentation,
     build_store_quality_projection,
 )
+from multi_agent_brief.runtime_host_v2.contracts import LocalReaderBrief
 from multi_agent_brief.semantic_evaluator.reader import (
     LAJ_READER_BOUNDARY,
     LAJ_READER_SCHEMA_ID,
 )
-from tests.helpers import initialize_workspace, sha256_file
+from tests.helpers import initialize_workspace
 
 
 def _finding(report_sha256: str) -> dict[str, object]:
@@ -101,6 +106,32 @@ def _write_laj_view(workspace: Path, report_sha256: str) -> Path:
     return target
 
 
+def _bind_final_reader(monkeypatch, workspace: Path, markdown: bytes) -> None:
+    local = build_local_run_presentation(workspace)
+    reader = LocalReaderBrief.model_validate(
+        {
+            "state": "available",
+            "artifact_id": "reader_brief",
+            "revision": 1,
+            "sha256": hashlib.sha256(markdown).hexdigest(),
+            "markdown_utf8": markdown,
+        },
+        strict=True,
+    )
+    local = local.model_copy(
+        update={
+            "view_state": "finalized",
+            "terminal_state": "finalized_local",
+            "reason_code": "local_finalization_complete",
+            "reader_brief": reader,
+        }
+    )
+    monkeypatch.setattr(
+        "multi_agent_brief.product.brief_html.builder.build_local_run_presentation",
+        lambda _workspace: local,
+    )
+
+
 def test_quality_page_matches_store_projection_verbatim(tmp_path: Path) -> None:
     workspace = initialize_workspace(tmp_path / "ws")
     data = build_brief_pages_data(workspace)
@@ -109,7 +140,7 @@ def test_quality_page_matches_store_projection_verbatim(tmp_path: Path) -> None:
     assert data["workspace"]["authority"] == "sqlite_control_store"
     quality = data["quality"]
     assert quality["status"] == "unavailable"
-    assert quality["reason_code"] == "package_not_ready"
+    assert quality["reason_code"] == "final_reader_not_available"
     assert quality["projection"] == build_store_quality_projection(workspace)
 
     groups = quality["groups"]
@@ -124,18 +155,15 @@ def test_quality_page_matches_store_projection_verbatim(tmp_path: Path) -> None:
     control = {row["label"]: row["value"] for row in groups["control"]}
     assert control["run_id"] == data["workspace"]["run_id"]
     assert control["store_revision"] == data["workspace"]["store_revision"]
-    assert isinstance(control["contract_fingerprint"], str)
+    assert control["view_state"] == "setup"
     assert len(groups["gates"]) >= 1
-    assert {row["label"] for row in groups["claims"]} == {
-        "claims",
-        "claim_freezes",
-        "claim_types",
-    }
+    assert {row["label"] for row in groups["claims"]} == {"claims"}
     assert quality["actions"]
 
 
 def test_semantic_page_is_honest_not_run_without_laj(tmp_path: Path) -> None:
     workspace = initialize_workspace(tmp_path / "ws")
+    _write_laj_view(workspace, "1" * 64)
     semantic = build_brief_pages_data(workspace)["semantic"]
 
     assert semantic["status"] == "not_run"
@@ -148,14 +176,16 @@ def test_semantic_page_is_honest_not_run_without_laj(tmp_path: Path) -> None:
     assert "never trigger Gates" in semantic["handoff_note"]
 
 
-def test_semantic_page_renders_bound_findings(tmp_path: Path) -> None:
+def test_semantic_page_renders_bound_findings(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     workspace = initialize_workspace(tmp_path / "ws")
-    brief = workspace / "output" / "brief.md"
-    brief.parent.mkdir(parents=True, exist_ok=True)
-    brief.write_text("# demo brief\n", encoding="utf-8")
-    _write_laj_view(workspace, sha256_file(brief))
+    markdown = b"# demo brief\n"
+    view = _write_laj_view(workspace, hashlib.sha256(markdown).hexdigest())
+    _bind_final_reader(monkeypatch, workspace, markdown)
 
-    semantic = build_brief_pages_data(workspace)["semantic"]
+    semantic = build_brief_pages_data(workspace, laj_view_path=view)["semantic"]
     assert semantic["status"] == "available"
     assert semantic["coverage"]["finding_count"] == 1
     finding = semantic["findings"][0]
@@ -168,21 +198,28 @@ def test_semantic_page_renders_bound_findings(tmp_path: Path) -> None:
     assert len(states) == 9
 
 
-def test_semantic_page_marks_stale_when_report_binding_drifts(tmp_path: Path) -> None:
+def test_semantic_page_marks_stale_when_report_binding_drifts(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     workspace = initialize_workspace(tmp_path / "ws")
-    _write_laj_view(workspace, "1" * 64)
-    brief = workspace / "output" / "brief.md"
-    brief.parent.mkdir(parents=True, exist_ok=True)
-    brief.write_text("# different brief\n", encoding="utf-8")
+    view = _write_laj_view(workspace, "1" * 64)
+    _bind_final_reader(monkeypatch, workspace, b"# different brief\n")
 
-    semantic = build_brief_pages_data(workspace)["semantic"]
+    semantic = build_brief_pages_data(workspace, laj_view_path=view)["semantic"]
     assert semantic["status"] == "stale"
     assert semantic["findings"] == []
 
 
-def test_semantic_page_honors_explicit_laj_view_path(tmp_path: Path) -> None:
+def test_semantic_page_honors_explicit_laj_view_path(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     workspace = initialize_workspace(tmp_path / "ws")
-    view_path = _write_laj_view(workspace, "1" * 64)
+    markdown = b"# final\n"
+    digest = hashlib.sha256(markdown).hexdigest()
+    view_path = _write_laj_view(workspace, digest)
+    _bind_final_reader(monkeypatch, workspace, markdown)
     semantic = build_brief_pages_data(workspace, laj_view_path=view_path)["semantic"]
     assert semantic["status"] == "available"
     assert semantic["coverage"]["finding_count"] == 1

@@ -100,6 +100,7 @@ from .contracts import (
     HumanSourceMaterialRequest,
     HumanSourcePackMember,
     HumanSourcePackRequest,
+    LocalPresentationResult,
     RepairContentInput,
     RoleTaskEnvelope,
     RuntimeDiagnoseReport,
@@ -355,12 +356,22 @@ class RuntimeHostService:
                         reason_code="terminal_state_incomplete",
                         transaction_ids=tuple(transaction_ids),
                     )
+                from multi_agent_brief.product.brief_html import (
+                    maybe_auto_open_brief_pages,
+                )
+
+                presentation_payload = maybe_auto_open_brief_pages(self.workspace)
+                presentation = LocalPresentationResult.model_validate(
+                    presentation_payload or {"status": "not_requested"},
+                    strict=True,
+                )
                 return build_runtime_continuation_result(
                     current.verified,
                     action,
                     status="finalized_local",
                     reason_code=action.reason_code,
                     transaction_ids=tuple(transaction_ids),
+                    presentation=presentation,
                 )
             if action.action_kind == "human_decision":
                 return build_runtime_continuation_result(

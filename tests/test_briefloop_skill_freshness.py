@@ -106,3 +106,25 @@ def test_briefloop_skill_contract_and_runtime_asset_parity_run_clean() -> None:
             text=True,
         )
         assert result.returncode == 0, result.stdout + result.stderr
+
+
+def test_presentation_fallback_contract_is_truthful_in_every_skill_copy() -> None:
+    paths = (
+        ".agents/skills/briefloop/SKILL.md",
+        ".agents/skills/briefloop/references/codex-controlstore-v2.md",
+        "src/multi_agent_brief/runtime_kits/codex/skills/briefloop/SKILL.md",
+        (
+            "src/multi_agent_brief/runtime_kits/codex/skills/briefloop/"
+            "references/controlstore-v2.md"
+        ),
+        "integrations/hermes-plugin/mabw/skills/briefloop/SKILL.md",
+        (
+            "integrations/hermes-plugin/mabw/skills/briefloop/"
+            "references/codex-controlstore-v2.md"
+        ),
+    )
+    for relative in paths:
+        text = (ROOT / relative).read_text(encoding="utf-8")
+        assert "browser_unavailable" in text
+        assert "projection_unavailable" in text
+        assert "projection_unavailable` has no path" in text

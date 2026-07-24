@@ -52,6 +52,18 @@ never implies approval, packaging, delivery, or repair. Runs without the
 authorization retain the granular protocol below and receive a zero-write
 unsupported/manual result from `runtime continue`.
 
+At truthful `finalized_local`, the result may include a best-effort
+`presentation`. `output/brief_pages.html` is a replaceable self-contained
+static projection of the exact Store-bound `reader_brief`.
+`browser_unavailable` retains the safe relative projection path;
+`projection_unavailable` has no path because no safe projection was written.
+Neither result can change Store revision, finalization, the next action, or
+Gate truth. The file is not approval, packaging, delivery,
+publication, or a persistent localhost service. Regenerate it explicitly with
+`briefloop quality html --workspace <workspace>` when needed. LAJ is rendered
+only from an explicit hash-bound advisory view; no Improvement Ledger authority
+is available.
+
 ## 2. Snapshot The Exact Action
 
 Before executing an action, write the exact command output to a regular file

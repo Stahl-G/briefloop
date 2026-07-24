@@ -1285,6 +1285,15 @@ class CoreRunDomainVerifier:
             history = store.load_history()
         except Exception as exc:
             raise CoreRunError("control_store_integrity_invalid") from exc
+        return self.verify_loaded_history(history, run_id)
+
+    def verify_loaded_history(
+        self,
+        history: ControlStoreHistory,
+        run_id: str,
+    ) -> VerifiedCoreRun:
+        """Verify one run from an already loaded immutable Store history."""
+
         _require_no_unowned_legacy_deliveries(history)
         try:
             snapshot = history.snapshot_at_revision(run_id, history.store_revision)

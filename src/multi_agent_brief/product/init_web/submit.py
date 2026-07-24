@@ -36,6 +36,10 @@ from multi_agent_brief.runtime_host_v2.initialization import (
     WorkspaceBootstrap,
 )
 from multi_agent_brief.core_run_v2.output_contract import resolve_output_extent
+from multi_agent_brief.product.workspace_hygiene import (
+    NestedWorkspaceTargetError,
+    canonical_workspace_target,
+)
 from multi_agent_brief.workspace.init_profile import InitProfile
 
 from .staging import InitWebStaging, InitWebStagingError
@@ -272,7 +276,10 @@ class InitWebSubmitter:
         target = Path(raw_target).expanduser()
         if not target.is_absolute():
             target = (self._base_dir or Path.cwd()) / target
-        return target.resolve(strict=False)
+        try:
+            return canonical_workspace_target(target.absolute())
+        except NestedWorkspaceTargetError as exc:
+            raise SubmissionError("workspace_target_nested", 409) from exc
 
     @staticmethod
     def _submission_identities(
@@ -546,6 +553,7 @@ class InitWebSubmitter:
                 force=False,
                 identity_factory=lambda: next(identities),
                 execution_authorization=execution_authorization,
+                post_finalize_html=execution_authorization is not None,
             )
             try:
                 initialized = bootstrap.initialize_runnable_codex(
