@@ -2,12 +2,13 @@
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 import json
 import os
 import shutil
 import subprocess
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable, Mapping
 
 
 DEFAULT_PROFILE = {
@@ -22,19 +23,126 @@ DEFAULT_PROFILE = {
 }
 
 REQUIRED_PROFILE_FIELDS = ("company_or_org", "industry_or_theme", "task_objective")
+_CLI_OVERRIDE_NAMES = (
+    "BRIEFLOOP_BIN",
+    "MABW_BIN",
+    "MULTI_AGENT_BRIEF_BIN",
+)
+_CLI_NAMES = ("briefloop", "multi-agent-brief")
+_HERMES_RUNTIME_ARGS = ("--runtime", "hermes")
+_CLI_UNAVAILABLE_REASON = "briefloop_cli_unavailable"
+_CLI_OVERRIDE_UNAVAILABLE_REASON = "briefloop_explicit_override_unavailable"
 
 
 def _json(data: dict[str, Any]) -> str:
     return json.dumps(data, ensure_ascii=False, indent=2)
 
 
-def _mabw_bin() -> str:
-    return (
-        os.environ.get("BRIEFLOOP_BIN")
-        or os.environ.get("MABW_BIN")
-        or os.environ.get("MULTI_AGENT_BRIEF_BIN")
-        or "briefloop"
+@dataclass(frozen=True)
+class _CliResolution:
+    command: str | None
+    source: str
+    reason_code: str | None
+    override_name: str | None = None
+
+
+def _resolve_cli(
+    *,
+    repo_root: Path | None,
+    environ: Mapping[str, str] | None = None,
+    which: Callable[[str], str | None] = shutil.which,
+    resolution_cwd: Path | None = None,
+) -> _CliResolution:
+    """Resolve one executable CLI without weakening explicit override intent."""
+
+    current_environ = os.environ if environ is None else environ
+    current_directory = Path.cwd() if resolution_cwd is None else resolution_cwd
+
+    def freeze_discovered(executable: str) -> str:
+        path = Path(executable).expanduser()
+        if not path.is_absolute():
+            path = current_directory / path
+        return str(path.resolve())
+
+    def freeze_explicit_override(override: str) -> str:
+        path = Path(override)
+        # Anchor relative paths without resolving their final symlink identity.
+        is_relative_path = not path.is_absolute() and (
+            "/" in override or "\\" in override
+        )
+        if not is_relative_path:
+            return override
+        return str(current_directory / path)
+
+    for override_name in _CLI_OVERRIDE_NAMES:
+        if override_name not in current_environ:
+            continue
+        override = current_environ[override_name]
+        executable = which(override) if override else None
+        if not executable:
+            return _CliResolution(
+                command=None,
+                source="explicit_override_invalid",
+                reason_code=_CLI_OVERRIDE_UNAVAILABLE_REASON,
+                override_name=override_name,
+            )
+        return _CliResolution(
+            # `which` validates an override; it must not select a different executable.
+            command=freeze_explicit_override(override),
+            source="explicit_override",
+            reason_code=None,
+            override_name=override_name,
+        )
+
+    for command_name in _CLI_NAMES:
+        executable = which(command_name)
+        if executable is not None:
+            return _CliResolution(
+                command=freeze_discovered(executable),
+                source=f"path_{command_name.replace('-', '_')}",
+                reason_code=None,
+            )
+
+    if repo_root is not None:
+        for bindir in (repo_root / ".venv" / "bin", repo_root / ".venv" / "Scripts"):
+            for command_name in _CLI_NAMES:
+                executable = which(str(bindir / command_name))
+                if executable is not None:
+                    return _CliResolution(
+                        command=freeze_discovered(executable),
+                        source=f"repo_local_{command_name.replace('-', '_')}",
+                        reason_code=None,
+                    )
+
+    return _CliResolution(
+        command=None,
+        source="unavailable",
+        reason_code=_CLI_UNAVAILABLE_REASON,
     )
+
+
+def _resolution_payload(resolution: _CliResolution) -> dict[str, Any]:
+    return {
+        "status": "ready" if resolution.command is not None else "unavailable",
+        "source": resolution.source,
+        "reason_code": resolution.reason_code,
+        "override_name": resolution.override_name,
+    }
+
+
+def _cli_unavailable_result(resolution: _CliResolution) -> dict[str, Any]:
+    return {
+        "ok": False,
+        "returncode": 127,
+        "stdout": "",
+        "stderr": (
+            "BriefLoop CLI unavailable. Install briefloop or configure an "
+            "executable BRIEFLOOP_BIN."
+        ),
+        "command": [],
+        "reason_code": resolution.reason_code or _CLI_UNAVAILABLE_REASON,
+        "binary_resolution": _resolution_payload(resolution),
+    }
 
 
 def _resolve_workspace(raw: str) -> Path:
@@ -49,7 +157,9 @@ def _normalize_profile(profile: dict[str, Any]) -> dict[str, Any]:
         if value in (None, ""):
             normalized[key] = []
         elif isinstance(value, str):
-            normalized[key] = [item.strip() for item in value.split(",") if item.strip()]
+            normalized[key] = [
+                item.strip() for item in value.split(",") if item.strip()
+            ]
     return normalized
 
 
@@ -84,7 +194,9 @@ def _run(cmd: list[str], cwd: str | None = None, timeout: int = 300) -> dict[str
             "ok": False,
             "returncode": 127,
             "stdout": "",
-            "stderr": f"Command not found: {cmd[0]}. Install MABW or set MABW_BIN.",
+            "stderr": (
+                f"Command not found: {cmd[0]}. Install BriefLoop or set BRIEFLOOP_BIN."
+            ),
             "command": cmd,
         }
     except subprocess.TimeoutExpired as exc:
@@ -115,31 +227,40 @@ def create_onboarding(args: dict, **kwargs) -> str:
         profile = _normalize_profile(args.get("profile", {}))
         missing = _validate_profile(profile)
         if missing:
-            return _json({
-                "ok": False,
-                "error": "Missing required brief profile fields.",
-                "missing": missing,
-                "required": list(REQUIRED_PROFILE_FIELDS),
-            })
+            return _json(
+                {
+                    "ok": False,
+                    "error": "Missing required brief profile fields.",
+                    "missing": missing,
+                    "required": list(REQUIRED_PROFILE_FIELDS),
+                }
+            )
 
         filename = args.get("onboarding_filename") or "onboarding.json"
         if Path(filename).name != filename:
-            return _json({"ok": False, "error": "onboarding_filename must be a filename, not a path."})
+            return _json(
+                {
+                    "ok": False,
+                    "error": "onboarding_filename must be a filename, not a path.",
+                }
+            )
 
         onboarding_path = workspace / filename
         onboarding_path.write_text(_json(profile) + "\n", encoding="utf-8")
 
-        return _json({
-            "ok": True,
-            "workspace": str(workspace),
-            "onboarding_path": str(onboarding_path),
-            "profile": profile,
-            "next_tool": "mabw_init_workspace",
-            "next_args": {
+        return _json(
+            {
+                "ok": True,
                 "workspace": str(workspace),
                 "onboarding_path": str(onboarding_path),
-            },
-        })
+                "profile": profile,
+                "next_tool": "mabw_init_workspace",
+                "next_args": {
+                    "workspace": str(workspace),
+                    "onboarding_path": str(onboarding_path),
+                },
+            }
+        )
     except Exception as exc:
         return _json({"ok": False, "error": f"{type(exc).__name__}: {exc}"})
 
@@ -150,15 +271,20 @@ def init_workspace(args: dict, **kwargs) -> str:
     try:
         workspace = _resolve_workspace(args["workspace"])
         onboarding_path = Path(args["onboarding_path"]).expanduser().resolve()
+        resolution = _resolve_cli(repo_root=_find_repo_root())
 
-        cmd = [
-            _mabw_bin(),
-            "init",
-            str(workspace),
-            "--from-onboarding",
-            str(onboarding_path),
-        ]
-        result = _run(cmd)
+        if resolution.command is None:
+            result = _cli_unavailable_result(resolution)
+        else:
+            cmd = [
+                resolution.command,
+                "init",
+                str(workspace),
+                "--from-onboarding",
+                str(onboarding_path),
+            ]
+            result = _run(cmd)
+            result["binary_resolution"] = _resolution_payload(resolution)
         result["workspace"] = str(workspace)
         result["onboarding_path"] = str(onboarding_path)
         result["next_tool"] = "mabw_run_handoff"
@@ -190,7 +316,9 @@ def _find_repo_root() -> Path | None:
             if (parent / "pyproject.toml").exists() and (parent / "CLAUDE.md").exists():
                 return parent
             # Allow single-marker match for shallow clones
-            if (parent / "pyproject.toml").exists() and (parent / "src" / "multi_agent_brief").exists():
+            if (parent / "pyproject.toml").exists() and (
+                parent / "src" / "multi_agent_brief"
+            ).exists():
                 return parent
     return None
 
@@ -222,10 +350,13 @@ def env_doctor(_args: dict, **kwargs) -> str:
     """Check MABW environment and return a diagnostic report."""
     del _args, kwargs
 
+    repo_root = _find_repo_root()
+    resolution = _resolve_cli(repo_root=repo_root)
     report: dict[str, Any] = {
         "repo_found": False,
         "plugin_enabled": False,
-        "mabw_bin": _mabw_bin(),
+        "mabw_bin": resolution.command or "",
+        "binary_resolution": _resolution_payload(resolution),
         "version": "unknown",
         "venv_found": False,
         "workspace_found": False,
@@ -234,7 +365,6 @@ def env_doctor(_args: dict, **kwargs) -> str:
     }
 
     # 1. Repo detection
-    repo_root = _find_repo_root()
     if repo_root is not None:
         report["repo_found"] = True
         report["repo_root"] = str(repo_root)
@@ -244,21 +374,7 @@ def env_doctor(_args: dict, **kwargs) -> str:
     report["plugin_enabled"] = plugin_dir.is_dir()
 
     # 3. Binary and version
-    mabw = _mabw_bin()
-    found_bin = mabw if shutil.which(mabw) else None
-    if found_bin is None and repo_root is not None:
-        # Try venv path
-        for bindir in (repo_root / ".venv" / "bin", repo_root / ".venv" / "Scripts"):
-            for command_name in ("briefloop", "multi-agent-brief"):
-                candidate = bindir / command_name
-                if candidate.exists():
-                    found_bin = str(candidate)
-                    report["mabw_bin"] = found_bin
-                    break
-            if found_bin is not None:
-                break
-    elif found_bin:
-        report["mabw_bin"] = found_bin
+    found_bin = resolution.command
 
     if found_bin:
         version_result = _run([found_bin, "version"])
@@ -269,7 +385,11 @@ def env_doctor(_args: dict, **kwargs) -> str:
     # 4. Venv
     if repo_root is not None:
         for venv_dir in (repo_root / ".venv", repo_root / "venv"):
-            activate = venv_dir / "bin" / "activate" if not _is_windows() else venv_dir / "Scripts" / "activate"
+            activate = (
+                venv_dir / "bin" / "activate"
+                if not _is_windows()
+                else venv_dir / "Scripts" / "activate"
+            )
             if activate.exists():
                 report["venv_found"] = True
                 report["venv_path"] = str(venv_dir)
@@ -281,7 +401,13 @@ def env_doctor(_args: dict, **kwargs) -> str:
     report["workspace_found"] = len(report["workspaces"]) > 0
 
     # 6. Next action
-    if not report["repo_found"]:
+    if resolution.source == "explicit_override_invalid":
+        report["next_action"] = "configure_cli_override"
+        report["hint"] = (
+            "The configured BriefLoop CLI override is not executable. Fix or "
+            "remove that override; no fallback was selected."
+        )
+    elif not report["repo_found"]:
         report["next_action"] = "clone_repo"
         report["hint"] = "Clone https://github.com/Stahl-G/briefloop.git first."
     elif not report["venv_found"]:
@@ -289,7 +415,9 @@ def env_doctor(_args: dict, **kwargs) -> str:
         report["hint"] = "Run bash scripts/setup.sh from the repo root."
     elif not found_bin:
         report["next_action"] = "activate_venv"
-        report["hint"] = "Activate the venv: source .venv/bin/activate (or Scripts\\activate on Windows)."
+        report["hint"] = (
+            "Activate the venv: source .venv/bin/activate (or Scripts\\activate on Windows)."
+        )
     elif not report["plugin_enabled"]:
         report["next_action"] = "install_plugin"
         report["hint"] = "Run briefloop hermes install-plugin."
@@ -298,13 +426,16 @@ def env_doctor(_args: dict, **kwargs) -> str:
         report["hint"] = "Use mabw_run_handoff with the first existing workspace."
     else:
         report["next_action"] = "collect_onboarding"
-        report["hint"] = "Ask the user for brief profile fields, then call mabw_create_onboarding."
+        report["hint"] = (
+            "Ask the user for brief profile fields, then call mabw_create_onboarding."
+        )
 
     return _json(report)
 
 
 def _is_windows() -> bool:
     import platform
+
     return platform.system() == "Windows"
 
 
@@ -314,73 +445,147 @@ def run_handoff(args: dict, **kwargs) -> str:
     try:
         workspace = _resolve_workspace(args["workspace"])
         repo_root = _find_repo_root()
+        resolution = _resolve_cli(repo_root=repo_root)
 
-        cmd = [_mabw_bin(), "run", "--workspace", str(workspace), "--runtime", "hermes"]
-        if repo_root is not None:
-            cmd.extend(["--repo-workdir", str(repo_root)])
-        result = _run(cmd, cwd=str(repo_root) if repo_root is not None else None)
+        if resolution.command is None:
+            result = _cli_unavailable_result(resolution)
+        else:
+            cmd = [
+                resolution.command,
+                "run",
+                "--workspace",
+                str(workspace),
+                *_HERMES_RUNTIME_ARGS,
+            ]
+            if repo_root is not None:
+                cmd.extend(["--repo-workdir", str(repo_root)])
+            result = _run(
+                cmd,
+                cwd=str(repo_root) if repo_root is not None else None,
+            )
+            result["binary_resolution"] = _resolution_payload(resolution)
         handoff_md = workspace / "output" / "intermediate" / "agent_handoff.md"
         handoff_json = workspace / "output" / "intermediate" / "agent_handoff.json"
         runtime_state_files = {
-            "runtime_manifest": workspace / "output" / "intermediate" / "runtime_manifest.json",
-            "workflow_state": workspace / "output" / "intermediate" / "workflow_state.json",
-            "artifact_registry": workspace / "output" / "intermediate" / "artifact_registry.json",
+            "runtime_manifest": workspace
+            / "output"
+            / "intermediate"
+            / "runtime_manifest.json",
+            "workflow_state": workspace
+            / "output"
+            / "intermediate"
+            / "workflow_state.json",
+            "artifact_registry": workspace
+            / "output"
+            / "intermediate"
+            / "artifact_registry.json",
             "event_log": workspace / "output" / "intermediate" / "event_log.jsonl",
         }
         feedback_state_files = {
-            "feedback_issues": workspace / "output" / "intermediate" / "feedback_issues.json",
+            "feedback_issues": workspace
+            / "output"
+            / "intermediate"
+            / "feedback_issues.json",
             "repair_plan": workspace / "output" / "intermediate" / "repair_plan.json",
-            "delta_audit_report": workspace / "output" / "intermediate" / "delta_audit_report.json",
+            "delta_audit_report": workspace
+            / "output"
+            / "intermediate"
+            / "delta_audit_report.json",
         }
         quality_gate_state_files = {
-            "quality_gate_report": workspace / "output" / "intermediate" / "quality_gate_report.json",
+            "quality_gate_report": workspace
+            / "output"
+            / "intermediate"
+            / "quality_gate_report.json",
         }
         provenance_state_files = {
-            "provenance_graph": workspace / "output" / "intermediate" / "provenance_graph.json",
+            "provenance_graph": workspace
+            / "output"
+            / "intermediate"
+            / "provenance_graph.json",
         }
         audience_memory_files = {
             "audience_profile": workspace / "audience_profile.md",
-            "audience_profile_snapshot": workspace / "output" / "intermediate" / "audience_profile_snapshot.md",
+            "audience_profile_snapshot": workspace
+            / "output"
+            / "intermediate"
+            / "audience_profile_snapshot.md",
         }
         control_switchboard_files = {
-            "orchestrator_control_switchboard": workspace / "output" / "intermediate" / "orchestrator_control_switchboard.json",
-            "control_selections": workspace / "output" / "intermediate" / "control_selections.json",
+            "orchestrator_control_switchboard": workspace
+            / "output"
+            / "intermediate"
+            / "orchestrator_control_switchboard.json",
+            "control_selections": workspace
+            / "output"
+            / "intermediate"
+            / "control_selections.json",
         }
 
-        result.update({
-            "workspace": str(workspace),
-            "runtime": "hermes",
-            "repo_root": str(repo_root) if repo_root is not None else "",
-            "handoff_md": str(handoff_md),
-            "handoff_json": str(handoff_json),
-            "handoff_md_exists": handoff_md.exists(),
-            "handoff_json_exists": handoff_json.exists(),
-            "runtime_state_files": {key: str(path) for key, path in runtime_state_files.items()},
-            "runtime_state_files_exist": {key: path.exists() for key, path in runtime_state_files.items()},
-            "feedback_state_files": {key: str(path) for key, path in feedback_state_files.items()},
-            "feedback_state_files_exist": {key: path.exists() for key, path in feedback_state_files.items()},
-            "quality_gate_state_files": {key: str(path) for key, path in quality_gate_state_files.items()},
-            "quality_gate_state_files_exist": {key: path.exists() for key, path in quality_gate_state_files.items()},
-            "provenance_state_files": {key: str(path) for key, path in provenance_state_files.items()},
-            "provenance_state_files_exist": {key: path.exists() for key, path in provenance_state_files.items()},
-            "audience_memory_files": {key: str(path) for key, path in audience_memory_files.items()},
-            "audience_memory_files_exist": {key: path.exists() for key, path in audience_memory_files.items()},
-            "control_switchboard_files": {key: str(path) for key, path in control_switchboard_files.items()},
-            "control_switchboard_files_exist": {key: path.exists() for key, path in control_switchboard_files.items()},
-            "next": (
-                "Read agent_handoff.md and continue in Hermes as the Orchestrator main agent. "
-                "Read configs/orchestrator_contract.yaml, configs/stage_specs.yaml, "
-                "configs/artifact_contracts.yaml, configs/policy_packs/default.yaml, "
-                "workflow_state.json, artifact_registry.json, optional feedback state references, "
-                "optional quality gate state references, optional provenance projection references, "
-                "audience_profile_snapshot.md as runtime taste context, and "
-                "orchestrator_control_switchboard.json before delegation. Record selections with "
-                "controls select; selection is not execution."
-            ),
-        })
+        result.update(
+            {
+                "workspace": str(workspace),
+                "runtime": "hermes",
+                "repo_root": str(repo_root) if repo_root is not None else "",
+                "handoff_md": str(handoff_md),
+                "handoff_json": str(handoff_json),
+                "handoff_md_exists": handoff_md.exists(),
+                "handoff_json_exists": handoff_json.exists(),
+                "runtime_state_files": {
+                    key: str(path) for key, path in runtime_state_files.items()
+                },
+                "runtime_state_files_exist": {
+                    key: path.exists() for key, path in runtime_state_files.items()
+                },
+                "feedback_state_files": {
+                    key: str(path) for key, path in feedback_state_files.items()
+                },
+                "feedback_state_files_exist": {
+                    key: path.exists() for key, path in feedback_state_files.items()
+                },
+                "quality_gate_state_files": {
+                    key: str(path) for key, path in quality_gate_state_files.items()
+                },
+                "quality_gate_state_files_exist": {
+                    key: path.exists() for key, path in quality_gate_state_files.items()
+                },
+                "provenance_state_files": {
+                    key: str(path) for key, path in provenance_state_files.items()
+                },
+                "provenance_state_files_exist": {
+                    key: path.exists() for key, path in provenance_state_files.items()
+                },
+                "audience_memory_files": {
+                    key: str(path) for key, path in audience_memory_files.items()
+                },
+                "audience_memory_files_exist": {
+                    key: path.exists() for key, path in audience_memory_files.items()
+                },
+                "control_switchboard_files": {
+                    key: str(path) for key, path in control_switchboard_files.items()
+                },
+                "control_switchboard_files_exist": {
+                    key: path.exists()
+                    for key, path in control_switchboard_files.items()
+                },
+                "next": (
+                    "Read agent_handoff.md and continue in Hermes as the Orchestrator main agent. "
+                    "Read configs/orchestrator_contract.yaml, configs/stage_specs.yaml, "
+                    "configs/artifact_contracts.yaml, configs/policy_packs/default.yaml, "
+                    "workflow_state.json, artifact_registry.json, optional feedback state references, "
+                    "optional quality gate state references, optional provenance projection references, "
+                    "audience_profile_snapshot.md as runtime taste context, and "
+                    "orchestrator_control_switchboard.json before delegation. Record selections with "
+                    "controls select; selection is not execution."
+                ),
+            }
+        )
 
-        if shutil.which(_mabw_bin()) is None:
-            result["hint"] = "briefloop is not on PATH. Install BriefLoop or set BRIEFLOOP_BIN."
+        if resolution.command is None:
+            result["hint"] = (
+                "BriefLoop CLI is unavailable. Install briefloop or configure "
+                "an executable BRIEFLOOP_BIN."
+            )
 
         return _json(result)
     except Exception as exc:
