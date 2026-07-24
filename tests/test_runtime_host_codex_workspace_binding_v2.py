@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from datetime import date
 import json
+import os
 from pathlib import Path
 
 import pytest
@@ -36,6 +37,7 @@ ASSET_PATHS = (
     Path("skills/briefloop/references/controlstore-v2.md"),
     *(Path(f"agents/briefloop-{role_id}.toml") for role_id in ROLE_IDS),
 )
+ROOT = Path(__file__).resolve().parent.parent
 
 
 def _workspace(tmp_path: Path, *, install: bool = True) -> Path:
@@ -279,6 +281,186 @@ def test_runtime_install_existing_store_never_repairs_drift(
     assert "runtime_adapter_binding_mismatch" in capsys.readouterr().out
     assert asset.read_bytes() == drifted
     _assert_revision(workspace, revision_before)
+
+
+def test_runtime_install_all_existing_store_keeps_codex_verify_only(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    workspace = _workspace(tmp_path)
+    _initialize(workspace, capsys)
+    protected_paths = tuple(workspace / ".codex" / relative for relative in ASSET_PATHS)
+    before_files = _file_evidence(protected_paths)
+    (workspace / "config.yaml").write_text("not: [valid\n", encoding="utf-8")
+    with SQLiteControlStore.open(workspace / "briefloop.db") as store:
+        revision_before = store.current_revision
+
+    assert (
+        main(
+            [
+                "runtime",
+                "install",
+                "--workspace",
+                str(workspace),
+                "--runtime",
+                "all",
+                "--repo-workdir",
+                str(ROOT),
+                "--force",
+            ]
+        )
+        == 0
+    )
+
+    assert "Installed workspace runtime kit for all" in capsys.readouterr().out
+    assert _file_evidence(protected_paths) == before_files
+    _assert_revision(workspace, revision_before)
+    assert (workspace / "AGENTS.md").is_file()
+    assert (workspace / "CLAUDE.md").is_file()
+    assert (workspace / ".opencode").is_dir()
+    assert (workspace / ".claude").is_dir()
+
+
+def test_runtime_install_all_store_drift_blocks_retained_adapters(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    workspace = _workspace(tmp_path)
+    _initialize(workspace, capsys)
+    asset = workspace / ".codex" / "agents" / "briefloop-scout.toml"
+    asset.write_bytes(asset.read_bytes() + b"\n# drift\n")
+    drifted = asset.read_bytes()
+    drifted_mtime = asset.stat().st_mtime_ns
+    with SQLiteControlStore.open(workspace / "briefloop.db") as store:
+        revision_before = store.current_revision
+
+    assert (
+        main(
+            [
+                "runtime",
+                "install",
+                "--workspace",
+                str(workspace),
+                "--runtime",
+                "all",
+                "--repo-workdir",
+                str(ROOT),
+                "--force",
+            ]
+        )
+        == 1
+    )
+
+    assert "runtime_adapter_binding_mismatch" in capsys.readouterr().out
+    assert asset.read_bytes() == drifted
+    assert asset.stat().st_mtime_ns == drifted_mtime
+    _assert_revision(workspace, revision_before)
+    assert not (workspace / "AGENTS.md").exists()
+    assert not (workspace / "CLAUDE.md").exists()
+    assert not (workspace / ".opencode").exists()
+    assert not (workspace / ".claude").exists()
+
+
+@pytest.mark.parametrize("force", (False, True), ids=("without_force", "force"))
+def test_runtime_install_all_store_bound_ancestry_failure_preserves_codex(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+    force: bool,
+) -> None:
+    workspace = _workspace(tmp_path)
+    _initialize(workspace, capsys)
+    protected_paths = tuple(workspace / ".codex" / relative for relative in ASSET_PATHS)
+    before_files = _file_evidence(protected_paths)
+    with SQLiteControlStore.open(workspace / "briefloop.db") as store:
+        revision_before = store.current_revision
+    ancestor = workspace / ".claude"
+    ancestor.write_text("user-owned file\n", encoding="utf-8")
+
+    args = [
+        "runtime",
+        "install",
+        "--workspace",
+        str(workspace),
+        "--runtime",
+        "all",
+        "--repo-workdir",
+        str(ROOT),
+    ]
+    if force:
+        args.append("--force")
+
+    assert main(args) == 1
+    assert "non-directory runtime install ancestor" in capsys.readouterr().out
+    assert _file_evidence(protected_paths) == before_files
+    _assert_revision(workspace, revision_before)
+    assert ancestor.read_text(encoding="utf-8") == "user-owned file\n"
+    assert not (workspace / "AGENTS.md").exists()
+    assert not (workspace / "CLAUDE.md").exists()
+    assert not (workspace / ".opencode").exists()
+
+
+@pytest.mark.parametrize("force", (False, True), ids=("without_force", "force"))
+@pytest.mark.parametrize("dry_run", (False, True), ids=("install", "dry_run"))
+def test_runtime_install_all_store_bound_hardlink_alias_preserves_codex(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+    force: bool,
+    dry_run: bool,
+) -> None:
+    workspace = _workspace(tmp_path)
+    _initialize(workspace, capsys)
+    protected_paths = tuple(workspace / ".codex" / relative for relative in ASSET_PATHS)
+    protected = workspace / ".codex" / "skills" / "briefloop" / "SKILL.md"
+    retained = (
+        workspace / ".opencode" / "skills" / "multi-agent-brief-workflow" / "SKILL.md"
+    )
+    retained.parent.mkdir(parents=True)
+    os.link(protected, retained)
+    before_files = _file_evidence(protected_paths)
+    before_identity = (
+        protected.stat().st_dev,
+        protected.stat().st_ino,
+        protected.stat().st_mtime_ns,
+        protected.stat().st_nlink,
+    )
+    with SQLiteControlStore.open(workspace / "briefloop.db") as store:
+        revision_before = store.current_revision
+
+    args = [
+        "runtime",
+        "install",
+        "--workspace",
+        str(workspace),
+        "--runtime",
+        "all",
+        "--repo-workdir",
+        str(ROOT),
+    ]
+    if force:
+        args.append("--force")
+    if dry_run:
+        args.append("--dry-run")
+
+    assert main(args) == 1
+    output = capsys.readouterr().out
+    assert "Conflicting protected Codex and writable runtime destinations" in output
+    assert "Installed workspace runtime kit for all" not in output
+    assert "Planned workspace runtime kit for all" not in output
+    assert _file_evidence(protected_paths) == before_files
+    assert (
+        protected.stat().st_dev,
+        protected.stat().st_ino,
+        protected.stat().st_mtime_ns,
+        protected.stat().st_nlink,
+    ) == before_identity
+    assert retained.samefile(protected)
+    _assert_revision(workspace, revision_before)
+    assert not (workspace / "AGENTS.md").exists()
+    assert not (workspace / "CLAUDE.md").exists()
+    assert not (workspace / "opencode.jsonc").exists()
+    assert not (workspace / ".opencode" / "agents").exists()
+    assert not (workspace / ".opencode" / "commands").exists()
+    assert not (workspace / ".claude").exists()
 
 
 @pytest.mark.parametrize("relative", ASSET_PATHS, ids=lambda path: path.as_posix())

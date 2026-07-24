@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 from importlib import resources
 import os
 from pathlib import Path
@@ -32,6 +33,25 @@ class RuntimeAssetInstallError(RuntimeError):
     """Raised when workspace runtime assets cannot be installed."""
 
 
+@dataclass(frozen=True)
+class ProtectedRuntimeAssetObservation:
+    """A verified runtime destination that participates only in safety checks."""
+
+    destination: Path
+
+
+@dataclass(frozen=True)
+class RuntimeAssetPlan:
+    """Frozen in-memory rendered plan for one or more runtime kits."""
+
+    runtime: str
+    runtimes: tuple[str, ...]
+    workspace: Path
+    repo_workdir: Path | None
+    writes: tuple[PlannedWrite, ...]
+    protected_observations: tuple[ProtectedRuntimeAssetObservation, ...] = ()
+
+
 def install_runtime_kit(
     *,
     workspace: str | Path,
@@ -41,6 +61,26 @@ def install_runtime_kit(
     dry_run: bool = False,
 ) -> dict[str, Any]:
     """Install runtime-discoverable assets into a user workspace."""
+    plan = plan_runtime_kit(
+        workspace=workspace,
+        runtime=runtime,
+        repo_workdir=repo_workdir,
+    )
+    preflighted = preflight_runtime_kit_plans(plans=(plan,), force=force)
+    return apply_runtime_kit_plan(
+        preflighted,
+        force=force,
+        dry_run=dry_run,
+    )
+
+
+def plan_runtime_kit(
+    *,
+    workspace: str | Path,
+    runtime: str,
+    repo_workdir: str | Path | None = None,
+) -> RuntimeAssetPlan:
+    """Render one runtime selection without applying filesystem changes."""
     ws = Path(workspace).expanduser().resolve()
     if not ws.exists() or not ws.is_dir():
         raise RuntimeAssetInstallError(f"Workspace directory not found: {ws}")
@@ -72,10 +112,70 @@ def install_runtime_kit(
     if "codex" in runtimes:
         _validate_existing_codex_kit_subset(workspace=ws, writes=all_writes)
 
+    return RuntimeAssetPlan(
+        runtime=runtime,
+        runtimes=runtimes,
+        workspace=ws,
+        repo_workdir=repo,
+        writes=tuple(all_writes),
+    )
+
+
+def preflight_runtime_kit_plans(
+    *,
+    plans: tuple[RuntimeAssetPlan, ...],
+    force: bool,
+    runtime: str | None = None,
+    protected_observations: tuple[ProtectedRuntimeAssetObservation, ...] = (),
+) -> RuntimeAssetPlan:
+    """Validate a complete selected set of rendered plans without writing."""
+    if not plans:
+        raise RuntimeAssetInstallError("No runtime kit plans were selected.")
+
+    workspace = plans[0].workspace
+    if any(plan.workspace != workspace for plan in plans):
+        raise RuntimeAssetInstallError("Runtime kit plans must share one workspace.")
+
+    runtimes = tuple(runtime_name for plan in plans for runtime_name in plan.runtimes)
+    combined = RuntimeAssetPlan(
+        runtime=runtime or (plans[0].runtime if len(plans) == 1 else "all"),
+        runtimes=runtimes,
+        workspace=workspace,
+        repo_workdir=next(
+            (plan.repo_workdir for plan in plans if plan.repo_workdir is not None),
+            None,
+        ),
+        writes=tuple(
+            _deduplicate_writes([write for plan in plans for write in plan.writes])
+        ),
+        protected_observations=tuple(
+            _deduplicate_protected_observations(
+                [
+                    observation
+                    for plan in plans
+                    for observation in plan.protected_observations
+                ]
+                + list(protected_observations)
+            )
+        ),
+    )
+    _validate_runtime_kit_plan(combined, force=force)
+    return combined
+
+
+def apply_runtime_kit_plan(
+    plan: RuntimeAssetPlan,
+    *,
+    force: bool,
+    dry_run: bool = False,
+) -> dict[str, Any]:
+    """Apply already-rendered writes, rechecking safety immediately before use."""
+
+    _validate_runtime_kit_destination_topology(plan)
     try:
         apply_planned_writes(
-            writes=all_writes,
-            root=ws,
+            writes=list(plan.writes),
+            root=plan.workspace,
             force=force,
             dry_run=dry_run,
             generated_markers=(
@@ -87,17 +187,168 @@ def install_runtime_kit(
     except InstallWriteError as exc:
         raise RuntimeAssetInstallError(str(exc)) from exc
 
-    if "codex" in runtimes and not dry_run:
-        _verify_materialized_codex_runtime_kit(ws)
+    if "codex" in plan.runtimes and not dry_run:
+        _verify_materialized_codex_runtime_kit(plan.workspace)
 
     return {
-        "runtime": runtime,
-        "workspace": str(ws),
-        "repo_workdir": None if repo is None else str(repo),
+        "runtime": plan.runtime,
+        "workspace": str(plan.workspace),
+        "repo_workdir": (None if plan.repo_workdir is None else str(plan.repo_workdir)),
         "dry_run": dry_run,
-        "written": [str(write.destination) for write in all_writes],
-        "count": len(all_writes),
+        "written": [str(write.destination) for write in plan.writes],
+        "count": len(plan.writes),
     }
+
+
+def _validate_runtime_kit_plan(plan: RuntimeAssetPlan, *, force: bool) -> None:
+    """Run the shared writer's complete safety checks with zero writes."""
+    _validate_runtime_kit_destination_topology(plan)
+    try:
+        apply_planned_writes(
+            writes=list(plan.writes),
+            root=plan.workspace,
+            force=force,
+            dry_run=True,
+            generated_markers=(
+                INSTALL_MARKER,
+                JSONC_INSTALL_MARKER,
+                TOML_INSTALL_MARKER,
+            ),
+        )
+    except InstallWriteError as exc:
+        raise RuntimeAssetInstallError(str(exc)) from exc
+
+
+def _validate_runtime_kit_destination_topology(plan: RuntimeAssetPlan) -> None:
+    """Reject unmaterializable destination ancestry before any selected write."""
+
+    writable_destinations = [write.destination for write in plan.writes]
+    protected_destinations = [
+        observation.destination for observation in plan.protected_observations
+    ]
+    protected_set = set(protected_destinations)
+    for destination in writable_destinations:
+        if destination in protected_set:
+            raise RuntimeAssetInstallError(
+                "Conflicting protected Codex and writable runtime destinations: "
+                f"{destination}"
+            )
+
+    _validate_planned_destination_graph(
+        [*protected_destinations, *writable_destinations]
+    )
+    protected_leaves: dict[tuple[int, int], Path] = {}
+    for destination in protected_destinations:
+        identity = _validate_destination_ancestry(
+            workspace=plan.workspace,
+            destination=destination,
+        )
+        if identity is not None:
+            protected_leaves.setdefault(identity, destination)
+
+    writable_leaves: dict[tuple[int, int], Path] = {}
+    for destination in writable_destinations:
+        identity = _validate_destination_ancestry(
+            workspace=plan.workspace,
+            destination=destination,
+        )
+        if identity is None:
+            continue
+        protected = protected_leaves.get(identity)
+        if protected is not None:
+            raise RuntimeAssetInstallError(
+                "Conflicting protected Codex and writable runtime destinations: "
+                f"{protected} and {destination}"
+            )
+        existing = writable_leaves.setdefault(identity, destination)
+        if existing != destination:
+            raise RuntimeAssetInstallError(
+                "Conflicting aliased runtime install destinations: "
+                f"{existing} and {destination}"
+            )
+
+
+def _validate_planned_destination_graph(destinations: list[Path]) -> None:
+    """Reject a planned file that would also need to be another file's parent."""
+
+    for index, destination in enumerate(destinations):
+        for other in destinations[index + 1 :]:
+            if _is_descendant_path(other, destination):
+                raise RuntimeAssetInstallError(
+                    "Conflicting runtime install destination ancestry: "
+                    f"{destination} is a parent of {other}"
+                )
+            if _is_descendant_path(destination, other):
+                raise RuntimeAssetInstallError(
+                    "Conflicting runtime install destination ancestry: "
+                    f"{other} is a parent of {destination}"
+                )
+
+
+def _is_descendant_path(path: Path, parent: Path) -> bool:
+    try:
+        path.relative_to(parent)
+    except ValueError:
+        return False
+    return path != parent
+
+
+def _validate_destination_ancestry(
+    *,
+    workspace: Path,
+    destination: Path,
+) -> tuple[int, int] | None:
+    """Classify every existing parent and leaf without following symlinks."""
+
+    try:
+        relative = destination.relative_to(workspace)
+    except ValueError:
+        # The shared writer owns the existing resolved-containment error.
+        return None
+
+    ancestor = workspace
+    for component in relative.parts[:-1]:
+        ancestor = ancestor / component
+        metadata = _runtime_asset_lstat(ancestor)
+        if metadata is None:
+            break
+        if stat.S_ISLNK(metadata.st_mode):
+            raise RuntimeAssetInstallError(
+                f"Refusing to use symlinked runtime install ancestor: {ancestor}"
+            )
+        if not stat.S_ISDIR(metadata.st_mode):
+            raise RuntimeAssetInstallError(
+                f"Refusing to use non-directory runtime install ancestor: {ancestor}"
+            )
+
+    leaf_metadata = _runtime_asset_lstat(destination)
+    if leaf_metadata is None:
+        return None
+    if stat.S_ISLNK(leaf_metadata.st_mode):
+        raise RuntimeAssetInstallError(
+            f"Refusing to use symlinked runtime install destination: {destination}"
+        )
+    if stat.S_ISDIR(leaf_metadata.st_mode):
+        raise RuntimeAssetInstallError(
+            f"Refusing to overwrite directory during runtime install: {destination}"
+        )
+    if not stat.S_ISREG(leaf_metadata.st_mode):
+        raise RuntimeAssetInstallError(
+            f"Refusing to overwrite non-regular runtime install destination: {destination}"
+        )
+
+    return (leaf_metadata.st_dev, leaf_metadata.st_ino)
+
+
+def _runtime_asset_lstat(path: Path) -> os.stat_result | None:
+    try:
+        return path.lstat()
+    except FileNotFoundError:
+        return None
+    except OSError as exc:
+        raise RuntimeAssetInstallError(
+            f"Unable to inspect runtime install destination: {path}"
+        ) from exc
 
 
 def _validate_existing_codex_kit_subset(
@@ -213,6 +464,19 @@ def _deduplicate_writes(writes: list[PlannedWrite]) -> list[PlannedWrite]:
     return unique
 
 
+def _deduplicate_protected_observations(
+    observations: list[ProtectedRuntimeAssetObservation],
+) -> list[ProtectedRuntimeAssetObservation]:
+    unique: list[ProtectedRuntimeAssetObservation] = []
+    seen: set[Path] = set()
+    for observation in observations:
+        if observation.destination in seen:
+            continue
+        seen.add(observation.destination)
+        unique.append(observation)
+    return unique
+
+
 def _resolve_source_repo(*, repo_workdir: str | Path | None, workspace: Path) -> Path:
     try:
         repo = resolve_repo_workdir(repo_workdir, workspace=workspace)
@@ -304,6 +568,19 @@ def _codex_writes(*, workspace: Path) -> list[PlannedWrite]:
             for role_id in role_ids
         ),
     ]
+
+
+def plan_protected_codex_observations(
+    *,
+    workspace: str | Path,
+) -> tuple[ProtectedRuntimeAssetObservation, ...]:
+    """Project the packaged Codex kit into read-only topology observations."""
+
+    resolved_workspace = Path(workspace).expanduser().resolve()
+    return tuple(
+        ProtectedRuntimeAssetObservation(destination=write.destination)
+        for write in _codex_writes(workspace=resolved_workspace)
+    )
 
 
 def _runtime_writes(
