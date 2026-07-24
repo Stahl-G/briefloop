@@ -1,17 +1,21 @@
-BriefLoop post-final Review Session assets
-==========================================
+BriefLoop initialization panel assets
+=====================================
 
-The interaction layout and visual-system adaptation in this directory derives
-from the BriefLoop Quality Panel prototype at:
-https://github.com/Stahl-G/briefloop-prototypes
+The BriefLoop initialization panel adapts interaction-layout and visual-system
+source from the official PPT Master repository:
+https://github.com/hugohe3/ppt-master
 
-The prototype records upstream visual provenance to PPT Master commit
-619a954 and is distributed under the MIT License. The adapted files in this
-directory are distributed under the BriefLoop repository MIT License.
+The adaptation is pinned to PPT Master commit
+619a954695d866dde970552db9fb1a6640c643c8. The adapted upstream source surface
+is skills/ppt-master/scripts/confirm_ui/.
+
+PPT Master is distributed under the MIT License. BriefLoop adapts that source
+for its initialization panel; the upstream ownership and license notice below
+remain part of this attribution.
 
 MIT License
 
-Copyright (c) BriefLoop contributors
+Copyright (c) 2025-2026 Hugo He
 
 Permission is hereby granted, free of charge, to any person obtaining a copy of
 this software and associated documentation files (the "Software"), to deal in

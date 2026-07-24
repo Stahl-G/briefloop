@@ -10,7 +10,7 @@
   "upstream_ppt_master_commit": "619a954695d866dde970552db9fb1a6640c643c8",
   "license": "MIT",
   "production_assets": {
-    "THIRD_PARTY_NOTICES.txt_sha256": "0331d187f4f3fa0f5618eded51d1156845e118fd86c59610d0fc60c009ea6ecc",
+    "THIRD_PARTY_NOTICES.txt_sha256": "704fbfe922faacdcce33b8a6ea6a44f426ef90735be04f00371d85003ff7e909",
     "app.js_sha256": "f24c29ec40faadac380e9544c28bf8ad04de65f15906a20111e3d3f74e164d62",
     "index.html_sha256": "df55e545d07f2f88adf14d51af895978d998fa8ceba53bb613cf5bcd05fea45c",
     "style.css_sha256": "5f612588384dbf8afa84829c4fb2b252ecb0f3ec0899022bdf52ff11547463ff"

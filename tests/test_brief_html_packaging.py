@@ -54,6 +54,13 @@ def test_built_wheel_serves_all_static_assets(tmp_path: Path) -> None:
     with zipfile.ZipFile(wheel_path) as archive:
         names = set(archive.namelist())
         assert EXPECTED_WHEEL_MEMBERS <= names
+        init_web_root = "multi_agent_brief/product/init_web/static"
+        for name in ("THIRD_PARTY_NOTICES.txt", "provenance.json"):
+            assert (
+                archive.read(f"{init_web_root}/{name}")
+                == (ROOT / "src" / init_web_root / name).read_bytes()
+            )
+        assert not any("industry-weekly-demo" in name for name in names)
 
         installed = tmp_path / "installed"
         installed.mkdir()
