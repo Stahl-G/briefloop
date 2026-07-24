@@ -339,7 +339,11 @@ demo 用的是合成材料，主要用来展示证据链和门禁行为。真实
   --runtime codex`，随后使用 `briefloop runtime next`、
   `invocation-start`、`invocation-accept|fail` 和 `apply`
 - Experimental 一次性网页初始化：`briefloop init <path> --web`
-- 只读三页报告视图：`briefloop quality html --workspace <path> [--open]`
+- 尽力而为且受平台能力门禁约束的本地静态只读四 Tab 视图：
+  `briefloop quality html --workspace <path>
+  [--open]`；Brief 显示 Store 绑定的 `finalized_local` reader，Quality 为确定性
+  投影，LAJ 仅为可选 advisory 且 NOT MEASURED，Improvement 因无 Store-native
+  writer/lifecycle 而如实显示 unavailable
 - 实验性 offline-shadow LAJ：`briefloop experiments laj shadow-run` 与
   `briefloop experiments laj present`；仅用于公开/合成材料的 advisory 评估及
   独立 JSON/Markdown/HTML 展示；也可通过
@@ -356,16 +360,16 @@ v0.14.0 完成 SQLite-only 切换，并增加只读交互面：
   和 human-request JSON payload 必须由 Store 重验，本身不是权威。
 - 打包的 Codex Skill 只执行 Store 派生的精确下一动作与 Receipt-backed
   invocation，不回退到 `operator` 或其他 runtime。
-- loopback init wizard 与三页 HTML 都是只读交互面。LAJ 仍为 Experimental，
-  效用 NOT MEASURED；Improvement Ledger 页面如实显示 unavailable，不能把
-  guidance 写入下一 run。
+- loopback init wizard 与本地静态四 Tab HTML 都是只读交互面。Brief 显示经
+  Store 验证的 `finalized_local` reader，Quality 为确定性投影；LAJ 仍为可选
+  advisory、效用 NOT MEASURED；Improvement Ledger 因没有 Store-native
+  writer/lifecycle 而如实显示 unavailable。
 - v0.14 工程改动由 Codex 实现和测试；人类维护者授权合并与发布。
 
 延续的受支持报告工具与 advisory quality surface 包括：
 
 - `ReportSpec`、`ReportPack`、`ReportTemplate` 和 `PolicyProfile` contract
 - workspace skeleton 和确定性的 PolicyProfile 解析
-- delivery / audit bundle manifest 与干净 bundle archive
 - 支持的 `industry-weekly`、`management-monthly` 和 `document-review` 产品入口
 - 有边界的 `evidence_extract` source/scope 注册、source lock、logical page
   inventory seed 和 text-span seed registry

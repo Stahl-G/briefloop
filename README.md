@@ -363,8 +363,14 @@ Current main entrypoints:
   --runtime codex`, followed by `briefloop runtime next`,
   `invocation-start`, `invocation-accept|fail`, and `apply`
 - Experimental one-shot web initialization: `briefloop init <path> --web`
-- read-only three-page report view: `briefloop quality html --workspace <path>
-  [--open]`
+- best-effort, capability-gated local static read-only four-tab view:
+  `briefloop quality html --workspace
+  <path> [--open]`; Brief shows the verified Store-bound `finalized_local`
+  reader, Quality is a deterministic projection, LAJ is optional explicit
+  hash-bound advisory input (never authority), and Improvement is honestly
+  unavailable because no Store-native writer/lifecycle is active. This view
+  does not imply approval, package readiness, delivery, publication, automatic
+  learning, or a persistent browser server.
 - experimental offline-shadow LAJ: `briefloop experiments laj shadow-run` and
   `briefloop experiments laj present` for public/synthetic advisory evaluation
   and standalone JSON/Markdown/HTML presentation; an explicitly supplied
@@ -385,9 +391,10 @@ surfaces:
 - the packaged Codex Skill follows the exact Store-derived next action and
   Receipt-backed invocation protocol. It does not fall back to `operator` or
   another runtime.
-- the loopback init wizard and three-page HTML are read-only interaction
-  surfaces. LAJ remains Experimental and NOT MEASURED; the Improvement Ledger
-  page reports unavailable and cannot write guidance into a later run.
+- the loopback init wizard and four-tab local HTML are read-only interaction
+  surfaces. Brief shows the verified Store-bound `finalized_local` reader;
+  Quality is deterministic; LAJ is optional advisory and NOT MEASURED; and
+  Improvement reports unavailable because no Store-native lifecycle is active.
 - the v0.14 engineering changes were implemented and tested with Codex. Human
   maintainers authorized the merges and release.
 
@@ -396,7 +403,6 @@ include:
 
 - `ReportSpec`, `ReportPack`, `ReportTemplate`, and `PolicyProfile` contracts
 - workspace skeletons and deterministic PolicyProfile resolution
-- delivery / audit bundle manifests and clean bundle archives
 - supported `industry-weekly`, `management-monthly`, and `document-review`
   product entrypoints
 - bounded `evidence_extract` source/scope registration, source locks, logical

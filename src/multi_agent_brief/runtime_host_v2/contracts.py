@@ -279,6 +279,118 @@ class RuntimeContinuationTrace(StrictModel):
     transaction_ids: list[ContractId]
 
 
+class LocalRunActionSummary(StrictModel):
+    """Sanitized action facts safe for the local reader presentation."""
+
+    action_kind: Literal[
+        "delegate", "deterministic", "human_decision", "blocked", "complete"
+    ]
+    effect_kind: ContractId
+    stage_id: ContractId | None = None
+    role_id: ContractId | None = None
+    reason_code: ContractId
+
+
+class LocalRunGateSummary(StrictModel):
+    """One deterministic Gate observation from the verified Store history."""
+
+    gate_id: ContractId
+    evaluation_id: ContractId
+    stage_id: ContractId
+    status: Literal["pass", "fail", "warning"]
+    blocking: bool
+
+
+class LocalRunSummary(StrictModel):
+    """Deterministic counts and Gate facts from one verified Store snapshot."""
+
+    accepted_source_count: NonNegativeInt
+    claim_count: NonNegativeInt
+    finalization_count: NonNegativeInt
+    gates: list[LocalRunGateSummary]
+    receipt_ids: list[ContractId]
+
+
+class LocalReaderBrief(StrictModel):
+    """The exact final reader bytes bound by the Store finalize render."""
+
+    state: Literal["unavailable", "available"]
+    artifact_id: Literal["reader_brief"] | None = None
+    revision: NonNegativeInt | None = None
+    sha256: Sha256 | None = None
+    markdown_utf8: bytes | None = None
+
+    @model_validator(mode="after")
+    def available_reader_is_complete(self) -> "LocalReaderBrief":
+        values = (
+            self.artifact_id,
+            self.revision,
+            self.sha256,
+            self.markdown_utf8,
+        )
+        if self.state == "available":
+            if any(value is None for value in values) or self.revision == 0:
+                raise ValueError("available reader brief identity is incomplete")
+        elif any(value is not None for value in values):
+            raise ValueError("unavailable reader brief must not carry bytes")
+        return self
+
+
+class LocalPresentationResult(StrictModel):
+    """Replaceable presentation outcome; never runtime or Store authority."""
+
+    status: Literal[
+        "not_requested",
+        "written",
+        "opened",
+        "browser_unavailable",
+        "projection_unavailable",
+    ]
+    relative_path: WorkspacePath | None = None
+    reason_code: ContractId | None = None
+
+    @model_validator(mode="after")
+    def path_matches_status(self) -> "LocalPresentationResult":
+        if self.status in {"written", "opened", "browser_unavailable"}:
+            if self.relative_path is None:
+                raise ValueError("written presentation requires relative path")
+        elif self.relative_path is not None:
+            raise ValueError("unwritten presentation must not carry a path")
+        return self
+
+
+class LocalRunPresentation(StrictModel):
+    """One strict local read model derived from a single verified history."""
+
+    schema_id = "briefloop.local_run_presentation.v2"
+
+    schema_version: Literal["briefloop.local_run_presentation.v2"]
+    boundary: Literal[
+        "read_only_projection_not_gate_approval_delivery_or_runtime_authority"
+    ]
+    run_id: ContractId
+    store_revision: NonNegativeInt
+    runtime: ContractId
+    execution_topology: ContractId
+    executor_display: CleanText
+    execution_topology_display: CleanText
+    context_independence: CleanText
+    review_mode: CleanText
+    role_stages: list[ContractId]
+    completion_target: Literal["finalized_local"] | None = None
+    view_state: Literal["setup", "running", "needs_attention", "finalized"]
+    completed_stages: NonNegativeInt
+    total_stages: NonNegativeInt
+    current_stage: ContractId | None = None
+    current_role: ContractId | None = None
+    reason_code: ContractId
+    terminal_state: ContractId
+    next_action: LocalRunActionSummary
+    reader_brief: LocalReaderBrief
+    summary: LocalRunSummary
+    presentation: LocalPresentationResult
+
+
 class RuntimeContinuationResult(StrictModel):
     """One bounded, Store-derived authorized continuation observation."""
 
@@ -302,6 +414,7 @@ class RuntimeContinuationResult(StrictModel):
     total_stages: NonNegativeInt
     violations: list[RuntimeProposalViolation]
     trace: RuntimeContinuationTrace
+    presentation: LocalPresentationResult | None = None
 
 
 class RepairContentInput(StrictModel):
@@ -323,6 +436,12 @@ __all__ = [
     "HumanSourceMaterialRequest",
     "HumanSourcePackMember",
     "HumanSourcePackRequest",
+    "LocalPresentationResult",
+    "LocalReaderBrief",
+    "LocalRunActionSummary",
+    "LocalRunGateSummary",
+    "LocalRunPresentation",
+    "LocalRunSummary",
     "RoleTaskEnvelope",
     "RepairContentInput",
     "RuntimeDiagnoseReport",

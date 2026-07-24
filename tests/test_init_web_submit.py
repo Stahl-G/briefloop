@@ -25,6 +25,10 @@ from multi_agent_brief.product.init_web.submit import (
     _profile_from_payload,
 )
 from multi_agent_brief.product.init_web.staging import InitWebStaging
+from multi_agent_brief.product.workspace_hygiene import (
+    NestedWorkspaceTargetError,
+    canonical_workspace_target,
+)
 from multi_agent_brief.runtime_assets import RuntimeAssetInstallError
 from multi_agent_brief.runtime_host_v2.initialization import WorkspaceBootstrap
 
@@ -158,6 +162,8 @@ def test_committed_submission_creates_runnable_workspace_and_real_receipt(
     assert response["status"] == "committed"
     workspace = tmp_path / "web-ws"
     assert (workspace / "config.yaml").is_file()
+    config = yaml.safe_load((workspace / "config.yaml").read_text(encoding="utf-8"))
+    assert config["output"]["html_report"]["auto_open"] is False
     assert (workspace / ".codex" / "config.toml").is_file()
     assert (workspace / "briefloop.db").is_file()
     expected_receipt_id = derived_id(
@@ -204,6 +210,7 @@ def test_authorized_submission_freezes_manifest_and_returns_first_action(
     authorization = config["controlstore_v2"]["execution_authorization"]
     assert authorization["completion_target"] == "finalized_local"
     assert authorization["source_manifest_member_count"] == 1
+    assert config["output"]["html_report"]["auto_open"] is True
 
 
 def test_source_manifest_preview_is_server_canonical_and_zero_workspace_write(
@@ -995,6 +1002,145 @@ def test_existing_non_empty_target_conflicts(tmp_path: Path) -> None:
         submitter.submit(_body("REQ-AAAA0007", "web-ws"))
     assert exc_info.value.error_code == "workspace_target_exists"
     assert exc_info.value.http_status == 409
+
+
+def test_target_nested_below_existing_workspace_rejects_before_writes(
+    tmp_path: Path,
+) -> None:
+    submitter = InitWebSubmitter(base_dir=tmp_path)
+    _submit_ok(submitter, _body("REQ-OUTER-0001", "outer"))
+    outer = tmp_path / "outer"
+    revision_before = _revision(outer)
+    nested = outer / "nested"
+
+    with pytest.raises(SubmissionError) as exc_info:
+        submitter.submit(_body("REQ-NESTED-001", "outer/nested"))
+
+    assert exc_info.value.error_code == "workspace_target_nested"
+    assert exc_info.value.http_status == 409
+    assert not nested.exists()
+    assert _revision(outer) == revision_before
+
+
+def test_init_web_rejects_outside_alias_into_workspace_before_source_access(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    submitter = InitWebSubmitter(base_dir=tmp_path)
+    _submit_ok(submitter, _body("REQ-WEB-ALIAS-OUTER", "outer"))
+    outer = tmp_path / "outer"
+    revision_before = _revision(outer)
+    alias = tmp_path / "outside-alias"
+    try:
+        alias.symlink_to(outer / "input" / "context", target_is_directory=True)
+    except OSError:
+        pytest.skip("directory symlinks unavailable")
+
+    def forbidden_source_access(*_args: object, **_kwargs: object) -> object:
+        raise AssertionError("source handles must not be accessed")
+
+    monkeypatch.setattr(
+        submitter._staging,
+        "canonical_manifest",
+        forbidden_source_access,
+    )
+    body = _body(
+        "REQ-WEB-ALIAS-INTO-WORKSPACE",
+        "outside-alias/nested",
+        source_manifest={"untrusted": True},
+        source_manifest_mode="generated",
+        upload_session_id="never-read",
+        upload_bindings=[{"upload_handle": "never-read"}],
+    )
+
+    with pytest.raises(SubmissionError) as exc_info:
+        submitter.submit(body)
+
+    assert exc_info.value.error_code == "workspace_target_nested"
+    assert exc_info.value.http_status == 409
+    assert not (outer / "input" / "context" / "nested").exists()
+    assert _revision(outer) == revision_before
+
+
+def test_init_web_rejects_lexically_nested_alias_outward_before_source_access(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    submitter = InitWebSubmitter(base_dir=tmp_path)
+    _submit_ok(submitter, _body("REQ-WEB-LEXICAL-OUTER", "outer"))
+    outer = tmp_path / "outer"
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    alias = outer / "input" / "context" / "outward"
+    try:
+        alias.symlink_to(outside, target_is_directory=True)
+    except OSError:
+        pytest.skip("directory symlinks unavailable")
+
+    def forbidden_source_access(*_args: object, **_kwargs: object) -> object:
+        raise AssertionError("source handles must not be accessed")
+
+    monkeypatch.setattr(
+        submitter._staging,
+        "canonical_manifest",
+        forbidden_source_access,
+    )
+    body = _body(
+        "REQ-WEB-LEXICAL-OUTWARD",
+        "outer/input/context/outward/nested",
+        source_manifest={"untrusted": True},
+        source_manifest_mode="generated",
+        upload_session_id="never-read",
+        upload_bindings=[{"upload_handle": "never-read"}],
+    )
+
+    with pytest.raises(SubmissionError) as exc_info:
+        submitter.submit(body)
+
+    assert exc_info.value.error_code == "workspace_target_nested"
+    assert exc_info.value.http_status == 409
+    assert not (outside / "nested").exists()
+
+
+def test_direct_create_workspace_rejects_alias_into_existing_workspace(
+    tmp_path: Path,
+) -> None:
+    outer = tmp_path / "outer"
+    profile = _profile_from_payload(_body("REQ-DIRECT-OUTER", "outer")["payload"])
+    create_workspace(outer, profile)
+    alias = tmp_path / "alias"
+    try:
+        alias.symlink_to(outer / "input" / "context", target_is_directory=True)
+    except OSError:
+        pytest.skip("directory symlinks unavailable")
+
+    with pytest.raises(NestedWorkspaceTargetError):
+        create_workspace(alias / "nested", profile)
+
+    assert not (outer / "input" / "context" / "nested").exists()
+
+
+def test_canonical_target_remains_bound_after_input_alias_replacement(
+    tmp_path: Path,
+) -> None:
+    original = tmp_path / "original"
+    replacement = tmp_path / "replacement"
+    original.mkdir()
+    replacement.mkdir()
+    alias = tmp_path / "alias"
+    try:
+        alias.symlink_to(original, target_is_directory=True)
+    except OSError:
+        pytest.skip("directory symlinks unavailable")
+    canonical = canonical_workspace_target(alias / "workspace")
+    alias.unlink()
+    alias.symlink_to(replacement, target_is_directory=True)
+    profile = _profile_from_payload(_body("REQ-ALIAS-SWAP", "workspace")["payload"])
+
+    create_workspace(canonical, profile)
+
+    assert (original / "workspace" / "config.yaml").exists()
+    assert not (replacement / "workspace").exists()
 
 
 def test_malformed_body_is_rejected(tmp_path: Path) -> None:

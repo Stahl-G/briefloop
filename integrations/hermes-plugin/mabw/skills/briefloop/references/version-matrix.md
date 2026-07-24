@@ -40,10 +40,13 @@ quality guarantee.
 
 ## Read-Only Product Surfaces
 
-The three-page Brief HTML and init web wizard are read-only interaction
-surfaces in the v0.14.0 release target. They do not create authority. LAJ
-remains Experimental and NOT MEASURED. The Improvement Ledger lifecycle is
-retired; a page that reports it unavailable is not a write path.
+The local static four-tab HTML and init web wizard are read-only interaction
+surfaces in the v0.14.0 release target. Brief shows the verified Store-bound
+`finalized_local` reader, Quality is deterministic, LAJ is optional advisory
+and NOT MEASURED, and Improvement is unavailable because no Store-native
+writer/lifecycle is active. They do not create authority, approval, packaging,
+delivery, publication, persistent-server behavior, automatic evaluation, or
+learning.
 
 ## Unsupported And Retired
 

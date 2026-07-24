@@ -3,10 +3,16 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+import shutil
+import sys
+import tempfile
 
+import pytest
 import yaml
 
 from multi_agent_brief.cli.main import build_parser, main
+from multi_agent_brief.cli import product_commands
+from tests.helpers import initialize_workspace
 
 
 def complete_init_args(workspace, *, language="zh-CN", industry="finance", extra=None):
@@ -65,6 +71,281 @@ def test_cli_init_creates_workspace(tmp_path, capsys):
     assert "input/context" in output
     assert "简报示例 Markdown" in output
     assert "Claim Ledger" in output
+
+
+def test_cli_init_rejects_nested_workspace_before_any_write(tmp_path, capsys):
+    outer = tmp_path / "outer"
+    assert main(complete_init_args(outer)) == 0
+    capsys.readouterr()
+    before = {
+        path.relative_to(outer).as_posix(): (
+            path.read_bytes(),
+            path.stat().st_mtime_ns,
+        )
+        for path in outer.rglob("*")
+        if path.is_file()
+    }
+    nested = outer / "nested"
+
+    assert main(complete_init_args(nested, language="en-US")) == 1
+
+    assert capsys.readouterr().out.strip() == "[error] workspace_target_nested"
+    assert not nested.exists()
+    after = {
+        path.relative_to(outer).as_posix(): (
+            path.read_bytes(),
+            path.stat().st_mtime_ns,
+        )
+        for path in outer.rglob("*")
+        if path.is_file()
+    }
+    assert after == before
+
+
+def test_cli_init_rejects_symlink_alias_into_existing_workspace_before_writes(
+    tmp_path,
+    capsys,
+):
+    outer = tmp_path / "outer"
+    assert main(complete_init_args(outer)) == 0
+    capsys.readouterr()
+    alias = tmp_path / "alias"
+    try:
+        alias.symlink_to(outer / "input" / "context", target_is_directory=True)
+    except OSError:
+        pytest.skip("directory symlinks unavailable")
+    before = {
+        path.relative_to(outer).as_posix(): (
+            path.read_bytes(),
+            path.stat().st_mtime_ns,
+        )
+        for path in outer.rglob("*")
+        if path.is_file()
+    }
+
+    assert main(complete_init_args(alias / "nested", language="en-US")) == 1
+
+    assert capsys.readouterr().out.strip() == "[error] workspace_target_nested"
+    assert not (outer / "input" / "context" / "nested").exists()
+    after = {
+        path.relative_to(outer).as_posix(): (
+            path.read_bytes(),
+            path.stat().st_mtime_ns,
+        )
+        for path in outer.rglob("*")
+        if path.is_file()
+    }
+    assert after == before
+
+
+def test_cli_init_rejects_lexically_nested_alias_that_points_outward(
+    tmp_path,
+    capsys,
+):
+    outer = tmp_path / "outer"
+    assert main(complete_init_args(outer)) == 0
+    capsys.readouterr()
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    alias = outer / "input" / "context" / "outward"
+    try:
+        alias.symlink_to(outside, target_is_directory=True)
+    except OSError:
+        pytest.skip("directory symlinks unavailable")
+
+    assert main(complete_init_args(alias / "nested", language="en-US")) == 1
+
+    assert capsys.readouterr().out.strip() == "[error] workspace_target_nested"
+    assert not (outside / "nested").exists()
+
+
+def test_cli_init_uses_canonical_non_nested_alias_target(tmp_path, capsys):
+    canonical_parent = tmp_path / "canonical"
+    canonical_parent.mkdir()
+    alias = tmp_path / "alias"
+    try:
+        alias.symlink_to(canonical_parent, target_is_directory=True)
+    except OSError:
+        pytest.skip("directory symlinks unavailable")
+
+    assert main(complete_init_args(alias / "workspace")) == 0
+
+    canonical_target = canonical_parent / "workspace"
+    output = capsys.readouterr().out
+    assert (canonical_target / "config.yaml").exists()
+    assert str(canonical_target) in output
+    assert str(alias / "workspace") not in output
+
+
+@pytest.mark.skipif(sys.platform != "darwin", reason="macOS /tmp alias row")
+def test_cli_init_allows_macos_tmp_alias_for_non_nested_target(capsys):
+    routed_parent = Path(tempfile.mkdtemp(prefix="briefloop-m5-", dir="/tmp"))
+    canonical_parent = routed_parent.resolve()
+    try:
+        assert main(complete_init_args(routed_parent / "workspace")) == 0
+        output = capsys.readouterr().out
+        assert (canonical_parent / "workspace" / "config.yaml").exists()
+        assert str(canonical_parent / "workspace") in output
+    finally:
+        shutil.rmtree(canonical_parent, ignore_errors=True)
+
+
+def test_quality_html_help_states_the_truthful_four_tab_boundary(capsys):
+    parser = build_parser()
+
+    with pytest.raises(SystemExit) as exc:
+        parser.parse_args(["quality", "html", "--help"])
+
+    assert exc.value.code == 0
+    output = capsys.readouterr().out
+    normalized = " ".join(output.split())
+    assert "local, static, read-only four-tab view" in normalized
+    assert "local-finalized Brief" in normalized
+    assert "deterministic Quality" in normalized
+    assert "optional advisory LAJ (NOT MEASURED)" in normalized
+    assert "unavailable Improvement" in normalized
+    assert "three-page" not in normalized
+
+
+def test_quality_html_reports_unsupported_publication_without_effects(
+    tmp_path: Path,
+    capsys,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    workspace = initialize_workspace(tmp_path / "ws")
+    store_before = (workspace / "briefloop.db").read_bytes()
+    output_before = {
+        path.relative_to(workspace).as_posix(): path.read_bytes()
+        for path in (workspace / "output").rglob("*")
+        if path.is_file()
+    }
+    names_before = sorted(
+        path.relative_to(workspace).as_posix()
+        for path in (workspace / "output").rglob("*")
+    )
+    monkeypatch.setattr(
+        "multi_agent_brief.product.brief_html.render."
+        "supports_retained_directory_publication",
+        lambda: False,
+    )
+
+    assert (
+        main(
+            [
+                "quality",
+                "html",
+                "--workspace",
+                str(workspace),
+                "--json",
+            ]
+        )
+        == 1
+    )
+    output = capsys.readouterr().out
+
+    assert "[quality html] static export:" not in output
+    assert json.loads(output) == {
+        "ok": False,
+        "error": "brief_html_publication_unsupported",
+        "workspace": str(workspace),
+        "boundary": "read_only_static_export",
+    }
+    assert (workspace / "briefloop.db").read_bytes() == store_before
+    assert {
+        path.relative_to(workspace).as_posix(): path.read_bytes()
+        for path in (workspace / "output").rglob("*")
+        if path.is_file()
+    } == output_before
+    assert sorted(
+        path.relative_to(workspace).as_posix()
+        for path in (workspace / "output").rglob("*")
+    ) == names_before
+
+
+def test_packs_bundle_help_states_retired_internal_only_boundary(capsys):
+    parser = build_parser()
+
+    with pytest.raises(SystemExit) as exc:
+        parser.parse_args(["packs", "bundle", "--help"])
+
+    assert exc.value.code == 0
+    normalized = " ".join(capsys.readouterr().out.split())
+    assert "public command is retired and unavailable" in normalized
+    assert "internal deterministic, capability-gated seam only" in normalized
+    assert "Write a local bundle projection" not in normalized
+    assert "safe local publication capability" not in normalized
+
+
+@pytest.mark.parametrize(
+    ("authority", "expected"),
+    (
+        ("fresh", "runtime_command_unsupported\n"),
+        ("sqlite", "runtime_command_unsupported\n"),
+        ("legacy", "legacy_workspace_unsupported\n"),
+    ),
+)
+def test_packs_bundle_public_authority_guard_precedes_projection_without_effects(
+    tmp_path: Path,
+    capsys,
+    monkeypatch: pytest.MonkeyPatch,
+    authority: str,
+    expected: str,
+) -> None:
+    workspace = tmp_path / authority
+    if authority == "sqlite":
+        workspace.mkdir()
+        (workspace / "briefloop.db").write_bytes(b"guard classification only")
+    elif authority == "legacy":
+        control = workspace / "output" / "intermediate" / "runtime_manifest.json"
+        control.parent.mkdir(parents=True)
+        control.write_text("{}\n", encoding="utf-8")
+
+    before = (
+        {
+            path.relative_to(workspace).as_posix(): path.read_bytes()
+            for path in workspace.rglob("*")
+            if path.is_file()
+        }
+        if workspace.exists()
+        else {}
+    )
+
+    def forbidden_projection(*args, **kwargs):
+        del args, kwargs
+        raise AssertionError("public guard must reject before bundle projection")
+
+    monkeypatch.setattr(
+        product_commands,
+        "write_report_bundle_manifest",
+        forbidden_projection,
+    )
+
+    assert (
+        main(
+            [
+                "packs",
+                "bundle",
+                "--workspace",
+                str(workspace),
+                "--write-archives",
+            ]
+        )
+        == 1
+    )
+    assert capsys.readouterr().out == expected
+    after = (
+        {
+            path.relative_to(workspace).as_posix(): path.read_bytes()
+            for path in workspace.rglob("*")
+            if path.is_file()
+        }
+        if workspace.exists()
+        else {}
+    )
+    assert after == before
+    assert not (workspace / "output" / "report_bundle_manifest.json").exists()
+    assert not (workspace / "output" / "delivery_bundle.zip").exists()
+    assert not (workspace / "output" / "audit_bundle.zip").exists()
 
 
 def test_cli_init_can_configure_initial_news_backfill(tmp_path):

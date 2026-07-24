@@ -422,7 +422,14 @@ def create_workspace(
     report_date_factory: Callable[[], date] = date.today,
     identity_factory: Callable[[], str] = _new_controlstore_identity,
     execution_authorization: RunExecutionAuthorizationBootstrap | None = None,
+    post_finalize_html: bool = False,
 ) -> None:
+    from multi_agent_brief.product.workspace_hygiene import (
+        canonical_workspace_target,
+    )
+
+    target = canonical_workspace_target(target)
+
     # Set decision mode based on source profile
     if profile.source_profile == "llm_decide":
         profile.source_decision_mode = "agent_decide"
@@ -453,6 +460,7 @@ def create_workspace(
                 controlstore_bootstrap=bootstrap.model_dump(
                     mode="json", exclude_unset=False
                 ),
+                html_report_auto_open=post_finalize_html,
             )
         ),
         target / "profile.yaml": to_yaml(build_profile(profile)),
@@ -823,6 +831,7 @@ def build_config(
     profile: InitProfile,
     *,
     controlstore_bootstrap: dict[str, Any] | None = None,
+    html_report_auto_open: bool = False,
 ) -> dict[str, Any]:
     cfg: dict[str, Any] = {
         "project": {
@@ -853,7 +862,7 @@ def build_config(
             "filename_template": "{project_name}_{report_date}",
             "named_outputs": True,
             "footer": "Confidential — Internal Use Only",
-            "html_report": {"auto_open": False},
+            "html_report": {"auto_open": html_report_auto_open},
         },
         "source": {
             "mode": profile.source_profile,

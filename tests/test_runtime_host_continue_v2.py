@@ -17,6 +17,7 @@ from multi_agent_brief.cli.main import main
 from multi_agent_brief.contracts import SchemaRegistry
 from multi_agent_brief.contracts.v2 import CoreRunNextAction, IntegrityCheckRequest
 from multi_agent_brief.control_store import SQLiteControlStore
+from multi_agent_brief.control_store.sqlite_store import ControlStoreHistory
 from multi_agent_brief.control_store.serialization import canonical_fingerprint
 from multi_agent_brief.core_run_v2.errors import CoreRunError, CoreRunResult
 from multi_agent_brief.core_run_v2.integrity import (
@@ -261,6 +262,14 @@ def test_persistent_invocation_reservation_unknown_returns_typed_attention(
             error_code="commit_outcome_unknown",
         ),
     )
+    monkeypatch.setattr(
+        "multi_agent_brief.product.brief_html.maybe_auto_open_brief_pages",
+        lambda _workspace: {
+            "status": "projection_unavailable",
+            "relative_path": None,
+            "reason_code": "brief_html_projection_unavailable",
+        },
+    )
 
     result = _service(workspace).continue_authorized()
 
@@ -321,12 +330,16 @@ def test_committed_proposal_accept_unknown_replays_identity_before_refresh(
     assert result.status == "role_work_required"
 
 
-def test_finalize_continuation_uses_core_effect_without_reader_html_hook(
+def test_finalize_effect_suppresses_legacy_hook_then_presents_terminal(
     tmp_path: Path,
     monkeypatch,
 ) -> None:
     workspace = tmp_path / "workspace"
     workspace.mkdir()
+    (workspace / "config.yaml").write_text(
+        "output:\n  html_report:\n    auto_open: true\n",
+        encoding="utf-8",
+    )
 
     def _action(*, kind: str, effect: str, reason: str, revision: int):
         payload: dict[str, object] = {
@@ -377,6 +390,11 @@ def test_finalize_continuation_uses_core_effect_without_reader_html_hook(
         "multi_agent_brief.runtime_host_v2.service.initialize_or_open_runtime",
         lambda *_args, **_kwargs: next(currents),
     )
+    monkeypatch.setattr(
+        "multi_agent_brief.product.brief_html.render."
+        "supports_retained_directory_publication",
+        lambda: False,
+    )
     service = RuntimeHostService(workspace, adapter_loader=lambda _runtime: None)
     presentation_flags: list[bool] = []
     monkeypatch.setattr(
@@ -392,8 +410,15 @@ def test_finalize_continuation_uses_core_effect_without_reader_html_hook(
 
     assert result.status == "finalized_local"
     assert result.reason_code == "local_finalization_complete"
+    assert result.store_revision == 9
+    assert result.trace.next_action.effect_kind == "finalized_local"
     assert result.trace.transaction_ids == ["TX-FINAL"]
     assert presentation_flags == [False]
+    assert result.presentation is not None
+    assert result.presentation.status == "projection_unavailable"
+    assert result.presentation.relative_path is None
+    assert result.presentation.reason_code == "brief_html_projection_unavailable"
+    assert not (workspace / "output").exists()
 
 
 def _write_current_role_proposal(
@@ -501,10 +526,15 @@ def _write_current_role_proposal(
 
 def test_authorized_current_session_reaches_truthful_finalized_local(
     tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     if sys.platform == "win32":
         return
     workspace = _authorized_workspace(tmp_path)
+    monkeypatch.setattr(
+        "multi_agent_brief.product.brief_html.render.webbrowser.open",
+        lambda _uri: False,
+    )
     service = _service(workspace)
     sequence: list[tuple[str, str, str]] = []
 
@@ -543,15 +573,77 @@ def test_authorized_current_session_reaches_truthful_finalized_local(
     assert all(len(item[2]) == 64 for item in sequence)
     assert result.trace.next_action.action_kind == "complete"
     assert result.trace.next_action.effect_kind == "finalized_local"
+    assert result.presentation is not None
+    assert result.presentation.status == "browser_unavailable"
+    assert result.presentation.relative_path == "output/brief_pages.html"
     with SQLiteControlStore.open(workspace / "briefloop.db") as store:
         head = store.load_workspace_run_head()
         assert head is not None
         snapshot = store.load_snapshot(head.current_run_id)
+        reader = next(
+            item
+            for item in snapshot.artifact_revisions
+            if item.artifact_id == "reader_brief"
+            and item.revision
+            == next(
+                artifact.current_revision
+                for artifact in snapshot.artifacts
+                if artifact.artifact_id == "reader_brief"
+            )
+        )
+        store_reader = store.read_artifact_revision_bytes(
+            head.current_run_id,
+            reader.artifact_id,
+            reader.revision,
+        )
     assert not snapshot.package_ready_records
     assert not snapshot.approvals
     assert not snapshot.delivery_authorizations
     assert not snapshot.delivery_attempts
     assert not snapshot.delivery_results
+
+    mutable_reader = workspace / "output" / "brief.md"
+    mutable_reader.write_text("# forged mutable reader\n", encoding="utf-8")
+    replay = service.continue_authorized()
+    assert replay.status == "finalized_local"
+    assert replay.store_revision == result.store_revision
+    html = (workspace / "output" / "brief_pages.html").read_text(encoding="utf-8")
+    embedded = html.split('id="brief-pages-data">', 1)[1].split(
+        "</script>", 1
+    )[0]
+    assert json.loads(embedded)["brief"]["markdown"] == store_reader.decode("utf-8")
+    assert "forged mutable reader" not in html
+    assert str(workspace) not in html
+    assert result.trace.next_action.action_fingerprint not in html
+
+    original_reader = ControlStoreHistory.read_artifact_revision_bytes
+
+    def _non_utf8_reader(
+        history: ControlStoreHistory,
+        run_id: str,
+        artifact_id: str,
+        revision: int,
+    ) -> bytes:
+        if artifact_id == "reader_brief":
+            return b"\xff"
+        return original_reader(history, run_id, artifact_id, revision)
+
+    monkeypatch.setattr(
+        ControlStoreHistory,
+        "read_artifact_revision_bytes",
+        _non_utf8_reader,
+    )
+    from multi_agent_brief.product.brief_html import present_local_run
+
+    projection_failure = present_local_run(
+        workspace,
+        browser_open=lambda _uri: True,
+    )
+    assert projection_failure == {
+        "status": "projection_unavailable",
+        "relative_path": None,
+        "reason_code": "brief_html_projection_unavailable",
+    }
 
 
 def test_authorized_editor_gate_repair_runs_once_then_finalizes_local(

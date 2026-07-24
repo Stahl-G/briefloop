@@ -8,6 +8,10 @@ import sys
 import textwrap
 import zipfile
 
+from multi_agent_brief.product.projection_platform import (
+    supports_retained_directory_publication,
+)
+
 
 ROOT = Path(__file__).parents[1]
 
@@ -75,11 +79,15 @@ def test_non_editable_wheel_runs_complete_dormant_core_spine(
         from importlib import resources
         import io
         import json
+        import os
         from pathlib import Path
         import shutil
         import sys
 
         import multi_agent_brief
+        from multi_agent_brief.product.projection_platform import (
+            supports_retained_directory_publication,
+        )
         from multi_agent_brief.cli.init_wizard import create_demo_workspace
         from multi_agent_brief.cli.main import main
         from multi_agent_brief.contracts.v2 import (
@@ -128,6 +136,9 @@ def test_non_editable_wheel_runs_complete_dormant_core_spine(
         workspace = Path(sys.argv[1])
         installed = Path(sys.argv[2]).resolve()
         assert Path(multi_agent_brief.__file__).resolve().is_relative_to(installed)
+        assert supports_retained_directory_publication() is (
+            os.environ["BRIEFLOOP_TEST_RETAINED_PUBLICATION_CAPABILITY"] == "1"
+        )
         migration_0004 = resources.files(
             "multi_agent_brief.control_store"
         ).joinpath("migrations", "0004.sql")
@@ -461,6 +472,14 @@ def test_non_editable_wheel_runs_complete_dormant_core_spine(
         else:
             assert current_result.reason_code == "local_finalization_complete"
             assert current_result.trace.next_action.effect_kind == "finalized_local"
+            assert current_result.presentation.status in {
+                "opened",
+                "browser_unavailable",
+            }
+            assert (
+                current_result.presentation.relative_path
+                == "output/brief_pages.html"
+            )
             assert [item[0] for item in sequence] == [
                 "role_work_required",
                 "role_work_required",
@@ -474,6 +493,33 @@ def test_non_editable_wheel_runs_complete_dormant_core_spine(
             ]
             with SQLiteControlStore.open(init_web_workspace / "briefloop.db") as store:
                 init_snapshot = store.load_snapshot(response["run_id"])
+                init_history = store.load_history()
+            reader_record = next(
+                item
+                for item in init_snapshot.artifacts
+                if item.artifact_id == "reader_brief"
+            )
+            reader_bytes = init_history.read_artifact_revision_bytes(
+                response["run_id"],
+                "reader_brief",
+                reader_record.current_revision,
+            )
+            brief_html = (
+                init_web_workspace / "output" / "brief_pages.html"
+            ).read_text(encoding="utf-8")
+            brief_data = json.loads(
+                brief_html.split('id="brief-pages-data">', 1)[1].split(
+                    "</script>",
+                    1,
+                )[0]
+            )
+            assert brief_data["brief"]["markdown"] == reader_bytes.decode("utf-8")
+            assert brief_data["brief"]["artifact"] == {
+                "artifact_id": "reader_brief",
+                "revision": reader_record.current_revision,
+                "sha256": hashlib.sha256(reader_bytes).hexdigest(),
+            }
+            assert str(init_web_workspace) not in brief_html
             assert len(init_snapshot.gate_repair_cycles) == 1
             assert len(init_snapshot.gate_repair_artifact_bindings) == 1
             assert len(init_snapshot.gate_repair_outcomes) == 1
@@ -1134,6 +1180,9 @@ def test_non_editable_wheel_runs_complete_dormant_core_spine(
     script_path.write_bytes(script.encode("utf-8"))
     env = dict(os.environ)
     env["PYTHONPATH"] = str(installed)
+    env["BRIEFLOOP_TEST_RETAINED_PUBLICATION_CAPABILITY"] = (
+        "1" if supports_retained_directory_publication() else "0"
+    )
     run = subprocess.run(
         _wheel_e2e_command(
             script_path=script_path,

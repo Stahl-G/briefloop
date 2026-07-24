@@ -9,6 +9,7 @@ from .builder import (
 from .render import (
     BriefHtmlError,
     maybe_auto_open_brief_pages,
+    present_local_run,
     render_brief_pages_html,
     verify_asset_provenance,
     write_brief_pages,
@@ -21,6 +22,7 @@ __all__ = [
     "BriefPagesError",
     "build_brief_pages_data",
     "maybe_auto_open_brief_pages",
+    "present_local_run",
     "render_brief_pages_html",
     "verify_asset_provenance",
     "write_brief_pages",

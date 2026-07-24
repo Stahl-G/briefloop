@@ -1,10 +1,11 @@
 /* ==========================================================================
-   BriefLoop brief_html — three-page read-only brief (production static asset)
+   BriefLoop brief_html — local reader and audit pages (production static asset)
    Derived (MIT) from the BriefLoop quality-panel redesign prototype.
-   Reads the embedded brief_pages.data.v1 payload and renders:
-     tab 1 quality  — deterministic Store projection (green = pass only)
-     tab 2 review   — LAJ semantic advisory view (purple; never PASS wording)
-     tab 3 feedback — Improvement Ledger surface (honest unavailable, inert)
+   Reads the embedded brief_pages.data.v2 payload and renders:
+     tab 1 brief    — exact Store-bound local reader Markdown
+     tab 2 quality  — deterministic Store projection (green = pass only)
+     tab 3 review   — LAJ semantic advisory view (purple; never PASS wording)
+     tab 4 feedback — Improvement Ledger surface (honest unavailable, inert)
    No network, no write affordance: DOM via createElement and
    textContent only; clearing uses replaceChildren().
    ========================================================================== */
@@ -15,6 +16,7 @@
     var MESSAGES = {
         zh: {
             top_badge: "只读静态导出 · 无任何写入能力",
+            tab_brief: "简报",
             tab_quality: "质量状态",
             tab_review: "AI 语义复盘",
             tab_feedback: "反馈与改进",
@@ -71,10 +73,16 @@
             planned_label: "planned",
             footer_boundary: "静态导出边界：本页永远是只读投影；不含任何命令端点或写入能力。",
             data_error: "嵌入数据缺失或无法解析；无法渲染。",
-            tab_aria: "Brief pages sections"
+            tab_aria: "Brief pages sections",
+            brief_title: "本地终稿",
+            brief_unavailable: "终稿尚不可用",
+            brief_local_boundary: "本页仅表示本地完成，不表示审批、打包、交付或发布。",
+            brief_progress: "运行进度",
+            brief_identity: "Store artifact"
         },
         en: {
             top_badge: "Read-only static export · no write affordance",
+            tab_brief: "Brief",
             tab_quality: "Quality status",
             tab_review: "AI semantic review",
             tab_feedback: "Feedback & improvement",
@@ -131,7 +139,12 @@
             planned_label: "planned",
             footer_boundary: "Static export boundary: this page is always a read-only projection; it contains no command endpoint and no write affordance.",
             data_error: "Embedded data missing or unparseable; cannot render.",
-            tab_aria: "Brief pages sections"
+            tab_aria: "Brief pages sections",
+            brief_title: "Local final brief",
+            brief_unavailable: "Final brief is not available yet",
+            brief_local_boundary: "This page records local finalization only. It is not approval, packaging, delivery, or publication.",
+            brief_progress: "Run progress",
+            brief_identity: "Store artifact"
         }
     };
 
@@ -144,7 +157,7 @@
     }
 
     var LANG = "zh";
-    var STATE = { tab: "quality" };
+    var STATE = { tab: "brief" };
 
     function t(key) { return (MESSAGES[LANG] && MESSAGES[LANG][key]) || MESSAGES.zh[key] || key; }
     function el(tag, cls, text) {
@@ -159,6 +172,107 @@
         if (v === null || v === undefined) return el("span", "kv-null", "null");
         if (typeof v === "object") return el("code", null, JSON.stringify(v));
         return el("span", null, String(v));
+    }
+
+    /* ---- brief tab: deliberately small Markdown subset, DOM/textContent only ---- */
+    function markdownBlocks(markdown) {
+        var fragment = document.createDocumentFragment();
+        var lines = String(markdown || "").replace(/\r\n?/g, "\n").split("\n");
+        var list = null;
+        var code = null;
+
+        function flushList() {
+            if (list) {
+                fragment.appendChild(list);
+                list = null;
+            }
+        }
+        lines.forEach(function (line) {
+            if (line.slice(0, 3) === "```") {
+                flushList();
+                if (code) {
+                    fragment.appendChild(code);
+                    code = null;
+                } else {
+                    code = el("pre", "reader-code");
+                }
+                return;
+            }
+            if (code) {
+                code.appendChild(document.createTextNode(
+                    (code.textContent ? "\n" : "") + line
+                ));
+                return;
+            }
+            var heading = /^(#{1,3})\s+(.+)$/.exec(line);
+            if (heading) {
+                flushList();
+                fragment.appendChild(el("h" + heading[1].length, null, heading[2]));
+                return;
+            }
+            var bullet = /^\s*[-*]\s+(.+)$/.exec(line);
+            var ordered = /^\s*\d+\.\s+(.+)$/.exec(line);
+            if (bullet || ordered) {
+                var kind = ordered ? "ol" : "ul";
+                if (!list || list.tagName.toLowerCase() !== kind) {
+                    flushList();
+                    list = el(kind);
+                }
+                list.appendChild(el("li", null, (bullet || ordered)[1]));
+                return;
+            }
+            flushList();
+            if (/^\s*$/.test(line)) return;
+            if (/^>\s?/.test(line)) {
+                fragment.appendChild(el("blockquote", null, line.replace(/^>\s?/, "")));
+            } else {
+                fragment.appendChild(el("p", null, line));
+            }
+        });
+        flushList();
+        if (code) fragment.appendChild(code);
+        return fragment;
+    }
+
+    function renderBrief(main) {
+        var brief = DATA.brief || {};
+        var run = DATA.run || {};
+        var section = el("article", "reader-sheet");
+        var header = el("header", "reader-header");
+        header.appendChild(el("p", "eyebrow", t("brief_title")));
+        header.appendChild(el("h1", null,
+            brief.status === "available" ? t("brief_title") : t("brief_unavailable")));
+        header.appendChild(el("p", "hero-boundary",
+            String(brief.boundary || t("brief_local_boundary"))));
+        var state = el("span", "status-pill-mini " +
+            (brief.status === "available" ? "level-pass" : "level-missing"),
+            String(brief.view_state || run.view_state || "setup"));
+        header.appendChild(state);
+        section.appendChild(header);
+
+        if (brief.status === "available" && typeof brief.markdown === "string") {
+            var identity = brief.artifact || {};
+            var meta = el("p", "reader-identity");
+            meta.appendChild(el("strong", null, t("brief_identity") + " · "));
+            meta.appendChild(el("code", null,
+                String(identity.artifact_id || "") + "@" +
+                String(identity.revision || "") + " · sha256 " +
+                String(identity.sha256 || "")));
+            section.appendChild(meta);
+            var body = el("div", "reader-markdown");
+            body.appendChild(markdownBlocks(brief.markdown));
+            section.appendChild(body);
+            section.appendChild(el("p", "reader-terminal-note", t("brief_local_boundary")));
+        } else {
+            var progress = el("div", "unavailable-card");
+            progress.appendChild(el("strong", null, t("brief_progress")));
+            progress.appendChild(el("p", null,
+                String(run.completed_stages || 0) + "/" +
+                String(run.total_stages || 0) + " · " +
+                String(run.reason_code || brief.reason_code || "")));
+            section.appendChild(progress);
+        }
+        main.appendChild(section);
     }
 
     /* ---- quality tab ---- */
@@ -455,7 +569,12 @@
     }
 
     /* ---- tabs ---- */
-    var TABS = [["quality", "tab_quality"], ["review", "tab_review"], ["feedback", "tab_feedback"]];
+    var TABS = [
+        ["brief", "tab_brief"],
+        ["quality", "tab_quality"],
+        ["review", "tab_review"],
+        ["feedback", "tab_feedback"]
+    ];
 
     function renderTabBar(main) {
         var bar = el("nav", "qp-tabs");
@@ -503,7 +622,8 @@
             return;
         }
         renderTabBar(main);
-        if (STATE.tab === "quality") renderQuality(main);
+        if (STATE.tab === "brief") renderBrief(main);
+        else if (STATE.tab === "quality") renderQuality(main);
         else if (STATE.tab === "review") renderReview(main);
         else renderFeedback(main);
         renderFooter(main);
