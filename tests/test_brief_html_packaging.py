@@ -9,6 +9,13 @@ import zipfile
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
+REFERENCE_FIXTURE = (
+    Path("examples")
+    / "reference-workspaces"
+    / "industry-weekly-demo"
+    / "artifacts"
+    / "quality_gate_report.json"
+)
 
 EXPECTED_WHEEL_MEMBERS = {
     "multi_agent_brief/product/brief_html/static/index.html",
@@ -30,6 +37,11 @@ def test_built_wheel_serves_all_static_assets(tmp_path: Path) -> None:
     shutil.copy2(ROOT / "pyproject.toml", build_root / "pyproject.toml")
     shutil.copy2(ROOT / "README.md", build_root / "README.md")
     shutil.copytree(ROOT / "src", build_root / "src")
+    fixture_source = ROOT / REFERENCE_FIXTURE
+    fixture_in_build_context = build_root / REFERENCE_FIXTURE
+    fixture_in_build_context.parent.mkdir(parents=True)
+    shutil.copy2(fixture_source, fixture_in_build_context)
+    assert fixture_in_build_context.read_bytes() == fixture_source.read_bytes()
     wheel_dir = tmp_path / "wheel"
     wheel_dir.mkdir()
     build = subprocess.run(
@@ -55,12 +67,19 @@ def test_built_wheel_serves_all_static_assets(tmp_path: Path) -> None:
         names = set(archive.namelist())
         assert EXPECTED_WHEEL_MEMBERS <= names
         init_web_root = "multi_agent_brief/product/init_web/static"
-        for name in ("THIRD_PARTY_NOTICES.txt", "provenance.json"):
+        for name in (
+            "index.html",
+            "app.js",
+            "style.css",
+            "THIRD_PARTY_NOTICES.txt",
+            "provenance.json",
+        ):
             assert (
                 archive.read(f"{init_web_root}/{name}")
                 == (ROOT / "src" / init_web_root / name).read_bytes()
             )
-        assert not any("industry-weekly-demo" in name for name in names)
+        assert REFERENCE_FIXTURE.as_posix() not in names
+        assert not any(name.endswith(REFERENCE_FIXTURE.as_posix()) for name in names)
 
         installed = tmp_path / "installed"
         installed.mkdir()

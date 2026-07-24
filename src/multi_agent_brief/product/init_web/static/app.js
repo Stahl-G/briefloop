@@ -1,7 +1,9 @@
 /* ==========================================================================
-   BriefLoop init_web — one-shot workspace wizard (production static asset)
-   Derived (MIT) from the BriefLoop interactive-init prototype; upstream fork
-   shape: PPT Master confirm_ui @619a954 (MIT).
+   BriefLoop init_web — one-shot workspace wizard (production static asset).
+   Interaction and layout source adapted under MIT from PPT Master
+   (https://github.com/hugohe3/ppt-master), pinned at
+   619a954695d866dde970552db9fb1a6640c643c8; source path:
+   skills/ppt-master/scripts/confirm_ui/. Copyright (c) 2025-2026 Hugo He.
    Served under CSP script-src 'self'; style-src 'self': no inline handlers,
    no inline style attributes (custom accent goes through CSSOM insertRule on
    the same-origin stylesheet). DOM via createElement + textContent only;

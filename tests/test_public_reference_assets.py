@@ -37,6 +37,20 @@ QUALITY_GATE_FIXTURE = (
 UPSTREAM_REPOSITORY = "https://github.com/hugohe3/ppt-master"
 UPSTREAM_COMMIT = "619a954695d866dde970552db9fb1a6640c643c8"
 UPSTREAM_SURFACE = "skills/ppt-master/scripts/confirm_ui/"
+UPSTREAM_LICENSE = "MIT"
+UPSTREAM_COPYRIGHT = "Copyright (c) 2025-2026 Hugo He"
+UPSTREAM_ASSET_HASHES = {
+    "index.html_sha256": "cc623bf37c88a7ac73526962398bfc232d47bd25bb74395b5b8d978e39440b02",
+    "app.js_sha256": "c40c9e23a58cff79e12f11a3721794bc57e811adbb14e6cf65a695b346b18318",
+    "style.css_sha256": "4a3fe851410121cde5463487ce4c6f6c9df98b0dd443bf3aeb4e0f5256c08f18",
+}
+INIT_WEB_STATIC_FILENAMES = (
+    "index.html",
+    "app.js",
+    "style.css",
+    "THIRD_PARTY_NOTICES.txt",
+    "provenance.json",
+)
 
 
 def _fixture_payload() -> dict[str, object]:
@@ -55,8 +69,12 @@ def _validation_errors(payload: dict[str, object]) -> list[str]:
     )
 
 
-def test_init_web_notice_is_pinned_and_source_fresh() -> None:
-    notice = NOTICE_PATH.read_bytes()
+def test_init_web_public_assets_are_pinned_and_source_fresh() -> None:
+    static_bytes = {
+        name: (INIT_WEB_STATIC / name).read_bytes()
+        for name in INIT_WEB_STATIC_FILENAMES
+    }
+    notice = static_bytes[NOTICE_PATH.name]
     notice_text = notice.decode("utf-8")
     provenance = json.loads(PROVENANCE_PATH.read_text(encoding="utf-8"))
 
@@ -65,18 +83,51 @@ def test_init_web_notice_is_pinned_and_source_fresh() -> None:
     assert UPSTREAM_COMMIT in notice_text
     assert UPSTREAM_SURFACE in notice_text
     assert "MIT License" in notice_text
-    assert "Copyright (c) 2025-2026 Hugo He" in notice_text
-    for retired_surface in (
-        "post-final Review Session",
-        "Quality Panel",
-        "briefloop-prototypes",
-    ):
-        assert retired_surface not in notice_text
+    assert UPSTREAM_COPYRIGHT in notice_text
 
-    assert (
-        provenance["production_assets"]["THIRD_PARTY_NOTICES.txt_sha256"]
-        == hashlib.sha256(notice).hexdigest()
-    )
+    assert provenance["schema_version"] == "briefloop.init_web.asset_provenance.v1"
+    assert provenance["upstream_repository"] == UPSTREAM_REPOSITORY
+    assert provenance["upstream_source_path"] == UPSTREAM_SURFACE
+    assert provenance["upstream_ppt_master_commit"] == UPSTREAM_COMMIT
+    assert provenance["upstream_license"] == UPSTREAM_LICENSE
+    assert provenance["upstream_copyright"] == UPSTREAM_COPYRIGHT
+    assert provenance["upstream_assets"] == UPSTREAM_ASSET_HASHES
+    for retired_field in (
+        "prototype_repository",
+        "prototype_source_path",
+        "prototype_assets",
+    ):
+        assert retired_field not in provenance
+
+    for name, content in static_bytes.items():
+        text = content.decode("utf-8")
+        lowered = text.lower()
+        for retired_reference in (
+            "briefloop-prototypes",
+            "interactive-init prototype",
+            "intermediate prototype lineage",
+            "quality panel",
+            "post-final",
+        ):
+            assert retired_reference not in lowered, (name, retired_reference)
+
+    for name in ("index.html", "app.js", "style.css"):
+        text = static_bytes[name].decode("utf-8")
+        for direct_upstream_value in (
+            UPSTREAM_REPOSITORY,
+            UPSTREAM_COMMIT,
+            UPSTREAM_SURFACE,
+            UPSTREAM_LICENSE,
+            UPSTREAM_COPYRIGHT,
+        ):
+            assert direct_upstream_value in text, name
+
+    expected_production_hashes = {
+        f"{name}_sha256": hashlib.sha256(content).hexdigest()
+        for name, content in static_bytes.items()
+        if name != "provenance.json"
+    }
+    assert provenance["production_assets"] == expected_production_hashes
 
     readme = (ROOT / "README.md").read_text(encoding="utf-8")
     assert UPSTREAM_REPOSITORY in readme
@@ -222,7 +273,9 @@ def test_public_quality_gate_fixture_tampering_is_rejected(
     assert _validation_errors(payload)
 
 
-def test_public_fixture_rejects_blocking_or_unrelated_warning_surface() -> None:
+def test_concrete_public_fixture_rejects_blocking_or_unrelated_warning_surface() -> (
+    None
+):
     blocking = copy.deepcopy(_fixture_payload())
     blocking["gate_results"][-1]["blocking"] = True
     assert not auditable_gate_has_only_final_abstract_advisory_warnings(blocking)

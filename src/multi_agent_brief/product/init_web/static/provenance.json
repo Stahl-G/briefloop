@@ -1,18 +1,20 @@
 {
   "schema_version": "briefloop.init_web.asset_provenance.v1",
-  "prototype_repository": "https://github.com/Stahl-G/briefloop-prototypes",
-  "prototype_source_path": "interactive-init",
-  "prototype_assets": {
-    "app.js_sha256": "10458a9713d58f7bbfc9f02449085b95b9b0d4629c35d93eadc29c90add32539",
-    "index.html_sha256": "97a32e2351a982e8068a7f09afa1f68c34940a7496a5b1350a86379a37d97fe6",
-    "style.css_sha256": "c53aa0904f369d7fd6325543836bc90aefc41c76fa82046fea0bb5b3edca27d1"
-  },
+  "upstream_repository": "https://github.com/hugohe3/ppt-master",
+  "upstream_source_path": "skills/ppt-master/scripts/confirm_ui/",
+  "upstream_license": "MIT",
+  "upstream_copyright": "Copyright (c) 2025-2026 Hugo He",
   "upstream_ppt_master_commit": "619a954695d866dde970552db9fb1a6640c643c8",
+  "upstream_assets": {
+    "app.js_sha256": "c40c9e23a58cff79e12f11a3721794bc57e811adbb14e6cf65a695b346b18318",
+    "index.html_sha256": "cc623bf37c88a7ac73526962398bfc232d47bd25bb74395b5b8d978e39440b02",
+    "style.css_sha256": "4a3fe851410121cde5463487ce4c6f6c9df98b0dd443bf3aeb4e0f5256c08f18"
+  },
   "license": "MIT",
   "production_assets": {
     "THIRD_PARTY_NOTICES.txt_sha256": "704fbfe922faacdcce33b8a6ea6a44f426ef90735be04f00371d85003ff7e909",
-    "app.js_sha256": "f24c29ec40faadac380e9544c28bf8ad04de65f15906a20111e3d3f74e164d62",
-    "index.html_sha256": "df55e545d07f2f88adf14d51af895978d998fa8ceba53bb613cf5bcd05fea45c",
-    "style.css_sha256": "5f612588384dbf8afa84829c4fb2b252ecb0f3ec0899022bdf52ff11547463ff"
+    "app.js_sha256": "8fe792abcec9d559e52f57949cb1047b90f95332e0be0520f6fa3b7c8c07b224",
+    "index.html_sha256": "a3fcd61d481b1bd386ebeae740ef254e4dc23bf82f9245909950a66f1d76995b",
+    "style.css_sha256": "4d3b0ac8c6bc5169bd97185cf0499c3a444ad25db4dfd8fde752399524a168d5"
   }
 }
