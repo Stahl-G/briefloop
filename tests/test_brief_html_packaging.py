@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import shutil
 import subprocess
 import sys
 import zipfile
@@ -24,6 +25,11 @@ EXPECTED_WHEEL_MEMBERS = {
 
 
 def test_built_wheel_serves_all_static_assets(tmp_path: Path) -> None:
+    build_root = tmp_path / "build-root"
+    build_root.mkdir()
+    shutil.copy2(ROOT / "pyproject.toml", build_root / "pyproject.toml")
+    shutil.copy2(ROOT / "README.md", build_root / "README.md")
+    shutil.copytree(ROOT / "src", build_root / "src")
     wheel_dir = tmp_path / "wheel"
     wheel_dir.mkdir()
     build = subprocess.run(
@@ -38,7 +44,7 @@ def test_built_wheel_serves_all_static_assets(tmp_path: Path) -> None:
             "--wheel-dir",
             str(wheel_dir),
         ],
-        cwd=ROOT,
+        cwd=build_root,
         check=False,
         capture_output=True,
         text=True,

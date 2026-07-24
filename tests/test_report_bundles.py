@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import os
+import shutil
 import subprocess
 import sys
 import textwrap
@@ -1424,6 +1425,11 @@ def test_non_editable_wheel_matches_internal_bundle_read_boundary(
     tmp_path: Path,
 ) -> None:
     workspace = _finalized_workspace(tmp_path)
+    build_root = tmp_path / "build-root"
+    build_root.mkdir()
+    shutil.copy2(ROOT / "pyproject.toml", build_root / "pyproject.toml")
+    shutil.copy2(ROOT / "README.md", build_root / "README.md")
+    shutil.copytree(ROOT / "src", build_root / "src")
     wheel_dir = tmp_path / "wheel"
     wheel_dir.mkdir()
     build = subprocess.run(
@@ -1438,7 +1444,7 @@ def test_non_editable_wheel_matches_internal_bundle_read_boundary(
             "--wheel-dir",
             str(wheel_dir),
         ],
-        cwd=ROOT,
+        cwd=build_root,
         check=False,
         capture_output=True,
         text=True,

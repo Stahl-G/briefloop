@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import os
 from pathlib import Path
+import shutil
 import subprocess
 import sys
 import zipfile
@@ -645,6 +646,11 @@ def test_se2r_14_source_probe_is_byte_identical_under_python_optimization() -> N
 def test_se2r_14_wheel_contains_all_resources_and_matches_source_identity(
     tmp_path: Path,
 ) -> None:
+    build_root = tmp_path / "build-root"
+    build_root.mkdir()
+    shutil.copy2(REPO_ROOT / "pyproject.toml", build_root / "pyproject.toml")
+    shutil.copy2(REPO_ROOT / "README.md", build_root / "README.md")
+    shutil.copytree(REPO_ROOT / "src", build_root / "src")
     wheel_dir = tmp_path / "wheel"
     wheel_dir.mkdir()
     build_python = os.environ.get(
@@ -663,7 +669,7 @@ def test_se2r_14_wheel_contains_all_resources_and_matches_source_identity(
             "--wheel-dir",
             str(wheel_dir),
         ],
-        cwd=REPO_ROOT,
+        cwd=build_root,
         check=False,
         capture_output=True,
         text=True,

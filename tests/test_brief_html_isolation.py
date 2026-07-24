@@ -33,6 +33,8 @@ ALLOWED_IMPORTS = {
     },
     "brief_html/render.py": {
         "multi_agent_brief.product.brief_html.builder",
+        # Pure publication-capability boundary shared with ReportBundle.
+        "multi_agent_brief.product.projection_platform",
         "yaml",
     },
     "brief_html/__init__.py": {
