@@ -14,7 +14,7 @@ import pytest
 import yaml
 
 from multi_agent_brief.cli.main import main
-from multi_agent_brief.product import bundle_projection
+from multi_agent_brief.product import bundle_projection, projection_platform
 from multi_agent_brief.product.bundle_projection import (
     ReportBundleProjectionError,
     build_report_bundle_manifest,
@@ -1047,18 +1047,51 @@ def test_bundle_projection_preserves_manifest_leaf_that_appears_after_preflight(
     assert not list((ws / "output").glob(".briefloop-bundle-*.tmp"))
 
 
+def test_bundle_publication_uses_the_shared_platform_classifier() -> None:
+    assert (
+        bundle_projection._supports_safe_bundle_publication
+        is projection_platform.supports_retained_directory_publication
+    )
+
+
 @pytest.mark.parametrize("function_name", ("open", "stat", "mkdir", "unlink"))
-def test_bundle_publication_capability_requires_every_retained_relative_primitive(
+def test_shared_publication_capability_requires_every_retained_relative_primitive(
     monkeypatch: pytest.MonkeyPatch,
     function_name: str,
 ) -> None:
-    missing = getattr(bundle_projection.os, function_name)
+    missing = getattr(projection_platform.os, function_name)
     monkeypatch.setattr(
-        bundle_projection.os,
+        projection_platform.os,
         "supports_dir_fd",
-        bundle_projection.os.supports_dir_fd - {missing},
+        projection_platform.os.supports_dir_fd - {missing},
     )
 
+    assert projection_platform.supports_retained_directory_publication() is False
+    assert bundle_projection._supports_safe_bundle_publication() is False
+
+
+def test_shared_publication_capability_requires_no_follow_observation(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        projection_platform.os,
+        "supports_follow_symlinks",
+        projection_platform.os.supports_follow_symlinks
+        - {projection_platform.os.stat},
+    )
+
+    assert projection_platform.supports_retained_directory_publication() is False
+    assert bundle_projection._supports_safe_bundle_publication() is False
+
+
+@pytest.mark.parametrize("flag_name", ("O_DIRECTORY", "O_NOFOLLOW"))
+def test_shared_publication_capability_requires_no_follow_directory_open(
+    monkeypatch: pytest.MonkeyPatch,
+    flag_name: str,
+) -> None:
+    monkeypatch.setattr(projection_platform.os, flag_name, 0, raising=False)
+
+    assert projection_platform.supports_retained_directory_publication() is False
     assert bundle_projection._supports_safe_bundle_publication() is False
 
 
@@ -1089,14 +1122,15 @@ def test_bundle_read_capability_requires_no_follow_observation(
     assert bundle_projection._supports_safe_bundle_read() is False
 
 
-def test_bundle_publication_capability_requires_relative_replace(
+def test_shared_publication_capability_requires_relative_replace(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     def path_only_replace(source: str, target: str) -> None:
         del source, target
 
-    monkeypatch.setattr(bundle_projection.os, "replace", path_only_replace)
+    monkeypatch.setattr(projection_platform.os, "replace", path_only_replace)
 
+    assert projection_platform.supports_retained_directory_publication() is False
     assert bundle_projection._supports_safe_bundle_publication() is False
 
 

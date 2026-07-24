@@ -5,9 +5,11 @@ from __future__ import annotations
 import json
 from pathlib import Path
 import shutil
+import stat
 
 import pytest
 
+from multi_agent_brief.product import projection_platform
 from multi_agent_brief.product.brief_html import (
     BriefHtmlError,
     maybe_auto_open_brief_pages,
@@ -15,6 +17,7 @@ from multi_agent_brief.product.brief_html import (
     verify_asset_provenance,
     write_brief_pages,
 )
+from multi_agent_brief.product.brief_html import render as brief_html_render
 from multi_agent_brief.product.brief_html.render import (
     html_report_auto_open_enabled,
     present_local_run,
@@ -94,6 +97,23 @@ def _minimal_data() -> dict[str, object]:
     }
 
 
+def _output_snapshot(workspace: Path) -> dict[str, tuple[int, int, int, bytes | None]]:
+    output = workspace / "output"
+    if not output.exists() and not output.is_symlink():
+        return {}
+    paths = [output, *output.rglob("*")]
+    snapshot: dict[str, tuple[int, int, int, bytes | None]] = {}
+    for path in paths:
+        observed = path.lstat()
+        snapshot[path.relative_to(workspace).as_posix()] = (
+            observed.st_mode,
+            observed.st_dev,
+            observed.st_ino,
+            path.read_bytes() if stat.S_ISREG(observed.st_mode) else None,
+        )
+    return snapshot
+
+
 def test_render_is_self_contained_and_embeds_parseable_data() -> None:
     html = render_brief_pages_html(_minimal_data()).decode("utf-8")
 
@@ -138,8 +158,29 @@ def test_read_brief_asset_rejects_unknown_names() -> None:
         read_brief_asset("../secret")
 
 
+def test_html_publication_uses_the_shared_platform_classifier() -> None:
+    assert (
+        brief_html_render.supports_retained_directory_publication
+        is projection_platform.supports_retained_directory_publication
+    )
+
+
 def test_write_brief_pages_headless_and_browser_paths(tmp_path: Path) -> None:
     workspace = initialize_workspace(tmp_path / "ws")
+    if not projection_platform.supports_retained_directory_publication():
+        store_before = (workspace / "briefloop.db").read_bytes()
+        output_before = _output_snapshot(workspace)
+
+        with pytest.raises(
+            BriefHtmlError,
+            match="^brief_html_publication_unsupported$",
+        ):
+            write_brief_pages(workspace)
+
+        assert (workspace / "briefloop.db").read_bytes() == store_before
+        assert _output_snapshot(workspace) == output_before
+        return
+
     headless = write_brief_pages(workspace)
     target = workspace / "output" / "brief_pages.html"
     assert headless["ok"] is True
@@ -165,6 +206,34 @@ def test_write_brief_pages_headless_and_browser_paths(tmp_path: Path) -> None:
     )
     assert failed["browser_opened"] is False
     assert failed["reason_code"] == "brief_html_browser_unavailable"
+
+
+def test_missing_publication_capability_is_typed_and_zero_write(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    workspace = initialize_workspace(tmp_path / "ws")
+    store_before = (workspace / "briefloop.db").read_bytes()
+    output_before = _output_snapshot(workspace)
+    monkeypatch.setattr(
+        brief_html_render,
+        "supports_retained_directory_publication",
+        lambda: False,
+    )
+
+    with pytest.raises(
+        BriefHtmlError,
+        match="^brief_html_publication_unsupported$",
+    ):
+        write_brief_pages(workspace)
+
+    assert present_local_run(workspace, browser_open=lambda _uri: True) == {
+        "status": "projection_unavailable",
+        "relative_path": None,
+        "reason_code": "brief_html_projection_unavailable",
+    }
+    assert (workspace / "briefloop.db").read_bytes() == store_before
+    assert _output_snapshot(workspace) == output_before
 
 
 def test_auto_open_config_flag_defaults_off_and_reads_true(tmp_path: Path) -> None:

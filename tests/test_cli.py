@@ -12,6 +12,7 @@ import yaml
 
 from multi_agent_brief.cli.main import build_parser, main
 from multi_agent_brief.cli import product_commands
+from tests.helpers import initialize_workspace
 
 
 def complete_init_args(workspace, *, language="zh-CN", industry="finance", extra=None):
@@ -204,6 +205,61 @@ def test_quality_html_help_states_the_truthful_four_tab_boundary(capsys):
     assert "optional advisory LAJ (NOT MEASURED)" in normalized
     assert "unavailable Improvement" in normalized
     assert "three-page" not in normalized
+
+
+def test_quality_html_reports_unsupported_publication_without_effects(
+    tmp_path: Path,
+    capsys,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    workspace = initialize_workspace(tmp_path / "ws")
+    store_before = (workspace / "briefloop.db").read_bytes()
+    output_before = {
+        path.relative_to(workspace).as_posix(): path.read_bytes()
+        for path in (workspace / "output").rglob("*")
+        if path.is_file()
+    }
+    names_before = sorted(
+        path.relative_to(workspace).as_posix()
+        for path in (workspace / "output").rglob("*")
+    )
+    monkeypatch.setattr(
+        "multi_agent_brief.product.brief_html.render."
+        "supports_retained_directory_publication",
+        lambda: False,
+    )
+
+    assert (
+        main(
+            [
+                "quality",
+                "html",
+                "--workspace",
+                str(workspace),
+                "--json",
+            ]
+        )
+        == 1
+    )
+    output = capsys.readouterr().out
+
+    assert "[quality html] static export:" not in output
+    assert json.loads(output) == {
+        "ok": False,
+        "error": "brief_html_publication_unsupported",
+        "workspace": str(workspace),
+        "boundary": "read_only_static_export",
+    }
+    assert (workspace / "briefloop.db").read_bytes() == store_before
+    assert {
+        path.relative_to(workspace).as_posix(): path.read_bytes()
+        for path in (workspace / "output").rglob("*")
+        if path.is_file()
+    } == output_before
+    assert sorted(
+        path.relative_to(workspace).as_posix()
+        for path in (workspace / "output").rglob("*")
+    ) == names_before
 
 
 def test_packs_bundle_help_states_retired_internal_only_boundary(capsys):

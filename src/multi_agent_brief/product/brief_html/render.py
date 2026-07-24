@@ -19,6 +19,10 @@ import webbrowser
 
 import yaml
 
+from multi_agent_brief.product.projection_platform import (
+    supports_retained_directory_publication,
+)
+
 from .builder import build_brief_pages_data
 
 _ROOT = "static"
@@ -224,6 +228,8 @@ def write_brief_pages(
 ) -> dict[str, Any]:
     """Write the replaceable read-only HTML view; optionally open it locally."""
 
+    if not supports_retained_directory_publication():
+        raise BriefHtmlError("brief_html_publication_unsupported")
     root = Path(workspace).expanduser().resolve()
     data = build_brief_pages_data(root, laj_view_path=laj_view_path)
     rendered = render_brief_pages_html(data)

@@ -390,6 +390,11 @@ def test_finalize_effect_suppresses_legacy_hook_then_presents_terminal(
         "multi_agent_brief.runtime_host_v2.service.initialize_or_open_runtime",
         lambda *_args, **_kwargs: next(currents),
     )
+    monkeypatch.setattr(
+        "multi_agent_brief.product.brief_html.render."
+        "supports_retained_directory_publication",
+        lambda: False,
+    )
     service = RuntimeHostService(workspace, adapter_loader=lambda _runtime: None)
     presentation_flags: list[bool] = []
     monkeypatch.setattr(
@@ -405,11 +410,15 @@ def test_finalize_effect_suppresses_legacy_hook_then_presents_terminal(
 
     assert result.status == "finalized_local"
     assert result.reason_code == "local_finalization_complete"
+    assert result.store_revision == 9
+    assert result.trace.next_action.effect_kind == "finalized_local"
     assert result.trace.transaction_ids == ["TX-FINAL"]
     assert presentation_flags == [False]
     assert result.presentation is not None
     assert result.presentation.status == "projection_unavailable"
+    assert result.presentation.relative_path is None
     assert result.presentation.reason_code == "brief_html_projection_unavailable"
+    assert not (workspace / "output").exists()
 
 
 def _write_current_role_proposal(

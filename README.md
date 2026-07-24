@@ -363,7 +363,8 @@ Current main entrypoints:
   --runtime codex`, followed by `briefloop runtime next`,
   `invocation-start`, `invocation-accept|fail`, and `apply`
 - Experimental one-shot web initialization: `briefloop init <path> --web`
-- local, static, read-only four-tab view: `briefloop quality html --workspace
+- best-effort, capability-gated local static read-only four-tab view:
+  `briefloop quality html --workspace
   <path> [--open]`; Brief shows the verified Store-bound `finalized_local`
   reader, Quality is a deterministic projection, LAJ is optional explicit
   hash-bound advisory input (never authority), and Improvement is honestly

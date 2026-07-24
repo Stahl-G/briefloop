@@ -8,7 +8,6 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 import hashlib
-import inspect
 import json
 import os
 import re
@@ -39,6 +38,9 @@ from multi_agent_brief.product.quality_panel import (
     validate_quality_panel_html,
     validate_quality_panel_payload,
     validate_quality_summary_markdown,
+)
+from multi_agent_brief.product.projection_platform import (
+    supports_retained_directory_publication as _supports_safe_bundle_publication,
 )
 from multi_agent_brief.product.report_spec import ReportSpecLoadError, load_report_spec
 from multi_agent_brief.product.template_registry import ReportTemplateRegistry
@@ -718,24 +720,6 @@ def _write_zip_to_fd(
                 info.external_attr = 0o644 << 16
                 zf.writestr(info, payload)
         stream.flush()
-
-
-def _supports_safe_bundle_publication() -> bool:
-    """Return whether the complete retained-relative writer is available."""
-
-    required_dir_fd = (os.open, os.stat, os.mkdir, os.unlink)
-    try:
-        replace_parameters = inspect.signature(os.replace).parameters
-    except (TypeError, ValueError):
-        return False
-    return (
-        all(function in os.supports_dir_fd for function in required_dir_fd)
-        and os.stat in os.supports_follow_symlinks
-        and {"src_dir_fd", "dst_dir_fd"} <= set(replace_parameters)
-        and bool(getattr(os, "O_DIRECTORY", 0))
-        and bool(getattr(os, "O_NOFOLLOW", 0))
-        and callable(getattr(os, "fstat", None))
-    )
 
 
 def _supports_safe_bundle_read() -> bool:

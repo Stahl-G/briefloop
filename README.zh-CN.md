@@ -339,7 +339,8 @@ demo 用的是合成材料，主要用来展示证据链和门禁行为。真实
   --runtime codex`，随后使用 `briefloop runtime next`、
   `invocation-start`、`invocation-accept|fail` 和 `apply`
 - Experimental 一次性网页初始化：`briefloop init <path> --web`
-- 本地静态只读四 Tab 视图：`briefloop quality html --workspace <path>
+- 尽力而为且受平台能力门禁约束的本地静态只读四 Tab 视图：
+  `briefloop quality html --workspace <path>
   [--open]`；Brief 显示 Store 绑定的 `finalized_local` reader，Quality 为确定性
   投影，LAJ 仅为可选 advisory 且 NOT MEASURED，Improvement 因无 Store-native
   writer/lifecycle 而如实显示 unavailable

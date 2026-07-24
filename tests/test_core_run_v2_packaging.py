@@ -8,6 +8,10 @@ import sys
 import textwrap
 import zipfile
 
+from multi_agent_brief.product.projection_platform import (
+    supports_retained_directory_publication,
+)
+
 
 ROOT = Path(__file__).parents[1]
 
@@ -75,11 +79,15 @@ def test_non_editable_wheel_runs_complete_dormant_core_spine(
         from importlib import resources
         import io
         import json
+        import os
         from pathlib import Path
         import shutil
         import sys
 
         import multi_agent_brief
+        from multi_agent_brief.product.projection_platform import (
+            supports_retained_directory_publication,
+        )
         from multi_agent_brief.cli.init_wizard import create_demo_workspace
         from multi_agent_brief.cli.main import main
         from multi_agent_brief.contracts.v2 import (
@@ -128,6 +136,9 @@ def test_non_editable_wheel_runs_complete_dormant_core_spine(
         workspace = Path(sys.argv[1])
         installed = Path(sys.argv[2]).resolve()
         assert Path(multi_agent_brief.__file__).resolve().is_relative_to(installed)
+        assert supports_retained_directory_publication() is (
+            os.environ["BRIEFLOOP_TEST_RETAINED_PUBLICATION_CAPABILITY"] == "1"
+        )
         migration_0004 = resources.files(
             "multi_agent_brief.control_store"
         ).joinpath("migrations", "0004.sql")
@@ -1169,6 +1180,9 @@ def test_non_editable_wheel_runs_complete_dormant_core_spine(
     script_path.write_bytes(script.encode("utf-8"))
     env = dict(os.environ)
     env["PYTHONPATH"] = str(installed)
+    env["BRIEFLOOP_TEST_RETAINED_PUBLICATION_CAPABILITY"] = (
+        "1" if supports_retained_directory_publication() else "0"
+    )
     run = subprocess.run(
         _wheel_e2e_command(
             script_path=script_path,
