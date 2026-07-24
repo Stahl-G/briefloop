@@ -360,6 +360,44 @@ def test_runtime_install_all_store_drift_blocks_retained_adapters(
     assert not (workspace / ".claude").exists()
 
 
+@pytest.mark.parametrize("force", (False, True), ids=("without_force", "force"))
+def test_runtime_install_all_store_bound_ancestry_failure_preserves_codex(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+    force: bool,
+) -> None:
+    workspace = _workspace(tmp_path)
+    _initialize(workspace, capsys)
+    protected_paths = tuple(workspace / ".codex" / relative for relative in ASSET_PATHS)
+    before_files = _file_evidence(protected_paths)
+    with SQLiteControlStore.open(workspace / "briefloop.db") as store:
+        revision_before = store.current_revision
+    ancestor = workspace / ".claude"
+    ancestor.write_text("user-owned file\n", encoding="utf-8")
+
+    args = [
+        "runtime",
+        "install",
+        "--workspace",
+        str(workspace),
+        "--runtime",
+        "all",
+        "--repo-workdir",
+        str(ROOT),
+    ]
+    if force:
+        args.append("--force")
+
+    assert main(args) == 1
+    assert "non-directory runtime install ancestor" in capsys.readouterr().out
+    assert _file_evidence(protected_paths) == before_files
+    _assert_revision(workspace, revision_before)
+    assert ancestor.read_text(encoding="utf-8") == "user-owned file\n"
+    assert not (workspace / "AGENTS.md").exists()
+    assert not (workspace / "CLAUDE.md").exists()
+    assert not (workspace / ".opencode").exists()
+
+
 @pytest.mark.parametrize("relative", ASSET_PATHS, ids=lambda path: path.as_posix())
 @pytest.mark.parametrize("mutation", ["tamper", "delete"])
 def test_runtime_next_rejects_every_changed_or_deleted_bound_asset(

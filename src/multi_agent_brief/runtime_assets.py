@@ -152,6 +152,7 @@ def apply_runtime_kit_plan(
 ) -> dict[str, Any]:
     """Apply already-rendered writes, rechecking safety immediately before use."""
 
+    _validate_runtime_kit_destination_topology(plan)
     try:
         apply_planned_writes(
             writes=list(plan.writes),
@@ -182,6 +183,7 @@ def apply_runtime_kit_plan(
 
 def _validate_runtime_kit_plan(plan: RuntimeAssetPlan, *, force: bool) -> None:
     """Run the shared writer's complete safety checks with zero writes."""
+    _validate_runtime_kit_destination_topology(plan)
     try:
         apply_planned_writes(
             writes=list(plan.writes),
@@ -196,6 +198,110 @@ def _validate_runtime_kit_plan(plan: RuntimeAssetPlan, *, force: bool) -> None:
         )
     except InstallWriteError as exc:
         raise RuntimeAssetInstallError(str(exc)) from exc
+
+
+def _validate_runtime_kit_destination_topology(plan: RuntimeAssetPlan) -> None:
+    """Reject unmaterializable destination ancestry before any selected write."""
+
+    destinations = [write.destination for write in plan.writes]
+    _validate_planned_destination_graph(destinations)
+    existing_leaves: dict[tuple[int, int], Path] = {}
+    for destination in destinations:
+        _validate_destination_ancestry(
+            workspace=plan.workspace,
+            destination=destination,
+            existing_leaves=existing_leaves,
+        )
+
+
+def _validate_planned_destination_graph(destinations: list[Path]) -> None:
+    """Reject a planned file that would also need to be another file's parent."""
+
+    for index, destination in enumerate(destinations):
+        for other in destinations[index + 1 :]:
+            if _is_descendant_path(other, destination):
+                raise RuntimeAssetInstallError(
+                    "Conflicting runtime install destination ancestry: "
+                    f"{destination} is a parent of {other}"
+                )
+            if _is_descendant_path(destination, other):
+                raise RuntimeAssetInstallError(
+                    "Conflicting runtime install destination ancestry: "
+                    f"{other} is a parent of {destination}"
+                )
+
+
+def _is_descendant_path(path: Path, parent: Path) -> bool:
+    try:
+        path.relative_to(parent)
+    except ValueError:
+        return False
+    return path != parent
+
+
+def _validate_destination_ancestry(
+    *,
+    workspace: Path,
+    destination: Path,
+    existing_leaves: dict[tuple[int, int], Path],
+) -> None:
+    """Classify every existing parent and leaf without following symlinks."""
+
+    try:
+        relative = destination.relative_to(workspace)
+    except ValueError:
+        # The shared writer owns the existing resolved-containment error.
+        return
+
+    ancestor = workspace
+    for component in relative.parts[:-1]:
+        ancestor = ancestor / component
+        metadata = _runtime_asset_lstat(ancestor)
+        if metadata is None:
+            break
+        if stat.S_ISLNK(metadata.st_mode):
+            raise RuntimeAssetInstallError(
+                f"Refusing to use symlinked runtime install ancestor: {ancestor}"
+            )
+        if not stat.S_ISDIR(metadata.st_mode):
+            raise RuntimeAssetInstallError(
+                f"Refusing to use non-directory runtime install ancestor: {ancestor}"
+            )
+
+    leaf_metadata = _runtime_asset_lstat(destination)
+    if leaf_metadata is None:
+        return
+    if stat.S_ISLNK(leaf_metadata.st_mode):
+        raise RuntimeAssetInstallError(
+            f"Refusing to use symlinked runtime install destination: {destination}"
+        )
+    if stat.S_ISDIR(leaf_metadata.st_mode):
+        raise RuntimeAssetInstallError(
+            f"Refusing to overwrite directory during runtime install: {destination}"
+        )
+    if not stat.S_ISREG(leaf_metadata.st_mode):
+        raise RuntimeAssetInstallError(
+            f"Refusing to overwrite non-regular runtime install destination: {destination}"
+        )
+
+    leaf_identity = (leaf_metadata.st_dev, leaf_metadata.st_ino)
+    existing = existing_leaves.setdefault(leaf_identity, destination)
+    if existing != destination:
+        raise RuntimeAssetInstallError(
+            "Conflicting aliased runtime install destinations: "
+            f"{existing} and {destination}"
+        )
+
+
+def _runtime_asset_lstat(path: Path) -> os.stat_result | None:
+    try:
+        return path.lstat()
+    except FileNotFoundError:
+        return None
+    except OSError as exc:
+        raise RuntimeAssetInstallError(
+            f"Unable to inspect runtime install destination: {path}"
+        ) from exc
 
 
 def _validate_existing_codex_kit_subset(

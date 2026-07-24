@@ -5,9 +5,14 @@ from __future__ import annotations
 from pathlib import Path
 
 import multi_agent_brief.runtime_assets as runtime_assets
+import pytest
 from multi_agent_brief.cli.main import main
 from multi_agent_brief.install.writer import PlannedWrite
-from multi_agent_brief.runtime_assets import INSTALL_MARKER, JSONC_INSTALL_MARKER
+from multi_agent_brief.runtime_assets import (
+    INSTALL_MARKER,
+    JSONC_INSTALL_MARKER,
+    SKILL_NAME,
+)
 
 try:
     import tomllib
@@ -364,6 +369,81 @@ def test_runtime_install_all_rejects_late_claude_overwrite_before_any_write(
     assert not (ws / ".opencode").exists()
     assert not (ws / ".claude").exists()
     assert not (ws / "AGENTS.md").exists()
+
+
+def _assert_no_selected_runtime_kit_writes(workspace: Path) -> None:
+    assert not (workspace / ".codex").exists()
+    assert not (workspace / "AGENTS.md").exists()
+    assert not (workspace / "opencode.jsonc").exists()
+    assert not (workspace / ".opencode" / "agents").exists()
+    assert not (workspace / ".opencode" / "commands").exists()
+    assert not (workspace / ".claude" / "agents").exists()
+    assert not (workspace / ".claude" / "commands").exists()
+
+
+@pytest.mark.parametrize(
+    ("topology", "error_fragment"),
+    (
+        ("symlink_ancestor", "symlinked runtime install ancestor"),
+        ("file_ancestor", "non-directory runtime install ancestor"),
+        ("directory_leaf", "directory during runtime install"),
+    ),
+)
+@pytest.mark.parametrize("force", (False, True), ids=("without_force", "force"))
+@pytest.mark.parametrize("dry_run", (False, True), ids=("install", "dry_run"))
+def test_runtime_install_all_rejects_unsafe_destination_topology_before_any_write(
+    tmp_path: Path,
+    capsys,
+    topology: str,
+    error_fragment: str,
+    force: bool,
+    dry_run: bool,
+) -> None:
+    workspace = _workspace(tmp_path)
+    if topology == "symlink_ancestor":
+        alias = workspace / ".opencode" / "skills" / SKILL_NAME
+        alias.parent.mkdir(parents=True)
+        alias.symlink_to(
+            workspace / ".codex" / "skills" / "briefloop",
+            target_is_directory=True,
+        )
+        assert alias.is_symlink()
+    elif topology == "file_ancestor":
+        ancestor = workspace / ".claude"
+        ancestor.write_text("user-owned file\n", encoding="utf-8")
+    else:
+        leaf = workspace / "CLAUDE.md"
+        leaf.mkdir()
+
+    args = [
+        "runtime",
+        "install",
+        "--workspace",
+        str(workspace),
+        "--runtime",
+        "all",
+        "--repo-workdir",
+        str(ROOT),
+    ]
+    if force:
+        args.append("--force")
+    if dry_run:
+        args.append("--dry-run")
+
+    assert main(args) == 1
+    output = capsys.readouterr().out
+    assert error_fragment in output
+    assert "Planned workspace runtime kit for all" not in output
+    _assert_no_selected_runtime_kit_writes(workspace)
+
+    if topology == "symlink_ancestor":
+        assert (workspace / ".opencode" / "skills" / SKILL_NAME).is_symlink()
+    elif topology == "file_ancestor":
+        assert (workspace / ".claude").read_text(
+            encoding="utf-8"
+        ) == "user-owned file\n"
+    else:
+        assert (workspace / "CLAUDE.md").is_dir()
 
 
 def test_runtime_install_all_rejects_missing_retained_source_before_any_write(
