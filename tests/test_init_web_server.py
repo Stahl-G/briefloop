@@ -23,11 +23,27 @@ from multi_agent_brief.product.init_web.submit import (
 
 class _StubSubmitter:
     def __init__(
-        self, response_status: str = "committed", *, authorized: bool = True
+        self,
+        response_status: str = "committed",
+        *,
+        authorized: bool = True,
+        tavily_discovery: bool = False,
     ) -> None:
         self.calls: list[object] = []
         self._response_status = response_status
         self._authorized = authorized
+        self._tavily_discovery = tavily_discovery
+
+    def configure_search_secret(
+        self, *, session_id: str, body: object
+    ) -> dict[str, object]:
+        self.calls.append({"session_id": session_id, "secret": body})
+        return {
+            "ok": True,
+            "provider": "tavily",
+            "api_key_env": "TAVILY_API_KEY",
+            "configured": True,
+        }
 
     def submit(self, body: object) -> tuple[int, dict[str, object]]:
         self.calls.append(body)
@@ -58,6 +74,13 @@ class _StubSubmitter:
         else:
             response["completion_target"] = None
             response["repair_budget"] = None
+        if self._tavily_discovery:
+            response["source_discovery"] = {
+                "mode": "automatic",
+                "profile": "llm_decide",
+                "backend": "tavily",
+                "api_key_env": "TAVILY_API_KEY",
+            }
         return 200, response
 
 
@@ -121,7 +144,13 @@ def test_get_assets_and_security_headers(server) -> None:
     assert b"requestNumber !== STATE.outputContractPreviewRequest" in body
     assert b"else if (!hasCurrentOutputContractPreview())" in body
     assert b"finalized_local" in body
-    assert b"repair_budget: 1" in body
+    assert b"payload.repair_budget = 1" in body
+    assert b'/api/v1/search-secret' in body
+    assert (
+        b'web_search_mode: c.source === "public_web" ? "external_api" : "disabled"'
+        in body
+    )
+    assert b"search_secret_session_id" in body
     assert b"runtime continue --workspace" not in body
     assert b"response.workspace ||" not in body
     assert b"published_at: null" in body
@@ -134,7 +163,8 @@ def test_get_assets_and_security_headers(server) -> None:
     assert b"It does not deliver externally or display the final report" in body
     assert b"no RunExecutionAuthorization" in body
     assert b"This creates a local workspace/run without RunExecutionAuthorization" in body
-    assert b't(STATE.sourcePackValid ? "review_authorized_boundary" : "review_manual_boundary")' in body
+    assert b'"review_web_boundary"' in body
+    assert b'"review_authorized_boundary"' in body
     assert b"review_statement" not in body
     status, _headers, _body = _request(server, "GET", "/assets/style.css")
     assert status == 200
@@ -174,6 +204,31 @@ def test_post_requires_token_and_session(server) -> None:
         },
     )
     assert status == 409
+
+
+def test_search_secret_endpoint_is_token_bound_and_never_echoes_key(server) -> None:
+    token, session = _credentials(server.url)
+    secret = "tvly-test-secret-123"
+    status, _headers, body = _request(
+        server,
+        "POST",
+        f"/api/v1/search-secret?session_id={session}",
+        body=json.dumps({"provider": "tavily", "api_key": secret}).encode(),
+        headers={
+            "Content-Type": "application/json",
+            SESSION_TOKEN_HEADER: token,
+        },
+    )
+
+    assert status == 200
+    payload = json.loads(body)
+    assert payload == {
+        "api_key_env": "TAVILY_API_KEY",
+        "configured": True,
+        "ok": True,
+        "provider": "tavily",
+    }
+    assert secret.encode() not in body
 
 
 def test_post_rejects_other_routes_and_bad_envelope(server) -> None:
@@ -263,6 +318,37 @@ def test_manual_success_never_claims_authorized_terminal_or_budget() -> None:
         assert "completion_target" not in payload
         assert "repair_budget" not in payload
         assert b"finalized_local" not in body
+    finally:
+        instance.close()
+
+
+def test_public_web_success_reports_automatic_tavily_discovery() -> None:
+    instance = create_init_web_server(
+        _StubSubmitter(authorized=False, tavily_discovery=True),
+        exit_on_success=False,
+    )
+    instance.start()
+    try:
+        token, session = _credentials(instance.url)
+        status, _headers, body = _request(
+            instance,
+            "POST",
+            f"/api/v1/submit?session_id={session}",
+            body=_submit_body(),
+            headers={
+                "Content-Type": "application/json",
+                SESSION_TOKEN_HEADER: token,
+            },
+        )
+        payload = json.loads(body)
+        assert status == 200
+        assert payload["execution_authorized"] is False
+        assert payload["source_discovery"] == {
+            "mode": "automatic",
+            "profile": "llm_decide",
+            "backend": "tavily",
+            "api_key_env": "TAVILY_API_KEY",
+        }
     finally:
         instance.close()
 

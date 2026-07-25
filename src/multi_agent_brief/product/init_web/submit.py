@@ -19,6 +19,11 @@ from typing import Any, Callable
 from pydantic import ValidationError
 
 from multi_agent_brief.cli.init_wizard import create_workspace
+from multi_agent_brief.cli.secrets_commands import (
+    SecretImportError,
+    store_workspace_secret,
+)
+from multi_agent_brief.core.env import get_known_env_value
 from multi_agent_brief.contracts.v2 import (
     ExecutionSourceManifest,
     RunExecutionAuthorizationBootstrap,
@@ -101,6 +106,25 @@ def _profile_from_payload(payload: dict[str, Any]) -> InitProfile:
         resolve_output_extent(output_extent, str(output_language))
     except ValueError as exc:
         raise SubmissionError("submission_output_extent_invalid", 422) from exc
+    web_search_mode = selections.get("web_search_mode") or "disabled"
+    if web_search_mode not in {"disabled", "external_api"}:
+        raise SubmissionError("submission_web_search_mode_invalid", 422)
+    search_backend = selections.get("search_backend") or ""
+    if web_search_mode == "external_api" and search_backend != "tavily":
+        raise SubmissionError("submission_search_backend_invalid", 422)
+    if web_search_mode == "disabled" and search_backend:
+        raise SubmissionError("submission_search_backend_invalid", 422)
+    source_profile = selections.get("source_profile") or (
+        "llm_decide" if web_search_mode == "external_api" else "conservative"
+    )
+    if source_profile not in {
+        "conservative",
+        "research",
+        "aggressive_signal",
+        "custom",
+        "llm_decide",
+    }:
+        raise SubmissionError("submission_source_profile_invalid", 422)
     profile = InitProfile(
         interface_language=selections.get("interface_language") or "zh",
         output_language=output_language,
@@ -124,9 +148,11 @@ def _profile_from_payload(payload: dict[str, Any]) -> InitProfile:
         ),
         cadence=selections.get("cadence") or "weekly",
         output_formats=_require_text_list(formats, "submission_output_formats_invalid"),
-        web_search_mode=selections.get("web_search_mode") or "disabled",
-        web_search_enabled=(selections.get("web_search_mode") or "disabled")
-        != "disabled",
+        source_profile=source_profile,
+        web_search_mode=web_search_mode,
+        web_search_enabled=web_search_mode != "disabled",
+        search_backend=search_backend,
+        tavily_enabled=search_backend == "tavily",
         output_extent=output_extent,
     )
     return profile
@@ -171,6 +197,8 @@ class InitWebSubmitter:
         self._base_dir = Path(base_dir).expanduser().resolve() if base_dir else None
         self._adapter_loader = adapter_loader
         self._staging = InitWebStaging()
+        self._search_secret_lock = Lock()
+        self._pending_search_secrets: dict[str, str] = {}
 
     @classmethod
     def _target_lock(cls, target: Path) -> RLock:
@@ -181,7 +209,77 @@ class InitWebSubmitter:
     def close(self) -> None:
         """Remove only inert host-private staging bytes."""
 
+        with self._search_secret_lock:
+            self._pending_search_secrets.clear()
         self._staging.close()
+
+    def configure_search_secret(
+        self,
+        *,
+        session_id: str,
+        body: Any,
+    ) -> dict[str, object]:
+        """Retain one Tavily key in memory until its workspace is created."""
+
+        if (
+            not isinstance(body, dict)
+            or set(body) != {"provider", "api_key"}
+            or body.get("provider") != "tavily"
+        ):
+            raise SubmissionError("submission_search_secret_invalid", 422)
+        api_key = body.get("api_key")
+        if (
+            not isinstance(api_key, str)
+            or not 8 <= len(api_key) <= 512
+            or any(character.isspace() for character in api_key)
+        ):
+            raise SubmissionError("submission_search_secret_invalid", 422)
+        with self._search_secret_lock:
+            self._pending_search_secrets[session_id] = api_key
+        return {
+            "ok": True,
+            "provider": "tavily",
+            "api_key_env": "TAVILY_API_KEY",
+            "configured": True,
+        }
+
+    def _search_secret(
+        self,
+        *,
+        session_id: str,
+        target: Path,
+        profile: InitProfile,
+    ) -> str | None:
+        if profile.web_search_mode != "external_api":
+            return None
+        with self._search_secret_lock:
+            pending = self._pending_search_secrets.get(session_id, "")
+        value = pending or get_known_env_value("TAVILY_API_KEY", target)
+        if not value:
+            raise SubmissionError("submission_search_api_key_required", 422)
+        return value
+
+    def _forget_search_secret(self, session_id: str) -> None:
+        with self._search_secret_lock:
+            self._pending_search_secrets.pop(session_id, None)
+
+    @staticmethod
+    def _with_search_discovery(
+        response: dict[str, Any],
+        *,
+        profile: InitProfile,
+    ) -> dict[str, Any]:
+        if (
+            profile.web_search_mode == "external_api"
+            and profile.search_backend == "tavily"
+        ):
+            response["source_discovery"] = {
+                "mode": "automatic",
+                "profile": "llm_decide",
+                "backend": "tavily",
+                "api_key_env": "TAVILY_API_KEY",
+            }
+        return response
 
     def stage_upload(
         self,
@@ -477,6 +575,18 @@ class InitWebSubmitter:
             _require_text(payload.get("workspace_target"), "workspace_target_invalid")
         )
         profile = _profile_from_payload(payload)
+        search_secret_session_id = ""
+        search_secret: str | None = None
+        if profile.web_search_mode == "external_api":
+            search_secret_session_id = _require_text(
+                payload.get("search_secret_session_id"),
+                "submission_search_secret_invalid",
+            )
+            search_secret = self._search_secret(
+                session_id=search_secret_session_id,
+                target=target,
+                profile=profile,
+            )
         fingerprint, manifest, execution_authorization = self._semantic_submission(
             request_id=request_id,
             profile=profile,
@@ -489,11 +599,14 @@ class InitWebSubmitter:
             bootstrap = WorkspaceBootstrap(target)
             authority_kind = bootstrap.classify_target()
             if authority_kind == "sqlite":
-                return 200, self._replay_existing_store(
-                    target=target,
-                    expected_workspace_id=workspace_id,
-                    expected_run_id=run_id,
-                    request_workspace_prefix=request_workspace_prefix,
+                return 200, self._with_search_discovery(
+                    self._replay_existing_store(
+                        target=target,
+                        expected_workspace_id=workspace_id,
+                        expected_run_id=run_id,
+                        request_workspace_prefix=request_workspace_prefix,
+                    ),
+                    profile=profile,
                 )
             if authority_kind == "invalid_sqlite":
                 raise SubmissionError("control_store_integrity_invalid", 500)
@@ -555,17 +668,32 @@ class InitWebSubmitter:
                 execution_authorization=execution_authorization,
                 post_finalize_html=execution_authorization is not None,
             )
+            if search_secret is not None:
+                try:
+                    store_workspace_secret(
+                        workspace=target,
+                        key="TAVILY_API_KEY",
+                        value=search_secret,
+                    )
+                except SecretImportError as exc:
+                    raise SubmissionError(
+                        "submission_search_secret_store_failed", 500
+                    ) from exc
+                self._forget_search_secret(search_secret_session_id)
             try:
                 initialized = bootstrap.initialize_runnable_codex(
                     expected_adapter_loader=self._adapter_loader
                 )
             except RuntimeHostError as exc:
                 raise _runtime_submission_error(exc) from exc
-            return 200, self._receipt_response(
-                target=target,
-                workspace_id=workspace_id,
-                run_id=run_id,
-                status="committed" if initialized.initialized else "replayed",
+            return 200, self._with_search_discovery(
+                self._receipt_response(
+                    target=target,
+                    workspace_id=workspace_id,
+                    run_id=run_id,
+                    status="committed" if initialized.initialized else "replayed",
+                ),
+                profile=profile,
             )
 
 

@@ -167,6 +167,25 @@ def import_workspace_secrets(
     }
 
 
+def store_workspace_secret(
+    *,
+    workspace: Path,
+    key: str,
+    value: str,
+) -> None:
+    """Store one allowlisted secret without returning or hashing its value."""
+
+    requested = _normalize_keys([key])
+    if requested != [key] or key not in KNOWN_WORKSPACE_ENV_KEYS:
+        raise SecretImportError("unsupported secret key")
+    if not isinstance(value, str) or not value or any(
+        character.isspace() for character in value
+    ):
+        raise SecretImportError("secret value is invalid")
+    _require_existing_workspace(workspace)
+    _write_workspace_env(workspace / ".env", {key: value})
+
+
 def _require_existing_workspace(workspace: Path) -> None:
     if not workspace.exists():
         raise SecretImportError(

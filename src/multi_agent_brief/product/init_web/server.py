@@ -73,6 +73,7 @@ class InitWebSubmissionOutcome:
     run_id: str
     transaction_id: str
     status: str
+    execution_authorized: bool
 
 
 @dataclass
@@ -166,6 +167,14 @@ def create_init_web_server(
         if response.get("execution_authorized") is True:
             friendly["completion_target"] = response.get("completion_target")
             friendly["repair_budget"] = response.get("repair_budget")
+        source_discovery = response.get("source_discovery")
+        if isinstance(source_discovery, dict):
+            friendly["source_discovery"] = {
+                "mode": source_discovery.get("mode"),
+                "profile": source_discovery.get("profile"),
+                "backend": source_discovery.get("backend"),
+                "api_key_env": source_discovery.get("api_key_env"),
+            }
         return friendly
 
     def _shutdown_soon() -> None:
@@ -246,6 +255,7 @@ def create_init_web_server(
                 "/api/v1/output-contract-preview",
                 "/api/v1/source-manifest-preview",
                 "/api/v1/source-upload",
+                "/api/v1/search-secret",
             }:
                 self._reject(HTTPStatus.NOT_FOUND, "init_web_route_not_found")
                 return
@@ -313,6 +323,11 @@ def create_init_web_server(
                         session_id=session_id,
                         body=body,
                     )
+                elif target.path == "/api/v1/search-secret":
+                    status, response = HTTPStatus.OK, submitter.configure_search_secret(
+                        session_id=session_id,
+                        body=body,
+                    )
                 else:
                     status, response = submitter.submit(body)
             except SubmissionError as exc:
@@ -338,6 +353,9 @@ def create_init_web_server(
                     run_id=str(response.get("run_id")),
                     transaction_id=str(response.get("transaction_id")),
                     status=str(response.get("status")),
+                    execution_authorized=(
+                        response.get("execution_authorized") is True
+                    ),
                 )
                 with outcome_lock:
                     nonlocal successful_outcome

@@ -188,6 +188,85 @@ def test_committed_submission_creates_runnable_workspace_and_real_receipt(
     assert _revision(workspace) == revision_before
 
 
+def test_public_web_submission_stores_tavily_key_outside_run_contract(
+    tmp_path: Path,
+) -> None:
+    submitter = InitWebSubmitter(base_dir=tmp_path)
+    body = _body("REQ-WEB00001", "web-search-ws")
+    payload = body["payload"]
+    assert isinstance(payload, dict)
+    selections = payload["selections"]
+    assert isinstance(selections, dict)
+    selections.update(
+        {
+            "source_profile": "llm_decide",
+            "web_search_mode": "external_api",
+            "search_backend": "tavily",
+        }
+    )
+    payload["search_secret_session_id"] = "web-session"
+    configured = submitter.configure_search_secret(
+        session_id="web-session",
+        body={"provider": "tavily", "api_key": "tvly-test-secret-123"},
+    )
+    assert configured == {
+        "ok": True,
+        "provider": "tavily",
+        "api_key_env": "TAVILY_API_KEY",
+        "configured": True,
+    }
+
+    response = _submit_ok(submitter, body)
+
+    workspace = tmp_path / "web-search-ws"
+    secret_path = workspace / ".env"
+    assert secret_path.read_text(encoding="utf-8") == (
+        "TAVILY_API_KEY=tvly-test-secret-123\n"
+    )
+    assert secret_path.stat().st_mode & 0o777 == 0o600
+    sources = yaml.safe_load((workspace / "sources.yaml").read_text(encoding="utf-8"))
+    assert sources["source_strategy"]["profile"] == "llm_decide"
+    assert sources["web_search"]["mode"] == "external_api"
+    assert sources["web_search"]["backend"] == "tavily"
+    assert sources["web_search"]["api_key_env"] == "TAVILY_API_KEY"
+    assert response["execution_authorized"] is False
+    assert response["source_discovery"] == {
+        "mode": "automatic",
+        "profile": "llm_decide",
+        "backend": "tavily",
+        "api_key_env": "TAVILY_API_KEY",
+    }
+    assert "tvly-test-secret-123" not in json.dumps(response)
+    config_text = (workspace / "config.yaml").read_text(encoding="utf-8")
+    assert "tvly-test-secret-123" not in config_text
+    assert b"tvly-test-secret-123" not in (workspace / "briefloop.db").read_bytes()
+
+
+def test_public_web_submission_requires_secret_before_workspace_write(
+    tmp_path: Path,
+) -> None:
+    submitter = InitWebSubmitter(base_dir=tmp_path)
+    body = _body("REQ-WEB00002", "web-search-ws")
+    payload = body["payload"]
+    assert isinstance(payload, dict)
+    selections = payload["selections"]
+    assert isinstance(selections, dict)
+    selections.update(
+        {
+            "source_profile": "llm_decide",
+            "web_search_mode": "external_api",
+            "search_backend": "tavily",
+        }
+    )
+    payload["search_secret_session_id"] = "web-session"
+
+    with pytest.raises(SubmissionError) as exc_info:
+        submitter.submit(body)
+
+    assert exc_info.value.error_code == "submission_search_api_key_required"
+    assert not (tmp_path / "web-search-ws").exists()
+
+
 def test_authorized_submission_freezes_manifest_and_returns_first_action(
     tmp_path: Path,
 ) -> None:
