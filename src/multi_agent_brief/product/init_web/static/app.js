@@ -87,6 +87,7 @@
             review_path_k: "工作区位置",
             review_authorized_boundary: "这将创建并授权一个本地 run，完成目标为 finalized_local，修复预算为 1。它会返回初始化 Receipt，并把控制权交回当前 Codex 会话。它不会对外交付，也不会显示最终报告。",
             review_manual_boundary: "这将创建一个没有 RunExecutionAuthorization 的本地工作区/run。后续保持手动继续。它不会对外交付，也不会显示最终报告。",
+            review_web_boundary: "这将创建一个启用 Tavily 自动检索的工作区。Agent 根据报告主题提出检索词，确定性运行时调用 Tavily、冻结返回内容并记录来源；随后由当前 Codex 会话继续工作流。本次初始化不声明 finalized_local，也不会对外交付。",
             review_manifest_hash: "已确认 canonical manifest SHA-256",
             review_accept: "接受",
             review_discard: "丢弃",
@@ -122,6 +123,14 @@
             source_validating: "服务器正在校验来源清单……",
             source_ready: "来源文件与清单已逐项匹配",
             err_source_pack: "请先选择来源文件并确认有效清单。",
+            web_search_title: "启用 Tavily 自动检索",
+            web_search_note: "BriefLoop 会根据公司、报告主题、时间窗和关注点生成检索任务；运行时调用 Tavily 并冻结返回内容。Key 只写入新工作区的私有 .env，不进入运行合同、日志或报告。",
+            tavily_key_label: "Tavily API Key",
+            tavily_key_placeholder: "粘贴 Tavily Key（不会回显）",
+            tavily_key_save: "安全保存到后台 .env",
+            tavily_key_saving: "正在安全保存……",
+            tavily_key_ready: "Tavily 已配置；Key 不会进入提交正文。",
+            err_tavily_key: "请先填写并保存 Tavily API Key。",
             err_session: "缺少会话令牌：请使用初始化命令给出的完整链接打开本页。",
             status_ready: "可以确认创建。",
             status_fill: "完成必选项后即可创建。",
@@ -195,6 +204,7 @@
             review_path_k: "Workspace location",
             review_authorized_boundary: "This creates and authorizes a local run with completion target finalized_local and repair budget 1. It returns an initialization Receipt and hands control back to the current Codex session. It does not deliver externally or display the final report.",
             review_manual_boundary: "This creates a local workspace/run without RunExecutionAuthorization. Continuation remains manual. It does not deliver externally or display the final report.",
+            review_web_boundary: "This creates a workspace with Tavily automatic discovery enabled. An agent proposes searches from the report topic; the deterministic runtime calls Tavily, freezes returned content, and records source evidence before the current Codex session continues. This initialization does not claim finalized_local or external delivery.",
             review_manifest_hash: "Confirmed canonical manifest SHA-256",
             review_accept: "Accept",
             review_discard: "Discard",
@@ -230,6 +240,14 @@
             source_validating: "Server is validating the source manifest…",
             source_ready: "Every manifest member matches one selected file",
             err_source_pack: "Select source files and confirm a valid manifest first.",
+            web_search_title: "Enable Tavily automatic discovery",
+            web_search_note: "BriefLoop derives search tasks from the company, report topic, time window, and focus areas. The runtime calls Tavily and freezes returned content. The key is written only to the new workspace's private .env; it never enters the run contract, logs, or report.",
+            tavily_key_label: "Tavily API Key",
+            tavily_key_placeholder: "Paste Tavily key (never echoed)",
+            tavily_key_save: "Save securely to backend .env",
+            tavily_key_saving: "Saving securely…",
+            tavily_key_ready: "Tavily is configured; the key is excluded from the submission body.",
+            err_tavily_key: "Enter and save a Tavily API key first.",
             err_session: "Missing session token: open this page via the full link printed by the init command.",
             status_ready: "Ready to create.",
             status_fill: "Complete the required choices to continue.",
@@ -284,9 +302,8 @@
             { id: "bilingual", zh: ["中英对照", ""], en: ["Bilingual", ""] }
         ],
         sources: [
-            { id: "public_web", zh: ["公开网页（已登记）", "轻量公开来源"], en: ["Public web (registered)", "Light public sources"] },
+            { id: "public_web", zh: ["公开网页（Tavily 自动检索）", "按主题搜索并冻结公开来源"], en: ["Public web (Tavily automatic)", "Search by topic and freeze public sources"] },
             { id: "local_only", zh: ["仅本地材料", "离线，不上网"], en: ["Local material only", "Offline"] },
-            { id: "mixed", zh: ["本地 + 公开网页", ""], en: ["Local + public web", ""] }
         ],
         formats: [
             { id: "docx", zh: ["DOCX", "可打印、可批注"], en: ["DOCX", "Printable, annotatable"] },
@@ -453,6 +470,8 @@
         sourcePackValid: false,
         sourcePreviewing: false,
         sourceUploading: false,
+        searchSecretConfigured: false,
+        searchSecretSaving: false,
         submitting: false
     };
 
@@ -712,6 +731,13 @@
             recIds: { det: rec.density ? [rec.density] : [], agent: agentRecIds("density") },
             onChange: function () { paintPreview(); updateActionbar(); }
         });
+        var budgetContract = el("div", "review-path output-contract-inline");
+        budgetContract.appendChild(el("span", "k", t("review_output_contract")));
+        var inlineBudget = el("span", null, "…");
+        inlineBudget.id = "output-contract-budget";
+        budgetContract.appendChild(inlineBudget);
+        sectionsHost.appendChild(budgetContract);
+        requestOutputContractPreview();
         enumField(sectionsHost, {
             num: "2.4", titleKey: "sec_tables", list: CATALOG.tables,
             get: function () { return STATE.selections.tables; },
@@ -871,6 +897,7 @@
         g1.appendChild(tb1);
         sectionsHost.appendChild(g1);
 
+        if (STATE.selections.source === "local_only") {
         var sources = el("div", "review-group explicit source-pack-editor");
         var sourceHead = el("div", "review-group-head");
         sourceHead.appendChild(el("span", "dot"));
@@ -962,6 +989,37 @@
             sources.appendChild(manifestHash);
         }
         sectionsHost.appendChild(sources);
+        } else {
+            var webSearch = el("div", "review-group explicit source-pack-editor");
+            var webHead = el("div", "review-group-head");
+            webHead.appendChild(el("span", "dot"));
+            webHead.appendChild(el("span", null, t("web_search_title")));
+            webSearch.appendChild(webHead);
+            webSearch.appendChild(el("p", "section-note", t("web_search_note")));
+            var keyLabel = el("label", "source-input-label", t("tavily_key_label"));
+            var keyInput = el("input", "source-file-input");
+            keyInput.type = "password";
+            keyInput.autocomplete = "off";
+            keyInput.placeholder = t("tavily_key_placeholder");
+            keyLabel.appendChild(keyInput);
+            webSearch.appendChild(keyLabel);
+            var saveKey = el("button", "btn-ghost", t("tavily_key_save"));
+            saveKey.type = "button";
+            saveKey.disabled = STATE.searchSecretSaving;
+            saveKey.addEventListener("click", function () {
+                configureTavilySecret(keyInput.value);
+                keyInput.value = "";
+            });
+            webSearch.appendChild(saveKey);
+            webSearch.appendChild(el(
+                "p",
+                STATE.searchSecretConfigured ? "source-pack-status ok" : "source-pack-status",
+                STATE.searchSecretSaving
+                    ? t("tavily_key_saving")
+                    : (STATE.searchSecretConfigured ? t("tavily_key_ready") : t("err_tavily_key"))
+            ));
+            sectionsHost.appendChild(webSearch);
+        }
 
         var g2 = el("div", "review-group proposed");
         var h2 = el("div", "review-group-head");
@@ -1036,7 +1094,11 @@
         sectionsHost.appendChild(el(
             "p",
             "review-warning",
-            t(STATE.sourcePackValid ? "review_authorized_boundary" : "review_manual_boundary")
+            t(
+                STATE.selections.source === "public_web"
+                    ? "review_web_boundary"
+                    : (STATE.sourcePackValid ? "review_authorized_boundary" : "review_manual_boundary")
+            )
         ));
     }
 
@@ -1215,9 +1277,19 @@
                 btnConfirm.disabled = true;
                 confirmStatus.textContent = t("err_output_contract_preview");
                 confirmStatus.classList.add("err");
-            } else if (!STATE.sourcePackValid || STATE.sourceUploading) {
+            } else if (
+                STATE.selections.source === "local_only"
+                && (!STATE.sourcePackValid || STATE.sourceUploading)
+            ) {
                 btnConfirm.disabled = true;
                 confirmStatus.textContent = t("err_source_pack");
+                confirmStatus.classList.add("err");
+            } else if (
+                STATE.selections.source === "public_web"
+                && !STATE.searchSecretConfigured
+            ) {
+                btnConfirm.disabled = true;
+                confirmStatus.textContent = t("err_tavily_key");
                 confirmStatus.classList.add("err");
             } else {
                 btnConfirm.disabled = false;
@@ -1339,39 +1411,46 @@
         var objective = String(c.purpose || "").trim() || STATE.freeText.trim();
         var cadence = c.cadence === "one_time" ? "ad_hoc" : String(c.cadence || "weekly");
         if (["weekly", "biweekly", "monthly", "ad_hoc"].indexOf(cadence) < 0) cadence = "weekly";
+        var payload = {
+            workspace_target: STATE.workspaceTarget,
+            selections: {
+                company: String(c.company || "").trim(),
+                industry_or_theme: reportLabel,
+                task_objective: objective,
+                brief_title: String(c.brief_title || "").trim(),
+                audience: audience,
+                interface_language: LANG,
+                output_language: c.language === "en" ? "en" : "zh",
+                cadence: cadence,
+                focus_areas: [reportLabel],
+                output_formats: (c.formats || []).slice(),
+                forbidden_sources: c.source === "local_only" ? ["public_web"] : [],
+                source_profile: c.source === "public_web" ? "llm_decide" : "conservative",
+                web_search_mode: c.source === "public_web" ? "external_api" : "disabled",
+                search_backend: c.source === "public_web" ? "tavily" : "",
+                output_extent: c.density
+            },
+            raw_free_text: STATE.freeText.trim(),
+            discarded: STATE.interpretation.mapped.filter(function (m) {
+                return STATE.dispositions[m.field + ":" + m.value] === "discarded";
+            }).map(function (m) { return m.field + "=" + m.value; }),
+            human_confirmation: true
+        };
+        if (c.source === "local_only") {
+            payload.completion_target = "finalized_local";
+            payload.repair_budget = 1;
+            payload.source_manifest_mode = STATE.sourceManifestMode;
+            payload.source_metadata = STATE.sourceConfirmedMetadata;
+            payload.source_manifest = STATE.sourceCanonicalManifest;
+            payload.upload_session_id = SESSION.sessionId;
+            payload.upload_bindings = STATE.sourceCanonicalBindings;
+        } else {
+            payload.search_secret_session_id = SESSION.sessionId;
+        }
         return {
             schema_version: "briefloop.init_web.submission.v1",
             request_id: STATE.requestId,
-            payload: {
-                workspace_target: STATE.workspaceTarget,
-                selections: {
-                    company: String(c.company || "").trim(),
-                    industry_or_theme: reportLabel,
-                    task_objective: objective,
-                    brief_title: String(c.brief_title || "").trim(),
-                    audience: audience,
-                    interface_language: LANG,
-                    output_language: c.language === "en" ? "en" : "zh",
-                    cadence: cadence,
-                    focus_areas: [reportLabel],
-                    output_formats: (c.formats || []).slice(),
-                    forbidden_sources: c.source === "local_only" ? ["public_web"] : [],
-                    web_search_mode: "disabled",
-                    output_extent: c.density
-                },
-                raw_free_text: STATE.freeText.trim(),
-                discarded: STATE.interpretation.mapped.filter(function (m) {
-                    return STATE.dispositions[m.field + ":" + m.value] === "discarded";
-                }).map(function (m) { return m.field + "=" + m.value; }),
-                completion_target: "finalized_local",
-                repair_budget: 1,
-                source_manifest_mode: STATE.sourceManifestMode,
-                source_metadata: STATE.sourceConfirmedMetadata,
-                source_manifest: STATE.sourceCanonicalManifest,
-                upload_session_id: SESSION.sessionId,
-                upload_bindings: STATE.sourceCanonicalBindings,
-                human_confirmation: true // set only here, from the explicit confirm button
-            }
+            payload: payload
         };
     }
 
@@ -1445,6 +1524,45 @@
                 routed.expected_content_sha256 = STATE.sourceRoutingHashes[index];
             }
             return routed;
+        });
+    }
+
+    function configureTavilySecret(apiKey) {
+        if (STATE.searchSecretSaving) return;
+        if (!apiKey || apiKey.length < 8 || /\s/.test(apiKey)) {
+            STATE.searchSecretConfigured = false;
+            renderStage3();
+            updateActionbar();
+            return;
+        }
+        STATE.searchSecretSaving = true;
+        STATE.searchSecretConfigured = false;
+        renderStage3();
+        updateActionbar();
+        fetch("/api/v1/search-secret?session_id=" + encodeURIComponent(SESSION.sessionId), {
+            method: "POST",
+            headers: {
+                "Content-Type": "application/json",
+                "X-BriefLoop-Session-Token": SESSION.token
+            },
+            credentials: "same-origin",
+            cache: "no-store",
+            body: JSON.stringify({ provider: "tavily", api_key: apiKey })
+        }).then(function (response) {
+            return response.json().then(function (body) {
+                if (!response.ok || body.configured !== true) {
+                    throw new Error(body.reason_code || "secret");
+                }
+                STATE.searchSecretSaving = false;
+                STATE.searchSecretConfigured = true;
+                renderStage3();
+                updateActionbar();
+            });
+        }).catch(function () {
+            STATE.searchSecretSaving = false;
+            STATE.searchSecretConfigured = false;
+            renderStage3();
+            updateActionbar();
         });
     }
 
@@ -1621,8 +1739,12 @@
         var next = el("p", "cf-next");
         next.appendChild(el("span", null, t("cf_next")));
         var firstAction = response.first_action || {};
+        var discovery = response.source_discovery || {};
+        var continuationLabel = discovery.backend === "tavily"
+            ? "Tavily automatic discovery · "
+            : "manual continuation · ";
         next.appendChild(el("code", null,
-            (response.execution_authorized === true ? "finalized_local · " : "manual continuation · ") +
+            (response.execution_authorized === true ? "finalized_local · " : continuationLabel) +
             String(firstAction.reason_code || firstAction.effect_kind || "initialized")));
         cfBody.appendChild(next);
 
