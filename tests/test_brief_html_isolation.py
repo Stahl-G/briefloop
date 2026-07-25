@@ -47,9 +47,13 @@ ALLOWED_IMPORTS = {
     },
     "init_web/submit.py": {
         "multi_agent_brief.cli.init_wizard",
+        # Public-search setup may use only the deterministic secret writer and
+        # known-environment lookup; the key never enters the run contract.
+        "multi_agent_brief.cli.secrets_commands",
         "multi_agent_brief.contracts.v2",
         "multi_agent_brief.control_store",
         "multi_agent_brief.control_store.serialization",
+        "multi_agent_brief.core.env",
         # RUN-UX-1A uses the sole Core-owned catalog only for bounded,
         # zero-write semantic extent validation and preview resolution.
         "multi_agent_brief.core_run_v2.output_contract",

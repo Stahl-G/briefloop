@@ -5,6 +5,7 @@ from __future__ import annotations
 from concurrent.futures import ThreadPoolExecutor
 from copy import deepcopy
 import json
+import os
 from io import BytesIO
 import yaml
 
@@ -223,7 +224,10 @@ def test_public_web_submission_stores_tavily_key_outside_run_contract(
     assert secret_path.read_text(encoding="utf-8") == (
         "TAVILY_API_KEY=tvly-test-secret-123\n"
     )
-    assert secret_path.stat().st_mode & 0o777 == 0o600
+    # POSIX mode bits express the workspace-secret contract. Windows reports
+    # synthetic mode bits and protects the file through its inherited ACL.
+    if os.name != "nt":
+        assert secret_path.stat().st_mode & 0o777 == 0o600
     sources = yaml.safe_load((workspace / "sources.yaml").read_text(encoding="utf-8"))
     assert sources["source_strategy"]["profile"] == "llm_decide"
     assert sources["web_search"]["mode"] == "external_api"
