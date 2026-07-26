@@ -45,6 +45,18 @@ class _PresentationContext(NamedTuple):
     presentation: LocalRunPresentation
 
 
+_FINALIZED_LOCAL_KNOWN_PACKAGE_STATES = frozenset(
+    {
+        "core_active",
+        "auditor_ready",
+        "rendered",
+        "gate_blocked",
+        "finalized",
+        "finalized_local",
+        "package_ready",
+        "invalid",
+    }
+)
 _FINALIZED_LOCAL_KNOWN_TERMINAL_STATES = frozenset(
     {
         "core_active",
@@ -290,6 +302,12 @@ def _exact_finalized_local_action(verified: VerifiedCoreRun):
         terminal = classify_terminal_legality(verified.snapshot)
     except (CoreRunError, RuntimeError, ValueError) as exc:
         raise RuntimeHostError("control_store_integrity_invalid") from exc
+    package_state = terminal.package_state
+    if (
+        package_state == "invalid"
+        or package_state not in _FINALIZED_LOCAL_KNOWN_PACKAGE_STATES
+    ):
+        raise RuntimeHostError("control_store_integrity_invalid")
     exact_action = (
         action.action_kind == "complete"
         and action.effect_kind == "finalized_local"
@@ -298,8 +316,7 @@ def _exact_finalized_local_action(verified: VerifiedCoreRun):
     terminal_state = terminal.terminal_state
     exact_terminal = terminal_state == "finalized_local"
     if (
-        terminal.package_state == "invalid"
-        or terminal_state == "invalid"
+        terminal_state == "invalid"
         or terminal_state not in _FINALIZED_LOCAL_KNOWN_TERMINAL_STATES
     ):
         raise RuntimeHostError("control_store_integrity_invalid")
