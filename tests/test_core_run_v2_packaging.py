@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import os
 from pathlib import Path, PureWindowsPath
 import shutil
@@ -8,8 +9,20 @@ import sys
 import textwrap
 import zipfile
 
+import pytest
+
+from tests.test_runtime_host_v2 import _adapter
+
+from multi_agent_brief.cli.init_wizard import create_demo_workspace
 from multi_agent_brief.product.projection_platform import (
     supports_retained_directory_publication,
+)
+from multi_agent_brief.runtime_host_v2 import (
+    RuntimeHostError,
+    build_finalized_local_review_projection,
+)
+from multi_agent_brief.runtime_host_v2.initialization import (
+    initialize_or_open_runtime,
 )
 
 
@@ -121,6 +134,92 @@ def test_non_editable_wheel_runtime_install_all_uses_explicit_source_repo(
         text=True,
     )
     assert run.returncode == 0, run.stdout + run.stderr
+
+
+def test_finalized_local_review_projection_source_and_wheel_parity(
+    tmp_path: Path,
+) -> None:
+    workspace = tmp_path / "nonterminal-workspace"
+    create_demo_workspace(workspace)
+    initialize_or_open_runtime(workspace, adapter_loader=_adapter)
+    with pytest.raises(RuntimeHostError) as source_error:
+        build_finalized_local_review_projection(workspace)
+    source_payload = {"ok": False, "reason_code": str(source_error.value)}
+    assert source_payload == {"ok": False, "reason_code": "run_not_finalized_local"}
+
+    build_root = tmp_path / "build-root"
+    build_root.mkdir()
+    shutil.copy2(ROOT / "pyproject.toml", build_root / "pyproject.toml")
+    shutil.copy2(ROOT / "README.md", build_root / "README.md")
+    shutil.copytree(ROOT / "src", build_root / "src")
+    wheel_dir = tmp_path / "wheel"
+    wheel_dir.mkdir()
+    build = subprocess.run(
+        [
+            sys.executable,
+            "-m",
+            "pip",
+            "wheel",
+            ".",
+            "--no-deps",
+            "--no-build-isolation",
+            "--wheel-dir",
+            str(wheel_dir),
+        ],
+        cwd=build_root,
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    assert build.returncode == 0, build.stdout + build.stderr
+    wheel_path = next(wheel_dir.glob("briefloop-*.whl"))
+    installed = tmp_path / "installed"
+    installed.mkdir()
+    with zipfile.ZipFile(wheel_path) as archive:
+        archive.extractall(installed)
+    script = textwrap.dedent(
+        """
+        import json
+        from pathlib import Path
+        import sys
+
+        from multi_agent_brief.runtime_host_v2 import (
+            RuntimeHostError,
+            build_finalized_local_review_projection,
+        )
+
+        try:
+            projection = build_finalized_local_review_projection(Path(sys.argv[1]))
+        except RuntimeHostError as error:
+            payload = {"ok": False, "reason_code": str(error)}
+        else:
+            payload = {
+                "ok": True,
+                "projection": projection.model_dump(
+                    mode="json", exclude_unset=False
+                ),
+            }
+        print(json.dumps(payload, ensure_ascii=False, sort_keys=True))
+        """
+    )
+    script_path = tmp_path / "wheel_finalized_local_review_facts.py"
+    script_path.write_bytes(script.encode("utf-8"))
+    environment = dict(os.environ)
+    environment["PYTHONPATH"] = str(installed)
+    run = subprocess.run(
+        _wheel_e2e_command(
+            script_path=script_path,
+            workspace=workspace,
+            installed=installed,
+        ),
+        cwd=tmp_path,
+        env=environment,
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    assert run.returncode == 0, run.stdout + run.stderr
+    assert json.loads(run.stdout) == source_payload
 
 
 def test_non_editable_wheel_runs_complete_dormant_core_spine(
