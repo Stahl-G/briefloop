@@ -163,6 +163,10 @@ def test_non_editable_wheel_runtime_install_all_uses_explicit_source_repo(
     assert run.returncode == 0, run.stdout + run.stderr
 
 
+@pytest.mark.skipif(
+    not supports_retained_directory_publication(),
+    reason="successful finalized-local projection is unavailable on this platform",
+)
 def test_finalized_local_review_projection_source_and_wheel_parity(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
