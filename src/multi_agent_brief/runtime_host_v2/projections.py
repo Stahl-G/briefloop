@@ -262,18 +262,25 @@ def _exact_finalized_local_action(verified: VerifiedCoreRun):
     exact_terminal = terminal.terminal_state == "finalized_local"
     if terminal.package_state == "invalid":
         raise RuntimeHostError("control_store_integrity_invalid")
-    if exact_action and exact_terminal:
-        return action, terminal
-    if verified.snapshot.finalizations and (
-        exact_terminal
-        or terminal.terminal_state
-        in {"core_active", "auditor_ready", "rendered", "gate_blocked"}
-    ):
-        # A completed-local terminal with incomplete retained lineage must be
-        # classified by its record/receipt shape before action disagreement.
-        return action, terminal
+    if terminal.terminal_state in {
+        "package_ready",
+        "approval_incomplete",
+        "authorization_missing_or_denied",
+        "attempt_pending",
+        "delivery_outcome_unknown",
+        "delivery_failed",
+        "draft_created",
+        "delivered",
+    }:
+        raise RuntimeHostError("run_not_finalized_local")
     if exact_action != exact_terminal:
         raise RuntimeHostError("control_store_integrity_invalid")
+    if exact_action:
+        return action, terminal
+    if verified.snapshot.finalizations:
+        # With no action/terminal disagreement, an incomplete retained local
+        # finalization is a lineage failure rather than a nonterminal run.
+        return action, terminal
     raise RuntimeHostError("run_not_finalized_local")
 
 

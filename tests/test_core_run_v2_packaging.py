@@ -12,6 +12,11 @@ import zipfile
 import pytest
 
 from tests.test_runtime_host_v2 import _adapter
+from tests.test_runtime_host_continue_v2 import (
+    _authorized_workspace,
+    _service,
+    _write_current_role_proposal,
+)
 
 from multi_agent_brief.cli.init_wizard import create_demo_workspace
 from multi_agent_brief.product.projection_platform import (
@@ -27,6 +32,28 @@ from multi_agent_brief.runtime_host_v2.initialization import (
 
 
 ROOT = Path(__file__).parents[1]
+
+
+def _real_finalized_local_workspace(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> Path:
+    """Create one verifier-valid finalized-local history without test-only Gate seams."""
+
+    workspace = _authorized_workspace(tmp_path)
+    monkeypatch.setattr(
+        "multi_agent_brief.product.brief_html.render.webbrowser.open",
+        lambda _uri: False,
+    )
+    service = _service(workspace)
+    for _ in range(12):
+        result = service.continue_authorized()
+        if result.status == "finalized_local":
+            assert result.reason_code == "local_finalization_complete"
+            return workspace
+        assert result.status == "role_work_required", result.reason_code
+        _write_current_role_proposal(workspace, result)
+    raise AssertionError("real finalized-local workspace did not terminate")
 
 
 def _wheel_e2e_command(
@@ -138,14 +165,21 @@ def test_non_editable_wheel_runtime_install_all_uses_explicit_source_repo(
 
 def test_finalized_local_review_projection_source_and_wheel_parity(
     tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    workspace = tmp_path / "nonterminal-workspace"
-    create_demo_workspace(workspace)
-    initialize_or_open_runtime(workspace, adapter_loader=_adapter)
-    with pytest.raises(RuntimeHostError) as source_error:
-        build_finalized_local_review_projection(workspace)
-    source_payload = {"ok": False, "reason_code": str(source_error.value)}
-    assert source_payload == {"ok": False, "reason_code": "run_not_finalized_local"}
+    workspace = _real_finalized_local_workspace(tmp_path, monkeypatch)
+    source_payload = build_finalized_local_review_projection(workspace).model_dump(
+        mode="json", exclude_unset=False
+    )
+    facts = source_payload["facts"]
+    assert facts["terminal_state"] == "finalized_local"
+    assert facts["terminal_action_fingerprint"]
+    assert facts["finalization_receipt_id"]
+    assert facts["report"]["render_receipt_id"]
+    assert facts["report"]["artifact_revision"] > 0
+    assert facts["report"]["markdown_utf8"]
+    assert facts["gate_bindings"]
+    assert facts["facts_fingerprint"]
 
     build_root = tmp_path / "build-root"
     build_root.mkdir()
@@ -183,23 +217,20 @@ def test_finalized_local_review_projection_source_and_wheel_parity(
         from pathlib import Path
         import sys
 
+        import multi_agent_brief
         from multi_agent_brief.runtime_host_v2 import (
-            RuntimeHostError,
             build_finalized_local_review_projection,
         )
 
-        try:
-            projection = build_finalized_local_review_projection(Path(sys.argv[1]))
-        except RuntimeHostError as error:
-            payload = {"ok": False, "reason_code": str(error)}
-        else:
-            payload = {
-                "ok": True,
-                "projection": projection.model_dump(
-                    mode="json", exclude_unset=False
-                ),
-            }
-        print(json.dumps(payload, ensure_ascii=False, sort_keys=True))
+        workspace = Path(sys.argv[1])
+        installed = Path(sys.argv[2]).resolve()
+        assert Path(multi_agent_brief.__file__).resolve().is_relative_to(installed)
+        projection = build_finalized_local_review_projection(workspace)
+        print(json.dumps(
+            projection.model_dump(mode="json", exclude_unset=False),
+            ensure_ascii=False,
+            sort_keys=True,
+        ))
         """
     )
     script_path = tmp_path / "wheel_finalized_local_review_facts.py"

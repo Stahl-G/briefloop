@@ -382,12 +382,21 @@ def test_finalized_local_review_projection_rejects_receipt_render_and_gate_linea
         build_finalized_local_review_projection(workspace)
 
 
-def test_finalized_local_review_projection_rejects_action_terminal_disagreement(
+def test_finalized_local_review_projection_prioritizes_action_terminal_integrity(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     workspace, _run_id, _clock = _finalized_local_workspace(tmp_path, monkeypatch)
     context = projections._load_presentation_context(workspace)
+    finalization = context.verified.snapshot.finalizations[0]
+    malformed_snapshot = replace(
+        context.verified.snapshot,
+        finalizations=(
+            finalization.model_copy(
+                update={"accepted_transaction_id": "REQ-MISSING-FINALIZATION"}
+            ),
+        ),
+    )
     monkeypatch.setattr(
         projections,
         "classify_terminal_legality",
@@ -399,7 +408,7 @@ def test_finalized_local_review_projection_rejects_action_terminal_disagreement(
     monkeypatch.setattr(
         projections,
         "_load_presentation_context",
-        lambda _workspace: context,
+        lambda _workspace: _context_with_snapshot(context, malformed_snapshot),
     )
 
     with pytest.raises(RuntimeHostError, match="control_store_integrity_invalid"):
