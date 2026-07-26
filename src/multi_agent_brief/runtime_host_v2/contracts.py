@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import hashlib
+import json
 from typing import Literal
 
 from pydantic import Field, model_validator
@@ -11,11 +13,13 @@ from multi_agent_brief.contracts.v2 import (
     ContractId,
     CleanText,
     CoreRunNextAction,
+    GateId,
     HttpUrlString,
     IsoDate,
     IsoDateTime,
     MimeType,
     NonNegativeInt,
+    PositiveInt,
     Sha256,
     ScratchInputPath,
     StrictModel,
@@ -111,7 +115,9 @@ class HumanSourcePackMember(StrictModel):
             raise ValueError("human source material must be under input")
         if self.document_kind == "status_incident":
             if self.opened_at is None or self.published_at is not None:
-                raise ValueError("status incident requires opened_at instead of published_at")
+                raise ValueError(
+                    "status incident requires opened_at instead of published_at"
+                )
         elif self.opened_at is not None or self.resolved_at is not None:
             raise ValueError("incident timestamps require status_incident")
         return self
@@ -135,8 +141,14 @@ class FrozenSourceManifestEntry(StrictModel):
     def temporal_shape_is_explicit(self) -> "FrozenSourceManifestEntry":
         if self.document_kind == "status_incident":
             if self.opened_at is None or self.published_at is not None:
-                raise ValueError("status incident requires opened_at instead of published_at")
-        elif self.published_at is None or self.opened_at is not None or self.resolved_at is not None:
+                raise ValueError(
+                    "status incident requires opened_at instead of published_at"
+                )
+        elif (
+            self.published_at is None
+            or self.opened_at is not None
+            or self.resolved_at is not None
+        ):
             raise ValueError("ordinary source requires published_at")
         return self
 
@@ -391,6 +403,147 @@ class LocalRunPresentation(StrictModel):
     presentation: LocalPresentationResult
 
 
+class FinalizedLocalGateBinding(StrictModel):
+    """One receipt-bound finalize Gate observation for the local terminal."""
+
+    schema_id = "briefloop.finalized_local_gate_binding.v2"
+
+    schema_version: Literal["briefloop.finalized_local_gate_binding.v2"]
+    evaluation_id: ContractId
+    gate_batch_id: ContractId
+    gate_id: GateId
+    stage_id: Literal["finalize"]
+    accepted_transaction_id: ContractId
+
+
+class FinalizedLocalReportBinding(StrictModel):
+    """Exact immutable reader revision selected by the finalization render."""
+
+    schema_id = "briefloop.finalized_local_report_binding.v2"
+
+    schema_version: Literal["briefloop.finalized_local_report_binding.v2"]
+    render_id: ContractId
+    render_receipt_id: ContractId
+    artifact_id: Literal["reader_brief"]
+    artifact_revision: PositiveInt
+    relative_path: WorkspacePath
+    sha256: Sha256
+    size_bytes: NonNegativeInt
+    markdown_utf8: bytes
+
+    @model_validator(mode="after")
+    def immutable_reader_bytes_match_identity(self) -> "FinalizedLocalReportBinding":
+        try:
+            self.markdown_utf8.decode("utf-8", errors="strict")
+        except UnicodeDecodeError as exc:
+            raise ValueError("reader brief must be strict UTF-8") from exc
+        if len(self.markdown_utf8) != self.size_bytes:
+            raise ValueError("reader brief size does not match immutable bytes")
+        if hashlib.sha256(self.markdown_utf8).hexdigest() != self.sha256:
+            raise ValueError("reader brief SHA-256 does not match immutable bytes")
+        return self
+
+
+class FinalizedLocalReviewFacts(StrictModel):
+    """Strict, read-only facts needed to review one finalized-local run."""
+
+    schema_id = "briefloop.finalized_local_review_facts.v2"
+
+    schema_version: Literal["briefloop.finalized_local_review_facts.v2"]
+    boundary: Literal[
+        "read_only_projection_not_runtime_gate_approval_delivery_or_provider_authority"
+    ]
+    workspace_id: ContractId
+    run_id: ContractId
+    store_revision: NonNegativeInt
+    terminal_state: Literal["finalized_local"]
+    terminal_action_fingerprint: Sha256
+    finalization_id: ContractId
+    finalization_receipt_id: ContractId
+    finalize_gate_batch_id: ContractId
+    gate_bindings: list[FinalizedLocalGateBinding] = Field(min_length=1)
+    report: FinalizedLocalReportBinding
+    facts_fingerprint: Sha256
+
+    @staticmethod
+    def _fingerprint_payload(payload: dict[str, object]) -> str:
+        """Return the canonical JSON fingerprint without the self field."""
+
+        canonical = dict(payload)
+        canonical.pop("facts_fingerprint", None)
+        try:
+            encoded = json.dumps(
+                canonical,
+                ensure_ascii=False,
+                sort_keys=True,
+                separators=(",", ":"),
+                allow_nan=False,
+            ).encode("utf-8")
+        except (TypeError, ValueError) as exc:
+            raise ValueError("finalized-local facts are not canonical JSON") from exc
+        return hashlib.sha256(encoded).hexdigest()
+
+    @classmethod
+    def fingerprint_for(cls, payload: dict[str, object]) -> str:
+        """Calculate the public, canonical facts fingerprint for a payload."""
+
+        return cls._fingerprint_payload(payload)
+
+    @model_validator(mode="after")
+    def facts_are_canonical_and_bound(self) -> "FinalizedLocalReviewFacts":
+        bindings = [(item.gate_id, item.evaluation_id) for item in self.gate_bindings]
+        evaluation_ids = [item.evaluation_id for item in self.gate_bindings]
+        if (
+            bindings != sorted(bindings)
+            or len(evaluation_ids) != len(set(evaluation_ids))
+            or any(
+                item.gate_batch_id != self.finalize_gate_batch_id
+                for item in self.gate_bindings
+            )
+        ):
+            raise ValueError("finalize Gate bindings must be sorted and exact")
+        expected = self._fingerprint_payload(
+            self.model_dump(mode="json", exclude={"facts_fingerprint"})
+        )
+        if self.facts_fingerprint != expected:
+            raise ValueError("finalized-local facts fingerprint mismatch")
+        return self
+
+
+class FinalizedLocalReviewProjection(StrictModel):
+    """One strict Core-derived finalized-local facts projection."""
+
+    schema_id = "briefloop.finalized_local_review_projection.v2"
+
+    schema_version: Literal["briefloop.finalized_local_review_projection.v2"]
+    facts: FinalizedLocalReviewFacts
+    local_run: LocalRunPresentation
+
+    @model_validator(mode="after")
+    def local_presentation_matches_exact_finalized_facts(
+        self,
+    ) -> "FinalizedLocalReviewProjection":
+        local = self.local_run
+        report = self.facts.report
+        if (
+            local.run_id != self.facts.run_id
+            or local.store_revision != self.facts.store_revision
+            or local.completion_target != "finalized_local"
+            or local.view_state != "finalized"
+            or local.terminal_state != "finalized_local"
+            or local.next_action.action_kind != "complete"
+            or local.next_action.effect_kind != "finalized_local"
+            or local.next_action.reason_code != "local_finalization_complete"
+            or local.reader_brief.state != "available"
+            or local.reader_brief.artifact_id != report.artifact_id
+            or local.reader_brief.revision != report.artifact_revision
+            or local.reader_brief.sha256 != report.sha256
+            or local.reader_brief.markdown_utf8 != report.markdown_utf8
+        ):
+            raise ValueError("local presentation does not match finalized-local facts")
+        return self
+
+
 class RuntimeContinuationResult(StrictModel):
     """One bounded, Store-derived authorized continuation observation."""
 
@@ -430,6 +583,10 @@ class RepairContentInput(StrictModel):
 
 __all__ = [
     "FrozenSourceManifestEntry",
+    "FinalizedLocalGateBinding",
+    "FinalizedLocalReportBinding",
+    "FinalizedLocalReviewFacts",
+    "FinalizedLocalReviewProjection",
     "GateRepairContext",
     "GateRepairFindingContext",
     "GateRepairStartRequest",

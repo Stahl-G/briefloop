@@ -14,7 +14,10 @@ from multi_agent_brief.control_store.sqlite_store import ControlStoreHistory
 from multi_agent_brief.control_store.serialization import sha256_hex
 from multi_agent_brief.core_run_v2.errors import CoreRunError
 from multi_agent_brief.core_run_v2.next_action import classify_core_run_next_action
-from multi_agent_brief.core_run_v2.policy import core_role_topology_policy
+from multi_agent_brief.core_run_v2.policy import (
+    core_role_topology_policy,
+    transaction_type_for,
+)
 from multi_agent_brief.core_run_v2.terminal import classify_terminal_legality
 from multi_agent_brief.core_run_v2.verifier import (
     CoreRunDomainVerifier,
@@ -22,6 +25,10 @@ from multi_agent_brief.core_run_v2.verifier import (
 )
 
 from .contracts import (
+    FinalizedLocalGateBinding,
+    FinalizedLocalReportBinding,
+    FinalizedLocalReviewFacts,
+    FinalizedLocalReviewProjection,
     LocalPresentationResult,
     LocalReaderBrief,
     LocalRunPresentation,
@@ -36,6 +43,54 @@ class _PresentationContext(NamedTuple):
     history: ControlStoreHistory
     verified: VerifiedCoreRun
     presentation: LocalRunPresentation
+
+
+_FINALIZED_LOCAL_KNOWN_PACKAGE_STATES = frozenset(
+    {
+        "core_active",
+        "auditor_ready",
+        "rendered",
+        "gate_blocked",
+        "finalized",
+        "finalized_local",
+        "package_ready",
+        "invalid",
+    }
+)
+_FINALIZED_LOCAL_KNOWN_TERMINAL_STATES = frozenset(
+    {
+        "core_active",
+        "auditor_ready",
+        "rendered",
+        "gate_blocked",
+        "finalized",
+        "finalized_local",
+        "package_ready",
+        "approval_incomplete",
+        "authorization_missing_or_denied",
+        "attempt_pending",
+        "delivery_outcome_unknown",
+        "delivery_failed",
+        "draft_created",
+        "delivered",
+        "invalid",
+    }
+)
+_FINALIZED_LOCAL_LATER_TERMINAL_STATES = frozenset(
+    {
+        "package_ready",
+        "approval_incomplete",
+        "authorization_missing_or_denied",
+        "attempt_pending",
+        "delivery_outcome_unknown",
+        "delivery_failed",
+        "draft_created",
+        "delivered",
+    }
+)
+_FINALIZED_LOCAL_INCOMPLETE_TERMINAL_STATES = frozenset(
+    {"core_active", "auditor_ready", "rendered", "gate_blocked", "finalized"}
+)
 
 
 def _current_run_id(history: ControlStoreHistory) -> str:
@@ -102,10 +157,7 @@ def _reader_brief(
         markdown.decode("utf-8", errors="strict")
     except (ControlStoreError, UnicodeDecodeError) as exc:
         raise RuntimeHostError("reader_brief_projection_invalid") from exc
-    if (
-        sha256_hex(markdown) != revision.sha256
-        or len(markdown) != revision.size_bytes
-    ):
+    if sha256_hex(markdown) != revision.sha256 or len(markdown) != revision.size_bytes:
         raise RuntimeHostError("reader_brief_projection_invalid")
     return LocalReaderBrief.model_validate(
         {
@@ -209,9 +261,7 @@ def _local_run_presentation(
                         ),
                     )
                 ],
-                "receipt_ids": [
-                    item.transaction_id for item in snapshot.transactions
-                ],
+                "receipt_ids": [item.transaction_id for item in snapshot.transactions],
             },
             "presentation": {"status": "not_requested"},
         },
@@ -242,6 +292,342 @@ def build_local_run_presentation(
     """Build the strict local read model from one verified Store history."""
 
     return _load_presentation_context(workspace).presentation
+
+
+def _exact_finalized_local_action(verified: VerifiedCoreRun):
+    """Consume, but never recompute, the Core terminal decision."""
+
+    try:
+        action = classify_core_run_next_action(verified)
+        terminal = classify_terminal_legality(verified.snapshot)
+    except (CoreRunError, RuntimeError, ValueError) as exc:
+        raise RuntimeHostError("control_store_integrity_invalid") from exc
+    package_state = terminal.package_state
+    if (
+        package_state == "invalid"
+        or package_state not in _FINALIZED_LOCAL_KNOWN_PACKAGE_STATES
+    ):
+        raise RuntimeHostError("control_store_integrity_invalid")
+    exact_action = (
+        action.action_kind == "complete"
+        and action.effect_kind == "finalized_local"
+        and action.reason_code == "local_finalization_complete"
+    )
+    terminal_state = terminal.terminal_state
+    exact_terminal = terminal_state == "finalized_local"
+    if (
+        terminal_state == "invalid"
+        or terminal_state not in _FINALIZED_LOCAL_KNOWN_TERMINAL_STATES
+    ):
+        raise RuntimeHostError("control_store_integrity_invalid")
+    if exact_action != exact_terminal:
+        raise RuntimeHostError("control_store_integrity_invalid")
+    if exact_action:
+        return action, terminal
+    if terminal_state in _FINALIZED_LOCAL_LATER_TERMINAL_STATES:
+        raise RuntimeHostError("run_not_finalized_local")
+    if not verified.snapshot.finalizations:
+        raise RuntimeHostError("run_not_finalized_local")
+    if terminal_state in _FINALIZED_LOCAL_INCOMPLETE_TERMINAL_STATES:
+        # A consistent but incomplete retained local finalization continues to
+        # the receipt/record lineage classifier below.
+        return action, terminal
+    raise RuntimeHostError("control_store_integrity_invalid")
+
+
+def _single_receipt(
+    snapshot,
+    *,
+    transaction_id: str,
+    transaction_type: str,
+    relation: str,
+    reference_field: str,
+    record_id: str,
+) -> object:
+    """Bind one retained record to exactly its accepted transaction receipt."""
+
+    receipts = [
+        item for item in snapshot.transactions if item.transaction_id == transaction_id
+    ]
+    if (
+        len(receipts) != 1
+        or receipts[0].run_id != snapshot.run.run_id
+        or receipts[0].transaction_type != transaction_type
+    ):
+        raise RuntimeHostError("finalized_local_lineage_invalid")
+    references = getattr(receipts[0], relation)
+    identifiers = [getattr(item, reference_field) for item in references]
+    if identifiers != [record_id]:
+        raise RuntimeHostError("finalized_local_lineage_invalid")
+    return receipts[0]
+
+
+def _finalized_local_lineage(
+    history: ControlStoreHistory,
+    verified: VerifiedCoreRun,
+):
+    """Return the exact Core receipts and records that bind finalized-local."""
+
+    snapshot = verified.snapshot
+    if (
+        snapshot.workspace_id != history.workspace_id
+        or snapshot.store_revision != history.store_revision
+        or snapshot.run.run_id != _current_run_id(history)
+    ):
+        raise RuntimeHostError("control_store_integrity_invalid")
+    finalizations = [
+        item for item in snapshot.finalizations if item.run_id == snapshot.run.run_id
+    ]
+    if len(finalizations) != 1 or len(snapshot.finalizations) != 1:
+        raise RuntimeHostError("finalized_local_lineage_invalid")
+    finalization = finalizations[0]
+    finalization_receipt = _single_receipt(
+        snapshot,
+        transaction_id=finalization.accepted_transaction_id,
+        transaction_type=transaction_type_for("finalize_complete"),
+        relation="finalizations",
+        reference_field="finalization_id",
+        record_id=finalization.finalization_id,
+    )
+    if [item.transition_id for item in finalization_receipt.stage_transitions] != [
+        finalization.finalize_transition_id
+    ]:
+        raise RuntimeHostError("finalized_local_lineage_invalid")
+    renders = [
+        item
+        for item in snapshot.finalize_renders
+        if item.run_id == snapshot.run.run_id
+        and item.render_id == finalization.render_id
+    ]
+    if len(renders) != 1:
+        raise RuntimeHostError("finalized_local_lineage_invalid")
+    render = renders[0]
+    render_receipt = _single_receipt(
+        snapshot,
+        transaction_id=render.accepted_transaction_id,
+        transaction_type=transaction_type_for("finalize_render"),
+        relation="finalize_renders",
+        reference_field="render_id",
+        record_id=render.render_id,
+    )
+    declared_ids = set(finalization.finalize_gate_evaluation_ids)
+    gates = [
+        item for item in snapshot.gate_evaluations if item.evaluation_id in declared_ids
+    ]
+    if (
+        len(gates) != len(declared_ids)
+        or {item.evaluation_id for item in gates} != declared_ids
+        or any(
+            item.run_id != snapshot.run.run_id
+            or item.gate_batch_id != finalization.finalize_gate_batch_id
+            or item.stage_id != "finalize"
+            for item in gates
+        )
+    ):
+        raise RuntimeHostError("finalized_local_lineage_invalid")
+    stage_bindings = [
+        item
+        for item in snapshot.stage_gate_bindings
+        if item.transition_id == finalization.finalize_transition_id
+    ]
+    expected_bindings = {(item.gate_id, item.evaluation_id) for item in gates}
+    if (
+        len(stage_bindings) != len(expected_bindings)
+        or {(item.gate_id, item.evaluation_id) for item in stage_bindings}
+        != expected_bindings
+        or any(
+            item.run_id != snapshot.run.run_id
+            or item.accepted_transaction_id != finalization.accepted_transaction_id
+            for item in stage_bindings
+        )
+    ):
+        raise RuntimeHostError("finalized_local_lineage_invalid")
+    if {
+        (item.transition_id, item.gate_id)
+        for item in finalization_receipt.stage_gate_bindings
+    } != {(finalization.finalize_transition_id, item.gate_id) for item in gates}:
+        raise RuntimeHostError("finalized_local_lineage_invalid")
+    bindings: list[FinalizedLocalGateBinding] = []
+    for gate in gates:
+        receipts = [
+            item
+            for item in snapshot.transactions
+            if item.transaction_id == gate.accepted_transaction_id
+        ]
+        if (
+            len(receipts) != 1
+            or receipts[0].run_id != snapshot.run.run_id
+            or receipts[0].transaction_type != transaction_type_for("gate_evaluation")
+            or gate.evaluation_id
+            not in [item.evaluation_id for item in receipts[0].gate_evaluations]
+        ):
+            raise RuntimeHostError("finalized_local_lineage_invalid")
+        try:
+            bindings.append(
+                FinalizedLocalGateBinding.model_validate(
+                    {
+                        "schema_version": FinalizedLocalGateBinding.schema_id,
+                        "evaluation_id": gate.evaluation_id,
+                        "gate_batch_id": gate.gate_batch_id,
+                        "gate_id": gate.gate_id,
+                        "stage_id": gate.stage_id,
+                        "accepted_transaction_id": gate.accepted_transaction_id,
+                    },
+                    strict=True,
+                )
+            )
+        except ValueError as exc:
+            raise RuntimeHostError("finalized_local_lineage_invalid") from exc
+    return (
+        finalization,
+        finalization_receipt,
+        render,
+        render_receipt,
+        sorted(
+            bindings,
+            key=lambda item: (item.gate_id, item.evaluation_id),
+        ),
+    )
+
+
+def _finalized_local_report(
+    history: ControlStoreHistory,
+    verified: VerifiedCoreRun,
+    render,
+    render_receipt,
+) -> FinalizedLocalReportBinding:
+    """Bind the one selected reader revision to immutable history bytes only."""
+
+    snapshot = verified.snapshot
+    references = [
+        item for item in render.reader_artifacts if item.artifact_id == "reader_brief"
+    ]
+    if len(references) != 1:
+        raise RuntimeHostError("final_report_revision_invalid")
+    reference = references[0]
+    records = [
+        item
+        for item in snapshot.artifacts
+        if item.run_id == snapshot.run.run_id and item.artifact_id == "reader_brief"
+    ]
+    revisions = [
+        item
+        for item in snapshot.artifact_revisions
+        if item.run_id == snapshot.run.run_id
+        and item.artifact_id == reference.artifact_id
+        and item.revision == reference.revision
+    ]
+    if (
+        len(records) != 1
+        or len(revisions) != 1
+        or records[0].current_revision != reference.revision
+        or records[0].status != "valid"
+        or records[0].path != revisions[0].path
+        or not revisions[0].frozen
+    ):
+        raise RuntimeHostError("final_report_revision_invalid")
+    revision = revisions[0]
+    try:
+        markdown = history.read_artifact_revision_bytes(
+            snapshot.run.run_id,
+            reference.artifact_id,
+            reference.revision,
+        )
+        markdown.decode("utf-8", errors="strict")
+    except (ControlStoreError, UnicodeDecodeError) as exc:
+        raise RuntimeHostError("final_report_revision_invalid") from exc
+    if sha256_hex(markdown) != revision.sha256 or len(markdown) != revision.size_bytes:
+        raise RuntimeHostError("final_report_revision_invalid")
+    try:
+        return FinalizedLocalReportBinding.model_validate(
+            {
+                "schema_version": FinalizedLocalReportBinding.schema_id,
+                "render_id": render.render_id,
+                "render_receipt_id": render_receipt.transaction_id,
+                "artifact_id": reference.artifact_id,
+                "artifact_revision": reference.revision,
+                "relative_path": revision.path,
+                "sha256": revision.sha256,
+                "size_bytes": revision.size_bytes,
+                "markdown_utf8": markdown,
+            },
+            strict=True,
+        )
+    except ValueError as exc:
+        raise RuntimeHostError("final_report_revision_invalid") from exc
+
+
+def build_finalized_local_review_projection(
+    workspace: str | Path,
+) -> FinalizedLocalReviewProjection:
+    """Project one exact finalized-local lineage from one verified Store history."""
+
+    try:
+        context = _load_presentation_context(workspace)
+    except RuntimeHostError as exc:
+        if str(exc) == "reader_brief_projection_invalid":
+            raise RuntimeHostError("final_report_revision_invalid") from exc
+        raise
+    action, terminal = _exact_finalized_local_action(context.verified)
+    (
+        finalization,
+        finalization_receipt,
+        render,
+        render_receipt,
+        gate_bindings,
+    ) = _finalized_local_lineage(context.history, context.verified)
+    if not (
+        action.action_kind == "complete"
+        and action.effect_kind == "finalized_local"
+        and action.reason_code == "local_finalization_complete"
+        and terminal.terminal_state == "finalized_local"
+    ):
+        raise RuntimeHostError("control_store_integrity_invalid")
+    report = _finalized_local_report(
+        context.history,
+        context.verified,
+        render,
+        render_receipt,
+    )
+    facts_payload: dict[str, object] = {
+        "schema_version": FinalizedLocalReviewFacts.schema_id,
+        "boundary": (
+            "read_only_projection_not_runtime_gate_approval_delivery_or_provider_authority"
+        ),
+        "workspace_id": context.verified.snapshot.workspace_id,
+        "run_id": context.verified.snapshot.run.run_id,
+        "store_revision": context.verified.snapshot.store_revision,
+        "terminal_state": "finalized_local",
+        "terminal_action_fingerprint": action.action_fingerprint,
+        "finalization_id": finalization.finalization_id,
+        "finalization_receipt_id": finalization_receipt.transaction_id,
+        "finalize_gate_batch_id": finalization.finalize_gate_batch_id,
+        "gate_bindings": [
+            item.model_dump(mode="json", exclude_unset=False) for item in gate_bindings
+        ],
+        "report": report.model_dump(mode="python", exclude_unset=False),
+    }
+    canonical_facts_payload = dict(facts_payload)
+    canonical_facts_payload["report"] = report.model_dump(
+        mode="json", exclude_unset=False
+    )
+    facts_payload["facts_fingerprint"] = FinalizedLocalReviewFacts.fingerprint_for(
+        canonical_facts_payload
+    )
+    try:
+        facts = FinalizedLocalReviewFacts.model_validate(facts_payload, strict=True)
+        return FinalizedLocalReviewProjection.model_validate(
+            {
+                "schema_version": FinalizedLocalReviewProjection.schema_id,
+                "facts": facts.model_dump(mode="python", exclude_unset=False),
+                "local_run": context.presentation.model_dump(
+                    mode="python", exclude_unset=False
+                ),
+            },
+            strict=True,
+        )
+    except ValueError as exc:
+        raise RuntimeHostError("finalized_local_lineage_invalid") from exc
 
 
 def build_store_status_projection(workspace: str | Path) -> dict[str, object]:
@@ -330,9 +716,7 @@ def build_runtime_continuation_result(
             "total_stages": len(stages),
             "violations": list(violations),
             "trace": {
-                "next_action": action.model_dump(
-                    mode="json", exclude_unset=False
-                ),
+                "next_action": action.model_dump(mode="json", exclude_unset=False),
                 "envelope_path": envelope_path,
                 "transaction_ids": list(transaction_ids),
             },
@@ -390,9 +774,7 @@ def build_quality_projection_from_local_run(
         "context_independence": local.context_independence,
         "review_mode": local.review_mode,
         "role_stages": local.role_stages,
-        "next_action": local.next_action.model_dump(
-            mode="json", exclude_unset=False
-        ),
+        "next_action": local.next_action.model_dump(mode="json", exclude_unset=False),
         "projection_source": {
             "store_revision": local.store_revision,
             "receipt_ids": local.summary.receipt_ids,
@@ -458,6 +840,7 @@ def _replace_projection(path: Path, payload: bytes) -> None:
 
 
 __all__ = [
+    "build_finalized_local_review_projection",
     "build_local_run_presentation",
     "build_quality_projection_from_local_run",
     "build_store_quality_projection",
