@@ -45,6 +45,42 @@ class _PresentationContext(NamedTuple):
     presentation: LocalRunPresentation
 
 
+_FINALIZED_LOCAL_KNOWN_TERMINAL_STATES = frozenset(
+    {
+        "core_active",
+        "auditor_ready",
+        "rendered",
+        "gate_blocked",
+        "finalized",
+        "finalized_local",
+        "package_ready",
+        "approval_incomplete",
+        "authorization_missing_or_denied",
+        "attempt_pending",
+        "delivery_outcome_unknown",
+        "delivery_failed",
+        "draft_created",
+        "delivered",
+        "invalid",
+    }
+)
+_FINALIZED_LOCAL_LATER_TERMINAL_STATES = frozenset(
+    {
+        "package_ready",
+        "approval_incomplete",
+        "authorization_missing_or_denied",
+        "attempt_pending",
+        "delivery_outcome_unknown",
+        "delivery_failed",
+        "draft_created",
+        "delivered",
+    }
+)
+_FINALIZED_LOCAL_INCOMPLETE_TERMINAL_STATES = frozenset(
+    {"core_active", "auditor_ready", "rendered", "gate_blocked", "finalized"}
+)
+
+
 def _current_run_id(history: ControlStoreHistory) -> str:
     heads = {
         (
@@ -259,29 +295,27 @@ def _exact_finalized_local_action(verified: VerifiedCoreRun):
         and action.effect_kind == "finalized_local"
         and action.reason_code == "local_finalization_complete"
     )
-    exact_terminal = terminal.terminal_state == "finalized_local"
-    if terminal.package_state == "invalid":
+    terminal_state = terminal.terminal_state
+    exact_terminal = terminal_state == "finalized_local"
+    if (
+        terminal.package_state == "invalid"
+        or terminal_state == "invalid"
+        or terminal_state not in _FINALIZED_LOCAL_KNOWN_TERMINAL_STATES
+    ):
         raise RuntimeHostError("control_store_integrity_invalid")
-    if terminal.terminal_state in {
-        "package_ready",
-        "approval_incomplete",
-        "authorization_missing_or_denied",
-        "attempt_pending",
-        "delivery_outcome_unknown",
-        "delivery_failed",
-        "draft_created",
-        "delivered",
-    }:
-        raise RuntimeHostError("run_not_finalized_local")
     if exact_action != exact_terminal:
         raise RuntimeHostError("control_store_integrity_invalid")
     if exact_action:
         return action, terminal
-    if verified.snapshot.finalizations:
-        # With no action/terminal disagreement, an incomplete retained local
-        # finalization is a lineage failure rather than a nonterminal run.
+    if terminal_state in _FINALIZED_LOCAL_LATER_TERMINAL_STATES:
+        raise RuntimeHostError("run_not_finalized_local")
+    if not verified.snapshot.finalizations:
+        raise RuntimeHostError("run_not_finalized_local")
+    if terminal_state in _FINALIZED_LOCAL_INCOMPLETE_TERMINAL_STATES:
+        # A consistent but incomplete retained local finalization continues to
+        # the receipt/record lineage classifier below.
         return action, terminal
-    raise RuntimeHostError("run_not_finalized_local")
+    raise RuntimeHostError("control_store_integrity_invalid")
 
 
 def _single_receipt(
