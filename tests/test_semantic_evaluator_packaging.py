@@ -28,9 +28,13 @@ WHEEL_RESOURCE_NAMES = {
 
 WHEEL_PROBE = r"""
 from copy import deepcopy
+from importlib import resources
 import inspect
+import json
 import os
 from pathlib import Path
+import sys
+import tempfile
 
 from multi_agent_brief.semantic_evaluator.admission import admit_inputs
 from multi_agent_brief.semantic_evaluator.baseline import build_baseline
@@ -59,6 +63,18 @@ import multi_agent_brief.semantic_evaluator.runner as shadow_runner_module
 import multi_agent_brief.semantic_evaluator.shadow_contracts as shadow_contracts_module
 import multi_agent_brief.semantic_evaluator.study as study_module
 import multi_agent_brief.semantic_evaluator.study_contracts as study_contracts_module
+import multi_agent_brief.semantic_evaluator.adapters.anthropic_messages as anthropic_adapter_module
+from multi_agent_brief.semantic_evaluator.adapters.anthropic_messages import (
+    ANTHROPIC_ADAPTER_ID,
+    ANTHROPIC_ADAPTER_VERSION,
+    ANTHROPIC_API_KEY_SETTING,
+    ANTHROPIC_ENDPOINT_SETTING,
+    ANTHROPIC_PROVIDER_ID,
+    AnthropicMessagesAdapterV1,
+    canonical_messages_endpoint_v1,
+    project_anthropic_message_bytes_v1,
+    synthetic_anthropic_message_bytes_v1,
+)
 import multi_agent_brief.semantic_evaluator.adapters.local_proxy_responses as local_proxy_adapter_module
 from multi_agent_brief.semantic_evaluator.adapters.local_proxy_responses import (
     CLIPROXY_ADAPTER_ID,
@@ -71,6 +87,7 @@ from multi_agent_brief.semantic_evaluator.adapters.synthetic_fixture import (
     SYNTHETIC_ADAPTER_VERSION,
     SYNTHETIC_PROVIDER_ID,
     _load_fixture_manifest,
+    _rubric_from_prompt,
 )
 from multi_agent_brief.semantic_evaluator.normalization import freeze_bounded_context
 import multi_agent_brief.semantic_evaluator.normalization as normalization_module
@@ -134,6 +151,401 @@ class ExplodingIdentitySizer:
     def count_tokens(self, *, system_text, user_text):
         self.calls += 1
         return 10
+
+
+class AnthropicProbeAdapter:
+    def __init__(self, execution, endpoint, mode):
+        self.adapter_id = execution.adapter_id
+        self.adapter_version = execution.adapter_version
+        self.provider_sdk_name = execution.provider_sdk_name
+        self.provider_sdk_version = execution.provider_sdk_version
+        self.qualification_eligible = execution.qualification_eligible
+        self.base_url = endpoint
+        self.mode = mode
+        self._delegate = object.__new__(AnthropicMessagesAdapterV1)
+        self.calls = 0
+
+    def invoke(self, request):
+        self.calls += 1
+        if self.mode == "retry_then_success" and request.attempt_ordinal == 1:
+            return self._delegate._transport_attempt(
+                request=request,
+                kind="timeout",
+            )
+        if self.mode == "terminal_transport":
+            return self._delegate._transport_attempt(
+                request=request,
+                kind="adapter_error",
+            )
+        rubric = _rubric_from_prompt(request.user_text)
+        output = canonical_json_bytes(
+            {
+                "dimension_id": request.dimension_id,
+                "schema_version": DIMENSION_RESPONSE_SCHEMA_ID,
+                "trial_id": request.trial_id,
+                "unit_results": [
+                    {
+                        "assessment_unit_id": item["assessment_unit_id"],
+                        "disposition": "no_finding",
+                    }
+                    for item in rubric["assessment_units"]
+                ],
+            }
+        )
+        stop_reason = {
+            "success": "end_turn",
+            "retry_then_success": "end_turn",
+            "truncation": "max_tokens",
+            "refusal": "refusal",
+        }[self.mode]
+        raw = synthetic_anthropic_message_bytes_v1(
+            stop_reason=stop_reason,
+            response_id=f"msg-wheel-{self.calls}",
+            model=request.expected_model_version,
+            content=[
+                {
+                    "type": "thinking",
+                    "thinking": "non-output",
+                    "signature": "public-signature",
+                },
+                {"type": "text", "text": output.decode("utf-8")},
+            ],
+            input_tokens=7,
+            output_tokens=5,
+        )
+        return self._delegate._attempt_from_response(
+            request=request,
+            raw=raw,
+            sdk_response=None,
+        )
+
+
+def _anthropic_result_projection(result):
+    return {
+        "archive_complete": result.archive_complete,
+        "execution_origin": result.execution_origin,
+        "ok": result.ok,
+        "qualification_class": result.qualification_class,
+        "qualification_eligible": result.qualification_eligible,
+        "reason_codes": list(result.reason_codes),
+        "replayed": result.replayed,
+        "run_status": result.run_status,
+        "validation_status": result.validation_status,
+    }
+
+
+def _rehash_anthropic_probe_outer(archive, changed_member):
+    manifest_path = archive / "archive_manifest.json"
+    manifest = json.loads(manifest_path.read_bytes())
+    members = manifest["payload_members"]
+    for member in members:
+        if member["path"] == changed_member:
+            raw = (archive / changed_member).read_bytes()
+            member["size_bytes"] = len(raw)
+            member["sha256"] = sha256_bytes(raw)
+            break
+    else:
+        raise RuntimeError("missing changed member")
+    manifest["aggregate_payload_sha256"] = canonical_sha256(members)
+    manifest["archive_id"] = (
+        "archive-"
+        + canonical_sha256(
+            [
+                manifest["shadow_request_sha256"],
+                manifest["aggregate_payload_sha256"],
+            ]
+        )[:16]
+    )
+    manifest["archive_manifest_sha256"] = canonical_sha256(
+        {
+            key: value
+            for key, value in manifest.items()
+            if key != "archive_manifest_sha256"
+        }
+    )
+    manifest_path.write_bytes(canonical_json_bytes(manifest))
+    receipt_path = archive / "receipt.json"
+    receipt = json.loads(receipt_path.read_bytes())
+    receipt["archive_id"] = manifest["archive_id"]
+    receipt["archive_manifest_sha256"] = manifest["archive_manifest_sha256"]
+    receipt["receipt_id"] = (
+        "receipt-"
+        + canonical_sha256(
+            [receipt["archive_manifest_sha256"], receipt["run_id"]]
+        )[:16]
+    )
+    receipt["receipt_sha256"] = canonical_sha256(
+        {
+            key: value
+            for key, value in receipt.items()
+            if key != "receipt_sha256"
+        }
+    )
+    receipt_raw = canonical_json_bytes(receipt)
+    receipt_path.write_bytes(receipt_raw)
+    (archive / "COMPLETE").write_bytes(
+        (sha256_bytes(receipt_raw) + "\n").encode("ascii")
+    )
+
+
+def anthropic_archive_probe():
+    endpoint_a = "https://messages-a.example.test/v1"
+    endpoint_b = "https://messages-b.example.test/v1"
+    with tempfile.TemporaryDirectory() as temporary:
+        root = Path(temporary).resolve()
+        inputs = root / "inputs"
+        inputs.mkdir()
+        fixture_root = resources.files(
+            "multi_agent_brief.semantic_evaluator"
+        ).joinpath("fixtures", "synthetic_shadow_v1")
+        report = inputs / "report.md"
+        context = inputs / "bounded_context.json"
+        instrument = inputs / "instrument.json"
+        report.write_bytes(fixture_root.joinpath("report.md").read_bytes())
+        context.write_bytes(fixture_root.joinpath("bounded_context.json").read_bytes())
+        instrument_payload = json.loads(
+            fixture_root.joinpath("instrument.json").read_bytes()
+        )
+        instrument_payload.update(
+            {
+                "instrument_config_id": "anthropic-wheel-probe-v1",
+                "provider_id": ANTHROPIC_PROVIDER_ID,
+                "model_id": "public-nonclaude-model-v1",
+                "model_version": "public-nonclaude-model-v1",
+                "decoding": {
+                    "max_output_tokens": 4096,
+                    "seed": None,
+                    "temperature": 1.0,
+                    "top_p": 1.0,
+                },
+                "prompt_sizer": {
+                    "max_context_tokens": 200000,
+                    "reserved_output_tokens": 4096,
+                    "sizer_id": "anthropic_utf8_bytes_conservative_v1",
+                    "sizer_version": "anthropic_utf8_bytes_conservative_v1",
+                },
+                "retry_policy": {
+                    "backoff_schedule_ms": [0],
+                    "max_attempts": 2,
+                    "retryable_reason_codes": ["provider_retryable_failure"],
+                },
+            }
+        )
+        instrument.write_bytes(canonical_json_bytes(instrument_payload))
+        model_instrument = inputs / "instrument-model-change.json"
+        model_instrument_payload = dict(instrument_payload)
+        model_instrument_payload["model_id"] = "other-public-nonclaude-model-v1"
+        model_instrument_payload["model_version"] = (
+            "other-public-nonclaude-model-v1"
+        )
+        model_instrument.write_bytes(canonical_json_bytes(model_instrument_payload))
+        os.environ[ANTHROPIC_ENDPOINT_SETTING] = endpoint_a
+        shadow_runner_module.metadata.version = lambda _name: "0.104.1"
+
+        def run_case(mode, trial_id, current_instrument=instrument):
+            adapters = []
+
+            def factory(execution):
+                adapter = AnthropicProbeAdapter(execution, endpoint_a, mode)
+                adapters.append(adapter)
+                return adapter
+
+            invocation = {
+                "report": report,
+                "bounded_context": context,
+                "profile": "research_design_report_zh_v1",
+                "instrument": current_instrument,
+                "trial_id": trial_id,
+                "archive_root": root / f"archives-{mode}",
+                "clock": lambda: "2026-07-27T00:00:00Z",
+                "sleep": lambda _seconds: None,
+            }
+            result = shadow_runner_module.run_shadow(
+                **invocation,
+                adapter_factory=factory,
+            )
+            return result, adapters[0].calls, invocation
+
+        first, success_calls, invocation = run_case(
+            "success",
+            "trial-anthropic-wheel-success",
+        )
+        truncation, truncation_calls, _ = run_case(
+            "truncation",
+            "trial-anthropic-wheel-truncation",
+        )
+        refusal, refusal_calls, _ = run_case(
+            "refusal",
+            "trial-anthropic-wheel-refusal",
+        )
+        retry, retry_calls, _ = run_case(
+            "retry_then_success",
+            "trial-anthropic-wheel-retry",
+        )
+        terminal, terminal_calls, _ = run_case(
+            "terminal_transport",
+            "trial-anthropic-wheel-terminal",
+        )
+        archive = Path(first.archive_path)
+        before = {
+            path.relative_to(archive).as_posix(): sha256_bytes(path.read_bytes())
+            for path in archive.rglob("*")
+            if path.is_file()
+        }
+
+        policy_payload = {
+            "schema_version": (
+                study_contracts_module.PROVIDER_BUDGET_POLICY_SCHEMA_ID
+            ),
+            "max_provider_calls": 18,
+            "max_input_tokens": 10_000_000,
+        }
+        budget_policy = (
+            study_contracts_module.LajProviderBudgetPolicyV1.model_validate(
+                {
+                    **policy_payload,
+                    "policy_sha256": canonical_sha256(policy_payload),
+                }
+            )
+        )
+        prepared_a = shadow_runner_module.prepare_shadow_run(
+            report=report,
+            bounded_context=context,
+            profile="research_design_report_zh_v1",
+            instrument=instrument,
+            trial_id="trial-anthropic-study-a",
+            archive_root=root / "study-a",
+        )
+        authorization_a = study_module.make_execution_authorization(
+            study_id="study-anthropic-wheel",
+            prepared=prepared_a,
+            policy=budget_policy,
+        )
+        preflight_a = study_module.compute_budget_preflight(
+            prepared=prepared_a,
+            authorization=authorization_a,
+            policy=budget_policy,
+        )
+        os.environ[ANTHROPIC_ENDPOINT_SETTING] = endpoint_b
+        prepared_b = shadow_runner_module.prepare_shadow_run(
+            report=report,
+            bounded_context=context,
+            profile="research_design_report_zh_v1",
+            instrument=instrument,
+            trial_id="trial-anthropic-study-b",
+            archive_root=root / "study-b",
+        )
+        authorization_b = study_module.make_execution_authorization(
+            study_id="study-anthropic-wheel",
+            prepared=prepared_b,
+            policy=budget_policy,
+        )
+        os.environ[ANTHROPIC_ENDPOINT_SETTING] = endpoint_a
+        prepared_model = shadow_runner_module.prepare_shadow_run(
+            report=report,
+            bounded_context=context,
+            profile="research_design_report_zh_v1",
+            instrument=model_instrument,
+            trial_id="trial-anthropic-study-model",
+            archive_root=root / "study-model",
+        )
+        authorization_model = study_module.make_execution_authorization(
+            study_id="study-anthropic-wheel",
+            prepared=prepared_model,
+            policy=budget_policy,
+        )
+
+        os.environ.pop(ANTHROPIC_API_KEY_SETTING, None)
+        sys.modules["anthropic"] = None
+        metadata_calls = []
+
+        def forbidden_metadata(name):
+            metadata_calls.append(name)
+            raise RuntimeError("replay touched distribution metadata")
+
+        shadow_runner_module.metadata.version = forbidden_metadata
+        replay = shadow_runner_module.run_shadow(
+            **invocation,
+            adapter_factory=lambda _execution: (_ for _ in ()).throw(
+                RuntimeError("replay touched adapter")
+            ),
+        )
+        after = {
+            path.relative_to(archive).as_posix(): sha256_bytes(path.read_bytes())
+            for path in archive.rglob("*")
+            if path.is_file()
+        }
+        sdk_projection = next(archive.glob("attempts/*/*/sdk_projection.json"))
+        sdk_payload = json.loads(sdk_projection.read_bytes())
+        sdk_payload["http_status"] = {
+            "invalid_code": None,
+            "state": "present_valid",
+            "value": 200,
+        }
+        sdk_projection.write_bytes(canonical_json_bytes(sdk_payload))
+        _rehash_anthropic_probe_outer(
+            archive,
+            sdk_projection.relative_to(archive).as_posix(),
+        )
+        tampered = shadow_runner_module.run_shadow(
+            **invocation,
+            adapter_factory=lambda _execution: (_ for _ in ()).throw(
+                RuntimeError("tampered replay touched adapter")
+            ),
+        )
+        return {
+            "archive_results": {
+                "refusal": _anthropic_result_projection(refusal),
+                "retry_then_success": _anthropic_result_projection(retry),
+                "success": _anthropic_result_projection(first),
+                "terminal_transport": _anthropic_result_projection(terminal),
+                "truncation": _anthropic_result_projection(truncation),
+            },
+            "mocked_adapter_calls": {
+                "refusal": refusal_calls,
+                "retry_then_success": retry_calls,
+                "success": success_calls,
+                "terminal_transport": terminal_calls,
+                "truncation": truncation_calls,
+            },
+            "real_provider_calls": 0,
+            "archive_files_hash": canonical_sha256(before),
+            "archive_replay_unchanged": after == before,
+            "receipt_id": first.receipt_id,
+            "replay_receipt_id": replay.receipt_id,
+            "replayed": replay.replayed,
+            "replay_metadata_calls": len(metadata_calls),
+            "sdk_status_tamper_reason_codes": list(tampered.reason_codes),
+            "study_identity": {
+                "authorization_a_sha256": authorization_a.authorization_sha256,
+                "authorization_b_sha256": authorization_b.authorization_sha256,
+                "authorization_model_sha256": (
+                    authorization_model.authorization_sha256
+                ),
+                "count_semantics": preflight_a.count_semantics,
+                "endpoint_changes_authorization": (
+                    authorization_a.authorization_sha256
+                    != authorization_b.authorization_sha256
+                ),
+                "endpoint_changes_execution": (
+                    authorization_a.execution_sha256
+                    != authorization_b.execution_sha256
+                ),
+                "model_changes_authorization": (
+                    authorization_a.authorization_sha256
+                    != authorization_model.authorization_sha256
+                ),
+                "model_changes_execution": (
+                    authorization_a.execution_sha256
+                    != authorization_model.execution_sha256
+                ),
+                "raw_endpoint_absent": (
+                    endpoint_a.encode("ascii")
+                    not in canonical_json_bytes(authorization_a)
+                ),
+            },
+        }
+
 
 resource_paths = (
     ("profiles", "research_design_report_zh_v1.yaml"),
@@ -530,6 +942,7 @@ module_files = [
         shadow_archive_module,
         shadow_contracts_module,
         shadow_runner_module,
+        anthropic_adapter_module,
         local_proxy_adapter_module,
         study_module,
         study_contracts_module,
@@ -575,6 +988,65 @@ payload = {
         "provider_id": CLIPROXY_PROVIDER_ID,
         "base_url_sha256": canonical_sha256([CLIPROXY_BASE_URL]),
     },
+    "anthropic_runtime_identity": {
+        "adapter_id": ANTHROPIC_ADAPTER_ID,
+        "adapter_version": ANTHROPIC_ADAPTER_VERSION,
+        "provider_id": ANTHROPIC_PROVIDER_ID,
+        "endpoint_setting": ANTHROPIC_ENDPOINT_SETTING,
+        "api_key_setting": ANTHROPIC_API_KEY_SETTING,
+        "sample_exact_model_id": "public-nonclaude-model-v1",
+        "canonical_endpoints": [
+            {
+                "endpoint": endpoint,
+                "sha256": sha256_bytes(
+                    canonical_messages_endpoint_v1(endpoint).encode("ascii")
+                ),
+            }
+            for endpoint in (
+                "https://api.anthropic.com",
+                "https://messages.example.test/v1",
+            )
+        ],
+        "projection": {
+            "status": project_anthropic_message_bytes_v1(
+                synthetic_anthropic_message_bytes_v1(
+                    stop_reason="end_turn",
+                    response_id="msg-wheel-public",
+                    model="public-nonclaude-model-v1",
+                    content=[
+                        {
+                            "type": "thinking",
+                            "thinking": "non-output",
+                            "signature": "public-signature",
+                        },
+                        {"type": "text", "text": '{"findings":[]}'},
+                    ],
+                    input_tokens=3,
+                    output_tokens=2,
+                )
+            ).status.state,
+            "projection_output_hash": sha256_bytes(
+                project_anthropic_message_bytes_v1(
+                    synthetic_anthropic_message_bytes_v1(
+                        stop_reason="end_turn",
+                        response_id="msg-wheel-public",
+                        model="public-nonclaude-model-v1",
+                        content=[
+                            {
+                                "type": "thinking",
+                                "thinking": "non-output",
+                                "signature": "public-signature",
+                            },
+                            {"type": "text", "text": '{"findings":[]}'},
+                        ],
+                        input_tokens=3,
+                        output_tokens=2,
+                    )
+                ).output.utf8_bytes
+            ),
+        },
+    },
+    "anthropic_archive_probe": anthropic_archive_probe(),
     "manifest": build_instrument_manifest(config).model_dump(mode="json"),
     "prompts": [
         {
@@ -640,7 +1112,39 @@ def _source_probe(*, optimized: bool) -> str:
 
 
 def test_se2r_14_source_probe_is_byte_identical_under_python_optimization() -> None:
-    assert _source_probe(optimized=False) == _source_probe(optimized=True)
+    normal = _source_probe(optimized=False)
+    assert normal == _source_probe(optimized=True)
+    probe = json.loads(normal)["anthropic_archive_probe"]
+    assert probe["real_provider_calls"] == 0
+    assert probe["mocked_adapter_calls"] == {
+        "refusal": 9,
+        "retry_then_success": 18,
+        "success": 9,
+        "terminal_transport": 9,
+        "truncation": 9,
+    }
+    assert probe["archive_results"]["success"]["ok"] is True
+    assert probe["archive_results"]["retry_then_success"]["ok"] is True
+    assert probe["archive_results"]["truncation"]["reason_codes"] == [
+        "provider_incomplete"
+    ]
+    assert probe["archive_results"]["refusal"]["reason_codes"] == ["provider_refused"]
+    assert probe["archive_results"]["terminal_transport"]["reason_codes"] == [
+        "provider_failed"
+    ]
+    assert probe["archive_replay_unchanged"] is True
+    assert probe["replayed"] is True
+    assert probe["replay_metadata_calls"] == 0
+    assert probe["receipt_id"] == probe["replay_receipt_id"]
+    assert probe["sdk_status_tamper_reason_codes"] == ["shadow_archive_invalid"]
+    assert probe["study_identity"]["count_semantics"] == (
+        "conservative_utf8_byte_upper_bound"
+    )
+    assert probe["study_identity"]["endpoint_changes_authorization"] is True
+    assert probe["study_identity"]["endpoint_changes_execution"] is True
+    assert probe["study_identity"]["model_changes_authorization"] is True
+    assert probe["study_identity"]["model_changes_execution"] is True
+    assert probe["study_identity"]["raw_endpoint_absent"] is True
 
 
 def test_se2r_14_wheel_contains_all_resources_and_matches_source_identity(
@@ -682,6 +1186,14 @@ def test_se2r_14_wheel_contains_all_resources_and_matches_source_identity(
     with zipfile.ZipFile(wheels[0]) as archive:
         names = set(archive.namelist())
         assert WHEEL_RESOURCE_NAMES <= names
+        metadata_name = next(
+            name for name in names if name.endswith(".dist-info/METADATA")
+        )
+        wheel_metadata = archive.read(metadata_name).decode("utf-8")
+        assert (
+            'Requires-Dist: anthropic<0.105,>=0.104; extra == "semantic-evaluator-anthropic"'
+            in wheel_metadata
+        )
         archive.extractall(extract_root)
 
     env = os.environ.copy()

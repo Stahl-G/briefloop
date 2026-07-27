@@ -20,6 +20,7 @@ EXPECTED_PACKAGE_FILES = {
     "__init__.py",
     "adapter.py",
     "adapters/__init__.py",
+    "adapters/anthropic_messages.py",
     "adapters/openai_responses.py",
     "adapters/local_proxy_responses.py",
     "adapters/synthetic_fixture.py",
@@ -88,15 +89,14 @@ FORBIDDEN_PROVIDER_OR_NETWORK_IMPORTS = (
 
 EXPERIMENT_ENTRYPOINT = SRC_ROOT / "cli" / "experiments_commands.py"
 QUALITY_PANEL_READ_ONLY_CONSUMER = SRC_ROOT / "product" / "quality_panel.py"
-BRIEF_HTML_READ_ONLY_CONSUMER = (
-    SRC_ROOT / "product" / "brief_html" / "builder.py"
-)
+BRIEF_HTML_READ_ONLY_CONSUMER = SRC_ROOT / "product" / "brief_html" / "builder.py"
 READ_ONLY_LAJ_CONSUMERS = {
     EXPERIMENT_ENTRYPOINT,
     QUALITY_PANEL_READ_ONLY_CONSUMER,
     BRIEF_HTML_READ_ONLY_CONSUMER,
 }
 NETWORK_IMPORT_ALLOWLIST = {
+    "adapters/anthropic_messages.py": {"anthropic"},
     "adapters/openai_responses.py": {"openai"},
     "adapters/local_proxy_responses.py": set(),
 }

@@ -9,6 +9,7 @@ from types import SimpleNamespace
 import pytest
 
 from multi_agent_brief.semantic_evaluator import archive as archive_module
+from multi_agent_brief.semantic_evaluator import runner as runner_module
 from multi_agent_brief.semantic_evaluator.adapter import FrozenProviderRequestV4
 from multi_agent_brief.semantic_evaluator.archive import (
     _recomputed_facts,
@@ -21,7 +22,24 @@ from multi_agent_brief.semantic_evaluator.adapters.openai_responses import (
     OpenAIResponsesAdapterV4,
     synthetic_openai_response_bytes_v4,
 )
+from multi_agent_brief.semantic_evaluator.adapters.anthropic_messages import (
+    ANTHROPIC_ADAPTER_ID,
+    ANTHROPIC_ENDPOINT_SETTING,
+    ANTHROPIC_PROVIDER_ID,
+    AnthropicMessagesAdapterV1,
+    synthetic_anthropic_message_bytes_v1,
+)
 from multi_agent_brief.semantic_evaluator.errors import SemanticEvaluatorError
+from multi_agent_brief.semantic_evaluator.contracts import (
+    DIMENSION_RESPONSE_SCHEMA_ID,
+)
+from multi_agent_brief.semantic_evaluator.adapters.synthetic_fixture import (
+    _rubric_from_prompt,
+)
+from multi_agent_brief.semantic_evaluator.prompt_sizer import (
+    ANTHROPIC_PROMPT_SIZER_ID,
+    ANTHROPIC_PROMPT_SIZER_VERSION,
+)
 from multi_agent_brief.semantic_evaluator.runner import _attempt_record, run_shadow
 from multi_agent_brief.semantic_evaluator.serialization import (
     canonical_json_bytes,
@@ -35,6 +53,7 @@ from multi_agent_brief.semantic_evaluator.shadow_contracts import (
 
 
 _FIXTURES = Path(__file__).parent / "fixtures" / "semantic_evaluator_shadow"
+_ANTHROPIC_TEST_MODEL = "public-nonclaude-model-v1"
 
 
 def _run(tmp_path: Path, *, trial_id: str = "trial-archive-v4"):
@@ -109,6 +128,96 @@ def _rehash_outer(archive: Path, changed_member: str) -> None:
     (archive / "COMPLETE").write_bytes(
         (sha256_bytes(receipt_raw) + "\n").encode("ascii")
     )
+
+
+def _anthropic_archive(tmp_path: Path, monkeypatch) -> tuple[Path, dict[str, object]]:
+    endpoint = "https://messages.example.test/v1"
+    inputs = tmp_path / "inputs"
+    inputs.mkdir()
+    report = inputs / "report.md"
+    context = inputs / "bounded_context.json"
+    instrument = inputs / "instrument.json"
+    report.write_bytes((_FIXTURES / "report.md").read_bytes())
+    context.write_bytes((_FIXTURES / "bounded_context.json").read_bytes())
+    instrument_payload = json.loads((_FIXTURES / "instrument.json").read_bytes())
+    instrument_payload.update(
+        {
+            "instrument_config_id": "anthropic-archive-instrument-v1",
+            "provider_id": ANTHROPIC_PROVIDER_ID,
+            "model_id": _ANTHROPIC_TEST_MODEL,
+            "model_version": _ANTHROPIC_TEST_MODEL,
+            "decoding": {
+                "max_output_tokens": 4096,
+                "seed": None,
+                "temperature": 1.0,
+                "top_p": 1.0,
+            },
+            "prompt_sizer": {
+                "max_context_tokens": 200000,
+                "reserved_output_tokens": 4096,
+                "sizer_id": ANTHROPIC_PROMPT_SIZER_ID,
+                "sizer_version": ANTHROPIC_PROMPT_SIZER_VERSION,
+            },
+        }
+    )
+    instrument.write_bytes(canonical_json_bytes(instrument_payload))
+    monkeypatch.setenv(ANTHROPIC_ENDPOINT_SETTING, endpoint)
+    monkeypatch.setattr(runner_module.metadata, "version", lambda _name: "0.104.1")
+
+    class Adapter:
+        def __init__(self, execution) -> None:
+            self.adapter_id = execution.adapter_id
+            self.adapter_version = execution.adapter_version
+            self.provider_sdk_name = execution.provider_sdk_name
+            self.provider_sdk_version = execution.provider_sdk_version
+            self.qualification_eligible = execution.qualification_eligible
+            self.base_url = endpoint
+            self.delegate = object.__new__(AnthropicMessagesAdapterV1)
+
+        def invoke(self, request):
+            rubric = _rubric_from_prompt(request.user_text)
+            output = canonical_json_bytes(
+                {
+                    "dimension_id": request.dimension_id,
+                    "schema_version": DIMENSION_RESPONSE_SCHEMA_ID,
+                    "trial_id": request.trial_id,
+                    "unit_results": [
+                        {
+                            "assessment_unit_id": item["assessment_unit_id"],
+                            "disposition": "no_finding",
+                        }
+                        for item in rubric["assessment_units"]
+                    ],
+                }
+            )
+            raw = synthetic_anthropic_message_bytes_v1(
+                stop_reason="end_turn",
+                response_id=f"msg-{request.dimension_id}",
+                model=request.expected_model_version,
+                content=[{"type": "text", "text": output.decode("utf-8")}],
+            )
+            return self.delegate._attempt_from_response(
+                request=request,
+                raw=raw,
+                sdk_response=None,
+            )
+
+    invocation = {
+        "report": report,
+        "bounded_context": context,
+        "profile": "research_design_report_zh_v1",
+        "instrument": instrument,
+        "trial_id": "trial-anthropic-status-tamper",
+        "archive_root": (tmp_path / "archives").resolve(),
+        "clock": lambda: "2027-07-18T00:00:00Z",
+        "sleep": lambda _seconds: None,
+    }
+    result = run_shadow(
+        **invocation,
+        adapter_factory=lambda execution: Adapter(execution),
+    )
+    assert result.ok and result.archive_path is not None
+    return Path(result.archive_path), invocation
 
 
 def test_se2r_12_complete_archive_replays_before_adapter_access(
@@ -330,3 +439,137 @@ def test_se2r_10_typed_transport_cannot_override_retained_provenance() -> None:
     )
     assert recomputed.transport_kind == "http_error"
     assert ProviderBoundaryFactsRecordV4.from_runtime(recomputed) != forged_record.facts
+
+
+def test_anthropic_archive_recomputes_terminal_status_from_raw_bytes() -> None:
+    request = FrozenProviderRequestV4(
+        trial_id="trial-anthropic-archive",
+        dimension_id="dimension-1",
+        attempt_ordinal=1,
+        system_text="system",
+        user_text="user",
+        prompt_request_sha256="1" * 64,
+        adapter_id=ANTHROPIC_ADAPTER_ID,
+        provider_id=ANTHROPIC_PROVIDER_ID,
+        model_id=_ANTHROPIC_TEST_MODEL,
+        expected_model_version=_ANTHROPIC_TEST_MODEL,
+        temperature=1.0,
+        top_p=1.0,
+        max_output_tokens=100,
+        seed=None,
+        timeout_seconds=60,
+    )
+    accepted_raw = synthetic_anthropic_message_bytes_v1(
+        stop_reason="end_turn",
+        response_id="msg-archive-public",
+        model=_ANTHROPIC_TEST_MODEL,
+        content=[
+            {"type": "thinking", "thinking": "non-output", "signature": "sig"},
+            {"type": "text", "text": '{"findings":[]}'},
+        ],
+        input_tokens=10,
+        output_tokens=5,
+    )
+    attempt = object.__new__(AnthropicMessagesAdapterV1)._attempt_from_response(
+        request=request,
+        raw=accepted_raw,
+        sdk_response=None,
+    )
+    record = _attempt_record(
+        provider_request=request,
+        attempt_ref="attempt:dimension-1:1",
+        raw=attempt,
+        started_at="2027-07-18T00:00:00Z",
+        completed_at="2027-07-18T00:00:01Z",
+    )
+    recomputed = _recomputed_facts(
+        record=record,
+        response_raw=accepted_raw,
+        sdk_projection_raw=attempt.sdk_projection_bytes,
+    )
+    assert ProviderBoundaryFactsRecordV4.from_runtime(recomputed) == record.facts
+
+    present_error = object.__new__(AnthropicMessagesAdapterV1)._attempt_from_response(
+        request=request,
+        raw=accepted_raw,
+        sdk_response=None,
+        transport_kind="http_error",
+        transport_http_status=503,
+        transport_http_present=True,
+    )
+    present_error_record = _attempt_record(
+        provider_request=request,
+        attempt_ref="attempt:dimension-1:1",
+        raw=present_error,
+        started_at="2027-07-18T00:00:00Z",
+        completed_at="2027-07-18T00:00:01Z",
+    )
+    recomputed_present_error = _recomputed_facts(
+        record=present_error_record,
+        response_raw=accepted_raw,
+        sdk_projection_raw=present_error.sdk_projection_bytes,
+    )
+    assert (
+        ProviderBoundaryFactsRecordV4.from_runtime(recomputed_present_error)
+        == present_error_record.facts
+    )
+
+    refused_raw = synthetic_anthropic_message_bytes_v1(
+        stop_reason="refusal",
+        response_id="msg-archive-public",
+        model=_ANTHROPIC_TEST_MODEL,
+        content=[{"type": "text", "text": '{"findings":[]}'}],
+        input_tokens=10,
+        output_tokens=5,
+    )
+    tampered = _recomputed_facts(
+        record=record,
+        response_raw=refused_raw,
+        sdk_projection_raw=attempt.sdk_projection_bytes,
+    )
+    assert ProviderBoundaryFactsRecordV4.from_runtime(tampered) != record.facts
+
+
+@pytest.mark.parametrize(
+    "http_status",
+    [
+        {"invalid_code": None, "state": "present_valid", "value": 200},
+        {
+            "invalid_code": "http_status_wrong_type",
+            "state": "present_invalid",
+            "value": None,
+        },
+    ],
+)
+def test_anthropic_rehashed_sdk_status_tamper_is_invalid_before_metadata(
+    tmp_path: Path,
+    monkeypatch,
+    http_status: dict[str, object],
+) -> None:
+    archive, invocation = _anthropic_archive(tmp_path, monkeypatch)
+    sdk_path = next(archive.glob("attempts/*/1/sdk_projection.json"))
+    sdk_projection = _strict_load(sdk_path)
+    assert sdk_projection["transport_kind"] == "response"
+    assert sdk_projection["http_status"]["state"] == "absent"
+    sdk_projection["http_status"] = http_status
+    sdk_path.write_bytes(canonical_json_bytes(sdk_projection))
+    _rehash_outer(
+        archive,
+        sdk_path.relative_to(archive).as_posix(),
+    )
+    metadata_calls = 0
+
+    def forbidden_metadata(_name):
+        nonlocal metadata_calls
+        metadata_calls += 1
+        raise AssertionError("tampered replay touched distribution metadata")
+
+    monkeypatch.setattr(runner_module.metadata, "version", forbidden_metadata)
+    replay = run_shadow(
+        **invocation,
+        adapter_factory=lambda _execution: (_ for _ in ()).throw(
+            AssertionError("tampered replay touched adapter")
+        ),
+    )
+    assert replay.reason_codes == ("shadow_archive_invalid",)
+    assert metadata_calls == 0

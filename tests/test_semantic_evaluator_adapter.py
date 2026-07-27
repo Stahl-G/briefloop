@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import replace
+import json
 import sys
 from types import SimpleNamespace
 
@@ -15,6 +16,17 @@ from multi_agent_brief.semantic_evaluator.adapter import (
     capture_response_envelope_v4,
     classify_provider_outcome_v4,
     make_provider_boundary_facts_v4,
+)
+from multi_agent_brief.semantic_evaluator.adapters.anthropic_messages import (
+    ANTHROPIC_ADAPTER_ID,
+    ANTHROPIC_API_KEY_SETTING,
+    ANTHROPIC_ENDPOINT_SETTING,
+    ANTHROPIC_PROVIDER_ID,
+    AnthropicMessagesAdapterV1,
+    canonical_messages_endpoint_v1,
+    is_supported_anthropic_sdk_version_v1,
+    project_anthropic_message_bytes_v1,
+    synthetic_anthropic_message_bytes_v1,
 )
 from multi_agent_brief.semantic_evaluator.adapters.openai_responses import (
     OPENAI_ADAPTER_ID,
@@ -34,11 +46,14 @@ from multi_agent_brief.semantic_evaluator.adapters.synthetic_fixture import (
     project_synthetic_response_bytes_v4,
 )
 from multi_agent_brief.semantic_evaluator.prompt_sizer import (
+    AnthropicUtf8BytePromptSizerV1,
     CLIProxyUtf8BytePromptSizerV1,
 )
 
 
 EXPECTED_MODEL = b"gpt-test-2026-07-18"
+ANTHROPIC_TEST_MODEL = "public-nonclaude-model-v1"
+ANTHROPIC_TEST_ENDPOINT = "https://messages.example.test/v1"
 KNOWN_STATUSES = frozenset(
     {"completed", "failed", "in_progress", "cancelled", "queued", "incomplete"}
 )
@@ -99,6 +114,26 @@ def _openai_request() -> FrozenProviderRequestV4:
         model_id="gpt-test",
         expected_model_version=EXPECTED_MODEL.decode(),
         temperature=0.0,
+        top_p=1.0,
+        max_output_tokens=100,
+        seed=None,
+        timeout_seconds=60,
+    )
+
+
+def _anthropic_request() -> FrozenProviderRequestV4:
+    return FrozenProviderRequestV4(
+        trial_id="trial-anthropic-public",
+        dimension_id="dimension-1",
+        attempt_ordinal=1,
+        system_text="system",
+        user_text="user",
+        prompt_request_sha256="2" * 64,
+        adapter_id=ANTHROPIC_ADAPTER_ID,
+        provider_id=ANTHROPIC_PROVIDER_ID,
+        model_id=ANTHROPIC_TEST_MODEL,
+        expected_model_version=ANTHROPIC_TEST_MODEL,
+        temperature=1.0,
         top_p=1.0,
         max_output_tokens=100,
         seed=None,
@@ -346,6 +381,390 @@ def test_cliproxy_prompt_sizer_is_strict_utf8_and_conservative() -> None:
     with pytest.raises(Exception) as exc_info:
         sizer.count_tokens(system_text="bad\ud800", user_text="ok")
     assert getattr(exc_info.value, "reason_code", None) == "prompt_sizer_unavailable"
+
+
+def test_anthropic_projector_keeps_thinking_out_of_final_text() -> None:
+    raw = synthetic_anthropic_message_bytes_v1(
+        stop_reason="end_turn",
+        response_id="msg-public",
+        model=ANTHROPIC_TEST_MODEL,
+        content=[
+            {"type": "thinking", "thinking": "private reasoning", "signature": "sig"},
+            {"type": "redacted_thinking", "data": "opaque"},
+            {"type": "text", "text": '{"findings":[]}'},
+        ],
+        input_tokens=11,
+        output_tokens=7,
+    )
+    projection = project_anthropic_message_bytes_v1(raw)
+    assert projection.envelope_valid is True
+    assert projection.status.utf8_bytes == b"completed"
+    assert projection.output.utf8_bytes == b'{"findings":[]}'
+    assert b"private reasoning" not in (projection.output.utf8_bytes or b"")
+    assert (
+        projection.input_tokens,
+        projection.output_tokens,
+        projection.total_tokens,
+    ) == (
+        11,
+        7,
+        18,
+    )
+
+
+@pytest.mark.parametrize(
+    ("stop_reason", "reason"),
+    [
+        ("max_tokens", "provider_incomplete"),
+        ("model_context_window_exceeded", "provider_incomplete"),
+        ("refusal", "provider_refused"),
+    ],
+)
+def test_anthropic_terminal_stop_reasons_never_expose_output(
+    stop_reason: str, reason: str
+) -> None:
+    raw = synthetic_anthropic_message_bytes_v1(
+        stop_reason=stop_reason,
+        response_id="msg-public",
+        model=ANTHROPIC_TEST_MODEL,
+        content=[{"type": "text", "text": '{"findings":[]}'}],
+    )
+    attempt = object.__new__(AnthropicMessagesAdapterV1)._attempt_from_response(
+        request=_anthropic_request(),
+        raw=raw,
+        sdk_response=None,
+    )
+    assert attempt.outcome.shadow_reason == reason
+    assert attempt.outcome.retry_eligible is False
+    assert attempt.extracted_output is None
+
+
+@pytest.mark.parametrize(
+    "content",
+    [
+        [{"type": "tool_use", "id": "tool-1"}],
+        [{"type": "thinking", "thinking": "x"}],
+        [{"type": "redacted_thinking", "data": ""}],
+        [{"type": "text", "text": ""}],
+    ],
+)
+def test_anthropic_unknown_or_malformed_blocks_fail_closed(
+    content: list[dict[str, object]],
+) -> None:
+    raw = synthetic_anthropic_message_bytes_v1(
+        stop_reason="end_turn",
+        response_id="msg-public",
+        model=ANTHROPIC_TEST_MODEL,
+        content=content,
+    )
+    attempt = object.__new__(AnthropicMessagesAdapterV1)._attempt_from_response(
+        request=_anthropic_request(),
+        raw=raw,
+        sdk_response=None,
+    )
+    assert attempt.outcome.shadow_reason == "provider_boundary_invalid"
+    assert attempt.extracted_output is None
+
+
+@pytest.mark.parametrize(
+    "stop_reason",
+    ["pause_turn", "stop_sequence", "tool_use", "future_stop_reason"],
+)
+def test_anthropic_unexpected_stop_reason_is_terminal_invalid(
+    stop_reason: str,
+) -> None:
+    raw = synthetic_anthropic_message_bytes_v1(
+        stop_reason=stop_reason,
+        response_id="msg-public",
+        model=ANTHROPIC_TEST_MODEL,
+        content=[{"type": "text", "text": '{"findings":[]}'}],
+    )
+    attempt = object.__new__(AnthropicMessagesAdapterV1)._attempt_from_response(
+        request=_anthropic_request(),
+        raw=raw,
+        sdk_response=None,
+    )
+    assert attempt.outcome.shadow_reason == "provider_boundary_invalid"
+    assert attempt.outcome.retry_eligible is False
+    assert attempt.extracted_output is None
+
+
+def test_anthropic_model_drift_is_terminal_identity_mismatch() -> None:
+    raw = synthetic_anthropic_message_bytes_v1(
+        stop_reason="end_turn",
+        response_id="msg-public",
+        model="public-nonclaude-model-v1-drifted",
+        content=[{"type": "text", "text": '{"findings":[]}'}],
+    )
+    attempt = object.__new__(AnthropicMessagesAdapterV1)._attempt_from_response(
+        request=_anthropic_request(),
+        raw=raw,
+        sdk_response=None,
+    )
+    assert attempt.outcome.shadow_reason == "provider_identity_mismatch"
+    assert attempt.extracted_output is None
+
+
+def test_anthropic_present_http_error_binds_status_and_stays_terminal() -> None:
+    raw = synthetic_anthropic_message_bytes_v1(
+        stop_reason="end_turn",
+        response_id="msg-http-error-public",
+        model=ANTHROPIC_TEST_MODEL,
+        content=[{"type": "text", "text": '{"findings":[]}'}],
+    )
+    adapter = object.__new__(AnthropicMessagesAdapterV1)
+    normal = adapter._attempt_from_response(
+        request=_anthropic_request(),
+        raw=raw,
+        sdk_response=None,
+    )
+    assert normal.facts.http_status.state == "absent"
+
+    present_error = adapter._attempt_from_response(
+        request=_anthropic_request(),
+        raw=raw,
+        sdk_response=None,
+        transport_kind="http_error",
+        transport_http_status=503,
+        transport_http_present=True,
+    )
+    assert present_error.facts.envelope.state == "present_valid"
+    assert present_error.facts.http_status.state == "present_valid"
+    assert present_error.facts.http_status.value == 503
+    assert present_error.outcome.retry_eligible is False
+    assert present_error.outcome.output_eligible is False
+    assert present_error.outcome.shadow_reason == "provider_boundary_invalid"
+    sdk_projection = json.loads(present_error.sdk_projection_bytes or b"")
+    assert sdk_projection["http_status"] == {
+        "invalid_code": None,
+        "state": "present_valid",
+        "value": 503,
+    }
+
+
+def test_anthropic_sdk_parse_failure_cannot_fall_back_to_raw_success() -> None:
+    from multi_agent_brief.semantic_evaluator.adapters import anthropic_messages
+
+    raw = synthetic_anthropic_message_bytes_v1(
+        stop_reason="end_turn",
+        response_id="msg-public",
+        model=ANTHROPIC_TEST_MODEL,
+        content=[{"type": "text", "text": '{"findings":[]}'}],
+    )
+    attempt = object.__new__(AnthropicMessagesAdapterV1)._attempt_from_response(
+        request=_anthropic_request(),
+        raw=raw,
+        sdk_response=anthropic_messages._SDK_READ_FAILED,
+    )
+    assert attempt.outcome.shadow_reason == "provider_boundary_invalid"
+    assert attempt.extracted_output is None
+
+
+def test_anthropic_adapter_error_is_value_free_and_never_calls_fallback() -> None:
+    sentinel = "secret-like-provider-diagnostic"
+
+    class TimeoutError(Exception):
+        pass
+
+    class ConnectionError(Exception):
+        pass
+
+    class StatusError(Exception):
+        pass
+
+    def explode(**_kwargs):
+        raise RuntimeError(sentinel)
+
+    adapter = object.__new__(AnthropicMessagesAdapterV1)
+    adapter._client = SimpleNamespace(
+        messages=SimpleNamespace(
+            with_raw_response=SimpleNamespace(create=explode),
+        )
+    )
+    adapter._anthropic = SimpleNamespace(
+        APITimeoutError=TimeoutError,
+        APIConnectionError=ConnectionError,
+        APIStatusError=StatusError,
+    )
+    attempt = adapter.invoke(_anthropic_request())
+    assert attempt.outcome.shadow_reason == "provider_failed"
+    assert attempt.raw_transport_response is None
+    assert sentinel.encode() not in (attempt.sdk_projection_bytes or b"")
+
+
+def test_anthropic_adapter_rejects_noncanonical_request_before_provider() -> None:
+    calls = 0
+
+    def create(**_kwargs):
+        nonlocal calls
+        calls += 1
+        raise AssertionError("noncanonical request reached provider")
+
+    adapter = object.__new__(AnthropicMessagesAdapterV1)
+    adapter._client = SimpleNamespace(
+        messages=SimpleNamespace(
+            with_raw_response=SimpleNamespace(create=create),
+        )
+    )
+    request = replace(_anthropic_request(), temperature=0.0)
+    attempt = adapter.invoke(request)
+    assert calls == 0
+    assert attempt.outcome.shadow_reason == "provider_failed"
+
+
+def test_anthropic_constructor_and_wire_profile_are_fixed(monkeypatch) -> None:
+    from multi_agent_brief.semantic_evaluator.adapters import anthropic_messages
+
+    constructor: dict[str, object] = {}
+    request_arguments: dict[str, object] = {}
+    raw = synthetic_anthropic_message_bytes_v1(
+        stop_reason="end_turn",
+        response_id="msg-public",
+        model=ANTHROPIC_TEST_MODEL,
+        content=[{"type": "text", "text": '{"findings":[]}'}],
+    )
+    sdk_response = SimpleNamespace(
+        id="msg-public",
+        model=ANTHROPIC_TEST_MODEL,
+        stop_reason="end_turn",
+        content=[SimpleNamespace(type="text", text='{"findings":[]}')],
+        usage=SimpleNamespace(input_tokens=1, output_tokens=1),
+    )
+    raw_response = SimpleNamespace(
+        http_response=SimpleNamespace(content=raw),
+        parse=lambda: sdk_response,
+    )
+
+    def create(**kwargs):
+        request_arguments.update(kwargs)
+        return raw_response
+
+    client = SimpleNamespace(
+        messages=SimpleNamespace(
+            with_raw_response=SimpleNamespace(create=create),
+        )
+    )
+
+    def make_client(**kwargs):
+        constructor.update(kwargs)
+        return client
+
+    class TimeoutError(Exception):
+        pass
+
+    class ConnectionError(Exception):
+        pass
+
+    class StatusError(Exception):
+        pass
+
+    monkeypatch.setenv("ANTHROPIC_BASE_URL", "https://generic-env.invalid")
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "generic-key-must-not-be-read")
+    monkeypatch.setitem(
+        sys.modules,
+        "anthropic",
+        SimpleNamespace(
+            Anthropic=make_client,
+            APITimeoutError=TimeoutError,
+            APIConnectionError=ConnectionError,
+            APIStatusError=StatusError,
+        ),
+    )
+    monkeypatch.setattr(anthropic_messages.metadata, "version", lambda _name: "0.104.1")
+    adapter = AnthropicMessagesAdapterV1(
+        api_key="test-key",
+        endpoint=ANTHROPIC_TEST_ENDPOINT,
+    )
+    attempt = adapter.invoke(_anthropic_request())
+
+    assert constructor == {
+        "api_key": "test-key",
+        "base_url": ANTHROPIC_TEST_ENDPOINT,
+        "max_retries": 0,
+    }
+    assert request_arguments == {
+        "model": ANTHROPIC_TEST_MODEL,
+        "max_tokens": 100,
+        "system": "system",
+        "messages": [{"role": "user", "content": "user"}],
+        "timeout": 60,
+    }
+    assert attempt.outcome.attempt_status == "completed"
+    assert "temperature" not in request_arguments
+    assert "top_p" not in request_arguments
+    assert "thinking" not in request_arguments
+    assert "output_config" not in request_arguments
+    assert "tools" not in request_arguments
+    assert ANTHROPIC_ENDPOINT_SETTING == "BRIEFLOOP_LAJ_MESSAGES_ENDPOINT"
+    assert ANTHROPIC_API_KEY_SETTING == "BRIEFLOOP_LAJ_MESSAGES_API_KEY"
+
+
+def test_anthropic_prompt_sizer_is_strict_local_upper_bound() -> None:
+    sizer = AnthropicUtf8BytePromptSizerV1()
+    assert sizer.count_tokens(system_text="A", user_text="中文") == 15
+    with pytest.raises(Exception) as exc_info:
+        sizer.count_tokens(system_text="bad\ud800", user_text="ok")
+    assert getattr(exc_info.value, "reason_code", None) == "prompt_sizer_unavailable"
+
+
+@pytest.mark.parametrize("version", ["0.103.9", "0.105.0", "", None, True])
+def test_anthropic_sdk_version_is_frozen_to_0104(version: object) -> None:
+    assert is_supported_anthropic_sdk_version_v1(version) is False
+    assert is_supported_anthropic_sdk_version_v1("0.104.1") is True
+
+
+@pytest.mark.parametrize(
+    "endpoint",
+    [
+        "https://api.anthropic.com",
+        ANTHROPIC_TEST_ENDPOINT,
+        "https://messages.example.test:8443/api",
+        "https://localhost:8443/v1",
+        "https://127.0.0.1:8443/v1",
+        "https://[2001:db8::1]:8443/v1",
+    ],
+)
+def test_messages_endpoint_accepts_only_exact_canonical_https(
+    endpoint: str,
+) -> None:
+    assert canonical_messages_endpoint_v1(endpoint) == endpoint
+
+
+@pytest.mark.parametrize(
+    "endpoint",
+    [
+        None,
+        "",
+        "http://messages.example.test",
+        "https://user@messages.example.test",
+        "https://messages.example.test?x=1",
+        "https://messages.example.test#fragment",
+        "https://messages.example.test/.",
+        "https://messages.example.test/a/../b",
+        "https://messages.example.test//v1",
+        "https://messages.example.test/%76%31",
+        "https:\\messages.example.test",
+        "https://MESSAGES.example.test",
+        "https://messages.example.test/",
+        "https://messages.example.test:443",
+        "https:// ",
+        "https:// /v1",
+        "https://messages.example.test/\tbad",
+        "https://example..test",
+        "https://-example.test",
+        "https://example-.test",
+        "https://127.000.0.1",
+        "https://127.1",
+        "https://[2001:0db8::1]",
+        "https://[fe80::1%25en0]",
+    ],
+)
+def test_messages_endpoint_rejects_ambiguous_or_noncanonical_forms(
+    endpoint: object,
+) -> None:
+    with pytest.raises(TypeError) as caught:
+        canonical_messages_endpoint_v1(endpoint)
+    assert str(caught.value) == "shadow_request_invalid"
 
 
 def test_se2r_02_openai_status_error_body_cannot_complete() -> None:

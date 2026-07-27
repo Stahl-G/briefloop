@@ -17,9 +17,17 @@ from multi_agent_brief.semantic_evaluator.normalization import normalize_markdow
 from multi_agent_brief.semantic_evaluator.runner import (
     PROFILE_ID,
     PreparedShadowRun,
+    ResolvedPreparedShadowRun,
     ShadowRunResult,
     execute_prepared_shadow_run,
     prepare_shadow_run,
+    resolve_prepared_shadow_identity,
+)
+from multi_agent_brief.semantic_evaluator.prompt_sizer import (
+    ANTHROPIC_PROMPT_SIZER_ID,
+    CLIPROXY_PROMPT_SIZER_ID,
+    OPENAI_PROMPT_SIZER_ID,
+    SYNTHETIC_PROMPT_SIZER_ID,
 )
 from multi_agent_brief.semantic_evaluator.serialization import (
     canonical_json_bytes,
@@ -331,8 +339,12 @@ def make_execution_authorization(
     study_id: str,
     prepared: PreparedShadowRun,
     policy: LajProviderBudgetPolicyV1,
+    resolved_identity: ResolvedPreparedShadowRun | None = None,
 ) -> LajProviderExecutionAuthorizationV1:
     admission = prepared.admission
+    resolved = resolved_identity or resolve_prepared_shadow_identity(prepared)
+    execution = resolved.execution_manifest
+    request = resolved.request
     payload: dict[str, object] = {
         "schema_version": PROVIDER_EXECUTION_AUTHORIZATION_SCHEMA_ID,
         "study_id": study_id,
@@ -343,6 +355,13 @@ def make_execution_authorization(
         "assessment_plan_sha256": admission.assessment_plan.assessment_plan_sha256,
         "ordered_prompt_request_sha256s": list(admission.prompt_request_sha256s),
         "budget_policy_sha256": policy.policy_sha256,
+        "provider_id": request.provider_id,
+        "adapter_id": execution.adapter_id,
+        "model_id": request.model_id,
+        "expected_model_version_utf8_hex": (request.expected_model_version_utf8_hex),
+        "execution_policy_sha256": execution.execution_policy_sha256,
+        "provider_endpoint_sha256": execution.provider_endpoint_sha256,
+        "execution_sha256": execution.execution_sha256,
     }
     return LajProviderExecutionAuthorizationV1.model_validate(
         {**payload, "authorization_sha256": canonical_sha256(payload)}
@@ -350,11 +369,16 @@ def make_execution_authorization(
 
 
 def _count_semantics(sizer_id: str) -> str:
-    if sizer_id == "openai_tiktoken_v1":
+    if sizer_id == OPENAI_PROMPT_SIZER_ID:
         return "exact_tokenizer"
-    if sizer_id == "local_proxy_utf8_bytes_conservative_v1":
+    if sizer_id in {
+        ANTHROPIC_PROMPT_SIZER_ID,
+        CLIPROXY_PROMPT_SIZER_ID,
+    }:
         return "conservative_utf8_byte_upper_bound"
-    return "synthetic_test_counter"
+    if sizer_id == SYNTHETIC_PROMPT_SIZER_ID:
+        return "synthetic_test_counter"
+    raise SemanticEvaluatorError("budget_preflight_unavailable")
 
 
 def compute_budget_preflight(
@@ -362,10 +386,17 @@ def compute_budget_preflight(
     prepared: PreparedShadowRun,
     authorization: LajProviderExecutionAuthorizationV1,
     policy: LajProviderBudgetPolicyV1,
+    resolved_identity: ResolvedPreparedShadowRun | None = None,
 ) -> LajBudgetPreflightV1:
     admission = prepared.admission
+    if type(authorization) is not LajProviderExecutionAuthorizationV1:
+        raise SemanticEvaluatorError("provider_execution_authorization_invalid")
+    resolved = resolved_identity or resolve_prepared_shadow_identity(prepared)
     expected = make_execution_authorization(
-        study_id=authorization.study_id, prepared=prepared, policy=policy
+        study_id=authorization.study_id,
+        prepared=prepared,
+        policy=policy,
+        resolved_identity=resolved,
     )
     if canonical_json_bytes(expected) != canonical_json_bytes(authorization):
         raise SemanticEvaluatorError("provider_execution_authorization_invalid")
@@ -485,9 +516,23 @@ def prepare_study(
             None,
             _study_preparation_reasons(prepared),
         )
-    authorization = make_execution_authorization(
-        study_id=declaration.study_id, prepared=prepared, policy=budget_policy
-    )
+    try:
+        resolved_identity = resolve_prepared_shadow_identity(prepared)
+        authorization = make_execution_authorization(
+            study_id=declaration.study_id,
+            prepared=prepared,
+            policy=budget_policy,
+            resolved_identity=resolved_identity,
+        )
+    except SemanticEvaluatorError as exc:
+        return StudyPreflightResult(
+            False,
+            eligibility,
+            resolved_case,
+            None,
+            None,
+            (exc.reason_code,),
+        )
     if authorization.report_sha256 != declaration.report_sha256:
         return StudyPreflightResult(
             False,
@@ -499,7 +544,10 @@ def prepare_study(
         )
     try:
         preflight = compute_budget_preflight(
-            prepared=prepared, authorization=authorization, policy=budget_policy
+            prepared=prepared,
+            authorization=authorization,
+            policy=budget_policy,
+            resolved_identity=resolved_identity,
         )
     except SemanticEvaluatorError as exc:
         return StudyPreflightResult(
@@ -612,6 +660,16 @@ def _verify_execution_evidence(
         auth.assessment_plan_sha256 == archive.request.assessment_plan_sha256,
         auth.ordered_prompt_request_sha256s
         == archive.request.ordered_prompt_request_sha256s,
+        auth.provider_id == archive.request.provider_id,
+        auth.adapter_id == archive.execution_manifest.adapter_id,
+        auth.model_id == archive.request.model_id,
+        auth.expected_model_version_utf8_hex
+        == archive.request.expected_model_version_utf8_hex,
+        auth.execution_policy_sha256
+        == archive.execution_manifest.execution_policy_sha256,
+        auth.provider_endpoint_sha256
+        == archive.execution_manifest.provider_endpoint_sha256,
+        auth.execution_sha256 == archive.execution_manifest.execution_sha256,
         frozen_preflight.input_binding_sha256 == archive.request.input_binding_sha256,
         frozen_preflight.instrument_sha256 == archive.request.instrument_sha256,
         frozen_preflight.assessment_plan_sha256
@@ -657,6 +715,13 @@ def budgeted_shadow_run(
     clock: Any = None,
     sleep: Any = None,
 ) -> BudgetedShadowRunResult:
+    if type(authorization) is not LajProviderExecutionAuthorizationV1:
+        return BudgetedShadowRunResult(
+            None,
+            None,
+            None,
+            ("provider_execution_authorization_invalid",),
+        )
     try:
         evidence_path = validate_standalone_study_output(
             evidence_output, forbidden_archive=archive_root
@@ -685,11 +750,24 @@ def budgeted_shadow_run(
             None, None, None, _study_preparation_reasons(prepared)
         )
     try:
+        resolved_identity = resolve_prepared_shadow_identity(
+            prepared,
+            replay_only=existing_execution_evidence is not None,
+        )
         preflight = compute_budget_preflight(
-            prepared=prepared, authorization=authorization, policy=budget_policy
+            prepared=prepared,
+            authorization=authorization,
+            policy=budget_policy,
+            resolved_identity=resolved_identity,
         )
     except SemanticEvaluatorError as exc:
-        return BudgetedShadowRunResult(None, None, None, (exc.reason_code,))
+        reason_code = (
+            "study_execution_evidence_incomplete"
+            if existing_execution_evidence is not None
+            and exc.reason_code == "shadow_archive_incomplete"
+            else exc.reason_code
+        )
+        return BudgetedShadowRunResult(None, None, None, (reason_code,))
     if preflight.decision == "blocked":
         return BudgetedShadowRunResult(
             preflight, None, None, tuple(preflight.reason_codes)
@@ -709,7 +787,11 @@ def budgeted_shadow_run(
         kwargs["clock"] = clock
     if sleep is not None:
         kwargs["sleep"] = sleep
-    result = execute_prepared_shadow_run(prepared, **kwargs)
+    result = execute_prepared_shadow_run(
+        prepared,
+        resolved_identity=resolved_identity,
+        **kwargs,
+    )
     if not result.archive_complete:
         if reserved is not None:
             reserved.close()

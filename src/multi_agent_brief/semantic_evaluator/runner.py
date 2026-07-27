@@ -27,6 +27,15 @@ from multi_agent_brief.semantic_evaluator.adapter import (
     make_provider_boundary_facts_v4,
 )
 from multi_agent_brief.semantic_evaluator.admission import admit_inputs
+from multi_agent_brief.semantic_evaluator.adapters.anthropic_messages import (
+    ANTHROPIC_ADAPTER_ID,
+    ANTHROPIC_ADAPTER_VERSION,
+    ANTHROPIC_API_KEY_SETTING,
+    ANTHROPIC_ENDPOINT_SETTING,
+    ANTHROPIC_PROVIDER_ID,
+    canonical_messages_endpoint_v1,
+    is_supported_anthropic_sdk_version_v1,
+)
 from multi_agent_brief.semantic_evaluator.adapters.openai_responses import (
     OPENAI_ADAPTER_ID,
     OPENAI_ADAPTER_VERSION,
@@ -62,6 +71,7 @@ from multi_agent_brief.semantic_evaluator.contracts import (
 )
 from multi_agent_brief.semantic_evaluator.errors import SemanticEvaluatorError
 from multi_agent_brief.semantic_evaluator.prompt_sizer import (
+    AnthropicUtf8BytePromptSizerV1,
     CLIProxyUtf8BytePromptSizerV1,
     OpenAITiktokenPromptSizerV1,
     SyntheticFixturePromptSizerV1,
@@ -154,6 +164,16 @@ class PreparedShadowRun:
     trial_id: str
     prompt_sizer: Any
     policy: ShadowExecutionPolicy
+    messages_endpoint: str | None
+
+
+@dataclass(frozen=True)
+class ResolvedPreparedShadowRun:
+    """One replay-first exact execution identity for a prepared shadow run."""
+
+    execution_manifest: ShadowExecutionManifest
+    request: ShadowRunRequest
+    replay: VerifiedShadowArchive | None
 
 
 @dataclass(frozen=True)
@@ -313,6 +333,14 @@ def _prompt_sizer_for(config: InstrumentConfig) -> tuple[str, Any]:
         return OPENAI_ADAPTER_ID, OpenAITiktokenPromptSizerV1(model_id=config.model_id)
     if config.provider_id == CLIPROXY_PROVIDER_ID:
         return CLIPROXY_ADAPTER_ID, CLIProxyUtf8BytePromptSizerV1()
+    if config.provider_id == ANTHROPIC_PROVIDER_ID:
+        if (
+            float(config.decoding.temperature) != 1.0
+            or float(config.decoding.top_p) != 1.0
+            or config.decoding.seed is not None
+        ):
+            raise SemanticEvaluatorError("shadow_request_invalid")
+        return ANTHROPIC_ADAPTER_ID, AnthropicUtf8BytePromptSizerV1()
     raise SemanticEvaluatorError("shadow_adapter_unavailable")
 
 
@@ -331,6 +359,16 @@ def _policy(adapter_id: str) -> ShadowExecutionPolicy:
     )
 
 
+def _messages_endpoint_for(adapter_id: str) -> str | None:
+    if adapter_id != ANTHROPIC_ADAPTER_ID:
+        return None
+    value = os.environ.get(ANTHROPIC_ENDPOINT_SETTING)
+    try:
+        return canonical_messages_endpoint_v1(value)
+    except TypeError:
+        raise SemanticEvaluatorError("shadow_request_invalid") from None
+
+
 def _source_bundle(*module_names: str) -> str:
     try:
         sources = [
@@ -341,19 +379,46 @@ def _source_bundle(*module_names: str) -> str:
     return canonical_sha256(sources)
 
 
+def _live_provider_sdk_version(adapter_id: str) -> str:
+    if adapter_id == SYNTHETIC_ADAPTER_ID:
+        return "synthetic-v4"
+    if adapter_id in {OPENAI_ADAPTER_ID, CLIPROXY_ADAPTER_ID}:
+        package_name = "openai"
+    elif adapter_id == ANTHROPIC_ADAPTER_ID:
+        package_name = "anthropic"
+    else:
+        raise SemanticEvaluatorError("shadow_adapter_unavailable")
+    try:
+        version = metadata.version(package_name)
+    except Exception:
+        raise SemanticEvaluatorError("shadow_adapter_unavailable") from None
+    if type(version) is not str or not version:
+        raise SemanticEvaluatorError("shadow_adapter_unavailable")
+    if adapter_id == ANTHROPIC_ADAPTER_ID and not (
+        is_supported_anthropic_sdk_version_v1(version)
+    ):
+        raise SemanticEvaluatorError("shadow_adapter_unavailable")
+    return version
+
+
 def _execution_manifest(
     *,
     instrument_sha256: str,
     policy: ShadowExecutionPolicy,
     prompt_sizer: Any,
+    messages_endpoint: str | None,
+    provider_sdk_version: str,
 ) -> ShadowExecutionManifest:
+    if policy.adapter_id != ANTHROPIC_ADAPTER_ID and messages_endpoint is not None:
+        raise SemanticEvaluatorError("shadow_request_invalid")
+    if type(provider_sdk_version) is not str or not provider_sdk_version:
+        raise SemanticEvaluatorError("shadow_adapter_unavailable")
     if policy.adapter_id == SYNTHETIC_ADAPTER_ID:
         adapter_version = _load_fixture_manifest()
         adapter_modules = (
             "multi_agent_brief.semantic_evaluator.adapters.synthetic_fixture",
         )
         provider_sdk_name = "synthetic"
-        provider_sdk_version = "synthetic-v4"
         execution_origin = "synthetic_fixture"
         qualification_class = "synthetic_only"
         provider_endpoint_sha256 = canonical_sha256(["synthetic-no-network"])
@@ -363,10 +428,6 @@ def _execution_manifest(
         adapter_modules = (
             "multi_agent_brief.semantic_evaluator.adapters.openai_responses",
         )
-        try:
-            provider_sdk_version = metadata.version("openai")
-        except Exception:
-            raise SemanticEvaluatorError("shadow_adapter_unavailable") from None
         provider_sdk_name = "openai"
         execution_origin = "direct_openai"
         qualification_class = "direct_openai"
@@ -378,18 +439,24 @@ def _execution_manifest(
             "multi_agent_brief.semantic_evaluator.adapters.openai_responses",
             "multi_agent_brief.semantic_evaluator.adapters.local_proxy_responses",
         )
-        try:
-            provider_sdk_version = metadata.version("openai")
-        except Exception:
-            raise SemanticEvaluatorError("shadow_adapter_unavailable") from None
         provider_sdk_name = "openai"
         execution_origin = "local_cliproxy"
         qualification_class = "local_proxy_experimental"
         provider_endpoint_sha256 = canonical_sha256([CLIPROXY_BASE_URL])
         qualification_eligible = False
+    elif policy.adapter_id == ANTHROPIC_ADAPTER_ID:
+        if messages_endpoint is None:
+            raise SemanticEvaluatorError("shadow_request_invalid")
+        adapter_version = ANTHROPIC_ADAPTER_VERSION
+        adapter_modules = (
+            "multi_agent_brief.semantic_evaluator.adapters.anthropic_messages",
+        )
+        provider_sdk_name = "anthropic"
+        execution_origin = "messages_endpoint"
+        qualification_class = "messages_compatible_experimental"
+        provider_endpoint_sha256 = sha256_bytes(messages_endpoint.encode("ascii"))
+        qualification_eligible = False
     else:
-        raise SemanticEvaluatorError("shadow_adapter_unavailable")
-    if type(provider_sdk_version) is not str or not provider_sdk_version:
         raise SemanticEvaluatorError("shadow_adapter_unavailable")
     schema_hashes = {
         model.schema_id: canonical_sha256(model.model_json_schema())
@@ -460,7 +527,48 @@ def _shadow_request(
     )
 
 
-def _adapter_for(execution: ShadowExecutionManifest) -> SemanticEvaluatorAdapter:
+def resolve_prepared_shadow_identity(
+    prepared: PreparedShadowRun,
+    *,
+    replay_only: bool = False,
+) -> ResolvedPreparedShadowRun:
+    """Resolve replay first, then freeze a live SDK identity only on a miss."""
+
+    replay = resolve_existing_archive(
+        archive_root=prepared.archive_root,
+        trial_id=prepared.trial_id,
+    )
+    if replay is None:
+        if replay_only:
+            raise SemanticEvaluatorError("shadow_archive_incomplete")
+        provider_sdk_version = _live_provider_sdk_version(prepared.policy.adapter_id)
+    else:
+        provider_sdk_version = replay.execution_manifest.provider_sdk_version
+    execution = _execution_manifest(
+        instrument_sha256=(prepared.admission.instrument_manifest.instrument_sha256),
+        policy=prepared.policy,
+        prompt_sizer=prepared.prompt_sizer,
+        messages_endpoint=prepared.messages_endpoint,
+        provider_sdk_version=provider_sdk_version,
+    )
+    request = _shadow_request(prepared.admission, execution)
+    if replay is not None:
+        replay.require_exact_identity(
+            request=request,
+            execution_manifest=execution,
+        )
+    return ResolvedPreparedShadowRun(
+        execution_manifest=execution,
+        request=request,
+        replay=replay,
+    )
+
+
+def _adapter_for(
+    execution: ShadowExecutionManifest,
+    *,
+    messages_endpoint: str | None,
+) -> SemanticEvaluatorAdapter:
     if execution.adapter_id == SYNTHETIC_ADAPTER_ID:
         from multi_agent_brief.semantic_evaluator.adapters.synthetic_fixture import (
             SyntheticFixtureAdapterV4,
@@ -485,6 +593,20 @@ def _adapter_for(execution: ShadowExecutionManifest) -> SemanticEvaluatorAdapter
         if type(api_key) is not str or not api_key:
             raise SemanticEvaluatorError("shadow_adapter_unavailable")
         adapter = CLIProxyResponsesAdapterV1(api_key=api_key)
+    elif execution.adapter_id == ANTHROPIC_ADAPTER_ID:
+        from multi_agent_brief.semantic_evaluator.adapters.anthropic_messages import (
+            AnthropicMessagesAdapterV1,
+        )
+
+        if messages_endpoint is None:
+            raise SemanticEvaluatorError("shadow_adapter_unavailable")
+        api_key = os.environ.get(ANTHROPIC_API_KEY_SETTING)
+        if type(api_key) is not str or not api_key:
+            raise SemanticEvaluatorError("shadow_adapter_unavailable")
+        adapter = AnthropicMessagesAdapterV1(
+            api_key=api_key,
+            endpoint=messages_endpoint,
+        )
     else:
         raise SemanticEvaluatorError("shadow_adapter_unavailable")
     if (
@@ -501,6 +623,8 @@ def _adapter_for(execution: ShadowExecutionManifest) -> SemanticEvaluatorAdapter
 def _validate_adapter(
     adapter: SemanticEvaluatorAdapter,
     execution: ShadowExecutionManifest,
+    *,
+    messages_endpoint: str | None,
 ) -> SemanticEvaluatorAdapter:
     try:
         valid = (
@@ -509,6 +633,15 @@ def _validate_adapter(
             and adapter.provider_sdk_name == execution.provider_sdk_name
             and adapter.provider_sdk_version == execution.provider_sdk_version
             and adapter.qualification_eligible == execution.qualification_eligible
+            and (
+                execution.adapter_id != ANTHROPIC_ADAPTER_ID
+                or (
+                    messages_endpoint is not None
+                    and adapter.base_url == messages_endpoint
+                    and execution.provider_endpoint_sha256
+                    == sha256_bytes(messages_endpoint.encode("ascii"))
+                )
+            )
             and callable(adapter.invoke)
         )
     except Exception:
@@ -801,6 +934,7 @@ def prepare_shadow_run(
         return _failure("shadow_request_invalid")
     try:
         adapter_id, prompt_sizer = _prompt_sizer_for(config)
+        messages_endpoint = _messages_endpoint_for(adapter_id)
     except SemanticEvaluatorError as exc:
         return _failure(exc.reason_code)
     admission = admit_inputs(
@@ -832,6 +966,7 @@ def prepare_shadow_run(
         trial_id=trial_id,
         prompt_sizer=prompt_sizer,
         policy=policy,
+        messages_endpoint=messages_endpoint,
     )
 
 
@@ -841,6 +976,7 @@ def execute_prepared_shadow_run(
     adapter_factory: Callable[[ShadowExecutionManifest], SemanticEvaluatorAdapter]
     | None = None,
     replay_only: bool = False,
+    resolved_identity: ResolvedPreparedShadowRun | None = None,
     clock: Callable[[], str] = _utc_now,
     sleep: Callable[[float], None] = time.sleep,
 ) -> ShadowRunResult:
@@ -851,30 +987,53 @@ def execute_prepared_shadow_run(
     trial_id = prepared.trial_id
     policy = prepared.policy
     try:
-        execution = _execution_manifest(
+        resolved = resolved_identity or resolve_prepared_shadow_identity(
+            prepared,
+            replay_only=replay_only,
+        )
+        expected_execution = _execution_manifest(
             instrument_sha256=admission.instrument_manifest.instrument_sha256,
             policy=policy,
             prompt_sizer=prepared.prompt_sizer,
+            messages_endpoint=prepared.messages_endpoint,
+            provider_sdk_version=(resolved.execution_manifest.provider_sdk_version),
         )
-        request = _shadow_request(admission, execution)
-        replay = resolve_existing_archive(
-            archive_root=root,
-            request=request,
-            execution_manifest=execution,
-        )
+        expected_request = _shadow_request(admission, expected_execution)
+        if canonical_json_bytes(resolved.execution_manifest) != canonical_json_bytes(
+            expected_execution
+        ) or canonical_json_bytes(resolved.request) != canonical_json_bytes(
+            expected_request
+        ):
+            raise SemanticEvaluatorError("shadow_request_conflict")
+        if replay_only and resolved.replay is None:
+            raise SemanticEvaluatorError("shadow_archive_incomplete")
+        if resolved.replay is not None:
+            resolved.replay.require_exact_identity(
+                request=expected_request,
+                execution_manifest=expected_execution,
+            )
     except SemanticEvaluatorError as exc:
         return _failure(exc.reason_code)
-    if replay is not None:
-        return _from_archive(replay, replayed=True)
-    if replay_only:
-        return _failure("shadow_archive_incomplete")
+    execution = expected_execution
+    request = expected_request
+    if resolved.replay is not None:
+        return _from_archive(resolved.replay, replayed=True)
     try:
         prepare_archive_root(archive_root=root, trial_id=trial_id)
     except SemanticEvaluatorError as exc:
         return _failure(exc.reason_code)
     try:
-        factory = adapter_factory or _adapter_for
-        adapter = _validate_adapter(factory(execution), execution)
+        factory = adapter_factory or (
+            lambda current: _adapter_for(
+                current,
+                messages_endpoint=prepared.messages_endpoint,
+            )
+        )
+        adapter = _validate_adapter(
+            factory(execution),
+            execution,
+            messages_endpoint=prepared.messages_endpoint,
+        )
     except Exception:
         return _failure("shadow_adapter_unavailable")
     try:
@@ -976,9 +1135,11 @@ __all__ = [
     "DEFAULT_TIMEOUT_SECONDS",
     "PROFILE_ID",
     "PreparedShadowRun",
+    "ResolvedPreparedShadowRun",
     "RUNNER_VERSION",
     "ShadowRunResult",
     "execute_prepared_shadow_run",
     "prepare_shadow_run",
+    "resolve_prepared_shadow_identity",
     "run_shadow",
 ]

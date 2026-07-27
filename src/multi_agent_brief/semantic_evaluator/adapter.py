@@ -57,6 +57,7 @@ ProviderShadowReason = Literal[
     "provider_retryable_failure",
     "provider_failed",
     "provider_incomplete",
+    "provider_refused",
     "provider_identity_mismatch",
     "provider_boundary_invalid",
 ]
@@ -74,7 +75,15 @@ _SHADOW_REASONS = frozenset(get_args(ProviderShadowReason))
 _KERNEL_REASONS = frozenset(get_args(KernelAttemptFailureReason))
 _RETRYABLE_HTTP_STATUS_CODES = frozenset({408, 409, 429})
 _KNOWN_RESPONSE_STATUSES = frozenset(
-    {"completed", "failed", "in_progress", "cancelled", "queued", "incomplete"}
+    {
+        "completed",
+        "failed",
+        "in_progress",
+        "cancelled",
+        "queued",
+        "incomplete",
+        "refused",
+    }
 )
 
 
@@ -448,6 +457,8 @@ def classify_provider_outcome_v4(
         status_bytes = typed_facts.status.utf8_bytes
         if status_bytes == b"incomplete":
             return _failed_outcome("provider_incomplete")
+        if status_bytes == b"refused":
+            return _failed_outcome("provider_refused")
         if status_bytes in {b"failed", b"cancelled", b"queued", b"in_progress"}:
             return _failed_outcome("provider_failed")
         if status_bytes != b"completed":
@@ -616,6 +627,7 @@ def _validate_taxonomy_totality() -> None:
             "provider_retryable_failure",
             "provider_failed",
             "provider_incomplete",
+            "provider_refused",
             "provider_identity_mismatch",
             "provider_boundary_invalid",
         }
@@ -632,7 +644,15 @@ def _validate_taxonomy_totality() -> None:
         if outcome.output_eligible:
             raise RuntimeError("shadow_adapter_unavailable")
     if _KNOWN_RESPONSE_STATUSES != frozenset(
-        {"completed", "failed", "in_progress", "cancelled", "queued", "incomplete"}
+        {
+            "completed",
+            "failed",
+            "in_progress",
+            "cancelled",
+            "queued",
+            "incomplete",
+            "refused",
+        }
     ):
         raise RuntimeError("shadow_adapter_unavailable")
 

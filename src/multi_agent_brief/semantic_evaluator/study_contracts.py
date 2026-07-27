@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Annotated, ClassVar, Literal
 
-from pydantic import Field, StrictBool, StrictInt, model_validator
+from pydantic import Field, StrictBool, StrictInt, StrictStr, model_validator
 
 from multi_agent_brief.contracts.v2 import CleanText, ContractId, Sha256, StrictModel
 from multi_agent_brief.semantic_evaluator.contracts import DimensionId, Severity
@@ -20,8 +20,11 @@ RESOLVED_SENSITIVITY_CASE_SCHEMA_ID = (
 PROVIDER_BUDGET_POLICY_SCHEMA_ID = (
     "briefloop.semantic_evaluator.provider_budget_policy.v1"
 )
-PROVIDER_EXECUTION_AUTHORIZATION_SCHEMA_ID = (
+PROVIDER_EXECUTION_AUTHORIZATION_V1_SCHEMA_ID = (
     "briefloop.semantic_evaluator.provider_execution_authorization.v1"
+)
+PROVIDER_EXECUTION_AUTHORIZATION_SCHEMA_ID = (
+    "briefloop.semantic_evaluator.provider_execution_authorization.v2"
 )
 BUDGET_PREFLIGHT_SCHEMA_ID = "briefloop.semantic_evaluator.budget_preflight.v1"
 STUDY_EXECUTION_EVIDENCE_SCHEMA_ID = (
@@ -235,9 +238,11 @@ class LajProviderBudgetPolicyV1(StrictModel):
         return self
 
 
-class LajProviderExecutionAuthorizationV1(StrictModel):
-    schema_id: ClassVar[str] = PROVIDER_EXECUTION_AUTHORIZATION_SCHEMA_ID
-    schema_version: Literal[PROVIDER_EXECUTION_AUTHORIZATION_SCHEMA_ID]
+class LajProviderExecutionAuthorizationLegacyV1(StrictModel):
+    """Historical unbound authorization; inspection only, never live authority."""
+
+    schema_id: ClassVar[str] = PROVIDER_EXECUTION_AUTHORIZATION_V1_SCHEMA_ID
+    schema_version: Literal[PROVIDER_EXECUTION_AUTHORIZATION_V1_SCHEMA_ID]
     study_id: ContractId
     trial_id: ContractId
     report_sha256: Sha256
@@ -249,13 +254,57 @@ class LajProviderExecutionAuthorizationV1(StrictModel):
     authorization_sha256: Sha256
 
     @model_validator(mode="after")
-    def validate_authorization(self) -> "LajProviderExecutionAuthorizationV1":
+    def validate_authorization(
+        self,
+    ) -> "LajProviderExecutionAuthorizationLegacyV1":
         if len(self.ordered_prompt_request_sha256s) != len(
             set(self.ordered_prompt_request_sha256s)
         ):
             raise ValueError("prompt request inventory mismatch")
         _check_hash(self, "authorization_sha256")
         return self
+
+
+class LajProviderExecutionAuthorizationV2(StrictModel):
+    schema_id: ClassVar[str] = PROVIDER_EXECUTION_AUTHORIZATION_SCHEMA_ID
+    schema_version: Literal[PROVIDER_EXECUTION_AUTHORIZATION_SCHEMA_ID]
+    study_id: ContractId
+    trial_id: ContractId
+    report_sha256: Sha256
+    bounded_context_sha256: Sha256
+    instrument_sha256: Sha256
+    assessment_plan_sha256: Sha256
+    ordered_prompt_request_sha256s: list[Sha256] = Field(min_length=9, max_length=9)
+    budget_policy_sha256: Sha256
+    provider_id: ContractId
+    adapter_id: ContractId
+    model_id: ContractId
+    expected_model_version_utf8_hex: StrictStr
+    execution_policy_sha256: Sha256
+    provider_endpoint_sha256: Sha256
+    execution_sha256: Sha256
+    authorization_sha256: Sha256
+
+    @model_validator(mode="after")
+    def validate_authorization(self) -> "LajProviderExecutionAuthorizationV2":
+        if len(self.ordered_prompt_request_sha256s) != len(
+            set(self.ordered_prompt_request_sha256s)
+        ):
+            raise ValueError("prompt request inventory mismatch")
+        try:
+            expected_model = bytes.fromhex(self.expected_model_version_utf8_hex)
+            expected_model.decode("utf-8", errors="strict")
+        except (ValueError, UnicodeDecodeError):
+            raise ValueError("expected model identity encoding mismatch") from None
+        if not expected_model:
+            raise ValueError("expected model identity encoding mismatch")
+        _check_hash(self, "authorization_sha256")
+        return self
+
+
+# The CLI imports this historical Python name dynamically.  Keep the parser
+# name stable while making its accepted serialized shape strictly current.
+LajProviderExecutionAuthorizationV1 = LajProviderExecutionAuthorizationV2
 
 
 class LajBudgetPreflightV1(StrictModel):
@@ -360,6 +409,7 @@ class LajStudyExecutionEvidenceV1(StrictModel):
             != self.preflight.assessment_plan_sha256
             or self.authorization.ordered_prompt_request_sha256s
             != self.preflight.ordered_prompt_request_sha256s
+            or self.authorization.execution_sha256 != self.execution_sha256
             or self.preflight.max_provider_calls
             != self.budget_policy.max_provider_calls
             or self.preflight.max_input_tokens != self.budget_policy.max_input_tokens
@@ -445,7 +495,8 @@ STUDY_CONTRACT_MODELS: tuple[type[StrictModel], ...] = (
     LajSensitivityManifestV1,
     ResolvedSensitivityCaseV1,
     LajProviderBudgetPolicyV1,
-    LajProviderExecutionAuthorizationV1,
+    LajProviderExecutionAuthorizationLegacyV1,
+    LajProviderExecutionAuthorizationV2,
     LajBudgetPreflightV1,
     LajStudyExecutionEvidenceV1,
     LajSensitivityComparisonV1,
