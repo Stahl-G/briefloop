@@ -14,6 +14,8 @@ from multi_agent_brief.semantic_evaluator.adapter import (
     ExternalTextFactV4,
     ExternalTextObservation,
     FrozenProviderRequestV4,
+    HttpStatusFactV4,
+    ProviderBoundaryFactsV4,
     RawProviderAttemptV4,
     capture_external_text_v4,
     capture_http_status_v4,
@@ -43,6 +45,10 @@ _STOP_REASONS = frozenset(
 )
 _SDK_READ_FAILED = object()
 _MISSING = object()
+_TRANSPORT_KINDS = frozenset(
+    {"response", "timeout", "connection", "http_error", "adapter_error"}
+)
+_BODY_STATES = frozenset({"absent", "present", "invalid"})
 
 
 class _DuplicateMember(ValueError):
@@ -251,41 +257,37 @@ class AnthropicRawProjectionV1:
     input_tokens: int | None
     output_tokens: int | None
     total_tokens: int | None
+    usage_present: bool
+    usage_valid: bool
+
+
+def _failed_raw_projection(code: str) -> AnthropicRawProjectionV1:
+    absent = _absent_text()
+    return AnthropicRawProjectionV1(
+        False,
+        code,
+        absent,
+        absent,
+        absent,
+        absent,
+        absent,
+        None,
+        None,
+        None,
+        False,
+        False,
+    )
 
 
 def project_anthropic_message_bytes_v1(raw: bytes) -> AnthropicRawProjectionV1:
     """Pure strict Messages projector shared by live capture and replay."""
 
-    absent = _absent_text()
-    failed = AnthropicRawProjectionV1(
-        False,
-        "envelope_wrong_type",
-        absent,
-        absent,
-        absent,
-        absent,
-        absent,
-        None,
-        None,
-        None,
-    )
     if type(raw) is not bytes:
-        return failed
+        return _failed_raw_projection("envelope_wrong_type")
     try:
         text = raw.decode("utf-8", errors="strict")
     except UnicodeDecodeError:
-        return AnthropicRawProjectionV1(
-            False,
-            "envelope_utf8_invalid",
-            absent,
-            absent,
-            absent,
-            absent,
-            absent,
-            None,
-            None,
-            None,
-        )
+        return _failed_raw_projection("envelope_utf8_invalid")
     try:
         value = json.loads(
             text,
@@ -293,101 +295,52 @@ def project_anthropic_message_bytes_v1(raw: bytes) -> AnthropicRawProjectionV1:
             parse_constant=_reject_json_constant,
         )
     except _DuplicateMember:
-        return AnthropicRawProjectionV1(
-            False,
-            "envelope_duplicate_member",
-            absent,
-            absent,
-            absent,
-            absent,
-            absent,
-            None,
-            None,
-            None,
-        )
+        return _failed_raw_projection("envelope_duplicate_member")
     except (json.JSONDecodeError, ValueError, TypeError, RecursionError):
-        return AnthropicRawProjectionV1(
-            False,
-            "envelope_json_invalid",
-            absent,
-            absent,
-            absent,
-            absent,
-            absent,
-            None,
-            None,
-            None,
-        )
+        return _failed_raw_projection("envelope_json_invalid")
     if type(value) is not dict:
-        return AnthropicRawProjectionV1(
-            False,
-            "envelope_not_object",
-            absent,
-            absent,
-            absent,
-            absent,
-            absent,
-            None,
-            None,
-            None,
-        )
+        return _failed_raw_projection("envelope_not_object")
     if value.get("type") != "message" or value.get("role") != "assistant":
-        return AnthropicRawProjectionV1(
-            False,
-            "envelope_projection_failed",
-            absent,
-            absent,
-            absent,
-            absent,
-            absent,
-            None,
-            None,
-            None,
-        )
+        return _failed_raw_projection("envelope_projection_failed")
     stop_reason = capture_external_text_v4(
         (_member(value, "stop_reason"),), allowed_values=_STOP_REASONS
     )
     status = normalize_anthropic_stop_reason_v1(stop_reason)
+    response_id = capture_external_text_v4((_member(value, "id"),))
+    model_identity = capture_external_text_v4((_member(value, "model"),))
+    output = _project_content(value, status=status)
+    usage_present = "usage" in value
     usage = value.get("usage")
     input_tokens: int | None = None
     output_tokens: int | None = None
-    if usage is not None:
-        if type(usage) is not dict:
-            return AnthropicRawProjectionV1(
-                False,
-                "envelope_projection_failed",
-                stop_reason,
-                status,
-                absent,
-                absent,
-                absent,
-                None,
-                None,
-                None,
-            )
+    usage_valid = not usage_present
+    if usage_present and type(usage) is dict:
         input_tokens = _usage_integer(usage.get("input_tokens"))
         output_tokens = _usage_integer(usage.get("output_tokens"))
-        if input_tokens is None or output_tokens is None:
-            return AnthropicRawProjectionV1(
-                False,
-                "envelope_projection_failed",
-                stop_reason,
-                status,
-                absent,
-                absent,
-                absent,
-                None,
-                None,
-                None,
-            )
-    output = _project_content(value, status=status)
+        usage_valid = input_tokens is not None and output_tokens is not None
+        if not usage_valid:
+            input_tokens = None
+            output_tokens = None
+    stop_sequence_valid = (
+        "stop_sequence" not in value or value.get("stop_sequence") is None
+    )
+    envelope_valid = (
+        response_id.state == "present_valid"
+        and model_identity.state == "present_valid"
+        and stop_reason.state == "present_valid"
+        and status.state == "present_valid"
+        and output.state != "present_invalid"
+        and (status.utf8_bytes != b"completed" or output.state == "present_valid")
+        and usage_valid
+        and stop_sequence_valid
+    )
     return AnthropicRawProjectionV1(
-        True,
-        None,
+        envelope_valid,
+        None if envelope_valid else "envelope_projection_failed",
         stop_reason,
         status,
-        capture_external_text_v4((_member(value, "id"),)),
-        capture_external_text_v4((_member(value, "model"),)),
+        response_id,
+        model_identity,
         output,
         input_tokens,
         output_tokens,
@@ -396,6 +349,8 @@ def project_anthropic_message_bytes_v1(raw: bytes) -> AnthropicRawProjectionV1:
             if input_tokens is not None and output_tokens is not None
             else None
         ),
+        usage_present,
+        usage_valid,
     )
 
 
@@ -443,12 +398,12 @@ def _sdk_output(value: object | None) -> ExternalTextObservation:
         return ExternalTextObservation(True, object())
 
 
-def _sdk_usage(value: object | None, name: str) -> int | None:
+def _sdk_usage(value: object, name: str) -> object:
     try:
         item = getattr(getattr(value, "usage"), name)
     except Exception:
-        return None
-    return _usage_integer(item)
+        return _MISSING
+    return item
 
 
 def _raw_bytes(value: object) -> bytes | None:
@@ -486,64 +441,503 @@ def _status_error_body(value: object) -> _StatusErrorBody:
     return _StatusErrorBody("present", content)
 
 
+def _parse_fact_payload(value: object) -> ExternalTextFactV4:
+    if type(value) is not dict or set(value) != {
+        "invalid_code",
+        "state",
+        "utf8_hex",
+        "utf8_sha256",
+    }:
+        raise TypeError("shadow_adapter_unavailable")
+    try:
+        return ExternalTextFactV4(
+            state=value["state"],  # type: ignore[arg-type]
+            utf8_hex=value["utf8_hex"],  # type: ignore[arg-type]
+            utf8_sha256=value["utf8_sha256"],  # type: ignore[arg-type]
+            invalid_code=value["invalid_code"],  # type: ignore[arg-type]
+        )
+    except Exception:
+        raise TypeError("shadow_adapter_unavailable") from None
+
+
+def _parse_http_status_payload(value: object) -> HttpStatusFactV4:
+    if type(value) is not dict or set(value) != {
+        "invalid_code",
+        "state",
+        "value",
+    }:
+        raise TypeError("shadow_adapter_unavailable")
+    try:
+        return HttpStatusFactV4(
+            state=value["state"],  # type: ignore[arg-type]
+            value=value["value"],  # type: ignore[arg-type]
+            invalid_code=value["invalid_code"],  # type: ignore[arg-type]
+        )
+    except Exception:
+        raise TypeError("shadow_adapter_unavailable") from None
+
+
+@dataclass(frozen=True)
+class AnthropicSdkProjectionV1:
+    stop_reason: ExternalTextFactV4
+    status: ExternalTextFactV4
+    response_id: ExternalTextFactV4
+    model_identity: ExternalTextFactV4
+    output: ExternalTextFactV4
+    input_tokens: int | None
+    output_tokens: int | None
+    total_tokens: int | None
+    transport_kind: str
+    http_status: HttpStatusFactV4
+    body_state: str
+
+    def canonical_bytes(self) -> bytes:
+        return canonical_json_bytes(
+            {
+                "body_state": self.body_state,
+                "http_status": asdict(self.http_status),
+                "input_tokens": self.input_tokens,
+                "model_identity": asdict(self.model_identity),
+                "output": asdict(self.output),
+                "output_tokens": self.output_tokens,
+                "response_id": asdict(self.response_id),
+                "schema_version": (
+                    "briefloop.semantic_evaluator.anthropic_sdk_projection.v1"
+                ),
+                "status": asdict(self.status),
+                "stop_reason": asdict(self.stop_reason),
+                "total_tokens": self.total_tokens,
+                "transport_kind": self.transport_kind,
+            }
+        )
+
+
+def parse_anthropic_sdk_projection_v1(raw: bytes) -> AnthropicSdkProjectionV1:
+    """Parse one exact canonical SDK fact projection without provider text."""
+
+    try:
+        text = raw.decode("utf-8", errors="strict")
+        value = json.loads(
+            text,
+            object_pairs_hook=_strict_object,
+            parse_constant=_reject_json_constant,
+        )
+    except (
+        AttributeError,
+        UnicodeDecodeError,
+        _DuplicateMember,
+        json.JSONDecodeError,
+        ValueError,
+        TypeError,
+        RecursionError,
+    ):
+        raise TypeError("shadow_adapter_unavailable") from None
+    required = {
+        "body_state",
+        "http_status",
+        "input_tokens",
+        "model_identity",
+        "output",
+        "output_tokens",
+        "response_id",
+        "schema_version",
+        "status",
+        "stop_reason",
+        "total_tokens",
+        "transport_kind",
+    }
+    if type(value) is not dict or set(value) != required:
+        raise TypeError("shadow_adapter_unavailable")
+    try:
+        if (
+            value["schema_version"]
+            != "briefloop.semantic_evaluator.anthropic_sdk_projection.v1"
+            or value["transport_kind"] not in _TRANSPORT_KINDS
+            or value["body_state"] not in _BODY_STATES
+        ):
+            raise ValueError
+        projection = AnthropicSdkProjectionV1(
+            stop_reason=_parse_fact_payload(value["stop_reason"]),
+            status=_parse_fact_payload(value["status"]),
+            response_id=_parse_fact_payload(value["response_id"]),
+            model_identity=_parse_fact_payload(value["model_identity"]),
+            output=_parse_fact_payload(value["output"]),
+            input_tokens=value["input_tokens"],
+            output_tokens=value["output_tokens"],
+            total_tokens=value["total_tokens"],
+            transport_kind=value["transport_kind"],
+            http_status=_parse_http_status_payload(value["http_status"]),
+            body_state=value["body_state"],
+        )
+        usage = (
+            projection.input_tokens,
+            projection.output_tokens,
+            projection.total_tokens,
+        )
+        if any(
+            item is not None and (type(item) is not int or item < 0) for item in usage
+        ):
+            raise ValueError
+        if any(item is not None for item in usage) and (
+            projection.input_tokens is None
+            or projection.output_tokens is None
+            or projection.total_tokens
+            != projection.input_tokens + projection.output_tokens
+        ):
+            raise ValueError
+        text_absent = all(
+            item.state == "absent"
+            for item in (
+                projection.stop_reason,
+                projection.status,
+                projection.response_id,
+                projection.model_identity,
+                projection.output,
+            )
+        )
+        usage_absent = all(item is None for item in usage)
+        if projection.transport_kind == "response":
+            valid_shape = (
+                projection.body_state in {"present", "invalid"}
+                and projection.http_status.state == "absent"
+            )
+        elif projection.transport_kind == "http_error":
+            valid_shape = projection.http_status.state != "absent" and (
+                projection.body_state in {"present", "invalid"}
+                or (projection.body_state == "absent" and text_absent and usage_absent)
+            )
+        else:
+            valid_shape = (
+                projection.body_state == "absent"
+                and projection.http_status.state == "absent"
+                and text_absent
+                and usage_absent
+            )
+        if not valid_shape or projection.canonical_bytes() != raw:
+            raise ValueError
+    except Exception:
+        raise TypeError("shadow_adapter_unavailable") from None
+    return projection
+
+
+def _reconcile_fact(
+    raw_fact: ExternalTextFactV4,
+    sdk_fact: ExternalTextFactV4,
+) -> ExternalTextFactV4:
+    if sdk_fact.state == "absent":
+        return raw_fact
+    if (
+        raw_fact.state == "present_valid"
+        and sdk_fact.state == "present_valid"
+        and raw_fact.utf8_bytes == sdk_fact.utf8_bytes
+    ):
+        return raw_fact
+    if (
+        raw_fact.state == "present_invalid"
+        and sdk_fact.state == "present_invalid"
+        and raw_fact.invalid_code == sdk_fact.invalid_code
+    ):
+        return raw_fact
+    return _invalid_text("external_text_projection_mismatch")
+
+
+def _sdk_fact_is_canonical_for_raw(
+    raw_fact: ExternalTextFactV4,
+    sdk_fact: ExternalTextFactV4,
+) -> bool:
+    if sdk_fact == raw_fact:
+        return True
+    return (
+        sdk_fact.state == "present_invalid"
+        and sdk_fact.invalid_code == "external_text_projection_mismatch"
+    )
+
+
+def _canonical_sdk_fact(
+    raw_fact: ExternalTextFactV4,
+    observation: ExternalTextObservation,
+    *,
+    allowed_values: frozenset[str] | None = None,
+) -> ExternalTextFactV4:
+    sdk_fact = capture_external_text_v4(
+        (observation,),
+        allowed_values=allowed_values,
+    )
+    if raw_fact.state != "absent" and sdk_fact.state == "absent":
+        return _invalid_text("external_text_projection_mismatch")
+    return _reconcile_fact(raw_fact, sdk_fact)
+
+
 def _sdk_projection_bytes(
     value: object | None,
     *,
+    raw_projection: AnthropicRawProjectionV1 | None,
     transport_kind: str,
     http_status: object = None,
     http_present: bool = False,
     body_state: str,
 ) -> bytes:
-    stop_reason = capture_external_text_v4(
-        (
-            _safe_attr(value, "stop_reason")
-            if value is not None
-            else ExternalTextObservation(False),
-        ),
-        allowed_values=_STOP_REASONS,
-    )
+    absent = _absent_text()
+    if raw_projection is None:
+        stop_reason = absent
+        response_id = absent
+        model_identity = absent
+        output = absent
+        input_tokens = None
+        output_tokens = None
+        total_tokens = None
+    elif value is None:
+        stop_reason = raw_projection.stop_reason
+        response_id = raw_projection.response_id
+        model_identity = raw_projection.model_identity
+        output = raw_projection.output
+        if raw_projection.usage_valid:
+            input_tokens = raw_projection.input_tokens
+            output_tokens = raw_projection.output_tokens
+            total_tokens = raw_projection.total_tokens
+        else:
+            input_tokens = None
+            output_tokens = None
+            total_tokens = None
+            body_state = "invalid"
+    else:
+        stop_reason = _canonical_sdk_fact(
+            raw_projection.stop_reason,
+            _safe_attr(value, "stop_reason"),
+            allowed_values=_STOP_REASONS,
+        )
+        response_id = _canonical_sdk_fact(
+            raw_projection.response_id,
+            _safe_attr(value, "id"),
+        )
+        model_identity = _canonical_sdk_fact(
+            raw_projection.model_identity,
+            _safe_attr(value, "model"),
+        )
+        output = _canonical_sdk_fact(
+            raw_projection.output,
+            _sdk_output(value),
+        )
+        observed_input = _sdk_usage(value, "input_tokens")
+        observed_output = _sdk_usage(value, "output_tokens")
+        if (
+            raw_projection.usage_present
+            and raw_projection.usage_valid
+            and observed_input == raw_projection.input_tokens
+            and observed_output == raw_projection.output_tokens
+        ):
+            input_tokens = raw_projection.input_tokens
+            output_tokens = raw_projection.output_tokens
+            total_tokens = raw_projection.total_tokens
+        elif (
+            not raw_projection.usage_present
+            and observed_input is _MISSING
+            and observed_output is _MISSING
+        ):
+            input_tokens = None
+            output_tokens = None
+            total_tokens = None
+        else:
+            input_tokens = None
+            output_tokens = None
+            total_tokens = None
+            body_state = "invalid"
+    if body_state == "invalid":
+        stop_reason = _invalid_text("external_text_read_failed")
+        response_id = _invalid_text("external_text_read_failed")
+        model_identity = _invalid_text("external_text_read_failed")
+        output = _invalid_text("external_text_read_failed")
+        input_tokens = None
+        output_tokens = None
+        total_tokens = None
     status = normalize_anthropic_stop_reason_v1(stop_reason)
-    input_tokens = _sdk_usage(value, "input_tokens")
-    output_tokens = _sdk_usage(value, "output_tokens")
-    return canonical_json_bytes(
-        {
-            "body_state": body_state,
-            "http_status": asdict(
-                capture_http_status_v4(http_status, present=http_present)
-            ),
-            "input_tokens": input_tokens,
-            "model_identity": asdict(
-                capture_external_text_v4(
-                    (
-                        _safe_attr(value, "model")
-                        if value is not None
-                        else ExternalTextObservation(False),
-                    )
+    projection = AnthropicSdkProjectionV1(
+        stop_reason=stop_reason,
+        status=status,
+        response_id=response_id,
+        model_identity=model_identity,
+        output=output,
+        input_tokens=input_tokens,
+        output_tokens=output_tokens,
+        total_tokens=total_tokens,
+        transport_kind=transport_kind,
+        http_status=capture_http_status_v4(http_status, present=http_present),
+        body_state=body_state,
+    )
+    return projection.canonical_bytes()
+
+
+@dataclass(frozen=True)
+class AnthropicAttemptProjectionV1:
+    facts: ProviderBoundaryFactsV4
+    input_tokens: int | None
+    output_tokens: int | None
+    total_tokens: int | None
+    sdk_projection_bytes: bytes
+
+
+def project_anthropic_attempt_v1(
+    *,
+    raw: bytes | None,
+    sdk_projection_raw: bytes,
+    provider_id: str,
+) -> AnthropicAttemptProjectionV1:
+    """Reconcile exact raw and canonical SDK facts for live capture and replay."""
+
+    sdk = parse_anthropic_sdk_projection_v1(sdk_projection_raw)
+    absent = _absent_text()
+    provider = capture_external_text_v4(
+        (
+            ExternalTextObservation(True, provider_id),
+            ExternalTextObservation(True, ANTHROPIC_PROVIDER_ID),
+        )
+    )
+    if raw is None:
+        if (
+            sdk.body_state != "absent"
+            or any(
+                item.state != "absent"
+                for item in (
+                    sdk.stop_reason,
+                    sdk.status,
+                    sdk.response_id,
+                    sdk.model_identity,
+                    sdk.output,
                 )
-            ),
-            "output": asdict(capture_external_text_v4((_sdk_output(value),))),
-            "output_tokens": output_tokens,
-            "response_id": asdict(
-                capture_external_text_v4(
-                    (
-                        _safe_attr(value, "id")
-                        if value is not None
-                        else ExternalTextObservation(False),
-                    )
+            )
+            or any(
+                item is not None
+                for item in (
+                    sdk.input_tokens,
+                    sdk.output_tokens,
+                    sdk.total_tokens,
                 )
-            ),
-            "schema_version": (
-                "briefloop.semantic_evaluator.anthropic_sdk_projection.v1"
-            ),
-            "status": asdict(status),
-            "stop_reason": asdict(stop_reason),
-            "total_tokens": (
-                input_tokens + output_tokens
-                if input_tokens is not None and output_tokens is not None
-                else None
-            ),
-            "transport_kind": transport_kind,
-        }
+            )
+        ):
+            raise TypeError("shadow_adapter_unavailable")
+        facts = make_provider_boundary_facts_v4(
+            envelope=capture_response_envelope_v4(None, present=False),
+            status=absent,
+            response_id=absent,
+            provider_identity=provider,
+            model_identity=absent,
+            output=absent,
+            http_status=sdk.http_status,
+            transport_kind=sdk.transport_kind,  # type: ignore[arg-type]
+        )
+        return AnthropicAttemptProjectionV1(
+            facts,
+            None,
+            None,
+            None,
+            sdk_projection_raw,
+        )
+
+    raw_projection = project_anthropic_message_bytes_v1(raw)
+    if sdk.body_state not in {"present", "invalid"}:
+        raise TypeError("shadow_adapter_unavailable")
+    raw_status = normalize_anthropic_stop_reason_v1(raw_projection.stop_reason)
+    if sdk.body_state == "invalid":
+        if any(
+            item.state != "present_invalid"
+            or item.invalid_code != "external_text_read_failed"
+            for item in (
+                sdk.stop_reason,
+                sdk.status,
+                sdk.response_id,
+                sdk.model_identity,
+                sdk.output,
+            )
+        ) or any(
+            item is not None
+            for item in (
+                sdk.input_tokens,
+                sdk.output_tokens,
+                sdk.total_tokens,
+            )
+        ):
+            raise TypeError("shadow_adapter_unavailable")
+    else:
+        for raw_fact, sdk_fact in (
+            (raw_projection.stop_reason, sdk.stop_reason),
+            (raw_status, sdk.status),
+            (raw_projection.response_id, sdk.response_id),
+            (raw_projection.model_identity, sdk.model_identity),
+            (raw_projection.output, sdk.output),
+        ):
+            if not _sdk_fact_is_canonical_for_raw(raw_fact, sdk_fact):
+                raise TypeError("shadow_adapter_unavailable")
+        raw_usage = (
+            raw_projection.input_tokens,
+            raw_projection.output_tokens,
+            raw_projection.total_tokens,
+        )
+        sdk_usage = (sdk.input_tokens, sdk.output_tokens, sdk.total_tokens)
+        if not raw_projection.usage_valid or sdk_usage != raw_usage:
+            raise TypeError("shadow_adapter_unavailable")
+    if sdk.body_state == "invalid":
+        stop_reason = sdk.stop_reason
+        status = sdk.status
+        response_id = sdk.response_id
+        model_identity = sdk.model_identity
+        output = sdk.output
+    else:
+        stop_reason = _reconcile_fact(raw_projection.stop_reason, sdk.stop_reason)
+        status = _reconcile_fact(
+            normalize_anthropic_stop_reason_v1(stop_reason),
+            sdk.status,
+        )
+        response_id = _reconcile_fact(raw_projection.response_id, sdk.response_id)
+        model_identity = _reconcile_fact(
+            raw_projection.model_identity,
+            sdk.model_identity,
+        )
+        output = _reconcile_fact(raw_projection.output, sdk.output)
+    raw_usage = (
+        raw_projection.input_tokens,
+        raw_projection.output_tokens,
+        raw_projection.total_tokens,
+    )
+    if sdk.body_state == "invalid":
+        input_tokens = None
+        output_tokens = None
+        total_tokens = None
+    else:
+        input_tokens, output_tokens, total_tokens = raw_usage
+    envelope_invalid_code = raw_projection.envelope_invalid_code
+    sdk_projection_mismatch = any(
+        item.state == "present_invalid"
+        and item.invalid_code == "external_text_projection_mismatch"
+        for item in (
+            sdk.stop_reason,
+            sdk.status,
+            sdk.response_id,
+            sdk.model_identity,
+            sdk.output,
+        )
+    )
+    if sdk.body_state == "invalid" or sdk_projection_mismatch:
+        envelope_invalid_code = "envelope_projection_failed"
+    facts = make_provider_boundary_facts_v4(
+        envelope=capture_response_envelope_v4(
+            raw,
+            present=True,
+            invalid_code=envelope_invalid_code,  # type: ignore[arg-type]
+        ),
+        status=status,
+        response_id=response_id,
+        provider_identity=provider,
+        model_identity=model_identity,
+        output=output,
+        http_status=sdk.http_status,
+        transport_kind=sdk.transport_kind,  # type: ignore[arg-type]
+    )
+    return AnthropicAttemptProjectionV1(
+        facts,
+        input_tokens,
+        output_tokens,
+        total_tokens,
+        sdk_projection_raw,
     )
 
 
@@ -587,116 +981,38 @@ class AnthropicMessagesAdapterV1:
         transport_http_status: object = None,
         transport_http_present: bool = False,
     ) -> RawProviderAttemptV4:
-        projection = project_anthropic_message_bytes_v1(raw)
-        status = projection.status
-        response_id = projection.response_id
-        model = projection.model_identity
-        output = projection.output
-        if sdk_response is not None and projection.envelope_valid:
-            sdk_stop = capture_external_text_v4(
-                (_safe_attr(sdk_response, "stop_reason"),),
-                allowed_values=_STOP_REASONS,
-            )
-            raw_stop_value = (
-                (projection.stop_reason.utf8_bytes or b"").decode("utf-8")
-                if projection.stop_reason.state == "present_valid"
-                else object()
-            )
-            stop_reason = capture_external_text_v4(
-                (
-                    ExternalTextObservation(
-                        projection.stop_reason.state != "absent", raw_stop_value
-                    ),
-                    _safe_attr(sdk_response, "stop_reason"),
-                ),
-                allowed_values=_STOP_REASONS,
-            )
-            if sdk_stop.state != "present_valid":
-                stop_reason = sdk_stop
-            status = normalize_anthropic_stop_reason_v1(stop_reason)
-            response_id = capture_external_text_v4(
-                (
-                    ExternalTextObservation(
-                        projection.response_id.state != "absent",
-                        (
-                            (projection.response_id.utf8_bytes or b"").decode("utf-8")
-                            if projection.response_id.state == "present_valid"
-                            else object()
-                        ),
-                    ),
-                    _safe_attr(sdk_response, "id"),
-                )
-            )
-            model = capture_external_text_v4(
-                (
-                    ExternalTextObservation(
-                        projection.model_identity.state != "absent",
-                        (
-                            (projection.model_identity.utf8_bytes or b"").decode(
-                                "utf-8"
-                            )
-                            if projection.model_identity.state == "present_valid"
-                            else object()
-                        ),
-                    ),
-                    _safe_attr(sdk_response, "model"),
-                )
-            )
-            if projection.output.state == "present_valid":
-                output = capture_external_text_v4(
-                    (
-                        ExternalTextObservation(
-                            True,
-                            (projection.output.utf8_bytes or b"").decode("utf-8"),
-                        ),
-                        _sdk_output(sdk_response),
-                    )
-                )
-        provider = capture_external_text_v4(
-            (
-                ExternalTextObservation(True, request.provider_id),
-                ExternalTextObservation(True, self.provider_id),
-            )
+        raw_projection = project_anthropic_message_bytes_v1(raw)
+        sdk_projection_bytes = _sdk_projection_bytes(
+            sdk_response,
+            raw_projection=raw_projection,
+            transport_kind=transport_kind,
+            http_status=transport_http_status,
+            http_present=transport_http_present,
+            body_state="present",
         )
-        facts = make_provider_boundary_facts_v4(
-            envelope=capture_response_envelope_v4(
-                raw,
-                present=True,
-                invalid_code=projection.envelope_invalid_code,  # type: ignore[arg-type]
-            ),
-            status=status,
-            response_id=response_id,
-            provider_identity=provider,
-            model_identity=model,
-            output=output,
-            http_status=capture_http_status_v4(
-                transport_http_status,
-                present=transport_http_present,
-            ),
-            transport_kind=transport_kind,  # type: ignore[arg-type]
+        shared = project_anthropic_attempt_v1(
+            raw=raw,
+            sdk_projection_raw=sdk_projection_bytes,
+            provider_id=request.provider_id,
         )
         outcome = classify_provider_outcome_v4(
-            facts,
+            shared.facts,
             expected_model_version_utf8=request.expected_model_version.encode(
                 "utf-8", errors="strict"
             ),
         )
         return RawProviderAttemptV4(
-            facts=facts,
+            facts=shared.facts,
             outcome=outcome,
             request_projection_bytes=request.projection_bytes(),
             raw_transport_response=raw,
-            extracted_output=output.utf8_bytes if outcome.output_eligible else None,
-            input_tokens=projection.input_tokens,
-            output_tokens=projection.output_tokens,
-            total_tokens=projection.total_tokens,
-            sdk_projection_bytes=_sdk_projection_bytes(
-                sdk_response,
-                transport_kind=transport_kind,
-                http_status=transport_http_status,
-                http_present=transport_http_present,
-                body_state="present",
+            extracted_output=(
+                shared.facts.output.utf8_bytes if outcome.output_eligible else None
             ),
+            input_tokens=shared.input_tokens,
+            output_tokens=shared.output_tokens,
+            total_tokens=shared.total_tokens,
+            sdk_projection_bytes=shared.sdk_projection_bytes,
         )
 
     def _transport_attempt(
@@ -709,38 +1025,30 @@ class AnthropicMessagesAdapterV1:
         body_state: str = "absent",
         raw: bytes | None = None,
     ) -> RawProviderAttemptV4:
-        absent = _absent_text()
-        envelope = capture_response_envelope_v4(
-            raw,
-            present=raw is not None,
-            invalid_code=("envelope_projection_failed" if raw is not None else None),
+        raw_projection = (
+            project_anthropic_message_bytes_v1(raw) if raw is not None else None
         )
-        facts = make_provider_boundary_facts_v4(
-            envelope=envelope,
-            status=absent,
-            response_id=absent,
-            provider_identity=capture_external_text_v4(
-                (
-                    ExternalTextObservation(True, request.provider_id),
-                    ExternalTextObservation(True, self.provider_id),
-                )
-            ),
-            model_identity=absent,
-            output=absent,
-            http_status=capture_http_status_v4(
-                http_status,
-                present=http_present,
-            ),
+        sdk_projection_bytes = _sdk_projection_bytes(
+            None,
+            raw_projection=raw_projection,
             transport_kind=kind,  # type: ignore[arg-type]
+            http_status=http_status,
+            http_present=http_present,
+            body_state=body_state,
+        )
+        shared = project_anthropic_attempt_v1(
+            raw=raw,
+            sdk_projection_raw=sdk_projection_bytes,
+            provider_id=request.provider_id,
         )
         outcome = classify_provider_outcome_v4(
-            facts,
+            shared.facts,
             expected_model_version_utf8=request.expected_model_version.encode(
                 "utf-8", errors="strict"
             ),
         )
         return RawProviderAttemptV4(
-            facts=facts,
+            facts=shared.facts,
             outcome=outcome,
             request_projection_bytes=request.projection_bytes(),
             raw_transport_response=raw,
@@ -748,13 +1056,7 @@ class AnthropicMessagesAdapterV1:
             input_tokens=None,
             output_tokens=None,
             total_tokens=None,
-            sdk_projection_bytes=_sdk_projection_bytes(
-                None,
-                transport_kind=kind,
-                http_status=http_status,
-                http_present=http_present,
-                body_state=body_state,
-            ),
+            sdk_projection_bytes=shared.sdk_projection_bytes,
         )
 
     def invoke(self, request: FrozenProviderRequestV4) -> RawProviderAttemptV4:
@@ -852,10 +1154,14 @@ __all__ = [
     "ANTHROPIC_ENDPOINT_SETTING",
     "ANTHROPIC_PROVIDER_ID",
     "AnthropicMessagesAdapterV1",
+    "AnthropicAttemptProjectionV1",
     "AnthropicRawProjectionV1",
+    "AnthropicSdkProjectionV1",
     "canonical_messages_endpoint_v1",
     "is_supported_anthropic_sdk_version_v1",
     "normalize_anthropic_stop_reason_v1",
+    "parse_anthropic_sdk_projection_v1",
+    "project_anthropic_attempt_v1",
     "project_anthropic_message_bytes_v1",
     "synthetic_anthropic_message_bytes_v1",
 ]

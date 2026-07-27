@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
 import json
 from pathlib import Path
 from types import SimpleNamespace
@@ -130,7 +131,13 @@ def _rehash_outer(archive: Path, changed_member: str) -> None:
     )
 
 
-def _anthropic_archive(tmp_path: Path, monkeypatch) -> tuple[Path, dict[str, object]]:
+def _anthropic_archive(
+    tmp_path: Path,
+    monkeypatch,
+    *,
+    raw_transform: Callable[[bytes], bytes] | None = None,
+    sdk_mismatch: bool = False,
+) -> tuple[Path, dict[str, object]]:
     endpoint = "https://messages.example.test/v1"
     inputs = tmp_path / "inputs"
     inputs.mkdir()
@@ -196,10 +203,23 @@ def _anthropic_archive(tmp_path: Path, monkeypatch) -> tuple[Path, dict[str, obj
                 model=request.expected_model_version,
                 content=[{"type": "text", "text": output.decode("utf-8")}],
             )
+            if raw_transform is not None:
+                raw = raw_transform(raw)
+            sdk_response = (
+                SimpleNamespace(
+                    id="sdk-unattested-id",
+                    model=request.expected_model_version,
+                    stop_reason="end_turn",
+                    content=[SimpleNamespace(type="text", text=output.decode("utf-8"))],
+                    usage=SimpleNamespace(input_tokens=1, output_tokens=1),
+                )
+                if sdk_mismatch
+                else None
+            )
             return self.delegate._attempt_from_response(
                 request=request,
                 raw=raw,
-                sdk_response=None,
+                sdk_response=sdk_response,
             )
 
     invocation = {
@@ -216,8 +236,48 @@ def _anthropic_archive(tmp_path: Path, monkeypatch) -> tuple[Path, dict[str, obj
         **invocation,
         adapter_factory=lambda execution: Adapter(execution),
     )
-    assert result.ok and result.archive_path is not None
+    assert result.archive_path is not None
+    if raw_transform is None and not sdk_mismatch:
+        assert result.ok
+    else:
+        assert result.ok is False
+        assert result.reason_codes == ("provider_failed",)
     return Path(result.archive_path), invocation
+
+
+def _anthropic_raw_transform(mode: str) -> Callable[[bytes], bytes]:
+    def transform(raw: bytes) -> bytes:
+        payload = json.loads(raw)
+        if mode == "missing_stop":
+            payload.pop("stop_reason")
+        elif mode == "unknown_stop":
+            payload["stop_reason"] = "future_stop"
+        elif mode == "missing_id":
+            payload.pop("id")
+        elif mode == "missing_model":
+            payload.pop("model")
+        elif mode == "stop_sequence_surrogate":
+            payload["stop_sequence"] = "\ud800"
+        else:
+            raise AssertionError(mode)
+        return json.dumps(
+            payload,
+            ensure_ascii=True,
+            sort_keys=True,
+            separators=(",", ":"),
+        ).encode("ascii")
+
+    return transform
+
+
+def _text_fact(value: str) -> dict[str, object]:
+    raw = value.encode("utf-8", errors="strict")
+    return {
+        "invalid_code": None,
+        "state": "present_valid",
+        "utf8_hex": raw.hex(),
+        "utf8_sha256": sha256_bytes(raw),
+    }
 
 
 def test_se2r_12_complete_archive_replays_before_adapter_access(
@@ -522,12 +582,220 @@ def test_anthropic_archive_recomputes_terminal_status_from_raw_bytes() -> None:
         input_tokens=10,
         output_tokens=5,
     )
-    tampered = _recomputed_facts(
-        record=record,
-        response_raw=refused_raw,
-        sdk_projection_raw=attempt.sdk_projection_bytes,
+    with pytest.raises(SemanticEvaluatorError) as exc_info:
+        _recomputed_facts(
+            record=record,
+            response_raw=refused_raw,
+            sdk_projection_raw=attempt.sdk_projection_bytes,
+        )
+    assert exc_info.value.reason_code == "shadow_archive_invalid"
+
+
+@pytest.mark.parametrize(
+    "mode",
+    [
+        "missing_stop",
+        "unknown_stop",
+        "missing_id",
+        "missing_model",
+        "stop_sequence_surrogate",
+    ],
+)
+def test_anthropic_malformed_present_response_is_replayable_negative_evidence(
+    tmp_path: Path,
+    monkeypatch,
+    mode: str,
+) -> None:
+    archive, invocation = _anthropic_archive(
+        tmp_path,
+        monkeypatch,
+        raw_transform=_anthropic_raw_transform(mode),
     )
-    assert ProviderBoundaryFactsRecordV4.from_runtime(tampered) != record.facts
+    verified = verify_shadow_archive(archive)
+    assert verified.ok is False
+    assert verified.reason_codes == ("provider_failed",)
+    records = [
+        _strict_load(path)
+        for path in sorted(archive.glob("attempts/*/*/transport.json"))
+    ]
+    assert records
+    assert all(
+        record["shadow_reason"] == "provider_boundary_invalid"
+        and record["retry_eligible"] is False
+        and record["output_eligible"] is False
+        for record in records
+    )
+
+    metadata_calls = 0
+
+    def forbidden_metadata(_name):
+        nonlocal metadata_calls
+        metadata_calls += 1
+        raise AssertionError("negative replay touched distribution metadata")
+
+    monkeypatch.delenv("BRIEFLOOP_LAJ_MESSAGES_API_KEY", raising=False)
+    monkeypatch.setattr(runner_module.metadata, "version", forbidden_metadata)
+    replay = run_shadow(
+        **invocation,
+        adapter_factory=lambda _execution: (_ for _ in ()).throw(
+            AssertionError("negative replay touched adapter")
+        ),
+    )
+    assert replay.replayed is True
+    assert replay.ok is False
+    assert replay.reason_codes == ("provider_failed",)
+    assert "shadow_archive_invalid" not in replay.reason_codes
+    assert metadata_calls == 0
+
+
+def test_anthropic_sdk_mismatch_is_replayable_negative_evidence(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    archive, invocation = _anthropic_archive(
+        tmp_path,
+        monkeypatch,
+        sdk_mismatch=True,
+    )
+    verified = verify_shadow_archive(archive)
+    assert verified.ok is False
+    assert verified.reason_codes == ("provider_failed",)
+    records = [
+        _strict_load(path)
+        for path in sorted(archive.glob("attempts/*/*/transport.json"))
+    ]
+    assert records
+    assert all(
+        record["shadow_reason"] == "provider_boundary_invalid"
+        and record["retry_eligible"] is False
+        and record["output_eligible"] is False
+        for record in records
+    )
+    sdk_members = sorted(archive.glob("attempts/*/*/sdk_projection.json"))
+    assert sdk_members
+    assert all(b"sdk-unattested-id" not in path.read_bytes() for path in sdk_members)
+
+    metadata_calls = 0
+
+    def forbidden_metadata(_name):
+        nonlocal metadata_calls
+        metadata_calls += 1
+        raise AssertionError("SDK mismatch replay touched distribution metadata")
+
+    monkeypatch.delenv("BRIEFLOOP_LAJ_MESSAGES_API_KEY", raising=False)
+    monkeypatch.setattr(runner_module.metadata, "version", forbidden_metadata)
+    replay = run_shadow(
+        **invocation,
+        adapter_factory=lambda _execution: (_ for _ in ()).throw(
+            AssertionError("SDK mismatch replay touched adapter")
+        ),
+    )
+    assert replay.replayed is True
+    assert replay.ok is False
+    assert replay.reason_codes == ("provider_failed",)
+    assert metadata_calls == 0
+
+
+@pytest.mark.parametrize(
+    "field",
+    [
+        "stop_reason",
+        "status",
+        "response_id",
+        "model_identity",
+        "output",
+        "usage",
+        "body_state",
+        "transport_kind",
+        "http_status",
+    ],
+)
+def test_anthropic_rehashed_sdk_member_tamper_is_intrinsically_invalid(
+    tmp_path: Path,
+    monkeypatch,
+    field: str,
+) -> None:
+    archive, invocation = _anthropic_archive(tmp_path, monkeypatch)
+    sdk_path = next(archive.glob("attempts/*/1/sdk_projection.json"))
+    sdk_projection = _strict_load(sdk_path)
+    if field == "stop_reason":
+        sdk_projection[field] = _text_fact("refusal")
+    elif field == "status":
+        sdk_projection[field] = _text_fact("refused")
+    elif field == "response_id":
+        sdk_projection[field] = _text_fact("msg-rehashed-tamper")
+    elif field == "model_identity":
+        sdk_projection[field] = _text_fact("other-public-model")
+    elif field == "output":
+        sdk_projection[field] = _text_fact('{"tampered":true}')
+    elif field == "usage":
+        sdk_projection["input_tokens"] += 1
+        sdk_projection["total_tokens"] += 1
+    elif field == "body_state":
+        sdk_projection[field] = "invalid"
+    elif field == "transport_kind":
+        sdk_projection[field] = "timeout"
+    elif field == "http_status":
+        sdk_projection[field] = {
+            "invalid_code": None,
+            "state": "present_valid",
+            "value": 200,
+        }
+    else:
+        raise AssertionError(field)
+    sdk_path.write_bytes(canonical_json_bytes(sdk_projection))
+    _rehash_outer(archive, sdk_path.relative_to(archive).as_posix())
+
+    metadata_calls = 0
+
+    def forbidden_metadata(_name):
+        nonlocal metadata_calls
+        metadata_calls += 1
+        raise AssertionError("SDK tamper touched distribution metadata")
+
+    monkeypatch.setattr(runner_module.metadata, "version", forbidden_metadata)
+    replay = run_shadow(
+        **invocation,
+        adapter_factory=lambda _execution: (_ for _ in ()).throw(
+            AssertionError("SDK tamper touched adapter")
+        ),
+    )
+    assert replay.reason_codes == ("shadow_archive_invalid",)
+    assert metadata_calls == 0
+
+
+def test_anthropic_invalid_raw_rehashed_sdk_id_tamper_is_invalid(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    archive, invocation = _anthropic_archive(
+        tmp_path,
+        monkeypatch,
+        raw_transform=_anthropic_raw_transform("missing_id"),
+    )
+    sdk_path = next(archive.glob("attempts/*/1/sdk_projection.json"))
+    sdk_projection = _strict_load(sdk_path)
+    assert sdk_projection["response_id"]["state"] == "absent"
+    sdk_projection["response_id"] = _text_fact("msg-rehashed-tamper")
+    sdk_path.write_bytes(canonical_json_bytes(sdk_projection))
+    _rehash_outer(archive, sdk_path.relative_to(archive).as_posix())
+
+    metadata_calls = 0
+
+    def forbidden_metadata(_name):
+        nonlocal metadata_calls
+        metadata_calls += 1
+        raise AssertionError("invalid-raw SDK tamper touched metadata")
+
+    monkeypatch.setattr(runner_module.metadata, "version", forbidden_metadata)
+    replay = run_shadow(
+        **invocation,
+        adapter_factory=lambda _execution: (_ for _ in ()).throw(
+            AssertionError("invalid-raw SDK tamper touched adapter")
+        ),
+    )
+    assert replay.reason_codes == ("shadow_archive_invalid",)
+    assert metadata_calls == 0
 
 
 @pytest.mark.parametrize(

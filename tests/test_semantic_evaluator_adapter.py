@@ -49,6 +49,7 @@ from multi_agent_brief.semantic_evaluator.prompt_sizer import (
     AnthropicUtf8BytePromptSizerV1,
     CLIProxyUtf8BytePromptSizerV1,
 )
+from multi_agent_brief.semantic_evaluator.serialization import canonical_json_bytes
 
 
 EXPECTED_MODEL = b"gpt-test-2026-07-18"
@@ -138,6 +139,17 @@ def _anthropic_request() -> FrozenProviderRequestV4:
         max_output_tokens=100,
         seed=None,
         timeout_seconds=60,
+    )
+
+
+def _anthropic_raw_payload() -> dict[str, object]:
+    return json.loads(
+        synthetic_anthropic_message_bytes_v1(
+            stop_reason="end_turn",
+            response_id="msg-public",
+            model=ANTHROPIC_TEST_MODEL,
+            content=[{"type": "text", "text": '{"findings":[]}'}],
+        )
     )
 
 
@@ -410,6 +422,163 @@ def test_anthropic_projector_keeps_thinking_out_of_final_text() -> None:
         7,
         18,
     )
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [
+        pytest.param("stop_reason", None, id="missing-stop"),
+        ("stop_reason", "future-stop"),
+        pytest.param("id", None, id="missing-id"),
+        ("id", ""),
+        ("id", 7),
+        ("id", "\ud800"),
+        pytest.param("model", None, id="missing-model"),
+        ("model", ""),
+        ("model", 7),
+        ("model", "\ud800"),
+    ],
+)
+def test_anthropic_required_envelope_facts_are_replayable_negative_evidence(
+    field: str,
+    value: object,
+) -> None:
+    payload = _anthropic_raw_payload()
+    if value is None:
+        payload.pop(field)
+    else:
+        payload[field] = value
+    raw = json.dumps(
+        payload,
+        ensure_ascii=True,
+        sort_keys=True,
+        separators=(",", ":"),
+    ).encode("ascii")
+    attempt = object.__new__(AnthropicMessagesAdapterV1)._attempt_from_response(
+        request=_anthropic_request(),
+        raw=raw,
+        sdk_response=None,
+    )
+    assert attempt.facts.envelope.state == "present_invalid"
+    assert attempt.outcome.shadow_reason == "provider_boundary_invalid"
+    assert attempt.outcome.retry_eligible is False
+    assert attempt.outcome.output_eligible is False
+    assert attempt.extracted_output is None
+    assert attempt.sdk_projection_bytes is not None
+
+
+@pytest.mark.parametrize(
+    ("stop_sequence", "valid"),
+    [
+        pytest.param("__absent__", True, id="absent"),
+        (None, True),
+        ("ordinary", False),
+        ("", False),
+        (7, False),
+        ({"value": "x"}, False),
+        (["x"], False),
+        (True, False),
+        ("\ud800", False),
+    ],
+)
+def test_anthropic_stop_sequence_is_only_absent_or_null(
+    stop_sequence: object,
+    valid: bool,
+) -> None:
+    payload = _anthropic_raw_payload()
+    if stop_sequence == "__absent__":
+        payload.pop("stop_sequence")
+    else:
+        payload["stop_sequence"] = stop_sequence
+    raw = json.dumps(
+        payload,
+        ensure_ascii=True,
+        sort_keys=True,
+        separators=(",", ":"),
+    ).encode("ascii")
+    attempt = object.__new__(AnthropicMessagesAdapterV1)._attempt_from_response(
+        request=_anthropic_request(),
+        raw=raw,
+        sdk_response=None,
+    )
+    assert attempt.facts.envelope.state == (
+        "present_valid" if valid else "present_invalid"
+    )
+    assert attempt.outcome.shadow_reason == (
+        None if valid else "provider_boundary_invalid"
+    )
+    assert attempt.outcome.output_eligible is valid
+    assert attempt.outcome.retry_eligible is False
+    assert attempt.extracted_output == (b'{"findings":[]}' if valid else None)
+    assert b"ordinary" not in (attempt.sdk_projection_bytes or b"")
+
+
+@pytest.mark.parametrize(
+    "field",
+    ["stop_reason", "id", "model", "output", "usage"],
+)
+def test_anthropic_sdk_mismatch_is_value_free_terminal_evidence(field: str) -> None:
+    raw = synthetic_anthropic_message_bytes_v1(
+        stop_reason="end_turn",
+        response_id="msg-public",
+        model=ANTHROPIC_TEST_MODEL,
+        content=[{"type": "text", "text": '{"findings":[]}'}],
+    )
+    sentinel = f"sdk-mismatch-{field}"
+    sdk_response = SimpleNamespace(
+        id="msg-public",
+        model=ANTHROPIC_TEST_MODEL,
+        stop_reason="end_turn",
+        content=[SimpleNamespace(type="text", text='{"findings":[]}')],
+        usage=SimpleNamespace(input_tokens=1, output_tokens=1),
+    )
+    if field == "stop_reason":
+        sdk_response.stop_reason = sentinel
+    elif field == "id":
+        sdk_response.id = sentinel
+    elif field == "model":
+        sdk_response.model = sentinel
+    elif field == "output":
+        sdk_response.content = [SimpleNamespace(type="text", text=sentinel)]
+    elif field == "usage":
+        sdk_response.usage = SimpleNamespace(input_tokens=2, output_tokens=1)
+    else:
+        raise AssertionError(field)
+    attempt = object.__new__(AnthropicMessagesAdapterV1)._attempt_from_response(
+        request=_anthropic_request(),
+        raw=raw,
+        sdk_response=sdk_response,
+    )
+    assert attempt.facts.envelope.state == "present_invalid"
+    assert attempt.outcome.shadow_reason == "provider_boundary_invalid"
+    assert attempt.outcome.retry_eligible is False
+    assert attempt.outcome.output_eligible is False
+    assert attempt.extracted_output is None
+    assert sentinel.encode("utf-8") not in (attempt.sdk_projection_bytes or b"")
+
+
+def test_anthropic_invalid_raw_sdk_fact_cannot_rescue_completion() -> None:
+    payload = _anthropic_raw_payload()
+    payload.pop("id")
+    raw = canonical_json_bytes(payload)
+    sentinel = "sdk-unattested-id"
+    sdk_response = SimpleNamespace(
+        id=sentinel,
+        model=ANTHROPIC_TEST_MODEL,
+        stop_reason="end_turn",
+        content=[SimpleNamespace(type="text", text='{"findings":[]}')],
+        usage=SimpleNamespace(input_tokens=1, output_tokens=1),
+    )
+    attempt = object.__new__(AnthropicMessagesAdapterV1)._attempt_from_response(
+        request=_anthropic_request(),
+        raw=raw,
+        sdk_response=sdk_response,
+    )
+    assert attempt.facts.envelope.state == "present_invalid"
+    assert attempt.facts.response_id.state == "present_invalid"
+    assert attempt.outcome.shadow_reason == "provider_boundary_invalid"
+    assert attempt.extracted_output is None
+    assert sentinel.encode("utf-8") not in (attempt.sdk_projection_bytes or b"")
 
 
 @pytest.mark.parametrize(

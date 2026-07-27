@@ -193,8 +193,10 @@ class AnthropicProbeAdapter:
             }
         )
         stop_reason = {
+            "malformed_missing_id": "end_turn",
             "success": "end_turn",
             "retry_then_success": "end_turn",
+            "stop_sequence_surrogate": "end_turn",
             "truncation": "max_tokens",
             "refusal": "refusal",
         }[self.mode]
@@ -213,6 +215,18 @@ class AnthropicProbeAdapter:
             input_tokens=7,
             output_tokens=5,
         )
+        if self.mode in {"malformed_missing_id", "stop_sequence_surrogate"}:
+            payload = json.loads(raw)
+            if self.mode == "malformed_missing_id":
+                payload.pop("id")
+            else:
+                payload["stop_sequence"] = "\ud800"
+            raw = json.dumps(
+                payload,
+                ensure_ascii=True,
+                sort_keys=True,
+                separators=(",", ":"),
+            ).encode("ascii")
         return self._delegate._attempt_from_response(
             request=request,
             raw=raw,
@@ -386,6 +400,14 @@ def anthropic_archive_probe():
             "terminal_transport",
             "trial-anthropic-wheel-terminal",
         )
+        malformed, malformed_calls, malformed_invocation = run_case(
+            "malformed_missing_id",
+            "trial-anthropic-wheel-malformed",
+        )
+        stop_sequence, stop_sequence_calls, stop_sequence_invocation = run_case(
+            "stop_sequence_surrogate",
+            "trial-anthropic-wheel-stop-sequence",
+        )
         archive = Path(first.archive_path)
         before = {
             path.relative_to(archive).as_posix(): sha256_bytes(path.read_bytes())
@@ -470,6 +492,18 @@ def anthropic_archive_probe():
                 RuntimeError("replay touched adapter")
             ),
         )
+        malformed_replay = shadow_runner_module.run_shadow(
+            **malformed_invocation,
+            adapter_factory=lambda _execution: (_ for _ in ()).throw(
+                RuntimeError("malformed replay touched adapter")
+            ),
+        )
+        stop_sequence_replay = shadow_runner_module.run_shadow(
+            **stop_sequence_invocation,
+            adapter_factory=lambda _execution: (_ for _ in ()).throw(
+                RuntimeError("stop-sequence replay touched adapter")
+            ),
+        )
         after = {
             path.relative_to(archive).as_posix(): sha256_bytes(path.read_bytes())
             for path in archive.rglob("*")
@@ -493,17 +527,46 @@ def anthropic_archive_probe():
                 RuntimeError("tampered replay touched adapter")
             ),
         )
+        malformed_archive = Path(malformed.archive_path)
+        malformed_sdk = next(
+            malformed_archive.glob("attempts/*/*/sdk_projection.json")
+        )
+        malformed_sdk_payload = json.loads(malformed_sdk.read_bytes())
+        tampered_id = b"msg-rehashed-invalid-raw"
+        malformed_sdk_payload["response_id"] = {
+            "invalid_code": None,
+            "state": "present_valid",
+            "utf8_hex": tampered_id.hex(),
+            "utf8_sha256": sha256_bytes(tampered_id),
+        }
+        malformed_sdk.write_bytes(canonical_json_bytes(malformed_sdk_payload))
+        _rehash_anthropic_probe_outer(
+            malformed_archive,
+            malformed_sdk.relative_to(malformed_archive).as_posix(),
+        )
+        invalid_raw_sdk_tamper = shadow_runner_module.run_shadow(
+            **malformed_invocation,
+            adapter_factory=lambda _execution: (_ for _ in ()).throw(
+                RuntimeError("invalid-raw SDK tamper touched adapter")
+            ),
+        )
         return {
             "archive_results": {
+                "malformed_missing_id": _anthropic_result_projection(malformed),
                 "refusal": _anthropic_result_projection(refusal),
                 "retry_then_success": _anthropic_result_projection(retry),
+                "stop_sequence_surrogate": _anthropic_result_projection(
+                    stop_sequence
+                ),
                 "success": _anthropic_result_projection(first),
                 "terminal_transport": _anthropic_result_projection(terminal),
                 "truncation": _anthropic_result_projection(truncation),
             },
             "mocked_adapter_calls": {
+                "malformed_missing_id": malformed_calls,
                 "refusal": refusal_calls,
                 "retry_then_success": retry_calls,
+                "stop_sequence_surrogate": stop_sequence_calls,
                 "success": success_calls,
                 "terminal_transport": terminal_calls,
                 "truncation": truncation_calls,
@@ -514,8 +577,19 @@ def anthropic_archive_probe():
             "receipt_id": first.receipt_id,
             "replay_receipt_id": replay.receipt_id,
             "replayed": replay.replayed,
+            "malformed_replayed": malformed_replay.replayed,
+            "malformed_replay_reason_codes": list(
+                malformed_replay.reason_codes
+            ),
+            "stop_sequence_replayed": stop_sequence_replay.replayed,
+            "stop_sequence_replay_reason_codes": list(
+                stop_sequence_replay.reason_codes
+            ),
             "replay_metadata_calls": len(metadata_calls),
             "sdk_status_tamper_reason_codes": list(tampered.reason_codes),
+            "invalid_raw_sdk_tamper_reason_codes": list(
+                invalid_raw_sdk_tamper.reason_codes
+            ),
             "study_identity": {
                 "authorization_a_sha256": authorization_a.authorization_sha256,
                 "authorization_b_sha256": authorization_b.authorization_sha256,
@@ -1117,8 +1191,10 @@ def test_se2r_14_source_probe_is_byte_identical_under_python_optimization() -> N
     probe = json.loads(normal)["anthropic_archive_probe"]
     assert probe["real_provider_calls"] == 0
     assert probe["mocked_adapter_calls"] == {
+        "malformed_missing_id": 9,
         "refusal": 9,
         "retry_then_success": 18,
+        "stop_sequence_surrogate": 9,
         "success": 9,
         "terminal_transport": 9,
         "truncation": 9,
@@ -1132,11 +1208,22 @@ def test_se2r_14_source_probe_is_byte_identical_under_python_optimization() -> N
     assert probe["archive_results"]["terminal_transport"]["reason_codes"] == [
         "provider_failed"
     ]
+    assert probe["archive_results"]["malformed_missing_id"]["reason_codes"] == [
+        "provider_failed"
+    ]
+    assert probe["archive_results"]["stop_sequence_surrogate"]["reason_codes"] == [
+        "provider_failed"
+    ]
     assert probe["archive_replay_unchanged"] is True
     assert probe["replayed"] is True
+    assert probe["malformed_replayed"] is True
+    assert probe["malformed_replay_reason_codes"] == ["provider_failed"]
+    assert probe["stop_sequence_replayed"] is True
+    assert probe["stop_sequence_replay_reason_codes"] == ["provider_failed"]
     assert probe["replay_metadata_calls"] == 0
     assert probe["receipt_id"] == probe["replay_receipt_id"]
     assert probe["sdk_status_tamper_reason_codes"] == ["shadow_archive_invalid"]
+    assert probe["invalid_raw_sdk_tamper_reason_codes"] == ["shadow_archive_invalid"]
     assert probe["study_identity"]["count_semantics"] == (
         "conservative_utf8_byte_upper_bound"
     )

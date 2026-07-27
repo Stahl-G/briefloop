@@ -29,8 +29,7 @@ from multi_agent_brief.semantic_evaluator.adapters.anthropic_messages import (
     ANTHROPIC_ADAPTER_ID,
     ANTHROPIC_PROVIDER_ID,
     is_supported_anthropic_sdk_version_v1,
-    normalize_anthropic_stop_reason_v1,
-    project_anthropic_message_bytes_v1,
+    project_anthropic_attempt_v1,
 )
 from multi_agent_brief.semantic_evaluator.adapters.openai_responses import (
     OPENAI_ADAPTER_ID,
@@ -330,21 +329,6 @@ class _OpenAISdkProjection:
     body_state: str
 
 
-@dataclass(frozen=True)
-class _AnthropicSdkProjection:
-    stop_reason: ExternalTextFactRecordV4
-    status: ExternalTextFactRecordV4
-    response_id: ExternalTextFactRecordV4
-    model_identity: ExternalTextFactRecordV4
-    output: ExternalTextFactRecordV4
-    input_tokens: int | None
-    output_tokens: int | None
-    total_tokens: int | None
-    transport_kind: str
-    http_status: HttpStatusFactRecordV4
-    body_state: str
-
-
 def _parse_openai_sdk_projection(raw: bytes) -> _OpenAISdkProjection:
     value = _strict_json_bytes(raw)
     required = {
@@ -403,125 +387,6 @@ def _parse_openai_sdk_projection(raw: bytes) -> _OpenAISdkProjection:
     return result
 
 
-def _parse_anthropic_sdk_projection(raw: bytes) -> _AnthropicSdkProjection:
-    value = _strict_json_bytes(raw)
-    required = {
-        "body_state",
-        "http_status",
-        "input_tokens",
-        "model_identity",
-        "output",
-        "output_tokens",
-        "response_id",
-        "schema_version",
-        "status",
-        "stop_reason",
-        "total_tokens",
-        "transport_kind",
-    }
-    if type(value) is not dict or set(value) != required:
-        raise SemanticEvaluatorError("shadow_archive_invalid")
-    try:
-        if (
-            value["schema_version"]
-            != "briefloop.semantic_evaluator.anthropic_sdk_projection.v1"
-            or value["transport_kind"]
-            not in {"response", "timeout", "connection", "http_error", "adapter_error"}
-            or value["body_state"] not in {"absent", "present", "invalid"}
-        ):
-            raise ValueError
-        text_facts = {
-            name: ExternalTextFactRecordV4.model_validate(value[name])
-            for name in (
-                "stop_reason",
-                "status",
-                "response_id",
-                "model_identity",
-                "output",
-            )
-        }
-        http_status = HttpStatusFactRecordV4.model_validate(value["http_status"])
-        input_tokens = value["input_tokens"]
-        output_tokens = value["output_tokens"]
-        total_tokens = value["total_tokens"]
-        for item in (input_tokens, output_tokens, total_tokens):
-            if item is not None and (type(item) is not int or item < 0):
-                raise ValueError
-        if total_tokens is not None and (
-            input_tokens is None
-            or output_tokens is None
-            or total_tokens != input_tokens + output_tokens
-        ):
-            raise ValueError
-    except Exception:
-        raise SemanticEvaluatorError("shadow_archive_invalid") from None
-    result = _AnthropicSdkProjection(
-        stop_reason=text_facts["stop_reason"],
-        status=text_facts["status"],
-        response_id=text_facts["response_id"],
-        model_identity=text_facts["model_identity"],
-        output=text_facts["output"],
-        input_tokens=input_tokens,
-        output_tokens=output_tokens,
-        total_tokens=total_tokens,
-        transport_kind=value["transport_kind"],
-        http_status=http_status,
-        body_state=value["body_state"],
-    )
-    sdk_values_absent = all(
-        item.state == "absent"
-        for item in (
-            result.stop_reason,
-            result.status,
-            result.response_id,
-            result.model_identity,
-            result.output,
-        )
-    ) and all(
-        item is None
-        for item in (result.input_tokens, result.output_tokens, result.total_tokens)
-    )
-    if result.transport_kind == "response":
-        valid_transport_shape = (
-            result.body_state == "present" and result.http_status.state == "absent"
-        )
-    elif result.transport_kind == "http_error":
-        valid_transport_shape = (
-            result.http_status.state != "absent" and sdk_values_absent
-        )
-    else:
-        valid_transport_shape = (
-            result.body_state == "absent"
-            and result.http_status.state == "absent"
-            and sdk_values_absent
-        )
-    if not valid_transport_shape:
-        raise SemanticEvaluatorError("shadow_archive_invalid")
-    expected = canonical_json_bytes(
-        {
-            "body_state": result.body_state,
-            "http_status": result.http_status.model_dump(mode="json", warnings="error"),
-            "input_tokens": result.input_tokens,
-            "model_identity": result.model_identity.model_dump(
-                mode="json", warnings="error"
-            ),
-            "output": result.output.model_dump(mode="json", warnings="error"),
-            "output_tokens": result.output_tokens,
-            "response_id": result.response_id.model_dump(mode="json", warnings="error"),
-            "schema_version": (
-                "briefloop.semantic_evaluator.anthropic_sdk_projection.v1"
-            ),
-            "status": result.status.model_dump(mode="json", warnings="error"),
-            "stop_reason": result.stop_reason.model_dump(mode="json", warnings="error"),
-            "total_tokens": result.total_tokens,
-            "transport_kind": result.transport_kind,
-        }
-    )
-    if raw != expected:
-        raise SemanticEvaluatorError("shadow_archive_invalid")
-    return result
-
-
 def _observation_from_fact(record: ExternalTextFactRecordV4) -> ExternalTextObservation:
     fact = record.to_runtime()
     if fact.state == "absent":
@@ -564,16 +429,23 @@ def _recomputed_facts(
 ):
     """Rebuild all derivable facts from retained bytes and frozen identities."""
 
+    if record.adapter_id == ANTHROPIC_ADAPTER_ID:
+        if sdk_projection_raw is None:
+            raise SemanticEvaluatorError("shadow_archive_invalid")
+        try:
+            return project_anthropic_attempt_v1(
+                raw=response_raw,
+                sdk_projection_raw=sdk_projection_raw,
+                provider_id=record.provider_id,
+            ).facts
+        except Exception:
+            raise SemanticEvaluatorError("shadow_archive_invalid") from None
+
     absent = _absent_external_text()
     openai_sdk_projection = (
         _parse_openai_sdk_projection(sdk_projection_raw)
         if sdk_projection_raw is not None
         and record.adapter_id in _OPENAI_WIRE_ADAPTER_IDS
-        else None
-    )
-    anthropic_sdk_projection = (
-        _parse_anthropic_sdk_projection(sdk_projection_raw)
-        if sdk_projection_raw is not None and record.adapter_id == ANTHROPIC_ADAPTER_ID
         else None
     )
     if response_raw is None:
@@ -596,32 +468,6 @@ def _recomputed_facts(
                 raise SemanticEvaluatorError("shadow_archive_invalid")
             transport_kind = openai_sdk_projection.transport_kind
             http_status = openai_sdk_projection.http_status.to_runtime()
-        elif record.adapter_id == ANTHROPIC_ADAPTER_ID:
-            if (
-                anthropic_sdk_projection is None
-                or anthropic_sdk_projection.body_state != "absent"
-                or any(
-                    item.state != "absent"
-                    for item in (
-                        anthropic_sdk_projection.stop_reason,
-                        anthropic_sdk_projection.status,
-                        anthropic_sdk_projection.response_id,
-                        anthropic_sdk_projection.model_identity,
-                        anthropic_sdk_projection.output,
-                    )
-                )
-                or any(
-                    item is not None
-                    for item in (
-                        anthropic_sdk_projection.input_tokens,
-                        anthropic_sdk_projection.output_tokens,
-                        anthropic_sdk_projection.total_tokens,
-                    )
-                )
-            ):
-                raise SemanticEvaluatorError("shadow_archive_invalid")
-            transport_kind = anthropic_sdk_projection.transport_kind
-            http_status = anthropic_sdk_projection.http_status.to_runtime()
         else:
             if sdk_projection_raw is not None:
                 raise SemanticEvaluatorError("shadow_archive_invalid")
@@ -708,88 +554,6 @@ def _recomputed_facts(
             envelope_invalid_code = projection.envelope_invalid_code
         transport_kind = openai_sdk_projection.transport_kind
         http_status = capture_http_status_v4(None, present=False)
-    elif record.adapter_id == ANTHROPIC_ADAPTER_ID:
-        projection = project_anthropic_message_bytes_v1(response_raw)
-        if (
-            anthropic_sdk_projection is None
-            or anthropic_sdk_projection.body_state not in {"present", "invalid"}
-        ):
-            raise SemanticEvaluatorError("shadow_archive_invalid")
-        provider = _provider_fact(
-            ExternalTextObservation(True, record.provider_id),
-            ExternalTextObservation(True, ANTHROPIC_PROVIDER_ID),
-        )
-        sdk_is_absent = all(
-            item.state == "absent"
-            for item in (
-                anthropic_sdk_projection.stop_reason,
-                anthropic_sdk_projection.status,
-                anthropic_sdk_projection.response_id,
-                anthropic_sdk_projection.model_identity,
-                anthropic_sdk_projection.output,
-            )
-        )
-        if anthropic_sdk_projection.body_state == "invalid":
-            status = absent
-            response_id = absent
-            model = absent
-            output = absent
-            envelope_invalid_code = "envelope_projection_failed"
-        elif projection.envelope_valid and not sdk_is_absent:
-            stop_reason = _reconcile_raw_and_sdk(
-                projection.stop_reason,
-                anthropic_sdk_projection.stop_reason,
-                allowed_values=frozenset(
-                    {
-                        "end_turn",
-                        "max_tokens",
-                        "model_context_window_exceeded",
-                        "pause_turn",
-                        "refusal",
-                        "stop_sequence",
-                        "tool_use",
-                    }
-                ),
-            )
-            status = normalize_anthropic_stop_reason_v1(stop_reason)
-            status = _reconcile_raw_and_sdk(
-                status,
-                anthropic_sdk_projection.status,
-                allowed_values=frozenset(
-                    {
-                        "completed",
-                        "failed",
-                        "in_progress",
-                        "cancelled",
-                        "queued",
-                        "incomplete",
-                        "refused",
-                    }
-                ),
-            )
-            response_id = _reconcile_raw_and_sdk(
-                projection.response_id, anthropic_sdk_projection.response_id
-            )
-            model = _reconcile_raw_and_sdk(
-                projection.model_identity,
-                anthropic_sdk_projection.model_identity,
-            )
-            output = (
-                _reconcile_raw_and_sdk(
-                    projection.output, anthropic_sdk_projection.output
-                )
-                if projection.output.state == "present_valid"
-                else projection.output
-            )
-            envelope_invalid_code = projection.envelope_invalid_code
-        else:
-            status = projection.status
-            response_id = projection.response_id
-            model = projection.model_identity
-            output = projection.output
-            envelope_invalid_code = projection.envelope_invalid_code
-        transport_kind = anthropic_sdk_projection.transport_kind
-        http_status = anthropic_sdk_projection.http_status.to_runtime()
     elif record.adapter_id == "synthetic_fixture_v4":
         if sdk_projection_raw is not None:
             raise SemanticEvaluatorError("shadow_archive_invalid")
@@ -846,20 +610,19 @@ def _validate_anthropic_usage(
         return
     if sdk_projection_raw is None:
         raise SemanticEvaluatorError("shadow_archive_invalid")
-    sdk = _parse_anthropic_sdk_projection(sdk_projection_raw)
-    if response_raw is None:
-        expected = (None, None, None)
-    else:
-        projection = project_anthropic_message_bytes_v1(response_raw)
-        expected = (
-            projection.input_tokens,
-            projection.output_tokens,
-            projection.total_tokens,
+    try:
+        projection = project_anthropic_attempt_v1(
+            raw=response_raw,
+            sdk_projection_raw=sdk_projection_raw,
+            provider_id=record.provider_id,
         )
-        sdk_values = (sdk.input_tokens, sdk.output_tokens, sdk.total_tokens)
-        if sdk.body_state == "present" and any(item is not None for item in sdk_values):
-            if sdk_values != expected:
-                raise SemanticEvaluatorError("shadow_archive_invalid")
+    except Exception:
+        raise SemanticEvaluatorError("shadow_archive_invalid") from None
+    expected = (
+        projection.input_tokens,
+        projection.output_tokens,
+        projection.total_tokens,
+    )
     if (record.input_tokens, record.output_tokens, record.total_tokens) != expected:
         raise SemanticEvaluatorError("shadow_archive_invalid")
 
