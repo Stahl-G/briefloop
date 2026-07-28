@@ -41,6 +41,9 @@ semantic-evaluator-openai = [
   "openai>=2,<3",
   "tiktoken>=0.9,<1",
 ]
+semantic-evaluator-anthropic = [
+  "anthropic>=0.104,<0.105",
+]
 dev = [
   "pytest>=8.0",
   "pytest-xdist>=3.5",

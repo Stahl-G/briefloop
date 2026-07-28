@@ -10,6 +10,16 @@ import shutil
 import pytest
 from pydantic import ValidationError
 
+from multi_agent_brief.semantic_evaluator import runner as runner_module
+from multi_agent_brief.semantic_evaluator.adapters.anthropic_messages import (
+    ANTHROPIC_ADAPTER_ID,
+    ANTHROPIC_ENDPOINT_SETTING,
+    ANTHROPIC_PROVIDER_ID,
+)
+from multi_agent_brief.semantic_evaluator.prompt_sizer import (
+    ANTHROPIC_PROMPT_SIZER_ID,
+    ANTHROPIC_PROMPT_SIZER_VERSION,
+)
 from multi_agent_brief.semantic_evaluator.runner import (
     PROFILE_ID,
     PreparedShadowRun,
@@ -17,6 +27,7 @@ from multi_agent_brief.semantic_evaluator.runner import (
     prepare_shadow_run,
 )
 from multi_agent_brief.semantic_evaluator.serialization import (
+    canonical_json_bytes,
     canonical_sha256,
     sha256_bytes,
 )
@@ -36,6 +47,7 @@ from multi_agent_brief.semantic_evaluator.study_contracts import (
     SENSITIVITY_GROUND_TRUTH_SCHEMA_ID,
     STUDY_DECLARATION_SCHEMA_ID,
     LajProviderBudgetPolicyV1,
+    LajProviderExecutionAuthorizationLegacyV1,
     LajProviderExecutionAuthorizationV1,
     LajStudyDeclarationV1,
 )
@@ -98,6 +110,43 @@ def _invocation(tmp_path: Path) -> dict[str, object]:
 
 def _prepared(tmp_path: Path) -> PreparedShadowRun:
     prepared = prepare_shadow_run(**_invocation(tmp_path))
+    assert isinstance(prepared, PreparedShadowRun)
+    return prepared
+
+
+def _anthropic_prepared(
+    tmp_path: Path,
+    monkeypatch,
+    *,
+    endpoint: str,
+) -> PreparedShadowRun:
+    invocation = _invocation(tmp_path)
+    instrument = Path(invocation["instrument"])
+    payload = json.loads(instrument.read_bytes())
+    payload.update(
+        {
+            "instrument_config_id": "anthropic-study-instrument-v1",
+            "provider_id": ANTHROPIC_PROVIDER_ID,
+            "model_id": "public-nonclaude-study-model-v1",
+            "model_version": "public-nonclaude-study-model-v1",
+            "decoding": {
+                "max_output_tokens": 4096,
+                "seed": None,
+                "temperature": 1.0,
+                "top_p": 1.0,
+            },
+            "prompt_sizer": {
+                "max_context_tokens": 200000,
+                "reserved_output_tokens": 4096,
+                "sizer_id": ANTHROPIC_PROMPT_SIZER_ID,
+                "sizer_version": ANTHROPIC_PROMPT_SIZER_VERSION,
+            },
+        }
+    )
+    instrument.write_bytes(canonical_json_bytes(payload))
+    monkeypatch.setenv(ANTHROPIC_ENDPOINT_SETTING, endpoint)
+    monkeypatch.setattr(runner_module.metadata, "version", lambda _name: "0.104.1")
+    prepared = prepare_shadow_run(**invocation)
     assert isinstance(prepared, PreparedShadowRun)
     return prepared
 
@@ -344,6 +393,132 @@ def test_execution_authorization_has_no_ground_truth_surface(tmp_path: Path) -> 
         LajProviderExecutionAuthorizationV1.model_validate(
             {**payload, "ground_truth": "not-provider-visible"}
         )
+
+
+def test_anthropic_authorization_binds_endpoint_execution_and_count_semantics(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    policy = _policy(tokens=10_000_000)
+    first = _anthropic_prepared(
+        tmp_path / "first",
+        monkeypatch,
+        endpoint="https://messages-a.example.test/v1",
+    )
+    first_authorization = make_execution_authorization(
+        study_id="study-anthropic-binding",
+        prepared=first,
+        policy=policy,
+    )
+    first_preflight = compute_budget_preflight(
+        prepared=first,
+        authorization=first_authorization,
+        policy=policy,
+    )
+    assert first_authorization.provider_id == ANTHROPIC_PROVIDER_ID
+    assert first_authorization.adapter_id == ANTHROPIC_ADAPTER_ID
+    assert first_authorization.model_id == "public-nonclaude-study-model-v1"
+    assert (
+        first_authorization.execution_policy_sha256
+        == first.policy.execution_policy_sha256
+    )
+    assert first_authorization.execution_sha256
+    assert first_preflight.count_semantics == "conservative_utf8_byte_upper_bound"
+
+    second = _anthropic_prepared(
+        tmp_path / "second",
+        monkeypatch,
+        endpoint="https://messages-b.example.test/v1",
+    )
+    second_authorization = make_execution_authorization(
+        study_id="study-anthropic-binding",
+        prepared=second,
+        policy=policy,
+    )
+    assert (
+        second_authorization.provider_endpoint_sha256
+        != first_authorization.provider_endpoint_sha256
+    )
+    assert second_authorization.execution_sha256 != first_authorization.execution_sha256
+    assert (
+        second_authorization.authorization_sha256
+        != first_authorization.authorization_sha256
+    )
+
+    changed_budget = _policy(calls=18, tokens=10_000_000)
+    budget_authorization = make_execution_authorization(
+        study_id="study-anthropic-binding",
+        prepared=first,
+        policy=changed_budget,
+    )
+    assert budget_authorization.execution_sha256 == first_authorization.execution_sha256
+    assert (
+        budget_authorization.authorization_sha256
+        != first_authorization.authorization_sha256
+    )
+
+
+def test_study_rejects_rehashed_execution_binding_mismatch_and_legacy_live_use(
+    tmp_path: Path,
+) -> None:
+    prepared = _prepared(tmp_path)
+    policy = _policy(tokens=10_000_000)
+    authorization = make_execution_authorization(
+        study_id="study-execution-mismatch",
+        prepared=prepared,
+        policy=policy,
+    )
+    tampered_payload = authorization.model_dump(mode="json")
+    tampered_payload["provider_endpoint_sha256"] = "f" * 64
+    tampered_payload["authorization_sha256"] = canonical_sha256(
+        {
+            key: value
+            for key, value in tampered_payload.items()
+            if key != "authorization_sha256"
+        }
+    )
+    tampered = LajProviderExecutionAuthorizationV1.model_validate(tampered_payload)
+    with pytest.raises(Exception) as caught:
+        compute_budget_preflight(
+            prepared=prepared,
+            authorization=tampered,
+            policy=policy,
+        )
+    assert (
+        getattr(caught.value, "reason_code", None)
+        == "provider_execution_authorization_invalid"
+    )
+
+    current = authorization.model_dump(mode="json")
+    legacy_payload = {
+        "schema_version": LajProviderExecutionAuthorizationLegacyV1.schema_id,
+        "study_id": current["study_id"],
+        "trial_id": current["trial_id"],
+        "report_sha256": current["report_sha256"],
+        "bounded_context_sha256": current["bounded_context_sha256"],
+        "instrument_sha256": current["instrument_sha256"],
+        "assessment_plan_sha256": current["assessment_plan_sha256"],
+        "ordered_prompt_request_sha256s": current["ordered_prompt_request_sha256s"],
+        "budget_policy_sha256": current["budget_policy_sha256"],
+    }
+    legacy = LajProviderExecutionAuthorizationLegacyV1.model_validate(
+        {
+            **legacy_payload,
+            "authorization_sha256": canonical_sha256(legacy_payload),
+        }
+    )
+    invocation = _invocation(tmp_path / "legacy")
+    result = budgeted_shadow_run(
+        authorization=legacy,  # type: ignore[arg-type]
+        budget_policy=policy,
+        report=invocation["report"],
+        bounded_context=invocation["bounded_context"],
+        instrument=invocation["instrument"],
+        archive_root=invocation["archive_root"],
+        evidence_output=tmp_path / "legacy-evidence.json",
+    )
+    assert result.reason_codes == ("provider_execution_authorization_invalid",)
+    assert not Path(invocation["archive_root"]).exists()
 
 
 def test_allowed_synthetic_budget_creates_evidence_and_zero_finding_is_neutral(
