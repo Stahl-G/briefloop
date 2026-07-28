@@ -209,10 +209,13 @@ def _link_target_after_pre_stat_before_open(
     parent_info = target.parent.stat()
     parent_identity = (parent_info.st_dev, parent_info.st_ino)
     original_open = os.open
+    original_open_supports_dir_fd = original_open in os.supports_dir_fd
     original_read = os.read
     state = {
         "hardlink_created": False,
+        "original_open_supports_dir_fd": original_open_supports_dir_fd,
         "target_body_read": False,
+        "target_open_succeeded": False,
         "target_open_used_dir_fd": False,
     }
 
@@ -232,8 +235,8 @@ def _link_target_after_pre_stat_before_open(
         *,
         dir_fd: int | None = None,
     ) -> int:
-        if not state["hardlink_created"] and is_target_open(path, dir_fd):
-            state["target_open_used_dir_fd"] = dir_fd is not None
+        target_open = is_target_open(path, dir_fd)
+        if target_open and not state["hardlink_created"]:
             try:
                 os.link(target, outside)
             except OSError as exc:
@@ -242,8 +245,13 @@ def _link_target_after_pre_stat_before_open(
                 raise AssertionError("target hardlink was not created")
             state["hardlink_created"] = True
         if dir_fd is None:
-            return original_open(path, flags, mode)
-        return original_open(path, flags, mode, dir_fd=dir_fd)
+            descriptor = original_open(path, flags, mode)
+        else:
+            descriptor = original_open(path, flags, mode, dir_fd=dir_fd)
+        if target_open:
+            state["target_open_used_dir_fd"] = dir_fd is not None
+            state["target_open_succeeded"] = True
+        return descriptor
 
     def intercept_read(descriptor: int, size: int) -> bytes:
         opened = os.fstat(descriptor)
@@ -1201,6 +1209,8 @@ def test_source_intake_rejects_link_created_after_pre_stat_without_body_read(
         target=target,
         outside=tmp_path / "outside-raced-source-content.pdf",
     )
+    if not force_absolute_fallback and not state["original_open_supports_dir_fd"]:
+        pytest.skip("native os.open does not support dir_fd")
     if force_absolute_fallback:
         monkeypatch.setattr(os, "supports_dir_fd", frozenset())
     else:
@@ -1222,6 +1232,8 @@ def test_source_intake_rejects_link_created_after_pre_stat_without_body_read(
     }:
         raise AssertionError(result.to_dict())
     if state["hardlink_created"] is not True:
+        raise AssertionError(state)
+    if state["target_open_succeeded"] is not True:
         raise AssertionError(state)
     if state["target_body_read"] is not False:
         raise AssertionError(state)
