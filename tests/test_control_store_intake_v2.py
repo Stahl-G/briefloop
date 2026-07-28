@@ -196,6 +196,62 @@ def _replace_with_external_hardlink(path: Path, *, outside: Path) -> bytes:
     return original
 
 
+def _link_target_after_pre_stat_before_open(
+    monkeypatch: pytest.MonkeyPatch,
+    *,
+    target: Path,
+    outside: Path,
+) -> dict[str, bool]:
+    """Create a real external hardlink only when the reader opens the checked leaf."""
+
+    target_info = target.stat()
+    target_identity = (target_info.st_dev, target_info.st_ino)
+    parent_info = target.parent.stat()
+    parent_identity = (parent_info.st_dev, parent_info.st_ino)
+    original_open = os.open
+    original_read = os.read
+    state = {"hardlink_created": False, "target_body_read": False}
+
+    def is_target_open(path: object, dir_fd: int | None) -> bool:
+        candidate = os.fspath(path)
+        if dir_fd is None:
+            return isinstance(candidate, str) and Path(candidate) == target
+        if candidate != target.name:
+            return False
+        opened_parent = os.fstat(dir_fd)
+        return (opened_parent.st_dev, opened_parent.st_ino) == parent_identity
+
+    def intercept_open(
+        path: object,
+        flags: int,
+        mode: int = 0o777,
+        *,
+        dir_fd: int | None = None,
+    ) -> int:
+        if not state["hardlink_created"] and is_target_open(path, dir_fd):
+            try:
+                os.link(target, outside)
+            except OSError as exc:
+                raise AssertionError(f"hardlink creation failed: {exc}") from exc
+            if target.stat().st_nlink <= 1:
+                raise AssertionError("target hardlink was not created")
+            state["hardlink_created"] = True
+        if dir_fd is None:
+            return original_open(path, flags, mode)
+        return original_open(path, flags, mode, dir_fd=dir_fd)
+
+    def intercept_read(descriptor: int, size: int) -> bytes:
+        opened = os.fstat(descriptor)
+        if (opened.st_dev, opened.st_ino) == target_identity:
+            state["target_body_read"] = True
+            raise AssertionError("target body read after hardlink race")
+        return original_read(descriptor, size)
+
+    monkeypatch.setattr(os, "open", intercept_open)
+    monkeypatch.setattr(os, "read", intercept_read)
+    return state
+
+
 def _candidate_request(workspace: Path, *, expected_revision: int = 2) -> Path:
     scratch = workspace / "scratch" / "INV-SCOUT-001"
     _write_json(
@@ -1123,6 +1179,47 @@ def test_hardlinked_source_pack_manifest_is_uncommitted_before_member_reads(
     assert snapshot.sources == ()
     assert snapshot.artifact_revisions == ()
     assert snapshot.events == ()
+
+
+@pytest.mark.parametrize("force_absolute_fallback", [False, True])
+def test_source_intake_rejects_link_created_after_pre_stat_without_body_read(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    force_absolute_fallback: bool,
+) -> None:
+    workspace = tmp_path / "workspace"
+    _seed_workspace(workspace)
+    request_path = _source_request(workspace)
+    target = request_path.parent / "source_content.pdf"
+    state = _link_target_after_pre_stat_before_open(
+        monkeypatch,
+        target=target,
+        outside=tmp_path / "outside-raced-source-content.pdf",
+    )
+    if force_absolute_fallback:
+        monkeypatch.setattr(os, "supports_dir_fd", frozenset())
+    database = workspace / "briefloop.db"
+    before_bytes = database.read_bytes()
+
+    result = IntakeService(workspace, clock=CLOCK).submit_source(
+        request_path.relative_to(workspace).as_posix()
+    )
+
+    if result.to_dict() != {
+        "status": "failed_uncommitted",
+        "error_code": "scratch_entry_unsafe",
+    }:
+        raise AssertionError(result.to_dict())
+    if state != {"hardlink_created": True, "target_body_read": False}:
+        raise AssertionError(state)
+    if database.read_bytes() != before_bytes:
+        raise AssertionError("raced scratch read changed the control store")
+    with SQLiteControlStore.open(database) as store:
+        if store.current_revision != 1:
+            raise AssertionError(store.current_revision)
+        snapshot = store.load_snapshot(RUN_ID)
+    if snapshot.sources or snapshot.artifact_revisions or snapshot.events:
+        raise AssertionError(snapshot)
 
 
 def test_finalized_current_run_requires_new_run_without_consuming_intake(

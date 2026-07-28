@@ -104,7 +104,8 @@ def test_source_and_non_editable_wheel_hardlink_intake_parity(
         capture_output=True,
         text=True,
     )
-    assert build.returncode == 0, build.stdout + build.stderr
+    if build.returncode != 0:
+        raise AssertionError(build.stdout + build.stderr)
     wheel_path = next(wheel_dir.glob("briefloop-*.whl"))
     installed = tmp_path / "installed"
     installed.mkdir()
@@ -138,9 +139,9 @@ def test_source_and_non_editable_wheel_hardlink_intake_parity(
 
         root = Path(sys.argv[1])
         expected_package_root = Path(sys.argv[2]).resolve()
-        assert Path(multi_agent_brief.__file__).resolve().is_relative_to(
-            expected_package_root
-        )
+        package_file = Path(multi_agent_brief.__file__).resolve()
+        if not package_file.is_relative_to(expected_package_root):
+            raise RuntimeError("package root mismatch")
 
         def replace_with_external_hardlink(path, outside):
             content = path.read_bytes()
@@ -152,10 +153,12 @@ def test_source_and_non_editable_wheel_hardlink_intake_parity(
                 return None
             target_info = path.stat()
             outside_info = outside.stat()
-            assert (target_info.st_dev, target_info.st_ino) == (
+            if (target_info.st_dev, target_info.st_ino) != (
                 outside_info.st_dev, outside_info.st_ino
-            )
-            assert target_info.st_nlink > 1
+            ):
+                raise RuntimeError("hardlink identity mismatch")
+            if target_info.st_nlink <= 1:
+                raise RuntimeError("hardlink link count mismatch")
             return content
 
         root.mkdir()
@@ -187,17 +190,20 @@ def test_source_and_non_editable_wheel_hardlink_intake_parity(
                 expected_store_revision=_store_revision(core_workspace),
             )
         )
-        assert doctor.status == "committed", doctor.to_dict()
+        if doctor.status != "committed":
+            raise RuntimeError(f"doctor did not commit: {doctor.to_dict()!r}")
         core_leaf = core_workspace / "input" / "authorized-source.txt"
-        assert replace_with_external_hardlink(
+        if replace_with_external_hardlink(
             core_leaf, root / "outside-authorized-source.txt"
-        ) is not None
+        ) is None:
+            raise RuntimeError("hardlink support changed between rows")
         core_db = core_workspace / "briefloop.db"
         core_before = core_db.read_bytes()
         core_result = core_service.apply_authorized_source_pack()
 
         print(json.dumps({
             "hardlink_supported": True,
+            "optimize": sys.flags.optimize,
             "intake": {
                 "result": intake_result.to_dict(),
                 "database_unchanged": intake_db.read_bytes() == intake_before,
@@ -215,29 +221,40 @@ def test_source_and_non_editable_wheel_hardlink_intake_parity(
     def execute(label: str, package_root: Path) -> dict[str, object]:
         environment = dict(os.environ)
         environment["PYTHONPATH"] = os.pathsep.join((str(package_root), str(ROOT)))
-        run = subprocess.run(
+        optimization_flag = (
+            "-" + ("O" * sys.flags.optimize) if sys.flags.optimize else None
+        )
+        command = [sys.executable]
+        if optimization_flag is not None:
+            command.append(optimization_flag)
+        command.extend(
             [
-                sys.executable,
                 str(script_path),
                 str(tmp_path / f"{label}-run"),
                 str(package_root),
-            ],
+            ]
+        )
+        run = subprocess.run(
+            command,
             cwd=tmp_path,
             env=environment,
             check=False,
             capture_output=True,
             text=True,
         )
-        assert run.returncode == 0, run.stdout + run.stderr
+        if run.returncode != 0:
+            raise AssertionError(run.stdout + run.stderr)
         return json.loads(run.stdout)
 
     source_payload = execute("source", ROOT / "src")
     if not source_payload["hardlink_supported"]:
         pytest.skip("test filesystem does not support hardlinks")
     wheel_payload = execute("wheel", installed)
-    assert wheel_payload == source_payload
-    assert source_payload == {
+    if wheel_payload != source_payload:
+        raise AssertionError(f"source/wheel payload mismatch: {source_payload!r} != {wheel_payload!r}")
+    expected = {
         "hardlink_supported": True,
+        "optimize": sys.flags.optimize,
         "intake": {
             "result": {
                 "error_code": "scratch_entry_unsafe",
@@ -253,6 +270,8 @@ def test_source_and_non_editable_wheel_hardlink_intake_parity(
             "database_unchanged": True,
         },
     }
+    if source_payload != expected:
+        raise AssertionError(f"unexpected hardlink payload: {source_payload!r}")
 
 
 def test_non_editable_wheel_runtime_install_all_uses_explicit_source_repo(

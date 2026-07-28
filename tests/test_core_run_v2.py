@@ -334,6 +334,48 @@ def _replace_with_external_hardlink(path: Path, *, outside: Path) -> bytes:
     return original
 
 
+def _link_workspace_file_after_pre_stat_before_open(
+    monkeypatch: pytest.MonkeyPatch,
+    *,
+    target: Path,
+    outside: Path,
+) -> dict[str, bool]:
+    """Race the real workspace-file open with a new external hardlink."""
+
+    target_info = target.stat()
+    target_identity = (target_info.st_dev, target_info.st_ino)
+    original_open = os.open
+    original_read = os.read
+    state = {"hardlink_created": False, "target_body_read": False}
+
+    def intercept_open(path: object, flags: int, mode: int = 0o777) -> int:
+        candidate = os.fspath(path)
+        if (
+            not state["hardlink_created"]
+            and isinstance(candidate, str)
+            and Path(candidate) == target
+        ):
+            try:
+                os.link(target, outside)
+            except OSError as exc:
+                raise AssertionError(f"hardlink creation failed: {exc}") from exc
+            if target.stat().st_nlink <= 1:
+                raise AssertionError("target hardlink was not created")
+            state["hardlink_created"] = True
+        return original_open(path, flags, mode)
+
+    def intercept_read(descriptor: int, size: int) -> bytes:
+        opened = os.fstat(descriptor)
+        if (opened.st_dev, opened.st_ino) == target_identity:
+            state["target_body_read"] = True
+            raise AssertionError("target body read after hardlink race")
+        return original_read(descriptor, size)
+
+    monkeypatch.setattr(os, "open", intercept_open)
+    monkeypatch.setattr(os, "read", intercept_read)
+    return state
+
+
 def test_initialize_freezes_receipt_owned_execution_authorization(
     tmp_path: Path,
 ) -> None:
@@ -484,6 +526,29 @@ def test_read_workspace_file_rejects_hardlinked_leaf_without_hash_or_content(
     assert observed.sha256 is None
     assert observed.content is None
     assert source_path.read_bytes() == original
+
+
+def test_read_workspace_file_rejects_link_created_after_pre_stat_without_body_read(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    workspace = _workspace(tmp_path)
+    source_path = workspace / "input" / "raced-source.txt"
+    source_path.write_bytes(b"raced hardlink sentinel\n")
+    state = _link_workspace_file_after_pre_stat_before_open(
+        monkeypatch,
+        target=source_path,
+        outside=tmp_path / "outside-raced-source.txt",
+    )
+
+    observed = read_workspace_file(workspace, "input/raced-source.txt")
+
+    if observed.entry_kind != "unsafe":
+        raise AssertionError(observed)
+    if observed.sha256 is not None or observed.content is not None:
+        raise AssertionError(observed)
+    if state != {"hardlink_created": True, "target_body_read": False}:
+        raise AssertionError(state)
 
 
 def test_authorized_source_pack_rejects_hardlinked_member_before_invocation_start(
