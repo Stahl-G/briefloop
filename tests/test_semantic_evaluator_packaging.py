@@ -10,6 +10,8 @@ import subprocess
 import sys
 import zipfile
 
+import pytest
+
 REPO_ROOT = Path(__file__).resolve().parents[1]
 RESOURCE_PATHS = (
     ("profiles", "research_design_report_zh_v1.yaml"),
@@ -1431,46 +1433,48 @@ def _run_wheel_probe(
     cwd: Path,
     env: dict[str, str],
     optimized: bool,
-) -> subprocess.CompletedProcess[str]:
+) -> str:
     command = [sys.executable]
     if optimized:
         command.append("-O")
     command.append("-")
+    child_env = env.copy()
+    child_env["PYTHONUTF8"] = "1"
+    child_env["PYTHONIOENCODING"] = "utf-8"
     probe = subprocess.run(
         command,
         cwd=cwd,
-        env=env,
-        input=WHEEL_PROBE,
+        env=child_env,
+        input=WHEEL_PROBE.encode("utf-8"),
         check=False,
         capture_output=True,
-        text=True,
     )
-    assert probe.returncode == 0, probe.stdout + probe.stderr
-    return probe
+    stdout = probe.stdout.decode("utf-8")
+    stderr = probe.stderr.decode("utf-8")
+    assert probe.returncode == 0, stdout + stderr
+    return stdout.splitlines()[-1]
 
 
-def _source_identity() -> dict[str, object]:
+def _source_identity() -> str:
     env = os.environ.copy()
     env["PYTHONPATH"] = str(REPO_ROOT / "src")
     env["SEMANTIC_EVALUATOR_WHEEL_ROOT"] = str(REPO_ROOT)
-    probe = _run_wheel_probe(
+    return _run_wheel_probe(
         cwd=REPO_ROOT,
         env=env,
         optimized=False,
     )
-    return json.loads(probe.stdout.splitlines()[-1])
 
 
 def _source_probe(*, optimized: bool) -> str:
     env = os.environ.copy()
     env["PYTHONPATH"] = str(REPO_ROOT / "src")
     env["SEMANTIC_EVALUATOR_WHEEL_ROOT"] = str(REPO_ROOT)
-    probe = _run_wheel_probe(
+    return _run_wheel_probe(
         cwd=REPO_ROOT,
         env=env,
         optimized=optimized,
     )
-    return probe.stdout.splitlines()[-1]
 
 
 def test_se2r_14_wheel_probe_uses_exact_stdin_without_long_argv(
@@ -1480,12 +1484,27 @@ def test_se2r_14_wheel_probe_uses_exact_stdin_without_long_argv(
 
     def run_probe(command, **kwargs):
         calls.append({"command": command, **kwargs})
-        return subprocess.CompletedProcess(command, 0, "{}\n", "")
+        return subprocess.CompletedProcess(command, 0, b"{}\n", b"")
 
     monkeypatch.setattr(subprocess, "run", run_probe)
-    env = {"PYTHONPATH": "synthetic"}
+    env = {
+        "LANG": "C",
+        "PYTHONCOERCECLOCALE": "0",
+        "PYTHONIOENCODING": "cp1252",
+        "PYTHONPATH": "synthetic",
+        "PYTHONUTF8": "0",
+    }
+    original_env = env.copy()
     for optimized in (False, True):
-        _run_wheel_probe(cwd=REPO_ROOT, env=env, optimized=optimized)
+        assert (
+            _run_wheel_probe(
+                cwd=REPO_ROOT,
+                env=env,
+                optimized=optimized,
+            )
+            == "{}"
+        )
+        assert env == original_env
 
     assert [call["command"] for call in calls] == [
         [sys.executable, "-"],
@@ -1495,12 +1514,100 @@ def test_se2r_14_wheel_probe_uses_exact_stdin_without_long_argv(
         command = call["command"]
         assert "-c" not in command
         assert WHEEL_PROBE not in command
-        assert call["input"] == WHEEL_PROBE
+        assert call["input"] == WHEEL_PROBE.encode("utf-8")
         assert call["cwd"] == REPO_ROOT
-        assert call["env"] is env
+        assert call["env"] is not env
+        assert call["env"] == {
+            **env,
+            "PYTHONIOENCODING": "utf-8",
+            "PYTHONUTF8": "1",
+        }
         assert call["check"] is False
         assert call["capture_output"] is True
-        assert call["text"] is True
+        assert "text" not in call
+        assert "encoding" not in call
+        assert "errors" not in call
+
+
+def test_se2r_14_wheel_probe_preserves_caller_env_on_return_and_decode_failure(
+    monkeypatch,
+) -> None:
+    env = {
+        "LANG": "C",
+        "PYTHONCOERCECLOCALE": "0",
+        "PYTHONIOENCODING": "cp1252",
+        "PYTHONPATH": "synthetic",
+        "PYTHONUTF8": "0",
+    }
+    original_env = env.copy()
+    outcomes = iter(
+        (
+            subprocess.CompletedProcess(
+                [sys.executable, "-"],
+                7,
+                "诊断输出".encode("utf-8"),
+                "诊断错误".encode("utf-8"),
+            ),
+            subprocess.CompletedProcess(
+                [sys.executable, "-"],
+                0,
+                b"\xff",
+                b"",
+            ),
+            subprocess.CompletedProcess(
+                [sys.executable, "-"],
+                0,
+                b"{}\n",
+                b"\xff",
+            ),
+        )
+    )
+    monkeypatch.setattr(
+        subprocess,
+        "run",
+        lambda command, **kwargs: next(outcomes),
+    )
+
+    with pytest.raises(AssertionError, match="诊断输出诊断错误"):
+        _run_wheel_probe(cwd=REPO_ROOT, env=env, optimized=False)
+    assert env == original_env
+
+    with pytest.raises(UnicodeDecodeError):
+        _run_wheel_probe(cwd=REPO_ROOT, env=env, optimized=False)
+    assert env == original_env
+
+    with pytest.raises(UnicodeDecodeError):
+        _run_wheel_probe(cwd=REPO_ROOT, env=env, optimized=False)
+    assert env == original_env
+
+
+def test_se2r_14_wheel_probe_is_utf8_under_hostile_caller_locale() -> None:
+    env = os.environ.copy()
+    env.update(
+        {
+            "LANG": "C",
+            "LC_ALL": "C",
+            "PYTHONCOERCECLOCALE": "0",
+            "PYTHONIOENCODING": "cp1252",
+            "PYTHONPATH": str(REPO_ROOT / "src"),
+            "PYTHONUTF8": "0",
+            "SEMANTIC_EVALUATOR_WHEEL_ROOT": str(REPO_ROOT),
+        }
+    )
+    original_env = env.copy()
+
+    canonical_result = _run_wheel_probe(
+        cwd=REPO_ROOT,
+        env=env,
+        optimized=False,
+    )
+
+    assert env == original_env
+    result = json.loads(canonical_result)
+    assert result["anthropic_archive_probe"]["real_provider_calls"] == 0
+    assert any(
+        "合成 wheel parity 报告" in item["user_text"] for item in result["prompts"]
+    )
 
 
 def test_se2r_14_source_probe_is_byte_identical_under_python_optimization() -> None:
@@ -1653,10 +1760,10 @@ def test_se2r_14_wheel_contains_all_resources_and_matches_source_identity(
     env["SEMANTIC_EVALUATOR_WHEEL_ROOT"] = str(extract_root)
     source_identity = _source_identity()
     for optimized in (False, True):
-        probe = _run_wheel_probe(
+        wheel_identity = _run_wheel_probe(
             cwd=tmp_path,
             env=env,
             optimized=optimized,
         )
-        wheel_identity = json.loads(probe.stdout.splitlines()[-1])
         assert wheel_identity == source_identity
+        assert json.loads(wheel_identity) == json.loads(source_identity)
