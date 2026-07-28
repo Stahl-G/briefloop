@@ -451,6 +451,8 @@ def read_workspace_file(workspace: Path, relative_path: str) -> CheckoutObservat
         before = leaf.lstat()
         if not stat.S_ISREG(before.st_mode) or stat.S_ISLNK(before.st_mode):
             return CheckoutObservation("non_regular")
+        if before.st_nlink != 1:
+            return CheckoutObservation("unsafe")
         flags = (
             os.O_RDONLY
             | getattr(os, "O_NOFOLLOW", 0)
@@ -463,7 +465,7 @@ def read_workspace_file(workspace: Path, relative_path: str) -> CheckoutObservat
                 opened.st_dev,
                 opened.st_ino,
                 opened.st_mode,
-            ):
+            ) or opened.st_nlink != 1:
                 return CheckoutObservation("unsafe")
             chunks: list[bytes] = []
             while True:

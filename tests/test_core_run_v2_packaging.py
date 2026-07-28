@@ -77,6 +77,203 @@ def test_wheel_e2e_command_uses_a_script_file_on_windows() -> None:
     assert "-c" not in command
 
 
+def test_source_and_non_editable_wheel_hardlink_intake_parity(
+    tmp_path: Path,
+) -> None:
+    build_root = tmp_path / "build-root"
+    build_root.mkdir()
+    shutil.copy2(ROOT / "pyproject.toml", build_root / "pyproject.toml")
+    shutil.copy2(ROOT / "README.md", build_root / "README.md")
+    shutil.copytree(ROOT / "src", build_root / "src")
+    wheel_dir = tmp_path / "wheel"
+    wheel_dir.mkdir()
+    build = subprocess.run(
+        [
+            sys.executable,
+            "-m",
+            "pip",
+            "wheel",
+            ".",
+            "--no-deps",
+            "--no-build-isolation",
+            "--wheel-dir",
+            str(wheel_dir),
+        ],
+        cwd=build_root,
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    if build.returncode != 0:
+        raise AssertionError(build.stdout + build.stderr)
+    wheel_path = next(wheel_dir.glob("briefloop-*.whl"))
+    installed = tmp_path / "installed"
+    installed.mkdir()
+    with zipfile.ZipFile(wheel_path) as archive:
+        archive.extractall(installed)
+
+    script = textwrap.dedent(
+        """
+        import json
+        import os
+        from pathlib import Path
+        import sys
+
+        import multi_agent_brief
+        from multi_agent_brief.contracts.v2 import IntegrityCheckRequest
+        from multi_agent_brief.intake_v2.service import IntakeService
+        from tests.test_control_store_intake_v2 import (
+            CLOCK as INTAKE_CLOCK,
+            _seed_workspace,
+            _source_request,
+        )
+        from tests.test_core_run_v2 import (
+            CLOCK as CORE_CLOCK,
+            RUN_ID,
+            _execution_authorization,
+            _initialize,
+            _record,
+            _store_revision,
+            _workspace,
+        )
+
+        root = Path(sys.argv[1])
+        expected_package_root = Path(sys.argv[2]).resolve()
+        package_file = Path(multi_agent_brief.__file__).resolve()
+        if not package_file.is_relative_to(expected_package_root):
+            raise RuntimeError("package root mismatch")
+
+        def replace_with_external_hardlink(path, outside):
+            content = path.read_bytes()
+            outside.write_bytes(content)
+            path.unlink()
+            try:
+                os.link(outside, path)
+            except OSError:
+                return None
+            target_info = path.stat()
+            outside_info = outside.stat()
+            if (target_info.st_dev, target_info.st_ino) != (
+                outside_info.st_dev, outside_info.st_ino
+            ):
+                raise RuntimeError("hardlink identity mismatch")
+            if target_info.st_nlink <= 1:
+                raise RuntimeError("hardlink link count mismatch")
+            return content
+
+        root.mkdir()
+        intake_workspace = root / "intake-workspace"
+        _seed_workspace(intake_workspace)
+        intake_request = _source_request(intake_workspace)
+        intake_leaf = intake_request.parent / "source_content.pdf"
+        if replace_with_external_hardlink(
+            intake_leaf, root / "outside-intake-source.pdf"
+        ) is None:
+            print(json.dumps({"hardlink_supported": False}, sort_keys=True))
+            raise SystemExit(0)
+        intake_db = intake_workspace / "briefloop.db"
+        intake_before = intake_db.read_bytes()
+        intake_result = IntakeService(
+            intake_workspace, clock=INTAKE_CLOCK
+        ).submit_source(intake_request.relative_to(intake_workspace).as_posix())
+
+        core_workspace = _workspace(root / "core-workspace")
+        core_service = _initialize(
+            core_workspace,
+            execution_authorization=_execution_authorization(core_workspace),
+        )
+        doctor = core_service.doctor_check(
+            _record(
+                IntegrityCheckRequest,
+                request_id="REQ-WHEEL-HARDLINK-DOCTOR-001",
+                run_id=RUN_ID,
+                expected_store_revision=_store_revision(core_workspace),
+            )
+        )
+        if doctor.status != "committed":
+            raise RuntimeError(f"doctor did not commit: {doctor.to_dict()!r}")
+        core_leaf = core_workspace / "input" / "authorized-source.txt"
+        if replace_with_external_hardlink(
+            core_leaf, root / "outside-authorized-source.txt"
+        ) is None:
+            raise RuntimeError("hardlink support changed between rows")
+        core_db = core_workspace / "briefloop.db"
+        core_before = core_db.read_bytes()
+        core_result = core_service.apply_authorized_source_pack()
+
+        print(json.dumps({
+            "hardlink_supported": True,
+            "optimize": sys.flags.optimize,
+            "intake": {
+                "result": intake_result.to_dict(),
+                "database_unchanged": intake_db.read_bytes() == intake_before,
+            },
+            "core": {
+                "result": core_result.to_dict(),
+                "database_unchanged": core_db.read_bytes() == core_before,
+            },
+        }, sort_keys=True))
+        """
+    )
+    script_path = tmp_path / "wheel_hardlink_intake_parity.py"
+    script_path.write_bytes(script.encode("utf-8"))
+
+    def execute(label: str, package_root: Path) -> dict[str, object]:
+        environment = dict(os.environ)
+        environment["PYTHONPATH"] = os.pathsep.join((str(package_root), str(ROOT)))
+        optimization_flag = (
+            "-" + ("O" * sys.flags.optimize) if sys.flags.optimize else None
+        )
+        command = [sys.executable]
+        if optimization_flag is not None:
+            command.append(optimization_flag)
+        command.extend(
+            [
+                str(script_path),
+                str(tmp_path / f"{label}-run"),
+                str(package_root),
+            ]
+        )
+        run = subprocess.run(
+            command,
+            cwd=tmp_path,
+            env=environment,
+            check=False,
+            capture_output=True,
+            text=True,
+        )
+        if run.returncode != 0:
+            raise AssertionError(run.stdout + run.stderr)
+        return json.loads(run.stdout)
+
+    source_payload = execute("source", ROOT / "src")
+    if not source_payload["hardlink_supported"]:
+        pytest.skip("test filesystem does not support hardlinks")
+    wheel_payload = execute("wheel", installed)
+    if wheel_payload != source_payload:
+        raise AssertionError(f"source/wheel payload mismatch: {source_payload!r} != {wheel_payload!r}")
+    expected = {
+        "hardlink_supported": True,
+        "optimize": sys.flags.optimize,
+        "intake": {
+            "result": {
+                "error_code": "scratch_entry_unsafe",
+                "status": "failed_uncommitted",
+            },
+            "database_unchanged": True,
+        },
+        "core": {
+            "result": {
+                "error_code": "source_pack_authorization_invalid",
+                "status": "failed_uncommitted",
+            },
+            "database_unchanged": True,
+        },
+    }
+    if source_payload != expected:
+        raise AssertionError(f"unexpected hardlink payload: {source_payload!r}")
+
+
 def test_non_editable_wheel_runtime_install_all_uses_explicit_source_repo(
     tmp_path: Path,
 ) -> None:

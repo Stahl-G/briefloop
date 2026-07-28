@@ -314,6 +314,68 @@ def _execution_authorization(workspace: Path) -> dict[str, object]:
     }
 
 
+def _replace_with_external_hardlink(path: Path, *, outside: Path) -> bytes:
+    """Replace one workspace leaf with a distinct external hardlink alias."""
+
+    original = path.read_bytes()
+    outside.write_bytes(original)
+    path.unlink()
+    try:
+        os.link(outside, path)
+    except OSError as exc:
+        pytest.skip(f"test filesystem does not support hardlinks: {exc}")
+    outside_info = outside.stat()
+    path_info = path.stat()
+    assert (path_info.st_dev, path_info.st_ino) == (
+        outside_info.st_dev,
+        outside_info.st_ino,
+    )
+    assert path_info.st_nlink > 1
+    return original
+
+
+def _link_workspace_file_after_pre_stat_before_open(
+    monkeypatch: pytest.MonkeyPatch,
+    *,
+    target: Path,
+    outside: Path,
+) -> dict[str, bool]:
+    """Race the real workspace-file open with a new external hardlink."""
+
+    target_info = target.stat()
+    target_identity = (target_info.st_dev, target_info.st_ino)
+    original_open = os.open
+    original_read = os.read
+    state = {"hardlink_created": False, "target_body_read": False}
+
+    def intercept_open(path: object, flags: int, mode: int = 0o777) -> int:
+        candidate = os.fspath(path)
+        if (
+            not state["hardlink_created"]
+            and isinstance(candidate, str)
+            and Path(candidate) == target
+        ):
+            try:
+                os.link(target, outside)
+            except OSError as exc:
+                raise AssertionError(f"hardlink creation failed: {exc}") from exc
+            if target.stat().st_nlink <= 1:
+                raise AssertionError("target hardlink was not created")
+            state["hardlink_created"] = True
+        return original_open(path, flags, mode)
+
+    def intercept_read(descriptor: int, size: int) -> bytes:
+        opened = os.fstat(descriptor)
+        if (opened.st_dev, opened.st_ino) == target_identity:
+            state["target_body_read"] = True
+            raise AssertionError("target body read after hardlink race")
+        return original_read(descriptor, size)
+
+    monkeypatch.setattr(os, "open", intercept_open)
+    monkeypatch.setattr(os, "read", intercept_read)
+    return state
+
+
 def test_initialize_freezes_receipt_owned_execution_authorization(
     tmp_path: Path,
 ) -> None:
@@ -445,6 +507,212 @@ def test_core_applies_authorized_source_pack_without_a_host_dto(
     assert replayed.receipt.transaction_id == result.receipt.transaction_id
     assert _store_revision(workspace) == revision_after_commit
     assert projection.read_text(encoding="utf-8") == '{"forged":true}'
+
+
+def test_read_workspace_file_rejects_hardlinked_leaf_without_hash_or_content(
+    tmp_path: Path,
+) -> None:
+    workspace = _workspace(tmp_path)
+    source_path = workspace / "input" / "hardlinked-source.txt"
+    source_path.write_bytes(b"external hardlink sentinel\n")
+    original = _replace_with_external_hardlink(
+        source_path,
+        outside=tmp_path / "outside-hardlinked-source.txt",
+    )
+
+    observed = read_workspace_file(workspace, "input/hardlinked-source.txt")
+
+    assert observed.entry_kind == "unsafe"
+    assert observed.sha256 is None
+    assert observed.content is None
+    assert source_path.read_bytes() == original
+
+
+def test_read_workspace_file_rejects_link_created_after_pre_stat_without_body_read(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    workspace = _workspace(tmp_path)
+    source_path = workspace / "input" / "raced-source.txt"
+    source_path.write_bytes(b"raced hardlink sentinel\n")
+    state = _link_workspace_file_after_pre_stat_before_open(
+        monkeypatch,
+        target=source_path,
+        outside=tmp_path / "outside-raced-source.txt",
+    )
+
+    observed = read_workspace_file(workspace, "input/raced-source.txt")
+
+    if observed.entry_kind != "unsafe":
+        raise AssertionError(observed)
+    if observed.sha256 is not None or observed.content is not None:
+        raise AssertionError(observed)
+    if state != {"hardlink_created": True, "target_body_read": False}:
+        raise AssertionError(state)
+
+
+def test_authorized_source_pack_rejects_hardlinked_member_before_invocation_start(
+    tmp_path: Path,
+) -> None:
+    workspace = _workspace(tmp_path)
+    service = _initialize(
+        workspace, execution_authorization=_execution_authorization(workspace)
+    )
+    assert service.doctor_check(
+        _record(
+            IntegrityCheckRequest,
+            request_id="REQ-AUTHORIZED-HARDLINK-DOCTOR-001",
+            run_id=RUN_ID,
+            expected_store_revision=_store_revision(workspace),
+        )
+    ).status == "committed"
+    source_path = workspace / "input" / "authorized-source.txt"
+    original = _replace_with_external_hardlink(
+        source_path,
+        outside=tmp_path / "outside-authorized-source.txt",
+    )
+    database = workspace / "briefloop.db"
+    before_bytes = database.read_bytes()
+
+    result = service.apply_authorized_source_pack()
+
+    assert result.to_dict() == {
+        "status": "failed_uncommitted",
+        "error_code": "source_pack_authorization_invalid",
+    }
+    assert database.read_bytes() == before_bytes
+    assert source_path.read_bytes() == original
+    with SQLiteControlStore.open(database, clock=CLOCK) as store:
+        snapshot = store.load_snapshot(RUN_ID)
+    assert not any(
+        item.role_id == "source-provider" and item.status == "active"
+        for item in snapshot.invocations
+    )
+    assert not any(
+        item.core_run_binding is not None
+        and item.core_run_binding.effect_kind == "invocation_start"
+        for item in snapshot.events
+    )
+
+
+def test_authorized_source_pack_validates_wrong_hash_before_invocation_start(
+    tmp_path: Path,
+) -> None:
+    workspace = _workspace(tmp_path)
+    service = _initialize(
+        workspace, execution_authorization=_execution_authorization(workspace)
+    )
+    assert service.doctor_check(
+        _record(
+            IntegrityCheckRequest,
+            request_id="REQ-AUTHORIZED-HASH-DOCTOR-001",
+            run_id=RUN_ID,
+            expected_store_revision=_store_revision(workspace),
+        )
+    ).status == "committed"
+    source_path = workspace / "input" / "authorized-source.txt"
+    source_path.write_bytes(b"one-link bytes with the wrong hash\n")
+    database = workspace / "briefloop.db"
+    before_bytes = database.read_bytes()
+
+    result = service.apply_authorized_source_pack()
+
+    assert result.to_dict() == {
+        "status": "failed_uncommitted",
+        "error_code": "source_hash_mismatch",
+    }
+    assert database.read_bytes() == before_bytes
+    with SQLiteControlStore.open(database, clock=CLOCK) as store:
+        snapshot = store.load_snapshot(RUN_ID)
+    assert not any(
+        item.core_run_binding is not None
+        and item.core_run_binding.effect_kind == "invocation_start"
+        for item in snapshot.events
+    )
+
+
+def test_authorized_source_pack_replays_before_hardlinked_member_access(
+    tmp_path: Path,
+) -> None:
+    workspace = _workspace(tmp_path)
+    service = _initialize(
+        workspace, execution_authorization=_execution_authorization(workspace)
+    )
+    assert service.doctor_check(
+        _record(
+            IntegrityCheckRequest,
+            request_id="REQ-AUTHORIZED-REPLAY-HARDLINK-DOCTOR-001",
+            run_id=RUN_ID,
+            expected_store_revision=_store_revision(workspace),
+        )
+    ).status == "committed"
+    committed = service.apply_authorized_source_pack()
+    assert committed.status == "committed", committed.to_dict()
+    source_path = workspace / "input" / "authorized-source.txt"
+    original = _replace_with_external_hardlink(
+        source_path,
+        outside=tmp_path / "outside-replayed-authorized-source.txt",
+    )
+    database = workspace / "briefloop.db"
+    before_bytes = database.read_bytes()
+
+    replayed = service.apply_authorized_source_pack()
+
+    assert replayed.status == "replayed", replayed.to_dict()
+    assert replayed.receipt == committed.receipt
+    assert database.read_bytes() == before_bytes
+    assert source_path.read_bytes() == original
+
+
+def test_authorized_source_pack_rejects_hardlinked_member_after_reservation(
+    tmp_path: Path,
+) -> None:
+    workspace = _workspace(tmp_path)
+    service = _initialize(
+        workspace, execution_authorization=_execution_authorization(workspace)
+    )
+    assert service.doctor_check(
+        _record(
+            IntegrityCheckRequest,
+            request_id="REQ-AUTHORIZED-RESERVED-HARDLINK-DOCTOR-001",
+            run_id=RUN_ID,
+            expected_store_revision=_store_revision(workspace),
+        )
+    ).status == "committed"
+    with SQLiteControlStore.open(workspace / "briefloop.db", clock=CLOCK) as store:
+        verified = CoreRunDomainVerifier().verify(store, RUN_ID)
+    authorization = verified.snapshot.run_execution_authorizations[0]
+    pack_request_id = derived_id(
+        "REQ-AUTHORIZED-SOURCE-PACK", RUN_ID, authorization.request_fingerprint
+    )
+    reservation = service.start_invocation(
+        _record(
+            InvocationStartRequest,
+            request_id=derived_id("REQ-AUTHORIZED-SOURCE-PROVIDER", pack_request_id),
+            run_id=RUN_ID,
+            stage_id="source-discovery",
+            role_id="source-provider",
+            runtime=verified.snapshot.run.runtime,
+            expected_store_revision=verified.snapshot.store_revision,
+        )
+    )
+    assert reservation.status == "committed", reservation.to_dict()
+    source_path = workspace / "input" / "authorized-source.txt"
+    original = _replace_with_external_hardlink(
+        source_path,
+        outside=tmp_path / "outside-reserved-authorized-source.txt",
+    )
+    database = workspace / "briefloop.db"
+    before_bytes = database.read_bytes()
+
+    result = service.apply_authorized_source_pack()
+
+    assert result.to_dict() == {
+        "status": "failed_uncommitted",
+        "error_code": "source_pack_authorization_invalid",
+    }
+    assert database.read_bytes() == before_bytes
+    assert source_path.read_bytes() == original
 
 
 def test_authorized_store_classification_tampering_fails_before_projection_checks(

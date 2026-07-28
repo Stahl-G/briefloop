@@ -252,6 +252,14 @@ class CoreRunService:
                 )
             except Exception as exc:
                 raise CoreRunError("control_store_integrity_invalid") from exc
+        contents: list[bytes] = []
+        for member in manifest.members:
+            observed = read_workspace_file(self.workspace, member.input_path)
+            if observed.entry_kind != "regular_file" or observed.content is None:
+                raise CoreRunError("source_pack_authorization_invalid")
+            if observed.sha256 != member.content_sha256:
+                raise CoreRunError("source_hash_mismatch")
+            contents.append(observed.content)
         if resumed_invocation_id is None:
             started = self._start_invocation(invocation_request)
             if (
@@ -266,14 +274,6 @@ class CoreRunService:
             invocation_id = resumed_invocation_id
         if intake_expected_revision is None:
             raise CoreRunError("control_store_integrity_invalid")
-        contents: list[bytes] = []
-        for member in manifest.members:
-            observed = read_workspace_file(self.workspace, member.input_path)
-            if observed.entry_kind != "regular_file" or observed.content is None:
-                raise CoreRunError("source_pack_authorization_invalid")
-            if observed.sha256 != member.content_sha256:
-                raise CoreRunError("source_hash_mismatch")
-            contents.append(observed.content)
         from multi_agent_brief.intake_v2.service import (
             IntakeError,
             IntakeService,
