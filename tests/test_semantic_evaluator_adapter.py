@@ -49,7 +49,10 @@ from multi_agent_brief.semantic_evaluator.prompt_sizer import (
     AnthropicUtf8BytePromptSizerV1,
     CLIProxyUtf8BytePromptSizerV1,
 )
-from multi_agent_brief.semantic_evaluator.serialization import canonical_json_bytes
+from multi_agent_brief.semantic_evaluator.serialization import (
+    canonical_json_bytes,
+    sha256_bytes,
+)
 
 
 EXPECTED_MODEL = b"gpt-test-2026-07-18"
@@ -151,6 +154,58 @@ def _anthropic_raw_payload() -> dict[str, object]:
             content=[{"type": "text", "text": '{"findings":[]}'}],
         )
     )
+
+
+class _AnthropicTimeoutError(Exception):
+    pass
+
+
+class _AnthropicConnectionError(Exception):
+    pass
+
+
+class _AnthropicStatusError(Exception):
+    pass
+
+
+def _anthropic_invoke_adapter(create):
+    adapter = object.__new__(AnthropicMessagesAdapterV1)
+    adapter._client = SimpleNamespace(
+        messages=SimpleNamespace(
+            with_raw_response=SimpleNamespace(create=create),
+        )
+    )
+    adapter._anthropic = SimpleNamespace(
+        APITimeoutError=_AnthropicTimeoutError,
+        APIConnectionError=_AnthropicConnectionError,
+        APIStatusError=_AnthropicStatusError,
+    )
+    return adapter
+
+
+def _invoke_anthropic_response(
+    raw: bytes,
+    *,
+    sdk_response: object | None = None,
+    parse_error: str | None = None,
+):
+    calls = {"parse": 0, "provider": 0}
+
+    def parse():
+        calls["parse"] += 1
+        if parse_error is not None:
+            raise RuntimeError(parse_error)
+        return sdk_response
+
+    def create(**_kwargs):
+        calls["provider"] += 1
+        return SimpleNamespace(
+            http_response=SimpleNamespace(content=raw),
+            parse=parse,
+        )
+
+    attempt = _anthropic_invoke_adapter(create).invoke(_anthropic_request())
+    return attempt, calls
 
 
 def test_se2r_01_completed_exact_response_is_output_eligible() -> None:
@@ -727,6 +782,287 @@ def test_anthropic_sdk_parse_failure_cannot_fall_back_to_raw_success() -> None:
     )
     assert attempt.outcome.shadow_reason == "provider_boundary_invalid"
     assert attempt.extracted_output is None
+
+
+def test_anthropic_invoke_retains_invalid_utf8_when_sdk_parse_fails() -> None:
+    sentinel = "parse-secret-sentinel"
+    raw = b"\xffcaptured-response"
+    attempt, calls = _invoke_anthropic_response(
+        raw,
+        parse_error=sentinel,
+    )
+    assert calls == {"parse": 1, "provider": 1}
+    assert attempt.facts.transport_kind == "response"
+    assert attempt.facts.envelope.state == "present_invalid"
+    assert attempt.facts.envelope.raw_sha256 == sha256_bytes(raw)
+    assert attempt.outcome.shadow_reason == "provider_boundary_invalid"
+    assert attempt.outcome.output_eligible is False
+    assert attempt.outcome.retry_eligible is False
+    assert attempt.raw_transport_response == raw
+    assert attempt.extracted_output is None
+    assert sentinel.encode() not in (attempt.sdk_projection_bytes or b"")
+
+
+def _anthropic_parse_failure_cases() -> list[tuple[str, bytes]]:
+    valid = synthetic_anthropic_message_bytes_v1(
+        stop_reason="end_turn",
+        response_id="msg-public",
+        model=ANTHROPIC_TEST_MODEL,
+        content=[{"type": "text", "text": '{"findings":[]}'}],
+    )
+    wrong_type = _anthropic_raw_payload()
+    wrong_type["type"] = "future_message"
+    wrong_role = _anthropic_raw_payload()
+    wrong_role["role"] = "user"
+    return [
+        ("invalid_json", b'{"type":"message"'),
+        (
+            "duplicate_member",
+            b'{"role":"assistant","type":"message","type":"message"}',
+        ),
+        ("non_object_json", b'["message"]'),
+        ("wrong_messages_type", canonical_json_bytes(wrong_type)),
+        ("wrong_messages_role", canonical_json_bytes(wrong_role)),
+        ("valid_messages_body", valid),
+    ]
+
+
+@pytest.mark.parametrize(
+    ("_case_id", "raw"),
+    _anthropic_parse_failure_cases(),
+    ids=[item[0] for item in _anthropic_parse_failure_cases()],
+)
+def test_anthropic_invoke_parse_failure_retains_exact_response(
+    _case_id: str,
+    raw: bytes,
+) -> None:
+    sentinel = "parse-provider-diagnostic-must-not-survive"
+    attempt, calls = _invoke_anthropic_response(raw, parse_error=sentinel)
+
+    assert calls == {"parse": 1, "provider": 1}
+    assert attempt.facts.transport_kind == "response"
+    assert attempt.facts.envelope.state == "present_invalid"
+    assert attempt.facts.envelope.raw_sha256 == sha256_bytes(raw)
+    assert attempt.raw_transport_response == raw
+    assert attempt.outcome.shadow_reason == "provider_boundary_invalid"
+    assert attempt.outcome.output_eligible is False
+    assert attempt.outcome.retry_eligible is False
+    assert attempt.extracted_output is None
+    sdk_projection = json.loads(attempt.sdk_projection_bytes or b"")
+    assert sdk_projection["body_state"] == "invalid"
+    for field in ("model_identity", "output", "response_id", "status", "stop_reason"):
+        assert sdk_projection[field] == {
+            "invalid_code": "external_text_read_failed",
+            "state": "present_invalid",
+            "utf8_hex": None,
+            "utf8_sha256": None,
+        }
+    assert sentinel.encode() not in (attempt.sdk_projection_bytes or b"")
+
+
+@pytest.mark.parametrize(
+    ("raising_field", "sdk_fact_field"),
+    [
+        ("id", "response_id"),
+        ("model", "model_identity"),
+        ("stop_reason", "stop_reason"),
+        ("content", "output"),
+        ("usage", "output"),
+    ],
+)
+def test_anthropic_invoke_sdk_getter_failure_retains_exact_response(
+    raising_field: str,
+    sdk_fact_field: str,
+) -> None:
+    sentinel = f"getter-secret-{raising_field}"
+    raw = synthetic_anthropic_message_bytes_v1(
+        stop_reason="end_turn",
+        response_id="msg-public",
+        model=ANTHROPIC_TEST_MODEL,
+        content=[{"type": "text", "text": '{"findings":[]}'}],
+    )
+
+    class SdkResponse:
+        def _value(self, name: str, value: object) -> object:
+            if raising_field == name:
+                raise RuntimeError(sentinel)
+            return value
+
+        @property
+        def id(self):
+            return self._value("id", "msg-public")
+
+        @property
+        def model(self):
+            return self._value("model", ANTHROPIC_TEST_MODEL)
+
+        @property
+        def stop_reason(self):
+            return self._value("stop_reason", "end_turn")
+
+        @property
+        def content(self):
+            return self._value(
+                "content",
+                [SimpleNamespace(type="text", text='{"findings":[]}')],
+            )
+
+        @property
+        def usage(self):
+            return self._value(
+                "usage",
+                SimpleNamespace(input_tokens=1, output_tokens=1),
+            )
+
+    attempt, calls = _invoke_anthropic_response(raw, sdk_response=SdkResponse())
+
+    assert calls == {"parse": 1, "provider": 1}
+    assert attempt.facts.transport_kind == "response"
+    assert attempt.facts.envelope.state == "present_invalid"
+    assert attempt.facts.envelope.raw_sha256 == sha256_bytes(raw)
+    assert attempt.raw_transport_response == raw
+    assert attempt.outcome.shadow_reason == "provider_boundary_invalid"
+    assert attempt.outcome.output_eligible is False
+    assert attempt.outcome.retry_eligible is False
+    sdk_projection = json.loads(attempt.sdk_projection_bytes or b"")
+    assert sdk_projection[sdk_fact_field]["state"] == "present_invalid"
+    assert sentinel.encode() not in (attempt.sdk_projection_bytes or b"")
+
+
+def test_anthropic_invoke_projector_failure_cannot_discard_captured_raw() -> None:
+    sentinel = "projector-secret-sentinel"
+    raw = synthetic_anthropic_message_bytes_v1(
+        stop_reason="end_turn",
+        response_id="msg-public",
+        model=ANTHROPIC_TEST_MODEL,
+        content=[{"type": "text", "text": '{"findings":[]}'}],
+    )
+    calls = {"parse": 0, "provider": 0}
+
+    def parse():
+        calls["parse"] += 1
+        return None
+
+    def create(**_kwargs):
+        calls["provider"] += 1
+        return SimpleNamespace(
+            http_response=SimpleNamespace(content=raw),
+            parse=parse,
+        )
+
+    adapter = _anthropic_invoke_adapter(create)
+
+    def fail_projection(**_kwargs):
+        raise RuntimeError(sentinel)
+
+    adapter._attempt_from_response = fail_projection
+    attempt = adapter.invoke(_anthropic_request())
+
+    assert calls == {"parse": 1, "provider": 1}
+    assert attempt.facts.transport_kind == "response"
+    assert attempt.facts.envelope.state == "present_invalid"
+    assert attempt.facts.envelope.raw_sha256 == sha256_bytes(raw)
+    assert attempt.raw_transport_response == raw
+    assert attempt.outcome.shadow_reason == "provider_boundary_invalid"
+    assert attempt.outcome.output_eligible is False
+    assert attempt.outcome.retry_eligible is False
+    assert sentinel.encode() not in (attempt.sdk_projection_bytes or b"")
+
+
+@pytest.mark.parametrize(
+    ("exception_type", "transport_kind"),
+    [
+        (_AnthropicTimeoutError, "timeout"),
+        (_AnthropicConnectionError, "connection"),
+        (RuntimeError, "adapter_error"),
+    ],
+)
+def test_anthropic_pre_body_transport_failure_remains_bodyless(
+    exception_type: type[Exception],
+    transport_kind: str,
+) -> None:
+    sentinel = f"transport-secret-{transport_kind}"
+    provider_calls = 0
+
+    def create(**_kwargs):
+        nonlocal provider_calls
+        provider_calls += 1
+        raise exception_type(sentinel)
+
+    attempt = _anthropic_invoke_adapter(create).invoke(_anthropic_request())
+
+    assert provider_calls == 1
+    assert attempt.facts.transport_kind == transport_kind
+    assert attempt.facts.envelope.state == "absent"
+    assert attempt.facts.envelope.raw_sha256 is None
+    assert attempt.raw_transport_response is None
+    assert attempt.outcome.output_eligible is False
+    assert sentinel.encode() not in (attempt.sdk_projection_bytes or b"")
+
+
+@pytest.mark.parametrize(
+    ("raw", "expected_envelope_state"),
+    [
+        (b"\xffhttp-error-body", "present_invalid"),
+        (
+            synthetic_anthropic_message_bytes_v1(
+                stop_reason="end_turn",
+                response_id="msg-http-error-public",
+                model=ANTHROPIC_TEST_MODEL,
+                content=[{"type": "text", "text": '{"findings":[]}'}],
+            ),
+            "present_valid",
+        ),
+    ],
+)
+def test_anthropic_http_status_retains_exact_present_body(
+    raw: bytes,
+    expected_envelope_state: str,
+) -> None:
+    provider_calls = 0
+    error = _AnthropicStatusError("status-secret-sentinel")
+    error.status_code = 503  # type: ignore[attr-defined]
+    error.response = SimpleNamespace(content=raw)  # type: ignore[attr-defined]
+
+    def create(**_kwargs):
+        nonlocal provider_calls
+        provider_calls += 1
+        raise error
+
+    attempt = _anthropic_invoke_adapter(create).invoke(_anthropic_request())
+
+    assert provider_calls == 1
+    assert attempt.facts.transport_kind == "http_error"
+    assert attempt.facts.http_status.state == "present_valid"
+    assert attempt.facts.http_status.value == 503
+    assert attempt.facts.envelope.state == expected_envelope_state
+    assert attempt.facts.envelope.raw_sha256 == sha256_bytes(raw)
+    assert attempt.raw_transport_response == raw
+    assert attempt.outcome.output_eligible is False
+    assert attempt.outcome.retry_eligible is False
+    assert attempt.outcome.shadow_reason == "provider_boundary_invalid"
+    assert b"status-secret-sentinel" not in (attempt.sdk_projection_bytes or b"")
+
+
+def test_anthropic_http_status_without_body_does_not_fabricate_raw() -> None:
+    error = _AnthropicStatusError("status-secret-sentinel")
+    error.status_code = 503  # type: ignore[attr-defined]
+    error.response = None  # type: ignore[attr-defined]
+
+    def create(**_kwargs):
+        raise error
+
+    attempt = _anthropic_invoke_adapter(create).invoke(_anthropic_request())
+
+    assert attempt.facts.transport_kind == "http_error"
+    assert attempt.facts.http_status.state == "present_valid"
+    assert attempt.facts.http_status.value == 503
+    assert attempt.facts.envelope.state == "absent"
+    assert attempt.facts.envelope.raw_sha256 is None
+    assert attempt.raw_transport_response is None
+    assert attempt.outcome.output_eligible is False
+    assert attempt.outcome.retry_eligible is True
+    assert attempt.outcome.shadow_reason == "provider_retryable_failure"
 
 
 def test_anthropic_adapter_error_is_value_free_and_never_calls_fallback() -> None:

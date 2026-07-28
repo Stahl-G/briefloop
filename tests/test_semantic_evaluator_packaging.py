@@ -35,6 +35,7 @@ import os
 from pathlib import Path
 import sys
 import tempfile
+from types import SimpleNamespace
 
 from multi_agent_brief.semantic_evaluator.admission import admit_inputs
 from multi_agent_brief.semantic_evaluator.baseline import build_baseline
@@ -164,6 +165,8 @@ class AnthropicProbeAdapter:
         self.mode = mode
         self._delegate = object.__new__(AnthropicMessagesAdapterV1)
         self.calls = 0
+        self.parse_calls = 0
+        self.provider_calls = 0
 
     def invoke(self, request):
         self.calls += 1
@@ -192,6 +195,41 @@ class AnthropicProbeAdapter:
                 ],
             }
         )
+        if self.mode == "parse_failure_invalid_utf8":
+            raw = b"\xffwheel-captured-response"
+            sentinel = "wheel-parse-provider-diagnostic-must-not-survive"
+
+            def parse():
+                self.parse_calls += 1
+                raise RuntimeError(sentinel)
+
+            def create(**_kwargs):
+                self.provider_calls += 1
+                return SimpleNamespace(
+                    http_response=SimpleNamespace(content=raw),
+                    parse=parse,
+                )
+
+            class TimeoutError(Exception):
+                pass
+
+            class ConnectionError(Exception):
+                pass
+
+            class StatusError(Exception):
+                pass
+
+            self._delegate._client = SimpleNamespace(
+                messages=SimpleNamespace(
+                    with_raw_response=SimpleNamespace(create=create),
+                )
+            )
+            self._delegate._anthropic = SimpleNamespace(
+                APITimeoutError=TimeoutError,
+                APIConnectionError=ConnectionError,
+                APIStatusError=StatusError,
+            )
+            return self._delegate.invoke(request)
         stop_reason = {
             "malformed_missing_id": "end_turn",
             "success": "end_turn",
@@ -378,41 +416,95 @@ def anthropic_archive_probe():
                 **invocation,
                 adapter_factory=factory,
             )
-            return result, adapters[0].calls, invocation
+            return (
+                result,
+                adapters[0].calls,
+                invocation,
+                {
+                    "parse": adapters[0].parse_calls,
+                    "provider": adapters[0].provider_calls,
+                },
+            )
 
-        first, success_calls, invocation = run_case(
+        first, success_calls, invocation, _ = run_case(
             "success",
             "trial-anthropic-wheel-success",
         )
-        truncation, truncation_calls, _ = run_case(
+        truncation, truncation_calls, _, _ = run_case(
             "truncation",
             "trial-anthropic-wheel-truncation",
         )
-        refusal, refusal_calls, _ = run_case(
+        refusal, refusal_calls, _, _ = run_case(
             "refusal",
             "trial-anthropic-wheel-refusal",
         )
-        retry, retry_calls, _ = run_case(
+        retry, retry_calls, _, _ = run_case(
             "retry_then_success",
             "trial-anthropic-wheel-retry",
         )
-        terminal, terminal_calls, _ = run_case(
+        terminal, terminal_calls, _, _ = run_case(
             "terminal_transport",
             "trial-anthropic-wheel-terminal",
         )
-        malformed, malformed_calls, malformed_invocation = run_case(
+        malformed, malformed_calls, malformed_invocation, _ = run_case(
             "malformed_missing_id",
             "trial-anthropic-wheel-malformed",
         )
-        stop_sequence, stop_sequence_calls, stop_sequence_invocation = run_case(
+        stop_sequence, stop_sequence_calls, stop_sequence_invocation, _ = run_case(
             "stop_sequence_surrogate",
             "trial-anthropic-wheel-stop-sequence",
+        )
+        (
+            parse_failure,
+            parse_failure_calls,
+            parse_failure_invocation,
+            parse_failure_boundary_calls,
+        ) = run_case(
+            "parse_failure_invalid_utf8",
+            "trial-anthropic-wheel-parse-failure",
         )
         archive = Path(first.archive_path)
         before = {
             path.relative_to(archive).as_posix(): sha256_bytes(path.read_bytes())
             for path in archive.rglob("*")
             if path.is_file()
+        }
+        parse_failure_archive = Path(parse_failure.archive_path)
+        parse_failure_records = [
+            json.loads(path.read_bytes())
+            for path in sorted(
+                parse_failure_archive.glob("attempts/*/*/transport.json")
+            )
+        ]
+        parse_failure_responses = sorted(
+            parse_failure_archive.glob("attempts/*/*/response.body")
+        )
+        parse_failure_sdk_members = sorted(
+            parse_failure_archive.glob("attempts/*/*/sdk_projection.json")
+        )
+        parse_failure_evidence = {
+            "exact_raw_retained": all(
+                path.read_bytes() == b"\xffwheel-captured-response"
+                for path in parse_failure_responses
+            ),
+            "present_invalid": all(
+                record["facts"]["transport_kind"] == "response"
+                and record["facts"]["envelope"]["state"] == "present_invalid"
+                and record["shadow_reason"] == "provider_boundary_invalid"
+                and record["retry_eligible"] is False
+                and record["output_eligible"] is False
+                for record in parse_failure_records
+            ),
+            "response_count": len(parse_failure_responses),
+            "sdk_body_invalid": all(
+                json.loads(path.read_bytes())["body_state"] == "invalid"
+                for path in parse_failure_sdk_members
+            ),
+            "sentinel_absent": all(
+                b"wheel-parse-provider-diagnostic-must-not-survive"
+                not in path.read_bytes()
+                for path in parse_failure_sdk_members
+            ),
         }
 
         policy_payload = {
@@ -504,6 +596,12 @@ def anthropic_archive_probe():
                 RuntimeError("stop-sequence replay touched adapter")
             ),
         )
+        parse_failure_replay = shadow_runner_module.run_shadow(
+            **parse_failure_invocation,
+            adapter_factory=lambda _execution: (_ for _ in ()).throw(
+                RuntimeError("parse-failure replay touched adapter")
+            ),
+        )
         after = {
             path.relative_to(archive).as_posix(): sha256_bytes(path.read_bytes())
             for path in archive.rglob("*")
@@ -553,6 +651,9 @@ def anthropic_archive_probe():
         return {
             "archive_results": {
                 "malformed_missing_id": _anthropic_result_projection(malformed),
+                "parse_failure_invalid_utf8": _anthropic_result_projection(
+                    parse_failure
+                ),
                 "refusal": _anthropic_result_projection(refusal),
                 "retry_then_success": _anthropic_result_projection(retry),
                 "stop_sequence_surrogate": _anthropic_result_projection(
@@ -564,6 +665,7 @@ def anthropic_archive_probe():
             },
             "mocked_adapter_calls": {
                 "malformed_missing_id": malformed_calls,
+                "parse_failure_invalid_utf8": parse_failure_calls,
                 "refusal": refusal_calls,
                 "retry_then_success": retry_calls,
                 "stop_sequence_surrogate": stop_sequence_calls,
@@ -572,6 +674,8 @@ def anthropic_archive_probe():
                 "truncation": truncation_calls,
             },
             "real_provider_calls": 0,
+            "actual_invoke_boundary_calls": parse_failure_boundary_calls,
+            "parse_failure_evidence": parse_failure_evidence,
             "archive_files_hash": canonical_sha256(before),
             "archive_replay_unchanged": after == before,
             "receipt_id": first.receipt_id,
@@ -584,6 +688,10 @@ def anthropic_archive_probe():
             "stop_sequence_replayed": stop_sequence_replay.replayed,
             "stop_sequence_replay_reason_codes": list(
                 stop_sequence_replay.reason_codes
+            ),
+            "parse_failure_replayed": parse_failure_replay.replayed,
+            "parse_failure_replay_reason_codes": list(
+                parse_failure_replay.reason_codes
             ),
             "replay_metadata_calls": len(metadata_calls),
             "sdk_status_tamper_reason_codes": list(tampered.reason_codes),
@@ -1192,6 +1300,7 @@ def test_se2r_14_source_probe_is_byte_identical_under_python_optimization() -> N
     assert probe["real_provider_calls"] == 0
     assert probe["mocked_adapter_calls"] == {
         "malformed_missing_id": 9,
+        "parse_failure_invalid_utf8": 9,
         "refusal": 9,
         "retry_then_success": 18,
         "stop_sequence_surrogate": 9,
@@ -1211,6 +1320,20 @@ def test_se2r_14_source_probe_is_byte_identical_under_python_optimization() -> N
     assert probe["archive_results"]["malformed_missing_id"]["reason_codes"] == [
         "provider_failed"
     ]
+    assert probe["archive_results"]["parse_failure_invalid_utf8"]["reason_codes"] == [
+        "provider_failed"
+    ]
+    assert probe["actual_invoke_boundary_calls"] == {
+        "parse": 9,
+        "provider": 9,
+    }
+    assert probe["parse_failure_evidence"] == {
+        "exact_raw_retained": True,
+        "present_invalid": True,
+        "response_count": 9,
+        "sdk_body_invalid": True,
+        "sentinel_absent": True,
+    }
     assert probe["archive_results"]["stop_sequence_surrogate"]["reason_codes"] == [
         "provider_failed"
     ]
@@ -1220,6 +1343,8 @@ def test_se2r_14_source_probe_is_byte_identical_under_python_optimization() -> N
     assert probe["malformed_replay_reason_codes"] == ["provider_failed"]
     assert probe["stop_sequence_replayed"] is True
     assert probe["stop_sequence_replay_reason_codes"] == ["provider_failed"]
+    assert probe["parse_failure_replayed"] is True
+    assert probe["parse_failure_replay_reason_codes"] == ["provider_failed"]
     assert probe["replay_metadata_calls"] == 0
     assert probe["receipt_id"] == probe["replay_receipt_id"]
     assert probe["sdk_status_tamper_reason_codes"] == ["shadow_archive_invalid"]

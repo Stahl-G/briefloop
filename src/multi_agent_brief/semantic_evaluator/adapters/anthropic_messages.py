@@ -988,7 +988,9 @@ class AnthropicMessagesAdapterV1:
             transport_kind=transport_kind,
             http_status=transport_http_status,
             http_present=transport_http_present,
-            body_state="present",
+            body_state=(
+                "invalid" if sdk_response is _SDK_READ_FAILED else "present"
+            ),
         )
         shared = project_anthropic_attempt_v1(
             raw=raw,
@@ -1076,16 +1078,6 @@ class AnthropicMessagesAdapterV1:
                 messages=[{"role": "user", "content": request.user_text}],
                 timeout=request.timeout_seconds,
             )
-            raw = _raw_bytes(raw_response)
-            if raw is None:
-                return self._transport_attempt(request=request, kind="adapter_error")
-            try:
-                sdk_response = raw_response.parse()
-            except Exception:
-                sdk_response = _SDK_READ_FAILED
-            return self._attempt_from_response(
-                request=request, raw=raw, sdk_response=sdk_response
-            )
         except self._anthropic.APITimeoutError:
             return self._transport_attempt(request=request, kind="timeout")
         except self._anthropic.APIConnectionError:
@@ -1119,6 +1111,24 @@ class AnthropicMessagesAdapterV1:
             )
         except Exception:
             return self._transport_attempt(request=request, kind="adapter_error")
+        raw = _raw_bytes(raw_response)
+        if raw is None:
+            return self._transport_attempt(request=request, kind="adapter_error")
+        try:
+            sdk_response = raw_response.parse()
+        except Exception:
+            sdk_response = _SDK_READ_FAILED
+        try:
+            return self._attempt_from_response(
+                request=request, raw=raw, sdk_response=sdk_response
+            )
+        except Exception:
+            return self._transport_attempt(
+                request=request,
+                kind="response",
+                body_state="invalid",
+                raw=raw,
+            )
 
 
 def synthetic_anthropic_message_bytes_v1(

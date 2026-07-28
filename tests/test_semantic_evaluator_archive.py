@@ -5,6 +5,7 @@ from __future__ import annotations
 from collections.abc import Callable
 import json
 from pathlib import Path
+import sys
 from types import SimpleNamespace
 
 import pytest
@@ -131,12 +132,26 @@ def _rehash_outer(archive: Path, changed_member: str) -> None:
     )
 
 
+def _rehash_attempt_record(record: dict[str, object]) -> bytes:
+    facts = record["facts"]
+    assert isinstance(facts, dict)
+    facts["boundary_facts_sha256"] = canonical_sha256(
+        {key: value for key, value in facts.items() if key != "boundary_facts_sha256"}
+    )
+    record["attempt_record_sha256"] = canonical_sha256(
+        {key: value for key, value in record.items() if key != "attempt_record_sha256"}
+    )
+    return canonical_json_bytes(record)
+
+
 def _anthropic_archive(
     tmp_path: Path,
     monkeypatch,
     *,
     raw_transform: Callable[[bytes], bytes] | None = None,
     sdk_mismatch: bool = False,
+    parse_failure: bool = False,
+    call_counts: dict[str, int] | None = None,
 ) -> tuple[Path, dict[str, object]]:
     endpoint = "https://messages.example.test/v1"
     inputs = tmp_path / "inputs"
@@ -216,11 +231,43 @@ def _anthropic_archive(
                 if sdk_mismatch
                 else None
             )
-            return self.delegate._attempt_from_response(
-                request=request,
-                raw=raw,
-                sdk_response=sdk_response,
+            sentinel = "parse-provider-diagnostic-must-not-survive"
+
+            def parse():
+                if call_counts is not None:
+                    call_counts["parse"] = call_counts.get("parse", 0) + 1
+                if parse_failure:
+                    raise RuntimeError(sentinel)
+                return sdk_response
+
+            def create(**_kwargs):
+                if call_counts is not None:
+                    call_counts["provider"] = call_counts.get("provider", 0) + 1
+                return SimpleNamespace(
+                    http_response=SimpleNamespace(content=raw),
+                    parse=parse,
+                )
+
+            class TimeoutError(Exception):
+                pass
+
+            class ConnectionError(Exception):
+                pass
+
+            class StatusError(Exception):
+                pass
+
+            self.delegate._client = SimpleNamespace(
+                messages=SimpleNamespace(
+                    with_raw_response=SimpleNamespace(create=create),
+                )
             )
+            self.delegate._anthropic = SimpleNamespace(
+                APITimeoutError=TimeoutError,
+                APIConnectionError=ConnectionError,
+                APIStatusError=StatusError,
+            )
+            return self.delegate.invoke(request)
 
     invocation = {
         "report": report,
@@ -237,7 +284,7 @@ def _anthropic_archive(
         adapter_factory=lambda execution: Adapter(execution),
     )
     assert result.archive_path is not None
-    if raw_transform is None and not sdk_mismatch:
+    if raw_transform is None and not sdk_mismatch and not parse_failure:
         assert result.ok
     else:
         assert result.ok is False
@@ -247,6 +294,14 @@ def _anthropic_archive(
 
 def _anthropic_raw_transform(mode: str) -> Callable[[bytes], bytes]:
     def transform(raw: bytes) -> bytes:
+        if mode == "invalid_utf8":
+            return b"\xffcaptured-archive-response"
+        if mode == "invalid_json":
+            return b'{"type":"message"'
+        if mode == "duplicate_member":
+            return b'{"role":"assistant","type":"message","type":"message"}'
+        if mode == "non_object_json":
+            return b'["message"]'
         payload = json.loads(raw)
         if mode == "missing_stop":
             payload.pop("stop_reason")
@@ -258,6 +313,10 @@ def _anthropic_raw_transform(mode: str) -> Callable[[bytes], bytes]:
             payload.pop("model")
         elif mode == "stop_sequence_surrogate":
             payload["stop_sequence"] = "\ud800"
+        elif mode == "wrong_messages_type":
+            payload["type"] = "future_message"
+        elif mode == "wrong_messages_role":
+            payload["role"] = "user"
         else:
             raise AssertionError(mode)
         return json.dumps(
@@ -589,6 +648,210 @@ def test_anthropic_archive_recomputes_terminal_status_from_raw_bytes() -> None:
             sdk_projection_raw=attempt.sdk_projection_bytes,
         )
     assert exc_info.value.reason_code == "shadow_archive_invalid"
+
+
+@pytest.mark.parametrize(
+    "mode",
+    [
+        "invalid_utf8",
+        "invalid_json",
+        "duplicate_member",
+        "non_object_json",
+        "wrong_messages_type",
+        "wrong_messages_role",
+        "valid_messages_body",
+    ],
+)
+def test_anthropic_real_invoke_parse_failure_archives_and_replays_negative_evidence(
+    tmp_path: Path,
+    monkeypatch,
+    mode: str,
+) -> None:
+    call_counts = {"network": 0, "parse": 0, "provider": 0}
+    transform = (
+        None
+        if mode == "valid_messages_body"
+        else _anthropic_raw_transform(mode)
+    )
+    archive, invocation = _anthropic_archive(
+        tmp_path,
+        monkeypatch,
+        raw_transform=transform,
+        parse_failure=True,
+        call_counts=call_counts,
+    )
+
+    verified = verify_shadow_archive(archive)
+    assert verified.ok is False
+    assert verified.reason_codes == ("provider_failed",)
+    records = [
+        _strict_load(path)
+        for path in sorted(archive.glob("attempts/*/*/transport.json"))
+    ]
+    responses = sorted(archive.glob("attempts/*/*/response.body"))
+    sdk_members = sorted(archive.glob("attempts/*/*/sdk_projection.json"))
+    assert records
+    assert len(responses) == len(records) == len(sdk_members)
+    assert call_counts == {
+        "network": 0,
+        "parse": len(records),
+        "provider": len(records),
+    }
+    for record, response_path, sdk_path in zip(
+        records,
+        responses,
+        sdk_members,
+        strict=True,
+    ):
+        raw = response_path.read_bytes()
+        assert record["facts"]["transport_kind"] == "response"
+        assert record["facts"]["envelope"]["state"] == "present_invalid"
+        assert record["facts"]["envelope"]["raw_sha256"] == sha256_bytes(raw)
+        assert record["raw_transport_response_sha256"] == sha256_bytes(raw)
+        assert record["shadow_reason"] == "provider_boundary_invalid"
+        assert record["retry_eligible"] is False
+        assert record["output_eligible"] is False
+        sdk_projection = _strict_load(sdk_path)
+        assert sdk_projection["body_state"] == "invalid"
+        assert b"parse-provider-diagnostic-must-not-survive" not in sdk_path.read_bytes()
+
+    metadata_calls = 0
+
+    def forbidden_metadata(_name):
+        nonlocal metadata_calls
+        metadata_calls += 1
+        raise AssertionError("negative replay touched distribution metadata")
+
+    monkeypatch.delenv("BRIEFLOOP_LAJ_MESSAGES_API_KEY", raising=False)
+    monkeypatch.setitem(sys.modules, "anthropic", None)
+    monkeypatch.setattr(runner_module.metadata, "version", forbidden_metadata)
+    replay = run_shadow(
+        **invocation,
+        adapter_factory=lambda _execution: (_ for _ in ()).throw(
+            AssertionError("negative replay touched adapter")
+        ),
+    )
+    assert replay.replayed is True
+    assert replay.ok is False
+    assert replay.reason_codes == ("provider_failed",)
+    assert metadata_calls == 0
+    assert call_counts == {
+        "network": 0,
+        "parse": len(records),
+        "provider": len(records),
+    }
+
+
+@pytest.mark.parametrize(
+    "tamper",
+    [
+        "raw_body",
+        "raw_hash",
+        "sdk_body_state",
+        "sdk_transport",
+        "facts",
+        "outcome",
+        "remove_raw",
+        "envelope_absent",
+    ],
+)
+def test_anthropic_parse_failure_rehashed_tamper_fails_before_runtime_access(
+    tmp_path: Path,
+    monkeypatch,
+    tamper: str,
+) -> None:
+    archive, invocation = _anthropic_archive(
+        tmp_path,
+        monkeypatch,
+        raw_transform=_anthropic_raw_transform("invalid_utf8"),
+        parse_failure=True,
+    )
+    transport_path = next(archive.glob("attempts/*/1/transport.json"))
+    prefix = transport_path.parent
+    response_path = prefix / "response.body"
+    sdk_path = prefix / "sdk_projection.json"
+    facts_path = prefix / "boundary_facts.json"
+
+    if tamper == "raw_body":
+        response_path.write_bytes(response_path.read_bytes() + b"-tampered")
+        _rehash_outer(archive, response_path.relative_to(archive).as_posix())
+    elif tamper == "raw_hash":
+        record = _strict_load(transport_path)
+        facts = record["facts"]
+        assert isinstance(facts, dict)
+        envelope = facts["envelope"]
+        assert isinstance(envelope, dict)
+        envelope["raw_sha256"] = "0" * 64
+        record["raw_transport_response_sha256"] = "0" * 64
+        transport_path.write_bytes(_rehash_attempt_record(record))
+        _rehash_outer(archive, transport_path.relative_to(archive).as_posix())
+    elif tamper == "sdk_body_state":
+        sdk = _strict_load(sdk_path)
+        sdk["body_state"] = "present"
+        sdk_path.write_bytes(canonical_json_bytes(sdk))
+        _rehash_outer(archive, sdk_path.relative_to(archive).as_posix())
+    elif tamper == "sdk_transport":
+        sdk = _strict_load(sdk_path)
+        sdk["transport_kind"] = "adapter_error"
+        sdk_path.write_bytes(canonical_json_bytes(sdk))
+        _rehash_outer(archive, sdk_path.relative_to(archive).as_posix())
+    elif tamper == "facts":
+        facts = _strict_load(facts_path)
+        facts["transport_kind"] = "adapter_error"
+        facts["boundary_facts_sha256"] = canonical_sha256(
+            {
+                key: value
+                for key, value in facts.items()
+                if key != "boundary_facts_sha256"
+            }
+        )
+        facts_path.write_bytes(canonical_json_bytes(facts))
+        _rehash_outer(archive, facts_path.relative_to(archive).as_posix())
+    elif tamper == "outcome":
+        record = _strict_load(transport_path)
+        record["shadow_reason"] = "provider_failed"
+        transport_path.write_bytes(_rehash_attempt_record(record))
+        _rehash_outer(archive, transport_path.relative_to(archive).as_posix())
+    elif tamper == "remove_raw":
+        response_path.unlink()
+    elif tamper == "envelope_absent":
+        record = _strict_load(transport_path)
+        facts = record["facts"]
+        assert isinstance(facts, dict)
+        facts["envelope"] = {
+            "invalid_code": None,
+            "raw_sha256": None,
+            "raw_size_bytes": None,
+            "state": "absent",
+        }
+        record["raw_transport_response_sha256"] = None
+        transport_path.write_bytes(_rehash_attempt_record(record))
+        _rehash_outer(archive, transport_path.relative_to(archive).as_posix())
+    else:
+        raise AssertionError(tamper)
+
+    with pytest.raises(SemanticEvaluatorError) as caught:
+        verify_shadow_archive(archive)
+    assert caught.value.reason_code == "shadow_archive_invalid"
+
+    metadata_calls = 0
+
+    def forbidden_metadata(_name):
+        nonlocal metadata_calls
+        metadata_calls += 1
+        raise AssertionError("tampered replay touched distribution metadata")
+
+    monkeypatch.delenv("BRIEFLOOP_LAJ_MESSAGES_API_KEY", raising=False)
+    monkeypatch.setitem(sys.modules, "anthropic", None)
+    monkeypatch.setattr(runner_module.metadata, "version", forbidden_metadata)
+    replay = run_shadow(
+        **invocation,
+        adapter_factory=lambda _execution: (_ for _ in ()).throw(
+            AssertionError("tampered replay touched adapter")
+        ),
+    )
+    assert replay.reason_codes == ("shadow_archive_invalid",)
+    assert metadata_calls == 0
 
 
 @pytest.mark.parametrize(
