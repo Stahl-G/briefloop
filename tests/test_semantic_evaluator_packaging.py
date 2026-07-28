@@ -1426,19 +1426,38 @@ print(canonical_json_text(payload))
 """
 
 
-def _source_identity() -> dict[str, object]:
-    env = os.environ.copy()
-    env["PYTHONPATH"] = str(REPO_ROOT / "src")
-    env["SEMANTIC_EVALUATOR_WHEEL_ROOT"] = str(REPO_ROOT)
+def _run_wheel_probe(
+    *,
+    cwd: Path,
+    env: dict[str, str],
+    optimized: bool,
+) -> subprocess.CompletedProcess[str]:
+    command = [sys.executable]
+    if optimized:
+        command.append("-O")
+    command.append("-")
     probe = subprocess.run(
-        [sys.executable, "-c", WHEEL_PROBE],
-        cwd=REPO_ROOT,
+        command,
+        cwd=cwd,
         env=env,
+        input=WHEEL_PROBE,
         check=False,
         capture_output=True,
         text=True,
     )
     assert probe.returncode == 0, probe.stdout + probe.stderr
+    return probe
+
+
+def _source_identity() -> dict[str, object]:
+    env = os.environ.copy()
+    env["PYTHONPATH"] = str(REPO_ROOT / "src")
+    env["SEMANTIC_EVALUATOR_WHEEL_ROOT"] = str(REPO_ROOT)
+    probe = _run_wheel_probe(
+        cwd=REPO_ROOT,
+        env=env,
+        optimized=False,
+    )
     return json.loads(probe.stdout.splitlines()[-1])
 
 
@@ -1446,20 +1465,42 @@ def _source_probe(*, optimized: bool) -> str:
     env = os.environ.copy()
     env["PYTHONPATH"] = str(REPO_ROOT / "src")
     env["SEMANTIC_EVALUATOR_WHEEL_ROOT"] = str(REPO_ROOT)
-    command = [sys.executable]
-    if optimized:
-        command.append("-O")
-    command.extend(["-c", WHEEL_PROBE])
-    probe = subprocess.run(
-        command,
+    probe = _run_wheel_probe(
         cwd=REPO_ROOT,
         env=env,
-        check=False,
-        capture_output=True,
-        text=True,
+        optimized=optimized,
     )
-    assert probe.returncode == 0, probe.stdout + probe.stderr
     return probe.stdout.splitlines()[-1]
+
+
+def test_se2r_14_wheel_probe_uses_exact_stdin_without_long_argv(
+    monkeypatch,
+) -> None:
+    calls: list[dict[str, object]] = []
+
+    def run_probe(command, **kwargs):
+        calls.append({"command": command, **kwargs})
+        return subprocess.CompletedProcess(command, 0, "{}\n", "")
+
+    monkeypatch.setattr(subprocess, "run", run_probe)
+    env = {"PYTHONPATH": "synthetic"}
+    for optimized in (False, True):
+        _run_wheel_probe(cwd=REPO_ROOT, env=env, optimized=optimized)
+
+    assert [call["command"] for call in calls] == [
+        [sys.executable, "-"],
+        [sys.executable, "-O", "-"],
+    ]
+    for call in calls:
+        command = call["command"]
+        assert "-c" not in command
+        assert WHEEL_PROBE not in command
+        assert call["input"] == WHEEL_PROBE
+        assert call["cwd"] == REPO_ROOT
+        assert call["env"] is env
+        assert call["check"] is False
+        assert call["capture_output"] is True
+        assert call["text"] is True
 
 
 def test_se2r_14_source_probe_is_byte_identical_under_python_optimization() -> None:
@@ -1612,18 +1653,10 @@ def test_se2r_14_wheel_contains_all_resources_and_matches_source_identity(
     env["SEMANTIC_EVALUATOR_WHEEL_ROOT"] = str(extract_root)
     source_identity = _source_identity()
     for optimized in (False, True):
-        command = [sys.executable]
-        if optimized:
-            command.append("-O")
-        command.extend(["-c", WHEEL_PROBE])
-        probe = subprocess.run(
-            command,
+        probe = _run_wheel_probe(
             cwd=tmp_path,
             env=env,
-            check=False,
-            capture_output=True,
-            text=True,
+            optimized=optimized,
         )
-        assert probe.returncode == 0, probe.stdout + probe.stderr
         wheel_identity = json.loads(probe.stdout.splitlines()[-1])
         assert wheel_identity == source_identity
