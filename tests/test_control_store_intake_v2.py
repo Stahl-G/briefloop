@@ -4,6 +4,7 @@ import ast
 from datetime import datetime, timezone
 import hashlib
 import json
+import os
 from pathlib import Path
 import sqlite3
 
@@ -15,6 +16,7 @@ from multi_agent_brief.contracts.v2 import (
     RunIdentity,
     StageState,
     SourceProposal,
+    SourcePackCommitRequest,
     WorkspaceRunHead,
 )
 from multi_agent_brief.control_store import (
@@ -172,6 +174,26 @@ def _source_request(workspace: Path, *, expected_revision: int = 1) -> Path:
         },
     )
     return request
+
+
+def _replace_with_external_hardlink(path: Path, *, outside: Path) -> bytes:
+    """Replace one workspace leaf with a distinct external hardlink alias."""
+
+    original = path.read_bytes()
+    outside.write_bytes(original)
+    path.unlink()
+    try:
+        os.link(outside, path)
+    except OSError as exc:
+        pytest.skip(f"test filesystem does not support hardlinks: {exc}")
+    outside_info = outside.stat()
+    path_info = path.stat()
+    assert (path_info.st_dev, path_info.st_ino) == (
+        outside_info.st_dev,
+        outside_info.st_ino,
+    )
+    assert path_info.st_nlink > 1
+    return original
 
 
 def _candidate_request(workspace: Path, *, expected_revision: int = 2) -> Path:
@@ -982,6 +1004,125 @@ def test_stale_store_revision_and_unsafe_scratch_are_zero_write(
     assert unsafe.error_code == "scratch_entry_unsafe"
     with SQLiteControlStore.open(workspace / "briefloop.db") as store:
         assert store.current_revision == 1
+
+
+@pytest.mark.parametrize(
+    ("leaf_name", "force_absolute_fallback"),
+    [
+        ("submit_request.json", False),
+        ("source_proposal.json", False),
+        ("source_content.pdf", False),
+        ("source_raw.json", False),
+        ("submit_request.json", True),
+        ("source_proposal.json", True),
+        ("source_content.pdf", True),
+        ("source_raw.json", True),
+    ],
+)
+def test_hardlinked_source_intake_leaves_are_uncommitted(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    leaf_name: str,
+    force_absolute_fallback: bool,
+) -> None:
+    workspace = tmp_path / "workspace"
+    _seed_workspace(workspace)
+    request_path = (
+        _snippet_source_request(workspace)
+        if leaf_name == "source_raw.json"
+        else _source_request(workspace)
+    )
+    target = request_path.parent / leaf_name
+    original = _replace_with_external_hardlink(
+        target,
+        outside=tmp_path / f"outside-{leaf_name}",
+    )
+    if force_absolute_fallback:
+        monkeypatch.setattr(os, "supports_dir_fd", frozenset())
+    database = workspace / "briefloop.db"
+    before_bytes = database.read_bytes()
+    result = IntakeService(workspace, clock=CLOCK).submit_source(
+        request_path.relative_to(workspace).as_posix()
+    )
+
+    assert result.to_dict() == {
+        "status": "failed_uncommitted",
+        "error_code": "scratch_entry_unsafe",
+    }
+    assert database.read_bytes() == before_bytes
+    assert target.read_bytes() == original
+    with SQLiteControlStore.open(database) as store:
+        assert store.current_revision == 1
+        snapshot = store.load_snapshot(RUN_ID)
+    assert snapshot.sources == ()
+    assert snapshot.artifact_revisions == ()
+    assert snapshot.events == ()
+
+
+@pytest.mark.parametrize("force_absolute_fallback", [False, True])
+def test_hardlinked_source_pack_manifest_is_uncommitted_before_member_reads(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    force_absolute_fallback: bool,
+) -> None:
+    workspace = tmp_path / "workspace"
+    _seed_workspace(workspace)
+    scratch = workspace / "scratch" / "INV-SOURCE-001"
+    manifest_path = scratch / "source_manifest.json"
+    manifest_bytes = b'{"members":[]}'
+    manifest_path.parent.mkdir(parents=True, exist_ok=True)
+    manifest_path.write_bytes(manifest_bytes)
+    request_path = scratch / "submit_request.json"
+    _write_json(
+        request_path,
+        {
+            "schema_version": SourcePackCommitRequest.schema_id,
+            "request_id": "REQ-SOURCE-PACK-HARDLINK-001",
+            "run_id": RUN_ID,
+            "invocation_id": "INV-SOURCE-001",
+            "members": [
+                {
+                    "member_id": "SRC-HARDLINK-001",
+                    "proposal_path": (
+                        "scratch/INV-SOURCE-001/sources/SRC-HARDLINK-001/"
+                        "source_proposal.json"
+                    ),
+                    "content_path": (
+                        "scratch/INV-SOURCE-001/sources/SRC-HARDLINK-001/"
+                        "source_content.bin"
+                    ),
+                    "raw_payload_path": None,
+                }
+            ],
+            "manifest_path": manifest_path.relative_to(workspace).as_posix(),
+            "expected_manifest_sha256": hashlib.sha256(manifest_bytes).hexdigest(),
+            "expected_store_revision": 1,
+        },
+    )
+    original = _replace_with_external_hardlink(
+        manifest_path,
+        outside=tmp_path / "outside-manifest.json",
+    )
+    if force_absolute_fallback:
+        monkeypatch.setattr(os, "supports_dir_fd", frozenset())
+    database = workspace / "briefloop.db"
+    before_bytes = database.read_bytes()
+    result = IntakeService(workspace, clock=CLOCK).submit_source_pack(
+        request_path.relative_to(workspace).as_posix()
+    )
+
+    assert result.to_dict() == {
+        "status": "failed_uncommitted",
+        "error_code": "scratch_entry_unsafe",
+    }
+    assert database.read_bytes() == before_bytes
+    assert manifest_path.read_bytes() == original
+    with SQLiteControlStore.open(database) as store:
+        assert store.current_revision == 1
+        snapshot = store.load_snapshot(RUN_ID)
+    assert snapshot.sources == ()
+    assert snapshot.artifact_revisions == ()
+    assert snapshot.events == ()
 
 
 def test_finalized_current_run_requires_new_run_without_consuming_intake(
