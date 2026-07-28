@@ -210,7 +210,11 @@ def _link_target_after_pre_stat_before_open(
     parent_identity = (parent_info.st_dev, parent_info.st_ino)
     original_open = os.open
     original_read = os.read
-    state = {"hardlink_created": False, "target_body_read": False}
+    state = {
+        "hardlink_created": False,
+        "target_body_read": False,
+        "target_open_used_dir_fd": False,
+    }
 
     def is_target_open(path: object, dir_fd: int | None) -> bool:
         candidate = os.fspath(path)
@@ -229,6 +233,7 @@ def _link_target_after_pre_stat_before_open(
         dir_fd: int | None = None,
     ) -> int:
         if not state["hardlink_created"] and is_target_open(path, dir_fd):
+            state["target_open_used_dir_fd"] = dir_fd is not None
             try:
                 os.link(target, outside)
             except OSError as exc:
@@ -1198,6 +1203,12 @@ def test_source_intake_rejects_link_created_after_pre_stat_without_body_read(
     )
     if force_absolute_fallback:
         monkeypatch.setattr(os, "supports_dir_fd", frozenset())
+    else:
+        monkeypatch.setattr(os, "supports_dir_fd", os.supports_dir_fd | {os.open})
+    if force_absolute_fallback and os.open in os.supports_dir_fd:
+        raise AssertionError("absolute fallback unexpectedly supports patched os.open")
+    if not force_absolute_fallback and os.open not in os.supports_dir_fd:
+        raise AssertionError("dir-fd route does not support patched os.open")
     database = workspace / "briefloop.db"
     before_bytes = database.read_bytes()
 
@@ -1210,7 +1221,11 @@ def test_source_intake_rejects_link_created_after_pre_stat_without_body_read(
         "error_code": "scratch_entry_unsafe",
     }:
         raise AssertionError(result.to_dict())
-    if state != {"hardlink_created": True, "target_body_read": False}:
+    if state["hardlink_created"] is not True:
+        raise AssertionError(state)
+    if state["target_body_read"] is not False:
+        raise AssertionError(state)
+    if state["target_open_used_dir_fd"] is not (not force_absolute_fallback):
         raise AssertionError(state)
     if database.read_bytes() != before_bytes:
         raise AssertionError("raced scratch read changed the control store")
