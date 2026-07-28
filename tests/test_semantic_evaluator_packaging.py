@@ -195,21 +195,11 @@ class AnthropicProbeAdapter:
                 ],
             }
         )
-        if self.mode == "parse_failure_invalid_utf8":
-            raw = b"\xffwheel-captured-response"
-            sentinel = "wheel-parse-provider-diagnostic-must-not-survive"
-
-            def parse():
-                self.parse_calls += 1
-                raise RuntimeError(sentinel)
-
-            def create(**_kwargs):
-                self.provider_calls += 1
-                return SimpleNamespace(
-                    http_response=SimpleNamespace(content=raw),
-                    parse=parse,
-                )
-
+        if self.mode in {
+            "http_captured_empty",
+            "http_unreadable_none",
+            "parse_failure_invalid_utf8",
+        }:
             class TimeoutError(Exception):
                 pass
 
@@ -218,6 +208,33 @@ class AnthropicProbeAdapter:
 
             class StatusError(Exception):
                 pass
+
+            if self.mode == "parse_failure_invalid_utf8":
+                raw = b"\xffwheel-captured-response"
+                sentinel = "wheel-parse-provider-diagnostic-must-not-survive"
+
+                def parse():
+                    self.parse_calls += 1
+                    raise RuntimeError(sentinel)
+
+                def create(**_kwargs):
+                    self.provider_calls += 1
+                    return SimpleNamespace(
+                        http_response=SimpleNamespace(content=raw),
+                        parse=parse,
+                    )
+
+            else:
+                content = b"" if self.mode == "http_captured_empty" else None
+
+                def create(**_kwargs):
+                    self.provider_calls += 1
+                    error = StatusError(
+                        "wheel-http-provider-diagnostic-must-not-survive"
+                    )
+                    error.status_code = 503
+                    error.response = SimpleNamespace(content=content)
+                    raise error
 
             self._delegate._client = SimpleNamespace(
                 messages=SimpleNamespace(
@@ -463,6 +480,24 @@ def anthropic_archive_probe():
             "parse_failure_invalid_utf8",
             "trial-anthropic-wheel-parse-failure",
         )
+        (
+            http_captured,
+            http_captured_calls,
+            http_captured_invocation,
+            http_captured_boundary_calls,
+        ) = run_case(
+            "http_captured_empty",
+            "trial-anthropic-wheel-http-captured",
+        )
+        (
+            http_unreadable,
+            http_unreadable_calls,
+            http_unreadable_invocation,
+            http_unreadable_boundary_calls,
+        ) = run_case(
+            "http_unreadable_none",
+            "trial-anthropic-wheel-http-unreadable",
+        )
         archive = Path(first.archive_path)
         before = {
             path.relative_to(archive).as_posix(): sha256_bytes(path.read_bytes())
@@ -504,6 +539,106 @@ def anthropic_archive_probe():
                 b"wheel-parse-provider-diagnostic-must-not-survive"
                 not in path.read_bytes()
                 for path in parse_failure_sdk_members
+            ),
+        }
+        http_captured_archive = Path(http_captured.archive_path)
+        http_captured_records = [
+            json.loads(path.read_bytes())
+            for path in sorted(
+                http_captured_archive.glob("attempts/*/*/transport.json")
+            )
+        ]
+        http_captured_responses = sorted(
+            http_captured_archive.glob("attempts/*/*/response.body")
+        )
+        http_captured_sdk_members = sorted(
+            http_captured_archive.glob("attempts/*/*/sdk_projection.json")
+        )
+        empty_sha = sha256_bytes(b"")
+        http_captured_evidence = {
+            "exact_empty_retained": all(
+                path.read_bytes() == b"" for path in http_captured_responses
+            ),
+            "present_invalid": all(
+                record["facts"]["transport_kind"] == "http_error"
+                and record["facts"]["envelope"] == {
+                    "invalid_code": "envelope_projection_failed",
+                    "raw_sha256": empty_sha,
+                    "raw_size_bytes": 0,
+                    "state": "present_invalid",
+                }
+                and record["facts"]["http_status"] == {
+                    "invalid_code": None,
+                    "state": "present_valid",
+                    "value": 503,
+                }
+                and record["raw_transport_response_sha256"] == empty_sha
+                and record["shadow_reason"] == "provider_boundary_invalid"
+                and record["retry_eligible"] is False
+                and record["output_eligible"] is False
+                for record in http_captured_records
+            ),
+            "response_count": len(http_captured_responses),
+            "sdk_body_invalid": all(
+                json.loads(path.read_bytes())["body_state"] == "invalid"
+                for path in http_captured_sdk_members
+            ),
+            "sentinel_absent": all(
+                b"wheel-http-provider-diagnostic-must-not-survive"
+                not in path.read_bytes()
+                for path in http_captured_sdk_members
+            ),
+        }
+        http_unreadable_archive = Path(http_unreadable.archive_path)
+        http_unreadable_records = [
+            json.loads(path.read_bytes())
+            for path in sorted(
+                http_unreadable_archive.glob("attempts/*/*/transport.json")
+            )
+        ]
+        http_unreadable_responses = sorted(
+            http_unreadable_archive.glob("attempts/*/*/response.body")
+        )
+        http_unreadable_sdk_members = sorted(
+            http_unreadable_archive.glob("attempts/*/*/sdk_projection.json")
+        )
+        http_unreadable_evidence = {
+            "absent_envelope_without_raw_hash": all(
+                record["facts"]["transport_kind"] == "http_error"
+                and record["facts"]["envelope"] == {
+                    "invalid_code": None,
+                    "raw_sha256": None,
+                    "raw_size_bytes": None,
+                    "state": "absent",
+                }
+                and record["facts"]["http_status"] == {
+                    "invalid_code": None,
+                    "state": "present_valid",
+                    "value": 503,
+                }
+                and record["raw_transport_response_sha256"] is None
+                and record["shadow_reason"] == "provider_boundary_invalid"
+                and record["retry_eligible"] is False
+                and record["output_eligible"] is False
+                for record in http_unreadable_records
+            ),
+            "empty_sha_absent": all(
+                empty_sha.encode("ascii") not in canonical_json_bytes(record)
+                for record in http_unreadable_records
+            )
+            and all(
+                empty_sha.encode("ascii") not in path.read_bytes()
+                for path in http_unreadable_sdk_members
+            ),
+            "response_count": len(http_unreadable_responses),
+            "sdk_body_invalid": all(
+                json.loads(path.read_bytes())["body_state"] == "invalid"
+                for path in http_unreadable_sdk_members
+            ),
+            "sentinel_absent": all(
+                b"wheel-http-provider-diagnostic-must-not-survive"
+                not in path.read_bytes()
+                for path in http_unreadable_sdk_members
             ),
         }
 
@@ -602,6 +737,18 @@ def anthropic_archive_probe():
                 RuntimeError("parse-failure replay touched adapter")
             ),
         )
+        http_captured_replay = shadow_runner_module.run_shadow(
+            **http_captured_invocation,
+            adapter_factory=lambda _execution: (_ for _ in ()).throw(
+                RuntimeError("HTTP captured replay touched adapter")
+            ),
+        )
+        http_unreadable_replay = shadow_runner_module.run_shadow(
+            **http_unreadable_invocation,
+            adapter_factory=lambda _execution: (_ for _ in ()).throw(
+                RuntimeError("HTTP unreadable replay touched adapter")
+            ),
+        )
         after = {
             path.relative_to(archive).as_posix(): sha256_bytes(path.read_bytes())
             for path in archive.rglob("*")
@@ -650,6 +797,12 @@ def anthropic_archive_probe():
         )
         return {
             "archive_results": {
+                "http_captured_empty": _anthropic_result_projection(
+                    http_captured
+                ),
+                "http_unreadable_none": _anthropic_result_projection(
+                    http_unreadable
+                ),
                 "malformed_missing_id": _anthropic_result_projection(malformed),
                 "parse_failure_invalid_utf8": _anthropic_result_projection(
                     parse_failure
@@ -664,6 +817,8 @@ def anthropic_archive_probe():
                 "truncation": _anthropic_result_projection(truncation),
             },
             "mocked_adapter_calls": {
+                "http_captured_empty": http_captured_calls,
+                "http_unreadable_none": http_unreadable_calls,
                 "malformed_missing_id": malformed_calls,
                 "parse_failure_invalid_utf8": parse_failure_calls,
                 "refusal": refusal_calls,
@@ -675,6 +830,12 @@ def anthropic_archive_probe():
             },
             "real_provider_calls": 0,
             "actual_invoke_boundary_calls": parse_failure_boundary_calls,
+            "http_actual_invoke_boundary_calls": {
+                "captured_empty": http_captured_boundary_calls,
+                "unreadable_none": http_unreadable_boundary_calls,
+            },
+            "http_captured_evidence": http_captured_evidence,
+            "http_unreadable_evidence": http_unreadable_evidence,
             "parse_failure_evidence": parse_failure_evidence,
             "archive_files_hash": canonical_sha256(before),
             "archive_replay_unchanged": after == before,
@@ -692,6 +853,14 @@ def anthropic_archive_probe():
             "parse_failure_replayed": parse_failure_replay.replayed,
             "parse_failure_replay_reason_codes": list(
                 parse_failure_replay.reason_codes
+            ),
+            "http_captured_replayed": http_captured_replay.replayed,
+            "http_captured_replay_reason_codes": list(
+                http_captured_replay.reason_codes
+            ),
+            "http_unreadable_replayed": http_unreadable_replay.replayed,
+            "http_unreadable_replay_reason_codes": list(
+                http_unreadable_replay.reason_codes
             ),
             "replay_metadata_calls": len(metadata_calls),
             "sdk_status_tamper_reason_codes": list(tampered.reason_codes),
@@ -1299,6 +1468,8 @@ def test_se2r_14_source_probe_is_byte_identical_under_python_optimization() -> N
     probe = json.loads(normal)["anthropic_archive_probe"]
     assert probe["real_provider_calls"] == 0
     assert probe["mocked_adapter_calls"] == {
+        "http_captured_empty": 9,
+        "http_unreadable_none": 9,
         "malformed_missing_id": 9,
         "parse_failure_invalid_utf8": 9,
         "refusal": 9,
@@ -1323,9 +1494,33 @@ def test_se2r_14_source_probe_is_byte_identical_under_python_optimization() -> N
     assert probe["archive_results"]["parse_failure_invalid_utf8"]["reason_codes"] == [
         "provider_failed"
     ]
+    assert probe["archive_results"]["http_captured_empty"]["reason_codes"] == [
+        "provider_failed"
+    ]
+    assert probe["archive_results"]["http_unreadable_none"]["reason_codes"] == [
+        "provider_failed"
+    ]
     assert probe["actual_invoke_boundary_calls"] == {
         "parse": 9,
         "provider": 9,
+    }
+    assert probe["http_actual_invoke_boundary_calls"] == {
+        "captured_empty": {"parse": 0, "provider": 9},
+        "unreadable_none": {"parse": 0, "provider": 9},
+    }
+    assert probe["http_captured_evidence"] == {
+        "exact_empty_retained": True,
+        "present_invalid": True,
+        "response_count": 9,
+        "sdk_body_invalid": True,
+        "sentinel_absent": True,
+    }
+    assert probe["http_unreadable_evidence"] == {
+        "absent_envelope_without_raw_hash": True,
+        "empty_sha_absent": True,
+        "response_count": 0,
+        "sdk_body_invalid": True,
+        "sentinel_absent": True,
     }
     assert probe["parse_failure_evidence"] == {
         "exact_raw_retained": True,
@@ -1345,6 +1540,10 @@ def test_se2r_14_source_probe_is_byte_identical_under_python_optimization() -> N
     assert probe["stop_sequence_replay_reason_codes"] == ["provider_failed"]
     assert probe["parse_failure_replayed"] is True
     assert probe["parse_failure_replay_reason_codes"] == ["provider_failed"]
+    assert probe["http_captured_replayed"] is True
+    assert probe["http_captured_replay_reason_codes"] == ["provider_failed"]
+    assert probe["http_unreadable_replayed"] is True
+    assert probe["http_unreadable_replay_reason_codes"] == ["provider_failed"]
     assert probe["replay_metadata_calls"] == 0
     assert probe["receipt_id"] == probe["replay_receipt_id"]
     assert probe["sdk_status_tamper_reason_codes"] == ["shadow_archive_invalid"]

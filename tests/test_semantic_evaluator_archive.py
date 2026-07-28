@@ -152,6 +152,9 @@ def _anthropic_archive(
     sdk_mismatch: bool = False,
     parse_failure: bool = False,
     call_counts: dict[str, int] | None = None,
+    http_body_mode: str | None = None,
+    http_status_mode: str = "valid",
+    http_status_code: int = 503,
 ) -> tuple[Path, dict[str, object]]:
     endpoint = "https://messages.example.test/v1"
     inputs = tmp_path / "inputs"
@@ -240,14 +243,6 @@ def _anthropic_archive(
                     raise RuntimeError(sentinel)
                 return sdk_response
 
-            def create(**_kwargs):
-                if call_counts is not None:
-                    call_counts["provider"] = call_counts.get("provider", 0) + 1
-                return SimpleNamespace(
-                    http_response=SimpleNamespace(content=raw),
-                    parse=parse,
-                )
-
             class TimeoutError(Exception):
                 pass
 
@@ -256,6 +251,53 @@ def _anthropic_archive(
 
             class StatusError(Exception):
                 pass
+
+            class RaisingStatusError(StatusError):
+                @property
+                def status_code(self):
+                    raise RuntimeError("status-provider-diagnostic-must-not-survive")
+
+            class RaisingResponse:
+                @property
+                def content(self):
+                    raise RuntimeError("content-provider-diagnostic-must-not-survive")
+
+            def status_error():
+                error = (
+                    RaisingStatusError("status-provider-diagnostic-must-not-survive")
+                    if http_status_mode == "raising"
+                    else StatusError("status-provider-diagnostic-must-not-survive")
+                )
+                if http_status_mode == "valid":
+                    error.status_code = http_status_code  # type: ignore[attr-defined]
+                if http_body_mode == "captured":
+                    response = SimpleNamespace(content=raw)
+                elif http_body_mode == "missing":
+                    response = SimpleNamespace()
+                elif http_body_mode == "none":
+                    response = SimpleNamespace(content=None)
+                elif http_body_mode == "text":
+                    response = SimpleNamespace(content="not-exact-bytes")
+                elif http_body_mode == "object":
+                    response = SimpleNamespace(content=object())
+                elif http_body_mode == "raising":
+                    response = RaisingResponse()
+                elif http_body_mode == "absent":
+                    response = None
+                else:
+                    raise AssertionError(http_body_mode)
+                error.response = response  # type: ignore[attr-defined]
+                return error
+
+            def create(**_kwargs):
+                if call_counts is not None:
+                    call_counts["provider"] = call_counts.get("provider", 0) + 1
+                if http_body_mode is not None:
+                    raise status_error()
+                return SimpleNamespace(
+                    http_response=SimpleNamespace(content=raw),
+                    parse=parse,
+                )
 
             self.delegate._client = SimpleNamespace(
                 messages=SimpleNamespace(
@@ -284,7 +326,12 @@ def _anthropic_archive(
         adapter_factory=lambda execution: Adapter(execution),
     )
     assert result.archive_path is not None
-    if raw_transform is None and not sdk_mismatch and not parse_failure:
+    if (
+        raw_transform is None
+        and not sdk_mismatch
+        and not parse_failure
+        and http_body_mode is None
+    ):
         assert result.ok
     else:
         assert result.ok is False
@@ -327,6 +374,40 @@ def _anthropic_raw_transform(mode: str) -> Callable[[bytes], bytes]:
         ).encode("ascii")
 
     return transform
+
+
+def _assert_anthropic_tamper_rejected_before_runtime(
+    archive: Path,
+    invocation: dict[str, object],
+    monkeypatch,
+) -> None:
+    with pytest.raises(SemanticEvaluatorError) as caught:
+        verify_shadow_archive(archive)
+    assert caught.value.reason_code == "shadow_archive_invalid"
+
+    metadata_calls = 0
+    adapter_calls = 0
+
+    def forbidden_metadata(_name):
+        nonlocal metadata_calls
+        metadata_calls += 1
+        raise AssertionError("tampered replay touched distribution metadata")
+
+    def forbidden_adapter(_execution):
+        nonlocal adapter_calls
+        adapter_calls += 1
+        raise AssertionError("tampered replay touched adapter")
+
+    monkeypatch.delenv("BRIEFLOOP_LAJ_MESSAGES_API_KEY", raising=False)
+    monkeypatch.setitem(sys.modules, "anthropic", None)
+    monkeypatch.setattr(runner_module.metadata, "version", forbidden_metadata)
+    replay = run_shadow(
+        **invocation,
+        adapter_factory=forbidden_adapter,
+    )
+    assert replay.reason_codes == ("shadow_archive_invalid",)
+    assert metadata_calls == 0
+    assert adapter_calls == 0
 
 
 def _text_fact(value: str) -> dict[str, object]:
@@ -740,6 +821,385 @@ def test_anthropic_real_invoke_parse_failure_archives_and_replays_negative_evide
         "parse": len(records),
         "provider": len(records),
     }
+
+
+@pytest.mark.parametrize(
+    ("raw_transform", "status_mode", "expected_status"),
+    [
+        (
+            _anthropic_raw_transform("invalid_utf8"),
+            "valid",
+            {
+                "invalid_code": None,
+                "state": "present_valid",
+                "value": 503,
+            },
+        ),
+        (
+            lambda _raw: b"",
+            "valid",
+            {
+                "invalid_code": None,
+                "state": "present_valid",
+                "value": 503,
+            },
+        ),
+        (
+            _anthropic_raw_transform("invalid_utf8"),
+            "raising",
+            {
+                "invalid_code": "http_status_read_failed",
+                "state": "present_invalid",
+                "value": None,
+            },
+        ),
+    ],
+)
+def test_anthropic_http_captured_body_archives_and_replays_exactly(
+    tmp_path: Path,
+    monkeypatch,
+    raw_transform: Callable[[bytes], bytes],
+    status_mode: str,
+    expected_status: dict[str, object],
+) -> None:
+    call_counts = {"network": 0, "parse": 0, "provider": 0}
+    archive, invocation = _anthropic_archive(
+        tmp_path,
+        monkeypatch,
+        raw_transform=raw_transform,
+        http_body_mode="captured",
+        http_status_mode=status_mode,
+        call_counts=call_counts,
+    )
+
+    verified = verify_shadow_archive(archive)
+    assert verified.ok is False
+    assert verified.reason_codes == ("provider_failed",)
+    records = [
+        _strict_load(path)
+        for path in sorted(archive.glob("attempts/*/*/transport.json"))
+    ]
+    responses = sorted(archive.glob("attempts/*/*/response.body"))
+    sdk_members = sorted(archive.glob("attempts/*/*/sdk_projection.json"))
+    assert len(records) == len(responses) == len(sdk_members) == 9
+    assert call_counts == {"network": 0, "parse": 0, "provider": len(records)}
+    for record, response_path, sdk_path in zip(
+        records,
+        responses,
+        sdk_members,
+        strict=True,
+    ):
+        raw = response_path.read_bytes()
+        expected_raw = raw_transform(b"unused")
+        assert raw == expected_raw
+        assert record["facts"]["transport_kind"] == "http_error"
+        assert record["facts"]["envelope"] == {
+            "invalid_code": "envelope_projection_failed",
+            "raw_sha256": sha256_bytes(raw),
+            "raw_size_bytes": len(raw),
+            "state": "present_invalid",
+        }
+        assert record["facts"]["http_status"] == expected_status
+        assert record["raw_transport_response_sha256"] == sha256_bytes(raw)
+        assert record["shadow_reason"] == "provider_boundary_invalid"
+        assert record["retry_eligible"] is False
+        assert record["output_eligible"] is False
+        sdk_projection = _strict_load(sdk_path)
+        assert sdk_projection["body_state"] == "invalid"
+        assert sdk_projection["transport_kind"] == "http_error"
+        assert sdk_projection["http_status"] == expected_status
+        assert b"provider-diagnostic-must-not-survive" not in sdk_path.read_bytes()
+
+    metadata_calls = 0
+    adapter_calls = 0
+
+    def forbidden_metadata(_name):
+        nonlocal metadata_calls
+        metadata_calls += 1
+        raise AssertionError("captured replay touched distribution metadata")
+
+    def forbidden_adapter(_execution):
+        nonlocal adapter_calls
+        adapter_calls += 1
+        raise AssertionError("captured replay touched adapter")
+
+    monkeypatch.delenv("BRIEFLOOP_LAJ_MESSAGES_API_KEY", raising=False)
+    monkeypatch.setitem(sys.modules, "anthropic", None)
+    monkeypatch.setattr(runner_module.metadata, "version", forbidden_metadata)
+    replay = run_shadow(
+        **invocation,
+        adapter_factory=forbidden_adapter,
+    )
+    assert replay.replayed is True
+    assert replay.ok is False
+    assert replay.reason_codes == ("provider_failed",)
+    assert metadata_calls == 0
+    assert adapter_calls == 0
+    assert call_counts == {"network": 0, "parse": 0, "provider": len(records)}
+
+
+@pytest.mark.parametrize(
+    ("body_mode", "status_code"),
+    [
+        ("missing", 503),
+        ("none", 408),
+        ("none", 409),
+        ("none", 429),
+        ("none", 500),
+        ("text", 503),
+        ("object", 503),
+        ("raising", 503),
+    ],
+)
+def test_anthropic_http_unreadable_body_archives_without_fabricated_raw(
+    tmp_path: Path,
+    monkeypatch,
+    body_mode: str,
+    status_code: int,
+) -> None:
+    call_counts = {"network": 0, "parse": 0, "provider": 0}
+    archive, invocation = _anthropic_archive(
+        tmp_path,
+        monkeypatch,
+        http_body_mode=body_mode,
+        http_status_code=status_code,
+        call_counts=call_counts,
+    )
+
+    verified = verify_shadow_archive(archive)
+    assert verified.ok is False
+    assert verified.reason_codes == ("provider_failed",)
+    records = [
+        _strict_load(path)
+        for path in sorted(archive.glob("attempts/*/*/transport.json"))
+    ]
+    responses = sorted(archive.glob("attempts/*/*/response.body"))
+    sdk_members = sorted(archive.glob("attempts/*/*/sdk_projection.json"))
+    assert len(records) == len(sdk_members) == 9
+    assert responses == []
+    assert call_counts == {"network": 0, "parse": 0, "provider": len(records)}
+    empty_sha = sha256_bytes(b"").encode("ascii")
+    for record, sdk_path in zip(records, sdk_members, strict=True):
+        assert record["facts"]["transport_kind"] == "http_error"
+        assert record["facts"]["envelope"] == {
+            "invalid_code": None,
+            "raw_sha256": None,
+            "raw_size_bytes": None,
+            "state": "absent",
+        }
+        assert record["facts"]["http_status"] == {
+            "invalid_code": None,
+            "state": "present_valid",
+            "value": status_code,
+        }
+        assert record["raw_transport_response_sha256"] is None
+        assert record["shadow_reason"] == "provider_boundary_invalid"
+        assert record["retry_eligible"] is False
+        assert record["output_eligible"] is False
+        sdk_projection = _strict_load(sdk_path)
+        assert sdk_projection["body_state"] == "invalid"
+        assert sdk_projection["transport_kind"] == "http_error"
+        assert sdk_projection["http_status"] == record["facts"]["http_status"]
+        assert empty_sha not in canonical_json_bytes(record)
+        assert empty_sha not in sdk_path.read_bytes()
+        assert b"provider-diagnostic-must-not-survive" not in sdk_path.read_bytes()
+
+    metadata_calls = 0
+    adapter_calls = 0
+
+    def forbidden_metadata(_name):
+        nonlocal metadata_calls
+        metadata_calls += 1
+        raise AssertionError("unreadable replay touched distribution metadata")
+
+    def forbidden_adapter(_execution):
+        nonlocal adapter_calls
+        adapter_calls += 1
+        raise AssertionError("unreadable replay touched adapter")
+
+    monkeypatch.delenv("BRIEFLOOP_LAJ_MESSAGES_API_KEY", raising=False)
+    monkeypatch.setitem(sys.modules, "anthropic", None)
+    monkeypatch.setattr(runner_module.metadata, "version", forbidden_metadata)
+    replay = run_shadow(
+        **invocation,
+        adapter_factory=forbidden_adapter,
+    )
+    assert replay.replayed is True
+    assert replay.ok is False
+    assert replay.reason_codes == ("provider_failed",)
+    assert metadata_calls == 0
+    assert adapter_calls == 0
+    assert call_counts == {"network": 0, "parse": 0, "provider": len(records)}
+
+
+@pytest.mark.parametrize(
+    "tamper",
+    [
+        "raw_body",
+        "raw_hash",
+        "remove_raw",
+        "sdk_body_state",
+        "sdk_status",
+        "sdk_transport",
+        "facts",
+        "outcome_retry",
+    ],
+)
+def test_anthropic_http_captured_body_tamper_is_intrinsically_invalid(
+    tmp_path: Path,
+    monkeypatch,
+    tamper: str,
+) -> None:
+    archive, invocation = _anthropic_archive(
+        tmp_path,
+        monkeypatch,
+        raw_transform=_anthropic_raw_transform("invalid_utf8"),
+        http_body_mode="captured",
+    )
+    transport_path = next(archive.glob("attempts/*/1/transport.json"))
+    prefix = transport_path.parent
+    response_path = prefix / "response.body"
+    sdk_path = prefix / "sdk_projection.json"
+    facts_path = prefix / "boundary_facts.json"
+
+    if tamper == "raw_body":
+        response_path.write_bytes(response_path.read_bytes() + b"-tampered")
+        _rehash_outer(archive, response_path.relative_to(archive).as_posix())
+    elif tamper == "raw_hash":
+        record = _strict_load(transport_path)
+        facts = record["facts"]
+        assert isinstance(facts, dict)
+        envelope = facts["envelope"]
+        assert isinstance(envelope, dict)
+        envelope["raw_sha256"] = "0" * 64
+        record["raw_transport_response_sha256"] = "0" * 64
+        transport_path.write_bytes(_rehash_attempt_record(record))
+        _rehash_outer(archive, transport_path.relative_to(archive).as_posix())
+    elif tamper == "remove_raw":
+        response_path.unlink()
+    elif tamper == "sdk_body_state":
+        sdk = _strict_load(sdk_path)
+        sdk["body_state"] = "present"
+        sdk_path.write_bytes(canonical_json_bytes(sdk))
+        _rehash_outer(archive, sdk_path.relative_to(archive).as_posix())
+    elif tamper == "sdk_status":
+        sdk = _strict_load(sdk_path)
+        sdk["http_status"] = {
+            "invalid_code": None,
+            "state": "present_valid",
+            "value": 429,
+        }
+        sdk_path.write_bytes(canonical_json_bytes(sdk))
+        _rehash_outer(archive, sdk_path.relative_to(archive).as_posix())
+    elif tamper == "sdk_transport":
+        sdk = _strict_load(sdk_path)
+        sdk["transport_kind"] = "timeout"
+        sdk_path.write_bytes(canonical_json_bytes(sdk))
+        _rehash_outer(archive, sdk_path.relative_to(archive).as_posix())
+    elif tamper == "facts":
+        facts = _strict_load(facts_path)
+        facts["transport_kind"] = "timeout"
+        facts["boundary_facts_sha256"] = canonical_sha256(
+            {
+                key: value
+                for key, value in facts.items()
+                if key != "boundary_facts_sha256"
+            }
+        )
+        facts_path.write_bytes(canonical_json_bytes(facts))
+        _rehash_outer(archive, facts_path.relative_to(archive).as_posix())
+    elif tamper == "outcome_retry":
+        record = _strict_load(transport_path)
+        record["kernel_reason"] = "provider_retryable_failure"
+        record["shadow_reason"] = "provider_retryable_failure"
+        record["retry_eligible"] = True
+        transport_path.write_bytes(_rehash_attempt_record(record))
+        _rehash_outer(archive, transport_path.relative_to(archive).as_posix())
+    else:
+        raise AssertionError(tamper)
+
+    _assert_anthropic_tamper_rejected_before_runtime(
+        archive,
+        invocation,
+        monkeypatch,
+    )
+
+
+@pytest.mark.parametrize(
+    "tamper",
+    [
+        "inject_empty_body",
+        "sdk_body_state",
+        "sdk_status",
+        "sdk_transport",
+        "facts",
+        "outcome_retry",
+    ],
+)
+def test_anthropic_http_unreadable_body_tamper_is_intrinsically_invalid(
+    tmp_path: Path,
+    monkeypatch,
+    tamper: str,
+) -> None:
+    archive, invocation = _anthropic_archive(
+        tmp_path,
+        monkeypatch,
+        http_body_mode="none",
+        http_status_code=503,
+    )
+    transport_path = next(archive.glob("attempts/*/1/transport.json"))
+    prefix = transport_path.parent
+    sdk_path = prefix / "sdk_projection.json"
+    facts_path = prefix / "boundary_facts.json"
+
+    if tamper == "inject_empty_body":
+        (prefix / "response.body").write_bytes(b"")
+    elif tamper == "sdk_body_state":
+        sdk = _strict_load(sdk_path)
+        sdk["body_state"] = "absent"
+        sdk_path.write_bytes(canonical_json_bytes(sdk))
+        _rehash_outer(archive, sdk_path.relative_to(archive).as_posix())
+    elif tamper == "sdk_status":
+        sdk = _strict_load(sdk_path)
+        sdk["http_status"] = {
+            "invalid_code": None,
+            "state": "absent",
+            "value": None,
+        }
+        sdk_path.write_bytes(canonical_json_bytes(sdk))
+        _rehash_outer(archive, sdk_path.relative_to(archive).as_posix())
+    elif tamper == "sdk_transport":
+        sdk = _strict_load(sdk_path)
+        sdk["transport_kind"] = "response"
+        sdk_path.write_bytes(canonical_json_bytes(sdk))
+        _rehash_outer(archive, sdk_path.relative_to(archive).as_posix())
+    elif tamper == "facts":
+        facts = _strict_load(facts_path)
+        facts["transport_kind"] = "timeout"
+        facts["boundary_facts_sha256"] = canonical_sha256(
+            {
+                key: value
+                for key, value in facts.items()
+                if key != "boundary_facts_sha256"
+            }
+        )
+        facts_path.write_bytes(canonical_json_bytes(facts))
+        _rehash_outer(archive, facts_path.relative_to(archive).as_posix())
+    elif tamper == "outcome_retry":
+        record = _strict_load(transport_path)
+        record["kernel_reason"] = "provider_retryable_failure"
+        record["shadow_reason"] = "provider_retryable_failure"
+        record["retry_eligible"] = True
+        transport_path.write_bytes(_rehash_attempt_record(record))
+        _rehash_outer(archive, transport_path.relative_to(archive).as_posix())
+    else:
+        raise AssertionError(tamper)
+
+    _assert_anthropic_tamper_rejected_before_runtime(
+        archive,
+        invocation,
+        monkeypatch,
+    )
 
 
 @pytest.mark.parametrize(

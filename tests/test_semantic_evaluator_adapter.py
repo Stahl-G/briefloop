@@ -1003,6 +1003,7 @@ def test_anthropic_pre_body_transport_failure_remains_bodyless(
 @pytest.mark.parametrize(
     ("raw", "expected_envelope_state"),
     [
+        (b"", "present_invalid"),
         (b"\xffhttp-error-body", "present_invalid"),
         (
             synthetic_anthropic_message_bytes_v1(
@@ -1042,6 +1043,190 @@ def test_anthropic_http_status_retains_exact_present_body(
     assert attempt.outcome.retry_eligible is False
     assert attempt.outcome.shadow_reason == "provider_boundary_invalid"
     assert b"status-secret-sentinel" not in (attempt.sdk_projection_bytes or b"")
+
+
+@pytest.mark.parametrize(
+    ("body_mode", "status_code"),
+    [
+        ("missing", 503),
+        ("none", 408),
+        ("none", 409),
+        ("none", 429),
+        ("none", 500),
+        ("text", 503),
+        ("object", 503),
+        ("raising", 503),
+    ],
+)
+def test_anthropic_http_unreadable_body_has_no_fabricated_raw(
+    body_mode: str,
+    status_code: int,
+) -> None:
+    sentinel = "content-secret-sentinel"
+    if body_mode == "missing":
+        response = SimpleNamespace()
+    elif body_mode == "none":
+        response = SimpleNamespace(content=None)
+    elif body_mode == "text":
+        response = SimpleNamespace(content="not-exact-bytes")
+    elif body_mode == "object":
+        response = SimpleNamespace(content=object())
+    elif body_mode == "raising":
+
+        class RaisingResponse:
+            @property
+            def content(self):
+                raise RuntimeError(sentinel)
+
+        response = RaisingResponse()
+    else:
+        raise AssertionError(body_mode)
+    error = _AnthropicStatusError("status-secret-sentinel")
+    error.status_code = status_code  # type: ignore[attr-defined]
+    error.response = response  # type: ignore[attr-defined]
+
+    def create(**_kwargs):
+        raise error
+
+    attempt = _anthropic_invoke_adapter(create).invoke(_anthropic_request())
+
+    assert attempt.facts.transport_kind == "http_error"
+    assert attempt.facts.http_status.state == "present_valid"
+    assert attempt.facts.http_status.value == status_code
+    assert attempt.facts.envelope.state == "absent"
+    assert attempt.facts.envelope.raw_size_bytes is None
+    assert attempt.facts.envelope.raw_sha256 is None
+    assert attempt.raw_transport_response is None
+    assert attempt.outcome.shadow_reason == "provider_boundary_invalid"
+    assert attempt.outcome.output_eligible is False
+    assert attempt.outcome.retry_eligible is False
+    sdk_projection = json.loads(attempt.sdk_projection_bytes or b"")
+    assert sdk_projection["body_state"] == "invalid"
+    assert sdk_projection["output"] == {
+        "invalid_code": "external_text_read_failed",
+        "state": "present_invalid",
+        "utf8_hex": None,
+        "utf8_sha256": None,
+    }
+    assert sha256_bytes(b"") not in (attempt.sdk_projection_bytes or b"").decode()
+    assert sentinel.encode() not in (attempt.sdk_projection_bytes or b"")
+
+
+def test_anthropic_http_status_getter_failure_retains_exact_body() -> None:
+    sentinel = "status-getter-secret-sentinel"
+    raw = b"\xffcaptured-http-error"
+
+    class RaisingStatusError(_AnthropicStatusError):
+        @property
+        def status_code(self):
+            raise RuntimeError(sentinel)
+
+    error = RaisingStatusError("status-secret-sentinel")
+    error.response = SimpleNamespace(content=raw)  # type: ignore[attr-defined]
+
+    def create(**_kwargs):
+        raise error
+
+    attempt = _anthropic_invoke_adapter(create).invoke(_anthropic_request())
+
+    assert attempt.facts.transport_kind == "http_error"
+    assert attempt.facts.http_status.state == "present_invalid"
+    assert attempt.facts.http_status.invalid_code == "http_status_read_failed"
+    assert attempt.facts.envelope.state == "present_invalid"
+    assert attempt.facts.envelope.raw_size_bytes == len(raw)
+    assert attempt.facts.envelope.raw_sha256 == sha256_bytes(raw)
+    assert attempt.raw_transport_response == raw
+    assert attempt.outcome.shadow_reason == "provider_boundary_invalid"
+    assert attempt.outcome.output_eligible is False
+    assert attempt.outcome.retry_eligible is False
+    assert sentinel.encode() not in (attempt.sdk_projection_bytes or b"")
+
+
+@pytest.mark.parametrize("status_mode", ["valid", "raising"])
+def test_anthropic_http_projection_failure_retains_exact_body(
+    status_mode: str,
+) -> None:
+    sentinel = f"http-projector-secret-{status_mode}"
+    raw = b"\xffcaptured-http-projector"
+
+    if status_mode == "raising":
+
+        class StatusError(_AnthropicStatusError):
+            @property
+            def status_code(self):
+                raise RuntimeError(sentinel)
+
+        error = StatusError("status-secret-sentinel")
+    else:
+        error = _AnthropicStatusError("status-secret-sentinel")
+        error.status_code = 503  # type: ignore[attr-defined]
+    error.response = SimpleNamespace(content=raw)  # type: ignore[attr-defined]
+
+    def create(**_kwargs):
+        raise error
+
+    adapter = _anthropic_invoke_adapter(create)
+
+    def fail_projection(**_kwargs):
+        raise RuntimeError(sentinel)
+
+    adapter._attempt_from_response = fail_projection
+    attempt = adapter.invoke(_anthropic_request())
+
+    assert attempt.facts.transport_kind == "http_error"
+    assert attempt.facts.envelope.state == "present_invalid"
+    assert attempt.facts.envelope.raw_size_bytes == len(raw)
+    assert attempt.facts.envelope.raw_sha256 == sha256_bytes(raw)
+    assert attempt.raw_transport_response == raw
+    assert attempt.outcome.shadow_reason == "provider_boundary_invalid"
+    assert attempt.outcome.output_eligible is False
+    assert attempt.outcome.retry_eligible is False
+    if status_mode == "raising":
+        assert attempt.facts.http_status.state == "present_invalid"
+        assert attempt.facts.http_status.invalid_code == "http_status_read_failed"
+    else:
+        assert attempt.facts.http_status.state == "present_valid"
+        assert attempt.facts.http_status.value == 503
+    assert sentinel.encode() not in (attempt.sdk_projection_bytes or b"")
+
+
+@pytest.mark.parametrize(
+    ("status_code", "expected_reason", "expected_retry"),
+    [
+        (408, "provider_retryable_failure", True),
+        (409, "provider_retryable_failure", True),
+        (429, "provider_retryable_failure", True),
+        (500, "provider_retryable_failure", True),
+        (599, "provider_retryable_failure", True),
+        (400, "provider_failed", False),
+        (404, "provider_failed", False),
+    ],
+)
+def test_anthropic_http_absent_body_preserves_retry_table(
+    status_code: int,
+    expected_reason: str,
+    expected_retry: bool,
+) -> None:
+    error = _AnthropicStatusError("status-secret-sentinel")
+    error.status_code = status_code  # type: ignore[attr-defined]
+    error.response = None  # type: ignore[attr-defined]
+
+    def create(**_kwargs):
+        raise error
+
+    attempt = _anthropic_invoke_adapter(create).invoke(_anthropic_request())
+
+    assert attempt.facts.transport_kind == "http_error"
+    assert attempt.facts.http_status.state == "present_valid"
+    assert attempt.facts.http_status.value == status_code
+    assert attempt.facts.envelope.state == "absent"
+    assert attempt.facts.envelope.raw_sha256 is None
+    assert attempt.raw_transport_response is None
+    assert attempt.outcome.shadow_reason == expected_reason
+    assert attempt.outcome.output_eligible is False
+    assert attempt.outcome.retry_eligible is expected_retry
+    sdk_projection = json.loads(attempt.sdk_projection_bytes or b"")
+    assert sdk_projection["body_state"] == "absent"
 
 
 def test_anthropic_http_status_without_body_does_not_fabricate_raw() -> None:

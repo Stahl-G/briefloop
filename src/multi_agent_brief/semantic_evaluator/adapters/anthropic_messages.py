@@ -44,6 +44,7 @@ _STOP_REASONS = frozenset(
     }
 )
 _SDK_READ_FAILED = object()
+_HTTP_STATUS_READ_FAILED = object()
 _MISSING = object()
 _TRANSPORT_KINDS = frozenset(
     {"response", "timeout", "connection", "http_error", "adapter_error"}
@@ -441,6 +442,13 @@ def _status_error_body(value: object) -> _StatusErrorBody:
     return _StatusErrorBody("present", content)
 
 
+def _status_error_http_status(value: object) -> object:
+    try:
+        return getattr(value, "status_code")
+    except Exception:
+        return _HTTP_STATUS_READ_FAILED
+
+
 def _parse_fact_payload(value: object) -> ExternalTextFactV4:
     if type(value) is not dict or set(value) != {
         "invalid_code",
@@ -751,6 +759,15 @@ def _sdk_projection_bytes(
         output_tokens = None
         total_tokens = None
     status = normalize_anthropic_stop_reason_v1(stop_reason)
+    http_status_fact = (
+        HttpStatusFactV4(
+            "present_invalid",
+            None,
+            "http_status_read_failed",
+        )
+        if http_status is _HTTP_STATUS_READ_FAILED
+        else capture_http_status_v4(http_status, present=http_present)
+    )
     projection = AnthropicSdkProjectionV1(
         stop_reason=stop_reason,
         status=status,
@@ -761,7 +778,7 @@ def _sdk_projection_bytes(
         output_tokens=output_tokens,
         total_tokens=total_tokens,
         transport_kind=transport_kind,
-        http_status=capture_http_status_v4(http_status, present=http_present),
+        http_status=http_status_fact,
         body_state=body_state,
     )
     return projection.canonical_bytes()
@@ -793,6 +810,48 @@ def project_anthropic_attempt_v1(
         )
     )
     if raw is None:
+        if sdk.body_state == "invalid":
+            if (
+                sdk.transport_kind != "http_error"
+                or sdk.http_status.state == "absent"
+                or any(
+                    item.state != "present_invalid"
+                    or item.invalid_code != "external_text_read_failed"
+                    for item in (
+                        sdk.stop_reason,
+                        sdk.status,
+                        sdk.response_id,
+                        sdk.model_identity,
+                        sdk.output,
+                    )
+                )
+                or any(
+                    item is not None
+                    for item in (
+                        sdk.input_tokens,
+                        sdk.output_tokens,
+                        sdk.total_tokens,
+                    )
+                )
+            ):
+                raise TypeError("shadow_adapter_unavailable")
+            facts = make_provider_boundary_facts_v4(
+                envelope=capture_response_envelope_v4(None, present=False),
+                status=sdk.status,
+                response_id=sdk.response_id,
+                provider_identity=provider,
+                model_identity=sdk.model_identity,
+                output=sdk.output,
+                http_status=sdk.http_status,
+                transport_kind="http_error",
+            )
+            return AnthropicAttemptProjectionV1(
+                facts,
+                None,
+                None,
+                None,
+                sdk_projection_raw,
+            )
         if (
             sdk.body_state != "absent"
             or any(
@@ -1017,6 +1076,35 @@ class AnthropicMessagesAdapterV1:
             sdk_projection_bytes=shared.sdk_projection_bytes,
         )
 
+    def _attempt_from_captured_response(
+        self,
+        *,
+        request: FrozenProviderRequestV4,
+        raw: bytes,
+        sdk_response: object | None,
+        transport_kind: str = "response",
+        transport_http_status: object = None,
+        transport_http_present: bool = False,
+    ) -> RawProviderAttemptV4:
+        try:
+            return self._attempt_from_response(
+                request=request,
+                raw=raw,
+                sdk_response=sdk_response,
+                transport_kind=transport_kind,
+                transport_http_status=transport_http_status,
+                transport_http_present=transport_http_present,
+            )
+        except Exception:
+            return self._transport_attempt(
+                request=request,
+                kind=transport_kind,
+                http_status=transport_http_status,
+                http_present=transport_http_present,
+                body_state="invalid",
+                raw=raw,
+            )
+
     def _transport_attempt(
         self,
         *,
@@ -1084,11 +1172,20 @@ class AnthropicMessagesAdapterV1:
             return self._transport_attempt(request=request, kind="connection")
         except self._anthropic.APIStatusError as error:
             body = _status_error_body(error)
-            status = getattr(error, "status_code", None)
+            status = _status_error_http_status(error)
             if body.state == "present":
-                return self._attempt_from_response(
+                raw = body.raw
+                if type(raw) is not bytes:
+                    return self._transport_attempt(
+                        request=request,
+                        kind="http_error",
+                        http_status=status,
+                        http_present=True,
+                        body_state="invalid",
+                    )
+                return self._attempt_from_captured_response(
                     request=request,
-                    raw=body.raw or b"",
+                    raw=raw,
                     sdk_response=None,
                     transport_kind="http_error",
                     transport_http_status=status,
@@ -1101,7 +1198,6 @@ class AnthropicMessagesAdapterV1:
                     http_status=status,
                     http_present=True,
                     body_state="invalid",
-                    raw=b"",
                 )
             return self._transport_attempt(
                 request=request,
@@ -1118,17 +1214,11 @@ class AnthropicMessagesAdapterV1:
             sdk_response = raw_response.parse()
         except Exception:
             sdk_response = _SDK_READ_FAILED
-        try:
-            return self._attempt_from_response(
-                request=request, raw=raw, sdk_response=sdk_response
-            )
-        except Exception:
-            return self._transport_attempt(
-                request=request,
-                kind="response",
-                body_state="invalid",
-                raw=raw,
-            )
+        return self._attempt_from_captured_response(
+            request=request,
+            raw=raw,
+            sdk_response=sdk_response,
+        )
 
 
 def synthetic_anthropic_message_bytes_v1(
