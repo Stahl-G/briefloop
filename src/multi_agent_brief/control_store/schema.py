@@ -12,7 +12,7 @@ from multi_agent_brief.control_store.errors import (
 )
 
 
-SCHEMA_VERSION = 8
+SCHEMA_VERSION = 9
 MIGRATION_NAME = "0001"
 MIGRATIONS = (
     (1, "0001"),
@@ -23,6 +23,7 @@ MIGRATIONS = (
     (6, "0006"),
     (7, "0007"),
     (8, "0008"),
+    (9, "0009"),
 )
 _SCHEMA_OBJECT_TYPES = ("index", "table", "trigger", "view")
 
@@ -41,9 +42,7 @@ def _schema_inventory(
             """
         ).fetchall()
     except sqlite3.Error as exc:
-        raise ControlStoreIntegrityError(
-            "database_schema_definition_mismatch"
-        ) from exc
+        raise ControlStoreIntegrityError("database_schema_definition_mismatch") from exc
     inventory: list[tuple[str, str, str, str | None]] = []
     for row in rows:
         object_type, name, table_name, definition = row
@@ -172,9 +171,7 @@ def verify_schema(connection: sqlite3.Connection) -> None:
             "PRAGMA foreign_key_check"
         ).fetchone()
     except sqlite3.Error as exc:
-        raise ControlStoreIntegrityError(
-            "database_foreign_key_check_failed"
-        ) from exc
+        raise ControlStoreIntegrityError("database_foreign_key_check_failed") from exc
     if foreign_key_violation is not None:
         raise ControlStoreIntegrityError("database_foreign_key_check_failed")
 

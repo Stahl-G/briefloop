@@ -14,8 +14,12 @@ from pathlib import Path
 import pytest
 
 from multi_agent_brief.cli.init_wizard import create_workspace
+from multi_agent_brief.cli.secrets_commands import SecretImportError
 from multi_agent_brief.cli.main import main
-from multi_agent_brief.control_store import SQLiteControlStore
+from multi_agent_brief.control_store import (
+    ControlStoreIntegrityError,
+    SQLiteControlStore,
+)
 from multi_agent_brief.core_run_v2.policy import derived_id
 from multi_agent_brief.core_run_v2.errors import CoreRunResult
 from multi_agent_brief.core_run_v2.service import CoreRunService
@@ -25,6 +29,7 @@ from multi_agent_brief.product.init_web.submit import (
     SubmissionError,
     _profile_from_payload,
 )
+from multi_agent_brief.product.init_web import submit as init_web_submit_module
 from multi_agent_brief.product.init_web.staging import InitWebStaging
 from multi_agent_brief.product.workspace_hygiene import (
     NestedWorkspaceTargetError,
@@ -46,6 +51,7 @@ def _body(request_id: str, target: str, **overrides: object) -> dict[str, object
             "interface_language": "zh",
             "output_language": "zh",
             "cadence": "weekly",
+            "max_source_age_days": 7,
             "focus_areas": ["operations", "policy"],
             "output_formats": ["markdown", "docx"],
             "forbidden_sources": [],
@@ -152,6 +158,34 @@ def _authorized_body(
     return body
 
 
+def _public_web_body(
+    request_id: str,
+    target: str,
+    *,
+    session_id: str = "web-session",
+) -> dict[str, object]:
+    body = _body(request_id, target)
+    payload = body["payload"]
+    assert isinstance(payload, dict)
+    selections = payload["selections"]
+    assert isinstance(selections, dict)
+    selections.update(
+        {
+            "source_profile": "llm_decide",
+            "web_search_mode": "external_api",
+            "search_backend": "tavily",
+        }
+    )
+    payload.update(
+        {
+            "completion_target": "finalized_local",
+            "repair_budget": 1,
+            "search_secret_session_id": session_id,
+        }
+    )
+    return body
+
+
 def test_committed_submission_creates_runnable_workspace_and_real_receipt(
     tmp_path: Path,
     capsys: pytest.CaptureFixture[str],
@@ -193,19 +227,7 @@ def test_public_web_submission_stores_tavily_key_outside_run_contract(
     tmp_path: Path,
 ) -> None:
     submitter = InitWebSubmitter(base_dir=tmp_path)
-    body = _body("REQ-WEB00001", "web-search-ws")
-    payload = body["payload"]
-    assert isinstance(payload, dict)
-    selections = payload["selections"]
-    assert isinstance(selections, dict)
-    selections.update(
-        {
-            "source_profile": "llm_decide",
-            "web_search_mode": "external_api",
-            "search_backend": "tavily",
-        }
-    )
-    payload["search_secret_session_id"] = "web-session"
+    body = _public_web_body("REQ-WEB00001", "web-search-ws")
     configured = submitter.configure_search_secret(
         session_id="web-session",
         body={"provider": "tavily", "api_key": "tvly-test-secret-123"},
@@ -234,41 +256,310 @@ def test_public_web_submission_stores_tavily_key_outside_run_contract(
     assert sources["web_search"]["backend"] == "tavily"
     assert sources["web_search"]["api_key_env"] == "TAVILY_API_KEY"
     assert response["execution_authorized"] is False
+    assert response["source_discovery_authorized"] is True
+    assert response["completion_target"] == "finalized_local"
+    assert response["repair_budget"] == 1
+    assert response["search_secret_status"] == "ready"
     assert response["source_discovery"] == {
-        "mode": "automatic",
+        "mode": "pre_provider_authorization",
         "profile": "llm_decide",
         "backend": "tavily",
         "api_key_env": "TAVILY_API_KEY",
     }
+    with SQLiteControlStore.open(workspace / "briefloop.db") as store:
+        head = store.load_workspace_run_head()
+        assert head is not None
+        snapshot = store.load_snapshot(head.current_run_id)
+    assert len(snapshot.run_execution_authorizations) == 0
+    assert len(snapshot.run_source_discovery_authorizations) == 1
+    assert snapshot.run_source_discovery_authorizations[0].route_id == "web-search"
     assert "tvly-test-secret-123" not in json.dumps(response)
     config_text = (workspace / "config.yaml").read_text(encoding="utf-8")
     assert "tvly-test-secret-123" not in config_text
     assert b"tvly-test-secret-123" not in (workspace / "briefloop.db").read_bytes()
 
 
-def test_public_web_submission_requires_secret_before_workspace_write(
+@pytest.mark.parametrize("max_source_age_days", [7, 30, 90])
+def test_public_web_submission_freezes_confirmed_report_window(
     tmp_path: Path,
+    max_source_age_days: int,
 ) -> None:
     submitter = InitWebSubmitter(base_dir=tmp_path)
-    body = _body("REQ-WEB00002", "web-search-ws")
+    target = f"web-search-{max_source_age_days}"
+    body = _public_web_body(
+        f"REQ-WINDOW-{max_source_age_days}",
+        target,
+    )
     payload = body["payload"]
     assert isinstance(payload, dict)
     selections = payload["selections"]
     assert isinstance(selections, dict)
-    selections.update(
-        {
-            "source_profile": "llm_decide",
-            "web_search_mode": "external_api",
-            "search_backend": "tavily",
-        }
+    selections["max_source_age_days"] = max_source_age_days
+    submitter.configure_search_secret(
+        session_id="web-session",
+        body={"provider": "tavily", "api_key": "tvly-window-secret"},
     )
-    payload["search_secret_session_id"] = "web-session"
+
+    _submit_ok(submitter, body)
+
+    workspace = tmp_path / target
+    sources = yaml.safe_load((workspace / "sources.yaml").read_text(encoding="utf-8"))
+    assert sources["web_search"]["recency_days"] == max_source_age_days
+    with SQLiteControlStore.open(workspace / "briefloop.db") as store:
+        head = store.load_workspace_run_head()
+        assert head is not None
+        snapshot = store.load_snapshot(head.current_run_id)
+    assert len(snapshot.run_contract_bindings) == 1
+    assert (
+        snapshot.run_contract_bindings[0].run_direction.max_source_age_days
+        == max_source_age_days
+    )
+
+
+@pytest.mark.parametrize(
+    "invalid_window",
+    [None, True, "30", 0, 14, 91],
+)
+def test_public_web_invalid_report_window_fails_before_state_or_secret(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    invalid_window: object,
+) -> None:
+    submitter = InitWebSubmitter(base_dir=tmp_path)
+    body = _public_web_body("REQ-WINDOW-INVALID", "invalid-window")
+    payload = body["payload"]
+    assert isinstance(payload, dict)
+    selections = payload["selections"]
+    assert isinstance(selections, dict)
+    if invalid_window is None:
+        selections.pop("max_source_age_days")
+    else:
+        selections["max_source_age_days"] = invalid_window
+
+    def _secret_effect_must_not_run(*_args: object, **_kwargs: object) -> object:
+        raise AssertionError("invalid report window reached credential effect")
+
+    monkeypatch.setattr(
+        init_web_submit_module,
+        "get_known_env_value",
+        _secret_effect_must_not_run,
+    )
+    monkeypatch.setattr(
+        init_web_submit_module,
+        "store_workspace_secret",
+        _secret_effect_must_not_run,
+    )
 
     with pytest.raises(SubmissionError) as exc_info:
         submitter.submit(body)
 
-    assert exc_info.value.error_code == "submission_search_api_key_required"
-    assert not (tmp_path / "web-search-ws").exists()
+    assert exc_info.value.error_code == "submission_report_window_invalid"
+    assert exc_info.value.http_status == 422
+    assert not (tmp_path / "invalid-window").exists()
+
+
+def test_public_web_submission_commits_discovery_before_secret_is_required(
+    tmp_path: Path,
+) -> None:
+    submitter = InitWebSubmitter(base_dir=tmp_path)
+    body = _public_web_body("REQ-WEB00002", "web-search-ws")
+
+    status, response = submitter.submit(body)
+
+    assert status == 422
+    assert response == {
+        "ok": False,
+        "reason_code": "submission_search_api_key_required",
+        "initialization_status": "committed",
+        "search_secret_status": "required",
+    }
+    workspace = tmp_path / "web-search-ws"
+    assert (workspace / "briefloop.db").is_file()
+    revision = _revision(workspace)
+    assert not (workspace / ".env").exists()
+    replay_status, replay = submitter.submit(body)
+    assert replay_status == 422
+    assert replay["reason_code"] == "submission_search_api_key_required"
+    assert _revision(workspace) == revision
+
+
+def test_public_web_pending_secret_recovers_on_exact_same_process_replay(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    submitter = InitWebSubmitter(base_dir=tmp_path)
+    body = _public_web_body("REQ-WEB00003", "web-search-ws")
+    sentinel = "tvly-pending-recovery-sentinel"
+    assert (
+        submitter.configure_search_secret(
+            session_id="web-session",
+            body={"provider": "tavily", "api_key": sentinel},
+        )["configured"]
+        is True
+    )
+    original_store_secret = init_web_submit_module.store_workspace_secret
+
+    def _pending_secret(*_args: object, **_kwargs: object) -> None:
+        raise SecretImportError("test-only persistence failure")
+
+    monkeypatch.setattr(
+        init_web_submit_module,
+        "store_workspace_secret",
+        _pending_secret,
+    )
+    first_status, first = submitter.submit(body)
+    assert first_status == 500
+    assert first == {
+        "ok": False,
+        "reason_code": "submission_search_secret_store_failed",
+        "initialization_status": "committed",
+        "search_secret_status": "pending",
+    }
+    workspace = tmp_path / "web-search-ws"
+    revision = _revision(workspace)
+    db_bytes = (workspace / "briefloop.db").read_bytes()
+    assert not (workspace / ".env").exists()
+    assert sentinel.encode("utf-8") not in db_bytes
+
+    monkeypatch.setattr(
+        init_web_submit_module,
+        "store_workspace_secret",
+        original_store_secret,
+    )
+    second_status, second = submitter.submit(body)
+    assert second_status == 200
+    assert second["status"] == "replayed"
+    assert second["search_secret_status"] == "recovered"
+    assert _revision(workspace) == revision
+    assert (workspace / "briefloop.db").read_bytes() == db_bytes
+    assert (workspace / ".env").read_text(encoding="utf-8") == (
+        f"TAVILY_API_KEY={sentinel}\n"
+    )
+    assert sentinel not in json.dumps(second)
+
+
+def test_public_web_restart_replay_is_store_first_then_recovered_or_ready(
+    tmp_path: Path,
+) -> None:
+    body = _public_web_body("REQ-WEB00004", "web-search-ws")
+    initial = InitWebSubmitter(base_dir=tmp_path)
+    initial_status, initial_response = initial.submit(body)
+    assert initial_status == 422
+    assert initial_response["search_secret_status"] == "required"
+    workspace = tmp_path / "web-search-ws"
+    revision = _revision(workspace)
+    db_bytes = (workspace / "briefloop.db").read_bytes()
+    initial.close()
+
+    recovered_body = _public_web_body(
+        "REQ-WEB00004",
+        "web-search-ws",
+        session_id="restart-entry-session",
+    )
+    recovered_submitter = InitWebSubmitter(base_dir=tmp_path)
+    sentinel = "tvly-restart-recovery-sentinel"
+    assert (
+        recovered_submitter.configure_search_secret(
+            session_id="restart-entry-session",
+            body={"provider": "tavily", "api_key": sentinel},
+        )["configured"]
+        is True
+    )
+    recovered_status, recovered = recovered_submitter.submit(recovered_body)
+    assert recovered_status == 200
+    assert recovered["status"] == "replayed"
+    assert recovered["search_secret_status"] == "recovered"
+    assert _revision(workspace) == revision
+    assert (workspace / "briefloop.db").read_bytes() == db_bytes
+    env_path = workspace / ".env"
+    env_mtime = env_path.stat().st_mtime_ns
+    recovered_submitter.close()
+
+    ready_submitter = InitWebSubmitter(base_dir=tmp_path)
+    ready_status, ready = ready_submitter.submit(
+        _public_web_body(
+            "REQ-WEB00004",
+            "web-search-ws",
+            session_id="restart-ready-session",
+        )
+    )
+    assert ready_status == 200
+    assert ready["status"] == "replayed"
+    assert ready["search_secret_status"] == "ready"
+    assert _revision(workspace) == revision
+    assert (workspace / "briefloop.db").read_bytes() == db_bytes
+    assert env_path.stat().st_mtime_ns == env_mtime
+    assert sentinel not in json.dumps(ready)
+
+
+def test_public_web_changed_semantics_conflict_before_secret_effect(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    submitter = InitWebSubmitter(base_dir=tmp_path)
+    body = _public_web_body("REQ-WEB00005", "web-search-ws")
+    assert (
+        submitter.configure_search_secret(
+            session_id="web-session",
+            body={"provider": "tavily", "api_key": "tvly-conflict-sentinel"},
+        )["configured"]
+        is True
+    )
+    assert _submit_ok(submitter, body)["search_secret_status"] == "ready"
+    workspace = tmp_path / "web-search-ws"
+    revision = _revision(workspace)
+    db_bytes = (workspace / "briefloop.db").read_bytes()
+    changed = deepcopy(body)
+    changed_payload = changed["payload"]
+    assert isinstance(changed_payload, dict)
+    changed_selections = changed_payload["selections"]
+    assert isinstance(changed_selections, dict)
+    changed_selections["max_source_age_days"] = 30
+
+    def _secret_must_not_be_touched(*_args: object, **_kwargs: object) -> object:
+        raise AssertionError("Store replay conflict must precede secret effect")
+
+    monkeypatch.setattr(
+        init_web_submit_module,
+        "get_known_env_value",
+        _secret_must_not_be_touched,
+    )
+    monkeypatch.setattr(
+        init_web_submit_module,
+        "store_workspace_secret",
+        _secret_must_not_be_touched,
+    )
+    with pytest.raises(SubmissionError) as exc_info:
+        submitter.submit(changed)
+    assert exc_info.value.error_code == "submission_replay_conflict"
+    assert _revision(workspace) == revision
+    assert (workspace / "briefloop.db").read_bytes() == db_bytes
+
+
+def test_discovery_authorization_missing_receipt_relation_fails_store_verification(
+    tmp_path: Path,
+) -> None:
+    submitter = InitWebSubmitter(base_dir=tmp_path)
+    body = _public_web_body("REQ-WEB00006", "web-search-ws")
+    assert (
+        submitter.configure_search_secret(
+            session_id="web-session",
+            body={"provider": "tavily", "api_key": "tvly-relation-sentinel"},
+        )["configured"]
+        is True
+    )
+    response = _submit_ok(submitter, body)
+    workspace = tmp_path / "web-search-ws"
+    with SQLiteControlStore.open(workspace / "briefloop.db") as store:
+        store._connection.execute(
+            "DELETE FROM transaction_run_source_discovery_authorizations "
+            "WHERE run_id = ? AND transaction_id = ?",
+            (response["run_id"], response["transaction_id"]),
+        )
+        store._connection.commit()
+        with pytest.raises(ControlStoreIntegrityError) as exc_info:
+            store.load_snapshot(response["run_id"])
+    assert exc_info.value.code == "transaction_relation_mismatch"
 
 
 def test_authorized_submission_freezes_manifest_and_returns_first_action(
@@ -323,9 +614,10 @@ def test_source_manifest_preview_is_server_canonical_and_zero_workspace_write(
     assert preview["routing_bindings"] == payload["upload_bindings"]
     observed = preview["source_preview"][0]
     assert observed["observed_filename"] == "source-000.txt"
-    assert observed["observed_sha256"] == payload["source_metadata"][0][
-        "expected_content_sha256"
-    ]
+    assert (
+        observed["observed_sha256"]
+        == payload["source_metadata"][0]["expected_content_sha256"]
+    )
     assert observed["byte_count"] == len(b"public source 0\n")
     assert not (tmp_path / "authorized-ws").exists()
 
@@ -415,7 +707,9 @@ def test_authorized_25_member_manifest_preserves_url_and_incident_semantics(
     _submit_ok(submitter, body)
 
     stored = json.loads(
-        (tmp_path / "authorized-ws" / "input" / "execution-source-manifest.json").read_text()
+        (
+            tmp_path / "authorized-ws" / "input" / "execution-source-manifest.json"
+        ).read_text()
     )
     assert len(stored["members"]) == 25
     assert [item["source_id"] for item in stored["members"]] == [
@@ -475,7 +769,10 @@ def test_generated_manifest_maps_every_member_once_with_stable_server_ids(
             },
         )
         assert len(preview["routing_bindings"]) == member_count
-        assert len({item["upload_handle"] for item in preview["routing_bindings"]}) == member_count
+        assert (
+            len({item["upload_handle"] for item in preview["routing_bindings"]})
+            == member_count
+        )
         projections.append(
             [
                 (

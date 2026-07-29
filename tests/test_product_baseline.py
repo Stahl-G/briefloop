@@ -36,6 +36,21 @@ def test_product_baseline_check_runs_clean() -> None:
     assert "ALL CHECKS PASSED" in result.stdout
 
 
+def test_runtime_first_docs_preserve_platform_boundary_truth() -> None:
+    architecture = (ROOT / "docs" / "architecture-status.md").read_text(
+        encoding="utf-8"
+    )
+    support = (ROOT / "docs" / "support-matrix.md").read_text(encoding="utf-8")
+
+    for text in (architecture, support):
+        assert "POSIX/macOS" in text
+        assert "Windows" in text
+        assert "checkout_publication_unsupported" in text
+        assert "before any Tavily call" in text or "before any provider call" in text
+        assert "no source promotion" in text or "zero source promotion" in text
+        assert "delivery" in text
+
+
 def _write_product_boundary_fixture(module, root: Path) -> None:
     for rel_path, phrases in module.REQUIRED_DOC_BOUNDARY_PHRASES.items():
         path = root / rel_path
@@ -59,9 +74,9 @@ def test_workbuddy_product_baseline_requires_bound_powershell_commands() -> None
     assert "^(?:[A-Za-z]:\\\\|\\\\\\\\[^\\\\]+\\\\[^\\\\]+\\\\)" in requirements
     assert "& $BriefLoop workbuddy pack-skill --output dist/workbuddy" in requirements
     assert "& $BriefLoop run" in requirements
-    assert "& $BriefLoop status --workspace \"<workspace>\"" in requirements
-    assert "& $BriefLoop state check --workspace \"<workspace>\"" in requirements
-    assert "& $BriefLoop quality summarize --workspace \"<workspace>\"" in requirements
+    assert '& $BriefLoop status --workspace "<workspace>"' in requirements
+    assert '& $BriefLoop state check --workspace "<workspace>"' in requirements
+    assert '& $BriefLoop quality summarize --workspace "<workspace>"' in requirements
     assert not any(
         phrase.startswith("briefloop ") or phrase.startswith("multi-agent-brief ")
         for phrase in requirements
@@ -75,7 +90,7 @@ def test_workbuddy_product_baseline_requires_bound_powershell_commands() -> None
         ("$BriefLoop = $BriefLoopCommand.Path", "$BriefLoop = 'briefloop'"),
         ("$BriefLoop -notmatch", "path check omitted"),
         (
-            "& $BriefLoop quality summarize --workspace \"<workspace>\"",
+            '& $BriefLoop quality summarize --workspace "<workspace>"',
             "briefloop quality summarize --workspace <workspace>",
         ),
     ],
@@ -125,7 +140,9 @@ def test_product_baseline_json_locks_v011_entrypoints_and_boundaries() -> None:
     assert checks["new.industry-weekly"]["status"] == "pass"
     assert "report_pack=market_weekly" in checks["new.industry-weekly"]["detail"]
     assert checks["new.management-monthly"]["status"] == "pass"
-    assert "report_pack=management_monthly" in checks["new.management-monthly"]["detail"]
+    assert (
+        "report_pack=management_monthly" in checks["new.management-monthly"]["detail"]
+    )
     assert checks["new.document-review"]["status"] == "pass"
     assert "report_pack=evidence_extract" in checks["new.document-review"]["detail"]
     assert "new.solar-periodic" not in checks
@@ -148,42 +165,77 @@ def test_product_baseline_json_locks_v011_entrypoints_and_boundaries() -> None:
     assert checks["first_user_docs.docs/15-minute-pilot.md"]["status"] == "pass"
     assert checks["first_user_docs.docs/15-minute-pilot.zh-CN.md"]["status"] == "pass"
     assert checks["first_user_docs.docs/getting-started.md"]["status"] == "pass"
-    assert checks["first_user_docs.docs/getting-started.md.unix_venv_activation"]["status"] == "pass"
+    assert (
+        checks["first_user_docs.docs/getting-started.md.unix_venv_activation"]["status"]
+        == "pass"
+    )
     assert checks["first_user_docs.README.md.unix_venv_activation"]["status"] == "pass"
     assert checks["first_user_docs.no_current_pipx_install"]["status"] == "pass"
-    assert checks["first_user_docs.no_archived_experiment_namespace"]["status"] == "pass"
+    assert (
+        checks["first_user_docs.no_archived_experiment_namespace"]["status"] == "pass"
+    )
     assert checks["first_user_docs.docs/weekly-loop.md"]["status"] == "pass"
     assert checks["first_user_docs.docs/troubleshooting.md"]["status"] == "pass"
     assert checks["first_user_docs.README.md.first_screen_links"]["status"] == "pass"
     assert checks["first_user_docs.README.md.three_page_block"]["status"] == "pass"
-    assert checks["first_user_docs.README.zh-CN.md.three_page_block"]["status"] == "pass"
+    assert (
+        checks["first_user_docs.README.zh-CN.md.three_page_block"]["status"] == "pass"
+    )
     assert checks["first_user_route.README.md"]["status"] == "pass"
     assert checks["first_user_route.README.zh-CN.md"]["status"] == "pass"
     assert checks["first_user_route.docs/getting-started.md"]["status"] == "pass"
     assert checks["first_user_route.docs/weekly-loop.md"]["status"] == "pass"
-    assert checks["support_matrix.v0_11_product_facing_workspace_entries"]["status"] == "pass"
-    assert checks["support_matrix.reportspec_reportpack_baseline_contracts"]["status"] == "pass"
+    assert (
+        checks["support_matrix.v0_11_product_facing_workspace_entries"]["status"]
+        == "pass"
+    )
+    assert (
+        checks["support_matrix.reportspec_reportpack_baseline_contracts"]["status"]
+        == "pass"
+    )
     assert checks["support_matrix.wider_product_os_extensions"]["status"] == "pass"
     assert (
-        checks["topology_convergence.docs/control-surfaces.md.required_current_contract"]["status"]
+        checks[
+            "topology_convergence.docs/control-surfaces.md.required_current_contract"
+        ]["status"]
         == "pass"
     )
     assert (
-        checks["topology_convergence.docs/control-surfaces.md.no_stale_planned_wording"]["status"]
+        checks[
+            "topology_convergence.docs/control-surfaces.md.no_stale_planned_wording"
+        ]["status"]
         == "pass"
     )
     assert (
-        checks["topology_convergence.docs/control-surfaces.zh-CN.md.required_current_contract"]["status"]
+        checks[
+            "topology_convergence.docs/control-surfaces.zh-CN.md.required_current_contract"
+        ]["status"]
         == "pass"
     )
     assert (
-        checks["topology_convergence.docs/control-surfaces.zh-CN.md.no_stale_planned_wording"]["status"]
+        checks[
+            "topology_convergence.docs/control-surfaces.zh-CN.md.no_stale_planned_wording"
+        ]["status"]
         == "pass"
     )
-    assert checks["golden_path.docs/golden-path.md.required_product_entries"]["status"] == "pass"
-    assert checks["golden_path.docs/golden-path.md.no_experiment_surface"]["status"] == "pass"
-    assert checks["golden_path.docs/golden-path.zh-CN.md.required_product_entries"]["status"] == "pass"
-    assert checks["golden_path.docs/golden-path.zh-CN.md.no_experiment_surface"]["status"] == "pass"
+    assert (
+        checks["golden_path.docs/golden-path.md.required_product_entries"]["status"]
+        == "pass"
+    )
+    assert (
+        checks["golden_path.docs/golden-path.md.no_experiment_surface"]["status"]
+        == "pass"
+    )
+    assert (
+        checks["golden_path.docs/golden-path.zh-CN.md.required_product_entries"][
+            "status"
+        ]
+        == "pass"
+    )
+    assert (
+        checks["golden_path.docs/golden-path.zh-CN.md.no_experiment_surface"]["status"]
+        == "pass"
+    )
     assert checks["reference_run_surface_count"]["status"] == "pass"
     assert checks["reference_run_archived_experiment_framing"]["status"] == "pass"
     readme_en = (ROOT / "README_en.md").read_text(encoding="utf-8")
@@ -192,7 +244,9 @@ def test_product_baseline_json_locks_v011_entrypoints_and_boundaries() -> None:
     assert "[15 分钟试用](docs/15-minute-pilot.zh-CN.md)" in readme_zh
 
 
-def test_first_user_docs_guard_rejects_architecture_first_readme_links(tmp_path, monkeypatch) -> None:
+def test_first_user_docs_guard_rejects_architecture_first_readme_links(
+    tmp_path, monkeypatch
+) -> None:
     module = _load_product_baseline_module()
     for rel_path, phrases in module.REQUIRED_FIRST_USER_DOC_PHRASES.items():
         path = tmp_path / rel_path
@@ -218,7 +272,10 @@ def test_first_user_docs_guard_rejects_architecture_first_readme_links(tmp_path,
     checks_by_id = {item["id"]: item for item in checks}
 
     assert checks_by_id["first_user_docs.docs/15-minute-pilot.md"]["status"] == "pass"
-    assert checks_by_id["first_user_docs.docs/15-minute-pilot.zh-CN.md"]["status"] == "pass"
+    assert (
+        checks_by_id["first_user_docs.docs/15-minute-pilot.zh-CN.md"]["status"]
+        == "pass"
+    )
     assert checks_by_id["first_user_docs.docs/getting-started.md"]["status"] == "pass"
     assert checks_by_id["first_user_docs.docs/weekly-loop.md"]["status"] == "pass"
     assert checks_by_id["first_user_docs.docs/troubleshooting.md"]["status"] == "pass"
@@ -227,7 +284,9 @@ def test_first_user_docs_guard_rejects_architecture_first_readme_links(tmp_path,
     assert "docs/architecture-status.md" in readme_check["detail"]
 
 
-def test_first_user_docs_guard_rejects_extra_links_in_readme_user_block(tmp_path, monkeypatch) -> None:
+def test_first_user_docs_guard_rejects_extra_links_in_readme_user_block(
+    tmp_path, monkeypatch
+) -> None:
     module = _load_product_baseline_module()
     (tmp_path / "README.md").write_text(
         "First-user path:\n"
@@ -258,10 +317,15 @@ def test_first_user_docs_guard_rejects_extra_links_in_readme_user_block(tmp_path
     readme_check = checks_by_id["first_user_docs.README.md.three_page_block"]
     assert readme_check["status"] == "fail"
     assert "docs/architecture-status.md" in readme_check["detail"]
-    assert checks_by_id["first_user_docs.README.zh-CN.md.three_page_block"]["status"] == "pass"
+    assert (
+        checks_by_id["first_user_docs.README.zh-CN.md.three_page_block"]["status"]
+        == "pass"
+    )
 
 
-def test_first_user_route_guard_rejects_internal_ids_and_control_vocab(tmp_path, monkeypatch) -> None:
+def test_first_user_route_guard_rejects_internal_ids_and_control_vocab(
+    tmp_path, monkeypatch
+) -> None:
     module = _load_product_baseline_module()
     route_blocks = {
         "README.md": (
@@ -325,7 +389,9 @@ def test_first_user_route_guard_rejects_internal_ids_and_control_vocab(tmp_path,
     assert "document-review" in weekly_check["detail"]
 
 
-def test_first_user_docs_guard_requires_unix_activation_before_cli_check(tmp_path, monkeypatch) -> None:
+def test_first_user_docs_guard_requires_unix_activation_before_cli_check(
+    tmp_path, monkeypatch
+) -> None:
     module = _load_product_baseline_module()
     for rel_path, phrases in module.REQUIRED_FIRST_USER_DOC_PHRASES.items():
         path = tmp_path / rel_path
@@ -349,12 +415,16 @@ def test_first_user_docs_guard_requires_unix_activation_before_cli_check(tmp_pat
     module._check_first_user_docs_surface(checks)
     checks_by_id = {item["id"]: item for item in checks}
 
-    activation_check = checks_by_id["first_user_docs.docs/getting-started.md.unix_venv_activation"]
+    activation_check = checks_by_id[
+        "first_user_docs.docs/getting-started.md.unix_venv_activation"
+    ]
     assert activation_check["status"] == "fail"
     assert "activate .venv" in activation_check["detail"]
 
 
-def test_first_user_docs_guard_requires_readme_activation_before_cli_usage(tmp_path, monkeypatch) -> None:
+def test_first_user_docs_guard_requires_readme_activation_before_cli_usage(
+    tmp_path, monkeypatch
+) -> None:
     module = _load_product_baseline_module()
     for rel_path, phrases in module.REQUIRED_FIRST_USER_DOC_PHRASES.items():
         path = tmp_path / rel_path
@@ -383,7 +453,9 @@ def test_first_user_docs_guard_requires_readme_activation_before_cli_usage(tmp_p
     assert "activate .venv" in activation_check["detail"]
 
 
-def test_first_user_docs_guard_rejects_current_pipx_install_instruction(tmp_path, monkeypatch) -> None:
+def test_first_user_docs_guard_rejects_current_pipx_install_instruction(
+    tmp_path, monkeypatch
+) -> None:
     module = _load_product_baseline_module()
     for rel_path, phrases in module.REQUIRED_FIRST_USER_DOC_PHRASES.items():
         path = tmp_path / rel_path
@@ -423,7 +495,9 @@ def test_first_user_docs_guard_rejects_current_pipx_install_instruction(tmp_path
     assert "README.md" not in pipx_check["detail"]
 
 
-def test_first_user_docs_guard_rejects_archived_experiment_namespace(tmp_path, monkeypatch) -> None:
+def test_first_user_docs_guard_rejects_archived_experiment_namespace(
+    tmp_path, monkeypatch
+) -> None:
     module = _load_product_baseline_module()
     for rel_path in module.ARCHIVED_EXPERIMENT_FIRST_USER_SURFACES:
         path = tmp_path / rel_path
@@ -455,20 +529,38 @@ def test_first_user_docs_guard_rejects_archived_experiment_namespace(tmp_path, m
         "OpenCode first-user command should not mention experiments 080.\n",
         encoding="utf-8",
     )
-    (tmp_path / ".agents" / "skills" / "briefloop-workbuddy").mkdir(parents=True, exist_ok=True)
+    (tmp_path / ".agents" / "skills" / "briefloop-workbuddy").mkdir(
+        parents=True, exist_ok=True
+    )
     (tmp_path / ".agents" / "skills" / "briefloop-workbuddy" / "SKILL.md").write_text(
         "Do not route new WorkBuddy users to BriefLoop-090 A-controlled runs.\n",
         encoding="utf-8",
     )
-    (tmp_path / ".agents" / "skills" / "briefloop-workbuddy" / "references" / "quickstart.md").parent.mkdir(
+    (
+        tmp_path
+        / ".agents"
+        / "skills"
+        / "briefloop-workbuddy"
+        / "references"
+        / "quickstart.md"
+    ).parent.mkdir(
         parents=True,
         exist_ok=True,
     )
-    (tmp_path / ".agents" / "skills" / "briefloop-workbuddy" / "references" / "quickstart.md").write_text(
+    (
+        tmp_path
+        / ".agents"
+        / "skills"
+        / "briefloop-workbuddy"
+        / "references"
+        / "quickstart.md"
+    ).write_text(
         "New WorkBuddy users should not see experiments 080.\n",
         encoding="utf-8",
     )
-    (tmp_path / ".codebuddy" / "skills" / "briefloop").mkdir(parents=True, exist_ok=True)
+    (tmp_path / ".codebuddy" / "skills" / "briefloop").mkdir(
+        parents=True, exist_ok=True
+    )
     (tmp_path / ".codebuddy" / "skills" / "briefloop" / "SKILL.md").write_text(
         "New CodeBuddy users should not see BriefLoop-090.\n",
         encoding="utf-8",
@@ -478,21 +570,51 @@ def test_first_user_docs_guard_rejects_archived_experiment_namespace(tmp_path, m
         "The CodeBuddy scout should not route first users to A-controlled experiment flows.\n",
         encoding="utf-8",
     )
-    (tmp_path / "integrations" / "workbuddy" / "briefloop" / "references" / "quickstart.md").parent.mkdir(
+    (
+        tmp_path
+        / "integrations"
+        / "workbuddy"
+        / "briefloop"
+        / "references"
+        / "quickstart.md"
+    ).parent.mkdir(
         parents=True,
         exist_ok=True,
     )
-    (tmp_path / "integrations" / "workbuddy" / "briefloop" / "references" / "quickstart.md").write_text(
+    (
+        tmp_path
+        / "integrations"
+        / "workbuddy"
+        / "briefloop"
+        / "references"
+        / "quickstart.md"
+    ).write_text(
         "New WorkBuddy users should not see MABW-080.\n",
         encoding="utf-8",
     )
-    (tmp_path / "examples" / "reference-workspaces" / "industry-weekly-demo").mkdir(parents=True, exist_ok=True)
-    (tmp_path / "examples" / "reference-workspaces" / "industry-weekly-demo" / "README.md").write_text(
+    (tmp_path / "examples" / "reference-workspaces" / "industry-weekly-demo").mkdir(
+        parents=True, exist_ok=True
+    )
+    (
+        tmp_path
+        / "examples"
+        / "reference-workspaces"
+        / "industry-weekly-demo"
+        / "README.md"
+    ).write_text(
         "Reference workspace should not route readers to BriefLoop-090.\n",
         encoding="utf-8",
     )
-    (tmp_path / "integrations" / "workbuddy" / "assistant").mkdir(parents=True, exist_ok=True)
-    (tmp_path / "integrations" / "workbuddy" / "assistant" / "briefloop-assistant-prompt.md").write_text(
+    (tmp_path / "integrations" / "workbuddy" / "assistant").mkdir(
+        parents=True, exist_ok=True
+    )
+    (
+        tmp_path
+        / "integrations"
+        / "workbuddy"
+        / "assistant"
+        / "briefloop-assistant-prompt.md"
+    ).write_text(
         "Assistant trigger should not point first users at manifestation score workflows.\n",
         encoding="utf-8",
     )
@@ -510,20 +632,46 @@ def test_first_user_docs_guard_rejects_archived_experiment_namespace(tmp_path, m
     assert "README.zh-CN.md:MABW-080" in quarantine_check["detail"]
     assert "CLAUDE.md:MABW-080" in quarantine_check["detail"]
     assert ".claude/commands/briefloop.md:BriefLoop-090" in quarantine_check["detail"]
-    assert ".opencode/commands/briefloop.md:experiments 080" in quarantine_check["detail"]
-    assert ".agents/skills/briefloop-workbuddy/SKILL.md:BriefLoop-090" in quarantine_check["detail"]
-    assert ".agents/skills/briefloop-workbuddy/SKILL.md:A-controlled" in quarantine_check["detail"]
-    assert ".agents/skills/briefloop-workbuddy/references/quickstart.md:experiments 080" in quarantine_check["detail"]
-    assert ".codebuddy/skills/briefloop/SKILL.md:BriefLoop-090" in quarantine_check["detail"]
-    assert ".codebuddy/agents/briefloop-scout.md:A-controlled" in quarantine_check["detail"]
-    assert "integrations/workbuddy/briefloop/references/quickstart.md:MABW-080" in quarantine_check["detail"]
-    assert "examples/reference-workspaces/industry-weekly-demo/README.md:BriefLoop-090" in quarantine_check["detail"]
-    assert "integrations/workbuddy/assistant/briefloop-assistant-prompt.md:manifestation score" in quarantine_check[
-        "detail"
-    ]
+    assert (
+        ".opencode/commands/briefloop.md:experiments 080" in quarantine_check["detail"]
+    )
+    assert (
+        ".agents/skills/briefloop-workbuddy/SKILL.md:BriefLoop-090"
+        in quarantine_check["detail"]
+    )
+    assert (
+        ".agents/skills/briefloop-workbuddy/SKILL.md:A-controlled"
+        in quarantine_check["detail"]
+    )
+    assert (
+        ".agents/skills/briefloop-workbuddy/references/quickstart.md:experiments 080"
+        in quarantine_check["detail"]
+    )
+    assert (
+        ".codebuddy/skills/briefloop/SKILL.md:BriefLoop-090"
+        in quarantine_check["detail"]
+    )
+    assert (
+        ".codebuddy/agents/briefloop-scout.md:A-controlled"
+        in quarantine_check["detail"]
+    )
+    assert (
+        "integrations/workbuddy/briefloop/references/quickstart.md:MABW-080"
+        in quarantine_check["detail"]
+    )
+    assert (
+        "examples/reference-workspaces/industry-weekly-demo/README.md:BriefLoop-090"
+        in quarantine_check["detail"]
+    )
+    assert (
+        "integrations/workbuddy/assistant/briefloop-assistant-prompt.md:manifestation score"
+        in quarantine_check["detail"]
+    )
 
 
-def test_first_user_docs_overclaims_fail_public_claim_scan(tmp_path, monkeypatch) -> None:
+def test_first_user_docs_overclaims_fail_public_claim_scan(
+    tmp_path, monkeypatch
+) -> None:
     module = _load_product_baseline_module()
     for rel_path, phrases in module.REQUIRED_DOC_BOUNDARY_PHRASES.items():
         path = tmp_path / rel_path
@@ -552,7 +700,9 @@ def test_first_user_docs_overclaims_fail_public_claim_scan(tmp_path, monkeypatch
     assert "proves every claim is true" in overclaim_check["detail"]
 
 
-def test_golden_path_guard_rejects_experiment_surface_drift(tmp_path, monkeypatch) -> None:
+def test_golden_path_guard_rejects_experiment_surface_drift(
+    tmp_path, monkeypatch
+) -> None:
     module = _load_product_baseline_module()
     for rel_path, phrases in module.REQUIRED_GOLDEN_PATH_PHRASES.items():
         path = tmp_path / rel_path
@@ -567,15 +717,27 @@ def test_golden_path_guard_rejects_experiment_surface_drift(tmp_path, monkeypatc
     module._check_golden_path_surface(checks)
     checks_by_id = {item["id"]: item for item in checks}
 
-    assert checks_by_id["golden_path.docs/golden-path.md.required_product_entries"]["status"] == "pass"
+    assert (
+        checks_by_id["golden_path.docs/golden-path.md.required_product_entries"][
+            "status"
+        ]
+        == "pass"
+    )
     drift_check = checks_by_id["golden_path.docs/golden-path.md.no_experiment_surface"]
     assert drift_check["status"] == "fail"
     assert "experiments 080" in drift_check["detail"]
     assert "score-run" in drift_check["detail"]
-    assert checks_by_id["golden_path.docs/golden-path.zh-CN.md.no_experiment_surface"]["status"] == "pass"
+    assert (
+        checks_by_id["golden_path.docs/golden-path.zh-CN.md.no_experiment_surface"][
+            "status"
+        ]
+        == "pass"
+    )
 
 
-def test_reference_run_guard_rejects_stale_briefloop_090_readiness_framing(tmp_path, monkeypatch) -> None:
+def test_reference_run_guard_rejects_stale_briefloop_090_readiness_framing(
+    tmp_path, monkeypatch
+) -> None:
     module = _load_product_baseline_module()
     reference_dir = tmp_path / "docs" / "reference-runs"
     reference_dir.mkdir(parents=True)
@@ -596,14 +758,16 @@ def test_reference_run_guard_rejects_stale_briefloop_090_readiness_framing(tmp_p
     assert "run-0.md:future BriefLoop-090 readiness" in framing_check["detail"]
 
 
-def test_golden_path_guard_rejects_non_executable_shell_shorthand(tmp_path, monkeypatch) -> None:
+def test_golden_path_guard_rejects_non_executable_shell_shorthand(
+    tmp_path, monkeypatch
+) -> None:
     module = _load_product_baseline_module()
     for rel_path, phrases in module.REQUIRED_GOLDEN_PATH_PHRASES.items():
         path = tmp_path / rel_path
         path.parent.mkdir(parents=True, exist_ok=True)
         text = "\n".join(phrases)
         if rel_path == "docs/golden-path.md":
-            text += "\nbriefloop run ./weekly-brief\nbriefloop feedback ./weekly-brief \"Fix this.\"\n"
+            text += '\nbriefloop run ./weekly-brief\nbriefloop feedback ./weekly-brief "Fix this."\n'
         path.write_text(text, encoding="utf-8")
     monkeypatch.setattr(module, "ROOT", tmp_path)
 
@@ -611,21 +775,32 @@ def test_golden_path_guard_rejects_non_executable_shell_shorthand(tmp_path, monk
     module._check_golden_path_surface(checks)
     checks_by_id = {item["id"]: item for item in checks}
 
-    assert checks_by_id["golden_path.docs/golden-path.md.required_product_entries"]["status"] == "pass"
-    command_check = checks_by_id["golden_path.docs/golden-path.md.no_experiment_surface"]
+    assert (
+        checks_by_id["golden_path.docs/golden-path.md.required_product_entries"][
+            "status"
+        ]
+        == "pass"
+    )
+    command_check = checks_by_id[
+        "golden_path.docs/golden-path.md.no_experiment_surface"
+    ]
     assert command_check["status"] == "fail"
     assert "briefloop run ./" in command_check["detail"]
     assert "briefloop feedback ./" in command_check["detail"]
 
 
-def test_golden_path_guard_allows_slash_command_workspace_shorthand(tmp_path, monkeypatch) -> None:
+def test_golden_path_guard_allows_slash_command_workspace_shorthand(
+    tmp_path, monkeypatch
+) -> None:
     module = _load_product_baseline_module()
     for rel_path, phrases in module.REQUIRED_GOLDEN_PATH_PHRASES.items():
         path = tmp_path / rel_path
         path.parent.mkdir(parents=True, exist_ok=True)
         text = "\n".join(phrases)
         if rel_path == "docs/golden-path.md":
-            text += "\n/briefloop run ./weekly-brief\n/briefloop status ./weekly-brief\n"
+            text += (
+                "\n/briefloop run ./weekly-brief\n/briefloop status ./weekly-brief\n"
+            )
         path.write_text(text, encoding="utf-8")
     monkeypatch.setattr(module, "ROOT", tmp_path)
 
@@ -633,11 +808,21 @@ def test_golden_path_guard_allows_slash_command_workspace_shorthand(tmp_path, mo
     module._check_golden_path_surface(checks)
     checks_by_id = {item["id"]: item for item in checks}
 
-    assert checks_by_id["golden_path.docs/golden-path.md.required_product_entries"]["status"] == "pass"
-    assert checks_by_id["golden_path.docs/golden-path.md.no_experiment_surface"]["status"] == "pass"
+    assert (
+        checks_by_id["golden_path.docs/golden-path.md.required_product_entries"][
+            "status"
+        ]
+        == "pass"
+    )
+    assert (
+        checks_by_id["golden_path.docs/golden-path.md.no_experiment_surface"]["status"]
+        == "pass"
+    )
 
 
-def test_support_matrix_alignment_rejects_product_os_overpromotion(tmp_path, monkeypatch) -> None:
+def test_support_matrix_alignment_rejects_product_os_overpromotion(
+    tmp_path, monkeypatch
+) -> None:
     module = _load_product_baseline_module()
     support_matrix = tmp_path / "docs" / "support-matrix.md"
     support_matrix.parent.mkdir(parents=True, exist_ok=True)
@@ -655,14 +840,24 @@ def test_support_matrix_alignment_rejects_product_os_overpromotion(tmp_path, mon
     module._check_support_matrix_alignment(checks)
     checks_by_id = {item["id"]: item for item in checks}
 
-    assert checks_by_id["support_matrix.v0_11_product_facing_workspace_entries"]["status"] == "pass"
-    assert checks_by_id["support_matrix.reportspec_reportpack_baseline_contracts"]["status"] == "pass"
+    assert (
+        checks_by_id["support_matrix.v0_11_product_facing_workspace_entries"]["status"]
+        == "pass"
+    )
+    assert (
+        checks_by_id["support_matrix.reportspec_reportpack_baseline_contracts"][
+            "status"
+        ]
+        == "pass"
+    )
     extension_check = checks_by_id["support_matrix.wider_product_os_extensions"]
     assert extension_check["status"] == "fail"
     assert "expected='Experimental'" in extension_check["detail"]
 
 
-def test_topology_convergence_guard_rejects_stale_planned_wording(tmp_path, monkeypatch) -> None:
+def test_topology_convergence_guard_rejects_stale_planned_wording(
+    tmp_path, monkeypatch
+) -> None:
     module = _load_product_baseline_module()
     for rel_path, phrases in module.REQUIRED_TOPOLOGY_CONVERGENCE_PHRASES.items():
         path = tmp_path / rel_path
@@ -681,14 +876,20 @@ def test_topology_convergence_guard_rejects_stale_planned_wording(tmp_path, monk
     checks_by_id = {item["id"]: item for item in checks}
 
     assert (
-        checks_by_id["topology_convergence.docs/control-surfaces.md.required_current_contract"]["status"]
+        checks_by_id[
+            "topology_convergence.docs/control-surfaces.md.required_current_contract"
+        ]["status"]
         == "pass"
     )
-    stale_check = checks_by_id["topology_convergence.docs/control-surfaces.md.no_stale_planned_wording"]
+    stale_check = checks_by_id[
+        "topology_convergence.docs/control-surfaces.md.no_stale_planned_wording"
+    ]
     assert stale_check["status"] == "fail"
     assert "Planned v0.8+" in stale_check["detail"]
     assert (
-        checks_by_id["topology_convergence.docs/control-surfaces.zh-CN.md.no_stale_planned_wording"]["status"]
+        checks_by_id[
+            "topology_convergence.docs/control-surfaces.zh-CN.md.no_stale_planned_wording"
+        ]["status"]
         == "pass"
     )
 
@@ -752,14 +953,19 @@ def test_public_overclaim_guard_fails_doc_boundary_check(tmp_path, monkeypatch) 
     assert "authorize_public_release" in overclaim_check["detail"]
 
 
-def test_readme_en_pointer_shape_rejects_extra_legacy_body(tmp_path, monkeypatch) -> None:
+def test_readme_en_pointer_shape_rejects_extra_legacy_body(
+    tmp_path, monkeypatch
+) -> None:
     module = _load_product_baseline_module()
     for rel_path, phrases in module.REQUIRED_DOC_BOUNDARY_PHRASES.items():
         path = tmp_path / rel_path
         path.parent.mkdir(parents=True, exist_ok=True)
         text = "\n".join(phrases)
         if rel_path == "README_en.md":
-            text = module.README_EN_POINTER + "\nCurrent version: **v0.1.0**\nOld README body.\n"
+            text = (
+                module.README_EN_POINTER
+                + "\nCurrent version: **v0.1.0**\nOld README body.\n"
+            )
         path.write_text(text, encoding="utf-8")
     monkeypatch.setattr(module, "ROOT", tmp_path)
 

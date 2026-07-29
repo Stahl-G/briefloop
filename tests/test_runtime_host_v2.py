@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from copy import deepcopy
 from datetime import date
+import json
 import os
 from pathlib import Path
 
@@ -28,7 +29,14 @@ from multi_agent_brief.runtime_host_v2.projections import (
     build_store_status_projection,
 )
 from multi_agent_brief.runtime_host_v2.service import RuntimeHostService
+from multi_agent_brief.runtime_host_v2.source_routes import collect_frozen_sources
 from multi_agent_brief.runtime_host_v2.scratch import materialize_host_bytes
+from multi_agent_brief.sources.base import SourceItem, SourceQuery
+from multi_agent_brief.sources.web_search import (
+    WebSearchCollection,
+    WebSearchProvider,
+)
+from multi_agent_brief.intake_v2.policy import evaluate_source_eligibility
 from multi_agent_brief.workspace.init_profile import InitProfile
 
 
@@ -224,9 +232,10 @@ def test_external_source_plan_freezes_executable_non_secret_requests(
     spec = route.acquisition_spec
     assert spec is not None and spec.kind == "web_search"
     assert spec.provider_id == "tavily"
-    assert [item.query for item in spec.requests] == ["operations", "policy"]
+    assert [item.query for item in spec.requests] == [
+        "Prepare the weekly manufacturing brief."
+    ]
     assert all(item.max_results == 5 for item in spec.requests)
-    assert all(item.recency_days == 7 for item in spec.requests)
     assert "TAVILY_API_KEY" not in str(spec.model_dump(mode="json"))
     fingerprint = first.verified.source_plan.source_plan_fingerprint
 
@@ -241,20 +250,200 @@ def test_external_source_plan_freezes_executable_non_secret_requests(
     assert reopened_route.acquisition_spec == spec
 
 
-def test_executable_source_parameters_change_spec_and_route_fingerprints(
+def test_tavily_route_maps_only_verified_raw_content_to_eligible_extract(
+    tmp_path: Path,
+) -> None:
+    workspace = _external_web_workspace(tmp_path)
+    initialized = initialize_or_open_runtime(workspace, adapter_loader=_adapter)
+    route = next(
+        item
+        for item in initialized.verified.source_plan.routes
+        if item.route_id == "web-search"
+    )
+
+    projections = (
+        {
+            "title": "Durable",
+            "url": "https://example.com/durable",
+            "snippet": "discovery snippet",
+            "raw_content": "retrieved durable page extract",
+            "published_date": "",
+            "score": 0.9,
+        },
+        {
+            "title": "Snippet",
+            "url": "https://example.com/snippet",
+            "snippet": "search snippet",
+            "raw_content": None,
+            "published_date": "",
+            "score": 0.7,
+        },
+    )
+    items = tuple(
+        SourceItem(
+            source_id=source_id,
+            source_name="example.com",
+            source_type="web_search",
+            title=projection["title"],
+            content=projection["raw_content"] or projection["snippet"],
+            url=projection["url"],
+            metadata={
+                "backend": "tavily",
+                "content_shape": (
+                    "provider_raw_content"
+                    if projection["raw_content"]
+                    else "search_snippet"
+                ),
+                "has_raw_content": bool(projection["raw_content"]),
+                "evidence_quality": (
+                    "partial_extract" if projection["raw_content"] else "snippet"
+                ),
+                "provider_projection": projection,
+            },
+        )
+        for source_id, projection in zip(
+            ("DURABLE", "SNIPPET"), projections, strict=True
+        )
+    )
+    response = {
+        "results": [
+            {
+                "title": item["title"],
+                "url": item["url"],
+                "content": item["snippet"],
+                "raw_content": item["raw_content"],
+                "published_date": item["published_date"],
+                "score": item["score"],
+            }
+            for item in projections
+        ]
+    }
+    provider = WebSearchProvider()
+    provider.collect_with_response = lambda *_args, **_kwargs: WebSearchCollection(
+        items=items,
+        raw_response=json.dumps(response, sort_keys=True, separators=(",", ":")).encode(
+            "utf-8"
+        ),
+        status_code=200,
+    )
+
+    materials = collect_frozen_sources(
+        workspace,
+        run_id=initialized.verified.snapshot.run.run_id,
+        invocation_id="INV-DURABLE-CONTENT",
+        route=route,
+        provider_factory=lambda _kind: provider,
+    )
+
+    by_title = {item.proposal.title: item for item in materials}
+    durable = by_title["Durable"]
+    assert durable.content == b"retrieved durable page extract"
+    assert durable.proposal.origin_type == "provider_response"
+    assert durable.proposal.acquisition_method == "provider_extract"
+    assert durable.proposal.material_kind == "partial_extract"
+    assert evaluate_source_eligibility(
+        durable.proposal,
+        raw_payload_present=True,
+    ) == (True, "eligible_durable_source_content")
+    snippet = by_title["Snippet"]
+    assert snippet.proposal.origin_type == "search_snippet_only"
+    assert snippet.proposal.acquisition_method == "provider_search"
+    assert snippet.proposal.material_kind == "search_snippet"
+    assert evaluate_source_eligibility(
+        snippet.proposal,
+        raw_payload_present=True,
+    ) == (False, "ineligible_search_snippet")
+
+
+def test_tavily_route_does_not_trust_raw_content_marker_alone(
+    tmp_path: Path,
+) -> None:
+    workspace = _external_web_workspace(tmp_path)
+    initialized = initialize_or_open_runtime(workspace, adapter_loader=_adapter)
+    route = next(
+        item
+        for item in initialized.verified.source_plan.routes
+        if item.route_id == "web-search"
+    )
+
+    projection = {
+        "title": "Forged marker",
+        "url": "https://example.com/forged",
+        "snippet": "search snippet",
+        "raw_content": None,
+        "published_date": "",
+        "score": 0.5,
+    }
+    forged = SourceItem(
+        source_id="FORGED",
+        source_name="example.com",
+        source_type="web_search",
+        title="Forged marker",
+        content="search snippet",
+        url="https://example.com/forged",
+        metadata={
+            "backend": "other",
+            "content_shape": "provider_raw_content",
+            "has_raw_content": True,
+            "evidence_quality": "partial_extract",
+            "provider_projection": projection,
+        },
+    )
+    provider = WebSearchProvider()
+    provider.collect_with_response = lambda *_args, **_kwargs: WebSearchCollection(
+        items=(forged,),
+        raw_response=json.dumps(
+            {
+                "results": [
+                    {
+                        "title": projection["title"],
+                        "url": projection["url"],
+                        "content": projection["snippet"],
+                        "raw_content": projection["raw_content"],
+                        "published_date": projection["published_date"],
+                        "score": projection["score"],
+                    }
+                ]
+            },
+            sort_keys=True,
+            separators=(",", ":"),
+        ).encode("utf-8"),
+        status_code=200,
+    )
+
+    material = collect_frozen_sources(
+        workspace,
+        run_id=initialized.verified.snapshot.run.run_id,
+        invocation_id="INV-FORGED-CONTENT",
+        route=route,
+        provider_factory=lambda _kind: provider,
+    )[0]
+
+    assert material.proposal.material_kind == "search_snippet"
+    assert evaluate_source_eligibility(
+        material.proposal,
+        raw_payload_present=True,
+    ) == (False, "ineligible_search_snippet")
+
+
+def test_tavily_source_plan_uses_direction_and_fixed_bounds(
     tmp_path: Path,
 ) -> None:
     web_fingerprints: list[tuple[str, str]] = []
-    for name, query, domains, max_results in (
-        ("base", "operations", ["example.com"], 5),
-        ("query", "policy", ["example.com"], 5),
-        ("bounds", "operations", ["example.org"], 9),
+    for name, preferred_domains in (
+        ("base", ["example.com"]),
+        ("domain", ["example.org"]),
     ):
         workspace = _external_web_workspace(tmp_path / name)
         path = workspace / "sources.yaml"
         payload = yaml.safe_load(path.read_text(encoding="utf-8"))
-        payload["web_search"]["search_tasks"] = [{"query": query, "domains": domains}]
-        payload["web_search"]["max_results"] = max_results
+        payload["web_search"]["search_tasks"] = [
+            {"query": "ignored legacy task", "domains": ["ignored.example"]}
+        ]
+        payload["web_search"]["news_source_domains"]["preferred_domains"] = (
+            preferred_domains
+        )
+        payload["web_search"]["max_results"] = 5
         path.write_text(yaml.safe_dump(payload, sort_keys=False), encoding="utf-8")
         initialized = initialize_or_open_runtime(workspace, adapter_loader=_adapter)
         route = next(
@@ -270,6 +459,17 @@ def test_executable_source_parameters_change_spec_and_route_fingerprints(
             )
         )
     assert len(set(web_fingerprints)) == len(web_fingerprints)
+
+    invalid = _external_web_workspace(tmp_path / "invalid-bounds")
+    invalid_path = invalid / "sources.yaml"
+    invalid_payload = yaml.safe_load(invalid_path.read_text(encoding="utf-8"))
+    invalid_payload["web_search"]["max_results"] = 9
+    invalid_path.write_text(
+        yaml.safe_dump(invalid_payload, sort_keys=False),
+        encoding="utf-8",
+    )
+    with pytest.raises(RuntimeHostError, match="runtime_initialization_input_invalid"):
+        initialize_or_open_runtime(invalid, adapter_loader=_adapter)
 
     cached_fingerprints: list[tuple[str, str]] = []
     for name, logical_path, formats in (

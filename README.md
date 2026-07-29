@@ -265,6 +265,14 @@ or symlinks fail closed before runtime work continues.
 
 For workspaces that use the `llm_decide` source profile, source discovery runs
 through the runtime-host route (`run --runtime codex` → `runtime next`).
+The narrow Tavily runtime-first path is Experimental: after explicit Human
+confirmation, `runtime continue` makes one bounded search request, freezes the
+exact provider response and returned content, and atomically records the
+Store-native source pack plus execution authorization before entering the
+existing external-role workflow. Search snippets remain claims-ineligible;
+only non-empty provider-returned durable content is claims-eligible. Synthetic
+loopback transport is tested. Live usefulness, reliability, cost, and
+acquisition-to-`finalized_local` performance are **NOT MEASURED**.
 
 ### Windows PowerShell
 

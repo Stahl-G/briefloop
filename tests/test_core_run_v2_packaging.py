@@ -251,7 +251,9 @@ def test_source_and_non_editable_wheel_hardlink_intake_parity(
         pytest.skip("test filesystem does not support hardlinks")
     wheel_payload = execute("wheel", installed)
     if wheel_payload != source_payload:
-        raise AssertionError(f"source/wheel payload mismatch: {source_payload!r} != {wheel_payload!r}")
+        raise AssertionError(
+            f"source/wheel payload mismatch: {source_payload!r} != {wheel_payload!r}"
+        )
     expected = {
         "hardlink_supported": True,
         "optimize": sys.flags.optimize,
@@ -581,6 +583,11 @@ def test_non_editable_wheel_runs_complete_dormant_core_spine(
         ).joinpath("migrations", "0008.sql")
         assert migration_0008.is_file()
         assert "PRAGMA user_version=8;" in migration_0008.read_text(encoding="utf-8")
+        migration_0009 = resources.files(
+            "multi_agent_brief.control_store"
+        ).joinpath("migrations", "0009.sql")
+        assert migration_0009.is_file()
+        assert "PRAGMA user_version=9;" in migration_0009.read_text(encoding="utf-8")
         assert callable(build_checkout_revision)
         assert CheckoutPublicationEngine.__module__.endswith(".publication")
         assert MAX_SOURCE_PACK_MEMBERS == 256
@@ -633,6 +640,15 @@ def test_non_editable_wheel_runs_complete_dormant_core_spine(
             ])
         assert install_exit == 0
         assert run_exit == 0
+        runtime_reference = binding_workspace / (
+            ".codex/skills/briefloop/references/controlstore-v2.md"
+        )
+        assert runtime_reference.is_file()
+        reference_text = runtime_reference.read_text(encoding="utf-8")
+        assert "RunSourceDiscoveryAuthorization" in reference_text
+        assert "one exact Human-confirmed Tavily Search request" in reference_text
+        assert "Search snippets are" in reference_text
+        assert "claims-ineligible" in reference_text
         scout = binding_workspace / ".codex/agents/briefloop-scout.toml"
         scout.write_bytes(scout.read_bytes() + b"\n# wheel drift\n")
         stream = io.StringIO()

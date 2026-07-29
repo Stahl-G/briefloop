@@ -32,6 +32,7 @@ MAX_SOURCE_PACK_MEMBERS = 256
 MAX_SOURCE_MEMBER_BYTES = 16 * 1024 * 1024
 MAX_SOURCE_PACK_BYTES = 256 * 1024 * 1024
 MAX_SOURCE_MANIFEST_BYTES = 4 * 1024 * 1024
+MAX_PROVIDER_RESPONSE_BYTES = 4 * 1024 * 1024
 SOURCE_STREAM_CHUNK_BYTES = 1024 * 1024
 _MAX_STAGE_CONTRACT_BYTES = 1024 * 1024
 _STAGE_FORMAT = "briefloop-runtime-source-stage/v1"
@@ -72,6 +73,9 @@ class VerifiedSourceStage:
     members: tuple[StagedSourceMember, ...]
     manifest_path: Path | None
     manifest_sha256: str | None
+    provider_response_path: Path | None
+    provider_response_sha256: str | None
+    provider_status_code: int | None
 
 
 class _StageMember(BaseModel):
@@ -90,6 +94,8 @@ class _StageAttestation(BaseModel):
     format: Literal["briefloop-runtime-source-stage/v1"]
     request_fingerprint: str
     manifest_sha256: str | None
+    provider_response_sha256: str | None = None
+    provider_status_code: int | None = None
     members: tuple[_StageMember, ...] = Field(
         min_length=1,
         max_length=MAX_SOURCE_PACK_MEMBERS,
@@ -115,6 +121,14 @@ class _StageAttestation(BaseModel):
         ]
         if self.manifest_sha256 is not None:
             values.append(self.manifest_sha256)
+        if self.provider_response_sha256 is not None:
+            values.append(self.provider_response_sha256)
+        if (self.provider_response_sha256 is None) != (
+            self.provider_status_code is None
+        ):
+            raise ValueError("provider response identity is incomplete")
+        if self.provider_status_code is not None and self.provider_status_code != 200:
+            raise ValueError("provider response status is invalid")
         if any(
             len(value) != 64
             or any(character not in "0123456789abcdef" for character in value)
@@ -177,6 +191,8 @@ def load_source_stage(
         expected_root_members = {"sources", "stage_attestation.json"}
         if expected_manifest_sha256 is not None:
             expected_root_members.add("source_manifest.json")
+        if attestation.provider_response_sha256 is not None:
+            expected_root_members.add("provider_response.json")
         if {item.name for item in os.scandir(root)} != expected_root_members:
             raise RuntimeHostError("runtime_source_staging_invalid")
         sources = root / "sources"
@@ -194,6 +210,18 @@ def load_source_stage(
                 max_size=MAX_SOURCE_MANIFEST_BYTES,
             )
             if size == 0 or digest != expected_manifest_sha256:
+                raise RuntimeHostError("runtime_source_staging_invalid")
+        provider_response_path: Path | None = None
+        if attestation.provider_response_sha256 is not None:
+            provider_response_path = root / "provider_response.json"
+            response_digest, response_size = _hash_regular_file(
+                provider_response_path,
+                max_size=MAX_PROVIDER_RESPONSE_BYTES,
+            )
+            if (
+                response_size == 0
+                or response_digest != attestation.provider_response_sha256
+            ):
                 raise RuntimeHostError("runtime_source_staging_invalid")
         staged: list[StagedSourceMember] = []
         aggregate_size = 0
@@ -272,6 +300,9 @@ def load_source_stage(
             members=tuple(staged),
             manifest_path=manifest_path,
             manifest_sha256=expected_manifest_sha256,
+            provider_response_path=provider_response_path,
+            provider_response_sha256=attestation.provider_response_sha256,
+            provider_status_code=attestation.provider_status_code,
         )
     except RuntimeHostError:
         raise
@@ -368,6 +399,8 @@ def stage_source_pack_bytes(
     stage_identity: str,
     request_fingerprint: str,
     members: tuple[SourceStageBytesInput, ...],
+    provider_response_bytes: bytes | None = None,
+    provider_status_code: int | None = None,
 ) -> VerifiedSourceStage:
     """Bound and stage one deterministic provider result set."""
 
@@ -380,6 +413,15 @@ def stage_source_pack_bytes(
     if existing is not None:
         return existing
     if not members or len(members) > MAX_SOURCE_PACK_MEMBERS:
+        raise RuntimeHostError("runtime_source_pack_invalid")
+    if (
+        provider_response_bytes is not None
+        and (
+            not provider_response_bytes
+            or len(provider_response_bytes) > MAX_PROVIDER_RESPONSE_BYTES
+            or provider_status_code != 200
+        )
+    ) or (provider_response_bytes is None and provider_status_code is not None):
         raise RuntimeHostError("runtime_source_pack_invalid")
     _require_canonical_members(tuple(item.member_id for item in members))
     aggregate_size = 0
@@ -413,6 +455,13 @@ def stage_source_pack_bytes(
             raise RuntimeHostError("runtime_source_pack_invalid")
     root, building = _stage_build_directory(workspace, stage_identity)
     try:
+        provider_response_sha256: str | None = None
+        if provider_response_bytes is not None:
+            _write_regular_bytes(
+                building / "provider_response.json",
+                provider_response_bytes,
+            )
+            provider_response_sha256 = sha256_hex(provider_response_bytes)
         staged_members: list[_StageMember] = []
         for item in members:
             member_root = building / "sources" / item.member_id
@@ -450,6 +499,8 @@ def stage_source_pack_bytes(
             building,
             request_fingerprint=request_fingerprint,
             manifest_sha256=None,
+            provider_response_sha256=provider_response_sha256,
+            provider_status_code=provider_status_code,
             members=tuple(staged_members),
         )
         _publish_stage(building, root)
@@ -528,12 +579,16 @@ def _finish_stage(
     *,
     request_fingerprint: str,
     manifest_sha256: str | None,
+    provider_response_sha256: str | None = None,
+    provider_status_code: int | None = None,
     members: tuple[_StageMember, ...],
 ) -> None:
     attestation = _StageAttestation(
         format=_STAGE_FORMAT,
         request_fingerprint=request_fingerprint,
         manifest_sha256=manifest_sha256,
+        provider_response_sha256=provider_response_sha256,
+        provider_status_code=provider_status_code,
         members=members,
     )
     _write_regular_bytes(

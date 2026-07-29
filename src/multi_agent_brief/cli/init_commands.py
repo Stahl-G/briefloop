@@ -195,7 +195,7 @@ def _init_web_wizard(args: argparse.Namespace) -> int:
         f"[init --web] {outcome.status}: workspace={outcome.workspace} "
         f"run_id={outcome.run_id} transaction_id={outcome.transaction_id}"
     )
-    if outcome.execution_authorized:
+    if outcome.execution_authorized or outcome.source_discovery_authorized:
         print(f"briefloop runtime continue --workspace {outcome.workspace}")
     else:
         print(

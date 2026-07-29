@@ -237,6 +237,13 @@ URL 与事件 `opened_at` 元数据。workspace 内的 Codex kit 也会被哈希
 
 旧的 `briefloop sources decide` 仅作为退役命令名保留；SQLite Codex run 的来源
 登记必须走 Store-derived runtime action，不得把旧 JSON 路径当作 fallback。
+窄范围 Tavily runtime-first 路径仍是 Experimental：经人类明确确认后，
+`runtime continue` 只发出一次有界搜索请求，冻结准确的 provider response 与
+返回内容，并在进入现有外部角色工作流前，通过一个原子 transaction 登记
+Store-native source pack 与 execution authorization。搜索摘要保留为
+claims-ineligible；只有非空的 provider-returned durable content 才能成为
+claims-eligible。合成 loopback transport 已测试；真实用途、可靠性、成本以及
+从 acquisition 到 `finalized_local` 的表现均为 **NOT MEASURED**。
 
 ### Windows PowerShell
 

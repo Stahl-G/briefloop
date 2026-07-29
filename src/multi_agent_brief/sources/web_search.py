@@ -1,14 +1,24 @@
 """Web search source provider with pluggable backends."""
+
 from __future__ import annotations
 
 import hashlib
 import os
 from contextlib import contextmanager
+from dataclasses import dataclass
 from typing import Any
 
-from multi_agent_brief.core.env import KNOWN_WORKSPACE_ENV_KEYS, known_env_key_is_set, read_workspace_env_key
+from multi_agent_brief.core.env import (
+    KNOWN_WORKSPACE_ENV_KEYS,
+    known_env_key_is_set,
+    read_workspace_env_key,
+)
 from multi_agent_brief.sources.base import SourceItem, SourceProvider, SourceQuery
-from multi_agent_brief.sources.search_backends.base import SearchBackend, SearchResult
+from multi_agent_brief.sources.search_backends.base import (
+    SearchBackend,
+    SearchResponse,
+    SearchResult,
+)
 
 
 # Registry of known backends that can be auto-instantiated from config.
@@ -16,23 +26,37 @@ _KNOWN_BACKENDS: dict[str, type[SearchBackend]] = {}
 WEB_SEARCH_MODES = {"disabled", "runtime_tool", "external_api", "configure_later"}
 
 
+@dataclass(frozen=True)
+class WebSearchCollection:
+    items: tuple[SourceItem, ...]
+    raw_response: bytes | None
+    status_code: int | None
+
+
 def _register_known_backends() -> None:
     """Lazily register known backend classes."""
     if _KNOWN_BACKENDS:
         return
     from multi_agent_brief.sources.search_backends.tavily import TavilyBackend
+
     _KNOWN_BACKENDS["tavily"] = TavilyBackend
     from multi_agent_brief.sources.search_backends.exa import ExaBackend
+
     _KNOWN_BACKENDS["exa"] = ExaBackend
     from multi_agent_brief.sources.search_backends.brave import BraveBackend
+
     _KNOWN_BACKENDS["brave"] = BraveBackend
     from multi_agent_brief.sources.search_backends.firecrawl import FirecrawlBackend
+
     _KNOWN_BACKENDS["firecrawl"] = FirecrawlBackend
     from multi_agent_brief.sources.search_backends.serper import SerperBackend
+
     _KNOWN_BACKENDS["serper"] = SerperBackend
 
 
-def backend_api_key_env(backend: SearchBackend, config: dict[str, Any] | None = None) -> str:
+def backend_api_key_env(
+    backend: SearchBackend, config: dict[str, Any] | None = None
+) -> str:
     """Return the env var name a backend uses for its API key."""
     if config and config.get("api_key_env"):
         return str(config["api_key_env"])
@@ -117,23 +141,33 @@ class WebSearchProvider(SourceProvider):
                 f"got '{mode or '<missing>'}'."
             ]
         if mode == "disabled":
-            return ["web_search.enabled is true but mode is disabled. Set enabled: false or choose another mode."]
+            return [
+                "web_search.enabled is true but mode is disabled. Set enabled: false or choose another mode."
+            ]
         if mode == "configure_later":
             return []
         if mode == "runtime_tool":
             if config.get("backend"):
-                return ["web_search.mode runtime_tool must not configure backend; remove backend or use mode: external_api."]
+                return [
+                    "web_search.mode runtime_tool must not configure backend; remove backend or use mode: external_api."
+                ]
             return []
         # external_api
         backend_name = config.get("backend") or ""
         if not backend_name:
-            return ["web_search.mode external_api requires backend: tavily|exa|brave|firecrawl|serper."]
+            return [
+                "web_search.mode external_api requires backend: tavily|exa|brave|firecrawl|serper."
+            ]
 
         _register_known_backends()
         if backend_name == "mock":
-            return ["web_search mock backend has been removed; use mode: runtime_tool or a real external_api backend."]
+            return [
+                "web_search mock backend has been removed; use mode: runtime_tool or a real external_api backend."
+            ]
         if backend_name not in _KNOWN_BACKENDS:
-            return [f"web_search: unknown backend '{backend_name}'. Supported: {', '.join(_KNOWN_BACKENDS)}"]
+            return [
+                f"web_search: unknown backend '{backend_name}'. Supported: {', '.join(_KNOWN_BACKENDS)}"
+            ]
 
         try:
             backend = self._get_backend(config)
@@ -141,30 +175,49 @@ class WebSearchProvider(SourceProvider):
             return [str(exc)]
         if not backend.is_available():
             api_key_env = backend_api_key_env(backend, config)
-            workspace_dir = config.get("_workspace_dir") or config.get("workspace_dir") or ""
+            workspace_dir = (
+                config.get("_workspace_dir") or config.get("workspace_dir") or ""
+            )
             if api_key_env:
                 if api_key_env in KNOWN_WORKSPACE_ENV_KEYS:
                     if known_env_key_is_set(api_key_env, workspace_dir):
                         return []
                 elif os.environ.get(api_key_env):
                     return []
-            key_hint = f"env var {api_key_env}" if api_key_env else "a configured API key"
-            return [f"web_search: backend '{backend_name}' requires {key_hint}, but it is missing. Copy your workspace .env.example to .env and fill in the key, or export it in your shell."]
+            key_hint = (
+                f"env var {api_key_env}" if api_key_env else "a configured API key"
+            )
+            return [
+                f"web_search: backend '{backend_name}' requires {key_hint}, but it is missing. Copy your workspace .env.example to .env and fill in the key, or export it in your shell."
+            ]
         return []
 
     def collect(self, query: SourceQuery, config: dict[str, Any]) -> list[SourceItem]:
+        return list(self.collect_with_response(query, config).items)
+
+    def collect_with_response(
+        self,
+        query: SourceQuery,
+        config: dict[str, Any],
+    ) -> WebSearchCollection:
         if not config.get("enabled"):
-            return []
+            return WebSearchCollection(items=(), raw_response=None, status_code=None)
         if config.get("mode") in {"runtime_tool", "configure_later"}:
-            return []
+            return WebSearchCollection(items=(), raw_response=None, status_code=None)
 
         backend = self._get_backend(config)
         with temporary_workspace_api_key_env(backend, config):
             if not backend.is_available():
-                return []
+                return WebSearchCollection(
+                    items=(),
+                    raw_response=None,
+                    status_code=None,
+                )
 
             backend_name = backend.name
             all_items: list[SourceItem] = []
+            raw_response: bytes | None = None
+            status_code: int | None = None
             max_results = config.get("max_results", 20)
             recency_days = config.get("recency_days")
 
@@ -172,13 +225,47 @@ class WebSearchProvider(SourceProvider):
             queries, task_meta = self._build_queries(query, config)
 
             for q, domains in queries:
-                results = backend.search(q, max_results=max_results, domains=domains, days=recency_days)
+                if backend.name == "tavily":
+                    search_response = getattr(backend, "search_response", None)
+                    if not callable(search_response):
+                        raise RuntimeError("tavily response envelope unavailable")
+                    envelope: SearchResponse = search_response(
+                        q,
+                        max_results=max_results,
+                        domains=domains,
+                        days=(
+                            recency_days if config.get("time_range") is None else None
+                        ),
+                        time_range=config.get("time_range"),
+                        start_date=config.get("start_date"),
+                        end_date=config.get("end_date"),
+                        topic=config.get("topic", "news"),
+                        search_depth=config.get("search_depth", "basic"),
+                    )
+                    if raw_response is not None:
+                        raise RuntimeError("multiple Tavily requests are not allowed")
+                    raw_response = envelope.raw_response
+                    status_code = envelope.status_code
+                    results = list(envelope.results)
+                else:
+                    results = backend.search(
+                        q,
+                        max_results=max_results,
+                        domains=domains,
+                        days=recency_days,
+                    )
                 task_metadata = task_meta.get(q)
                 for r in results:
-                    item = self._result_to_source_item(r, q, backend_name, task_metadata=task_metadata)
+                    item = self._result_to_source_item(
+                        r, q, backend_name, task_metadata=task_metadata
+                    )
                     all_items.append(item)
 
-        return all_items
+        return WebSearchCollection(
+            items=tuple(all_items),
+            raw_response=raw_response,
+            status_code=status_code,
+        )
 
     def _build_queries(
         self, query: SourceQuery, config: dict[str, Any]
@@ -246,9 +333,22 @@ class WebSearchProvider(SourceProvider):
             "backend": backend_name,
             "retrieved_at": retrieved_at,
             "date_status": result.metadata.get("date_status", "missing_published_at"),
-            "source_temporality": result.metadata.get("source_temporality", "retrieved_only"),
+            "source_temporality": result.metadata.get(
+                "source_temporality", "retrieved_only"
+            ),
         }
         metadata.update(result.metadata)
+        raw_content = (
+            result.raw_content.strip()
+            if isinstance(result.raw_content, str) and result.raw_content.strip()
+            else None
+        )
+        metadata["content_shape"] = (
+            "provider_raw_content" if raw_content is not None else "search_snippet"
+        )
+        metadata["has_raw_content"] = raw_content is not None
+        if result.raw_projection:
+            metadata["provider_projection"] = result.raw_projection
         # Propagate task metadata (topic, market, language, etc.) to SourceItem
         if task_metadata:
             for key, value in task_metadata.items():
@@ -258,7 +358,7 @@ class WebSearchProvider(SourceProvider):
             source_name=result.source_name or "web_search",
             source_type="web_search",
             title=result.title,
-            content=result.snippet,
+            content=raw_content if raw_content is not None else result.snippet,
             url=result.url,
             published_at=result.published_at,
             retrieved_at=retrieved_at,

@@ -17,6 +17,7 @@ from multi_agent_brief.contracts.v2 import (
     CoreRunNextAction,
     ExecutionSourceManifest,
     RunExecutionAuthorizationInput,
+    RunSourceDiscoveryAuthorizationInput,
     RuntimeAdapterBinding,
     WorkspaceControlStoreBootstrapV2,
 )
@@ -80,6 +81,7 @@ class _InitializationInputs:
     config_bytes: bytes
     sources_sha256: str
     execution_authorization: RunExecutionAuthorizationInput | None
+    source_discovery_authorization: RunSourceDiscoveryAuthorizationInput | None
 
 
 @dataclass(frozen=True)
@@ -212,11 +214,30 @@ def _load_initialization_inputs(workspace: Path) -> _InitializationInputs:
             )
         except (ValidationError, ValueError) as exc:
             raise RuntimeHostError("runtime_initialization_input_invalid") from exc
+    source_discovery_authorization: RunSourceDiscoveryAuthorizationInput | None = None
+    bootstrap_discovery = bootstrap.source_discovery_authorization
+    if bootstrap_discovery is not None:
+        try:
+            source_discovery_authorization = RunSourceDiscoveryAuthorizationInput.model_validate(
+                {
+                    "schema_version": RunSourceDiscoveryAuthorizationInput.schema_id,
+                    "route_id": bootstrap_discovery.route_id,
+                    "provider_id": bootstrap_discovery.provider_id,
+                    "execution_owner": bootstrap_discovery.execution_owner,
+                    "credential_env": bootstrap_discovery.credential_env,
+                    "completion_target": bootstrap_discovery.completion_target,
+                    "repair_budget": bootstrap_discovery.repair_budget,
+                },
+                strict=True,
+            )
+        except (ValidationError, ValueError) as exc:
+            raise RuntimeHostError("runtime_initialization_input_invalid") from exc
     return _InitializationInputs(
         bootstrap=bootstrap,
         config_bytes=config_bytes,
         sources_sha256=sources_sha256,
         execution_authorization=execution_authorization,
+        source_discovery_authorization=source_discovery_authorization,
     )
 
 
@@ -255,6 +276,13 @@ def _initialize_request(
                     None
                     if inputs.execution_authorization is None
                     else inputs.execution_authorization.model_dump(
+                        mode="json", exclude_unset=False
+                    )
+                ),
+                "source_discovery_authorization": (
+                    None
+                    if inputs.source_discovery_authorization is None
+                    else inputs.source_discovery_authorization.model_dump(
                         mode="json", exclude_unset=False
                     )
                 ),

@@ -26,6 +26,20 @@ page describes implemented runtime capability, not a breaking deep rename.
   one Invocation, one UoW, and one Receipt. The same request hash-binds the
   frozen manifest and preserves source IDs, URLs, and incident temporal
   metadata; partial pack commits are forbidden.
+- The Experimental narrow Tavily runtime-first route starts only from a
+  Store-frozen Human-confirmed discovery authorization. `runtime continue`
+  owns one bounded provider request, freezes the exact response, per-result
+  projection, and returned content, then uses the existing Intake UoW to
+  atomically record the mixed-eligibility source pack and execution
+  authorization before returning the external-role handoff. Search snippets
+  are claims-ineligible. Synthetic transport is tested; live usefulness,
+  reliability, cost, and acquisition-to-`finalized_local` performance are
+  NOT MEASURED.
+  POSIX/macOS retained-publication capability is checked before any Tavily call.
+  On current Windows, `runtime continue` returns the typed
+  `checkout_publication_unsupported` stop with zero provider/network access,
+  no source promotion, and no later execution, finalization, approval,
+  package, or delivery authority.
 - The workspace-local Codex kit is execution input, not decoration: `run` and
   runtime commands verify its exact config, Skill, reference, and role-file
   inventory against the Store-bound adapter identity.

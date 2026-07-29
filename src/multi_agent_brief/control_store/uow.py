@@ -48,6 +48,7 @@ from multi_agent_brief.contracts.v2 import (
     ArtifactSupersessionRecord,
     RunContractBinding,
     RunExecutionAuthorization,
+    RunSourceDiscoveryAuthorization,
     RunIdentity,
     RunIntegrityRecord,
     RunArchiveArtifactBinding,
@@ -130,24 +131,22 @@ class ControlUnitOfWork:
         ] = {}
         self._run_contract_binding: RunContractBinding | None = None
         self._run_execution_authorization: RunExecutionAuthorization | None = None
-        self._owned_artifact_submissions: dict[
-            str, OwnedArtifactSubmissionRecord
+        self._run_source_discovery_authorization: (
+            RunSourceDiscoveryAuthorization | None
+        ) = None
+        self._referenced_source_discovery_authorizations: dict[
+            str, RunSourceDiscoveryAuthorization
         ] = {}
+        self._owned_artifact_submissions: dict[str, OwnedArtifactSubmissionRecord] = {}
         self._stage_transitions: dict[str, StageTransitionRecord] = {}
-        self._stage_artifact_bindings: dict[
-            tuple[str, int], StageArtifactBinding
-        ] = {}
+        self._stage_artifact_bindings: dict[tuple[str, int], StageArtifactBinding] = {}
         self._stage_gate_bindings: dict[tuple[str, str], StageGateBinding] = {}
         self._claims: dict[str, ClaimRecord] = {}
-        self._claim_source_bindings: dict[
-            tuple[str, str], ClaimSourceBinding
-        ] = {}
+        self._claim_source_bindings: dict[tuple[str, str], ClaimSourceBinding] = {}
         self._claim_freezes: dict[str, ClaimFreezeRecord] = {}
         self._gate_evaluations: dict[str, GateEvaluationRecord] = {}
         self._gate_findings: dict[tuple[str, str], GateFindingRecord] = {}
-        self._gate_artifact_bindings: dict[
-            tuple[str, int], GateArtifactBinding
-        ] = {}
+        self._gate_artifact_bindings: dict[tuple[str, int], GateArtifactBinding] = {}
         self._run_integrity_records: dict[int, RunIntegrityRecord] = {}
         self._repair_cycles: dict[str, RepairCycleRecord] = {}
         self._gate_repair_cycles: dict[str, GateRepairCycleRecord] = {}
@@ -160,10 +159,16 @@ class ControlUnitOfWork:
         self._finalize_renders: dict[str, FinalizeRenderRecord] = {}
         self._finalizations: dict[str, FinalizationRecord] = {}
         self._run_archives: dict[str, RunArchiveRecord] = {}
-        self._run_archive_artifact_bindings: dict[tuple[str, int], RunArchiveArtifactBinding] = {}
+        self._run_archive_artifact_bindings: dict[
+            tuple[str, int], RunArchiveArtifactBinding
+        ] = {}
         self._package_ready_records: dict[str, PackageReadyRecord] = {}
-        self._package_artifact_bindings: dict[tuple[str, int], PackageArtifactBinding] = {}
-        self._approval_package_bindings: dict[tuple[str, str], ApprovalPackageBinding] = {}
+        self._package_artifact_bindings: dict[
+            tuple[str, int], PackageArtifactBinding
+        ] = {}
+        self._approval_package_bindings: dict[
+            tuple[str, str], ApprovalPackageBinding
+        ] = {}
         self._delivery_authorizations: dict[str, DeliveryAuthorizationRecord] = {}
         self._delivery_attempts: dict[str, DeliveryAttemptRecord] = {}
         self._delivery_results: dict[str, DeliveryResultRecord] = {}
@@ -173,9 +178,7 @@ class ControlUnitOfWork:
         ] = {}
         self._receipt_checkout_binding: ReceiptCheckoutBinding | None = None
         self._checkout_publication_intent: CheckoutPublicationIntent | None = None
-        self._checkout_publication_members: dict[
-            int, CheckoutPublicationMember
-        ] = {}
+        self._checkout_publication_members: dict[int, CheckoutPublicationMember] = {}
         self._state = "active"
 
     @property
@@ -353,6 +356,37 @@ class ControlUnitOfWork:
             raise ControlStoreConflict("duplicate_staged_record")
         self._run_execution_authorization = snapshot
 
+    def put_run_source_discovery_authorization(
+        self,
+        record: RunSourceDiscoveryAuthorization,
+    ) -> None:
+        snapshot = self._snapshot_record(record, RunSourceDiscoveryAuthorization)
+        self._require_run(snapshot)
+        if snapshot.workspace_id != self._store.workspace_id:
+            raise ControlStoreConflict("control_record_workspace_mismatch")
+        if self._run_source_discovery_authorization is not None:
+            raise ControlStoreConflict("duplicate_staged_record")
+        self._run_source_discovery_authorization = snapshot
+        self._put_unique(
+            self._referenced_source_discovery_authorizations,
+            snapshot.authorization_id,
+            snapshot,
+        )
+
+    def reference_run_source_discovery_authorization(
+        self,
+        record: RunSourceDiscoveryAuthorization,
+    ) -> None:
+        snapshot = self._snapshot_record(record, RunSourceDiscoveryAuthorization)
+        self._require_run(snapshot)
+        if snapshot.workspace_id != self._store.workspace_id:
+            raise ControlStoreConflict("control_record_workspace_mismatch")
+        self._put_unique(
+            self._referenced_source_discovery_authorizations,
+            snapshot.authorization_id,
+            snapshot,
+        )
+
     def put_owned_artifact_submission(
         self,
         record: OwnedArtifactSubmissionRecord,
@@ -485,12 +519,16 @@ class ControlUnitOfWork:
     def put_artifact_supersession(self, record: ArtifactSupersessionRecord) -> None:
         snapshot = self._snapshot_record(record, ArtifactSupersessionRecord)
         self._require_run(snapshot)
-        self._put_unique(self._artifact_supersessions, snapshot.supersession_id, snapshot)
+        self._put_unique(
+            self._artifact_supersessions, snapshot.supersession_id, snapshot
+        )
 
     def put_repair_completion(self, record: RepairCompletionRecord) -> None:
         snapshot = self._snapshot_record(record, RepairCompletionRecord)
         self._require_run(snapshot)
-        self._put_unique(self._repair_completions, snapshot.repair_completion_id, snapshot)
+        self._put_unique(
+            self._repair_completions, snapshot.repair_completion_id, snapshot
+        )
 
     def put_recovery_completion(self, record: RecoveryCompletionRecord) -> None:
         snapshot = self._snapshot_record(record, RecoveryCompletionRecord)
@@ -499,9 +537,14 @@ class ControlUnitOfWork:
 
     def put_run_head_transition(self, record: RunHeadTransitionRecord) -> None:
         snapshot = self._snapshot_record(record, RunHeadTransitionRecord)
-        if snapshot.workspace_id != self._store.workspace_id or snapshot.successor_run_id != self.run_id:
+        if (
+            snapshot.workspace_id != self._store.workspace_id
+            or snapshot.successor_run_id != self.run_id
+        ):
             raise ControlStoreConflict("control_record_run_mismatch")
-        self._put_unique(self._run_head_transitions, snapshot.head_transition_id, snapshot)
+        self._put_unique(
+            self._run_head_transitions, snapshot.head_transition_id, snapshot
+        )
 
     def put_finalize_render(self, record: FinalizeRenderRecord) -> None:
         snapshot = self._snapshot_record(record, FinalizeRenderRecord)
@@ -518,10 +561,16 @@ class ControlUnitOfWork:
         self._require_run(snapshot)
         self._put_unique(self._run_archives, snapshot.archive_id, snapshot)
 
-    def put_run_archive_artifact_binding(self, record: RunArchiveArtifactBinding) -> None:
+    def put_run_archive_artifact_binding(
+        self, record: RunArchiveArtifactBinding
+    ) -> None:
         snapshot = self._snapshot_record(record, RunArchiveArtifactBinding)
         self._require_run(snapshot)
-        self._put_unique(self._run_archive_artifact_bindings, (snapshot.archive_id, snapshot.position), snapshot)
+        self._put_unique(
+            self._run_archive_artifact_bindings,
+            (snapshot.archive_id, snapshot.position),
+            snapshot,
+        )
 
     def put_package_ready(self, record: PackageReadyRecord) -> None:
         snapshot = self._snapshot_record(record, PackageReadyRecord)
@@ -531,17 +580,27 @@ class ControlUnitOfWork:
     def put_package_artifact_binding(self, record: PackageArtifactBinding) -> None:
         snapshot = self._snapshot_record(record, PackageArtifactBinding)
         self._require_run(snapshot)
-        self._put_unique(self._package_artifact_bindings, (snapshot.package_id, snapshot.position), snapshot)
+        self._put_unique(
+            self._package_artifact_bindings,
+            (snapshot.package_id, snapshot.position),
+            snapshot,
+        )
 
     def put_approval_package_binding(self, record: ApprovalPackageBinding) -> None:
         snapshot = self._snapshot_record(record, ApprovalPackageBinding)
         self._require_run(snapshot)
-        self._put_unique(self._approval_package_bindings, (snapshot.approval_id, snapshot.package_id), snapshot)
+        self._put_unique(
+            self._approval_package_bindings,
+            (snapshot.approval_id, snapshot.package_id),
+            snapshot,
+        )
 
     def put_delivery_authorization(self, record: DeliveryAuthorizationRecord) -> None:
         snapshot = self._snapshot_record(record, DeliveryAuthorizationRecord)
         self._require_run(snapshot)
-        self._put_unique(self._delivery_authorizations, snapshot.authorization_id, snapshot)
+        self._put_unique(
+            self._delivery_authorizations, snapshot.authorization_id, snapshot
+        )
 
     def put_delivery_attempt(self, record: DeliveryAttemptRecord) -> None:
         snapshot = self._snapshot_record(record, DeliveryAttemptRecord)
@@ -607,9 +666,7 @@ class ControlUnitOfWork:
             or snapshot.identity.transaction_id != self.transaction_id
         ):
             raise ControlStoreConflict("relational_integrity_conflict")
-        self._put_unique(
-            self._checkout_publication_members, snapshot.ordinal, snapshot
-        )
+        self._put_unique(self._checkout_publication_members, snapshot.ordinal, snapshot)
 
     def _put_unique(
         self,
@@ -633,9 +690,7 @@ class ControlUnitOfWork:
             "transaction_id": identity.transaction_id,
             "transaction_type": identity.transaction_type,
             "expected_revision": identity.expected_revision,
-            "run": (
-                self._record_payload(self._run) if self._run is not None else None
-            ),
+            "run": (self._record_payload(self._run) if self._run is not None else None),
             "workspace_run_head": (
                 self._record_payload(self._workspace_run_head)
                 if self._workspace_run_head is not None
@@ -654,8 +709,7 @@ class ControlUnitOfWork:
                 for key in sorted(self._artifacts)
             ],
             "artifact_revisions": [
-                self._record_payload(item.record)
-                for item in self._artifact_revisions
+                self._record_payload(item.record) for item in self._artifact_revisions
             ],
             "events": [self._record_payload(item) for item in self._events],
             "approvals": [
@@ -687,6 +741,17 @@ class ControlUnitOfWork:
                 if self._run_execution_authorization is not None
                 else None
             ),
+            "run_source_discovery_authorization": (
+                self._record_payload(self._run_source_discovery_authorization)
+                if self._run_source_discovery_authorization is not None
+                else None
+            ),
+            "referenced_source_discovery_authorizations": [
+                self._record_payload(
+                    self._referenced_source_discovery_authorizations[key]
+                )
+                for key in sorted(self._referenced_source_discovery_authorizations)
+            ],
             "owned_artifact_submissions": [
                 self._record_payload(self._owned_artifact_submissions[key])
                 for key in sorted(self._owned_artifact_submissions)
@@ -704,8 +769,7 @@ class ControlUnitOfWork:
                 for key in sorted(self._stage_gate_bindings)
             ],
             "claims": [
-                self._record_payload(self._claims[key])
-                for key in sorted(self._claims)
+                self._record_payload(self._claims[key]) for key in sorted(self._claims)
             ],
             "claim_source_bindings": [
                 self._record_payload(self._claim_source_bindings[key])
@@ -731,7 +795,10 @@ class ControlUnitOfWork:
                 self._record_payload(self._run_integrity_records[key])
                 for key in sorted(self._run_integrity_records)
             ],
-            "repair_cycles": [self._record_payload(self._repair_cycles[key]) for key in sorted(self._repair_cycles)],
+            "repair_cycles": [
+                self._record_payload(self._repair_cycles[key])
+                for key in sorted(self._repair_cycles)
+            ],
             "gate_repair_cycles": [
                 self._record_payload(self._gate_repair_cycles[key])
                 for key in sorted(self._gate_repair_cycles)
@@ -744,20 +811,62 @@ class ControlUnitOfWork:
                 self._record_payload(self._gate_repair_outcomes[key])
                 for key in sorted(self._gate_repair_outcomes)
             ],
-            "artifact_supersessions": [self._record_payload(self._artifact_supersessions[key]) for key in sorted(self._artifact_supersessions)],
-            "repair_completions": [self._record_payload(self._repair_completions[key]) for key in sorted(self._repair_completions)],
-            "recovery_completions": [self._record_payload(self._recovery_completions[key]) for key in sorted(self._recovery_completions)],
-            "run_head_transitions": [self._record_payload(self._run_head_transitions[key]) for key in sorted(self._run_head_transitions)],
-            "finalize_renders": [self._record_payload(self._finalize_renders[key]) for key in sorted(self._finalize_renders)],
-            "finalizations": [self._record_payload(self._finalizations[key]) for key in sorted(self._finalizations)],
-            "run_archives": [self._record_payload(self._run_archives[key]) for key in sorted(self._run_archives)],
-            "run_archive_artifact_bindings": [self._record_payload(self._run_archive_artifact_bindings[key]) for key in sorted(self._run_archive_artifact_bindings)],
-            "package_ready_records": [self._record_payload(self._package_ready_records[key]) for key in sorted(self._package_ready_records)],
-            "package_artifact_bindings": [self._record_payload(self._package_artifact_bindings[key]) for key in sorted(self._package_artifact_bindings)],
-            "approval_package_bindings": [self._record_payload(self._approval_package_bindings[key]) for key in sorted(self._approval_package_bindings)],
-            "delivery_authorizations": [self._record_payload(self._delivery_authorizations[key]) for key in sorted(self._delivery_authorizations)],
-            "delivery_attempts": [self._record_payload(self._delivery_attempts[key]) for key in sorted(self._delivery_attempts)],
-            "delivery_results": [self._record_payload(self._delivery_results[key]) for key in sorted(self._delivery_results)],
+            "artifact_supersessions": [
+                self._record_payload(self._artifact_supersessions[key])
+                for key in sorted(self._artifact_supersessions)
+            ],
+            "repair_completions": [
+                self._record_payload(self._repair_completions[key])
+                for key in sorted(self._repair_completions)
+            ],
+            "recovery_completions": [
+                self._record_payload(self._recovery_completions[key])
+                for key in sorted(self._recovery_completions)
+            ],
+            "run_head_transitions": [
+                self._record_payload(self._run_head_transitions[key])
+                for key in sorted(self._run_head_transitions)
+            ],
+            "finalize_renders": [
+                self._record_payload(self._finalize_renders[key])
+                for key in sorted(self._finalize_renders)
+            ],
+            "finalizations": [
+                self._record_payload(self._finalizations[key])
+                for key in sorted(self._finalizations)
+            ],
+            "run_archives": [
+                self._record_payload(self._run_archives[key])
+                for key in sorted(self._run_archives)
+            ],
+            "run_archive_artifact_bindings": [
+                self._record_payload(self._run_archive_artifact_bindings[key])
+                for key in sorted(self._run_archive_artifact_bindings)
+            ],
+            "package_ready_records": [
+                self._record_payload(self._package_ready_records[key])
+                for key in sorted(self._package_ready_records)
+            ],
+            "package_artifact_bindings": [
+                self._record_payload(self._package_artifact_bindings[key])
+                for key in sorted(self._package_artifact_bindings)
+            ],
+            "approval_package_bindings": [
+                self._record_payload(self._approval_package_bindings[key])
+                for key in sorted(self._approval_package_bindings)
+            ],
+            "delivery_authorizations": [
+                self._record_payload(self._delivery_authorizations[key])
+                for key in sorted(self._delivery_authorizations)
+            ],
+            "delivery_attempts": [
+                self._record_payload(self._delivery_attempts[key])
+                for key in sorted(self._delivery_attempts)
+            ],
+            "delivery_results": [
+                self._record_payload(self._delivery_results[key])
+                for key in sorted(self._delivery_results)
+            ],
             "checkout_revisions": [
                 self._record_payload(self._checkout_revisions[key])
                 for key in sorted(self._checkout_revisions)
@@ -768,11 +877,13 @@ class ControlUnitOfWork:
             ],
             "receipt_checkout_binding": (
                 self._record_payload(self._receipt_checkout_binding)
-                if self._receipt_checkout_binding is not None else None
+                if self._receipt_checkout_binding is not None
+                else None
             ),
             "checkout_publication_intent": (
                 self._record_payload(self._checkout_publication_intent)
-                if self._checkout_publication_intent is not None else None
+                if self._checkout_publication_intent is not None
+                else None
             ),
             "checkout_publication_members": [
                 self._record_payload(self._checkout_publication_members[key])
@@ -810,9 +921,7 @@ class ControlUnitOfWork:
             raise
         except Exception as exc:
             self._state = "outcome_unknown"
-            raise ControlStoreCommitOutcomeUnknown(
-                "commit_outcome_unknown"
-            ) from exc
+            raise ControlStoreCommitOutcomeUnknown("commit_outcome_unknown") from exc
         self._state = "committed"
         return receipt
 

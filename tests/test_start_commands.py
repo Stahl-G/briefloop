@@ -1,4 +1,5 @@
 """Tests for briefloop start / handoff launcher."""
+
 from __future__ import annotations
 
 import json
@@ -12,7 +13,9 @@ import pytest
 
 from multi_agent_brief.cli.main import main
 from multi_agent_brief.cli.init_commands import _init_web_wizard
-from multi_agent_brief.orchestrator.fact_layer_import import require_fast_rerun_handoff_ready
+from multi_agent_brief.orchestrator.fact_layer_import import (
+    require_fast_rerun_handoff_ready,
+)
 from multi_agent_brief.orchestrator_contract import contract_references_exist
 from multi_agent_brief.orchestrator_contract import resolve_repo_workdir
 from multi_agent_brief.audience_memory import AUDIENCE_MEMORY_FILES
@@ -68,7 +71,7 @@ def test_init_web_handoff_prints_exact_browser_selected_target(
     assert server.closed is True
 
 
-def test_init_web_public_search_handoff_uses_standard_codex_run(
+def test_init_web_discovery_authorized_handoff_uses_runtime_continue(
     monkeypatch, capsys, tmp_path: Path
 ) -> None:
     selected = tmp_path / "public-search"
@@ -79,6 +82,7 @@ def test_init_web_public_search_handoff_uses_standard_codex_run(
             run_id="RUN-PUBLIC",
             transaction_id="TX-PUBLIC",
             execution_authorized=False,
+            source_discovery_authorized=True,
         )
     )
     monkeypatch.setattr(
@@ -90,11 +94,7 @@ def test_init_web_public_search_handoff_uses_standard_codex_run(
     assert _init_web_wizard(SimpleNamespace(port=0)) == 0
 
     output = capsys.readouterr().out
-    assert (
-        f"briefloop run --workspace {selected} --runtime codex --skip-doctor"
-        in output
-    )
-    assert "runtime continue" not in output
+    assert f"briefloop runtime continue --workspace {selected}" in output
 
 
 @pytest.mark.parametrize(
@@ -146,8 +146,6 @@ manual:
 )
 
 
-
-
 def _snapshot_workspace_bytes(ws: Path) -> dict[str, bytes]:
     return {
         path.relative_to(ws).as_posix(): path.read_bytes()
@@ -156,27 +154,10 @@ def _snapshot_workspace_bytes(ws: Path) -> dict[str, bytes]:
     }
 
 
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 # ---------------------------------------------------------------------------
 # Help and identity tests
 # ---------------------------------------------------------------------------
+
 
 def test_start_help_shows_runtime_options(capsys):
     """start --help must show runtime choices and launcher identity."""
@@ -225,6 +206,7 @@ def test_handoff_help_shows_config_required(capsys):
 # start — no workspace
 # ---------------------------------------------------------------------------
 
+
 def test_start_no_workspace_in_non_workspace_dir(tmp_path, monkeypatch, capsys):
     """start without --workspace in a non-workspace dir should give guidance."""
     monkeypatch.chdir(tmp_path)
@@ -235,48 +217,14 @@ def test_start_no_workspace_in_non_workspace_dir(tmp_path, monkeypatch, capsys):
     assert "No workspace found" in output or "briefloop init" in output
 
 
-
-
 # ---------------------------------------------------------------------------
 # start — with workspace
 # ---------------------------------------------------------------------------
 
 
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 # ---------------------------------------------------------------------------
 # start — runtime variants
 # ---------------------------------------------------------------------------
-
-
-
-
-
-
-
 
 
 def test_run_fast_rerun_recipe_requires_fact_layer_import(tmp_path):
@@ -294,28 +242,21 @@ def test_run_fast_rerun_recipe_requires_fact_layer_import(tmp_path):
     assert not (ws / "output" / "intermediate" / "agent_handoff.json").exists()
 
 
-
-
-
-
-
-
-
-
-
-
-
-
 def test_start_rejects_historical_runtime_without_writes(tmp_path):
     ws = _write_workspace(tmp_path)
     with pytest.raises(SystemExit):
-        main([
-            "start",
-            "--workspace", str(ws),
-            "--runtime", "manual",
-            "--skip-doctor",
-            "--venv", str(tmp_path / ".venv" / "bin" / "activate"),
-        ])
+        main(
+            [
+                "start",
+                "--workspace",
+                str(ws),
+                "--runtime",
+                "manual",
+                "--skip-doctor",
+                "--venv",
+                str(tmp_path / ".venv" / "bin" / "activate"),
+            ]
+        )
     assert not (ws / "output").exists()
 
 
@@ -324,9 +265,17 @@ def test_start_rejects_historical_runtime_without_writes(tmp_path):
 # ---------------------------------------------------------------------------
 
 
-
 def test_handoff_no_config_fails(tmp_path):
-    rc = main(["handoff", "--runtime", "operator", "--config", str(tmp_path / "nonexistent" / "config.yaml"), "--skip-doctor"])
+    rc = main(
+        [
+            "handoff",
+            "--runtime",
+            "operator",
+            "--config",
+            str(tmp_path / "nonexistent" / "config.yaml"),
+            "--skip-doctor",
+        ]
+    )
     assert rc != 0
 
 
@@ -335,30 +284,15 @@ def test_handoff_no_config_fails(tmp_path):
 # ---------------------------------------------------------------------------
 
 
-
-
-
-
-
-
-
-
-
-
-
-
-
 # ---------------------------------------------------------------------------
 # write_handoff_artifacts
 # ---------------------------------------------------------------------------
 
 
-
-
-
 # ---------------------------------------------------------------------------
 # run command — launcher identity
 # ---------------------------------------------------------------------------
+
 
 def test_run_help_does_not_contain_deprecated(capsys):
     """run --help must not contain deprecated/prepare/deterministic pipeline language."""
@@ -377,17 +311,15 @@ def test_run_requires_explicit_runtime_without_writes(tmp_path):
     ws = _write_workspace(tmp_path)
     argv = [
         "run",
-        "--workspace", str(ws),
+        "--workspace",
+        str(ws),
         "--skip-doctor",
-        "--venv", str(tmp_path / ".venv" / "bin" / "activate"),
+        "--venv",
+        str(tmp_path / ".venv" / "bin" / "activate"),
     ]
     with pytest.raises(SystemExit):
         main(argv)
     assert not (ws / "output").exists()
-
-
-
-
 
 
 def test_prepare_output_points_to_run(tmp_path, capsys):
@@ -401,7 +333,9 @@ def test_prepare_output_points_to_run(tmp_path, capsys):
     assert _snapshot_workspace_bytes(ws) == before
 
 
-def test_retired_launcher_public_paths_reject_without_writes(tmp_path, monkeypatch, capsys):
+def test_retired_launcher_public_paths_reject_without_writes(
+    tmp_path, monkeypatch, capsys
+):
     """Bounded rejection matrix for the retired run/start/handoff launcher surface."""
     venv = str(tmp_path / ".venv" / "bin" / "activate")
 
@@ -415,7 +349,16 @@ def test_retired_launcher_public_paths_reject_without_writes(tmp_path, monkeypat
     ws_start = _write_workspace(tmp_path / "start-flag")
     assert_rejected(
         ws_start,
-        ["start", "--runtime", "operator", "--workspace", str(ws_start), "--skip-doctor", "--venv", venv],
+        [
+            "start",
+            "--runtime",
+            "operator",
+            "--workspace",
+            str(ws_start),
+            "--skip-doctor",
+            "--venv",
+            venv,
+        ],
         "runtime_command_unsupported\n",
     )
     # retired `start` CWD workspace auto-detection.
@@ -430,15 +373,32 @@ def test_retired_launcher_public_paths_reject_without_writes(tmp_path, monkeypat
     ws_run = _write_workspace(tmp_path / "run-operator")
     assert_rejected(
         ws_run,
-        ["run", "--runtime", "operator", "--workspace", str(ws_run), "--skip-doctor", "--venv", venv],
+        [
+            "run",
+            "--runtime",
+            "operator",
+            "--workspace",
+            str(ws_run),
+            "--skip-doctor",
+            "--venv",
+            venv,
+        ],
         "[run] runtime_adapter_unsupported\n",
     )
     ws_rerun = _write_workspace(tmp_path / "run-fast-rerun")
     assert_rejected(
         ws_rerun,
         [
-            "run", "--runtime", "claude", "--recipe", "fast-rerun",
-            "--workspace", str(ws_rerun), "--skip-doctor", "--venv", venv,
+            "run",
+            "--runtime",
+            "claude",
+            "--recipe",
+            "fast-rerun",
+            "--workspace",
+            str(ws_rerun),
+            "--skip-doctor",
+            "--venv",
+            venv,
         ],
         "[run] runtime_adapter_unsupported\n",
     )
@@ -446,14 +406,32 @@ def test_retired_launcher_public_paths_reject_without_writes(tmp_path, monkeypat
     ws_codex = _write_workspace(tmp_path / "run-codex")
     assert_rejected(
         ws_codex,
-        ["run", "--runtime", "codex", "--workspace", str(ws_codex), "--skip-doctor", "--venv", venv],
+        [
+            "run",
+            "--runtime",
+            "codex",
+            "--workspace",
+            str(ws_codex),
+            "--skip-doctor",
+            "--venv",
+            venv,
+        ],
         "[run] runtime_command_unsupported\n",
     )
     # retired public `handoff` generator command.
     ws_handoff = _write_workspace(tmp_path / "handoff")
     assert_rejected(
         ws_handoff,
-        ["handoff", "--config", str(ws_handoff / "config.yaml"), "--runtime", "hermes", "--skip-doctor", "--venv", venv],
+        [
+            "handoff",
+            "--config",
+            str(ws_handoff / "config.yaml"),
+            "--runtime",
+            "hermes",
+            "--skip-doctor",
+            "--venv",
+            venv,
+        ],
         "runtime_command_unsupported\n",
     )
     # legacy JSON control-plane workspaces are refused by every command.
@@ -461,7 +439,16 @@ def test_retired_launcher_public_paths_reject_without_writes(tmp_path, monkeypat
     write_legacy_control_files(ws_legacy)
     assert_rejected(
         ws_legacy,
-        ["run", "--runtime", "claude", "--workspace", str(ws_legacy), "--skip-doctor", "--venv", venv],
+        [
+            "run",
+            "--runtime",
+            "claude",
+            "--workspace",
+            str(ws_legacy),
+            "--skip-doctor",
+            "--venv",
+            venv,
+        ],
         "legacy_workspace_unsupported\n",
     )
 
@@ -469,6 +456,7 @@ def test_retired_launcher_public_paths_reject_without_writes(tmp_path, monkeypat
 # ---------------------------------------------------------------------------
 # onboard command discoverability
 # ---------------------------------------------------------------------------
+
 
 def test_onboard_help_exists(capsys):
     """onboard --help must exist as a discoverable command."""
@@ -493,7 +481,16 @@ def test_init_help_mentions_onboard(capsys):
 
 def test_run_no_workspace_mentions_onboard(tmp_path, capsys):
     """run without a workspace must suggest onboard as the first path."""
-    rc = main(["run", "--runtime", "operator", "--workspace", str(tmp_path / "no-such-ws"), "--skip-doctor"])
+    rc = main(
+        [
+            "run",
+            "--runtime",
+            "operator",
+            "--workspace",
+            str(tmp_path / "no-such-ws"),
+            "--skip-doctor",
+        ]
+    )
     assert rc == 1
     captured = capsys.readouterr()
     output = captured.out

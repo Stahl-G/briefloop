@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from dataclasses import replace
+
 from multi_agent_brief.contracts.v2 import CoreRunNextAction, InvocationStartRequest
 from multi_agent_brief.control_store.serialization import canonical_fingerprint
 from multi_agent_brief.quality_gates.contract import GATE_IDS
@@ -222,6 +224,13 @@ def classify_core_run_next_action(verified: VerifiedCoreRun) -> CoreRunNextActio
         )
         if event is None or event.stage_id is None:
             raise CoreRunError("control_store_integrity_invalid")
+        discovery_recovery = _discovery_source_acquire_reservation_action(
+            verified,
+            invocation,
+            event,
+        )
+        if discovery_recovery is not None:
+            return discovery_recovery
         if _is_authorized_source_pack_reservation(verified, invocation, event):
             return _action(
                 verified,
@@ -479,6 +488,30 @@ def _source_discovery_action(verified: VerifiedCoreRun) -> CoreRunNextAction:
         )
         not in verified.exhausted_source_route_keys
     ]
+    if snapshot.run_source_discovery_authorizations:
+        if len(snapshot.run_source_discovery_authorizations) != 1:
+            raise CoreRunError("control_store_integrity_invalid")
+        discovery = snapshot.run_source_discovery_authorizations[0]
+        authorized_routes = [
+            item
+            for item in verified.source_plan.routes
+            if item.route_id == discovery.route_id
+            and item.provider_id == discovery.provider_id
+            and item.execution_owner == discovery.execution_owner
+            and item.route_fingerprint == discovery.source_route_fingerprint
+        ]
+        if len(authorized_routes) != 1:
+            raise CoreRunError("control_store_integrity_invalid")
+        routes = [
+            item
+            for item in routes
+            if item.route_id == discovery.route_id
+            and item.provider_id == discovery.provider_id
+            and item.execution_owner == discovery.execution_owner
+            and item.route_fingerprint == discovery.source_route_fingerprint
+        ]
+        if len(routes) > 1:
+            raise CoreRunError("control_store_integrity_invalid")
     if not routes:
         return _action(
             verified,
@@ -578,7 +611,9 @@ def _is_authorized_source_pack_reservation(
         (item for item in snapshot.transactions if item.transaction_id == request_id),
         None,
     )
-    if receipt is None or receipt.transaction_type != transaction_type_for("invocation_start"):
+    if receipt is None or receipt.transaction_type != transaction_type_for(
+        "invocation_start"
+    ):
         return False
     try:
         request = InvocationStartRequest.model_validate(
@@ -606,6 +641,110 @@ def _is_authorized_source_pack_reservation(
         and event.core_run_binding.primary_record_id
         == derived_id("INV", request_id, fingerprint)
         and invocation.invocation_id == event.core_run_binding.primary_record_id
+    )
+
+
+def _discovery_source_acquire_reservation_action(
+    verified: VerifiedCoreRun,
+    invocation,
+    event,
+) -> CoreRunNextAction | None:
+    """Recognize only the receipt-owned deterministic discovery reservation."""
+
+    snapshot = verified.snapshot
+    if (
+        snapshot.run_execution_authorizations
+        or len(snapshot.run_source_discovery_authorizations) != 1
+        or invocation.role_id != "source-provider"
+        or invocation.runtime != snapshot.run.runtime
+        or event.stage_id != "source-discovery"
+        or event.core_run_binding is None
+    ):
+        return None
+    discovery = snapshot.run_source_discovery_authorizations[0]
+    routes = [
+        item
+        for item in verified.source_plan.routes
+        if item.route_id == discovery.route_id
+        and item.provider_id == discovery.provider_id
+        and item.execution_owner == "deterministic"
+        and item.execution_owner == discovery.execution_owner
+        and item.route_fingerprint == discovery.source_route_fingerprint
+    ]
+    if len(routes) != 1:
+        return None
+    receipt = next(
+        (
+            item
+            for item in snapshot.transactions
+            if item.transaction_id == event.transaction_id
+        ),
+        None,
+    )
+    if (
+        receipt is None
+        or receipt.transaction_type != transaction_type_for("invocation_start")
+        or receipt.committed_revision != snapshot.store_revision
+        or receipt.prior_revision != receipt.committed_revision - 1
+        or event.event_id not in receipt.event_ids
+    ):
+        return None
+    historical = replace(
+        verified,
+        snapshot=replace(snapshot, store_revision=receipt.prior_revision),
+    )
+    action = _action(
+        historical,
+        action_kind="deterministic",
+        effect_kind="source_acquire",
+        reason_code="deterministic_source_route_required",
+        stage_id="source-discovery",
+        source_route_id=discovery.route_id,
+        source_provider_id=discovery.provider_id,
+        request_schema_id="briefloop.source_pack_commit_request.v2",
+    )
+    request_id = derived_id(
+        "REQ-HOST-INVOKE",
+        action.run_id,
+        action.action_fingerprint,
+    )
+    try:
+        request = InvocationStartRequest.model_validate(
+            {
+                "schema_version": InvocationStartRequest.schema_id,
+                "request_id": request_id,
+                "run_id": snapshot.run.run_id,
+                "stage_id": "source-discovery",
+                "role_id": "source-provider",
+                "runtime": snapshot.run.runtime,
+                "expected_store_revision": receipt.prior_revision,
+            },
+            strict=True,
+        )
+    except Exception:
+        return None
+    fingerprint = canonical_fingerprint(
+        request.model_dump(mode="json", exclude_unset=False)
+    )
+    binding = event.core_run_binding
+    if (
+        event.transaction_id != request_id
+        or binding.request_id != request_id
+        or binding.request_fingerprint != fingerprint
+        or binding.effect_kind != "invocation_start"
+        or binding.primary_record_id != derived_id("INV", request_id, fingerprint)
+        or invocation.invocation_id != binding.primary_record_id
+    ):
+        return None
+    return _action(
+        verified,
+        action_kind="deterministic",
+        effect_kind="source_acquire",
+        reason_code="active_discovery_source_acquire_requires_resume",
+        stage_id="source-discovery",
+        source_route_id=discovery.route_id,
+        source_provider_id=discovery.provider_id,
+        request_schema_id="briefloop.source_pack_commit_request.v2",
     )
 
 

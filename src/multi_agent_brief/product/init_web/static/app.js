@@ -87,7 +87,7 @@
             review_path_k: "工作区位置",
             review_authorized_boundary: "这将创建并授权一个本地 run，完成目标为 finalized_local，修复预算为 1。它会返回初始化 Receipt，并把控制权交回当前 Codex 会话。它不会对外交付，也不会显示最终报告。",
             review_manual_boundary: "这将创建一个没有 RunExecutionAuthorization 的本地工作区/run。后续保持手动继续。它不会对外交付，也不会显示最终报告。",
-            review_web_boundary: "这将创建一个启用 Tavily 自动检索的工作区。Agent 根据报告主题提出检索词，确定性运行时调用 Tavily、冻结返回内容并记录来源；随后由当前 Codex 会话继续工作流。本次初始化不声明 finalized_local，也不会对外交付。",
+            review_web_boundary: "这将记录一个实验性的 Tavily 运行时获取方向：确认的任务目标是唯一检索词，最多返回 5 条结果，runtime continue 最多发出一次请求。仅 provider 返回的非空 durable content 可成为 claims-eligible 来源；随后进入现有外部角色工作流。合成传输已测试，实际用途、可靠性、成本和到 finalized_local 的表现均为 NOT MEASURED；不会对外交付。",
             review_manifest_hash: "已确认 canonical manifest SHA-256",
             review_accept: "接受",
             review_discard: "丢弃",
@@ -123,13 +123,13 @@
             source_validating: "服务器正在校验来源清单……",
             source_ready: "来源文件与清单已逐项匹配",
             err_source_pack: "请先选择来源文件并确认有效清单。",
-            web_search_title: "启用 Tavily 自动检索",
-            web_search_note: "BriefLoop 会根据公司、报告主题、时间窗和关注点生成检索任务；运行时调用 Tavily 并冻结返回内容。Key 只写入新工作区的私有 .env，不进入运行合同、日志或报告。",
+            web_search_title: "确认 Tavily 运行时获取（实验性）",
+            web_search_note: "确认的任务目标会成为唯一 Tavily 检索词，max_results 固定为 5；runtime continue 最多调用一次并冻结原始响应及 provider 返回的 durable content。Key 只写入新工作区的私有 .env，不进入 Store、日志或报告。",
             tavily_key_label: "Tavily API Key",
             tavily_key_placeholder: "粘贴 Tavily Key（不会回显）",
-            tavily_key_save: "安全保存到后台 .env",
-            tavily_key_saving: "正在安全保存……",
-            tavily_key_ready: "Tavily 已配置；Key 不会进入提交正文。",
+            tavily_key_save: "暂存到本地初始化会话",
+            tavily_key_saving: "正在暂存……",
+            tavily_key_ready: "Key 已暂存；确认并写入 Store 收据后才会写入私有 .env。",
             err_tavily_key: "请先填写并保存 Tavily API Key。",
             err_session: "缺少会话令牌：请使用初始化命令给出的完整链接打开本页。",
             status_ready: "可以确认创建。",
@@ -151,7 +151,8 @@
             cf_again: "再次提交同一请求（replay）",
             cf_close: "关闭，修改后重试",
             cf_note: "目标为 finalized_local，预授权编辑修复预算为 1。此页仅确认初始化；已启动的 Codex 控制器会在命令行继续。",
-            cf_note_manual: "本次初始化没有 RunExecutionAuthorization；后续为手动继续，不声明 finalized_local 或修复预算。"
+            cf_note_manual: "本次初始化没有 RunExecutionAuthorization；后续为手动继续，不声明 finalized_local 或修复预算。",
+            cf_note_discovery: "本次初始化具有独立的 RunSourceDiscoveryAuthorization。runtime continue 会在平台与凭据预检后最多发出一次 Tavily 请求；只有包含非空 durable content 的响应才可原子提升为执行授权并进入现有角色工作流。"
         },
         en: {
             panel_title: "Create report workspace",
@@ -204,7 +205,7 @@
             review_path_k: "Workspace location",
             review_authorized_boundary: "This creates and authorizes a local run with completion target finalized_local and repair budget 1. It returns an initialization Receipt and hands control back to the current Codex session. It does not deliver externally or display the final report.",
             review_manual_boundary: "This creates a local workspace/run without RunExecutionAuthorization. Continuation remains manual. It does not deliver externally or display the final report.",
-            review_web_boundary: "This creates a workspace with Tavily automatic discovery enabled. An agent proposes searches from the report topic; the deterministic runtime calls Tavily, freezes returned content, and records source evidence before the current Codex session continues. This initialization does not claim finalized_local or external delivery.",
+            review_web_boundary: "This records an Experimental Tavily runtime-acquisition direction. The confirmed task objective is the sole query, at most five results are requested, and runtime continue makes at most one request. Only non-empty provider-returned durable content can become claims-eligible before the existing external-role workflow. Synthetic transport is tested; live usefulness, reliability, cost, and acquisition-to-finalized_local performance are NOT MEASURED. It does not deliver externally.",
             review_manifest_hash: "Confirmed canonical manifest SHA-256",
             review_accept: "Accept",
             review_discard: "Discard",
@@ -240,13 +241,13 @@
             source_validating: "Server is validating the source manifest…",
             source_ready: "Every manifest member matches one selected file",
             err_source_pack: "Select source files and confirm a valid manifest first.",
-            web_search_title: "Enable Tavily automatic discovery",
-            web_search_note: "BriefLoop derives search tasks from the company, report topic, time window, and focus areas. The runtime calls Tavily and freezes returned content. The key is written only to the new workspace's private .env; it never enters the run contract, logs, or report.",
+            web_search_title: "Confirm Tavily runtime acquisition (Experimental)",
+            web_search_note: "The confirmed task objective becomes the sole Tavily query with max_results fixed at 5. Runtime continue makes at most one call and freezes the raw response plus provider-returned durable content. The key is written only to the new workspace's private .env; it never enters the Store, logs, or report.",
             tavily_key_label: "Tavily API Key",
             tavily_key_placeholder: "Paste Tavily key (never echoed)",
-            tavily_key_save: "Save securely to backend .env",
-            tavily_key_saving: "Saving securely…",
-            tavily_key_ready: "Tavily is configured; the key is excluded from the submission body.",
+            tavily_key_save: "Hold in local init session",
+            tavily_key_saving: "Holding securely…",
+            tavily_key_ready: "Key is held; it is written to private .env only after the confirmed Store receipt.",
             err_tavily_key: "Enter and save a Tavily API key first.",
             err_session: "Missing session token: open this page via the full link printed by the init command.",
             status_ready: "Ready to create.",
@@ -268,7 +269,8 @@
             cf_again: "Resubmit the same request (replay)",
             cf_close: "Close, change something, retry",
             cf_note: "The target is finalized_local with one preauthorized editor repair. This page confirms initialization only; the initiating Codex controller continues in the terminal.",
-            cf_note_manual: "This initialization has no RunExecutionAuthorization; continuation is manual and does not claim finalized_local or a repair budget."
+            cf_note_manual: "This initialization has no RunExecutionAuthorization; continuation is manual and does not claim finalized_local or a repair budget.",
+            cf_note_discovery: "This initialization has a distinct RunSourceDiscoveryAuthorization. After platform and credential preflight, runtime continue makes at most one Tavily request; only a response with non-empty durable content can be atomically promoted to execution authorization and enter the existing role workflow."
         }
     };
 
@@ -293,8 +295,7 @@
         windows: [
             { id: "7d", zh: ["近 7 天", ""], en: ["Last 7 days", ""] },
             { id: "30d", zh: ["近 30 天", ""], en: ["Last 30 days", ""] },
-            { id: "quarter", zh: ["本季度", ""], en: ["This quarter", ""] },
-            { id: "custom_window", zh: ["自定义…", ""], en: ["Custom…", ""] }
+            { id: "90d", zh: ["近 90 天", ""], en: ["Last 90 days", ""] }
         ],
         languages: [
             { id: "zh-CN", zh: ["中文", ""], en: ["Chinese", ""] },
@@ -302,7 +303,7 @@
             { id: "bilingual", zh: ["中英对照", ""], en: ["Bilingual", ""] }
         ],
         sources: [
-            { id: "public_web", zh: ["公开网页（Tavily 自动检索）", "按主题搜索并冻结公开来源"], en: ["Public web (Tavily automatic)", "Search by topic and freeze public sources"] },
+            { id: "public_web", zh: ["公开网页（Tavily 运行时获取）", "确认唯一检索词并发出至多一次请求"], en: ["Public web (Tavily runtime acquisition)", "Confirm one query and make at most one request"] },
             { id: "local_only", zh: ["仅本地材料", "离线，不上网"], en: ["Local material only", "Offline"] },
         ],
         formats: [
@@ -445,7 +446,7 @@
         selections: {
             company: "", report_type: null, audience: null, audience_custom: "",
             purpose: "", brief_title: "",
-            cadence: null, window: null, window_custom: "", language: null, source: null,
+            cadence: null, window: null, language: null, source: null,
             formats: [], presentation: null, custom_base: "executive_brief",
             density: null, tables: null, citations: null,
             accent: "forest", accent_hex: "", accent_hex_raw: ""
@@ -634,10 +635,7 @@
         enumField(sectionsHost, {
             num: "1.7", titleKey: "sec_window", list: CATALOG.windows,
             get: function () { return STATE.selections.window; },
-            set: function (v) { STATE.selections.window = v; },
-            customId: "custom_window", customPlaceholder: "placeholder_window",
-            customGet: function () { return STATE.selections.window_custom; },
-            customSet: function (v) { STATE.selections.window_custom = v; }
+            set: function (v) { STATE.selections.window = v; }
         });
         enumField(sectionsHost, {
             num: "1.8", titleKey: "sec_language", list: CATALOG.languages,
@@ -813,9 +811,6 @@
         };
         if (raw === "formats") return optionLabel(CATALOG.formats, value);
         if (raw === "purpose" || raw === "company" || raw === "brief_title") return value;
-        if (raw === "window" && value === "custom_window") {
-            return STATE.selections.window_custom || optionLabel(CATALOG.windows, value);
-        }
         if (raw === "accent" && value === "custom_hex") {
             return STATE.selections.accent_hex || STATE.selections.accent_hex_raw || optionLabel(CATALOG.accents, value);
         }
@@ -1404,6 +1399,7 @@
 
     function buildSubmission() {
         var c = confirmedSelections();
+        var maxSourceAgeDays = { "7d": 7, "30d": 30, "90d": 90 }[c.window];
         var reportLabel = enLabel(CATALOG.report_types, c.report_type);
         var audience = c.audience === "custom_audience"
             ? String(c.audience_custom || "").trim()
@@ -1422,6 +1418,7 @@
                 interface_language: LANG,
                 output_language: c.language === "en" ? "en" : "zh",
                 cadence: cadence,
+                max_source_age_days: maxSourceAgeDays,
                 focus_areas: [reportLabel],
                 output_formats: (c.formats || []).slice(),
                 forbidden_sources: c.source === "local_only" ? ["public_web"] : [],
@@ -1445,6 +1442,8 @@
             payload.upload_session_id = SESSION.sessionId;
             payload.upload_bindings = STATE.sourceCanonicalBindings;
         } else {
+            payload.completion_target = "finalized_local";
+            payload.repair_budget = 1;
             payload.search_secret_session_id = SESSION.sessionId;
         }
         return {
@@ -1724,7 +1723,8 @@
         var receiptRows = [["workspace_id", response.workspace_id],
          ["run_id", response.run_id],
          ["transaction_id", response.transaction_id]];
-        if (response.execution_authorized === true) {
+        var hasDiscoveryAuthorization = response.source_discovery_authorized === true;
+        if (response.execution_authorized === true || hasDiscoveryAuthorization) {
             receiptRows.push(["completion_target", response.completion_target]);
             receiptRows.push(["repair_budget", response.repair_budget]);
         }
@@ -1739,9 +1739,8 @@
         var next = el("p", "cf-next");
         next.appendChild(el("span", null, t("cf_next")));
         var firstAction = response.first_action || {};
-        var discovery = response.source_discovery || {};
-        var continuationLabel = discovery.backend === "tavily"
-            ? "Tavily automatic discovery · "
+        var continuationLabel = hasDiscoveryAuthorization
+            ? "Tavily runtime acquisition · "
             : "manual continuation · ";
         next.appendChild(el("code", null,
             (response.execution_authorized === true ? "finalized_local · " : continuationLabel) +
@@ -1765,7 +1764,9 @@
         cfBody.appendChild(el(
             "p",
             "cf-note",
-            t(response.execution_authorized === true ? "cf_note" : "cf_note_manual")
+            t(response.execution_authorized === true
+                ? "cf_note"
+                : (hasDiscoveryAuthorization ? "cf_note_discovery" : "cf_note_manual"))
         ));
     }
 
