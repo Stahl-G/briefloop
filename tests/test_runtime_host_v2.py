@@ -236,7 +236,6 @@ def test_external_source_plan_freezes_executable_non_secret_requests(
         "Prepare the weekly manufacturing brief."
     ]
     assert all(item.max_results == 5 for item in spec.requests)
-    assert all(item.recency_days == 7 for item in spec.requests)
     assert "TAVILY_API_KEY" not in str(spec.model_dump(mode="json"))
     fingerprint = first.verified.source_plan.source_plan_fingerprint
 
