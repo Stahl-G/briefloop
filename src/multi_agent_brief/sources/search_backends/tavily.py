@@ -7,9 +7,12 @@ specified via api_key_env in config.
 
 from __future__ import annotations
 
+from datetime import datetime, timezone
+from email.utils import parsedate_to_datetime
 import hashlib
 import json
 import os
+import re
 import urllib.request
 from urllib.parse import urlsplit
 from typing import Any
@@ -31,6 +34,16 @@ TAVILY_API_URL = "https://api.tavily.com/search"
 DEFAULT_API_KEY_ENV = "TAVILY_API_KEY"
 TAVILY_RESPONSE_BYTE_CAP = 4 * 1024 * 1024
 TAVILY_TIMEOUT_SECONDS = 30
+_ISO_DATE = re.compile(r"\d{4}-\d{2}-\d{2}\Z")
+_ISO_DATETIME = re.compile(
+    r"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}"
+    r"(?:\.\d{1,6})?(?:Z|[+-]\d{2}:\d{2})?\Z"
+)
+_RFC_DATETIME = re.compile(
+    r"(?:(?P<weekday>Mon|Tue|Wed|Thu|Fri|Sat|Sun), )?"
+    r"\d{2} (?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec) "
+    r"\d{4} \d{2}:\d{2}:\d{2} (?:GMT|[+-]\d{4})\Z"
+)
 
 
 class _TavilyResult(BaseModel):
@@ -75,6 +88,41 @@ def _extract_domain(url: str) -> str:
     except (IndexError, AttributeError):
         pass
     return ""
+
+
+def _normalized_published_date(value: str) -> str:
+    """Return one strict calendar date without rewriting provider evidence."""
+
+    if not value or value != value.strip():
+        return ""
+    if _ISO_DATE.fullmatch(value):
+        try:
+            return datetime.strptime(value, "%Y-%m-%d").date().isoformat()
+        except ValueError:
+            return ""
+    if _ISO_DATETIME.fullmatch(value):
+        try:
+            parsed = datetime.fromisoformat(
+                f"{value[:-1]}+00:00" if value.endswith("Z") else value
+            )
+        except ValueError:
+            return ""
+        if parsed.tzinfo is not None:
+            parsed = parsed.astimezone(timezone.utc)
+        return parsed.date().isoformat()
+    rfc_match = _RFC_DATETIME.fullmatch(value)
+    if rfc_match is None:
+        return ""
+    try:
+        parsed = parsedate_to_datetime(value)
+    except (TypeError, ValueError, OverflowError):
+        return ""
+    if parsed.tzinfo is None or parsed.utcoffset() is None:
+        return ""
+    weekday = rfc_match.group("weekday")
+    if weekday is not None and parsed.strftime("%a") != weekday:
+        return ""
+    return parsed.astimezone(timezone.utc).date().isoformat()
 
 
 class TavilyBackend(SearchBackend):
@@ -202,8 +250,9 @@ class TavilyBackend(SearchBackend):
 
         results: list[SearchResult] = []
         for item in data.results:
-            raw_published = (item.published_date or "").strip()
-            has_published = bool(raw_published)
+            raw_published = item.published_date or ""
+            published_at = _normalized_published_date(raw_published)
+            has_published = bool(published_at)
             raw_content_value = item.raw_content
             raw_content = (
                 raw_content_value.strip()
@@ -224,7 +273,7 @@ class TavilyBackend(SearchBackend):
                     url=str(item.url),
                     snippet=item.content,
                     raw_content=raw_content,
-                    published_at=raw_published,
+                    published_at=published_at,
                     source_name=_extract_domain(str(item.url)),
                     raw_projection=projection,
                     metadata={
