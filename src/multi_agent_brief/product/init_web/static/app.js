@@ -87,7 +87,7 @@
             review_path_k: "工作区位置",
             review_authorized_boundary: "这将创建并授权一个本地 run，完成目标为 finalized_local，修复预算为 1。它会返回初始化 Receipt，并把控制权交回当前 Codex 会话。它不会对外交付，也不会显示最终报告。",
             review_manual_boundary: "这将创建一个没有 RunExecutionAuthorization 的本地工作区/run。后续保持手动继续。它不会对外交付，也不会显示最终报告。",
-            review_web_boundary: "这将记录一个实验性的 Tavily 运行时获取方向：确认的任务目标是唯一检索词，最多返回 5 条结果，runtime continue 最多发出一次请求。仅 provider 返回的非空 durable content 可成为 claims-eligible 来源；随后进入现有外部角色工作流。合成传输已测试，实际用途、可靠性、成本和到 finalized_local 的表现均为 NOT MEASURED；不会对外交付。",
+            review_web_boundary: "这将记录一个实验性的 Tavily 运行时获取方向：确认的任务目标是唯一检索词，最多返回 5 条结果，runtime continue 最多发出一次请求。可选域名只限制 provider 检索范围，不证明来源支持、权威性或 claim 正确性。仅 provider 返回的非空 durable content 可成为 claims-eligible 来源；随后进入现有外部角色工作流。合成传输已测试，实际用途、可靠性、成本和到 finalized_local 的表现均为 NOT MEASURED；不会对外交付。",
             review_manifest_hash: "已确认 canonical manifest SHA-256",
             review_accept: "接受",
             review_discard: "丢弃",
@@ -103,6 +103,7 @@
             field_window: "时间窗",
             field_language: "语言",
             field_source: "来源姿态",
+            field_search_domains: "检索域名限制",
             field_formats: "本地输出格式",
             field_presentation: "版式风格",
             field_density: "报告篇幅 / 阅读深度",
@@ -124,7 +125,10 @@
             source_ready: "来源文件与清单已逐项匹配",
             err_source_pack: "请先选择来源文件并确认有效清单。",
             web_search_title: "确认 Tavily 运行时获取（实验性）",
-            web_search_note: "确认的任务目标会成为唯一 Tavily 检索词，max_results 固定为 5；runtime continue 最多调用一次并冻结原始响应及 provider 返回的 durable content。Key 只写入新工作区的私有 .env，不进入 Store、日志或报告。",
+            web_search_note: "确认的任务目标会成为唯一 Tavily 检索词，max_results 固定为 5；runtime continue 最多调用一次并冻结原始响应及 provider 返回的 durable content。可选域名只限制 provider 检索范围，不代表证据支持或权威性。Key 只写入新工作区的私有 .env，不进入 Store、日志或报告。",
+            search_domains_label: "可选检索域名（逗号或换行分隔）",
+            search_domains_placeholder: "例如 openai.com",
+            search_domains_note: "留空表示通用搜索。这里只接受 DNS 域名，不接受 URL、路径、端口、通配符或 IP。",
             tavily_key_label: "Tavily API Key",
             tavily_key_placeholder: "粘贴 Tavily Key（不会回显）",
             tavily_key_save: "暂存到本地初始化会话",
@@ -205,7 +209,7 @@
             review_path_k: "Workspace location",
             review_authorized_boundary: "This creates and authorizes a local run with completion target finalized_local and repair budget 1. It returns an initialization Receipt and hands control back to the current Codex session. It does not deliver externally or display the final report.",
             review_manual_boundary: "This creates a local workspace/run without RunExecutionAuthorization. Continuation remains manual. It does not deliver externally or display the final report.",
-            review_web_boundary: "This records an Experimental Tavily runtime-acquisition direction. The confirmed task objective is the sole query, at most five results are requested, and runtime continue makes at most one request. Only non-empty provider-returned durable content can become claims-eligible before the existing external-role workflow. Synthetic transport is tested; live usefulness, reliability, cost, and acquisition-to-finalized_local performance are NOT MEASURED. It does not deliver externally.",
+            review_web_boundary: "This records an Experimental Tavily runtime-acquisition direction. The confirmed task objective is the sole query, at most five results are requested, and runtime continue makes at most one request. Optional domains constrain provider search only; they do not prove source support, authority, or claim correctness. Only non-empty provider-returned durable content can become claims-eligible before the existing external-role workflow. Synthetic transport is tested; live usefulness, reliability, cost, and acquisition-to-finalized_local performance are NOT MEASURED. It does not deliver externally.",
             review_manifest_hash: "Confirmed canonical manifest SHA-256",
             review_accept: "Accept",
             review_discard: "Discard",
@@ -221,6 +225,7 @@
             field_window: "Time window",
             field_language: "Language",
             field_source: "Source posture",
+            field_search_domains: "Search domain restriction",
             field_formats: "Local output formats",
             field_presentation: "Style",
             field_density: "Report amount / reading depth",
@@ -242,7 +247,10 @@
             source_ready: "Every manifest member matches one selected file",
             err_source_pack: "Select source files and confirm a valid manifest first.",
             web_search_title: "Confirm Tavily runtime acquisition (Experimental)",
-            web_search_note: "The confirmed task objective becomes the sole Tavily query with max_results fixed at 5. Runtime continue makes at most one call and freezes the raw response plus provider-returned durable content. The key is written only to the new workspace's private .env; it never enters the Store, logs, or report.",
+            web_search_note: "The confirmed task objective becomes the sole Tavily query with max_results fixed at 5. Runtime continue makes at most one call and freezes the raw response plus provider-returned durable content. Optional domains constrain provider search only; they do not prove evidence support or authority. The key is written only to the new workspace's private .env; it never enters the Store, logs, or report.",
+            search_domains_label: "Optional search domains (comma or newline separated)",
+            search_domains_placeholder: "e.g. openai.com",
+            search_domains_note: "Leave empty for general search. DNS domains only; URLs, paths, ports, wildcards, and IP addresses are rejected.",
             tavily_key_label: "Tavily API Key",
             tavily_key_placeholder: "Paste Tavily key (never echoed)",
             tavily_key_save: "Hold in local init session",
@@ -447,6 +455,7 @@
             company: "", report_type: null, audience: null, audience_custom: "",
             purpose: "", brief_title: "",
             cadence: null, window: null, language: null, source: null,
+            search_domains: "",
             formats: [], presentation: null, custom_base: "executive_brief",
             density: null, tables: null, citations: null,
             accent: "forest", accent_hex: "", accent_hex_raw: ""
@@ -859,6 +868,9 @@
         push("field_window", s.window);
         push("field_language", s.language);
         push("field_source", s.source);
+        if (s.source === "public_web") {
+            push("field_search_domains", splitSearchDomains(s.search_domains));
+        }
         push("field_formats", s.formats);
         push("field_presentation", s.presentation);
         push("field_density", s.density);
@@ -991,6 +1003,17 @@
             webHead.appendChild(el("span", null, t("web_search_title")));
             webSearch.appendChild(webHead);
             webSearch.appendChild(el("p", "section-note", t("web_search_note")));
+            var domainLabel = el("label", "source-input-label", t("search_domains_label"));
+            var domainInput = el("textarea", "source-manifest-editor");
+            domainInput.value = STATE.selections.search_domains;
+            domainInput.placeholder = t("search_domains_placeholder");
+            domainInput.spellcheck = false;
+            domainInput.addEventListener("input", function () {
+                STATE.selections.search_domains = domainInput.value;
+            });
+            domainLabel.appendChild(domainInput);
+            webSearch.appendChild(domainLabel);
+            webSearch.appendChild(el("p", "section-note", t("search_domains_note")));
             var keyLabel = el("label", "source-input-label", t("tavily_key_label"));
             var keyInput = el("input", "source-file-input");
             keyInput.type = "password";
@@ -1320,6 +1343,12 @@
         return STATE.selections.language === "en" ? "en" : "zh";
     }
 
+    function splitSearchDomains(value) {
+        var raw = String(value || "");
+        if (!raw.trim()) return [];
+        return raw.split(/[,\n]/).map(function (item) { return item.trim(); });
+    }
+
     function currentOutputContractPreviewKey() {
         return String(STATE.selections.density || "") + "|" + outputLanguageForSubmission();
     }
@@ -1419,6 +1448,9 @@
                 output_language: c.language === "en" ? "en" : "zh",
                 cadence: cadence,
                 max_source_age_days: maxSourceAgeDays,
+                search_domains: c.source === "public_web"
+                    ? splitSearchDomains(c.search_domains)
+                    : [],
                 focus_areas: [reportLabel],
                 output_formats: (c.formats || []).slice(),
                 forbidden_sources: c.source === "local_only" ? ["public_web"] : [],
