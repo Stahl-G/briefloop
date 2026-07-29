@@ -105,7 +105,7 @@ def test_tavily_vertical_real_loopback_source_and_wheel_parity(
             b'"url":"https://example.com/public-durable",'
             b'"content":"discovery summary",'
             b'"raw_content":"provider-returned durable content",'
-            b'"published_date":"Thu, 23 Jul 2026 22:59:50 GMT",'
+            b'"published_date":" 2026-07-23",'
             b'"score":0.9},'
             b'{"title":"Snippet-only result",'
             b'"url":"https://example.com/public-snippet",'
@@ -506,7 +506,7 @@ def test_tavily_vertical_real_loopback_source_and_wheel_parity(
             if source.published_at is not None
         )
         require(
-            published_dates == ["2026-07-22", "2026-07-23"],
+            published_dates == ["2026-07-22"],
             "normalized published dates missing",
         )
         require(
@@ -541,7 +541,7 @@ def test_tavily_vertical_real_loopback_source_and_wheel_parity(
         require(
             raw_published_dates
             == [
-                "Thu, 23 Jul 2026 22:59:50 GMT",
+                " 2026-07-23",
                 "Wed, 22 Jul 2026 05:30:00 GMT",
             ],
             "provider published-date projection changed",
@@ -642,9 +642,9 @@ def test_tavily_vertical_real_loopback_source_and_wheel_parity(
             "durable_sources": 1,
             "optimize": sys.flags.optimize,
             "provider_calls": 1,
-            "published_dates": ["2026-07-22", "2026-07-23"],
+            "published_dates": ["2026-07-22"],
             "raw_published_dates": [
-                "Thu, 23 Jul 2026 22:59:50 GMT",
+                " 2026-07-23",
                 "Wed, 22 Jul 2026 05:30:00 GMT",
             ],
             "role": "scout",

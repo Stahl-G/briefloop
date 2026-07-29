@@ -1776,7 +1776,9 @@ class CoreRunDomainVerifier:
                     "url": url,
                     "snippet": snippet,
                     "raw_content": raw_content,
-                    "published_date": (published_value or "").strip(),
+                    "published_date": (
+                        published_value if published_value is not None else ""
+                    ),
                     "score": score,
                 }
             )
