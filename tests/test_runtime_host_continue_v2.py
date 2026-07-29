@@ -1406,6 +1406,21 @@ def test_discovery_workspace_env_reaches_real_tavily_boundary_once(
     monkeypatch.delenv("TAVILY_API_KEY", raising=False)
     calls: list[dict[str, object]] = []
     authorization_headers: list[str | None] = []
+    response_bytes = json.dumps(
+        {
+            "results": [
+                {
+                    "title": "Durable source",
+                    "url": "https://example.com/durable",
+                    "content": "snippet only",
+                    "raw_content": "durable provider content",
+                    "published_date": " 2026-07-23",
+                    "score": 0.9,
+                }
+            ]
+        },
+        separators=(",", ":"),
+    ).encode("utf-8")
 
     class _Response:
         status = 200
@@ -1418,20 +1433,7 @@ def test_discovery_workspace_env_reaches_real_tavily_boundary_once(
 
         @staticmethod
         def read(_limit=-1) -> bytes:
-            return json.dumps(
-                {
-                    "results": [
-                        {
-                            "title": "Durable source",
-                            "url": "https://example.com/durable",
-                            "content": "snippet only",
-                            "raw_content": "durable provider content",
-                            "published_date": "2026-07-26",
-                            "score": 0.9,
-                        }
-                    ]
-                }
-            ).encode("utf-8")
+            return response_bytes
 
     def urlopen(request, *, timeout):
         assert timeout == 30
@@ -1446,9 +1448,10 @@ def test_discovery_workspace_env_reaches_real_tavily_boundary_once(
         "multi_agent_brief.sources.search_backends.tavily.urllib.request.urlopen",
         urlopen,
     )
+    service = _service(workspace)
     action = _advance_discovery_to_source_action(workspace)
 
-    result = _service(workspace).apply_current(action)
+    result = service.apply_current(action)
 
     assert result.status == "committed"
     assert len(calls) == 1
@@ -1465,14 +1468,76 @@ def test_discovery_workspace_env_reaches_real_tavily_boundary_once(
         head = store.load_workspace_run_head()
         assert head is not None
         snapshot = store.load_snapshot(head.current_run_id)
+        history = store.load_history()
+        CoreRunDomainVerifier().verify(store, snapshot.run.run_id)
+        promotion = next(
+            receipt
+            for receipt in history.transactions
+            if receipt.transaction_type == "source_evidence_intake"
+        )
+        provider_revision = next(
+            revision
+            for revision in promotion.artifact_revisions
+            if revision.artifact_id.startswith("ARTIFACT-PROVIDER-RESPONSE")
+        )
+        provider_bytes = store.read_artifact_revision_bytes(
+            snapshot.run.run_id,
+            provider_revision.artifact_id,
+            provider_revision.revision,
+        )
+        source = snapshot.sources[0]
+        raw_projection = store.read_artifact_revision_bytes(
+            snapshot.run.run_id,
+            source.raw_payload_artifact_id,
+            source.raw_payload_artifact_revision,
+        )
     assert len(snapshot.sources) == 1
-    assert snapshot.sources[0].origin_type == "provider_response"
-    assert snapshot.sources[0].acquisition_method == "provider_extract"
-    assert snapshot.sources[0].material_kind == "partial_extract"
-    assert snapshot.sources[0].claims_eligible is True
+    assert source.origin_type == "provider_response"
+    assert source.acquisition_method == "provider_extract"
+    assert source.material_kind == "partial_extract"
+    assert source.claims_eligible is True
+    assert source.published_at is None
+    assert provider_bytes == response_bytes
+    assert json.loads(raw_projection)["published_date"] == " 2026-07-23"
     assert len(snapshot.run_execution_authorizations) == 1
+    handoff = service.continue_authorized()
+    assert handoff.status == "role_work_required"
     database = (workspace / "briefloop.db").read_bytes()
+    revision = _revision(workspace)
+    (workspace / ".env").unlink()
+
+    replayed = service.continue_authorized()
+
+    assert replayed.status == "role_work_required"
+    assert len(calls) == 1
+    assert _revision(workspace) == revision
+    assert (workspace / "briefloop.db").read_bytes() == database
     assert b"tvly-runtime-secret-sentinel" not in database
+
+    from multi_agent_brief.control_store.serialization import canonical_json_bytes
+
+    original_reader = ControlStoreHistory.read_artifact_revision_bytes
+
+    def trim_frozen_projection(
+        reader: ControlStoreHistory,
+        run_id: str,
+        artifact_id: str,
+        artifact_revision: int,
+    ) -> bytes:
+        payload = original_reader(reader, run_id, artifact_id, artifact_revision)
+        if artifact_id == source.raw_payload_artifact_id:
+            projection = json.loads(payload)
+            projection["published_date"] = projection["published_date"].strip()
+            return canonical_json_bytes(projection)
+        return payload
+
+    monkeypatch.setattr(
+        ControlStoreHistory,
+        "read_artifact_revision_bytes",
+        trim_frozen_projection,
+    )
+    with pytest.raises(CoreRunError, match="control_store_integrity_invalid"):
+        CoreRunDomainVerifier()._verify_snapshot(history, snapshot)
 
 
 @_REQUIRES_RETAINED_PUBLICATION

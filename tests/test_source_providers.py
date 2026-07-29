@@ -440,6 +440,75 @@ def test_tavily_requests_and_preserves_raw_content_separately(monkeypatch):
     assert sentinel not in repr(results)
 
 
+def test_tavily_normalizes_strict_dates_and_preserves_provider_value(monkeypatch):
+    sentinel = "test-only-tavily-key"
+    cases = (
+        ("Thu, 23 Jul 2026 22:59:50 GMT", "2026-07-23"),
+        ("Wed, 22 Jul 2026 05:30:00 GMT", "2026-07-22"),
+        ("2026-07-23", "2026-07-23"),
+        ("2026-07-23T23:30:00-02:00", "2026-07-24"),
+        ("2026-07-23T23:30:00", "2026-07-23"),
+        ("Thu, 23 Jul 2026 00:30:00 +1400", "2026-07-22"),
+        ("Thu, 23 Jul 2026 22:59:50", ""),
+        ("Fri, 23 Jul 2026 22:59:50 GMT", ""),
+        ("July 23, 2026", ""),
+        ("2 days ago", ""),
+        (" 2026-07-23", ""),
+        ("2026-02-30", ""),
+    )
+    current_published_date = ""
+    response_bytes = b""
+
+    class _FakeResponse:
+        status = 200
+
+        def read(self, _limit=-1):
+            return response_bytes
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            return False
+
+    def _urlopen(_request, timeout=30):
+        assert timeout == 30
+        return _FakeResponse()
+
+    monkeypatch.setattr("urllib.request.urlopen", _urlopen)
+    monkeypatch.setenv("TAVILY_API_KEY", sentinel)
+
+    for current_published_date, expected in cases:
+        response_bytes = json.dumps(
+            {
+                "results": [
+                    {
+                        "title": "Dated result",
+                        "url": "https://example.com/dated",
+                        "content": "search snippet",
+                        "raw_content": "retrieved durable page extract",
+                        "published_date": current_published_date,
+                        "score": 0.9,
+                    }
+                ]
+            }
+        ).encode("utf-8")
+
+        response = TavilyBackend().search_response("test query", max_results=1)
+        result = response.results[0]
+
+        assert response.raw_response == response_bytes
+        assert result.published_at == expected
+        assert result.raw_projection["published_date"] == current_published_date
+        assert result.metadata["date_status"] == (
+            "published_at_present" if expected else "missing_published_at"
+        )
+        assert result.metadata["source_temporality"] == (
+            "published" if expected else "retrieved_only"
+        )
+        assert sentinel not in repr(result)
+
+
 def test_tavily_transport_failure_is_stable_and_value_free(monkeypatch):
     sentinel = "tvly-secret-must-not-escape"
 

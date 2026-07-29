@@ -105,11 +105,13 @@ def test_tavily_vertical_real_loopback_source_and_wheel_parity(
             b'"url":"https://example.com/public-durable",'
             b'"content":"discovery summary",'
             b'"raw_content":"provider-returned durable content",'
-            b'"published_date":"2026-07-29","score":0.9},'
+            b'"published_date":" 2026-07-23",'
+            b'"score":0.9},'
             b'{"title":"Snippet-only result",'
             b'"url":"https://example.com/public-snippet",'
             b'"content":"snippet only","raw_content":"",'
-            b'"published_date":"2026-07-29","score":0.7}]}'
+            b'"published_date":"Wed, 22 Jul 2026 05:30:00 GMT",'
+            b'"score":0.7}]}'
         )
 
         class TavilyHandler(BaseHTTPRequestHandler):
@@ -498,6 +500,15 @@ def test_tavily_vertical_real_loopback_source_and_wheel_parity(
             "execution authorization missing",
         )
         require(len(promoted.sources) == 2, "source count mismatch")
+        published_dates = sorted(
+            source.published_at
+            for source in promoted.sources
+            if source.published_at is not None
+        )
+        require(
+            published_dates == ["2026-07-22"],
+            "normalized published dates missing",
+        )
         require(
             sorted(source.claims_eligible for source in promoted.sources)
             == [False, True],
@@ -522,6 +533,18 @@ def test_tavily_vertical_real_loopback_source_and_wheel_parity(
         require(
             all(projection.startswith(b"{") for projection, _ in source_payloads),
             "raw projections missing",
+        )
+        raw_published_dates = sorted(
+            json.loads(projection)["published_date"]
+            for projection, _content in source_payloads
+        )
+        require(
+            raw_published_dates
+            == [
+                " 2026-07-23",
+                "Wed, 22 Jul 2026 05:30:00 GMT",
+            ],
+            "provider published-date projection changed",
         )
         db_bytes = db_path.read_bytes()
 
@@ -559,6 +582,8 @@ def test_tavily_vertical_real_loopback_source_and_wheel_parity(
                     ),
                     "optimize": sys.flags.optimize,
                     "provider_calls": len(provider_requests),
+                    "published_dates": published_dates,
+                    "raw_published_dates": raw_published_dates,
                     "role": continuation["current_stage"],
                     "sources": len(promoted.sources),
                     "status": continuation["status"],
@@ -617,6 +642,11 @@ def test_tavily_vertical_real_loopback_source_and_wheel_parity(
             "durable_sources": 1,
             "optimize": sys.flags.optimize,
             "provider_calls": 1,
+            "published_dates": ["2026-07-22"],
+            "raw_published_dates": [
+                " 2026-07-23",
+                "Wed, 22 Jul 2026 05:30:00 GMT",
+            ],
             "role": "scout",
             "sources": 2,
             "status": "role_work_required",
