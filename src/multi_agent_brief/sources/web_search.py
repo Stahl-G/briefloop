@@ -233,7 +233,12 @@ class WebSearchProvider(SourceProvider):
                         q,
                         max_results=max_results,
                         domains=domains,
-                        days=recency_days,
+                        days=(
+                            recency_days if config.get("time_range") is None else None
+                        ),
+                        time_range=config.get("time_range"),
+                        start_date=config.get("start_date"),
+                        end_date=config.get("end_date"),
                         topic=config.get("topic", "news"),
                         search_depth=config.get("search_depth", "basic"),
                     )

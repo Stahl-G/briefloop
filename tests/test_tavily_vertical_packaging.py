@@ -99,6 +99,7 @@ def test_tavily_vertical_real_loopback_source_and_wheel_parity(
         request_id = "REQ-WHEEL-TAVILY-VERTICAL-001"
         target_name = "tavily-vertical-workspace"
         provider_requests = []
+        provider_authorizations = []
         response_bytes = (
             b'{"results":[{"title":"Durable public result",'
             b'"url":"https://example.com/public-durable",'
@@ -115,6 +116,9 @@ def test_tavily_vertical_real_loopback_source_and_wheel_parity(
             def do_POST(self):
                 length = int(self.headers["Content-Length"])
                 provider_requests.append(json.loads(self.rfile.read(length)))
+                provider_authorizations.append(
+                    self.headers.get("Authorization")
+                )
                 self.send_response(200)
                 self.send_header("Content-Type", "application/json")
                 self.send_header("Content-Length", str(len(response_bytes)))
@@ -350,14 +354,31 @@ def test_tavily_vertical_real_loopback_source_and_wheel_parity(
         )
         require(provider_request["max_results"] == 5, "max_results mismatch")
         require(
-            provider_request["include_raw_content"] is True,
+            provider_request["include_raw_content"] == "markdown",
             "raw content not requested",
         )
         require(
             provider_request["include_answer"] is False,
             "answer unexpectedly requested",
         )
-        require(provider_request["api_key"] == sentinel, "provider key mismatch")
+        require(
+            provider_request["auto_parameters"] is False,
+            "auto parameters unexpectedly enabled",
+        )
+        require(
+            provider_request["search_depth"] == "basic",
+            "search depth mismatch",
+        )
+        require(
+            provider_request["time_range"] == "week",
+            "time range mismatch",
+        )
+        require("days" not in provider_request, "legacy days filter used")
+        require("api_key" not in provider_request, "provider key entered body")
+        require(
+            provider_authorizations == [f"Bearer {sentinel}"],
+            "provider authorization mismatch",
+        )
 
         with SQLiteControlStore.open(db_path) as store:
             head = store.load_workspace_run_head()

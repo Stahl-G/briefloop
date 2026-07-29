@@ -415,6 +415,7 @@ def test_tavily_requests_and_preserves_raw_content_separately(monkeypatch):
 
     def _urlopen(request, timeout=30):
         captured["payload"] = json.loads(request.data.decode("utf-8"))
+        captured["authorization"] = request.get_header("Authorization")
         captured["timeout"] = timeout
         return _FakeResponse()
 
@@ -425,8 +426,10 @@ def test_tavily_requests_and_preserves_raw_content_separately(monkeypatch):
 
     payload = captured["payload"]
     assert isinstance(payload, dict)
-    assert payload["include_raw_content"] is True
-    assert payload["api_key"] == sentinel
+    assert payload["include_raw_content"] == "markdown"
+    assert payload["auto_parameters"] is False
+    assert "api_key" not in payload
+    assert captured["authorization"] == f"Bearer {sentinel}"
     assert results[0].snippet == "search snippet"
     assert results[0].raw_content == "retrieved durable page extract"
     assert results[0].metadata["evidence_quality"] == "partial_extract"

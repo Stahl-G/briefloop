@@ -129,17 +129,30 @@ class TavilyBackend(SearchBackend):
         topic = kwargs.get("topic", "news")
         search_depth = kwargs.get("search_depth", "basic")
         days = kwargs.get("days")
+        time_range = kwargs.get("time_range")
+        start_date = kwargs.get("start_date")
+        end_date = kwargs.get("end_date")
+        if (start_date is None) != (end_date is None):
+            raise SearchBackendError(
+                "Tavily search failed",
+                backend="tavily",
+            ) from None
 
         payload: dict[str, Any] = {
-            "api_key": api_key,
             "query": query,
             "max_results": max_results,
             "topic": topic,
             "search_depth": search_depth,
             "include_answer": False,
-            "include_raw_content": True,
+            "include_raw_content": "markdown",
+            "auto_parameters": False,
         }
-        if days:
+        if time_range:
+            payload["time_range"] = time_range
+        elif start_date is not None and end_date is not None:
+            payload["start_date"] = start_date
+            payload["end_date"] = end_date
+        elif days:
             payload["days"] = days
         if domains:
             payload["include_domains"] = domains
@@ -148,7 +161,11 @@ class TavilyBackend(SearchBackend):
         req = urllib.request.Request(
             TAVILY_API_URL,
             data=body,
-            headers={"Content-Type": "application/json", "Accept": "application/json"},
+            headers={
+                "Content-Type": "application/json",
+                "Accept": "application/json",
+                "Authorization": f"Bearer {api_key}",
+            },
             method="POST",
         )
 

@@ -467,12 +467,14 @@ def test_real_loopback_public_web_tavily_replays_before_credential_or_provider(
     workspace_target = "loopback-discovery"
     response_bytes: list[bytes] = []
     provider_requests: list[dict[str, object]] = []
+    provider_authorizations: list[str | None] = []
 
     class _TavilyLoopbackHandler(BaseHTTPRequestHandler):
         def do_POST(self) -> None:
             length = int(self.headers["Content-Length"])
             payload = json.loads(self.rfile.read(length))
             provider_requests.append(payload)
+            provider_authorizations.append(self.headers.get("Authorization"))
             response = json.dumps(
                 {
                     "results": [
@@ -654,9 +656,14 @@ def test_real_loopback_public_web_tavily_replays_before_credential_or_provider(
     provider_request = provider_requests[0]
     assert provider_request["query"] == ("Prepare the weekly manufacturing brief.")
     assert provider_request["max_results"] == 5
-    assert provider_request["include_raw_content"] is True
+    assert provider_request["include_raw_content"] == "markdown"
+    assert provider_request["auto_parameters"] is False
+    assert provider_request["search_depth"] == "basic"
+    assert provider_request["time_range"] == "week"
+    assert "days" not in provider_request
     assert provider_request["include_answer"] is False
-    assert provider_request["api_key"] == sentinel
+    assert "api_key" not in provider_request
+    assert provider_authorizations == [f"Bearer {sentinel}"]
     db_bytes = db_path.read_bytes()
     with SQLiteControlStore.open(db_path) as store:
         head = store.load_workspace_run_head()

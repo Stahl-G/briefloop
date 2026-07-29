@@ -123,6 +123,7 @@ def collect_frozen_source_pack(
                         "recency_days": request.recency_days,
                         "topic": "news",
                         "search_depth": "basic",
+                        "time_range": ("week" if request.recency_days == 7 else None),
                         "search_tasks": [
                             {
                                 "query": request.query,

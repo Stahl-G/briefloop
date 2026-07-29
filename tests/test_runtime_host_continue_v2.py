@@ -1404,6 +1404,7 @@ def test_discovery_workspace_env_reaches_real_tavily_boundary_once(
     workspace = _discovery_workspace(tmp_path)
     monkeypatch.delenv("TAVILY_API_KEY", raising=False)
     calls: list[dict[str, object]] = []
+    authorization_headers: list[str | None] = []
 
     class _Response:
         status = 200
@@ -1437,6 +1438,7 @@ def test_discovery_workspace_env_reaches_real_tavily_boundary_once(
         assert os.environ["TAVILY_API_KEY"] == "tvly-runtime-secret-sentinel"
         payload = json.loads(request.data.decode("utf-8"))
         calls.append(payload)
+        authorization_headers.append(request.get_header("Authorization"))
         return _Response()
 
     monkeypatch.setattr(
@@ -1449,8 +1451,14 @@ def test_discovery_workspace_env_reaches_real_tavily_boundary_once(
 
     assert result.status == "committed"
     assert len(calls) == 1
-    assert calls[0]["include_raw_content"] is True
-    assert calls[0]["api_key"] == "tvly-runtime-secret-sentinel"
+    assert calls[0]["include_raw_content"] == "markdown"
+    assert calls[0]["auto_parameters"] is False
+    assert calls[0]["search_depth"] == "basic"
+    assert calls[0]["max_results"] == 5
+    assert calls[0]["time_range"] == "week"
+    assert "days" not in calls[0]
+    assert "api_key" not in calls[0]
+    assert authorization_headers == ["Bearer tvly-runtime-secret-sentinel"]
     assert "TAVILY_API_KEY" not in os.environ
     with SQLiteControlStore.open(workspace / "briefloop.db") as store:
         head = store.load_workspace_run_head()
