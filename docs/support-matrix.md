@@ -44,12 +44,12 @@ validation unless that is stated separately.
 | Stage-scoped quality gate control files (`gates/auditor_quality_gate_report.json`, `gates/finalize_quality_gate_report.json`; legacy latest projection `quality_gate_report.json`) | Supported |
 | Atomic Claim Graph (`atomic_claim_graph.json` schema, coverage/type validation, Analyst/Editor contract boundary, and reader-residue projection) | Experimental |
 | Evidence Span Registry (`evidence_span_registry.json` schema, source-pack byte binding, archive projection, and Source Appendix trace view) | Experimental |
-| Durable Source Evidence Pack materialization (`sources materialize-pack`, `input/sources/*.json`, optional `source_evidence_pack_manifest.json` hash validation, and source taxonomy normalization) | Experimental |
+| Legacy Durable Source Evidence Pack materializer (`sources materialize-pack`) | Unsupported/retired; the parser returns `runtime_command_unsupported` with zero writes. The optional manifest contract remains readable for existing artifacts but has no writer through this command |
 | Claim-Support Matrix (`claim_support_matrix.json` schema, cross-artifact validation, and gate/status projection from explicit support records) | Experimental |
 | Semantic Assessment Report (`semantic_assessment_report.json` schema and reference validation) | Experimental; schema/contract only. The proposal projection, status visibility, and human adjudication records were deleted with the legacy stack in LD2-3. The Quality Panel `semantic_support` section reports a constant `not_available` until a Store-native producer lands — on SQLite workspaces it already did, since the Store projection never carried this key |
 | v0.11 product-facing workspace entries (`briefloop new industry-weekly`, `briefloop new management-monthly`, `briefloop new document-review`) mapped to canonical ReportPacks (`market_weekly`, `management_monthly`, `evidence_extract`) with local-first skeletons and control-spine defaults | Supported |
 | ReportSpec / ReportPack baseline contracts for the v0.11 product baseline (`report_spec.yaml`, packaged `market_weekly`, `management_monthly`, and `evidence_extract`, `packs list/show`, and `validate-report-spec`) | Supported |
-| Wider Product OS extensions: ReportTemplate / PolicyProfile registry, Citation Profile Split metadata, Reader Template Conformance warning projection, template renderer MVP, `solar-periodic` / `solar_industry_periodic`, SourceHub Lite setup, internal release-mode approval records, Quality Panel / Quality Summary / static HTML projection, Trajectory Regulation read-only projection, Materiality Selection diagnostic projection, and `extract` source/scope registration | Experimental |
+| Wider Product OS extensions: ReportTemplate / PolicyProfile registry, Citation Profile Split metadata, Reader Template Conformance warning projection, template renderer MVP, `solar-periodic` / `solar_industry_periodic`, internal release-mode approval records, Quality Panel / Quality Summary / static HTML projection, Trajectory Regulation read-only projection, Materiality Selection diagnostic projection, and `extract` source/scope registration | Experimental |
 | Public `briefloop packs bundle` command | Unsupported/retired on SQLite workspaces; the authority guard returns `runtime_command_unsupported` before bundle, file, or Store effects |
 | Internal deterministic ReportBundle seam | Experimental/internal and independently safe-read/publication capability-gated; not a CLI, Gate, approval, package-ready, delivery, or publication authority |
 | Provenance projection control file (`provenance_graph.json`) | Supported |
@@ -216,14 +216,11 @@ remains bounded source/scope/source-lock/page-seed/span registration: it does
 not parse PDFs or binary documents, render pages for visual inspection, extract
 tables or figures, judge semantic support, generate Claim-Support Matrix rows,
 draw legal or disclosure conclusions, run stages, or authorize delivery.
-SourceHub Lite commands can copy explicit local text files into
-`input/sources/sourcehub/`, register RSS feeds, and register runtime web-search
-handoff tasks in `sources.yaml`. This is source setup only: local files remain
-workspace-local evidence inputs, RSS registration does not fetch feeds, and
-web-search handoff uses `runtime_tool` mode without executing Python web
-search. SourceHub Lite does not turn source candidates or search summaries into
-evidence, generate Evidence Span Registry entries, run stages, bypass gates, or
-authorize delivery.
+The legacy SourceHub Lite `sources add-file/add-rss/add-web-search` command
+names are retired parser surfaces. They return
+`runtime_command_unsupported` without source, workspace, Store, provider, or
+network effects. Current source intake and public-web acquisition use
+Store-derived runtime actions.
 Internal release-mode approval commands can initialize
 `human_approval_ledger.json`, append human approval decisions, and write
 `release_readiness_report.json` for internal review modes. These reports may
@@ -278,20 +275,13 @@ lite/force-deliver path.
 
 Source appendices are reader-facing delivery artifacts generated during finalize from cited Claim Ledger sources. They can display safe source identity and taxonomy labels, while the separate source appendix trace audit copy can include internal claim/source/span IDs, source paths, source byte hashes, and metadata completeness warnings for review. They are not source evidence, semantic proof, runtime state, provenance graphs, or workflow gates.
 
-Durable Source Evidence Pack materialization is experimental. The
-`sources materialize-pack` command can turn explicit manual or cached-package
-source records into workspace-local source evidence files under
-`input/sources/` and an optional hash-checked
-`output/intermediate/source_evidence_pack_manifest.json`. This helps ordinary
-recurring reports archive reproducible source bytes. It does not upgrade
-`source_candidates.yaml`, search summaries, model summaries, or source plans
-into evidence; it does not assess semantic support, generate Claim-Support
-Matrix rows, or authorize delivery.
-Generated source evidence records preserve separate provider/storage
-`source_type`, retrieval/page `retrieval_source_type`, reader-facing
-`source_category`, and `underlying_evidence_type` metadata. This taxonomy is
-identity normalization only; it is not trust scoring, source-policy gating,
-semantic support judgment, or compliance review.
+The legacy `sources materialize-pack` name is retained only so callers receive
+a deterministic `runtime_command_unsupported` response. It performs no source
+or Store write. The optional
+`output/intermediate/source_evidence_pack_manifest.json` schema and reader
+contract remain available for existing artifacts, but this retired command is
+not their producer. A source plan, source candidate, search summary, or model
+summary remains discovery material rather than evidence.
 
 Fast-rerun fact-layer import is an experimental control transaction. It can
 import a complete, clean, archived frozen fact layer into a new runtime run for

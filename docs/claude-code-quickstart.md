@@ -148,21 +148,23 @@ Use this wording when the requested behavior is already enforced:
 
 ## 3. Source Discovery
 
-When the workspace uses `llm_decide`, resolve sources before Scout:
+When the workspace uses `llm_decide`, keep `source_candidates.yaml` as a
+planning/review artifact and follow the current Store-derived runtime action:
 
 ```bash
-briefloop sources decide --config ../briefloop-workspace/config.yaml
 cat ../briefloop-workspace/source_candidates.yaml
-briefloop sources decide --config ../briefloop-workspace/config.yaml --merge
+briefloop runtime continue --workspace ../briefloop-workspace
 ```
 
 PowerShell:
 
 ```powershell
-briefloop sources decide --config ..\briefloop-workspace\config.yaml
 Get-Content ..\briefloop-workspace\source_candidates.yaml
-briefloop sources decide --config ..\briefloop-workspace\config.yaml --merge
+briefloop runtime continue --workspace ..\briefloop-workspace
 ```
+
+The retired `briefloop sources decide` command does not merge source plans or
+write source authority.
 
 ## 4. Doctor Check
 

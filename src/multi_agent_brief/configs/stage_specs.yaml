@@ -19,7 +19,7 @@ workflow:
     - stage_id: source-discovery
       owner: python_tool_or_source_planner
       category: source_governance
-      command: briefloop sources decide --config <workspace>/config.yaml
+      command: delegated source-planner writes <workspace>/source_candidates.yaml (plan only); runtime progression remains Store-derived
       consumes:
         - config
         - sources_config

@@ -49,8 +49,8 @@ CODEX_WRITER_FLOW_PROTOCOL = """Codex writer flow protocol:
         - Before initializing into an existing directory, check output/intermediate/runtime_manifest.json, workflow_state.json, artifact_registry.json, event_log.jsonl, and output/runs/. If present, ask whether to create a new workspace, overwrite config only while keeping old output, or reset old output/control state before running.
         - After init or config inspection, show a Source Mode Card: manual local files enabled/disabled, runtime WebSearch enabled/disabled, external API search enabled/disabled, existing source files count, and demo-looking source files yes/no.
         - If using Codex/runtime WebSearch, write collected public sources into input/sources/ as durable source files.
-        - Do not call sources decide --search unless web_search.mode is external_api.
-        - Do not call sources decide --merge on source_plan_only artifacts.
+        - Do not call the retired briefloop sources decide command. Use the current Store-derived runtime action for authorized source acquisition.
+        - Never merge source_plan_only artifacts into evidence or source authority.
         - source_candidates.yaml is planning/review only, not evidence.
         - If runtime_tool search and old demo-looking source files both exist, ask whether to keep or remove the old source files before running.
         - During production runs, report progress after every successful stage-complete transaction in this form: [stage] produced <artifact> -> stage-complete passed -> next <stage>.
@@ -874,10 +874,10 @@ def render_opencode_command_generate_brief(manifest: dict) -> str:
         "\n"
         "3. **Source discovery gate (llm_decide only):**\n"
         "   If `sources.yaml` has `source.mode: llm_decide` and `source_candidates.yaml` "
-        "does not exist or has not been merged:\n"
-        "   - Run: `briefloop sources decide --config $ARGUMENTS/config.yaml`\n"
-        "   - Review `$ARGUMENTS/source_candidates.yaml`.\n"
-        "   - Run: `briefloop sources decide --config $ARGUMENTS/config.yaml --merge`\n"
+        "does not exist or needs refinement:\n"
+        "   - Delegate Source Planner to create or refine `$ARGUMENTS/source_candidates.yaml` as a plan-only artifact.\n"
+        "   - Review the plan, then use the current Store-derived `briefloop runtime continue --workspace $ARGUMENTS` action for authorized acquisition.\n"
+        "   - Never merge the plan through the retired `briefloop sources decide` command.\n"
         "\n"
         "4. **Doctor gate:**\n"
         "   - Run: `briefloop doctor --config $ARGUMENTS/config.yaml`\n"

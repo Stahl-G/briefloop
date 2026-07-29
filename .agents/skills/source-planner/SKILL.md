@@ -54,9 +54,9 @@ Use when sources.yaml uses llm_decide, or when the workspace needs source candid
   Durable runtime-search source files must include URL, source title/name,
   published date or retrieved_at, and raw excerpt/snippet. Summary-only notes
   are discovery hints, not evidence.
-- Do not call `sources decide --search` unless `web_search.mode` is
-  `external_api`.
-- Do not call `sources decide --merge` on `source_plan_only` artifacts.
+- `briefloop sources decide` is retired. Do not call its `--search` or
+  `--merge` forms. Keep `source_candidates.yaml` plan-only and hand acquisition
+  to the Store-derived RuntimeHost/source-provider path.
 - Do not decide whether source-discovery is complete, and do not call
   `state stage-complete`.
 

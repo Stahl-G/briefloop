@@ -82,8 +82,7 @@ briefloop onboard
 briefloop init ../briefloop-workspace --from-onboarding onboarding.json
 briefloop run --workspace ../briefloop-workspace --runtime claude
 briefloop doctor --config ../briefloop-workspace/config.yaml
-briefloop sources decide --config ../briefloop-workspace/config.yaml
-briefloop sources decide --config ../briefloop-workspace/config.yaml --merge
+briefloop runtime continue --workspace ../briefloop-workspace
 briefloop finalize --config ../briefloop-workspace/config.yaml
 python scripts/generate_agent_configs.py --check
 ```

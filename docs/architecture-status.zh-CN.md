@@ -115,14 +115,10 @@
   audit bundle 保留 trace artifacts。这只是 citation surface metadata，不证明
   support、不放松 gates、不移除 audit trace、不批准 delivery，也不决定 release
   readiness。
-  `sources materialize-pack` 可以把显式 manual 或 cached-package source records
-  materialize 到 `input/sources/`，并可写入 hash-validated
-  `source_evidence_pack_manifest.json`，为 recurring reports 提供可归档复现的
-  durable source-evidence layer。Source evidence records 会区分 provider/storage
-  `source_type`、retrieval/page `retrieval_source_type`、reader-facing
-  `source_category` 和 `underlying_evidence_type` metadata；这是 taxonomy
-  normalization，不是 trust scoring、source-policy gate 或 semantic support
-  judgment。
+  旧的 `sources materialize-pack` 命令名只保留为 fail-closed parser surface，
+  统一返回 `runtime_command_unsupported`，不再有当前 source writer。可选的
+  `source_evidence_pack_manifest.json` contract 仍可读取已有 artifact，但不会由
+  该退役命令生成。
   `briefloop extract` 可以在
   `evidence_extract` workspace 中登记显式 extraction scope，并把本地 source
   files 复制到 `input/sources/evidence_extract/`。它还会在
@@ -138,11 +134,10 @@
   不渲染页面做视觉检查、不抽取表格或图、不判断语义支持、不生成 Claim-Support
   Matrix rows、不形成法律或披露结论、不运行 stages、不批准 delivery，也不绕过
   gates。
-  Experimental SourceHub Lite setup commands 可以把本地 text evidence files 复制到
-  `input/sources/sourcehub/`、登记 RSS feeds，并在 `sources.yaml` 中登记
-  `runtime_tool` web-search handoff tasks。这只是 source setup：不会执行 web
-  search、crawl web、把 source candidates 或 search summaries 变成 evidence、
-  生成 Evidence Span Registry entries、运行 stages、批准 delivery 或绕过 gates。
+  旧的 SourceHub Lite `sources add-file/add-rss/add-web-search` 命令名已退役，
+  只保留 fail-closed parser surface；它们返回
+  `runtime_command_unsupported`，不会产生 source、workspace 或 Store effect。
+  当前 source intake 和 public-web acquisition 走 Store-derived runtime action。
   Resolved PolicyProfiles 可以通过有限 adapter 收紧现有 deterministic
   quality-gate strictness 和 reader-final forbidden-phrase checks，但 gates 不会从
   natural-language industry strings 静默推断 policy。

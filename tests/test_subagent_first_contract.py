@@ -402,8 +402,8 @@ def test_codex_orchestrator_has_writer_flow_protocol():
     assert "input/sources/" in text
     assert "URL, source title/name" in text
     assert "raw excerpt/snippet" in text
-    assert "Do not call sources decide --search unless web_search.mode is external_api" in text
-    assert "Do not call sources decide --merge on source_plan_only artifacts" in text
+    assert "Do not call the retired briefloop sources decide command" in text
+    assert "Never merge source_plan_only artifacts into evidence or source authority" in text
     assert "source_candidates.yaml is planning/review only, not evidence" in text
     assert "report progress after every successful stage-complete transaction" in text
     assert "[stage] produced <artifact> -> stage-complete passed -> next <stage>" in text

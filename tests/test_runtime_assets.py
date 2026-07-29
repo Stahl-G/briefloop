@@ -54,6 +54,19 @@ def _assert_frontmatter_first(path: Path) -> None:
     assert INSTALL_MARKER in text
 
 
+def test_codex_workspace_skill_uses_current_store_derived_source_guidance() -> None:
+    text = runtime_assets._workspace_skill_text(
+        runtime="codex",
+        runtime_label="Codex",
+    )
+
+    assert "retired `briefloop sources decide` command" in text
+    assert "current Store-derived runtime action" in text
+    assert "Never merge `source_plan_only` artifacts" in text
+    assert "sources decide --search" not in text
+    assert "sources decide --merge" not in text
+
+
 def test_runtime_install_opencode_workspace_kit_is_local(
     tmp_path: Path, capsys
 ) -> None:

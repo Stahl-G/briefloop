@@ -757,9 +757,9 @@ Codex writer flow:
   `input/sources/` as durable source files with URL, source title/name,
   published date or retrieved_at, and raw excerpt/snippet. Summary-only notes
   are discovery hints, not evidence.
-- Do not call `sources decide --search` unless `web_search.mode` is
-  `external_api`.
-- Do not call `sources decide --merge` on `source_plan_only` artifacts.
+- Do not call the retired `briefloop sources decide` command. Follow the
+  current Store-derived runtime action for authorized acquisition.
+- Never merge `source_plan_only` artifacts into evidence or source authority.
 - `source_candidates.yaml` is planning/review only, not evidence.
 - During production runs, report progress after every successful
   `state stage-complete` transaction.

@@ -415,8 +415,9 @@ include:
   product entrypoints
 - bounded `evidence_extract` source/scope registration, source locks, logical
   page inventory seeds, and text-span seed registries
-- experimental SourceHub Lite setup for local files, RSS feeds, and runtime web-search handoff tasks
-- durable source evidence pack materialization and source taxonomy normalization
+- retired `sources decide/materialize-pack/add-*` names that fail closed with
+  `runtime_command_unsupported`; source acquisition uses Store-derived runtime
+  actions, while `source_candidates.yaml` remains a plan-only artifact
 - internal release-mode approval records
 - Quality Panel JSON / Markdown / HTML projections and audit-bundle integration
 - standalone experimental LAJ JSON / Markdown / HTML second-opinion artifacts

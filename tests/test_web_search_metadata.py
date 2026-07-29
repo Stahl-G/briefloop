@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from unittest.mock import MagicMock
 
+import pytest
+
 from multi_agent_brief.sources.base import SourceQuery
 from multi_agent_brief.sources.web_search import WebSearchProvider
 
@@ -79,6 +81,17 @@ class TestBuildQueriesMetadata:
 
         assert len(queries) == 1
         assert task_meta == {}
+
+    def test_missing_queries_points_to_current_runtime_first_path(self):
+        provider = WebSearchProvider()
+
+        with pytest.raises(RuntimeError) as exc_info:
+            provider._build_queries(SourceQuery(), {"enabled": True})
+
+        message = str(exc_info.value)
+        assert "briefloop init <workspace> --web" in message
+        assert "briefloop runtime continue --workspace <workspace>" in message
+        assert "briefloop sources decide" not in message
 
     def test_mixed_tasks_with_and_without_metadata(self):
         provider = WebSearchProvider()

@@ -378,6 +378,10 @@ def test_cli_init_can_configure_initial_news_backfill(tmp_path):
     assert backfill["enabled"] is True
     assert backfill["days"] == 7
     assert backfill["daily_max_results"] == 20
+    assert backfill["note"] == (
+        "Planning preference only; Store-derived RuntimeHost actions govern"
+        " any authorized acquisition."
+    )
     customization = sources["source_discovery"]["search_customization"]
     assert "task_objective" in customization["derive_queries_from"]
     assert customization["daily_backfill_uses_user_need_terms"] is True
@@ -388,6 +392,10 @@ def test_cli_init_can_configure_initial_news_backfill(tmp_path):
     domain_config = sources["web_search"]["news_source_domains"]
     assert domain_config["preferred_domains"] == ["reuters.com", "bloomberg.com"]
     assert domain_config["excluded_domains"] == ["spam.example.com"]
+    assert sources["filing_resolver"]["note"] == (
+        "Disabled by default. Configure filing_resolver tickers explicitly "
+        "in sources.yaml."
+    )
 
 
 def test_cli_init_rejects_initial_news_backfill_without_llm_decide(tmp_path, capsys):
@@ -410,7 +418,8 @@ def test_cli_init_rejects_initial_news_backfill_without_llm_decide(tmp_path, cap
 
     assert rc == 1
     assert (
-        "--initial-news-backfill requires --source-profile llm_decide"
+        "--initial-news-backfill requires --source-profile llm_decide because "
+        "it belongs to the llm_decide source-discovery profile."
         in capsys.readouterr().out
     )
     assert not (workspace / "sources.yaml").exists()

@@ -625,7 +625,8 @@ As the Hermes Orchestrator main agent, execute:
    briefloop doctor --config {workspace}/config.yaml
 
 6. If source discovery is configured:
-   briefloop sources decide --config {workspace}/config.yaml
+   briefloop runtime continue --workspace {workspace}
+   Treat source_candidates.yaml as a plan-only artifact; never merge it through the retired briefloop sources decide command.
    If runtime WebSearch reports `Did 0 searches`, or every query returns an empty result set, stop and request human review. Do not switch to source-planner or continue with stale sources.
 
 7. If non-text input files are present:

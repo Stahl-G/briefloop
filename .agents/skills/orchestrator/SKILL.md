@@ -65,15 +65,15 @@ when the user explicitly asks for repo-development work.
 - Keep role handoffs artifact-based.
 - Coordinate source-planner, scout, screener, claim-ledger, analyst, editor, auditor, and formatter as delegated specialists.
 - Treat `source_candidates.yaml` as planning/review only, not evidence. Do not
-  call `sources decide --merge` on `source_plan_only` artifacts, and do not
+  merge it through the retired `briefloop sources decide` command, and do not
   dispatch Scout from source plans alone.
 - If using runtime WebSearch, ensure collected public sources are written into
   `input/sources/` as durable source files before source-discovery completion.
   Durable runtime-search source files must include URL, source title/name,
   published date or retrieved_at, and raw excerpt/snippet. Summary-only notes
   are discovery hints, not evidence.
-- Do not call `sources decide --search` unless `web_search.mode` is
-  `external_api`.
+- Do not call the retired `briefloop sources decide` command. Use the current
+  Store-derived runtime action for public-web acquisition.
 - Check expected artifacts after each delegated stage.
 - Make stage decisions with completion transactions for successful progress, `briefloop state decide` for `retry_stage`, `request_human_review`, or `block_run`, and the deterministic repair transaction for `delegate_repair`.
 - Record successful delegated stage completion with `briefloop state stage-complete --workspace <workspace> --stage <stage_id> --reason "<reason>"` before moving to the next stage. Use `briefloop state decide` only for retry, human review, or block decisions; for owner-stage artifact repair from a current quality gate, run `briefloop gates show --workspace <workspace> --json` and follow its required_commands. Current-gate repair start must use `--gate-stage` and `--gate-artifact`; do not use unscoped repair start for current-gate blockers. For non-gate owner-stage repair routes from audit_report, finalize_report, artifact_registry, or transaction_integrity, run `briefloop repair route --workspace <workspace> --json`, then start the selected route with `--finding-id <finding_id>` or `--route-index <route_index>`; do not use bare `repair start --workspace <workspace>`. Delegate only the repair owner role, and finish with `briefloop repair complete --workspace <workspace> --reason "<reason>"`. If any command rejects the decision, completion, or repair, stop and correct the stage state.

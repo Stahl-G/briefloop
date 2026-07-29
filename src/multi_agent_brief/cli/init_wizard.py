@@ -1217,8 +1217,8 @@ def _build_initial_news_backfill_config(profile: InitProfile) -> dict[str, Any]:
         ),
         "mode": "daily_news_windows",
         "note": (
-            "When enabled, sources decide --search expands source discovery into"
-            " one user-need-customized news query per day."
+            "Planning preference only; Store-derived RuntimeHost actions govern"
+            " any authorized acquisition."
         ),
     }
 
@@ -1247,7 +1247,7 @@ def _build_llm_decide_sources(profile: InitProfile) -> dict[str, Any]:
     enabled_providers = ["manual"]
     if getattr(profile, "web_search_enabled", False):
         enabled_providers.append("web_search")
-    # filing_resolver is available but disabled by default; enable via sources decide --merge
+    # filing_resolver is available but disabled by default.
 
     return {
         "source_strategy": {
@@ -1349,7 +1349,10 @@ def _build_llm_decide_sources(profile: InitProfile) -> dict[str, Any]:
             "tickers": [],
             "filing_types": ["10-K", "10-Q", "8-K"],
             "xbrl": True,
-            "note": "Disabled by default. Enable via 'briefloop sources decide --merge' after reviewing source_candidates.yaml filing_sources.",
+            "note": (
+                "Disabled by default. Configure filing_resolver tickers "
+                "explicitly in sources.yaml."
+            ),
         },
     }
 

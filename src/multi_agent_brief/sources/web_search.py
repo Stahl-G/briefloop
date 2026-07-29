@@ -307,9 +307,11 @@ class WebSearchProvider(SourceProvider):
             else:
                 raise RuntimeError(
                     "web_search has no search_tasks configured and no "
-                    "keywords provided.  Run 'briefloop sources decide "
-                    "--config <workspace>/config.yaml' to discover sources, or "
-                    "add search_tasks manually in sources.yaml."
+                    "keywords provided. Configure public-web discovery with "
+                    "'briefloop init <workspace> --web', then follow the "
+                    "Store-derived 'briefloop runtime continue --workspace "
+                    "<workspace>' action, or add search_tasks manually in "
+                    "sources.yaml."
                 )
 
         return queries, task_meta

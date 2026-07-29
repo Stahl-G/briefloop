@@ -386,7 +386,12 @@ def test_hermes_prompt_contains_doctor_and_sources():
         venv_path="/tmp/test-repo/.venv/bin/activate",
     )
     assert "briefloop doctor" in prompt
-    assert "briefloop sources decide" in prompt
+    assert (
+        f"briefloop runtime continue --workspace {Path('/tmp/test-ws').resolve()}"
+        in prompt
+    )
+    assert "retired briefloop sources decide command" in prompt
+    assert "briefloop sources decide --config" not in prompt
     assert "briefloop inputs classify" in prompt
 
 

@@ -380,8 +380,9 @@ v0.14.0 完成 SQLite-only 切换，并增加只读交互面：
 - 支持的 `industry-weekly`、`management-monthly` 和 `document-review` 产品入口
 - 有边界的 `evidence_extract` source/scope 注册、source lock、logical page
   inventory seed 和 text-span seed registry
-- 实验性的 SourceHub Lite 来源设置入口，用于本地文件、RSS feed 和 runtime web-search handoff task
-- durable source evidence pack materialization 和 source taxonomy normalization
+- 已退役的 `sources decide/materialize-pack/add-*` 命令名统一 fail closed 并返回
+  `runtime_command_unsupported`；来源获取走 Store-derived runtime action，
+  `source_candidates.yaml` 只保留为 plan-only artifact
 - 内部 review release-mode approval record
 - Quality Panel JSON / Markdown / HTML 投影及 audit bundle 集成
 - 独立的实验性 LAJ JSON / Markdown / HTML second-opinion artifact，以及显式绑定

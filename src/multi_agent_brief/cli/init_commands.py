@@ -393,7 +393,7 @@ def _profile_option_errors(profile) -> list[str]:
     ):
         errors.append(
             "--initial-news-backfill requires --source-profile llm_decide "
-            "because it runs through sources decide and source_discovery."
+            "because it belongs to the llm_decide source-discovery profile."
         )
     return errors
 

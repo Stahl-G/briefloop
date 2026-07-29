@@ -70,8 +70,8 @@ Codex writer flow protocol:
         - Before initializing into an existing directory, check output/intermediate/runtime_manifest.json, workflow_state.json, artifact_registry.json, event_log.jsonl, and output/runs/. If present, ask whether to create a new workspace, overwrite config only while keeping old output, or reset old output/control state before running.
         - After init or config inspection, show a Source Mode Card: manual local files enabled/disabled, runtime WebSearch enabled/disabled, external API search enabled/disabled, existing source files count, and demo-looking source files yes/no.
         - If using Codex/runtime WebSearch, write collected public sources into input/sources/ as durable source files.
-        - Do not call sources decide --search unless web_search.mode is external_api.
-        - Do not call sources decide --merge on source_plan_only artifacts.
+        - Do not call the retired briefloop sources decide command. Use the current Store-derived runtime action for authorized source acquisition.
+        - Never merge source_plan_only artifacts into evidence or source authority.
         - source_candidates.yaml is planning/review only, not evidence.
         - If runtime_tool search and old demo-looking source files both exist, ask whether to keep or remove the old source files before running.
         - During production runs, report progress after every successful stage-complete transaction in this form: [stage] produced <artifact> -> stage-complete passed -> next <stage>.

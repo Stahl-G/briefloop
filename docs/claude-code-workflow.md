@@ -8,7 +8,7 @@ brief is produced by external subagents.
 
 ```text
 Python tools
-  init / sources decide / doctor / inputs extract / inputs classify / audit / finalize
+  init / runtime next+continue / doctor / inputs extract / inputs classify / audit / finalize
 
 External subagents
   source-planner -> scout -> screener -> claim-ledger -> analyst -> editor -> auditor -> formatter
@@ -19,7 +19,9 @@ External subagents
 The Python CLI keeps deterministic, testable support functions in code:
 
 - `briefloop init` — create a workspace
-- `briefloop sources decide` — resolve `llm_decide` source policy
+- `briefloop runtime next` / `briefloop runtime continue` — read and advance the
+  current Store-derived runtime action; `source_candidates.yaml` remains
+  planning-only
 - `briefloop doctor` — check configuration and source health
 - `briefloop inputs extract` — convert supported PDF/DOCX/image inputs to adjacent `.mineru.md` files with MinerU
 - `briefloop inputs classify` — classify evidence and instruction inputs
