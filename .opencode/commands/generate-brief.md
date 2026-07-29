@@ -39,10 +39,10 @@ Stage sequence:
 2. Read `$ARGUMENTS/config.yaml`, `$ARGUMENTS/sources.yaml`, `$ARGUMENTS/user.md`, and workspace inputs.
 
 3. **Source discovery gate (llm_decide only):**
-   If `sources.yaml` has `source.mode: llm_decide` and `source_candidates.yaml` does not exist or has not been merged:
-   - Run: `briefloop sources decide --config $ARGUMENTS/config.yaml`
-   - Review `$ARGUMENTS/source_candidates.yaml`.
-   - Run: `briefloop sources decide --config $ARGUMENTS/config.yaml --merge`
+   If `sources.yaml` has `source.mode: llm_decide` and `source_candidates.yaml` does not exist or needs refinement:
+   - Delegate Source Planner to create or refine `$ARGUMENTS/source_candidates.yaml` as a plan-only artifact.
+   - Review the plan, then use the current Store-derived `briefloop runtime continue --workspace $ARGUMENTS` action for authorized acquisition.
+   - Never merge the plan through the retired `briefloop sources decide` command.
 
 4. **Doctor gate:**
    - Run: `briefloop doctor --config $ARGUMENTS/config.yaml`

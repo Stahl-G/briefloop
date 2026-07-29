@@ -1698,49 +1698,6 @@ def test_web_search_source_id_stable():
     assert all(sid.startswith("WS_") for sid in ids1)
 
 
-# --- P1: Decider merge should not auto-enable web_search ---
-
-
-def test_merge_does_not_auto_enable_web_search(tmp_path):
-    """merge_candidates_to_sources should not enable web_search by default."""
-    import yaml
-    from multi_agent_brief.sources.decider import merge_candidates_to_sources
-
-    sources = {
-        "source_strategy": {"profile": "research", "enabled_providers": ["manual"]},
-        "manual": {"enabled": True, "sources": []},
-        "rss": {"enabled": False, "feeds": []},
-        "web_search": {"enabled": False, "max_results": 20, "recency_days": 7},
-    }
-    sources_path = tmp_path / "sources.yaml"
-    with open(sources_path, "w", encoding="utf-8") as f:
-        yaml.dump(sources, f)
-
-    candidates = {
-        "metadata": {
-            "generated_by": "source_decider",
-            "status": "pending_review",
-        },
-        "recommended_sources": [
-            {
-                "name": "Tech News",
-                "url": "https://technews.com",
-                "category": "industry_media",
-                "enabled": True,
-            },
-        ],
-    }
-    candidates_path = tmp_path / "source_candidates.yaml"
-    with open(candidates_path, "w", encoding="utf-8") as f:
-        yaml.dump(candidates, f)
-
-    merge_candidates_to_sources(sources_path, candidates_path)
-
-    updated = yaml.safe_load(sources_path.read_text(encoding="utf-8"))
-    assert updated["web_search"]["enabled"] is False
-    assert "web_search" not in updated["source_strategy"].get("enabled_providers", [])
-
-
 # --- P2: Provider errors are captured ---
 
 

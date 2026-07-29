@@ -81,9 +81,8 @@ your editorial judgment.
    Complete the `source-discovery` transaction before invoking Scout.
    - If `sources.yaml` has `source_strategy.profile: llm_decide` and `source_candidates.yaml` is missing or unmerged, resolve sources first:
      - Explain supported web-search options neutrally: Tavily, Exa, Brave, Firecrawl, Serper, runtime_websearch, or configure_later.
-     - Run `briefloop sources decide --config $ARGUMENTS/config.yaml`.
-     - Review `$ARGUMENTS/source_candidates.yaml`.
-     - Run `briefloop sources decide --config $ARGUMENTS/config.yaml --merge` after source approval.
+     - Delegate Source Planner to create or refine `$ARGUMENTS/source_candidates.yaml` as a plan-only artifact.
+     - Review the plan, then use the current Store-derived `briefloop runtime continue --workspace $ARGUMENTS` action for authorized acquisition; never merge the plan through the retired `briefloop sources decide` command.
    - Treat `source_candidates.yaml` as a source plan only, not source evidence. Scout must extract candidate claims from actual source content or search results.
    - If runtime WebSearch is used and it reports `Did 0 searches`, or every query returns an empty result set, stop and request human review. Do not switch to source-planner and continue with stale or old sources.
    - If the workspace uses a configured non-`llm_decide` source profile, verify the configured `sources.yaml` source surface instead of running source proposal.

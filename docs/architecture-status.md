@@ -170,14 +170,11 @@ page describes implemented runtime capability, not a breaking deep rename.
   source labels while audit bundles preserve trace artifacts. This is
   citation-surface metadata only; it does not prove support, relax gates,
   remove audit trace, approve delivery, or decide release readiness.
-  `sources materialize-pack` can materialize explicit manual or cached-package
-  source records into `input/sources/` plus an optional hash-validated
-  `source_evidence_pack_manifest.json`, giving recurring reports a durable
-  source-evidence layer for archive reproducibility. Source evidence records
-  preserve separate provider/storage `source_type`, retrieval/page
-  `retrieval_source_type`, reader-facing `source_category`, and
-  `underlying_evidence_type` metadata; this is taxonomy normalization, not
-  trust scoring, source-policy gating, or semantic support judgment.
+  The legacy `sources materialize-pack` name is retained only as a fail-closed
+  parser surface and returns `runtime_command_unsupported`; it has no current
+  source writer. The optional `source_evidence_pack_manifest.json` contract
+  remains readable for existing artifacts but is not produced by that retired
+  command.
   `briefloop extract` can register an explicit
   extraction scope and copy local source files into an `evidence_extract`
   workspace's `input/sources/evidence_extract/` directory. It also writes a
@@ -195,12 +192,11 @@ page describes implemented runtime capability, not a breaking deep rename.
   inspection, extract tables or figures, judge semantic support, generate
   Claim-Support Matrix rows, create legal or disclosure conclusions, run
   stages, approve delivery, or bypass gates.
-  Experimental SourceHub Lite setup commands can copy local text evidence files
-  into `input/sources/sourcehub/`, register RSS feeds, and register
-  `runtime_tool` web-search handoff tasks in `sources.yaml`. These commands are
-  source setup only: they do not execute web search, crawl the web, turn source
-  candidates or search summaries into evidence, generate Evidence Span Registry
-  entries, run stages, approve delivery, or bypass gates.
+  The legacy SourceHub Lite `sources add-file/add-rss/add-web-search` names are
+  retired fail-closed parser surfaces. They return
+  `runtime_command_unsupported` without source, workspace, or Store effects;
+  current source intake and public-web acquisition use Store-derived runtime
+  actions.
   Resolved PolicyProfiles may tighten existing deterministic quality-gate
   strictness and reader-final forbidden-phrase checks through a limited adapter.
   Internal release-mode approval commands can initialize

@@ -2,7 +2,6 @@
 
 Covers:
 - local_signal_planner.py: task generation, market hints, query templates
-- decider.py: search queries with local language, source candidates with local tasks
 - audit: LOCAL_SIGNAL_CLAIM_001, LOCAL_SIGNAL_PROVENANCE_001, LOCAL_SIGNAL_PRIVACY_001
 - collector_tasks.json generation
 - local_signal_samples.jsonl parsing
@@ -23,13 +22,6 @@ from multi_agent_brief.sources.local_signal_planner import (
     generate_local_signal_report,
     parse_local_signal_samples,
 )
-from multi_agent_brief.sources.decider import (
-    build_search_queries,
-    build_search_tasks_with_metadata,
-    generate_source_candidates,
-)
-
-
 # ── Fixtures ─────────────────────────────────────────────────────────
 
 
@@ -253,70 +245,6 @@ class TestCollectorTasks:
         result = generate_collector_tasks(_discovery_disabled())
         assert result["status"] == "no_tasks"
         assert result["tasks"] == []
-
-
-# ── Source Candidates Tests ───────────────────────────────────────────
-
-
-class TestSourceCandidates:
-    """Test generate_source_candidates() with local signal tasks."""
-
-    def test_candidates_include_local_tasks(self):
-        candidates = generate_source_candidates(_discovery_vietnam())
-        assert "local_social_listening_tasks" in candidates
-        assert len(candidates["local_social_listening_tasks"]) > 0
-
-    def test_local_task_has_required_fields(self):
-        candidates = generate_source_candidates(_discovery_vietnam())
-        task = candidates["local_social_listening_tasks"][0]
-        assert "task_id" in task
-        assert "market" in task
-        assert "language" in task
-        assert "query" in task
-
-    def test_disabled_has_no_local_tasks(self):
-        candidates = generate_source_candidates(_discovery_disabled())
-        assert "local_social_listening_tasks" not in candidates
-
-
-# ── Search Queries Tests ─────────────────────────────────────────────
-
-
-class TestSearchQueries:
-    """Test build_search_queries() with local signal queries."""
-
-    def test_queries_include_local_language(self):
-        queries = build_search_queries(_discovery_vietnam())
-        # Should have at least one Vietnamese query
-        vi_queries = [q for q in queries if any(c in q for c in "đánh giá người dùng")]
-        assert len(vi_queries) > 0
-
-    def test_queries_deduplicated(self):
-        queries = build_search_queries(_discovery_vietnam())
-        assert len(queries) == len(set(queries))
-
-    def test_disabled_has_no_local_queries(self):
-        queries = build_search_queries(_discovery_disabled())
-        # Standard queries only
-        assert all("đánh giá" not in q for q in queries)
-
-
-class TestSearchTasksWithMetadata:
-    """Test build_search_tasks_with_metadata()."""
-
-    def test_tasks_have_metadata(self):
-        tasks = build_search_tasks_with_metadata(_discovery_vietnam())
-        signal_tasks = [t for t in tasks if t.get("topic") == "consumer_signal"]
-        assert len(signal_tasks) > 0
-        for task in signal_tasks:
-            assert "market" in task
-            assert "language" in task
-            assert "signal_type" in task
-
-    def test_standard_queries_have_no_special_metadata(self):
-        tasks = build_search_tasks_with_metadata(_discovery_vietnam())
-        standard_tasks = [t for t in tasks if t.get("topic") != "consumer_signal"]
-        assert len(standard_tasks) > 0
 
 
 # ── Local Signal Samples Parser Tests ────────────────────────────────
@@ -593,15 +521,5 @@ class TestReferenceWorkflowRegression:
         tasks = build_local_signal_tasks(discovery)
         assert tasks == []
 
-        candidates = generate_source_candidates(discovery)
-        assert "local_social_listening_tasks" not in candidates
-
         collector = generate_collector_tasks(discovery)
         assert collector["status"] == "no_tasks"
-
-    def test_standard_queries_unchanged(self):
-        """Standard queries should still be generated."""
-        discovery = _discovery_disabled()
-        queries = build_search_queries(discovery)
-        assert len(queries) > 0
-        assert any("industry news" in q for q in queries)
