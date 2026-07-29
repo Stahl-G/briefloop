@@ -1,4 +1,5 @@
 """Tests for CLI toolbox commands."""
+
 from __future__ import annotations
 
 import json
@@ -36,9 +37,7 @@ def complete_init_args(workspace, *, language="zh-CN", industry="finance", extra
     ]
     parser = build_parser()
     subcommands = next(
-        action.choices
-        for action in parser._actions
-        if getattr(action, "choices", None)
+        action.choices for action in parser._actions if getattr(action, "choices", None)
     )
     init_options = {
         option
@@ -203,8 +202,33 @@ def test_quality_html_help_states_the_truthful_four_tab_boundary(capsys):
     assert "local-finalized Brief" in normalized
     assert "deterministic Quality" in normalized
     assert "optional advisory LAJ (NOT MEASURED)" in normalized
-    assert "unavailable Improvement" in normalized
+    assert "Store- native Human guidance state" in normalized
+    assert "next-run consumption is not shipped" in normalized
     assert "three-page" not in normalized
+
+
+def test_quality_laj_help_exposes_actionable_human_review_without_unit_c(capsys):
+    parser = build_parser()
+
+    with pytest.raises(SystemExit) as exc:
+        parser.parse_args(["quality", "laj", "--help"])
+
+    assert exc.value.code == 0
+    output = " ".join(capsys.readouterr().out.split())
+    for command in (
+        "policy-set",
+        "assess",
+        "status",
+        "retry",
+        "review-open",
+        "disposition",
+        "draft",
+        "approve",
+        "review-status",
+    ):
+        assert command in output
+    assert "snapshot" not in output
+    assert "not consumed by later runs" in output
 
 
 def test_quality_html_reports_unsupported_publication_without_effects(
@@ -256,10 +280,13 @@ def test_quality_html_reports_unsupported_publication_without_effects(
         for path in (workspace / "output").rglob("*")
         if path.is_file()
     } == output_before
-    assert sorted(
-        path.relative_to(workspace).as_posix()
-        for path in (workspace / "output").rglob("*")
-    ) == names_before
+    assert (
+        sorted(
+            path.relative_to(workspace).as_posix()
+            for path in (workspace / "output").rglob("*")
+        )
+        == names_before
+    )
 
 
 def test_packs_bundle_help_states_retired_internal_only_boundary(capsys):
@@ -473,18 +500,20 @@ def test_cli_audit_existing_brief(tmp_path):
     ledger = tmp_path / "claim_ledger.json"
     brief.write_text("Revenue grew 5%. [src:CLAIM_TEST_001]\n", encoding="utf-8")
     ledger.write_text(
-        json.dumps([
-            {
-                "claim_id": "CLAIM_TEST_001",
-                "statement": "Revenue grew 5%.",
-                "source_id": "SRC001",
-                "evidence_text": "Revenue grew 5%.",
-                "source_url": "https://example.com/report",
-                "source_type": "manual",
-                "claim_type": "fact",
-                "confidence": "high",
-            }
-        ]),
+        json.dumps(
+            [
+                {
+                    "claim_id": "CLAIM_TEST_001",
+                    "statement": "Revenue grew 5%.",
+                    "source_id": "SRC001",
+                    "evidence_text": "Revenue grew 5%.",
+                    "source_url": "https://example.com/report",
+                    "source_type": "manual",
+                    "claim_type": "fact",
+                    "confidence": "high",
+                }
+            ]
+        ),
         encoding="utf-8",
     )
 
@@ -535,7 +564,9 @@ def test_cli_audit_accepts_wrapped_ledger_and_hyphenated_claim_id(tmp_path):
     )
 
     audit_output = tmp_path / "audit.json"
-    exit_code = main(["audit", str(brief), "--ledger", str(ledger), "--output", str(audit_output)])
+    exit_code = main(
+        ["audit", str(brief), "--ledger", str(ledger), "--output", str(audit_output)]
+    )
 
     assert exit_code == 0
     report = json.loads(audit_output.read_text(encoding="utf-8"))
@@ -588,11 +619,17 @@ def test_claude_install_writes_user_command_and_agents(tmp_path, capsys):
     )
     (command_dir / "capability.md").write_text("# capability\n", encoding="utf-8")
     (command_dir / "init-brief.md").write_text("# init\n", encoding="utf-8")
-    (command_dir / "propose-competitors.md").write_text("# competitors\n", encoding="utf-8")
-    (agents_dir / "scout.md").write_text("---\nname: scout\n---\n\nScout.\n", encoding="utf-8")
+    (command_dir / "propose-competitors.md").write_text(
+        "# competitors\n", encoding="utf-8"
+    )
+    (agents_dir / "scout.md").write_text(
+        "---\nname: scout\n---\n\nScout.\n", encoding="utf-8"
+    )
 
     target = tmp_path / "claude"
-    rc = main(["claude", "install", "--repo-workdir", str(repo), "--target", str(target)])
+    rc = main(
+        ["claude", "install", "--repo-workdir", str(repo), "--target", str(target)]
+    )
 
     assert rc == 0
     output = capsys.readouterr().out
@@ -600,11 +637,16 @@ def test_claude_install_writes_user_command_and_agents(tmp_path, capsys):
     installed_briefloop_command = target / "commands" / "briefloop.md"
     assert installed_briefloop_command.exists()
     assert installed_briefloop_command.read_text(encoding="utf-8").startswith("---\n")
-    assert "Generated by briefloop claude install" in installed_briefloop_command.read_text(encoding="utf-8")
+    assert (
+        "Generated by briefloop claude install"
+        in installed_briefloop_command.read_text(encoding="utf-8")
+    )
     installed_mabw_command = target / "commands" / "mabw.md"
     assert installed_mabw_command.exists()
     assert installed_mabw_command.read_text(encoding="utf-8").startswith("---\n")
-    assert "Generated by briefloop claude install" in installed_mabw_command.read_text(encoding="utf-8")
+    assert "Generated by briefloop claude install" in installed_mabw_command.read_text(
+        encoding="utf-8"
+    )
     installed_command = target / "commands" / "generate-brief.md"
     assert installed_command.exists()
     text = installed_command.read_text(encoding="utf-8")
@@ -618,14 +660,18 @@ def test_claude_install_writes_user_command_and_agents(tmp_path, capsys):
     installed_agent = target / "agents" / "mabw" / "scout.md"
     assert installed_agent.exists()
     assert installed_agent.read_text(encoding="utf-8").startswith("---\n")
-    assert "Generated by briefloop claude install" in installed_agent.read_text(encoding="utf-8")
+    assert "Generated by briefloop claude install" in installed_agent.read_text(
+        encoding="utf-8"
+    )
 
 
 def test_claude_install_briefloop_command_is_self_contained(tmp_path, capsys):
     repo = Path(__file__).resolve().parents[1]
     target = tmp_path / "claude"
 
-    rc = main(["claude", "install", "--repo-workdir", str(repo), "--target", str(target)])
+    rc = main(
+        ["claude", "install", "--repo-workdir", str(repo), "--target", str(target)]
+    )
 
     assert rc == 0
     capsys.readouterr()
@@ -655,28 +701,42 @@ def test_claude_install_refuses_existing_non_mabw_file_without_force(tmp_path, c
     (agents_dir / "scout.md").write_text("# scout\n", encoding="utf-8")
     target = tmp_path / "claude"
     (target / "commands").mkdir(parents=True)
-    (target / "commands" / "capability.md").write_text("# user capability\n", encoding="utf-8")
-    (target / "commands" / "generate-brief.md").write_text("# existing\n", encoding="utf-8")
+    (target / "commands" / "capability.md").write_text(
+        "# user capability\n", encoding="utf-8"
+    )
+    (target / "commands" / "generate-brief.md").write_text(
+        "# existing\n", encoding="utf-8"
+    )
 
-    rc = main(["claude", "install", "--repo-workdir", str(repo), "--target", str(target)])
+    rc = main(
+        ["claude", "install", "--repo-workdir", str(repo), "--target", str(target)]
+    )
 
     assert rc == 1
-    assert "Refusing to overwrite existing non-generated file without --force" in capsys.readouterr().out
+    assert (
+        "Refusing to overwrite existing non-generated file without --force"
+        in capsys.readouterr().out
+    )
 
 
 def test_cli_run_command_creates_handoff(capsys):
     """run --runtime operator is retired: typed rejection with zero workspace writes."""
     import tempfile
+
     d = Path(tempfile.mkdtemp())
     config = d / "config.yaml"
-    config.write_text("project:\n  name: test\noutput:\n  path: output\n", encoding="utf-8")
+    config.write_text(
+        "project:\n  name: test\noutput:\n  path: output\n", encoding="utf-8"
+    )
     (d / "user.md").write_text("# test\n", encoding="utf-8")
     before_files = {
         path.relative_to(d).as_posix(): path.read_bytes()
         for path in d.rglob("*")
         if path.is_file()
     }
-    exit_code = main(["run", "--runtime", "operator", "--config", str(config), "--skip-doctor"])
+    exit_code = main(
+        ["run", "--runtime", "operator", "--config", str(config), "--skip-doctor"]
+    )
     captured = capsys.readouterr()
     # retired public `run --runtime operator` handoff surface and
     # its output/intermediate control artifacts; the Codex SQLite ControlStore
@@ -693,7 +753,9 @@ def test_cli_run_command_creates_handoff(capsys):
     assert not (d / "output").exists()
 
 
-def test_cli_prepare_is_deprecated_and_does_not_generate_outputs(tmp_path: Path, capsys):
+def test_cli_prepare_is_deprecated_and_does_not_generate_outputs(
+    tmp_path: Path, capsys
+):
     """prepare is retired: typed rejection and it must not generate any outputs."""
     ws = tmp_path / "ws"
     assert main(complete_init_args(ws, extra=["--source-profile", "conservative"])) == 0
@@ -746,11 +808,16 @@ def test_onboard_template_writes_json(tmp_path, capsys):
 def test_onboard_validate_accepts_valid_file(tmp_path, capsys):
     """onboard --validate accepts a complete onboarding.json."""
     valid = tmp_path / "valid.json"
-    valid.write_text(json.dumps({
-        "company_or_org": "阿特斯",
-        "industry_or_theme": "光伏",
-        "task_objective": "行业简报",
-    }), encoding="utf-8")
+    valid.write_text(
+        json.dumps(
+            {
+                "company_or_org": "阿特斯",
+                "industry_or_theme": "光伏",
+                "task_objective": "行业简报",
+            }
+        ),
+        encoding="utf-8",
+    )
     exit_code = main(["onboard", "--validate", str(valid)])
     captured = capsys.readouterr()
     assert exit_code == 0
@@ -760,9 +827,14 @@ def test_onboard_validate_accepts_valid_file(tmp_path, capsys):
 def test_onboard_validate_rejects_missing_fields(tmp_path, capsys):
     """onboard --validate returns 1 when required fields are missing."""
     incomplete = tmp_path / "incomplete.json"
-    incomplete.write_text(json.dumps({
-        "audience_plain": "management",
-    }), encoding="utf-8")
+    incomplete.write_text(
+        json.dumps(
+            {
+                "audience_plain": "management",
+            }
+        ),
+        encoding="utf-8",
+    )
     exit_code = main(["onboard", "--validate", str(incomplete)])
     captured = capsys.readouterr()
     assert exit_code == 1

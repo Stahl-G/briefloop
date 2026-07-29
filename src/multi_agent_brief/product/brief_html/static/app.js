@@ -5,9 +5,9 @@
      tab 1 brief    — exact Store-bound local reader Markdown
      tab 2 quality  — deterministic Store projection (green = pass only)
      tab 3 review   — LAJ semantic advisory view (purple; never PASS wording)
-     tab 4 feedback — Improvement Ledger surface (honest unavailable, inert)
-   No network, no write affordance: DOM via createElement and
-   textContent only; clearing uses replaceChildren().
+     tab 4 feedback — Store-native Human guidance state (next-run use unshipped)
+   Static exports remain read-only. A secured loopback Review Session may expose
+   strict Human commands; DOM uses createElement/textContent only.
    ========================================================================== */
 (function () {
     "use strict";
@@ -16,6 +16,7 @@
     var MESSAGES = {
         zh: {
             top_badge: "只读静态导出 · 无任何写入能力",
+            session_badge: "本机审阅会话 · 人工操作写入 SQLite",
             tab_brief: "简报",
             tab_quality: "质量状态",
             tab_review: "AI 语义复盘",
@@ -66,9 +67,23 @@
             disclaimer_title: "免责声明",
             fb_title: "反馈与下一轮改进",
             fb_sub: "Improvement Ledger 尚未提供 Store 原生的权威记录位置；本页如实呈现不可用状态，不臆造任何记录。",
+            fb_available_sub: "以下为 Store 原生、人工编辑并单独批准的 guidance；下一轮消费尚未实现。",
             recorded_title: "已记录的反馈",
             recorded_none: "（暂无记录）",
             il_unavailable: "Improvement Ledger 不可用：尚无权威记录面。",
+            disposition_title: "人工处置",
+            disposition_accept: "接受",
+            disposition_reject: "拒绝",
+            disposition_defer: "暂缓",
+            guidance_edit: "编辑 guidance",
+            guidance_save: "保存草稿",
+            guidance_approve: "单独批准",
+            guidance_deactivate: "停用",
+            guidance_revert: "撤回",
+            guidance_supersede: "标记被替代",
+            command_pending: "正在记录…",
+            command_failed: "记录失败",
+            command_saved: "已由 Store Receipt 记录",
             consumption_label: "下一轮消费边界 · ",
             planned_label: "planned",
             footer_boundary: "静态导出边界：本页永远是只读投影；不含任何命令端点或写入能力。",
@@ -82,6 +97,7 @@
         },
         en: {
             top_badge: "Read-only static export · no write affordance",
+            session_badge: "Local Review Session · Human actions write SQLite",
             tab_brief: "Brief",
             tab_quality: "Quality status",
             tab_review: "AI semantic review",
@@ -132,9 +148,23 @@
             disclaimer_title: "Disclaimer",
             fb_title: "Feedback & next-run improvement",
             fb_sub: "No Store-native authoritative home for the Improvement Ledger exists yet; this page reports that honestly and fabricates nothing.",
+            fb_available_sub: "Store-native Human-edited, separately approved guidance is shown below; next-run consumption is not shipped.",
             recorded_title: "Recorded feedback",
             recorded_none: "(no records)",
             il_unavailable: "Improvement Ledger unavailable: no authoritative record surface exists.",
+            disposition_title: "Human disposition",
+            disposition_accept: "Accept",
+            disposition_reject: "Reject",
+            disposition_defer: "Defer",
+            guidance_edit: "Edit guidance",
+            guidance_save: "Save draft",
+            guidance_approve: "Approve separately",
+            guidance_deactivate: "Deactivate",
+            guidance_revert: "Revert",
+            guidance_supersede: "Mark superseded",
+            command_pending: "Recording…",
+            command_failed: "Command failed",
+            command_saved: "Recorded by Store Receipt",
             consumption_label: "next-run consumption · ",
             planned_label: "planned",
             footer_boundary: "Static export boundary: this page is always a read-only projection; it contains no command endpoint and no write affordance.",
@@ -156,8 +186,23 @@
         DATA = null;
     }
 
+    function readActionSession() {
+        try {
+            if (location.protocol !== "http:" || location.hostname !== "127.0.0.1") return null;
+            var values = new URLSearchParams(location.hash.slice(1));
+            var token = values.get("token");
+            var session = values.get("session");
+            var csrf = values.get("csrf");
+            if (!token || !session || !csrf) return null;
+            return { token: token, session: session, csrf: csrf };
+        } catch (e) {
+            return null;
+        }
+    }
+
+    var ACTION_SESSION = readActionSession();
     var LANG = "zh";
-    var STATE = { tab: "brief" };
+    var STATE = { tab: ACTION_SESSION ? "review" : "brief" };
 
     function t(key) { return (MESSAGES[LANG] && MESSAGES[LANG][key]) || MESSAGES.zh[key] || key; }
     function el(tag, cls, text) {
@@ -172,6 +217,59 @@
         if (v === null || v === undefined) return el("span", "kv-null", "null");
         if (typeof v === "object") return el("code", null, JSON.stringify(v));
         return el("span", null, String(v));
+    }
+
+    function requestId(prefix) {
+        if (!window.crypto || !window.crypto.getRandomValues) return null;
+        var values = new Uint32Array(4);
+        window.crypto.getRandomValues(values);
+        return prefix + "-" + Array.from(values).map(function (value) {
+            return value.toString(16).padStart(8, "0");
+        }).join("");
+    }
+
+    function applyReviewStatus(status) {
+        if (!status || status.ok !== true) return;
+        var byFinding = {};
+        (status.dispositions || []).forEach(function (row) {
+            byFinding[row.finding_id] = row;
+        });
+        ((DATA.semantic || {}).findings || []).forEach(function (finding) {
+            var row = byFinding[finding.finding_id];
+            if (row) {
+                finding.finding_fingerprint = row.finding_fingerprint;
+                finding.human_disposition = row.current;
+            }
+        });
+        DATA.improvement.status = "available";
+        DATA.improvement.recorded = status.guidance_drafts || [];
+        DATA.improvement.guidance_statuses = status.guidance_statuses || [];
+    }
+
+    function sendReviewCommand(action, payload, statusNode) {
+        if (!ACTION_SESSION) return;
+        statusNode.textContent = t("command_pending");
+        fetch("/api/v1/command?session_id=" + encodeURIComponent(ACTION_SESSION.session), {
+            method: "POST",
+            headers: {
+                "Content-Type": "application/json",
+                "X-BriefLoop-Session-Token": ACTION_SESSION.token,
+                "X-BriefLoop-CSRF-Token": ACTION_SESSION.csrf
+            },
+            body: JSON.stringify({
+                schema_version: "briefloop.post_final_review.command.v1",
+                action: action,
+                payload: payload
+            })
+        }).then(function (response) {
+            if (!response.ok) throw new Error("command rejected");
+            return response.json();
+        }).then(function (result) {
+            applyReviewStatus(result.review_status);
+            renderAll();
+        }).catch(function () {
+            statusNode.textContent = t("command_failed");
+        });
     }
 
     /* ---- brief tab: deliberately small Markdown subset, DOM/textContent only ---- */
@@ -523,6 +621,71 @@
         }
 
         card.appendChild(el("div", "finding-meta", String(f.finding_id || "")));
+        if (ACTION_SESSION && (DATA.semantic || {}).review_actions_available &&
+                f.finding_fingerprint) {
+            var controls = el("div", "finding-body");
+            controls.appendChild(el("strong", null, t("disposition_title")));
+            if (f.human_disposition) {
+                controls.appendChild(el("p", "section-muted",
+                    String(f.human_disposition.decision) + " · " +
+                    String(f.human_disposition.disposition_id)));
+            }
+            var note = document.createElement("textarea");
+            note.setAttribute("aria-label", t("disposition_title"));
+            note.maxLength = 4000;
+            controls.appendChild(note);
+            var commandStatus = el("p", "section-muted");
+            ["accept", "reject", "defer"].forEach(function (decision) {
+                var button = el("button", "qp-tab", t("disposition_" + decision));
+                button.type = "button";
+                button.addEventListener("click", function () {
+                    var request = requestId("human-disposition");
+                    if (!request) {
+                        commandStatus.textContent = t("command_failed");
+                        return;
+                    }
+                    sendReviewCommand(decision, {
+                        schema_version: "briefloop.post_final_finding_disposition_input.v1",
+                        human_actor_id: "local-human-reviewer",
+                        human_request_id: request,
+                        assessment_result_id: DATA.semantic.assessment_result_id,
+                        reader_view_sha256: DATA.semantic.reader_view_sha256,
+                        finding_id: f.finding_id,
+                        finding_fingerprint: f.finding_fingerprint,
+                        decision: decision,
+                        human_note: note.value || null
+                    }, commandStatus);
+                });
+                controls.appendChild(button);
+            });
+            if (f.human_disposition && f.human_disposition.decision === "accept") {
+                var guidance = document.createElement("textarea");
+                guidance.setAttribute("aria-label", t("guidance_edit"));
+                guidance.maxLength = 12000;
+                controls.appendChild(guidance);
+                var save = el("button", "qp-tab", t("guidance_save"));
+                save.type = "button";
+                save.addEventListener("click", function () {
+                    var request = requestId("human-guidance-draft");
+                    if (!request || !guidance.value.trim()) {
+                        commandStatus.textContent = t("command_failed");
+                        return;
+                    }
+                    sendReviewCommand("draft", {
+                        schema_version: "briefloop.post_final_guidance_draft_input.v1",
+                        human_actor_id: "local-human-reviewer",
+                        human_request_id: request,
+                        assessment_result_id: DATA.semantic.assessment_result_id,
+                        finding_id: f.finding_id,
+                        disposition_id: f.human_disposition.disposition_id,
+                        guidance_text: guidance.value
+                    }, commandStatus);
+                });
+                controls.appendChild(save);
+            }
+            controls.appendChild(commandStatus);
+            card.appendChild(controls);
+        }
         return card;
     }
 
@@ -533,27 +696,66 @@
 
         var zone = el("section", "feedback-zone");
         zone.appendChild(el("h2", null, t("fb_title")));
-        zone.appendChild(el("p", "feedback-sub", t("fb_sub")));
+        zone.appendChild(el("p", "feedback-sub",
+            t(imp.status === "available" ? "fb_available_sub" : "fb_sub")));
 
         var wrap = el("div", "recorded-list");
         wrap.appendChild(el("h3", null, t("recorded_title")));
         var recorded = imp.recorded || [];
+        var latestDraftByGuidance = {};
+        recorded.forEach(function (row) {
+            if (typeof row !== "object" || !row.guidance_id) return;
+            var revision = Number(row.draft_revision || 0);
+            latestDraftByGuidance[row.guidance_id] = Math.max(
+                latestDraftByGuidance[row.guidance_id] || 0,
+                revision
+            );
+        });
         if (!recorded.length) {
             wrap.appendChild(el("p", "section-muted", t("recorded_none")));
         } else {
             recorded.forEach(function (r) {
                 var entry = el("div", "rec-entry");
                 entry.appendChild(el("div", "re-text", typeof r === "string" ? r : JSON.stringify(r)));
+                if (ACTION_SESSION && typeof r === "object" && r.guidance_id &&
+                        Number(r.draft_revision) === latestDraftByGuidance[r.guidance_id]) {
+                    var commandStatus = el("p", "section-muted");
+                    [["approve", "guidance_approve"],
+                     ["deactivate", "guidance_deactivate"],
+                     ["revert", "guidance_revert"],
+                     ["supersede", "guidance_supersede"]].forEach(function (action) {
+                        var button = el("button", "qp-tab", t(action[1]));
+                        button.type = "button";
+                        button.addEventListener("click", function () {
+                            var request = requestId("human-guidance-status");
+                            if (!request) {
+                                commandStatus.textContent = t("command_failed");
+                                return;
+                            }
+                            sendReviewCommand(action[0], {
+                                schema_version: "briefloop.post_final_guidance_status_input.v1",
+                                human_actor_id: "local-human-reviewer",
+                                human_request_id: request,
+                                guidance_id: r.guidance_id,
+                                draft_revision: r.draft_revision
+                            }, commandStatus);
+                        });
+                        entry.appendChild(button);
+                    });
+                    entry.appendChild(commandStatus);
+                }
                 wrap.appendChild(entry);
             });
         }
         zone.appendChild(wrap);
 
-        var card = el("div", "unavailable-card");
-        card.appendChild(el("span", "badge badge-missing", String(imp.status || t("unavailable"))));
-        if (imp.reason_code) card.appendChild(el("code", null, String(imp.reason_code)));
-        card.appendChild(el("p", null, t("il_unavailable")));
-        zone.appendChild(card);
+        if (imp.status !== "available") {
+            var card = el("div", "unavailable-card");
+            card.appendChild(el("span", "badge badge-missing", String(imp.status || t("unavailable"))));
+            if (imp.reason_code) card.appendChild(el("code", null, String(imp.reason_code)));
+            card.appendChild(el("p", null, t("il_unavailable")));
+            zone.appendChild(card);
+        }
 
         var n = el("p", "consumption-note");
         n.appendChild(el("strong", null, t("consumption_label")));
@@ -600,14 +802,17 @@
     function switchTab(id) {
         if (TABS.every(function (tb) { return tb[0] !== id; })) return;
         STATE.tab = id;
-        try { location.hash = id; } catch (e) { /* file:// quirks */ }
+        if (!ACTION_SESSION) {
+            try { location.hash = id; } catch (e) { /* file:// quirks */ }
+        }
         renderAll();
         window.scrollTo(0, 0);
     }
 
     function renderFooter(main) {
         var f = el("footer", "qp-footer");
-        f.appendChild(el("p", null, t("footer_boundary")));
+        f.appendChild(el("p", null,
+            ACTION_SESSION ? t("session_badge") : t("footer_boundary")));
         var p = el("p");
         p.appendChild(el("code", null, String(DATA.schema_version || "")));
         f.appendChild(p);
@@ -648,7 +853,10 @@
             langMenu.hidden = true;
             langBtn.setAttribute("aria-expanded", "false");
             document.querySelectorAll("[data-i18n]").forEach(function (node) {
-                node.textContent = t(node.dataset.i18n);
+                var key = node.dataset.i18n;
+                node.textContent = t(
+                    ACTION_SESSION && key === "top_badge" ? "session_badge" : key
+                );
             });
             renderAll();
         });
@@ -656,9 +864,15 @@
 
     /* ---- boot ---- */
     var initialHash = "";
-    try { initialHash = location.hash.replace("#", ""); } catch (e) { /* ignore */ }
-    if (TABS.some(function (tb) { return tb[0] === initialHash; })) STATE.tab = initialHash;
+    if (!ACTION_SESSION) {
+        try { initialHash = location.hash.replace("#", ""); } catch (e) { /* ignore */ }
+        if (TABS.some(function (tb) { return tb[0] === initialHash; })) STATE.tab = initialHash;
+    } else {
+        var topBadge = document.querySelector("[data-i18n='top_badge']");
+        if (topBadge) topBadge.textContent = t("session_badge");
+    }
     window.addEventListener("hashchange", function () {
+        if (ACTION_SESSION) return;
         var h = "";
         try { h = location.hash.replace("#", ""); } catch (e) { /* ignore */ }
         if (TABS.some(function (tb) { return tb[0] === h; }) && h !== STATE.tab) {

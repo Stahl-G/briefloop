@@ -1,7 +1,8 @@
-"""Store-agnostic primitives for the local post-final Review Session.
+"""Ephemeral transport for the canonical local post-final Review Session.
 
-The package deliberately accepts already-verified, typed projections.  It does
-not discover workspaces, open ControlStore, or decide runtime legality.
+The dormant package-era projection remains Store-agnostic.  The actionable
+launcher delegates all authority discovery and writes to the product services;
+browser state and this transport never decide runtime legality.
 """
 
 from .contracts import (
@@ -12,7 +13,11 @@ from .contracts import (
     ReviewSessionDescriptor,
     SemanticReviewProjection,
 )
-from .launcher import ReviewLaunchResult, launch_review_session
+from .launcher import (
+    ReviewLaunchResult,
+    launch_actionable_review_session,
+    launch_review_session,
+)
 from .static_qp import render_static_quality_panel
 
 __all__ = [
@@ -23,6 +28,7 @@ __all__ = [
     "ReviewLaunchResult",
     "ReviewSessionDescriptor",
     "SemanticReviewProjection",
+    "launch_actionable_review_session",
     "launch_review_session",
     "render_static_quality_panel",
 ]

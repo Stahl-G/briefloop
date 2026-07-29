@@ -247,20 +247,14 @@ def register_quality(subparsers: argparse._SubParsersAction) -> None:
         "--workspace", required=True, help="Path to workspace directory."
     )
     summarize_parser.add_argument(
-        "--laj-view",
-        help=(
-            "Optional standalone laj.json to display as an experimental, "
-            "advisory-only Quality Panel section."
-        ),
-    )
-    summarize_parser.add_argument(
         "--json", action="store_true", help="Emit machine-readable JSON."
     )
 
     html_help = (
         "Write a local, static, read-only four-tab view: verified "
         "local-finalized Brief, deterministic Quality, optional advisory "
-        "LAJ (NOT MEASURED), and unavailable Improvement."
+        "LAJ (NOT MEASURED), and Store-native Human guidance state whose "
+        "next-run consumption is not shipped."
     )
     html_parser = actions.add_parser(
         "html",
@@ -285,6 +279,80 @@ def register_quality(subparsers: argparse._SubParsersAction) -> None:
     html_parser.add_argument(
         "--json", action="store_true", help="Emit machine-readable JSON."
     )
+
+    laj_parser = actions.add_parser(
+        "laj",
+        help=(
+            "Experimental post-final LAJ and Human review controls; advisory only, "
+            "not a Gate, and approved guidance is not yet consumed by later runs."
+        ),
+    )
+    laj_actions = laj_parser.add_subparsers(dest="laj_action", required=True)
+    policy_parser = laj_actions.add_parser(
+        "policy-set",
+        help="Record a strict non-secret, Human-enabled advisory policy.",
+    )
+    policy_parser.add_argument("--workspace", required=True)
+    policy_parser.add_argument(
+        "--policy-json",
+        required=True,
+        help="Strict non-secret policy JSON. API keys are never accepted here.",
+    )
+    policy_parser.add_argument("--json", action="store_true")
+    assess_parser = laj_actions.add_parser(
+        "assess",
+        help="Claim and run one advisory assessment after Store preflight.",
+    )
+    assess_parser.add_argument("--workspace", required=True)
+    assess_parser.add_argument("--json", action="store_true")
+    status_parser = laj_actions.add_parser(
+        "status",
+        help="Read Store-qualified LAJ lifecycle status without provider access.",
+    )
+    status_parser.add_argument("--workspace", required=True)
+    status_parser.add_argument("--json", action="store_true")
+    retry_parser = laj_actions.add_parser(
+        "retry",
+        help="Recover an existing advisory request without a new provider call.",
+    )
+    retry_parser.add_argument("--workspace", required=True)
+    retry_parser.add_argument("--request-id", required=True)
+    retry_parser.add_argument("--json", action="store_true")
+    review_open_parser = laj_actions.add_parser(
+        "review-open",
+        help=(
+            "Open the secured local Human Review Session; LAJ remains advisory "
+            "and approved guidance is not consumed by later runs."
+        ),
+    )
+    review_open_parser.add_argument("--workspace", required=True)
+    review_open_parser.add_argument(
+        "--no-browser",
+        action="store_true",
+        help="Print the loopback URL and keep the session alive without opening a browser.",
+    )
+    review_open_parser.add_argument("--json", action="store_true")
+    for action, help_text in (
+        ("disposition", "Record one accept/reject/defer finding disposition."),
+        ("draft", "Append one Human-edited guidance draft for an accepted finding."),
+        ("approve", "Separately approve one exact guidance draft."),
+        ("deactivate", "Append a deactivated status for one exact guidance draft."),
+        ("revert", "Append a reverted status for one exact guidance draft."),
+        ("supersede", "Append a superseded status for one exact guidance draft."),
+        (
+            "review-status",
+            "Read disposition and guidance state without provider access.",
+        ),
+    ):
+        command = laj_actions.add_parser(action, help=help_text)
+        command.add_argument("--workspace", required=True)
+        if action != "review-status":
+            command.add_argument(
+                "--request-json",
+                required=True,
+                help="Strict Human command JSON; raw provider findings are not accepted.",
+            )
+        command.add_argument("--json", action="store_true")
 
 
 def handle_new_workspace(args: argparse.Namespace) -> int:
@@ -447,6 +515,103 @@ def handle_extract(args: argparse.Namespace) -> int:
 
 def handle_quality(args: argparse.Namespace) -> int:
     action = getattr(args, "quality_action", "")
+    if action == "laj":
+        from multi_agent_brief.product.post_final_assessment import (
+            PostFinalAssessmentError,
+            PostFinalAssessmentService,
+        )
+        from multi_agent_brief.product.post_final_review import (
+            PostFinalReviewError,
+            PostFinalReviewService,
+        )
+
+        workspace = Path(args.workspace).expanduser().resolve()
+        service = PostFinalAssessmentService(workspace)
+        try:
+            laj_action = getattr(args, "laj_action", "")
+            if laj_action == "policy-set":
+                value = json.loads(args.policy_json)
+                if type(value) is not dict:
+                    raise PostFinalAssessmentError(
+                        "post_final_assessment_policy_invalid"
+                    )
+                payload = service.policy_set(value)
+            elif laj_action == "assess":
+                payload = service.assess()
+            elif laj_action == "status":
+                payload = service.status()
+            elif laj_action == "retry":
+                payload = service.retry(args.request_id)
+            elif laj_action == "review-open":
+                from multi_agent_brief.product.review_session import (
+                    launch_actionable_review_session,
+                )
+
+                launched = launch_actionable_review_session(
+                    workspace,
+                    open_browser=not bool(args.no_browser),
+                )
+                payload = {
+                    "ok": True,
+                    "status": launched.reason_code,
+                    "url": launched.url,
+                    "runtime_authority": False,
+                    "next_run_consumption": "not_shipped",
+                }
+                _print_payload(
+                    "quality laj",
+                    payload,
+                    as_json=getattr(args, "json", False),
+                )
+                try:
+                    launched.server.wait()
+                except KeyboardInterrupt:
+                    launched.server.close()
+                return 0
+            elif laj_action == "review-status":
+                payload = PostFinalReviewService(workspace).review_status()
+            elif laj_action in {
+                "disposition",
+                "draft",
+                "approve",
+                "deactivate",
+                "revert",
+                "supersede",
+            }:
+                value = json.loads(args.request_json)
+                if type(value) is not dict:
+                    raise PostFinalReviewError("post_final_review_request_invalid")
+                review = PostFinalReviewService(workspace)
+                if laj_action == "disposition":
+                    payload = review.record_disposition(value)
+                elif laj_action == "draft":
+                    payload = review.append_guidance_draft(value)
+                else:
+                    payload = getattr(review, f"{laj_action}_guidance")(value)
+            else:
+                return 1
+        except (
+            json.JSONDecodeError,
+            PostFinalAssessmentError,
+            PostFinalReviewError,
+            OSError,
+            ValueError,
+        ) as exc:
+            payload = {
+                "ok": False,
+                "status": "unavailable",
+                "reason_code": str(exc),
+                "boundary": (
+                    "experimental_advisory_human_review_not_gate_delivery_or_"
+                    "next_run_consumption"
+                ),
+            }
+        payload.setdefault(
+            "boundary",
+            "experimental_advisory_human_review_not_gate_delivery_or_next_run_consumption",
+        )
+        _print_payload("quality laj", payload, as_json=getattr(args, "json", False))
+        return 0 if payload.get("ok") else 1
     if action == "html":
         from multi_agent_brief.product.brief_html import (
             BriefHtmlError,

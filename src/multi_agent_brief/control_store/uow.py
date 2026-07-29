@@ -41,6 +41,12 @@ from multi_agent_brief.contracts.v2 import (
     ProposalSourceBinding,
     PackageArtifactBinding,
     PackageReadyRecord,
+    PostFinalAssessmentPolicyRevision,
+    PostFinalAssessmentRequestRecord,
+    PostFinalAssessmentResultRecord,
+    PostFinalFindingDispositionRecord,
+    PostFinalGuidanceDraftRevision,
+    PostFinalGuidanceStatusRevision,
     RecoveryCompletionRecord,
     RepairCompletionRecord,
     RepairCycleRecord,
@@ -172,6 +178,24 @@ class ControlUnitOfWork:
         self._delivery_authorizations: dict[str, DeliveryAuthorizationRecord] = {}
         self._delivery_attempts: dict[str, DeliveryAttemptRecord] = {}
         self._delivery_results: dict[str, DeliveryResultRecord] = {}
+        self._post_final_assessment_policy_revisions: dict[
+            str, PostFinalAssessmentPolicyRevision
+        ] = {}
+        self._post_final_assessment_requests: dict[
+            str, PostFinalAssessmentRequestRecord
+        ] = {}
+        self._post_final_assessment_results: dict[
+            str, PostFinalAssessmentResultRecord
+        ] = {}
+        self._post_final_finding_dispositions: dict[
+            str, PostFinalFindingDispositionRecord
+        ] = {}
+        self._post_final_guidance_drafts: dict[
+            tuple[str, int], PostFinalGuidanceDraftRevision
+        ] = {}
+        self._post_final_guidance_statuses: dict[
+            str, PostFinalGuidanceStatusRevision
+        ] = {}
         self._checkout_revisions: dict[str, CheckoutRevisionRecord] = {}
         self._checkout_revision_members: dict[
             tuple[str, int], CheckoutRevisionMember
@@ -612,6 +636,72 @@ class ControlUnitOfWork:
         self._require_run(snapshot)
         self._put_unique(self._delivery_results, snapshot.result_id, snapshot)
 
+    def put_post_final_assessment_policy_revision(
+        self, record: PostFinalAssessmentPolicyRevision
+    ) -> None:
+        snapshot = self._snapshot_record(record, PostFinalAssessmentPolicyRevision)
+        self._require_run(snapshot)
+        self._put_unique(
+            self._post_final_assessment_policy_revisions,
+            snapshot.policy_revision_id,
+            snapshot,
+        )
+
+    def put_post_final_assessment_request(
+        self, record: PostFinalAssessmentRequestRecord
+    ) -> None:
+        snapshot = self._snapshot_record(record, PostFinalAssessmentRequestRecord)
+        self._require_run(snapshot)
+        self._put_unique(
+            self._post_final_assessment_requests,
+            snapshot.assessment_request_id,
+            snapshot,
+        )
+
+    def put_post_final_assessment_result(
+        self, record: PostFinalAssessmentResultRecord
+    ) -> None:
+        snapshot = self._snapshot_record(record, PostFinalAssessmentResultRecord)
+        self._require_run(snapshot)
+        self._put_unique(
+            self._post_final_assessment_results,
+            snapshot.assessment_result_id,
+            snapshot,
+        )
+
+    def put_post_final_finding_disposition(
+        self, record: PostFinalFindingDispositionRecord
+    ) -> None:
+        snapshot = self._snapshot_record(record, PostFinalFindingDispositionRecord)
+        self._require_run(snapshot)
+        self._put_unique(
+            self._post_final_finding_dispositions,
+            snapshot.disposition_id,
+            snapshot,
+        )
+
+    def put_post_final_guidance_draft(
+        self, record: PostFinalGuidanceDraftRevision
+    ) -> None:
+        snapshot = self._snapshot_record(record, PostFinalGuidanceDraftRevision)
+        self._require_run(snapshot)
+        self._put_unique(
+            self._post_final_guidance_drafts,
+            (snapshot.guidance_id, snapshot.draft_revision),
+            snapshot,
+        )
+
+    def put_post_final_guidance_status(
+        self, record: PostFinalGuidanceStatusRevision
+    ) -> None:
+        snapshot = self._snapshot_record(record, PostFinalGuidanceStatusRevision)
+        self._require_run(snapshot)
+        self._put_unique(
+            self._post_final_guidance_statuses,
+            snapshot.status_revision_id,
+            snapshot,
+        )
+
     def put_checkout_revision(self, record: CheckoutRevisionRecord) -> None:
         snapshot = self._snapshot_record(record, CheckoutRevisionRecord)
         self._require_run(snapshot)
@@ -866,6 +956,30 @@ class ControlUnitOfWork:
             "delivery_results": [
                 self._record_payload(self._delivery_results[key])
                 for key in sorted(self._delivery_results)
+            ],
+            "post_final_assessment_policy_revisions": [
+                self._record_payload(self._post_final_assessment_policy_revisions[key])
+                for key in sorted(self._post_final_assessment_policy_revisions)
+            ],
+            "post_final_assessment_requests": [
+                self._record_payload(self._post_final_assessment_requests[key])
+                for key in sorted(self._post_final_assessment_requests)
+            ],
+            "post_final_assessment_results": [
+                self._record_payload(self._post_final_assessment_results[key])
+                for key in sorted(self._post_final_assessment_results)
+            ],
+            "post_final_finding_dispositions": [
+                self._record_payload(self._post_final_finding_dispositions[key])
+                for key in sorted(self._post_final_finding_dispositions)
+            ],
+            "post_final_guidance_drafts": [
+                self._record_payload(self._post_final_guidance_drafts[key])
+                for key in sorted(self._post_final_guidance_drafts)
+            ],
+            "post_final_guidance_statuses": [
+                self._record_payload(self._post_final_guidance_statuses[key])
+                for key in sorted(self._post_final_guidance_statuses)
             ],
             "checkout_revisions": [
                 self._record_payload(self._checkout_revisions[key])

@@ -84,7 +84,7 @@ page describes implemented runtime capability, not a breaking deep rename.
 - The Orchestrator control switchboard can surface deterministic control recommendations and record enable/defer/reject selections without executing those controls.
 - Finalize writes the reader delivery bundle under `output/delivery/`, appending the source appendix to delivery Markdown/DOCX while retaining `output/source_appendix.md` as an audit/control copy. Reader-facing appendices can show safe source identity and taxonomy labels, while `output/source_appendix_trace.md` can carry internal claim/source/span IDs, source paths, source byte hashes, and metadata completeness warnings for audit review. Delivery artifacts must not expose internal claim IDs, source IDs, evidence text, local paths, or file URLs.
 - Runtime asset availability is now explicit: packaged installs include contract configs and public-safe eval fixtures, while source runtime assets such as `.agents/`, `.claude/`, `.opencode/`, `.codex/`, `.codebuddy/`, and Hermes plugin files are source-clone-only unless copied into a workspace with `briefloop runtime install` or used directly from a source checkout where documented.
-- The Improvement Ledger lifecycle was retired in LD2-3. Its projection and per-run freeze code lived in the deleted legacy stack, so `improvement/ledger.jsonl`, `improvement/memory.md`, and `improvement_memory_snapshot.md` have no reader or writer. The `improvement_*` event vocabulary in `contracts/v2.py` survives. A Store-native replacement is MU-2 work.
+- The legacy Improvement Ledger lifecycle was retired in LD2-3. Its JSON/JSONL files remain inert with no reader or writer. Experimental post-final Human review now records finding dispositions, Human-edited guidance drafts, and separate approval/status revisions as append-only SQLite receipts. Approved guidance is not consumed by a later run until the separate snapshot/precedence unit ships.
 - Packaged public-safe evaluation cases now cover Improvement Memory control behavior: unapproved entries are not materialized, approved guidance is frozen, and reverted entries disappear from the next snapshot.
 - Experimental Atomic Claim Graph controls can validate an optional
   `output/intermediate/atomic_claim_graph.json`, check whole-ledger coverage and
@@ -124,6 +124,15 @@ page describes implemented runtime capability, not a breaking deep rename.
   finalization, delivery, repair, approval, contamination, reference
   eligibility, or next-action authority; evaluator usefulness and efficacy are
   not measured.
+- Experimental Store-qualified post-final LAJ can bind one verified
+  `finalized_local` report to a non-secret Human policy, immutable assessment
+  request, verified evaluator archive, and qualified advisory result. The same
+  canonical `brief_html` page is read-only as a static export and becomes
+  actionable only through a secured loopback Review Session, where strict
+  Human commands append accept/reject/defer, edited guidance drafts, and
+  separate approval/status Receipts. It never changes Gate, finalization,
+  delivery, or Core next-action truth; utility is NOT MEASURED and next-run
+  guidance consumption is not shipped.
 - The v0.11 product-baseline target has stable product-facing workspace
   entries for `briefloop new industry-weekly`, `briefloop new
   management-monthly`, and `briefloop new document-review`. These entries map
@@ -213,7 +222,10 @@ page describes implemented runtime capability, not a breaking deep rename.
   projection from that panel and optional
   `output/intermediate/quality_panel.html` as a static no-JavaScript audit
   attachment. The experimental `quality summarize` command can
-  write these artifacts together, and report bundle projection can include
+  write these legacy audit artifacts together; SQLite workspaces display an
+  explicit current-report-bound LAJ view through
+  `quality html --workspace <path> --laj-view <laj.json>`. Report bundle
+  projection can include
   them in audit bundles while keeping them out of reader-facing delivery
   bundles. These product-quality audit/control
   projections do not run gates, create a quality score, replace gate reports,

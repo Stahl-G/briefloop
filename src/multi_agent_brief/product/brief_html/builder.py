@@ -3,7 +3,9 @@
 The Brief, run state, quality summary, and frozen reader bytes all come from
 one strict runtime-host read model built from one verified ControlStore
 history.  LAJ is rendered only when an explicit hash-bound view is supplied.
-Improvement remains honestly unavailable.  No legacy JSON fold-in is read.
+Store-native Human dispositions and approved guidance are projected read-only;
+next-run guidance consumption remains unavailable.  No legacy JSON fold-in is
+read.
 """
 
 from __future__ import annotations
@@ -13,6 +15,13 @@ from pathlib import Path
 from typing import Any, get_args
 
 from multi_agent_brief.product.review_session.contracts import FindingDimensionId
+from multi_agent_brief.product.post_final_assessment_projection import (
+    build_post_final_assessment_projection,
+)
+from multi_agent_brief.product.post_final_review import (
+    PostFinalReviewError,
+    PostFinalReviewService,
+)
 from multi_agent_brief.runtime_host_v2.projections import (
     build_local_run_presentation,
     build_quality_projection_from_local_run,
@@ -35,9 +44,13 @@ LAJ_EXPERIMENTAL_BANNER = (
     "or proof of correctness. Utility NOT MEASURED."
 )
 IMPROVEMENT_CONSUMPTION_NOTE = (
-    "No current run or future run consumes an Improvement Ledger snapshot."
+    "Approved guidance is Store-native, but no current or future run consumes "
+    "it until the separate next-run snapshot unit ships."
 )
-IMPROVEMENT_PLANNED_NOTE = "A Store-native Improvement Ledger is not available."
+IMPROVEMENT_PLANNED_NOTE = (
+    "Human disposition, edited guidance and separate approval are available; "
+    "next-run consumption is not shipped."
+)
 
 
 class BriefPagesError(ValueError):
@@ -107,47 +120,68 @@ def _quality_page(local: Any) -> dict[str, Any]:
         "boundary": "projection_only_not_gate_or_delivery_authority",
         "projection": projection,
         "groups": _quality_groups(local),
-        "actions": [
-            local.next_action.model_dump(mode="json", exclude_unset=False)
-        ],
+        "actions": [local.next_action.model_dump(mode="json", exclude_unset=False)],
     }
 
 
 def _semantic_page(
     local: Any,
     laj_view_path: str | Path | None,
+    *,
+    workspace: Path,
 ) -> dict[str, Any]:
-    source = Path(laj_view_path).expanduser() if laj_view_path is not None else None
     view: LajReaderView
-    if source is None or not source.is_file():
-        view = build_empty_laj_reader_view(
-            status="not_available", reason_code="laj_not_run"
-        )
+    qualified = build_post_final_assessment_projection(workspace)
+    if qualified.lifecycle_present:
+        view = qualified.view
     else:
-        try:
-            view = load_laj_reader_view(source)
-            if (
-                local.reader_brief.state == "available"
-                and local.reader_brief.sha256 is not None
-            ):
-                view = bind_laj_reader_view_to_report(
-                    view,
-                    expected_report_sha256=local.reader_brief.sha256,
-                )
-            else:
-                view = build_empty_laj_reader_view(
-                    status="not_available",
-                    reason_code="final_reader_not_available",
-                )
-        except Exception:
+        source = Path(laj_view_path).expanduser() if laj_view_path is not None else None
+        if source is None or not source.is_file():
             view = build_empty_laj_reader_view(
-                status="invalid", reason_code="laj_reader_view_invalid"
+                status="not_available", reason_code="laj_not_run"
             )
+        else:
+            try:
+                view = load_laj_reader_view(source)
+                if (
+                    local.reader_brief.state == "available"
+                    and local.reader_brief.sha256 is not None
+                ):
+                    view = bind_laj_reader_view_to_report(
+                        view,
+                        expected_report_sha256=local.reader_brief.sha256,
+                    )
+                else:
+                    view = build_empty_laj_reader_view(
+                        status="not_available",
+                        reason_code="final_reader_not_available",
+                    )
+            except Exception:
+                view = build_empty_laj_reader_view(
+                    status="invalid", reason_code="laj_reader_view_invalid"
+                )
 
     dimension_ids = list(get_args(FindingDimensionId))
     findings = [
-        finding.model_dump(mode="json", exclude_unset=False) for finding in view.findings
+        finding.model_dump(mode="json", exclude_unset=False)
+        for finding in view.findings
     ]
+    review_status: dict[str, Any] | None = None
+    if qualified.lifecycle_present and qualified.status == "available":
+        try:
+            review_status = PostFinalReviewService(workspace).review_status()
+        except PostFinalReviewError:
+            review_status = None
+    review_by_finding = {
+        item["finding_id"]: item
+        for item in (review_status or {}).get("dispositions", [])
+    }
+    for finding in findings:
+        review = review_by_finding.get(finding["finding_id"])
+        finding["finding_fingerprint"] = (
+            review["finding_fingerprint"] if review is not None else None
+        )
+        finding["human_disposition"] = review["current"] if review is not None else None
     dimensions = [
         {
             "dimension_id": dimension,
@@ -160,7 +194,13 @@ def _semantic_page(
         for dimension in dimension_ids
     ]
     return {
-        "status": "not_run" if view.reason_codes == ["laj_not_run"] else view.status,
+        "status": (
+            qualified.status
+            if qualified.lifecycle_present
+            else "not_run"
+            if view.reason_codes == ["laj_not_run"]
+            else view.status
+        ),
         "banner": LAJ_EXPERIMENTAL_BANNER,
         "boundary": view.boundary,
         "coverage": {
@@ -175,6 +215,19 @@ def _semantic_page(
             "Handoff units are evidence needs, not defects; they never trigger Gates."
         ),
         "reason_codes": view.reason_codes,
+        "store_qualified": qualified.lifecycle_present,
+        "review_actions_available": review_status is not None,
+        "assessment_result_id": (
+            review_status["assessment_result_id"] if review_status is not None else None
+        ),
+        "assessment_result_fingerprint": (
+            review_status["assessment_result_fingerprint"]
+            if review_status is not None
+            else None
+        ),
+        "reader_view_sha256": (
+            review_status["reader_view_sha256"] if review_status is not None else None
+        ),
         "disclaimer": view.disclaimer,
     }
 
@@ -209,13 +262,29 @@ def _brief_page(local: Any) -> dict[str, Any]:
     }
 
 
-def _improvement_page() -> dict[str, Any]:
+def _improvement_page(workspace: Path) -> dict[str, Any]:
+    try:
+        status = PostFinalReviewService(workspace).review_status()
+    except PostFinalReviewError:
+        status = None
+    if status is not None:
+        return {
+            "status": "available",
+            "reason_code": None,
+            "recorded": status["guidance_drafts"],
+            "guidance_statuses": status["guidance_statuses"],
+            "consumption_note": IMPROVEMENT_CONSUMPTION_NOTE,
+            "planned_note": IMPROVEMENT_PLANNED_NOTE,
+            "next_run_consumption": "not_shipped",
+        }
     return {
         "status": "unavailable",
-        "reason_code": "pf_review_2_not_shipped",
+        "reason_code": "post_final_review_not_available",
         "recorded": [],
+        "guidance_statuses": [],
         "consumption_note": IMPROVEMENT_CONSUMPTION_NOTE,
         "planned_note": IMPROVEMENT_PLANNED_NOTE,
+        "next_run_consumption": "not_shipped",
     }
 
 
@@ -254,8 +323,8 @@ def build_brief_pages_data(
         },
         "brief": _brief_page(local),
         "quality": _quality_page(local),
-        "semantic": _semantic_page(local, laj_view_path),
-        "improvement": _improvement_page(),
+        "semantic": _semantic_page(local, laj_view_path, workspace=root),
+        "improvement": _improvement_page(root),
     }
 
 

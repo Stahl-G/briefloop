@@ -1138,6 +1138,18 @@ def test_schema_settings_and_exact_table_universe(tmp_path: Path) -> None:
         "transaction_delivery_authorizations",
         "transaction_delivery_attempts",
         "transaction_delivery_results",
+        "post_final_assessment_policy_revisions",
+        "post_final_assessment_requests",
+        "post_final_assessment_results",
+        "post_final_finding_dispositions",
+        "post_final_guidance_drafts",
+        "post_final_guidance_statuses",
+        "transaction_post_final_assessment_policy_revisions",
+        "transaction_post_final_assessment_requests",
+        "transaction_post_final_assessment_results",
+        "transaction_post_final_finding_dispositions",
+        "transaction_post_final_guidance_drafts",
+        "transaction_post_final_guidance_statuses",
         "checkout_revisions",
         "checkout_revision_members",
         "receipt_checkout_bindings",
@@ -1153,7 +1165,7 @@ def test_schema_settings_and_exact_table_universe(tmp_path: Path) -> None:
         assert store._connection.execute("PRAGMA foreign_keys").fetchone()[0] == 1
         assert store._connection.execute("PRAGMA journal_mode").fetchone()[0] == "wal"
         assert store._connection.execute("PRAGMA synchronous").fetchone()[0] == 2
-        assert store._connection.execute("PRAGMA user_version").fetchone()[0] == 9
+        assert store._connection.execute("PRAGMA user_version").fetchone()[0] == 10
         tables = {
             row[0]
             for row in store._connection.execute(
@@ -2610,7 +2622,7 @@ def test_future_schema_fails_closed(tmp_path: Path) -> None:
     store = _create_store(tmp_path)
     store.close()
     connection = sqlite3.connect(tmp_path / "control.db")
-    connection.execute("PRAGMA user_version = 10")
+    connection.execute("PRAGMA user_version = 11")
     connection.close()
     with pytest.raises(ControlStoreSchemaError) as error:
         SQLiteControlStore.open(tmp_path / "control.db")
@@ -2926,10 +2938,15 @@ def test_only_dormant_v2_modules_import_control_store() -> None:
         "cli/core_v2_commands.py",
         "cli/authority_guard.py",
         # brief_html builder is the read-only page-1 projection (C3-sanctioned);
-        # init_web submit reads only the real bootstrap receipt after the
-        # sanctioned initialize path.
+        # PF-LAJ's product service is the sole advisory policy/request/result
+        # writer and its companion projection is read-only. init_web submit
+        # reads only the real bootstrap receipt after the sanctioned initialize
+        # path.
         "product/brief_html/builder.py",
         "product/init_web/submit.py",
+        "product/post_final_assessment.py",
+        "product/post_final_assessment_projection.py",
+        "product/post_final_review.py",
         "runtime_host_v2/codex.py",
         "runtime_host_v2/initialization.py",
         "runtime_host_v2/projections.py",

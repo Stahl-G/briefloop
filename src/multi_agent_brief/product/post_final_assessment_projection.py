@@ -1,0 +1,232 @@
+"""Read-only Store-qualified LAJ projection for the canonical HTML renderer."""
+
+from __future__ import annotations
+
+from dataclasses import dataclass
+from pathlib import Path
+from typing import Any
+
+from multi_agent_brief.control_store.errors import ControlStoreError
+from multi_agent_brief.control_store.sqlite_store import SQLiteControlStore
+from multi_agent_brief.core_run_v2.errors import CoreRunError
+from multi_agent_brief.core_run_v2.next_action import classify_core_run_next_action
+from multi_agent_brief.core_run_v2.verifier import CoreRunDomainVerifier
+from multi_agent_brief.product.post_final_assessment import (
+    PostFinalAssessmentError,
+    post_final_assessment_archive_root,
+    resolve_current_post_final_assessment_policy,
+    resolve_current_post_final_assessment_request,
+)
+from multi_agent_brief.runtime_host_v2.errors import RuntimeHostError
+from multi_agent_brief.runtime_host_v2.projections import (
+    build_finalized_local_review_projection,
+)
+from multi_agent_brief.semantic_evaluator.archive import (
+    trial_archive_path,
+    verify_shadow_archive,
+)
+from multi_agent_brief.semantic_evaluator.errors import SemanticEvaluatorError
+from multi_agent_brief.semantic_evaluator.reader import (
+    LajReaderView,
+    build_empty_laj_reader_view,
+    build_laj_reader_view,
+)
+
+
+@dataclass(frozen=True)
+class PostFinalAssessmentProjection:
+    """One non-authoritative, fail-closed semantic page input."""
+
+    lifecycle_present: bool
+    status: str
+    reason_code: str | None
+    view: LajReaderView
+
+
+def _empty(
+    *, lifecycle_present: bool, status: str, reason_code: str
+) -> PostFinalAssessmentProjection:
+    return PostFinalAssessmentProjection(
+        lifecycle_present=lifecycle_present,
+        status=status,
+        reason_code=reason_code,
+        view=build_empty_laj_reader_view(
+            status="not_available", reason_code=reason_code
+        ),
+    )
+
+
+def _terminal_class(view: LajReaderView) -> str:
+    if view.status == "available":
+        return "available"
+    if view.status == "abstained":
+        return "abstained"
+    reasons = set(view.reason_codes)
+    if any("incomplete" in item or "truncat" in item for item in reasons):
+        return "incomplete"
+    if any("refus" in item for item in reasons):
+        return "refused"
+    return "provider_failed" if reasons else "unavailable"
+
+
+def build_post_final_assessment_projection(
+    workspace: str | Path,
+) -> PostFinalAssessmentProjection:
+    """Return the only Store-qualified current LAJ result, or zero advice."""
+
+    root = Path(workspace).expanduser().resolve()
+    try:
+        facts = build_finalized_local_review_projection(root).facts
+        with SQLiteControlStore.open(root / "briefloop.db") as store:
+            history = store.load_history()
+            verified = CoreRunDomainVerifier().verify_loaded_history(
+                history,
+                facts.run_id,
+            )
+            action = classify_core_run_next_action(verified)
+            snapshot = history.snapshot_at_revision(
+                facts.run_id, history.store_revision
+            )
+            if facts.store_revision != snapshot.store_revision:
+                raise PostFinalAssessmentError("control_store_integrity_invalid")
+            request = resolve_current_post_final_assessment_request(
+                history,
+                snapshot,
+                facts,
+                action,
+            )
+    except RuntimeHostError as exc:
+        # A run that has not reached finalized_local has no PF-LAJ lifecycle at
+        # all.  Keep the existing explicit ``quality html --laj-view``
+        # presentation-only surface available in that state; it is never a
+        # Store-qualified assessment and cannot override one once present.
+        if str(exc) == "run_not_finalized_local":
+            return _empty(
+                lifecycle_present=False,
+                status="not_requested",
+                reason_code="laj_not_run",
+            )
+        return _empty(
+            lifecycle_present=True,
+            status="unavailable",
+            reason_code="post_final_assessment_unavailable",
+        )
+    except (
+        ControlStoreError,
+        CoreRunError,
+        PostFinalAssessmentError,
+        OSError,
+        ValueError,
+    ):
+        return _empty(
+            lifecycle_present=True,
+            status="unavailable",
+            reason_code="post_final_assessment_unavailable",
+        )
+    policies = list(snapshot.post_final_assessment_policy_revisions)
+    if request is None and not policies:
+        return _empty(
+            lifecycle_present=False,
+            status="not_requested",
+            reason_code="laj_not_run",
+        )
+    if request is None:
+        return _empty(
+            lifecycle_present=True,
+            status="not_requested",
+            reason_code="post_final_assessment_not_requested",
+        )
+    try:
+        policy = resolve_current_post_final_assessment_policy(snapshot, facts)
+    except PostFinalAssessmentError:
+        return _empty(
+            lifecycle_present=True,
+            status="invalid",
+            reason_code="control_store_integrity_invalid",
+        )
+    if (
+        policy is None
+        or policy.policy_revision_id != request.policy_revision_id
+        or request.report_artifact_id != facts.report.artifact_id
+        or request.report_revision != facts.report.artifact_revision
+        or request.report_sha256 != facts.report.sha256
+        or request.finalization_id != facts.finalization_id
+        or request.finalization_receipt_id != facts.finalization_receipt_id
+        or request.finalize_gate_batch_id != facts.finalize_gate_batch_id
+        or request.policy_fingerprint != policy.policy_fingerprint
+    ):
+        return _empty(
+            lifecycle_present=True,
+            status="invalid",
+            reason_code="control_store_integrity_invalid",
+        )
+    results = [
+        item
+        for item in snapshot.post_final_assessment_results
+        if item.assessment_request_id == request.assessment_request_id
+    ]
+    if len(results) > 1:
+        return _empty(
+            lifecycle_present=True,
+            status="invalid",
+            reason_code="control_store_integrity_invalid",
+        )
+    if not results:
+        return _empty(
+            lifecycle_present=True,
+            status="pending",
+            reason_code="post_final_assessment_pending",
+        )
+    result = results[0]
+    try:
+        archive = verify_shadow_archive(
+            trial_archive_path(
+                post_final_assessment_archive_root(root), request.trial_id
+            )
+        )
+        view = build_laj_reader_view(
+            archive.path,
+            expected_report_sha256=facts.report.sha256,
+        )
+    except (SemanticEvaluatorError, OSError, ValueError):
+        return _empty(
+            lifecycle_present=True,
+            status="invalid",
+            reason_code="post_final_assessment_archive_invalid",
+        )
+    if (
+        result.finalized_facts_fingerprint != request.finalized_facts_fingerprint
+        or result.finalized_lineage_fingerprint != request.finalized_lineage_fingerprint
+        or view.binding is None
+        or view.binding.trial_id != request.trial_id
+        or archive.request.shadow_request_sha256 != result.shadow_request_sha256
+        or archive.execution_manifest.execution_sha256
+        != result.execution_manifest_sha256
+        or archive.archive_manifest.archive_manifest_sha256
+        != result.archive_manifest_sha256
+        or archive.receipt.receipt_id != result.archive_receipt_id
+        or archive.presentation.composition_sha256 != result.composition_sha256
+        or archive.presentation.presentation_sha256 != result.presentation_sha256
+        or view.view_sha256 != result.reader_view_sha256
+        or _terminal_class(view) != result.terminal_evidence_class
+        or view.finding_count != result.finding_count
+        or view.withheld_finding_count != result.withheld_finding_count
+        or view.abstention_count != result.abstention_count
+    ):
+        return _empty(
+            lifecycle_present=True,
+            status="invalid",
+            reason_code="post_final_assessment_binding_invalid",
+        )
+    return PostFinalAssessmentProjection(
+        lifecycle_present=True,
+        status=view.status,
+        reason_code=None,
+        view=view,
+    )
+
+
+__all__ = [
+    "PostFinalAssessmentProjection",
+    "build_post_final_assessment_projection",
+]
