@@ -265,7 +265,7 @@ class AnthropicProbeAdapter:
                 {
                     "type": "thinking",
                     "thinking": "non-output",
-                    "signature": "public-signature",
+                    "signature": "",
                 },
                 {"type": "text", "text": output.decode("utf-8")},
             ],
@@ -1370,7 +1370,7 @@ payload = {
                         {
                             "type": "thinking",
                             "thinking": "non-output",
-                            "signature": "public-signature",
+                            "signature": "",
                         },
                         {"type": "text", "text": '{"findings":[]}'},
                     ],
@@ -1388,7 +1388,7 @@ payload = {
                             {
                                 "type": "thinking",
                                 "thinking": "non-output",
-                                "signature": "public-signature",
+                                "signature": "",
                             },
                             {"type": "text", "text": '{"findings":[]}'},
                         ],

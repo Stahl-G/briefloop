@@ -338,7 +338,7 @@ class _AnthropicFixtureAdapter:
                 {
                     "type": "thinking",
                     "thinking": "synthetic non-output reasoning",
-                    "signature": "public-signature",
+                    "signature": "",
                 },
                 {"type": "text", "text": output.decode("utf-8")},
             ],

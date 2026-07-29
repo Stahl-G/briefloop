@@ -456,7 +456,7 @@ def test_anthropic_projector_keeps_thinking_out_of_final_text() -> None:
         response_id="msg-public",
         model=ANTHROPIC_TEST_MODEL,
         content=[
-            {"type": "thinking", "thinking": "private reasoning", "signature": "sig"},
+            {"type": "thinking", "thinking": "private reasoning", "signature": ""},
             {"type": "redacted_thinking", "data": "opaque"},
             {"type": "text", "text": '{"findings":[]}'},
         ],
@@ -477,6 +477,29 @@ def test_anthropic_projector_keeps_thinking_out_of_final_text() -> None:
         7,
         18,
     )
+    sdk_response = SimpleNamespace(
+        id="msg-public",
+        model=ANTHROPIC_TEST_MODEL,
+        stop_reason="end_turn",
+        content=[
+            SimpleNamespace(
+                type="thinking",
+                thinking="private reasoning",
+                signature="",
+            ),
+            SimpleNamespace(type="redacted_thinking", data="opaque"),
+            SimpleNamespace(type="text", text='{"findings":[]}'),
+        ],
+        usage=SimpleNamespace(input_tokens=11, output_tokens=7),
+    )
+    attempt = object.__new__(AnthropicMessagesAdapterV1)._attempt_from_response(
+        request=_anthropic_request(),
+        raw=raw,
+        sdk_response=sdk_response,
+    )
+    assert attempt.outcome.attempt_status == "completed"
+    assert attempt.extracted_output == b'{"findings":[]}'
+    assert b"private reasoning" not in (attempt.extracted_output or b"")
 
 
 @pytest.mark.parametrize(
@@ -668,6 +691,7 @@ def test_anthropic_terminal_stop_reasons_never_expose_output(
     [
         [{"type": "tool_use", "id": "tool-1"}],
         [{"type": "thinking", "thinking": "x"}],
+        [{"type": "thinking", "thinking": "x", "signature": 7}],
         [{"type": "redacted_thinking", "data": ""}],
         [{"type": "text", "text": ""}],
     ],
@@ -687,6 +711,73 @@ def test_anthropic_unknown_or_malformed_blocks_fail_closed(
         sdk_response=None,
     )
     assert attempt.outcome.shadow_reason == "provider_boundary_invalid"
+    assert attempt.extracted_output is None
+
+
+def test_anthropic_raw_thinking_signature_rejects_non_utf8() -> None:
+    payload = _anthropic_raw_payload()
+    payload["content"] = [
+        {"type": "thinking", "thinking": "private reasoning", "signature": "\ud800"},
+        {"type": "text", "text": '{"findings":[]}'},
+    ]
+    raw = json.dumps(
+        payload,
+        ensure_ascii=True,
+        sort_keys=True,
+        separators=(",", ":"),
+    ).encode("ascii")
+    attempt = object.__new__(AnthropicMessagesAdapterV1)._attempt_from_response(
+        request=_anthropic_request(),
+        raw=raw,
+        sdk_response=None,
+    )
+    assert attempt.outcome.shadow_reason == "provider_boundary_invalid"
+    assert attempt.outcome.retry_eligible is False
+    assert attempt.extracted_output is None
+
+
+@pytest.mark.parametrize(
+    ("signature", "present"),
+    [
+        pytest.param(None, False, id="missing"),
+        pytest.param(None, True, id="null"),
+        pytest.param(7, True, id="non-string"),
+        pytest.param("\ud800", True, id="non-utf8"),
+    ],
+)
+def test_anthropic_sdk_thinking_signature_fails_closed(
+    signature: object,
+    present: bool,
+) -> None:
+    raw = synthetic_anthropic_message_bytes_v1(
+        stop_reason="end_turn",
+        response_id="msg-public",
+        model=ANTHROPIC_TEST_MODEL,
+        content=[
+            {"type": "thinking", "thinking": "private reasoning", "signature": ""},
+            {"type": "text", "text": '{"findings":[]}'},
+        ],
+    )
+    thinking = {"type": "thinking", "thinking": "private reasoning"}
+    if present:
+        thinking["signature"] = signature
+    sdk_response = SimpleNamespace(
+        id="msg-public",
+        model=ANTHROPIC_TEST_MODEL,
+        stop_reason="end_turn",
+        content=[
+            SimpleNamespace(**thinking),
+            SimpleNamespace(type="text", text='{"findings":[]}'),
+        ],
+        usage=SimpleNamespace(input_tokens=1, output_tokens=1),
+    )
+    attempt = object.__new__(AnthropicMessagesAdapterV1)._attempt_from_response(
+        request=_anthropic_request(),
+        raw=raw,
+        sdk_response=sdk_response,
+    )
+    assert attempt.outcome.shadow_reason == "provider_boundary_invalid"
+    assert attempt.outcome.retry_eligible is False
     assert attempt.extracted_output is None
 
 

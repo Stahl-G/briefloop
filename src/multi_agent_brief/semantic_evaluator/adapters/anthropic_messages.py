@@ -188,14 +188,18 @@ def normalize_anthropic_stop_reason_v1(
     return capture_external_text_v4((ExternalTextObservation(True, normalized),))
 
 
-def _valid_nonempty_text(value: object) -> bool:
-    if type(value) is not str or not value:
+def _valid_utf8_text(value: object) -> bool:
+    if type(value) is not str:
         return False
     try:
         value.encode("utf-8", errors="strict")
     except UnicodeEncodeError:
         return False
     return True
+
+
+def _valid_nonempty_text(value: object) -> bool:
+    return _valid_utf8_text(value) and bool(value)
 
 
 def _project_content(
@@ -217,9 +221,9 @@ def _project_content(
                     return _invalid_text("external_text_projection_mismatch")
                 chunks.append(block["text"])  # type: ignore[arg-type]
             elif block_type == "thinking":
-                if set(block) != {"signature", "thinking", "type"} or not all(
-                    _valid_nonempty_text(block.get(name))
-                    for name in ("thinking", "signature")
+                if set(block) != {"signature", "thinking", "type"} or not (
+                    _valid_nonempty_text(block.get("thinking"))
+                    and _valid_utf8_text(block.get("signature"))
                 ):
                     return _invalid_text("external_text_projection_mismatch")
             elif block_type == "redacted_thinking":
@@ -380,9 +384,9 @@ def _sdk_output(value: object | None) -> ExternalTextObservation:
                     return ExternalTextObservation(True, object())
                 chunks.append(text)
             elif block_type == "thinking":
-                if not all(
-                    _valid_nonempty_text(getattr(block, name))
-                    for name in ("thinking", "signature")
+                if not (
+                    _valid_nonempty_text(getattr(block, "thinking"))
+                    and _valid_utf8_text(getattr(block, "signature"))
                 ):
                     return ExternalTextObservation(True, object())
             elif block_type == "redacted_thinking":
@@ -1047,9 +1051,7 @@ class AnthropicMessagesAdapterV1:
             transport_kind=transport_kind,
             http_status=transport_http_status,
             http_present=transport_http_present,
-            body_state=(
-                "invalid" if sdk_response is _SDK_READ_FAILED else "present"
-            ),
+            body_state=("invalid" if sdk_response is _SDK_READ_FAILED else "present"),
         )
         shared = project_anthropic_attempt_v1(
             raw=raw,
