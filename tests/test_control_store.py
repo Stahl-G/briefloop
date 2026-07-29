@@ -38,7 +38,11 @@ from multi_agent_brief.control_store import (
     SQLiteControlStore,
 )
 from multi_agent_brief.control_store.schema import migration_sql
-from multi_agent_brief.control_store.serialization import canonical_model_text
+from multi_agent_brief.control_store.serialization import (
+    canonical_json_bytes,
+    canonical_model_text,
+)
+from multi_agent_brief.control_store.sqlite_store import _decode_record
 from multi_agent_brief.core_run_v2.checkout import build_checkout_revision
 
 
@@ -50,6 +54,14 @@ COMMITTED_AT = datetime(2026, 7, 15, 9, 0, 1, tzinfo=timezone.utc)
 BLOB = b"BriefLoop SQLite substrate test artifact.\n"
 BLOB_SHA256 = hashlib.sha256(BLOB).hexdigest()
 CRASH_TRANSACTION_ID = "TX-CRASH-BOUNDARY-001"
+_POST_FINAL_RECEIPT_RELATION_FIELDS = (
+    "post_final_assessment_policy_revisions",
+    "post_final_assessment_requests",
+    "post_final_assessment_results",
+    "post_final_finding_dispositions",
+    "post_final_guidance_drafts",
+    "post_final_guidance_statuses",
+)
 
 
 _CRASH_SUBPROCESS = r"""
@@ -429,6 +441,52 @@ def _insert_receipt_row(
                 position,
                 reference.artifact_id,
             ),
+        )
+
+
+def test_historical_receipt_projection_accepts_only_the_exact_legacy_shape() -> None:
+    receipt = TransactionReceipt.model_validate(
+        TransactionReceipt.minimal_example,
+        strict=True,
+    )
+    payload = receipt.model_dump(mode="json", exclude_unset=False)
+    for field in _POST_FINAL_RECEIPT_RELATION_FIELDS:
+        assert payload.pop(field) == []
+    legacy_text = canonical_json_bytes(payload).decode("utf-8")
+
+    assert _decode_record(TransactionReceipt, legacy_text) == receipt
+
+    partial = receipt.model_dump(mode="json", exclude_unset=False)
+    partial.pop(_POST_FINAL_RECEIPT_RELATION_FIELDS[0])
+    with pytest.raises(
+        ControlStoreIntegrityError,
+        match="stored_payload_not_canonical",
+    ):
+        _decode_record(
+            TransactionReceipt,
+            canonical_json_bytes(partial).decode("utf-8"),
+        )
+
+    advisory = dict(payload)
+    advisory["transaction_type"] = "post_final_guidance_status"
+    with pytest.raises(
+        ControlStoreIntegrityError,
+        match="stored_payload_not_canonical",
+    ):
+        _decode_record(
+            TransactionReceipt,
+            canonical_json_bytes(advisory).decode("utf-8"),
+        )
+
+    unknown = dict(payload)
+    unknown["unknown_relation"] = []
+    with pytest.raises(
+        ControlStoreIntegrityError,
+        match="stored_payload_invalid",
+    ):
+        _decode_record(
+            TransactionReceipt,
+            canonical_json_bytes(unknown).decode("utf-8"),
         )
 
 

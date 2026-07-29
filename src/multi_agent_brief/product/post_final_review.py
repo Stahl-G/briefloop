@@ -19,6 +19,8 @@ from multi_agent_brief.contracts.v2 import (
     PostFinalGuidanceDraftRevision,
     PostFinalGuidanceStatusRevision,
     StrictModel,
+    post_final_guidance_legal_actions,
+    post_final_guidance_status_transition_allowed,
 )
 from multi_agent_brief.control_store.errors import ControlStoreError
 from multi_agent_brief.control_store.serialization import canonical_json_bytes
@@ -224,6 +226,32 @@ class PostFinalReviewService:
         snapshot = loaded["snapshot"]
         result = loaded["result"]
         view = loaded["view"]
+        existing = next(
+            (
+                item
+                for item in snapshot.post_final_finding_dispositions
+                if item.human_request_id == command.human_request_id
+            ),
+            None,
+        )
+        if existing is not None:
+            if (
+                existing.assessment_result_id != command.assessment_result_id
+                or existing.reader_view_sha256 != command.reader_view_sha256
+                or existing.finding_id != command.finding_id
+                or existing.finding_fingerprint != command.finding_fingerprint
+                or existing.decision != command.decision
+                or existing.human_note != command.human_note
+                or existing.human_actor_id != command.human_actor_id
+            ):
+                raise PostFinalReviewError("post_final_review_request_conflict")
+            receipt = self._receipt(snapshot, existing.accepted_transaction_id)
+            return {
+                "ok": True,
+                "replayed": True,
+                "disposition_id": existing.disposition_id,
+                "receipt_id": receipt.transaction_id,
+            }
         finding = loaded["findings"].get(command.finding_id)
         expected_fingerprint = (
             _finding_fingerprint(
@@ -241,14 +269,6 @@ class PostFinalReviewService:
             or command.finding_fingerprint != expected_fingerprint
         ):
             raise PostFinalReviewError("post_final_review_binding_invalid")
-        existing = next(
-            (
-                item
-                for item in snapshot.post_final_finding_dispositions
-                if item.human_request_id == command.human_request_id
-            ),
-            None,
-        )
         semantic = {
             "assessment_result_id": result.assessment_result_id,
             "reader_view_sha256": view.view_sha256,
@@ -258,18 +278,6 @@ class PostFinalReviewService:
             "human_note": command.human_note,
             "human_actor_id": command.human_actor_id,
         }
-        if existing is not None:
-            if any(
-                getattr(existing, key) != expected for key, expected in semantic.items()
-            ):
-                raise PostFinalReviewError("post_final_review_request_conflict")
-            receipt = self._receipt(snapshot, existing.accepted_transaction_id)
-            return {
-                "ok": True,
-                "replayed": True,
-                "disposition_id": existing.disposition_id,
-                "receipt_id": receipt.transaction_id,
-            }
         previous = self._current_disposition(
             snapshot, result.assessment_result_id, command.finding_id
         )
@@ -342,6 +350,31 @@ class PostFinalReviewService:
         loaded = self._load()
         snapshot = loaded["snapshot"]
         result = loaded["result"]
+        existing = next(
+            (
+                item
+                for item in snapshot.post_final_guidance_drafts
+                if item.human_request_id == command.human_request_id
+            ),
+            None,
+        )
+        if existing is not None:
+            if (
+                existing.assessment_result_id != command.assessment_result_id
+                or existing.finding_id != command.finding_id
+                or existing.disposition_id != command.disposition_id
+                or existing.guidance_text != command.guidance_text
+                or existing.human_actor_id != command.human_actor_id
+            ):
+                raise PostFinalReviewError("post_final_review_request_conflict")
+            receipt = self._receipt(snapshot, existing.accepted_transaction_id)
+            return {
+                "ok": True,
+                "replayed": True,
+                "guidance_id": existing.guidance_id,
+                "draft_revision": existing.draft_revision,
+                "receipt_id": receipt.transaction_id,
+            }
         finding = loaded["findings"].get(command.finding_id)
         disposition = next(
             (
@@ -370,29 +403,6 @@ class PostFinalReviewService:
             )
         ):
             raise PostFinalReviewError("post_final_guidance_not_accepted")
-        existing = next(
-            (
-                item
-                for item in snapshot.post_final_guidance_drafts
-                if item.human_request_id == command.human_request_id
-            ),
-            None,
-        )
-        if existing is not None:
-            if (
-                existing.disposition_id != command.disposition_id
-                or existing.guidance_text != command.guidance_text
-                or existing.human_actor_id != command.human_actor_id
-            ):
-                raise PostFinalReviewError("post_final_review_request_conflict")
-            receipt = self._receipt(snapshot, existing.accepted_transaction_id)
-            return {
-                "ok": True,
-                "replayed": True,
-                "guidance_id": existing.guidance_id,
-                "draft_revision": existing.draft_revision,
-                "receipt_id": receipt.transaction_id,
-            }
         guidance_id = _id(
             "pf-laj-guidance",
             {
@@ -484,6 +494,29 @@ class PostFinalReviewService:
         loaded = self._load()
         snapshot = loaded["snapshot"]
         result = loaded["result"]
+        existing = next(
+            (
+                item
+                for item in snapshot.post_final_guidance_statuses
+                if item.human_request_id == command.human_request_id
+            ),
+            None,
+        )
+        if existing is not None:
+            if (
+                existing.guidance_id != command.guidance_id
+                or existing.draft_revision != command.draft_revision
+                or existing.status != status
+                or existing.human_actor_id != command.human_actor_id
+            ):
+                raise PostFinalReviewError("post_final_review_request_conflict")
+            receipt = self._receipt(snapshot, existing.accepted_transaction_id)
+            return {
+                "ok": True,
+                "replayed": True,
+                "status_revision_id": existing.status_revision_id,
+                "receipt_id": receipt.transaction_id,
+            }
         draft = next(
             (
                 item
@@ -521,29 +554,6 @@ class PostFinalReviewService:
                 or current_disposition.decision != "accept"
             ):
                 raise PostFinalReviewError("post_final_guidance_stale")
-        existing = next(
-            (
-                item
-                for item in snapshot.post_final_guidance_statuses
-                if item.human_request_id == command.human_request_id
-            ),
-            None,
-        )
-        if existing is not None:
-            if (
-                existing.guidance_id != command.guidance_id
-                or existing.draft_revision != command.draft_revision
-                or existing.status != status
-                or existing.human_actor_id != command.human_actor_id
-            ):
-                raise PostFinalReviewError("post_final_review_request_conflict")
-            receipt = self._receipt(snapshot, existing.accepted_transaction_id)
-            return {
-                "ok": True,
-                "replayed": True,
-                "status_revision_id": existing.status_revision_id,
-                "receipt_id": receipt.transaction_id,
-            }
         previous = self._current_status(snapshot, command.guidance_id)
         identity = {
             "guidance_id": command.guidance_id,
@@ -576,6 +586,8 @@ class PostFinalReviewService:
             payload, "status_fingerprint"
         )
         record = PostFinalGuidanceStatusRevision.model_validate(payload, strict=True)
+        if not post_final_guidance_status_transition_allowed(previous, record):
+            raise PostFinalReviewError("post_final_guidance_transition_invalid")
         event = _event(
             run_id=result.run_id,
             event_id=event_id,
@@ -643,10 +655,40 @@ class PostFinalReviewService:
                     ),
                 }
             )
-        drafts = [
-            item.model_dump(mode="json", exclude_unset=False)
-            for item in snapshot.post_final_guidance_drafts
-        ]
+        draft_rows = sorted(
+            snapshot.post_final_guidance_drafts,
+            key=lambda item: (item.guidance_id, item.draft_revision),
+        )
+        latest_draft_revisions = {
+            item.guidance_id: max(
+                candidate.draft_revision
+                for candidate in draft_rows
+                if candidate.guidance_id == item.guidance_id
+            )
+            for item in draft_rows
+        }
+        drafts = []
+        for item in draft_rows:
+            payload = item.model_dump(mode="json", exclude_unset=False)
+            current_status = self._current_status(snapshot, item.guidance_id)
+            legal_statuses = post_final_guidance_legal_actions(
+                current_status,
+                target_draft_revision=item.draft_revision,
+            )
+            payload["legal_actions"] = (
+                [
+                    {
+                        "approved": "approve",
+                        "deactivated": "deactivate",
+                        "reverted": "revert",
+                        "superseded": "supersede",
+                    }[status]
+                    for status in legal_statuses
+                ]
+                if item.draft_revision == latest_draft_revisions[item.guidance_id]
+                else []
+            )
+            drafts.append(payload)
         statuses = [
             item.model_dump(mode="json", exclude_unset=False)
             for item in snapshot.post_final_guidance_statuses

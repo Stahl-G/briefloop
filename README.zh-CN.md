@@ -143,7 +143,7 @@ BriefLoop 适合：
 | 哪些动作真正生效了？ | 被接受的 strict request、transaction receipt 和 invocation lineage | 通过受支持的 status/runtime view 查看 `briefloop.db` |
 | 什么在替你把关？ | Store-backed gate evaluation、package readiness 和显式人工批准 | Receipt-backed runtime action 与只读状态投影 |
 
-Agent 可以观察和提议；只有通过严格校验并被确定性服务接受的请求才会改变 Store，交付仍由人控制。实验性 post-final 人工审阅现可在 SQLite 中记录 accept/reject/defer、人工编辑的 guidance 和独立 approval Receipt；当前尚未交付 Store-native 的可复用 guidance 或 Improvement Ledger 的下一轮消费闭环。
+Agent 可以观察和提议；只有通过严格校验并被确定性服务接受的请求才会改变 Store，交付仍由人控制。在尚未发布的 development main 上，实验性 post-final 人工审阅可在 SQLite 中记录 accept/reject/defer、人工编辑的 guidance 和独立 approval Receipt；后续 run 尚不消费这些 guidance，完整的 Improvement Ledger 下一轮闭环仍未交付。v0.14.0 的发布边界是：当前尚未交付 Store-native 的可复用 guidance 或 Improvement Ledger。
 
 ---
 
@@ -339,7 +339,13 @@ demo 用的是合成材料，主要用来展示证据链和门禁行为。真实
 
 当前版本：**v0.14.0**
 
-当前主要入口：
+尚未发布的 development-main 实验（不属于 v0.14.0）：Store-qualified
+post-final 审阅可记录非秘密 Human policy、执行或精确 replay 一次 advisory
+assessment、打开受保护的本地 Review Session，并追加人工处置、编辑草稿和独立
+guidance approval。效用 NOT MEASURED；finding 不影响
+Gate/finalize/delivery/Core，已批准 guidance 尚不进入后续 run。
+
+v0.14.0 已发布入口：
 
 - CLI：`briefloop`
 - Experimental SQLite-only Codex runtime：`briefloop run --workspace <path>
@@ -349,20 +355,13 @@ demo 用的是合成材料，主要用来展示证据链和门禁行为。真实
 - 尽力而为且受平台能力门禁约束的本地静态只读四 Tab 视图：
   `briefloop quality html --workspace <path>
   [--open]`；Brief 显示 Store 绑定的 `finalized_local` reader，Quality 为确定性
-  投影，LAJ 仅为可选 advisory 且 NOT MEASURED，Improvement 在可用时显示当前
-  Store-native 人工处置与 guidance 状态。静态导出保持只读；受保护的本地
-  `briefloop quality laj review-open` 会话才暴露严格人工命令。后续 run 尚不消费
-  已批准 guidance
+  投影，LAJ 仅为可选 advisory 且 NOT MEASURED，Improvement 因已发布版本没有
+  Store-native writer/lifecycle 而如实显示 unavailable
 - 实验性 offline-shadow LAJ：`briefloop experiments laj shadow-run` 与
   `briefloop experiments laj present`；仅用于公开/合成材料的 advisory 评估及
   独立 JSON/Markdown/HTML 展示；也可通过
   `briefloop quality html --workspace <path> --laj-view <laj.json>` 只读展示
   显式提供且与当前报告绑定的 `laj.json`
-- 实验性 Store-qualified post-final 审阅：`briefloop quality laj` 记录非秘密的
-  Human policy、执行或精确 replay 一次 advisory assessment、打开受保护的本地
-  Review Session，并追加记录人工处置、编辑草稿和独立 guidance approval。效用
-  NOT MEASURED；finding 不影响 Gate/finalize/delivery/Core，已批准 guidance
-  尚不进入后续 run
 
 v0.14.0 完成 SQLite-only 切换，并增加只读交互面：
 
@@ -376,8 +375,8 @@ v0.14.0 完成 SQLite-only 切换，并增加只读交互面：
   invocation，不回退到 `operator` 或其他 runtime。
 - loopback init wizard 与本地静态四 Tab HTML 都是只读交互面。Brief 显示经
   Store 验证的 `finalized_local` reader，Quality 为确定性投影；LAJ 仍为可选
-  advisory、效用 NOT MEASURED。实验性受保护 post-final Review Session 可记录
-  Store-native 人工处置与独立批准的 guidance，但后续 run 尚不消费这些记录。
+  advisory、效用 NOT MEASURED；Improvement Ledger 因已发布版本没有
+  Store-native writer/lifecycle 而如实显示 unavailable。
 - v0.14 工程改动由 Codex 实现和测试；人类维护者授权合并与发布。
 
 延续的受支持报告工具与 advisory quality surface 包括：

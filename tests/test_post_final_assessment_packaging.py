@@ -35,8 +35,11 @@ from multi_agent_brief.semantic_evaluator.adapters.anthropic_messages import (
     ANTHROPIC_API_KEY_SETTING,
 )
 import multi_agent_brief.semantic_evaluator.runner as runner_module
-from tests.test_core_run_v2_packaging import _real_finalized_local_workspace
-from tests.test_post_final_assessment import _fixture_service, _policy_payload
+from tests.test_post_final_assessment import (
+    _fixture_service,
+    _policy_payload,
+    _schema9_finalized_local_workspace_upgraded,
+)
 from tests.test_post_final_human_review import _disposition_payload
 
 
@@ -50,7 +53,9 @@ if not package_file.is_relative_to(expected_package_root):
 if mode == "source":
     patch = pytest.MonkeyPatch()
     try:
-        workspace = _real_finalized_local_workspace(workspace.parent, patch)
+        workspace, _run_id, _historical = (
+            _schema9_finalized_local_workspace_upgraded(workspace.parent, patch)
+        )
         calls = []
         service = _fixture_service(workspace, calls, terminal_mode="finding")
         if not service.policy_set(_policy_payload())["ok"]:

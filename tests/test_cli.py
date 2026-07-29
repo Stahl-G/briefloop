@@ -231,6 +231,48 @@ def test_quality_laj_help_exposes_actionable_human_review_without_unit_c(capsys)
     assert "not consumed by later runs" in output
 
 
+def test_readmes_keep_unreleased_laj_human_loop_outside_v014_claims() -> None:
+    def require(condition: bool, message: str) -> None:
+        if not condition:
+            raise AssertionError(message)
+
+    root = Path(__file__).resolve().parents[1]
+    english = (root / "README.md").read_text(encoding="utf-8")
+    chinese = (root / "README.zh-CN.md").read_text(encoding="utf-8")
+    readme_en = (root / "README_en.md").read_text(encoding="utf-8")
+
+    require(
+        "Unreleased development-main experiment (not part of v0.14.0)" in english,
+        "English README does not label A+B as unreleased",
+    )
+    released_english = english.split(
+        "v0.14.0 completes the SQLite-only cutover",
+        1,
+    )[1].split("The carried-forward supported report tooling", 1)[0]
+    require(
+        "secured post-final Review Sessions can record" not in released_english,
+        "English README attributes A+B to v0.14.0",
+    )
+
+    require(
+        "尚未发布的 development-main 实验（不属于 v0.14.0）" in chinese,
+        "Chinese README does not label A+B as unreleased",
+    )
+    released_chinese = chinese.split(
+        "v0.14.0 完成 SQLite-only 切换",
+        1,
+    )[1].split("延续的受支持报告工具", 1)[0]
+    require(
+        "post-final Review Session 可记录" not in released_chinese,
+        "Chinese README attributes A+B to v0.14.0",
+    )
+
+    require(
+        "Store-qualified post-final review" not in readme_en,
+        "README_en contains the same false release attribution",
+    )
+
+
 def test_quality_html_reports_unsupported_publication_without_effects(
     tmp_path: Path,
     capsys,

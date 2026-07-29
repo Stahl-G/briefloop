@@ -3,14 +3,20 @@
 from __future__ import annotations
 
 from dataclasses import replace
+import hashlib
+from importlib import resources
 import json
 from pathlib import Path
 import shutil
+import sqlite3
 from threading import Event, Thread
 
 import pytest
 
 from multi_agent_brief.control_store import SQLiteControlStore
+from multi_agent_brief.contracts.v2 import TransactionReceipt
+from multi_agent_brief.control_store.schema import MIGRATIONS
+from multi_agent_brief.control_store.serialization import canonical_json_bytes
 from multi_agent_brief.core_run_v2.errors import CoreRunError
 from multi_agent_brief.core_run_v2.next_action import classify_core_run_next_action
 from multi_agent_brief.core_run_v2.verifier import CoreRunDomainVerifier
@@ -52,11 +58,22 @@ from multi_agent_brief.semantic_evaluator.runner import (
 from multi_agent_brief.semantic_evaluator.serialization import canonical_json_bytes
 import multi_agent_brief.product.post_final_assessment as post_final_assessment_module
 import multi_agent_brief.semantic_evaluator.runner as runner_module
+import multi_agent_brief.control_store.schema as schema_module
+import multi_agent_brief.control_store.sqlite_store as sqlite_store_module
 from tests.test_finalized_local_review_facts import _finalized_local_workspace
+from tests.test_core_run_v2_packaging import _real_finalized_local_workspace
 from tests.helpers import initialize_workspace
 
 
 FIXTURES = Path(__file__).parent / "fixtures" / "semantic_evaluator_shadow"
+_POST_FINAL_RECEIPT_RELATION_FIELDS = (
+    "post_final_assessment_policy_revisions",
+    "post_final_assessment_requests",
+    "post_final_assessment_results",
+    "post_final_finding_dispositions",
+    "post_final_guidance_drafts",
+    "post_final_guidance_statuses",
+)
 
 
 class _MessagesFixtureAdapter:
@@ -184,6 +201,128 @@ def _current_action(history, run_id: str, revision: int):
     snapshot = history.snapshot_at_revision(run_id, revision)
     verified = CoreRunDomainVerifier()._verify_snapshot(history, snapshot)
     return classify_core_run_next_action(verified)
+
+
+def _schema9_finalized_local_workspace_upgraded(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> tuple[Path, str, dict[str, bytes]]:
+    """Build real schema-9 Core history, then apply 0010 without byte rewrites."""
+
+    canonical_model_text = sqlite_store_module.canonical_model_text
+
+    def legacy_record_text(record) -> str:
+        if type(record) is not TransactionReceipt:
+            return canonical_model_text(record)
+        payload = record.model_dump(mode="json", exclude_unset=False)
+        for field in _POST_FINAL_RECEIPT_RELATION_FIELDS:
+            if payload.pop(field) != []:
+                raise AssertionError("schema-9 receipt gained advisory relation")
+        return canonical_json_bytes(payload).decode("utf-8")
+
+    schema9_patch = pytest.MonkeyPatch()
+    schema9_patch.setattr(
+        sqlite_store_module,
+        "canonical_model_text",
+        legacy_record_text,
+    )
+    try:
+        workspace = _real_finalized_local_workspace(tmp_path, monkeypatch)
+        with SQLiteControlStore.open(workspace / "briefloop.db") as store:
+            head = store.load_workspace_run_head()
+        if head is None:
+            raise AssertionError("schema-9 fixture has no workspace run head")
+        run_id = head.current_run_id
+    finally:
+        schema9_patch.undo()
+
+    database = workspace / "briefloop.db"
+    connection = sqlite3.connect(database)
+    try:
+        migration_10_tables = (
+            "transaction_post_final_guidance_statuses",
+            "transaction_post_final_guidance_drafts",
+            "transaction_post_final_finding_dispositions",
+            "post_final_guidance_statuses",
+            "post_final_guidance_drafts",
+            "post_final_finding_dispositions",
+            "transaction_post_final_assessment_results",
+            "transaction_post_final_assessment_requests",
+            "transaction_post_final_assessment_policy_revisions",
+            "post_final_assessment_results",
+            "post_final_assessment_requests",
+            "post_final_assessment_policy_revisions",
+        )
+        connection.execute("PRAGMA foreign_keys = OFF")
+        for table in migration_10_tables:
+            connection.execute(f"DROP TABLE {table}")
+        connection.execute("DROP TRIGGER schema_migrations_no_delete")
+        connection.execute("DELETE FROM schema_migrations WHERE version=10")
+        connection.execute(
+            "CREATE TRIGGER schema_migrations_no_delete BEFORE DELETE ON "
+            "schema_migrations\n"
+            "BEGIN SELECT RAISE(ABORT, 'append_only'); END"
+        )
+        connection.execute("PRAGMA user_version = 9")
+        connection.commit()
+
+        expected_schema9 = sqlite3.connect(":memory:")
+        try:
+            for version, name in MIGRATIONS:
+                if version >= 10:
+                    break
+                migration = resources.files("multi_agent_brief.control_store").joinpath(
+                    "migrations", f"{name}.sql"
+                )
+                expected_schema9.executescript(migration.read_text(encoding="utf-8"))
+            if schema_module._schema_inventory(
+                connection
+            ) != schema_module._schema_inventory(expected_schema9):
+                raise AssertionError("schema-9 fixture inventory drift")
+        finally:
+            expected_schema9.close()
+
+        before = {
+            str(row[0]): str(row[1]).encode("utf-8")
+            for row in connection.execute(
+                "SELECT transaction_id,payload_json FROM transactions "
+                "ORDER BY committed_revision"
+            ).fetchall()
+        }
+        if not before:
+            raise AssertionError("schema-9 fixture has no receipts")
+        if any(
+            field.encode("utf-8") in payload
+            for payload in before.values()
+            for field in _POST_FINAL_RECEIPT_RELATION_FIELDS
+        ):
+            raise AssertionError("schema-9 receipt unexpectedly has advisory fields")
+        migration = resources.files("multi_agent_brief.control_store").joinpath(
+            "migrations",
+            "0010.sql",
+        )
+        connection.executescript(migration.read_text(encoding="utf-8"))
+        connection.execute("PRAGMA foreign_keys = ON")
+        after = {
+            str(row[0]): str(row[1]).encode("utf-8")
+            for row in connection.execute(
+                "SELECT transaction_id,payload_json FROM transactions "
+                "ORDER BY committed_revision"
+            ).fetchall()
+        }
+        if after != before:
+            raise AssertionError("0010 rewrote historical receipt bytes")
+        if {
+            key: hashlib.sha256(value).hexdigest() for key, value in before.items()
+        } != {key: hashlib.sha256(value).hexdigest() for key, value in after.items()}:
+            raise AssertionError("0010 changed historical receipt hashes")
+    finally:
+        connection.close()
+
+    with SQLiteControlStore.open(database) as store:
+        history = store.load_history()
+    CoreRunDomainVerifier().verify_history(history)
+    return workspace, run_id, before
 
 
 def _policy_payload() -> dict[str, object]:

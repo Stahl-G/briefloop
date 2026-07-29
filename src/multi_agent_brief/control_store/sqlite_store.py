@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, replace
 from datetime import datetime, timezone
+import json
 import os
 from pathlib import Path
 import sqlite3
@@ -68,6 +69,7 @@ from multi_agent_brief.contracts.v2 import (
     PostFinalGuidanceDraftReference,
     PostFinalGuidanceStatusRevision,
     PostFinalGuidanceStatusReference,
+    post_final_guidance_status_transition_allowed,
     RecoveryCompletionRecord,
     RepairCompletionRecord,
     RepairCycleRecord,
@@ -119,6 +121,24 @@ from multi_agent_brief.control_store.serialization import (
 _ModelT = TypeVar("_ModelT", bound=StrictModel)
 _FailureHook = Callable[[str], None]
 _CONTRACT_ID_ADAPTER = TypeAdapter(ContractId)
+_POST_FINAL_RECEIPT_RELATION_FIELDS = (
+    "post_final_assessment_policy_revisions",
+    "post_final_assessment_requests",
+    "post_final_assessment_results",
+    "post_final_finding_dispositions",
+    "post_final_guidance_drafts",
+    "post_final_guidance_statuses",
+)
+_POST_FINAL_RECEIPT_TRANSACTION_TYPES = frozenset(
+    {
+        "post_final_assessment_policy",
+        "post_final_assessment_claim",
+        "post_final_assessment_result",
+        "post_final_finding_disposition",
+        "post_final_guidance_draft",
+        "post_final_guidance_status",
+    }
+)
 _EXTENDED_RECORD_MODELS = (
     WorkspaceRunHead,
     ArtifactIdentityRecord,
@@ -185,6 +205,38 @@ def _canonical_record_text(record: StrictModel) -> str:
 
 
 def _decode_record(model_type: type[_ModelT], payload_text: str) -> _ModelT:
+    if model_type is TransactionReceipt:
+        try:
+            payload = json.loads(payload_text)
+        except (json.JSONDecodeError, TypeError, ValueError) as exc:
+            raise ControlStoreIntegrityError("stored_payload_invalid") from exc
+        if not isinstance(payload, dict):
+            raise ControlStoreIntegrityError("stored_payload_invalid")
+        missing = {
+            field
+            for field in _POST_FINAL_RECEIPT_RELATION_FIELDS
+            if field not in payload
+        }
+        if not missing:
+            return cast(_ModelT, decode_model(TransactionReceipt, payload_text))
+        if (
+            missing != set(_POST_FINAL_RECEIPT_RELATION_FIELDS)
+            or payload.get("transaction_type") in _POST_FINAL_RECEIPT_TRANSACTION_TYPES
+        ):
+            raise ControlStoreIntegrityError("stored_payload_not_canonical")
+        expanded = dict(payload)
+        expanded.update({field: [] for field in _POST_FINAL_RECEIPT_RELATION_FIELDS})
+        try:
+            receipt = TransactionReceipt.model_validate(expanded)
+        except (ValidationError, TypeError, ValueError) as exc:
+            raise ControlStoreIntegrityError("stored_payload_invalid") from exc
+        legacy_projection = receipt.model_dump(mode="json", exclude_unset=False)
+        for field in _POST_FINAL_RECEIPT_RELATION_FIELDS:
+            if legacy_projection.pop(field) != []:
+                raise ControlStoreIntegrityError("stored_payload_not_canonical")
+        if canonical_json_bytes(legacy_projection).decode("utf-8") != payload_text:
+            raise ControlStoreIntegrityError("stored_payload_not_canonical")
+        return cast(_ModelT, receipt)
     if model_type not in _EXTENDED_RECORD_MODELS:
         return decode_model(model_type, payload_text)
     try:
@@ -2653,6 +2705,11 @@ class SQLiteControlStore:
             status_heads[guidance_id] = next(iter(heads))
         for record in staged_statuses.values():
             draft = available_drafts.get((record.guidance_id, record.draft_revision))
+            current_status = (
+                existing_statuses.get(status_heads.get(record.guidance_id, ""))
+                if status_heads.get(record.guidance_id) is not None
+                else None
+            )
             current_disposition = (
                 available_dispositions.get(draft.disposition_id)
                 if draft is not None
@@ -2682,6 +2739,9 @@ class SQLiteControlStore:
                 )
                 or record.previous_status_revision_id
                 != status_heads.get(record.guidance_id)
+                or not post_final_guidance_status_transition_allowed(
+                    current_status, record
+                )
             ):
                 raise ControlStoreConflict("relational_integrity_conflict")
 
@@ -6937,10 +6997,17 @@ class SQLiteControlStore:
         for rows in status_chains.values():
             rows.sort(key=lambda item: item[0])
             previous = None
+            previous_status = None
             for _revision, status in rows:
-                if status.previous_status_revision_id != previous:
+                if (
+                    status.previous_status_revision_id != previous
+                    or not post_final_guidance_status_transition_allowed(
+                        previous_status, status
+                    )
+                ):
                     raise ControlStoreIntegrityError("control_store_integrity_invalid")
                 previous = status.status_revision_id
+                previous_status = status
 
     def _verify_checkout_snapshot_structure(
         self, snapshot: ControlStoreSnapshot

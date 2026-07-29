@@ -720,10 +720,15 @@
                 if (ACTION_SESSION && typeof r === "object" && r.guidance_id &&
                         Number(r.draft_revision) === latestDraftByGuidance[r.guidance_id]) {
                     var commandStatus = el("p", "section-muted");
-                    [["approve", "guidance_approve"],
-                     ["deactivate", "guidance_deactivate"],
-                     ["revert", "guidance_revert"],
-                     ["supersede", "guidance_supersede"]].forEach(function (action) {
+                    var actionLabels = {
+                        approve: "guidance_approve",
+                        deactivate: "guidance_deactivate",
+                        revert: "guidance_revert",
+                        supersede: "guidance_supersede"
+                    };
+                    (r.legal_actions || []).forEach(function (actionName) {
+                        var action = [actionName, actionLabels[actionName]];
+                        if (!action[1]) return;
                         var button = el("button", "qp-tab", t(action[1]));
                         button.type = "button";
                         button.addEventListener("click", function () {

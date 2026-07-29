@@ -3393,6 +3393,49 @@ class PostFinalGuidanceStatusRevision(StrictModel):
         return self
 
 
+POST_FINAL_GUIDANCE_STATUS_TRANSITIONS = MappingProxyType(
+    {
+        None: ("approved",),
+        "approved": ("approved", "deactivated", "reverted", "superseded"),
+        "deactivated": ("approved",),
+        "reverted": ("approved",),
+        "superseded": ("approved",),
+    }
+)
+
+
+def post_final_guidance_legal_actions(
+    current: PostFinalGuidanceStatusRevision | None,
+    *,
+    target_draft_revision: int,
+) -> tuple[str, ...]:
+    """Return the only legal Human actions for one exact draft revision."""
+
+    if current is None:
+        return (
+            POST_FINAL_GUIDANCE_STATUS_TRANSITIONS[None]
+            if target_draft_revision >= 1
+            else ()
+        )
+    if target_draft_revision > current.draft_revision:
+        return ("approved",)
+    if target_draft_revision == current.draft_revision and current.status == "approved":
+        return ("deactivated", "reverted", "superseded")
+    return ()
+
+
+def post_final_guidance_status_transition_allowed(
+    current: PostFinalGuidanceStatusRevision | None,
+    candidate: PostFinalGuidanceStatusRevision,
+) -> bool:
+    """Validate one append-only status transition against the current head."""
+
+    return candidate.status in post_final_guidance_legal_actions(
+        current,
+        target_draft_revision=candidate.draft_revision,
+    )
+
+
 class RepairStartRequest(StrictModel):
     schema_id = "briefloop.repair_start_request.v2"
     schema_version: Literal["briefloop.repair_start_request.v2"]
@@ -6609,6 +6652,9 @@ __all__ = [
     "PostFinalGuidanceDraftRevision",
     "PostFinalGuidanceDraftReference",
     "PostFinalGuidanceStatusRevision",
+    "POST_FINAL_GUIDANCE_STATUS_TRANSITIONS",
+    "post_final_guidance_legal_actions",
+    "post_final_guidance_status_transition_allowed",
     "PostFinalGuidanceStatusReference",
     "PublicationIdentityV1",
     "RecoveryCompleteRequest",

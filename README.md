@@ -152,11 +152,12 @@ The design rule is simple:
 | What guards delivery? | Store-backed gate evaluations, package readiness, and explicit human approval | Receipt-backed runtime actions and read-only status projections |
 
 Agents can observe and propose. Only strict requests accepted by deterministic
-services change the Store, and delivery stays human-controlled. Experimental
-post-final Human review can now record accept/reject/defer, Human-edited
-guidance, and a separate approval Receipt in SQLite. Later runs do not consume
-that guidance yet; the Improvement Ledger surface is not shipped yet as a
-complete next-run loop.
+services change the Store, and delivery stays human-controlled. On the
+unreleased development main, Experimental post-final Human review can record
+accept/reject/defer, Human-edited guidance, and a separate approval Receipt in
+SQLite. Later runs do not consume that guidance yet; the Improvement Ledger
+surface is not shipped yet as a complete next-run loop. Released v0.14.0 truth:
+the Improvement Ledger surface is not shipped yet.
 
 ---
 
@@ -367,7 +368,14 @@ The demos use synthetic materials. They show the evidence chain and gate behavio
 
 Current version: **v0.14.0**
 
-Current main entrypoints:
+Unreleased development-main experiment (not part of v0.14.0): Store-qualified
+post-final review can record a non-secret Human policy, run or exactly replay
+one advisory assessment, open the secured local Review Session, and append
+Human dispositions, edited drafts, and separate guidance approvals. Utility is
+NOT MEASURED; findings never affect Gate/finalize/delivery/Core truth, and
+approved guidance is not consumed by later runs.
+
+Released v0.14.0 entrypoints:
 
 - CLI: `briefloop`
 - Experimental SQLite-only Codex runtime: `briefloop run --workspace <path>
@@ -378,23 +386,16 @@ Current main entrypoints:
   `briefloop quality html --workspace
   <path> [--open]`; Brief shows the verified Store-bound `finalized_local`
   reader, Quality is a deterministic projection, LAJ is optional explicit
-  hash-bound advisory input (never authority), and Improvement shows current
-  Store-native Human disposition/guidance state when available. Static exports
-  remain read-only; the secured local `briefloop quality laj review-open`
-  session exposes strict Human commands. This view
+  hash-bound advisory input (never authority), and Improvement is honestly
+  unavailable because no released Store-native writer/lifecycle is active.
+  This view
   does not imply approval, package readiness, delivery, publication, automatic
-  learning, or next-run guidance consumption.
+  learning, or a persistent browser server.
 - experimental offline-shadow LAJ: `briefloop experiments laj shadow-run` and
   `briefloop experiments laj present` for public/synthetic advisory evaluation
   and standalone JSON/Markdown/HTML presentation; an explicitly supplied
   current-report-bound `laj.json` may be displayed read-only with
   `briefloop quality html --workspace <path> --laj-view <laj.json>`
-- experimental Store-qualified post-final review: `briefloop quality laj`
-  records a non-secret Human policy, runs/replays one advisory assessment,
-  opens the secured local Review Session, and records append-only Human
-  dispositions, edited drafts, and separate guidance approvals. Utility is
-  NOT MEASURED; findings never affect Gate/finalize/delivery/Core truth, and
-  approved guidance is not consumed by later runs.
 
 v0.14.0 completes the SQLite-only cutover and adds read-only interaction
 surfaces:
@@ -410,12 +411,11 @@ surfaces:
 - the packaged Codex Skill follows the exact Store-derived next action and
   Receipt-backed invocation protocol. It does not fall back to `operator` or
   another runtime.
-- the loopback init wizard and static four-tab HTML are read-only interaction
+- the loopback init wizard and four-tab local HTML are read-only interaction
   surfaces. Brief shows the verified Store-bound `finalized_local` reader;
-  Quality is deterministic; LAJ is optional advisory and NOT MEASURED.
-  Experimental secured post-final Review Sessions can record Store-native
-  Human disposition and separately approved guidance, but no later run
-  consumes it.
+  Quality is deterministic; LAJ is optional advisory and NOT MEASURED; and
+  Improvement reports unavailable because no released Store-native lifecycle
+  is active.
 - the v0.14 engineering changes were implemented and tested with Codex. Human
   maintainers authorized the merges and release.
 
