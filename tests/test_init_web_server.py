@@ -152,6 +152,7 @@ def _public_web_tavily_body(
     session_id: str,
     workspace_target: str,
     task_objective: str = "Prepare the weekly manufacturing brief.",
+    search_domains: list[str] | None = None,
 ) -> dict[str, object]:
     return {
         "schema_version": "briefloop.init_web.submission.v1",
@@ -174,6 +175,9 @@ def _public_web_tavily_body(
                 "source_profile": "llm_decide",
                 "web_search_mode": "external_api",
                 "search_backend": "tavily",
+                "search_domains": (
+                    ["openai.com"] if search_domains is None else search_domains
+                ),
                 "output_extent": "balanced",
             },
             "completion_target": "finalized_local",
@@ -244,6 +248,9 @@ def test_get_assets_and_security_headers(server) -> None:
     )
     assert b'{ "7d": 7, "30d": 30, "90d": 90 }' in body
     assert b"max_source_age_days: maxSourceAgeDays" in body
+    assert b"search_domains:" in body
+    assert b"Optional search domains" in body
+    assert b"they do not prove evidence support or authority" in body
     assert b'id: "90d"' in body
     assert b'id: "quarter"' not in body
     assert b"custom_window" not in body
@@ -486,7 +493,7 @@ def test_real_loopback_public_web_tavily_replays_before_credential_or_provider(
                     "results": [
                         {
                             "title": "Durable public result",
-                            "url": "https://example.com/public-durable",
+                            "url": "https://openai.com/public-durable",
                             "content": "discovery summary",
                             "raw_content": "provider-returned durable content",
                             "published_date": "2026-07-29",
@@ -494,7 +501,7 @@ def test_real_loopback_public_web_tavily_replays_before_credential_or_provider(
                         },
                         {
                             "title": "Snippet-only result",
-                            "url": "https://example.com/public-snippet",
+                            "url": "https://openai.com/public-snippet",
                             "content": "snippet only",
                             "raw_content": "",
                             "published_date": "2026-07-29",
@@ -667,6 +674,7 @@ def test_real_loopback_public_web_tavily_replays_before_credential_or_provider(
     assert provider_request["search_depth"] == "basic"
     assert provider_request["days"] == 30
     assert "time_range" not in provider_request
+    assert provider_request["include_domains"] == ["openai.com"]
     assert provider_request["include_answer"] is False
     assert "api_key" not in provider_request
     assert provider_authorizations == [f"Bearer {sentinel}"]

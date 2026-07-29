@@ -13,6 +13,7 @@ from __future__ import annotations
 
 from dataclasses import asdict
 from pathlib import Path
+import re
 from threading import Lock, RLock
 from typing import Any, Callable
 
@@ -52,6 +53,8 @@ from .staging import InitWebStaging, InitWebStagingError
 
 SUBMISSION_SCHEMA = "briefloop.init_web.submission.v1"
 _REQUIRED_SELECTION_KEYS = ("company", "industry_or_theme", "task_objective")
+_MAX_SEARCH_DOMAINS = 20
+_DNS_LABEL = re.compile(r"[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?")
 
 
 class SubmissionError(ValueError):
@@ -91,6 +94,33 @@ def _require_text_list(value: Any, error_code: str) -> list[str]:
     return [item.strip() for item in value]
 
 
+def _canonical_search_domains(value: Any) -> list[str]:
+    if type(value) is not list or len(value) > _MAX_SEARCH_DOMAINS:
+        raise SubmissionError("submission_search_domains_invalid", 422)
+    domains: list[str] = []
+    for item in value:
+        if type(item) is not str:
+            raise SubmissionError("submission_search_domains_invalid", 422)
+        domain = item.strip().lower()
+        try:
+            domain.encode("ascii", errors="strict")
+        except UnicodeEncodeError:
+            raise SubmissionError("submission_search_domains_invalid", 422) from None
+        labels = domain.split(".")
+        if (
+            not domain
+            or len(domain) > 253
+            or len(labels) < 2
+            or re.fullmatch(r"[0-9.]+", domain) is not None
+            or any(_DNS_LABEL.fullmatch(label) is None for label in labels)
+        ):
+            raise SubmissionError("submission_search_domains_invalid", 422)
+        domains.append(domain)
+    if len(domains) != len(set(domains)):
+        raise SubmissionError("submission_search_domains_invalid", 422)
+    return sorted(domains)
+
+
 def _profile_from_payload(payload: dict[str, Any]) -> InitProfile:
     selections = payload.get("selections")
     if not isinstance(selections, dict):
@@ -115,6 +145,9 @@ def _profile_from_payload(payload: dict[str, Any]) -> InitProfile:
         raise SubmissionError("submission_search_backend_invalid", 422)
     if web_search_mode == "disabled" and search_backend:
         raise SubmissionError("submission_search_backend_invalid", 422)
+    search_domains = _canonical_search_domains(selections.get("search_domains", []))
+    if web_search_mode != "external_api" and search_domains:
+        raise SubmissionError("submission_search_domains_invalid", 422)
     max_source_age_days = selections.get("max_source_age_days")
     if max_source_age_days is None:
         if web_search_mode == "external_api":
@@ -162,6 +195,7 @@ def _profile_from_payload(payload: dict[str, Any]) -> InitProfile:
         web_search_enabled=web_search_mode != "disabled",
         search_backend=search_backend,
         tavily_enabled=search_backend == "tavily",
+        preferred_news_domains=search_domains,
         output_extent=output_extent,
     )
     return profile

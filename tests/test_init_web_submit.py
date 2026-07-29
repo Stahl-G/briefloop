@@ -163,6 +163,7 @@ def _public_web_body(
     target: str,
     *,
     session_id: str = "web-session",
+    search_domains: list[str] | None = None,
 ) -> dict[str, object]:
     body = _body(request_id, target)
     payload = body["payload"]
@@ -174,6 +175,7 @@ def _public_web_body(
             "source_profile": "llm_decide",
             "web_search_mode": "external_api",
             "search_backend": "tavily",
+            "search_domains": [] if search_domains is None else search_domains,
         }
     )
     payload.update(
@@ -228,6 +230,11 @@ def test_public_web_submission_stores_tavily_key_outside_run_contract(
 ) -> None:
     submitter = InitWebSubmitter(base_dir=tmp_path)
     body = _public_web_body("REQ-WEB00001", "web-search-ws")
+    payload = body["payload"]
+    assert isinstance(payload, dict)
+    selections = payload["selections"]
+    assert isinstance(selections, dict)
+    selections.pop("search_domains")
     configured = submitter.configure_search_secret(
         session_id="web-session",
         body={"provider": "tavily", "api_key": "tvly-test-secret-123"},
@@ -255,6 +262,10 @@ def test_public_web_submission_stores_tavily_key_outside_run_contract(
     assert sources["web_search"]["mode"] == "external_api"
     assert sources["web_search"]["backend"] == "tavily"
     assert sources["web_search"]["api_key_env"] == "TAVILY_API_KEY"
+    assert (
+        sources["source_discovery"]["news_source_selection"]["preferred_domains"] == []
+    )
+    assert sources["web_search"]["news_source_domains"]["preferred_domains"] == []
     assert response["execution_authorized"] is False
     assert response["source_discovery_authorized"] is True
     assert response["completion_target"] == "finalized_local"
@@ -277,6 +288,146 @@ def test_public_web_submission_stores_tavily_key_outside_run_contract(
     config_text = (workspace / "config.yaml").read_text(encoding="utf-8")
     assert "tvly-test-secret-123" not in config_text
     assert b"tvly-test-secret-123" not in (workspace / "briefloop.db").read_bytes()
+
+
+def test_public_web_submission_freezes_canonical_search_domains_and_replays(
+    tmp_path: Path,
+) -> None:
+    submitter = InitWebSubmitter(base_dir=tmp_path)
+    body = _public_web_body(
+        "REQ-DOMAINS-001",
+        "domain-bound",
+        search_domains=[" OpenAI.COM ", "docs.openai.com"],
+    )
+    submitter.configure_search_secret(
+        session_id="web-session",
+        body={"provider": "tavily", "api_key": "tvly-domain-secret"},
+    )
+
+    committed = _submit_ok(submitter, body)
+    workspace = tmp_path / "domain-bound"
+    sources = yaml.safe_load((workspace / "sources.yaml").read_text(encoding="utf-8"))
+    assert sources["source_discovery"]["news_source_selection"][
+        "preferred_domains"
+    ] == ["docs.openai.com", "openai.com"]
+    assert sources["web_search"]["news_source_domains"]["preferred_domains"] == [
+        "docs.openai.com",
+        "openai.com",
+    ]
+    with SQLiteControlStore.open(workspace / "briefloop.db") as store:
+        head = store.load_workspace_run_head()
+        assert head is not None
+        snapshot = store.load_snapshot(head.current_run_id)
+    assert snapshot.store_revision == committed["committed_revision"]
+    db_bytes = (workspace / "briefloop.db").read_bytes()
+
+    replayed = _submit_ok(
+        submitter,
+        _public_web_body(
+            "REQ-DOMAINS-001",
+            "domain-bound",
+            search_domains=["docs.openai.com", "openai.com"],
+        ),
+    )
+    assert replayed["status"] == "replayed"
+    assert (workspace / "briefloop.db").read_bytes() == db_bytes
+
+
+@pytest.mark.parametrize(
+    "invalid_domains",
+    [
+        None,
+        "openai.com",
+        [""],
+        ["https://openai.com"],
+        ["openai.com/path"],
+        ["openai.com:443"],
+        ["*.openai.com"],
+        ["127.0.0.1"],
+        ["[::1]"],
+        ["localhost"],
+        ["openai..com"],
+        ["-openai.com"],
+        ["openai-.com"],
+        ["OPENAI.COM", "openai.com"],
+        [f"d{index}.example.com" for index in range(21)],
+    ],
+)
+def test_public_web_invalid_search_domains_fail_before_state_or_secret(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    invalid_domains: object,
+) -> None:
+    submitter = InitWebSubmitter(base_dir=tmp_path)
+    body = _public_web_body("REQ-DOMAINS-BAD", "invalid-domain")
+    payload = body["payload"]
+    assert isinstance(payload, dict)
+    selections = payload["selections"]
+    assert isinstance(selections, dict)
+    selections["search_domains"] = invalid_domains
+
+    def _effect_must_not_run(*_args: object, **_kwargs: object) -> object:
+        raise AssertionError("invalid domains reached credential effect")
+
+    monkeypatch.setattr(
+        init_web_submit_module,
+        "get_known_env_value",
+        _effect_must_not_run,
+    )
+    monkeypatch.setattr(
+        init_web_submit_module,
+        "store_workspace_secret",
+        _effect_must_not_run,
+    )
+
+    with pytest.raises(SubmissionError) as exc_info:
+        submitter.submit(body)
+
+    assert exc_info.value.error_code == "submission_search_domains_invalid"
+    assert exc_info.value.http_status == 422
+    assert not (tmp_path / "invalid-domain").exists()
+
+
+def test_public_web_changed_search_domains_conflict_before_secret_effect(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    submitter = InitWebSubmitter(base_dir=tmp_path)
+    body = _public_web_body(
+        "REQ-DOMAINS-CONFLICT",
+        "domain-conflict",
+        search_domains=["openai.com"],
+    )
+    submitter.configure_search_secret(
+        session_id="web-session",
+        body={"provider": "tavily", "api_key": "tvly-domain-secret"},
+    )
+    _submit_ok(submitter, body)
+    workspace = tmp_path / "domain-conflict"
+    db_bytes = (workspace / "briefloop.db").read_bytes()
+    (workspace / ".env").unlink()
+
+    def _secret_effect_must_not_run(**_kwargs: object) -> str:
+        raise AssertionError("domain conflict reached credential effect")
+
+    monkeypatch.setattr(
+        submitter,
+        "_apply_search_secret_effect",
+        _secret_effect_must_not_run,
+    )
+    changed = _public_web_body(
+        "REQ-DOMAINS-CONFLICT",
+        "domain-conflict",
+        search_domains=["platform.openai.com"],
+    )
+
+    with pytest.raises(SubmissionError) as exc_info:
+        submitter.submit(changed)
+
+    assert exc_info.value.error_code == "submission_replay_conflict"
+    assert exc_info.value.http_status == 409
+    assert (workspace / "briefloop.db").read_bytes() == db_bytes
+    assert not (workspace / ".env").exists()
 
 
 @pytest.mark.parametrize("max_source_age_days", [7, 30, 90])

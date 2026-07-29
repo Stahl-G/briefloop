@@ -102,13 +102,13 @@ def test_tavily_vertical_real_loopback_source_and_wheel_parity(
         provider_authorizations = []
         response_bytes = (
             b'{"results":[{"title":"Durable public result",'
-            b'"url":"https://example.com/public-durable",'
+            b'"url":"https://openai.com/public-durable",'
             b'"content":"discovery summary",'
             b'"raw_content":"provider-returned durable content",'
             b'"published_date":" 2026-07-23",'
             b'"score":0.9},'
             b'{"title":"Snippet-only result",'
-            b'"url":"https://example.com/public-snippet",'
+            b'"url":"https://openai.com/public-snippet",'
             b'"content":"snippet only","raw_content":"",'
             b'"published_date":"Wed, 22 Jul 2026 05:30:00 GMT",'
             b'"score":0.7}]}'
@@ -177,6 +177,7 @@ def test_tavily_vertical_real_loopback_source_and_wheel_parity(
                         "source_profile": "llm_decide",
                         "web_search_mode": "external_api",
                         "search_backend": "tavily",
+                        "search_domains": ["openai.com"],
                         "output_extent": "balanced",
                     },
                     "completion_target": "finalized_local",
@@ -447,6 +448,10 @@ def test_tavily_vertical_real_loopback_source_and_wheel_parity(
         )
         require(provider_request["days"] == 30, "day range mismatch")
         require("time_range" not in provider_request, "week filter used")
+        require(
+            provider_request["include_domains"] == ["openai.com"],
+            "provider domain binding mismatch",
+        )
         require("api_key" not in provider_request, "provider key entered body")
         require(
             provider_authorizations == [f"Bearer {sentinel}"],
@@ -577,6 +582,7 @@ def test_tavily_vertical_real_loopback_source_and_wheel_parity(
                 {
                     "capable": True,
                     "credential_echo_rejections": echo_rejections,
+                    "domains": provider_request["include_domains"],
                     "durable_sources": sum(
                         source.claims_eligible for source in promoted.sources
                     ),
@@ -639,6 +645,7 @@ def test_tavily_vertical_real_loopback_source_and_wheel_parity(
         expected = {
             "capable": True,
             "credential_echo_rejections": 2,
+            "domains": ["openai.com"],
             "durable_sources": 1,
             "optimize": sys.flags.optimize,
             "provider_calls": 1,
