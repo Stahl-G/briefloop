@@ -22,11 +22,36 @@ RETIRED_SOURCE_ACTIONS = (
     "add-rss",
     "add-web-search",
 )
+REQUIRED_RETIRED_HELP = (
+    "Retired compatibility command",
+    "unavailable",
+    "runtime_command_unsupported",
+    "init-web",
+    "briefloop runtime continue --workspace <workspace>",
+)
+FORBIDDEN_ACTIVE_HELP = (
+    "Source discovery and management",
+    "Resolve llm_decide profile into concrete source candidates",
+    "Run web search to discover sources",
+    "Merge approved source_candidates.yaml into sources.yaml",
+    "Materialize explicit durable source records",
+    "Copy local text evidence files",
+    "Register an RSS/Atom feed",
+    "Register a runtime web-search handoff task",
+)
 
 
 def _require(condition: bool, message: str) -> None:
     if not condition:
         raise AssertionError(message)
+
+
+def _require_truthful_retired_help(label: str, output: str) -> None:
+    normalized = " ".join(output.split())
+    for required in REQUIRED_RETIRED_HELP:
+        _require(required in normalized, f"{label}: missing help fragment {required!r}")
+    for forbidden in FORBIDDEN_ACTIVE_HELP:
+        _require(forbidden not in normalized, f"{label}: stale help {forbidden!r}")
 
 
 def _workspace_file_bytes(workspace: Path) -> dict[str, bytes]:
@@ -193,6 +218,47 @@ def test_retired_sources_source_and_non_editable_wheel_parity(
         env["PYTHONPATH"] = str(package_root)
         prefix = [sys.executable, "-O"] if optimized else [sys.executable]
         results: list[object] = []
+        help_commands = (
+            ("sources", ["sources", "--help"]),
+            *(
+                (action, ["sources", action, "--help"])
+                for action in RETIRED_SOURCE_ACTIONS
+            ),
+        )
+        for help_label, help_args in help_commands:
+            process = subprocess.run(
+                [
+                    *prefix,
+                    "-m",
+                    "multi_agent_brief.cli.main",
+                    *help_args,
+                ],
+                cwd=tmp_path,
+                env=env,
+                check=False,
+                capture_output=True,
+                text=True,
+            )
+            _require(
+                process.returncode == 0,
+                f"{label}/{optimized}/{help_label}: help exit {process.returncode}",
+            )
+            _require(
+                process.stderr == "",
+                f"{label}/{optimized}/{help_label}: {process.stderr!r}",
+            )
+            _require_truthful_retired_help(
+                f"{label}/{optimized}/{help_label}",
+                process.stdout,
+            )
+            results.append(
+                (
+                    f"{help_label}-help",
+                    process.returncode,
+                    process.stdout,
+                    process.stderr,
+                )
+            )
         for action in RETIRED_SOURCE_ACTIONS:
             process = subprocess.run(
                 [
@@ -219,6 +285,11 @@ def test_retired_sources_source_and_non_editable_wheel_parity(
         wheel = execute("wheel", installed, optimized)
         _require(source == wheel, f"source/wheel mismatch under -O={optimized}")
         for action, returncode, stdout, stderr in source:
+            if action.endswith("-help"):
+                _require(returncode == 0, f"{action}: return code {returncode}")
+                _require_truthful_retired_help(action, stdout)
+                _require(stderr == "", f"{action}: {stderr!r}")
+                continue
             _require(returncode == 1, f"{action}: return code {returncode}")
             _require(stdout == "runtime_command_unsupported\n", f"{action}: {stdout!r}")
             _require(stderr == "", f"{action}: {stderr!r}")

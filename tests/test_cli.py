@@ -277,6 +277,49 @@ def test_packs_bundle_help_states_retired_internal_only_boundary(capsys):
 
 
 @pytest.mark.parametrize(
+    "argv",
+    (
+        ["sources", "--help"],
+        ["sources", "decide", "--help"],
+        ["sources", "materialize-pack", "--help"],
+        ["sources", "add-file", "--help"],
+        ["sources", "add-rss", "--help"],
+        ["sources", "add-web-search", "--help"],
+    ),
+)
+def test_retired_sources_help_is_truthful(capsys, argv):
+    parser = build_parser()
+
+    with pytest.raises(SystemExit) as exc:
+        parser.parse_args(argv)
+
+    if exc.value.code != 0:
+        raise AssertionError(f"{argv}: unexpected help exit {exc.value.code}")
+    normalized = " ".join(capsys.readouterr().out.split())
+    for required in (
+        "Retired compatibility command",
+        "unavailable",
+        "runtime_command_unsupported",
+        "init-web",
+        "briefloop runtime continue --workspace <workspace>",
+    ):
+        if required not in normalized:
+            raise AssertionError(f"{argv}: missing truthful help fragment {required!r}")
+    for forbidden in (
+        "Source discovery and management",
+        "Resolve llm_decide profile into concrete source candidates",
+        "Run web search to discover sources",
+        "Merge approved source_candidates.yaml into sources.yaml",
+        "Materialize explicit durable source records",
+        "Copy local text evidence files",
+        "Register an RSS/Atom feed",
+        "Register a runtime web-search handoff task",
+    ):
+        if forbidden in normalized:
+            raise AssertionError(f"{argv}: stale active help fragment {forbidden!r}")
+
+
+@pytest.mark.parametrize(
     ("authority", "expected"),
     (
         ("fresh", "runtime_command_unsupported\n"),

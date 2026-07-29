@@ -7,10 +7,20 @@ import argparse
 from multi_agent_brief.sources.doctor import run_doctor, format_doctor_report
 
 
+_RETIRED_SOURCES_DESCRIPTION = (
+    "Retired compatibility command. It is unavailable and always returns "
+    "runtime_command_unsupported. Configure public-web sources through init-web, "
+    "then follow the Store-derived `briefloop runtime continue --workspace "
+    "<workspace>` action."
+)
+
+
 def register_sources(subparsers: argparse._SubParsersAction) -> None:
     """Register the sources subcommand group."""
     sources_parser = subparsers.add_parser(
-        "sources", help="Source discovery and management."
+        "sources",
+        help="Retired source compatibility commands; always unavailable.",
+        description=_RETIRED_SOURCES_DESCRIPTION,
     )
     sources_sub = sources_parser.add_subparsers(
         dest="sources_action", required=True
@@ -18,147 +28,157 @@ def register_sources(subparsers: argparse._SubParsersAction) -> None:
 
     decide_parser = sources_sub.add_parser(
         "decide",
-        help="Resolve llm_decide profile into concrete source candidates.",
+        help="Retired/unavailable candidate command (compatibility only).",
+        description=_RETIRED_SOURCES_DESCRIPTION,
     )
     decide_parser.add_argument(
-        "--config", required=True, help="Path to config.yaml in the workspace."
+        "--config",
+        required=True,
+        help="Compatibility argument only; no source candidates are resolved.",
     )
     decide_parser.add_argument(
         "--search",
         action="store_true",
-        help="Run web search to discover sources (requires search backend).",
+        help="Compatibility flag only; no web search is executed.",
     )
     decide_parser.add_argument(
         "--daily-news-backfill",
         action="store_true",
-        help=(
-            "Run one user-need-customized news search per day for the"
-            " recent backfill window."
-        ),
+        help="Compatibility flag only; no daily news search is executed.",
     )
     decide_parser.add_argument(
         "--backfill-days",
         type=int,
-        help="Number of past days for --daily-news-backfill. Default: 7.",
+        help="Compatibility value only; no backfill is executed.",
     )
     decide_parser.add_argument(
         "--daily-max-results",
         type=int,
-        help="Maximum search results per day for daily news backfill. Default: 20.",
+        help="Compatibility value only; no search results are requested.",
     )
     decide_parser.add_argument(
         "--merge",
         action="store_true",
-        help="Merge approved source_candidates.yaml into sources.yaml.",
+        help="Compatibility flag only; no source candidates are merged.",
     )
     decide_parser.add_argument(
         "--candidates",
-        help="Path to source_candidates.yaml (for --merge).",
+        help="Compatibility path only; the file is not read or merged.",
     )
 
     materialize_parser = sources_sub.add_parser(
         "materialize-pack",
-        help="Materialize explicit durable source records into input/sources/.",
+        help="Retired/unavailable materialization command (compatibility only).",
+        description=_RETIRED_SOURCES_DESCRIPTION,
     )
     materialize_parser.add_argument(
-        "--config", required=True, help="Path to config.yaml in the workspace."
+        "--config",
+        required=True,
+        help="Compatibility argument only; no source pack is materialized.",
     )
     materialize_parser.add_argument(
         "--force",
         action="store_true",
-        help="Replace existing generated source evidence records.",
+        help="Compatibility flag only; no source evidence is replaced.",
     )
     materialize_parser.add_argument(
         "--json",
         action="store_true",
-        help="Emit machine-readable JSON.",
+        help="Compatibility flag only; the command remains unavailable.",
     )
 
     add_file_parser = sources_sub.add_parser(
         "add-file",
-        help="Copy local text evidence files into the workspace and register them.",
+        help="Retired/unavailable local-file command (compatibility only).",
+        description=_RETIRED_SOURCES_DESCRIPTION,
     )
     _add_workspace_selector(add_file_parser)
     add_file_parser.add_argument(
         "paths",
         nargs="+",
-        help="Local text source files or glob patterns (.md, .txt, .json).",
+        help="Compatibility paths only; no file is read, copied, or registered.",
     )
     add_file_parser.add_argument(
         "--name",
-        help="Reader-facing source name. Only valid with one file.",
+        help="Compatibility value only; no source name is recorded.",
     )
     add_file_parser.add_argument(
         "--category",
         default="other",
-        help="Reader-facing source category. Defaults to other.",
+        help="Compatibility value only; no source category is recorded.",
     )
     add_file_parser.add_argument(
         "--language",
         default="en",
-        help="Source language hint. Defaults to en.",
+        help="Compatibility value only; no source language is recorded.",
     )
     add_file_parser.add_argument(
         "--json",
         action="store_true",
-        help="Emit machine-readable JSON.",
+        help="Compatibility flag only; the command remains unavailable.",
     )
 
     add_rss_parser = sources_sub.add_parser(
         "add-rss",
-        help="Register an RSS/Atom feed in sources.yaml.",
+        help="Retired/unavailable RSS command (compatibility only).",
+        description=_RETIRED_SOURCES_DESCRIPTION,
     )
     _add_workspace_selector(add_rss_parser)
-    add_rss_parser.add_argument("url", help="RSS/Atom feed URL.")
-    add_rss_parser.add_argument("--name", help="Feed display name.")
+    add_rss_parser.add_argument(
+        "url", help="Compatibility URL only; no feed is registered."
+    )
+    add_rss_parser.add_argument(
+        "--name", help="Compatibility value only; no feed name is recorded."
+    )
     add_rss_parser.add_argument(
         "--category",
         default="news_media",
-        help="Reader-facing source category. Defaults to news_media.",
+        help="Compatibility value only; no feed category is recorded.",
     )
     add_rss_parser.add_argument(
         "--language",
         default="en",
-        help="Feed language hint. Defaults to en.",
+        help="Compatibility value only; no feed language is recorded.",
     )
     add_rss_parser.add_argument(
         "--json",
         action="store_true",
-        help="Emit machine-readable JSON.",
+        help="Compatibility flag only; the command remains unavailable.",
     )
 
     add_web_parser = sources_sub.add_parser(
         "add-web-search",
-        help="Register a runtime web-search handoff task without executing search.",
+        help="Retired/unavailable web-search command (compatibility only).",
+        description=_RETIRED_SOURCES_DESCRIPTION,
     )
     _add_workspace_selector(add_web_parser)
     add_web_parser.add_argument(
         "--query",
         required=True,
-        help="Search query for the runtime handoff.",
+        help="Compatibility value only; no search or handoff is created.",
     )
     add_web_parser.add_argument(
         "--domain",
         action="append",
         dest="domains",
         default=[],
-        help="Preferred domain for the handoff task. Repeatable.",
+        help="Compatibility value only; no preferred domain is recorded.",
     )
     add_web_parser.add_argument(
         "--max-results",
         type=int,
         default=10,
-        help="Maximum results for the runtime handoff. Defaults to 10.",
+        help="Compatibility value only; no search results are requested.",
     )
     add_web_parser.add_argument(
         "--recency-days",
         type=int,
-        help="Optional recency window for the runtime handoff.",
+        help="Compatibility value only; no recency window is recorded.",
     )
     add_web_parser.add_argument(
         "--json",
         action="store_true",
-        help="Emit machine-readable JSON.",
+        help="Compatibility flag only; the command remains unavailable.",
     )
 
 
@@ -187,11 +207,11 @@ def _doctor(args: argparse.Namespace) -> int:
 def _add_workspace_selector(parser: argparse.ArgumentParser) -> None:
     parser.add_argument(
         "--workspace",
-        help="BriefLoop workspace path. Defaults to the current directory.",
+        help="Compatibility path only; no workspace source state is changed.",
     )
     parser.add_argument(
         "--config",
-        help="Path to config.yaml. Overrides --workspace when provided.",
+        help="Compatibility path only; the config is not used for source actions.",
     )
 
 
