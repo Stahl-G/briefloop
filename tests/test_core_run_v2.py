@@ -115,16 +115,15 @@ def _commit_core_fixture(store: SQLiteControlStore, unit, *, observer=None):
 
     snapshot = store.load_snapshot(unit.run_id)
     current = {
-        (item.artifact_id, item.revision): item
-        for item in snapshot.artifact_revisions
+        (item.artifact_id, item.revision): item for item in snapshot.artifact_revisions
     }
     selected = {
         artifact.artifact_id: current[(artifact.artifact_id, artifact.current_revision)]
         for artifact in snapshot.artifacts
         if artifact.current_revision > 0
-        and not current[(artifact.artifact_id, artifact.current_revision)].path.startswith(
-            "briefloop.db.blobs/"
-        )
+        and not current[
+            (artifact.artifact_id, artifact.current_revision)
+        ].path.startswith("briefloop.db.blobs/")
     }
     selected.update(
         {
@@ -174,6 +173,8 @@ def _commit_core_fixture(store: SQLiteControlStore, unit, *, observer=None):
         )
     )
     return unit.commit(_postcommit_observer=observer)
+
+
 ROOT = Path(__file__).parents[1]
 
 
@@ -264,7 +265,9 @@ def _initialize(
         sources_config_sha256=read_workspace_file(workspace, "sources.yaml").sha256,
     )
     result = service.initialize(
-        CoreRunInitializeRequest.model_validate(_bind_init_payload(request), strict=True)
+        CoreRunInitializeRequest.model_validate(
+            _bind_init_payload(request), strict=True
+        )
     )
     assert result.status == "committed", result.to_dict()
     return service
@@ -303,7 +306,9 @@ def _execution_authorization(workspace: Path) -> dict[str, object]:
         },
         strict=True,
     )
-    canonical = canonical_json_bytes(manifest.model_dump(mode="json", exclude_unset=False))
+    canonical = canonical_json_bytes(
+        manifest.model_dump(mode="json", exclude_unset=False)
+    )
     return {
         "schema_version": "briefloop.run_execution_authorization_input.v2",
         "completion_target": "finalized_local",
@@ -474,21 +479,27 @@ def test_core_applies_authorized_source_pack_without_a_host_dto(
     service = _initialize(
         workspace, execution_authorization=_execution_authorization(workspace)
     )
-    assert service.doctor_check(
-        _record(
-            IntegrityCheckRequest,
-            request_id="REQ-AUTHORIZED-PACK-DOCTOR-001",
-            run_id=RUN_ID,
-            expected_store_revision=_store_revision(workspace),
-        )
-    ).status == "committed"
+    assert (
+        service.doctor_check(
+            _record(
+                IntegrityCheckRequest,
+                request_id="REQ-AUTHORIZED-PACK-DOCTOR-001",
+                run_id=RUN_ID,
+                expected_store_revision=_store_revision(workspace),
+            )
+        ).status
+        == "committed"
+    )
     result = service.apply_authorized_source_pack()
     assert result.status == "committed", result.to_dict()
     with SQLiteControlStore.open(workspace / "briefloop.db", clock=CLOCK) as store:
         verified = CoreRunDomainVerifier().verify(store, RUN_ID)
     assert len(verified.snapshot.sources) == 1
     assert len(verified.snapshot.owned_artifact_submissions) == 1
-    assert verified.snapshot.owned_artifact_submissions[0].artifact_id == "input_classification"
+    assert (
+        verified.snapshot.owned_artifact_submissions[0].artifact_id
+        == "input_classification"
+    )
     assert result.receipt is not None
     assert result.receipt.checkout_publication_intents == []
     projection = workspace / "output" / "input_classification.json"
@@ -558,14 +569,17 @@ def test_authorized_source_pack_rejects_hardlinked_member_before_invocation_star
     service = _initialize(
         workspace, execution_authorization=_execution_authorization(workspace)
     )
-    assert service.doctor_check(
-        _record(
-            IntegrityCheckRequest,
-            request_id="REQ-AUTHORIZED-HARDLINK-DOCTOR-001",
-            run_id=RUN_ID,
-            expected_store_revision=_store_revision(workspace),
-        )
-    ).status == "committed"
+    assert (
+        service.doctor_check(
+            _record(
+                IntegrityCheckRequest,
+                request_id="REQ-AUTHORIZED-HARDLINK-DOCTOR-001",
+                run_id=RUN_ID,
+                expected_store_revision=_store_revision(workspace),
+            )
+        ).status
+        == "committed"
+    )
     source_path = workspace / "input" / "authorized-source.txt"
     original = _replace_with_external_hardlink(
         source_path,
@@ -602,14 +616,17 @@ def test_authorized_source_pack_validates_wrong_hash_before_invocation_start(
     service = _initialize(
         workspace, execution_authorization=_execution_authorization(workspace)
     )
-    assert service.doctor_check(
-        _record(
-            IntegrityCheckRequest,
-            request_id="REQ-AUTHORIZED-HASH-DOCTOR-001",
-            run_id=RUN_ID,
-            expected_store_revision=_store_revision(workspace),
-        )
-    ).status == "committed"
+    assert (
+        service.doctor_check(
+            _record(
+                IntegrityCheckRequest,
+                request_id="REQ-AUTHORIZED-HASH-DOCTOR-001",
+                run_id=RUN_ID,
+                expected_store_revision=_store_revision(workspace),
+            )
+        ).status
+        == "committed"
+    )
     source_path = workspace / "input" / "authorized-source.txt"
     source_path.write_bytes(b"one-link bytes with the wrong hash\n")
     database = workspace / "briefloop.db"
@@ -638,14 +655,17 @@ def test_authorized_source_pack_replays_before_hardlinked_member_access(
     service = _initialize(
         workspace, execution_authorization=_execution_authorization(workspace)
     )
-    assert service.doctor_check(
-        _record(
-            IntegrityCheckRequest,
-            request_id="REQ-AUTHORIZED-REPLAY-HARDLINK-DOCTOR-001",
-            run_id=RUN_ID,
-            expected_store_revision=_store_revision(workspace),
-        )
-    ).status == "committed"
+    assert (
+        service.doctor_check(
+            _record(
+                IntegrityCheckRequest,
+                request_id="REQ-AUTHORIZED-REPLAY-HARDLINK-DOCTOR-001",
+                run_id=RUN_ID,
+                expected_store_revision=_store_revision(workspace),
+            )
+        ).status
+        == "committed"
+    )
     committed = service.apply_authorized_source_pack()
     assert committed.status == "committed", committed.to_dict()
     source_path = workspace / "input" / "authorized-source.txt"
@@ -671,14 +691,17 @@ def test_authorized_source_pack_rejects_hardlinked_member_after_reservation(
     service = _initialize(
         workspace, execution_authorization=_execution_authorization(workspace)
     )
-    assert service.doctor_check(
-        _record(
-            IntegrityCheckRequest,
-            request_id="REQ-AUTHORIZED-RESERVED-HARDLINK-DOCTOR-001",
-            run_id=RUN_ID,
-            expected_store_revision=_store_revision(workspace),
-        )
-    ).status == "committed"
+    assert (
+        service.doctor_check(
+            _record(
+                IntegrityCheckRequest,
+                request_id="REQ-AUTHORIZED-RESERVED-HARDLINK-DOCTOR-001",
+                run_id=RUN_ID,
+                expected_store_revision=_store_revision(workspace),
+            )
+        ).status
+        == "committed"
+    )
     with SQLiteControlStore.open(workspace / "briefloop.db", clock=CLOCK) as store:
         verified = CoreRunDomainVerifier().verify(store, RUN_ID)
     authorization = verified.snapshot.run_execution_authorizations[0]
@@ -722,14 +745,17 @@ def test_authorized_store_classification_tampering_fails_before_projection_check
     service = _initialize(
         workspace, execution_authorization=_execution_authorization(workspace)
     )
-    assert service.doctor_check(
-        _record(
-            IntegrityCheckRequest,
-            request_id="REQ-AUTHORIZED-TAMPER-DOCTOR-001",
-            run_id=RUN_ID,
-            expected_store_revision=_store_revision(workspace),
-        )
-    ).status == "committed"
+    assert (
+        service.doctor_check(
+            _record(
+                IntegrityCheckRequest,
+                request_id="REQ-AUTHORIZED-TAMPER-DOCTOR-001",
+                run_id=RUN_ID,
+                expected_store_revision=_store_revision(workspace),
+            )
+        ).status
+        == "committed"
+    )
     assert service.apply_authorized_source_pack().status == "committed"
 
     with SQLiteControlStore.open(workspace / "briefloop.db", clock=CLOCK) as store:
@@ -773,14 +799,17 @@ def test_authorized_source_pack_is_platform_neutral(
     service = _initialize(
         workspace, execution_authorization=_execution_authorization(workspace)
     )
-    assert service.doctor_check(
-        _record(
-            IntegrityCheckRequest,
-            request_id="REQ-AUTHORIZED-WINDOWS-DOCTOR-001",
-            run_id=RUN_ID,
-            expected_store_revision=_store_revision(workspace),
-        )
-    ).status == "committed"
+    assert (
+        service.doctor_check(
+            _record(
+                IntegrityCheckRequest,
+                request_id="REQ-AUTHORIZED-WINDOWS-DOCTOR-001",
+                run_id=RUN_ID,
+                expected_store_revision=_store_revision(workspace),
+            )
+        ).status
+        == "committed"
+    )
     monkeypatch.setattr(sys, "platform", "win32")
     result = service.apply_authorized_source_pack()
     assert result.status == "committed", result.to_dict()
@@ -795,14 +824,17 @@ def test_authorized_source_pack_resumes_the_reserved_invocation(
     service = _initialize(
         workspace, execution_authorization=_execution_authorization(workspace)
     )
-    assert service.doctor_check(
-        _record(
-            IntegrityCheckRequest,
-            request_id="REQ-AUTHORIZED-RESUME-DOCTOR-001",
-            run_id=RUN_ID,
-            expected_store_revision=_store_revision(workspace),
-        )
-    ).status == "committed"
+    assert (
+        service.doctor_check(
+            _record(
+                IntegrityCheckRequest,
+                request_id="REQ-AUTHORIZED-RESUME-DOCTOR-001",
+                run_id=RUN_ID,
+                expected_store_revision=_store_revision(workspace),
+            )
+        ).status
+        == "committed"
+    )
     with SQLiteControlStore.open(workspace / "briefloop.db", clock=CLOCK) as store:
         verified = CoreRunDomainVerifier().verify(store, RUN_ID)
     authorization = verified.snapshot.run_execution_authorizations[0]
@@ -850,14 +882,17 @@ def test_authorized_source_pack_rejects_mismatched_active_reservation(
     service = _initialize(
         workspace, execution_authorization=_execution_authorization(workspace)
     )
-    assert service.doctor_check(
-        _record(
-            IntegrityCheckRequest,
-            request_id="REQ-AUTHORIZED-MISMATCH-DOCTOR-001",
-            run_id=RUN_ID,
-            expected_store_revision=_store_revision(workspace),
-        )
-    ).status == "committed"
+    assert (
+        service.doctor_check(
+            _record(
+                IntegrityCheckRequest,
+                request_id="REQ-AUTHORIZED-MISMATCH-DOCTOR-001",
+                run_id=RUN_ID,
+                expected_store_revision=_store_revision(workspace),
+            )
+        ).status
+        == "committed"
+    )
     wrong = _start_invocation(
         service,
         workspace,
@@ -880,14 +915,17 @@ def test_authorized_source_pack_advances_without_source_candidates(
         execution_authorization=_execution_authorization(workspace),
         input_governance_required=True,
     )
-    assert service.doctor_check(
-        _record(
-            IntegrityCheckRequest,
-            request_id="REQ-AUTHORIZED-PROGRESSION-DOCTOR-001",
-            run_id=RUN_ID,
-            expected_store_revision=_store_revision(workspace),
-        )
-    ).status == "committed"
+    assert (
+        service.doctor_check(
+            _record(
+                IntegrityCheckRequest,
+                request_id="REQ-AUTHORIZED-PROGRESSION-DOCTOR-001",
+                run_id=RUN_ID,
+                expected_store_revision=_store_revision(workspace),
+            )
+        ).status
+        == "committed"
+    )
     assert service.apply_authorized_source_pack().status == "committed"
     with SQLiteControlStore.open(workspace / "briefloop.db", clock=CLOCK) as store:
         snapshot = CoreRunDomainVerifier().verify(store, RUN_ID).snapshot
@@ -934,17 +972,18 @@ def test_authorized_file_source_pack_is_rejected_before_member_reads(
     service = _initialize(
         workspace, execution_authorization=_execution_authorization(workspace)
     )
-    assert service.doctor_check(
-        _record(
-            IntegrityCheckRequest,
-            request_id="REQ-AUTHORIZED-FILE-PACK-DOCTOR-001",
-            run_id=RUN_ID,
-            expected_store_revision=_store_revision(workspace),
-        )
-    ).status == "committed"
-    request_path = (
-        workspace / "scratch" / "INV-NOT-STARTED-001" / "submit_request.json"
+    assert (
+        service.doctor_check(
+            _record(
+                IntegrityCheckRequest,
+                request_id="REQ-AUTHORIZED-FILE-PACK-DOCTOR-001",
+                run_id=RUN_ID,
+                expected_store_revision=_store_revision(workspace),
+            )
+        ).status
+        == "committed"
     )
+    request_path = workspace / "scratch" / "INV-NOT-STARTED-001" / "submit_request.json"
     request_path.parent.mkdir(parents=True)
     request_path.write_text(
         json.dumps(
@@ -962,7 +1001,9 @@ def test_authorized_file_source_pack_is_rejected_before_member_reads(
                     }
                 ],
                 "manifest_path": "scratch/INV-NOT-STARTED-001/source_manifest.json",
-                "expected_manifest_sha256": _execution_authorization(workspace)["source_manifest_sha256"],
+                "expected_manifest_sha256": _execution_authorization(workspace)[
+                    "source_manifest_sha256"
+                ],
                 "expected_store_revision": _store_revision(workspace),
             }
         ),
@@ -973,7 +1014,9 @@ def test_authorized_file_source_pack_is_rejected_before_member_reads(
     )
     assert result.status == "failed_uncommitted"
     assert result.error_code == "source_pack_authorization_invalid"
-    source_request = workspace / "scratch" / "INV-SOURCE-ENTRY-001" / "submit_request.json"
+    source_request = (
+        workspace / "scratch" / "INV-SOURCE-ENTRY-001" / "submit_request.json"
+    )
     source_request.parent.mkdir(parents=True)
     _write_json(
         source_request,
@@ -1052,7 +1095,10 @@ def test_initialize_normalizes_web_search_configure_later_source_plan(
     with SQLiteControlStore.open(workspace / "briefloop.db") as store:
         verified = CoreRunDomainVerifier().verify(store, RUN_ID)
     assert verified.source_plan.web_search_mode == "configure_later"
-    assert [(item.route_id, item.route_kind, item.execution_owner) for item in verified.source_plan.routes] == [
+    assert [
+        (item.route_id, item.route_kind, item.execution_owner)
+        for item in verified.source_plan.routes
+    ] == [
         ("manual", "manual", "human"),
         ("web-search", "disabled", "human"),
     ]
@@ -2486,8 +2532,7 @@ def test_gate_batch_rejects_mixed_evaluator_versions(tmp_path: Path) -> None:
     forged_history = replace(
         history,
         snapshots=tuple(
-            forged if item.run.run_id == RUN_ID else item
-            for item in history.snapshots
+            forged if item.run.run_id == RUN_ID else item for item in history.snapshots
         ),
     )
 
@@ -3751,7 +3796,10 @@ def test_human_assisted_editor_accepts_revision_two_before_consumption(
         assert route.route_family == "snapshot"
         assert route.audited_brief_revision == 1
         assert route.consumed_analyst_snapshot_revision == 1
-        assert store.read_artifact_revision_bytes(RUN_ID, "audited_brief", 1) == first_bytes
+        assert (
+            store.read_artifact_revision_bytes(RUN_ID, "audited_brief", 1)
+            == first_bytes
+        )
         transition = next(
             item
             for item in verified.snapshot.stage_transitions
@@ -4676,7 +4724,9 @@ def test_new_initialize_rejects_workspace_input_hash_mismatch_without_store(
         stream.write("\n# changed before first initialize\n")
 
     result = CoreRunService(workspace, clock=CLOCK).initialize(
-        CoreRunInitializeRequest.model_validate(_bind_init_payload(payload), strict=True)
+        CoreRunInitializeRequest.model_validate(
+            _bind_init_payload(payload), strict=True
+        )
     )
 
     assert result.to_dict() == {
@@ -4706,7 +4756,9 @@ def test_secret_bearing_workspace_input_is_rejected_before_store_creation(
         sources_config_sha256=read_workspace_file(workspace, "sources.yaml").sha256,
     )
     result = CoreRunService(workspace, clock=CLOCK).initialize(
-        CoreRunInitializeRequest.model_validate(_bind_init_payload(payload), strict=True)
+        CoreRunInitializeRequest.model_validate(
+            _bind_init_payload(payload), strict=True
+        )
     )
 
     assert result.to_dict() == {
@@ -4745,7 +4797,9 @@ def test_legacy_json_control_workspace_cannot_become_fresh_v2(
         sources_config_sha256=read_workspace_file(workspace, "sources.yaml").sha256,
     )
     result = CoreRunService(workspace, clock=CLOCK).initialize(
-        CoreRunInitializeRequest.model_validate(_bind_init_payload(payload), strict=True)
+        CoreRunInitializeRequest.model_validate(
+            _bind_init_payload(payload), strict=True
+        )
     )
 
     assert result.to_dict() == {
@@ -5918,6 +5972,7 @@ def test_core_effect_receipt_binding_table_is_exact() -> None:
                 "artifact_identities",
                 "run_contract_bindings",
                 "run_execution_authorizations",
+                "run_source_discovery_authorizations",
                 "stage_transitions",
                 "run_integrity_records",
             }
@@ -6014,14 +6069,16 @@ def test_core_effect_receipt_binding_table_is_exact() -> None:
         transaction_type: rule.authoritative_relation_families
         for transaction_type, rule in _INTAKE_EFFECT_RULES.items()
     } == {
-            "source_evidence_intake": frozenset(
-                {
-                    "artifact_revisions",
-                    "artifact_identities",
-                    "source_ids",
-                    "owned_artifact_submissions",
-                }
-            ),
+        "source_evidence_intake": frozenset(
+            {
+                "artifact_revisions",
+                "artifact_identities",
+                "source_ids",
+                "owned_artifact_submissions",
+                "run_execution_authorizations",
+                "run_source_discovery_authorizations",
+            }
+        ),
         "candidate_claims_intake": frozenset(
             {"artifact_revisions", "artifact_identities", "proposal_ids"}
         ),
@@ -7259,7 +7316,9 @@ def test_core_receipt_requires_exact_checkout_binding_in_store_and_verifier(
             CoreRunDomainVerifier()._verify_snapshot(history, forged)
 
 
-def test_domain_verifier_never_uses_publication_metadata_as_business_authority() -> None:
+def test_domain_verifier_never_uses_publication_metadata_as_business_authority() -> (
+    None
+):
     source = (
         Path(__file__).parents[1]
         / "src"

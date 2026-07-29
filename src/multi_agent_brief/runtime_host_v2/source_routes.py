@@ -39,6 +39,13 @@ class FrozenSourceMaterial:
     raw_payload: bytes
 
 
+@dataclass(frozen=True)
+class FrozenSourceCollection:
+    materials: tuple[FrozenSourceMaterial, ...]
+    provider_response: bytes | None
+    provider_status_code: int | None
+
+
 ProviderFactory = Callable[[str], SourceProvider]
 
 
@@ -69,16 +76,39 @@ def collect_frozen_sources(
 ) -> tuple[FrozenSourceMaterial, ...]:
     """Execute one frozen route and retain every deterministically ordered result."""
 
+    return collect_frozen_source_pack(
+        workspace,
+        run_id=run_id,
+        invocation_id=invocation_id,
+        route=route,
+        provider_factory=provider_factory,
+    ).materials
+
+
+def collect_frozen_source_pack(
+    workspace: Path,
+    *,
+    run_id: str,
+    invocation_id: str,
+    route: RuntimeSourceRouteBinding,
+    provider_factory: ProviderFactory | None = None,
+) -> FrozenSourceCollection:
+    """Execute one route and retain its exact provider response when available."""
+
     spec = route.acquisition_spec
     if route.execution_owner != "deterministic" or spec is None:
         raise RuntimeHostError("runtime_source_plan_invalid")
     factory = provider_factory or _provider
     items: list[SourceItem] = []
+    provider_response: bytes | None = None
+    provider_status_code: int | None = None
     if isinstance(spec, RuntimeWebSearchAcquisitionSpec):
         provider = factory("web_search")
         for request in spec.requests:
-            items.extend(
-                provider.collect(
+            if route.provider_id == "tavily":
+                if not isinstance(provider, WebSearchProvider):
+                    raise RuntimeHostError("runtime_source_plan_invalid")
+                collected = provider.collect_with_response(
                     SourceQuery(
                         keywords=[],
                         max_results=request.max_results,
@@ -88,8 +118,11 @@ def collect_frozen_sources(
                         "enabled": True,
                         "mode": "external_api",
                         "backend": spec.provider_id,
+                        "_workspace_dir": str(workspace),
                         "max_results": request.max_results,
                         "recency_days": request.recency_days,
+                        "topic": "news",
+                        "search_depth": "basic",
                         "search_tasks": [
                             {
                                 "query": request.query,
@@ -98,7 +131,35 @@ def collect_frozen_sources(
                         ],
                     },
                 )
-            )
+                if provider_response is not None:
+                    raise RuntimeHostError("runtime_source_plan_invalid")
+                provider_response = collected.raw_response
+                provider_status_code = collected.status_code
+                items.extend(collected.items)
+            else:
+                items.extend(
+                    provider.collect(
+                        SourceQuery(
+                            keywords=[],
+                            max_results=request.max_results,
+                            recency_days=request.recency_days or 0,
+                        ),
+                        {
+                            "enabled": True,
+                            "mode": "external_api",
+                            "backend": spec.provider_id,
+                            "_workspace_dir": str(workspace),
+                            "max_results": request.max_results,
+                            "recency_days": request.recency_days,
+                            "search_tasks": [
+                                {
+                                    "query": request.query,
+                                    "domains": request.domains,
+                                }
+                            ],
+                        },
+                    )
+                )
     elif isinstance(spec, RuntimeNewsApiAcquisitionSpec):
         provider = factory("newsapi")
         items = provider.collect(
@@ -132,7 +193,17 @@ def collect_frozen_sources(
     else:  # pragma: no cover - discriminated strict contract is total
         raise RuntimeHostError("runtime_source_plan_invalid")
     if not items:
-        raise RuntimeHostError("runtime_source_acquisition_failed")
+        raise RuntimeHostError("source_pack_empty")
+    if route.provider_id == "tavily":
+        if (
+            provider_response is None
+            or not provider_response
+            or provider_status_code != 200
+            or len(spec.requests) != 1
+            or len(items) > spec.requests[0].max_results
+            or len(items) != len({item.source_id for item in items})
+        ):
+            raise RuntimeHostError("source_provider_result_invalid")
     items = _canonical_source_items(items)
     ordered = sorted(
         items,
@@ -143,15 +214,19 @@ def collect_frozen_sources(
             sha256_hex(value.content.encode("utf-8")),
         ),
     )
-    return tuple(
-        _material_from_item(
-            workspace=workspace,
-            run_id=run_id,
-            invocation_id=invocation_id,
-            route=route,
-            item=item,
-        )
-        for item in ordered
+    return FrozenSourceCollection(
+        materials=tuple(
+            _material_from_item(
+                workspace=workspace,
+                run_id=run_id,
+                invocation_id=invocation_id,
+                route=route,
+                item=item,
+            )
+            for item in ordered
+        ),
+        provider_response=provider_response,
+        provider_status_code=provider_status_code,
     )
 
 
@@ -218,7 +293,12 @@ def _material_from_item(
     content = item.content.encode("utf-8")
     if not content:
         raise RuntimeHostError("runtime_source_acquisition_failed")
-    raw_payload = canonical_json_bytes(item.to_dict())
+    provider_projection = item.metadata.get("provider_projection")
+    raw_payload = (
+        canonical_json_bytes(provider_projection)
+        if route.provider_id == "tavily" and isinstance(provider_projection, dict)
+        else canonical_json_bytes(item.to_dict())
+    )
     source_id = derived_id(
         "SRC-HOST",
         route.route_fingerprint,
@@ -254,6 +334,15 @@ def _material_from_item(
         if not item.url:
             raise RuntimeHostError("runtime_source_acquisition_failed")
         locator = {"kind": "web", "url": item.url}
+    has_durable_tavily_content = (
+        route.provider_id == "tavily"
+        and item.source_type == "web_search"
+        and item.metadata.get("backend") == "tavily"
+        and item.metadata.get("content_shape") == "provider_raw_content"
+        and item.metadata.get("has_raw_content") is True
+        and item.metadata.get("evidence_quality") == "partial_extract"
+        and bool(item.content.strip())
+    )
     proposal = SourceProposal.model_validate(
         {
             "schema_version": SourceProposal.schema_id,
@@ -264,21 +353,21 @@ def _material_from_item(
                 "cached_provider_response"
                 if is_cached
                 else "provider_response"
-                if is_newsapi
+                if is_newsapi or has_durable_tavily_content
                 else "search_snippet_only"
             ),
             "acquisition_method": (
                 "cached_provider_response"
                 if is_cached
                 else "provider_extract"
-                if is_newsapi
+                if is_newsapi or has_durable_tavily_content
                 else "provider_search"
             ),
             "material_kind": (
                 "full_content"
                 if is_cached
                 else "partial_extract"
-                if is_newsapi
+                if is_newsapi or has_durable_tavily_content
                 else "search_snippet"
             ),
             "provider": route.provider_id or "cached_package",
@@ -319,7 +408,9 @@ def _published_date(value: str) -> str | None:
 
 
 __all__ = [
+    "FrozenSourceCollection",
     "FrozenSourceMaterial",
+    "collect_frozen_source_pack",
     "collect_frozen_sources",
     "derive_runtime_source_plan",
 ]

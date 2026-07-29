@@ -871,9 +871,7 @@ def test_proposed_graph_is_verified_before_sqlite_commit(
             revision = store._workspace_revision_in_transaction()
             observations.append((store._connection.in_transaction, revision))
             if revision == 1:
-                raise ControlStoreIntegrityError(
-                    "transaction_ledger_integrity_invalid"
-                )
+                raise ControlStoreIntegrityError("transaction_ledger_integrity_invalid")
 
         monkeypatch.setattr(
             store,
@@ -1050,13 +1048,13 @@ def test_schema_settings_and_exact_table_universe(tmp_path: Path) -> None:
         "agent_invocations",
         "transactions",
         "transaction_events",
-            "transaction_artifact_revisions",
-            "transaction_artifact_identities",
+        "transaction_artifact_revisions",
+        "transaction_artifact_identities",
         "transaction_sources",
         "transaction_proposals",
         "events",
-            "artifacts",
-            "artifact_identities",
+        "artifacts",
+        "artifact_identities",
         "artifact_revisions",
         "approvals",
         "deliveries",
@@ -1064,9 +1062,10 @@ def test_schema_settings_and_exact_table_universe(tmp_path: Path) -> None:
         "sources",
         "accepted_proposals",
         "proposal_source_bindings",
-            "run_contract_bindings",
-            "run_execution_authorizations",
-            "owned_artifact_submissions",
+        "run_contract_bindings",
+        "run_execution_authorizations",
+        "run_source_discovery_authorizations",
+        "owned_artifact_submissions",
         "stage_transitions",
         "stage_artifact_bindings",
         "stage_gate_bindings",
@@ -1084,8 +1083,9 @@ def test_schema_settings_and_exact_table_universe(tmp_path: Path) -> None:
         "gate_repair_artifact_bindings",
         "gate_repair_outcomes",
         "gate_repair_outcome_evaluations",
-            "transaction_run_contract_bindings",
-            "transaction_run_execution_authorizations",
+        "transaction_run_contract_bindings",
+        "transaction_run_execution_authorizations",
+        "transaction_run_source_discovery_authorizations",
         "transaction_owned_artifact_submissions",
         "transaction_stage_transitions",
         "transaction_stage_artifact_bindings",
@@ -1153,7 +1153,7 @@ def test_schema_settings_and_exact_table_universe(tmp_path: Path) -> None:
         assert store._connection.execute("PRAGMA foreign_keys").fetchone()[0] == 1
         assert store._connection.execute("PRAGMA journal_mode").fetchone()[0] == "wal"
         assert store._connection.execute("PRAGMA synchronous").fetchone()[0] == 2
-        assert store._connection.execute("PRAGMA user_version").fetchone()[0] == 8
+        assert store._connection.execute("PRAGMA user_version").fetchone()[0] == 9
         tables = {
             row[0]
             for row in store._connection.execute(
@@ -1233,9 +1233,10 @@ def test_transaction_receipt_preserves_event_and_artifact_revision_order(
             (reference.artifact_id, reference.revision)
             for reference in receipt.artifact_revisions
         ] == expected_revisions
-        assert [
-            reference.artifact_id for reference in receipt.artifact_identities
-        ] == ["artifact-a", "artifact-b"]
+        assert [reference.artifact_id for reference in receipt.artifact_identities] == [
+            "artifact-a",
+            "artifact-b",
+        ]
         assert store.load_snapshot(RUN_ID).transactions == (receipt,)
 
 
@@ -1247,6 +1248,7 @@ def test_artifact_identity_is_inception_owned_and_history_is_revision_exact(
     second_digest = hashlib.sha256(second_content).hexdigest()
     second_path = f"output/artifacts/{second_digest}/brief.md"
     with _create_store(tmp_path) as store:
+
         def stage_first():
             unit = store.begin(
                 RUN_ID,
@@ -1323,10 +1325,13 @@ def test_artifact_identity_is_inception_owned_and_history_is_revision_exact(
         assert second.artifact_identities == []
         assert _table_count(store, "artifact_identities") == 1
         assert _table_count(store, "transaction_artifact_identities") == 1
-        assert store._connection.execute(
-            "SELECT payload_json FROM artifact_identities WHERE run_id=? AND artifact_id=?",
-            (RUN_ID, records.artifact.artifact_id),
-        ).fetchone()[0] == identity_payload
+        assert (
+            store._connection.execute(
+                "SELECT payload_json FROM artifact_identities WHERE run_id=? AND artifact_id=?",
+                (RUN_ID, records.artifact.artifact_id),
+            ).fetchone()[0]
+            == identity_payload
+        )
 
         history = store.load_history()
         first_prefix = history.snapshot_at_revision(RUN_ID, 1)
@@ -1378,9 +1383,12 @@ def test_artifact_identity_stable_fields_and_revision_zero_path_are_immutable(
         assert error.value.code == "relational_integrity_conflict"
         assert store.current_revision == 1
         assert _table_count(store, "transactions") == 1
-        assert store._connection.execute(
-            "SELECT payload_json FROM artifact_identities"
-        ).fetchone()[0] == before_identity
+        assert (
+            store._connection.execute(
+                "SELECT payload_json FROM artifact_identities"
+            ).fetchone()[0]
+            == before_identity
+        )
 
 
 def test_revision_positive_artifact_path_must_equal_its_exact_revision(
@@ -1511,13 +1519,13 @@ def test_dual_connection_late_conflict_leaves_only_non_authoritative_orphan(
 ) -> None:
     primary = _create_store(tmp_path)
     _stage_all(primary).commit()
-    winner = SQLiteControlStore.open(tmp_path / "control.db", clock=lambda: COMMITTED_AT)
+    winner = SQLiteControlStore.open(
+        tmp_path / "control.db", clock=lambda: COMMITTED_AT
+    )
     loser_content = b"Late conflicting content-addressed blob.\n"
     loser_sha256 = hashlib.sha256(loser_content).hexdigest()
     loser_artifact_id = "late-conflict-brief"
-    loser_artifact_path = (
-        f"output/artifacts/{loser_sha256}/{loser_artifact_id}.md"
-    )
+    loser_artifact_path = f"output/artifacts/{loser_sha256}/{loser_artifact_id}.md"
     loser_transaction_id = "TX-LATE-CONFLICT-002"
     loser = primary.begin(
         RUN_ID,
@@ -2602,7 +2610,7 @@ def test_future_schema_fails_closed(tmp_path: Path) -> None:
     store = _create_store(tmp_path)
     store.close()
     connection = sqlite3.connect(tmp_path / "control.db")
-    connection.execute("PRAGMA user_version = 9")
+    connection.execute("PRAGMA user_version = 10")
     connection.close()
     with pytest.raises(ControlStoreSchemaError) as error:
         SQLiteControlStore.open(tmp_path / "control.db")
@@ -2833,9 +2841,7 @@ def test_postcommit_observer_failure_preserves_commit_and_closes_uow(
         with pytest.raises(ControlStoreStateError, match="unit_of_work_not_active"):
             unit.commit()
 
-        replayed = _stage_all(store).commit(
-            _postcommit_observer=lambda _receipt: None
-        )
+        replayed = _stage_all(store).commit(_postcommit_observer=lambda _receipt: None)
         assert replayed.transaction_id == TRANSACTION_ID
         assert store.current_revision == 1
 

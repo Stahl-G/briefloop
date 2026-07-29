@@ -20,6 +20,13 @@ This page explains the public architecture migration from older Python-pipeline 
 - `config.yaml` and `sources.yaml` are strict initialization inputs. Their exact
   bytes and normalized bindings are frozen into SQLite; later edits cannot
   change run legality.
+- Tavily discovery authority is distinct from execution authority. The
+  Experimental runtime-first route makes at most one Human-confirmed request,
+  freezes provider-returned response/content, and uses one Intake transaction
+  to promote a Store-native source pack plus execution authorization. Search
+  snippets remain claims-ineligible, and legacy source commands are not a
+  fallback. Synthetic transport is tested; live results and cost are NOT
+  MEASURED.
 - Retained legacy commands and assets may remain in the tree until the separate
   deletion unit, but the authority guard prevents them from acting on a SQLite
   workspace or continuing a JSON-only workspace.

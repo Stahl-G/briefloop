@@ -7,7 +7,9 @@ description: Use when operating this workspace through the SQLite-only BriefLoop
 
 Read `references/controlstore-v2.md` completely before acting.
 
-For an M2-authorized `finalized_local` run, prefer the bounded controller seam:
+For a run with either the Store-frozen M2 execution authorization or the
+narrow Store-frozen Tavily source-discovery authorization, prefer the bounded
+controller seam:
 
 ```bash
 briefloop runtime continue --workspace <workspace>
@@ -17,8 +19,12 @@ It applies only existing Store-derived deterministic effects. When it returns
 `role_work_required`, write only the exact envelope's allowed scratch proposal,
 then call `runtime continue` again. `proposal_invalid` is value-free guidance
 and does not fail or replace the invocation. Stop on `needs_human`,
-`needs_attention`, or truthful `finalized_local`. A run without the execution
-authorization remains on the granular protocol below.
+`needs_attention`, or truthful `finalized_local`. Discovery-only continuation
+may run the doctor, source planner, and exact bound Tavily route. Search
+snippets remain ineligible; only durable provider content can enter the single
+atomic source/manifest/classification/execution-authorization promotion
+receipt. A run without either authorization remains on the granular protocol
+below.
 
 The workspace kit supports Store binding and reopened/future sessions. It is
 not evidence that an already-running Codex session hot-loaded newly written

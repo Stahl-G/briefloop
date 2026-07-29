@@ -1,4 +1,5 @@
 """Search backend abstract base class."""
+
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
@@ -8,10 +9,13 @@ from typing import Any
 
 class SearchBackendError(Exception):
     """Raised by search backends when a search fails (auth, rate-limit, network, etc.).
-    
+
     Must never include API keys in the message or attributes.
     """
-    def __init__(self, message: str, *, backend: str = "", status_code: int | None = None) -> None:
+
+    def __init__(
+        self, message: str, *, backend: str = "", status_code: int | None = None
+    ) -> None:
         super().__init__(message)
         self.backend = backend
         self.status_code = status_code
@@ -27,6 +31,17 @@ class SearchResult:
     published_at: str = ""
     source_name: str = ""
     metadata: dict[str, Any] = field(default_factory=dict)
+    raw_content: str | None = None
+    raw_projection: dict[str, Any] = field(default_factory=dict)
+
+
+@dataclass(frozen=True)
+class SearchResponse:
+    """One immutable provider response and its strict result projections."""
+
+    raw_response: bytes
+    status_code: int
+    results: tuple[SearchResult, ...]
 
 
 class SearchBackend(ABC):
@@ -35,7 +50,14 @@ class SearchBackend(ABC):
     name: str = "base"
 
     @abstractmethod
-    def search(self, query: str, max_results: int = 10, *, domains: list[str] | None = None, **kwargs: Any) -> list[SearchResult]:
+    def search(
+        self,
+        query: str,
+        max_results: int = 10,
+        *,
+        domains: list[str] | None = None,
+        **kwargs: Any,
+    ) -> list[SearchResult]:
         """Execute a search query and return results.
 
         Args:

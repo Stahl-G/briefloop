@@ -1,4 +1,5 @@
 """Tests for web search task metadata preservation through to SourceItem.metadata."""
+
 from __future__ import annotations
 
 from unittest.mock import MagicMock
@@ -7,11 +8,17 @@ from multi_agent_brief.sources.base import SourceQuery
 from multi_agent_brief.sources.web_search import WebSearchProvider
 
 
-def _mock_search_result(url="https://example.com/1", title="Test", snippet="content"):
+def _mock_search_result(
+    url="https://example.com/1",
+    title="Test",
+    snippet="content",
+    raw_content=None,
+):
     result = MagicMock()
     result.url = url
     result.title = title
     result.snippet = snippet
+    result.raw_content = raw_content
     result.published_at = "2026-06-01"
     result.source_name = "example"
     result.metadata = {
@@ -96,6 +103,30 @@ class TestBuildQueriesMetadata:
 
 
 class TestResultToSourceItemMetadata:
+    def test_tavily_raw_content_is_distinct_from_search_snippet(self):
+        provider = WebSearchProvider()
+        result = _mock_search_result(
+            snippet="discovery snippet",
+            raw_content="  durable page extract  ",
+        )
+
+        item = provider._result_to_source_item(result, "test query", "tavily")
+
+        assert item.content == "durable page extract"
+        assert item.metadata["content_shape"] == "provider_raw_content"
+        assert item.metadata["has_raw_content"] is True
+        assert "durable page extract" not in repr(item.metadata)
+
+    def test_missing_tavily_raw_content_preserves_snippet_shape(self):
+        provider = WebSearchProvider()
+        result = _mock_search_result(snippet="discovery snippet", raw_content=" ")
+
+        item = provider._result_to_source_item(result, "test query", "tavily")
+
+        assert item.content == "discovery snippet"
+        assert item.metadata["content_shape"] == "search_snippet"
+        assert item.metadata["has_raw_content"] is False
+
     def test_task_metadata_propagated_with_prefix(self):
         provider = WebSearchProvider()
         result = _mock_search_result()

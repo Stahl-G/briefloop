@@ -52,9 +52,9 @@ def _verify_assets() -> None:
     except Exception:
         raise InitWebError("init_web_provenance_invalid") from None
     production = payload.get("production_assets") if isinstance(payload, dict) else None
-    expected_names = {
-        f"{name}_sha256" for name, _kind in _ASSETS.values()
-    } | {"THIRD_PARTY_NOTICES.txt_sha256"}
+    expected_names = {f"{name}_sha256" for name, _kind in _ASSETS.values()} | {
+        "THIRD_PARTY_NOTICES.txt_sha256"
+    }
     if not isinstance(production, dict) or set(production) != expected_names:
         raise InitWebError("init_web_provenance_invalid")
     for key, expected in production.items():
@@ -74,6 +74,7 @@ class InitWebSubmissionOutcome:
     transaction_id: str
     status: str
     execution_authorized: bool
+    source_discovery_authorized: bool
 
 
 @dataclass
@@ -84,9 +85,7 @@ class InitWebServer:
     _token: str = field(repr=False)
     _server: ThreadingHTTPServer = field(repr=False)
     _cleanup: Callable[[], None] = field(repr=False)
-    _outcome_getter: Callable[[], InitWebSubmissionOutcome | None] = field(
-        repr=False
-    )
+    _outcome_getter: Callable[[], InitWebSubmissionOutcome | None] = field(repr=False)
     _thread: Thread | None = field(default=None, repr=False)
 
     def start(self) -> None:
@@ -150,6 +149,9 @@ def create_init_web_server(
             "run_id": response.get("run_id"),
             "transaction_id": response.get("transaction_id"),
             "execution_authorized": response.get("execution_authorized") is True,
+            "source_discovery_authorized": (
+                response.get("source_discovery_authorized") is True
+            ),
             "first_action": {
                 "action_kind": action_payload.get("action_kind"),
                 "effect_kind": action_payload.get("effect_kind"),
@@ -164,9 +166,14 @@ def create_init_web_server(
                 "reason_code": progress_payload.get("reason_code"),
             },
         }
-        if response.get("execution_authorized") is True:
+        if (
+            response.get("execution_authorized") is True
+            or response.get("source_discovery_authorized") is True
+        ):
             friendly["completion_target"] = response.get("completion_target")
             friendly["repair_budget"] = response.get("repair_budget")
+        if isinstance(response.get("search_secret_status"), str):
+            friendly["search_secret_status"] = response.get("search_secret_status")
         source_discovery = response.get("source_discovery")
         if isinstance(source_discovery, dict):
             friendly["source_discovery"] = {
@@ -210,11 +217,16 @@ def create_init_web_server(
             self._send(status, body, "application/json; charset=utf-8")
 
         def _valid_host(self) -> bool:
-            return self.headers.get("Host", "") == f"127.0.0.1:{self.server.server_port}"
+            return (
+                self.headers.get("Host", "") == f"127.0.0.1:{self.server.server_port}"
+            )
 
         def _valid_origin(self) -> bool:
             origin = self.headers.get("Origin")
-            return origin is None or origin == f"http://127.0.0.1:{self.server.server_port}"
+            return (
+                origin is None
+                or origin == f"http://127.0.0.1:{self.server.server_port}"
+            )
 
         def _authorized(self, query: dict[str, list[str]]) -> bool:
             supplied = self.headers.get(SESSION_TOKEN_HEADER, "")
@@ -273,7 +285,9 @@ def create_init_web_server(
                 else MAX_JSON_BODY_BYTES
             )
             if length < 1 or length > maximum:
-                self._reject(HTTPStatus.REQUEST_ENTITY_TOO_LARGE, "init_web_body_too_large")
+                self._reject(
+                    HTTPStatus.REQUEST_ENTITY_TOO_LARGE, "init_web_body_too_large"
+                )
                 return
             if target.path == "/api/v1/source-upload":
                 if self.headers.get("Content-Type") != "application/octet-stream":
@@ -307,7 +321,9 @@ def create_init_web_server(
                 self._send(HTTPStatus.OK, payload, "application/json; charset=utf-8")
                 return
             if self.headers.get("Content-Type") != "application/json":
-                self._reject(HTTPStatus.UNSUPPORTED_MEDIA_TYPE, "init_web_content_type_invalid")
+                self._reject(
+                    HTTPStatus.UNSUPPORTED_MEDIA_TYPE, "init_web_content_type_invalid"
+                )
                 return
             raw = self.rfile.read(length)
             try:
@@ -319,22 +335,31 @@ def create_init_web_server(
                 if target.path == "/api/v1/output-contract-preview":
                     status, response = HTTPStatus.OK, preview_output_contract(body)
                 elif target.path == "/api/v1/source-manifest-preview":
-                    status, response = HTTPStatus.OK, submitter.preview_source_manifest(
-                        session_id=session_id,
-                        body=body,
+                    status, response = (
+                        HTTPStatus.OK,
+                        submitter.preview_source_manifest(
+                            session_id=session_id,
+                            body=body,
+                        ),
                     )
                 elif target.path == "/api/v1/search-secret":
-                    status, response = HTTPStatus.OK, submitter.configure_search_secret(
-                        session_id=session_id,
-                        body=body,
+                    status, response = (
+                        HTTPStatus.OK,
+                        submitter.configure_search_secret(
+                            session_id=session_id,
+                            body=body,
+                        ),
                     )
                 else:
                     status, response = submitter.submit(body)
             except SubmissionError as exc:
-                status, response = exc.http_status, {
-                    "ok": False,
-                    "reason_code": exc.error_code,
-                }
+                status, response = (
+                    exc.http_status,
+                    {
+                        "ok": False,
+                        "reason_code": exc.error_code,
+                    },
+                )
             if (
                 target.path == "/api/v1/submit"
                 and status == HTTPStatus.OK
@@ -353,8 +378,9 @@ def create_init_web_server(
                     run_id=str(response.get("run_id")),
                     transaction_id=str(response.get("transaction_id")),
                     status=str(response.get("status")),
-                    execution_authorized=(
-                        response.get("execution_authorized") is True
+                    execution_authorized=(response.get("execution_authorized") is True),
+                    source_discovery_authorized=(
+                        response.get("source_discovery_authorized") is True
                     ),
                 )
                 with outcome_lock:

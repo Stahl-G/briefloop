@@ -29,6 +29,8 @@ from multi_agent_brief.contracts.v2 import (
     DeliveryAttemptRequest,
     DeliveryResultObservation,
     DeliveryResultRequest,
+    ExecutionSourceManifest,
+    ExecutionSourceManifestMember,
     FinalizeCompleteRequest,
     FinalizeRenderRequest,
     ArtifactSupersedeRequest,
@@ -48,7 +50,11 @@ from multi_agent_brief.contracts.v2 import (
     StageCompleteRequest,
     StrictModel,
 )
-from multi_agent_brief.control_store import ControlStoreError, SQLiteControlStore
+from multi_agent_brief.control_store import (
+    ControlStoreCommitOutcomeUnknown,
+    ControlStoreError,
+    SQLiteControlStore,
+)
 from multi_agent_brief.control_store.serialization import (
     canonical_fingerprint,
     canonical_json_bytes,
@@ -59,6 +65,7 @@ from multi_agent_brief.core_run_v2.artifacts import (
     _input_classification_bytes,
 )
 from multi_agent_brief.core_run_v2.claims import ClaimFreezeService
+from multi_agent_brief.core_run_v2.errors import CoreRunError
 from multi_agent_brief.core_run_v2.gates import GateEvaluationService
 from multi_agent_brief.core_run_v2.gate_repair import (
     GateRepairService,
@@ -74,6 +81,7 @@ from multi_agent_brief.core_run_v2.policy import (
     core_role_topology_policy,
     derived_id,
 )
+from multi_agent_brief.core_run_v2.publication_platform import capability_profile
 from multi_agent_brief.core_run_v2.service import CoreRunService
 from multi_agent_brief.core_run_v2.recovery import (
     CoreRunRecoveryService,
@@ -85,9 +93,15 @@ from multi_agent_brief.core_run_v2.terminal import (
 )
 from multi_agent_brief.core_run_v2.verifier import CoreRunDomainVerifier
 from multi_agent_brief.core.citations import remove_src_marker_spans
+from multi_agent_brief.core.env import WorkspaceEnvError, known_env_key_is_set
 from multi_agent_brief.intake_v2.errors import IntakeError
 from multi_agent_brief.intake_v2.scratch import ScratchReader, parse_json_object
-from multi_agent_brief.intake_v2.service import IntakeService
+from multi_agent_brief.intake_v2.service import (
+    IntakeService,
+    _CoreDiscoverySourcePack,
+    _SourcePackBytes,
+    _SourcePackMemberBytes,
+)
 from multi_agent_brief.sources.search_backends.base import SearchBackendError
 from multi_agent_brief.outputs.reader_projection import (
     ReaderProjectionSourceError,
@@ -118,6 +132,7 @@ from .scratch import (
     materialize_role_envelope,
     read_role_envelope,
     read_role_outputs,
+    verify_optional_host_request,
 )
 from .submission import (
     HumanSourceStageInput,
@@ -140,6 +155,14 @@ class _RoleOutputSpec:
     proposal_lane: str | None = None
     proposal_model: type[StrictModel] | None = None
     producer_tool_id: str | None = None
+
+
+@dataclass(frozen=True)
+class _VerifiedSourcePackSubmission:
+    """One immutable Host verification result for materialization and Intake."""
+
+    request: SourcePackCommitRequest
+    pack: _SourcePackBytes
 
 
 _ROLE_OUTPUTS: dict[str, _RoleOutputSpec] = {
@@ -286,6 +309,11 @@ class _VerifiedRoleSubmission:
     spec: _RoleOutputSpec
     outputs: dict[str, bytes]
     violations: tuple[FieldViolation, ...]
+    acceptance_request: (
+        SourceCommitRequest | ArtifactSubmitRequest | OwnedArtifactSubmitRequest | None
+    )
+    acceptance_lane: str | None
+    acceptance_payload: bytes | None
 
 
 class RuntimeHostService:
@@ -336,12 +364,32 @@ class RuntimeHostService:
                 adapter_loader=self._adapter_loader,
             )
             action = current.action
-            if len(current.verified.snapshot.run_execution_authorizations) != 1:
+            execution_authorizations = (
+                current.verified.snapshot.run_execution_authorizations
+            )
+            discovery_authorizations = (
+                current.verified.snapshot.run_source_discovery_authorizations
+            )
+            if (
+                len(execution_authorizations) != 1
+                and len(discovery_authorizations) != 1
+            ):
                 return build_runtime_continuation_result(
                     current.verified,
                     action,
                     status="needs_human",
                     reason_code="runtime_continuation_unsupported",
+                    transaction_ids=tuple(transaction_ids),
+                )
+            prepromotion = (
+                not execution_authorizations and len(discovery_authorizations) == 1
+            )
+            if prepromotion and not self._prepromotion_action_allowed(action):
+                return build_runtime_continuation_result(
+                    current.verified,
+                    action,
+                    status="needs_attention",
+                    reason_code="control_store_integrity_invalid",
                     transaction_ids=tuple(transaction_ids),
                 )
             if action.action_kind == "complete":
@@ -486,8 +534,7 @@ class RuntimeHostService:
                             else "runtime_proposal_invalid"
                         ),
                         envelope_path=(
-                            Path(envelope.scratch_directory)
-                            / "role_task_envelope.json"
+                            Path(envelope.scratch_directory) / "role_task_envelope.json"
                         ).as_posix(),
                         transaction_ids=tuple(transaction_ids),
                         violations=tuple(
@@ -515,6 +562,18 @@ class RuntimeHostService:
                             refreshed.action,
                             status="needs_attention",
                             reason_code="commit_outcome_unknown",
+                            transaction_ids=tuple(transaction_ids),
+                        )
+                    if code == "checkout_publication_unsupported":
+                        refreshed = initialize_or_open_runtime(
+                            self.workspace,
+                            adapter_loader=self._adapter_loader,
+                        )
+                        return build_runtime_continuation_result(
+                            refreshed.verified,
+                            refreshed.action,
+                            status="needs_attention",
+                            reason_code=code,
                             transaction_ids=tuple(transaction_ids),
                         )
                     raise
@@ -550,10 +609,21 @@ class RuntimeHostService:
                     "checkout_publication_unsupported",
                     "runtime_adapter_binding_mismatch",
                     "control_store_integrity_invalid",
+                    "source_provider_secret_unavailable",
+                    "source_discovery_authorization_invalid",
+                    "source_provider_unavailable",
+                    "source_provider_result_invalid",
+                    "source_pack_empty",
+                    "source_acquisition_outcome_unknown",
+                    "workspace_secret_unsafe",
                 }:
+                    refreshed = initialize_or_open_runtime(
+                        self.workspace,
+                        adapter_loader=self._adapter_loader,
+                    )
                     return build_runtime_continuation_result(
-                        current.verified,
-                        action,
+                        refreshed.verified,
+                        refreshed.action,
                         status="needs_attention",
                         reason_code=code,
                         transaction_ids=tuple(transaction_ids),
@@ -566,6 +636,34 @@ class RuntimeHostService:
                 transaction_id = receipt.transaction_id
             if isinstance(transaction_id, str):
                 transaction_ids.append(transaction_id)
+
+    @staticmethod
+    def _prepromotion_action_allowed(action: CoreRunNextAction) -> bool:
+        if action.action_kind == "deterministic":
+            return (
+                (action.effect_kind == "doctor_check" and action.stage_id == "doctor")
+                or (
+                    action.effect_kind == "stage_complete"
+                    and action.stage_id in {"doctor", "source-discovery"}
+                )
+                or (
+                    action.effect_kind == "source_acquire"
+                    and action.stage_id == "source-discovery"
+                    and action.source_route_id == "web-search"
+                    and action.source_provider_id == "tavily"
+                )
+                or (
+                    action.effect_kind == "invocation_accept_or_fail"
+                    and action.stage_id == "source-discovery"
+                    and action.role_id in {None, "source-planner"}
+                )
+            )
+        return (
+            action.action_kind == "delegate"
+            and action.effect_kind == "role_proposal"
+            and action.stage_id == "source-discovery"
+            and action.role_id == "source-planner"
+        )
 
     def start_current_invocation(
         self,
@@ -1106,46 +1204,23 @@ class RuntimeHostService:
         verified = self._verify_role_submission(envelope, spec)
         if verified.violations:
             raise RuntimeHostError("runtime_proposal_invalid")
-        request, lane = self._derive_acceptance_request(
-            verified.envelope,
-            verified.spec,
-            verified.outputs,
-        )
-        request_path = materialize_host_request(
+        request = verified.acceptance_request
+        request_payload = verified.acceptance_payload
+        if request is None or request_payload is None:
+            raise RuntimeHostError("runtime_envelope_invalid")
+        lane = verified.acceptance_lane
+        materialize_host_request(
             self.workspace,
             envelope,
-            canonical_json_bytes(request.model_dump(mode="json", exclude_unset=False)),
+            request_payload,
         )
-        relative_request = request_path.relative_to(self.workspace).as_posix()
-        if spec.owner_kind == "source":
-            result = IntakeService(self.workspace).submit_source(relative_request)
-        elif spec.owner_kind == "proposal":
-            if lane is None:
-                raise RuntimeHostError("runtime_envelope_invalid")
-            result = IntakeService(self.workspace).submit_proposal(
-                lane,
-                relative_request,
-            )
-        else:
-            result = ArtifactAcceptanceService(self.workspace).submit_owned_artifact(
-                request
-            )
+        result = self._submit_verified_acceptance(verified, request, lane)
         status = result.status
         if status == "commit_outcome_unknown":
             # Resolve the exact acceptance identity through the owning service
             # before refreshing action classification.  If the first commit
             # succeeded, this call returns the receipt replay for that commit.
-            if spec.owner_kind == "source":
-                result = IntakeService(self.workspace).submit_source(relative_request)
-            elif spec.owner_kind == "proposal":
-                result = IntakeService(self.workspace).submit_proposal(
-                    lane or "",
-                    relative_request,
-                )
-            else:
-                result = ArtifactAcceptanceService(
-                    self.workspace
-                ).submit_owned_artifact(request)
+            result = self._submit_verified_acceptance(verified, request, lane)
             status = result.status
             if status == "commit_outcome_unknown":
                 raise RuntimeHostError("commit_outcome_unknown")
@@ -1168,6 +1243,46 @@ class RuntimeHostService:
                 "next_action": next_action.model_dump(mode="json", exclude_unset=False),
             },
             strict=True,
+        )
+
+    def _submit_verified_acceptance(
+        self,
+        verified: _VerifiedRoleSubmission,
+        request: SourceCommitRequest
+        | ArtifactSubmitRequest
+        | OwnedArtifactSubmitRequest,
+        lane: str | None,
+    ):
+        """Delegate immutable verified bytes to the existing sole owner writer."""
+
+        if verified.spec.owner_kind == "source":
+            if not isinstance(request, SourceCommitRequest) or lane is not None:
+                raise RuntimeHostError("runtime_envelope_invalid")
+            return IntakeService(self.workspace)._submit_source_from_host(
+                request,
+                proposal_bytes=verified.outputs["source_proposal.json"],
+                content_bytes=verified.outputs["source_content.bin"],
+                raw_bytes=verified.outputs.get("source_raw.json"),
+            )
+        if verified.spec.owner_kind == "proposal":
+            if not isinstance(request, ArtifactSubmitRequest) or lane is None:
+                raise RuntimeHostError("runtime_envelope_invalid")
+            return IntakeService(self.workspace)._submit_proposal_from_host(
+                lane,
+                request,
+                verified.outputs[verified.spec.filenames[0]],
+            )
+        if (
+            verified.spec.owner_kind != "owned"
+            or not isinstance(request, OwnedArtifactSubmitRequest)
+            or lane is not None
+        ):
+            raise RuntimeHostError("runtime_envelope_invalid")
+        return ArtifactAcceptanceService(
+            self.workspace
+        )._submit_owned_artifact_from_host(
+            request,
+            verified.outputs[verified.spec.filenames[0]],
         )
 
     def _validate_envelope(self, current, envelope, spec: _RoleOutputSpec) -> None:
@@ -1198,13 +1313,12 @@ class RuntimeHostService:
         )
         if invocation is None or invocation.status not in {"active", "completed"}:
             raise RuntimeHostError("runtime_envelope_invalid")
-        host_files = (
-            ("submit_request.json",) if invocation.status == "completed" else ()
-        )
+        completed = invocation.status == "completed"
         outputs = read_role_outputs(
             self.workspace,
             envelope,
-            host_filenames=host_files,
+            host_filenames=(("submit_request.json",) if completed else ()),
+            allow_optional_host_request=not completed,
         )
         violations = tuple(
             _strict_proposal_violations(
@@ -1213,11 +1327,27 @@ class RuntimeHostService:
                 expected_run_id=envelope.run_id,
             )
         )
+        request = None
+        lane = None
+        request_payload = None
+        if not violations:
+            request, lane = self._derive_acceptance_request(envelope, spec, outputs)
+            request_payload = canonical_json_bytes(
+                request.model_dump(mode="json", exclude_unset=False)
+            )
+            verify_optional_host_request(
+                self.workspace,
+                envelope,
+                request_payload,
+            )
         return _VerifiedRoleSubmission(
             envelope=envelope,
             spec=spec,
             outputs=outputs,
             violations=violations,
+            acceptance_request=request,
+            acceptance_lane=lane,
+            acceptance_payload=request_payload,
         )
 
     def _derive_acceptance_request(
@@ -1242,6 +1372,16 @@ class RuntimeHostService:
             "REQ-HOST-ACCEPT",
             envelope.invocation_id,
             envelope.action_fingerprint,
+            # Bind replay residue to the exact verified role-output bytes.
+            canonical_fingerprint(
+                [
+                    {
+                        "filename": filename,
+                        "sha256": sha256_hex(outputs[filename]),
+                    }
+                    for filename in sorted(outputs)
+                ]
+            ),
         )
         scratch = f"scratch/{envelope.invocation_id}"
         if spec.proposal_model is not None:
@@ -1493,10 +1633,15 @@ class RuntimeHostService:
             raise RuntimeHostError(
                 result.error_code or "control_store_integrity_invalid"
             )
-        if presentation_hook and result.status == "committed" and action.effect_kind in {
-            "finalize_complete",
-            "delivery_result",
-        }:
+        if (
+            presentation_hook
+            and result.status == "committed"
+            and action.effect_kind
+            in {
+                "finalize_complete",
+                "delivery_result",
+            }
+        ):
             # Read-only three-page brief HTML auto-open (config-gated, default
             # off, best-effort: the hook never raises into the run).
             from multi_agent_brief.product.brief_html import (
@@ -1584,6 +1729,12 @@ class RuntimeHostService:
         invocation_id: str,
         commit_request_id: str,
     ) -> RuntimeInvocationResult | None:
+        invocation = self._invocation_for_id(current, invocation_id)
+        failure_reason = (
+            invocation.failure_reason
+            if invocation is not None and invocation.status == "failed"
+            else None
+        )
         try:
             with SQLiteControlStore.open(self.workspace / "briefloop.db") as store:
                 receipt = store.load_transaction_receipt(
@@ -1593,7 +1744,7 @@ class RuntimeHostService:
                 failure_request_id = derived_id(
                     "REQ-HOST-INVOCATION-FAILURE",
                     invocation_id,
-                    "dispatch_unavailable",
+                    failure_reason or "dispatch_unavailable",
                 )
                 failure_receipt = store.load_transaction_receipt(
                     current.verified.snapshot.run.run_id,
@@ -1619,7 +1770,6 @@ class RuntimeHostService:
                 store_revision=receipt.committed_revision,
                 rejected=outcomes == {"rejected"},
             )
-        invocation = self._invocation_for_id(current, invocation_id)
         if invocation is None:
             return None
         if invocation.status == "active":
@@ -1666,6 +1816,7 @@ class RuntimeHostService:
         *,
         request_id: str,
         invocation_id: str,
+        reason_code: str = "dispatch_unavailable",
     ) -> RuntimeInvocationResult:
         invocation = self._invocation_for_id(current, invocation_id)
         if invocation is None:
@@ -1698,13 +1849,13 @@ class RuntimeHostService:
             envelope = self._expected_invocation_envelope(invocation_id)
         result = self._record_invocation_failure(
             envelope,
-            reason_code="dispatch_unavailable",
+            reason_code=reason_code,
             expected_store_revision=envelope.store_revision,
         )
         if result.status == "commit_outcome_unknown":
             result = self._record_invocation_failure(
                 envelope,
-                reason_code="dispatch_unavailable",
+                reason_code=reason_code,
                 expected_store_revision=envelope.store_revision,
             )
         return self._source_pack_runtime_result(invocation_id, result)
@@ -1715,20 +1866,23 @@ class RuntimeHostService:
         stage: VerifiedSourceStage,
         *,
         commit_request_id: str,
-    ) -> str:
+    ) -> _VerifiedSourcePackSubmission:
         invocation_id = dispatch.envelope.invocation_id
+        manifest_bytes: bytes | None = None
         if stage.manifest_path is not None:
             if stage.manifest_sha256 is None:
                 raise RuntimeHostError("runtime_source_staging_invalid")
+            manifest_bytes = read_verified_staged_bytes(
+                stage.manifest_path,
+                expected_sha256=stage.manifest_sha256,
+                max_size=4 * 1024 * 1024,
+            )
             self._materialize_tool_input(
                 f"scratch/{invocation_id}/source_manifest.json",
-                read_verified_staged_bytes(
-                    stage.manifest_path,
-                    expected_sha256=stage.manifest_sha256,
-                    max_size=4 * 1024 * 1024,
-                ),
+                manifest_bytes,
             )
         members: list[dict[str, object]] = []
+        member_bytes: list[_SourcePackMemberBytes] = []
         for member in stage.members:
             root = f"scratch/{invocation_id}/sources/{member.member_id}"
             proposal_path = f"{root}/source_proposal.json"
@@ -1736,29 +1890,33 @@ class RuntimeHostService:
             raw_path = (
                 None if member.raw_payload_path is None else f"{root}/source_raw.json"
             )
+            proposal_bytes = read_verified_staged_bytes(
+                member.proposal_path,
+                expected_sha256=member.proposal_sha256,
+            )
+            content_bytes = read_verified_staged_bytes(
+                member.content_path,
+                expected_sha256=member.content_sha256,
+            )
             self._materialize_tool_input(
                 proposal_path,
-                read_verified_staged_bytes(
-                    member.proposal_path,
-                    expected_sha256=member.proposal_sha256,
-                ),
+                proposal_bytes,
             )
             self._materialize_tool_input(
                 content_path,
-                read_verified_staged_bytes(
-                    member.content_path,
-                    expected_sha256=member.content_sha256,
-                ),
+                content_bytes,
             )
+            raw_bytes: bytes | None = None
             if member.raw_payload_path is not None and raw_path is not None:
                 if member.raw_payload_sha256 is None:
                     raise RuntimeHostError("runtime_source_staging_invalid")
+                raw_bytes = read_verified_staged_bytes(
+                    member.raw_payload_path,
+                    expected_sha256=member.raw_payload_sha256,
+                )
                 self._materialize_tool_input(
                     raw_path,
-                    read_verified_staged_bytes(
-                        member.raw_payload_path,
-                        expected_sha256=member.raw_payload_sha256,
-                    ),
+                    raw_bytes,
                 )
             members.append(
                 {
@@ -1767,6 +1925,13 @@ class RuntimeHostService:
                     "content_path": content_path,
                     "raw_payload_path": raw_path,
                 }
+            )
+            member_bytes.append(
+                _SourcePackMemberBytes(
+                    proposal_bytes=proposal_bytes,
+                    content_bytes=content_bytes,
+                    raw_bytes=raw_bytes,
+                )
             )
         submit = SourcePackCommitRequest.model_validate(
             {
@@ -1785,11 +1950,17 @@ class RuntimeHostService:
             },
             strict=True,
         )
-        submit_path = self._materialize_tool_input(
+        self._materialize_tool_input(
             f"scratch/{invocation_id}/submit_request.json",
             canonical_json_bytes(submit.model_dump(mode="json", exclude_unset=False)),
         )
-        return submit_path.relative_to(self.workspace).as_posix()
+        return _VerifiedSourcePackSubmission(
+            request=submit,
+            pack=_SourcePackBytes(
+                manifest_bytes=manifest_bytes,
+                members=tuple(member_bytes),
+            ),
+        )
 
     def _submit_staged_source_pack(
         self,
@@ -1800,7 +1971,7 @@ class RuntimeHostService:
         stage_identity: str,
     ) -> RuntimeInvocationResult:
         try:
-            relative = self._materialize_staged_source_pack(
+            verified = self._materialize_staged_source_pack(
                 dispatch,
                 stage,
                 commit_request_id=commit_request_id,
@@ -1817,9 +1988,15 @@ class RuntimeHostService:
             )
             return result
         intake = IntakeService(self.workspace)
-        result = intake.submit_source_pack(relative)
+        result = intake._submit_source_pack_from_host(
+            verified.request,
+            verified.pack,
+        )
         if result.status == "commit_outcome_unknown":
-            result = intake.submit_source_pack(relative)
+            result = intake._submit_source_pack_from_host(
+                verified.request,
+                verified.pack,
+            )
         runtime_result = self._source_pack_runtime_result(
             dispatch.envelope.invocation_id,
             result,
@@ -1847,6 +2024,16 @@ class RuntimeHostService:
         )
         if route is None or route.execution_owner != "deterministic":
             raise RuntimeHostError("runtime_source_plan_invalid")
+        if (
+            not current.verified.snapshot.run_execution_authorizations
+            and len(current.verified.snapshot.run_source_discovery_authorizations) == 1
+        ):
+            return self._apply_discovery_source_acquire(
+                current,
+                action,
+                route=route,
+                replay_only=replay_only,
+            )
         invocation_request_id = derived_id(
             "REQ-HOST-INVOKE",
             action.run_id,
@@ -1977,6 +2164,447 @@ class RuntimeHostService:
             stage,
             commit_request_id=commit_request_id,
             stage_identity=stage_identity,
+        )
+
+    def _apply_discovery_source_acquire(
+        self,
+        current,
+        action: CoreRunNextAction,
+        *,
+        route,
+        replay_only: bool,
+    ) -> RuntimeInvocationResult:
+        """Acquire once, then atomically promote the Store-owned discovery run."""
+
+        from .source_routes import collect_frozen_source_pack
+
+        discovery = current.verified.snapshot.run_source_discovery_authorizations[0]
+        if (
+            discovery.run_id != action.run_id
+            or discovery.route_id != route.route_id
+            or discovery.source_route_fingerprint != route.route_fingerprint
+            or discovery.provider_id != route.provider_id
+            or discovery.execution_owner != route.execution_owner
+            or action.source_route_id != discovery.route_id
+            or action.source_provider_id != discovery.provider_id
+        ):
+            raise RuntimeHostError("source_discovery_authorization_invalid")
+        active_recovery = (
+            action.reason_code == "active_discovery_source_acquire_requires_resume"
+        )
+        recovery_envelope = None
+        source_action = action
+        if active_recovery:
+            active = [
+                item
+                for item in current.verified.snapshot.invocations
+                if item.status == "active"
+            ]
+            if len(active) != 1:
+                raise RuntimeHostError("control_store_integrity_invalid")
+            recovery_envelope = self._expected_invocation_envelope(
+                active[0].invocation_id,
+                current=current,
+            )
+            source_action = recovery_envelope.action
+            if (
+                source_action.action_kind != "deterministic"
+                or source_action.effect_kind != "source_acquire"
+                or source_action.reason_code != "deterministic_source_route_required"
+                or source_action.stage_id != "source-discovery"
+                or source_action.source_route_id != discovery.route_id
+                or source_action.source_provider_id != discovery.provider_id
+                or recovery_envelope.role_id != "source-provider"
+            ):
+                raise RuntimeHostError("control_store_integrity_invalid")
+        invocation_request_id = derived_id(
+            "REQ-HOST-INVOKE",
+            source_action.run_id,
+            source_action.action_fingerprint,
+        )
+        _, invocation_id = self._planned_invocation(
+            current,
+            source_action,
+            request_id=invocation_request_id,
+        )
+        if (
+            recovery_envelope is not None
+            and recovery_envelope.invocation_id != invocation_id
+        ):
+            raise RuntimeHostError("control_store_integrity_invalid")
+        commit_request_id = derived_id(
+            "REQ-HOST-SOURCE-PACK",
+            source_action.run_id,
+            source_action.action_fingerprint,
+        )
+        replay = self._source_pack_store_replay(
+            current,
+            invocation_id=invocation_id,
+            commit_request_id=commit_request_id,
+        )
+        if replay is not None:
+            return replay
+        if replay_only:
+            raise RuntimeHostError("runtime_action_stale")
+        stage_identity = canonical_fingerprint(
+            {
+                "kind": "discovery_source_pack",
+                "run_id": source_action.run_id,
+                "action_fingerprint": source_action.action_fingerprint,
+                "discovery_authorization_id": discovery.authorization_id,
+            }
+        )
+        stage_fingerprint = canonical_fingerprint(
+            {
+                "action": source_action.model_dump(
+                    mode="json",
+                    exclude_unset=False,
+                ),
+                "route_fingerprint": route.route_fingerprint,
+                "discovery_request_fingerprint": discovery.request_fingerprint,
+            }
+        )
+        try:
+            stage = load_source_stage(
+                self.workspace,
+                stage_identity=stage_identity,
+                request_fingerprint=stage_fingerprint,
+                expected_manifest_sha256=None,
+            )
+        except RuntimeHostError as exc:
+            if str(exc) == "submission_replay_conflict":
+                raise
+            raise RuntimeHostError("source_provider_result_invalid") from None
+        if stage is None:
+            if active_recovery:
+                raise RuntimeHostError("source_acquisition_outcome_unknown") from None
+        try:
+            capability_profile(self.workspace)
+        except CoreRunError as exc:
+            raise RuntimeHostError(exc.code) from None
+        if stage is None:
+            try:
+                secret_available = known_env_key_is_set(
+                    discovery.credential_env,
+                    self.workspace,
+                )
+            except WorkspaceEnvError:
+                raise RuntimeHostError("workspace_secret_unsafe") from None
+            if not secret_available:
+                raise RuntimeHostError("source_provider_secret_unavailable")
+            dispatch = self._start_invocation_for_action(
+                current,
+                source_action,
+                role_id="source-provider",
+                request_id=invocation_request_id,
+            )
+            if dispatch.envelope.invocation_id != invocation_id:
+                raise RuntimeHostError("control_store_integrity_invalid")
+            try:
+                collection = collect_frozen_source_pack(
+                    self.workspace,
+                    run_id=source_action.run_id,
+                    invocation_id=invocation_id,
+                    route=route,
+                )
+                materials = collection.materials
+                if (
+                    collection.provider_response is None
+                    or collection.provider_status_code != 200
+                ):
+                    raise RuntimeHostError("source_provider_result_invalid")
+                manifest, proposals, ordered_materials = (
+                    self._freeze_discovery_source_manifest(materials)
+                )
+                stage = stage_source_pack_bytes(
+                    self.workspace,
+                    stage_identity=stage_identity,
+                    request_fingerprint=stage_fingerprint,
+                    members=tuple(
+                        SourceStageBytesInput(
+                            member_id=proposal.source_id,
+                            proposal_bytes=canonical_json_bytes(
+                                proposal.model_dump(
+                                    mode="json",
+                                    exclude_unset=False,
+                                )
+                            ),
+                            content_bytes=material.content,
+                            raw_payload_bytes=material.raw_payload,
+                        )
+                        for proposal, material in zip(
+                            proposals,
+                            ordered_materials,
+                            strict=True,
+                        )
+                    ),
+                    provider_response_bytes=collection.provider_response,
+                    provider_status_code=collection.provider_status_code,
+                )
+                (
+                    staged_manifest,
+                    staged_proposals,
+                    staged_contents,
+                    staged_raw_payloads,
+                    staged_provider_response,
+                ) = self._discovery_source_pack_from_stage(stage)
+                if (
+                    staged_manifest != manifest
+                    or staged_proposals != proposals
+                    or staged_contents
+                    != tuple(item.content for item in ordered_materials)
+                    or staged_raw_payloads
+                    != tuple(item.raw_payload for item in ordered_materials)
+                    or staged_provider_response != collection.provider_response
+                ):
+                    raise RuntimeHostError("submission_replay_conflict")
+            except SearchBackendError:
+                self._record_invocation_failure(
+                    dispatch.envelope,
+                    reason_code="child_failed",
+                    expected_store_revision=dispatch.envelope.store_revision,
+                )
+                raise RuntimeHostError("source_provider_unavailable") from None
+            except RuntimeHostError as exc:
+                reason = (
+                    "source_pack_empty"
+                    if str(exc) == "source_pack_empty"
+                    else "source_provider_result_invalid"
+                )
+                self._record_invocation_failure(
+                    dispatch.envelope,
+                    reason_code="proposal_invalid",
+                    expected_store_revision=dispatch.envelope.store_revision,
+                )
+                raise RuntimeHostError(reason) from None
+            except (
+                OSError,
+                NotImplementedError,
+                RuntimeError,
+                ValidationError,
+                ValueError,
+            ):
+                self._record_invocation_failure(
+                    dispatch.envelope,
+                    reason_code="proposal_invalid",
+                    expected_store_revision=dispatch.envelope.store_revision,
+                )
+                raise RuntimeHostError("source_provider_result_invalid") from None
+        else:
+            if recovery_envelope is None:
+                raise RuntimeHostError("runtime_source_staging_invalid")
+            dispatch = InvocationDispatch(
+                envelope=recovery_envelope,
+                envelope_path=(
+                    self.workspace / "scratch" / invocation_id / "task_envelope.json"
+                ),
+            )
+        try:
+            (
+                manifest,
+                proposals,
+                contents,
+                raw_payloads,
+                provider_response,
+            ) = self._discovery_source_pack_from_stage(stage)
+        except RuntimeHostError:
+            discard_source_stage(self.workspace, stage_identity=stage_identity)
+            self._record_staged_invocation_failure(
+                current,
+                source_action,
+                request_id=invocation_request_id,
+                invocation_id=invocation_id,
+                reason_code="proposal_invalid",
+            )
+            raise RuntimeHostError("source_provider_result_invalid") from None
+
+        if dispatch.envelope.invocation_id != invocation_id:
+            raise RuntimeHostError("control_store_integrity_invalid")
+        manifest_bytes = canonical_json_bytes(
+            manifest.model_dump(mode="json", exclude_unset=False)
+        )
+        intake_input = _CoreDiscoverySourcePack(
+            request_id=commit_request_id,
+            run_id=source_action.run_id,
+            invocation_id=invocation_id,
+            expected_store_revision=dispatch.envelope.store_revision,
+            manifest=manifest,
+            source_manifest_sha256=sha256_hex(manifest_bytes),
+            proposals=proposals,
+            contents=contents,
+            raw_payloads=raw_payloads,
+            provider_response=provider_response,
+        )
+        intake = IntakeService(self.workspace)
+        try:
+            result = intake._commit_discovery_source_pack_from_core(intake_input)
+        except ControlStoreCommitOutcomeUnknown:
+            try:
+                result = intake._commit_discovery_source_pack_from_core(intake_input)
+            except ControlStoreCommitOutcomeUnknown as exc:
+                raise RuntimeHostError("commit_outcome_unknown") from exc
+        except IntakeError as exc:
+            if exc.code == "source_pack_empty":
+                reason = "source_pack_empty"
+            elif exc.code == "source_discovery_authorization_invalid":
+                reason = exc.code
+            else:
+                reason = "source_provider_result_invalid"
+            failure = self._record_invocation_failure(
+                dispatch.envelope,
+                reason_code="proposal_invalid",
+                expected_store_revision=dispatch.envelope.store_revision,
+            )
+            if failure.status == "commit_outcome_unknown":
+                failure = self._record_invocation_failure(
+                    dispatch.envelope,
+                    reason_code="proposal_invalid",
+                    expected_store_revision=dispatch.envelope.store_revision,
+                )
+            if failure.status not in {
+                "committed",
+                "replayed",
+                "rejected_recorded",
+            }:
+                raise RuntimeHostError(
+                    failure.error_code or "control_store_integrity_invalid"
+                )
+            discard_source_stage(self.workspace, stage_identity=stage_identity)
+            raise RuntimeHostError(reason) from None
+        runtime_result = self._source_pack_runtime_result(invocation_id, result)
+        discard_source_stage(self.workspace, stage_identity=stage_identity)
+        return runtime_result
+
+    @staticmethod
+    def _freeze_discovery_source_manifest(materials):
+        ordered_materials = tuple(
+            sorted(
+                materials,
+                key=lambda item: item.proposal.source_id,
+            )
+        )
+        manifest, proposals = RuntimeHostService._discovery_manifest_from_proposals(
+            tuple(item.proposal for item in ordered_materials)
+        )
+        return manifest, proposals, ordered_materials
+
+    @staticmethod
+    def _discovery_manifest_from_proposals(proposals):
+        members: list[ExecutionSourceManifestMember] = []
+        for proposal in proposals:
+            members.append(
+                ExecutionSourceManifestMember.model_validate(
+                    {
+                        "source_id": proposal.source_id,
+                        "input_path": (f"input/discovered/{proposal.source_id}.txt"),
+                        "content_sha256": proposal.content_sha256,
+                        "content_media_type": proposal.content_media_type,
+                        "origin_type": proposal.origin_type,
+                        "acquisition_method": proposal.acquisition_method,
+                        "material_kind": proposal.material_kind,
+                        "provider": proposal.provider,
+                        "locator": proposal.locator.model_dump(mode="json"),
+                        "title": proposal.title,
+                        "publisher": proposal.publisher,
+                        "published_at": proposal.published_at,
+                        "retrieved_at": proposal.retrieved_at,
+                        "source_category": proposal.source_category,
+                        "retrieval_source_type": (proposal.retrieval_source_type),
+                        "underlying_evidence_type": (proposal.underlying_evidence_type),
+                        "raw_underlying_evidence_type": (
+                            proposal.raw_underlying_evidence_type
+                        ),
+                        "document_kind": proposal.document_kind,
+                        "opened_at": proposal.opened_at,
+                        "resolved_at": proposal.resolved_at,
+                    },
+                    strict=True,
+                )
+            )
+        manifest = ExecutionSourceManifest.model_validate(
+            {
+                "schema_version": ExecutionSourceManifest.schema_id,
+                "members": [
+                    item.model_dump(mode="json", exclude_unset=False)
+                    for item in members
+                ],
+            },
+            strict=True,
+        )
+        manifest_sha256 = sha256_hex(
+            canonical_json_bytes(manifest.model_dump(mode="json", exclude_unset=False))
+        )
+        by_source_id = {item.source_id: item for item in proposals}
+        rebound = tuple(
+            SourceProposal.model_validate(
+                {
+                    **by_source_id[member.source_id].model_dump(
+                        mode="json",
+                        exclude_unset=False,
+                    ),
+                    "source_manifest_sha256": manifest_sha256,
+                    "manifest_local_file": member.input_path,
+                },
+                strict=True,
+            )
+            for member in manifest.members
+        )
+        return manifest, rebound
+
+    @staticmethod
+    def _discovery_source_pack_from_stage(stage: VerifiedSourceStage):
+        proposals: list[SourceProposal] = []
+        contents: list[bytes] = []
+        raw_payloads: list[bytes] = []
+        if (
+            stage.provider_response_path is None
+            or stage.provider_response_sha256 is None
+            or stage.provider_status_code != 200
+        ):
+            raise RuntimeHostError("runtime_source_staging_invalid")
+        provider_response = read_verified_staged_bytes(
+            stage.provider_response_path,
+            expected_sha256=stage.provider_response_sha256,
+            max_size=4 * 1024 * 1024,
+        )
+        for member in stage.members:
+            proposal = SourceProposal.model_validate_json(
+                read_verified_staged_bytes(
+                    member.proposal_path,
+                    expected_sha256=member.proposal_sha256,
+                ),
+                strict=True,
+            )
+            if (
+                proposal.source_id != member.member_id
+                or member.raw_payload_path is None
+                or member.raw_payload_sha256 is None
+            ):
+                raise RuntimeHostError("runtime_source_staging_invalid")
+            proposals.append(proposal)
+            contents.append(
+                read_verified_staged_bytes(
+                    member.content_path,
+                    expected_sha256=member.content_sha256,
+                )
+            )
+            raw_payloads.append(
+                read_verified_staged_bytes(
+                    member.raw_payload_path,
+                    expected_sha256=member.raw_payload_sha256,
+                )
+            )
+        manifest, rebound = RuntimeHostService._discovery_manifest_from_proposals(
+            tuple(proposals)
+        )
+        if rebound != tuple(proposals):
+            raise RuntimeHostError("runtime_source_staging_invalid")
+        return (
+            manifest,
+            rebound,
+            tuple(contents),
+            tuple(raw_payloads),
+            provider_response,
         )
 
     def _apply_human_source_pack(

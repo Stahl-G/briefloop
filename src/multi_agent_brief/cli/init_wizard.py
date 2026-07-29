@@ -14,7 +14,10 @@ from multi_agent_brief.audience_memory import (
 from multi_agent_brief.workspace.init_profile import InitProfile
 
 if TYPE_CHECKING:
-    from multi_agent_brief.contracts.v2 import RunExecutionAuthorizationBootstrap
+    from multi_agent_brief.contracts.v2 import (
+        RunExecutionAuthorizationBootstrap,
+        RunSourceDiscoveryAuthorizationBootstrap,
+    )
 
 try:
     from dotenv import load_dotenv
@@ -26,10 +29,26 @@ except ImportError:
 
 # Search backend configuration
 _SEARCH_BACKENDS = {
-    "tavily": {"env_key": "TAVILY_API_KEY", "name": "Tavily", "desc": "AI-powered web search"},
-    "exa": {"env_key": "EXA_API_KEY", "name": "Exa", "desc": "Deep research, papers, filings"},
-    "brave": {"env_key": "BRAVE_SEARCH_API_KEY", "name": "Brave", "desc": "Independent web index"},
-    "firecrawl": {"env_key": "FIRECRAWL_API_KEY", "name": "Firecrawl", "desc": "Search + full-text crawl"},
+    "tavily": {
+        "env_key": "TAVILY_API_KEY",
+        "name": "Tavily",
+        "desc": "AI-powered web search",
+    },
+    "exa": {
+        "env_key": "EXA_API_KEY",
+        "name": "Exa",
+        "desc": "Deep research, papers, filings",
+    },
+    "brave": {
+        "env_key": "BRAVE_SEARCH_API_KEY",
+        "name": "Brave",
+        "desc": "Independent web index",
+    },
+    "firecrawl": {
+        "env_key": "FIRECRAWL_API_KEY",
+        "name": "Firecrawl",
+        "desc": "Search + full-text crawl",
+    },
     "serper": {"env_key": "SERPER_API_KEY", "name": "Serper", "desc": "Google SERP"},
 }
 
@@ -70,7 +89,9 @@ def _build_search_backend_choices(
     for backend_key, info in _SEARCH_BACKENDS.items():
         status = "configured" if backend_key in configured_set else "needs API key"
         if language == "zh-CN":
-            choices[str(idx)] = f"{backend_key} ({info['name']} - {info['desc']}；{status})"
+            choices[str(idx)] = (
+                f"{backend_key} ({info['name']} - {info['desc']}；{status})"
+            )
         else:
             choices[str(idx)] = f"{backend_key} ({info['desc']}; {status})"
         idx += 1
@@ -99,6 +120,7 @@ def _build_search_backend_choices(
 def _demo_published_at() -> str:
     """Return a dynamic date 1 day before today for demo source freshness."""
     from datetime import date, timedelta
+
     return (date.today() - timedelta(days=1)).isoformat()
 
 
@@ -133,6 +155,7 @@ def _build_demo_market_data() -> dict:
             "Freight index for domestic trucking rose 2.3% month-over-month to 142.5, driven by seasonal demand and fuel cost pass-through.",
         ],
     }
+
 
 DEMO_SOURCES = """source_strategy:
   profile: "conservative"
@@ -364,7 +387,9 @@ def create_demo_workspace(
         target / "config.yaml": to_yaml(
             build_config(
                 profile,
-                controlstore_bootstrap=bootstrap.model_dump(mode="json", exclude_unset=False),
+                controlstore_bootstrap=bootstrap.model_dump(
+                    mode="json", exclude_unset=False
+                ),
             )
         ),
         target / "sources.yaml": DEMO_SOURCES,
@@ -405,7 +430,9 @@ def create_demo_workspace(
         input_dir / "instructions" / "README.md": _build_instructions_readme("en-US"),
         input_dir / "context" / "README.md": _build_context_readme("en-US"),
         sources_dir / "news.json": json.dumps(_build_demo_news(), indent=2),
-        sources_dir / "market_data.json": json.dumps(_build_demo_market_data(), indent=2),
+        sources_dir / "market_data.json": json.dumps(
+            _build_demo_market_data(), indent=2
+        ),
     }
     _write_files(files, force=force)
 
@@ -422,6 +449,8 @@ def create_workspace(
     report_date_factory: Callable[[], date] = date.today,
     identity_factory: Callable[[], str] = _new_controlstore_identity,
     execution_authorization: RunExecutionAuthorizationBootstrap | None = None,
+    source_discovery_authorization: RunSourceDiscoveryAuthorizationBootstrap
+    | None = None,
     post_finalize_html: bool = False,
 ) -> None:
     from multi_agent_brief.product.workspace_hygiene import (
@@ -452,6 +481,17 @@ def create_workspace(
         report_date=report_date_factory(),
         execution_authorization=execution_authorization,
     )
+    if source_discovery_authorization is not None:
+        from multi_agent_brief.contracts.v2 import WorkspaceControlStoreBootstrapV2
+
+        payload = bootstrap.model_dump(mode="json", exclude_unset=False)
+        payload["source_discovery_authorization"] = (
+            source_discovery_authorization.model_dump(mode="json", exclude_unset=False)
+        )
+        bootstrap = WorkspaceControlStoreBootstrapV2.model_validate(
+            payload,
+            strict=True,
+        )
     lang = profile.interface_language
     files = {
         target / "config.yaml": to_yaml(
@@ -465,7 +505,9 @@ def create_workspace(
         ),
         target / "profile.yaml": to_yaml(build_profile(profile)),
         target / "sources.yaml": to_yaml(build_sources(profile)),
-        target / "competitor_universe.yaml": to_yaml(_build_competitor_universe(profile)),
+        target / "competitor_universe.yaml": to_yaml(
+            _build_competitor_universe(profile)
+        ),
         target / "user.md": build_user_md(profile),
         target / "audience_profile.md": build_default_audience_profile(
             profile_data_from_object(profile)
@@ -488,15 +530,22 @@ def create_workspace(
 def _is_interactive() -> bool:
     """Check if stdin is connected to a real terminal (not a pipe or agent Bash tool)."""
     import sys
+
     return sys.stdin.isatty() if hasattr(sys.stdin, "isatty") else False
 
 
-def build_profile_from_args(args: Any, *, input_func: Callable[[str], str] | None = None) -> InitProfile:
+def build_profile_from_args(
+    args: Any, *, input_func: Callable[[str], str] | None = None
+) -> InitProfile:
     input_func = input if input_func is None else input_func
     profile = InitProfile()
     if has_direct_init_args(args):
-        profile.interface_language = normalize_language(args.language or profile.interface_language)
-        profile.output_language = normalize_language(args.output_language or args.language or profile.output_language)
+        profile.interface_language = normalize_language(
+            args.language or profile.interface_language
+        )
+        profile.output_language = normalize_language(
+            args.output_language or args.language or profile.output_language
+        )
         profile.company = args.company or profile.company
         profile.role = args.role or profile.role
         profile.industry = args.industry or profile.industry
@@ -508,8 +557,12 @@ def build_profile_from_args(args: Any, *, input_func: Callable[[str], str] | Non
         if args.selector_max_items is not None:
             profile.selector_max_items = args.selector_max_items
         apply_rag_args(profile, args.rag, args.retrieval_provider)
-        profile.output_formats = parse_list_arg(args.output_formats) or profile.output_formats
-        profile.source_profile = getattr(args, "source_profile", None) or profile.source_profile
+        profile.output_formats = (
+            parse_list_arg(args.output_formats) or profile.output_formats
+        )
+        profile.source_profile = (
+            getattr(args, "source_profile", None) or profile.source_profile
+        )
         if getattr(args, "web_search_mode", None):
             profile.web_search_mode = args.web_search_mode
             profile.web_search_enabled = args.web_search_mode != "disabled"
@@ -544,7 +597,9 @@ def build_profile_from_args(args: Any, *, input_func: Callable[[str], str] | Non
                 str(args.initial_news_backfill_daily_max_results),
                 profile.initial_news_backfill_daily_max_results,
             )
-        preferred_domains = parse_list_arg(getattr(args, "preferred_news_domains", None))
+        preferred_domains = parse_list_arg(
+            getattr(args, "preferred_news_domains", None)
+        )
         if preferred_domains:
             profile.preferred_news_domains = preferred_domains
         excluded_domains = parse_list_arg(getattr(args, "excluded_news_domains", None))
@@ -597,7 +652,9 @@ def has_direct_init_args(args: Any) -> bool:
     return False
 
 
-def prompt_for_profile(*, input_func: Callable[[str], str] | None = None) -> InitProfile:
+def prompt_for_profile(
+    *, input_func: Callable[[str], str] | None = None
+) -> InitProfile:
     input_func = input if input_func is None else input_func
     language_choice = ask_choice(
         input_func,
@@ -605,7 +662,9 @@ def prompt_for_profile(*, input_func: Callable[[str], str] | None = None) -> Ini
         {"1": "en-US", "2": "zh-CN", "3": "bilingual"},
         "2",
     )
-    profile = InitProfile(interface_language=language_choice, output_language=language_choice)
+    profile = InitProfile(
+        interface_language=language_choice, output_language=language_choice
+    )
     prompts = prompt_labels(language_choice)
 
     profile.company = ask_text(input_func, prompts["company"], profile.company)
@@ -613,18 +672,35 @@ def prompt_for_profile(*, input_func: Callable[[str], str] | None = None) -> Ini
     profile.industry = ask_text(input_func, prompts["industry"], profile.industry)
     profile.brief_title = ask_text(input_func, prompts["title"], profile.brief_title)
     profile.audience = ask_text(input_func, prompts["audience"], profile.audience)
-    profile.focus_areas = parse_list_arg(ask_text(input_func, prompts["focus"], ",".join(profile.focus_areas)))
+    profile.focus_areas = parse_list_arg(
+        ask_text(input_func, prompts["focus"], ",".join(profile.focus_areas))
+    )
     profile.cadence = ask_text(input_func, prompts["cadence"], profile.cadence)
-    max_items = ask_text(input_func, prompts["selector_max_items"], str(profile.selector_max_items))
+    max_items = ask_text(
+        input_func, prompts["selector_max_items"], str(profile.selector_max_items)
+    )
     profile.selector_max_items = parse_int(max_items, profile.selector_max_items)
     rag_enabled = ask_yes_no(input_func, prompts["rag"], default=False)
     profile.retrieval_enabled = rag_enabled
     if rag_enabled:
-        profile.retrieval_provider = ask_choice(input_func, prompts["retrieval_provider"], {"1": "ollama", "2": "gemini"}, "1")
-        profile.retrieval_model = retrieval_model_for_provider(profile.retrieval_provider)
-    profile.output_formats = parse_list_arg(ask_text(input_func, prompts["outputs"], ",".join(profile.output_formats)))
-    profile.max_source_age_days = parse_int(ask_text(input_func, prompts["max_age"], str(profile.max_source_age_days)), 14)
-    profile.source_profile = ask_choice(input_func, prompts["source_profile"], prompts["source_profile_options"], "2")
+        profile.retrieval_provider = ask_choice(
+            input_func,
+            prompts["retrieval_provider"],
+            {"1": "ollama", "2": "gemini"},
+            "1",
+        )
+        profile.retrieval_model = retrieval_model_for_provider(
+            profile.retrieval_provider
+        )
+    profile.output_formats = parse_list_arg(
+        ask_text(input_func, prompts["outputs"], ",".join(profile.output_formats))
+    )
+    profile.max_source_age_days = parse_int(
+        ask_text(input_func, prompts["max_age"], str(profile.max_source_age_days)), 14
+    )
+    profile.source_profile = ask_choice(
+        input_func, prompts["source_profile"], prompts["source_profile_options"], "2"
+    )
 
     # Web search backend selection
     web_search_enabled = ask_yes_no(input_func, prompts["web_search"], default=True)
@@ -684,12 +760,16 @@ def prompt_for_profile(*, input_func: Callable[[str], str] | None = None) -> Ini
         )
 
     # Competitor monitoring
-    competitor_enabled = ask_yes_no(input_func, prompts["competitor_module"], default=False)
+    competitor_enabled = ask_yes_no(
+        input_func, prompts["competitor_module"], default=False
+    )
     profile.competitor_module_enabled = competitor_enabled
     if competitor_enabled:
         names_raw = ask_text(input_func, prompts["competitor_names"], "")
         if names_raw.strip():
-            profile.competitor_names = [n.strip() for n in names_raw.split(",") if n.strip()]
+            profile.competitor_names = [
+                n.strip() for n in names_raw.split(",") if n.strip()
+            ]
 
     return profile
 
@@ -719,14 +799,25 @@ def prompt_labels(language: str) -> dict[str, Any]:
             "audience": "Audience (e.g. management, strategy, research, investor relations, marketing, etc.): ",
             "focus": "Focus areas, comma-separated: ",
             "cadence": "Reporting cadence:\n1. Weekly\n2. Biweekly\n3. Monthly\n4. Ad hoc\nDefault [1]: ",
-            "cadence_options": {"1": "weekly", "2": "biweekly", "3": "monthly", "4": "ad_hoc"},
+            "cadence_options": {
+                "1": "weekly",
+                "2": "biweekly",
+                "3": "monthly",
+                "4": "ad_hoc",
+            },
             "selector_max_items": "How many items should be selected for each brief? Default [20]: ",
             "rag": "Enable historical retrieval / RAG? [y/N]: ",
             "retrieval_provider": "Choose retrieval provider:\n1. Ollama local\n2. Gemini API\nDefault [1]: ",
             "outputs": "Output formats, comma-separated: ",
             "max_age": "Maximum source age in days: ",
             "source_profile": "Source profile:\n1. Conservative: official and high-confidence sources only\n2. Research: balanced official, industry, market, and research sources\n3. Aggressive signal: broader signal discovery, more noise allowed\n4. Custom: user will manually edit sources.yaml\n5. Let LLM decide: generate an agent-readable source discovery policy\nDefault [2]: ",
-            "source_profile_options": {"1": "conservative", "2": "research", "3": "aggressive_signal", "4": "custom", "5": "llm_decide"},
+            "source_profile_options": {
+                "1": "conservative",
+                "2": "research",
+                "3": "aggressive_signal",
+                "4": "custom",
+                "5": "llm_decide",
+            },
             "web_search": (
                 "Enable online search? Strongly recommended for fresh reports; "
                 "if enabled, add a Tavily API key. [Y/n]: "
@@ -762,7 +853,13 @@ def prompt_labels(language: str) -> dict[str, Any]:
                 "outputs": "Output formats / 输出格式，comma-separated / 逗号分隔: ",
                 "max_age": "Maximum source age in days / 最大来源天数: ",
                 "source_profile": "Source profile / 信息来源策略:\n1. Conservative / 保守：仅官方和高置信来源\n2. Research / 研究：官方、行业、市场、研究来源平衡\n3. Aggressive signal / 激进信号：扩大发现范围\n4. Custom / 自定义\n5. Let LLM decide / 让 LLM 自动决定来源\nDefault [2]: ",
-                "source_profile_options": {"1": "conservative", "2": "research", "3": "aggressive_signal", "4": "custom", "5": "llm_decide"},
+                "source_profile_options": {
+                    "1": "conservative",
+                    "2": "research",
+                    "3": "aggressive_signal",
+                    "4": "custom",
+                    "5": "llm_decide",
+                },
                 "web_search": (
                     "Enable online search? / 是否打开在线搜索？"
                     " If enabled, strongly add a Tavily API key. / "
@@ -809,14 +906,25 @@ def prompt_labels(language: str) -> dict[str, Any]:
         "audience": "请输入阅读对象（例如：管理层、战略团队、研究团队、投资者关系、市场团队 等）：",
         "focus": "请输入关注领域，逗号分隔：",
         "cadence": "请选择简报频率：\n1. 每周\n2. 双周\n3. 每月\n4. 不定期\n默认 [1]：",
-        "cadence_options": {"1": "weekly", "2": "biweekly", "3": "monthly", "4": "ad_hoc"},
+        "cadence_options": {
+            "1": "weekly",
+            "2": "biweekly",
+            "3": "monthly",
+            "4": "ad_hoc",
+        },
         "selector_max_items": "每期筛选多少条？默认 [20]：",
         "rag": "是否启用历史检索 / RAG？[y/N]：",
         "retrieval_provider": "请选择检索 provider：\n1. Ollama 本地\n2. Gemini API\n默认 [1]：",
         "outputs": "请输入输出格式，逗号分隔：",
         "max_age": "请输入最大来源天数：",
         "source_profile": "请选择信息来源策略：\n1. 保守：只使用官方和高置信来源\n2. 研究：官方、行业媒体、市场数据、研究来源平衡\n3. 激进信号：扩大信号发现范围，允许更多噪音\n4. 自定义：用户后续手动编辑 sources.yaml\n5. 让 LLM 自动决定：生成 agent 可读的来源发现策略\n默认 [2]：",
-        "source_profile_options": {"1": "conservative", "2": "research", "3": "aggressive_signal", "4": "custom", "5": "llm_decide"},
+        "source_profile_options": {
+            "1": "conservative",
+            "2": "research",
+            "3": "aggressive_signal",
+            "4": "custom",
+            "5": "llm_decide",
+        },
         "web_search": "是否打开在线搜索？如打开，强烈建议添加 Tavily API。[Y/n]：",
         "search_backend": "如何提供实时网络搜索？ ",
         "initial_news_backfill": "是否运行过去七天新闻查找？将会搜索过去七天每日二十条相关新闻。[y/N]：",
@@ -924,9 +1032,7 @@ def build_config(
         }
     if controlstore_bootstrap is not None:
         cfg["controlstore_v2"] = controlstore_bootstrap
-        cfg["report"]["date"] = controlstore_bootstrap["run_direction"][
-            "report_date"
-        ]
+        cfg["report"]["date"] = controlstore_bootstrap["run_direction"]["report_date"]
     return cfg
 
 
@@ -959,7 +1065,9 @@ def build_sources(profile: InitProfile) -> dict[str, Any]:
             "name": "Local Evidence Sources",
             "path": "input/sources/",
             "category": "local_files",
-            "language": profile.output_language.split("-")[0] if "-" in profile.output_language else profile.output_language,
+            "language": profile.output_language.split("-")[0]
+            if "-" in profile.output_language
+            else profile.output_language,
             "enabled": True,
         }
     ]
@@ -977,6 +1085,7 @@ def build_sources(profile: InitProfile) -> dict[str, Any]:
 
     # Seed pack: use optional_seed_pack if set and registered
     from multi_agent_brief.sources.industry_packs import get_industry_pack
+
     seed_tasks = []
     if profile.optional_seed_pack:
         pack = get_industry_pack(profile.optional_seed_pack)
@@ -1044,7 +1153,9 @@ def _build_web_search_config(profile: InitProfile) -> dict[str, Any]:
 
     # Legacy compatibility: if tavily_enabled is True but no external backend is
     # selected yet, override to external_api with Tavily.
-    if mode in {"disabled", "configure_later"} and getattr(profile, "tavily_enabled", False):
+    if mode in {"disabled", "configure_later"} and getattr(
+        profile, "tavily_enabled", False
+    ):
         mode = "external_api"
         if not backend:
             backend = "tavily"
@@ -1127,7 +1238,11 @@ def _build_news_source_domain_config(profile: InitProfile) -> dict[str, Any]:
 
 def _build_llm_decide_sources(profile: InitProfile) -> dict[str, Any]:
     """Generate sources.yaml for llm_decide profile: agent-readable discovery policy."""
-    lang = profile.output_language.split("-")[0] if "-" in profile.output_language else profile.output_language
+    lang = (
+        profile.output_language.split("-")[0]
+        if "-" in profile.output_language
+        else profile.output_language
+    )
 
     enabled_providers = ["manual"]
     if getattr(profile, "web_search_enabled", False):
@@ -1206,7 +1321,8 @@ def _build_llm_decide_sources(profile: InitProfile) -> dict[str, Any]:
                 "customer names",
                 "confidential files",
                 "material non-public information",
-            ] + [s for s in profile.forbidden_sources if s],
+            ]
+            + [s for s in profile.forbidden_sources if s],
             "review_policy": {
                 "require_user_confirmation_before_first_live_ingestion": True,
                 "write_candidate_sources_to": "source_candidates.yaml",
@@ -1328,9 +1444,15 @@ def build_user_md(profile: InitProfile) -> str:
 
 
 def _user_md_zh(profile: InitProfile, focus: str) -> str:
-    forbidden = "\n".join(f"- {s}" for s in profile.forbidden_sources) if profile.forbidden_sources else ""
+    forbidden = (
+        "\n".join(f"- {s}" for s in profile.forbidden_sources)
+        if profile.forbidden_sources
+        else ""
+    )
     forbidden_section = f"\n## 禁止来源\n\n{forbidden}\n" if forbidden else ""
-    task_section = f"\n## 任务目标\n\n{profile.task_objective}\n" if profile.task_objective else ""
+    task_section = (
+        f"\n## 任务目标\n\n{profile.task_objective}\n" if profile.task_objective else ""
+    )
     industry_raw = profile.industry_text or profile.industry
     return (
         "# 用户简报画像\n\n"
@@ -1365,9 +1487,17 @@ def _user_md_zh(profile: InitProfile, focus: str) -> str:
 
 
 def _user_md_en(profile: InitProfile, focus: str) -> str:
-    forbidden = "\n".join(f"- {s}" for s in profile.forbidden_sources) if profile.forbidden_sources else ""
+    forbidden = (
+        "\n".join(f"- {s}" for s in profile.forbidden_sources)
+        if profile.forbidden_sources
+        else ""
+    )
     forbidden_section = f"\n## Forbidden Sources\n\n{forbidden}\n" if forbidden else ""
-    task_section = f"\n## Task Objective\n\n{profile.task_objective}\n" if profile.task_objective else ""
+    task_section = (
+        f"\n## Task Objective\n\n{profile.task_objective}\n"
+        if profile.task_objective
+        else ""
+    )
     industry_raw = profile.industry_text or profile.industry
     return (
         "# User Briefing Profile\n\n"
@@ -1401,7 +1531,9 @@ def _user_md_en(profile: InitProfile, focus: str) -> str:
     )
 
 
-def apply_rag_args(profile: InitProfile, rag: str | None, retrieval_provider: str | None) -> None:
+def apply_rag_args(
+    profile: InitProfile, rag: str | None, retrieval_provider: str | None
+) -> None:
     if rag:
         profile.retrieval_enabled = rag.lower() in {"on", "true", "yes", "y", "1"}
     if retrieval_provider:
@@ -1418,12 +1550,27 @@ def retrieval_model_for_provider(provider: str) -> str:
 
 def normalize_language(value: str) -> str:
     t = value.strip().lower()
-    if not t or t in ("default", "unknown", "choose for me", "默认", "不知道", "帮我选"):
+    if not t or t in (
+        "default",
+        "unknown",
+        "choose for me",
+        "默认",
+        "不知道",
+        "帮我选",
+    ):
         return "en-US"
     aliases = {
-        "en": "en-US", "en-us": "en-US", "en_us": "en-US", "english": "en-US",
-        "zh": "zh-CN", "zh-cn": "zh-CN", "zh_cn": "zh-CN", "cn": "zh-CN", "chinese": "zh-CN",
-        "bilingual": "bilingual", "dual language": "bilingual",
+        "en": "en-US",
+        "en-us": "en-US",
+        "en_us": "en-US",
+        "english": "en-US",
+        "zh": "zh-CN",
+        "zh-cn": "zh-CN",
+        "zh_cn": "zh-CN",
+        "cn": "zh-CN",
+        "chinese": "zh-CN",
+        "bilingual": "bilingual",
+        "dual language": "bilingual",
     }
     return aliases.get(t, t)
 
@@ -1498,7 +1645,11 @@ def format_scalar(value: Any) -> str:
     if isinstance(value, int):
         return str(value)
     text = str(value)
-    if text == "auto" or not text or any(char in text for char in [":", "#", "[", "]", "{", "}", ","]):
+    if (
+        text == "auto"
+        or not text
+        or any(char in text for char in [":", "#", "[", "]", "{", "}", ","])
+    ):
         return json.dumps(text, ensure_ascii=False)
     return json.dumps(text, ensure_ascii=False)
 
@@ -1507,15 +1658,17 @@ def _build_competitor_universe(profile: InitProfile) -> dict:
     """Generate default competitor_universe.yaml content."""
     entities = []
     for name in profile.competitor_names:
-        entities.append({
-            "entity_id": name.lower().replace(" ", "_"),
-            "name": name,
-            "aliases": [],
-            "relation": "direct_competitor",
-            "priority": "secondary",
-            "geographies": [],
-            "technologies": [],
-        })
+        entities.append(
+            {
+                "entity_id": name.lower().replace(" ", "_"),
+                "name": name,
+                "aliases": [],
+                "relation": "direct_competitor",
+                "priority": "secondary",
+                "geographies": [],
+                "technologies": [],
+            }
+        )
     return {
         "target": {
             "entity_id": "",
@@ -1562,7 +1715,9 @@ def _build_env_example() -> str:
 def _write_files(files: dict[Path, str], *, force: bool) -> None:
     for path in files:
         if path.exists() and not force:
-            raise FileExistsError(f"Refusing to overwrite existing file: {path}. Use --force to overwrite.")
+            raise FileExistsError(
+                f"Refusing to overwrite existing file: {path}. Use --force to overwrite."
+            )
     for path, content in files.items():
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(content, encoding="utf-8")

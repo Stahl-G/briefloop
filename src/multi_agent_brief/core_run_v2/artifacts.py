@@ -79,6 +79,20 @@ class ArtifactAcceptanceService:
         except (CoreRunError, ControlStoreError) as exc:
             return core_run_failure_result(exc)
 
+    def _submit_owned_artifact_from_host(
+        self,
+        request: OwnedArtifactSubmitRequest,
+        content: bytes,
+    ) -> CoreRunResult:
+        """Accept immutable RuntimeHost-verified bytes through this sole writer."""
+
+        try:
+            if type(content) is not bytes:
+                raise CoreRunError("artifact_input_unsafe")
+            return self._submit_owned_artifact(request, host_content=content)
+        except (CoreRunError, ControlStoreError) as exc:
+            return core_run_failure_result(exc)
+
     def promote_audit_proposal(
         self,
         request: AuditPromotionRequest,
@@ -91,6 +105,8 @@ class ArtifactAcceptanceService:
     def _submit_owned_artifact(
         self,
         request: OwnedArtifactSubmitRequest,
+        *,
+        host_content: bytes | None = None,
     ) -> CoreRunResult:
         policy = ARTIFACT_POLICIES.get(request.artifact_id)
         if policy is None:
@@ -106,6 +122,17 @@ class ArtifactAcceptanceService:
                 request_fingerprint=fingerprint,
             )
             if replay is not None:
+                if host_content is not None:
+                    snapshot = store.load_snapshot(request.run_id)
+                    submissions = [
+                        item
+                        for item in snapshot.owned_artifact_submissions
+                        if item.submission_id == replay.primary_record_id
+                    ]
+                    if len(submissions) != 1:
+                        raise CoreRunError("control_store_integrity_invalid")
+                    if submissions[0].artifact_sha256 != sha256_hex(host_content):
+                        raise CoreRunError("submission_replay_conflict")
                 return replay
             if PurePosixPath(request.input_path).suffix != policy.input_suffix:
                 raise CoreRunError("artifact_input_unsafe")
@@ -115,10 +142,13 @@ class ArtifactAcceptanceService:
                 and verified.snapshot.run_execution_authorizations
             ):
                 raise CoreRunError("artifact_owner_mismatch")
-            try:
-                content = self._reader.read(request.input_path)
-            except IntakeError as exc:
-                raise CoreRunError("artifact_input_unsafe") from exc
+            if host_content is None:
+                try:
+                    content = self._reader.read(request.input_path)
+                except IntakeError as exc:
+                    raise CoreRunError("artifact_input_unsafe") from exc
+            else:
+                content = host_content
             if request.artifact_id == "input_classification":
                 expected_content = _input_classification_bytes(self.workspace)
                 if content != expected_content:
@@ -174,29 +204,26 @@ class ArtifactAcceptanceService:
                 raise CoreRunError("artifact_owner_mismatch")
             if (
                 verified.binding.role_topology == "human_assisted"
-                and request.artifact_id
-                in {"analyst_draft_snapshot", "audited_brief"}
+                and request.artifact_id in {"analyst_draft_snapshot", "audited_brief"}
             ):
-                route = classify_human_assisted_analyst_route(
-                    verified.snapshot
-                )
+                route = classify_human_assisted_analyst_route(verified.snapshot)
                 if stage_id == "analyst":
-                    expected_family = (
-                        "writer" if owner_role == "writer" else "snapshot"
-                    )
+                    expected_family = "writer" if owner_role == "writer" else "snapshot"
                     if (
                         route.active_analyst_role != owner_role
-                        or route.route_family
-                        not in {"undecided", expected_family}
+                        or route.route_family not in {"undecided", expected_family}
                     ):
                         raise CoreRunError("artifact_revision_conflict")
                 elif stage_id == "editor" and (
-                    route.route_family != "snapshot"
-                    or not route.editor_reserved
+                    route.route_family != "snapshot" or not route.editor_reserved
                 ):
                     raise CoreRunError("artifact_revision_conflict")
             stage = next(
-                (item for item in verified.snapshot.stage_states if item.stage_id == stage_id),
+                (
+                    item
+                    for item in verified.snapshot.stage_states
+                    if item.stage_id == stage_id
+                ),
                 None,
             )
             if stage is None or stage.status != "ready":
@@ -321,8 +348,7 @@ class ArtifactAcceptanceService:
             if (
                 active_gate_repair is None
                 and verified.binding.role_topology == "human_assisted"
-                and request.artifact_id
-                in {"analyst_draft_snapshot", "audited_brief"}
+                and request.artifact_id in {"analyst_draft_snapshot", "audited_brief"}
             ):
                 proposed = replace(
                     verified.snapshot,
@@ -517,10 +543,7 @@ class ArtifactAcceptanceService:
             ):
                 raise CoreRunError("artifact_revision_conflict")
             lineage.require_stage_mutable("auditor")
-            if (
-                report_record.current_revision
-                != request.expected_audit_report_revision
-            ):
+            if report_record.current_revision != request.expected_audit_report_revision:
                 raise CoreRunError("artifact_revision_conflict")
             self._require_store_revision(
                 verified.snapshot.store_revision,
@@ -536,10 +559,13 @@ class ArtifactAcceptanceService:
             )
             if auditor_stage is None or auditor_stage.status != "ready":
                 raise CoreRunError("stage_not_current")
-            if report_record.current_revision > 0 and self._integrity.revision_is_protected(
-                verified,
-                report_record.artifact_id,
-                report_record.current_revision,
+            if (
+                report_record.current_revision > 0
+                and self._integrity.revision_is_protected(
+                    verified,
+                    report_record.artifact_id,
+                    report_record.current_revision,
+                )
             ):
                 raise CoreRunError("artifact_revision_conflict")
             blocked = self._integrity.require_clean(
@@ -725,7 +751,9 @@ class ArtifactAcceptanceService:
 
     def _open_store(self) -> SQLiteControlStore:
         try:
-            return SQLiteControlStore.open(self.workspace / "briefloop.db", clock=self._clock)
+            return SQLiteControlStore.open(
+                self.workspace / "briefloop.db", clock=self._clock
+            )
         except Exception as exc:
             raise CoreRunError("control_store_integrity_invalid") from exc
 

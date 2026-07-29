@@ -1,7 +1,8 @@
 from __future__ import annotations
 
-from datetime import date
 from copy import deepcopy
+from dataclasses import replace
+from datetime import date
 import hashlib
 import json
 from pathlib import Path
@@ -32,6 +33,9 @@ from multi_agent_brief.runtime_host_v2.service import (
 from multi_agent_brief.runtime_host_v2.submission import source_stage_root
 from multi_agent_brief.runtime_assets import install_runtime_kit
 from multi_agent_brief.sources.base import SourceItem
+from multi_agent_brief.sources.web_search import (
+    WebSearchCollection,
+)
 from multi_agent_brief.workspace.init_profile import InitProfile
 
 
@@ -1189,10 +1193,10 @@ def test_deterministic_source_failure_exhausts_frozen_route_without_retry(
     def no_results(_provider, _query, _config):
         nonlocal calls
         calls += 1
-        return []
+        return _provider_collection([])
 
     monkeypatch.setattr(
-        "multi_agent_brief.sources.web_search.WebSearchProvider.collect",
+        "multi_agent_brief.sources.web_search.WebSearchProvider.collect_with_response",
         no_results,
     )
     assert main(["run", "--workspace", str(workspace), "--runtime", "codex"]) == 0
@@ -1418,6 +1422,89 @@ def test_deterministic_source_failure_exhausts_frozen_route_without_retry(
         json.dumps(request_payload, sort_keys=True),
         encoding="utf-8",
     )
+    original_host_submit = IntakeService._submit_source_pack_from_host
+    host_submit_calls = 0
+    replacement_bytes: list[bytes] = []
+
+    def replace_materialized_pack_then_report_unknown(self, request, pack):
+        nonlocal host_submit_calls
+        host_submit_calls += 1
+        if host_submit_calls == 1:
+            replacement_contents = [
+                f"Replacement content B for {member.member_id}.\n".encode()
+                for member in request.members
+            ]
+            replacement_manifest = deepcopy(manifest_payload)
+            for entry, replacement_content in zip(
+                replacement_manifest["sources"],
+                replacement_contents,
+                strict=True,
+            ):
+                entry["sha256"] = hashlib.sha256(replacement_content).hexdigest()
+            replacement_manifest_bytes = json.dumps(
+                replacement_manifest,
+                sort_keys=True,
+                separators=(",", ":"),
+            ).encode()
+            replacement_manifest_sha = hashlib.sha256(
+                replacement_manifest_bytes
+            ).hexdigest()
+            assert request.manifest_path is not None
+            (workspace / request.manifest_path).write_bytes(replacement_manifest_bytes)
+            replacement_bytes.append(replacement_manifest_bytes)
+            for member, verified, replacement_content in zip(
+                request.members,
+                pack.members,
+                replacement_contents,
+                strict=True,
+            ):
+                replacement_proposal = json.loads(verified.proposal_bytes)
+                replacement_proposal["title"] = (
+                    f"Replacement title B for {member.member_id}"
+                )
+                replacement_proposal["content_sha256"] = hashlib.sha256(
+                    replacement_content
+                ).hexdigest()
+                replacement_proposal["source_manifest_sha256"] = (
+                    replacement_manifest_sha
+                )
+                replacement_proposal_bytes = json.dumps(
+                    replacement_proposal,
+                    sort_keys=True,
+                    separators=(",", ":"),
+                ).encode()
+                (workspace / member.proposal_path).write_bytes(
+                    replacement_proposal_bytes
+                )
+                (workspace / member.content_path).write_bytes(replacement_content)
+                replacement_bytes.extend(
+                    (replacement_proposal_bytes, replacement_content)
+                )
+            replacement_request = request.model_dump(mode="json", exclude_unset=False)
+            replacement_request["expected_manifest_sha256"] = replacement_manifest_sha
+            replacement_request_bytes = json.dumps(
+                replacement_request,
+                sort_keys=True,
+                separators=(",", ":"),
+            ).encode()
+            (
+                workspace / "scratch" / request.invocation_id / "submit_request.json"
+            ).write_bytes(replacement_request_bytes)
+            replacement_bytes.append(replacement_request_bytes)
+        result = original_host_submit(self, request, pack)
+        if host_submit_calls == 1:
+            assert result.status == "committed"
+            return IntakeResult(
+                status="commit_outcome_unknown",
+                error_code="commit_outcome_unknown",
+            )
+        return result
+
+    monkeypatch.setattr(
+        IntakeService,
+        "_submit_source_pack_from_host",
+        replace_materialized_pack_then_report_unknown,
+    )
     assert (
         main(
             [
@@ -1434,7 +1521,8 @@ def test_deterministic_source_failure_exhausts_frozen_route_without_retry(
         == 0
     )
     accepted_manual = json.loads(capsys.readouterr().out)
-    assert accepted_manual["status"] == "committed", accepted_manual
+    assert accepted_manual["status"] == "replayed", accepted_manual
+    assert host_submit_calls == 2
     with SQLiteControlStore.open(workspace / "briefloop.db") as store:
         after_manual = store.current_revision
         snapshot = store.load_snapshot(action["run_id"])
@@ -1460,6 +1548,8 @@ def test_deterministic_source_failure_exhausts_frozen_route_without_retry(
     receipt = snapshot.transactions[-1]
     assert len(receipt.source_ids) == 2
     assert accepted_manual["next_action"]["effect_kind"] == "stage_complete"
+    database_bytes = (workspace / "briefloop.db").read_bytes()
+    assert all(item not in database_bytes for item in replacement_bytes)
 
     manual.write_text("mutated after acceptance\n", encoding="utf-8")
     assert (
@@ -1556,6 +1646,54 @@ def _provider_item(position: int, *, content: str | None = None) -> SourceItem:
     )
 
 
+def _provider_collection(items: list[SourceItem]) -> WebSearchCollection:
+    projections = [
+        {
+            "title": item.title,
+            "url": item.url,
+            "snippet": f"Discovery snippet {position}.",
+            "raw_content": item.content,
+            "published_date": item.published_at or "",
+            "score": 0.9,
+        }
+        for position, item in enumerate(items, start=1)
+    ]
+    normalized = tuple(
+        replace(
+            item,
+            metadata={
+                **item.metadata,
+                "backend": "tavily",
+                "content_shape": "provider_raw_content",
+                "has_raw_content": True,
+                "evidence_quality": "partial_extract",
+                "provider_projection": projection,
+            },
+        )
+        for item, projection in zip(items, projections, strict=True)
+    )
+    response = {
+        "results": [
+            {
+                "title": projection["title"],
+                "url": projection["url"],
+                "content": projection["snippet"],
+                "raw_content": projection["raw_content"],
+                "published_date": projection["published_date"],
+                "score": projection["score"],
+            }
+            for projection in projections
+        ]
+    }
+    return WebSearchCollection(
+        items=normalized,
+        raw_response=json.dumps(response, sort_keys=True, separators=(",", ":")).encode(
+            "utf-8"
+        ),
+        status_code=200,
+    )
+
+
 def test_deterministic_source_acquire_rejects_public_invocation_start_before_mutation(
     tmp_path: Path,
     capsys,
@@ -1571,10 +1709,10 @@ def test_deterministic_source_acquire_rejects_public_invocation_start_before_mut
     def should_not_run(_provider, _query, _config):
         nonlocal provider_calls
         provider_calls += 1
-        return [_provider_item(1)]
+        return _provider_collection([_provider_item(1)])
 
     monkeypatch.setattr(
-        "multi_agent_brief.sources.web_search.WebSearchProvider.collect",
+        "multi_agent_brief.sources.web_search.WebSearchProvider.collect_with_response",
         should_not_run,
     )
     action_path = workspace / "source-acquire-action.json"
@@ -1620,7 +1758,7 @@ def test_deterministic_source_acquire_rejects_public_invocation_start_before_mut
     )
 
 
-def test_provider_result_257_is_zero_mutation_before_invocation(
+def test_provider_result_over_bound_records_one_failed_invocation(
     tmp_path: Path,
     capsys,
     monkeypatch,
@@ -1635,10 +1773,10 @@ def test_provider_result_257_is_zero_mutation_before_invocation(
     def oversized(_provider, _query, _config):
         nonlocal calls
         calls += 1
-        return [_provider_item(position) for position in range(257)]
+        return _provider_collection([_provider_item(position) for position in range(6)])
 
     monkeypatch.setattr(
-        "multi_agent_brief.sources.web_search.WebSearchProvider.collect",
+        "multi_agent_brief.sources.web_search.WebSearchProvider.collect_with_response",
         oversized,
     )
     with SQLiteControlStore.open(workspace / "briefloop.db") as store:
@@ -1649,15 +1787,20 @@ def test_provider_result_257_is_zero_mutation_before_invocation(
         for path in (workspace / "scratch").rglob("*")
     )
 
-    with pytest.raises(RuntimeHostError, match="runtime_source_pack_invalid"):
-        host.apply_current(expected_action=action)
+    rejected = host.apply_current(expected_action=action)
 
     assert calls == 1
+    assert rejected.status == "rejected_recorded"
     with SQLiteControlStore.open(workspace / "briefloop.db") as store:
         after_snapshot = store.load_snapshot(action.run_id)
-        assert store.current_revision == before_revision
-    assert len(after_snapshot.invocations) == len(before_snapshot.invocations)
-    assert len(after_snapshot.transactions) == len(before_snapshot.transactions)
+        assert store.current_revision == before_revision + 2
+    assert len(after_snapshot.invocations) == len(before_snapshot.invocations) + 1
+    assert len(after_snapshot.transactions) == len(before_snapshot.transactions) + 2
+    provider_invocation = next(
+        item for item in after_snapshot.invocations if item.role_id == "source-provider"
+    )
+    assert provider_invocation.status == "failed"
+    assert provider_invocation.failure_reason == "dispatch_unavailable"
     assert (
         sorted(
             path.relative_to(workspace).as_posix()
@@ -1667,7 +1810,7 @@ def test_provider_result_257_is_zero_mutation_before_invocation(
     )
 
 
-def test_provider_256_commits_once_and_store_replay_skips_second_call(
+def test_provider_max_five_commits_once_and_store_replay_skips_second_call(
     tmp_path: Path,
     capsys,
     monkeypatch,
@@ -1682,10 +1825,10 @@ def test_provider_256_commits_once_and_store_replay_skips_second_call(
     def bounded(_provider, _query, _config):
         nonlocal calls
         calls += 1
-        return [_provider_item(position) for position in range(256)]
+        return _provider_collection([_provider_item(position) for position in range(5)])
 
     monkeypatch.setattr(
-        "multi_agent_brief.sources.web_search.WebSearchProvider.collect",
+        "multi_agent_brief.sources.web_search.WebSearchProvider.collect_with_response",
         bounded,
     )
 
@@ -1708,11 +1851,11 @@ def test_provider_256_commits_once_and_store_replay_skips_second_call(
         if item.transaction_id == committed.transaction_id
     )
     assert len(provider_invocations) == 1
-    assert len(snapshot.sources) == 256
-    assert len(receipt.source_ids) == 256
+    assert len(snapshot.sources) == 5
+    assert len(receipt.source_ids) == 5
 
 
-def test_provider_duplicate_identity_is_deduped_or_conflicts_before_invocation(
+def test_provider_duplicate_identity_is_rejected_after_one_call(
     tmp_path: Path,
     capsys,
     monkeypatch,
@@ -1724,13 +1867,22 @@ def test_provider_duplicate_identity_is_deduped_or_conflicts_before_invocation(
     host, action = _advance_to_source_route(workspace, capsys, route="web-search")
     item = _provider_item(1)
     monkeypatch.setattr(
-        "multi_agent_brief.sources.web_search.WebSearchProvider.collect",
-        lambda _provider, _query, _config: [item, item],
+        "multi_agent_brief.sources.web_search.WebSearchProvider.collect_with_response",
+        lambda _provider, _query, _config: _provider_collection([item, item]),
     )
-    committed = host.apply_current(expected_action=action)
-    assert committed.status == "committed"
+    identical_rejected = host.apply_current(expected_action=action)
+    assert identical_rejected.status == "rejected_recorded"
     with SQLiteControlStore.open(workspace / "briefloop.db") as store:
-        assert len(store.load_snapshot(action.run_id).sources) == 1
+        identical_snapshot = store.load_snapshot(action.run_id)
+    assert identical_snapshot.sources == ()
+    assert (
+        next(
+            item
+            for item in identical_snapshot.invocations
+            if item.role_id == "source-provider"
+        ).status
+        == "failed"
+    )
 
     conflicting_workspace = _external_workspace(tmp_path / "conflicting")
     conflicting_host, conflicting_action = _advance_to_source_route(
@@ -1741,20 +1893,22 @@ def test_provider_duplicate_identity_is_deduped_or_conflicts_before_invocation(
     first = _provider_item(2)
     second = _provider_item(2, content="Different bytes under one source identity.")
     monkeypatch.setattr(
-        "multi_agent_brief.sources.web_search.WebSearchProvider.collect",
-        lambda _provider, _query, _config: [first, second],
+        "multi_agent_brief.sources.web_search.WebSearchProvider.collect_with_response",
+        lambda _provider, _query, _config: _provider_collection([first, second]),
     )
     with SQLiteControlStore.open(conflicting_workspace / "briefloop.db") as store:
         before_revision = store.current_revision
         before_invocations = len(
             store.load_snapshot(conflicting_action.run_id).invocations
         )
-    with pytest.raises(RuntimeHostError, match="runtime_source_pack_invalid"):
-        conflicting_host.apply_current(expected_action=conflicting_action)
+    conflicting_rejected = conflicting_host.apply_current(
+        expected_action=conflicting_action
+    )
+    assert conflicting_rejected.status == "rejected_recorded"
     with SQLiteControlStore.open(conflicting_workspace / "briefloop.db") as store:
         snapshot = store.load_snapshot(conflicting_action.run_id)
-        assert store.current_revision == before_revision
-    assert len(snapshot.invocations) == before_invocations
+        assert store.current_revision == before_revision + 2
+    assert len(snapshot.invocations) == before_invocations + 1
 
 
 def test_overlapping_cached_roots_fail_before_provider_and_invocation(
@@ -1827,10 +1981,10 @@ def test_source_pack_resume_reuses_staged_set_and_same_invocation(
     def one_result(_provider, _query, _config):
         nonlocal provider_calls
         provider_calls += 1
-        return [_provider_item(1)]
+        return _provider_collection([_provider_item(1)])
 
     monkeypatch.setattr(
-        "multi_agent_brief.sources.web_search.WebSearchProvider.collect",
+        "multi_agent_brief.sources.web_search.WebSearchProvider.collect_with_response",
         one_result,
     )
     original_start = RuntimeHostService._start_invocation_for_action
@@ -1940,10 +2094,10 @@ def test_missing_stage_after_invocation_records_one_failure_without_provider(
     def should_not_run(_provider, _query, _config):
         nonlocal provider_calls
         provider_calls += 1
-        return [_provider_item(1)]
+        return _provider_collection([_provider_item(1)])
 
     monkeypatch.setattr(
-        "multi_agent_brief.sources.web_search.WebSearchProvider.collect",
+        "multi_agent_brief.sources.web_search.WebSearchProvider.collect_with_response",
         should_not_run,
     )
 
@@ -1978,19 +2132,19 @@ def test_source_pack_commit_outcome_unknown_replays_identical_request(
     def one_result(_provider, _query, _config):
         nonlocal provider_calls
         provider_calls += 1
-        return [_provider_item(1)]
+        return _provider_collection([_provider_item(1)])
 
     monkeypatch.setattr(
-        "multi_agent_brief.sources.web_search.WebSearchProvider.collect",
+        "multi_agent_brief.sources.web_search.WebSearchProvider.collect_with_response",
         one_result,
     )
-    original_submit = IntakeService.submit_source_pack
+    original_submit = IntakeService._submit_source_pack_from_host
     submit_calls = 0
 
-    def unknown_after_commit(self, request_path):
+    def unknown_after_commit(self, request, pack):
         nonlocal submit_calls
         submit_calls += 1
-        result = original_submit(self, request_path)
+        result = original_submit(self, request, pack)
         if submit_calls == 1:
             assert result.status == "committed"
             return IntakeResult(
@@ -1999,7 +2153,11 @@ def test_source_pack_commit_outcome_unknown_replays_identical_request(
             )
         return result
 
-    monkeypatch.setattr(IntakeService, "submit_source_pack", unknown_after_commit)
+    monkeypatch.setattr(
+        IntakeService,
+        "_submit_source_pack_from_host",
+        unknown_after_commit,
+    )
     with SQLiteControlStore.open(workspace / "briefloop.db") as store:
         before_revision = store.current_revision
 

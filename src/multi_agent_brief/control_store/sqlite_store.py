@@ -64,6 +64,7 @@ from multi_agent_brief.contracts.v2 import (
     ArtifactSupersessionRecord,
     RunContractBinding,
     RunExecutionAuthorization,
+    RunSourceDiscoveryAuthorization,
     RunIdentity,
     RunIntegrityRecord,
     RunArchiveArtifactBinding,
@@ -114,6 +115,7 @@ _EXTENDED_RECORD_MODELS = (
     ProposalSourceBinding,
     RunContractBinding,
     RunExecutionAuthorization,
+    RunSourceDiscoveryAuthorization,
     OwnedArtifactSubmissionRecord,
     StageTransitionRecord,
     StageArtifactBinding,
@@ -208,9 +210,7 @@ def _validate_blob_topology(
             if allow_missing:
                 return False
             if require_blob and blob_path is not None:
-                raise ControlStoreIntegrityError(
-                    missing_blob_error_code or error_code
-                )
+                raise ControlStoreIntegrityError(missing_blob_error_code or error_code)
             fail()
         except OSError as exc:
             fail(exc)
@@ -268,9 +268,7 @@ def _validate_blob_topology(
             mode = blob_path.lstat().st_mode
         except FileNotFoundError:
             if require_blob:
-                raise ControlStoreIntegrityError(
-                    missing_blob_error_code or error_code
-                )
+                raise ControlStoreIntegrityError(missing_blob_error_code or error_code)
             return ()
         except OSError as exc:
             fail(exc)
@@ -348,6 +346,7 @@ class ControlStoreSnapshot:
     proposal_source_bindings: tuple[ProposalSourceBinding, ...]
     run_contract_bindings: tuple[RunContractBinding, ...]
     run_execution_authorizations: tuple[RunExecutionAuthorization, ...]
+    run_source_discovery_authorizations: tuple[RunSourceDiscoveryAuthorization, ...]
     owned_artifact_submissions: tuple[OwnedArtifactSubmissionRecord, ...]
     stage_transitions: tuple[StageTransitionRecord, ...]
     stage_artifact_bindings: tuple[StageArtifactBinding, ...]
@@ -448,7 +447,10 @@ class ControlStoreHistory:
         )
         if not transactions:
             raise ControlStoreStateError("run_not_found_at_revision")
-        def relation_keys(name: str, fields: tuple[str, ...]) -> set[tuple[object, ...]]:
+
+        def relation_keys(
+            name: str, fields: tuple[str, ...]
+        ) -> set[tuple[object, ...]]:
             return {
                 tuple(getattr(reference, field) for field in fields)
                 for receipt in transactions
@@ -458,9 +460,7 @@ class ControlStoreHistory:
         event_ids = {
             event_id for receipt in transactions for event_id in receipt.event_ids
         }
-        revision_keys = relation_keys(
-            "artifact_revisions", ("artifact_id", "revision")
-        )
+        revision_keys = relation_keys("artifact_revisions", ("artifact_id", "revision"))
         identity_ids = {
             reference.artifact_id
             for receipt in transactions
@@ -493,9 +493,7 @@ class ControlStoreHistory:
         if set(revisions_by_artifact) - identity_ids:
             raise ControlStoreIntegrityError("snapshot_history_invalid")
         artifacts: list[ArtifactRecord] = []
-        for identity in sorted(
-            artifact_identities, key=lambda item: item.artifact_id
-        ):
+        for identity in sorted(artifact_identities, key=lambda item: item.artifact_id):
             revisions = sorted(
                 revisions_by_artifact.get(identity.artifact_id, []),
                 key=lambda item: item.revision,
@@ -562,7 +560,9 @@ class ControlStoreHistory:
                 },
                 strict=True,
             )
-            for transition in sorted(latest_stage.values(), key=lambda item: item.stage_id)
+            for transition in sorted(
+                latest_stage.values(), key=lambda item: item.stage_id
+            )
         )
 
         sources = tuple(item for item in full.sources if item.source_id in source_ids)
@@ -602,7 +602,10 @@ class ControlStoreHistory:
         }
         rejections: dict[str, tuple[int, EventEnvelope]] = {}
         for event in events:
-            if event.intake_binding is None or event.intake_binding.outcome != "rejected":
+            if (
+                event.intake_binding is None
+                or event.intake_binding.outcome != "rejected"
+            ):
                 continue
             owner_revision = global_revision.get((run_id, event.transaction_id))
             if owner_revision is None:
@@ -651,6 +654,11 @@ class ControlStoreHistory:
             "run_execution_authorizations",
             ("authorization_id",),
             full.run_execution_authorizations,
+        )
+        run_source_discovery_authorizations = selected(
+            "run_source_discovery_authorizations",
+            ("authorization_id",),
+            full.run_source_discovery_authorizations,
         )
         stage_artifact_bindings = selected(
             "stage_artifact_bindings",
@@ -764,11 +772,13 @@ class ControlStoreHistory:
             for reference in receipt.checkout_revisions
         }
         checkout_revisions = tuple(
-            item for item in full.checkout_revisions
+            item
+            for item in full.checkout_revisions
             if item.checkout_revision_id in checkout_revision_ids
         )
         checkout_revision_members = tuple(
-            item for item in full.checkout_revision_members
+            item
+            for item in full.checkout_revision_members
             if item.checkout_revision_id in checkout_revision_ids
         )
         binding_transaction_ids = {
@@ -777,7 +787,8 @@ class ControlStoreHistory:
             for reference in receipt.receipt_checkout_bindings
         }
         receipt_checkout_bindings = tuple(
-            item for item in full.receipt_checkout_bindings
+            item
+            for item in full.receipt_checkout_bindings
             if item.transaction_id in binding_transaction_ids
         )
         intent_revision_ids = {
@@ -786,11 +797,13 @@ class ControlStoreHistory:
             for reference in receipt.checkout_publication_intents
         }
         checkout_publication_intents = tuple(
-            item for item in full.checkout_publication_intents
+            item
+            for item in full.checkout_publication_intents
             if item.identity.checkout_revision_id in intent_revision_ids
         )
         checkout_publication_members = tuple(
-            item for item in full.checkout_publication_members
+            item
+            for item in full.checkout_publication_members
             if item.identity.checkout_revision_id in intent_revision_ids
         )
         workspace_run_head = self._workspace_head_at_revision(committed_revision)
@@ -816,6 +829,7 @@ class ControlStoreHistory:
             proposal_source_bindings=proposal_source_bindings,
             run_contract_bindings=run_contract_bindings,
             run_execution_authorizations=run_execution_authorizations,
+            run_source_discovery_authorizations=run_source_discovery_authorizations,
             owned_artifact_submissions=owned_artifact_submissions,
             stage_transitions=stage_transitions,
             stage_artifact_bindings=stage_artifact_bindings,
@@ -884,11 +898,17 @@ class ControlStoreHistory:
                 for transition in snapshot.run_head_transitions
                 if (
                     revision_by_transaction.get(
-                        (transition.successor_run_id, transition.accepted_transaction_id)
+                        (
+                            transition.successor_run_id,
+                            transition.accepted_transaction_id,
+                        )
                     )
                     is not None
                     and revision_by_transaction[
-                        (transition.successor_run_id, transition.accepted_transaction_id)
+                        (
+                            transition.successor_run_id,
+                            transition.accepted_transaction_id,
+                        )
                     ]
                     <= committed_revision
                 )
@@ -1201,7 +1221,9 @@ class SQLiteControlStore:
                 intents[0],
                 tuple(filter(match, snapshot.checkout_publication_members)),
                 tuple(filter(match, snapshot.checkout_publication_acks)),
-                tuple(filter(match, snapshot.checkout_publication_cleanup_observations)),
+                tuple(
+                    filter(match, snapshot.checkout_publication_cleanup_observations)
+                ),
             )
 
     def append_checkout_publication_acks(
@@ -1216,26 +1238,30 @@ class SQLiteControlStore:
         if any(item.identity != identity for item in records):
             raise ControlStoreIntegrityError("checkout_publication_journal_invalid")
         with self._lock:
-            intent, members, existing, _observations = self.load_checkout_publication(identity)
+            intent, members, existing, _observations = self.load_checkout_publication(
+                identity
+            )
             if existing:
                 if existing == records:
                     return
                 raise ControlStoreIntegrityError("checkout_publication_journal_invalid")
             ordered = tuple(sorted(records, key=lambda item: item.ordinal))
-            if (
-                len(ordered) != intent.changed_member_count
-                or [item.ordinal for item in ordered] != list(range(len(members)))
-            ):
+            if len(ordered) != intent.changed_member_count or [
+                item.ordinal for item in ordered
+            ] != list(range(len(members))):
                 raise ControlStoreIntegrityError("checkout_publication_journal_invalid")
             for ack, member in zip(ordered, members, strict=True):
                 if (
-                    ack.publication_identity_sha256 != intent.publication_identity_sha256
+                    ack.publication_identity_sha256
+                    != intent.publication_identity_sha256
                     or ack.capability_profile_sha256 != intent.capability_profile_sha256
                     or ack.post_kind != member.post_kind
                     or ack.post_sha256 != member.post_sha256
                     or ack.post_size != member.post_size
                 ):
-                    raise ControlStoreIntegrityError("checkout_publication_journal_invalid")
+                    raise ControlStoreIntegrityError(
+                        "checkout_publication_journal_invalid"
+                    )
             try:
                 self._connection.execute("BEGIN IMMEDIATE")
                 for ack in ordered:
@@ -1243,12 +1269,20 @@ class SQLiteControlStore:
                     self._connection.execute(
                         "INSERT INTO checkout_publication_acks VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
                         (
-                            item.workspace_id, item.run_id, item.transaction_id,
-                            item.checkout_revision_id, ack.ordinal,
-                            ack.schema_version, ack.publication_identity_sha256,
-                            ack.capability_profile_sha256, ack.post_kind,
-                            ack.post_sha256, ack.post_size, ack.verification,
-                            ack.cleanup_policy, ack.appended_at,
+                            item.workspace_id,
+                            item.run_id,
+                            item.transaction_id,
+                            item.checkout_revision_id,
+                            ack.ordinal,
+                            ack.schema_version,
+                            ack.publication_identity_sha256,
+                            ack.capability_profile_sha256,
+                            ack.post_kind,
+                            ack.post_sha256,
+                            ack.post_size,
+                            ack.verification,
+                            ack.cleanup_policy,
+                            ack.appended_at,
                             _canonical_record_text(ack),
                         ),
                     )
@@ -1270,7 +1304,9 @@ class SQLiteControlStore:
                 for record in records:
                     identity = record.identity
                     semantic_payload = {
-                        "identity": identity.model_dump(mode="json", exclude_unset=False),
+                        "identity": identity.model_dump(
+                            mode="json", exclude_unset=False
+                        ),
                         "ordinal": record.ordinal,
                         "auxiliary_role": record.auxiliary_role,
                         "reason_code": record.reason_code,
@@ -1332,9 +1368,12 @@ class SQLiteControlStore:
                         existing = _decode_record(
                             CheckoutPublicationCleanupObservation, str(row[0])
                         )
-                        if existing.model_copy(
-                            update={"appended_at": record.appended_at}
-                        ) != record:
+                        if (
+                            existing.model_copy(
+                                update={"appended_at": record.appended_at}
+                            )
+                            != record
+                        ):
                             raise ControlStoreIntegrityError(
                                 "checkout_publication_journal_invalid"
                             )
@@ -1343,14 +1382,22 @@ class SQLiteControlStore:
                         "INSERT INTO checkout_publication_cleanup_observations VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
                         (
                             record.cleanup_observation_id,
-                            identity.workspace_id, identity.run_id,
-                            identity.transaction_id, identity.checkout_revision_id,
-                            record.ordinal, record.schema_version,
-                            record.auxiliary_role, record.reason_code,
-                            record.expected_kind, record.expected_sha256,
-                            record.expected_size, record.observed_kind,
-                            record.observed_sha256, record.observed_size,
-                            record.appended_at, _canonical_record_text(record),
+                            identity.workspace_id,
+                            identity.run_id,
+                            identity.transaction_id,
+                            identity.checkout_revision_id,
+                            record.ordinal,
+                            record.schema_version,
+                            record.auxiliary_role,
+                            record.reason_code,
+                            record.expected_kind,
+                            record.expected_sha256,
+                            record.expected_size,
+                            record.observed_kind,
+                            record.observed_sha256,
+                            record.observed_size,
+                            record.appended_at,
+                            _canonical_record_text(record),
                         ),
                     )
                 self._connection.commit()
@@ -1497,6 +1544,9 @@ class SQLiteControlStore:
                 self._insert_run_execution_authorization(
                     uow._run_execution_authorization
                 )
+                self._insert_run_source_discovery_authorization(
+                    uow._run_source_discovery_authorization
+                )
                 self._insert_owned_artifact_submissions(
                     uow._owned_artifact_submissions.values()
                 )
@@ -1504,22 +1554,16 @@ class SQLiteControlStore:
                 self._insert_stage_artifact_bindings(
                     uow._stage_artifact_bindings.values()
                 )
-                self._insert_stage_gate_bindings(
-                    uow._stage_gate_bindings.values()
-                )
+                self._insert_stage_gate_bindings(uow._stage_gate_bindings.values())
                 self._insert_claims(uow._claims.values())
-                self._insert_claim_source_bindings(
-                    uow._claim_source_bindings.values()
-                )
+                self._insert_claim_source_bindings(uow._claim_source_bindings.values())
                 self._insert_claim_freezes(uow._claim_freezes.values())
                 self._insert_gate_evaluations(uow._gate_evaluations.values())
                 self._insert_gate_findings(uow._gate_findings.values())
                 self._insert_gate_artifact_bindings(
                     uow._gate_artifact_bindings.values()
                 )
-                self._insert_run_integrity_records(
-                    uow._run_integrity_records.values()
-                )
+                self._insert_run_integrity_records(uow._run_integrity_records.values())
                 self._insert_gate_repair_records(uow)
                 self._insert_pr4b_records(uow)
                 self._insert_checkout_records(uow)
@@ -1593,13 +1637,16 @@ class SQLiteControlStore:
         for artifact_id, revision in staged_revision_keys:
             if artifact_id not in staged_artifact_ids | existing_artifact_ids:
                 raise ControlStoreConflict("relational_integrity_conflict")
-            if self._connection.execute(
-                """
+            if (
+                self._connection.execute(
+                    """
                 SELECT 1 FROM artifact_revisions
                 WHERE run_id = ? AND artifact_id = ? AND revision = ?
                 """,
-                (run_id, artifact_id, revision),
-            ).fetchone() is not None:
+                    (run_id, artifact_id, revision),
+                ).fetchone()
+                is not None
+            ):
                 # Exact transaction replay returned before this preflight. Any
                 # remaining revision-key collision belongs to different intent.
                 raise ControlStoreConflict("relational_integrity_conflict")
@@ -1621,9 +1668,7 @@ class SQLiteControlStore:
                 (run_id, record.artifact_id),
             ).fetchone()
             if (artifact_row is None) != (identity_row is None):
-                raise ControlStoreIntegrityError(
-                    "transaction_ledger_integrity_invalid"
-                )
+                raise ControlStoreIntegrityError("transaction_ledger_integrity_invalid")
             if artifact_row is None:
                 identity = ArtifactIdentityRecord.model_validate(
                     {
@@ -1869,14 +1914,35 @@ class SQLiteControlStore:
         }
 
         binding = uow._run_contract_binding
+        existing_binding_row = self._connection.execute(
+            """
+            SELECT contract_fingerprint
+            FROM run_contract_bindings
+            WHERE run_id = ?
+            """,
+            (run_id,),
+        ).fetchone()
+        binding_fingerprint = (
+            binding.contract_fingerprint
+            if binding is not None
+            else (
+                None if existing_binding_row is None else str(existing_binding_row[0])
+            )
+        )
         if binding is not None:
             refs = {
-                (binding.stage_specs_artifact.artifact_id, binding.stage_specs_artifact.revision),
+                (
+                    binding.stage_specs_artifact.artifact_id,
+                    binding.stage_specs_artifact.revision,
+                ),
                 (
                     binding.artifact_contracts_artifact.artifact_id,
                     binding.artifact_contracts_artifact.revision,
                 ),
-                (binding.policy_pack_artifact.artifact_id, binding.policy_pack_artifact.revision),
+                (
+                    binding.policy_pack_artifact.artifact_id,
+                    binding.policy_pack_artifact.revision,
+                ),
             }
             if (
                 binding.accepted_transaction_id != uow.transaction_id
@@ -1888,17 +1954,47 @@ class SQLiteControlStore:
         execution_authorization = uow._run_execution_authorization
         if execution_authorization is not None:
             if (
-                execution_authorization.accepted_transaction_id
-                != uow.transaction_id
+                execution_authorization.accepted_transaction_id != uow.transaction_id
                 or execution_authorization.authorization_event_id not in staged_events
                 or (
                     execution_authorization.source_manifest_artifact.artifact_id,
                     execution_authorization.source_manifest_artifact.revision,
                 )
                 not in available_revisions
-                or binding is None
                 or execution_authorization.run_contract_fingerprint
+                != binding_fingerprint
+            ):
+                raise ControlStoreConflict("relational_integrity_conflict")
+
+        source_discovery_authorization = uow._run_source_discovery_authorization
+        if source_discovery_authorization is not None:
+            if (
+                source_discovery_authorization.accepted_transaction_id
+                != uow.transaction_id
+                or source_discovery_authorization.authorization_event_id
+                not in staged_events
+                or binding is None
+                or source_discovery_authorization.run_contract_fingerprint
                 != binding.contract_fingerprint
+            ):
+                raise ControlStoreConflict("relational_integrity_conflict")
+        for (
+            authorization_id,
+            referenced,
+        ) in uow._referenced_source_discovery_authorizations.items():
+            if source_discovery_authorization is not None and (
+                authorization_id == source_discovery_authorization.authorization_id
+            ):
+                continue
+            row = self._connection.execute(
+                "SELECT payload_json FROM run_source_discovery_authorizations "
+                "WHERE run_id=? AND authorization_id=?",
+                (run_id, authorization_id),
+            ).fetchone()
+            if (
+                row is None
+                or _decode_record(RunSourceDiscoveryAuthorization, str(row[0]))
+                != referenced
             ):
                 raise ControlStoreConflict("relational_integrity_conflict")
 
@@ -1952,6 +2048,7 @@ class SQLiteControlStore:
             (
                 uow._run_contract_binding is not None,
                 uow._run_execution_authorization is not None,
+                uow._run_source_discovery_authorization is not None,
                 bool(uow._owned_artifact_submissions),
                 bool(uow._stage_transitions),
                 bool(uow._claims),
@@ -2027,8 +2124,14 @@ class SQLiteControlStore:
             if (
                 record.accepted_transaction_id != uow.transaction_id
                 or record.evaluation_id not in available_evaluations
-                or (record.claim_id is not None and record.claim_id not in available_claims)
-                or (record.source_id is not None and record.source_id not in available_sources)
+                or (
+                    record.claim_id is not None
+                    and record.claim_id not in available_claims
+                )
+                or (
+                    record.source_id is not None
+                    and record.source_id not in available_sources
+                )
             ):
                 raise ControlStoreConflict("relational_integrity_conflict")
         for record in uow._gate_artifact_bindings.values():
@@ -2176,9 +2279,11 @@ class SQLiteControlStore:
             *uow._delivery_results.values(),
         )
         for record in records:
-            if getattr(record, "run_id", None) != run_id or getattr(
-                record, "accepted_transaction_id", None
-            ) != uow.transaction_id:
+            if (
+                getattr(record, "run_id", None) != run_id
+                or getattr(record, "accepted_transaction_id", None)
+                != uow.transaction_id
+            ):
                 raise ControlStoreConflict("relational_integrity_conflict")
         for transition in uow._run_head_transitions.values():
             if (
@@ -2215,7 +2320,9 @@ class SQLiteControlStore:
                 if getattr(record, field) not in staged_events:
                     raise ControlStoreConflict("relational_integrity_conflict")
         for completion in uow._repair_completions.values():
-            if set(completion.supersession_ids) != set(uow._artifact_supersessions) and not all(
+            if set(completion.supersession_ids) != set(
+                uow._artifact_supersessions
+            ) and not all(
                 self._connection.execute(
                     "SELECT 1 FROM artifact_supersessions WHERE run_id=? AND supersession_id=?",
                     (run_id, item),
@@ -2223,18 +2330,32 @@ class SQLiteControlStore:
                 for item in completion.supersession_ids
             ):
                 raise ControlStoreConflict("relational_integrity_conflict")
-            if len(completion.reopened_transition_ids) != len(set(completion.reopened_transition_ids)):
+            if len(completion.reopened_transition_ids) != len(
+                set(completion.reopened_transition_ids)
+            ):
                 raise ControlStoreConflict("relational_integrity_conflict")
         for render in uow._finalize_renders.values():
             if not render.reader_artifacts:
                 raise ControlStoreConflict("relational_integrity_conflict")
         for archive in uow._run_archives.values():
-            bindings = [item for item in uow._run_archive_artifact_bindings.values() if item.archive_id == archive.archive_id]
-            if len(bindings) != archive.included_count or sorted(item.position for item in bindings) != list(range(len(bindings))):
+            bindings = [
+                item
+                for item in uow._run_archive_artifact_bindings.values()
+                if item.archive_id == archive.archive_id
+            ]
+            if len(bindings) != archive.included_count or sorted(
+                item.position for item in bindings
+            ) != list(range(len(bindings))):
                 raise ControlStoreConflict("relational_integrity_conflict")
         for package in uow._package_ready_records.values():
-            bindings = [item for item in uow._package_artifact_bindings.values() if item.package_id == package.package_id]
-            if len(bindings) != package.artifact_count or sorted(item.position for item in bindings) != list(range(len(bindings))):
+            bindings = [
+                item
+                for item in uow._package_artifact_bindings.values()
+                if item.package_id == package.package_id
+            ]
+            if len(bindings) != package.artifact_count or sorted(
+                item.position for item in bindings
+            ) != list(range(len(bindings))):
                 raise ControlStoreConflict("relational_integrity_conflict")
 
     def _build_receipt(
@@ -2279,17 +2400,26 @@ class SQLiteControlStore:
                         else []
                     ),
                     "run_execution_authorizations": (
-                        [{"authorization_id": uow._run_execution_authorization.authorization_id}]
+                        [
+                            {
+                                "authorization_id": uow._run_execution_authorization.authorization_id
+                            }
+                        ]
                         if uow._run_execution_authorization is not None
                         else []
                     ),
+                    "run_source_discovery_authorizations": [
+                        {"authorization_id": authorization_id}
+                        for authorization_id in sorted(
+                            uow._referenced_source_discovery_authorizations
+                        )
+                    ],
                     "owned_artifact_submissions": [
                         {"submission_id": key}
                         for key in sorted(uow._owned_artifact_submissions)
                     ],
                     "stage_transitions": [
-                        {"transition_id": key}
-                        for key in sorted(uow._stage_transitions)
+                        {"transition_id": key} for key in sorted(uow._stage_transitions)
                     ],
                     "stage_artifact_bindings": [
                         {"transition_id": key[0], "position": key[1]}
@@ -2299,20 +2429,16 @@ class SQLiteControlStore:
                         {"transition_id": key[0], "gate_id": key[1]}
                         for key in sorted(uow._stage_gate_bindings)
                     ],
-                    "claims": [
-                        {"claim_id": key} for key in sorted(uow._claims)
-                    ],
+                    "claims": [{"claim_id": key} for key in sorted(uow._claims)],
                     "claim_source_bindings": [
                         {"claim_id": key[0], "source_id": key[1]}
                         for key in sorted(uow._claim_source_bindings)
                     ],
                     "claim_freezes": [
-                        {"freeze_id": key}
-                        for key in sorted(uow._claim_freezes)
+                        {"freeze_id": key} for key in sorted(uow._claim_freezes)
                     ],
                     "gate_evaluations": [
-                        {"evaluation_id": key}
-                        for key in sorted(uow._gate_evaluations)
+                        {"evaluation_id": key} for key in sorted(uow._gate_evaluations)
                     ],
                     "gate_findings": [
                         {"evaluation_id": key[0], "finding_id": key[1]}
@@ -2326,7 +2452,9 @@ class SQLiteControlStore:
                         {"integrity_revision": key}
                         for key in sorted(uow._run_integrity_records)
                     ],
-                    "repair_cycles": [{"repair_id": key} for key in sorted(uow._repair_cycles)],
+                    "repair_cycles": [
+                        {"repair_id": key} for key in sorted(uow._repair_cycles)
+                    ],
                     "gate_repair_cycles": [
                         {"gate_repair_id": key}
                         for key in sorted(uow._gate_repair_cycles)
@@ -2338,30 +2466,60 @@ class SQLiteControlStore:
                     "gate_repair_outcomes": [
                         {"outcome_id": key} for key in sorted(uow._gate_repair_outcomes)
                     ],
-                    "artifact_supersessions": [{"supersession_id": key} for key in sorted(uow._artifact_supersessions)],
-                    "repair_completions": [{"repair_completion_id": key} for key in sorted(uow._repair_completions)],
-                    "recovery_completions": [{"recovery_id": key} for key in sorted(uow._recovery_completions)],
-                    "run_head_transitions": [{"head_transition_id": key} for key in sorted(uow._run_head_transitions)],
-                    "finalize_renders": [{"render_id": key} for key in sorted(uow._finalize_renders)],
-                    "finalizations": [{"finalization_id": key} for key in sorted(uow._finalizations)],
-                    "run_archives": [{"archive_id": key} for key in sorted(uow._run_archives)],
+                    "artifact_supersessions": [
+                        {"supersession_id": key}
+                        for key in sorted(uow._artifact_supersessions)
+                    ],
+                    "repair_completions": [
+                        {"repair_completion_id": key}
+                        for key in sorted(uow._repair_completions)
+                    ],
+                    "recovery_completions": [
+                        {"recovery_id": key}
+                        for key in sorted(uow._recovery_completions)
+                    ],
+                    "run_head_transitions": [
+                        {"head_transition_id": key}
+                        for key in sorted(uow._run_head_transitions)
+                    ],
+                    "finalize_renders": [
+                        {"render_id": key} for key in sorted(uow._finalize_renders)
+                    ],
+                    "finalizations": [
+                        {"finalization_id": key} for key in sorted(uow._finalizations)
+                    ],
+                    "run_archives": [
+                        {"archive_id": key} for key in sorted(uow._run_archives)
+                    ],
                     "run_archive_artifact_bindings": [
                         {"archive_id": key[0], "position": key[1]}
                         for key in sorted(uow._run_archive_artifact_bindings)
                     ],
-                    "package_ready_records": [{"package_id": key} for key in sorted(uow._package_ready_records)],
+                    "package_ready_records": [
+                        {"package_id": key}
+                        for key in sorted(uow._package_ready_records)
+                    ],
                     "package_artifact_bindings": [
                         {"package_id": key[0], "position": key[1]}
                         for key in sorted(uow._package_artifact_bindings)
                     ],
-                    "approvals": [{"approval_id": key} for key in sorted(uow._approvals)],
+                    "approvals": [
+                        {"approval_id": key} for key in sorted(uow._approvals)
+                    ],
                     "approval_package_bindings": [
                         {"approval_id": key[0], "package_id": key[1]}
                         for key in sorted(uow._approval_package_bindings)
                     ],
-                    "delivery_authorizations": [{"authorization_id": key} for key in sorted(uow._delivery_authorizations)],
-                    "delivery_attempts": [{"attempt_id": key} for key in sorted(uow._delivery_attempts)],
-                    "delivery_results": [{"result_id": key} for key in sorted(uow._delivery_results)],
+                    "delivery_authorizations": [
+                        {"authorization_id": key}
+                        for key in sorted(uow._delivery_authorizations)
+                    ],
+                    "delivery_attempts": [
+                        {"attempt_id": key} for key in sorted(uow._delivery_attempts)
+                    ],
+                    "delivery_results": [
+                        {"result_id": key} for key in sorted(uow._delivery_results)
+                    ],
                     "checkout_revisions": [
                         {"checkout_revision_id": key}
                         for key in sorted(uow._checkout_revisions)
@@ -2408,7 +2566,8 @@ class SQLiteControlStore:
         revision_members = tuple(
             sorted(
                 (
-                    item for item in members
+                    item
+                    for item in members
                     if item.checkout_revision_id == revision.checkout_revision_id
                 ),
                 key=lambda item: item.ordinal,
@@ -2427,10 +2586,8 @@ class SQLiteControlStore:
             or binding.run_id != run_id
             or binding.transaction_id != uow.transaction_id
             or binding.post_run_id != revision.run_id
-            or binding.post_checkout_revision_id
-            != revision.checkout_revision_id
-            or binding.pre_checkout_revision_id
-            != revision.parent_checkout_revision_id
+            or binding.post_checkout_revision_id != revision.checkout_revision_id
+            or binding.pre_checkout_revision_id != revision.parent_checkout_revision_id
         ):
             raise ControlStoreConflict("relational_integrity_conflict")
         available = {
@@ -2489,9 +2646,7 @@ class SQLiteControlStore:
             try:
                 pre_snapshot = self.load_snapshot(binding.pre_run_id)
             except ControlStoreError as exc:
-                raise ControlStoreConflict(
-                    "relational_integrity_conflict"
-                ) from exc
+                raise ControlStoreConflict("relational_integrity_conflict") from exc
             pre_records = tuple(
                 item
                 for item in pre_snapshot.checkout_revisions
@@ -2504,8 +2659,7 @@ class SQLiteControlStore:
                     (
                         item
                         for item in pre_snapshot.checkout_revision_members
-                        if item.checkout_revision_id
-                        == binding.pre_checkout_revision_id
+                        if item.checkout_revision_id == binding.pre_checkout_revision_id
                     ),
                     key=lambda item: item.ordinal,
                 )
@@ -2525,8 +2679,7 @@ class SQLiteControlStore:
             or binding.transaction_id != uow.transaction_id
             or binding.post_run_id != run_id
             or binding.post_checkout_revision_id != revision.checkout_revision_id
-            or revision.parent_checkout_revision_id
-            != binding.pre_checkout_revision_id
+            or revision.parent_checkout_revision_id != binding.pre_checkout_revision_id
         ):
             raise ControlStoreConflict("relational_integrity_conflict")
         try:
@@ -3061,6 +3214,47 @@ class SQLiteControlStore:
             ),
         )
 
+    def _insert_run_source_discovery_authorization(
+        self,
+        record: RunSourceDiscoveryAuthorization | None,
+    ) -> None:
+        if record is None:
+            return
+        self._connection.execute(
+            """
+            INSERT INTO run_source_discovery_authorizations(
+                run_id, authorization_id, workspace_id, schema_version,
+                run_contract_fingerprint, run_direction_fingerprint,
+                runtime_source_plan_fingerprint, source_route_fingerprint,
+                route_id, provider_id, execution_owner, credential_env,
+                completion_target, repair_budget, authorization_event_id,
+                accepted_transaction_id, request_fingerprint, created_at,
+                payload_json
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                record.run_id,
+                record.authorization_id,
+                record.workspace_id,
+                record.schema_version,
+                record.run_contract_fingerprint,
+                record.run_direction_fingerprint,
+                record.runtime_source_plan_fingerprint,
+                record.source_route_fingerprint,
+                record.route_id,
+                record.provider_id,
+                record.execution_owner,
+                record.credential_env,
+                record.completion_target,
+                record.repair_budget,
+                record.authorization_event_id,
+                record.accepted_transaction_id,
+                record.request_fingerprint,
+                record.created_at,
+                _canonical_record_text(record),
+            ),
+        )
+
     def _insert_owned_artifact_submissions(
         self,
         records: Iterable[OwnedArtifactSubmissionRecord],
@@ -3509,35 +3703,82 @@ class SQLiteControlStore:
         for record in uow._repair_cycles.values():
             self._connection.execute(
                 "INSERT INTO repair_cycles VALUES (?,?,?,?,?,?,?,?,?,?,?)",
-                (record.run_id, record.repair_id, record.schema_version, record.contamination_revision,
-                 record.owner_stage_id, record.reason_code, record.started_at, record.start_event_id,
-                 record.accepted_transaction_id, record.request_fingerprint, _canonical_record_text(record)),
+                (
+                    record.run_id,
+                    record.repair_id,
+                    record.schema_version,
+                    record.contamination_revision,
+                    record.owner_stage_id,
+                    record.reason_code,
+                    record.started_at,
+                    record.start_event_id,
+                    record.accepted_transaction_id,
+                    record.request_fingerprint,
+                    _canonical_record_text(record),
+                ),
             )
         for record in uow._artifact_supersessions.values():
             self._connection.execute(
                 "INSERT INTO artifact_supersessions VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
-                (record.run_id, record.supersession_id, record.repair_id, record.mode, record.schema_version,
-                 record.prior_artifact.artifact_id, record.prior_artifact.revision, record.successor_artifact.revision,
-                 record.reason_code, record.created_at, record.accepted_event_id, record.accepted_transaction_id,
-                 record.request_fingerprint, _canonical_record_text(record)),
+                (
+                    record.run_id,
+                    record.supersession_id,
+                    record.repair_id,
+                    record.mode,
+                    record.schema_version,
+                    record.prior_artifact.artifact_id,
+                    record.prior_artifact.revision,
+                    record.successor_artifact.revision,
+                    record.reason_code,
+                    record.created_at,
+                    record.accepted_event_id,
+                    record.accepted_transaction_id,
+                    record.request_fingerprint,
+                    _canonical_record_text(record),
+                ),
             )
         for record in uow._repair_completions.values():
             self._connection.execute(
                 "INSERT INTO repair_completions VALUES (?,?,?,?,?,?,?,?,?,?)",
-                (record.run_id, record.repair_completion_id, record.repair_id, record.schema_version,
-                 record.contamination_revision, record.completed_at, record.completion_event_id,
-                 record.accepted_transaction_id, record.request_fingerprint, _canonical_record_text(record)),
+                (
+                    record.run_id,
+                    record.repair_completion_id,
+                    record.repair_id,
+                    record.schema_version,
+                    record.contamination_revision,
+                    record.completed_at,
+                    record.completion_event_id,
+                    record.accepted_transaction_id,
+                    record.request_fingerprint,
+                    _canonical_record_text(record),
+                ),
             )
             for position, value in enumerate(record.supersession_ids):
-                self._connection.execute("INSERT INTO repair_completion_supersessions VALUES (?,?,?,?)", (record.run_id, record.repair_completion_id, position, value))
+                self._connection.execute(
+                    "INSERT INTO repair_completion_supersessions VALUES (?,?,?,?)",
+                    (record.run_id, record.repair_completion_id, position, value),
+                )
             for position, value in enumerate(record.reopened_transition_ids):
-                self._connection.execute("INSERT INTO repair_completion_transitions VALUES (?,?,?,?)", (record.run_id, record.repair_completion_id, position, value))
+                self._connection.execute(
+                    "INSERT INTO repair_completion_transitions VALUES (?,?,?,?)",
+                    (record.run_id, record.repair_completion_id, position, value),
+                )
         for record in uow._recovery_completions.values():
             self._connection.execute(
                 "INSERT INTO recovery_completions VALUES (?,?,?,?,?,?,?,?,?,?,?)",
-                (record.run_id, record.recovery_id, record.repair_completion_id, record.schema_version,
-                 record.contamination_revision, record.disposition, record.completed_at, record.completion_event_id,
-                 record.accepted_transaction_id, record.request_fingerprint, _canonical_record_text(record)),
+                (
+                    record.run_id,
+                    record.recovery_id,
+                    record.repair_completion_id,
+                    record.schema_version,
+                    record.contamination_revision,
+                    record.disposition,
+                    record.completed_at,
+                    record.completion_event_id,
+                    record.accepted_transaction_id,
+                    record.request_fingerprint,
+                    _canonical_record_text(record),
+                ),
             )
             for table, values in (
                 ("recovery_supersessions", record.supersession_ids),
@@ -3545,24 +3786,51 @@ class SQLiteControlStore:
                 ("recovery_gate_evaluations", record.gate_evaluation_ids),
             ):
                 for position, value in enumerate(values):
-                    self._connection.execute(f"INSERT INTO {table} VALUES (?,?,?,?)", (record.run_id, record.recovery_id, position, value))
+                    self._connection.execute(
+                        f"INSERT INTO {table} VALUES (?,?,?,?)",
+                        (record.run_id, record.recovery_id, position, value),
+                    )
         for record in uow._run_head_transitions.values():
             self._connection.execute(
                 "INSERT INTO run_head_transitions VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
-                (record.workspace_id, record.head_transition_id, record.successor_run_id, record.predecessor_run_id,
-                 record.schema_version, record.prior_workspace_revision, record.successor_workspace_revision,
-                 record.reason_code, record.successor_disposition, record.created_at, record.transition_event_id,
-                 record.accepted_transaction_id, record.request_fingerprint, _canonical_record_text(record)),
+                (
+                    record.workspace_id,
+                    record.head_transition_id,
+                    record.successor_run_id,
+                    record.predecessor_run_id,
+                    record.schema_version,
+                    record.prior_workspace_revision,
+                    record.successor_workspace_revision,
+                    record.reason_code,
+                    record.successor_disposition,
+                    record.created_at,
+                    record.transition_event_id,
+                    record.accepted_transaction_id,
+                    record.request_fingerprint,
+                    _canonical_record_text(record),
+                ),
             )
         for record in uow._finalize_renders.values():
             self._connection.execute(
                 "INSERT INTO finalize_renders VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
-                (record.run_id, record.render_id, record.schema_version, record.audit_proposal_id,
-                 record.audited_brief.artifact_id, record.audited_brief.revision,
-                 record.audit_report.artifact_id, record.audit_report.revision, record.reader_clean_status,
-                 record.policy_result_fingerprint, record.run_contract_fingerprint, record.created_at,
-                 record.render_event_id, record.accepted_transaction_id, record.request_fingerprint,
-                 _canonical_record_text(record)),
+                (
+                    record.run_id,
+                    record.render_id,
+                    record.schema_version,
+                    record.audit_proposal_id,
+                    record.audited_brief.artifact_id,
+                    record.audited_brief.revision,
+                    record.audit_report.artifact_id,
+                    record.audit_report.revision,
+                    record.reader_clean_status,
+                    record.policy_result_fingerprint,
+                    record.run_contract_fingerprint,
+                    record.created_at,
+                    record.render_event_id,
+                    record.accepted_transaction_id,
+                    record.request_fingerprint,
+                    _canonical_record_text(record),
+                ),
             )
             revisions = {
                 (item.record.artifact_id, item.record.revision): item
@@ -3571,62 +3839,219 @@ class SQLiteControlStore:
             for position, reference in enumerate(record.reader_artifacts):
                 revision = revisions.get((reference.artifact_id, reference.revision))
                 if revision is None:
-                    row = self._connection.execute("SELECT sha256 FROM artifact_revisions WHERE run_id=? AND artifact_id=? AND revision=?", (record.run_id, reference.artifact_id, reference.revision)).fetchone()
+                    row = self._connection.execute(
+                        "SELECT sha256 FROM artifact_revisions WHERE run_id=? AND artifact_id=? AND revision=?",
+                        (record.run_id, reference.artifact_id, reference.revision),
+                    ).fetchone()
                     if row is None:
                         raise ControlStoreConflict("relational_integrity_conflict")
                     digest = str(row[0])
                 else:
                     digest = revision.record.sha256
-                self._connection.execute("INSERT INTO finalize_render_artifacts VALUES (?,?,?,?,?,?)", (record.run_id, record.render_id, position, reference.artifact_id, reference.revision, digest))
+                self._connection.execute(
+                    "INSERT INTO finalize_render_artifacts VALUES (?,?,?,?,?,?)",
+                    (
+                        record.run_id,
+                        record.render_id,
+                        position,
+                        reference.artifact_id,
+                        reference.revision,
+                        digest,
+                    ),
+                )
         for record in uow._finalizations.values():
             self._connection.execute(
                 "INSERT INTO finalizations VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)",
-                (record.run_id, record.finalization_id, record.schema_version, record.render_id,
-                 record.finalize_transition_id, record.finalize_gate_batch_id, record.recovery_id,
-                 record.integrity_revision, record.finalized_at, record.finalization_event_id,
-                 record.accepted_transaction_id, record.request_fingerprint, _canonical_record_text(record)),
+                (
+                    record.run_id,
+                    record.finalization_id,
+                    record.schema_version,
+                    record.render_id,
+                    record.finalize_transition_id,
+                    record.finalize_gate_batch_id,
+                    record.recovery_id,
+                    record.integrity_revision,
+                    record.finalized_at,
+                    record.finalization_event_id,
+                    record.accepted_transaction_id,
+                    record.request_fingerprint,
+                    _canonical_record_text(record),
+                ),
             )
             for position, value in enumerate(record.finalize_gate_evaluation_ids):
-                self._connection.execute("INSERT INTO finalization_gate_evaluations VALUES (?,?,?,?)", (record.run_id, record.finalization_id, position, value))
+                self._connection.execute(
+                    "INSERT INTO finalization_gate_evaluations VALUES (?,?,?,?)",
+                    (record.run_id, record.finalization_id, position, value),
+                )
         for record in uow._run_archives.values():
             self._connection.execute(
                 "INSERT INTO run_archives VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)",
-                (record.run_id, record.archive_id, record.schema_version, record.finalization_id,
-                 record.archive_artifact.artifact_id, record.archive_artifact.revision, record.manifest_sha256,
-                 record.included_count, record.created_at, record.archive_event_id, record.accepted_transaction_id,
-                 record.request_fingerprint, _canonical_record_text(record)),
+                (
+                    record.run_id,
+                    record.archive_id,
+                    record.schema_version,
+                    record.finalization_id,
+                    record.archive_artifact.artifact_id,
+                    record.archive_artifact.revision,
+                    record.manifest_sha256,
+                    record.included_count,
+                    record.created_at,
+                    record.archive_event_id,
+                    record.accepted_transaction_id,
+                    record.request_fingerprint,
+                    _canonical_record_text(record),
+                ),
             )
         for record in uow._run_archive_artifact_bindings.values():
-            self._connection.execute("INSERT INTO run_archive_artifact_bindings VALUES (?,?,?,?,?,?,?,?,?,?)", (record.run_id, record.archive_id, record.position, record.schema_version, record.artifact_id, record.artifact_revision, record.artifact_sha256, record.usage, record.accepted_transaction_id, _canonical_record_text(record)))
+            self._connection.execute(
+                "INSERT INTO run_archive_artifact_bindings VALUES (?,?,?,?,?,?,?,?,?,?)",
+                (
+                    record.run_id,
+                    record.archive_id,
+                    record.position,
+                    record.schema_version,
+                    record.artifact_id,
+                    record.artifact_revision,
+                    record.artifact_sha256,
+                    record.usage,
+                    record.accepted_transaction_id,
+                    _canonical_record_text(record),
+                ),
+            )
         for record in uow._package_ready_records.values():
             self._connection.execute(
                 "INSERT INTO package_ready_records VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
-                (record.run_id, record.package_id, record.schema_version, record.finalization_id, record.archive_id,
-                 record.package_manifest_artifact.artifact_id, record.package_manifest_artifact.revision,
-                 record.package_manifest_sha256, record.artifact_count, record.created_at, record.package_event_id,
-                 record.accepted_transaction_id, record.request_fingerprint, _canonical_record_text(record)),
+                (
+                    record.run_id,
+                    record.package_id,
+                    record.schema_version,
+                    record.finalization_id,
+                    record.archive_id,
+                    record.package_manifest_artifact.artifact_id,
+                    record.package_manifest_artifact.revision,
+                    record.package_manifest_sha256,
+                    record.artifact_count,
+                    record.created_at,
+                    record.package_event_id,
+                    record.accepted_transaction_id,
+                    record.request_fingerprint,
+                    _canonical_record_text(record),
+                ),
             )
         for record in uow._package_artifact_bindings.values():
-            self._connection.execute("INSERT INTO package_artifact_bindings VALUES (?,?,?,?,?,?,?,?,?,?)", (record.run_id, record.package_id, record.position, record.schema_version, record.artifact_id, record.artifact_revision, record.artifact_sha256, record.usage, record.accepted_transaction_id, _canonical_record_text(record)))
+            self._connection.execute(
+                "INSERT INTO package_artifact_bindings VALUES (?,?,?,?,?,?,?,?,?,?)",
+                (
+                    record.run_id,
+                    record.package_id,
+                    record.position,
+                    record.schema_version,
+                    record.artifact_id,
+                    record.artifact_revision,
+                    record.artifact_sha256,
+                    record.usage,
+                    record.accepted_transaction_id,
+                    _canonical_record_text(record),
+                ),
+            )
         for record in uow._approval_package_bindings.values():
-            self._connection.execute("INSERT INTO approval_package_bindings VALUES (?,?,?,?,?,?)", (record.run_id, record.approval_id, record.package_id, record.schema_version, record.accepted_transaction_id, _canonical_record_text(record)))
+            self._connection.execute(
+                "INSERT INTO approval_package_bindings VALUES (?,?,?,?,?,?)",
+                (
+                    record.run_id,
+                    record.approval_id,
+                    record.package_id,
+                    record.schema_version,
+                    record.accepted_transaction_id,
+                    _canonical_record_text(record),
+                ),
+            )
         for record in uow._delivery_authorizations.values():
-            self._connection.execute("INSERT INTO delivery_authorizations VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)", (record.run_id, record.authorization_id, record.schema_version, record.package_id, record.prior_authorization_id, record.approval_mode, record.retry_of_attempt_id, record.purpose, record.decision, record.target, record.channel, record.recipient_fingerprint, record.actor_id, record.recorded_at, record.authorization_event_id, record.accepted_transaction_id, record.request_fingerprint, _canonical_record_text(record)))
+            self._connection.execute(
+                "INSERT INTO delivery_authorizations VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                (
+                    record.run_id,
+                    record.authorization_id,
+                    record.schema_version,
+                    record.package_id,
+                    record.prior_authorization_id,
+                    record.approval_mode,
+                    record.retry_of_attempt_id,
+                    record.purpose,
+                    record.decision,
+                    record.target,
+                    record.channel,
+                    record.recipient_fingerprint,
+                    record.actor_id,
+                    record.recorded_at,
+                    record.authorization_event_id,
+                    record.accepted_transaction_id,
+                    record.request_fingerprint,
+                    _canonical_record_text(record),
+                ),
+            )
         for record in uow._delivery_attempts.values():
-            self._connection.execute("INSERT INTO delivery_attempts VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)", (record.run_id, record.attempt_id, record.schema_version, record.package_id, record.authorization_id, record.target, record.channel, record.recipient_fingerprint, record.connector_operation_id, record.connector_request_fingerprint, record.created_at, record.attempt_event_id, record.accepted_transaction_id, record.request_fingerprint, _canonical_record_text(record)))
+            self._connection.execute(
+                "INSERT INTO delivery_attempts VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                (
+                    record.run_id,
+                    record.attempt_id,
+                    record.schema_version,
+                    record.package_id,
+                    record.authorization_id,
+                    record.target,
+                    record.channel,
+                    record.recipient_fingerprint,
+                    record.connector_operation_id,
+                    record.connector_request_fingerprint,
+                    record.created_at,
+                    record.attempt_event_id,
+                    record.accepted_transaction_id,
+                    record.request_fingerprint,
+                    _canonical_record_text(record),
+                ),
+            )
         for record in uow._delivery_results.values():
             evidence = record.evidence_artifact
-            self._connection.execute("INSERT INTO delivery_results VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)", (record.run_id, record.result_id, record.schema_version, record.attempt_id, record.prior_result_id, record.reconciliation_authorization_id, record.status, record.adapter_id, record.adapter_version, record.connector_operation_id, record.evidence_sha256, evidence.artifact_id if evidence else None, evidence.revision if evidence else None, record.recorded_at, record.result_event_id, record.accepted_transaction_id, record.request_fingerprint, _canonical_record_text(record)))
+            self._connection.execute(
+                "INSERT INTO delivery_results VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                (
+                    record.run_id,
+                    record.result_id,
+                    record.schema_version,
+                    record.attempt_id,
+                    record.prior_result_id,
+                    record.reconciliation_authorization_id,
+                    record.status,
+                    record.adapter_id,
+                    record.adapter_version,
+                    record.connector_operation_id,
+                    record.evidence_sha256,
+                    evidence.artifact_id if evidence else None,
+                    evidence.revision if evidence else None,
+                    record.recorded_at,
+                    record.result_event_id,
+                    record.accepted_transaction_id,
+                    record.request_fingerprint,
+                    _canonical_record_text(record),
+                ),
+            )
 
     def _insert_checkout_records(self, uow: "ControlUnitOfWork") -> None:
         for record in uow._checkout_revisions.values():
             self._connection.execute(
                 "INSERT INTO checkout_revisions VALUES (?,?,?,?,?,?,?,?,?,?,?)",
                 (
-                    record.checkout_revision_id, record.workspace_id, record.run_id,
-                    record.parent_checkout_revision_id, record.schema_version,
-                    record.manifest_sha256, record.tree_sha256, record.member_count,
-                    record.created_at, record.creator_transaction_id,
+                    record.checkout_revision_id,
+                    record.workspace_id,
+                    record.run_id,
+                    record.parent_checkout_revision_id,
+                    record.schema_version,
+                    record.manifest_sha256,
+                    record.tree_sha256,
+                    record.member_count,
+                    record.created_at,
+                    record.creator_transaction_id,
                     _canonical_record_text(record),
                 ),
             )
@@ -3634,11 +4059,17 @@ class SQLiteControlStore:
             self._connection.execute(
                 "INSERT INTO checkout_revision_members VALUES (?,?,?,?,?,?,?,?,?,?,?)",
                 (
-                    record.checkout_revision_id, record.ordinal,
-                    record.workspace_id, record.run_id, record.schema_version,
-                    record.canonical_path, record.artifact_id,
-                    record.artifact_revision, record.blob_sha256,
-                    record.byte_size, _canonical_record_text(record),
+                    record.checkout_revision_id,
+                    record.ordinal,
+                    record.workspace_id,
+                    record.run_id,
+                    record.schema_version,
+                    record.canonical_path,
+                    record.artifact_id,
+                    record.artifact_revision,
+                    record.blob_sha256,
+                    record.byte_size,
+                    _canonical_record_text(record),
                 ),
             )
         binding = uow._receipt_checkout_binding
@@ -3646,9 +4077,13 @@ class SQLiteControlStore:
             self._connection.execute(
                 "INSERT INTO receipt_checkout_bindings VALUES (?,?,?,?,?,?,?,?,?)",
                 (
-                    binding.workspace_id, binding.run_id, binding.transaction_id,
-                    binding.schema_version, binding.pre_run_id,
-                    binding.pre_checkout_revision_id, binding.post_run_id,
+                    binding.workspace_id,
+                    binding.run_id,
+                    binding.transaction_id,
+                    binding.schema_version,
+                    binding.pre_run_id,
+                    binding.pre_checkout_revision_id,
+                    binding.post_run_id,
                     binding.post_checkout_revision_id,
                     _canonical_record_text(binding),
                 ),
@@ -3659,12 +4094,18 @@ class SQLiteControlStore:
             self._connection.execute(
                 "INSERT INTO checkout_publication_intents VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)",
                 (
-                    identity.workspace_id, identity.run_id, identity.transaction_id,
-                    identity.checkout_revision_id, intent.schema_version,
+                    identity.workspace_id,
+                    identity.run_id,
+                    identity.transaction_id,
+                    identity.checkout_revision_id,
+                    intent.schema_version,
                     intent.publication_identity_sha256,
-                    intent.pre_checkout_revision_id, intent.post_checkout_revision_id,
-                    intent.post_manifest_sha256, intent.post_tree_sha256,
-                    intent.changed_member_count, intent.capability_profile_sha256,
+                    intent.pre_checkout_revision_id,
+                    intent.post_checkout_revision_id,
+                    intent.post_manifest_sha256,
+                    intent.post_tree_sha256,
+                    intent.changed_member_count,
+                    intent.capability_profile_sha256,
                     _canonical_record_text(intent),
                 ),
             )
@@ -3673,12 +4114,21 @@ class SQLiteControlStore:
             self._connection.execute(
                 "INSERT INTO checkout_publication_members VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
                 (
-                    identity.workspace_id, identity.run_id, identity.transaction_id,
-                    identity.checkout_revision_id, record.ordinal,
-                    record.schema_version, record.canonical_path,
-                    record.temporary_basename, record.claim_basename,
-                    record.pre_kind, record.pre_sha256, record.pre_size,
-                    record.post_kind, record.post_sha256, record.post_size,
+                    identity.workspace_id,
+                    identity.run_id,
+                    identity.transaction_id,
+                    identity.checkout_revision_id,
+                    record.ordinal,
+                    record.schema_version,
+                    record.canonical_path,
+                    record.temporary_basename,
+                    record.claim_basename,
+                    record.pre_kind,
+                    record.pre_sha256,
+                    record.pre_size,
+                    record.post_kind,
+                    record.post_sha256,
+                    record.post_size,
                     _canonical_record_text(record),
                 ),
             )
@@ -3758,6 +4208,22 @@ class SQLiteControlStore:
             self._connection.execute(
                 """
                 INSERT INTO transaction_run_execution_authorizations(
+                    run_id, transaction_id, position, authorization_id
+                ) VALUES (?, ?, ?, ?)
+                """,
+                (
+                    receipt.run_id,
+                    receipt.transaction_id,
+                    position,
+                    reference.authorization_id,
+                ),
+            )
+        for position, reference in enumerate(
+            receipt.run_source_discovery_authorizations
+        ):
+            self._connection.execute(
+                """
+                INSERT INTO transaction_run_source_discovery_authorizations(
                     run_id, transaction_id, position, authorization_id
                 ) VALUES (?, ?, ?, ?)
                 """,
@@ -3946,16 +4412,40 @@ class SQLiteControlStore:
                 receipt.gate_repair_outcomes,
                 "outcome_id",
             ),
-            ("transaction_artifact_supersessions", receipt.artifact_supersessions, "supersession_id"),
-            ("transaction_repair_completions", receipt.repair_completions, "repair_completion_id"),
-            ("transaction_recovery_completions", receipt.recovery_completions, "recovery_id"),
-            ("transaction_run_head_transitions", receipt.run_head_transitions, "head_transition_id"),
+            (
+                "transaction_artifact_supersessions",
+                receipt.artifact_supersessions,
+                "supersession_id",
+            ),
+            (
+                "transaction_repair_completions",
+                receipt.repair_completions,
+                "repair_completion_id",
+            ),
+            (
+                "transaction_recovery_completions",
+                receipt.recovery_completions,
+                "recovery_id",
+            ),
+            (
+                "transaction_run_head_transitions",
+                receipt.run_head_transitions,
+                "head_transition_id",
+            ),
             ("transaction_finalize_renders", receipt.finalize_renders, "render_id"),
             ("transaction_finalizations", receipt.finalizations, "finalization_id"),
             ("transaction_run_archives", receipt.run_archives, "archive_id"),
-            ("transaction_package_ready_records", receipt.package_ready_records, "package_id"),
+            (
+                "transaction_package_ready_records",
+                receipt.package_ready_records,
+                "package_id",
+            ),
             ("transaction_approvals", receipt.approvals, "approval_id"),
-            ("transaction_delivery_authorizations", receipt.delivery_authorizations, "authorization_id"),
+            (
+                "transaction_delivery_authorizations",
+                receipt.delivery_authorizations,
+                "authorization_id",
+            ),
             ("transaction_delivery_attempts", receipt.delivery_attempts, "attempt_id"),
             ("transaction_delivery_results", receipt.delivery_results, "result_id"),
         )
@@ -3963,39 +4453,76 @@ class SQLiteControlStore:
             for position, reference in enumerate(references):
                 self._connection.execute(
                     f"INSERT INTO {table} VALUES (?,?,?,?)",
-                    (receipt.run_id, receipt.transaction_id, position, getattr(reference, field)),
+                    (
+                        receipt.run_id,
+                        receipt.transaction_id,
+                        position,
+                        getattr(reference, field),
+                    ),
                 )
         for table, references, identity_field in (
-            ("transaction_run_archive_artifact_bindings", receipt.run_archive_artifact_bindings, "archive_id"),
-            ("transaction_package_artifact_bindings", receipt.package_artifact_bindings, "package_id"),
+            (
+                "transaction_run_archive_artifact_bindings",
+                receipt.run_archive_artifact_bindings,
+                "archive_id",
+            ),
+            (
+                "transaction_package_artifact_bindings",
+                receipt.package_artifact_bindings,
+                "package_id",
+            ),
         ):
             for position, reference in enumerate(references):
                 self._connection.execute(
                     f"INSERT INTO {table} VALUES (?,?,?,?,?)",
-                    (receipt.run_id, receipt.transaction_id, position, getattr(reference, identity_field), reference.position),
+                    (
+                        receipt.run_id,
+                        receipt.transaction_id,
+                        position,
+                        getattr(reference, identity_field),
+                        reference.position,
+                    ),
                 )
         for position, reference in enumerate(receipt.approval_package_bindings):
             self._connection.execute(
                 "INSERT INTO transaction_approval_package_bindings VALUES (?,?,?,?,?)",
-                (receipt.run_id, receipt.transaction_id, position, reference.approval_id, reference.package_id),
+                (
+                    receipt.run_id,
+                    receipt.transaction_id,
+                    position,
+                    reference.approval_id,
+                    reference.package_id,
+                ),
             )
         for position, reference in enumerate(receipt.checkout_revisions):
             self._connection.execute(
                 "INSERT INTO transaction_checkout_revisions VALUES (?,?,?,?)",
-                (receipt.run_id, receipt.transaction_id, position,
-                 reference.checkout_revision_id),
+                (
+                    receipt.run_id,
+                    receipt.transaction_id,
+                    position,
+                    reference.checkout_revision_id,
+                ),
             )
         for position, reference in enumerate(receipt.receipt_checkout_bindings):
             self._connection.execute(
                 "INSERT INTO transaction_receipt_checkout_bindings VALUES (?,?,?,?)",
-                (receipt.run_id, receipt.transaction_id, position,
-                 reference.transaction_id),
+                (
+                    receipt.run_id,
+                    receipt.transaction_id,
+                    position,
+                    reference.transaction_id,
+                ),
             )
         for position, reference in enumerate(receipt.checkout_publication_intents):
             self._connection.execute(
                 "INSERT INTO transaction_checkout_publication_intents VALUES (?,?,?,?)",
-                (receipt.run_id, receipt.transaction_id, position,
-                 reference.checkout_revision_id),
+                (
+                    receipt.run_id,
+                    receipt.transaction_id,
+                    position,
+                    reference.checkout_revision_id,
+                ),
             )
 
     def _blob_relpath(self, sha256: str) -> str:
@@ -4201,7 +4728,9 @@ class SQLiteControlStore:
                                 )
                             ] = path.read_bytes()
                         except OSError as exc:
-                            raise ControlStoreIntegrityError("blob_read_failed") from exc
+                            raise ControlStoreIntegrityError(
+                                "blob_read_failed"
+                            ) from exc
                 history = ControlStoreHistory(
                     workspace_id=self.workspace_id,
                     store_revision=self.current_revision,
@@ -4543,9 +5072,7 @@ class SQLiteControlStore:
                     "source_category": "source_category",
                     "retrieval_source_type": "retrieval_source_type",
                     "underlying_evidence_type": "underlying_evidence_type",
-                    "raw_underlying_evidence_type": (
-                        "raw_underlying_evidence_type"
-                    ),
+                    "raw_underlying_evidence_type": ("raw_underlying_evidence_type"),
                     "content_sha256": "content_sha256",
                     "content_size_bytes": "content_size_bytes",
                     "content_media_type": "content_media_type",
@@ -4557,9 +5084,7 @@ class SQLiteControlStore:
                     "raw_payload_media_type": "raw_payload_media_type",
                     "raw_payload_blob_path": "raw_payload_blob_path",
                     "raw_payload_artifact_id": "raw_payload_artifact_id",
-                    "raw_payload_artifact_revision": (
-                        "raw_payload_artifact_revision"
-                    ),
+                    "raw_payload_artifact_revision": ("raw_payload_artifact_revision"),
                     "claims_eligible": "claims_eligible",
                     "eligibility_reason": "eligibility_reason",
                     "invocation_id": "invocation_id",
@@ -4651,11 +5176,37 @@ class SQLiteControlStore:
                     "source_manifest_artifact_id": (
                         "source_manifest_artifact.artifact_id"
                     ),
-                    "source_manifest_revision": (
-                        "source_manifest_artifact.revision"
-                    ),
+                    "source_manifest_revision": ("source_manifest_artifact.revision"),
                     "source_manifest_sha256": "source_manifest_sha256",
                     "source_manifest_member_count": "source_manifest_member_count",
+                    "repair_budget": "repair_budget",
+                    "authorization_event_id": "authorization_event_id",
+                    "accepted_transaction_id": "accepted_transaction_id",
+                    "request_fingerprint": "request_fingerprint",
+                    "created_at": "created_at",
+                },
+            ),
+            run_source_discovery_authorizations=self._load_for_run(
+                RunSourceDiscoveryAuthorization,
+                "run_source_discovery_authorizations",
+                run_id,
+                "authorization_id",
+                {
+                    "run_id": "run_id",
+                    "authorization_id": "authorization_id",
+                    "workspace_id": "workspace_id",
+                    "schema_version": "schema_version",
+                    "run_contract_fingerprint": "run_contract_fingerprint",
+                    "run_direction_fingerprint": "run_direction_fingerprint",
+                    "runtime_source_plan_fingerprint": (
+                        "runtime_source_plan_fingerprint"
+                    ),
+                    "source_route_fingerprint": "source_route_fingerprint",
+                    "route_id": "route_id",
+                    "provider_id": "provider_id",
+                    "execution_owner": "execution_owner",
+                    "credential_env": "credential_env",
+                    "completion_target": "completion_target",
                     "repair_budget": "repair_budget",
                     "authorization_event_id": "authorization_event_id",
                     "accepted_transaction_id": "accepted_transaction_id",
@@ -4884,7 +5435,24 @@ class SQLiteControlStore:
                     "request_fingerprint": "request_fingerprint",
                 },
             ),
-            repair_cycles=self._load_for_run(RepairCycleRecord, "repair_cycles", run_id, "started_at, repair_id", {"run_id":"run_id","repair_id":"repair_id","schema_version":"schema_version","contamination_revision":"contamination_revision","owner_stage_id":"owner_stage_id","reason_code":"reason_code","started_at":"started_at","start_event_id":"start_event_id","accepted_transaction_id":"accepted_transaction_id","request_fingerprint":"request_fingerprint"}),
+            repair_cycles=self._load_for_run(
+                RepairCycleRecord,
+                "repair_cycles",
+                run_id,
+                "started_at, repair_id",
+                {
+                    "run_id": "run_id",
+                    "repair_id": "repair_id",
+                    "schema_version": "schema_version",
+                    "contamination_revision": "contamination_revision",
+                    "owner_stage_id": "owner_stage_id",
+                    "reason_code": "reason_code",
+                    "started_at": "started_at",
+                    "start_event_id": "start_event_id",
+                    "accepted_transaction_id": "accepted_transaction_id",
+                    "request_fingerprint": "request_fingerprint",
+                },
+            ),
             gate_repair_cycles=self._load_for_run(
                 GateRepairCycleRecord,
                 "gate_repair_cycles",
@@ -4945,55 +5513,427 @@ class SQLiteControlStore:
                     "request_fingerprint": "request_fingerprint",
                 },
             ),
-            artifact_supersessions=self._load_for_run(ArtifactSupersessionRecord, "artifact_supersessions", run_id, "created_at, supersession_id", {"run_id":"run_id","supersession_id":"supersession_id","repair_id":"repair_id","schema_version":"schema_version","mode":"mode","artifact_id":"prior_artifact.artifact_id","prior_revision":"prior_artifact.revision","successor_revision":"successor_artifact.revision","reason_code":"reason_code","created_at":"created_at","accepted_event_id":"accepted_event_id","accepted_transaction_id":"accepted_transaction_id","request_fingerprint":"request_fingerprint"}),
-            repair_completions=self._load_for_run(RepairCompletionRecord, "repair_completions", run_id, "completed_at, repair_completion_id", {"run_id":"run_id","repair_completion_id":"repair_completion_id","repair_id":"repair_id","schema_version":"schema_version","contamination_revision":"contamination_revision","completed_at":"completed_at","completion_event_id":"completion_event_id","accepted_transaction_id":"accepted_transaction_id","request_fingerprint":"request_fingerprint"}),
-            recovery_completions=self._load_for_run(RecoveryCompletionRecord, "recovery_completions", run_id, "completed_at, recovery_id", {"run_id":"run_id","recovery_id":"recovery_id","repair_completion_id":"repair_completion_id","schema_version":"schema_version","contamination_revision":"contamination_revision","disposition":"disposition","completed_at":"completed_at","completion_event_id":"completion_event_id","accepted_transaction_id":"accepted_transaction_id","request_fingerprint":"request_fingerprint"}),
-            run_head_transitions=self._load_for_run(RunHeadTransitionRecord, "run_head_transitions", run_id, "created_at, head_transition_id", {"successor_run_id":"successor_run_id","head_transition_id":"head_transition_id","workspace_id":"workspace_id","predecessor_run_id":"predecessor_run_id","schema_version":"schema_version","prior_workspace_revision":"prior_workspace_revision","successor_workspace_revision":"successor_workspace_revision","reason_code":"reason_code","successor_disposition":"successor_disposition","created_at":"created_at","transition_event_id":"transition_event_id","accepted_transaction_id":"accepted_transaction_id","request_fingerprint":"request_fingerprint"}, run_column="successor_run_id"),
-            finalize_renders=self._load_for_run(FinalizeRenderRecord, "finalize_renders", run_id, "created_at, render_id", {"run_id":"run_id","render_id":"render_id","schema_version":"schema_version","audit_proposal_id":"audit_proposal_id","audited_brief_artifact_id":"audited_brief.artifact_id","audited_brief_revision":"audited_brief.revision","audit_report_artifact_id":"audit_report.artifact_id","audit_report_revision":"audit_report.revision","reader_clean_status":"reader_clean_status","policy_result_fingerprint":"policy_result_fingerprint","run_contract_fingerprint":"run_contract_fingerprint","created_at":"created_at","render_event_id":"render_event_id","accepted_transaction_id":"accepted_transaction_id","request_fingerprint":"request_fingerprint"}),
-            finalizations=self._load_for_run(FinalizationRecord, "finalizations", run_id, "finalized_at, finalization_id", {"run_id":"run_id","finalization_id":"finalization_id","schema_version":"schema_version","render_id":"render_id","finalize_transition_id":"finalize_transition_id","finalize_gate_batch_id":"finalize_gate_batch_id","recovery_id":"recovery_id","integrity_revision":"integrity_revision","finalized_at":"finalized_at","finalization_event_id":"finalization_event_id","accepted_transaction_id":"accepted_transaction_id","request_fingerprint":"request_fingerprint"}),
-            run_archives=self._load_for_run(RunArchiveRecord, "run_archives", run_id, "created_at, archive_id", {"run_id":"run_id","archive_id":"archive_id","schema_version":"schema_version","finalization_id":"finalization_id","archive_artifact_id":"archive_artifact.artifact_id","archive_artifact_revision":"archive_artifact.revision","manifest_sha256":"manifest_sha256","included_count":"included_count","created_at":"created_at","archive_event_id":"archive_event_id","accepted_transaction_id":"accepted_transaction_id","request_fingerprint":"request_fingerprint"}),
-            run_archive_artifact_bindings=self._load_for_run(RunArchiveArtifactBinding, "run_archive_artifact_bindings", run_id, "archive_id, position", {"run_id":"run_id","archive_id":"archive_id","position":"position","schema_version":"schema_version","artifact_id":"artifact_id","artifact_revision":"artifact_revision","artifact_sha256":"artifact_sha256","usage":"usage","accepted_transaction_id":"accepted_transaction_id"}),
-            package_ready_records=self._load_for_run(PackageReadyRecord, "package_ready_records", run_id, "created_at, package_id", {"run_id":"run_id","package_id":"package_id","schema_version":"schema_version","finalization_id":"finalization_id","archive_id":"archive_id","package_manifest_artifact_id":"package_manifest_artifact.artifact_id","package_manifest_revision":"package_manifest_artifact.revision","package_manifest_sha256":"package_manifest_sha256","artifact_count":"artifact_count","created_at":"created_at","package_event_id":"package_event_id","accepted_transaction_id":"accepted_transaction_id","request_fingerprint":"request_fingerprint"}),
-            package_artifact_bindings=self._load_for_run(PackageArtifactBinding, "package_artifact_bindings", run_id, "package_id, position", {"run_id":"run_id","package_id":"package_id","position":"position","schema_version":"schema_version","artifact_id":"artifact_id","artifact_revision":"artifact_revision","artifact_sha256":"artifact_sha256","usage":"usage","accepted_transaction_id":"accepted_transaction_id"}),
-            approval_package_bindings=self._load_for_run(ApprovalPackageBinding, "approval_package_bindings", run_id, "approval_id, package_id", {"run_id":"run_id","approval_id":"approval_id","package_id":"package_id","schema_version":"schema_version","accepted_transaction_id":"accepted_transaction_id"}),
-            delivery_authorizations=self._load_for_run(DeliveryAuthorizationRecord, "delivery_authorizations", run_id, "recorded_at, authorization_id", {"run_id":"run_id","authorization_id":"authorization_id","schema_version":"schema_version","package_id":"package_id","prior_authorization_id":"prior_authorization_id","approval_mode":"approval_mode","retry_of_attempt_id":"retry_of_attempt_id","purpose":"purpose","decision":"decision","target":"target","channel":"channel","recipient_fingerprint":"recipient_fingerprint","actor_id":"actor_id","recorded_at":"recorded_at","authorization_event_id":"authorization_event_id","accepted_transaction_id":"accepted_transaction_id","request_fingerprint":"request_fingerprint"}),
-            delivery_attempts=self._load_for_run(DeliveryAttemptRecord, "delivery_attempts", run_id, "created_at, attempt_id", {"run_id":"run_id","attempt_id":"attempt_id","schema_version":"schema_version","package_id":"package_id","authorization_id":"authorization_id","target":"target","channel":"channel","recipient_fingerprint":"recipient_fingerprint","connector_operation_id":"connector_operation_id","connector_request_fingerprint":"connector_request_fingerprint","created_at":"created_at","attempt_event_id":"attempt_event_id","accepted_transaction_id":"accepted_transaction_id","request_fingerprint":"request_fingerprint"}),
-            delivery_results=self._load_for_run(DeliveryResultRecord, "delivery_results", run_id, "recorded_at, result_id", {"run_id":"run_id","result_id":"result_id","schema_version":"schema_version","attempt_id":"attempt_id","prior_result_id":"prior_result_id","reconciliation_authorization_id":"reconciliation_authorization_id","status":"status","adapter_id":"adapter_id","adapter_version":"adapter_version","connector_operation_id":"connector_operation_id","evidence_sha256":"evidence_sha256","evidence_artifact_id":"evidence_artifact.artifact_id","evidence_artifact_revision":"evidence_artifact.revision","recorded_at":"recorded_at","result_event_id":"result_event_id","accepted_transaction_id":"accepted_transaction_id","request_fingerprint":"request_fingerprint"}),
+            artifact_supersessions=self._load_for_run(
+                ArtifactSupersessionRecord,
+                "artifact_supersessions",
+                run_id,
+                "created_at, supersession_id",
+                {
+                    "run_id": "run_id",
+                    "supersession_id": "supersession_id",
+                    "repair_id": "repair_id",
+                    "schema_version": "schema_version",
+                    "mode": "mode",
+                    "artifact_id": "prior_artifact.artifact_id",
+                    "prior_revision": "prior_artifact.revision",
+                    "successor_revision": "successor_artifact.revision",
+                    "reason_code": "reason_code",
+                    "created_at": "created_at",
+                    "accepted_event_id": "accepted_event_id",
+                    "accepted_transaction_id": "accepted_transaction_id",
+                    "request_fingerprint": "request_fingerprint",
+                },
+            ),
+            repair_completions=self._load_for_run(
+                RepairCompletionRecord,
+                "repair_completions",
+                run_id,
+                "completed_at, repair_completion_id",
+                {
+                    "run_id": "run_id",
+                    "repair_completion_id": "repair_completion_id",
+                    "repair_id": "repair_id",
+                    "schema_version": "schema_version",
+                    "contamination_revision": "contamination_revision",
+                    "completed_at": "completed_at",
+                    "completion_event_id": "completion_event_id",
+                    "accepted_transaction_id": "accepted_transaction_id",
+                    "request_fingerprint": "request_fingerprint",
+                },
+            ),
+            recovery_completions=self._load_for_run(
+                RecoveryCompletionRecord,
+                "recovery_completions",
+                run_id,
+                "completed_at, recovery_id",
+                {
+                    "run_id": "run_id",
+                    "recovery_id": "recovery_id",
+                    "repair_completion_id": "repair_completion_id",
+                    "schema_version": "schema_version",
+                    "contamination_revision": "contamination_revision",
+                    "disposition": "disposition",
+                    "completed_at": "completed_at",
+                    "completion_event_id": "completion_event_id",
+                    "accepted_transaction_id": "accepted_transaction_id",
+                    "request_fingerprint": "request_fingerprint",
+                },
+            ),
+            run_head_transitions=self._load_for_run(
+                RunHeadTransitionRecord,
+                "run_head_transitions",
+                run_id,
+                "created_at, head_transition_id",
+                {
+                    "successor_run_id": "successor_run_id",
+                    "head_transition_id": "head_transition_id",
+                    "workspace_id": "workspace_id",
+                    "predecessor_run_id": "predecessor_run_id",
+                    "schema_version": "schema_version",
+                    "prior_workspace_revision": "prior_workspace_revision",
+                    "successor_workspace_revision": "successor_workspace_revision",
+                    "reason_code": "reason_code",
+                    "successor_disposition": "successor_disposition",
+                    "created_at": "created_at",
+                    "transition_event_id": "transition_event_id",
+                    "accepted_transaction_id": "accepted_transaction_id",
+                    "request_fingerprint": "request_fingerprint",
+                },
+                run_column="successor_run_id",
+            ),
+            finalize_renders=self._load_for_run(
+                FinalizeRenderRecord,
+                "finalize_renders",
+                run_id,
+                "created_at, render_id",
+                {
+                    "run_id": "run_id",
+                    "render_id": "render_id",
+                    "schema_version": "schema_version",
+                    "audit_proposal_id": "audit_proposal_id",
+                    "audited_brief_artifact_id": "audited_brief.artifact_id",
+                    "audited_brief_revision": "audited_brief.revision",
+                    "audit_report_artifact_id": "audit_report.artifact_id",
+                    "audit_report_revision": "audit_report.revision",
+                    "reader_clean_status": "reader_clean_status",
+                    "policy_result_fingerprint": "policy_result_fingerprint",
+                    "run_contract_fingerprint": "run_contract_fingerprint",
+                    "created_at": "created_at",
+                    "render_event_id": "render_event_id",
+                    "accepted_transaction_id": "accepted_transaction_id",
+                    "request_fingerprint": "request_fingerprint",
+                },
+            ),
+            finalizations=self._load_for_run(
+                FinalizationRecord,
+                "finalizations",
+                run_id,
+                "finalized_at, finalization_id",
+                {
+                    "run_id": "run_id",
+                    "finalization_id": "finalization_id",
+                    "schema_version": "schema_version",
+                    "render_id": "render_id",
+                    "finalize_transition_id": "finalize_transition_id",
+                    "finalize_gate_batch_id": "finalize_gate_batch_id",
+                    "recovery_id": "recovery_id",
+                    "integrity_revision": "integrity_revision",
+                    "finalized_at": "finalized_at",
+                    "finalization_event_id": "finalization_event_id",
+                    "accepted_transaction_id": "accepted_transaction_id",
+                    "request_fingerprint": "request_fingerprint",
+                },
+            ),
+            run_archives=self._load_for_run(
+                RunArchiveRecord,
+                "run_archives",
+                run_id,
+                "created_at, archive_id",
+                {
+                    "run_id": "run_id",
+                    "archive_id": "archive_id",
+                    "schema_version": "schema_version",
+                    "finalization_id": "finalization_id",
+                    "archive_artifact_id": "archive_artifact.artifact_id",
+                    "archive_artifact_revision": "archive_artifact.revision",
+                    "manifest_sha256": "manifest_sha256",
+                    "included_count": "included_count",
+                    "created_at": "created_at",
+                    "archive_event_id": "archive_event_id",
+                    "accepted_transaction_id": "accepted_transaction_id",
+                    "request_fingerprint": "request_fingerprint",
+                },
+            ),
+            run_archive_artifact_bindings=self._load_for_run(
+                RunArchiveArtifactBinding,
+                "run_archive_artifact_bindings",
+                run_id,
+                "archive_id, position",
+                {
+                    "run_id": "run_id",
+                    "archive_id": "archive_id",
+                    "position": "position",
+                    "schema_version": "schema_version",
+                    "artifact_id": "artifact_id",
+                    "artifact_revision": "artifact_revision",
+                    "artifact_sha256": "artifact_sha256",
+                    "usage": "usage",
+                    "accepted_transaction_id": "accepted_transaction_id",
+                },
+            ),
+            package_ready_records=self._load_for_run(
+                PackageReadyRecord,
+                "package_ready_records",
+                run_id,
+                "created_at, package_id",
+                {
+                    "run_id": "run_id",
+                    "package_id": "package_id",
+                    "schema_version": "schema_version",
+                    "finalization_id": "finalization_id",
+                    "archive_id": "archive_id",
+                    "package_manifest_artifact_id": "package_manifest_artifact.artifact_id",
+                    "package_manifest_revision": "package_manifest_artifact.revision",
+                    "package_manifest_sha256": "package_manifest_sha256",
+                    "artifact_count": "artifact_count",
+                    "created_at": "created_at",
+                    "package_event_id": "package_event_id",
+                    "accepted_transaction_id": "accepted_transaction_id",
+                    "request_fingerprint": "request_fingerprint",
+                },
+            ),
+            package_artifact_bindings=self._load_for_run(
+                PackageArtifactBinding,
+                "package_artifact_bindings",
+                run_id,
+                "package_id, position",
+                {
+                    "run_id": "run_id",
+                    "package_id": "package_id",
+                    "position": "position",
+                    "schema_version": "schema_version",
+                    "artifact_id": "artifact_id",
+                    "artifact_revision": "artifact_revision",
+                    "artifact_sha256": "artifact_sha256",
+                    "usage": "usage",
+                    "accepted_transaction_id": "accepted_transaction_id",
+                },
+            ),
+            approval_package_bindings=self._load_for_run(
+                ApprovalPackageBinding,
+                "approval_package_bindings",
+                run_id,
+                "approval_id, package_id",
+                {
+                    "run_id": "run_id",
+                    "approval_id": "approval_id",
+                    "package_id": "package_id",
+                    "schema_version": "schema_version",
+                    "accepted_transaction_id": "accepted_transaction_id",
+                },
+            ),
+            delivery_authorizations=self._load_for_run(
+                DeliveryAuthorizationRecord,
+                "delivery_authorizations",
+                run_id,
+                "recorded_at, authorization_id",
+                {
+                    "run_id": "run_id",
+                    "authorization_id": "authorization_id",
+                    "schema_version": "schema_version",
+                    "package_id": "package_id",
+                    "prior_authorization_id": "prior_authorization_id",
+                    "approval_mode": "approval_mode",
+                    "retry_of_attempt_id": "retry_of_attempt_id",
+                    "purpose": "purpose",
+                    "decision": "decision",
+                    "target": "target",
+                    "channel": "channel",
+                    "recipient_fingerprint": "recipient_fingerprint",
+                    "actor_id": "actor_id",
+                    "recorded_at": "recorded_at",
+                    "authorization_event_id": "authorization_event_id",
+                    "accepted_transaction_id": "accepted_transaction_id",
+                    "request_fingerprint": "request_fingerprint",
+                },
+            ),
+            delivery_attempts=self._load_for_run(
+                DeliveryAttemptRecord,
+                "delivery_attempts",
+                run_id,
+                "created_at, attempt_id",
+                {
+                    "run_id": "run_id",
+                    "attempt_id": "attempt_id",
+                    "schema_version": "schema_version",
+                    "package_id": "package_id",
+                    "authorization_id": "authorization_id",
+                    "target": "target",
+                    "channel": "channel",
+                    "recipient_fingerprint": "recipient_fingerprint",
+                    "connector_operation_id": "connector_operation_id",
+                    "connector_request_fingerprint": "connector_request_fingerprint",
+                    "created_at": "created_at",
+                    "attempt_event_id": "attempt_event_id",
+                    "accepted_transaction_id": "accepted_transaction_id",
+                    "request_fingerprint": "request_fingerprint",
+                },
+            ),
+            delivery_results=self._load_for_run(
+                DeliveryResultRecord,
+                "delivery_results",
+                run_id,
+                "recorded_at, result_id",
+                {
+                    "run_id": "run_id",
+                    "result_id": "result_id",
+                    "schema_version": "schema_version",
+                    "attempt_id": "attempt_id",
+                    "prior_result_id": "prior_result_id",
+                    "reconciliation_authorization_id": "reconciliation_authorization_id",
+                    "status": "status",
+                    "adapter_id": "adapter_id",
+                    "adapter_version": "adapter_version",
+                    "connector_operation_id": "connector_operation_id",
+                    "evidence_sha256": "evidence_sha256",
+                    "evidence_artifact_id": "evidence_artifact.artifact_id",
+                    "evidence_artifact_revision": "evidence_artifact.revision",
+                    "recorded_at": "recorded_at",
+                    "result_event_id": "result_event_id",
+                    "accepted_transaction_id": "accepted_transaction_id",
+                    "request_fingerprint": "request_fingerprint",
+                },
+            ),
             checkout_revisions=self._load_for_run(
-                CheckoutRevisionRecord, "checkout_revisions", run_id,
+                CheckoutRevisionRecord,
+                "checkout_revisions",
+                run_id,
                 "created_at, checkout_revision_id",
-                {"checkout_revision_id":"checkout_revision_id", "workspace_id":"workspace_id", "run_id":"run_id", "parent_checkout_revision_id":"parent_checkout_revision_id", "schema_version":"schema_version", "manifest_sha256":"manifest_sha256", "tree_sha256":"tree_sha256", "member_count":"member_count", "created_at":"created_at", "creator_transaction_id":"creator_transaction_id"},
+                {
+                    "checkout_revision_id": "checkout_revision_id",
+                    "workspace_id": "workspace_id",
+                    "run_id": "run_id",
+                    "parent_checkout_revision_id": "parent_checkout_revision_id",
+                    "schema_version": "schema_version",
+                    "manifest_sha256": "manifest_sha256",
+                    "tree_sha256": "tree_sha256",
+                    "member_count": "member_count",
+                    "created_at": "created_at",
+                    "creator_transaction_id": "creator_transaction_id",
+                },
             ),
             checkout_revision_members=self._load_for_run(
-                CheckoutRevisionMember, "checkout_revision_members", run_id,
+                CheckoutRevisionMember,
+                "checkout_revision_members",
+                run_id,
                 "checkout_revision_id, ordinal",
-                {"checkout_revision_id":"checkout_revision_id", "ordinal":"ordinal", "workspace_id":"workspace_id", "run_id":"run_id", "schema_version":"schema_version", "canonical_path":"canonical_path", "artifact_id":"artifact_id", "artifact_revision":"artifact_revision", "blob_sha256":"blob_sha256", "byte_size":"byte_size"},
+                {
+                    "checkout_revision_id": "checkout_revision_id",
+                    "ordinal": "ordinal",
+                    "workspace_id": "workspace_id",
+                    "run_id": "run_id",
+                    "schema_version": "schema_version",
+                    "canonical_path": "canonical_path",
+                    "artifact_id": "artifact_id",
+                    "artifact_revision": "artifact_revision",
+                    "blob_sha256": "blob_sha256",
+                    "byte_size": "byte_size",
+                },
             ),
             receipt_checkout_bindings=self._load_for_run(
-                ReceiptCheckoutBinding, "receipt_checkout_bindings", run_id,
+                ReceiptCheckoutBinding,
+                "receipt_checkout_bindings",
+                run_id,
                 "transaction_id",
-                {"workspace_id":"workspace_id", "run_id":"run_id", "transaction_id":"transaction_id", "schema_version":"schema_version", "pre_run_id":"pre_run_id", "pre_checkout_revision_id":"pre_checkout_revision_id", "post_run_id":"post_run_id", "post_checkout_revision_id":"post_checkout_revision_id"},
+                {
+                    "workspace_id": "workspace_id",
+                    "run_id": "run_id",
+                    "transaction_id": "transaction_id",
+                    "schema_version": "schema_version",
+                    "pre_run_id": "pre_run_id",
+                    "pre_checkout_revision_id": "pre_checkout_revision_id",
+                    "post_run_id": "post_run_id",
+                    "post_checkout_revision_id": "post_checkout_revision_id",
+                },
             ),
             checkout_publication_intents=self._load_for_run(
-                CheckoutPublicationIntent, "checkout_publication_intents", run_id,
+                CheckoutPublicationIntent,
+                "checkout_publication_intents",
+                run_id,
                 "transaction_id, checkout_revision_id",
-                {"workspace_id":"identity.workspace_id", "run_id":"identity.run_id", "transaction_id":"identity.transaction_id", "checkout_revision_id":"identity.checkout_revision_id", "schema_version":"schema_version", "publication_identity_sha256":"publication_identity_sha256", "pre_checkout_revision_id":"pre_checkout_revision_id", "post_checkout_revision_id":"post_checkout_revision_id", "post_manifest_sha256":"post_manifest_sha256", "post_tree_sha256":"post_tree_sha256", "changed_member_count":"changed_member_count", "capability_profile_sha256":"capability_profile_sha256"},
+                {
+                    "workspace_id": "identity.workspace_id",
+                    "run_id": "identity.run_id",
+                    "transaction_id": "identity.transaction_id",
+                    "checkout_revision_id": "identity.checkout_revision_id",
+                    "schema_version": "schema_version",
+                    "publication_identity_sha256": "publication_identity_sha256",
+                    "pre_checkout_revision_id": "pre_checkout_revision_id",
+                    "post_checkout_revision_id": "post_checkout_revision_id",
+                    "post_manifest_sha256": "post_manifest_sha256",
+                    "post_tree_sha256": "post_tree_sha256",
+                    "changed_member_count": "changed_member_count",
+                    "capability_profile_sha256": "capability_profile_sha256",
+                },
             ),
             checkout_publication_members=self._load_for_run(
-                CheckoutPublicationMember, "checkout_publication_members", run_id,
+                CheckoutPublicationMember,
+                "checkout_publication_members",
+                run_id,
                 "transaction_id, checkout_revision_id, ordinal",
-                {"workspace_id":"identity.workspace_id", "run_id":"identity.run_id", "transaction_id":"identity.transaction_id", "checkout_revision_id":"identity.checkout_revision_id", "ordinal":"ordinal", "schema_version":"schema_version", "canonical_path":"canonical_path", "temporary_basename":"temporary_basename", "claim_basename":"claim_basename", "pre_kind":"pre_kind", "pre_sha256":"pre_sha256", "pre_size":"pre_size", "post_kind":"post_kind", "post_sha256":"post_sha256", "post_size":"post_size"},
+                {
+                    "workspace_id": "identity.workspace_id",
+                    "run_id": "identity.run_id",
+                    "transaction_id": "identity.transaction_id",
+                    "checkout_revision_id": "identity.checkout_revision_id",
+                    "ordinal": "ordinal",
+                    "schema_version": "schema_version",
+                    "canonical_path": "canonical_path",
+                    "temporary_basename": "temporary_basename",
+                    "claim_basename": "claim_basename",
+                    "pre_kind": "pre_kind",
+                    "pre_sha256": "pre_sha256",
+                    "pre_size": "pre_size",
+                    "post_kind": "post_kind",
+                    "post_sha256": "post_sha256",
+                    "post_size": "post_size",
+                },
             ),
             checkout_publication_acks=self._load_for_run(
-                CheckoutPublicationAck, "checkout_publication_acks", run_id,
+                CheckoutPublicationAck,
+                "checkout_publication_acks",
+                run_id,
                 "transaction_id, checkout_revision_id, ordinal",
-                {"workspace_id":"identity.workspace_id", "run_id":"identity.run_id", "transaction_id":"identity.transaction_id", "checkout_revision_id":"identity.checkout_revision_id", "ordinal":"ordinal", "schema_version":"schema_version", "publication_identity_sha256":"publication_identity_sha256", "capability_profile_sha256":"capability_profile_sha256", "post_kind":"post_kind", "post_sha256":"post_sha256", "post_size":"post_size", "verification":"verification", "cleanup_policy":"cleanup_policy", "appended_at":"appended_at"},
+                {
+                    "workspace_id": "identity.workspace_id",
+                    "run_id": "identity.run_id",
+                    "transaction_id": "identity.transaction_id",
+                    "checkout_revision_id": "identity.checkout_revision_id",
+                    "ordinal": "ordinal",
+                    "schema_version": "schema_version",
+                    "publication_identity_sha256": "publication_identity_sha256",
+                    "capability_profile_sha256": "capability_profile_sha256",
+                    "post_kind": "post_kind",
+                    "post_sha256": "post_sha256",
+                    "post_size": "post_size",
+                    "verification": "verification",
+                    "cleanup_policy": "cleanup_policy",
+                    "appended_at": "appended_at",
+                },
             ),
             checkout_publication_cleanup_observations=self._load_for_run(
                 CheckoutPublicationCleanupObservation,
-                "checkout_publication_cleanup_observations", run_id,
+                "checkout_publication_cleanup_observations",
+                run_id,
                 "transaction_id, checkout_revision_id, ordinal, auxiliary_role",
-                {"cleanup_observation_id":"cleanup_observation_id", "workspace_id":"identity.workspace_id", "run_id":"identity.run_id", "transaction_id":"identity.transaction_id", "checkout_revision_id":"identity.checkout_revision_id", "ordinal":"ordinal", "schema_version":"schema_version", "auxiliary_role":"auxiliary_role", "reason_code":"reason_code", "expected_kind":"expected_kind", "expected_sha256":"expected_sha256", "expected_size":"expected_size", "observed_kind":"observed_kind", "observed_sha256":"observed_sha256", "observed_size":"observed_size", "appended_at":"appended_at"},
+                {
+                    "cleanup_observation_id": "cleanup_observation_id",
+                    "workspace_id": "identity.workspace_id",
+                    "run_id": "identity.run_id",
+                    "transaction_id": "identity.transaction_id",
+                    "checkout_revision_id": "identity.checkout_revision_id",
+                    "ordinal": "ordinal",
+                    "schema_version": "schema_version",
+                    "auxiliary_role": "auxiliary_role",
+                    "reason_code": "reason_code",
+                    "expected_kind": "expected_kind",
+                    "expected_sha256": "expected_sha256",
+                    "expected_size": "expected_size",
+                    "observed_kind": "observed_kind",
+                    "observed_sha256": "observed_sha256",
+                    "observed_size": "observed_size",
+                    "appended_at": "appended_at",
+                },
             ),
             transactions=self._load_transactions(run_id),
         )
@@ -5093,11 +6033,11 @@ class SQLiteControlStore:
         )
         if not any(graph):
             return
-        if not (
-            snapshot.checkout_revisions and snapshot.receipt_checkout_bindings
-        ):
+        if not (snapshot.checkout_revisions and snapshot.receipt_checkout_bindings):
             raise ControlStoreIntegrityError("checkout_revision_invalid")
-        revisions = {item.checkout_revision_id: item for item in snapshot.checkout_revisions}
+        revisions = {
+            item.checkout_revision_id: item for item in snapshot.checkout_revisions
+        }
         receipts = {item.transaction_id: item for item in snapshot.transactions}
         built_revisions: dict[
             str,
@@ -5105,11 +6045,14 @@ class SQLiteControlStore:
         ] = {}
         members_by_revision: dict[str, list[CheckoutRevisionMember]] = {}
         for member in snapshot.checkout_revision_members:
-            members_by_revision.setdefault(member.checkout_revision_id, []).append(member)
+            members_by_revision.setdefault(member.checkout_revision_id, []).append(
+                member
+            )
             revision = revisions.get(member.checkout_revision_id)
             artifact = next(
                 (
-                    item for item in snapshot.artifact_revisions
+                    item
+                    for item in snapshot.artifact_revisions
                     if item.artifact_id == member.artifact_id
                     and item.revision == member.artifact_revision
                 ),
@@ -5128,7 +6071,9 @@ class SQLiteControlStore:
                 members_by_revision.get(revision.checkout_revision_id, []),
                 key=lambda item: item.ordinal,
             )
-            if len(members) != revision.member_count or [m.ordinal for m in members] != list(range(len(members))):
+            if len(members) != revision.member_count or [
+                m.ordinal for m in members
+            ] != list(range(len(members))):
                 raise ControlStoreIntegrityError("checkout_revision_invalid")
             artifact_rows = []
             for member in members:
@@ -5158,9 +6103,7 @@ class SQLiteControlStore:
                     )
                 )
             except (_CheckoutStructureError, ValueError) as exc:
-                raise ControlStoreIntegrityError(
-                    "checkout_revision_invalid"
-                ) from exc
+                raise ControlStoreIntegrityError("checkout_revision_invalid") from exc
             if rebuilt_record != revision or rebuilt_members != tuple(members):
                 raise ControlStoreIntegrityError("checkout_revision_invalid")
             built_revisions[revision.checkout_revision_id] = (
@@ -5173,7 +6116,9 @@ class SQLiteControlStore:
                 for item in receipt.checkout_revisions
             ):
                 raise ControlStoreIntegrityError("checkout_revision_invalid")
-        bindings = {item.transaction_id: item for item in snapshot.receipt_checkout_bindings}
+        bindings = {
+            item.transaction_id: item for item in snapshot.receipt_checkout_bindings
+        }
         for transaction_id, binding in bindings.items():
             receipt = receipts.get(transaction_id)
             post = revisions.get(binding.post_checkout_revision_id)
@@ -5202,8 +6147,7 @@ class SQLiteControlStore:
                 or post.run_id != binding.post_run_id
                 or post.workspace_id != binding.workspace_id
                 or post.creator_transaction_id != transaction_id
-                or post.parent_checkout_revision_id
-                != binding.pre_checkout_revision_id
+                or post.parent_checkout_revision_id != binding.pre_checkout_revision_id
                 or not pre_exists
                 or not any(
                     item.transaction_id == transaction_id
@@ -5213,21 +6157,28 @@ class SQLiteControlStore:
                 raise ControlStoreIntegrityError("checkout_revision_invalid")
         intents = {
             (
-                item.identity.workspace_id, item.identity.run_id,
-                item.identity.transaction_id, item.identity.checkout_revision_id,
+                item.identity.workspace_id,
+                item.identity.run_id,
+                item.identity.transaction_id,
+                item.identity.checkout_revision_id,
             ): item
             for item in snapshot.checkout_publication_intents
         }
-        members_by_intent: dict[tuple[str, str, str, str], list[CheckoutPublicationMember]] = {}
+        members_by_intent: dict[
+            tuple[str, str, str, str], list[CheckoutPublicationMember]
+        ] = {}
         for member in snapshot.checkout_publication_members:
             key = (
-                member.identity.workspace_id, member.identity.run_id,
+                member.identity.workspace_id,
+                member.identity.run_id,
                 member.identity.transaction_id,
                 member.identity.checkout_revision_id,
             )
             members_by_intent.setdefault(key, []).append(member)
         for key, intent in intents.items():
-            members = sorted(members_by_intent.get(key, []), key=lambda item: item.ordinal)
+            members = sorted(
+                members_by_intent.get(key, []), key=lambda item: item.ordinal
+            )
             binding = bindings.get(intent.identity.transaction_id)
             receipt = receipts.get(intent.identity.transaction_id)
             post_structure = built_revisions.get(intent.post_checkout_revision_id)
@@ -5260,8 +6211,7 @@ class SQLiteControlStore:
                 or binding.run_id != snapshot.run.run_id
                 or binding.transaction_id != intent.identity.transaction_id
                 or binding.post_run_id != snapshot.run.run_id
-                or binding.post_checkout_revision_id
-                != intent.post_checkout_revision_id
+                or binding.post_checkout_revision_id != intent.post_checkout_revision_id
                 or post_structure[0].parent_checkout_revision_id
                 != binding.pre_checkout_revision_id
                 or (
@@ -5291,12 +6241,8 @@ class SQLiteControlStore:
             try:
                 expected_intent, expected_members = _derive_publication_structure(
                     identity=intent.identity,
-                    pre_record=(
-                        None if pre_structure is None else pre_structure[0]
-                    ),
-                    pre_members=(
-                        () if pre_structure is None else pre_structure[1]
-                    ),
+                    pre_record=(None if pre_structure is None else pre_structure[0]),
+                    pre_members=(() if pre_structure is None else pre_structure[1]),
                     post_record=post_structure[0],
                     post_members=post_structure[1],
                     capability_profile_sha256=intent.capability_profile_sha256,
@@ -5306,14 +6252,19 @@ class SQLiteControlStore:
                     "checkout_publication_journal_invalid"
                 ) from exc
             if intent != expected_intent or tuple(members) != expected_members:
-                raise ControlStoreIntegrityError(
-                    "checkout_publication_journal_invalid"
-                )
+                raise ControlStoreIntegrityError("checkout_publication_journal_invalid")
         if set(members_by_intent) - set(intents):
             raise ControlStoreIntegrityError("checkout_publication_journal_invalid")
-        ack_by_intent: dict[tuple[str, str, str, str], list[CheckoutPublicationAck]] = {}
+        ack_by_intent: dict[
+            tuple[str, str, str, str], list[CheckoutPublicationAck]
+        ] = {}
         for ack in snapshot.checkout_publication_acks:
-            key = (ack.identity.workspace_id, ack.identity.run_id, ack.identity.transaction_id, ack.identity.checkout_revision_id)
+            key = (
+                ack.identity.workspace_id,
+                ack.identity.run_id,
+                ack.identity.transaction_id,
+                ack.identity.checkout_revision_id,
+            )
             ack_by_intent.setdefault(key, []).append(ack)
         for key, acks in ack_by_intent.items():
             expected = sorted(
@@ -5324,22 +6275,18 @@ class SQLiteControlStore:
             if (
                 intent is None
                 or len(ordered_acks) != len(expected)
-                or [ack.ordinal for ack in ordered_acks]
-                != list(range(len(expected)))
+                or [ack.ordinal for ack in ordered_acks] != list(range(len(expected)))
                 or any(
                     ack.identity != member.identity
                     or ack.publication_identity_sha256
                     != intent.publication_identity_sha256
-                    or ack.capability_profile_sha256
-                    != intent.capability_profile_sha256
+                    or ack.capability_profile_sha256 != intent.capability_profile_sha256
                     or ack.post_kind != member.post_kind
                     or ack.post_sha256 != member.post_sha256
                     or ack.post_size != member.post_size
                     or ack.verification != "post_verified_durable"
                     or ack.cleanup_policy != "retain_residue_v1"
-                    for ack, member in zip(
-                        ordered_acks, expected, strict=True
-                    )
+                    for ack, member in zip(ordered_acks, expected, strict=True)
                 )
             ):
                 raise ControlStoreIntegrityError("checkout_publication_journal_invalid")
@@ -5429,9 +6376,7 @@ class SQLiteControlStore:
                         records[0].created_at.replace("Z", "+00:00")
                     ),
                     artifact_revisions=tuple(
-                        artifact_revisions[
-                            (item.artifact_id, item.artifact_revision)
-                        ]
+                        artifact_revisions[(item.artifact_id, item.artifact_revision)]
                         for item in members
                     ),
                     parent_checkout_revision_id=(
@@ -5453,6 +6398,8 @@ class SQLiteControlStore:
         core_rows_exist = any(
             (
                 snapshot.run_contract_bindings,
+                snapshot.run_execution_authorizations,
+                snapshot.run_source_discovery_authorizations,
                 snapshot.owned_artifact_submissions,
                 snapshot.stage_transitions,
                 snapshot.stage_artifact_bindings,
@@ -5535,9 +6482,7 @@ class SQLiteControlStore:
 
         self._verify_pr4b_snapshot_relations(snapshot)
 
-        receipts = {
-            item.transaction_id: item for item in snapshot.transactions
-        }
+        receipts = {item.transaction_id: item for item in snapshot.transactions}
         events = {item.event_id: item for item in snapshot.events}
         revisions = {
             (item.artifact_id, item.revision): item
@@ -5624,15 +6569,44 @@ class SQLiteControlStore:
             ):
                 raise ControlStoreIntegrityError("core_run_relation_invalid")
 
+        if len(snapshot.run_source_discovery_authorizations) > 1:
+            raise ControlStoreIntegrityError("core_run_relation_invalid")
+        for authorization in snapshot.run_source_discovery_authorizations:
+            owner = receipts.get(authorization.accepted_transaction_id)
+            if (
+                authorization.run_id != snapshot.run.run_id
+                or authorization.workspace_id != snapshot.workspace_id
+                or authorization.run_contract_fingerprint
+                != binding.contract_fingerprint
+                or authorization.run_direction_fingerprint
+                != canonical_fingerprint(
+                    canonical_run_direction_for_binding(
+                        binding.run_direction.model_dump(
+                            mode="json",
+                            exclude_unset=False,
+                        )
+                    )
+                )
+                or authorization.runtime_source_plan_fingerprint
+                != binding.runtime_source_plan_fingerprint
+                or owner is None
+                or owner.transaction_type != "core-v2-initialize"
+                or [
+                    item.authorization_id
+                    for item in owner.run_source_discovery_authorizations
+                ]
+                != [authorization.authorization_id]
+                or authorization.authorization_event_id not in owner.event_ids
+            ):
+                raise ControlStoreIntegrityError("core_run_relation_invalid")
+
         transitions_by_stage: dict[str, list[StageTransitionRecord]] = {}
         transition_by_id: dict[str, StageTransitionRecord] = {}
         for transition in snapshot.stage_transitions:
             if transition.transition_id in transition_by_id:
                 raise ControlStoreIntegrityError("core_run_relation_invalid")
             transition_by_id[transition.transition_id] = transition
-            transitions_by_stage.setdefault(transition.stage_id, []).append(
-                transition
-            )
+            transitions_by_stage.setdefault(transition.stage_id, []).append(transition)
         states = {item.stage_id: item for item in snapshot.stage_states}
         if set(states) != set(transitions_by_stage):
             raise ControlStoreIntegrityError("core_run_relation_invalid")
@@ -5675,7 +6649,9 @@ class SQLiteControlStore:
             not integrity_rows
             or integrity_rows[0].integrity_revision != 1
             or integrity_rows[0].status != "clean"
-            or [item.integrity_revision for item in initialization.run_integrity_records]
+            or [
+                item.integrity_revision for item in initialization.run_integrity_records
+            ]
             != [1]
         ):
             raise ControlStoreIntegrityError("core_run_relation_invalid")
@@ -5695,9 +6671,7 @@ class SQLiteControlStore:
         for event in snapshot.events:
             core = event.core_run_binding
             if core is not None and core.effect_kind == "invocation_start":
-                invocation_events.setdefault(core.primary_record_id, []).append(
-                    event
-                )
+                invocation_events.setdefault(core.primary_record_id, []).append(event)
         source_invocations = [item.invocation_id for item in snapshot.sources]
         proposal_invocations = [
             item.invocation_id for item in snapshot.accepted_proposals
@@ -5705,8 +6679,7 @@ class SQLiteControlStore:
         submission_invocations = [
             item.invocation_id
             for item in snapshot.owned_artifact_submissions
-            if item.invocation_id is not None
-            and item.source_proposal_id is None
+            if item.invocation_id is not None and item.source_proposal_id is None
         ]
         failed_records = [
             event.intake_binding.invocation_id
@@ -5723,9 +6696,7 @@ class SQLiteControlStore:
             ):
                 raise ControlStoreIntegrityError("core_run_relation_invalid")
             source_explanations = source_invocations.count(invocation.invocation_id)
-            proposal_explanations = proposal_invocations.count(
-                invocation.invocation_id
-            )
+            proposal_explanations = proposal_invocations.count(invocation.invocation_id)
             submission_explanations = submission_invocations.count(
                 invocation.invocation_id
             )
@@ -5747,9 +6718,7 @@ class SQLiteControlStore:
                 or failures
             ):
                 raise ControlStoreIntegrityError("core_run_relation_invalid")
-            if invocation.status == "failed" and (
-                failures != 1 or explanation_kinds
-            ):
+            if invocation.status == "failed" and (failures != 1 or explanation_kinds):
                 raise ControlStoreIntegrityError("core_run_relation_invalid")
         if set(invocation_events) != {
             item.invocation_id for item in snapshot.invocations
@@ -5845,11 +6814,43 @@ class SQLiteControlStore:
                     result.evidence_artifact.revision,
                     result.accepted_transaction_id,
                 )
+        artifacts_by_id = {item.artifact_id: item for item in snapshot.artifacts}
+        for receipt in receipts.values():
+            if (
+                len(receipt.run_source_discovery_authorizations) != 1
+                or len(receipt.run_execution_authorizations) != 1
+            ):
+                continue
+            unclaimed = [
+                item
+                for item in receipt.artifact_revisions
+                if (item.artifact_id, item.revision) not in producer_transactions
+            ]
+            if len(unclaimed) != 1:
+                raise ControlStoreIntegrityError("core_run_relation_invalid")
+            response_ref = unclaimed[0]
+            response_revision = revisions.get(
+                (response_ref.artifact_id, response_ref.revision)
+            )
+            response_artifact = artifacts_by_id.get(response_ref.artifact_id)
+            if (
+                response_revision is None
+                or response_artifact is None
+                or response_ref.revision != 1
+                or response_revision.producer_id != "source-discovery"
+                or response_artifact.format != "json"
+                or response_artifact.current_revision != 1
+                or not response_revision.frozen
+            ):
+                raise ControlStoreIntegrityError("core_run_relation_invalid")
+            add_producer(
+                response_ref.artifact_id,
+                response_ref.revision,
+                receipt.transaction_id,
+            )
         revisions_by_artifact: dict[str, list[ArtifactRevision]] = {}
         for revision in snapshot.artifact_revisions:
-            revisions_by_artifact.setdefault(revision.artifact_id, []).append(
-                revision
-            )
+            revisions_by_artifact.setdefault(revision.artifact_id, []).append(revision)
         for artifact in snapshot.artifacts:
             values = sorted(
                 revisions_by_artifact.get(artifact.artifact_id, []),
@@ -5900,9 +6901,7 @@ class SQLiteControlStore:
                 != artifact_binding.accepted_transaction_id
             ):
                 raise ControlStoreIntegrityError("core_run_relation_invalid")
-        evaluations = {
-            item.evaluation_id: item for item in snapshot.gate_evaluations
-        }
+        evaluations = {item.evaluation_id: item for item in snapshot.gate_evaluations}
         for gate_binding in snapshot.stage_gate_bindings:
             transition = transition_by_id.get(gate_binding.transition_id)
             evaluation = evaluations.get(gate_binding.evaluation_id)
@@ -5996,11 +6995,12 @@ class SQLiteControlStore:
                 evaluation.accepted_transaction_id,
                 [],
             ).append(evaluation)
-        for transaction_id, transaction_evaluations in evaluations_by_transaction.items():
+        for (
+            transaction_id,
+            transaction_evaluations,
+        ) in evaluations_by_transaction.items():
             receipt = receipts.get(transaction_id)
-            evaluation_ids = {
-                item.evaluation_id for item in transaction_evaluations
-            }
+            evaluation_ids = {item.evaluation_id for item in transaction_evaluations}
             finding_ids = {
                 (item.evaluation_id, item.finding_id)
                 for item in snapshot.gate_findings
@@ -6040,7 +7040,9 @@ class SQLiteControlStore:
     def _verify_pr4b_snapshot_relations(self, snapshot: ControlStoreSnapshot) -> None:
         """Match list-valued PR-4B payload fields to their relation rows."""
 
-        def values(table: str, owner_column: str, owner_id: str, value_column: str) -> tuple[str, ...]:
+        def values(
+            table: str, owner_column: str, owner_id: str, value_column: str
+        ) -> tuple[str, ...]:
             rows = self._connection.execute(
                 f"SELECT position, {value_column} FROM {table} "
                 f"WHERE run_id=? AND {owner_column}=? ORDER BY position",
@@ -6051,17 +7053,37 @@ class SQLiteControlStore:
             return tuple(str(row[1]) for row in rows)
 
         for record in snapshot.repair_completions:
-            if values("repair_completion_supersessions", "repair_completion_id", record.repair_completion_id, "supersession_id") != tuple(record.supersession_ids):
+            if values(
+                "repair_completion_supersessions",
+                "repair_completion_id",
+                record.repair_completion_id,
+                "supersession_id",
+            ) != tuple(record.supersession_ids):
                 raise ControlStoreIntegrityError("core_run_relation_invalid")
-            if values("repair_completion_transitions", "repair_completion_id", record.repair_completion_id, "transition_id") != tuple(record.reopened_transition_ids):
+            if values(
+                "repair_completion_transitions",
+                "repair_completion_id",
+                record.repair_completion_id,
+                "transition_id",
+            ) != tuple(record.reopened_transition_ids):
                 raise ControlStoreIntegrityError("core_run_relation_invalid")
         for record in snapshot.recovery_completions:
             for table, column, expected in (
                 ("recovery_supersessions", "supersession_id", record.supersession_ids),
-                ("recovery_stage_transitions", "transition_id", record.rerun_transition_ids),
-                ("recovery_gate_evaluations", "evaluation_id", record.gate_evaluation_ids),
+                (
+                    "recovery_stage_transitions",
+                    "transition_id",
+                    record.rerun_transition_ids,
+                ),
+                (
+                    "recovery_gate_evaluations",
+                    "evaluation_id",
+                    record.gate_evaluation_ids,
+                ),
             ):
-                if values(table, "recovery_id", record.recovery_id, column) != tuple(expected):
+                if values(table, "recovery_id", record.recovery_id, column) != tuple(
+                    expected
+                ):
                     raise ControlStoreIntegrityError("core_run_relation_invalid")
         revision_digests = {
             (item.artifact_id, item.revision): item.sha256
@@ -6073,14 +7095,24 @@ class SQLiteControlStore:
                 "FROM finalize_render_artifacts WHERE run_id=? AND render_id=? ORDER BY position",
                 (record.run_id, record.render_id),
             ).fetchall()
-            expected = tuple((item.artifact_id, item.revision) for item in record.reader_artifacts)
+            expected = tuple(
+                (item.artifact_id, item.revision) for item in record.reader_artifacts
+            )
             actual = tuple((str(row[1]), int(row[2])) for row in rows)
             if [row[0] for row in rows] != list(range(len(rows))) or actual != expected:
                 raise ControlStoreIntegrityError("core_run_relation_invalid")
-            if any(revision_digests.get((str(row[1]), int(row[2]))) != str(row[3]) for row in rows):
+            if any(
+                revision_digests.get((str(row[1]), int(row[2]))) != str(row[3])
+                for row in rows
+            ):
                 raise ControlStoreIntegrityError("core_run_relation_invalid")
         for record in snapshot.finalizations:
-            if values("finalization_gate_evaluations", "finalization_id", record.finalization_id, "evaluation_id") != tuple(record.finalize_gate_evaluation_ids):
+            if values(
+                "finalization_gate_evaluations",
+                "finalization_id",
+                record.finalization_id,
+                "evaluation_id",
+            ) != tuple(record.finalize_gate_evaluation_ids):
                 raise ControlStoreIntegrityError("core_run_relation_invalid")
 
     def _load_workspace_run_head_in_transaction(self) -> WorkspaceRunHead | None:
@@ -6333,15 +7365,13 @@ class SQLiteControlStore:
             """,
             (receipt.run_id, receipt.transaction_id),
         ).fetchall()
-        if [row[0] for row in event_rows] != list(range(len(event_rows))) or [
-            row[0] for row in revision_rows
-        ] != list(range(len(revision_rows))) or [
-            row[0] for row in identity_rows
-        ] != list(range(len(identity_rows))) or [
-            row[0] for row in source_rows
-        ] != list(range(len(source_rows))) or [
-            row[0] for row in proposal_rows
-        ] != list(range(len(proposal_rows))):
+        if (
+            [row[0] for row in event_rows] != list(range(len(event_rows)))
+            or [row[0] for row in revision_rows] != list(range(len(revision_rows)))
+            or [row[0] for row in identity_rows] != list(range(len(identity_rows)))
+            or [row[0] for row in source_rows] != list(range(len(source_rows)))
+            or [row[0] for row in proposal_rows] != list(range(len(proposal_rows)))
+        ):
             raise ControlStoreIntegrityError("transaction_relation_mismatch")
         event_ids = tuple(str(row[1]) for row in event_rows)
         try:
@@ -6399,11 +7429,18 @@ class SQLiteControlStore:
                 ),
             ),
             (
+                "transaction_run_source_discovery_authorizations",
+                ("authorization_id",),
+                tuple(
+                    (item.authorization_id,)
+                    for item in receipt.run_source_discovery_authorizations
+                ),
+            ),
+            (
                 "transaction_owned_artifact_submissions",
                 ("submission_id",),
                 tuple(
-                    (item.submission_id,)
-                    for item in receipt.owned_artifact_submissions
+                    (item.submission_id,) for item in receipt.owned_artifact_submissions
                 ),
             ),
             (
@@ -6620,7 +7657,9 @@ class SQLiteControlStore:
             ).fetchall()
             if [row[0] for row in rows] != list(range(len(rows))):
                 raise ControlStoreIntegrityError("transaction_relation_mismatch")
-            actual = tuple(tuple(row[index + 1] for index in range(len(columns))) for row in rows)
+            actual = tuple(
+                tuple(row[index + 1] for index in range(len(columns))) for row in rows
+            )
             if actual != expected:
                 raise ControlStoreIntegrityError("transaction_relation_mismatch")
 
@@ -6727,9 +7766,7 @@ class SQLiteControlStore:
             invalid()
 
         revision_keys: set[tuple[str, str, int]] = set()
-        revisions_by_artifact: dict[
-            tuple[str, str], list[ArtifactRevision]
-        ] = {}
+        revisions_by_artifact: dict[tuple[str, str], list[ArtifactRevision]] = {}
         for row in self._connection.execute(
             """
             SELECT * FROM artifact_revisions
@@ -6950,7 +7987,11 @@ class SQLiteControlStore:
             for row in rows
         ]
         initial = transitions[0].predecessor_run_id
-        if initial is None or initial not in run_ids or len(transitions) + 1 != len(run_ids):
+        if (
+            initial is None
+            or initial not in run_ids
+            or len(transitions) + 1 != len(run_ids)
+        ):
             raise ControlStoreIntegrityError("transaction_ledger_integrity_invalid")
         seen = {initial}
         current = initial
@@ -6964,7 +8005,8 @@ class SQLiteControlStore:
                 transition.predecessor_run_id != current
                 or transition.successor_run_id in seen
                 or transition.successor_run_id not in run_ids
-                or transition.successor_workspace_revision != transition.prior_workspace_revision + 1
+                or transition.successor_workspace_revision
+                != transition.prior_workspace_revision + 1
                 or transaction is None
                 or str(transaction[0]) != transition.successor_run_id
                 or int(transaction[1]) != transition.prior_workspace_revision
@@ -7073,9 +8115,7 @@ class SQLiteControlStore:
             ),
         )
         for relation_table, relation_ids, domain_table, domain_ids, with_run in specs:
-            relation_columns = ", ".join(
-                ("run_id", "transaction_id", *relation_ids)
-            )
+            relation_columns = ", ".join(("run_id", "transaction_id", *relation_ids))
             relation_rows = self._connection.execute(
                 f"SELECT {relation_columns} FROM {relation_table}"
             ).fetchall()
@@ -7110,6 +8150,18 @@ class SQLiteControlStore:
                     )
                 domain_keys.add(key)
             if domain_keys != set(owners):
+                raise ControlStoreIntegrityError("transaction_ledger_integrity_invalid")
+        discovery_rows = self._connection.execute(
+            "SELECT run_id,authorization_id,accepted_transaction_id "
+            "FROM run_source_discovery_authorizations"
+        ).fetchall()
+        for run_id, authorization_id, accepted_transaction_id in discovery_rows:
+            owner = self._connection.execute(
+                "SELECT 1 FROM transaction_run_source_discovery_authorizations "
+                "WHERE run_id=? AND transaction_id=? AND authorization_id=?",
+                (run_id, accepted_transaction_id, authorization_id),
+            ).fetchone()
+            if owner is None:
                 raise ControlStoreIntegrityError("transaction_ledger_integrity_invalid")
 
     def _verify_pr4b_relation_coverage(self) -> None:
@@ -7328,13 +8380,10 @@ class SQLiteControlStore:
                 or raw_revision.size_bytes != source.raw_payload_size_bytes
                 or raw_revision.path != source.raw_payload_blob_path
                 or source.raw_payload_blob_path != expected_raw_path
-                or raw_artifact.current_revision
-                != source.raw_payload_artifact_revision
+                or raw_artifact.current_revision != source.raw_payload_artifact_revision
                 or raw_artifact.path != expected_raw_path
             ):
-                raise ControlStoreIntegrityError(
-                    "transaction_ledger_integrity_invalid"
-                )
+                raise ControlStoreIntegrityError("transaction_ledger_integrity_invalid")
         event = self._event_for(source.run_id, source.acquisition_event_id)
         binding = event.intake_binding
         if (

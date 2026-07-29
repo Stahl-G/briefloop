@@ -23,6 +23,7 @@ from multi_agent_brief.contracts.v2 import (
     InvocationStartRequest,
     RunContractBinding,
     RunExecutionAuthorization,
+    RunSourceDiscoveryAuthorization,
     canonical_run_direction_for_binding,
     RunDirection,
     RunIdentity,
@@ -157,7 +158,9 @@ class CoreRunService:
         resumed_invocation_id: str | None = None
         intake_expected_revision: int | None = None
         with self._open_store() as store:
-            verified = self._verifier.verify(store, store.load_workspace_run_head().current_run_id)
+            verified = self._verifier.verify(
+                store, store.load_workspace_run_head().current_run_id
+            )
             if len(verified.snapshot.run_execution_authorizations) != 1:
                 raise CoreRunError("core_run_head_mismatch")
             authorization = verified.snapshot.run_execution_authorizations[0]
@@ -176,7 +179,9 @@ class CoreRunService:
             )
             action = classify_core_run_next_action(verified)
             active_invocations = [
-                item for item in verified.snapshot.invocations if item.status == "active"
+                item
+                for item in verified.snapshot.invocations
+                if item.status == "active"
             ]
             fresh_reservation = (
                 action.action_kind == "deterministic"
@@ -281,7 +286,9 @@ class CoreRunService:
         )
 
         try:
-            result = IntakeService(self.workspace, clock=self._clock)._commit_authorized_source_pack_from_core(
+            result = IntakeService(
+                self.workspace, clock=self._clock
+            )._commit_authorized_source_pack_from_core(
                 _CoreAuthorizedSourcePack(
                     request_id=pack_request_id,
                     run_id=invocation_request.run_id,
@@ -367,6 +374,9 @@ class CoreRunService:
         adapter_hash = sha256_hex(adapter_bytes)
         source_plan_hash = sha256_hex(source_plan_bytes)
         authorization_input = request.execution_authorization
+        source_discovery_input = request.source_discovery_authorization
+        if authorization_input is not None and source_discovery_input is not None:
+            raise CoreRunError("core_run_contract_mismatch")
         execution_manifest_bytes: bytes | None = None
         if authorization_input is not None:
             execution_manifest_bytes = canonical_json_bytes(
@@ -378,6 +388,20 @@ class CoreRunService:
                 authorization_input.source_manifest_sha256
             ):
                 raise CoreRunError("core_run_contract_mismatch")
+        discovery_route: RuntimeSourceRouteBinding | None = None
+        if source_discovery_input is not None:
+            routes = [
+                route
+                for route in source_plan.routes
+                if route.route_id == source_discovery_input.route_id
+                and route.provider_id == source_discovery_input.provider_id
+                and route.execution_owner == source_discovery_input.execution_owner
+                and route.route_kind == "external_api"
+                and route.acquisition_spec is not None
+            ]
+            if len(routes) != 1:
+                raise CoreRunError("core_run_contract_mismatch")
+            discovery_route = routes[0]
         fingerprint = run_contract_fingerprint(
             runtime=request.runtime,
             stage_specs_schema=str(contracts.stage_specs["schema_version"]),
@@ -570,6 +594,43 @@ class CoreRunService:
                     strict=True,
                 )
             )
+            source_discovery_authorization = (
+                None
+                if source_discovery_input is None or discovery_route is None
+                else RunSourceDiscoveryAuthorization.model_validate(
+                    {
+                        "schema_version": RunSourceDiscoveryAuthorization.schema_id,
+                        "authorization_id": derived_id(
+                            "DISCOVERY-AUTH", request.request_id, request_fingerprint
+                        ),
+                        "run_id": request.run_id,
+                        "workspace_id": request.workspace_id,
+                        "run_contract_fingerprint": binding.contract_fingerprint,
+                        "run_direction_fingerprint": canonical_fingerprint(
+                            canonical_run_direction_for_binding(
+                                request.run_direction.model_dump(
+                                    mode="json", exclude_unset=False
+                                )
+                            )
+                        ),
+                        "runtime_source_plan_fingerprint": (
+                            source_plan.source_plan_fingerprint
+                        ),
+                        "source_route_fingerprint": discovery_route.route_fingerprint,
+                        "route_id": source_discovery_input.route_id,
+                        "provider_id": source_discovery_input.provider_id,
+                        "execution_owner": source_discovery_input.execution_owner,
+                        "credential_env": source_discovery_input.credential_env,
+                        "completion_target": source_discovery_input.completion_target,
+                        "repair_budget": source_discovery_input.repair_budget,
+                        "authorization_event_id": event_id,
+                        "accepted_transaction_id": request.request_id,
+                        "request_fingerprint": request_fingerprint,
+                        "created_at": now,
+                    },
+                    strict=True,
+                )
+            )
             event = _core_event(
                 event_id=event_id,
                 run_id=request.run_id,
@@ -601,6 +662,10 @@ class CoreRunService:
             unit.put_run_contract_binding(binding)
             if execution_authorization is not None:
                 unit.put_run_execution_authorization(execution_authorization)
+            if source_discovery_authorization is not None:
+                unit.put_run_source_discovery_authorization(
+                    source_discovery_authorization
+                )
             artifact_contracts = {
                 str(item["artifact_id"]): item for item in contracts.artifacts
             }
@@ -1192,7 +1257,12 @@ class CoreRunService:
                 producer_invocation_id = require_invocation(
                     sources[0].invocation_id, role_id="source-provider"
                 )
-                return tuple(selected), gate_ids, producer_invocation_id, producer_tool_id
+                return (
+                    tuple(selected),
+                    gate_ids,
+                    producer_invocation_id,
+                    producer_tool_id,
+                )
             candidates = require_artifact("source_candidates", "produced")
             submission = require_submission(
                 candidates,
@@ -1907,7 +1977,9 @@ _SECRET_BEARING_INPUT_SUFFIXES = tuple(
 # The bootstrap's strict, non-secret control DTO uses this historical suffix;
 # it is validated separately as a Pydantic authorization input, never treated
 # as a credential selector or persisted secret.
-_NON_SECRET_CONTROL_INPUT_KEYS = frozenset({"execution_authorization"})
+_NON_SECRET_CONTROL_INPUT_KEYS = frozenset(
+    {"execution_authorization", "source_discovery_authorization"}
+)
 _LEGACY_CONTROL_PATHS = (
     "output/intermediate/runtime_manifest.json",
     "output/intermediate/workflow_state.json",
@@ -2410,27 +2482,39 @@ def _source_acquisition_spec(
         if type(tasks) is not list:
             raise CoreRunError("runtime_source_plan_invalid")
         requests: list[dict[str, object]] = []
-        for task in tasks:
-            if type(task) is not dict or set(task) - {
-                "query",
-                "domains",
-                "topic",
-                "market",
-                "language",
-                "platform_group",
-                "signal_type",
-            }:
+        if provider_id == "tavily":
+            if run_direction is None or max_results != 5:
                 raise CoreRunError("runtime_source_plan_invalid")
-            query = task.get("query")
-            task_domains = task.get("domains", domains)
-            requests.append(
+            requests = [
                 _web_request_payload(
-                    query=query,
-                    domains=task_domains,
+                    query=run_direction.task_objective,
+                    domains=domains,
                     max_results=max_results,
                     recency_days=recency_days,
                 )
-            )
+            ]
+        else:
+            for task in tasks:
+                if type(task) is not dict or set(task) - {
+                    "query",
+                    "domains",
+                    "topic",
+                    "market",
+                    "language",
+                    "platform_group",
+                    "signal_type",
+                }:
+                    raise CoreRunError("runtime_source_plan_invalid")
+                query = task.get("query")
+                task_domains = task.get("domains", domains)
+                requests.append(
+                    _web_request_payload(
+                        query=query,
+                        domains=task_domains,
+                        max_results=max_results,
+                        recency_days=recency_days,
+                    )
+                )
         if not requests:
             if run_direction is None:
                 raise CoreRunError("runtime_source_plan_invalid")
@@ -2529,7 +2613,7 @@ def _web_preferred_domains(web: dict[str, object]) -> list[str]:
         or any(type(item) is not str for item in preferred)
     ):
         raise CoreRunError("runtime_source_plan_invalid")
-    return sorted({item.lower() for item in preferred})
+    return list(dict.fromkeys(item.lower() for item in preferred))
 
 
 def _web_request_payload(
@@ -2550,7 +2634,7 @@ def _web_request_payload(
             {
                 "schema_version": RuntimeWebSearchRequestSpec.schema_id,
                 "query": query,
-                "domains": sorted({item.lower() for item in domains}),
+                "domains": list(dict.fromkeys(item.lower() for item in domains)),
                 "max_results": max_results,
                 "recency_days": recency_days,
             },

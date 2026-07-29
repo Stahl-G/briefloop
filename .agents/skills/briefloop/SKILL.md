@@ -74,12 +74,17 @@ action snapshot as the next instruction.
 
 Follow `references/codex-controlstore-v2.md` as an executable state machine.
 
-For a run with the Store-frozen M2 execution authorization, use
+For a run with either the Store-frozen M2 execution authorization or the
+narrow Store-frozen Tavily source-discovery authorization, use
 `briefloop runtime continue --workspace <workspace>` as the bounded controller
 seam. On `role_work_required`, perform only the exact current-session envelope
 work and call it again. Stop on `proposal_invalid`, `needs_human`,
 `needs_attention`, or `finalized_local` as directed; never invent the missing
-request or repair. Unauthorized runs retain the granular/manual protocol.
+request or repair. During discovery-only continuation, the host may run the
+doctor, source planner, and exact bound Tavily route. Search snippets remain
+ineligible; only durable provider content can participate in the single atomic
+source/manifest/classification/execution-authorization promotion receipt.
+Unauthorized runs retain the granular/manual protocol.
 
 An init-web response does not hot-load the newly installed workspace kit into
 the initiating Codex process. The uninterrupted path is an already-active

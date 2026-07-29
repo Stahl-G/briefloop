@@ -8,8 +8,16 @@ import json
 import os
 import re
 from pathlib import Path
+import stat
+import tempfile
 
-from multi_agent_brief.core.env import KNOWN_WORKSPACE_ENV_KEYS, _parse_env_line
+from multi_agent_brief.core.env import (
+    KNOWN_WORKSPACE_ENV_KEYS,
+    MAX_WORKSPACE_ENV_BYTES,
+    WorkspaceEnvError,
+    _parse_env_line,
+    _read_workspace_env_bytes,
+)
 
 
 _SAFE_ENV_KEY_RE = re.compile(r"^[A-Z][A-Z0-9_]*$")
@@ -73,7 +81,6 @@ def _normalize_keys(keys: list[str]) -> list[str]:
     return normalized
 
 
-
 def _read_known_env_values(path: Path) -> dict[str, str]:
     try:
         lines = path.read_text(encoding="utf-8").splitlines()
@@ -90,14 +97,19 @@ def _read_known_env_values(path: Path) -> dict[str, str]:
     return values
 
 
-
 def _write_workspace_env(path: Path, values: dict[str, str]) -> None:
     existing_lines: list[str] = []
-    if path.exists():
+    try:
+        existing = _read_workspace_env_bytes(path.parent)
+    except FileNotFoundError:
+        existing = None
+    except WorkspaceEnvError as exc:
+        raise SecretImportError("workspace secret target is unsafe") from exc
+    if existing is not None:
         try:
-            existing_lines = path.read_text(encoding="utf-8").splitlines()
-        except OSError as exc:
-            raise SecretImportError(f"unable to read workspace env file: {path}") from exc
+            existing_lines = existing.decode("utf-8").splitlines()
+        except UnicodeDecodeError as exc:
+            raise SecretImportError("workspace secret target is unsafe") from exc
 
     updated_lines: list[str] = []
     replaced: set[str] = set()
@@ -114,12 +126,61 @@ def _write_workspace_env(path: Path, values: dict[str, str]) -> None:
         if key not in replaced:
             updated_lines.append(f"{key}={_quote_env_value(values[key])}")
 
-    try:
-        path.write_text("\n".join(updated_lines).rstrip() + "\n", encoding="utf-8")
-        os.chmod(path, 0o600)
-    except OSError as exc:
-        raise SecretImportError(f"unable to write workspace env file: {path}") from exc
+    payload = ("\n".join(updated_lines).rstrip() + "\n").encode("utf-8")
+    if not payload or len(payload) > MAX_WORKSPACE_ENV_BYTES:
+        raise SecretImportError("workspace secret target is unsafe")
+    _replace_workspace_env(path, payload)
 
+
+def _replace_workspace_env(path: Path, payload: bytes) -> None:
+    descriptor = -1
+    temporary: Path | None = None
+    directory_descriptor = -1
+    try:
+        parent_metadata = path.parent.lstat()
+        if path.parent.is_symlink() or not stat.S_ISDIR(parent_metadata.st_mode):
+            raise SecretImportError("workspace secret target is unsafe")
+        descriptor, temporary_name = tempfile.mkstemp(
+            prefix=".briefloop-env-",
+            dir=path.parent,
+        )
+        temporary = Path(temporary_name)
+        os.fchmod(descriptor, 0o600)
+        opened = os.fstat(descriptor)
+        if not stat.S_ISREG(opened.st_mode) or opened.st_nlink != 1:
+            raise SecretImportError("workspace secret target is unsafe")
+        offset = 0
+        while offset < len(payload):
+            count = os.write(descriptor, payload[offset:])
+            if count <= 0:
+                raise SecretImportError("workspace secret target is unsafe")
+            offset += count
+        os.fsync(descriptor)
+        os.close(descriptor)
+        descriptor = -1
+        os.replace(temporary, path)
+        temporary = None
+        if os.name != "nt":
+            os.chmod(path, 0o600)
+        directory_descriptor = os.open(
+            path.parent,
+            os.O_RDONLY | getattr(os, "O_DIRECTORY", 0),
+        )
+        os.fsync(directory_descriptor)
+    except SecretImportError:
+        raise
+    except OSError as exc:
+        raise SecretImportError("workspace secret target is unsafe") from exc
+    finally:
+        if descriptor >= 0:
+            os.close(descriptor)
+        if directory_descriptor >= 0:
+            os.close(directory_descriptor)
+        if temporary is not None:
+            try:
+                temporary.unlink()
+            except OSError:
+                pass
 
 
 def import_workspace_secrets(
@@ -178,8 +239,10 @@ def store_workspace_secret(
     requested = _normalize_keys([key])
     if requested != [key] or key not in KNOWN_WORKSPACE_ENV_KEYS:
         raise SecretImportError("unsupported secret key")
-    if not isinstance(value, str) or not value or any(
-        character.isspace() for character in value
+    if (
+        not isinstance(value, str)
+        or not value
+        or any(character.isspace() for character in value)
     ):
         raise SecretImportError("secret value is invalid")
     _require_existing_workspace(workspace)
@@ -203,67 +266,6 @@ def _require_existing_workspace(workspace: Path) -> None:
         )
 
 
-def _normalize_keys(keys: list[str]) -> list[str]:
-    normalized: list[str] = []
-    seen: set[str] = set()
-    for raw in keys:
-        key = str(raw or "").strip()
-        if not key:
-            continue
-        if not _SAFE_ENV_KEY_RE.match(key):
-            raise SecretImportError(f"invalid secret key name: {key}")
-        if key not in seen:
-            normalized.append(key)
-            seen.add(key)
-    return normalized
-
-
-def _read_known_env_values(path: Path) -> dict[str, str]:
-    try:
-        lines = path.read_text(encoding="utf-8").splitlines()
-    except OSError as exc:
-        raise SecretImportError(f"unable to read source env file: {path}") from exc
-    values: dict[str, str] = {}
-    for line in lines:
-        parsed = _parse_env_line(line)
-        if not parsed:
-            continue
-        key, value = parsed
-        if value:
-            values[key] = value
-    return values
-
-
-def _write_workspace_env(path: Path, values: dict[str, str]) -> None:
-    existing_lines: list[str] = []
-    if path.exists():
-        try:
-            existing_lines = path.read_text(encoding="utf-8").splitlines()
-        except OSError as exc:
-            raise SecretImportError(f"unable to read workspace env file: {path}") from exc
-
-    updated_lines: list[str] = []
-    replaced: set[str] = set()
-    for line in existing_lines:
-        parsed = _parse_env_line(line)
-        if parsed and parsed[0] in values:
-            key = parsed[0]
-            updated_lines.append(f"{key}={_quote_env_value(values[key])}")
-            replaced.add(key)
-        else:
-            updated_lines.append(line)
-
-    for key in values:
-        if key not in replaced:
-            updated_lines.append(f"{key}={_quote_env_value(values[key])}")
-
-    try:
-        path.write_text("\n".join(updated_lines).rstrip() + "\n", encoding="utf-8")
-        os.chmod(path, 0o600)
-    except OSError as exc:
-        raise SecretImportError(f"unable to write workspace env file: {path}") from exc
-
-
 def _quote_env_value(value: str) -> str:
     if not value:
         return ""
@@ -283,6 +285,7 @@ def handle(args: argparse.Namespace) -> int:
 
     print("runtime_command_unsupported")
     return 1
+
 
 # NOTE: the public command surface of this module is retired. The
 # SQLite ControlStore is the sole runtime authority; only the parser

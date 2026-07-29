@@ -58,6 +58,7 @@ validation unless that is stated separately.
 | `briefloop` CLI | Supported |
 | `multi-agent-brief` CLI | Supported compatibility entrypoint with identical behavior; retained for existing scripts and installs |
 | `briefloop run --workspace <path> --runtime codex` plus `runtime next/invocation-start/invocation-validate/invocation-accept/invocation-fail/apply/diagnose`; strict JSON proposal contract preflight | Experimental; fresh SQLite-only, no JSON migration or fallback |
+| `briefloop runtime continue --workspace <path>` with Store-frozen Tavily discovery authorization | Experimental; one Human-confirmed bounded Tavily Search request, exact response/content staging, one Intake UoW for the mixed-eligibility source pack plus execution authorization, then the existing external-role handoff; snippets remain claims-ineligible; synthetic loopback transport tested; live usefulness, reliability, cost, and acquisition-to-`finalized_local` performance NOT MEASURED; POSIX/macOS capability is checked before any provider call; current Windows returns `checkout_publication_unsupported` with zero provider/network access, no source promotion, and no later execution/finalization/approval/package/delivery authority |
 | Legacy runtime names and `operator --recipe fast-rerun` | Unsupported for the SQLite-only active path |
 | `briefloop status --workspace <path>` | Supported read-only Store projection for SQLite workspaces; JSON-only workspace unsupported |
 | Legacy `briefloop deliver` commands | Unsupported on SQLite; approval and delivery use typed Store actions through `runtime apply` |
@@ -381,7 +382,7 @@ approval, release authority, semantic proof, or output-quality proof.
 | Provider | Status |
 |---|---|
 | Manual (local md/txt/json files) | Supported |
-| Web search — Tavily | Supported |
+| Web search — Tavily | Experimental narrow runtime-first route; synthetic transport tested; live usefulness, reliability, cost, and acquisition-to-`finalized_local` performance NOT MEASURED |
 | Web search — Exa | Supported |
 | Web search — Brave | Supported |
 | Web search — Firecrawl | Supported |

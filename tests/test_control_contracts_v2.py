@@ -53,6 +53,9 @@ EXPECTED_V2_CONTRACT_IDS = (
     "briefloop.run_execution_authorization_input.v2",
     "briefloop.run_execution_authorization_bootstrap.v2",
     "briefloop.run_execution_authorization.v2",
+    "briefloop.run_source_discovery_authorization_input.v2",
+    "briefloop.run_source_discovery_authorization_bootstrap.v2",
+    "briefloop.run_source_discovery_authorization.v2",
     "briefloop.workspace_controlstore_bootstrap.v2",
     "briefloop.runtime_adapter_binding.v2",
     "briefloop.runtime_web_search_request_spec.v2",
@@ -128,8 +131,8 @@ EXPECTED_V2_CONTRACT_IDS = (
 
 def test_v2_contract_inventory_is_exact_and_uses_existing_registry() -> None:
     assert V2_CONTRACT_IDS == EXPECTED_V2_CONTRACT_IDS
-    assert len(V2_CONTRACT_MODELS) == 97
-    assert len(set(V2_CONTRACT_IDS)) == 97
+    assert len(V2_CONTRACT_MODELS) == 100
+    assert len(set(V2_CONTRACT_IDS)) == 100
     for contract_id, model in zip(V2_CONTRACT_IDS, V2_CONTRACT_MODELS):
         assert SchemaRegistry.get(contract_id) is model
 
@@ -244,10 +247,13 @@ def test_run_direction_reuses_the_existing_search_mode_contract(
     if field == "search_backend":
         payload["web_search_mode"] = "external_api"
 
-    assert [item.field for item in SchemaRegistry.validate(
-        "briefloop.run_direction.v2",
-        payload,
-    )] == [field]
+    assert [
+        item.field
+        for item in SchemaRegistry.validate(
+            "briefloop.run_direction.v2",
+            payload,
+        )
+    ] == [field]
 
 
 def test_extra_field_error_is_value_free_and_does_not_expose_pydantic_message() -> None:
@@ -393,17 +399,16 @@ def test_artifact_identity_record_and_reference_are_exact_strict_contracts() -> 
             {**payload, "media_type": "application/json"},
             strict=True,
         )
-    assert ArtifactIdentityReference.model_validate(
-        {"artifact_id": "artifact-a"},
-        strict=True,
-    ).artifact_id == "artifact-a"
+    assert (
+        ArtifactIdentityReference.model_validate(
+            {"artifact_id": "artifact-a"},
+            strict=True,
+        ).artifact_id
+        == "artifact-a"
+    )
     for invalid in ({}, {"artifact_id": 1}, {"artifact_id": "artifact-a", "x": 1}):
         with pytest.raises(ValidationError):
             ArtifactIdentityReference.model_validate(invalid, strict=True)
-
-
-
-
 
 
 def test_intake_event_types_require_exact_typed_binding() -> None:
@@ -457,8 +462,6 @@ def test_intake_event_types_require_exact_typed_binding() -> None:
         contract_id,
         {**base, "intake_binding": source["intake_binding"]},
     )
-
-
 
 
 @pytest.mark.parametrize("value", (math.nan, math.inf, -math.inf))
@@ -528,9 +531,7 @@ def test_control_dto_examples_cover_required_revision_and_identity_bindings() ->
     assert receipt["artifact_revisions"] == [
         {"artifact_id": "candidate_claims", "revision": 1}
     ]
-    assert receipt["artifact_identities"] == [
-        {"artifact_id": "candidate_claims"}
-    ]
+    assert receipt["artifact_identities"] == [{"artifact_id": "candidate_claims"}]
 
 
 def test_nested_error_path_uses_stable_briefloop_format() -> None:
