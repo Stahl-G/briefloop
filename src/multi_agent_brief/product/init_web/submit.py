@@ -115,6 +115,13 @@ def _profile_from_payload(payload: dict[str, Any]) -> InitProfile:
         raise SubmissionError("submission_search_backend_invalid", 422)
     if web_search_mode == "disabled" and search_backend:
         raise SubmissionError("submission_search_backend_invalid", 422)
+    max_source_age_days = selections.get("max_source_age_days")
+    if max_source_age_days is None:
+        if web_search_mode == "external_api":
+            raise SubmissionError("submission_report_window_invalid", 422)
+        max_source_age_days = 14
+    elif type(max_source_age_days) is not int or max_source_age_days not in {7, 30, 90}:
+        raise SubmissionError("submission_report_window_invalid", 422)
     source_profile = selections.get("source_profile") or (
         "llm_decide" if web_search_mode == "external_api" else "conservative"
     )
@@ -148,6 +155,7 @@ def _profile_from_payload(payload: dict[str, Any]) -> InitProfile:
             "submission_forbidden_sources_invalid",
         ),
         cadence=selections.get("cadence") or "weekly",
+        max_source_age_days=max_source_age_days,
         output_formats=_require_text_list(formats, "submission_output_formats_invalid"),
         source_profile=source_profile,
         web_search_mode=web_search_mode,

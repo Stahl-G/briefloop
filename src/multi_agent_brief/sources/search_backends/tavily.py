@@ -7,6 +7,7 @@ specified via api_key_env in config.
 
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import urllib.request
@@ -183,6 +184,10 @@ class TavilyBackend(SearchBackend):
                 or len(raw_response) > TAVILY_RESPONSE_BYTE_CAP
             ):
                 raise ValueError("invalid Tavily response")
+            api_key_bytes = api_key.encode("utf-8")
+            api_key_sha256 = hashlib.sha256(api_key_bytes).hexdigest().encode("ascii")
+            if api_key_bytes in raw_response or api_key_sha256 in raw_response.lower():
+                raise ValueError("unsafe Tavily response")
             decoded = json.loads(raw_response.decode("utf-8"))
             data = _TavilyResponse.model_validate(decoded, strict=True)
             if len(data.results) > max_results:

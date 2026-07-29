@@ -145,7 +145,8 @@ def _replace_workspace_env(path: Path, payload: bytes) -> None:
             dir=path.parent,
         )
         temporary = Path(temporary_name)
-        os.fchmod(descriptor, 0o600)
+        if os.name != "nt":
+            os.fchmod(descriptor, 0o600)
         opened = os.fstat(descriptor)
         if not stat.S_ISREG(opened.st_mode) or opened.st_nlink != 1:
             raise SecretImportError("workspace secret target is unsafe")
@@ -162,11 +163,11 @@ def _replace_workspace_env(path: Path, payload: bytes) -> None:
         temporary = None
         if os.name != "nt":
             os.chmod(path, 0o600)
-        directory_descriptor = os.open(
-            path.parent,
-            os.O_RDONLY | getattr(os, "O_DIRECTORY", 0),
-        )
-        os.fsync(directory_descriptor)
+            directory_descriptor = os.open(
+                path.parent,
+                os.O_RDONLY | getattr(os, "O_DIRECTORY", 0),
+            )
+            os.fsync(directory_descriptor)
     except SecretImportError:
         raise
     except OSError as exc:

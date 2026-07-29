@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 from io import BytesIO
@@ -459,6 +460,71 @@ def test_tavily_transport_failure_is_stable_and_value_free(monkeypatch):
         assert sentinel not in repr(exc)
     else:
         raise AssertionError("transport failure must remain a typed failure")
+
+
+def test_tavily_rejects_secret_or_secret_hash_in_ignored_response_field(
+    monkeypatch,
+):
+    sentinel = "tvly-response-echo-sentinel"
+    sentinel_hash = hashlib.sha256(sentinel.encode("utf-8")).hexdigest()
+    echoed_values = (sentinel, sentinel_hash.upper())
+    calls = 0
+
+    class _FakeResponse:
+        status = 200
+
+        def __init__(self, echoed: str) -> None:
+            self._echoed = echoed
+
+        def read(self, _limit=-1):
+            return json.dumps(
+                {
+                    "ignored_diagnostic": self._echoed,
+                    "results": [
+                        {
+                            "title": "Durable result",
+                            "url": "https://example.com/durable",
+                            "content": "search snippet",
+                            "raw_content": "retrieved durable page extract",
+                            "score": 0.9,
+                        }
+                    ],
+                }
+            ).encode("utf-8")
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            return False
+
+    current_echo = ""
+
+    def _urlopen(_request, timeout=30):
+        nonlocal calls
+        assert timeout == 30
+        calls += 1
+        return _FakeResponse(current_echo)
+
+    monkeypatch.setattr("urllib.request.urlopen", _urlopen)
+    monkeypatch.setenv("TAVILY_API_KEY", sentinel)
+
+    for index, echoed in enumerate(echoed_values, start=1):
+        current_echo = echoed
+        try:
+            TavilyBackend().search_response("test query", max_results=1)
+        except SearchBackendError as exc:
+            assert str(exc) == "Tavily search failed"
+            assert exc.backend == "tavily"
+            assert exc.__cause__ is None
+            assert exc.__context__ is None
+            assert sentinel not in str(exc)
+            assert sentinel not in repr(exc)
+            assert sentinel_hash not in str(exc).lower()
+            assert sentinel_hash not in repr(exc).lower()
+        else:
+            raise AssertionError("credential echo must remain a typed failure")
+        assert calls == index
 
 
 # --- Non-stub providers (api_news, filings, mcp, cli) ---

@@ -51,6 +51,7 @@ def _body(request_id: str, target: str, **overrides: object) -> dict[str, object
             "interface_language": "zh",
             "output_language": "zh",
             "cadence": "weekly",
+            "max_source_age_days": 7,
             "focus_areas": ["operations", "policy"],
             "output_formats": ["markdown", "docx"],
             "forbidden_sources": [],
@@ -278,6 +279,85 @@ def test_public_web_submission_stores_tavily_key_outside_run_contract(
     assert b"tvly-test-secret-123" not in (workspace / "briefloop.db").read_bytes()
 
 
+@pytest.mark.parametrize("max_source_age_days", [7, 30, 90])
+def test_public_web_submission_freezes_confirmed_report_window(
+    tmp_path: Path,
+    max_source_age_days: int,
+) -> None:
+    submitter = InitWebSubmitter(base_dir=tmp_path)
+    target = f"web-search-{max_source_age_days}"
+    body = _public_web_body(
+        f"REQ-WINDOW-{max_source_age_days}",
+        target,
+    )
+    payload = body["payload"]
+    assert isinstance(payload, dict)
+    selections = payload["selections"]
+    assert isinstance(selections, dict)
+    selections["max_source_age_days"] = max_source_age_days
+    submitter.configure_search_secret(
+        session_id="web-session",
+        body={"provider": "tavily", "api_key": "tvly-window-secret"},
+    )
+
+    _submit_ok(submitter, body)
+
+    workspace = tmp_path / target
+    sources = yaml.safe_load((workspace / "sources.yaml").read_text(encoding="utf-8"))
+    assert sources["web_search"]["recency_days"] == max_source_age_days
+    with SQLiteControlStore.open(workspace / "briefloop.db") as store:
+        head = store.load_workspace_run_head()
+        assert head is not None
+        snapshot = store.load_snapshot(head.current_run_id)
+    assert len(snapshot.run_contract_bindings) == 1
+    assert (
+        snapshot.run_contract_bindings[0].run_direction.max_source_age_days
+        == max_source_age_days
+    )
+
+
+@pytest.mark.parametrize(
+    "invalid_window",
+    [None, True, "30", 0, 14, 91],
+)
+def test_public_web_invalid_report_window_fails_before_state_or_secret(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    invalid_window: object,
+) -> None:
+    submitter = InitWebSubmitter(base_dir=tmp_path)
+    body = _public_web_body("REQ-WINDOW-INVALID", "invalid-window")
+    payload = body["payload"]
+    assert isinstance(payload, dict)
+    selections = payload["selections"]
+    assert isinstance(selections, dict)
+    if invalid_window is None:
+        selections.pop("max_source_age_days")
+    else:
+        selections["max_source_age_days"] = invalid_window
+
+    def _secret_effect_must_not_run(*_args: object, **_kwargs: object) -> object:
+        raise AssertionError("invalid report window reached credential effect")
+
+    monkeypatch.setattr(
+        init_web_submit_module,
+        "get_known_env_value",
+        _secret_effect_must_not_run,
+    )
+    monkeypatch.setattr(
+        init_web_submit_module,
+        "store_workspace_secret",
+        _secret_effect_must_not_run,
+    )
+
+    with pytest.raises(SubmissionError) as exc_info:
+        submitter.submit(body)
+
+    assert exc_info.value.error_code == "submission_report_window_invalid"
+    assert exc_info.value.http_status == 422
+    assert not (tmp_path / "invalid-window").exists()
+
+
 def test_public_web_submission_commits_discovery_before_secret_is_required(
     tmp_path: Path,
 ) -> None:
@@ -434,7 +514,7 @@ def test_public_web_changed_semantics_conflict_before_secret_effect(
     assert isinstance(changed_payload, dict)
     changed_selections = changed_payload["selections"]
     assert isinstance(changed_selections, dict)
-    changed_selections["focus_areas"] = ["policy"]
+    changed_selections["max_source_age_days"] = 30
 
     def _secret_must_not_be_touched(*_args: object, **_kwargs: object) -> object:
         raise AssertionError("Store replay conflict must precede secret effect")

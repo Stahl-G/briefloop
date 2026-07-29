@@ -167,6 +167,7 @@ def _public_web_tavily_body(
                 "interface_language": "en",
                 "output_language": "en",
                 "cadence": "weekly",
+                "max_source_age_days": 30,
                 "focus_areas": ["operations"],
                 "output_formats": ["markdown"],
                 "forbidden_sources": [],
@@ -241,6 +242,11 @@ def test_get_assets_and_security_headers(server) -> None:
         b'web_search_mode: c.source === "public_web" ? "external_api" : "disabled"'
         in body
     )
+    assert b'{ "7d": 7, "30d": 30, "90d": 90 }' in body
+    assert b"max_source_age_days: maxSourceAgeDays" in body
+    assert b'id: "90d"' in body
+    assert b'id: "quarter"' not in body
+    assert b"custom_window" not in body
     assert b"search_secret_session_id" in body
     assert b"runtime continue --workspace" not in body
     assert b"response.workspace ||" not in body
@@ -659,8 +665,8 @@ def test_real_loopback_public_web_tavily_replays_before_credential_or_provider(
     assert provider_request["include_raw_content"] == "markdown"
     assert provider_request["auto_parameters"] is False
     assert provider_request["search_depth"] == "basic"
-    assert provider_request["time_range"] == "week"
-    assert "days" not in provider_request
+    assert provider_request["days"] == 30
+    assert "time_range" not in provider_request
     assert provider_request["include_answer"] is False
     assert "api_key" not in provider_request
     assert provider_authorizations == [f"Bearer {sentinel}"]

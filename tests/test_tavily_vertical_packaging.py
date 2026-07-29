@@ -168,6 +168,7 @@ def test_tavily_vertical_real_loopback_source_and_wheel_parity(
                         "interface_language": "en",
                         "output_language": "en",
                         "cadence": "weekly",
+                        "max_source_age_days": 30,
                         "focus_areas": ["operations"],
                         "output_formats": ["markdown"],
                         "forbidden_sources": [],
@@ -193,6 +194,68 @@ def test_tavily_vertical_real_loopback_source_and_wheel_parity(
         tavily_module.TAVILY_API_URL = (
             f"http://127.0.0.1:{provider_server.server_port}/search"
         )
+
+        original_urlopen = tavily_module.urllib.request.urlopen
+        secret_hash_text = hashlib.sha256(
+            sentinel.encode("utf-8")
+        ).hexdigest()
+        echo_rejections = 0
+        for echoed in (sentinel, secret_hash_text.upper()):
+            echo_calls = []
+
+            class EchoResponse:
+                status = 200
+
+                def __enter__(self):
+                    return self
+
+                def __exit__(self, *_args):
+                    return False
+
+                def read(self, _limit=-1):
+                    return json.dumps(
+                        {
+                            "ignored_diagnostic": echoed,
+                            "results": [
+                                {
+                                    "title": "Durable result",
+                                    "url": "https://example.com/durable",
+                                    "content": "search snippet",
+                                    "raw_content": "durable page extract",
+                                    "score": 0.9,
+                                }
+                            ],
+                        }
+                    ).encode("utf-8")
+
+            def echo_urlopen(_request, timeout=30):
+                require(timeout == 30, "echo timeout mismatch")
+                echo_calls.append("called")
+                return EchoResponse()
+
+            os.environ["TAVILY_API_KEY"] = sentinel
+            tavily_module.urllib.request.urlopen = echo_urlopen
+            try:
+                tavily_module.TavilyBackend().search_response(
+                    "echo test",
+                    max_results=1,
+                )
+            except tavily_module.SearchBackendError as exc:
+                require(str(exc) == "Tavily search failed", "echo error changed")
+                require(exc.__cause__ is None, "echo error cause leaked")
+                require(exc.__context__ is None, "echo error context leaked")
+                require(sentinel not in repr(exc), "echo secret leaked")
+                require(
+                    secret_hash_text not in repr(exc).lower(),
+                    "echo hash leaked",
+                )
+                echo_rejections += 1
+            else:
+                raise RuntimeError("credential echo was accepted")
+            finally:
+                tavily_module.urllib.request.urlopen = original_urlopen
+                os.environ.pop("TAVILY_API_KEY", None)
+            require(len(echo_calls) == 1, "echo call count mismatch")
 
         first = create_init_web_server(InitWebSubmitter(base_dir=root))
         wizard_errors = []
@@ -257,6 +320,7 @@ def test_tavily_vertical_real_loopback_source_and_wheel_parity(
             initial["source_discovery_authorized"] is True,
             "discovery authorization missing",
         )
+        require(initial["search_secret_status"] == "ready", "secret not ready")
         db_path = workspace / "briefloop.db"
         env_path = workspace / ".env"
         require(db_path.is_file() and env_path.is_file(), "init files missing")
@@ -323,6 +387,15 @@ def test_tavily_vertical_real_loopback_source_and_wheel_parity(
                 db_path.read_bytes() == before_acquisition,
                 "unsupported platform changed Store",
             )
+            with SQLiteControlStore.open(db_path) as store:
+                head = store.load_workspace_run_head()
+                require(head is not None, "unsupported workspace head missing")
+                stopped_snapshot = store.load_snapshot(head.current_run_id)
+            require(stopped_snapshot.sources == (), "unsupported source persisted")
+            require(
+                len(stopped_snapshot.run_execution_authorizations) == 0,
+                "unsupported execution authorization persisted",
+            )
             provider_server.shutdown()
             provider_thread.join(timeout=2)
             provider_server.server_close()
@@ -330,6 +403,7 @@ def test_tavily_vertical_real_loopback_source_and_wheel_parity(
                 json.dumps(
                     {
                         "capable": False,
+                        "credential_echo_rejections": echo_rejections,
                         "optimize": sys.flags.optimize,
                         "provider_calls": 0,
                         "reason_code": continuation["reason_code"],
@@ -369,11 +443,8 @@ def test_tavily_vertical_real_loopback_source_and_wheel_parity(
             provider_request["search_depth"] == "basic",
             "search depth mismatch",
         )
-        require(
-            provider_request["time_range"] == "week",
-            "time range mismatch",
-        )
-        require("days" not in provider_request, "legacy days filter used")
+        require(provider_request["days"] == 30, "day range mismatch")
+        require("time_range" not in provider_request, "week filter used")
         require("api_key" not in provider_request, "provider key entered body")
         require(
             provider_authorizations == [f"Bearer {sentinel}"],
@@ -482,6 +553,7 @@ def test_tavily_vertical_real_loopback_source_and_wheel_parity(
             json.dumps(
                 {
                     "capable": True,
+                    "credential_echo_rejections": echo_rejections,
                     "durable_sources": sum(
                         source.claims_eligible for source in promoted.sources
                     ),
@@ -541,6 +613,7 @@ def test_tavily_vertical_real_loopback_source_and_wheel_parity(
     if source_payload["capable"]:
         expected = {
             "capable": True,
+            "credential_echo_rejections": 2,
             "durable_sources": 1,
             "optimize": sys.flags.optimize,
             "provider_calls": 1,
@@ -551,6 +624,7 @@ def test_tavily_vertical_real_loopback_source_and_wheel_parity(
     else:
         expected = {
             "capable": False,
+            "credential_echo_rejections": 2,
             "optimize": sys.flags.optimize,
             "provider_calls": 0,
             "reason_code": "checkout_publication_unsupported",

@@ -82,6 +82,7 @@ def _body(*, authorized: bool) -> dict[str, object]:
             "interface_language": "en",
             "output_language": "en",
             "cadence": "weekly",
+            "max_source_age_days": 7,
             "focus_areas": ["operations"],
             "output_formats": ["markdown"],
             "forbidden_sources": [],
@@ -2052,6 +2053,86 @@ def test_discovery_provider_failure_records_one_typed_failure(
     assert sentinel not in repr(snapshot)
     assert sentinel not in repr(history.transactions)
     assert sentinel.encode() not in (workspace / "briefloop.db").read_bytes()
+
+
+@pytest.mark.parametrize("echo_kind", ["secret", "sha256"])
+@_REQUIRES_RETAINED_PUBLICATION
+def test_discovery_provider_credential_echo_fails_before_stage_or_promotion(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+    echo_kind: str,
+) -> None:
+    workspace = _discovery_workspace(tmp_path)
+    sentinel = "tvly-runtime-secret-sentinel"
+    sentinel_hash = hashlib.sha256(sentinel.encode("utf-8")).hexdigest()
+    calls = 0
+
+    class _Response:
+        status = 200
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            return False
+
+        @staticmethod
+        def read(_limit=-1) -> bytes:
+            echoed = sentinel if echo_kind == "secret" else sentinel_hash.upper()
+            return json.dumps(
+                {
+                    "ignored_diagnostic": echoed,
+                    "results": [
+                        {
+                            "title": "Durable source",
+                            "url": "https://example.com/durable",
+                            "content": "search snippet",
+                            "raw_content": "retrieved durable page extract",
+                            "score": 0.9,
+                        }
+                    ],
+                }
+            ).encode("utf-8")
+
+    def echo_response(request, timeout=30):
+        nonlocal calls
+        assert timeout == 30
+        assert request.get_header("Authorization") == f"Bearer {sentinel}"
+        calls += 1
+        return _Response()
+
+    monkeypatch.setattr("urllib.request.urlopen", echo_response)
+    action = _advance_discovery_to_source_action(workspace)
+    stage_identity = _discovery_stage_identity(workspace, action)
+    with SQLiteControlStore.open(workspace / "briefloop.db") as store:
+        head = store.load_workspace_run_head()
+        assert head is not None
+        artifacts_before = store.load_snapshot(head.current_run_id).artifacts
+
+    result = _service(workspace).continue_authorized()
+
+    assert calls == 1
+    assert result.status == "needs_attention"
+    assert result.reason_code == "source_provider_unavailable"
+    assert sentinel not in repr(result)
+    assert sentinel_hash not in repr(result).lower()
+    assert sentinel not in caplog.text
+    assert sentinel_hash not in caplog.text.lower()
+    assert not source_stage_root(workspace, stage_identity).exists()
+    with SQLiteControlStore.open(workspace / "briefloop.db") as store:
+        head = store.load_workspace_run_head()
+        assert head is not None
+        snapshot = store.load_snapshot(head.current_run_id)
+        history = store.load_history()
+    assert snapshot.sources == ()
+    assert snapshot.run_execution_authorizations == ()
+    assert snapshot.artifacts == artifacts_before
+    database_bytes = (workspace / "briefloop.db").read_bytes()
+    assert sentinel.encode("utf-8") not in database_bytes
+    assert sentinel_hash.encode("ascii") not in database_bytes.lower()
+    assert sentinel not in repr(history.transactions)
+    assert sentinel_hash not in repr(history.transactions).lower()
 
 
 def test_authorized_continue_commits_pack_and_returns_exact_role_work(

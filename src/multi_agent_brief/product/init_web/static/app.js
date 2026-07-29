@@ -295,8 +295,7 @@
         windows: [
             { id: "7d", zh: ["近 7 天", ""], en: ["Last 7 days", ""] },
             { id: "30d", zh: ["近 30 天", ""], en: ["Last 30 days", ""] },
-            { id: "quarter", zh: ["本季度", ""], en: ["This quarter", ""] },
-            { id: "custom_window", zh: ["自定义…", ""], en: ["Custom…", ""] }
+            { id: "90d", zh: ["近 90 天", ""], en: ["Last 90 days", ""] }
         ],
         languages: [
             { id: "zh-CN", zh: ["中文", ""], en: ["Chinese", ""] },
@@ -447,7 +446,7 @@
         selections: {
             company: "", report_type: null, audience: null, audience_custom: "",
             purpose: "", brief_title: "",
-            cadence: null, window: null, window_custom: "", language: null, source: null,
+            cadence: null, window: null, language: null, source: null,
             formats: [], presentation: null, custom_base: "executive_brief",
             density: null, tables: null, citations: null,
             accent: "forest", accent_hex: "", accent_hex_raw: ""
@@ -636,10 +635,7 @@
         enumField(sectionsHost, {
             num: "1.7", titleKey: "sec_window", list: CATALOG.windows,
             get: function () { return STATE.selections.window; },
-            set: function (v) { STATE.selections.window = v; },
-            customId: "custom_window", customPlaceholder: "placeholder_window",
-            customGet: function () { return STATE.selections.window_custom; },
-            customSet: function (v) { STATE.selections.window_custom = v; }
+            set: function (v) { STATE.selections.window = v; }
         });
         enumField(sectionsHost, {
             num: "1.8", titleKey: "sec_language", list: CATALOG.languages,
@@ -815,9 +811,6 @@
         };
         if (raw === "formats") return optionLabel(CATALOG.formats, value);
         if (raw === "purpose" || raw === "company" || raw === "brief_title") return value;
-        if (raw === "window" && value === "custom_window") {
-            return STATE.selections.window_custom || optionLabel(CATALOG.windows, value);
-        }
         if (raw === "accent" && value === "custom_hex") {
             return STATE.selections.accent_hex || STATE.selections.accent_hex_raw || optionLabel(CATALOG.accents, value);
         }
@@ -1406,6 +1399,7 @@
 
     function buildSubmission() {
         var c = confirmedSelections();
+        var maxSourceAgeDays = { "7d": 7, "30d": 30, "90d": 90 }[c.window];
         var reportLabel = enLabel(CATALOG.report_types, c.report_type);
         var audience = c.audience === "custom_audience"
             ? String(c.audience_custom || "").trim()
@@ -1424,6 +1418,7 @@
                 interface_language: LANG,
                 output_language: c.language === "en" ? "en" : "zh",
                 cadence: cadence,
+                max_source_age_days: maxSourceAgeDays,
                 focus_areas: [reportLabel],
                 output_formats: (c.formats || []).slice(),
                 forbidden_sources: c.source === "local_only" ? ["public_web"] : [],
