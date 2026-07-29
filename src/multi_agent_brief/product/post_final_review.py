@@ -542,17 +542,18 @@ class PostFinalReviewService:
         )
         if command.draft_revision != latest_draft_revision:
             raise PostFinalReviewError("post_final_guidance_stale")
+        current_disposition = self._current_disposition(
+            snapshot,
+            draft.assessment_result_id,
+            draft.finding_id,
+        )
+        approval_eligible = (
+            current_disposition is not None
+            and current_disposition.disposition_id == draft.disposition_id
+            and current_disposition.decision == "accept"
+        )
         if status == "approved":
-            current_disposition = self._current_disposition(
-                snapshot,
-                draft.assessment_result_id,
-                draft.finding_id,
-            )
-            if (
-                current_disposition is None
-                or current_disposition.disposition_id != draft.disposition_id
-                or current_disposition.decision != "accept"
-            ):
+            if not approval_eligible:
                 raise PostFinalReviewError("post_final_guidance_stale")
         previous = self._current_status(snapshot, command.guidance_id)
         identity = {
@@ -586,7 +587,11 @@ class PostFinalReviewService:
             payload, "status_fingerprint"
         )
         record = PostFinalGuidanceStatusRevision.model_validate(payload, strict=True)
-        if not post_final_guidance_status_transition_allowed(previous, record):
+        if not post_final_guidance_status_transition_allowed(
+            previous,
+            record,
+            approval_eligible=approval_eligible,
+        ):
             raise PostFinalReviewError("post_final_guidance_transition_invalid")
         event = _event(
             run_id=result.run_id,
@@ -671,9 +676,19 @@ class PostFinalReviewService:
         for item in draft_rows:
             payload = item.model_dump(mode="json", exclude_unset=False)
             current_status = self._current_status(snapshot, item.guidance_id)
+            current_disposition = self._current_disposition(
+                snapshot,
+                item.assessment_result_id,
+                item.finding_id,
+            )
             legal_statuses = post_final_guidance_legal_actions(
                 current_status,
                 target_draft_revision=item.draft_revision,
+                approval_eligible=(
+                    current_disposition is not None
+                    and current_disposition.disposition_id == item.disposition_id
+                    and current_disposition.decision == "accept"
+                ),
             )
             payload["legal_actions"] = (
                 [

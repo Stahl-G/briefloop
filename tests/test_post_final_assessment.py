@@ -226,6 +226,11 @@ def _schema9_finalized_local_workspace_upgraded(
         "canonical_model_text",
         legacy_record_text,
     )
+    schema9_patch.setattr(
+        SQLiteControlStore,
+        "_legacy_receipt_cutoff",
+        lambda _store: 1_000_000,
+    )
     try:
         workspace = _real_finalized_local_workspace(tmp_path, monkeypatch)
         with SQLiteControlStore.open(workspace / "briefloop.db") as store:
@@ -240,6 +245,7 @@ def _schema9_finalized_local_workspace_upgraded(
     connection = sqlite3.connect(database)
     try:
         migration_10_tables = (
+            "transaction_receipt_compatibility_boundaries",
             "transaction_post_final_guidance_statuses",
             "transaction_post_final_guidance_drafts",
             "transaction_post_final_finding_dispositions",
@@ -303,6 +309,12 @@ def _schema9_finalized_local_workspace_upgraded(
         )
         connection.executescript(migration.read_text(encoding="utf-8"))
         connection.execute("PRAGMA foreign_keys = ON")
+        cutoff = connection.execute(
+            "SELECT legacy_receipt_max_committed_revision "
+            "FROM transaction_receipt_compatibility_boundaries"
+        ).fetchone()
+        if cutoff is None or int(cutoff[0]) != len(before):
+            raise AssertionError("0010 legacy receipt cutoff drift")
         after = {
             str(row[0]): str(row[1]).encode("utf-8")
             for row in connection.execute(

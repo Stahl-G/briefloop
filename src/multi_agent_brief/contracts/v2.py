@@ -3408,17 +3408,18 @@ def post_final_guidance_legal_actions(
     current: PostFinalGuidanceStatusRevision | None,
     *,
     target_draft_revision: int,
+    approval_eligible: bool,
 ) -> tuple[str, ...]:
     """Return the only legal Human actions for one exact draft revision."""
 
     if current is None:
         return (
             POST_FINAL_GUIDANCE_STATUS_TRANSITIONS[None]
-            if target_draft_revision >= 1
+            if target_draft_revision >= 1 and approval_eligible
             else ()
         )
     if target_draft_revision > current.draft_revision:
-        return ("approved",)
+        return ("approved",) if approval_eligible else ()
     if target_draft_revision == current.draft_revision and current.status == "approved":
         return ("deactivated", "reverted", "superseded")
     return ()
@@ -3427,12 +3428,15 @@ def post_final_guidance_legal_actions(
 def post_final_guidance_status_transition_allowed(
     current: PostFinalGuidanceStatusRevision | None,
     candidate: PostFinalGuidanceStatusRevision,
+    *,
+    approval_eligible: bool,
 ) -> bool:
     """Validate one append-only status transition against the current head."""
 
     return candidate.status in post_final_guidance_legal_actions(
         current,
         target_draft_revision=candidate.draft_revision,
+        approval_eligible=approval_eligible,
     )
 
 

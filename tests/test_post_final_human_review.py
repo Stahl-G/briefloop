@@ -331,6 +331,7 @@ def test_guidance_status_transition_table_and_ui_actions_fail_closed(
         item
         for item in current["guidance_drafts"]
         if item["guidance_id"] == draft["guidance_id"]
+        and item["draft_revision"] == draft["draft_revision"]
     )
     assert draft_row["legal_actions"] == ["approve"]
 
@@ -357,6 +358,66 @@ def test_guidance_status_transition_table_and_ui_actions_fail_closed(
     with SQLiteControlStore.open(workspace / "briefloop.db") as store:
         assert store.current_revision == before_invalid
 
+    rejected = review.record_disposition(
+        _disposition_payload(
+            status,
+            finding,
+            request_id="transition-disposition-reject-before-approval",
+            decision="reject",
+        )
+    )
+    current = review.review_status()
+    draft_row = next(
+        item
+        for item in current["guidance_drafts"]
+        if item["guidance_id"] == draft["guidance_id"]
+    )
+    assert draft_row["legal_actions"] == []
+    with SQLiteControlStore.open(workspace / "briefloop.db") as store:
+        before_rejected_approval = store.current_revision
+    with pytest.raises(PostFinalReviewError, match="post_final_guidance_stale"):
+        review.approve_guidance(
+            {
+                "schema_version": POST_FINAL_GUIDANCE_STATUS_INPUT_SCHEMA,
+                "human_actor_id": "human-reviewer-1",
+                "human_request_id": "transition-approve-after-reject",
+                "guidance_id": draft["guidance_id"],
+                "draft_revision": draft["draft_revision"],
+            }
+        )
+    with SQLiteControlStore.open(workspace / "briefloop.db") as store:
+        assert store.current_revision == before_rejected_approval
+
+    reaccepted = review.record_disposition(
+        _disposition_payload(
+            status,
+            finding,
+            request_id="transition-disposition-reaccept",
+            decision="accept",
+        )
+    )
+    draft = review.append_guidance_draft(
+        {
+            "schema_version": POST_FINAL_GUIDANCE_DRAFT_INPUT_SCHEMA,
+            "human_actor_id": "human-reviewer-1",
+            "human_request_id": "transition-guidance-draft-current-accept",
+            "assessment_result_id": status["assessment_result_id"],
+            "finding_id": finding["finding_id"],
+            "disposition_id": reaccepted["disposition_id"],
+            "guidance_text": (
+                "Keep the recommendation within the current accepted evidence boundary."
+            ),
+        }
+    )
+    current = review.review_status()
+    draft_row = next(
+        item
+        for item in current["guidance_drafts"]
+        if item["guidance_id"] == draft["guidance_id"]
+        and item["draft_revision"] == draft["draft_revision"]
+    )
+    assert draft_row["legal_actions"] == ["approve"]
+
     approve_payload = {
         "schema_version": POST_FINAL_GUIDANCE_STATUS_INPUT_SCHEMA,
         "human_actor_id": "human-reviewer-1",
@@ -370,6 +431,7 @@ def test_guidance_status_transition_table_and_ui_actions_fail_closed(
         item
         for item in current["guidance_drafts"]
         if item["guidance_id"] == draft["guidance_id"]
+        and item["draft_revision"] == draft["draft_revision"]
     )
     assert draft_row["legal_actions"] == [
         "deactivate",
@@ -423,6 +485,103 @@ def test_guidance_status_transition_table_and_ui_actions_fail_closed(
                 forged_workspace / "briefloop.db"
             ) as forged_store:
                 forged_store.load_snapshot(run_id)
+
+    later_rejection = review.record_disposition(
+        _disposition_payload(
+            status,
+            finding,
+            request_id="transition-disposition-reject-after-approval",
+            decision="reject",
+        )
+    )
+    current = review.review_status()
+    draft_row = next(
+        item
+        for item in current["guidance_drafts"]
+        if item["guidance_id"] == draft["guidance_id"]
+        and item["draft_revision"] == draft["draft_revision"]
+    )
+    assert draft_row["legal_actions"] == [
+        "deactivate",
+        "revert",
+        "supersede",
+    ]
+
+    forged_workspace = tmp_path / "forged-reject-before-approval"
+    shutil.copytree(workspace, forged_workspace)
+    with SQLiteControlStore.open(workspace / "briefloop.db") as store:
+        chronology_snapshot = store.load_snapshot(run_id)
+    approval_receipt = next(
+        item
+        for item in chronology_snapshot.transactions
+        if item.transaction_id == approved["receipt_id"]
+    )
+    rejection_receipt = next(
+        item
+        for item in chronology_snapshot.transactions
+        if item.transaction_id == later_rejection["receipt_id"]
+    )
+    connection = sqlite3.connect(forged_workspace / "briefloop.db")
+    try:
+        trigger_sql = connection.execute(
+            "SELECT sql FROM sqlite_master "
+            "WHERE type='trigger' AND name='transactions_no_update'"
+        ).fetchone()
+        if trigger_sql is None:
+            raise AssertionError("transactions update trigger missing")
+        connection.execute("DROP TRIGGER transactions_no_update")
+        temporary_prior = (
+            int(connection.execute("SELECT revision FROM workspaces").fetchone()[0])
+            + 10
+        )
+        temporary_approval = approval_receipt.model_copy(
+            update={
+                "prior_revision": temporary_prior,
+                "committed_revision": temporary_prior + 1,
+            }
+        )
+        forged_rejection = rejection_receipt.model_copy(
+            update={
+                "prior_revision": approval_receipt.prior_revision,
+                "committed_revision": approval_receipt.committed_revision,
+            }
+        )
+        forged_approval = approval_receipt.model_copy(
+            update={
+                "prior_revision": rejection_receipt.prior_revision,
+                "committed_revision": rejection_receipt.committed_revision,
+            }
+        )
+        for receipt in (
+            temporary_approval,
+            forged_rejection,
+            forged_approval,
+        ):
+            connection.execute(
+                "UPDATE transactions "
+                "SET prior_revision=?,committed_revision=?,payload_json=? "
+                "WHERE run_id=? AND transaction_id=?",
+                (
+                    receipt.prior_revision,
+                    receipt.committed_revision,
+                    canonical_json_bytes(
+                        receipt.model_dump(mode="json", exclude_unset=False)
+                    ).decode("utf-8"),
+                    receipt.run_id,
+                    receipt.transaction_id,
+                ),
+            )
+        connection.execute(str(trigger_sql[0]))
+        connection.commit()
+    finally:
+        connection.close()
+    with pytest.raises(
+        ControlStoreIntegrityError,
+        match="control_store_integrity_invalid",
+    ):
+        with SQLiteControlStore.open(forged_workspace / "briefloop.db") as forged_store:
+            forged_store.load_snapshot(run_id)
+
     deactivated = review.deactivate_guidance(
         {
             **approve_payload,

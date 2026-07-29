@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from copy import deepcopy
 from dataclasses import replace
+from datetime import date, timedelta
 import hashlib
 from io import BytesIO
 import json
@@ -120,7 +121,7 @@ def _authorized_workspace(tmp_path: Path) -> Path:
         "original_url": None,
         "title": "Public durable source",
         "publisher": "Example publisher",
-        "published_at": "2026-07-22",
+        "published_at": (date.today() - timedelta(days=1)).isoformat(),
         "retrieved_at": "2026-07-23T00:00:00Z",
         "source_category": "other",
         "retrieval_source_type": "local_file",

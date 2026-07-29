@@ -454,7 +454,26 @@ def test_historical_receipt_projection_accepts_only_the_exact_legacy_shape() -> 
         assert payload.pop(field) == []
     legacy_text = canonical_json_bytes(payload).decode("utf-8")
 
-    assert _decode_record(TransactionReceipt, legacy_text) == receipt
+    assert (
+        _decode_record(
+            TransactionReceipt,
+            legacy_text,
+            receipt_committed_revision=receipt.committed_revision,
+            legacy_receipt_max_committed_revision=receipt.committed_revision,
+        )
+        == receipt
+    )
+
+    with pytest.raises(
+        ControlStoreIntegrityError,
+        match="stored_payload_not_canonical",
+    ):
+        _decode_record(
+            TransactionReceipt,
+            legacy_text,
+            receipt_committed_revision=receipt.committed_revision,
+            legacy_receipt_max_committed_revision=receipt.committed_revision - 1,
+        )
 
     partial = receipt.model_dump(mode="json", exclude_unset=False)
     partial.pop(_POST_FINAL_RECEIPT_RELATION_FIELDS[0])
@@ -465,6 +484,8 @@ def test_historical_receipt_projection_accepts_only_the_exact_legacy_shape() -> 
         _decode_record(
             TransactionReceipt,
             canonical_json_bytes(partial).decode("utf-8"),
+            receipt_committed_revision=receipt.committed_revision,
+            legacy_receipt_max_committed_revision=receipt.committed_revision,
         )
 
     advisory = dict(payload)
@@ -476,6 +497,8 @@ def test_historical_receipt_projection_accepts_only_the_exact_legacy_shape() -> 
         _decode_record(
             TransactionReceipt,
             canonical_json_bytes(advisory).decode("utf-8"),
+            receipt_committed_revision=receipt.committed_revision,
+            legacy_receipt_max_committed_revision=receipt.committed_revision,
         )
 
     unknown = dict(payload)
@@ -487,7 +510,56 @@ def test_historical_receipt_projection_accepts_only_the_exact_legacy_shape() -> 
         _decode_record(
             TransactionReceipt,
             canonical_json_bytes(unknown).decode("utf-8"),
+            receipt_committed_revision=receipt.committed_revision,
+            legacy_receipt_max_committed_revision=receipt.committed_revision,
         )
+
+
+def test_fresh_schema10_receipt_cannot_be_laundered_as_legacy(
+    tmp_path: Path,
+) -> None:
+    store = _create_store(tmp_path)
+    receipt = _stage_all(store).commit()
+    database = store.path
+    cutoff = store._connection.execute(
+        "SELECT legacy_receipt_max_committed_revision "
+        "FROM transaction_receipt_compatibility_boundaries "
+        "WHERE workspace_id=?",
+        (WORKSPACE_ID,),
+    ).fetchone()
+    assert cutoff is not None and int(cutoff[0]) == 0
+    store.close()
+
+    payload = receipt.model_dump(mode="json", exclude_unset=False)
+    for field in _POST_FINAL_RECEIPT_RELATION_FIELDS:
+        assert payload.pop(field) == []
+    connection = sqlite3.connect(database)
+    try:
+        trigger_sql = connection.execute(
+            "SELECT sql FROM sqlite_master "
+            "WHERE type='trigger' AND name='transactions_no_update'"
+        ).fetchone()
+        assert trigger_sql is not None
+        connection.execute("DROP TRIGGER transactions_no_update")
+        connection.execute(
+            "UPDATE transactions SET payload_json=? "
+            "WHERE run_id=? AND transaction_id=?",
+            (
+                canonical_json_bytes(payload).decode("utf-8"),
+                receipt.run_id,
+                receipt.transaction_id,
+            ),
+        )
+        connection.execute(str(trigger_sql[0]))
+        connection.commit()
+    finally:
+        connection.close()
+
+    with pytest.raises(
+        ControlStoreIntegrityError,
+        match="stored_payload_not_canonical",
+    ):
+        SQLiteControlStore.open(database)
 
 
 def _insert_artifact_revision_row(
@@ -1105,6 +1177,7 @@ def test_schema_settings_and_exact_table_universe(tmp_path: Path) -> None:
         "stage_states",
         "agent_invocations",
         "transactions",
+        "transaction_receipt_compatibility_boundaries",
         "transaction_events",
         "transaction_artifact_revisions",
         "transaction_artifact_identities",

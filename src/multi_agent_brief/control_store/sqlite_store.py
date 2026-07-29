@@ -139,6 +139,9 @@ _POST_FINAL_RECEIPT_TRANSACTION_TYPES = frozenset(
         "post_final_guidance_status",
     }
 )
+_RECEIPT_COMPATIBILITY_BOUNDARY_ID = (
+    "briefloop.transaction_receipt_relation_compatibility.v1"
+)
 _EXTENDED_RECORD_MODELS = (
     WorkspaceRunHead,
     ArtifactIdentityRecord,
@@ -204,7 +207,13 @@ def _canonical_record_text(record: StrictModel) -> str:
     return canonical_json_bytes(payload).decode("utf-8")
 
 
-def _decode_record(model_type: type[_ModelT], payload_text: str) -> _ModelT:
+def _decode_record(
+    model_type: type[_ModelT],
+    payload_text: str,
+    *,
+    receipt_committed_revision: int | None = None,
+    legacy_receipt_max_committed_revision: int | None = None,
+) -> _ModelT:
     if model_type is TransactionReceipt:
         try:
             payload = json.loads(payload_text)
@@ -220,7 +229,12 @@ def _decode_record(model_type: type[_ModelT], payload_text: str) -> _ModelT:
         if not missing:
             return cast(_ModelT, decode_model(TransactionReceipt, payload_text))
         if (
-            missing != set(_POST_FINAL_RECEIPT_RELATION_FIELDS)
+            type(receipt_committed_revision) is not int
+            or type(legacy_receipt_max_committed_revision) is not int
+            or receipt_committed_revision < 1
+            or legacy_receipt_max_committed_revision < 0
+            or receipt_committed_revision > legacy_receipt_max_committed_revision
+            or missing != set(_POST_FINAL_RECEIPT_RELATION_FIELDS)
             or payload.get("transaction_type") in _POST_FINAL_RECEIPT_TRANSACTION_TYPES
         ):
             raise ControlStoreIntegrityError("stored_payload_not_canonical")
@@ -236,6 +250,8 @@ def _decode_record(model_type: type[_ModelT], payload_text: str) -> _ModelT:
                 raise ControlStoreIntegrityError("stored_payload_not_canonical")
         if canonical_json_bytes(legacy_projection).decode("utf-8") != payload_text:
             raise ControlStoreIntegrityError("stored_payload_not_canonical")
+        if receipt.committed_revision != receipt_committed_revision:
+            raise ControlStoreIntegrityError("stored_payload_identity_mismatch")
         return cast(_ModelT, receipt)
     if model_type not in _EXTENDED_RECORD_MODELS:
         return decode_model(model_type, payload_text)
@@ -1126,6 +1142,16 @@ class SQLiteControlStore:
                 "INSERT INTO workspaces(workspace_id, revision) VALUES (?, 0)",
                 (workspace_id,),
             )
+            connection.execute(
+                """
+                INSERT INTO transaction_receipt_compatibility_boundaries(
+                    workspace_id,
+                    boundary_id,
+                    legacy_receipt_max_committed_revision
+                ) VALUES (?, ?, 0)
+                """,
+                (workspace_id, _RECEIPT_COMPATIBILITY_BOUNDARY_ID),
+            )
             connection.commit()
         except Exception:
             connection.close()
@@ -1532,7 +1558,7 @@ class SQLiteControlStore:
     ) -> TransactionReceipt | None:
         row = self._connection.execute(
             """
-            SELECT fingerprint, payload_json
+            SELECT fingerprint, payload_json, committed_revision
             FROM transactions
             WHERE run_id = ? AND transaction_id = ?
             """,
@@ -1542,7 +1568,12 @@ class SQLiteControlStore:
             return None
         if row[0] != fingerprint:
             raise ControlStoreConflict("transaction_replay_conflict")
-        receipt = _decode_record(TransactionReceipt, str(row[1]))
+        receipt = _decode_record(
+            TransactionReceipt,
+            str(row[1]),
+            receipt_committed_revision=int(row[2]),
+            legacy_receipt_max_committed_revision=self._legacy_receipt_cutoff(),
+        )
         self._verify_transaction_relations(receipt)
         self._verify_receipt_blobs(receipt)
         return receipt
@@ -2740,7 +2771,14 @@ class SQLiteControlStore:
                 or record.previous_status_revision_id
                 != status_heads.get(record.guidance_id)
                 or not post_final_guidance_status_transition_allowed(
-                    current_status, record
+                    current_status,
+                    record,
+                    approval_eligible=(
+                        current_disposition is not None
+                        and current_disposition.decision == "accept"
+                        and disposition_heads.get(disposition_key)
+                        == draft.disposition_id
+                    ),
                 )
             ):
                 raise ControlStoreConflict("relational_integrity_conflict")
@@ -6999,10 +7037,31 @@ class SQLiteControlStore:
             previous = None
             previous_status = None
             for _revision, status in rows:
+                draft = drafts.get((status.guidance_id, status.draft_revision))
+                approval_eligible = False
+                if draft is not None:
+                    disposition_rows = disposition_chains.get(
+                        (draft.assessment_result_id, draft.finding_id),
+                        [],
+                    )
+                    prior_dispositions = [
+                        disposition
+                        for committed_revision, disposition in disposition_rows
+                        if committed_revision
+                        <= receipts[status.accepted_transaction_id].prior_revision
+                    ]
+                    if prior_dispositions:
+                        current_disposition = prior_dispositions[-1]
+                        approval_eligible = (
+                            current_disposition.disposition_id == draft.disposition_id
+                            and current_disposition.decision == "accept"
+                        )
                 if (
                     status.previous_status_revision_id != previous
                     or not post_final_guidance_status_transition_allowed(
-                        previous_status, status
+                        previous_status,
+                        status,
+                        approval_eligible=approval_eligible,
                     )
                 ):
                     raise ControlStoreIntegrityError("control_store_integrity_invalid")
@@ -8148,7 +8207,20 @@ class SQLiteControlStore:
         row: sqlite3.Row,
         columns: dict[str, str],
     ) -> _ModelT:
-        model = _decode_record(model_type, str(row["payload_json"]))
+        model = _decode_record(
+            model_type,
+            str(row["payload_json"]),
+            receipt_committed_revision=(
+                int(row["committed_revision"])
+                if model_type is TransactionReceipt
+                else None
+            ),
+            legacy_receipt_max_committed_revision=(
+                self._legacy_receipt_cutoff()
+                if model_type is TransactionReceipt
+                else None
+            ),
+        )
         for column, attribute in columns.items():
             stored = row[column]
             expected: object = model
@@ -8175,6 +8247,24 @@ class SQLiteControlStore:
             if row["source_ids_json"] != source_ids_text:
                 raise ControlStoreIntegrityError("stored_payload_identity_mismatch")
         return model
+
+    def _legacy_receipt_cutoff(self) -> int:
+        rows = self._connection.execute(
+            """
+            SELECT boundary_id,legacy_receipt_max_committed_revision
+            FROM transaction_receipt_compatibility_boundaries
+            WHERE workspace_id=?
+            """,
+            (self.workspace_id,),
+        ).fetchall()
+        if (
+            len(rows) != 1
+            or rows[0]["boundary_id"] != _RECEIPT_COMPATIBILITY_BOUNDARY_ID
+            or type(rows[0]["legacy_receipt_max_committed_revision"]) is not int
+            or rows[0]["legacy_receipt_max_committed_revision"] < 0
+        ):
+            raise ControlStoreIntegrityError("control_store_integrity_invalid")
+        return int(rows[0]["legacy_receipt_max_committed_revision"])
 
     def _decode_artifact_record_row(self, row: sqlite3.Row) -> ArtifactRecord:
         return self._decode_checked(

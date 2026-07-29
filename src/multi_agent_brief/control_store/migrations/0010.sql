@@ -1,5 +1,39 @@
 BEGIN IMMEDIATE;
 
+CREATE TABLE transaction_receipt_compatibility_boundaries (
+    workspace_id TEXT PRIMARY KEY,
+    boundary_id TEXT NOT NULL
+        CHECK(boundary_id='briefloop.transaction_receipt_relation_compatibility.v1'),
+    legacy_receipt_max_committed_revision INTEGER NOT NULL
+        CHECK(
+            typeof(legacy_receipt_max_committed_revision)='integer'
+            AND legacy_receipt_max_committed_revision>=0
+        ),
+    FOREIGN KEY(workspace_id) REFERENCES workspaces(workspace_id)
+        ON UPDATE RESTRICT ON DELETE RESTRICT
+);
+
+INSERT INTO transaction_receipt_compatibility_boundaries(
+    workspace_id,
+    boundary_id,
+    legacy_receipt_max_committed_revision
+)
+SELECT
+    workspaces.workspace_id,
+    'briefloop.transaction_receipt_relation_compatibility.v1',
+    COALESCE(MAX(transactions.committed_revision),0)
+FROM workspaces
+LEFT JOIN transactions
+    ON transactions.workspace_id=workspaces.workspace_id
+GROUP BY workspaces.workspace_id;
+
+CREATE TRIGGER transaction_receipt_compatibility_boundaries_no_update
+BEFORE UPDATE ON transaction_receipt_compatibility_boundaries
+BEGIN SELECT RAISE(ABORT,'append_only'); END;
+CREATE TRIGGER transaction_receipt_compatibility_boundaries_no_delete
+BEFORE DELETE ON transaction_receipt_compatibility_boundaries
+BEGIN SELECT RAISE(ABORT,'append_only'); END;
+
 CREATE TABLE post_final_assessment_policy_revisions (
     run_id TEXT NOT NULL,
     policy_revision_id TEXT NOT NULL,
