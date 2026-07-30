@@ -249,6 +249,10 @@ def register_quality(subparsers: argparse._SubParsersAction) -> None:
     summarize_parser.add_argument(
         "--json", action="store_true", help="Emit machine-readable JSON."
     )
+    summarize_parser.add_argument(
+        "--laj-view",
+        help=argparse.SUPPRESS,
+    )
 
     html_help = (
         "Write a local, static, read-only four-tab view: verified "
@@ -639,6 +643,10 @@ def handle_quality(args: argparse.Namespace) -> int:
             return 0
         return 1
     if action != "summarize":
+        return 1
+
+    if getattr(args, "laj_view", None) is not None:
+        print("runtime_command_unsupported")
         return 1
 
     workspace = Path(args.workspace).expanduser().resolve()

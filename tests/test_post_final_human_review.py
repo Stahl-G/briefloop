@@ -24,6 +24,9 @@ from multi_agent_brief.product.post_final_review import (
     PostFinalReviewError,
     PostFinalReviewService,
 )
+from multi_agent_brief.product.projection_platform import (
+    supports_retained_directory_publication,
+)
 from multi_agent_brief.control_store.serialization import canonical_json_bytes
 from multi_agent_brief.product.post_final_assessment import _record_fingerprint
 from multi_agent_brief.semantic_evaluator.adapters.anthropic_messages import (
@@ -667,6 +670,10 @@ def test_guidance_status_transition_table_and_ui_actions_fail_closed(
     assert approved["status_revision_id"] != deactivated["status_revision_id"]
 
 
+@pytest.mark.skipif(
+    not supports_retained_directory_publication(),
+    reason="successful finalized-local Human review is unavailable on this platform",
+)
 def test_schema9_finalized_local_upgrade_runs_full_laj_human_loop(
     tmp_path,
     monkeypatch,

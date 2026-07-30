@@ -74,7 +74,9 @@ def test_hidden_core_v2_initialize_emits_one_json_result(
     config_sha256, sources_sha256 = workspace_input_fingerprints(workspace)
     assert snapshot.run_contract_bindings[0].workspace_config_sha256 == config_sha256
     assert snapshot.run_contract_bindings[0].sources_config_sha256 == sources_sha256
-    assert not (workspace / "output" / "intermediate" / "runtime_manifest.json").exists()
+    assert not (
+        workspace / "output" / "intermediate" / "runtime_manifest.json"
+    ).exists()
     assert not (workspace / "output" / "intermediate" / "event_log.jsonl").exists()
 
 
@@ -293,11 +295,7 @@ def test_core_v2_cli_is_internal_and_requires_json() -> None:
     )
     command = command_action.choices["core-v2"]
     assert "Internal fresh-v2 core run harness" in command.description
-    action = next(
-        item
-        for item in command._actions
-        if getattr(item, "choices", None)
-    )
+    action = next(item for item in command._actions if getattr(item, "choices", None))
     assert set(action.choices) == {
         "initialize",
         "doctor-check",
@@ -336,6 +334,9 @@ def test_core_v2_imports_are_confined_to_dormant_cli_package_and_bound_intake() 
         "contracts/v2.py",
         "product/brief_html/builder.py",
         "product/init_web/submit.py",
+        "product/post_final_assessment.py",
+        "product/post_final_assessment_projection.py",
+        "product/post_final_review.py",
         "runtime_host_v2/initialization.py",
         "runtime_host_v2/projections.py",
         "runtime_host_v2/service.py",
@@ -358,6 +359,22 @@ def test_core_v2_imports_are_confined_to_dormant_cli_package_and_bound_intake() 
                 if relative not in allowed and not relative.startswith("core_run_v2/"):
                     findings.append(f"{relative}:{node.lineno}")
     assert findings == []
+
+    synthetic_relative = "product/unknown_core_consumer.py"
+    synthetic = ast.parse(
+        "from multi_agent_brief.core_run_v2.verifier import CoreRunDomainVerifier\n"
+    )
+    synthetic_findings = [
+        f"{synthetic_relative}:{node.lineno}"
+        for node in ast.walk(synthetic)
+        if isinstance(node, ast.ImportFrom)
+        and (
+            node.module == "multi_agent_brief.core_run_v2"
+            or (node.module or "").startswith("multi_agent_brief.core_run_v2.")
+        )
+        and synthetic_relative not in allowed
+    ]
+    assert synthetic_findings == ["product/unknown_core_consumer.py:1"]
 
 
 def test_core_v2_does_not_import_legacy_runtime_writers() -> None:
@@ -405,9 +422,7 @@ def test_core_v2_and_control_store_import_ownership_is_structural() -> None:
                 sqlite_imports.append(relative)
             if relative.startswith("control_store/") and any(
                 name.startswith("multi_agent_brief.core_run_v2")
-                or name.startswith(
-                    "multi_agent_brief.contracts.runtime_contracts"
-                )
+                or name.startswith("multi_agent_brief.contracts.runtime_contracts")
                 or name.startswith("multi_agent_brief.quality_gates")
                 for name in imports
             ):
@@ -513,9 +528,7 @@ def test_core_v2_static_authority_chokepoints_are_exact() -> None:
         if isinstance(node, ast.FunctionDef) and node.name == "__init__"
     )
     assert "repo_workdir" not in {item.arg for item in initializer.args.args}
-    assert "repo_workdir" not in {
-        item.arg for item in initializer.args.kwonlyargs
-    }
+    assert "repo_workdir" not in {item.arg for item in initializer.args.kwonlyargs}
 
     gate_tree = ast.parse(
         (core / "gates.py").read_text(encoding="utf-8"),
@@ -540,12 +553,13 @@ def test_core_v2_static_authority_chokepoints_are_exact() -> None:
             item.name
             for node in ast.walk(tree)
             if isinstance(node, ast.ImportFrom)
-            and node.module
-            == "multi_agent_brief.contracts.runtime_contracts"
+            and node.module == "multi_agent_brief.contracts.runtime_contracts"
             for item in node.names
         }
     assert "load_runtime_contract_payloads" in shared_contract_imports["service.py"]
-    assert "validate_runtime_contract_payloads" in shared_contract_imports["verifier.py"]
+    assert (
+        "validate_runtime_contract_payloads" in shared_contract_imports["verifier.py"]
+    )
 
     forbidden_store_verbs = {
         "complete_stage",

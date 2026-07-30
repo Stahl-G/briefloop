@@ -11,6 +11,12 @@ import sys
 import textwrap
 import zipfile
 
+import pytest
+
+from multi_agent_brief.product.projection_platform import (
+    supports_retained_directory_publication,
+)
+
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -221,6 +227,10 @@ def _run_probe(
     return json.loads(run.stdout)
 
 
+@pytest.mark.skipif(
+    not supports_retained_directory_publication(),
+    reason="successful finalized-local assessment is unavailable on this platform",
+)
 def test_source_and_non_editable_wheel_replay_the_same_pf_laj_result(
     tmp_path: Path,
 ) -> None:
