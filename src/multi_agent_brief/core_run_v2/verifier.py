@@ -362,6 +362,12 @@ _AUTHORITATIVE_RECEIPT_RELATION_FAMILIES = frozenset(
         "delivery_authorizations",
         "delivery_attempts",
         "delivery_results",
+        "post_final_assessment_policy_revisions",
+        "post_final_assessment_requests",
+        "post_final_assessment_results",
+        "post_final_finding_dispositions",
+        "post_final_guidance_drafts",
+        "post_final_guidance_statuses",
     }
 )
 
@@ -593,6 +599,20 @@ class _IntakeEffectRule:
     authoritative_relation_families: frozenset[str]
 
 
+@dataclass(frozen=True)
+class _PostFinalAssessmentReceiptRule:
+    """One zero-effect PF-LAJ receipt family accepted by historical replay."""
+
+    event_type: str
+    relation_family: str
+    reference_id_field: str
+    record_collection: str
+    record_id_field: str
+    record_event_id_field: str
+    reference_secondary_field: str | None = None
+    record_secondary_field: str | None = None
+
+
 _INTAKE_EFFECT_RULES = {
     "source_evidence_intake": _IntakeEffectRule(
         CoreEffect.SOURCE_INTAKE,
@@ -656,6 +676,60 @@ _INTAKE_EFFECT_RULES = {
 }
 
 
+_POST_FINAL_ASSESSMENT_RECEIPT_RULES = {
+    "post_final_assessment_policy": _PostFinalAssessmentReceiptRule(
+        "post_final_assessment_policy_recorded",
+        "post_final_assessment_policy_revisions",
+        "policy_revision_id",
+        "post_final_assessment_policy_revisions",
+        "policy_revision_id",
+        "policy_event_id",
+    ),
+    "post_final_assessment_claim": _PostFinalAssessmentReceiptRule(
+        "post_final_assessment_claimed",
+        "post_final_assessment_requests",
+        "assessment_request_id",
+        "post_final_assessment_requests",
+        "assessment_request_id",
+        "request_event_id",
+    ),
+    "post_final_assessment_result": _PostFinalAssessmentReceiptRule(
+        "post_final_assessment_result_recorded",
+        "post_final_assessment_results",
+        "assessment_result_id",
+        "post_final_assessment_results",
+        "assessment_result_id",
+        "result_event_id",
+    ),
+    "post_final_finding_disposition": _PostFinalAssessmentReceiptRule(
+        "post_final_finding_disposition_recorded",
+        "post_final_finding_dispositions",
+        "disposition_id",
+        "post_final_finding_dispositions",
+        "disposition_id",
+        "disposition_event_id",
+    ),
+    "post_final_guidance_draft": _PostFinalAssessmentReceiptRule(
+        "post_final_guidance_draft_recorded",
+        "post_final_guidance_drafts",
+        "guidance_id",
+        "post_final_guidance_drafts",
+        "guidance_id",
+        "draft_event_id",
+        "draft_revision",
+        "draft_revision",
+    ),
+    "post_final_guidance_status": _PostFinalAssessmentReceiptRule(
+        "post_final_guidance_status_recorded",
+        "post_final_guidance_statuses",
+        "status_revision_id",
+        "post_final_guidance_statuses",
+        "status_revision_id",
+        "status_event_id",
+    ),
+}
+
+
 def _verify_authoritative_receipt_relation_families(
     receipt: TransactionReceipt,
     allowed: frozenset[str],
@@ -669,6 +743,65 @@ def _verify_authoritative_receipt_relation_families(
     )
     if not allowed.issubset(_AUTHORITATIVE_RECEIPT_RELATION_FAMILIES) or not (
         present <= allowed
+    ):
+        raise CoreRunError("control_store_integrity_invalid")
+
+
+def _verified_post_final_assessment_receipt(
+    snapshot: ControlStoreSnapshot,
+    receipt: TransactionReceipt,
+) -> None:
+    """Verify one exact Store-native PF-LAJ advisory receipt.
+
+    PF-LAJ records are deliberately neither Intake nor Core effects.  This
+    narrow table makes that absence explicit while rejecting relation smuggling
+    onto either this receipt family or any existing Core/Intake family.
+    """
+
+    rule = _POST_FINAL_ASSESSMENT_RECEIPT_RULES.get(receipt.transaction_type)
+    if rule is None or receipt.run_id != snapshot.run.run_id:
+        raise CoreRunError("control_store_integrity_invalid")
+    _verify_authoritative_receipt_relation_families(
+        receipt,
+        frozenset({rule.relation_family}),
+    )
+    references = getattr(receipt, rule.relation_family)
+    if len(receipt.event_ids) != 1 or len(references) != 1:
+        raise CoreRunError("control_store_integrity_invalid")
+    reference = references[0]
+    record_id = getattr(reference, rule.reference_id_field)
+    secondary_id = (
+        getattr(reference, rule.reference_secondary_field)
+        if rule.reference_secondary_field is not None
+        else None
+    )
+    events = [item for item in snapshot.events if item.event_id == receipt.event_ids[0]]
+    records = [
+        item
+        for item in getattr(snapshot, rule.record_collection)
+        if getattr(item, rule.record_id_field) == record_id
+        and (
+            rule.record_secondary_field is None
+            or getattr(item, rule.record_secondary_field) == secondary_id
+        )
+    ]
+    if len(events) != 1 or len(records) != 1:
+        raise CoreRunError("control_store_integrity_invalid")
+    event = events[0]
+    record = records[0]
+    if (
+        event.run_id != receipt.run_id
+        or event.transaction_id != receipt.transaction_id
+        or event.event_type != rule.event_type
+        or event.intake_binding is not None
+        or event.core_run_binding is not None
+        or event.stage_id is not None
+        or event.artifact_id is not None
+        or event.decision != record_id
+        or event.reason != rule.event_type
+        or record.run_id != receipt.run_id
+        or record.accepted_transaction_id != receipt.transaction_id
+        or getattr(record, rule.record_event_id_field) != event.event_id
     ):
         raise CoreRunError("control_store_integrity_invalid")
 
@@ -1918,6 +2051,13 @@ class CoreRunDomainVerifier:
         snapshot: ControlStoreSnapshot,
         receipt: TransactionReceipt,
     ) -> None:
+        if receipt.transaction_type in _POST_FINAL_ASSESSMENT_RECEIPT_RULES:
+            self._verify_historical_post_final_assessment_prefix(
+                history,
+                snapshot,
+                receipt,
+            )
+            return
         if receipt.transaction_type in _INTAKE_EFFECT_RULES:
             if (
                 receipt.committed_revision <= 1
@@ -2110,6 +2250,39 @@ class CoreRunDomainVerifier:
             or receipt.package_artifact_bindings
         ):
             self._verify_archive_package_reconstruction(history, snapshot, receipt)
+
+    def _verify_historical_post_final_assessment_prefix(
+        self,
+        history: ControlStoreHistory,
+        snapshot: ControlStoreSnapshot,
+        receipt: TransactionReceipt,
+    ) -> None:
+        """Verify the non-Core PF-LAJ receipt without granting an effect."""
+
+        if (
+            receipt.committed_revision <= 1
+            or receipt.prior_revision != receipt.committed_revision - 1
+        ):
+            raise CoreRunError("historical_prefix_invalid")
+        _verified_post_final_assessment_receipt(snapshot, receipt)
+        try:
+            pre = history.snapshot_at_revision(
+                receipt.run_id,
+                receipt.committed_revision - 1,
+            )
+        except Exception as exc:
+            raise CoreRunError("historical_prefix_invalid") from exc
+
+        # Reverify both immutable Core snapshots.  The advisory receipt may
+        # coexist with finalized-local history, but it must not mask a broken
+        # pre- or post-commit Core graph or become a transition authority.
+        pre_verified = self._verify_snapshot(history, pre)
+        post_verified = self._verify_snapshot(history, snapshot)
+        for verified in (pre_verified, post_verified):
+            recovery = classify_recovery_legality(verified.snapshot)
+            terminal = classify_terminal_legality(verified.snapshot)
+            if recovery.state == "invalid" or terminal.terminal_state == "invalid":
+                raise CoreRunError("historical_prefix_invalid")
 
     def _source_route_exhaustion_as_of(
         self,

@@ -383,6 +383,12 @@ EVENT_TYPES = {
     "role_invocation_started",
     "owned_artifact_accepted",
     "audit_proposal_promoted",
+    "post_final_assessment_policy_recorded",
+    "post_final_assessment_claimed",
+    "post_final_assessment_result_recorded",
+    "post_final_finding_disposition_recorded",
+    "post_final_guidance_draft_recorded",
+    "post_final_guidance_status_recorded",
 }
 
 # Release-mode approval vocabulary and boundary. DTO truth source;
@@ -3081,6 +3087,359 @@ class DeliveryResultObservation(StrictModel):
         return self
 
 
+def _canonical_json_sha256(value: object) -> str:
+    """Return the exact JSON identity used by Store-owned opaque subcontracts."""
+
+    try:
+        encoded = json.dumps(
+            value,
+            ensure_ascii=False,
+            sort_keys=True,
+            separators=(",", ":"),
+            allow_nan=False,
+        ).encode("utf-8")
+    except (TypeError, ValueError) as exc:
+        raise ValueError("canonical JSON identity is invalid") from exc
+    return hashlib.sha256(encoded).hexdigest()
+
+
+class PostFinalAssessmentPolicyRevision(StrictModel):
+    """One Human-recorded, non-secret advisory assessment policy revision."""
+
+    schema_id = "briefloop.post_final_assessment_policy_revision.v2"
+
+    schema_version: Literal["briefloop.post_final_assessment_policy_revision.v2"]
+    policy_revision_id: ContractId
+    run_id: ContractId
+    previous_policy_revision_id: Optional[ContractId] = None
+    enabled: bool
+    auto_run: bool
+    auto_open: bool
+    adapter_id: Literal["anthropic_messages_v1"]
+    messages_endpoint: CleanText
+    messages_endpoint_sha256: Sha256
+    requested_model_id: CleanText
+    model_version: CleanText
+    expected_model_identity: CleanText
+    profile_id: Literal["research_design_report_zh_v1"]
+    instrument_config: dict[str, JsonValue]
+    instrument_config_sha256: Sha256
+    bounded_context: dict[str, JsonValue]
+    bounded_context_sha256: Sha256
+    temperature: Literal[1.0]
+    top_p: Literal[1.0]
+    max_provider_calls: PositiveInt
+    max_total_input_tokens: PositiveInt
+    max_total_output_tokens: PositiveInt
+    max_output_tokens_per_call: PositiveInt
+    wall_timeout_seconds: Literal[60]
+    public_safe_egress_attested: bool
+    egress_scope: Literal["public_safe_report"]
+    human_actor_id: ContractId
+    human_request_id: ContractId
+    recorded_at: IsoDateTime
+    policy_event_id: ContractId
+    accepted_transaction_id: ContractId
+    policy_fingerprint: Sha256
+
+    @model_validator(mode="after")
+    def policy_identity_is_exact(self) -> "PostFinalAssessmentPolicyRevision":
+        if (
+            self.messages_endpoint_sha256
+            != hashlib.sha256(self.messages_endpoint.encode("utf-8")).hexdigest()
+            or self.instrument_config_sha256
+            != _canonical_json_sha256(self.instrument_config)
+            or self.bounded_context.get("context_sha256") != self.bounded_context_sha256
+            or self.max_output_tokens_per_call > self.max_total_output_tokens
+            or (self.enabled and not self.public_safe_egress_attested)
+        ):
+            raise ValueError("post-final assessment policy identity is invalid")
+        expected = _contract_fingerprint(
+            self.model_dump(mode="json", exclude={"policy_fingerprint"}),
+            field="policy_fingerprint",
+        )
+        if self.policy_fingerprint != expected:
+            raise ValueError("post-final assessment policy fingerprint mismatch")
+        return self
+
+
+class PostFinalAssessmentRequestRecord(StrictModel):
+    """The one durable assessment claim for exact finalized-local facts."""
+
+    schema_id = "briefloop.post_final_assessment_request_record.v2"
+
+    schema_version: Literal["briefloop.post_final_assessment_request_record.v2"]
+    assessment_request_id: ContractId
+    run_id: ContractId
+    finalized_facts_fingerprint: Sha256
+    finalized_lineage_fingerprint: Sha256
+    report_artifact_id: ContractId
+    report_revision: PositiveInt
+    report_sha256: Sha256
+    finalization_id: ContractId
+    finalization_receipt_id: ContractId
+    finalize_gate_batch_id: ContractId
+    policy_revision_id: ContractId
+    policy_fingerprint: Sha256
+    adapter_id: Literal["anthropic_messages_v1"]
+    messages_endpoint_sha256: Sha256
+    requested_model_id: CleanText
+    expected_model_identity: CleanText
+    profile_id: Literal["research_design_report_zh_v1"]
+    instrument_config_sha256: Sha256
+    bounded_context_sha256: Sha256
+    input_binding_sha256: Sha256
+    assessment_plan_sha256: Sha256
+    ordered_prompt_request_sha256s: list[Sha256] = Field(min_length=9, max_length=9)
+    prompt_count: PositiveInt
+    provider_call_ceiling: PositiveInt
+    total_input_token_upper_bound: PositiveInt
+    total_output_token_upper_bound: PositiveInt
+    output_tokens_per_call: PositiveInt
+    trial_id: ContractId
+    archive_identity_sha256: Sha256
+    request_status: Literal["claimed"]
+    claimed_at: IsoDateTime
+    request_event_id: ContractId
+    accepted_transaction_id: ContractId
+    request_fingerprint: Sha256
+
+    @model_validator(mode="after")
+    def request_identity_is_exact(self) -> "PostFinalAssessmentRequestRecord":
+        if (
+            len(set(self.ordered_prompt_request_sha256s))
+            != len(self.ordered_prompt_request_sha256s)
+            or self.prompt_count != len(self.ordered_prompt_request_sha256s)
+            or self.output_tokens_per_call > self.total_output_token_upper_bound
+        ):
+            raise ValueError("post-final assessment request identity is invalid")
+        expected = _contract_fingerprint(
+            self.model_dump(mode="json", exclude={"request_fingerprint"}),
+            field="request_fingerprint",
+        )
+        if self.request_fingerprint != expected:
+            raise ValueError("post-final assessment request fingerprint mismatch")
+        return self
+
+
+class PostFinalAssessmentResultRecord(StrictModel):
+    """One qualified, archive-bound advisory outcome; never raw provider data."""
+
+    schema_id = "briefloop.post_final_assessment_result_record.v2"
+
+    schema_version: Literal["briefloop.post_final_assessment_result_record.v2"]
+    assessment_result_id: ContractId
+    run_id: ContractId
+    assessment_request_id: ContractId
+    policy_revision_id: ContractId
+    finalized_facts_fingerprint: Sha256
+    finalized_lineage_fingerprint: Sha256
+    terminal_evidence_class: Literal[
+        "available",
+        "abstained",
+        "provider_failed",
+        "refused",
+        "incomplete",
+        "unavailable",
+    ]
+    reason_codes: list[ContractId] = Field(default_factory=list)
+    shadow_request_sha256: Sha256
+    execution_manifest_sha256: Sha256
+    archive_manifest_sha256: Sha256
+    archive_receipt_id: ContractId
+    composition_sha256: Sha256
+    presentation_sha256: Sha256
+    reader_view_sha256: Sha256
+    assessed_unit_count: NonNegativeInt
+    finding_count: NonNegativeInt
+    withheld_finding_count: NonNegativeInt
+    abstention_count: NonNegativeInt
+    recorded_at: IsoDateTime
+    result_event_id: ContractId
+    accepted_transaction_id: ContractId
+    result_fingerprint: Sha256
+
+    @model_validator(mode="after")
+    def result_identity_and_non_effect_are_exact(
+        self,
+    ) -> "PostFinalAssessmentResultRecord":
+        if self.reason_codes != sorted(set(self.reason_codes)):
+            raise ValueError("post-final assessment reason codes are not canonical")
+        if self.terminal_evidence_class != "available" and (
+            self.finding_count != 0 or self.withheld_finding_count != 0
+        ):
+            raise ValueError("unavailable assessment cannot expose findings")
+        expected = _contract_fingerprint(
+            self.model_dump(mode="json", exclude={"result_fingerprint"}),
+            field="result_fingerprint",
+        )
+        if self.result_fingerprint != expected:
+            raise ValueError("post-final assessment result fingerprint mismatch")
+        return self
+
+
+class PostFinalFindingDispositionRecord(StrictModel):
+    """One append-only Human decision on one Store-qualified LAJ finding."""
+
+    schema_id = "briefloop.post_final_finding_disposition_record.v2"
+
+    schema_version: Literal["briefloop.post_final_finding_disposition_record.v2"]
+    disposition_id: ContractId
+    run_id: ContractId
+    finalized_lineage_fingerprint: Sha256
+    assessment_result_id: ContractId
+    assessment_result_fingerprint: Sha256
+    reader_view_sha256: Sha256
+    finding_id: ContractId
+    finding_fingerprint: Sha256
+    previous_disposition_id: Optional[ContractId] = None
+    decision: Literal["accept", "reject", "defer"]
+    human_note: Optional[CleanText] = None
+    human_actor_id: ContractId
+    human_request_id: ContractId
+    recorded_at: IsoDateTime
+    disposition_event_id: ContractId
+    accepted_transaction_id: ContractId
+    disposition_fingerprint: Sha256
+
+    @model_validator(mode="after")
+    def disposition_identity_is_exact(self) -> "PostFinalFindingDispositionRecord":
+        expected = _contract_fingerprint(
+            self.model_dump(mode="json", exclude={"disposition_fingerprint"}),
+            field="disposition_fingerprint",
+        )
+        if self.disposition_fingerprint != expected:
+            raise ValueError("post-final disposition fingerprint mismatch")
+        return self
+
+
+class PostFinalGuidanceDraftRevision(StrictModel):
+    """One Human-authored guidance text revision sourced from an acceptance."""
+
+    schema_id = "briefloop.post_final_guidance_draft_revision.v2"
+
+    schema_version: Literal["briefloop.post_final_guidance_draft_revision.v2"]
+    guidance_id: ContractId
+    draft_revision: PositiveInt
+    run_id: ContractId
+    finalized_lineage_fingerprint: Sha256
+    assessment_result_id: ContractId
+    assessment_result_fingerprint: Sha256
+    finding_id: ContractId
+    finding_fingerprint: Sha256
+    disposition_id: ContractId
+    disposition_fingerprint: Sha256
+    previous_draft_revision: Optional[PositiveInt] = None
+    guidance_scope: Literal["finding_only"]
+    guidance_text: CleanText
+    guidance_sha256: Sha256
+    human_actor_id: ContractId
+    human_request_id: ContractId
+    recorded_at: IsoDateTime
+    draft_event_id: ContractId
+    accepted_transaction_id: ContractId
+    draft_fingerprint: Sha256
+
+    @model_validator(mode="after")
+    def guidance_draft_identity_is_exact(self) -> "PostFinalGuidanceDraftRevision":
+        if (
+            self.guidance_sha256
+            != hashlib.sha256(self.guidance_text.encode("utf-8")).hexdigest()
+        ):
+            raise ValueError("post-final guidance text hash mismatch")
+        if (self.draft_revision == 1 and self.previous_draft_revision is not None) or (
+            self.draft_revision > 1
+            and self.previous_draft_revision != self.draft_revision - 1
+        ):
+            raise ValueError("post-final guidance revision chain is invalid")
+        expected = _contract_fingerprint(
+            self.model_dump(mode="json", exclude={"draft_fingerprint"}),
+            field="draft_fingerprint",
+        )
+        if self.draft_fingerprint != expected:
+            raise ValueError("post-final guidance draft fingerprint mismatch")
+        return self
+
+
+class PostFinalGuidanceStatusRevision(StrictModel):
+    """One separate Human approval/lifecycle decision for an exact draft."""
+
+    schema_id = "briefloop.post_final_guidance_status_revision.v2"
+
+    schema_version: Literal["briefloop.post_final_guidance_status_revision.v2"]
+    status_revision_id: ContractId
+    run_id: ContractId
+    finalized_lineage_fingerprint: Sha256
+    guidance_id: ContractId
+    draft_revision: PositiveInt
+    guidance_sha256: Sha256
+    status: Literal["approved", "deactivated", "reverted", "superseded"]
+    previous_status_revision_id: Optional[ContractId] = None
+    human_actor_id: ContractId
+    human_request_id: ContractId
+    recorded_at: IsoDateTime
+    status_event_id: ContractId
+    accepted_transaction_id: ContractId
+    status_fingerprint: Sha256
+
+    @model_validator(mode="after")
+    def guidance_status_identity_is_exact(self) -> "PostFinalGuidanceStatusRevision":
+        expected = _contract_fingerprint(
+            self.model_dump(mode="json", exclude={"status_fingerprint"}),
+            field="status_fingerprint",
+        )
+        if self.status_fingerprint != expected:
+            raise ValueError("post-final guidance status fingerprint mismatch")
+        return self
+
+
+POST_FINAL_GUIDANCE_STATUS_TRANSITIONS = MappingProxyType(
+    {
+        None: ("approved",),
+        "approved": ("approved", "deactivated", "reverted", "superseded"),
+        "deactivated": ("approved",),
+        "reverted": ("approved",),
+        "superseded": ("approved",),
+    }
+)
+
+
+def post_final_guidance_legal_actions(
+    current: PostFinalGuidanceStatusRevision | None,
+    *,
+    target_draft_revision: int,
+    approval_eligible: bool,
+) -> tuple[str, ...]:
+    """Return the only legal Human actions for one exact draft revision."""
+
+    if current is None:
+        return (
+            POST_FINAL_GUIDANCE_STATUS_TRANSITIONS[None]
+            if target_draft_revision >= 1 and approval_eligible
+            else ()
+        )
+    if target_draft_revision > current.draft_revision:
+        return ("approved",) if approval_eligible else ()
+    if target_draft_revision == current.draft_revision and current.status == "approved":
+        return ("deactivated", "reverted", "superseded")
+    return ()
+
+
+def post_final_guidance_status_transition_allowed(
+    current: PostFinalGuidanceStatusRevision | None,
+    candidate: PostFinalGuidanceStatusRevision,
+    *,
+    approval_eligible: bool,
+) -> bool:
+    """Validate one append-only status transition against the current head."""
+
+    return candidate.status in post_final_guidance_legal_actions(
+        current,
+        target_draft_revision=candidate.draft_revision,
+        approval_eligible=approval_eligible,
+    )
+
+
 class RepairStartRequest(StrictModel):
     schema_id = "briefloop.repair_start_request.v2"
     schema_version: Literal["briefloop.repair_start_request.v2"]
@@ -3820,6 +4179,31 @@ class DeliveryResultReference(StrictModel):
     result_id: ContractId
 
 
+class PostFinalAssessmentPolicyRevisionReference(StrictModel):
+    policy_revision_id: ContractId
+
+
+class PostFinalAssessmentRequestReference(StrictModel):
+    assessment_request_id: ContractId
+
+
+class PostFinalAssessmentResultReference(StrictModel):
+    assessment_result_id: ContractId
+
+
+class PostFinalFindingDispositionReference(StrictModel):
+    disposition_id: ContractId
+
+
+class PostFinalGuidanceDraftReference(StrictModel):
+    guidance_id: ContractId
+    draft_revision: PositiveInt
+
+
+class PostFinalGuidanceStatusReference(StrictModel):
+    status_revision_id: ContractId
+
+
 class CheckoutRevisionReference(StrictModel):
     checkout_revision_id: CheckoutRevisionId
 
@@ -3909,6 +4293,24 @@ class TransactionReceipt(StrictModel):
     )
     delivery_attempts: list[DeliveryAttemptReference] = Field(default_factory=list)
     delivery_results: list[DeliveryResultReference] = Field(default_factory=list)
+    post_final_assessment_policy_revisions: list[
+        PostFinalAssessmentPolicyRevisionReference
+    ] = Field(default_factory=list)
+    post_final_assessment_requests: list[PostFinalAssessmentRequestReference] = Field(
+        default_factory=list
+    )
+    post_final_assessment_results: list[PostFinalAssessmentResultReference] = Field(
+        default_factory=list
+    )
+    post_final_finding_dispositions: list[PostFinalFindingDispositionReference] = Field(
+        default_factory=list
+    )
+    post_final_guidance_drafts: list[PostFinalGuidanceDraftReference] = Field(
+        default_factory=list
+    )
+    post_final_guidance_statuses: list[PostFinalGuidanceStatusReference] = Field(
+        default_factory=list
+    )
     checkout_revisions: list[CheckoutRevisionReference] = Field(default_factory=list)
     receipt_checkout_bindings: list[ReceiptCheckoutBindingReference] = Field(
         default_factory=list
@@ -3969,6 +4371,12 @@ class TransactionReceipt(StrictModel):
             self.delivery_authorizations,
             self.delivery_attempts,
             self.delivery_results,
+            self.post_final_assessment_policy_revisions,
+            self.post_final_assessment_requests,
+            self.post_final_assessment_results,
+            self.post_final_finding_dispositions,
+            self.post_final_guidance_drafts,
+            self.post_final_guidance_statuses,
             self.checkout_revisions,
             self.receipt_checkout_bindings,
             self.checkout_publication_intents,
@@ -5698,6 +6106,249 @@ for _model in (
     _model.full_example = deepcopy(_model.minimal_example)
 
 
+_PFLAJ_INSTRUMENT = {
+    "schema_version": "briefloop.semantic_evaluator.instrument_config.v1",
+    "instrument_config_id": "PFLAJ-INSTRUMENT-001",
+    "provider_id": "anthropic_messages",
+    "model_id": "messages-model-001",
+    "model_version": "model-version-001",
+    "language": "zh-CN",
+    "decoding": {
+        "temperature": 1.0,
+        "top_p": 1.0,
+        "max_output_tokens": 1024,
+        "seed": None,
+    },
+    "retry_policy": {
+        "max_attempts": 1,
+        "retryable_reason_codes": [],
+        "backoff_schedule_ms": [],
+    },
+    "prompt_sizer": {
+        "sizer_id": "anthropic_utf8_byte_v1",
+        "sizer_version": "v1",
+        "max_context_tokens": 8192,
+        "reserved_output_tokens": 1024,
+    },
+    "transport_policy": {
+        "provider_transport_only": True,
+        "model_tools": False,
+        "browser": False,
+        "cross_run_memory": False,
+        "provider_file_search": False,
+    },
+}
+_PFLAJ_CONTEXT = {
+    "schema_version": "briefloop.semantic_evaluator.bounded_context.v1",
+    "context_id": "PFLAJ-CONTEXT-001",
+    "context_sha256": _SHA_A,
+    "language": "zh-CN",
+    "data_class": "public",
+    "requirements": [],
+}
+_PFLAJ_CONTEXT["context_sha256"] = _canonical_json_sha256(
+    {key: value for key, value in _PFLAJ_CONTEXT.items() if key != "context_sha256"}
+)
+_PFLAJ_ENDPOINT = "https://messages.example.com"
+_PFLAJ_POLICY = {
+    "schema_version": PostFinalAssessmentPolicyRevision.schema_id,
+    "policy_revision_id": "PFLAJ-POLICY-001",
+    "run_id": _RUN,
+    "previous_policy_revision_id": None,
+    "enabled": True,
+    "auto_run": False,
+    "auto_open": False,
+    "adapter_id": "anthropic_messages_v1",
+    "messages_endpoint": _PFLAJ_ENDPOINT,
+    "messages_endpoint_sha256": hashlib.sha256(
+        _PFLAJ_ENDPOINT.encode("utf-8")
+    ).hexdigest(),
+    "requested_model_id": "messages-model-001",
+    "model_version": "model-version-001",
+    "expected_model_identity": "model-version-001",
+    "profile_id": "research_design_report_zh_v1",
+    "instrument_config": deepcopy(_PFLAJ_INSTRUMENT),
+    "instrument_config_sha256": _canonical_json_sha256(_PFLAJ_INSTRUMENT),
+    "bounded_context": deepcopy(_PFLAJ_CONTEXT),
+    "bounded_context_sha256": _PFLAJ_CONTEXT["context_sha256"],
+    "temperature": 1.0,
+    "top_p": 1.0,
+    "max_provider_calls": 9,
+    "max_total_input_tokens": 100000,
+    "max_total_output_tokens": 9216,
+    "max_output_tokens_per_call": 1024,
+    "wall_timeout_seconds": 60,
+    "public_safe_egress_attested": True,
+    "egress_scope": "public_safe_report",
+    "human_actor_id": "HUMAN-001",
+    "human_request_id": "PFLAJ-POLICY-REQUEST-001",
+    "recorded_at": _NOW,
+    "policy_event_id": "EVENT-PFLAJ-POLICY-001",
+    "accepted_transaction_id": "TX-PFLAJ-POLICY-001",
+    "policy_fingerprint": _SHA_A,
+}
+_PFLAJ_POLICY["policy_fingerprint"] = _contract_fingerprint(
+    _PFLAJ_POLICY, field="policy_fingerprint"
+)
+PostFinalAssessmentPolicyRevision.minimal_example = deepcopy(_PFLAJ_POLICY)
+PostFinalAssessmentPolicyRevision.full_example = deepcopy(_PFLAJ_POLICY)
+
+_PFLAJ_REQUEST = {
+    "schema_version": PostFinalAssessmentRequestRecord.schema_id,
+    "assessment_request_id": "PFLAJ-REQUEST-001",
+    "run_id": _RUN,
+    "finalized_facts_fingerprint": _SHA_A,
+    "finalized_lineage_fingerprint": _SHA_B,
+    "report_artifact_id": "reader_brief",
+    "report_revision": 1,
+    "report_sha256": _SHA_B,
+    "finalization_id": "FINALIZATION-001",
+    "finalization_receipt_id": "TX-FINALIZATION-001",
+    "finalize_gate_batch_id": "GATE-BATCH-001",
+    "policy_revision_id": _PFLAJ_POLICY["policy_revision_id"],
+    "policy_fingerprint": _PFLAJ_POLICY["policy_fingerprint"],
+    "adapter_id": "anthropic_messages_v1",
+    "messages_endpoint_sha256": _PFLAJ_POLICY["messages_endpoint_sha256"],
+    "requested_model_id": "messages-model-001",
+    "expected_model_identity": "model-version-001",
+    "profile_id": "research_design_report_zh_v1",
+    "instrument_config_sha256": _PFLAJ_POLICY["instrument_config_sha256"],
+    "bounded_context_sha256": _PFLAJ_POLICY["bounded_context_sha256"],
+    "input_binding_sha256": "c" * 64,
+    "assessment_plan_sha256": "d" * 64,
+    "ordered_prompt_request_sha256s": [f"{item:064x}" for item in range(1, 10)],
+    "prompt_count": 9,
+    "provider_call_ceiling": 9,
+    "total_input_token_upper_bound": 10000,
+    "total_output_token_upper_bound": 9216,
+    "output_tokens_per_call": 1024,
+    "trial_id": "PFLAJ-TRIAL-001",
+    "archive_identity_sha256": "e" * 64,
+    "request_status": "claimed",
+    "claimed_at": _NOW,
+    "request_event_id": "EVENT-PFLAJ-REQUEST-001",
+    "accepted_transaction_id": "TX-PFLAJ-REQUEST-001",
+    "request_fingerprint": _SHA_A,
+}
+_PFLAJ_REQUEST["request_fingerprint"] = _contract_fingerprint(
+    _PFLAJ_REQUEST, field="request_fingerprint"
+)
+PostFinalAssessmentRequestRecord.minimal_example = deepcopy(_PFLAJ_REQUEST)
+PostFinalAssessmentRequestRecord.full_example = deepcopy(_PFLAJ_REQUEST)
+
+_PFLAJ_RESULT = {
+    "schema_version": PostFinalAssessmentResultRecord.schema_id,
+    "assessment_result_id": "PFLAJ-RESULT-001",
+    "run_id": _RUN,
+    "assessment_request_id": _PFLAJ_REQUEST["assessment_request_id"],
+    "policy_revision_id": _PFLAJ_POLICY["policy_revision_id"],
+    "finalized_facts_fingerprint": _SHA_A,
+    "finalized_lineage_fingerprint": _SHA_B,
+    "terminal_evidence_class": "available",
+    "reason_codes": [],
+    "shadow_request_sha256": "f" * 64,
+    "execution_manifest_sha256": "1" * 64,
+    "archive_manifest_sha256": "2" * 64,
+    "archive_receipt_id": "PFLAJ-ARCHIVE-RECEIPT-001",
+    "composition_sha256": "3" * 64,
+    "presentation_sha256": "4" * 64,
+    "reader_view_sha256": "5" * 64,
+    "assessed_unit_count": 25,
+    "finding_count": 0,
+    "withheld_finding_count": 0,
+    "abstention_count": 0,
+    "recorded_at": _NOW,
+    "result_event_id": "EVENT-PFLAJ-RESULT-001",
+    "accepted_transaction_id": "TX-PFLAJ-RESULT-001",
+    "result_fingerprint": _SHA_A,
+}
+_PFLAJ_RESULT["result_fingerprint"] = _contract_fingerprint(
+    _PFLAJ_RESULT, field="result_fingerprint"
+)
+PostFinalAssessmentResultRecord.minimal_example = deepcopy(_PFLAJ_RESULT)
+PostFinalAssessmentResultRecord.full_example = deepcopy(_PFLAJ_RESULT)
+
+_PFLAJ_DISPOSITION = {
+    "schema_version": PostFinalFindingDispositionRecord.schema_id,
+    "disposition_id": "PFLAJ-DISPOSITION-001",
+    "run_id": _RUN,
+    "finalized_lineage_fingerprint": _SHA_B,
+    "assessment_result_id": _PFLAJ_RESULT["assessment_result_id"],
+    "assessment_result_fingerprint": _PFLAJ_RESULT["result_fingerprint"],
+    "reader_view_sha256": _PFLAJ_RESULT["reader_view_sha256"],
+    "finding_id": "F-000000000001",
+    "finding_fingerprint": "6" * 64,
+    "previous_disposition_id": None,
+    "decision": "accept",
+    "human_note": "Useful post-final observation.",
+    "human_actor_id": "HUMAN-001",
+    "human_request_id": "PFLAJ-DISPOSITION-REQUEST-001",
+    "recorded_at": _NOW,
+    "disposition_event_id": "EVENT-PFLAJ-DISPOSITION-001",
+    "accepted_transaction_id": "TX-PFLAJ-DISPOSITION-001",
+    "disposition_fingerprint": _SHA_A,
+}
+_PFLAJ_DISPOSITION["disposition_fingerprint"] = _contract_fingerprint(
+    _PFLAJ_DISPOSITION, field="disposition_fingerprint"
+)
+PostFinalFindingDispositionRecord.minimal_example = deepcopy(_PFLAJ_DISPOSITION)
+PostFinalFindingDispositionRecord.full_example = deepcopy(_PFLAJ_DISPOSITION)
+
+_PFLAJ_GUIDANCE_DRAFT = {
+    "schema_version": PostFinalGuidanceDraftRevision.schema_id,
+    "guidance_id": "PFLAJ-GUIDANCE-001",
+    "draft_revision": 1,
+    "run_id": _RUN,
+    "finalized_lineage_fingerprint": _SHA_B,
+    "assessment_result_id": _PFLAJ_RESULT["assessment_result_id"],
+    "assessment_result_fingerprint": _PFLAJ_RESULT["result_fingerprint"],
+    "finding_id": _PFLAJ_DISPOSITION["finding_id"],
+    "finding_fingerprint": _PFLAJ_DISPOSITION["finding_fingerprint"],
+    "disposition_id": _PFLAJ_DISPOSITION["disposition_id"],
+    "disposition_fingerprint": _PFLAJ_DISPOSITION["disposition_fingerprint"],
+    "previous_draft_revision": None,
+    "guidance_scope": "finding_only",
+    "guidance_text": "Keep the conclusion aligned with the report body.",
+    "guidance_sha256": hashlib.sha256(
+        "Keep the conclusion aligned with the report body.".encode("utf-8")
+    ).hexdigest(),
+    "human_actor_id": "HUMAN-001",
+    "human_request_id": "PFLAJ-GUIDANCE-DRAFT-REQUEST-001",
+    "recorded_at": _NOW,
+    "draft_event_id": "EVENT-PFLAJ-GUIDANCE-DRAFT-001",
+    "accepted_transaction_id": "TX-PFLAJ-GUIDANCE-DRAFT-001",
+    "draft_fingerprint": _SHA_A,
+}
+_PFLAJ_GUIDANCE_DRAFT["draft_fingerprint"] = _contract_fingerprint(
+    _PFLAJ_GUIDANCE_DRAFT, field="draft_fingerprint"
+)
+PostFinalGuidanceDraftRevision.minimal_example = deepcopy(_PFLAJ_GUIDANCE_DRAFT)
+PostFinalGuidanceDraftRevision.full_example = deepcopy(_PFLAJ_GUIDANCE_DRAFT)
+
+_PFLAJ_GUIDANCE_STATUS = {
+    "schema_version": PostFinalGuidanceStatusRevision.schema_id,
+    "status_revision_id": "PFLAJ-GUIDANCE-STATUS-001",
+    "run_id": _RUN,
+    "finalized_lineage_fingerprint": _SHA_B,
+    "guidance_id": _PFLAJ_GUIDANCE_DRAFT["guidance_id"],
+    "draft_revision": _PFLAJ_GUIDANCE_DRAFT["draft_revision"],
+    "guidance_sha256": _PFLAJ_GUIDANCE_DRAFT["guidance_sha256"],
+    "status": "approved",
+    "previous_status_revision_id": None,
+    "human_actor_id": "HUMAN-001",
+    "human_request_id": "PFLAJ-GUIDANCE-STATUS-REQUEST-001",
+    "recorded_at": _NOW,
+    "status_event_id": "EVENT-PFLAJ-GUIDANCE-STATUS-001",
+    "accepted_transaction_id": "TX-PFLAJ-GUIDANCE-STATUS-001",
+    "status_fingerprint": _SHA_A,
+}
+_PFLAJ_GUIDANCE_STATUS["status_fingerprint"] = _contract_fingerprint(
+    _PFLAJ_GUIDANCE_STATUS, field="status_fingerprint"
+)
+PostFinalGuidanceStatusRevision.minimal_example = deepcopy(_PFLAJ_GUIDANCE_STATUS)
+PostFinalGuidanceStatusRevision.full_example = deepcopy(_PFLAJ_GUIDANCE_STATUS)
+
+
 V2_CONTRACT_MODELS: tuple[type[StrictModel], ...] = (
     SourceProposal,
     SourceCommitRequest,
@@ -5779,6 +6430,12 @@ V2_CONTRACT_MODELS: tuple[type[StrictModel], ...] = (
     DeliveryAttemptRecord,
     DeliveryResultRecord,
     DeliveryResultObservation,
+    PostFinalAssessmentPolicyRevision,
+    PostFinalAssessmentRequestRecord,
+    PostFinalAssessmentResultRecord,
+    PostFinalFindingDispositionRecord,
+    PostFinalGuidanceDraftRevision,
+    PostFinalGuidanceStatusRevision,
     RepairStartRequest,
     ArtifactSupersedeRequest,
     ArtifactRevertRequest,
@@ -5988,6 +6645,21 @@ __all__ = [
     "PackageArtifactBindingReference",
     "PackageReadyRecord",
     "PackageReadyReference",
+    "PostFinalAssessmentPolicyRevision",
+    "PostFinalAssessmentPolicyRevisionReference",
+    "PostFinalAssessmentRequestRecord",
+    "PostFinalAssessmentRequestReference",
+    "PostFinalAssessmentResultRecord",
+    "PostFinalAssessmentResultReference",
+    "PostFinalFindingDispositionRecord",
+    "PostFinalFindingDispositionReference",
+    "PostFinalGuidanceDraftRevision",
+    "PostFinalGuidanceDraftReference",
+    "PostFinalGuidanceStatusRevision",
+    "POST_FINAL_GUIDANCE_STATUS_TRANSITIONS",
+    "post_final_guidance_legal_actions",
+    "post_final_guidance_status_transition_allowed",
+    "PostFinalGuidanceStatusReference",
     "PublicationIdentityV1",
     "RecoveryCompleteRequest",
     "RecoveryCompletionRecord",

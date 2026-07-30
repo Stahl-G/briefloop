@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, replace
 from datetime import datetime, timezone
+import json
 import os
 from pathlib import Path
 import sqlite3
@@ -56,6 +57,19 @@ from multi_agent_brief.contracts.v2 import (
     ProposalSourceBinding,
     PackageArtifactBinding,
     PackageReadyRecord,
+    PostFinalAssessmentPolicyRevision,
+    PostFinalAssessmentPolicyRevisionReference,
+    PostFinalAssessmentRequestRecord,
+    PostFinalAssessmentRequestReference,
+    PostFinalAssessmentResultRecord,
+    PostFinalAssessmentResultReference,
+    PostFinalFindingDispositionRecord,
+    PostFinalFindingDispositionReference,
+    PostFinalGuidanceDraftRevision,
+    PostFinalGuidanceDraftReference,
+    PostFinalGuidanceStatusRevision,
+    PostFinalGuidanceStatusReference,
+    post_final_guidance_status_transition_allowed,
     RecoveryCompletionRecord,
     RepairCompletionRecord,
     RepairCycleRecord,
@@ -107,6 +121,27 @@ from multi_agent_brief.control_store.serialization import (
 _ModelT = TypeVar("_ModelT", bound=StrictModel)
 _FailureHook = Callable[[str], None]
 _CONTRACT_ID_ADAPTER = TypeAdapter(ContractId)
+_POST_FINAL_RECEIPT_RELATION_FIELDS = (
+    "post_final_assessment_policy_revisions",
+    "post_final_assessment_requests",
+    "post_final_assessment_results",
+    "post_final_finding_dispositions",
+    "post_final_guidance_drafts",
+    "post_final_guidance_statuses",
+)
+_POST_FINAL_RECEIPT_TRANSACTION_TYPES = frozenset(
+    {
+        "post_final_assessment_policy",
+        "post_final_assessment_claim",
+        "post_final_assessment_result",
+        "post_final_finding_disposition",
+        "post_final_guidance_draft",
+        "post_final_guidance_status",
+    }
+)
+_RECEIPT_COMPATIBILITY_BOUNDARY_ID = (
+    "briefloop.transaction_receipt_relation_compatibility.v1"
+)
 _EXTENDED_RECORD_MODELS = (
     WorkspaceRunHead,
     ArtifactIdentityRecord,
@@ -145,6 +180,12 @@ _EXTENDED_RECORD_MODELS = (
     DeliveryAuthorizationRecord,
     DeliveryAttemptRecord,
     DeliveryResultRecord,
+    PostFinalAssessmentPolicyRevision,
+    PostFinalAssessmentRequestRecord,
+    PostFinalAssessmentResultRecord,
+    PostFinalFindingDispositionRecord,
+    PostFinalGuidanceDraftRevision,
+    PostFinalGuidanceStatusRevision,
     CheckoutRevisionRecord,
     CheckoutRevisionMember,
     ReceiptCheckoutBinding,
@@ -166,7 +207,52 @@ def _canonical_record_text(record: StrictModel) -> str:
     return canonical_json_bytes(payload).decode("utf-8")
 
 
-def _decode_record(model_type: type[_ModelT], payload_text: str) -> _ModelT:
+def _decode_record(
+    model_type: type[_ModelT],
+    payload_text: str,
+    *,
+    receipt_committed_revision: int | None = None,
+    legacy_receipt_max_committed_revision: int | None = None,
+) -> _ModelT:
+    if model_type is TransactionReceipt:
+        try:
+            payload = json.loads(payload_text)
+        except (json.JSONDecodeError, TypeError, ValueError) as exc:
+            raise ControlStoreIntegrityError("stored_payload_invalid") from exc
+        if not isinstance(payload, dict):
+            raise ControlStoreIntegrityError("stored_payload_invalid")
+        missing = {
+            field
+            for field in _POST_FINAL_RECEIPT_RELATION_FIELDS
+            if field not in payload
+        }
+        if not missing:
+            return cast(_ModelT, decode_model(TransactionReceipt, payload_text))
+        if (
+            type(receipt_committed_revision) is not int
+            or type(legacy_receipt_max_committed_revision) is not int
+            or receipt_committed_revision < 1
+            or legacy_receipt_max_committed_revision < 0
+            or receipt_committed_revision > legacy_receipt_max_committed_revision
+            or missing != set(_POST_FINAL_RECEIPT_RELATION_FIELDS)
+            or payload.get("transaction_type") in _POST_FINAL_RECEIPT_TRANSACTION_TYPES
+        ):
+            raise ControlStoreIntegrityError("stored_payload_not_canonical")
+        expanded = dict(payload)
+        expanded.update({field: [] for field in _POST_FINAL_RECEIPT_RELATION_FIELDS})
+        try:
+            receipt = TransactionReceipt.model_validate(expanded)
+        except (ValidationError, TypeError, ValueError) as exc:
+            raise ControlStoreIntegrityError("stored_payload_invalid") from exc
+        legacy_projection = receipt.model_dump(mode="json", exclude_unset=False)
+        for field in _POST_FINAL_RECEIPT_RELATION_FIELDS:
+            if legacy_projection.pop(field) != []:
+                raise ControlStoreIntegrityError("stored_payload_not_canonical")
+        if canonical_json_bytes(legacy_projection).decode("utf-8") != payload_text:
+            raise ControlStoreIntegrityError("stored_payload_not_canonical")
+        if receipt.committed_revision != receipt_committed_revision:
+            raise ControlStoreIntegrityError("stored_payload_identity_mismatch")
+        return cast(_ModelT, receipt)
     if model_type not in _EXTENDED_RECORD_MODELS:
         return decode_model(model_type, payload_text)
     try:
@@ -376,6 +462,14 @@ class ControlStoreSnapshot:
     delivery_authorizations: tuple[DeliveryAuthorizationRecord, ...]
     delivery_attempts: tuple[DeliveryAttemptRecord, ...]
     delivery_results: tuple[DeliveryResultRecord, ...]
+    post_final_assessment_policy_revisions: tuple[
+        PostFinalAssessmentPolicyRevision, ...
+    ]
+    post_final_assessment_requests: tuple[PostFinalAssessmentRequestRecord, ...]
+    post_final_assessment_results: tuple[PostFinalAssessmentResultRecord, ...]
+    post_final_finding_dispositions: tuple[PostFinalFindingDispositionRecord, ...]
+    post_final_guidance_drafts: tuple[PostFinalGuidanceDraftRevision, ...]
+    post_final_guidance_statuses: tuple[PostFinalGuidanceStatusRevision, ...]
     checkout_revisions: tuple[CheckoutRevisionRecord, ...]
     checkout_revision_members: tuple[CheckoutRevisionMember, ...]
     receipt_checkout_bindings: tuple[ReceiptCheckoutBinding, ...]
@@ -766,6 +860,36 @@ class ControlStoreHistory:
         delivery_results = selected(
             "delivery_results", ("result_id",), full.delivery_results
         )
+        post_final_assessment_policy_revisions = selected(
+            "post_final_assessment_policy_revisions",
+            ("policy_revision_id",),
+            full.post_final_assessment_policy_revisions,
+        )
+        post_final_assessment_requests = selected(
+            "post_final_assessment_requests",
+            ("assessment_request_id",),
+            full.post_final_assessment_requests,
+        )
+        post_final_assessment_results = selected(
+            "post_final_assessment_results",
+            ("assessment_result_id",),
+            full.post_final_assessment_results,
+        )
+        post_final_finding_dispositions = selected(
+            "post_final_finding_dispositions",
+            ("disposition_id",),
+            full.post_final_finding_dispositions,
+        )
+        post_final_guidance_drafts = selected(
+            "post_final_guidance_drafts",
+            ("guidance_id", "draft_revision"),
+            full.post_final_guidance_drafts,
+        )
+        post_final_guidance_statuses = selected(
+            "post_final_guidance_statuses",
+            ("status_revision_id",),
+            full.post_final_guidance_statuses,
+        )
         checkout_revision_ids = {
             reference.checkout_revision_id
             for receipt in transactions
@@ -859,6 +983,14 @@ class ControlStoreHistory:
             delivery_authorizations=delivery_authorizations,
             delivery_attempts=delivery_attempts,
             delivery_results=delivery_results,
+            post_final_assessment_policy_revisions=(
+                post_final_assessment_policy_revisions
+            ),
+            post_final_assessment_requests=post_final_assessment_requests,
+            post_final_assessment_results=post_final_assessment_results,
+            post_final_finding_dispositions=post_final_finding_dispositions,
+            post_final_guidance_drafts=post_final_guidance_drafts,
+            post_final_guidance_statuses=post_final_guidance_statuses,
             checkout_revisions=checkout_revisions,
             checkout_revision_members=checkout_revision_members,
             receipt_checkout_bindings=receipt_checkout_bindings,
@@ -1009,6 +1141,16 @@ class SQLiteControlStore:
             connection.execute(
                 "INSERT INTO workspaces(workspace_id, revision) VALUES (?, 0)",
                 (workspace_id,),
+            )
+            connection.execute(
+                """
+                INSERT INTO transaction_receipt_compatibility_boundaries(
+                    workspace_id,
+                    boundary_id,
+                    legacy_receipt_max_committed_revision
+                ) VALUES (?, ?, 0)
+                """,
+                (workspace_id, _RECEIPT_COMPATIBILITY_BOUNDARY_ID),
             )
             connection.commit()
         except Exception:
@@ -1416,7 +1558,7 @@ class SQLiteControlStore:
     ) -> TransactionReceipt | None:
         row = self._connection.execute(
             """
-            SELECT fingerprint, payload_json
+            SELECT fingerprint, payload_json, committed_revision
             FROM transactions
             WHERE run_id = ? AND transaction_id = ?
             """,
@@ -1426,7 +1568,12 @@ class SQLiteControlStore:
             return None
         if row[0] != fingerprint:
             raise ControlStoreConflict("transaction_replay_conflict")
-        receipt = _decode_record(TransactionReceipt, str(row[1]))
+        receipt = _decode_record(
+            TransactionReceipt,
+            str(row[1]),
+            receipt_committed_revision=int(row[2]),
+            legacy_receipt_max_committed_revision=self._legacy_receipt_cutoff(),
+        )
         self._verify_transaction_relations(receipt)
         self._verify_receipt_blobs(receipt)
         return receipt
@@ -1482,6 +1629,7 @@ class SQLiteControlStore:
             self._preflight_intake_subgraph(uow, run_id)
             self._preflight_core_run_subgraph(uow, run_id)
             self._preflight_pr4b_subgraph(uow, run_id)
+            self._preflight_post_final_assessment_subgraph(uow, run_id)
             self._preflight_checkout_subgraph(uow, run_id)
             self._inject("before_blob_write")
             for position, item in enumerate(uow._artifact_revisions, start=1):
@@ -1517,6 +1665,7 @@ class SQLiteControlStore:
                 )
                 if locked_artifact_identities != new_artifact_identities:
                     raise ControlStoreConflict("relational_integrity_conflict")
+                self._preflight_post_final_assessment_subgraph(uow, run_id)
                 committed_revision = locked_revision + 1
                 receipt = self._build_receipt(
                     uow,
@@ -1566,6 +1715,7 @@ class SQLiteControlStore:
                 self._insert_run_integrity_records(uow._run_integrity_records.values())
                 self._insert_gate_repair_records(uow)
                 self._insert_pr4b_records(uow)
+                self._insert_post_final_assessment_records(uow)
                 self._insert_checkout_records(uow)
                 self._insert_transaction_relations(receipt)
                 self._inject("after_records")
@@ -2358,6 +2508,281 @@ class SQLiteControlStore:
             ) != list(range(len(bindings))):
                 raise ControlStoreConflict("relational_integrity_conflict")
 
+    def _preflight_post_final_assessment_subgraph(
+        self, uow: "ControlUnitOfWork", run_id: str
+    ) -> None:
+        """Bind the three advisory records without interpreting Core legality."""
+
+        staged_events = {event.event_id for event in uow._events}
+        existing_policies = {
+            str(row[0]): (
+                str(row[1]),
+                None if row[2] is None else str(row[2]),
+            )
+            for row in self._connection.execute(
+                "SELECT policy_revision_id, policy_fingerprint, "
+                "previous_policy_revision_id "
+                "FROM post_final_assessment_policy_revisions WHERE run_id=?",
+                (run_id,),
+            ).fetchall()
+        }
+        existing_requests = {
+            str(row[0]): (str(row[1]), str(row[2]), str(row[3]))
+            for row in self._connection.execute(
+                "SELECT assessment_request_id, policy_revision_id, "
+                "finalized_facts_fingerprint, request_fingerprint "
+                "FROM post_final_assessment_requests WHERE run_id=?",
+                (run_id,),
+            ).fetchall()
+        }
+        existing_results = {
+            str(row[0]): str(row[1])
+            for row in self._connection.execute(
+                "SELECT assessment_result_id, assessment_request_id "
+                "FROM post_final_assessment_results WHERE run_id=?",
+                (run_id,),
+            ).fetchall()
+        }
+        staged_policies = uow._post_final_assessment_policy_revisions
+        staged_requests = uow._post_final_assessment_requests
+        staged_results = uow._post_final_assessment_results
+
+        if len(staged_policies) > 1:
+            raise ControlStoreConflict("relational_integrity_conflict")
+        policy_ids = set(existing_policies)
+        predecessor_ids = {
+            previous_policy_revision_id
+            for _fingerprint, previous_policy_revision_id in existing_policies.values()
+            if previous_policy_revision_id is not None
+        }
+        policy_heads = policy_ids - predecessor_ids
+        if not policy_ids:
+            expected_previous_policy_id = None
+        elif len(policy_heads) == 1:
+            expected_previous_policy_id = next(iter(policy_heads))
+        else:
+            raise ControlStoreConflict("relational_integrity_conflict")
+        for record in staged_policies.values():
+            if (
+                record.accepted_transaction_id != uow.transaction_id
+                or record.policy_event_id not in staged_events
+                or record.policy_revision_id in existing_policies
+                or record.previous_policy_revision_id != expected_previous_policy_id
+            ):
+                raise ControlStoreConflict("relational_integrity_conflict")
+        available_policies = {
+            policy_revision_id: fingerprint
+            for policy_revision_id, (
+                fingerprint,
+                _previous_policy_revision_id,
+            ) in existing_policies.items()
+        }
+        available_policies.update(
+            {key: value.policy_fingerprint for key, value in staged_policies.items()}
+        )
+        for record in staged_requests.values():
+            policy_fingerprint = available_policies.get(record.policy_revision_id)
+            if (
+                record.accepted_transaction_id != uow.transaction_id
+                or record.request_event_id not in staged_events
+                or record.assessment_request_id in existing_requests
+                or policy_fingerprint != record.policy_fingerprint
+            ):
+                raise ControlStoreConflict("relational_integrity_conflict")
+        available_requests = dict(existing_requests)
+        available_requests.update(
+            {
+                key: (
+                    value.policy_revision_id,
+                    value.finalized_facts_fingerprint,
+                    value.request_fingerprint,
+                )
+                for key, value in staged_requests.items()
+            }
+        )
+        for record in staged_results.values():
+            request = available_requests.get(record.assessment_request_id)
+            if (
+                record.accepted_transaction_id != uow.transaction_id
+                or record.result_event_id not in staged_events
+                or record.assessment_result_id in existing_results
+                or request is None
+                or request[0] != record.policy_revision_id
+                or request[1] != record.finalized_facts_fingerprint
+            ):
+                raise ControlStoreConflict("relational_integrity_conflict")
+
+        def load_models(model_type: type[_ModelT], table: str) -> dict[object, _ModelT]:
+            rows = self._connection.execute(
+                f"SELECT payload_json FROM {table} WHERE run_id=?",
+                (run_id,),
+            ).fetchall()
+            models = [_decode_record(model_type, str(row[0])) for row in rows]
+            if model_type is PostFinalAssessmentResultRecord:
+                return {item.assessment_result_id: item for item in models}
+            if model_type is PostFinalFindingDispositionRecord:
+                return {item.disposition_id: item for item in models}
+            if model_type is PostFinalGuidanceDraftRevision:
+                return {
+                    (item.guidance_id, item.draft_revision): item for item in models
+                }
+            if model_type is PostFinalGuidanceStatusRevision:
+                return {item.status_revision_id: item for item in models}
+            raise ControlStoreConflict("relational_integrity_conflict")
+
+        available_results = load_models(
+            PostFinalAssessmentResultRecord, "post_final_assessment_results"
+        )
+        available_results.update(staged_results)
+        existing_dispositions = load_models(
+            PostFinalFindingDispositionRecord, "post_final_finding_dispositions"
+        )
+        staged_dispositions = uow._post_final_finding_dispositions
+        if len(staged_dispositions) > 1:
+            raise ControlStoreConflict("relational_integrity_conflict")
+        disposition_heads: dict[tuple[str, str], str] = {}
+        disposition_groups: dict[
+            tuple[str, str], list[PostFinalFindingDispositionRecord]
+        ] = {}
+        for disposition in existing_dispositions.values():
+            key = (disposition.assessment_result_id, disposition.finding_id)
+            disposition_groups.setdefault(key, []).append(disposition)
+        for key, records in disposition_groups.items():
+            ids = {item.disposition_id for item in records}
+            referenced = {
+                item.previous_disposition_id
+                for item in records
+                if item.previous_disposition_id is not None
+            }
+            heads = ids - referenced
+            if len(heads) != 1:
+                raise ControlStoreConflict("relational_integrity_conflict")
+            disposition_heads[key] = next(iter(heads))
+        for record in staged_dispositions.values():
+            result = available_results.get(record.assessment_result_id)
+            key = (record.assessment_result_id, record.finding_id)
+            if (
+                record.accepted_transaction_id != uow.transaction_id
+                or record.disposition_event_id not in staged_events
+                or record.disposition_id in existing_dispositions
+                or result is None
+                or result.result_fingerprint != record.assessment_result_fingerprint
+                or result.finalized_lineage_fingerprint
+                != record.finalized_lineage_fingerprint
+                or result.reader_view_sha256 != record.reader_view_sha256
+                or record.previous_disposition_id != disposition_heads.get(key)
+            ):
+                raise ControlStoreConflict("relational_integrity_conflict")
+
+        available_dispositions = dict(existing_dispositions)
+        available_dispositions.update(staged_dispositions)
+        existing_drafts = load_models(
+            PostFinalGuidanceDraftRevision, "post_final_guidance_drafts"
+        )
+        staged_drafts = uow._post_final_guidance_drafts
+        if len(staged_drafts) > 1:
+            raise ControlStoreConflict("relational_integrity_conflict")
+        draft_heads: dict[str, int] = {}
+        for guidance_id, revision in existing_drafts:
+            draft_heads[guidance_id] = max(draft_heads.get(guidance_id, 0), revision)
+        for record in staged_drafts.values():
+            disposition = available_dispositions.get(record.disposition_id)
+            expected_revision = draft_heads.get(record.guidance_id, 0) + 1
+            disposition_key = (
+                record.assessment_result_id,
+                record.finding_id,
+            )
+            if (
+                record.accepted_transaction_id != uow.transaction_id
+                or record.draft_event_id not in staged_events
+                or (record.guidance_id, record.draft_revision) in existing_drafts
+                or disposition is None
+                or disposition.decision != "accept"
+                or disposition.disposition_fingerprint != record.disposition_fingerprint
+                or disposition.assessment_result_id != record.assessment_result_id
+                or disposition.assessment_result_fingerprint
+                != record.assessment_result_fingerprint
+                or disposition.finding_id != record.finding_id
+                or disposition.finding_fingerprint != record.finding_fingerprint
+                or disposition.finalized_lineage_fingerprint
+                != record.finalized_lineage_fingerprint
+                or disposition_heads.get(disposition_key) != record.disposition_id
+                or record.draft_revision != expected_revision
+            ):
+                raise ControlStoreConflict("relational_integrity_conflict")
+
+        available_drafts = dict(existing_drafts)
+        available_drafts.update(staged_drafts)
+        existing_statuses = load_models(
+            PostFinalGuidanceStatusRevision, "post_final_guidance_statuses"
+        )
+        staged_statuses = uow._post_final_guidance_statuses
+        if len(staged_statuses) > 1:
+            raise ControlStoreConflict("relational_integrity_conflict")
+        status_heads: dict[str, str] = {}
+        status_groups: dict[str, list[PostFinalGuidanceStatusRevision]] = {}
+        for status in existing_statuses.values():
+            status_groups.setdefault(status.guidance_id, []).append(status)
+        for guidance_id, records in status_groups.items():
+            ids = {item.status_revision_id for item in records}
+            referenced = {
+                item.previous_status_revision_id
+                for item in records
+                if item.previous_status_revision_id is not None
+            }
+            heads = ids - referenced
+            if len(heads) != 1:
+                raise ControlStoreConflict("relational_integrity_conflict")
+            status_heads[guidance_id] = next(iter(heads))
+        for record in staged_statuses.values():
+            draft = available_drafts.get((record.guidance_id, record.draft_revision))
+            current_status = (
+                existing_statuses.get(status_heads.get(record.guidance_id, ""))
+                if status_heads.get(record.guidance_id) is not None
+                else None
+            )
+            current_disposition = (
+                available_dispositions.get(draft.disposition_id)
+                if draft is not None
+                else None
+            )
+            disposition_key = (
+                (draft.assessment_result_id, draft.finding_id)
+                if draft is not None
+                else None
+            )
+            if (
+                record.accepted_transaction_id != uow.transaction_id
+                or record.status_event_id not in staged_events
+                or record.status_revision_id in existing_statuses
+                or draft is None
+                or draft.finalized_lineage_fingerprint
+                != record.finalized_lineage_fingerprint
+                or draft.guidance_sha256 != record.guidance_sha256
+                or (
+                    record.status == "approved"
+                    and (
+                        current_disposition is None
+                        or current_disposition.decision != "accept"
+                        or disposition_heads.get(disposition_key)
+                        != draft.disposition_id
+                    )
+                )
+                or record.previous_status_revision_id
+                != status_heads.get(record.guidance_id)
+                or not post_final_guidance_status_transition_allowed(
+                    current_status,
+                    record,
+                    approval_eligible=(
+                        current_disposition is not None
+                        and current_disposition.decision == "accept"
+                        and disposition_heads.get(disposition_key)
+                        == draft.disposition_id
+                    ),
+                )
+            ):
+                raise ControlStoreConflict("relational_integrity_conflict")
+
     def _build_receipt(
         self,
         uow: "ControlUnitOfWork",
@@ -2519,6 +2944,30 @@ class SQLiteControlStore:
                     ],
                     "delivery_results": [
                         {"result_id": key} for key in sorted(uow._delivery_results)
+                    ],
+                    "post_final_assessment_policy_revisions": [
+                        {"policy_revision_id": key}
+                        for key in sorted(uow._post_final_assessment_policy_revisions)
+                    ],
+                    "post_final_assessment_requests": [
+                        {"assessment_request_id": key}
+                        for key in sorted(uow._post_final_assessment_requests)
+                    ],
+                    "post_final_assessment_results": [
+                        {"assessment_result_id": key}
+                        for key in sorted(uow._post_final_assessment_results)
+                    ],
+                    "post_final_finding_dispositions": [
+                        {"disposition_id": key}
+                        for key in sorted(uow._post_final_finding_dispositions)
+                    ],
+                    "post_final_guidance_drafts": [
+                        {"guidance_id": key[0], "draft_revision": key[1]}
+                        for key in sorted(uow._post_final_guidance_drafts)
+                    ],
+                    "post_final_guidance_statuses": [
+                        {"status_revision_id": key}
+                        for key in sorted(uow._post_final_guidance_statuses)
                     ],
                     "checkout_revisions": [
                         {"checkout_revision_id": key}
@@ -4037,6 +4486,158 @@ class SQLiteControlStore:
                 ),
             )
 
+    def _insert_post_final_assessment_records(self, uow: "ControlUnitOfWork") -> None:
+        """Insert the sole Store-owned PF-LAJ advisory lifecycle records."""
+
+        for record in uow._post_final_assessment_policy_revisions.values():
+            self._connection.execute(
+                """
+                INSERT INTO post_final_assessment_policy_revisions VALUES
+                (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+                """,
+                (
+                    record.run_id,
+                    record.policy_revision_id,
+                    record.schema_version,
+                    record.previous_policy_revision_id,
+                    int(record.enabled),
+                    int(record.auto_run),
+                    int(record.auto_open),
+                    record.adapter_id,
+                    record.messages_endpoint_sha256,
+                    record.requested_model_id,
+                    record.profile_id,
+                    record.human_request_id,
+                    record.policy_fingerprint,
+                    record.recorded_at,
+                    record.policy_event_id,
+                    record.accepted_transaction_id,
+                    _canonical_record_text(record),
+                ),
+            )
+        for record in uow._post_final_assessment_requests.values():
+            self._connection.execute(
+                """
+                INSERT INTO post_final_assessment_requests VALUES
+                (?,?,?,?,?,?,?,?,?,?,?,?,?)
+                """,
+                (
+                    record.run_id,
+                    record.assessment_request_id,
+                    record.schema_version,
+                    record.finalized_facts_fingerprint,
+                    record.finalized_lineage_fingerprint,
+                    record.policy_revision_id,
+                    record.trial_id,
+                    record.archive_identity_sha256,
+                    record.request_fingerprint,
+                    record.claimed_at,
+                    record.request_event_id,
+                    record.accepted_transaction_id,
+                    _canonical_record_text(record),
+                ),
+            )
+        for record in uow._post_final_assessment_results.values():
+            self._connection.execute(
+                """
+                INSERT INTO post_final_assessment_results VALUES
+                (?,?,?,?,?,?,?,?,?,?,?,?,?)
+                """,
+                (
+                    record.run_id,
+                    record.assessment_result_id,
+                    record.schema_version,
+                    record.assessment_request_id,
+                    record.policy_revision_id,
+                    record.finalized_facts_fingerprint,
+                    record.finalized_lineage_fingerprint,
+                    record.terminal_evidence_class,
+                    record.result_fingerprint,
+                    record.recorded_at,
+                    record.result_event_id,
+                    record.accepted_transaction_id,
+                    _canonical_record_text(record),
+                ),
+            )
+        for record in uow._post_final_finding_dispositions.values():
+            self._connection.execute(
+                "INSERT INTO post_final_finding_dispositions VALUES "
+                "(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                (
+                    record.run_id,
+                    record.disposition_id,
+                    record.schema_version,
+                    record.finalized_lineage_fingerprint,
+                    record.assessment_result_id,
+                    record.assessment_result_fingerprint,
+                    record.reader_view_sha256,
+                    record.finding_id,
+                    record.finding_fingerprint,
+                    record.previous_disposition_id,
+                    record.decision,
+                    record.human_note,
+                    record.human_actor_id,
+                    record.human_request_id,
+                    record.recorded_at,
+                    record.disposition_event_id,
+                    record.accepted_transaction_id,
+                    record.disposition_fingerprint,
+                    _canonical_record_text(record),
+                ),
+            )
+        for record in uow._post_final_guidance_drafts.values():
+            self._connection.execute(
+                "INSERT INTO post_final_guidance_drafts VALUES "
+                "(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                (
+                    record.run_id,
+                    record.guidance_id,
+                    record.draft_revision,
+                    record.schema_version,
+                    record.finalized_lineage_fingerprint,
+                    record.assessment_result_id,
+                    record.assessment_result_fingerprint,
+                    record.finding_id,
+                    record.finding_fingerprint,
+                    record.disposition_id,
+                    record.disposition_fingerprint,
+                    record.previous_draft_revision,
+                    record.guidance_scope,
+                    record.guidance_text,
+                    record.guidance_sha256,
+                    record.human_actor_id,
+                    record.human_request_id,
+                    record.recorded_at,
+                    record.draft_event_id,
+                    record.accepted_transaction_id,
+                    record.draft_fingerprint,
+                    _canonical_record_text(record),
+                ),
+            )
+        for record in uow._post_final_guidance_statuses.values():
+            self._connection.execute(
+                "INSERT INTO post_final_guidance_statuses VALUES "
+                "(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                (
+                    record.run_id,
+                    record.status_revision_id,
+                    record.schema_version,
+                    record.finalized_lineage_fingerprint,
+                    record.guidance_id,
+                    record.draft_revision,
+                    record.guidance_sha256,
+                    record.status,
+                    record.previous_status_revision_id,
+                    record.human_actor_id,
+                    record.human_request_id,
+                    record.recorded_at,
+                    record.status_event_id,
+                    record.accepted_transaction_id,
+                    record.status_fingerprint,
+                    _canonical_record_text(record),
+                ),
+            )
+
     def _insert_checkout_records(self, uow: "ControlUnitOfWork") -> None:
         for record in uow._checkout_revisions.values():
             self._connection.execute(
@@ -4448,6 +5049,31 @@ class SQLiteControlStore:
             ),
             ("transaction_delivery_attempts", receipt.delivery_attempts, "attempt_id"),
             ("transaction_delivery_results", receipt.delivery_results, "result_id"),
+            (
+                "transaction_post_final_assessment_policy_revisions",
+                receipt.post_final_assessment_policy_revisions,
+                "policy_revision_id",
+            ),
+            (
+                "transaction_post_final_assessment_requests",
+                receipt.post_final_assessment_requests,
+                "assessment_request_id",
+            ),
+            (
+                "transaction_post_final_assessment_results",
+                receipt.post_final_assessment_results,
+                "assessment_result_id",
+            ),
+            (
+                "transaction_post_final_finding_dispositions",
+                receipt.post_final_finding_dispositions,
+                "disposition_id",
+            ),
+            (
+                "transaction_post_final_guidance_statuses",
+                receipt.post_final_guidance_statuses,
+                "status_revision_id",
+            ),
         )
         for table, references, field in simple_relations:
             for position, reference in enumerate(references):
@@ -4460,6 +5086,17 @@ class SQLiteControlStore:
                         getattr(reference, field),
                     ),
                 )
+        for position, reference in enumerate(receipt.post_final_guidance_drafts):
+            self._connection.execute(
+                "INSERT INTO transaction_post_final_guidance_drafts VALUES (?,?,?,?,?)",
+                (
+                    receipt.run_id,
+                    receipt.transaction_id,
+                    position,
+                    reference.guidance_id,
+                    reference.draft_revision,
+                ),
+            )
         for table, references, identity_field in (
             (
                 "transaction_run_archive_artifact_bindings",
@@ -5794,6 +6431,148 @@ class SQLiteControlStore:
                     "request_fingerprint": "request_fingerprint",
                 },
             ),
+            post_final_assessment_policy_revisions=self._load_for_run(
+                PostFinalAssessmentPolicyRevision,
+                "post_final_assessment_policy_revisions",
+                run_id,
+                "recorded_at, policy_revision_id",
+                {
+                    "run_id": "run_id",
+                    "policy_revision_id": "policy_revision_id",
+                    "schema_version": "schema_version",
+                    "previous_policy_revision_id": "previous_policy_revision_id",
+                    "enabled": "enabled",
+                    "auto_run": "auto_run",
+                    "auto_open": "auto_open",
+                    "adapter_id": "adapter_id",
+                    "messages_endpoint_sha256": "messages_endpoint_sha256",
+                    "requested_model_id": "requested_model_id",
+                    "profile_id": "profile_id",
+                    "human_request_id": "human_request_id",
+                    "policy_fingerprint": "policy_fingerprint",
+                    "recorded_at": "recorded_at",
+                    "policy_event_id": "policy_event_id",
+                    "accepted_transaction_id": "accepted_transaction_id",
+                },
+            ),
+            post_final_assessment_requests=self._load_for_run(
+                PostFinalAssessmentRequestRecord,
+                "post_final_assessment_requests",
+                run_id,
+                "claimed_at, assessment_request_id",
+                {
+                    "run_id": "run_id",
+                    "assessment_request_id": "assessment_request_id",
+                    "schema_version": "schema_version",
+                    "finalized_facts_fingerprint": "finalized_facts_fingerprint",
+                    "finalized_lineage_fingerprint": "finalized_lineage_fingerprint",
+                    "policy_revision_id": "policy_revision_id",
+                    "trial_id": "trial_id",
+                    "archive_identity_sha256": "archive_identity_sha256",
+                    "request_fingerprint": "request_fingerprint",
+                    "claimed_at": "claimed_at",
+                    "request_event_id": "request_event_id",
+                    "accepted_transaction_id": "accepted_transaction_id",
+                },
+            ),
+            post_final_assessment_results=self._load_for_run(
+                PostFinalAssessmentResultRecord,
+                "post_final_assessment_results",
+                run_id,
+                "recorded_at, assessment_result_id",
+                {
+                    "run_id": "run_id",
+                    "assessment_result_id": "assessment_result_id",
+                    "schema_version": "schema_version",
+                    "assessment_request_id": "assessment_request_id",
+                    "policy_revision_id": "policy_revision_id",
+                    "finalized_facts_fingerprint": "finalized_facts_fingerprint",
+                    "finalized_lineage_fingerprint": "finalized_lineage_fingerprint",
+                    "terminal_evidence_class": "terminal_evidence_class",
+                    "result_fingerprint": "result_fingerprint",
+                    "recorded_at": "recorded_at",
+                    "result_event_id": "result_event_id",
+                    "accepted_transaction_id": "accepted_transaction_id",
+                },
+            ),
+            post_final_finding_dispositions=self._load_for_run(
+                PostFinalFindingDispositionRecord,
+                "post_final_finding_dispositions",
+                run_id,
+                "recorded_at, disposition_id",
+                {
+                    "run_id": "run_id",
+                    "disposition_id": "disposition_id",
+                    "schema_version": "schema_version",
+                    "finalized_lineage_fingerprint": "finalized_lineage_fingerprint",
+                    "assessment_result_id": "assessment_result_id",
+                    "assessment_result_fingerprint": "assessment_result_fingerprint",
+                    "reader_view_sha256": "reader_view_sha256",
+                    "finding_id": "finding_id",
+                    "finding_fingerprint": "finding_fingerprint",
+                    "previous_disposition_id": "previous_disposition_id",
+                    "decision": "decision",
+                    "human_note": "human_note",
+                    "human_actor_id": "human_actor_id",
+                    "human_request_id": "human_request_id",
+                    "recorded_at": "recorded_at",
+                    "disposition_event_id": "disposition_event_id",
+                    "accepted_transaction_id": "accepted_transaction_id",
+                    "disposition_fingerprint": "disposition_fingerprint",
+                },
+            ),
+            post_final_guidance_drafts=self._load_for_run(
+                PostFinalGuidanceDraftRevision,
+                "post_final_guidance_drafts",
+                run_id,
+                "guidance_id, draft_revision",
+                {
+                    "run_id": "run_id",
+                    "guidance_id": "guidance_id",
+                    "draft_revision": "draft_revision",
+                    "schema_version": "schema_version",
+                    "finalized_lineage_fingerprint": "finalized_lineage_fingerprint",
+                    "assessment_result_id": "assessment_result_id",
+                    "assessment_result_fingerprint": "assessment_result_fingerprint",
+                    "finding_id": "finding_id",
+                    "finding_fingerprint": "finding_fingerprint",
+                    "disposition_id": "disposition_id",
+                    "disposition_fingerprint": "disposition_fingerprint",
+                    "previous_draft_revision": "previous_draft_revision",
+                    "guidance_scope": "guidance_scope",
+                    "guidance_text": "guidance_text",
+                    "guidance_sha256": "guidance_sha256",
+                    "human_actor_id": "human_actor_id",
+                    "human_request_id": "human_request_id",
+                    "recorded_at": "recorded_at",
+                    "draft_event_id": "draft_event_id",
+                    "accepted_transaction_id": "accepted_transaction_id",
+                    "draft_fingerprint": "draft_fingerprint",
+                },
+            ),
+            post_final_guidance_statuses=self._load_for_run(
+                PostFinalGuidanceStatusRevision,
+                "post_final_guidance_statuses",
+                run_id,
+                "recorded_at, status_revision_id",
+                {
+                    "run_id": "run_id",
+                    "status_revision_id": "status_revision_id",
+                    "schema_version": "schema_version",
+                    "finalized_lineage_fingerprint": "finalized_lineage_fingerprint",
+                    "guidance_id": "guidance_id",
+                    "draft_revision": "draft_revision",
+                    "guidance_sha256": "guidance_sha256",
+                    "status": "status",
+                    "previous_status_revision_id": "previous_status_revision_id",
+                    "human_actor_id": "human_actor_id",
+                    "human_request_id": "human_request_id",
+                    "recorded_at": "recorded_at",
+                    "status_event_id": "status_event_id",
+                    "accepted_transaction_id": "accepted_transaction_id",
+                    "status_fingerprint": "status_fingerprint",
+                },
+            ),
             checkout_revisions=self._load_for_run(
                 CheckoutRevisionRecord,
                 "checkout_revisions",
@@ -5939,6 +6718,7 @@ class SQLiteControlStore:
         )
         self._verify_core_snapshot_structure(snapshot)
         self._verify_gate_repair_snapshot_structure(snapshot)
+        self._verify_post_final_assessment_snapshot_structure(snapshot)
         self._verify_checkout_snapshot_structure(snapshot)
         return snapshot
 
@@ -6018,6 +6798,275 @@ class SQLiteControlStore:
                 or [str(row[1]) for row in rows] != outcome.evaluation_ids
             ):
                 raise ControlStoreIntegrityError("gate_repair_relation_invalid")
+
+    def _verify_post_final_assessment_snapshot_structure(
+        self, snapshot: ControlStoreSnapshot
+    ) -> None:
+        """Reject detached, cross-run, or reordered PF-LAJ Store relations."""
+
+        graph = (
+            snapshot.post_final_assessment_policy_revisions,
+            snapshot.post_final_assessment_requests,
+            snapshot.post_final_assessment_results,
+            snapshot.post_final_finding_dispositions,
+            snapshot.post_final_guidance_drafts,
+            snapshot.post_final_guidance_statuses,
+        )
+        if not any(graph):
+            return
+        receipts = {item.transaction_id: item for item in snapshot.transactions}
+        events = {item.event_id: item for item in snapshot.events}
+        policies = {
+            item.policy_revision_id: item
+            for item in snapshot.post_final_assessment_policy_revisions
+        }
+        requests = {
+            item.assessment_request_id: item
+            for item in snapshot.post_final_assessment_requests
+        }
+        results = {
+            item.assessment_result_id: item
+            for item in snapshot.post_final_assessment_results
+        }
+        dispositions = {
+            item.disposition_id: item
+            for item in snapshot.post_final_finding_dispositions
+        }
+        drafts = {
+            (item.guidance_id, item.draft_revision): item
+            for item in snapshot.post_final_guidance_drafts
+        }
+        statuses = {
+            item.status_revision_id: item
+            for item in snapshot.post_final_guidance_statuses
+        }
+        if (
+            len(policies) != len(snapshot.post_final_assessment_policy_revisions)
+            or len(requests) != len(snapshot.post_final_assessment_requests)
+            or len(results) != len(snapshot.post_final_assessment_results)
+            or len(dispositions) != len(snapshot.post_final_finding_dispositions)
+            or len(drafts) != len(snapshot.post_final_guidance_drafts)
+            or len(statuses) != len(snapshot.post_final_guidance_statuses)
+        ):
+            raise ControlStoreIntegrityError("control_store_integrity_invalid")
+        facts_slots: set[str] = set()
+        lineage_slots: set[str] = set()
+        result_request_ids: set[str] = set()
+        policy_receipt_order: list[tuple[int, PostFinalAssessmentPolicyRevision]] = []
+        for policy in policies.values():
+            receipt = receipts.get(policy.accepted_transaction_id)
+            event = events.get(policy.policy_event_id)
+            if (
+                policy.run_id != snapshot.run.run_id
+                or receipt is None
+                or event is None
+                or event.transaction_id != receipt.transaction_id
+                or event.event_type != "post_final_assessment_policy_recorded"
+                or event.core_run_binding is not None
+                or not any(
+                    item.policy_revision_id == policy.policy_revision_id
+                    for item in receipt.post_final_assessment_policy_revisions
+                )
+                or (
+                    policy.previous_policy_revision_id is not None
+                    and policy.previous_policy_revision_id not in policies
+                )
+            ):
+                raise ControlStoreIntegrityError("control_store_integrity_invalid")
+            policy_receipt_order.append((receipt.committed_revision, policy))
+        policy_receipt_order.sort(key=lambda item: item[0])
+        if len({revision for revision, _policy in policy_receipt_order}) != len(
+            policy_receipt_order
+        ):
+            raise ControlStoreIntegrityError("control_store_integrity_invalid")
+        expected_previous_policy_id: str | None = None
+        for _revision, policy in policy_receipt_order:
+            if policy.previous_policy_revision_id != expected_previous_policy_id:
+                raise ControlStoreIntegrityError("control_store_integrity_invalid")
+            expected_previous_policy_id = policy.policy_revision_id
+        for request in requests.values():
+            receipt = receipts.get(request.accepted_transaction_id)
+            event = events.get(request.request_event_id)
+            policy = policies.get(request.policy_revision_id)
+            if (
+                request.run_id != snapshot.run.run_id
+                or request.finalized_facts_fingerprint in facts_slots
+                or request.finalized_lineage_fingerprint in lineage_slots
+                or policy is None
+                or policy.policy_fingerprint != request.policy_fingerprint
+                or receipt is None
+                or event is None
+                or event.transaction_id != receipt.transaction_id
+                or event.event_type != "post_final_assessment_claimed"
+                or event.core_run_binding is not None
+                or not any(
+                    item.assessment_request_id == request.assessment_request_id
+                    for item in receipt.post_final_assessment_requests
+                )
+            ):
+                raise ControlStoreIntegrityError("control_store_integrity_invalid")
+            facts_slots.add(request.finalized_facts_fingerprint)
+            lineage_slots.add(request.finalized_lineage_fingerprint)
+        for result in results.values():
+            receipt = receipts.get(result.accepted_transaction_id)
+            event = events.get(result.result_event_id)
+            request = requests.get(result.assessment_request_id)
+            if (
+                result.run_id != snapshot.run.run_id
+                or result.assessment_request_id in result_request_ids
+                or request is None
+                or result.policy_revision_id != request.policy_revision_id
+                or result.finalized_facts_fingerprint
+                != request.finalized_facts_fingerprint
+                or result.finalized_lineage_fingerprint
+                != request.finalized_lineage_fingerprint
+                or receipt is None
+                or event is None
+                or event.transaction_id != receipt.transaction_id
+                or event.event_type != "post_final_assessment_result_recorded"
+                or event.core_run_binding is not None
+                or not any(
+                    item.assessment_result_id == result.assessment_result_id
+                    for item in receipt.post_final_assessment_results
+                )
+            ):
+                raise ControlStoreIntegrityError("control_store_integrity_invalid")
+            result_request_ids.add(result.assessment_request_id)
+
+        disposition_chains: dict[
+            tuple[str, str], list[tuple[int, PostFinalFindingDispositionRecord]]
+        ] = {}
+        for disposition in dispositions.values():
+            receipt = receipts.get(disposition.accepted_transaction_id)
+            event = events.get(disposition.disposition_event_id)
+            result = results.get(disposition.assessment_result_id)
+            if (
+                disposition.run_id != snapshot.run.run_id
+                or result is None
+                or result.result_fingerprint
+                != disposition.assessment_result_fingerprint
+                or result.finalized_lineage_fingerprint
+                != disposition.finalized_lineage_fingerprint
+                or result.reader_view_sha256 != disposition.reader_view_sha256
+                or receipt is None
+                or event is None
+                or event.transaction_id != receipt.transaction_id
+                or event.event_type != "post_final_finding_disposition_recorded"
+                or event.core_run_binding is not None
+                or len(receipt.post_final_finding_dispositions) != 1
+                or receipt.post_final_finding_dispositions[0].disposition_id
+                != disposition.disposition_id
+            ):
+                raise ControlStoreIntegrityError("control_store_integrity_invalid")
+            disposition_chains.setdefault(
+                (disposition.assessment_result_id, disposition.finding_id), []
+            ).append((receipt.committed_revision, disposition))
+        for rows in disposition_chains.values():
+            rows.sort(key=lambda item: item[0])
+            previous: str | None = None
+            for _revision, disposition in rows:
+                if disposition.previous_disposition_id != previous:
+                    raise ControlStoreIntegrityError("control_store_integrity_invalid")
+                previous = disposition.disposition_id
+
+        draft_chains: dict[str, list[PostFinalGuidanceDraftRevision]] = {}
+        for draft in drafts.values():
+            receipt = receipts.get(draft.accepted_transaction_id)
+            event = events.get(draft.draft_event_id)
+            disposition = dispositions.get(draft.disposition_id)
+            if (
+                draft.run_id != snapshot.run.run_id
+                or disposition is None
+                or disposition.decision != "accept"
+                or disposition.disposition_fingerprint != draft.disposition_fingerprint
+                or disposition.assessment_result_id != draft.assessment_result_id
+                or disposition.assessment_result_fingerprint
+                != draft.assessment_result_fingerprint
+                or disposition.finding_id != draft.finding_id
+                or disposition.finding_fingerprint != draft.finding_fingerprint
+                or disposition.finalized_lineage_fingerprint
+                != draft.finalized_lineage_fingerprint
+                or receipt is None
+                or event is None
+                or event.transaction_id != receipt.transaction_id
+                or event.event_type != "post_final_guidance_draft_recorded"
+                or event.core_run_binding is not None
+                or len(receipt.post_final_guidance_drafts) != 1
+                or receipt.post_final_guidance_drafts[0].guidance_id
+                != draft.guidance_id
+                or receipt.post_final_guidance_drafts[0].draft_revision
+                != draft.draft_revision
+            ):
+                raise ControlStoreIntegrityError("control_store_integrity_invalid")
+            draft_chains.setdefault(draft.guidance_id, []).append(draft)
+        for rows in draft_chains.values():
+            rows.sort(key=lambda item: item.draft_revision)
+            if [item.draft_revision for item in rows] != list(range(1, len(rows) + 1)):
+                raise ControlStoreIntegrityError("control_store_integrity_invalid")
+            for index, draft in enumerate(rows):
+                expected_previous = rows[index - 1].draft_revision if index else None
+                if draft.previous_draft_revision != expected_previous:
+                    raise ControlStoreIntegrityError("control_store_integrity_invalid")
+
+        status_chains: dict[str, list[tuple[int, PostFinalGuidanceStatusRevision]]] = {}
+        for status in statuses.values():
+            receipt = receipts.get(status.accepted_transaction_id)
+            event = events.get(status.status_event_id)
+            draft = drafts.get((status.guidance_id, status.draft_revision))
+            if (
+                status.run_id != snapshot.run.run_id
+                or draft is None
+                or draft.finalized_lineage_fingerprint
+                != status.finalized_lineage_fingerprint
+                or draft.guidance_sha256 != status.guidance_sha256
+                or receipt is None
+                or event is None
+                or event.transaction_id != receipt.transaction_id
+                or event.event_type != "post_final_guidance_status_recorded"
+                or event.core_run_binding is not None
+                or len(receipt.post_final_guidance_statuses) != 1
+                or receipt.post_final_guidance_statuses[0].status_revision_id
+                != status.status_revision_id
+            ):
+                raise ControlStoreIntegrityError("control_store_integrity_invalid")
+            status_chains.setdefault(status.guidance_id, []).append(
+                (receipt.committed_revision, status)
+            )
+        for rows in status_chains.values():
+            rows.sort(key=lambda item: item[0])
+            previous = None
+            previous_status = None
+            for _revision, status in rows:
+                draft = drafts.get((status.guidance_id, status.draft_revision))
+                approval_eligible = False
+                if draft is not None:
+                    disposition_rows = disposition_chains.get(
+                        (draft.assessment_result_id, draft.finding_id),
+                        [],
+                    )
+                    prior_dispositions = [
+                        disposition
+                        for committed_revision, disposition in disposition_rows
+                        if committed_revision
+                        <= receipts[status.accepted_transaction_id].prior_revision
+                    ]
+                    if prior_dispositions:
+                        current_disposition = prior_dispositions[-1]
+                        approval_eligible = (
+                            current_disposition.disposition_id == draft.disposition_id
+                            and current_disposition.decision == "accept"
+                        )
+                if (
+                    status.previous_status_revision_id != previous
+                    or not post_final_guidance_status_transition_allowed(
+                        previous_status,
+                        status,
+                        approval_eligible=approval_eligible,
+                    )
+                ):
+                    raise ControlStoreIntegrityError("control_store_integrity_invalid")
+                previous = status.status_revision_id
+                previous_status = status
 
     def _verify_checkout_snapshot_structure(
         self, snapshot: ControlStoreSnapshot
@@ -7158,7 +8207,20 @@ class SQLiteControlStore:
         row: sqlite3.Row,
         columns: dict[str, str],
     ) -> _ModelT:
-        model = _decode_record(model_type, str(row["payload_json"]))
+        model = _decode_record(
+            model_type,
+            str(row["payload_json"]),
+            receipt_committed_revision=(
+                int(row["committed_revision"])
+                if model_type is TransactionReceipt
+                else None
+            ),
+            legacy_receipt_max_committed_revision=(
+                self._legacy_receipt_cutoff()
+                if model_type is TransactionReceipt
+                else None
+            ),
+        )
         for column, attribute in columns.items():
             stored = row[column]
             expected: object = model
@@ -7185,6 +8247,24 @@ class SQLiteControlStore:
             if row["source_ids_json"] != source_ids_text:
                 raise ControlStoreIntegrityError("stored_payload_identity_mismatch")
         return model
+
+    def _legacy_receipt_cutoff(self) -> int:
+        rows = self._connection.execute(
+            """
+            SELECT boundary_id,legacy_receipt_max_committed_revision
+            FROM transaction_receipt_compatibility_boundaries
+            WHERE workspace_id=?
+            """,
+            (self.workspace_id,),
+        ).fetchall()
+        if (
+            len(rows) != 1
+            or rows[0]["boundary_id"] != _RECEIPT_COMPATIBILITY_BOUNDARY_ID
+            or type(rows[0]["legacy_receipt_max_committed_revision"]) is not int
+            or rows[0]["legacy_receipt_max_committed_revision"] < 0
+        ):
+            raise ControlStoreIntegrityError("control_store_integrity_invalid")
+        return int(rows[0]["legacy_receipt_max_committed_revision"])
 
     def _decode_artifact_record_row(self, row: sqlite3.Row) -> ArtifactRecord:
         return self._decode_checked(
@@ -7624,6 +8704,54 @@ class SQLiteControlStore:
                 "transaction_delivery_results",
                 ("result_id",),
                 tuple((item.result_id,) for item in receipt.delivery_results),
+            ),
+            (
+                "transaction_post_final_assessment_policy_revisions",
+                ("policy_revision_id",),
+                tuple(
+                    (item.policy_revision_id,)
+                    for item in receipt.post_final_assessment_policy_revisions
+                ),
+            ),
+            (
+                "transaction_post_final_assessment_requests",
+                ("assessment_request_id",),
+                tuple(
+                    (item.assessment_request_id,)
+                    for item in receipt.post_final_assessment_requests
+                ),
+            ),
+            (
+                "transaction_post_final_assessment_results",
+                ("assessment_result_id",),
+                tuple(
+                    (item.assessment_result_id,)
+                    for item in receipt.post_final_assessment_results
+                ),
+            ),
+            (
+                "transaction_post_final_finding_dispositions",
+                ("disposition_id",),
+                tuple(
+                    (item.disposition_id,)
+                    for item in receipt.post_final_finding_dispositions
+                ),
+            ),
+            (
+                "transaction_post_final_guidance_drafts",
+                ("guidance_id", "draft_revision"),
+                tuple(
+                    (item.guidance_id, item.draft_revision)
+                    for item in receipt.post_final_guidance_drafts
+                ),
+            ),
+            (
+                "transaction_post_final_guidance_statuses",
+                ("status_revision_id",),
+                tuple(
+                    (item.status_revision_id,)
+                    for item in receipt.post_final_guidance_statuses
+                ),
             ),
             (
                 "transaction_checkout_revisions",
@@ -8293,6 +9421,48 @@ class SQLiteControlStore:
                 "delivery_results",
                 "run_id",
                 ("result_id",),
+            ),
+            (
+                "transaction_post_final_assessment_policy_revisions",
+                ("policy_revision_id",),
+                "post_final_assessment_policy_revisions",
+                "run_id",
+                ("policy_revision_id",),
+            ),
+            (
+                "transaction_post_final_assessment_requests",
+                ("assessment_request_id",),
+                "post_final_assessment_requests",
+                "run_id",
+                ("assessment_request_id",),
+            ),
+            (
+                "transaction_post_final_assessment_results",
+                ("assessment_result_id",),
+                "post_final_assessment_results",
+                "run_id",
+                ("assessment_result_id",),
+            ),
+            (
+                "transaction_post_final_finding_dispositions",
+                ("disposition_id",),
+                "post_final_finding_dispositions",
+                "run_id",
+                ("disposition_id",),
+            ),
+            (
+                "transaction_post_final_guidance_drafts",
+                ("guidance_id", "draft_revision"),
+                "post_final_guidance_drafts",
+                "run_id",
+                ("guidance_id", "draft_revision"),
+            ),
+            (
+                "transaction_post_final_guidance_statuses",
+                ("status_revision_id",),
+                "post_final_guidance_statuses",
+                "run_id",
+                ("status_revision_id",),
             ),
         )
         for relation_table, relation_ids, domain_table, domain_run, domain_ids in specs:

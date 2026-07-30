@@ -54,7 +54,7 @@
 - 司乐师 控制台 可以给出 deterministic control recommendations，并记录 enable/defer/reject selections；selection 不会自动执行对应 control。
 - Finalize 会把 reader delivery bundle 写入 `output/delivery/`，并把来源附录追加到交付 Markdown/DOCX 末尾；`output/source_appendix.md` 继续作为 audit/control copy 保留。Reader-facing appendix 可以展示安全的 source identity 和 taxonomy labels；`output/source_appendix_trace.md` 可以承载内部 claim/source/span IDs、source paths、source byte hashes 和 metadata completeness warnings 供 audit review。交付产物不得暴露内部 claim IDs、source IDs、evidence text、本地路径或 file URL。
 - Runtime asset availability 已显式区分：package install 包含 契约 configs 和 public-safe eval fixtures；`.agents/`、`.claude/`、`.opencode/`、`.codex/` 以及 Hermes plugin 文件属于 source-clone-only，除非通过 `briefloop runtime install` 复制到 workspace。
-- Improvement Ledger lifecycle 已在 LD2-3 退役。其投影与每次 run 冻结的代码位于被删除的 legacy stack 中，因此 `improvement/ledger.jsonl`、`improvement/memory.md`、`improvement_memory_snapshot.md` 已无任何代码读写方。`contracts/v2.py` 中的 `improvement_*` 事件词汇表存活。Store-native 替代方案属于 MU-2 工作范围。
+- legacy Improvement Ledger lifecycle 已在 LD2-3 退役；其 JSON/JSONL 文件保持 inert 且无读写方。实验性 post-final 人工审阅现把 finding 处置、人工编辑 guidance 草稿和独立 approval/status revision 记录为 append-only SQLite Receipt。后续 run 的 snapshot/precedence 单元尚未交付，因此不会消费已批准 guidance。
 - Packaged public-safe evaluation cases 已覆盖 Improvement Memory 控制行为：未批准 entry 不物化，已批准 guidance 会冻结，reverted entry 会从下一次 snapshot 中移除。
 - 实验性 Atomic Claim Graph 控制可以校验可选
   `output/intermediate/atomic_claim_graph.json`，检查 whole-ledger coverage 和
@@ -151,7 +151,9 @@
   `output/intermediate/quality_panel.json`，并可生成 SHA-bound
   `output/intermediate/quality_summary.md` 和 no-JavaScript
   `output/intermediate/quality_panel.html` audit attachment。`quality summarize`
-  会一起写这些 artifacts，report bundle projection 可把它们放进 audit bundle，
+  会一起写这些 legacy audit artifacts；SQLite workspace 通过
+  `quality html --workspace <path> --laj-view <laj.json>` 显式展示与当前报告绑定的
+  LAJ view。report bundle projection 可把这些 artifacts 放进 audit bundle，
   但不会放入 reader-facing delivery bundle。这些 projection 不运行 gates、不创建
   quality score、不替代 gate reports、不决定 release eligibility、不批准
   delivery、不证明 semantic truth，也不执行 repair。

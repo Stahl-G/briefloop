@@ -24,6 +24,10 @@ from multi_agent_brief.semantic_evaluator.reader import (
     LAJ_READER_BOUNDARY,
     LAJ_READER_SCHEMA_ID,
 )
+from multi_agent_brief.semantic_evaluator.adapters.anthropic_messages import (
+    ANTHROPIC_API_KEY_SETTING,
+)
+import multi_agent_brief.semantic_evaluator.runner as runner_module
 from tests.helpers import initialize_workspace
 
 
@@ -170,9 +174,7 @@ def test_semantic_page_is_honest_not_run_without_laj(tmp_path: Path) -> None:
     assert semantic["banner"] == LAJ_EXPERIMENTAL_BANNER
     assert semantic["findings"] == []
     assert len(semantic["dimensions"]) == 9
-    assert all(
-        row["state"] == "not_assessed_in_view" for row in semantic["dimensions"]
-    )
+    assert all(row["state"] == "not_assessed_in_view" for row in semantic["dimensions"])
     assert "never trigger Gates" in semantic["handoff_note"]
 
 
@@ -225,12 +227,43 @@ def test_semantic_page_honors_explicit_laj_view_path(
     assert semantic["coverage"]["finding_count"] == 1
 
 
+def test_semantic_page_prefers_store_qualified_assessment_over_manual_view(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """S13/S18/S23: canonical HTML consumes only the bound Store/archive view."""
+
+    from tests.test_finalized_local_review_facts import _finalized_local_workspace
+    from tests.test_post_final_assessment import _fixture_service, _policy_payload
+
+    workspace, _run_id, _clock = _finalized_local_workspace(tmp_path, monkeypatch)
+    calls: list[tuple[str, int]] = []
+    service = _fixture_service(workspace, calls)
+    assert service.policy_set(_policy_payload())["ok"] is True
+    monkeypatch.setattr(runner_module.metadata, "version", lambda _name: "0.104.1")
+    monkeypatch.setenv(ANTHROPIC_API_KEY_SETTING, "public-synthetic-key")
+    assessed = service.assess()
+    assert assessed["ok"] is True and assessed["status"] == "available"
+    assert len(calls) == 9
+
+    report_sha256 = build_local_run_presentation(workspace).reader_brief.sha256
+    assert report_sha256 is not None
+    manual = _write_laj_view(workspace, report_sha256)
+    semantic = build_brief_pages_data(workspace, laj_view_path=manual)["semantic"]
+
+    assert semantic["store_qualified"] is True
+    assert semantic["status"] == "available"
+    assert semantic["coverage"]["finding_count"] == 0
+    assert semantic["findings"] == []
+    assert semantic["reason_codes"] != ["assessment_completed"]
+
+
 def test_improvement_page_is_honest_unavailable(tmp_path: Path) -> None:
     workspace = initialize_workspace(tmp_path / "ws")
     improvement = build_brief_pages_data(workspace)["improvement"]
 
     assert improvement["status"] == "unavailable"
-    assert improvement["reason_code"] == "pf_review_2_not_shipped"
+    assert improvement["reason_code"] == "post_final_review_not_available"
     assert improvement["recorded"] == []
     assert improvement["consumption_note"] == IMPROVEMENT_CONSUMPTION_NOTE
     assert improvement["planned_note"] == IMPROVEMENT_PLANNED_NOTE

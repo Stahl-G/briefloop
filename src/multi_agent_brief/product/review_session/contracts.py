@@ -26,6 +26,7 @@ SEMANTIC_REVIEW_SCHEMA_ID = "briefloop.post_final_review.semantic_review.v1"
 IMPROVEMENT_PROJECTION_SCHEMA_ID = "briefloop.post_final_review.improvement.v1"
 POST_FINAL_REVIEW_READ_MODEL_SCHEMA_ID = "briefloop.post_final_review.read_model.v1"
 REVIEW_SESSION_DESCRIPTOR_SCHEMA_ID = "briefloop.post_final_review.session.v1"
+REVIEW_SESSION_COMMAND_SCHEMA_ID = "briefloop.post_final_review.command.v1"
 
 QualityStatus = Literal["pass", "warning", "block", "incomplete"]
 SemanticReviewStatus = Literal[
@@ -44,7 +45,9 @@ SemanticReviewStatus = Literal[
 # The evaluator-side bridge converts findings field-by-field; this kernel never
 # imports the evaluator, so the display contract is restated locally.
 FindingBlockId = Annotated[str, StringConstraints(pattern=r"^B[0-9]{6}$")]
-FindingAssessmentUnitId = Annotated[str, StringConstraints(pattern=r"^AU-[0-9a-f]{12}$")]
+FindingAssessmentUnitId = Annotated[
+    str, StringConstraints(pattern=r"^AU-[0-9a-f]{12}$")
+]
 FindingProposalId = Annotated[str, StringConstraints(pattern=r"^F-[0-9a-f]{12}$")]
 
 FindingScopeClass = Literal["O1", "O2"]
@@ -293,7 +296,10 @@ class PostFinalReviewReadModel(StrictModel):
 
     @model_validator(mode="after")
     def validate_read_model(self) -> "PostFinalReviewReadModel":
-        if self.context.qp_projection_fingerprint != self.quality.projection_fingerprint:
+        if (
+            self.context.qp_projection_fingerprint
+            != self.quality.projection_fingerprint
+        ):
             raise ValueError("quality projection binding mismatch")
         binding = self.semantic_review.binding
         if binding is not None and binding.report_sha256 != self.context.report_sha256:
@@ -321,3 +327,21 @@ class ReviewSessionStatus(StrictModel):
     schema_version: Literal["briefloop.post_final_review.session_status.v1"]
     active: StrictBool
     reason_code: ContractId
+
+
+class ReviewSessionCommand(StrictModel):
+    """Ephemeral transport envelope; nested domain DTOs remain Store-service owned."""
+
+    schema_version: Literal["briefloop.post_final_review.command.v1"]
+    action: Literal[
+        "accept",
+        "reject",
+        "defer",
+        "draft",
+        "approve",
+        "deactivate",
+        "revert",
+        "supersede",
+        "status",
+    ]
+    payload: dict[str, object]

@@ -17,6 +17,7 @@ from urllib.parse import parse_qs, urlsplit
 import pytest
 
 from multi_agent_brief.control_store import SQLiteControlStore
+from multi_agent_brief.control_store.schema import SCHEMA_VERSION
 from multi_agent_brief.cli.init_commands import _init_web_wizard
 from multi_agent_brief.cli.main import main
 from multi_agent_brief.core.env import get_known_env_value
@@ -621,7 +622,7 @@ def test_real_loopback_public_web_tavily_replays_before_credential_or_provider(
     assert len(receipt.run_source_discovery_authorizations) == 1
     assert snapshot.store_revision == 1
     with sqlite3.connect(db_path) as connection:
-        assert connection.execute("PRAGMA user_version").fetchone()[0] == 9
+        assert connection.execute("PRAGMA user_version").fetchone()[0] == SCHEMA_VERSION
     for artifact in workspace.rglob("*"):
         if artifact.is_file() and artifact != env_path:
             assert sentinel.encode("utf-8") not in artifact.read_bytes()

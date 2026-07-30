@@ -27,6 +27,12 @@ This page explains the public architecture migration from older Python-pipeline 
   snippets remain claims-ineligible, and legacy source commands are not a
   fallback. Synthetic transport is tested; live results and cost are NOT
   MEASURED.
+- Legacy Improvement JSON/JSONL remains inert. Experimental post-final review
+  stores one qualified advisory assessment, Human accept/reject/defer,
+  Human-edited guidance drafts, and separate approval/status revisions through
+  SQLite Receipts. Static HTML stays read-only; only the secured loopback
+  Review Session accepts strict Human commands. No approved guidance is
+  consumed by later runs until the separate snapshot/precedence unit ships.
 - Retained legacy commands and assets may remain in the tree until the separate
   deletion unit, but the authority guard prevents them from acting on a SQLite
   workspace or continuing a JSON-only workspace.

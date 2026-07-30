@@ -1,8 +1,10 @@
 """AST isolation pins for the two new web-surface packages (C3).
 
 brief_html is a read-only projection surface: only builder.py may touch the
-Store/LAJ read paths.  init_web reaches authority ONLY through the sanctioned
-bootstrap seam (cli.init_wizard.create_workspace +
+Store/LAJ/Human-review read paths.  The shared static asset exposes commands
+only when a secured loopback session binding is present; a file/static export
+has no command authority.  init_web reaches authority ONLY through the
+sanctioned bootstrap seam (cli.init_wizard.create_workspace +
 runtime_host_v2.initialization).  Neither package may read improvement-ledger
 material, legacy fold-ins, or open raw sockets/sqlite/subprocess.
 """
@@ -27,6 +29,10 @@ ALLOWED_IMPORTS = {
         "multi_agent_brief.core_run_v2.terminal",
         "multi_agent_brief.core_run_v2.verifier",
         "multi_agent_brief.product.review_session.contracts",
+        "multi_agent_brief.product.post_final_assessment_projection",
+        # Builder calls only review_status(); Human writes stay behind the
+        # secured loopback command dispatcher in review_session.
+        "multi_agent_brief.product.post_final_review",
         "multi_agent_brief.runtime_host_v2.errors",
         "multi_agent_brief.runtime_host_v2.projections",
         "multi_agent_brief.semantic_evaluator.reader",
@@ -134,7 +140,10 @@ def test_brief_html_static_export_has_no_write_affordance() -> None:
     static = BRIEF_HTML / "static"
     app = (static / "app.js").read_bytes()
     index = (static / "index.html").read_bytes()
-    assert b"fetch(" not in app
+    assert b'location.protocol !== "http:"' in app
+    assert b'location.hostname !== "127.0.0.1"' in app
+    assert b"if (!ACTION_SESSION) return;" in app
+    assert b'fetch("/api/v1/command?session_id="' in app
     assert b"XMLHttpRequest" not in app
     assert b"<form" not in index and b"<form" not in app
     assert b"innerHTML" not in app

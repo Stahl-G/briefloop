@@ -168,6 +168,17 @@ class PreparedShadowRun:
 
 
 @dataclass(frozen=True)
+class PreparedShadowBudget:
+    """Pure, conservative bounds for one already-admitted prompt set."""
+
+    prompt_count: int
+    provider_call_ceiling: int
+    total_input_token_upper_bound: int
+    total_output_token_upper_bound: int
+    per_call_output_token_cap: int
+
+
+@dataclass(frozen=True)
 class ResolvedPreparedShadowRun:
     """One replay-first exact execution identity for a prepared shadow run."""
 
@@ -367,6 +378,152 @@ def _messages_endpoint_for(adapter_id: str) -> str | None:
         return canonical_messages_endpoint_v1(value)
     except TypeError:
         raise SemanticEvaluatorError("shadow_request_invalid") from None
+
+
+def _prepared_shadow_run_from_values(
+    *,
+    report_bytes: bytes,
+    bounded_context: BoundedContext,
+    instrument_config: InstrumentConfig,
+    trial_id: str,
+    archive_root: Path,
+    workspace_root: Path,
+    messages_endpoint: str | None,
+) -> PreparedShadowRun:
+    """Admit immutable values without touching an archive, SDK, key, or adapter."""
+
+    if (
+        type(report_bytes) is not bytes
+        or type(trial_id) is not str
+        or not trial_id
+        or type(bounded_context) is not BoundedContext
+        or type(instrument_config) is not InstrumentConfig
+        or not archive_root.is_absolute()
+        or not workspace_root.is_absolute()
+        or ".." in archive_root.parts
+        or ".." in workspace_root.parts
+    ):
+        raise SemanticEvaluatorError("shadow_request_invalid")
+    try:
+        report_bytes.decode("utf-8", errors="strict")
+    except UnicodeDecodeError:
+        raise SemanticEvaluatorError("shadow_request_invalid") from None
+    config = instrument_config
+    if (
+        config.decoding.seed is not None
+        or not 1 <= config.retry_policy.max_attempts <= 3
+        or config.retry_policy.retryable_reason_codes
+        != (
+            []
+            if config.retry_policy.max_attempts == 1
+            else ["provider_retryable_failure"]
+        )
+        or config.prompt_sizer.reserved_output_tokens
+        < config.decoding.max_output_tokens
+    ):
+        raise SemanticEvaluatorError("shadow_request_invalid")
+    adapter_id, prompt_sizer = _prompt_sizer_for(config)
+    if adapter_id == ANTHROPIC_ADAPTER_ID:
+        try:
+            canonical_endpoint = canonical_messages_endpoint_v1(messages_endpoint)
+        except TypeError:
+            raise SemanticEvaluatorError("shadow_request_invalid") from None
+        if canonical_endpoint != messages_endpoint:
+            raise SemanticEvaluatorError("shadow_request_invalid")
+    elif messages_endpoint is not None:
+        raise SemanticEvaluatorError("shadow_request_invalid")
+    admission = admit_inputs(
+        {
+            "schema_version": ADMISSION_REQUEST_SCHEMA_ID,
+            "artifact_id": f"shadow-report-{sha256_bytes(report_bytes)[:16]}",
+            "trial_id": trial_id,
+            "report_bytes_hex": report_bytes.hex(),
+            "declared_report_sha256": sha256_bytes(report_bytes),
+            "bounded_context": bounded_context,
+            "declared_bounded_context_sha256": bounded_context.context_sha256,
+            "instrument_config": config,
+            "public_data_attestation": True,
+            "private_or_confidential_material": False,
+            "archive_root": str(archive_root),
+            "workspace_root": str(workspace_root),
+        },
+        prompt_sizer=prompt_sizer,
+    )
+    if not admission.admitted:
+        raise SemanticEvaluatorError(
+            admission.reason_codes[0]
+            if admission.reason_codes
+            else "shadow_request_invalid"
+        )
+    return PreparedShadowRun(
+        admission=admission,
+        archive_root=archive_root,
+        trial_id=trial_id,
+        prompt_sizer=prompt_sizer,
+        policy=_policy(adapter_id),
+        messages_endpoint=messages_endpoint,
+    )
+
+
+def prepare_shadow_run_from_bytes(
+    *,
+    report_bytes: bytes,
+    bounded_context: BoundedContext,
+    instrument_config: InstrumentConfig,
+    trial_id: str,
+    archive_root: str | Path,
+    workspace_root: str | Path,
+    messages_endpoint: str | None,
+) -> PreparedShadowRun | ShadowRunResult:
+    """Prepare a product-owned immutable run without reading caller files or env."""
+
+    try:
+        root = Path(archive_root).expanduser()
+        workspace = Path(workspace_root).expanduser()
+        return _prepared_shadow_run_from_values(
+            report_bytes=report_bytes,
+            bounded_context=bounded_context,
+            instrument_config=instrument_config,
+            trial_id=trial_id,
+            archive_root=root,
+            workspace_root=workspace,
+            messages_endpoint=messages_endpoint,
+        )
+    except SemanticEvaluatorError as exc:
+        return _failure(exc.reason_code)
+
+
+def prepared_shadow_budget(prepared: PreparedShadowRun) -> PreparedShadowBudget:
+    """Calculate prompt/call/token bounds before archive or provider effects."""
+
+    if type(prepared) is not PreparedShadowRun:
+        raise SemanticEvaluatorError("shadow_request_invalid")
+    prompts = tuple(prepared.admission.prompts)
+    per_prompt = tuple(
+        prepared.prompt_sizer.count_tokens(
+            system_text=item.system_text,
+            user_text=item.user_text,
+        )
+        for item in prompts
+    )
+    if any(type(value) is not int or value < 0 for value in per_prompt):
+        raise SemanticEvaluatorError("prompt_sizer_unavailable")
+    calls = (
+        len(prompts) * prepared.admission.instrument_config.retry_policy.max_attempts
+    )
+    if type(calls) is not int or calls < 0:
+        raise SemanticEvaluatorError("shadow_request_invalid")
+    output_cap = prepared.admission.instrument_config.decoding.max_output_tokens
+    if type(output_cap) is not int or output_cap < 0:
+        raise SemanticEvaluatorError("shadow_request_invalid")
+    return PreparedShadowBudget(
+        prompt_count=len(prompts),
+        provider_call_ceiling=calls,
+        total_input_token_upper_bound=sum(per_prompt)
+        * prepared.admission.instrument_config.retry_policy.max_attempts,
+        total_output_token_upper_bound=calls * output_cap,
+        per_call_output_token_cap=output_cap,
+    )
 
 
 def _source_bundle(*module_names: str) -> str:
@@ -919,55 +1076,20 @@ def prepare_shadow_run(
         )
     except SemanticEvaluatorError as exc:
         return _failure(exc.reason_code)
-    if (
-        config.decoding.seed is not None
-        or not 1 <= config.retry_policy.max_attempts <= 3
-        or config.retry_policy.retryable_reason_codes
-        != (
-            []
-            if config.retry_policy.max_attempts == 1
-            else ["provider_retryable_failure"]
-        )
-        or config.prompt_sizer.reserved_output_tokens
-        < config.decoding.max_output_tokens
-    ):
-        return _failure("shadow_request_invalid")
     try:
-        adapter_id, prompt_sizer = _prompt_sizer_for(config)
+        adapter_id, _ = _prompt_sizer_for(config)
         messages_endpoint = _messages_endpoint_for(adapter_id)
+        return _prepared_shadow_run_from_values(
+            report_bytes=report_bytes,
+            bounded_context=context,
+            instrument_config=config,
+            trial_id=trial_id,
+            archive_root=root,
+            workspace_root=common_input_root,
+            messages_endpoint=messages_endpoint,
+        )
     except SemanticEvaluatorError as exc:
         return _failure(exc.reason_code)
-    admission = admit_inputs(
-        {
-            "schema_version": ADMISSION_REQUEST_SCHEMA_ID,
-            "artifact_id": f"shadow-report-{sha256_bytes(report_bytes)[:16]}",
-            "trial_id": trial_id,
-            "report_bytes_hex": report_bytes.hex(),
-            "declared_report_sha256": sha256_bytes(report_bytes),
-            "bounded_context": context,
-            "declared_bounded_context_sha256": context.context_sha256,
-            "instrument_config": config,
-            "public_data_attestation": True,
-            "private_or_confidential_material": False,
-            "archive_root": str(root),
-            "workspace_root": str(common_input_root),
-        },
-        prompt_sizer=prompt_sizer,
-    )
-    if not admission.admitted:
-        return _failure(*admission.reason_codes)
-    try:
-        policy = _policy(adapter_id)
-    except SemanticEvaluatorError as exc:
-        return _failure(exc.reason_code)
-    return PreparedShadowRun(
-        admission=admission,
-        archive_root=root,
-        trial_id=trial_id,
-        prompt_sizer=prompt_sizer,
-        policy=policy,
-        messages_endpoint=messages_endpoint,
-    )
 
 
 def execute_prepared_shadow_run(
@@ -1134,12 +1256,15 @@ def run_shadow(
 __all__ = [
     "DEFAULT_TIMEOUT_SECONDS",
     "PROFILE_ID",
+    "PreparedShadowBudget",
     "PreparedShadowRun",
     "ResolvedPreparedShadowRun",
     "RUNNER_VERSION",
     "ShadowRunResult",
     "execute_prepared_shadow_run",
+    "prepared_shadow_budget",
     "prepare_shadow_run",
+    "prepare_shadow_run_from_bytes",
     "resolve_prepared_shadow_identity",
     "run_shadow",
 ]

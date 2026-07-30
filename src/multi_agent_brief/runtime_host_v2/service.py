@@ -347,6 +347,20 @@ class RuntimeHostService:
             strict=True,
         )
 
+    def _observe_post_final_assessment(self) -> None:
+        """Best-effort post-commit advisory observer; never affects Core truth."""
+
+        try:
+            from multi_agent_brief.product.post_final_assessment import (
+                PostFinalAssessmentService,
+            )
+
+            PostFinalAssessmentService(self.workspace).observe_finalized_local()
+        except Exception:
+            # The observer intentionally cannot affect finalization, the
+            # continuation result, Store authority, or the next action.
+            return
+
     def continue_authorized(
         self,
         *,
@@ -404,6 +418,7 @@ class RuntimeHostService:
                         reason_code="terminal_state_incomplete",
                         transaction_ids=tuple(transaction_ids),
                     )
+                self._observe_post_final_assessment()
                 from multi_agent_brief.product.brief_html import (
                     maybe_auto_open_brief_pages,
                 )
@@ -1648,6 +1663,8 @@ class RuntimeHostService:
                 maybe_auto_open_brief_pages,
             )
 
+            if action.effect_kind == "finalize_complete":
+                self._observe_post_final_assessment()
             maybe_auto_open_brief_pages(self.workspace)
         return result
 

@@ -38,7 +38,7 @@ validation unless that is stated separately.
 | JSON/JSONL runtime control files (`runtime_manifest.json`, `workflow_state.json`, `artifact_registry.json`, `event_log.jsonl`) | Projection/legacy only; never accepted as runtime authority |
 | Stage runtime/model provenance on completion transactions | Supported |
 | Audience profile runtime surface (`audience_profile.md` + `audience_profile_snapshot.md`) | Supported |
-| Improvement Ledger / Memory (`improvement/ledger.jsonl`, `improvement/memory.md`, `improvement_memory_snapshot.md`) | Retired (LD2-3); the projection and per-run freeze paths were deleted with the legacy stack, so these files have no code reader or writer. The `improvement_*` event vocabulary in `contracts/v2.py` survives. A Store-native Improvement Ledger belongs to MU-2 |
+| Legacy Improvement Ledger / Memory files (`improvement/ledger.jsonl`, `improvement/memory.md`, `improvement_memory_snapshot.md`) | Retired (LD2-3); these files have no code reader or writer. Experimental post-final Human disposition, edited guidance, and separate approval are now append-only SQLite records; next-run snapshot/consumption is not shipped |
 | Orchestrator control switchboard (`orchestrator_control_switchboard.json`, optional `control_selections.json`) | Supported |
 | Feedback control files (`feedback_issues.json`, `repair_plan.json`, conditional `delta_audit_report.json`) | Supported |
 | Stage-scoped quality gate control files (`gates/auditor_quality_gate_report.json`, `gates/finalize_quality_gate_report.json`; legacy latest projection `quality_gate_report.json`) | Supported |
@@ -87,7 +87,8 @@ validation unless that is stated separately.
 | `briefloop experiments laj study-preflight/budgeted-shadow-run/study-compare` | Experimental; strict target eligibility, complete-trial call/token budget, and offline exact dimension/span-overlap comparison only; advisory with zero runtime authority; utility and efficacy NOT MEASURED |
 | `briefloop init --from-onboarding` | Supported |
 | `briefloop init --web [--port <n>]` | Experimental; one-shot loopback wizard that creates the workspace through the same ControlStore bootstrap path and returns the real TransactionReceipt |
-| `briefloop quality html --workspace <path> [--open] [--laj-view <laj.json>]` | Experimental; best-effort, capability-gated local static read-only four-tab surface: verified Store-bound `finalized_local` Brief, deterministic Quality, optional advisory LAJ (NOT MEASURED), and unavailable Improvement; unsupported platforms return no projection path; no approval, package, delivery, publication, persistent-server, automatic-evaluation, or learning affordance |
+| `briefloop quality html --workspace <path> [--open] [--laj-view <laj.json>]` | Experimental; best-effort, capability-gated local static read-only four-tab surface: verified Store-bound `finalized_local` Brief, deterministic Quality, optional advisory LAJ (NOT MEASURED), and current Store-native Human guidance state; unsupported platforms return no projection path; static export has no write, approval, package, delivery, publication, persistent-server, or learning affordance |
+| `briefloop quality laj policy-set/assess/status/retry/review-open/disposition/draft/approve/deactivate/revert/supersede/review-status` | Experimental Store-qualified post-final assessment and secured local Human review. Append-only SQLite Receipts record policy/request/result, accept/reject/defer, Human-edited drafts, and separate approval/status. LAJ remains advisory and utility NOT MEASURED; no Gate/finalize/delivery/Core effect, automatic acceptance, or next-run guidance consumption |
 | `briefloop onboard` | Supported |
 | `briefloop doctor` | Supported |
 | `briefloop extract --workspace <path> --scope <text> --source <file>` | Unsupported on SQLite; retired public CLI |
@@ -108,7 +109,7 @@ Provenance commands write a deterministic workspace-local audit/debug graph from
 
 Audience profile files are workspace-local runtime context. The active run uses the frozen per-run snapshot exposed through handoff; these files are not source evidence, artifact contracts, quality gates, provenance graph nodes, or stage blockers.
 
-Improvement Ledger files are retired as of LD2-3. The code that projected approved guidance into `improvement/memory.md` and froze `output/intermediate/improvement_memory_snapshot.md` during `run`/`start`/`handoff` was deleted with the legacy runtime-state stack, so these files now have no reader or writer. The `improvement_*` event vocabulary in `contracts/v2.py` survives. Existing workspace files are inert; nothing reads them and no run consumes them. A Store-native Improvement Ledger is MU-2 work. Even when it was live, the snapshot carried taste/audience guidance only — it did not serve as evidence, source material, Claim Ledger input, repair instruction, semantic proof, or an output-quality guarantee.
+Legacy Improvement Ledger files are retired as of LD2-3. The code that projected approved guidance into `improvement/memory.md` and froze `output/intermediate/improvement_memory_snapshot.md` during `run`/`start`/`handoff` was deleted with the legacy runtime-state stack, so these files remain inert and have no reader or writer. Experimental post-final Human review now records finding dispositions, Human-edited guidance drafts, and separate approval/status revisions in SQLite. Those records are not evidence, source material, Claim Ledger input, repair instructions, semantic proof, or an output-quality guarantee, and no current or future run consumes them until the separate approved-guidance snapshot unit ships.
 
 Control switchboard files are runtime control context. Python surfaces deterministic recommendations and records Orchestrator enable/defer/reject selections; selection is not execution and does not run gates, feedback planning, provenance projection, source discovery, repair, or subagents.
 
@@ -234,7 +235,9 @@ compact human-readable `output/intermediate/quality_summary.md` from a valid
 panel. Static Quality Panel HTML can render
 `output/intermediate/quality_panel.html` from the same valid panel with inline
 CSS and no external assets or frontend runtime. `quality summarize` can write
-these artifacts together. With explicit `--laj-view <laj.json>`, it can render
+the legacy audit artifacts together. The current SQLite manual display surface
+is `quality html --workspace <path> --laj-view <laj.json>`; with an explicit
+view it can render
 a strict, current-report-bound LAJ result as an experimental advisory-only
 section; it does not call the evaluator, and absent, invalid, stale, failed, or
 abstained LAJ does not change the panel overall status, blockers, recommended

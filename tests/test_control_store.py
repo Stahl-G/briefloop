@@ -38,7 +38,11 @@ from multi_agent_brief.control_store import (
     SQLiteControlStore,
 )
 from multi_agent_brief.control_store.schema import migration_sql
-from multi_agent_brief.control_store.serialization import canonical_model_text
+from multi_agent_brief.control_store.serialization import (
+    canonical_json_bytes,
+    canonical_model_text,
+)
+from multi_agent_brief.control_store.sqlite_store import _decode_record
 from multi_agent_brief.core_run_v2.checkout import build_checkout_revision
 
 
@@ -50,6 +54,14 @@ COMMITTED_AT = datetime(2026, 7, 15, 9, 0, 1, tzinfo=timezone.utc)
 BLOB = b"BriefLoop SQLite substrate test artifact.\n"
 BLOB_SHA256 = hashlib.sha256(BLOB).hexdigest()
 CRASH_TRANSACTION_ID = "TX-CRASH-BOUNDARY-001"
+_POST_FINAL_RECEIPT_RELATION_FIELDS = (
+    "post_final_assessment_policy_revisions",
+    "post_final_assessment_requests",
+    "post_final_assessment_results",
+    "post_final_finding_dispositions",
+    "post_final_guidance_drafts",
+    "post_final_guidance_statuses",
+)
 
 
 _CRASH_SUBPROCESS = r"""
@@ -430,6 +442,124 @@ def _insert_receipt_row(
                 reference.artifact_id,
             ),
         )
+
+
+def test_historical_receipt_projection_accepts_only_the_exact_legacy_shape() -> None:
+    receipt = TransactionReceipt.model_validate(
+        TransactionReceipt.minimal_example,
+        strict=True,
+    )
+    payload = receipt.model_dump(mode="json", exclude_unset=False)
+    for field in _POST_FINAL_RECEIPT_RELATION_FIELDS:
+        assert payload.pop(field) == []
+    legacy_text = canonical_json_bytes(payload).decode("utf-8")
+
+    assert (
+        _decode_record(
+            TransactionReceipt,
+            legacy_text,
+            receipt_committed_revision=receipt.committed_revision,
+            legacy_receipt_max_committed_revision=receipt.committed_revision,
+        )
+        == receipt
+    )
+
+    with pytest.raises(
+        ControlStoreIntegrityError,
+        match="stored_payload_not_canonical",
+    ):
+        _decode_record(
+            TransactionReceipt,
+            legacy_text,
+            receipt_committed_revision=receipt.committed_revision,
+            legacy_receipt_max_committed_revision=receipt.committed_revision - 1,
+        )
+
+    partial = receipt.model_dump(mode="json", exclude_unset=False)
+    partial.pop(_POST_FINAL_RECEIPT_RELATION_FIELDS[0])
+    with pytest.raises(
+        ControlStoreIntegrityError,
+        match="stored_payload_not_canonical",
+    ):
+        _decode_record(
+            TransactionReceipt,
+            canonical_json_bytes(partial).decode("utf-8"),
+            receipt_committed_revision=receipt.committed_revision,
+            legacy_receipt_max_committed_revision=receipt.committed_revision,
+        )
+
+    advisory = dict(payload)
+    advisory["transaction_type"] = "post_final_guidance_status"
+    with pytest.raises(
+        ControlStoreIntegrityError,
+        match="stored_payload_not_canonical",
+    ):
+        _decode_record(
+            TransactionReceipt,
+            canonical_json_bytes(advisory).decode("utf-8"),
+            receipt_committed_revision=receipt.committed_revision,
+            legacy_receipt_max_committed_revision=receipt.committed_revision,
+        )
+
+    unknown = dict(payload)
+    unknown["unknown_relation"] = []
+    with pytest.raises(
+        ControlStoreIntegrityError,
+        match="stored_payload_invalid",
+    ):
+        _decode_record(
+            TransactionReceipt,
+            canonical_json_bytes(unknown).decode("utf-8"),
+            receipt_committed_revision=receipt.committed_revision,
+            legacy_receipt_max_committed_revision=receipt.committed_revision,
+        )
+
+
+def test_fresh_schema10_receipt_cannot_be_laundered_as_legacy(
+    tmp_path: Path,
+) -> None:
+    store = _create_store(tmp_path)
+    receipt = _stage_all(store).commit()
+    database = store.path
+    cutoff = store._connection.execute(
+        "SELECT legacy_receipt_max_committed_revision "
+        "FROM transaction_receipt_compatibility_boundaries "
+        "WHERE workspace_id=?",
+        (WORKSPACE_ID,),
+    ).fetchone()
+    assert cutoff is not None and int(cutoff[0]) == 0
+    store.close()
+
+    payload = receipt.model_dump(mode="json", exclude_unset=False)
+    for field in _POST_FINAL_RECEIPT_RELATION_FIELDS:
+        assert payload.pop(field) == []
+    connection = sqlite3.connect(database)
+    try:
+        trigger_sql = connection.execute(
+            "SELECT sql FROM sqlite_master "
+            "WHERE type='trigger' AND name='transactions_no_update'"
+        ).fetchone()
+        assert trigger_sql is not None
+        connection.execute("DROP TRIGGER transactions_no_update")
+        connection.execute(
+            "UPDATE transactions SET payload_json=? "
+            "WHERE run_id=? AND transaction_id=?",
+            (
+                canonical_json_bytes(payload).decode("utf-8"),
+                receipt.run_id,
+                receipt.transaction_id,
+            ),
+        )
+        connection.execute(str(trigger_sql[0]))
+        connection.commit()
+    finally:
+        connection.close()
+
+    with pytest.raises(
+        ControlStoreIntegrityError,
+        match="stored_payload_not_canonical",
+    ):
+        SQLiteControlStore.open(database)
 
 
 def _insert_artifact_revision_row(
@@ -1047,6 +1177,7 @@ def test_schema_settings_and_exact_table_universe(tmp_path: Path) -> None:
         "stage_states",
         "agent_invocations",
         "transactions",
+        "transaction_receipt_compatibility_boundaries",
         "transaction_events",
         "transaction_artifact_revisions",
         "transaction_artifact_identities",
@@ -1138,6 +1269,18 @@ def test_schema_settings_and_exact_table_universe(tmp_path: Path) -> None:
         "transaction_delivery_authorizations",
         "transaction_delivery_attempts",
         "transaction_delivery_results",
+        "post_final_assessment_policy_revisions",
+        "post_final_assessment_requests",
+        "post_final_assessment_results",
+        "post_final_finding_dispositions",
+        "post_final_guidance_drafts",
+        "post_final_guidance_statuses",
+        "transaction_post_final_assessment_policy_revisions",
+        "transaction_post_final_assessment_requests",
+        "transaction_post_final_assessment_results",
+        "transaction_post_final_finding_dispositions",
+        "transaction_post_final_guidance_drafts",
+        "transaction_post_final_guidance_statuses",
         "checkout_revisions",
         "checkout_revision_members",
         "receipt_checkout_bindings",
@@ -1153,7 +1296,7 @@ def test_schema_settings_and_exact_table_universe(tmp_path: Path) -> None:
         assert store._connection.execute("PRAGMA foreign_keys").fetchone()[0] == 1
         assert store._connection.execute("PRAGMA journal_mode").fetchone()[0] == "wal"
         assert store._connection.execute("PRAGMA synchronous").fetchone()[0] == 2
-        assert store._connection.execute("PRAGMA user_version").fetchone()[0] == 9
+        assert store._connection.execute("PRAGMA user_version").fetchone()[0] == 10
         tables = {
             row[0]
             for row in store._connection.execute(
@@ -2610,7 +2753,7 @@ def test_future_schema_fails_closed(tmp_path: Path) -> None:
     store = _create_store(tmp_path)
     store.close()
     connection = sqlite3.connect(tmp_path / "control.db")
-    connection.execute("PRAGMA user_version = 10")
+    connection.execute("PRAGMA user_version = 11")
     connection.close()
     with pytest.raises(ControlStoreSchemaError) as error:
         SQLiteControlStore.open(tmp_path / "control.db")
@@ -2926,10 +3069,15 @@ def test_only_dormant_v2_modules_import_control_store() -> None:
         "cli/core_v2_commands.py",
         "cli/authority_guard.py",
         # brief_html builder is the read-only page-1 projection (C3-sanctioned);
-        # init_web submit reads only the real bootstrap receipt after the
-        # sanctioned initialize path.
+        # PF-LAJ's product service is the sole advisory policy/request/result
+        # writer and its companion projection is read-only. init_web submit
+        # reads only the real bootstrap receipt after the sanctioned initialize
+        # path.
         "product/brief_html/builder.py",
         "product/init_web/submit.py",
+        "product/post_final_assessment.py",
+        "product/post_final_assessment_projection.py",
+        "product/post_final_review.py",
         "runtime_host_v2/codex.py",
         "runtime_host_v2/initialization.py",
         "runtime_host_v2/projections.py",

@@ -90,10 +90,19 @@ FORBIDDEN_PROVIDER_OR_NETWORK_IMPORTS = (
 EXPERIMENT_ENTRYPOINT = SRC_ROOT / "cli" / "experiments_commands.py"
 QUALITY_PANEL_READ_ONLY_CONSUMER = SRC_ROOT / "product" / "quality_panel.py"
 BRIEF_HTML_READ_ONLY_CONSUMER = SRC_ROOT / "product" / "brief_html" / "builder.py"
+POST_FINAL_ASSESSMENT_WRITER = SRC_ROOT / "product" / "post_final_assessment.py"
+POST_FINAL_ASSESSMENT_READ_ONLY_PROJECTION = (
+    SRC_ROOT / "product" / "post_final_assessment_projection.py"
+)
 READ_ONLY_LAJ_CONSUMERS = {
     EXPERIMENT_ENTRYPOINT,
     QUALITY_PANEL_READ_ONLY_CONSUMER,
     BRIEF_HTML_READ_ONLY_CONSUMER,
+    # PF-LAJ-1 is the Store-owned, post-final product coordinator and its
+    # read-only projection.  The evaluator keeps no authority imports in the
+    # reverse direction; these consumers cannot alter Core/Gate/run truth.
+    POST_FINAL_ASSESSMENT_WRITER,
+    POST_FINAL_ASSESSMENT_READ_ONLY_PROJECTION,
 }
 NETWORK_IMPORT_ALLOWLIST = {
     "adapters/anthropic_messages.py": {"anthropic"},

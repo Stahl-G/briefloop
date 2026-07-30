@@ -664,7 +664,7 @@ def test_anthropic_archive_recomputes_terminal_status_from_raw_bytes() -> None:
         response_id="msg-archive-public",
         model=_ANTHROPIC_TEST_MODEL,
         content=[
-            {"type": "thinking", "thinking": "non-output", "signature": "sig"},
+            {"type": "thinking", "thinking": "non-output", "signature": ""},
             {"type": "text", "text": '{"findings":[]}'},
         ],
         input_tokens=10,
@@ -750,9 +750,7 @@ def test_anthropic_real_invoke_parse_failure_archives_and_replays_negative_evide
 ) -> None:
     call_counts = {"network": 0, "parse": 0, "provider": 0}
     transform = (
-        None
-        if mode == "valid_messages_body"
-        else _anthropic_raw_transform(mode)
+        None if mode == "valid_messages_body" else _anthropic_raw_transform(mode)
     )
     archive, invocation = _anthropic_archive(
         tmp_path,
@@ -794,7 +792,9 @@ def test_anthropic_real_invoke_parse_failure_archives_and_replays_negative_evide
         assert record["output_eligible"] is False
         sdk_projection = _strict_load(sdk_path)
         assert sdk_projection["body_state"] == "invalid"
-        assert b"parse-provider-diagnostic-must-not-survive" not in sdk_path.read_bytes()
+        assert (
+            b"parse-provider-diagnostic-must-not-survive" not in sdk_path.read_bytes()
+        )
 
     metadata_calls = 0
 

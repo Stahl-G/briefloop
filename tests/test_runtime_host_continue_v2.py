@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from copy import deepcopy
 from dataclasses import replace
+from datetime import date, timedelta
 import hashlib
 from io import BytesIO
 import json
@@ -120,7 +121,7 @@ def _authorized_workspace(tmp_path: Path) -> Path:
         "original_url": None,
         "title": "Public durable source",
         "publisher": "Example publisher",
-        "published_at": "2026-07-22",
+        "published_at": (date.today() - timedelta(days=1)).isoformat(),
         "retrieved_at": "2026-07-23T00:00:00Z",
         "source_category": "other",
         "retrieval_source_type": "local_file",
@@ -2644,6 +2645,12 @@ def test_finalize_effect_suppresses_legacy_hook_then_presents_terminal(
     )
     service = RuntimeHostService(workspace, adapter_loader=lambda _runtime: None)
     presentation_flags: list[bool] = []
+    assessment_observations: list[str] = []
+    monkeypatch.setattr(
+        service,
+        "_observe_post_final_assessment",
+        lambda: assessment_observations.append("finalized_local"),
+    )
     monkeypatch.setattr(
         service,
         "apply_current",
@@ -2661,6 +2668,7 @@ def test_finalize_effect_suppresses_legacy_hook_then_presents_terminal(
     assert result.trace.next_action.effect_kind == "finalized_local"
     assert result.trace.transaction_ids == ["TX-FINAL"]
     assert presentation_flags == [False]
+    assert assessment_observations == ["finalized_local"]
     assert result.presentation is not None
     assert result.presentation.status == "projection_unavailable"
     assert result.presentation.relative_path is None
@@ -2780,12 +2788,35 @@ def test_authorized_current_session_reaches_truthful_finalized_local(
 ) -> None:
     if sys.platform == "win32":
         return
+    from multi_agent_brief.semantic_evaluator.adapters.anthropic_messages import (
+        ANTHROPIC_API_KEY_SETTING,
+    )
+    import multi_agent_brief.semantic_evaluator.runner as runner_module
+    from tests.test_post_final_assessment import _fixture_service, _policy_payload
+
     workspace = _authorized_workspace(tmp_path)
+    assessment_calls: list[tuple[str, int]] = []
+    assessment = _fixture_service(
+        workspace,
+        assessment_calls,
+        terminal_mode="finding",
+    )
+    policy = _policy_payload()
+    policy["auto_run"] = True
+    assert assessment.policy_set(policy)["ok"] is True
+    monkeypatch.setattr(runner_module.metadata, "version", lambda _name: "0.104.1")
+    monkeypatch.setenv(ANTHROPIC_API_KEY_SETTING, "public-synthetic-key")
     monkeypatch.setattr(
         "multi_agent_brief.product.brief_html.render.webbrowser.open",
         lambda _uri: False,
     )
     service = _service(workspace)
+    assessment_observations: list[dict[str, object]] = []
+    monkeypatch.setattr(
+        service,
+        "_observe_post_final_assessment",
+        lambda: assessment_observations.append(assessment.observe_finalized_local()),
+    )
     sequence: list[tuple[str, str, str]] = []
 
     for _ in range(8):
@@ -2851,12 +2882,29 @@ def test_authorized_current_session_reaches_truthful_finalized_local(
     assert not snapshot.delivery_authorizations
     assert not snapshot.delivery_attempts
     assert not snapshot.delivery_results
+    assert len(snapshot.post_final_assessment_requests) == 1
+    assert len(snapshot.post_final_assessment_results) == 1
+    assert len(assessment_calls) == 9
+    assert [item["status"] for item in assessment_observations] == ["available"]
 
     mutable_reader = workspace / "output" / "brief.md"
     mutable_reader.write_text("# forged mutable reader\n", encoding="utf-8")
+    monkeypatch.delenv(ANTHROPIC_API_KEY_SETTING, raising=False)
+    monkeypatch.setattr(
+        runner_module.metadata,
+        "version",
+        lambda _name: (_ for _ in ()).throw(
+            AssertionError("terminal replay touched SDK metadata")
+        ),
+    )
     replay = service.continue_authorized()
     assert replay.status == "finalized_local"
-    assert replay.store_revision == result.store_revision
+    assert replay.store_revision > result.store_revision
+    assert len(assessment_calls) == 9
+    assert [item["status"] for item in assessment_observations] == [
+        "available",
+        "available",
+    ]
     html = (workspace / "output" / "brief_pages.html").read_text(encoding="utf-8")
     embedded = html.split('id="brief-pages-data">', 1)[1].split("</script>", 1)[0]
     assert json.loads(embedded)["brief"]["markdown"] == store_reader.decode("utf-8")
