@@ -319,6 +319,20 @@ def test_core_v2_cli_is_internal_and_requires_json() -> None:
 
 def test_core_v2_imports_are_confined_to_dormant_cli_package_and_bound_intake() -> None:
     package_root = ROOT / "src" / "multi_agent_brief"
+
+    def imports_core_v2(node: ast.AST) -> bool:
+        if isinstance(node, ast.ImportFrom):
+            modules = (node.module or "",)
+        elif isinstance(node, ast.Import):
+            modules = tuple(alias.name for alias in node.names)
+        else:
+            return False
+        return any(
+            module == "multi_agent_brief.core_run_v2"
+            or module.startswith("multi_agent_brief.core_run_v2.")
+            for module in modules
+        )
+
     allowed = {
         "cli/core_v2_commands.py",
         "intake_v2/service.py",
@@ -350,31 +364,37 @@ def test_core_v2_imports_are_confined_to_dormant_cli_package_and_bound_intake() 
         relative = path.relative_to(package_root).as_posix()
         tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
         for node in ast.walk(tree):
-            if not isinstance(node, ast.ImportFrom):
-                continue
-            module = node.module or ""
-            if module == "multi_agent_brief.core_run_v2" or module.startswith(
-                "multi_agent_brief.core_run_v2."
-            ):
+            if imports_core_v2(node):
                 if relative not in allowed and not relative.startswith("core_run_v2/"):
                     findings.append(f"{relative}:{node.lineno}")
     assert findings == []
 
-    synthetic_relative = "product/unknown_core_consumer.py"
-    synthetic = ast.parse(
-        "from multi_agent_brief.core_run_v2.verifier import CoreRunDomainVerifier\n"
-    )
-    synthetic_findings = [
-        f"{synthetic_relative}:{node.lineno}"
-        for node in ast.walk(synthetic)
-        if isinstance(node, ast.ImportFrom)
-        and (
-            node.module == "multi_agent_brief.core_run_v2"
-            or (node.module or "").startswith("multi_agent_brief.core_run_v2.")
+    synthetic_findings: list[str] = []
+    for synthetic_relative, source in (
+        (
+            "product/unknown_core_from_consumer.py",
+            (
+                "from multi_agent_brief.core_run_v2.verifier "
+                "import CoreRunDomainVerifier\n"
+            ),
+        ),
+        (
+            "product/unknown_core_import_consumer.py",
+            "import multi_agent_brief.core_run_v2.verifier\n",
+        ),
+    ):
+        synthetic = ast.parse(source)
+        synthetic_findings.extend(
+            f"{synthetic_relative}:{node.lineno}"
+            for node in ast.walk(synthetic)
+            if imports_core_v2(node)
+            and synthetic_relative not in allowed
+            and not synthetic_relative.startswith("core_run_v2/")
         )
-        and synthetic_relative not in allowed
+    assert synthetic_findings == [
+        "product/unknown_core_from_consumer.py:1",
+        "product/unknown_core_import_consumer.py:1",
     ]
-    assert synthetic_findings == ["product/unknown_core_consumer.py:1"]
 
 
 def test_core_v2_does_not_import_legacy_runtime_writers() -> None:
