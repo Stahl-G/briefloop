@@ -46,6 +46,7 @@ semantic-evaluator-anthropic = [
 ]
 dev = [
   "pytest>=8.0",
+  "pytest-timeout>=2.4,<3",
   "pytest-xdist>=3.5",
   "python-docx>=1.0.0",
   "ruff>=0.8.0",
@@ -118,6 +119,10 @@ multi_agent_brief = [
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 pythonpath = ["src"]
+markers = [
+  "explicit_e2e: heavyweight end-to-end evidence run only when explicitly authorized; excluded from normal PR CI",
+  "timeout(seconds): per-node wall-clock bound supplied by pytest-timeout",
+]
 
 [tool.ruff]
 target-version = "py312"

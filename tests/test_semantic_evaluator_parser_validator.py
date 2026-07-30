@@ -578,6 +578,75 @@ def test_valid_o1_finding_replays_span_and_preserves_explicit_dispositions() -> 
     ]
 
 
+def test_global_inventory_offsets_remain_invalid_for_block_local_span() -> None:
+    reader, context, _profile, plan = _case()
+    units = [
+        item for item in plan.units if item.dimension_id == "cross_section_consistency"
+    ]
+    block = next(item for item in reader.artifact.blocks if item.start_char > 0)
+    local_span = make_span_locator(
+        reader.artifact,
+        block_id=block.block_id,
+        start_char=0,
+        end_char=len(block.text),
+    )
+    global_span = SpanLocator(
+        report_sha256=reader.artifact.report_sha256,
+        block_id=block.block_id,
+        start_char=block.start_char,
+        end_char=block.end_char,
+        excerpt_sha256=block.text_sha256,
+    )
+
+    def _response(span: SpanLocator) -> DimensionResponse:
+        return DimensionResponse(
+            schema_version=DIMENSION_RESPONSE_SCHEMA_ID,
+            trial_id=plan.trial_id,
+            dimension_id="cross_section_consistency",
+            unit_results=[
+                FindingEmittedResult(
+                    assessment_unit_id=units[0].assessment_unit_id,
+                    disposition="finding_emitted",
+                    findings=[_finding(units[0], span)],
+                ),
+                *[
+                    NoFindingResult(
+                        assessment_unit_id=item.assessment_unit_id,
+                        disposition="no_finding",
+                    )
+                    for item in units[1:]
+                ],
+            ],
+        )
+
+    accepted = _response(local_span)
+    accepted_result = validate_dimension_response(
+        accepted,
+        raw_object=accepted.model_dump(mode="json"),
+        expected_dimension_id="cross_section_consistency",
+        plan=plan,
+        reader_artifact=reader.artifact,
+        bounded_context=context,
+        attempt_ref="attempt-block-local",
+    )
+    assert accepted_result.accepted is True
+    assert len(accepted_result.accepted_findings) == 1
+
+    rejected = _response(global_span)
+    rejected_result = validate_dimension_response(
+        rejected,
+        raw_object=rejected.model_dump(mode="json"),
+        expected_dimension_id="cross_section_consistency",
+        plan=plan,
+        reader_artifact=reader.artifact,
+        bounded_context=context,
+        attempt_ref="attempt-global-inventory",
+    )
+    assert rejected_result.reason_codes == ("span_offset_invalid",)
+    assert rejected_result.accepted_findings == ()
+    assert len(rejected_result.rejected_finding_ids) == 1
+
+
 def test_bad_span_is_rejected_and_canary_value_is_security_failure() -> None:
     reader, context, _profile, plan = _case()
     units = [

@@ -199,6 +199,130 @@ print(json.dumps({
 """
 
 
+_ZERO_ADVICE_PROBE = r"""
+import json
+import os
+from pathlib import Path
+import shutil
+import sys
+
+import pytest
+
+import multi_agent_brief
+from multi_agent_brief.control_store import SQLiteControlStore
+from multi_agent_brief.product.brief_html import build_brief_pages_data
+from multi_agent_brief.product.post_final_assessment import PostFinalAssessmentService
+from multi_agent_brief.product.post_final_assessment_projection import (
+    build_post_final_assessment_projection,
+)
+from multi_agent_brief.semantic_evaluator.adapters.anthropic_messages import (
+    ANTHROPIC_API_KEY_SETTING,
+)
+from multi_agent_brief.semantic_evaluator.archive import trial_archive_path
+import multi_agent_brief.semantic_evaluator.runner as runner_module
+from tests.test_post_final_assessment import (
+    _fixture_service,
+    _policy_payload,
+    _schema9_finalized_local_workspace_upgraded,
+)
+
+
+mode = sys.argv[1]
+workspace = Path(sys.argv[2])
+expected_package_root = Path(sys.argv[3]).resolve()
+package_file = Path(multi_agent_brief.__file__).resolve()
+if not package_file.is_relative_to(expected_package_root):
+    raise RuntimeError("package root mismatch")
+
+provider_calls = 0
+if mode == "source":
+    patch = pytest.MonkeyPatch()
+    try:
+        workspace, run_id, _historical = (
+            _schema9_finalized_local_workspace_upgraded(workspace.parent, patch)
+        )
+        calls = []
+        service = _fixture_service(
+            workspace,
+            calls,
+            terminal_mode="transport_failure",
+        )
+        if not service.policy_set(_policy_payload())["ok"]:
+            raise RuntimeError("policy did not commit")
+        patch.setattr(runner_module.metadata, "version", lambda _name: "0.104.1")
+        patch.setenv(ANTHROPIC_API_KEY_SETTING, "public-synthetic-key")
+        assessed = service.assess()
+        if assessed.get("status") != "provider_failed":
+            raise RuntimeError(f"source terminal result failed: {assessed!r}")
+        provider_calls = len(calls)
+        with SQLiteControlStore.open(workspace / "briefloop.db") as store:
+            snapshot = store.load_snapshot(run_id)
+        request = snapshot.post_final_assessment_requests[0]
+        shutil.rmtree(trial_archive_path(service._archive_root, request.trial_id))
+    finally:
+        patch.undo()
+elif mode == "wheel":
+    os.environ.pop(ANTHROPIC_API_KEY_SETTING, None)
+    runner_module.metadata.version = lambda _name: (_ for _ in ()).throw(
+        AssertionError("wheel zero-advice replay touched distribution metadata")
+    )
+else:
+    raise RuntimeError("unknown mode")
+
+database_before = (workspace / "briefloop.db").read_bytes()
+with SQLiteControlStore.open(workspace / "briefloop.db") as store:
+    head = store.load_workspace_run_head()
+    if head is None:
+        raise RuntimeError("missing Store head")
+    revision_before = store.current_revision
+    snapshot = store.load_snapshot(head.current_run_id)
+    request = snapshot.post_final_assessment_requests[0]
+    result = snapshot.post_final_assessment_results[0]
+
+replay = PostFinalAssessmentService(
+    workspace,
+    adapter_factory=lambda _execution: (_ for _ in ()).throw(
+        AssertionError("zero-advice replay touched adapter")
+    ),
+)
+assessed = replay.assess()
+retried = replay.retry(request.assessment_request_id)
+projection = build_post_final_assessment_projection(workspace)
+semantic = build_brief_pages_data(workspace)["semantic"]
+if not assessed.get("replayed") or not retried.get("replayed"):
+    raise RuntimeError("zero-advice Store result did not replay")
+if assessed.get("status") != result.terminal_evidence_class:
+    raise RuntimeError("zero-advice assess status drift")
+if retried.get("status") != result.terminal_evidence_class:
+    raise RuntimeError("zero-advice retry status drift")
+if projection.view.archive_verified or projection.view.findings:
+    raise RuntimeError("zero-advice projection claimed archive findings")
+if semantic["status"] != result.terminal_evidence_class:
+    raise RuntimeError("zero-advice HTML status drift")
+if semantic["findings"]:
+    raise RuntimeError("zero-advice HTML exposed findings")
+with SQLiteControlStore.open(workspace / "briefloop.db") as store:
+    if store.current_revision != revision_before:
+        raise RuntimeError("zero-advice replay changed Store revision")
+if (workspace / "briefloop.db").read_bytes() != database_before:
+    raise RuntimeError("zero-advice replay changed Store bytes")
+
+print(json.dumps({
+    "optimize": sys.flags.optimize,
+    "provider_calls": provider_calls,
+    "request_id": request.assessment_request_id,
+    "result_id": result.assessment_result_id,
+    "result_fingerprint": result.result_fingerprint,
+    "status": result.terminal_evidence_class,
+    "reason_codes": result.reason_codes,
+    "finding_count": result.finding_count,
+    "withheld_finding_count": result.withheld_finding_count,
+    "archive_verified": projection.view.archive_verified,
+    "semantic_status": semantic["status"],
+}, sort_keys=True))
+"""
+
+
 def _run_probe(
     *,
     mode: str,
@@ -227,6 +351,8 @@ def _run_probe(
     return json.loads(run.stdout)
 
 
+@pytest.mark.explicit_e2e
+@pytest.mark.timeout(900)
 @pytest.mark.skipif(
     not supports_retained_directory_publication(),
     reason="successful finalized-local assessment is unavailable on this platform",
@@ -307,3 +433,32 @@ def test_source_and_non_editable_wheel_replay_the_same_pf_laj_result(
         "provider_calls": 0,
         "improvement_status": "available",
     }
+
+    zero_script = tmp_path / "pf_laj_zero_advice_wheel_probe.py"
+    zero_script.write_text(textwrap.dedent(_ZERO_ADVICE_PROBE), encoding="utf-8")
+    zero_workspace = tmp_path / "zero-advice-fixture" / "workspace"
+    zero_source = _run_probe(
+        mode="source",
+        workspace=zero_workspace,
+        package_root=ROOT / "src",
+        script=zero_script,
+        cwd=tmp_path,
+    )
+    zero_wheel = _run_probe(
+        mode="wheel",
+        workspace=zero_workspace,
+        package_root=installed,
+        script=zero_script,
+        cwd=tmp_path,
+    )
+
+    assert zero_source["optimize"] == zero_wheel["optimize"] == sys.flags.optimize
+    assert zero_source["provider_calls"] == 9
+    assert zero_wheel["provider_calls"] == 0
+    assert {
+        key: zero_source[key] for key in zero_source if key != "provider_calls"
+    } == {key: zero_wheel[key] for key in zero_wheel if key != "provider_calls"}
+    assert zero_wheel["status"] == "provider_failed"
+    assert zero_wheel["finding_count"] == 0
+    assert zero_wheel["withheld_finding_count"] == 0
+    assert zero_wheel["archive_verified"] is False

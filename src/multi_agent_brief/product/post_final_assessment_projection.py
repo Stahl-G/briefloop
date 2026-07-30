@@ -6,6 +6,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+from multi_agent_brief.contracts.v2 import PostFinalAssessmentResultRecord
 from multi_agent_brief.control_store.errors import ControlStoreError
 from multi_agent_brief.control_store.sqlite_store import SQLiteControlStore
 from multi_agent_brief.core_run_v2.errors import CoreRunError
@@ -16,6 +17,7 @@ from multi_agent_brief.product.post_final_assessment import (
     post_final_assessment_archive_root,
     resolve_current_post_final_assessment_policy,
     resolve_current_post_final_assessment_request,
+    resolve_current_post_final_assessment_result,
 )
 from multi_agent_brief.runtime_host_v2.errors import RuntimeHostError
 from multi_agent_brief.runtime_host_v2.projections import (
@@ -27,10 +29,13 @@ from multi_agent_brief.semantic_evaluator.archive import (
 )
 from multi_agent_brief.semantic_evaluator.errors import SemanticEvaluatorError
 from multi_agent_brief.semantic_evaluator.reader import (
+    LAJ_READER_BOUNDARY,
+    LAJ_READER_SCHEMA_ID,
     LajReaderView,
     build_empty_laj_reader_view,
     build_laj_reader_view,
 )
+from multi_agent_brief.semantic_evaluator.serialization import canonical_sha256
 
 
 @dataclass(frozen=True)
@@ -67,6 +72,42 @@ def _terminal_class(view: LajReaderView) -> str:
     if any("refus" in item for item in reasons):
         return "refused"
     return "provider_failed" if reasons else "unavailable"
+
+
+def _recorded_zero_advice_view(
+    result: PostFinalAssessmentResultRecord,
+) -> LajReaderView:
+    """Project exact Store terminal truth without claiming archive verification."""
+
+    payload: dict[str, object] = {
+        "schema_version": LAJ_READER_SCHEMA_ID,
+        "status": "unavailable",
+        "boundary": LAJ_READER_BOUNDARY,
+        "advisory_only": True,
+        "shadow_only": True,
+        "runtime_authority": False,
+        "authority_effect": "none",
+        "archive_verified": False,
+        "binding": None,
+        "run_status": None,
+        "validation_status": None,
+        "reason_codes": list(result.reason_codes),
+        "assessed_unit_count": result.assessed_unit_count,
+        "finding_count": 0,
+        "withheld_finding_count": 0,
+        "abstention_count": result.abstention_count,
+        "findings": [],
+        "disclaimer": (
+            "Experimental advisory terminal status is recorded without actionable "
+            "findings. The current archive was not semantically reverified. No "
+            "workflow, Gate, finalization, delivery, repair, approval, or next-action "
+            "effect."
+        ),
+    }
+    return LajReaderView.model_validate(
+        {**payload, "view_sha256": canonical_sha256(payload)},
+        strict=True,
+    )
 
 
 def build_post_final_assessment_projection(
@@ -138,11 +179,11 @@ def build_post_final_assessment_projection(
         )
     try:
         policy = resolve_current_post_final_assessment_policy(snapshot, facts)
-    except PostFinalAssessmentError:
+    except PostFinalAssessmentError as exc:
         return _empty(
             lifecycle_present=True,
             status="invalid",
-            reason_code="control_store_integrity_invalid",
+            reason_code=str(exc),
         )
     if (
         policy is None
@@ -160,24 +201,27 @@ def build_post_final_assessment_projection(
             status="invalid",
             reason_code="control_store_integrity_invalid",
         )
-    results = [
-        item
-        for item in snapshot.post_final_assessment_results
-        if item.assessment_request_id == request.assessment_request_id
-    ]
-    if len(results) > 1:
+    try:
+        result = resolve_current_post_final_assessment_result(snapshot, request)
+    except PostFinalAssessmentError as exc:
         return _empty(
             lifecycle_present=True,
             status="invalid",
-            reason_code="control_store_integrity_invalid",
+            reason_code=str(exc),
         )
-    if not results:
+    if result is None:
         return _empty(
             lifecycle_present=True,
             status="pending",
             reason_code="post_final_assessment_pending",
         )
-    result = results[0]
+    if result.finding_count == 0 and result.withheld_finding_count == 0:
+        return PostFinalAssessmentProjection(
+            lifecycle_present=True,
+            status=result.terminal_evidence_class,
+            reason_code=result.reason_codes[0] if result.reason_codes else None,
+            view=_recorded_zero_advice_view(result),
+        )
     try:
         archive = verify_shadow_archive(
             trial_archive_path(

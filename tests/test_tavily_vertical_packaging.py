@@ -11,10 +11,14 @@ import sys
 import textwrap
 import zipfile
 
+import pytest
+
 
 ROOT = Path(__file__).parents[1]
 
 
+@pytest.mark.explicit_e2e
+@pytest.mark.timeout(900)
 def test_tavily_vertical_real_loopback_source_and_wheel_parity(
     tmp_path: Path,
 ) -> None:

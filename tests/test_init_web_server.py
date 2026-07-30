@@ -471,6 +471,8 @@ def test_public_web_success_reports_pre_provider_discovery_authorization() -> No
         instance.close()
 
 
+@pytest.mark.explicit_e2e
+@pytest.mark.timeout(900)
 def test_real_loopback_public_web_tavily_replays_before_credential_or_provider(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,

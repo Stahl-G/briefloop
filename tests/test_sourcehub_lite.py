@@ -168,6 +168,8 @@ def test_retired_sources_no_workspace_bypass_reaches_fail_closed_handler(
     _require(_workspace_file_bytes(tmp_path) == before, "workspace changed")
 
 
+@pytest.mark.explicit_e2e
+@pytest.mark.timeout(900)
 def test_retired_sources_source_and_non_editable_wheel_parity(
     tmp_path: Path,
 ) -> None:

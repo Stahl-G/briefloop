@@ -670,6 +670,8 @@ def test_guidance_status_transition_table_and_ui_actions_fail_closed(
     assert approved["status_revision_id"] != deactivated["status_revision_id"]
 
 
+@pytest.mark.explicit_e2e
+@pytest.mark.timeout(900)
 @pytest.mark.skipif(
     not supports_retained_directory_publication(),
     reason="successful finalized-local Human review is unavailable on this platform",

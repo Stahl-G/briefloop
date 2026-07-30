@@ -40,7 +40,10 @@ from multi_agent_brief.semantic_evaluator.adapters.anthropic_messages import (
     ANTHROPIC_PROVIDER_ID,
     canonical_messages_endpoint_v1,
 )
-from multi_agent_brief.semantic_evaluator.archive import verify_shadow_archive
+from multi_agent_brief.semantic_evaluator.archive import (
+    trial_archive_path,
+    verify_shadow_archive,
+)
 from multi_agent_brief.semantic_evaluator.contracts import (
     BoundedContext,
     BoundedRequirement,
@@ -449,6 +452,41 @@ def resolve_current_post_final_assessment_request(
     return request
 
 
+def resolve_current_post_final_assessment_result(
+    snapshot: Any,
+    request: PostFinalAssessmentRequestRecord,
+) -> PostFinalAssessmentResultRecord | None:
+    """Resolve one exact Store-qualified result without touching its archive."""
+
+    run_results = [
+        item
+        for item in snapshot.post_final_assessment_results
+        if item.run_id == request.run_id
+    ]
+    matches = [
+        item
+        for item in run_results
+        if item.assessment_request_id == request.assessment_request_id
+    ]
+    if len(matches) > 1 or len(matches) != len(run_results):
+        raise PostFinalAssessmentError("control_store_integrity_invalid")
+    if not matches:
+        return None
+    result = matches[0]
+    if (
+        result.policy_revision_id != request.policy_revision_id
+        or result.finalized_facts_fingerprint != request.finalized_facts_fingerprint
+        or result.finalized_lineage_fingerprint != request.finalized_lineage_fingerprint
+        or result.result_fingerprint
+        != _record_fingerprint(
+            result.model_dump(mode="json", warnings="error"),
+            "result_fingerprint",
+        )
+    ):
+        raise PostFinalAssessmentError("post_final_assessment_binding_invalid")
+    return result
+
+
 def _resolve_current_post_final_assessment_policy(
     snapshot: Any,
     run_id: str,
@@ -820,19 +858,18 @@ class PostFinalAssessmentService:
                 "status": "invalid",
                 "reason_code": "post_final_assessment_policy_conflict",
             }
-        result = (
-            next(
-                (
-                    item
-                    for item in snapshot.post_final_assessment_results
-                    if request is not None
-                    and item.assessment_request_id == request.assessment_request_id
-                ),
-                None,
+        try:
+            result = (
+                resolve_current_post_final_assessment_result(snapshot, request)
+                if request is not None
+                else None
             )
-            if request is not None
-            else None
-        )
+        except PostFinalAssessmentError as exc:
+            return {
+                "ok": False,
+                "status": "invalid",
+                "reason_code": str(exc),
+            }
         status = (
             "not_requested"
             if policy is None or not policy.enabled
@@ -891,6 +928,22 @@ class PostFinalAssessmentService:
                 "status": "invalid",
                 "reason_code": "post_final_assessment_policy_conflict",
             }
+        if existing is not None:
+            try:
+                stored_result = resolve_current_post_final_assessment_result(
+                    snapshot,
+                    existing,
+                )
+            except PostFinalAssessmentError as exc:
+                return {"ok": False, "status": "invalid", "reason_code": str(exc)}
+            if stored_result is not None:
+                if self._result_has_zero_advice(stored_result):
+                    return self._stored_result_replay(stored_result)
+                return self._qualify_archive(
+                    facts,
+                    existing,
+                    str(trial_archive_path(self._archive_root, existing.trial_id)),
+                )
         try:
             config = InstrumentConfig.model_validate(
                 policy.instrument_config, strict=True
@@ -1000,6 +1053,21 @@ class PostFinalAssessmentService:
                 "status": "invalid",
                 "reason_code": "post_final_assessment_policy_conflict",
             }
+        try:
+            stored_result = resolve_current_post_final_assessment_result(
+                snapshot,
+                request,
+            )
+        except PostFinalAssessmentError as exc:
+            return {"ok": False, "status": "invalid", "reason_code": str(exc)}
+        if stored_result is not None:
+            if self._result_has_zero_advice(stored_result):
+                return self._stored_result_replay(stored_result)
+            return self._qualify_archive(
+                facts,
+                request,
+                str(trial_archive_path(self._archive_root, request.trial_id)),
+            )
         config = InstrumentConfig.model_validate(policy.instrument_config, strict=True)
         prepared = prepare_shadow_run_from_bytes(
             report_bytes=facts.report.markdown_utf8,
@@ -1206,28 +1274,12 @@ class PostFinalAssessmentService:
                 "status": "invalid",
                 "reason_code": "post_final_assessment_policy_conflict",
             }
-        existing_results = [
-            item
-            for item in snapshot.post_final_assessment_results
-            if item.assessment_request_id == request.assessment_request_id
-        ]
-        if len(existing_results) > 1:
-            return {
-                "ok": False,
-                "status": "invalid",
-                "reason_code": "control_store_integrity_invalid",
-            }
-        existing = existing_results[0] if existing_results else None
-        if existing is not None and (
-            existing.finalized_facts_fingerprint != request.finalized_facts_fingerprint
-            or existing.finalized_lineage_fingerprint
-            != request.finalized_lineage_fingerprint
-        ):
-            return {
-                "ok": False,
-                "status": "invalid",
-                "reason_code": "control_store_integrity_invalid",
-            }
+        try:
+            existing = resolve_current_post_final_assessment_result(snapshot, request)
+        except PostFinalAssessmentError as exc:
+            return {"ok": False, "status": "invalid", "reason_code": str(exc)}
+        if existing is not None and self._result_has_zero_advice(existing):
+            return self._stored_result_replay(existing)
         try:
             archive = verify_shadow_archive(Path(archive_path))
             view = build_laj_reader_view(
@@ -1351,6 +1403,21 @@ class PostFinalAssessmentService:
         }
 
     @staticmethod
+    def _result_has_zero_advice(result: PostFinalAssessmentResultRecord) -> bool:
+        return result.finding_count == 0 and result.withheld_finding_count == 0
+
+    @staticmethod
+    def _stored_result_replay(
+        result: PostFinalAssessmentResultRecord,
+    ) -> dict[str, object]:
+        return {
+            "ok": True,
+            "replayed": True,
+            "status": result.terminal_evidence_class,
+            "assessment_result_id": result.assessment_result_id,
+        }
+
+    @staticmethod
     def _result_matches_verified_evidence(
         result: PostFinalAssessmentResultRecord,
         request: PostFinalAssessmentRequestRecord,
@@ -1392,4 +1459,5 @@ __all__ = [
     "PostFinalAssessmentService",
     "post_final_assessment_archive_root",
     "resolve_current_post_final_assessment_policy",
+    "resolve_current_post_final_assessment_result",
 ]

@@ -42,7 +42,7 @@ from multi_agent_brief.semantic_evaluator.unit_planner import (
 )
 
 
-PROMPT_ASSEMBLER_VERSION = "dimension_prompt_assembler_v3"
+PROMPT_ASSEMBLER_VERSION = "dimension_prompt_assembler_v4"
 CANARY_DERIVATION_VERSION = "semantic_evaluator_canary_v1"
 
 
@@ -168,6 +168,32 @@ def dimension_prompt_sha256() -> str:
     return resource_sha256("prompts", DIMENSION_PROMPT_RESOURCE)
 
 
+def _provider_reader_artifact_projection(
+    reader_artifact: ReaderArtifact,
+) -> dict[str, object]:
+    """Project frozen reader identity without global block offsets."""
+
+    return {
+        "schema_version": reader_artifact.schema_version,
+        "artifact_id": reader_artifact.artifact_id,
+        "report_sha256": reader_artifact.report_sha256,
+        "language": reader_artifact.language,
+        "format": reader_artifact.format,
+        "normalized_text_sha256": reader_artifact.normalized_text_sha256,
+        "blocks": [
+            {
+                "block_id": block.block_id,
+                "ordinal": block.ordinal,
+                "section_path": list(block.section_path),
+                "role": block.role,
+                "text": block.text,
+                "text_sha256": block.text_sha256,
+            }
+            for block in reader_artifact.blocks
+        ],
+    }
+
+
 def build_dimension_prompt(
     *,
     reader_artifact: ReaderArtifact,
@@ -206,7 +232,7 @@ def build_dimension_prompt(
     ):
         raise ValueError("dimension_prompt_plan_binding_invalid")
     report_data = {
-        "artifact": reader_artifact.model_dump(mode="json", warnings="error"),
+        "artifact": _provider_reader_artifact_projection(reader_artifact),
         "normalized_text": normalized_text,
         "span_locator_contract": {
             "offset_basis": "block_text_zero_based_half_open",

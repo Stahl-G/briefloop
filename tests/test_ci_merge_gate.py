@@ -10,6 +10,7 @@ import yaml
 
 ROOT = Path(__file__).resolve().parent.parent
 WORKFLOW_PATH = ROOT / ".github" / "workflows" / "tests.yml"
+PYPROJECT_PATH = ROOT / "pyproject.toml"
 REQUIRED_CODE_JOBS = {
     "test",
     "non-dev-smoke",
@@ -136,6 +137,32 @@ def test_candidate_classification_pins_supported_matrix() -> None:
     )
 
 
+def test_matrix_pytest_harness_excludes_explicit_e2e_and_is_diagnostic() -> None:
+    workflow = _workflow()
+    test_job = workflow["jobs"]["test"]
+    test_step = next(
+        step for step in test_job["steps"] if step.get("name") == "Tests"
+    )
+    command = " ".join(test_step["run"].split())
+
+    assert test_job["timeout-minutes"] == 60
+    assert test_step["timeout-minutes"] == 45
+    assert "${{ runner.os == 'Windows' && '-vv' || '-q' }}" in command
+    assert "-n auto" in command
+    assert "--dist worksteal" in command
+    assert '-m "not explicit_e2e"' in command
+    assert "--max-worker-restart=0" in command
+    assert "-o faulthandler_timeout=240" in command
+    assert "--timeout=" not in command
+
+    pyproject = PYPROJECT_PATH.read_text(encoding="utf-8")
+    assert '  "pytest-timeout>=2.4,<3",' in pyproject
+    assert (
+        '"explicit_e2e: heavyweight end-to-end evidence run only when '
+        'explicitly authorized; excluded from normal PR CI",'
+    ) in pyproject
+
+
 def test_draft_and_candidate_jobs_use_closed_conditions() -> None:
     jobs = _workflow()["jobs"]
     docs_condition = jobs["docs-only"]["if"]
@@ -256,5 +283,3 @@ def test_merge_gate_rejects_failed_classification(
 ) -> None:
     with pytest.raises(SystemExit, match="dependency mismatch"):
         _execute_gate(monkeypatch, results={"changes": bad_result})
-
-

@@ -815,7 +815,7 @@ def test_terminal_action_revision_attests_exact_assessed_facts_and_replays(
 
     workspace, run_id, _clock = _finalized_local_workspace(tmp_path, monkeypatch)
     calls: list[tuple[str, int]] = []
-    service = _fixture_service(workspace, calls)
+    service = _fixture_service(workspace, calls, terminal_mode="finding")
     archive_root = service._archive_root
     assert archive_root == post_final_assessment_archive_root(workspace / ".")
     assert archive_root.is_absolute()
@@ -1013,22 +1013,22 @@ def test_terminal_action_revision_attests_exact_assessed_facts_and_replays(
         assert store.current_revision == revision_before_tamper_retry
     assert len(calls) == 9
 
-    # A missing local archive after a durable result remains recovery-only: it
-    # cannot turn retry into a second provider attempt or rewrite Store truth.
+    # A missing archive for a durable nonzero result fails closed without
+    # current preparation, a provider attempt, or a Store rewrite.
     import shutil
 
     shutil.rmtree(archive_path)
     missing_assess = replay.assess()
     assert missing_assess == {
         "ok": False,
-        "status": "pending",
-        "assessment_request_id": request.assessment_request_id,
+        "status": "invalid",
+        "reason_code": "archive_verification_failed",
     }
     missing = replay.retry(request.assessment_request_id)
     assert missing == {
         "ok": False,
-        "status": "pending",
-        "assessment_request_id": request.assessment_request_id,
+        "status": "invalid",
+        "reason_code": "archive_verification_failed",
     }
     assert len(calls) == 9
 
@@ -1157,7 +1157,7 @@ def test_existing_result_rejects_a_different_self_valid_archive_before_replay(
 
     workspace, run_id, _clock = _finalized_local_workspace(tmp_path, monkeypatch)
     primary_calls: list[tuple[str, int]] = []
-    service = _fixture_service(workspace, primary_calls)
+    service = _fixture_service(workspace, primary_calls, terminal_mode="finding")
     assert service.policy_set(_policy_payload())["ok"] is True
     monkeypatch.setattr(runner_module.metadata, "version", lambda _name: "0.104.1")
     monkeypatch.setenv(ANTHROPIC_API_KEY_SETTING, "public-synthetic-key")
@@ -1336,17 +1336,32 @@ def test_terminal_provider_evidence_is_qualified_without_advice_or_redial(
     assert len(calls) == 9
     projection = build_post_final_assessment_projection(workspace)
     assert projection.lifecycle_present is True
-    assert projection.status in {"unavailable", "abstained"}
+    assert projection.status == expected_class
+    assert projection.view.status == "unavailable"
+    assert projection.view.archive_verified is False
+    assert projection.view.binding is None
     assert projection.view.finding_count == 0
     assert projection.view.withheld_finding_count == 0
 
     with SQLiteControlStore.open(workspace / "briefloop.db") as store:
         snapshot = store.load_snapshot(run_id)
+        revision_before = store.current_revision
+    request = snapshot.post_final_assessment_requests[0]
     result = snapshot.post_final_assessment_results[0]
     assert result.terminal_evidence_class == expected_class
     assert result.finding_count == result.withheld_finding_count == 0
+    assert projection.view.reason_codes == result.reason_codes
+    database_before = (workspace / "briefloop.db").read_bytes()
+    shutil.rmtree(trial_archive_path(service._archive_root, request.trial_id))
 
     monkeypatch.delenv(ANTHROPIC_API_KEY_SETTING, raising=False)
+    monkeypatch.setattr(
+        post_final_assessment_module,
+        "prepare_shadow_run_from_bytes",
+        lambda **_kwargs: (_ for _ in ()).throw(
+            AssertionError("terminal Store replay touched current preparation")
+        ),
+    )
     monkeypatch.setattr(
         runner_module.metadata,
         "version",
@@ -1360,7 +1375,84 @@ def test_terminal_provider_evidence_is_qualified_without_advice_or_redial(
             AssertionError("terminal evidence replay touched adapter")
         ),
     )
+    assessed = replay.assess()
+    assert assessed["ok"] is True and assessed["replayed"] is True
+    assert assessed["status"] == expected_class
     retry = replay.retry(result.assessment_request_id)
     assert retry["ok"] is True and retry["replayed"] is True
     assert retry["status"] == expected_class
+    replayed_projection = build_post_final_assessment_projection(workspace)
+    assert replayed_projection.status == expected_class
+    assert replayed_projection.view.archive_verified is False
+    assert replayed_projection.view.reason_codes == result.reason_codes
+    semantic = build_brief_pages_data(workspace)["semantic"]
+    assert semantic["status"] == expected_class
+    assert semantic["store_qualified"] is True
+    assert semantic["coverage"]["finding_count"] == 0
+    assert semantic["findings"] == []
+    assert semantic["reason_codes"] == result.reason_codes
+    assert semantic["review_actions_available"] is False
+    assert (workspace / "briefloop.db").read_bytes() == database_before
+    with SQLiteControlStore.open(workspace / "briefloop.db") as store:
+        assert store.current_revision == revision_before
+    assert len(calls) == 9
+
+
+def test_store_result_binding_mismatch_stops_before_current_preparation(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    workspace, run_id, _clock = _finalized_local_workspace(tmp_path, monkeypatch)
+    calls: list[tuple[str, int]] = []
+    service = _fixture_service(workspace, calls, terminal_mode="transport_failure")
+    assert service.policy_set(_policy_payload())["ok"] is True
+    monkeypatch.setattr(runner_module.metadata, "version", lambda _name: "0.104.1")
+    monkeypatch.setenv(ANTHROPIC_API_KEY_SETTING, "public-synthetic-key")
+    first = service.assess()
+    assert first["ok"] is True and first["status"] == "provider_failed"
+
+    loaded = service._load()
+    facts, snapshot, binding, workspace_id, history, action = loaded
+    request = snapshot.post_final_assessment_requests[0]
+    result = snapshot.post_final_assessment_results[0]
+    mismatched = result.model_copy(update={"finalized_lineage_fingerprint": "f" * 64})
+    mismatched_snapshot = replace(
+        snapshot,
+        post_final_assessment_results=(mismatched,),
+    )
+    database_before = (workspace / "briefloop.db").read_bytes()
+    with SQLiteControlStore.open(workspace / "briefloop.db") as store:
+        revision_before = store.current_revision
+
+    replay = PostFinalAssessmentService(workspace)
+    monkeypatch.setattr(
+        replay,
+        "_load",
+        lambda: (
+            facts,
+            mismatched_snapshot,
+            binding,
+            workspace_id,
+            history,
+            action,
+        ),
+    )
+    monkeypatch.setattr(
+        post_final_assessment_module,
+        "prepare_shadow_run_from_bytes",
+        lambda **_kwargs: (_ for _ in ()).throw(
+            AssertionError("mismatched Store result touched current preparation")
+        ),
+    )
+    expected = {
+        "ok": False,
+        "status": "invalid",
+        "reason_code": "post_final_assessment_binding_invalid",
+    }
+    assert replay.assess() == expected
+    assert replay.retry(request.assessment_request_id) == expected
+    assert (workspace / "briefloop.db").read_bytes() == database_before
+    with SQLiteControlStore.open(workspace / "briefloop.db") as store:
+        assert store.current_revision == revision_before
+        assert store.load_snapshot(run_id).post_final_assessment_results == (result,)
     assert len(calls) == 9
