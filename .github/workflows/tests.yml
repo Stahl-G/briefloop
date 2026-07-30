@@ -174,6 +174,7 @@ jobs:
       needs.changes.outputs.run_candidate == 'true' &&
       needs.changes.outputs.docs_only != 'true'
     runs-on: ${{ matrix.os }}
+    timeout-minutes: 60
     strategy:
       fail-fast: false
       matrix: ${{ fromJSON(needs.changes.outputs.test_matrix) }}
@@ -216,7 +217,15 @@ jobs:
         run: python scripts/check_terms.py
 
       - name: Tests
-        run: python -m pytest -q -n auto --dist worksteal
+        timeout-minutes: 45
+        run: >-
+          python -m pytest
+          ${{ runner.os == 'Windows' && '-vv' || '-q' }}
+          -n auto
+          --dist worksteal
+          --max-worker-restart=0
+          -o faulthandler_timeout=240
+          --timeout=300
 
       - name: Agent config check
         run: python scripts/generate_agent_configs.py --check
