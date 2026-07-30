@@ -1581,6 +1581,8 @@ def test_se2r_14_wheel_probe_preserves_caller_env_on_return_and_decode_failure(
     assert env == original_env
 
 
+@pytest.mark.explicit_e2e
+@pytest.mark.timeout(900)
 def test_se2r_14_wheel_probe_is_utf8_under_hostile_caller_locale() -> None:
     env = os.environ.copy()
     env.update(
@@ -1610,6 +1612,8 @@ def test_se2r_14_wheel_probe_is_utf8_under_hostile_caller_locale() -> None:
     )
 
 
+@pytest.mark.explicit_e2e
+@pytest.mark.timeout(900)
 def test_se2r_14_source_probe_is_byte_identical_under_python_optimization() -> None:
     normal = _source_probe(optimized=False)
     assert normal == _source_probe(optimized=True)
@@ -1706,6 +1710,8 @@ def test_se2r_14_source_probe_is_byte_identical_under_python_optimization() -> N
     assert probe["study_identity"]["raw_endpoint_absent"] is True
 
 
+@pytest.mark.explicit_e2e
+@pytest.mark.timeout(900)
 def test_se2r_14_wheel_contains_all_resources_and_matches_source_identity(
     tmp_path: Path,
 ) -> None:

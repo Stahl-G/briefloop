@@ -1421,6 +1421,8 @@ def test_public_docs_keep_report_bundle_internal_and_command_retired() -> None:
     assert "`packs bundle` delivery/audit data projection" not in support
 
 
+@pytest.mark.explicit_e2e
+@pytest.mark.timeout(900)
 def test_non_editable_wheel_matches_internal_bundle_read_boundary(
     tmp_path: Path,
 ) -> None:

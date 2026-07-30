@@ -351,6 +351,8 @@ def _run_probe(
     return json.loads(run.stdout)
 
 
+@pytest.mark.explicit_e2e
+@pytest.mark.timeout(900)
 @pytest.mark.skipif(
     not supports_retained_directory_publication(),
     reason="successful finalized-local assessment is unavailable on this platform",

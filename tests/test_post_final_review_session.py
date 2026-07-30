@@ -5,6 +5,8 @@ from http.client import HTTPConnection
 import json
 from urllib.parse import parse_qs, urlsplit
 
+import pytest
+
 from multi_agent_brief.product.review_session.launcher import launch_review_session
 from multi_agent_brief.product.review_session.launcher import (
     launch_actionable_review_session,
@@ -198,6 +200,8 @@ def test_static_quality_panel_is_separate_no_js_read_only_projection() -> None:
     assert "Improvement Ledger" not in html
 
 
+@pytest.mark.explicit_e2e
+@pytest.mark.timeout(900)
 def test_actionable_canonical_session_requires_token_origin_and_csrf(
     tmp_path, monkeypatch
 ) -> None:

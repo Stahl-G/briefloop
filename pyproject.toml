@@ -119,6 +119,10 @@ multi_agent_brief = [
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 pythonpath = ["src"]
+markers = [
+  "explicit_e2e: heavyweight end-to-end evidence run only when explicitly authorized; excluded from normal PR CI",
+  "timeout(seconds): per-node wall-clock bound supplied by pytest-timeout",
+]
 
 [tool.ruff]
 target-version = "py312"

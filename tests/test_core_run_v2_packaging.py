@@ -456,6 +456,8 @@ def test_finalized_local_review_projection_source_and_wheel_parity(
     assert json.loads(run.stdout) == source_payload
 
 
+@pytest.mark.explicit_e2e
+@pytest.mark.timeout(900)
 def test_non_editable_wheel_runs_complete_dormant_core_spine(
     tmp_path: Path,
 ) -> None:

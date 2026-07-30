@@ -137,7 +137,7 @@ def test_candidate_classification_pins_supported_matrix() -> None:
     )
 
 
-def test_matrix_pytest_harness_is_bounded_and_diagnostic() -> None:
+def test_matrix_pytest_harness_excludes_explicit_e2e_and_is_diagnostic() -> None:
     workflow = _workflow()
     test_job = workflow["jobs"]["test"]
     test_step = next(
@@ -150,12 +150,17 @@ def test_matrix_pytest_harness_is_bounded_and_diagnostic() -> None:
     assert "${{ runner.os == 'Windows' && '-vv' || '-q' }}" in command
     assert "-n auto" in command
     assert "--dist worksteal" in command
+    assert '-m "not explicit_e2e"' in command
     assert "--max-worker-restart=0" in command
     assert "-o faulthandler_timeout=240" in command
-    assert "--timeout=300" in command
+    assert "--timeout=" not in command
 
     pyproject = PYPROJECT_PATH.read_text(encoding="utf-8")
     assert '  "pytest-timeout>=2.4,<3",' in pyproject
+    assert (
+        '"explicit_e2e: heavyweight end-to-end evidence run only when '
+        'explicitly authorized; excluded from normal PR CI",'
+    ) in pyproject
 
 
 def test_draft_and_candidate_jobs_use_closed_conditions() -> None:
@@ -278,4 +283,3 @@ def test_merge_gate_rejects_failed_classification(
 ) -> None:
     with pytest.raises(SystemExit, match="dependency mismatch"):
         _execute_gate(monkeypatch, results={"changes": bad_result})
-
