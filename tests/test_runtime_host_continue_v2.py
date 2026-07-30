@@ -54,6 +54,9 @@ from multi_agent_brief.runtime_host_v2.errors import RuntimeHostError
 from multi_agent_brief.runtime_host_v2.initialization import (
     initialize_or_open_runtime,
 )
+from multi_agent_brief.runtime_host_v2.contracts import (
+    RuntimeSourceAcquisitionRecoveryRequest,
+)
 from multi_agent_brief.runtime_host_v2 import service as host_service
 from multi_agent_brief.runtime_host_v2.service import RuntimeHostService
 from multi_agent_brief.runtime_host_v2.submission import source_stage_root
@@ -231,15 +234,16 @@ def _discovery_stage_identity(
     with SQLiteControlStore.open(workspace / "briefloop.db") as store:
         head = store.load_workspace_run_head()
         assert head is not None
-        discovery = store.load_snapshot(
-            head.current_run_id
-        ).run_source_discovery_authorizations[0]
+        snapshot = store.load_snapshot(head.current_run_id)
+        discovery = snapshot.run_source_discovery_authorizations[0]
+        attempt = snapshot.run_source_acquisition_attempt_authorizations[-1]
     return canonical_fingerprint(
         {
             "kind": "discovery_source_pack",
             "run_id": action.run_id,
             "action_fingerprint": action.action_fingerprint,
             "discovery_authorization_id": discovery.authorization_id,
+            "attempt_authorization_id": attempt.attempt_authorization_id,
         }
     )
 
@@ -494,6 +498,8 @@ def _transferred_discovery_source_action(workspace: Path) -> CoreRunNextAction:
     assert verified.snapshot.sources == ()
     assert len(verified.snapshot.run_source_discovery_authorizations) == 1
     discovery = verified.snapshot.run_source_discovery_authorizations[0]
+    assert len(verified.snapshot.run_source_acquisition_attempt_authorizations) == 1
+    attempt = verified.snapshot.run_source_acquisition_attempt_authorizations[0]
     route = next(
         item
         for item in verified.source_plan.routes
@@ -529,6 +535,7 @@ def _transferred_discovery_source_action(workspace: Path) -> CoreRunNextAction:
             "run_id": action.run_id,
             "action_fingerprint": action.action_fingerprint,
             "discovery_authorization_id": discovery.authorization_id,
+            "attempt_authorization_id": attempt.attempt_authorization_id,
         }
     )
     stage_fingerprint = canonical_fingerprint(
@@ -536,8 +543,10 @@ def _transferred_discovery_source_action(workspace: Path) -> CoreRunNextAction:
             "action": action.model_dump(mode="json", exclude_unset=False),
             "route_fingerprint": route.route_fingerprint,
             "discovery_request_fingerprint": discovery.request_fingerprint,
+            "attempt_authorization_id": attempt.attempt_authorization_id,
         }
     )
+    collection = _tavily_collection([_tavily_item(durable=True)])
     stage_source_pack_bytes(
         workspace,
         stage_identity=stage_identity,
@@ -557,6 +566,9 @@ def _transferred_discovery_source_action(workspace: Path) -> CoreRunNextAction:
                 strict=True,
             )
         ),
+        provider_response_bytes=collection.raw_response,
+        provider_status_code=collection.status_code,
+        stage_kind="provider_outcome",
     )
     return action
 
@@ -713,6 +725,7 @@ def test_discovery_missing_runtime_secret_is_zero_write(
     _advance_discovery_to_source_action(workspace)
     (workspace / ".env").unlink()
     revision = _revision(workspace)
+    database_before = (workspace / "briefloop.db").read_bytes()
     calls = 0
 
     def collect(_provider, _query, _config):
@@ -728,6 +741,18 @@ def test_discovery_missing_runtime_secret_is_zero_write(
     assert result.reason_code == "source_provider_secret_unavailable"
     assert calls == 0
     assert _revision(workspace) == revision
+    assert (workspace / "briefloop.db").read_bytes() == database_before
+    with SQLiteControlStore.open(workspace / "briefloop.db") as store:
+        head = store.load_workspace_run_head()
+        assert head is not None
+        snapshot = store.load_snapshot(head.current_run_id)
+    assert len(snapshot.run_source_acquisition_attempt_authorizations) == 1
+    assert not [
+        event
+        for event in snapshot.events
+        if event.intake_binding is not None
+        and event.intake_binding.source_acquisition_failure is not None
+    ]
 
 
 @pytest.mark.parametrize("entrypoint", ["source", "pack"])
@@ -1790,12 +1815,10 @@ def test_discovery_active_invocation_invalid_stage_fails_without_provider_recall
         lambda *_args, **_kwargs: pytest.fail("provider must not be recalled"),
     )
 
-    expected = (
-        "source_acquisition_outcome_unknown"
-        if stage_damage == "missing"
-        else "source_provider_result_invalid"
-    )
-    with pytest.raises(RuntimeHostError, match=expected):
+    with pytest.raises(
+        RuntimeHostError,
+        match="source_acquisition_outcome_unknown",
+    ):
         _service(workspace).apply_current(_service(workspace).next_action())
 
     assert provider_calls == 1
@@ -1845,7 +1868,10 @@ def test_discovery_tampered_precommit_stage_fails_closed_without_provider_recall
     content_path.write_bytes(b"tampered staged content")
     (workspace / ".env").unlink()
 
-    with pytest.raises(RuntimeHostError, match="source_provider_result_invalid"):
+    with pytest.raises(
+        RuntimeHostError,
+        match="source_acquisition_outcome_unknown",
+    ):
         _service(workspace).apply_current(_service(workspace).next_action())
 
     assert provider_calls == 1
@@ -1962,7 +1988,7 @@ def test_discovery_promotion_failure_rolls_back_all_authority_rows(
         for item in snapshot.invocations
         if item.role_id == "source-provider" and item.status == "failed"
     ]
-    assert len(failures) == 1
+    assert failures == []
 
 
 @_REQUIRES_RETAINED_PUBLICATION
@@ -1980,8 +2006,14 @@ def test_discovery_all_snippets_fail_without_promotion(
     )
     action = _advance_discovery_to_source_action(workspace)
 
-    with pytest.raises(RuntimeHostError, match="source_pack_empty"):
-        _service(workspace).apply_current(action)
+    result = _service(workspace).apply_current(action)
+
+    assert result.status == "rejected_recorded"
+    assert result.next_action.effect_kind == "source_acquisition_recovery"
+    assert (
+        result.next_action.reason_code
+        == "source_acquisition_recovery_decision_required"
+    )
 
     with SQLiteControlStore.open(workspace / "briefloop.db") as store:
         head = store.load_workspace_run_head()
@@ -1989,6 +2021,13 @@ def test_discovery_all_snippets_fail_without_promotion(
         snapshot = store.load_snapshot(head.current_run_id)
     assert snapshot.sources == ()
     assert snapshot.run_execution_authorizations == ()
+    evidence = snapshot.events[-1].intake_binding.source_acquisition_failure
+    assert evidence is not None
+    assert evidence.failure_class == "provider_results_without_durable_content"
+    assert evidence.result_count == 1
+    assert evidence.durable_content_count == 0
+    assert evidence.claims_eligible_count == 0
+    assert evidence.provider_response_artifact is not None
     assert (
         len(
             [
@@ -2014,8 +2053,10 @@ def test_discovery_empty_provider_result_fails_without_promotion(
     )
     action = _advance_discovery_to_source_action(workspace)
 
-    with pytest.raises(RuntimeHostError, match="source_pack_empty"):
-        _service(workspace).apply_current(action)
+    result = _service(workspace).apply_current(action)
+
+    assert result.status == "rejected_recorded"
+    assert result.next_action.effect_kind == "source_acquisition_recovery"
 
     with SQLiteControlStore.open(workspace / "briefloop.db") as store:
         head = store.load_workspace_run_head()
@@ -2023,6 +2064,12 @@ def test_discovery_empty_provider_result_fails_without_promotion(
         snapshot = store.load_snapshot(head.current_run_id)
     assert snapshot.sources == ()
     assert snapshot.run_execution_authorizations == ()
+    evidence = snapshot.events[-1].intake_binding.source_acquisition_failure
+    assert evidence is not None
+    assert evidence.failure_class == "provider_results_empty"
+    assert evidence.result_count == 0
+    assert evidence.durable_content_count == 0
+    assert evidence.provider_response_artifact is not None
     assert (
         len(
             [
@@ -2036,7 +2083,7 @@ def test_discovery_empty_provider_result_fails_without_promotion(
 
 
 @_REQUIRES_RETAINED_PUBLICATION
-def test_discovery_empty_provider_result_replays_stable_human_source_fallback(
+def test_discovery_empty_provider_result_replays_stable_recovery_choice(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -2056,8 +2103,8 @@ def test_discovery_empty_provider_result_replays_stable_human_source_fallback(
 
     failed = service.continue_authorized()
 
-    assert failed.status == "needs_attention"
-    assert failed.reason_code == "source_pack_empty"
+    assert failed.status == "needs_human"
+    assert failed.reason_code == "source_acquisition_recovery_decision_required"
     assert provider_calls == 1
     current = service.next_action()
     assert (
@@ -2067,9 +2114,9 @@ def test_discovery_empty_provider_result_replays_stable_human_source_fallback(
         current.reason_code,
     ) == (
         "human_decision",
-        "source_input_required",
+        "source_acquisition_recovery",
         "source-discovery",
-        "human_source_material_required",
+        "source_acquisition_recovery_decision_required",
     )
 
     (workspace / ".env").unlink()
@@ -2081,7 +2128,7 @@ def test_discovery_empty_provider_result_replays_stable_human_source_fallback(
 
     assert first == second
     assert first.status == "needs_human"
-    assert first.reason_code == "human_source_material_required"
+    assert first.reason_code == "source_acquisition_recovery_decision_required"
     assert first.trace.next_action == current
     assert provider_calls == 1
     assert _revision(workspace) == before_revision
@@ -2103,6 +2150,206 @@ def test_discovery_empty_provider_result_replays_stable_human_source_fallback(
 
 
 @_REQUIRES_RETAINED_PUBLICATION
+def test_discovery_next_attempt_requires_exact_human_authorization_and_replays(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    workspace = _discovery_workspace(tmp_path)
+    env_bytes = (workspace / ".env").read_bytes()
+    provider_calls = 0
+
+    def collect(_provider, _query, _config):
+        nonlocal provider_calls
+        provider_calls += 1
+        return _tavily_collection(
+            [] if provider_calls == 1 else [_tavily_item(durable=True)]
+        )
+
+    monkeypatch.setattr(WebSearchProvider, "collect_with_response", collect)
+    _advance_discovery_to_source_action(workspace)
+    service = _service(workspace)
+
+    failed = service.continue_authorized()
+
+    assert failed.status == "needs_human"
+    assert provider_calls == 1
+    action = service.next_action()
+    assert action.effect_kind == "source_acquisition_recovery"
+    with SQLiteControlStore.open(workspace / "briefloop.db") as store:
+        head = store.load_workspace_run_head()
+        assert head is not None
+        snapshot = store.load_snapshot(head.current_run_id)
+    assert len(snapshot.run_source_acquisition_attempt_authorizations) == 1
+    previous = snapshot.run_source_acquisition_attempt_authorizations[0]
+    recovery = RuntimeSourceAcquisitionRecoveryRequest.model_validate(
+        {
+            "schema_version": (RuntimeSourceAcquisitionRecoveryRequest.schema_id),
+            "request_id": "REQ-HUMAN-TAVILY-ATTEMPT-002",
+            "run_id": action.run_id,
+            "expected_store_revision": action.store_revision,
+            "expected_action_fingerprint": action.action_fingerprint,
+            "decision": "authorize_next_tavily_attempt",
+            "previous_attempt_authorization_id": (previous.attempt_authorization_id),
+            "human_confirmation": True,
+            "provider_cost_status": "not_reported_acknowledged",
+            "human_source_pack": None,
+        },
+        strict=True,
+    )
+
+    authorized = service.apply_current(action, human_request=recovery)
+    replayed = service.apply_current(action, human_request=recovery)
+
+    assert authorized.status == "committed"
+    assert replayed.status == "replayed"
+    assert provider_calls == 1
+    conflicting = recovery.model_copy(
+        update={
+            "previous_attempt_authorization_id": (
+                "SOURCE-ACQUIRE-ATTEMPT-AUTH-CONFLICT"
+            )
+        }
+    )
+    with pytest.raises(RuntimeHostError, match="submission_replay_conflict"):
+        service.apply_current(action, human_request=conflicting)
+    assert provider_calls == 1
+    with SQLiteControlStore.open(workspace / "briefloop.db") as store:
+        head = store.load_workspace_run_head()
+        assert head is not None
+        snapshot = store.load_snapshot(head.current_run_id)
+    attempts = snapshot.run_source_acquisition_attempt_authorizations
+    assert [item.attempt_ordinal for item in attempts] == [1, 2]
+    assert (
+        attempts[1].previous_attempt_authorization_id
+        == attempts[0].attempt_authorization_id
+    )
+    assert attempts[1].accepted_transaction_id == recovery.request_id
+    second_action = service.next_action()
+    assert second_action.effect_kind == "source_acquire"
+    assert (
+        second_action.source_acquisition_attempt_authorization_id
+        == attempts[1].attempt_authorization_id
+    )
+
+    promoted = service.continue_authorized()
+
+    assert promoted.status == "role_work_required", promoted.reason_code
+    assert provider_calls == 2
+    assert (workspace / ".env").read_bytes() == env_bytes
+    replay = service.apply_current(second_action)
+    assert replay.status == "replayed"
+    assert provider_calls == 2
+    with SQLiteControlStore.open(workspace / "briefloop.db") as store:
+        head = store.load_workspace_run_head()
+        assert head is not None
+        snapshot = store.load_snapshot(head.current_run_id)
+    assert len(snapshot.run_execution_authorizations) == 1
+    assert len(snapshot.sources) == 1
+
+
+@_REQUIRES_RETAINED_PUBLICATION
+def test_discovery_recovery_accepts_explicit_human_source_pack_without_redial(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    workspace = _discovery_workspace(tmp_path)
+    provider_calls = 0
+
+    def collect(_provider, _query, _config):
+        nonlocal provider_calls
+        provider_calls += 1
+        return _tavily_collection([])
+
+    monkeypatch.setattr(WebSearchProvider, "collect_with_response", collect)
+    _advance_discovery_to_source_action(workspace)
+    service = _service(workspace)
+    assert service.continue_authorized().status == "needs_human"
+    action = service.next_action()
+    content = b"Human-selected public source after the failed provider attempt.\n"
+    source_path = workspace / "input" / "recovery-source.txt"
+    source_path.write_bytes(content)
+    content_sha256 = hashlib.sha256(content).hexdigest()
+    manifest_payload = {
+        "schema_version": "example.source_manifest.v1",
+        "sources": [
+            {
+                "source_id": "SRC-RECOVERY-001",
+                "title": "Human recovery source",
+                "publisher": "Example publisher",
+                "published_at": "2026-07-29",
+                "url": "https://example.com/recovery-source",
+                "local_file": "documents/recovery-source.txt",
+                "sha256": content_sha256,
+            }
+        ],
+    }
+    manifest_bytes = json.dumps(
+        manifest_payload,
+        separators=(",", ":"),
+        sort_keys=True,
+    ).encode("utf-8")
+    (workspace / "input" / "source_manifest.json").write_bytes(manifest_bytes)
+    recovery = RuntimeSourceAcquisitionRecoveryRequest.model_validate(
+        {
+            "schema_version": (RuntimeSourceAcquisitionRecoveryRequest.schema_id),
+            "request_id": "REQ-HUMAN-SOURCE-RECOVERY-001",
+            "run_id": action.run_id,
+            "expected_store_revision": action.store_revision,
+            "expected_action_fingerprint": action.action_fingerprint,
+            "decision": "provide_human_source_pack",
+            "previous_attempt_authorization_id": None,
+            "human_confirmation": None,
+            "provider_cost_status": None,
+            "human_source_pack": {
+                "schema_version": ("briefloop.runtime_human_source_pack_request.v2"),
+                "request_id": "REQ-HUMAN-SOURCE-PACK-RECOVERY-001",
+                "run_id": action.run_id,
+                "expected_store_revision": action.store_revision,
+                "manifest_path": "input/source_manifest.json",
+                "manifest_schema_version": "example.source_manifest.v1",
+                "expected_manifest_sha256": hashlib.sha256(manifest_bytes).hexdigest(),
+                "members": [
+                    {
+                        "member_id": "SRC-RECOVERY-001",
+                        "input_path": "input/recovery-source.txt",
+                        "manifest_local_file": "documents/recovery-source.txt",
+                        "expected_input_sha256": content_sha256,
+                        "title": "Human recovery source",
+                        "publisher": "Example publisher",
+                        "published_at": "2026-07-29",
+                        "url": "https://example.com/recovery-source",
+                        "document_kind": None,
+                        "opened_at": None,
+                        "resolved_at": None,
+                        "retrieved_at": "2026-07-30T00:00:00Z",
+                        "content_media_type": "text/plain",
+                    }
+                ],
+            },
+        },
+        strict=True,
+    )
+
+    committed = service.apply_current(action, human_request=recovery)
+
+    assert committed.status == "committed"
+    assert provider_calls == 1
+    current_action = service.next_action()
+    assert current_action.effect_kind == "stage_complete"
+    promoted = service.continue_authorized()
+    assert promoted.status == "role_work_required", promoted.reason_code
+    assert provider_calls == 1
+    with SQLiteControlStore.open(workspace / "briefloop.db") as store:
+        head = store.load_workspace_run_head()
+        assert head is not None
+        snapshot = store.load_snapshot(head.current_run_id)
+    assert len(snapshot.run_source_acquisition_attempt_authorizations) == 1
+    assert len(snapshot.sources) == 1
+    assert snapshot.run_execution_authorizations == ()
+    assert snapshot.sources[0].provider is None
+
+
+@_REQUIRES_RETAINED_PUBLICATION
 def test_discovery_malformed_provider_result_fails_without_promotion(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -2117,8 +2364,10 @@ def test_discovery_malformed_provider_result_fails_without_promotion(
     )
     action = _advance_discovery_to_source_action(workspace)
 
-    with pytest.raises(RuntimeHostError, match="source_provider_result_invalid"):
-        _service(workspace).apply_current(action)
+    result = _service(workspace).apply_current(action)
+
+    assert result.status == "rejected_recorded"
+    assert result.next_action.effect_kind == "source_acquisition_recovery"
 
     with SQLiteControlStore.open(workspace / "briefloop.db") as store:
         head = store.load_workspace_run_head()
@@ -2126,6 +2375,10 @@ def test_discovery_malformed_provider_result_fails_without_promotion(
         snapshot = store.load_snapshot(head.current_run_id)
     assert snapshot.sources == ()
     assert snapshot.run_execution_authorizations == ()
+    evidence = snapshot.events[-1].intake_binding.source_acquisition_failure
+    assert evidence is not None
+    assert evidence.failure_class == "source_pack_validation_rejected"
+    assert evidence.provider_response_artifact is not None
     assert (
         len(
             [
@@ -2163,8 +2416,8 @@ def test_discovery_provider_failure_records_one_typed_failure(
 
     result = _service(workspace).continue_authorized()
 
-    assert result.status == "needs_attention"
-    assert result.reason_code == "source_provider_unavailable"
+    assert result.status == "needs_human"
+    assert result.reason_code == "source_acquisition_recovery_decision_required"
     assert sentinel not in repr(result)
     assert sentinel not in caplog.text
     with SQLiteControlStore.open(workspace / "briefloop.db") as store:
@@ -2183,6 +2436,10 @@ def test_discovery_provider_failure_records_one_typed_failure(
     ]
     assert len(failures) == 1
     assert failures[0].failure_reason == "child_failed"
+    evidence = snapshot.events[-1].intake_binding.source_acquisition_failure
+    assert evidence is not None
+    assert evidence.failure_class == "provider_response_unavailable"
+    assert evidence.provider_response_artifact is None
     assert sentinel not in repr(snapshot)
     assert sentinel not in repr(history.transactions)
     assert sentinel.encode() not in (workspace / "briefloop.db").read_bytes()
@@ -2246,8 +2503,8 @@ def test_discovery_provider_credential_echo_fails_before_stage_or_promotion(
     result = _service(workspace).continue_authorized()
 
     assert calls == 1
-    assert result.status == "needs_attention"
-    assert result.reason_code == "source_provider_unavailable"
+    assert result.status == "needs_human"
+    assert result.reason_code == "source_acquisition_recovery_decision_required"
     assert sentinel not in repr(result)
     assert sentinel_hash not in repr(result).lower()
     assert sentinel not in caplog.text
@@ -2666,6 +2923,7 @@ def test_finalize_effect_suppresses_legacy_hook_then_presents_terminal(
             "role_id": None,
             "source_route_id": None,
             "source_provider_id": None,
+            "source_acquisition_attempt_authorization_id": None,
             "reason_code": reason,
             "input_artifacts": [],
             "request_schema_id": None,

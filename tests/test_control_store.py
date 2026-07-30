@@ -515,6 +515,55 @@ def test_historical_receipt_projection_accepts_only_the_exact_legacy_shape() -> 
         )
 
 
+def test_historical_receipt_projection_accepts_only_missing_attempt_relation() -> None:
+    receipt = TransactionReceipt.model_validate(
+        TransactionReceipt.minimal_example,
+        strict=True,
+    )
+    payload = receipt.model_dump(mode="json", exclude_unset=False)
+    assert payload.pop("run_source_acquisition_attempt_authorizations") == []
+    legacy_text = canonical_json_bytes(payload).decode("utf-8")
+
+    assert (
+        _decode_record(
+            TransactionReceipt,
+            legacy_text,
+            receipt_committed_revision=receipt.committed_revision,
+            legacy_source_attempt_receipt_max_committed_revision=(
+                receipt.committed_revision
+            ),
+        )
+        == receipt
+    )
+    with pytest.raises(
+        ControlStoreIntegrityError,
+        match="stored_payload_not_canonical",
+    ):
+        _decode_record(
+            TransactionReceipt,
+            legacy_text,
+            receipt_committed_revision=receipt.committed_revision,
+            legacy_source_attempt_receipt_max_committed_revision=(
+                receipt.committed_revision - 1
+            ),
+        )
+
+    authorize = dict(payload)
+    authorize["transaction_type"] = "core-v2-source-acquisition-attempt-authorize"
+    with pytest.raises(
+        ControlStoreIntegrityError,
+        match="stored_payload_not_canonical",
+    ):
+        _decode_record(
+            TransactionReceipt,
+            canonical_json_bytes(authorize).decode("utf-8"),
+            receipt_committed_revision=receipt.committed_revision,
+            legacy_source_attempt_receipt_max_committed_revision=(
+                receipt.committed_revision
+            ),
+        )
+
+
 def test_fresh_schema10_receipt_cannot_be_laundered_as_legacy(
     tmp_path: Path,
 ) -> None:
@@ -1281,6 +1330,9 @@ def test_schema_settings_and_exact_table_universe(tmp_path: Path) -> None:
         "transaction_post_final_finding_dispositions",
         "transaction_post_final_guidance_drafts",
         "transaction_post_final_guidance_statuses",
+        "source_acquisition_attempt_compatibility_boundaries",
+        "run_source_acquisition_attempt_authorizations",
+        "transaction_run_source_acquisition_attempt_authorizations",
         "checkout_revisions",
         "checkout_revision_members",
         "receipt_checkout_bindings",
@@ -1296,7 +1348,7 @@ def test_schema_settings_and_exact_table_universe(tmp_path: Path) -> None:
         assert store._connection.execute("PRAGMA foreign_keys").fetchone()[0] == 1
         assert store._connection.execute("PRAGMA journal_mode").fetchone()[0] == "wal"
         assert store._connection.execute("PRAGMA synchronous").fetchone()[0] == 2
-        assert store._connection.execute("PRAGMA user_version").fetchone()[0] == 10
+        assert store._connection.execute("PRAGMA user_version").fetchone()[0] == 11
         tables = {
             row[0]
             for row in store._connection.execute(
@@ -2753,7 +2805,7 @@ def test_future_schema_fails_closed(tmp_path: Path) -> None:
     store = _create_store(tmp_path)
     store.close()
     connection = sqlite3.connect(tmp_path / "control.db")
-    connection.execute("PRAGMA user_version = 11")
+    connection.execute("PRAGMA user_version = 12")
     connection.close()
     with pytest.raises(ControlStoreSchemaError) as error:
         SQLiteControlStore.open(tmp_path / "control.db")

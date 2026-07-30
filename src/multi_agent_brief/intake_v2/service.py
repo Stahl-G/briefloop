@@ -29,8 +29,10 @@ from multi_agent_brief.contracts.v2 import (
     OwnedArtifactSubmissionRecord,
     ProposalSourceBinding,
     RunExecutionAuthorization,
+    RunSourceAcquisitionAttemptAuthorization,
     RunSourceDiscoveryAuthorization,
     ScreenedCandidatesProposal,
+    SourceAcquisitionFailureEvidence,
     SourceCommitRequest,
     SourcePackCommitMember,
     SourcePackCommitRequest,
@@ -139,6 +141,9 @@ class _CoreDiscoverySourcePack:
     request_id: str
     run_id: str
     invocation_id: str
+    attempt_authorization_id: str
+    attempt_ordinal: int
+    provider_request_fingerprint: str
     expected_store_revision: int
     manifest: ExecutionSourceManifest
     source_manifest_sha256: str
@@ -146,6 +151,32 @@ class _CoreDiscoverySourcePack:
     contents: tuple[bytes, ...]
     raw_payloads: tuple[bytes, ...]
     provider_response: bytes
+
+
+@dataclass(frozen=True)
+class _CoreDiscoveryFailureAttempt:
+    """Host observations consumed by the existing sole Intake rejection writer."""
+
+    request_id: str
+    run_id: str
+    invocation_id: str
+    attempt_authorization_id: str
+    attempt_ordinal: int
+    expected_store_revision: int
+    discovery_authorization_id: str
+    provider_id: str
+    route_fingerprint: str
+    provider_request_fingerprint: str
+    provider_response: bytes | None
+    provider_status_code: int | None
+    result_count: int | None
+    durable_content_count: int | None
+    validation_rejected: bool
+    manifest: ExecutionSourceManifest | None
+    source_manifest_sha256: str | None
+    proposals: tuple[SourceProposal, ...]
+    contents: tuple[bytes, ...]
+    raw_payloads: tuple[bytes, ...]
 
 
 class IntakeService:
@@ -240,6 +271,31 @@ class IntakeService:
                     request.run_id,
                     request.request_id,
                 )
+            return self._submit_source_pack_bytes(request, pack)
+        except ControlStoreCommitOutcomeUnknown:
+            return IntakeResult(
+                status="commit_outcome_unknown",
+                error_code="commit_outcome_unknown",
+            )
+        except (IntakeError, _KnownInvalid) as exc:
+            return IntakeResult(status="failed_uncommitted", error_code=exc.code)
+
+    def _commit_human_source_pack_from_host(
+        self,
+        request: SourcePackCommitRequest,
+        pack: _SourcePackBytes,
+    ) -> IntakeResult:
+        """Commit immutable bytes from the exact Human-source Host action.
+
+        The public file entrypoint remains closed once discovery authority
+        exists.  This narrow Host seam consumes already-verified bytes through
+        the same Intake validator and UoW; it does not reopen scratch paths or
+        create another writer.
+        """
+
+        try:
+            if type(request) is not SourcePackCommitRequest:
+                raise IntakeError("intake_request_invalid")
             return self._submit_source_pack_bytes(request, pack)
         except ControlStoreCommitOutcomeUnknown:
             return IntakeResult(
@@ -365,73 +421,17 @@ class IntakeService:
     ) -> IntakeResult:
         """Atomically promote one verified discovery pack without file authority."""
 
-        if (
-            len(
-                {
-                    len(input.proposals),
-                    len(input.contents),
-                    len(input.raw_payloads),
-                }
-            )
-            != 1
-        ):
-            raise IntakeError("source_provider_result_invalid")
-        if len(input.proposals) != len(input.manifest.members):
-            raise IntakeError("source_provider_result_invalid")
         if not input.provider_response:
             raise IntakeError("source_provider_result_invalid")
-        canonical_manifest = canonical_json_bytes(
-            input.manifest.model_dump(mode="json", exclude_unset=False)
+        members, prepared, canonical_manifest = self._prepare_discovery_source_members(
+            run_id=input.run_id,
+            invocation_id=input.invocation_id,
+            manifest=input.manifest,
+            source_manifest_sha256=input.source_manifest_sha256,
+            proposals=input.proposals,
+            contents=input.contents,
+            raw_payloads=input.raw_payloads,
         )
-        if sha256_hex(canonical_manifest) != input.source_manifest_sha256:
-            raise IntakeError("source_provider_result_invalid")
-
-        members: list[SourcePackCommitMember] = []
-        prepared: list[_PreparedSourcePackMember] = []
-        for frozen, proposal, content, raw_payload in zip(
-            input.manifest.members,
-            input.proposals,
-            input.contents,
-            input.raw_payloads,
-            strict=True,
-        ):
-            if (
-                proposal.run_id != input.run_id
-                or proposal.source_id != frozen.source_id
-                or proposal.source_manifest_sha256 != input.source_manifest_sha256
-                or not _proposal_matches_discovery_manifest(proposal, frozen)
-                or sha256_hex(content) != proposal.content_sha256
-                or sha256_hex(raw_payload) != proposal.raw_payload_sha256
-            ):
-                raise IntakeError("source_provider_result_invalid")
-            root = f"scratch/{input.invocation_id}/sources/{frozen.source_id}"
-            member = SourcePackCommitMember.model_validate(
-                {
-                    "member_id": frozen.source_id,
-                    "proposal_path": f"{root}/source_proposal.json",
-                    "content_path": f"{root}/source_content.bin",
-                    "raw_payload_path": f"{root}/source_raw.json",
-                },
-                strict=True,
-            )
-            try:
-                eligible, reason = evaluate_source_eligibility(
-                    proposal,
-                    raw_payload_present=True,
-                )
-            except SourcePolicyError as exc:
-                raise IntakeError("source_provider_result_invalid") from exc
-            members.append(member)
-            prepared.append(
-                _PreparedSourcePackMember(
-                    member=member,
-                    proposal=proposal,
-                    content_bytes=content,
-                    raw_bytes=raw_payload,
-                    claims_eligible=eligible,
-                    eligibility_reason=reason,
-                )
-            )
         if not any(item.claims_eligible for item in prepared):
             raise IntakeError("source_pack_empty")
 
@@ -459,6 +459,9 @@ class IntakeService:
                 "request": request.model_dump(mode="json", exclude_unset=False),
                 "manifest_sha256": input.source_manifest_sha256,
                 "provider_response_sha256": sha256_hex(input.provider_response),
+                "attempt_authorization_id": input.attempt_authorization_id,
+                "attempt_ordinal": input.attempt_ordinal,
+                "provider_request_fingerprint": (input.provider_request_fingerprint),
                 "members": [
                     {
                         "member_id": item.member.member_id,
@@ -496,15 +499,22 @@ class IntakeService:
             if (
                 snapshot.run_execution_authorizations
                 or len(snapshot.run_source_discovery_authorizations) != 1
+                or not snapshot.run_source_acquisition_attempt_authorizations
             ):
                 raise IntakeError("source_discovery_authorization_invalid")
             discovery = snapshot.run_source_discovery_authorizations[0]
+            attempt = snapshot.run_source_acquisition_attempt_authorizations[-1]
             if (
                 discovery.run_id != request.run_id
                 or discovery.provider_id != "tavily"
                 or discovery.execution_owner != "deterministic"
                 or discovery.completion_target != "finalized_local"
                 or discovery.repair_budget != 1
+                or attempt.attempt_authorization_id != input.attempt_authorization_id
+                or attempt.attempt_ordinal != input.attempt_ordinal
+                or attempt.discovery_authorization_id != discovery.authorization_id
+                or attempt.provider_request_fingerprint
+                != input.provider_request_fingerprint
             ):
                 raise IntakeError("source_discovery_authorization_invalid")
             return self._commit_source_pack(
@@ -518,9 +528,300 @@ class IntakeService:
                 core_run_bound=core_run_bound,
                 authorization_manifest=input.manifest,
                 discovery_authorization=discovery,
+                discovery_attempt_authorization=attempt,
                 discovery_manifest_bytes=canonical_manifest,
                 discovery_provider_response_bytes=input.provider_response,
             )
+
+    def _record_discovery_acquisition_failure_from_core(
+        self,
+        input: _CoreDiscoveryFailureAttempt,
+    ) -> IntakeResult:
+        """Atomically retain one strict failed acquisition through Intake's writer."""
+
+        if (
+            input.provider_id != "tavily"
+            or type(input.validation_rejected) is not bool
+            or type(input.expected_store_revision) is not int
+        ):
+            raise IntakeError("source_provider_result_invalid")
+        response_sha256: str | None = None
+        response_size: int | None = None
+        response_artifact_id: str | None = None
+        rejection_counts: dict[str, int] | None = None
+        claims_eligible_count: int | None = None
+        if input.provider_response is None:
+            if (
+                input.provider_status_code is not None
+                or input.result_count is not None
+                or input.durable_content_count is not None
+                or input.validation_rejected
+                or input.manifest is not None
+                or input.source_manifest_sha256 is not None
+                or input.proposals
+                or input.contents
+                or input.raw_payloads
+            ):
+                raise IntakeError("source_provider_result_invalid")
+            failure_class = "provider_response_unavailable"
+            provider_status_class = "response_unavailable"
+        else:
+            if input.provider_status_code != 200:
+                raise IntakeError("source_provider_result_invalid")
+            observed_results, observed_durable = (
+                _source_acquisition_response_observations(input.provider_response)
+            )
+            if (
+                input.result_count != observed_results
+                or input.durable_content_count != observed_durable
+            ):
+                raise IntakeError("source_provider_result_invalid")
+            response_sha256 = sha256_hex(input.provider_response)
+            response_size = len(input.provider_response)
+            response_artifact_id = _derived_id(
+                "ARTIFACT-PROVIDER-RESPONSE",
+                input.run_id,
+                input.discovery_authorization_id,
+                input.invocation_id,
+            )
+            provider_status_class = "http_200"
+            if input.validation_rejected:
+                if (
+                    input.manifest is not None
+                    or input.source_manifest_sha256 is not None
+                    or input.proposals
+                    or input.contents
+                    or input.raw_payloads
+                ):
+                    raise IntakeError("source_provider_result_invalid")
+                failure_class = "source_pack_validation_rejected"
+            elif observed_results == 0:
+                if (
+                    input.manifest is not None
+                    or input.source_manifest_sha256 is not None
+                    or input.proposals
+                    or input.contents
+                    or input.raw_payloads
+                ):
+                    raise IntakeError("source_provider_result_invalid")
+                claims_eligible_count = 0
+                failure_class = "provider_results_empty"
+            else:
+                if input.manifest is None or input.source_manifest_sha256 is None:
+                    raise IntakeError("source_provider_result_invalid")
+                _members, prepared, _canonical_manifest = (
+                    self._prepare_discovery_source_members(
+                        run_id=input.run_id,
+                        invocation_id=input.invocation_id,
+                        manifest=input.manifest,
+                        source_manifest_sha256=input.source_manifest_sha256,
+                        proposals=input.proposals,
+                        contents=input.contents,
+                        raw_payloads=input.raw_payloads,
+                    )
+                )
+                claims_eligible_count = sum(
+                    1 for item in prepared if item.claims_eligible
+                )
+                if claims_eligible_count:
+                    raise IntakeError("source_provider_result_invalid")
+                rejection_counts = {}
+                for item in prepared:
+                    rejection_counts[item.eligibility_reason] = (
+                        rejection_counts.get(item.eligibility_reason, 0) + 1
+                    )
+                if sum(rejection_counts.values()) != observed_results:
+                    raise IntakeError("source_provider_result_invalid")
+                failure_class = (
+                    "provider_results_without_durable_content"
+                    if observed_durable == 0
+                    else "intake_rejected_no_eligible_source"
+                )
+        reason_code = (
+            "child_failed"
+            if failure_class == "provider_response_unavailable"
+            else "proposal_invalid"
+        )
+        request = InvocationFailureRequest.model_validate(
+            {
+                "schema_version": InvocationFailureRequest.schema_id,
+                "request_id": input.request_id,
+                "run_id": input.run_id,
+                "invocation_id": input.invocation_id,
+                "reason_code": reason_code,
+                "expected_store_revision": input.expected_store_revision,
+            },
+            strict=True,
+        )
+        attempt_id = _derived_id(
+            "SOURCE-ACQUISITION-ATTEMPT",
+            input.run_id,
+            input.invocation_id,
+            input.discovery_authorization_id,
+            input.route_fingerprint,
+            input.provider_request_fingerprint,
+            failure_class,
+            response_sha256 or "response-unavailable",
+        )
+        evidence = SourceAcquisitionFailureEvidence.model_validate(
+            {
+                "schema_version": SourceAcquisitionFailureEvidence.schema_id,
+                "attempt_id": attempt_id,
+                "attempt_authorization_id": input.attempt_authorization_id,
+                "attempt_ordinal": input.attempt_ordinal,
+                "run_id": input.run_id,
+                "invocation_id": input.invocation_id,
+                "discovery_authorization_id": input.discovery_authorization_id,
+                "provider_id": input.provider_id,
+                "route_fingerprint": input.route_fingerprint,
+                "provider_request_fingerprint": (input.provider_request_fingerprint),
+                "request_fingerprint": canonical_fingerprint(
+                    request.model_dump(mode="json", exclude_unset=False)
+                ),
+                "failure_class": failure_class,
+                "provider_status_class": provider_status_class,
+                "provider_response_artifact": (
+                    None
+                    if response_artifact_id is None
+                    else {"artifact_id": response_artifact_id, "revision": 1}
+                ),
+                "provider_response_sha256": response_sha256,
+                "provider_response_size_bytes": response_size,
+                "result_count": input.result_count,
+                "durable_content_count": input.durable_content_count,
+                "claims_eligible_count": claims_eligible_count,
+                "rejection_counts": rejection_counts,
+            },
+            strict=True,
+        )
+        request_fingerprint = canonical_fingerprint(
+            {
+                "lane": "discovery_source_pack_failure",
+                "request": request.model_dump(mode="json", exclude_unset=False),
+                "evidence": evidence.model_dump(mode="json", exclude_unset=False),
+            }
+        )
+        with self._open_store() as store:
+            replay = self._resolve_replay(
+                store,
+                run_id=request.run_id,
+                request_id=request.request_id,
+                request_fingerprint=request_fingerprint,
+            )
+            if replay is not None:
+                return replay
+            snapshot, invocation, owner_stage, core_run_bound = (
+                self._trusted_submission_context(
+                    store,
+                    INTAKE_LANES["source"],
+                    request,
+                )
+            )
+            if (
+                snapshot.run_execution_authorizations
+                or len(snapshot.run_source_discovery_authorizations) != 1
+                or not snapshot.run_source_acquisition_attempt_authorizations
+            ):
+                raise IntakeError("source_discovery_authorization_invalid")
+            discovery = snapshot.run_source_discovery_authorizations[0]
+            attempt = snapshot.run_source_acquisition_attempt_authorizations[-1]
+            if (
+                discovery.authorization_id != input.discovery_authorization_id
+                or discovery.run_id != input.run_id
+                or discovery.provider_id != input.provider_id
+                or discovery.source_route_fingerprint != input.route_fingerprint
+                or attempt.attempt_authorization_id != input.attempt_authorization_id
+                or attempt.attempt_ordinal != input.attempt_ordinal
+                or attempt.discovery_authorization_id != discovery.authorization_id
+                or attempt.provider_request_fingerprint
+                != input.provider_request_fingerprint
+            ):
+                raise IntakeError("source_discovery_authorization_invalid")
+            return self._record_rejection(
+                store,
+                request=request,
+                request_fingerprint=request_fingerprint,
+                invocation=invocation,
+                owner_stage=owner_stage,
+                core_run_bound=core_run_bound,
+                reason_code=reason_code,
+                source_acquisition_failure=evidence,
+                provider_response_bytes=input.provider_response,
+                discovery_authorization=discovery,
+                discovery_attempt_authorization=attempt,
+            )
+
+    @staticmethod
+    def _prepare_discovery_source_members(
+        *,
+        run_id: str,
+        invocation_id: str,
+        manifest: ExecutionSourceManifest,
+        source_manifest_sha256: str,
+        proposals: tuple[SourceProposal, ...],
+        contents: tuple[bytes, ...],
+        raw_payloads: tuple[bytes, ...],
+    ) -> tuple[
+        list[SourcePackCommitMember],
+        list[_PreparedSourcePackMember],
+        bytes,
+    ]:
+        if len({len(proposals), len(contents), len(raw_payloads)}) != 1 or len(
+            proposals
+        ) != len(manifest.members):
+            raise IntakeError("source_provider_result_invalid")
+        canonical_manifest = canonical_json_bytes(
+            manifest.model_dump(mode="json", exclude_unset=False)
+        )
+        if sha256_hex(canonical_manifest) != source_manifest_sha256:
+            raise IntakeError("source_provider_result_invalid")
+        members: list[SourcePackCommitMember] = []
+        prepared: list[_PreparedSourcePackMember] = []
+        for frozen, proposal, content, raw_payload in zip(
+            manifest.members,
+            proposals,
+            contents,
+            raw_payloads,
+            strict=True,
+        ):
+            if (
+                proposal.run_id != run_id
+                or proposal.source_id != frozen.source_id
+                or proposal.source_manifest_sha256 != source_manifest_sha256
+                or not _proposal_matches_discovery_manifest(proposal, frozen)
+                or sha256_hex(content) != proposal.content_sha256
+                or sha256_hex(raw_payload) != proposal.raw_payload_sha256
+            ):
+                raise IntakeError("source_provider_result_invalid")
+            root = f"scratch/{invocation_id}/sources/{frozen.source_id}"
+            member = SourcePackCommitMember.model_validate(
+                {
+                    "member_id": frozen.source_id,
+                    "proposal_path": f"{root}/source_proposal.json",
+                    "content_path": f"{root}/source_content.bin",
+                    "raw_payload_path": f"{root}/source_raw.json",
+                },
+                strict=True,
+            )
+            try:
+                eligible, reason = evaluate_source_eligibility(
+                    proposal,
+                    raw_payload_present=True,
+                )
+            except SourcePolicyError as exc:
+                raise IntakeError("source_provider_result_invalid") from exc
+            members.append(member)
+            prepared.append(
+                _PreparedSourcePackMember(
+                    member=member,
+                    proposal=proposal,
+                    content_bytes=content,
+                    raw_bytes=raw_payload,
+                    claims_eligible=eligible,
+                    eligibility_reason=reason,
+                )
+            )
+        return members, prepared, canonical_manifest
 
     def submit_proposal(
         self,
@@ -1684,6 +1985,9 @@ class IntakeService:
         core_run_bound: bool,
         authorization_manifest: ExecutionSourceManifest | None,
         discovery_authorization: RunSourceDiscoveryAuthorization | None = None,
+        discovery_attempt_authorization: (
+            RunSourceAcquisitionAttemptAuthorization | None
+        ) = None,
         discovery_manifest_bytes: bytes | None = None,
         discovery_provider_response_bytes: bytes | None = None,
     ) -> IntakeResult:
@@ -1872,6 +2176,11 @@ class IntakeService:
                 unit.reference_run_source_discovery_authorization(
                     discovery_authorization
                 )
+                if discovery_attempt_authorization is None:
+                    raise IntakeError("source_discovery_authorization_invalid")
+                unit.reference_run_source_acquisition_attempt_authorization(
+                    discovery_attempt_authorization
+                )
                 unit.put_run_execution_authorization(
                     RunExecutionAuthorization.model_validate(
                         {
@@ -2050,7 +2359,7 @@ class IntakeService:
         self,
         store: SQLiteControlStore,
         *,
-        request: SourceCommitRequest | ArtifactSubmitRequest,
+        request: SourceCommitRequest | ArtifactSubmitRequest | InvocationFailureRequest,
         request_fingerprint: str,
         invocation: Invocation,
         owner_stage: str,
@@ -2058,8 +2367,48 @@ class IntakeService:
         reason_code: str,
         source_id: str | None = None,
         proposal_id: str | None = None,
+        source_acquisition_failure: SourceAcquisitionFailureEvidence | None = None,
+        provider_response_bytes: bytes | None = None,
+        discovery_authorization: RunSourceDiscoveryAuthorization | None = None,
+        discovery_attempt_authorization: (
+            RunSourceAcquisitionAttemptAuthorization | None
+        ) = None,
     ) -> IntakeResult:
         now = self._now()
+        response_artifact: ArtifactRecord | None = None
+        response_revision: ArtifactRevision | None = None
+        response_artifact_id: str | None = None
+        if source_acquisition_failure is not None:
+            reference = source_acquisition_failure.provider_response_artifact
+            if reference is None:
+                if provider_response_bytes is not None:
+                    raise IntakeError("source_provider_result_invalid")
+            else:
+                if (
+                    provider_response_bytes is None
+                    or source_acquisition_failure.provider_response_sha256
+                    != sha256_hex(provider_response_bytes)
+                    or source_acquisition_failure.provider_response_size_bytes
+                    != len(provider_response_bytes)
+                ):
+                    raise IntakeError("source_provider_result_invalid")
+                response_artifact_id = reference.artifact_id
+                response_artifact, response_revision = _artifact_pair(
+                    run_id=request.run_id,
+                    artifact_id=reference.artifact_id,
+                    revision=reference.revision,
+                    path=_blob_workspace_path(
+                        source_acquisition_failure.provider_response_sha256
+                    ),
+                    artifact_format="json",
+                    sha256=source_acquisition_failure.provider_response_sha256,
+                    size_bytes=len(provider_response_bytes),
+                    producer_id=owner_stage,
+                    created_at=now,
+                    required=False,
+                )
+        elif provider_response_bytes is not None:
+            raise IntakeError("source_provider_result_invalid")
         event = _intake_event(
             event_id=_derived_id("EVT-REJECT", request.request_id, request_fingerprint),
             run_id=request.run_id,
@@ -2070,9 +2419,11 @@ class IntakeService:
             outcome="rejected",
             created_at=now,
             stage_id=owner_stage,
+            artifact_id=response_artifact_id,
             reason_code=reason_code,
             source_id=source_id,
             proposal_id=proposal_id,
+            source_acquisition_failure=source_acquisition_failure,
         )
         failed = _failed_invocation(invocation, now, reason_code)
         unit = store.begin(
@@ -2082,7 +2433,20 @@ class IntakeService:
             request.expected_store_revision,
         )
         unit.put_invocation(failed)
+        if (
+            response_artifact is not None
+            and response_revision is not None
+            and provider_response_bytes is not None
+        ):
+            unit.put_artifact(response_artifact)
+            unit.put_artifact_revision(response_revision, provider_response_bytes)
         unit.append_event(event)
+        if discovery_authorization is not None:
+            unit.reference_run_source_discovery_authorization(discovery_authorization)
+        if discovery_attempt_authorization is not None:
+            unit.reference_run_source_acquisition_attempt_authorization(
+                discovery_attempt_authorization
+            )
 
         def observe(_receipt: TransactionReceipt) -> None:
             if core_run_bound:
@@ -2446,6 +2810,40 @@ def _blob_workspace_path(digest: str) -> str:
     return f"briefloop.db.blobs/sha256/{digest[:2]}/{digest}"
 
 
+def _source_acquisition_response_observations(payload: bytes) -> tuple[int, int]:
+    """Return bounded mechanical counts from one already-safe Tavily response."""
+
+    try:
+        response = parse_json_object(payload)
+    except IntakeError as exc:
+        raise IntakeError("source_provider_result_invalid") from exc
+    results = response.get("results")
+    if type(results) is not list or len(results) > 5:
+        raise IntakeError("source_provider_result_invalid")
+    durable_count = 0
+    for result in results:
+        if type(result) is not dict:
+            raise IntakeError("source_provider_result_invalid")
+        title = result.get("title")
+        url = result.get("url")
+        snippet = result.get("content")
+        raw_content = result.get("raw_content")
+        published_date = result.get("published_date")
+        score = result.get("score")
+        if (
+            type(title) is not str
+            or type(url) is not str
+            or type(snippet) is not str
+            or type(raw_content) not in {str, type(None)}
+            or type(published_date) not in {str, type(None)}
+            or type(score) not in {int, float, type(None)}
+        ):
+            raise IntakeError("source_provider_result_invalid")
+        if isinstance(raw_content, str) and raw_content.strip():
+            durable_count += 1
+    return len(results), durable_count
+
+
 def _artifact_pair(
     *,
     run_id: str,
@@ -2526,6 +2924,7 @@ def _intake_event(
     reason_code: str | None = None,
     source_id: str | None = None,
     proposal_id: str | None = None,
+    source_acquisition_failure: SourceAcquisitionFailureEvidence | None = None,
 ) -> EventEnvelope:
     return EventEnvelope.model_validate(
         {
@@ -2549,6 +2948,14 @@ def _intake_event(
                 "source_id": source_id,
                 "proposal_id": proposal_id,
                 "reason_code": reason_code,
+                "source_acquisition_failure": (
+                    None
+                    if source_acquisition_failure is None
+                    else source_acquisition_failure.model_dump(
+                        mode="json",
+                        exclude_unset=False,
+                    )
+                ),
             },
         },
         strict=True,

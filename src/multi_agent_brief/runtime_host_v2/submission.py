@@ -69,6 +69,7 @@ class StagedSourceMember:
 @dataclass(frozen=True)
 class VerifiedSourceStage:
     root: Path
+    stage_kind: Literal["source_pack", "provider_outcome"]
     request_fingerprint: str
     members: tuple[StagedSourceMember, ...]
     manifest_path: Path | None
@@ -92,12 +93,13 @@ class _StageAttestation(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True, strict=True)
 
     format: Literal["briefloop-runtime-source-stage/v1"]
+    stage_kind: Literal["source_pack", "provider_outcome"]
     request_fingerprint: str
     manifest_sha256: str | None
     provider_response_sha256: str | None = None
     provider_status_code: int | None = None
     members: tuple[_StageMember, ...] = Field(
-        min_length=1,
+        min_length=0,
         max_length=MAX_SOURCE_PACK_MEMBERS,
     )
 
@@ -129,6 +131,11 @@ class _StageAttestation(BaseModel):
             raise ValueError("provider response identity is incomplete")
         if self.provider_status_code is not None and self.provider_status_code != 200:
             raise ValueError("provider response status is invalid")
+        if self.stage_kind == "source_pack":
+            if not self.members:
+                raise ValueError("source pack stage requires members")
+        elif self.provider_response_sha256 is None:
+            raise ValueError("provider outcome stage requires a response")
         if any(
             len(value) != 64
             or any(character not in "0123456789abcdef" for character in value)
@@ -166,6 +173,7 @@ def load_source_stage(
     stage_identity: str,
     request_fingerprint: str,
     expected_manifest_sha256: str | None,
+    expected_stage_kind: Literal["source_pack", "provider_outcome"] = "source_pack",
 ) -> VerifiedSourceStage | None:
     """Reverify an existing inert stage without consulting mutable inputs."""
 
@@ -186,6 +194,8 @@ def load_source_stage(
         )
         if attestation.request_fingerprint != request_fingerprint:
             raise RuntimeHostError("submission_replay_conflict")
+        if attestation.stage_kind != expected_stage_kind:
+            raise RuntimeHostError("runtime_source_staging_invalid")
         if attestation.manifest_sha256 != expected_manifest_sha256:
             raise RuntimeHostError("runtime_source_staging_invalid")
         expected_root_members = {"sources", "stage_attestation.json"}
@@ -296,6 +306,7 @@ def load_source_stage(
             )
         return VerifiedSourceStage(
             root=root,
+            stage_kind=attestation.stage_kind,
             request_fingerprint=request_fingerprint,
             members=tuple(staged),
             manifest_path=manifest_path,
@@ -374,6 +385,7 @@ def stage_human_source_pack(
             )
         _finish_stage(
             building,
+            stage_kind="source_pack",
             request_fingerprint=request_fingerprint,
             manifest_sha256=expected_manifest_sha256,
             members=tuple(staged_members),
@@ -401,6 +413,7 @@ def stage_source_pack_bytes(
     members: tuple[SourceStageBytesInput, ...],
     provider_response_bytes: bytes | None = None,
     provider_status_code: int | None = None,
+    stage_kind: Literal["source_pack", "provider_outcome"] = "source_pack",
 ) -> VerifiedSourceStage:
     """Bound and stage one deterministic provider result set."""
 
@@ -409,10 +422,11 @@ def stage_source_pack_bytes(
         stage_identity=stage_identity,
         request_fingerprint=request_fingerprint,
         expected_manifest_sha256=None,
+        expected_stage_kind=stage_kind,
     )
     if existing is not None:
         return existing
-    if not members or len(members) > MAX_SOURCE_PACK_MEMBERS:
+    if len(members) > MAX_SOURCE_PACK_MEMBERS:
         raise RuntimeHostError("runtime_source_pack_invalid")
     if (
         provider_response_bytes is not None
@@ -422,6 +436,10 @@ def stage_source_pack_bytes(
             or provider_status_code != 200
         )
     ) or (provider_response_bytes is None and provider_status_code is not None):
+        raise RuntimeHostError("runtime_source_pack_invalid")
+    if (stage_kind == "source_pack" and not members) or (
+        stage_kind == "provider_outcome" and provider_response_bytes is None
+    ):
         raise RuntimeHostError("runtime_source_pack_invalid")
     _require_canonical_members(tuple(item.member_id for item in members))
     aggregate_size = 0
@@ -497,6 +515,7 @@ def stage_source_pack_bytes(
             )
         _finish_stage(
             building,
+            stage_kind=stage_kind,
             request_fingerprint=request_fingerprint,
             manifest_sha256=None,
             provider_response_sha256=provider_response_sha256,
@@ -512,6 +531,7 @@ def stage_source_pack_bytes(
         stage_identity=stage_identity,
         request_fingerprint=request_fingerprint,
         expected_manifest_sha256=None,
+        expected_stage_kind=stage_kind,
     )
     if loaded is None:  # pragma: no cover - guarded by publish
         raise RuntimeHostError("runtime_source_staging_invalid")
@@ -577,6 +597,7 @@ def _stage_build_directory(workspace: Path, stage_identity: str) -> tuple[Path, 
 def _finish_stage(
     building: Path,
     *,
+    stage_kind: Literal["source_pack", "provider_outcome"],
     request_fingerprint: str,
     manifest_sha256: str | None,
     provider_response_sha256: str | None = None,
@@ -585,6 +606,7 @@ def _finish_stage(
 ) -> None:
     attestation = _StageAttestation(
         format=_STAGE_FORMAT,
+        stage_kind=stage_kind,
         request_fingerprint=request_fingerprint,
         manifest_sha256=manifest_sha256,
         provider_response_sha256=provider_response_sha256,

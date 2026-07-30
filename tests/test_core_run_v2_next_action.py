@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from dataclasses import replace
 from types import SimpleNamespace
 
 import pytest
@@ -114,6 +115,34 @@ def test_next_action_keeps_arbitrary_discovery_invocation_reserved(tmp_path) -> 
     assert reserved.action_kind == "deterministic"
     assert reserved.effect_kind == "invocation_accept_or_fail"
     assert reserved.reason_code == "active_invocation_reserved"
+
+
+@_REQUIRES_RETAINED_PUBLICATION
+def test_pre_schema11_discovery_history_requires_human_source_pack(tmp_path) -> None:
+    workspace = _discovery_workspace(tmp_path)
+    source_action = _advance_discovery_to_source_action(workspace)
+    current = _verified(workspace, source_action.run_id)
+    legacy = replace(
+        current,
+        snapshot=replace(
+            current.snapshot,
+            run_source_acquisition_attempt_authorizations=(),
+        ),
+    )
+
+    action = classify_core_run_next_action(legacy)
+
+    assert (
+        action.action_kind,
+        action.effect_kind,
+        action.reason_code,
+        action.request_schema_id,
+    ) == (
+        "human_decision",
+        "source_input_required",
+        "human_source_material_required",
+        "briefloop.runtime_human_source_pack_request.v2",
+    )
 
 
 def test_next_action_selects_stage_complete_after_current_proposals(tmp_path) -> None:

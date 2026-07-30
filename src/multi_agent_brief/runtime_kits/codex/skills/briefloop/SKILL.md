@@ -20,7 +20,11 @@ It applies only existing Store-derived deterministic effects. When it returns
 then call `runtime continue` again. `proposal_invalid` is value-free guidance
 and does not fail or replace the invocation. Stop on `needs_human`,
 `needs_attention`, or truthful `finalized_local`. Discovery-only continuation
-may run the doctor, source planner, and exact bound Tavily route. Search
+may run the doctor, source planner, and exact bound Tavily route. The workspace
+credential remains local until the Human rotates/removes it, but each provider
+call needs one distinct Human/Store attempt authorization. Exact replay never
+redials and failures never auto-retry. A typed recovery action requires the
+Human to authorize another attempt or provide a HumanSourcePack. Search
 snippets remain ineligible; only durable provider content can enter the single
 atomic source/manifest/classification/execution-authorization promotion
 receipt. A run without either authorization remains on the granular protocol

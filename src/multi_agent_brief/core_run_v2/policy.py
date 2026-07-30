@@ -276,9 +276,7 @@ def run_contract_fingerprint(
             "runtime_adapter_fingerprint": runtime_adapter_fingerprint,
             "runtime_source_plan_sha256": runtime_source_plan_sha256,
             "runtime_source_plan_fingerprint": runtime_source_plan_fingerprint,
-            "run_direction": canonical_run_direction_for_binding(
-                run_direction
-            ),
+            "run_direction": canonical_run_direction_for_binding(run_direction),
             "workspace_config_sha256": workspace_config_sha256,
             "sources_config_sha256": sources_config_sha256,
             "role_topology": role_topology,
@@ -310,6 +308,9 @@ def transaction_type_for(effect_kind: str) -> str:
         "delivery_authorization": "core-v2-delivery-authorization",
         "delivery_attempt": "core-v2-delivery-attempt",
         "delivery_result": "core-v2-delivery-result",
+        "source_acquisition_attempt_authorize": (
+            "core-v2-source-acquisition-attempt-authorize"
+        ),
     }
     return values[effect_kind]
 

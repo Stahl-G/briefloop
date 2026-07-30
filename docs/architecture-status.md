@@ -28,13 +28,17 @@ page describes implemented runtime capability, not a breaking deep rename.
   metadata; partial pack commits are forbidden.
 - The Experimental narrow Tavily runtime-first route starts only from a
   Store-frozen Human-confirmed discovery authorization. `runtime continue`
-  owns one bounded provider request, freezes the exact response, per-result
-  projection, and returned content, then uses the existing Intake UoW to
-  atomically record the mixed-eligibility source pack and execution
-  authorization before returning the external-role handoff. Search snippets
-  are claims-ineligible. Synthetic transport is tested; live usefulness,
-  reliability, cost, and acquisition-to-`finalized_local` performance are
-  NOT MEASURED.
+  keeps the credential in private workspace `.env` until Human
+  rotation/removal, while every separately Human-confirmed, Store-recorded
+  attempt permits at most one bounded provider request. Exact replay never
+  redials and failures never auto-retry. Safe failed responses remain
+  receipt-owned audit evidence without source or execution authority. A
+  successful attempt freezes the exact response, per-result projection, and
+  returned content, then uses the existing Intake UoW to atomically record the
+  mixed-eligibility source pack and execution authorization before returning
+  the external-role handoff. Search snippets are claims-ineligible. Synthetic
+  transport is tested; live usefulness, reliability, cost, and
+  acquisition-to-`finalized_local` performance are NOT MEASURED.
   POSIX/macOS retained-publication capability is checked before any Tavily call.
   On current Windows, `runtime continue` returns the typed
   `checkout_publication_unsupported` stop with zero provider/network access,

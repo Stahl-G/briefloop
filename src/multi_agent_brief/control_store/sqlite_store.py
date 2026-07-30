@@ -78,6 +78,7 @@ from multi_agent_brief.contracts.v2 import (
     ArtifactSupersessionRecord,
     RunContractBinding,
     RunExecutionAuthorization,
+    RunSourceAcquisitionAttemptAuthorization,
     RunSourceDiscoveryAuthorization,
     RunIdentity,
     RunIntegrityRecord,
@@ -142,6 +143,9 @@ _POST_FINAL_RECEIPT_TRANSACTION_TYPES = frozenset(
 _RECEIPT_COMPATIBILITY_BOUNDARY_ID = (
     "briefloop.transaction_receipt_relation_compatibility.v1"
 )
+_SOURCE_ATTEMPT_COMPATIBILITY_BOUNDARY_ID = (
+    "briefloop.source_acquisition_attempt_compatibility.v1"
+)
 _EXTENDED_RECORD_MODELS = (
     WorkspaceRunHead,
     ArtifactIdentityRecord,
@@ -151,6 +155,7 @@ _EXTENDED_RECORD_MODELS = (
     RunContractBinding,
     RunExecutionAuthorization,
     RunSourceDiscoveryAuthorization,
+    RunSourceAcquisitionAttemptAuthorization,
     OwnedArtifactSubmissionRecord,
     StageTransitionRecord,
     StageArtifactBinding,
@@ -213,6 +218,7 @@ def _decode_record(
     *,
     receipt_committed_revision: int | None = None,
     legacy_receipt_max_committed_revision: int | None = None,
+    legacy_source_attempt_receipt_max_committed_revision: int | None = None,
 ) -> _ModelT:
     if model_type is TransactionReceipt:
         try:
@@ -221,33 +227,50 @@ def _decode_record(
             raise ControlStoreIntegrityError("stored_payload_invalid") from exc
         if not isinstance(payload, dict):
             raise ControlStoreIntegrityError("stored_payload_invalid")
-        missing = {
+        missing_post_final = {
             field
             for field in _POST_FINAL_RECEIPT_RELATION_FIELDS
             if field not in payload
         }
-        if not missing:
+        attempt_field = "run_source_acquisition_attempt_authorizations"
+        missing_attempt = attempt_field not in payload
+        if not missing_post_final and not missing_attempt:
             return cast(_ModelT, decode_model(TransactionReceipt, payload_text))
-        if (
+        post_final_invalid = bool(missing_post_final) and (
             type(receipt_committed_revision) is not int
             or type(legacy_receipt_max_committed_revision) is not int
             or receipt_committed_revision < 1
             or legacy_receipt_max_committed_revision < 0
             or receipt_committed_revision > legacy_receipt_max_committed_revision
-            or missing != set(_POST_FINAL_RECEIPT_RELATION_FIELDS)
+            or missing_post_final != set(_POST_FINAL_RECEIPT_RELATION_FIELDS)
             or payload.get("transaction_type") in _POST_FINAL_RECEIPT_TRANSACTION_TYPES
-        ):
+        )
+        source_attempt_invalid = missing_attempt and (
+            type(receipt_committed_revision) is not int
+            or type(legacy_source_attempt_receipt_max_committed_revision) is not int
+            or receipt_committed_revision < 1
+            or legacy_source_attempt_receipt_max_committed_revision < 0
+            or receipt_committed_revision
+            > legacy_source_attempt_receipt_max_committed_revision
+            or payload.get("transaction_type")
+            == "core-v2-source-acquisition-attempt-authorize"
+        )
+        if post_final_invalid or source_attempt_invalid:
             raise ControlStoreIntegrityError("stored_payload_not_canonical")
         expanded = dict(payload)
-        expanded.update({field: [] for field in _POST_FINAL_RECEIPT_RELATION_FIELDS})
+        expanded.update({field: [] for field in missing_post_final})
+        if missing_attempt:
+            expanded[attempt_field] = []
         try:
             receipt = TransactionReceipt.model_validate(expanded)
         except (ValidationError, TypeError, ValueError) as exc:
             raise ControlStoreIntegrityError("stored_payload_invalid") from exc
         legacy_projection = receipt.model_dump(mode="json", exclude_unset=False)
-        for field in _POST_FINAL_RECEIPT_RELATION_FIELDS:
+        for field in missing_post_final:
             if legacy_projection.pop(field) != []:
                 raise ControlStoreIntegrityError("stored_payload_not_canonical")
+        if missing_attempt and legacy_projection.pop(attempt_field) != []:
+            raise ControlStoreIntegrityError("stored_payload_not_canonical")
         if canonical_json_bytes(legacy_projection).decode("utf-8") != payload_text:
             raise ControlStoreIntegrityError("stored_payload_not_canonical")
         if receipt.committed_revision != receipt_committed_revision:
@@ -433,6 +456,9 @@ class ControlStoreSnapshot:
     run_contract_bindings: tuple[RunContractBinding, ...]
     run_execution_authorizations: tuple[RunExecutionAuthorization, ...]
     run_source_discovery_authorizations: tuple[RunSourceDiscoveryAuthorization, ...]
+    run_source_acquisition_attempt_authorizations: tuple[
+        RunSourceAcquisitionAttemptAuthorization, ...
+    ]
     owned_artifact_submissions: tuple[OwnedArtifactSubmissionRecord, ...]
     stage_transitions: tuple[StageTransitionRecord, ...]
     stage_artifact_bindings: tuple[StageArtifactBinding, ...]
@@ -754,6 +780,11 @@ class ControlStoreHistory:
             ("authorization_id",),
             full.run_source_discovery_authorizations,
         )
+        run_source_acquisition_attempt_authorizations = selected(
+            "run_source_acquisition_attempt_authorizations",
+            ("attempt_authorization_id",),
+            full.run_source_acquisition_attempt_authorizations,
+        )
         stage_artifact_bindings = selected(
             "stage_artifact_bindings",
             ("transition_id", "position"),
@@ -954,6 +985,9 @@ class ControlStoreHistory:
             run_contract_bindings=run_contract_bindings,
             run_execution_authorizations=run_execution_authorizations,
             run_source_discovery_authorizations=run_source_discovery_authorizations,
+            run_source_acquisition_attempt_authorizations=(
+                run_source_acquisition_attempt_authorizations
+            ),
             owned_artifact_submissions=owned_artifact_submissions,
             stage_transitions=stage_transitions,
             stage_artifact_bindings=stage_artifact_bindings,
@@ -1151,6 +1185,16 @@ class SQLiteControlStore:
                 ) VALUES (?, ?, 0)
                 """,
                 (workspace_id, _RECEIPT_COMPATIBILITY_BOUNDARY_ID),
+            )
+            connection.execute(
+                """
+                INSERT INTO source_acquisition_attempt_compatibility_boundaries(
+                    workspace_id,
+                    boundary_id,
+                    legacy_receipt_max_committed_revision
+                ) VALUES (?, ?, 0)
+                """,
+                (workspace_id, _SOURCE_ATTEMPT_COMPATIBILITY_BOUNDARY_ID),
             )
             connection.commit()
         except Exception:
@@ -1573,6 +1617,9 @@ class SQLiteControlStore:
             str(row[1]),
             receipt_committed_revision=int(row[2]),
             legacy_receipt_max_committed_revision=self._legacy_receipt_cutoff(),
+            legacy_source_attempt_receipt_max_committed_revision=(
+                self._legacy_source_attempt_receipt_cutoff()
+            ),
         )
         self._verify_transaction_relations(receipt)
         self._verify_receipt_blobs(receipt)
@@ -1695,6 +1742,9 @@ class SQLiteControlStore:
                 )
                 self._insert_run_source_discovery_authorization(
                     uow._run_source_discovery_authorization
+                )
+                self._insert_run_source_acquisition_attempt_authorization(
+                    uow._run_source_acquisition_attempt_authorization
                 )
                 self._insert_owned_artifact_submissions(
                     uow._owned_artifact_submissions.values()
@@ -2145,6 +2195,92 @@ class SQLiteControlStore:
                 row is None
                 or _decode_record(RunSourceDiscoveryAuthorization, str(row[0]))
                 != referenced
+            ):
+                raise ControlStoreConflict("relational_integrity_conflict")
+
+        attempt_authorization = uow._run_source_acquisition_attempt_authorization
+        if attempt_authorization is not None:
+            discovery_record = source_discovery_authorization
+            if discovery_record is None:
+                discovery_row = self._connection.execute(
+                    "SELECT payload_json FROM run_source_discovery_authorizations "
+                    "WHERE run_id=? AND authorization_id=?",
+                    (
+                        run_id,
+                        attempt_authorization.discovery_authorization_id,
+                    ),
+                ).fetchone()
+                discovery_record = (
+                    None
+                    if discovery_row is None
+                    else _decode_record(
+                        RunSourceDiscoveryAuthorization,
+                        str(discovery_row[0]),
+                    )
+                )
+            previous_rows = self._connection.execute(
+                """
+                SELECT payload_json
+                FROM run_source_acquisition_attempt_authorizations
+                WHERE run_id=?
+                ORDER BY attempt_ordinal
+                """,
+                (run_id,),
+            ).fetchall()
+            previous = [
+                _decode_record(
+                    RunSourceAcquisitionAttemptAuthorization,
+                    str(row[0]),
+                )
+                for row in previous_rows
+            ]
+            expected_ordinal = len(previous) + 1
+            expected_previous = (
+                None if not previous else previous[-1].attempt_authorization_id
+            )
+            if (
+                attempt_authorization.accepted_transaction_id != uow.transaction_id
+                or attempt_authorization.authorization_event_id not in staged_events
+                or discovery_record is None
+                or attempt_authorization.discovery_authorization_id
+                != discovery_record.authorization_id
+                or attempt_authorization.workspace_id != discovery_record.workspace_id
+                or attempt_authorization.run_contract_fingerprint
+                != discovery_record.run_contract_fingerprint
+                or attempt_authorization.run_direction_fingerprint
+                != discovery_record.run_direction_fingerprint
+                or attempt_authorization.runtime_source_plan_fingerprint
+                != discovery_record.runtime_source_plan_fingerprint
+                or attempt_authorization.source_route_fingerprint
+                != discovery_record.source_route_fingerprint
+                or attempt_authorization.provider_id != discovery_record.provider_id
+                or attempt_authorization.route_id != discovery_record.route_id
+                or attempt_authorization.attempt_ordinal != expected_ordinal
+                or attempt_authorization.previous_attempt_authorization_id
+                != expected_previous
+            ):
+                raise ControlStoreConflict("relational_integrity_conflict")
+        for (
+            attempt_id,
+            referenced_attempt,
+        ) in uow._referenced_source_acquisition_attempt_authorizations.items():
+            if attempt_authorization is not None and (
+                attempt_id == attempt_authorization.attempt_authorization_id
+            ):
+                continue
+            row = self._connection.execute(
+                "SELECT payload_json "
+                "FROM run_source_acquisition_attempt_authorizations "
+                "WHERE run_id=? AND attempt_authorization_id=?",
+                (run_id, attempt_id),
+            ).fetchone()
+            if (
+                row is None
+                or _decode_record(
+                    RunSourceAcquisitionAttemptAuthorization,
+                    str(row[0]),
+                )
+                != referenced_attempt
             ):
                 raise ControlStoreConflict("relational_integrity_conflict")
 
@@ -2839,6 +2975,14 @@ class SQLiteControlStore:
                             uow._referenced_source_discovery_authorizations
                         )
                     ],
+                    "run_source_acquisition_attempt_authorizations": (
+                        [
+                            {"attempt_authorization_id": attempt_id}
+                            for attempt_id in sorted(
+                                uow._referenced_source_acquisition_attempt_authorizations
+                            )
+                        ]
+                    ),
                     "owned_artifact_submissions": [
                         {"submission_id": key}
                         for key in sorted(uow._owned_artifact_submissions)
@@ -3696,6 +3840,54 @@ class SQLiteControlStore:
                 record.credential_env,
                 record.completion_target,
                 record.repair_budget,
+                record.authorization_event_id,
+                record.accepted_transaction_id,
+                record.request_fingerprint,
+                record.created_at,
+                _canonical_record_text(record),
+            ),
+        )
+
+    def _insert_run_source_acquisition_attempt_authorization(
+        self,
+        record: RunSourceAcquisitionAttemptAuthorization | None,
+    ) -> None:
+        if record is None:
+            return
+        self._connection.execute(
+            """
+            INSERT INTO run_source_acquisition_attempt_authorizations(
+                run_id, attempt_authorization_id, attempt_ordinal, workspace_id,
+                schema_version, discovery_authorization_id,
+                run_contract_fingerprint, run_direction_fingerprint,
+                runtime_source_plan_fingerprint, source_route_fingerprint,
+                provider_request_fingerprint, provider_id, route_id,
+                max_provider_calls, provider_cost_status,
+                previous_attempt_authorization_id, human_request_id,
+                authorization_event_id, accepted_transaction_id,
+                request_fingerprint, created_at, payload_json
+            ) VALUES (
+                ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
+            )
+            """,
+            (
+                record.run_id,
+                record.attempt_authorization_id,
+                record.attempt_ordinal,
+                record.workspace_id,
+                record.schema_version,
+                record.discovery_authorization_id,
+                record.run_contract_fingerprint,
+                record.run_direction_fingerprint,
+                record.runtime_source_plan_fingerprint,
+                record.source_route_fingerprint,
+                record.provider_request_fingerprint,
+                record.provider_id,
+                record.route_id,
+                record.max_provider_calls,
+                record.provider_cost_status,
+                record.previous_attempt_authorization_id,
+                record.human_request_id,
                 record.authorization_event_id,
                 record.accepted_transaction_id,
                 record.request_fingerprint,
@@ -4835,6 +5027,22 @@ class SQLiteControlStore:
                     reference.authorization_id,
                 ),
             )
+        for position, reference in enumerate(
+            receipt.run_source_acquisition_attempt_authorizations
+        ):
+            self._connection.execute(
+                """
+                INSERT INTO transaction_run_source_acquisition_attempt_authorizations(
+                    run_id, transaction_id, position, attempt_authorization_id
+                ) VALUES (?, ?, ?, ?)
+                """,
+                (
+                    receipt.run_id,
+                    receipt.transaction_id,
+                    position,
+                    reference.attempt_authorization_id,
+                ),
+            )
         for position, reference in enumerate(receipt.owned_artifact_submissions):
             self._connection.execute(
                 """
@@ -5845,6 +6053,39 @@ class SQLiteControlStore:
                     "credential_env": "credential_env",
                     "completion_target": "completion_target",
                     "repair_budget": "repair_budget",
+                    "authorization_event_id": "authorization_event_id",
+                    "accepted_transaction_id": "accepted_transaction_id",
+                    "request_fingerprint": "request_fingerprint",
+                    "created_at": "created_at",
+                },
+            ),
+            run_source_acquisition_attempt_authorizations=self._load_for_run(
+                RunSourceAcquisitionAttemptAuthorization,
+                "run_source_acquisition_attempt_authorizations",
+                run_id,
+                "attempt_ordinal",
+                {
+                    "run_id": "run_id",
+                    "attempt_authorization_id": "attempt_authorization_id",
+                    "attempt_ordinal": "attempt_ordinal",
+                    "workspace_id": "workspace_id",
+                    "schema_version": "schema_version",
+                    "discovery_authorization_id": "discovery_authorization_id",
+                    "run_contract_fingerprint": "run_contract_fingerprint",
+                    "run_direction_fingerprint": "run_direction_fingerprint",
+                    "runtime_source_plan_fingerprint": (
+                        "runtime_source_plan_fingerprint"
+                    ),
+                    "source_route_fingerprint": "source_route_fingerprint",
+                    "provider_request_fingerprint": ("provider_request_fingerprint"),
+                    "provider_id": "provider_id",
+                    "route_id": "route_id",
+                    "max_provider_calls": "max_provider_calls",
+                    "provider_cost_status": "provider_cost_status",
+                    "previous_attempt_authorization_id": (
+                        "previous_attempt_authorization_id"
+                    ),
+                    "human_request_id": "human_request_id",
                     "authorization_event_id": "authorization_event_id",
                     "accepted_transaction_id": "accepted_transaction_id",
                     "request_fingerprint": "request_fingerprint",
@@ -7449,6 +7690,7 @@ class SQLiteControlStore:
                 snapshot.run_contract_bindings,
                 snapshot.run_execution_authorizations,
                 snapshot.run_source_discovery_authorizations,
+                snapshot.run_source_acquisition_attempt_authorizations,
                 snapshot.owned_artifact_submissions,
                 snapshot.stage_transitions,
                 snapshot.stage_artifact_bindings,
@@ -7646,6 +7888,55 @@ class SQLiteControlStore:
                 ]
                 != [authorization.authorization_id]
                 or authorization.authorization_event_id not in owner.event_ids
+            ):
+                raise ControlStoreIntegrityError("core_run_relation_invalid")
+
+        attempts = list(snapshot.run_source_acquisition_attempt_authorizations)
+        legacy_discovery = (
+            bool(snapshot.run_source_discovery_authorizations)
+            and initialization.committed_revision
+            <= self._legacy_source_attempt_receipt_cutoff()
+        )
+        if snapshot.run_source_discovery_authorizations and not legacy_discovery:
+            if not attempts:
+                raise ControlStoreIntegrityError("core_run_relation_invalid")
+        if attempts and not snapshot.run_source_discovery_authorizations:
+            raise ControlStoreIntegrityError("core_run_relation_invalid")
+        for index, attempt in enumerate(attempts, start=1):
+            owner = receipts.get(attempt.accepted_transaction_id)
+            discovery = snapshot.run_source_discovery_authorizations[0]
+            if (
+                attempt.run_id != snapshot.run.run_id
+                or attempt.workspace_id != snapshot.workspace_id
+                or attempt.discovery_authorization_id != discovery.authorization_id
+                or attempt.run_contract_fingerprint
+                != discovery.run_contract_fingerprint
+                or attempt.run_direction_fingerprint
+                != discovery.run_direction_fingerprint
+                or attempt.runtime_source_plan_fingerprint
+                != discovery.runtime_source_plan_fingerprint
+                or attempt.source_route_fingerprint
+                != discovery.source_route_fingerprint
+                or attempt.provider_id != discovery.provider_id
+                or attempt.route_id != discovery.route_id
+                or attempt.attempt_ordinal != index
+                or attempt.previous_attempt_authorization_id
+                != (
+                    None if index == 1 else attempts[index - 2].attempt_authorization_id
+                )
+                or owner is None
+                or (index == 1 and owner.transaction_type != "core-v2-initialize")
+                or (
+                    index > 1
+                    and owner.transaction_type
+                    != "core-v2-source-acquisition-attempt-authorize"
+                )
+                or [
+                    item.attempt_authorization_id
+                    for item in (owner.run_source_acquisition_attempt_authorizations)
+                ]
+                != [attempt.attempt_authorization_id]
+                or attempt.authorization_event_id not in owner.event_ids
             ):
                 raise ControlStoreIntegrityError("core_run_relation_invalid")
 
@@ -7865,19 +8156,58 @@ class SQLiteControlStore:
                 )
         artifacts_by_id = {item.artifact_id: item for item in snapshot.artifacts}
         for receipt in receipts.values():
-            if (
-                len(receipt.run_source_discovery_authorizations) != 1
-                or len(receipt.run_execution_authorizations) != 1
-            ):
-                continue
             unclaimed = [
                 item
                 for item in receipt.artifact_revisions
                 if (item.artifact_id, item.revision) not in producer_transactions
             ]
+            if not unclaimed:
+                continue
+            failure_evidence = [
+                event.intake_binding.source_acquisition_failure
+                for event in snapshot.events
+                if event.transaction_id == receipt.transaction_id
+                and event.intake_binding is not None
+                and event.intake_binding.source_acquisition_failure is not None
+            ]
+            successful_discovery = (
+                len(receipt.run_source_discovery_authorizations) == 1
+                and len(receipt.run_execution_authorizations) == 1
+                and not failure_evidence
+            )
+            failed_discovery = (
+                len(receipt.run_source_discovery_authorizations) == 1
+                and len(receipt.run_source_acquisition_attempt_authorizations) == 1
+                and not receipt.run_execution_authorizations
+                and len(failure_evidence) == 1
+                and failure_evidence[0].provider_response_artifact is not None
+                and receipt.run_source_acquisition_attempt_authorizations[
+                    0
+                ].attempt_authorization_id
+                == failure_evidence[0].attempt_authorization_id
+                and len(
+                    [
+                        item
+                        for item in snapshot.invocations
+                        if item.invocation_id == failure_evidence[0].invocation_id
+                        and item.status == "failed"
+                    ]
+                )
+                == 1
+            )
+            if not successful_discovery and not failed_discovery:
+                continue
             if len(unclaimed) != 1:
                 raise ControlStoreIntegrityError("core_run_relation_invalid")
             response_ref = unclaimed[0]
+            if failed_discovery:
+                failure_response_ref = failure_evidence[0].provider_response_artifact
+                if (
+                    failure_response_ref is None
+                    or response_ref.artifact_id != failure_response_ref.artifact_id
+                    or response_ref.revision != failure_response_ref.revision
+                ):
+                    raise ControlStoreIntegrityError("core_run_relation_invalid")
             response_revision = revisions.get(
                 (response_ref.artifact_id, response_ref.revision)
             )
@@ -8220,6 +8550,11 @@ class SQLiteControlStore:
                 if model_type is TransactionReceipt
                 else None
             ),
+            legacy_source_attempt_receipt_max_committed_revision=(
+                self._legacy_source_attempt_receipt_cutoff()
+                if model_type is TransactionReceipt
+                else None
+            ),
         )
         for column, attribute in columns.items():
             stored = row[column]
@@ -8260,6 +8595,24 @@ class SQLiteControlStore:
         if (
             len(rows) != 1
             or rows[0]["boundary_id"] != _RECEIPT_COMPATIBILITY_BOUNDARY_ID
+            or type(rows[0]["legacy_receipt_max_committed_revision"]) is not int
+            or rows[0]["legacy_receipt_max_committed_revision"] < 0
+        ):
+            raise ControlStoreIntegrityError("control_store_integrity_invalid")
+        return int(rows[0]["legacy_receipt_max_committed_revision"])
+
+    def _legacy_source_attempt_receipt_cutoff(self) -> int:
+        rows = self._connection.execute(
+            """
+            SELECT boundary_id,legacy_receipt_max_committed_revision
+            FROM source_acquisition_attempt_compatibility_boundaries
+            WHERE workspace_id=?
+            """,
+            (self.workspace_id,),
+        ).fetchall()
+        if (
+            len(rows) != 1
+            or rows[0]["boundary_id"] != _SOURCE_ATTEMPT_COMPATIBILITY_BOUNDARY_ID
             or type(rows[0]["legacy_receipt_max_committed_revision"]) is not int
             or rows[0]["legacy_receipt_max_committed_revision"] < 0
         ):
@@ -8514,6 +8867,14 @@ class SQLiteControlStore:
                 tuple(
                     (item.authorization_id,)
                     for item in receipt.run_source_discovery_authorizations
+                ),
+            ),
+            (
+                "transaction_run_source_acquisition_attempt_authorizations",
+                ("attempt_authorization_id",),
+                tuple(
+                    (item.attempt_authorization_id,)
+                    for item in (receipt.run_source_acquisition_attempt_authorizations)
                 ),
             ),
             (
@@ -9288,6 +9649,20 @@ class SQLiteControlStore:
                 "SELECT 1 FROM transaction_run_source_discovery_authorizations "
                 "WHERE run_id=? AND transaction_id=? AND authorization_id=?",
                 (run_id, accepted_transaction_id, authorization_id),
+            ).fetchone()
+            if owner is None:
+                raise ControlStoreIntegrityError("transaction_ledger_integrity_invalid")
+        attempt_rows = self._connection.execute(
+            "SELECT run_id,attempt_authorization_id,accepted_transaction_id "
+            "FROM run_source_acquisition_attempt_authorizations"
+        ).fetchall()
+        for run_id, attempt_id, accepted_transaction_id in attempt_rows:
+            owner = self._connection.execute(
+                "SELECT 1 "
+                "FROM transaction_run_source_acquisition_attempt_authorizations "
+                "WHERE run_id=? AND transaction_id=? "
+                "AND attempt_authorization_id=?",
+                (run_id, accepted_transaction_id, attempt_id),
             ).fetchone()
             if owner is None:
                 raise ControlStoreIntegrityError("transaction_ledger_integrity_invalid")

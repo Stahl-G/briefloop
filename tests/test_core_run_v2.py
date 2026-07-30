@@ -5908,6 +5908,7 @@ def test_core_effect_receipt_binding_table_is_exact() -> None:
         "delivery_authorization",
         "delivery_attempt",
         "delivery_result",
+        "source_acquisition_attempt_authorize",
     }
     assert {
         effect: rule.receipt_event_counts
@@ -5943,6 +5944,9 @@ def test_core_effect_receipt_binding_table_is_exact() -> None:
         "delivery_authorization": (("decision_recorded", 1),),
         "delivery_attempt": (("delivery_attempted", 1),),
         "delivery_result": None,
+        "source_acquisition_attempt_authorize": (
+            ("source_acquisition_attempt_authorized", 1),
+        ),
     }
     assert _AUTHORITATIVE_RECEIPT_RELATION_FAMILIES == set(
         TransactionReceipt.model_fields
@@ -5973,6 +5977,7 @@ def test_core_effect_receipt_binding_table_is_exact() -> None:
                 "run_contract_bindings",
                 "run_execution_authorizations",
                 "run_source_discovery_authorizations",
+                "run_source_acquisition_attempt_authorizations",
                 "stage_transitions",
                 "run_integrity_records",
             }
@@ -6056,6 +6061,9 @@ def test_core_effect_receipt_binding_table_is_exact() -> None:
         "delivery_result": frozenset(
             {"artifact_revisions", "artifact_identities", "delivery_results"}
         ),
+        "source_acquisition_attempt_authorize": frozenset(
+            {"run_source_acquisition_attempt_authorizations"}
+        ),
     }
     assert set(_INTAKE_EFFECT_RULES) == {
         "source_evidence_intake",
@@ -6077,6 +6085,7 @@ def test_core_effect_receipt_binding_table_is_exact() -> None:
                 "owned_artifact_submissions",
                 "run_execution_authorizations",
                 "run_source_discovery_authorizations",
+                "run_source_acquisition_attempt_authorizations",
             }
         ),
         "candidate_claims_intake": frozenset(
@@ -6091,7 +6100,14 @@ def test_core_effect_receipt_binding_table_is_exact() -> None:
         "audit_proposal_intake": frozenset(
             {"artifact_revisions", "artifact_identities", "proposal_ids"}
         ),
-        "intake_rejection": frozenset(),
+        "intake_rejection": frozenset(
+            {
+                "artifact_revisions",
+                "artifact_identities",
+                "run_source_discovery_authorizations",
+                "run_source_acquisition_attempt_authorizations",
+            }
+        ),
     }
 
 

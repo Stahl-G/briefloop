@@ -81,7 +81,11 @@ seam. On `role_work_required`, perform only the exact current-session envelope
 work and call it again. Stop on `proposal_invalid`, `needs_human`,
 `needs_attention`, or `finalized_local` as directed; never invent the missing
 request or repair. During discovery-only continuation, the host may run the
-doctor, source planner, and exact bound Tavily route. Search snippets remain
+doctor, source planner, and exact bound Tavily route. The workspace credential
+remains local until the Human rotates/removes it, but each provider call needs
+one distinct Human/Store attempt authorization. Exact replay never redials and
+failures never auto-retry. A typed recovery action requires the Human to
+authorize another attempt or provide a HumanSourcePack. Search snippets remain
 ineligible; only durable provider content can participate in the single atomic
 source/manifest/classification/execution-authorization promotion receipt.
 Unauthorized runs retain the granular/manual protocol.

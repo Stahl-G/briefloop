@@ -22,6 +22,10 @@ from multi_agent_brief.core_run_v2.policy import derived_id
 from multi_agent_brief.core_run_v2.service import CoreRunService
 from multi_agent_brief.intake_v2.errors import IntakeResult
 from multi_agent_brief.intake_v2.service import IntakeService
+from multi_agent_brief.product.init_web.submit import (
+    SUBMISSION_SCHEMA,
+    InitWebSubmitter,
+)
 from multi_agent_brief.runtime_host_v2.codex import load_codex_adapter_binding
 from multi_agent_brief.runtime_host_v2.errors import RuntimeHostError
 from multi_agent_brief.runtime_host_v2.service import (
@@ -232,27 +236,48 @@ def test_first_dynamic_proposal_is_created_and_advances_the_runtime(
 
 
 def _external_workspace(tmp_path: Path) -> Path:
+    tmp_path.mkdir(parents=True, exist_ok=True)
     workspace = tmp_path / "external-workspace"
-    values = iter(("external-codex-workspace", "external-codex-run"))
-    create_workspace(
-        workspace,
-        InitProfile(
-            company="ExampleCo",
-            industry="manufacturing",
-            brief_title="ExampleCo brief",
-            task_objective="Prepare the ExampleCo brief.",
-            audience="management",
-            audience_profile="management",
-            focus_areas=["operations"],
-            output_formats=["markdown"],
-            web_search_mode="external_api",
-            web_search_enabled=True,
-            search_backend="tavily",
-        ),
-        report_date_factory=lambda: date(2026, 7, 19),
-        identity_factory=lambda: next(values),
+    session_id = "runtime-host-codex-test-session"
+    submitter = InitWebSubmitter(base_dir=tmp_path)
+    submitter.configure_search_secret(
+        session_id=session_id,
+        body={"provider": "tavily", "api_key": "test-only-tavily-secret"},
     )
-    install_runtime_kit(workspace=workspace, runtime="codex")
+    status, response = submitter.submit(
+        {
+            "schema_version": SUBMISSION_SCHEMA,
+            "request_id": "REQ-RUNTIME-HOST-CODEX-TAVILY",
+            "payload": {
+                "workspace_target": workspace.name,
+                "selections": {
+                    "company": "ExampleCo",
+                    "industry_or_theme": "manufacturing",
+                    "task_objective": "Prepare the ExampleCo brief.",
+                    "brief_title": "ExampleCo brief",
+                    "audience": "management",
+                    "interface_language": "en",
+                    "output_language": "en",
+                    "cadence": "weekly",
+                    "max_source_age_days": 30,
+                    "focus_areas": ["operations"],
+                    "output_formats": ["markdown"],
+                    "forbidden_sources": [],
+                    "source_profile": "llm_decide",
+                    "web_search_mode": "external_api",
+                    "search_backend": "tavily",
+                    "search_domains": [],
+                    "output_extent": "balanced",
+                },
+                "completion_target": "finalized_local",
+                "repair_budget": 1,
+                "search_secret_session_id": session_id,
+                "human_confirmation": True,
+            },
+        }
+    )
+    if status != 200 or response.get("source_discovery_authorized") is not True:
+        raise AssertionError(f"external workspace initialization failed: {response!r}")
     return workspace
 
 
@@ -1253,12 +1278,14 @@ def test_deterministic_source_failure_exhausts_frozen_route_without_retry(
     failed = json.loads(capsys.readouterr().out)
     assert failed["status"] == "rejected_recorded"
     assert failed["next_action"]["action_kind"] == "human_decision"
-    assert failed["next_action"]["effect_kind"] == "source_input_required"
+    assert failed["next_action"]["effect_kind"] == "source_acquisition_recovery"
     assert calls == 1
 
     with SQLiteControlStore.open(workspace / "briefloop.db") as store:
         revision = store.current_revision
-        snapshot = store.load_snapshot("RUN-external-codex-run")
+        head = store.load_workspace_run_head()
+        assert head is not None
+        snapshot = store.load_snapshot(head.current_run_id)
     assert snapshot.sources == ()
     assert (
         len(
@@ -1311,7 +1338,7 @@ def test_deterministic_source_failure_exhausts_frozen_route_without_retry(
         manifest_payload, sort_keys=True, separators=(",", ":")
     ).encode("utf-8")
     manifest_path.write_bytes(manifest_bytes)
-    request_payload = {
+    human_pack_payload = {
         "schema_version": "briefloop.runtime_human_source_pack_request.v2",
         "request_id": "REQ-HUMAN-SOURCE-PACK-001",
         "run_id": action["run_id"],
@@ -1352,18 +1379,34 @@ def test_deterministic_source_failure_exhausts_frozen_route_without_retry(
             },
         ],
     }
+    request_payload = {
+        "schema_version": ("briefloop.runtime_source_acquisition_recovery_request.v1"),
+        "request_id": "REQ-HUMAN-SOURCE-RECOVERY-001",
+        "run_id": action["run_id"],
+        "expected_store_revision": action["store_revision"],
+        "expected_action_fingerprint": action["action_fingerprint"],
+        "decision": "provide_human_source_pack",
+        "previous_attempt_authorization_id": None,
+        "human_confirmation": None,
+        "provider_cost_status": None,
+        "human_source_pack": human_pack_payload,
+    }
     request_path.write_text(
         json.dumps(request_payload, sort_keys=True),
         encoding="utf-8",
     )
-    bad_members = [dict(item) for item in request_payload["members"]]
+    bad_members = [dict(item) for item in human_pack_payload["members"]]
     bad_members[1]["expected_input_sha256"] = "0" * 64
     request_path.write_text(
         json.dumps(
             {
                 **request_payload,
                 "request_id": "REQ-HUMAN-SOURCE-PACK-BAD",
-                "members": bad_members,
+                "human_source_pack": {
+                    **human_pack_payload,
+                    "request_id": "REQ-HUMAN-SOURCE-PACK-BAD",
+                    "members": bad_members,
+                },
             },
             sort_keys=True,
         ),
@@ -1393,7 +1436,14 @@ def test_deterministic_source_failure_exhausts_frozen_route_without_retry(
     manifest_path.write_bytes(manifest_bytes + b"\n")
     request_path.write_text(
         json.dumps(
-            {**request_payload, "request_id": "REQ-HUMAN-SOURCE-PACK-MANIFEST-BAD"},
+            {
+                **request_payload,
+                "request_id": "REQ-HUMAN-SOURCE-MANIFEST-BAD",
+                "human_source_pack": {
+                    **human_pack_payload,
+                    "request_id": "REQ-HUMAN-SOURCE-PACK-MANIFEST-BAD",
+                },
+            },
             sort_keys=True,
         ),
         encoding="utf-8",
@@ -1422,7 +1472,7 @@ def test_deterministic_source_failure_exhausts_frozen_route_without_retry(
         json.dumps(request_payload, sort_keys=True),
         encoding="utf-8",
     )
-    original_host_submit = IntakeService._submit_source_pack_from_host
+    original_host_submit = IntakeService._commit_human_source_pack_from_host
     host_submit_calls = 0
     replacement_bytes: list[bytes] = []
 
@@ -1502,7 +1552,7 @@ def test_deterministic_source_failure_exhausts_frozen_route_without_retry(
 
     monkeypatch.setattr(
         IntakeService,
-        "_submit_source_pack_from_host",
+        "_commit_human_source_pack_from_host",
         replace_materialized_pack_then_report_unknown,
     )
     assert (
@@ -1591,9 +1641,15 @@ def test_deterministic_source_failure_exhausts_frozen_route_without_retry(
         ("input_path", "input/missing-source.txt"),
         ("expected_input_sha256", "0" * 64),
     ):
-        changed_members = [dict(item) for item in request_payload["members"]]
+        changed_members = [dict(item) for item in human_pack_payload["members"]]
         changed_members[0][field] = changed_value
-        changed_request = {**request_payload, "members": changed_members}
+        changed_request = {
+            **request_payload,
+            "human_source_pack": {
+                **human_pack_payload,
+                "members": changed_members,
+            },
+        }
         request_path.write_text(
             json.dumps(changed_request, sort_keys=True),
             encoding="utf-8",
@@ -1800,14 +1856,16 @@ def test_provider_result_over_bound_records_one_failed_invocation(
         item for item in after_snapshot.invocations if item.role_id == "source-provider"
     )
     assert provider_invocation.status == "failed"
-    assert provider_invocation.failure_reason == "dispatch_unavailable"
-    assert (
-        sorted(
-            path.relative_to(workspace).as_posix()
-            for path in (workspace / "scratch").rglob("*")
-        )
-        == scratch_before
+    assert provider_invocation.failure_reason == "child_failed"
+    scratch_after = sorted(
+        path.relative_to(workspace).as_posix()
+        for path in (workspace / "scratch").rglob("*")
     )
+    assert set(scratch_before).issubset(scratch_after)
+    assert set(scratch_after) - set(scratch_before) == {
+        f"scratch/{provider_invocation.invocation_id}",
+        f"scratch/{provider_invocation.invocation_id}/role_task_envelope.json",
+    }
 
 
 def test_provider_max_five_commits_once_and_store_replay_skips_second_call(
@@ -2031,33 +2089,43 @@ def test_source_pack_resume_reuses_staged_set_and_same_invocation(
         host.start_current_invocation(expected_action=action)
     assert not (workspace / "scratch" / provider_invocations[0].invocation_id).exists()
     if corrupt_stage:
+        discovery = interrupted.run_source_discovery_authorizations[0]
+        attempt = interrupted.run_source_acquisition_attempt_authorizations[0]
         stage_identity = canonical_fingerprint(
             {
-                "kind": "deterministic_source_pack",
+                "kind": "discovery_source_pack",
                 "run_id": action.run_id,
-                "invocation_id": provider_invocations[0].invocation_id,
+                "action_fingerprint": action.action_fingerprint,
+                "discovery_authorization_id": discovery.authorization_id,
+                "attempt_authorization_id": attempt.attempt_authorization_id,
             }
         )
-        (
-            source_stage_root(workspace, stage_identity) / "stage_attestation.json"
-        ).write_text(
+        stage_root = source_stage_root(workspace, stage_identity)
+        stage_root.mkdir(parents=True, exist_ok=True)
+        (stage_root / "stage_attestation.json").write_text(
             "{}",
             encoding="utf-8",
         )
 
-    resumed = host.apply_current(expected_action=action)
+    with pytest.raises(
+        RuntimeHostError,
+        match="source_acquisition_outcome_unknown",
+    ):
+        host.apply_current()
 
-    assert resumed.status == ("rejected_recorded" if corrupt_stage else "committed")
-    assert provider_calls == 1
+    assert provider_calls == 0
     with SQLiteControlStore.open(workspace / "briefloop.db") as store:
         final = store.load_snapshot(action.run_id)
     assert (
         len([item for item in final.invocations if item.role_id == "source-provider"])
         == 1
     )
-    assert next(
-        item for item in final.invocations if item.role_id == "source-provider"
-    ).status == ("failed" if corrupt_stage else "completed")
+    assert (
+        next(
+            item for item in final.invocations if item.role_id == "source-provider"
+        ).status
+        == "active"
+    )
 
 
 def test_missing_stage_after_invocation_records_one_failure_without_provider(
@@ -2101,12 +2169,17 @@ def test_missing_stage_after_invocation_records_one_failure_without_provider(
         should_not_run,
     )
 
-    failed = host.apply_current(expected_action=action)
-    replayed = host.apply_current(expected_action=action)
+    with pytest.raises(
+        RuntimeHostError,
+        match="source_acquisition_outcome_unknown",
+    ):
+        host.apply_current()
+    with pytest.raises(
+        RuntimeHostError,
+        match="source_acquisition_outcome_unknown",
+    ):
+        host.apply_current()
 
-    assert failed.status == "rejected_recorded"
-    assert replayed.status == "rejected_recorded"
-    assert replayed.transaction_id == failed.transaction_id
     assert provider_calls == 0
     with SQLiteControlStore.open(workspace / "briefloop.db") as store:
         snapshot = store.load_snapshot(action.run_id)
@@ -2114,7 +2187,7 @@ def test_missing_stage_after_invocation_records_one_failure_without_provider(
         item for item in snapshot.invocations if item.role_id == "source-provider"
     ]
     assert len(provider_invocations) == 1
-    assert provider_invocations[0].status == "failed"
+    assert provider_invocations[0].status == "active"
 
 
 def test_source_pack_commit_outcome_unknown_replays_identical_request(
@@ -2138,13 +2211,13 @@ def test_source_pack_commit_outcome_unknown_replays_identical_request(
         "multi_agent_brief.sources.web_search.WebSearchProvider.collect_with_response",
         one_result,
     )
-    original_submit = IntakeService._submit_source_pack_from_host
+    original_submit = IntakeService._commit_discovery_source_pack_from_core
     submit_calls = 0
 
-    def unknown_after_commit(self, request, pack):
+    def unknown_after_commit(self, intake_input):
         nonlocal submit_calls
         submit_calls += 1
-        result = original_submit(self, request, pack)
+        result = original_submit(self, intake_input)
         if submit_calls == 1:
             assert result.status == "committed"
             return IntakeResult(
@@ -2155,7 +2228,7 @@ def test_source_pack_commit_outcome_unknown_replays_identical_request(
 
     monkeypatch.setattr(
         IntakeService,
-        "_submit_source_pack_from_host",
+        "_commit_discovery_source_pack_from_core",
         unknown_after_commit,
     )
     with SQLiteControlStore.open(workspace / "briefloop.db") as store:

@@ -23,7 +23,9 @@ from multi_agent_brief.contracts.v2 import (
     InvocationStartRequest,
     RunContractBinding,
     RunExecutionAuthorization,
+    RunSourceAcquisitionAttemptAuthorization,
     RunSourceDiscoveryAuthorization,
+    SourceAcquisitionAttemptAuthorizeRequest,
     canonical_run_direction_for_binding,
     RunDirection,
     RunIdentity,
@@ -137,6 +139,15 @@ class CoreRunService:
     def doctor_check(self, request: IntegrityCheckRequest) -> CoreRunResult:
         try:
             return self._doctor_check(request)
+        except (CoreRunError, ControlStoreError) as exc:
+            return core_run_failure_result(exc)
+
+    def authorize_source_acquisition_attempt(
+        self,
+        request: SourceAcquisitionAttemptAuthorizeRequest,
+    ) -> CoreRunResult:
+        try:
+            return self._authorize_source_acquisition_attempt(request)
         except (CoreRunError, ControlStoreError) as exc:
             return core_run_failure_result(exc)
 
@@ -631,6 +642,53 @@ class CoreRunService:
                     strict=True,
                 )
             )
+            source_acquisition_attempt_authorization = (
+                None
+                if source_discovery_authorization is None
+                or discovery_route is None
+                or discovery_route.acquisition_spec is None
+                else RunSourceAcquisitionAttemptAuthorization.model_validate(
+                    {
+                        "schema_version": (
+                            RunSourceAcquisitionAttemptAuthorization.schema_id
+                        ),
+                        "attempt_authorization_id": derived_id(
+                            "SOURCE-ACQUIRE-ATTEMPT-AUTH",
+                            request.request_id,
+                            request_fingerprint,
+                            "1",
+                        ),
+                        "attempt_ordinal": 1,
+                        "run_id": request.run_id,
+                        "workspace_id": request.workspace_id,
+                        "discovery_authorization_id": (
+                            source_discovery_authorization.authorization_id
+                        ),
+                        "run_contract_fingerprint": binding.contract_fingerprint,
+                        "run_direction_fingerprint": (
+                            source_discovery_authorization.run_direction_fingerprint
+                        ),
+                        "runtime_source_plan_fingerprint": (
+                            source_plan.source_plan_fingerprint
+                        ),
+                        "source_route_fingerprint": (discovery_route.route_fingerprint),
+                        "provider_request_fingerprint": (
+                            discovery_route.acquisition_spec.acquisition_spec_fingerprint
+                        ),
+                        "provider_id": source_discovery_authorization.provider_id,
+                        "route_id": source_discovery_authorization.route_id,
+                        "max_provider_calls": 1,
+                        "provider_cost_status": ("not_reported_acknowledged"),
+                        "previous_attempt_authorization_id": None,
+                        "human_request_id": request.request_id,
+                        "authorization_event_id": event_id,
+                        "accepted_transaction_id": request.request_id,
+                        "request_fingerprint": request_fingerprint,
+                        "created_at": now,
+                    },
+                    strict=True,
+                )
+            )
             event = _core_event(
                 event_id=event_id,
                 run_id=request.run_id,
@@ -665,6 +723,10 @@ class CoreRunService:
             if source_discovery_authorization is not None:
                 unit.put_run_source_discovery_authorization(
                     source_discovery_authorization
+                )
+            if source_acquisition_attempt_authorization is not None:
+                unit.put_run_source_acquisition_attempt_authorization(
+                    source_acquisition_attempt_authorization
                 )
             artifact_contracts = {
                 str(item["artifact_id"]): item for item in contracts.artifacts
@@ -831,11 +893,21 @@ class CoreRunService:
                 and request.stage_id == "source-discovery"
                 and request.role_id == "source-provider"
             )
+            recovery_source_reservation = (
+                action.action_kind == "human_decision"
+                and action.effect_kind == "source_acquisition_recovery"
+                and action.stage_id == "source-discovery"
+                and action.request_schema_id
+                == "briefloop.runtime_source_acquisition_recovery_request.v1"
+                and request.stage_id == "source-discovery"
+                and request.role_id == "source-provider"
+            )
             if not (
                 delegate_reservation
                 or source_acquire_reservation
                 or authorized_source_pack_reservation
                 or human_source_reservation
+                or recovery_source_reservation
             ):
                 raise CoreRunError("invocation_owner_mismatch")
             if request.role_id not in verified.runtime_adapter.role_ids:
@@ -934,6 +1006,146 @@ class CoreRunService:
                 status="committed",
                 receipt=receipt,
                 primary_record_id=invocation_id,
+            )
+
+    def _authorize_source_acquisition_attempt(
+        self,
+        request: SourceAcquisitionAttemptAuthorizeRequest,
+    ) -> CoreRunResult:
+        fingerprint = canonical_fingerprint(
+            request.model_dump(mode="json", exclude_unset=False)
+        )
+        with self._open_store() as store:
+            replay = resolve_core_replay(
+                store,
+                run_id=request.run_id,
+                request_id=request.request_id,
+                request_fingerprint=fingerprint,
+            )
+            if replay is not None:
+                return replay
+            verified = self._verifier.verify(store, request.run_id)
+            self._require_store_revision(verified, request.expected_store_revision)
+            action = classify_core_run_next_action(verified)
+            if (
+                action.action_kind != "human_decision"
+                or action.effect_kind != "source_acquisition_recovery"
+                or action.reason_code != "source_acquisition_recovery_decision_required"
+                or action.action_fingerprint != request.expected_action_fingerprint
+                or len(verified.snapshot.run_source_discovery_authorizations) != 1
+                or not verified.snapshot.run_source_acquisition_attempt_authorizations
+                or verified.snapshot.run_execution_authorizations
+            ):
+                raise CoreRunError("source_acquisition_recovery_invalid")
+            discovery = verified.snapshot.run_source_discovery_authorizations[0]
+            previous = verified.snapshot.run_source_acquisition_attempt_authorizations[
+                -1
+            ]
+            if (
+                previous.attempt_authorization_id
+                != request.previous_attempt_authorization_id
+            ):
+                raise CoreRunError("source_acquisition_recovery_invalid")
+            route = next(
+                (
+                    item
+                    for item in verified.source_plan.routes
+                    if item.route_id == discovery.route_id
+                    and item.provider_id == discovery.provider_id
+                    and item.route_fingerprint == discovery.source_route_fingerprint
+                ),
+                None,
+            )
+            if route is None or route.acquisition_spec is None:
+                raise CoreRunError("control_store_integrity_invalid")
+            now = _now(self._clock)
+            event_id = derived_id(
+                "EVT-SOURCE-ACQUIRE-ATTEMPT-AUTH",
+                request.request_id,
+                fingerprint,
+            )
+            attempt_id = derived_id(
+                "SOURCE-ACQUIRE-ATTEMPT-AUTH",
+                request.run_id,
+                request.request_id,
+                fingerprint,
+            )
+            authorization = RunSourceAcquisitionAttemptAuthorization.model_validate(
+                {
+                    "schema_version": (
+                        RunSourceAcquisitionAttemptAuthorization.schema_id
+                    ),
+                    "attempt_authorization_id": attempt_id,
+                    "attempt_ordinal": previous.attempt_ordinal + 1,
+                    "run_id": request.run_id,
+                    "workspace_id": verified.snapshot.workspace_id,
+                    "discovery_authorization_id": discovery.authorization_id,
+                    "run_contract_fingerprint": discovery.run_contract_fingerprint,
+                    "run_direction_fingerprint": (discovery.run_direction_fingerprint),
+                    "runtime_source_plan_fingerprint": (
+                        discovery.runtime_source_plan_fingerprint
+                    ),
+                    "source_route_fingerprint": discovery.source_route_fingerprint,
+                    "provider_request_fingerprint": (
+                        route.acquisition_spec.acquisition_spec_fingerprint
+                    ),
+                    "provider_id": discovery.provider_id,
+                    "route_id": discovery.route_id,
+                    "max_provider_calls": 1,
+                    "provider_cost_status": request.provider_cost_status,
+                    "previous_attempt_authorization_id": (
+                        previous.attempt_authorization_id
+                    ),
+                    "human_request_id": request.request_id,
+                    "authorization_event_id": event_id,
+                    "accepted_transaction_id": request.request_id,
+                    "request_fingerprint": fingerprint,
+                    "created_at": now,
+                },
+                strict=True,
+            )
+            event = _core_event(
+                event_id=event_id,
+                run_id=request.run_id,
+                event_type="source_acquisition_attempt_authorized",
+                transaction_id=request.request_id,
+                stage_id="source-discovery",
+                decision="continue",
+                reason="Human authorized one additional Tavily acquisition attempt",
+                created_at=now,
+                binding=CoreRunEventBinding(
+                    request_id=request.request_id,
+                    request_fingerprint=fingerprint,
+                    effect_kind="source_acquisition_attempt_authorize",
+                    primary_record_id=attempt_id,
+                    outcome="committed",
+                ),
+            )
+            unit = store.begin(
+                request.run_id,
+                request.request_id,
+                transaction_type_for("source_acquisition_attempt_authorize"),
+                request.expected_store_revision,
+            )
+            unit.put_run_source_acquisition_attempt_authorization(authorization)
+            unit.append_event(event)
+            checkout = prepare_checkout_effect(
+                workspace=self.workspace,
+                snapshot=verified.snapshot,
+                transaction_id=request.request_id,
+                created_at=self._clock(),
+            )
+            stage_checkout_effect(unit, checkout)
+            receipt = unit.commit(
+                _postcommit_observer=lambda _receipt: self._verifier.verify(
+                    store,
+                    request.run_id,
+                )
+            )
+            return CoreRunResult(
+                status="committed",
+                receipt=receipt,
+                primary_record_id=attempt_id,
             )
 
     def _doctor_check(self, request: IntegrityCheckRequest) -> CoreRunResult:

@@ -54,6 +54,7 @@ from multi_agent_brief.contracts.v2 import (
     ArtifactSupersessionRecord,
     RunContractBinding,
     RunExecutionAuthorization,
+    RunSourceAcquisitionAttemptAuthorization,
     RunSourceDiscoveryAuthorization,
     RunIdentity,
     RunIntegrityRecord,
@@ -140,6 +141,12 @@ class ControlUnitOfWork:
         self._run_source_discovery_authorization: (
             RunSourceDiscoveryAuthorization | None
         ) = None
+        self._run_source_acquisition_attempt_authorization: (
+            RunSourceAcquisitionAttemptAuthorization | None
+        ) = None
+        self._referenced_source_acquisition_attempt_authorizations: dict[
+            str, RunSourceAcquisitionAttemptAuthorization
+        ] = {}
         self._referenced_source_discovery_authorizations: dict[
             str, RunSourceDiscoveryAuthorization
         ] = {}
@@ -408,6 +415,43 @@ class ControlUnitOfWork:
         self._put_unique(
             self._referenced_source_discovery_authorizations,
             snapshot.authorization_id,
+            snapshot,
+        )
+
+    def put_run_source_acquisition_attempt_authorization(
+        self,
+        record: RunSourceAcquisitionAttemptAuthorization,
+    ) -> None:
+        snapshot = self._snapshot_record(
+            record,
+            RunSourceAcquisitionAttemptAuthorization,
+        )
+        self._require_run(snapshot)
+        if snapshot.workspace_id != self._store.workspace_id:
+            raise ControlStoreConflict("control_record_workspace_mismatch")
+        if self._run_source_acquisition_attempt_authorization is not None:
+            raise ControlStoreConflict("duplicate_staged_record")
+        self._run_source_acquisition_attempt_authorization = snapshot
+        self._put_unique(
+            self._referenced_source_acquisition_attempt_authorizations,
+            snapshot.attempt_authorization_id,
+            snapshot,
+        )
+
+    def reference_run_source_acquisition_attempt_authorization(
+        self,
+        record: RunSourceAcquisitionAttemptAuthorization,
+    ) -> None:
+        snapshot = self._snapshot_record(
+            record,
+            RunSourceAcquisitionAttemptAuthorization,
+        )
+        self._require_run(snapshot)
+        if snapshot.workspace_id != self._store.workspace_id:
+            raise ControlStoreConflict("control_record_workspace_mismatch")
+        self._put_unique(
+            self._referenced_source_acquisition_attempt_authorizations,
+            snapshot.attempt_authorization_id,
             snapshot,
         )
 
@@ -836,6 +880,19 @@ class ControlUnitOfWork:
                 if self._run_source_discovery_authorization is not None
                 else None
             ),
+            "run_source_acquisition_attempt_authorization": (
+                self._record_payload(self._run_source_acquisition_attempt_authorization)
+                if self._run_source_acquisition_attempt_authorization is not None
+                else None
+            ),
+            "referenced_source_acquisition_attempt_authorizations": [
+                self._record_payload(
+                    self._referenced_source_acquisition_attempt_authorizations[key]
+                )
+                for key in sorted(
+                    self._referenced_source_acquisition_attempt_authorizations
+                )
+            ],
             "referenced_source_discovery_authorizations": [
                 self._record_payload(
                     self._referenced_source_discovery_authorizations[key]
