@@ -654,6 +654,16 @@ class RuntimeHostService:
 
     @staticmethod
     def _prepromotion_action_allowed(action: CoreRunNextAction) -> bool:
+        if action.action_kind == "human_decision":
+            return (
+                action.effect_kind == "source_input_required"
+                and action.stage_id == "source-discovery"
+                and action.reason_code == "human_source_material_required"
+                and action.request_schema_id
+                == "briefloop.runtime_human_source_pack_request.v2"
+                and action.source_route_id is None
+                and action.source_provider_id is None
+            )
         if action.action_kind == "deterministic":
             return (
                 (action.effect_kind == "doctor_check" and action.stage_id == "doctor")

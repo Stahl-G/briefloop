@@ -2036,6 +2036,73 @@ def test_discovery_empty_provider_result_fails_without_promotion(
 
 
 @_REQUIRES_RETAINED_PUBLICATION
+def test_discovery_empty_provider_result_replays_stable_human_source_fallback(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    workspace = _discovery_workspace(tmp_path)
+    provider_calls = 0
+
+    def collect(_provider, _query, _config):
+        nonlocal provider_calls
+        provider_calls += 1
+        if provider_calls != 1:
+            pytest.fail("human source fallback must not recall the provider")
+        return _tavily_collection([])
+
+    monkeypatch.setattr(WebSearchProvider, "collect_with_response", collect)
+    _advance_discovery_to_source_action(workspace)
+    service = _service(workspace)
+
+    failed = service.continue_authorized()
+
+    assert failed.status == "needs_attention"
+    assert failed.reason_code == "source_pack_empty"
+    assert provider_calls == 1
+    current = service.next_action()
+    assert (
+        current.action_kind,
+        current.effect_kind,
+        current.stage_id,
+        current.reason_code,
+    ) == (
+        "human_decision",
+        "source_input_required",
+        "source-discovery",
+        "human_source_material_required",
+    )
+
+    (workspace / ".env").unlink()
+    before_revision = _revision(workspace)
+    database_before = (workspace / "briefloop.db").read_bytes()
+
+    first = service.continue_authorized()
+    second = service.continue_authorized()
+
+    assert first == second
+    assert first.status == "needs_human"
+    assert first.reason_code == "human_source_material_required"
+    assert first.trace.next_action == current
+    assert provider_calls == 1
+    assert _revision(workspace) == before_revision
+    assert (workspace / "briefloop.db").read_bytes() == database_before
+    with SQLiteControlStore.open(workspace / "briefloop.db") as store:
+        head = store.load_workspace_run_head()
+        assert head is not None
+        snapshot = store.load_snapshot(head.current_run_id)
+    assert len(snapshot.run_source_discovery_authorizations) == 1
+    assert snapshot.run_execution_authorizations == ()
+    assert snapshot.sources == ()
+    failures = [
+        item
+        for item in snapshot.invocations
+        if item.role_id == "source-provider" and item.status == "failed"
+    ]
+    assert len(failures) == 1
+    assert failures[0].failure_reason == "proposal_invalid"
+
+
+@_REQUIRES_RETAINED_PUBLICATION
 def test_discovery_malformed_provider_result_fails_without_promotion(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
