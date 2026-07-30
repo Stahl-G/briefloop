@@ -170,6 +170,31 @@ def test_prompt_exposes_block_local_full_span_candidates() -> None:
     assert (
         contract["artifact_block_start_end_usage"] == "normalized_text_inventory_only"
     )
+    artifact = report_data["artifact"]
+    assert artifact == {
+        "schema_version": decision.reader.artifact.schema_version,
+        "artifact_id": decision.reader.artifact.artifact_id,
+        "report_sha256": decision.reader.artifact.report_sha256,
+        "language": decision.reader.artifact.language,
+        "format": decision.reader.artifact.format,
+        "normalized_text_sha256": (decision.reader.artifact.normalized_text_sha256),
+        "blocks": [
+            {
+                "block_id": block.block_id,
+                "ordinal": block.ordinal,
+                "section_path": block.section_path,
+                "role": block.role,
+                "text": block.text,
+                "text_sha256": block.text_sha256,
+            }
+            for block in decision.reader.artifact.blocks
+        ],
+    }
+    assert any(block.start_char > 0 for block in decision.reader.artifact.blocks)
+    assert all(
+        "start_char" not in block and "end_char" not in block
+        for block in artifact["blocks"]
+    )
     candidates = contract["full_block_candidates"]
     blocks = decision.reader.artifact.blocks
     assert len(candidates) == len(blocks)
