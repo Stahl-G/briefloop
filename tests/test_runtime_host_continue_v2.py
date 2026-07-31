@@ -11,6 +11,7 @@ import json
 import os
 from pathlib import Path
 import sqlite3
+import stat
 import sys
 from types import SimpleNamespace
 
@@ -58,6 +59,7 @@ from multi_agent_brief.runtime_host_v2.contracts import (
     RuntimeSourceAcquisitionRecoveryRequest,
 )
 from multi_agent_brief.runtime_host_v2 import service as host_service
+from multi_agent_brief.runtime_host_v2 import submission as host_submission
 from multi_agent_brief.runtime_host_v2.service import RuntimeHostService
 from multi_agent_brief.runtime_host_v2.submission import source_stage_root
 from multi_agent_brief.sources.base import SourceItem
@@ -1943,7 +1945,10 @@ def test_discovery_active_invocation_reuses_receipt_owned_stage_without_provider
     assert len(snapshot.run_execution_authorizations) == 1
 
 
-@pytest.mark.parametrize("stage_damage", ["missing", "tampered"])
+@pytest.mark.parametrize(
+    "stage_damage",
+    ["missing", "dangling", "looping", "regular_file", "tampered"],
+)
 @_REQUIRES_RETAINED_PUBLICATION
 def test_discovery_active_invocation_missing_vs_tampered_stage_is_fail_closed(
     tmp_path: Path,
@@ -1979,10 +1984,31 @@ def test_discovery_active_invocation_missing_vs_tampered_stage_is_fail_closed(
     stage_root = source_stage_root(workspace, stage_identity)
     if stage_damage == "missing":
         stage_root.rename(stage_root.with_name(f"{stage_root.name}.missing"))
+    elif stage_damage in {"dangling", "looping", "regular_file"}:
+        stage_root.rename(stage_root.with_name(f"{stage_root.name}.saved"))
+        if stage_damage == "dangling":
+            stage_root.symlink_to(stage_root.with_name(f"{stage_root.name}.absent"))
+        elif stage_damage == "looping":
+            stage_root.symlink_to(stage_root.name)
+        else:
+            stage_root.write_bytes(b"unsafe non-directory stage root")
     else:
         next(stage_root.glob("sources/*/source_content.bin")).write_bytes(
             b"tampered staged content"
         )
+    unsafe_root_identity = None
+    unsafe_link_target = None
+    if stage_damage != "missing":
+        unsafe_metadata = stage_root.lstat()
+        unsafe_root_identity = (
+            unsafe_metadata.st_dev,
+            unsafe_metadata.st_ino,
+            unsafe_metadata.st_mode,
+        )
+        if stat.S_ISLNK(unsafe_metadata.st_mode):
+            unsafe_link_target = os.readlink(stage_root)
+    revision_before_recovery = _revision(workspace)
+    database_before_recovery = (workspace / "briefloop.db").read_bytes()
 
     def forbidden_effect(*_args, **_kwargs):
         pytest.fail("stage recovery must not inspect credential or provider")
@@ -2034,6 +2060,53 @@ def test_discovery_active_invocation_missing_vs_tampered_stage_is_fail_closed(
     else:
         assert len(active) == 1
         assert failures == []
+        assert _revision(workspace) == revision_before_recovery
+        assert (workspace / "briefloop.db").read_bytes() == database_before_recovery
+        unsafe_metadata = stage_root.lstat()
+        assert (
+            unsafe_metadata.st_dev,
+            unsafe_metadata.st_ino,
+            unsafe_metadata.st_mode,
+        ) == unsafe_root_identity
+        if unsafe_link_target is not None:
+            assert os.readlink(stage_root) == unsafe_link_target
+    if stage_damage != "missing":
+        host_submission._discard_path(stage_root)
+    saved_stage = stage_root.with_name(f"{stage_root.name}.saved")
+    if saved_stage.is_dir():
+        host_submission._discard_path(saved_stage)
+
+
+@pytest.mark.parametrize("root_kind", ["dangling", "looping", "regular_file"])
+def test_source_stage_publish_rejects_present_unsafe_root(
+    tmp_path: Path,
+    root_kind: str,
+) -> None:
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    root = source_stage_root(workspace, f"publish-{root_kind}")
+    root.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
+    building = root.parent / f".building-{root_kind}"
+    building.mkdir(mode=0o700)
+    (building / "sources").mkdir(mode=0o700)
+    if root_kind == "dangling":
+        root.symlink_to(root.with_name(f"{root.name}.absent"))
+    elif root_kind == "looping":
+        root.symlink_to(root.name)
+    else:
+        root.write_bytes(b"unsafe non-directory stage root")
+    metadata = root.lstat()
+    identity = (metadata.st_dev, metadata.st_ino, metadata.st_mode)
+    link_target = os.readlink(root) if stat.S_ISLNK(metadata.st_mode) else None
+
+    with pytest.raises(RuntimeHostError, match="runtime_source_staging_invalid"):
+        host_submission._publish_stage(building, root)
+
+    metadata = root.lstat()
+    assert (metadata.st_dev, metadata.st_ino, metadata.st_mode) == identity
+    if link_target is not None:
+        assert os.readlink(root) == link_target
+    host_submission._discard_path(root)
 
 
 @_REQUIRES_RETAINED_PUBLICATION

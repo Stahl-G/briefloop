@@ -167,6 +167,20 @@ def source_stage_root(workspace: Path, stage_identity: str) -> Path:
     )
 
 
+def _stage_root_metadata_if_present(root: Path) -> os.stat_result | None:
+    """Return no-follow metadata; only lexical ENOENT means absence."""
+
+    try:
+        metadata = root.lstat()
+    except FileNotFoundError:
+        return None
+    except OSError as exc:
+        raise RuntimeHostError("runtime_source_staging_invalid") from exc
+    if stat.S_ISLNK(metadata.st_mode) or not stat.S_ISDIR(metadata.st_mode):
+        raise RuntimeHostError("runtime_source_staging_invalid")
+    return metadata
+
+
 def load_source_stage(
     workspace: Path,
     *,
@@ -178,12 +192,10 @@ def load_source_stage(
     """Reverify an existing inert stage without consulting mutable inputs."""
 
     root = source_stage_root(workspace, stage_identity)
-    if not root.exists():
+    metadata = _stage_root_metadata_if_present(root)
+    if metadata is None:
         return None
     try:
-        metadata = root.lstat()
-        if root.is_symlink() or not stat.S_ISDIR(metadata.st_mode):
-            raise RuntimeHostError("runtime_source_staging_invalid")
         attestation_bytes = _read_regular_bytes(
             root / "stage_attestation.json",
             max_size=_MAX_STAGE_CONTRACT_BYTES,
@@ -621,14 +633,33 @@ def _finish_stage(
 
 def _publish_stage(building: Path, root: Path) -> None:
     try:
+        existing = _stage_root_metadata_if_present(root)
+    except RuntimeHostError:
+        _discard_path(building)
+        raise
+    if existing is not None:
+        _discard_path(building)
+        return
+    try:
         os.rename(building, root)
     except FileExistsError:
-        _discard_path(building)
-    except OSError:
-        if root.exists():
+        try:
+            existing = _stage_root_metadata_if_present(root)
+        except RuntimeHostError:
             _discard_path(building)
-        else:
             raise
+        _discard_path(building)
+        if existing is None:
+            raise RuntimeHostError("runtime_source_staging_invalid") from None
+    except OSError:
+        try:
+            existing = _stage_root_metadata_if_present(root)
+        except RuntimeHostError:
+            _discard_path(building)
+            raise
+        if existing is None:
+            raise
+        _discard_path(building)
 
 
 def _write_regular_bytes(path: Path, payload: bytes) -> None:
