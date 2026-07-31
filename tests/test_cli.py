@@ -176,6 +176,7 @@ def test_cli_init_uses_canonical_non_nested_alias_target(tmp_path, capsys):
     assert str(alias / "workspace") not in output
 
 
+@pytest.mark.macos_publication
 @pytest.mark.skipif(sys.platform != "darwin", reason="macOS /tmp alias row")
 def test_cli_init_allows_macos_tmp_alias_for_non_nested_target(capsys):
     routed_parent = Path(tempfile.mkdtemp(prefix="briefloop-m5-", dir="/tmp"))

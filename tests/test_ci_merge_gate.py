@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import ast
 import os
 from pathlib import Path
 from typing import Any
@@ -38,6 +39,37 @@ def _workflow() -> dict[str, Any]:
     if True in payload and "on" not in payload:
         payload["on"] = payload.pop(True)
     return payload
+
+
+def _candidate_matrix_entries(script: str) -> list[dict[str, Any]]:
+    """Evaluate the ``test_matrix`` assignment from the classification script.
+
+    The matrix is built with comprehensions rather than written as a literal,
+    so executing the single assignment keeps this test bound to the real
+    definition instead of a transcribed copy that can drift from it.
+    """
+
+    module = ast.parse(script)
+    for node in module.body:
+        if (
+            isinstance(node, ast.Assign)
+            and len(node.targets) == 1
+            and isinstance(node.targets[0], ast.Name)
+            and node.targets[0].id == "test_matrix"
+        ):
+            namespace: dict[str, Any] = {}
+            exec(
+                compile(
+                    ast.Module(body=[node], type_ignores=[]),
+                    str(WORKFLOW_PATH),
+                    "exec",
+                ),
+                namespace,
+            )
+            entries = namespace["test_matrix"]["include"]
+            assert isinstance(entries, list)
+            return entries
+    raise AssertionError("classification script does not define test_matrix")
 
 
 def _gate_script() -> str:
@@ -82,7 +114,13 @@ def test_candidate_triggers_and_concurrency_are_explicit() -> None:
         "ready_for_review",
         "converted_to_draft",
     }
-    assert triggers["workflow_dispatch"] is None
+    # Dispatch carries exactly one opt-in input: regenerating .test_durations.
+    # Shard balance depends on that file, so refreshing it must stay a
+    # deliberate manual act rather than a side effect of any other trigger.
+    assert set(triggers["workflow_dispatch"]["inputs"]) == {"refresh_test_durations"}
+    assert triggers["workflow_dispatch"]["inputs"]["refresh_test_durations"][
+        "default"
+    ] is False
     concurrency = workflow["concurrency"]
     assert concurrency["group"] == (
         "tests-${{ github.event_name == 'pull_request' && "
@@ -113,24 +151,47 @@ def test_pr_concurrency_is_stable_while_non_pr_runs_are_unique() -> None:
 
 
 def test_candidate_classification_pins_supported_matrix() -> None:
-    """The PR test matrix is intentionally macOS + Windows on Python 3.12.
+    """The PR test matrix is three OSes on Python 3.12, sharded by duration.
 
-    Linux full-suite legs are retired by explicit maintainer decision; Linux
-    keeps install/CLI smoke coverage via the non-dev smoke jobs. Guard
-    against silently collapsing the matrix to a single ubuntu leg or
-    restoring an untested Python floor.
+    #526 shrank a 6-leg matrix to one POSIX leg plus Windows and left Linux
+    to the ubuntu smoke jobs. This keeps that shape and swaps which POSIX OS
+    carries the full suite: ubuntu has 4 vCPU against macOS's 3, and the
+    working-checkout publication surface that dominates runtime is POSIX
+    rather than darwin-specific. macOS keeps the darwin durability
+    primitives through the macos_publication selection.
+
+    Guard against silently dropping an OS, collapsing the shards back to one
+    leg, or restoring an untested Python floor.
     """
     workflow = _workflow()
     changes = workflow["jobs"]["changes"]
     script = changes["steps"][1]["run"]
 
     assert set(changes["outputs"]) == {"docs_only", "run_candidate", "test_matrix"}
-    assert '"os": ["macos-latest", "windows-latest"]' in script
-    assert '"python-version": ["3.12"]' in script
     assert 'event_name != "pull_request" or not pr_is_draft' in script
     assert 'event_name == "pull_request"' in script
     assert 'event_name == "workflow_dispatch"' not in script
-    assert '["ubuntu-latest"], "python-version": ["3.12"]' not in script
+
+    entries = _candidate_matrix_entries(script)
+    assert {entry["python-version"] for entry in entries} == {"3.12"}
+
+    shards_by_os: dict[str, list[dict[str, object]]] = {}
+    for entry in entries:
+        shards_by_os.setdefault(str(entry["os"]), []).append(entry)
+    assert set(shards_by_os) == {"ubuntu-latest", "windows-latest", "macos-latest"}
+
+    for name, expected_shards, expected_select in (
+        ("ubuntu-latest", 4, ""),
+        ("windows-latest", 2, ""),
+        ("macos-latest", 1, "macos_publication"),
+    ):
+        legs = shards_by_os[name]
+        assert len(legs) == expected_shards
+        assert {leg["shards"] for leg in legs} == {expected_shards}
+        assert sorted(int(leg["shard"]) for leg in legs) == list(
+            range(1, expected_shards + 1)
+        )
+        assert {leg["select"] for leg in legs} == {expected_select}
 
     assert workflow["jobs"]["test"]["strategy"]["matrix"] == (
         "${{ fromJSON(needs.changes.outputs.test_matrix) }}"
@@ -150,13 +211,26 @@ def test_matrix_pytest_harness_excludes_explicit_e2e_and_is_diagnostic() -> None
     assert "${{ runner.os == 'Windows' && '-vv' || '-q' }}" in command
     assert "-n auto" in command
     assert "--dist worksteal" in command
-    assert '-m "not explicit_e2e"' in command
+    # explicit_e2e stays excluded on every leg; matrix.select only prefixes an
+    # additional selection, so it can narrow a leg but never widen it.
+    assert 'not explicit_e2e"' in command
+    assert (
+        "-m \"${{ matrix.select && format('{0} and ', matrix.select) || '' }}"
+        'not explicit_e2e"'
+    ) in command
+    # Duration-weighted sharding. Round-robin would be wrong here: the runtime
+    # distribution is extreme and the slowest tests sit adjacent in one file.
+    assert "--splits ${{ matrix.shards }}" in command
+    assert "--group ${{ matrix.shard }}" in command
     assert "--max-worker-restart=0" in command
     assert "-o faulthandler_timeout=240" in command
     assert "--timeout=" not in command
 
     pyproject = PYPROJECT_PATH.read_text(encoding="utf-8")
     assert '  "pytest-timeout>=2.4,<3",' in pyproject
+    assert '  "pytest-split>=0.10,<1",' in pyproject
+    # Shards are only balanced while this file tracks the suite.
+    assert (ROOT / ".test_durations").is_file()
     assert (
         '"explicit_e2e: heavyweight end-to-end evidence run only when '
         'explicitly authorized; excluded from normal PR CI",'
