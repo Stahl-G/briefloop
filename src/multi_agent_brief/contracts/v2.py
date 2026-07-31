@@ -6,6 +6,7 @@ stage legality, establish source truth, or replace any current v1 authority.
 
 from __future__ import annotations
 
+from contextvars import ContextVar
 from copy import deepcopy
 from dataclasses import dataclass
 from datetime import date, datetime
@@ -27,6 +28,7 @@ from pydantic import (
     StringConstraints,
     ValidationError,
     ValidationInfo,
+    ValidatorFunctionWrapHandler,
     WithJsonSchema,
     field_validator,
     model_validator,
@@ -107,26 +109,47 @@ SOURCE_ELIGIBILITY_REASONS = (
 )
 
 
-def _contains_non_finite_number(value: Any) -> bool:
+def _scan_non_finite_numbers(value: Any, scanned: set[int]) -> bool:
+    """Walk one payload for non-finite floats, recording visited containers.
+
+    ``scanned`` accumulates the identity of every container the walk entered.
+    An enclosing validation keeps that set so a nested contract can prove its
+    payload was already covered instead of rewalking the same subtree.
+    """
+
     stack = [value]
-    seen: set[int] = set()
     while stack:
         current = stack.pop()
         if type(current) is float and not math.isfinite(current):
             return True
         if isinstance(current, dict):
             identity = id(current)
-            if identity in seen:
+            if identity in scanned:
                 continue
-            seen.add(identity)
+            scanned.add(identity)
             stack.extend(current.values())
         elif isinstance(current, (list, tuple)):
             identity = id(current)
-            if identity in seen:
+            if identity in scanned:
                 continue
-            seen.add(identity)
+            scanned.add(identity)
             stack.extend(current)
     return False
+
+
+def _contains_non_finite_number(value: Any) -> bool:
+    return _scan_non_finite_numbers(value, set())
+
+
+# Set for the duration of one outermost contract validation. Nested contracts
+# validated inside it are subtrees of a payload that was already walked, so
+# they skip their own walk. The value is the identity set of the containers
+# that walk actually covered: a nested payload that did not come from the
+# outer structure is absent from it and is still walked.
+_SCANNED_FINITE_CONTAINERS: ContextVar[set[int] | None] = ContextVar(
+    "briefloop_scanned_finite_containers",
+    default=None,
+)
 
 
 def _contract_fingerprint(payload: dict[str, Any], *, field: str) -> str:
@@ -455,15 +478,32 @@ class StrictModel(BaseModel):
     minimal_example: ClassVar[dict[str, Any]]
     full_example: ClassVar[dict[str, Any]]
 
-    @model_validator(mode="before")
+    @model_validator(mode="wrap")
     @classmethod
-    def reject_non_finite_json_numbers(cls, value: Any) -> Any:
-        if _contains_non_finite_number(value):
+    def reject_non_finite_json_numbers(
+        cls,
+        value: Any,
+        handler: ValidatorFunctionWrapHandler,
+    ) -> Any:
+        scanned = _SCANNED_FINITE_CONTAINERS.get()
+        if scanned is not None:
+            if id(value) not in scanned and _scan_non_finite_numbers(value, scanned):
+                raise PydanticCustomError(
+                    "non_finite_json_number",
+                    "non-finite JSON number",
+                )
+            return handler(value)
+        scanned = set()
+        if _scan_non_finite_numbers(value, scanned):
             raise PydanticCustomError(
                 "non_finite_json_number",
                 "non-finite JSON number",
             )
-        return value
+        token = _SCANNED_FINITE_CONTAINERS.set(scanned)
+        try:
+            return handler(value)
+        finally:
+            _SCANNED_FINITE_CONTAINERS.reset(token)
 
     @classmethod
     def contract_validate(cls, data: dict[str, Any]) -> list[FieldViolation]:
