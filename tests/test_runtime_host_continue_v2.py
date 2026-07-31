@@ -1642,6 +1642,178 @@ def test_discovery_precommit_crash_reuses_staged_bytes_before_secret_or_provider
     assert len(snapshot.run_execution_authorizations) == 1
 
 
+@_REQUIRES_RETAINED_PUBLICATION
+def test_discovery_restart_without_stage_consumes_attempt_without_redial(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    workspace = _discovery_workspace(tmp_path)
+    env_path = workspace / ".env"
+    env_before = env_path.read_bytes()
+    env_mtime_before = env_path.stat().st_mtime_ns
+    provider_calls = 0
+    original_stage = host_service.stage_source_pack_bytes
+
+    class SimulatedProcessExit(BaseException):
+        pass
+
+    def collect(_provider, _query, _config):
+        nonlocal provider_calls
+        provider_calls += 1
+        return _tavily_collection([_tavily_item(durable=True)])
+
+    def crash_before_stage(*_args, **_kwargs):
+        raise SimulatedProcessExit
+
+    monkeypatch.setattr(WebSearchProvider, "collect_with_response", collect)
+    monkeypatch.setattr(host_service, "stage_source_pack_bytes", crash_before_stage)
+    action = _advance_discovery_to_source_action(workspace)
+    stage_identity = _discovery_stage_identity(workspace, action)
+
+    with pytest.raises(SimulatedProcessExit):
+        _service(workspace).apply_current(action)
+
+    assert provider_calls == 1
+    assert not source_stage_root(workspace, stage_identity).exists()
+    with SQLiteControlStore.open(workspace / "briefloop.db") as store:
+        head = store.load_workspace_run_head()
+        assert head is not None
+        crashed = store.load_snapshot(head.current_run_id)
+    assert len(crashed.run_source_acquisition_attempt_authorizations) == 1
+    assert crashed.sources == ()
+    assert crashed.run_execution_authorizations == ()
+    assert not [
+        item
+        for item in crashed.events
+        if item.intake_binding is not None
+        and item.intake_binding.source_acquisition_failure is not None
+    ]
+    active = [
+        item
+        for item in crashed.invocations
+        if item.role_id == "source-provider" and item.status == "active"
+    ]
+    assert len(active) == 1
+
+    def forbidden_effect(*_args, **_kwargs):
+        pytest.fail("recovery must not inspect capability, credential, or provider")
+
+    monkeypatch.setattr(host_service, "stage_source_pack_bytes", original_stage)
+    monkeypatch.setattr(host_service, "capability_profile", forbidden_effect)
+    monkeypatch.setattr(host_service, "known_env_key_is_set", forbidden_effect)
+    monkeypatch.setattr(
+        "multi_agent_brief.runtime_host_v2.source_routes.collect_frozen_source_pack",
+        forbidden_effect,
+    )
+    monkeypatch.setattr(
+        WebSearchProvider,
+        "collect_with_response",
+        forbidden_effect,
+    )
+    monkeypatch.setattr(
+        "multi_agent_brief.sources.search_backends.tavily.urllib.request.urlopen",
+        forbidden_effect,
+    )
+    recovery_action = _service(workspace).next_action()
+
+    recovered = _service(workspace).apply_current(recovery_action)
+
+    assert recovered.status == "rejected_recorded"
+    assert recovered.next_action.effect_kind == "source_acquisition_recovery"
+    assert recovered.next_action.reason_code == (
+        "source_acquisition_recovery_decision_required"
+    )
+    assert provider_calls == 1
+    assert env_path.read_bytes() == env_before
+    assert env_path.stat().st_mtime_ns == env_mtime_before
+    with SQLiteControlStore.open(workspace / "briefloop.db") as store:
+        head = store.load_workspace_run_head()
+        assert head is not None
+        failed = store.load_snapshot(head.current_run_id)
+    assert failed.sources == ()
+    assert failed.run_execution_authorizations == ()
+    attempts = failed.run_source_acquisition_attempt_authorizations
+    assert len(attempts) == 1
+    failed_invocations = [
+        item
+        for item in failed.invocations
+        if item.role_id == "source-provider" and item.status == "failed"
+    ]
+    assert len(failed_invocations) == 1
+    assert failed_invocations[0].invocation_id == active[0].invocation_id
+    assert failed_invocations[0].failure_reason == "child_failed"
+    failure_events = [
+        item
+        for item in failed.events
+        if item.intake_binding is not None
+        and item.intake_binding.source_acquisition_failure is not None
+    ]
+    assert len(failure_events) == 1
+    failure = failure_events[0].intake_binding.source_acquisition_failure
+    assert failure is not None
+    assert failure.invocation_id == active[0].invocation_id
+    assert failure.attempt_authorization_id == attempts[0].attempt_authorization_id
+    assert failure.attempt_ordinal == 1
+    assert failure.failure_class == "provider_response_unavailable"
+    assert failure.provider_status_class == "response_unavailable"
+    assert failure.provider_response_artifact is None
+    assert failure.provider_response_sha256 is None
+    assert failure.provider_response_size_bytes is None
+    assert failure.result_count is None
+    assert failure.durable_content_count is None
+    assert failure.claims_eligible_count is None
+    assert failure_events[0].artifact_id is None
+    assert not source_stage_root(workspace, stage_identity).exists()
+
+    revision_after_failure = _revision(workspace)
+    database_after_failure = (workspace / "briefloop.db").read_bytes()
+    replayed = _service(workspace).apply_current(recovery_action)
+
+    assert replayed == recovered
+    assert _revision(workspace) == revision_after_failure
+    assert (workspace / "briefloop.db").read_bytes() == database_after_failure
+    assert provider_calls == 1
+    assert env_path.read_bytes() == env_before
+    assert env_path.stat().st_mtime_ns == env_mtime_before
+
+    human_action = _service(workspace).next_action()
+    request = RuntimeSourceAcquisitionRecoveryRequest.model_validate(
+        {
+            "schema_version": RuntimeSourceAcquisitionRecoveryRequest.schema_id,
+            "request_id": "REQ-HUMAN-TAVILY-POST-CRASH-002",
+            "run_id": human_action.run_id,
+            "expected_store_revision": human_action.store_revision,
+            "expected_action_fingerprint": human_action.action_fingerprint,
+            "decision": "authorize_next_tavily_attempt",
+            "previous_attempt_authorization_id": attempts[0].attempt_authorization_id,
+            "human_confirmation": True,
+            "provider_cost_status": "not_reported_acknowledged",
+            "human_source_pack": None,
+        },
+        strict=True,
+    )
+    authorized = _service(workspace).apply_current(
+        human_action,
+        human_request=request,
+    )
+
+    assert authorized.status == "committed"
+    assert provider_calls == 1
+    assert env_path.read_bytes() == env_before
+    assert env_path.stat().st_mtime_ns == env_mtime_before
+    with SQLiteControlStore.open(workspace / "briefloop.db") as store:
+        head = store.load_workspace_run_head()
+        assert head is not None
+        final = store.load_snapshot(head.current_run_id)
+    assert [
+        item.attempt_ordinal
+        for item in final.run_source_acquisition_attempt_authorizations
+    ] == [
+        1,
+        2,
+    ]
+
+
 def test_discovery_source_acquire_platform_stop_preserves_verified_stage(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -1773,12 +1945,15 @@ def test_discovery_active_invocation_reuses_receipt_owned_stage_without_provider
 
 @pytest.mark.parametrize("stage_damage", ["missing", "tampered"])
 @_REQUIRES_RETAINED_PUBLICATION
-def test_discovery_active_invocation_invalid_stage_fails_without_provider_recall(
+def test_discovery_active_invocation_missing_vs_tampered_stage_is_fail_closed(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
     stage_damage: str,
 ) -> None:
     workspace = _discovery_workspace(tmp_path)
+    env_path = workspace / ".env"
+    env_before = env_path.read_bytes()
+    env_mtime_before = env_path.stat().st_mtime_ns
     provider_calls = 0
 
     def collect(_provider, _query, _config):
@@ -1808,20 +1983,32 @@ def test_discovery_active_invocation_invalid_stage_fails_without_provider_recall
         next(stage_root.glob("sources/*/source_content.bin")).write_bytes(
             b"tampered staged content"
         )
-    (workspace / ".env").unlink()
+
+    def forbidden_effect(*_args, **_kwargs):
+        pytest.fail("stage recovery must not inspect credential or provider")
+
+    monkeypatch.setattr(host_service, "capability_profile", forbidden_effect)
+    monkeypatch.setattr(host_service, "known_env_key_is_set", forbidden_effect)
     monkeypatch.setattr(
         WebSearchProvider,
         "collect_with_response",
-        lambda *_args, **_kwargs: pytest.fail("provider must not be recalled"),
+        forbidden_effect,
     )
 
-    with pytest.raises(
-        RuntimeHostError,
-        match="source_acquisition_outcome_unknown",
-    ):
-        _service(workspace).apply_current(_service(workspace).next_action())
+    if stage_damage == "missing":
+        recovered = _service(workspace).apply_current(_service(workspace).next_action())
+        assert recovered.status == "rejected_recorded"
+        assert recovered.next_action.effect_kind == "source_acquisition_recovery"
+    else:
+        with pytest.raises(
+            RuntimeHostError,
+            match="source_acquisition_outcome_unknown",
+        ):
+            _service(workspace).apply_current(_service(workspace).next_action())
 
     assert provider_calls == 1
+    assert env_path.read_bytes() == env_before
+    assert env_path.stat().st_mtime_ns == env_mtime_before
     with SQLiteControlStore.open(workspace / "briefloop.db") as store:
         head = store.load_workspace_run_head()
         assert head is not None
@@ -1833,7 +2020,20 @@ def test_discovery_active_invocation_invalid_stage_fails_without_provider_recall
         for item in snapshot.invocations
         if item.role_id == "source-provider" and item.status == "active"
     ]
-    assert len(active) == 1
+    failures = [
+        item.intake_binding.source_acquisition_failure
+        for item in snapshot.events
+        if item.intake_binding is not None
+        and item.intake_binding.source_acquisition_failure is not None
+    ]
+    if stage_damage == "missing":
+        assert active == []
+        assert len(failures) == 1
+        assert failures[0].failure_class == "provider_response_unavailable"
+        assert failures[0].provider_response_artifact is None
+    else:
+        assert len(active) == 1
+        assert failures == []
 
 
 @_REQUIRES_RETAINED_PUBLICATION

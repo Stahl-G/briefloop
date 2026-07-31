@@ -2335,10 +2335,24 @@ class RuntimeHostService:
                 for item in current.verified.snapshot.invocations
                 if item.status == "active"
             ]
-            if len(active) != 1:
+            if len(active) == 1:
+                recovery_invocation_id = active[0].invocation_id
+            elif not active and replay_only:
+                failures = [
+                    item.intake_binding.source_acquisition_failure
+                    for item in current.verified.snapshot.events
+                    if item.intake_binding is not None
+                    and item.intake_binding.source_acquisition_failure is not None
+                    and item.intake_binding.source_acquisition_failure.attempt_authorization_id
+                    == attempt.attempt_authorization_id
+                ]
+                if len(failures) != 1:
+                    raise RuntimeHostError("control_store_integrity_invalid")
+                recovery_invocation_id = failures[0].invocation_id
+            else:
                 raise RuntimeHostError("control_store_integrity_invalid")
             recovery_envelope = self._expected_invocation_envelope(
-                active[0].invocation_id,
+                recovery_invocation_id,
                 current=current,
             )
             source_action = recovery_envelope.action
@@ -2420,9 +2434,24 @@ class RuntimeHostService:
             if active_recovery:
                 raise RuntimeHostError("source_acquisition_outcome_unknown") from None
             raise RuntimeHostError("source_provider_result_invalid") from None
-        if stage is None:
-            if active_recovery:
-                raise RuntimeHostError("source_acquisition_outcome_unknown") from None
+        if stage is None and active_recovery:
+            if recovery_envelope is None:
+                raise RuntimeHostError("control_store_integrity_invalid")
+            dispatch = InvocationDispatch(
+                envelope=recovery_envelope,
+                envelope_path=(
+                    self.workspace / "scratch" / invocation_id / "task_envelope.json"
+                ),
+            )
+            return self._record_discovery_acquisition_failure(
+                dispatch=dispatch,
+                discovery=discovery,
+                attempt=attempt,
+                route=route,
+                provider_request_fingerprint=provider_request_fingerprint,
+                commit_request_id=commit_request_id,
+                stage_identity=stage_identity,
+            )
         try:
             capability_profile(self.workspace)
         except CoreRunError as exc:
