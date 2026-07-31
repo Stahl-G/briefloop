@@ -269,14 +269,19 @@ or symlinks fail closed before runtime work continues.
 
 For workspaces that use the `llm_decide` source profile, source discovery runs
 through the runtime-host route (`run --runtime codex` → `runtime next`).
-The narrow Tavily runtime-first path is Experimental: after explicit Human
-confirmation, `runtime continue` makes one bounded search request, freezes the
-exact provider response and returned content, and atomically records the
-Store-native source pack plus execution authorization before entering the
-existing external-role workflow. Search snippets remain claims-ineligible;
-only non-empty provider-returned durable content is claims-eligible. Synthetic
-loopback transport is tested. Live usefulness, reliability, cost, and
-acquisition-to-`finalized_local` performance are **NOT MEASURED**.
+The narrow Tavily runtime-first path is Experimental. Its credential remains
+in the private workspace `.env` until the Human rotates or removes it, but
+credential presence is not provider-spend authority. Each separately
+Human-confirmed, Store-recorded acquisition attempt permits at most one bounded
+search request. Exact replay never redials; failures never auto-retry, and a
+safe failed response remains auditable without creating source or execution
+authority. A successful attempt freezes the exact provider response and
+returned content, then atomically records the Store-native source pack plus
+execution authorization before entering the existing external-role workflow.
+Search snippets remain claims-ineligible; only non-empty provider-returned
+durable content is claims-eligible. Synthetic loopback transport is tested.
+Live usefulness, reliability, cost, and acquisition-to-`finalized_local`
+performance are **NOT MEASURED**.
 
 ### Windows PowerShell
 

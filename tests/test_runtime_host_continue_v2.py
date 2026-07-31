@@ -8,9 +8,12 @@ from datetime import date, timedelta
 import hashlib
 from io import BytesIO
 import json
+import multiprocessing
 import os
 from pathlib import Path
+import shutil
 import sqlite3
+import stat
 import sys
 from types import SimpleNamespace
 
@@ -35,7 +38,10 @@ from multi_agent_brief.control_store import (
 )
 from multi_agent_brief.control_store.errors import ControlStoreCommitOutcomeUnknown
 from multi_agent_brief.control_store.sqlite_store import ControlStoreHistory
-from multi_agent_brief.control_store.serialization import canonical_fingerprint
+from multi_agent_brief.control_store.serialization import (
+    canonical_fingerprint,
+    canonical_json_bytes,
+)
 from multi_agent_brief.core_run_v2 import artifacts as artifact_service
 from multi_agent_brief.core_run_v2.errors import CoreRunError, CoreRunResult
 from multi_agent_brief.core_run_v2.integrity import (
@@ -54,9 +60,16 @@ from multi_agent_brief.runtime_host_v2.errors import RuntimeHostError
 from multi_agent_brief.runtime_host_v2.initialization import (
     initialize_or_open_runtime,
 )
+from multi_agent_brief.runtime_host_v2.contracts import (
+    RuntimeSourceAcquisitionRecoveryRequest,
+)
 from multi_agent_brief.runtime_host_v2 import service as host_service
+from multi_agent_brief.runtime_host_v2 import submission as host_submission
 from multi_agent_brief.runtime_host_v2.service import RuntimeHostService
-from multi_agent_brief.runtime_host_v2.submission import source_stage_root
+from multi_agent_brief.runtime_host_v2.submission import (
+    SourceStageBytesInput,
+    source_stage_root,
+)
 from multi_agent_brief.sources.base import SourceItem
 from multi_agent_brief.sources.search_backends.tavily import TavilyBackend
 from multi_agent_brief.sources.web_search import (
@@ -206,6 +219,65 @@ def _service(workspace: Path) -> RuntimeHostService:
     )
 
 
+def test_source_acquisition_attempt_authority_requires_exact_action_shapes() -> None:
+    def _validated_action(**updates: object) -> CoreRunNextAction:
+        payload = SchemaRegistry.example(CoreRunNextAction.schema_id, "full")
+        payload.update(updates)
+        payload.pop("action_fingerprint", None)
+        payload["action_fingerprint"] = canonical_fingerprint(payload)
+        return CoreRunNextAction.model_validate(payload, strict=True)
+
+    acquisition = {
+        "action_kind": "deterministic",
+        "effect_kind": "source_acquire",
+        "stage_id": "source-discovery",
+        "role_id": None,
+        "source_route_id": "web-search",
+        "source_provider_id": "tavily",
+        "source_acquisition_attempt_authorization_id": (
+            "SOURCE-ACQUIRE-ATTEMPT-AUTH-001"
+        ),
+        "reason_code": "deterministic_source_route_required",
+        "request_schema_id": "briefloop.source_pack_commit_request.v2",
+    }
+    assert _validated_action(**acquisition).action_kind == "deterministic"
+
+    with pytest.raises(
+        ValueError,
+        match="source acquisition lifecycle requires an exact action shape",
+    ):
+        _validated_action(
+            **{
+                **acquisition,
+                "action_kind": "delegate",
+                "role_id": "source-provider",
+            }
+        )
+
+    recovery = {
+        "action_kind": "human_decision",
+        "effect_kind": "source_acquisition_recovery",
+        "stage_id": "source-discovery",
+        "role_id": None,
+        "source_route_id": None,
+        "source_provider_id": None,
+        "source_acquisition_attempt_authorization_id": (
+            "SOURCE-ACQUIRE-ATTEMPT-AUTH-001"
+        ),
+        "reason_code": "source_acquisition_recovery_decision_required",
+        "request_schema_id": (
+            "briefloop.runtime_source_acquisition_recovery_request.v1"
+        ),
+    }
+    assert _validated_action(**recovery).action_kind == "human_decision"
+
+    with pytest.raises(
+        ValueError,
+        match="source acquisition lifecycle requires an exact action shape",
+    ):
+        _validated_action(**{**recovery, "stage_id": "editor"})
+
+
 def _advance_discovery_to_source_action(workspace: Path) -> CoreRunNextAction:
     service = _service(workspace)
     planner = service.continue_authorized()
@@ -231,15 +303,16 @@ def _discovery_stage_identity(
     with SQLiteControlStore.open(workspace / "briefloop.db") as store:
         head = store.load_workspace_run_head()
         assert head is not None
-        discovery = store.load_snapshot(
-            head.current_run_id
-        ).run_source_discovery_authorizations[0]
+        snapshot = store.load_snapshot(head.current_run_id)
+        discovery = snapshot.run_source_discovery_authorizations[0]
+        attempt = snapshot.run_source_acquisition_attempt_authorizations[-1]
     return canonical_fingerprint(
         {
             "kind": "discovery_source_pack",
             "run_id": action.run_id,
             "action_fingerprint": action.action_fingerprint,
             "discovery_authorization_id": discovery.authorization_id,
+            "attempt_authorization_id": attempt.attempt_authorization_id,
         }
     )
 
@@ -494,6 +567,8 @@ def _transferred_discovery_source_action(workspace: Path) -> CoreRunNextAction:
     assert verified.snapshot.sources == ()
     assert len(verified.snapshot.run_source_discovery_authorizations) == 1
     discovery = verified.snapshot.run_source_discovery_authorizations[0]
+    assert len(verified.snapshot.run_source_acquisition_attempt_authorizations) == 1
+    attempt = verified.snapshot.run_source_acquisition_attempt_authorizations[0]
     route = next(
         item
         for item in verified.source_plan.routes
@@ -529,6 +604,7 @@ def _transferred_discovery_source_action(workspace: Path) -> CoreRunNextAction:
             "run_id": action.run_id,
             "action_fingerprint": action.action_fingerprint,
             "discovery_authorization_id": discovery.authorization_id,
+            "attempt_authorization_id": attempt.attempt_authorization_id,
         }
     )
     stage_fingerprint = canonical_fingerprint(
@@ -536,8 +612,10 @@ def _transferred_discovery_source_action(workspace: Path) -> CoreRunNextAction:
             "action": action.model_dump(mode="json", exclude_unset=False),
             "route_fingerprint": route.route_fingerprint,
             "discovery_request_fingerprint": discovery.request_fingerprint,
+            "attempt_authorization_id": attempt.attempt_authorization_id,
         }
     )
+    collection = _tavily_collection([_tavily_item(durable=True)])
     stage_source_pack_bytes(
         workspace,
         stage_identity=stage_identity,
@@ -557,6 +635,9 @@ def _transferred_discovery_source_action(workspace: Path) -> CoreRunNextAction:
                 strict=True,
             )
         ),
+        provider_response_bytes=collection.raw_response,
+        provider_status_code=collection.status_code,
+        stage_kind="provider_outcome",
     )
     return action
 
@@ -630,6 +711,137 @@ def _tavily_collection(
             sort_keys=True,
         ).encode("utf-8"),
         status_code=200,
+    )
+
+
+def _active_discovery_stage_for_recovery(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> tuple[Path, CoreRunNextAction, Path, dict[str, int]]:
+    workspace = _discovery_workspace(tmp_path)
+    provider_calls = {"count": 0}
+
+    def collect(_provider, _query, _config):
+        provider_calls["count"] += 1
+        return _tavily_collection([_tavily_item(durable=True)])
+
+    def crash_before_promotion(_instance, _input):
+        raise RuntimeHostError("simulated_post_invocation_crash")
+
+    original_commit = IntakeService._commit_discovery_source_pack_from_core
+    monkeypatch.setattr(WebSearchProvider, "collect_with_response", collect)
+    monkeypatch.setattr(
+        IntakeService,
+        "_commit_discovery_source_pack_from_core",
+        crash_before_promotion,
+    )
+    action = _advance_discovery_to_source_action(workspace)
+    with pytest.raises(RuntimeHostError, match="simulated_post_invocation_crash"):
+        _service(workspace).apply_current(action)
+    monkeypatch.setattr(
+        IntakeService,
+        "_commit_discovery_source_pack_from_core",
+        original_commit,
+    )
+    stage_identity = _discovery_stage_identity(workspace, action)
+    return (
+        workspace,
+        action,
+        source_stage_root(workspace, stage_identity),
+        provider_calls,
+    )
+
+
+def _replace_stage_directory_with_symlink(path: Path) -> Path:
+    saved = path.with_name(f"{path.name}.race-saved")
+    path.rename(saved)
+    path.symlink_to(saved, target_is_directory=True)
+    return saved
+
+
+def _synthetic_provider_stage(
+    tmp_path: Path,
+) -> tuple[Path, str, str, Path]:
+    workspace = tmp_path / "snapshot-workspace"
+    workspace.mkdir()
+    content = b"synthetic durable provider content"
+    raw_payload = canonical_json_bytes({"provider": "tavily", "result": 1})
+    source_id = "SRC-STAGE-SNAPSHOT-001"
+    proposal = SourceProposal.model_validate(
+        {
+            "schema_version": SourceProposal.schema_id,
+            "proposal_id": "PROP-STAGE-SNAPSHOT-001",
+            "run_id": "RUN-STAGE-SNAPSHOT-001",
+            "source_id": source_id,
+            "origin_type": "provider_response",
+            "acquisition_method": "provider_extract",
+            "material_kind": "partial_extract",
+            "provider": "tavily",
+            "locator": {
+                "kind": "web",
+                "url": "https://example.com/stage-snapshot",
+            },
+            "title": "Synthetic stage source",
+            "publisher": "Example publisher",
+            "published_at": "2026-07-30",
+            "retrieved_at": "2026-07-31T00:00:00Z",
+            "source_category": "news_media",
+            "retrieval_source_type": "news_media",
+            "underlying_evidence_type": "media_report",
+            "raw_underlying_evidence_type": "provider-response",
+            "content_sha256": hashlib.sha256(content).hexdigest(),
+            "content_media_type": "text/plain",
+            "raw_payload_sha256": hashlib.sha256(raw_payload).hexdigest(),
+            "raw_payload_media_type": "application/json",
+            "source_manifest_sha256": hashlib.sha256(
+                b"synthetic-stage-manifest"
+            ).hexdigest(),
+            "manifest_local_file": f"input/discovered/{source_id}.txt",
+            "document_kind": None,
+            "opened_at": None,
+            "resolved_at": None,
+        },
+        strict=True,
+    )
+    request_fingerprint = hashlib.sha256(b"synthetic-stage-request").hexdigest()
+    stage_identity = "synthetic-provider-stage"
+    provider_response = canonical_json_bytes(
+        {
+            "results": [
+                {
+                    "title": "Synthetic stage source",
+                    "url": "https://example.com/stage-snapshot",
+                    "content": "search snippet",
+                    "raw_content": content.decode("utf-8"),
+                    "published_date": "2026-07-30",
+                    "score": 0.9,
+                }
+            ]
+        }
+    )
+    host_submission.stage_source_pack_bytes(
+        workspace,
+        stage_identity=stage_identity,
+        request_fingerprint=request_fingerprint,
+        members=(
+            SourceStageBytesInput(
+                member_id=source_id,
+                proposal_bytes=canonical_json_bytes(
+                    proposal.model_dump(mode="json", exclude_unset=False)
+                ),
+                content_bytes=content,
+                raw_payload_bytes=raw_payload,
+            ),
+        ),
+        provider_response_bytes=provider_response,
+        provider_status_code=200,
+        stage_kind="provider_outcome",
+    )
+    return (
+        workspace,
+        stage_identity,
+        request_fingerprint,
+        source_stage_root(workspace, stage_identity),
     )
 
 
@@ -713,6 +925,7 @@ def test_discovery_missing_runtime_secret_is_zero_write(
     _advance_discovery_to_source_action(workspace)
     (workspace / ".env").unlink()
     revision = _revision(workspace)
+    database_before = (workspace / "briefloop.db").read_bytes()
     calls = 0
 
     def collect(_provider, _query, _config):
@@ -728,6 +941,19 @@ def test_discovery_missing_runtime_secret_is_zero_write(
     assert result.reason_code == "source_provider_secret_unavailable"
     assert calls == 0
     assert _revision(workspace) == revision
+    assert (workspace / "briefloop.db").read_bytes() == database_before
+    assert not (workspace / ".briefloop-source-acquisition.lock").exists()
+    with SQLiteControlStore.open(workspace / "briefloop.db") as store:
+        head = store.load_workspace_run_head()
+        assert head is not None
+        snapshot = store.load_snapshot(head.current_run_id)
+    assert len(snapshot.run_source_acquisition_attempt_authorizations) == 1
+    assert not [
+        event
+        for event in snapshot.events
+        if event.intake_binding is not None
+        and event.intake_binding.source_acquisition_failure is not None
+    ]
 
 
 @pytest.mark.parametrize("entrypoint", ["source", "pack"])
@@ -1617,6 +1843,178 @@ def test_discovery_precommit_crash_reuses_staged_bytes_before_secret_or_provider
     assert len(snapshot.run_execution_authorizations) == 1
 
 
+@_REQUIRES_RETAINED_PUBLICATION
+def test_discovery_restart_without_stage_consumes_attempt_without_redial(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    workspace = _discovery_workspace(tmp_path)
+    env_path = workspace / ".env"
+    env_before = env_path.read_bytes()
+    env_mtime_before = env_path.stat().st_mtime_ns
+    provider_calls = 0
+    original_stage = host_service.stage_source_pack_bytes
+
+    class SimulatedProcessExit(BaseException):
+        pass
+
+    def collect(_provider, _query, _config):
+        nonlocal provider_calls
+        provider_calls += 1
+        return _tavily_collection([_tavily_item(durable=True)])
+
+    def crash_before_stage(*_args, **_kwargs):
+        raise SimulatedProcessExit
+
+    monkeypatch.setattr(WebSearchProvider, "collect_with_response", collect)
+    monkeypatch.setattr(host_service, "stage_source_pack_bytes", crash_before_stage)
+    action = _advance_discovery_to_source_action(workspace)
+    stage_identity = _discovery_stage_identity(workspace, action)
+
+    with pytest.raises(SimulatedProcessExit):
+        _service(workspace).apply_current(action)
+
+    assert provider_calls == 1
+    assert not source_stage_root(workspace, stage_identity).exists()
+    with SQLiteControlStore.open(workspace / "briefloop.db") as store:
+        head = store.load_workspace_run_head()
+        assert head is not None
+        crashed = store.load_snapshot(head.current_run_id)
+    assert len(crashed.run_source_acquisition_attempt_authorizations) == 1
+    assert crashed.sources == ()
+    assert crashed.run_execution_authorizations == ()
+    assert not [
+        item
+        for item in crashed.events
+        if item.intake_binding is not None
+        and item.intake_binding.source_acquisition_failure is not None
+    ]
+    active = [
+        item
+        for item in crashed.invocations
+        if item.role_id == "source-provider" and item.status == "active"
+    ]
+    assert len(active) == 1
+
+    def forbidden_effect(*_args, **_kwargs):
+        pytest.fail("recovery must not inspect capability, credential, or provider")
+
+    monkeypatch.setattr(host_service, "stage_source_pack_bytes", original_stage)
+    monkeypatch.setattr(host_service, "capability_profile", forbidden_effect)
+    monkeypatch.setattr(host_service, "known_env_key_is_set", forbidden_effect)
+    monkeypatch.setattr(
+        "multi_agent_brief.runtime_host_v2.source_routes.collect_frozen_source_pack",
+        forbidden_effect,
+    )
+    monkeypatch.setattr(
+        WebSearchProvider,
+        "collect_with_response",
+        forbidden_effect,
+    )
+    monkeypatch.setattr(
+        "multi_agent_brief.sources.search_backends.tavily.urllib.request.urlopen",
+        forbidden_effect,
+    )
+    recovery_action = _service(workspace).next_action()
+
+    recovered = _service(workspace).apply_current(recovery_action)
+
+    assert recovered.status == "rejected_recorded"
+    assert recovered.next_action.effect_kind == "source_acquisition_recovery"
+    assert recovered.next_action.reason_code == (
+        "source_acquisition_recovery_decision_required"
+    )
+    assert provider_calls == 1
+    assert env_path.read_bytes() == env_before
+    assert env_path.stat().st_mtime_ns == env_mtime_before
+    with SQLiteControlStore.open(workspace / "briefloop.db") as store:
+        head = store.load_workspace_run_head()
+        assert head is not None
+        failed = store.load_snapshot(head.current_run_id)
+    assert failed.sources == ()
+    assert failed.run_execution_authorizations == ()
+    attempts = failed.run_source_acquisition_attempt_authorizations
+    assert len(attempts) == 1
+    failed_invocations = [
+        item
+        for item in failed.invocations
+        if item.role_id == "source-provider" and item.status == "failed"
+    ]
+    assert len(failed_invocations) == 1
+    assert failed_invocations[0].invocation_id == active[0].invocation_id
+    assert failed_invocations[0].failure_reason == "child_failed"
+    failure_events = [
+        item
+        for item in failed.events
+        if item.intake_binding is not None
+        and item.intake_binding.source_acquisition_failure is not None
+    ]
+    assert len(failure_events) == 1
+    failure = failure_events[0].intake_binding.source_acquisition_failure
+    assert failure is not None
+    assert failure.invocation_id == active[0].invocation_id
+    assert failure.attempt_authorization_id == attempts[0].attempt_authorization_id
+    assert failure.attempt_ordinal == 1
+    assert failure.failure_class == "provider_response_unavailable"
+    assert failure.provider_status_class == "response_unavailable"
+    assert failure.provider_response_artifact is None
+    assert failure.provider_response_sha256 is None
+    assert failure.provider_response_size_bytes is None
+    assert failure.result_count is None
+    assert failure.durable_content_count is None
+    assert failure.claims_eligible_count is None
+    assert failure_events[0].artifact_id is None
+    assert not source_stage_root(workspace, stage_identity).exists()
+
+    revision_after_failure = _revision(workspace)
+    database_after_failure = (workspace / "briefloop.db").read_bytes()
+    replayed = _service(workspace).apply_current(recovery_action)
+
+    assert replayed == recovered
+    assert _revision(workspace) == revision_after_failure
+    assert (workspace / "briefloop.db").read_bytes() == database_after_failure
+    assert provider_calls == 1
+    assert env_path.read_bytes() == env_before
+    assert env_path.stat().st_mtime_ns == env_mtime_before
+
+    human_action = _service(workspace).next_action()
+    request = RuntimeSourceAcquisitionRecoveryRequest.model_validate(
+        {
+            "schema_version": RuntimeSourceAcquisitionRecoveryRequest.schema_id,
+            "request_id": "REQ-HUMAN-TAVILY-POST-CRASH-002",
+            "run_id": human_action.run_id,
+            "expected_store_revision": human_action.store_revision,
+            "expected_action_fingerprint": human_action.action_fingerprint,
+            "decision": "authorize_next_tavily_attempt",
+            "previous_attempt_authorization_id": attempts[0].attempt_authorization_id,
+            "human_confirmation": True,
+            "provider_cost_status": "not_reported_acknowledged",
+            "human_source_pack": None,
+        },
+        strict=True,
+    )
+    authorized = _service(workspace).apply_current(
+        human_action,
+        human_request=request,
+    )
+
+    assert authorized.status == "committed"
+    assert provider_calls == 1
+    assert env_path.read_bytes() == env_before
+    assert env_path.stat().st_mtime_ns == env_mtime_before
+    with SQLiteControlStore.open(workspace / "briefloop.db") as store:
+        head = store.load_workspace_run_head()
+        assert head is not None
+        final = store.load_snapshot(head.current_run_id)
+    assert [
+        item.attempt_ordinal
+        for item in final.run_source_acquisition_attempt_authorizations
+    ] == [
+        1,
+        2,
+    ]
+
+
 def test_discovery_source_acquire_platform_stop_preserves_verified_stage(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -1700,6 +2098,345 @@ def test_discovery_source_acquire_platform_stop_preserves_verified_stage(
     assert snapshot_after == snapshot_before
 
 
+@pytest.mark.parametrize(
+    "race_kind",
+    [
+        "root_after_probe",
+        "root_before_enumeration",
+        "sources_before_open",
+        "member_before_open",
+        "leaf_before_open",
+    ],
+)
+@_REQUIRES_RETAINED_PUBLICATION
+def test_discovery_active_stage_replacement_during_snapshot_is_zero_effect(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    race_kind: str,
+) -> None:
+    workspace, _action, stage_root, provider_calls = (
+        _active_discovery_stage_for_recovery(tmp_path, monkeypatch)
+    )
+    env_path = workspace / ".env"
+    env_before = env_path.read_bytes()
+    env_mtime_before = env_path.stat().st_mtime_ns
+    revision_before = _revision(workspace)
+    database_before = (workspace / "briefloop.db").read_bytes()
+    member_root = next((stage_root / "sources").iterdir())
+    content_path = member_root / "source_content.bin"
+    raced = {"value": False}
+    race_target: Path | None = None
+    replacement_bytes = b"unverified replacement stage bytes"
+
+    if race_kind == "root_after_probe":
+        original_probe = host_submission._stage_root_metadata_if_present
+
+        def replace_after_probe(path: Path):
+            nonlocal race_target
+            metadata = original_probe(path)
+            if path == stage_root and metadata is not None and not raced["value"]:
+                raced["value"] = True
+                _replace_stage_directory_with_symlink(stage_root)
+                race_target = stage_root
+            return metadata
+
+        monkeypatch.setattr(
+            host_submission,
+            "_stage_root_metadata_if_present",
+            replace_after_probe,
+        )
+    elif race_kind in {
+        "root_before_enumeration",
+        "sources_before_open",
+        "member_before_open",
+    }:
+        snapshot_type = (
+            host_submission._DescriptorStageSnapshot
+            if host_submission._supports_retained_stage_descriptors()
+            else host_submission._PathStageSnapshot
+        )
+        if race_kind == "root_before_enumeration":
+            method_name = "root_names"
+            path_to_replace = stage_root
+        elif race_kind == "sources_before_open":
+            method_name = "sources_names"
+            path_to_replace = stage_root / "sources"
+        else:
+            method_name = "member_names"
+            path_to_replace = member_root
+        original_method = getattr(snapshot_type, method_name)
+
+        def replace_before_directory_open(instance, *args):
+            nonlocal race_target
+            if not raced["value"]:
+                raced["value"] = True
+                _replace_stage_directory_with_symlink(path_to_replace)
+                race_target = path_to_replace
+            return original_method(instance, *args)
+
+        monkeypatch.setattr(
+            snapshot_type,
+            method_name,
+            replace_before_directory_open,
+        )
+    elif host_submission._supports_retained_stage_descriptors():
+        original_open = host_submission.os.open
+
+        def replace_leaf_before_descriptor_open(
+            path,
+            flags,
+            mode=0o777,
+            *,
+            dir_fd=None,
+        ):
+            nonlocal race_target
+            if (
+                not raced["value"]
+                and path == "source_content.bin"
+                and dir_fd is not None
+            ):
+                raced["value"] = True
+                content_path.rename(
+                    content_path.with_name(f"{content_path.name}.race-saved")
+                )
+                content_path.write_bytes(replacement_bytes)
+                race_target = content_path
+            if dir_fd is None:
+                return original_open(path, flags, mode)
+            return original_open(path, flags, mode, dir_fd=dir_fd)
+
+        monkeypatch.setattr(
+            host_submission.os, "open", replace_leaf_before_descriptor_open
+        )
+        monkeypatch.setattr(
+            host_submission.os,
+            "supports_dir_fd",
+            {*host_submission.os.supports_dir_fd, replace_leaf_before_descriptor_open},
+        )
+    else:
+        original_read = host_submission._read_regular_bytes
+
+        def replace_leaf_before_fallback_open(path: Path, *, max_size: int):
+            nonlocal race_target
+            if not raced["value"] and path == content_path:
+                raced["value"] = True
+                content_path.rename(
+                    content_path.with_name(f"{content_path.name}.race-saved")
+                )
+                content_path.write_bytes(replacement_bytes)
+                race_target = content_path
+            return original_read(path, max_size=max_size)
+
+        monkeypatch.setattr(
+            host_submission,
+            "_read_regular_bytes",
+            replace_leaf_before_fallback_open,
+        )
+
+    def forbidden_effect(*_args, **_kwargs):
+        pytest.fail("unsafe stage recovery must not inspect credential or provider")
+
+    monkeypatch.setattr(host_service, "capability_profile", forbidden_effect)
+    monkeypatch.setattr(host_service, "known_env_key_is_set", forbidden_effect)
+    monkeypatch.setattr(WebSearchProvider, "collect_with_response", forbidden_effect)
+
+    with pytest.raises(
+        RuntimeHostError,
+        match="source_acquisition_outcome_unknown",
+    ):
+        _service(workspace).apply_current(_service(workspace).next_action())
+
+    assert raced["value"] is True
+    assert race_target is not None
+    if race_kind == "leaf_before_open":
+        assert race_target.read_bytes() == replacement_bytes
+    else:
+        assert race_target.is_symlink()
+    assert provider_calls["count"] == 1
+    assert env_path.read_bytes() == env_before
+    assert env_path.stat().st_mtime_ns == env_mtime_before
+    assert _revision(workspace) == revision_before
+    assert (workspace / "briefloop.db").read_bytes() == database_before
+    with SQLiteControlStore.open(workspace / "briefloop.db") as store:
+        head = store.load_workspace_run_head()
+        assert head is not None
+        snapshot = store.load_snapshot(head.current_run_id)
+    assert snapshot.sources == ()
+    assert snapshot.run_execution_authorizations == ()
+    assert (
+        len(
+            [
+                item
+                for item in snapshot.invocations
+                if item.role_id == "source-provider" and item.status == "active"
+            ]
+        )
+        == 1
+    )
+    assert not [
+        item
+        for item in snapshot.events
+        if item.intake_binding is not None
+        and item.intake_binding.source_acquisition_failure is not None
+    ]
+
+
+@pytest.mark.parametrize(
+    "race_kind",
+    ["root_before_enumeration", "sources_before_open", "member_before_open"],
+)
+def test_source_stage_fallback_rejects_directory_replacement(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    race_kind: str,
+) -> None:
+    workspace, stage_identity, request_fingerprint, stage_root = (
+        _synthetic_provider_stage(tmp_path)
+    )
+    member_root = next((stage_root / "sources").iterdir())
+    if race_kind == "root_before_enumeration":
+        method_name = "root_names"
+        path_to_replace = stage_root
+    elif race_kind == "sources_before_open":
+        method_name = "sources_names"
+        path_to_replace = stage_root / "sources"
+    else:
+        method_name = "member_names"
+        path_to_replace = member_root
+    original_method = getattr(host_submission._PathStageSnapshot, method_name)
+    raced = False
+
+    def replace_before_directory_open(instance, *args):
+        nonlocal raced
+        if not raced:
+            raced = True
+            _replace_stage_directory_with_symlink(path_to_replace)
+        return original_method(instance, *args)
+
+    monkeypatch.setattr(
+        host_submission,
+        "_supports_retained_stage_descriptors",
+        lambda: False,
+    )
+    monkeypatch.setattr(
+        host_submission._PathStageSnapshot,
+        method_name,
+        replace_before_directory_open,
+    )
+
+    with pytest.raises(RuntimeHostError, match="runtime_source_staging_invalid"):
+        host_submission.load_source_stage(
+            workspace,
+            stage_identity=stage_identity,
+            request_fingerprint=request_fingerprint,
+            expected_manifest_sha256=None,
+            expected_stage_kind="provider_outcome",
+        )
+
+    assert raced is True
+    assert path_to_replace.is_symlink()
+
+
+def test_source_stage_fallback_rejects_leaf_replacement_before_open(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    workspace, stage_identity, request_fingerprint, stage_root = (
+        _synthetic_provider_stage(tmp_path)
+    )
+    content_path = next(stage_root.glob("sources/*/source_content.bin"))
+    original_read = host_submission._read_regular_bytes
+    replacement = b"unverified fallback replacement"
+    raced = False
+
+    def replace_before_open(path: Path, *, max_size: int):
+        nonlocal raced
+        if not raced and path == content_path:
+            raced = True
+            path.rename(path.with_name(f"{path.name}.race-saved"))
+            path.write_bytes(replacement)
+        return original_read(path, max_size=max_size)
+
+    monkeypatch.setattr(
+        host_submission,
+        "_supports_retained_stage_descriptors",
+        lambda: False,
+    )
+    monkeypatch.setattr(
+        host_submission,
+        "_read_regular_bytes",
+        replace_before_open,
+    )
+
+    with pytest.raises(RuntimeHostError, match="runtime_source_staging_invalid"):
+        host_submission.load_source_stage(
+            workspace,
+            stage_identity=stage_identity,
+            request_fingerprint=request_fingerprint,
+            expected_manifest_sha256=None,
+            expected_stage_kind="provider_outcome",
+        )
+
+    assert raced is True
+    assert content_path.read_bytes() == replacement
+
+
+@_REQUIRES_RETAINED_PUBLICATION
+def test_discovery_post_snapshot_replacement_commits_only_immutable_bytes(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    workspace = _discovery_workspace(tmp_path)
+    provider_calls = 0
+    durable_content = b"durable provider content"
+
+    def collect(_provider, _query, _config):
+        nonlocal provider_calls
+        provider_calls += 1
+        return _tavily_collection([_tavily_item(durable=True)])
+
+    original_stage = host_service.stage_source_pack_bytes
+    saved_root: Path | None = None
+
+    def replace_after_snapshot(*args, **kwargs):
+        nonlocal saved_root
+        stage = original_stage(*args, **kwargs)
+        if saved_root is None:
+            saved_root = stage.root.with_name(f"{stage.root.name}.verified-a")
+            stage.root.rename(saved_root)
+            shutil.copytree(saved_root, stage.root)
+            next(stage.root.glob("sources/*/source_content.bin")).write_bytes(
+                b"unverified replacement B"
+            )
+        return stage
+
+    monkeypatch.setattr(WebSearchProvider, "collect_with_response", collect)
+    monkeypatch.setattr(host_service, "stage_source_pack_bytes", replace_after_snapshot)
+    action = _advance_discovery_to_source_action(workspace)
+
+    committed = _service(workspace).apply_current(action)
+
+    assert committed.status == "committed"
+    assert provider_calls == 1
+    assert saved_root is not None
+    assert saved_root.is_dir()
+    assert not source_stage_root(
+        workspace,
+        _discovery_stage_identity(workspace, action),
+    ).exists()
+    with SQLiteControlStore.open(workspace / "briefloop.db") as store:
+        head = store.load_workspace_run_head()
+        assert head is not None
+        snapshot = store.load_snapshot(head.current_run_id)
+    assert len(snapshot.sources) == 1
+    assert (
+        snapshot.sources[0].content_sha256
+        == hashlib.sha256(durable_content).hexdigest()
+    )
+    assert len(snapshot.run_execution_authorizations) == 1
+    host_submission._discard_path(saved_root)
+
+
 @_REQUIRES_RETAINED_PUBLICATION
 def test_discovery_active_invocation_reuses_receipt_owned_stage_without_provider(
     tmp_path: Path,
@@ -1746,14 +2483,20 @@ def test_discovery_active_invocation_reuses_receipt_owned_stage_without_provider
     assert len(snapshot.run_execution_authorizations) == 1
 
 
-@pytest.mark.parametrize("stage_damage", ["missing", "tampered"])
+@pytest.mark.parametrize(
+    "stage_damage",
+    ["missing", "dangling", "looping", "regular_file", "tampered"],
+)
 @_REQUIRES_RETAINED_PUBLICATION
-def test_discovery_active_invocation_invalid_stage_fails_without_provider_recall(
+def test_discovery_active_invocation_missing_vs_tampered_stage_is_fail_closed(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
     stage_damage: str,
 ) -> None:
     workspace = _discovery_workspace(tmp_path)
+    env_path = workspace / ".env"
+    env_before = env_path.read_bytes()
+    env_mtime_before = env_path.stat().st_mtime_ns
     provider_calls = 0
 
     def collect(_provider, _query, _config):
@@ -1779,26 +2522,57 @@ def test_discovery_active_invocation_invalid_stage_fails_without_provider_recall
     stage_root = source_stage_root(workspace, stage_identity)
     if stage_damage == "missing":
         stage_root.rename(stage_root.with_name(f"{stage_root.name}.missing"))
+    elif stage_damage in {"dangling", "looping", "regular_file"}:
+        stage_root.rename(stage_root.with_name(f"{stage_root.name}.saved"))
+        if stage_damage == "dangling":
+            stage_root.symlink_to(stage_root.with_name(f"{stage_root.name}.absent"))
+        elif stage_damage == "looping":
+            stage_root.symlink_to(stage_root.name)
+        else:
+            stage_root.write_bytes(b"unsafe non-directory stage root")
     else:
         next(stage_root.glob("sources/*/source_content.bin")).write_bytes(
             b"tampered staged content"
         )
-    (workspace / ".env").unlink()
+    unsafe_root_identity = None
+    unsafe_link_target = None
+    if stage_damage != "missing":
+        unsafe_metadata = stage_root.lstat()
+        unsafe_root_identity = (
+            unsafe_metadata.st_dev,
+            unsafe_metadata.st_ino,
+            unsafe_metadata.st_mode,
+        )
+        if stat.S_ISLNK(unsafe_metadata.st_mode):
+            unsafe_link_target = os.readlink(stage_root)
+    revision_before_recovery = _revision(workspace)
+    database_before_recovery = (workspace / "briefloop.db").read_bytes()
+
+    def forbidden_effect(*_args, **_kwargs):
+        pytest.fail("stage recovery must not inspect credential or provider")
+
+    monkeypatch.setattr(host_service, "capability_profile", forbidden_effect)
+    monkeypatch.setattr(host_service, "known_env_key_is_set", forbidden_effect)
     monkeypatch.setattr(
         WebSearchProvider,
         "collect_with_response",
-        lambda *_args, **_kwargs: pytest.fail("provider must not be recalled"),
+        forbidden_effect,
     )
 
-    expected = (
-        "source_acquisition_outcome_unknown"
-        if stage_damage == "missing"
-        else "source_provider_result_invalid"
-    )
-    with pytest.raises(RuntimeHostError, match=expected):
-        _service(workspace).apply_current(_service(workspace).next_action())
+    if stage_damage == "missing":
+        recovered = _service(workspace).apply_current(_service(workspace).next_action())
+        assert recovered.status == "rejected_recorded"
+        assert recovered.next_action.effect_kind == "source_acquisition_recovery"
+    else:
+        with pytest.raises(
+            RuntimeHostError,
+            match="source_acquisition_outcome_unknown",
+        ):
+            _service(workspace).apply_current(_service(workspace).next_action())
 
     assert provider_calls == 1
+    assert env_path.read_bytes() == env_before
+    assert env_path.stat().st_mtime_ns == env_mtime_before
     with SQLiteControlStore.open(workspace / "briefloop.db") as store:
         head = store.load_workspace_run_head()
         assert head is not None
@@ -1810,7 +2584,67 @@ def test_discovery_active_invocation_invalid_stage_fails_without_provider_recall
         for item in snapshot.invocations
         if item.role_id == "source-provider" and item.status == "active"
     ]
-    assert len(active) == 1
+    failures = [
+        item.intake_binding.source_acquisition_failure
+        for item in snapshot.events
+        if item.intake_binding is not None
+        and item.intake_binding.source_acquisition_failure is not None
+    ]
+    if stage_damage == "missing":
+        assert active == []
+        assert len(failures) == 1
+        assert failures[0].failure_class == "provider_response_unavailable"
+        assert failures[0].provider_response_artifact is None
+    else:
+        assert len(active) == 1
+        assert failures == []
+        assert _revision(workspace) == revision_before_recovery
+        assert (workspace / "briefloop.db").read_bytes() == database_before_recovery
+        unsafe_metadata = stage_root.lstat()
+        assert (
+            unsafe_metadata.st_dev,
+            unsafe_metadata.st_ino,
+            unsafe_metadata.st_mode,
+        ) == unsafe_root_identity
+        if unsafe_link_target is not None:
+            assert os.readlink(stage_root) == unsafe_link_target
+    if stage_damage != "missing":
+        host_submission._discard_path(stage_root)
+    saved_stage = stage_root.with_name(f"{stage_root.name}.saved")
+    if saved_stage.is_dir():
+        host_submission._discard_path(saved_stage)
+
+
+@pytest.mark.parametrize("root_kind", ["dangling", "looping", "regular_file"])
+def test_source_stage_publish_rejects_present_unsafe_root(
+    tmp_path: Path,
+    root_kind: str,
+) -> None:
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    root = source_stage_root(workspace, f"publish-{root_kind}")
+    root.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
+    building = root.parent / f".building-{root_kind}"
+    building.mkdir(mode=0o700)
+    (building / "sources").mkdir(mode=0o700)
+    if root_kind == "dangling":
+        root.symlink_to(root.with_name(f"{root.name}.absent"))
+    elif root_kind == "looping":
+        root.symlink_to(root.name)
+    else:
+        root.write_bytes(b"unsafe non-directory stage root")
+    metadata = root.lstat()
+    identity = (metadata.st_dev, metadata.st_ino, metadata.st_mode)
+    link_target = os.readlink(root) if stat.S_ISLNK(metadata.st_mode) else None
+
+    with pytest.raises(RuntimeHostError, match="runtime_source_staging_invalid"):
+        host_submission._publish_stage(building, root)
+
+    metadata = root.lstat()
+    assert (metadata.st_dev, metadata.st_ino, metadata.st_mode) == identity
+    if link_target is not None:
+        assert os.readlink(root) == link_target
+    host_submission._discard_path(root)
 
 
 @_REQUIRES_RETAINED_PUBLICATION
@@ -1845,7 +2679,10 @@ def test_discovery_tampered_precommit_stage_fails_closed_without_provider_recall
     content_path.write_bytes(b"tampered staged content")
     (workspace / ".env").unlink()
 
-    with pytest.raises(RuntimeHostError, match="source_provider_result_invalid"):
+    with pytest.raises(
+        RuntimeHostError,
+        match="source_acquisition_outcome_unknown",
+    ):
         _service(workspace).apply_current(_service(workspace).next_action())
 
     assert provider_calls == 1
@@ -1962,7 +2799,7 @@ def test_discovery_promotion_failure_rolls_back_all_authority_rows(
         for item in snapshot.invocations
         if item.role_id == "source-provider" and item.status == "failed"
     ]
-    assert len(failures) == 1
+    assert failures == []
 
 
 @_REQUIRES_RETAINED_PUBLICATION
@@ -1980,8 +2817,14 @@ def test_discovery_all_snippets_fail_without_promotion(
     )
     action = _advance_discovery_to_source_action(workspace)
 
-    with pytest.raises(RuntimeHostError, match="source_pack_empty"):
-        _service(workspace).apply_current(action)
+    result = _service(workspace).apply_current(action)
+
+    assert result.status == "rejected_recorded"
+    assert result.next_action.effect_kind == "source_acquisition_recovery"
+    assert (
+        result.next_action.reason_code
+        == "source_acquisition_recovery_decision_required"
+    )
 
     with SQLiteControlStore.open(workspace / "briefloop.db") as store:
         head = store.load_workspace_run_head()
@@ -1989,6 +2832,13 @@ def test_discovery_all_snippets_fail_without_promotion(
         snapshot = store.load_snapshot(head.current_run_id)
     assert snapshot.sources == ()
     assert snapshot.run_execution_authorizations == ()
+    evidence = snapshot.events[-1].intake_binding.source_acquisition_failure
+    assert evidence is not None
+    assert evidence.failure_class == "provider_results_without_durable_content"
+    assert evidence.result_count == 1
+    assert evidence.durable_content_count == 0
+    assert evidence.claims_eligible_count == 0
+    assert evidence.provider_response_artifact is not None
     assert (
         len(
             [
@@ -2014,8 +2864,10 @@ def test_discovery_empty_provider_result_fails_without_promotion(
     )
     action = _advance_discovery_to_source_action(workspace)
 
-    with pytest.raises(RuntimeHostError, match="source_pack_empty"):
-        _service(workspace).apply_current(action)
+    result = _service(workspace).apply_current(action)
+
+    assert result.status == "rejected_recorded"
+    assert result.next_action.effect_kind == "source_acquisition_recovery"
 
     with SQLiteControlStore.open(workspace / "briefloop.db") as store:
         head = store.load_workspace_run_head()
@@ -2023,6 +2875,12 @@ def test_discovery_empty_provider_result_fails_without_promotion(
         snapshot = store.load_snapshot(head.current_run_id)
     assert snapshot.sources == ()
     assert snapshot.run_execution_authorizations == ()
+    evidence = snapshot.events[-1].intake_binding.source_acquisition_failure
+    assert evidence is not None
+    assert evidence.failure_class == "provider_results_empty"
+    assert evidence.result_count == 0
+    assert evidence.durable_content_count == 0
+    assert evidence.provider_response_artifact is not None
     assert (
         len(
             [
@@ -2036,7 +2894,7 @@ def test_discovery_empty_provider_result_fails_without_promotion(
 
 
 @_REQUIRES_RETAINED_PUBLICATION
-def test_discovery_empty_provider_result_replays_stable_human_source_fallback(
+def test_discovery_empty_provider_result_replays_stable_recovery_choice(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -2056,8 +2914,8 @@ def test_discovery_empty_provider_result_replays_stable_human_source_fallback(
 
     failed = service.continue_authorized()
 
-    assert failed.status == "needs_attention"
-    assert failed.reason_code == "source_pack_empty"
+    assert failed.status == "needs_human"
+    assert failed.reason_code == "source_acquisition_recovery_decision_required"
     assert provider_calls == 1
     current = service.next_action()
     assert (
@@ -2067,9 +2925,9 @@ def test_discovery_empty_provider_result_replays_stable_human_source_fallback(
         current.reason_code,
     ) == (
         "human_decision",
-        "source_input_required",
+        "source_acquisition_recovery",
         "source-discovery",
-        "human_source_material_required",
+        "source_acquisition_recovery_decision_required",
     )
 
     (workspace / ".env").unlink()
@@ -2081,7 +2939,7 @@ def test_discovery_empty_provider_result_replays_stable_human_source_fallback(
 
     assert first == second
     assert first.status == "needs_human"
-    assert first.reason_code == "human_source_material_required"
+    assert first.reason_code == "source_acquisition_recovery_decision_required"
     assert first.trace.next_action == current
     assert provider_calls == 1
     assert _revision(workspace) == before_revision
@@ -2103,6 +2961,307 @@ def test_discovery_empty_provider_result_replays_stable_human_source_fallback(
 
 
 @_REQUIRES_RETAINED_PUBLICATION
+def test_discovery_next_attempt_requires_exact_human_authorization_and_replays(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    workspace = _discovery_workspace(tmp_path)
+    env_bytes = (workspace / ".env").read_bytes()
+    provider_calls = 0
+
+    def collect(_provider, _query, _config):
+        nonlocal provider_calls
+        provider_calls += 1
+        return _tavily_collection(
+            [] if provider_calls == 1 else [_tavily_item(durable=True)]
+        )
+
+    monkeypatch.setattr(WebSearchProvider, "collect_with_response", collect)
+    _advance_discovery_to_source_action(workspace)
+    service = _service(workspace)
+
+    failed = service.continue_authorized()
+
+    assert failed.status == "needs_human"
+    assert provider_calls == 1
+    action = service.next_action()
+    assert action.effect_kind == "source_acquisition_recovery"
+    with SQLiteControlStore.open(workspace / "briefloop.db") as store:
+        head = store.load_workspace_run_head()
+        assert head is not None
+        snapshot = store.load_snapshot(head.current_run_id)
+    assert len(snapshot.run_source_acquisition_attempt_authorizations) == 1
+    previous = snapshot.run_source_acquisition_attempt_authorizations[0]
+    assert (
+        action.source_acquisition_attempt_authorization_id
+        == previous.attempt_authorization_id
+    )
+    recovery = RuntimeSourceAcquisitionRecoveryRequest.model_validate(
+        {
+            "schema_version": (RuntimeSourceAcquisitionRecoveryRequest.schema_id),
+            "request_id": "REQ-HUMAN-TAVILY-ATTEMPT-002",
+            "run_id": action.run_id,
+            "expected_store_revision": action.store_revision,
+            "expected_action_fingerprint": action.action_fingerprint,
+            "decision": "authorize_next_tavily_attempt",
+            "previous_attempt_authorization_id": (
+                action.source_acquisition_attempt_authorization_id
+            ),
+            "human_confirmation": True,
+            "provider_cost_status": "not_reported_acknowledged",
+            "human_source_pack": None,
+        },
+        strict=True,
+    )
+
+    authorized = service.apply_current(action, human_request=recovery)
+    replayed = service.apply_current(action, human_request=recovery)
+
+    assert authorized.status == "committed"
+    assert replayed.status == "replayed"
+    assert provider_calls == 1
+    conflicting = recovery.model_copy(
+        update={
+            "previous_attempt_authorization_id": (
+                "SOURCE-ACQUIRE-ATTEMPT-AUTH-CONFLICT"
+            )
+        }
+    )
+    with pytest.raises(RuntimeHostError, match="submission_replay_conflict"):
+        service.apply_current(action, human_request=conflicting)
+    assert provider_calls == 1
+    with SQLiteControlStore.open(workspace / "briefloop.db") as store:
+        head = store.load_workspace_run_head()
+        assert head is not None
+        snapshot = store.load_snapshot(head.current_run_id)
+    attempts = snapshot.run_source_acquisition_attempt_authorizations
+    assert [item.attempt_ordinal for item in attempts] == [1, 2]
+    assert (
+        attempts[1].previous_attempt_authorization_id
+        == attempts[0].attempt_authorization_id
+    )
+    assert attempts[1].accepted_transaction_id == recovery.request_id
+    second_action = service.next_action()
+    assert second_action.effect_kind == "source_acquire"
+    assert (
+        second_action.source_acquisition_attempt_authorization_id
+        == attempts[1].attempt_authorization_id
+    )
+
+    promoted = service.continue_authorized()
+
+    assert promoted.status == "role_work_required", promoted.reason_code
+    assert provider_calls == 2
+    assert (workspace / ".env").read_bytes() == env_bytes
+    replay = service.apply_current(second_action)
+    assert replay.status == "replayed"
+    assert provider_calls == 2
+    with SQLiteControlStore.open(workspace / "briefloop.db") as store:
+        head = store.load_workspace_run_head()
+        assert head is not None
+        snapshot = store.load_snapshot(head.current_run_id)
+    assert len(snapshot.run_execution_authorizations) == 1
+    assert len(snapshot.sources) == 1
+
+
+@_REQUIRES_RETAINED_PUBLICATION
+def test_discovery_attempt_is_cross_process_serialized_before_provider_call(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    workspace = _discovery_workspace(tmp_path)
+    _advance_discovery_to_source_action(workspace)
+    action = _service(workspace).next_action()
+    process_context = multiprocessing.get_context("fork")
+    apply_entered = process_context.Barrier(2)
+    provider_entered = process_context.Event()
+    provider_release = process_context.Event()
+    provider_calls = process_context.Value("i", 0)
+    outcomes = process_context.Queue()
+
+    def collect(_provider, _query, _config):
+        with provider_calls.get_lock():
+            provider_calls.value += 1
+        provider_entered.set()
+        assert provider_release.wait(timeout=10)
+        return _tavily_collection([_tavily_item(durable=True)])
+
+    original_apply = RuntimeHostService._apply_discovery_source_acquire
+
+    def synchronized_apply(self, current, current_action, **kwargs):
+        if not kwargs.get("_acquisition_lock_held", False):
+            apply_entered.wait(timeout=10)
+        return original_apply(self, current, current_action, **kwargs)
+
+    monkeypatch.setattr(WebSearchProvider, "collect_with_response", collect)
+    monkeypatch.setattr(
+        RuntimeHostService,
+        "_apply_discovery_source_acquire",
+        synchronized_apply,
+    )
+
+    def run_one() -> None:
+        try:
+            result = _service(workspace).apply_current(action)
+        except RuntimeHostError as exc:
+            outcomes.put(("error", str(exc)))
+        else:
+            outcomes.put(("result", result.status))
+
+    processes = [
+        process_context.Process(target=run_one),
+        process_context.Process(target=run_one),
+    ]
+    for process in processes:
+        process.start()
+    assert provider_entered.wait(timeout=10)
+    assert all(process.is_alive() for process in processes)
+    provider_release.set()
+    for process in processes:
+        process.join(timeout=20)
+        assert process.exitcode == 0
+
+    observed = sorted(outcomes.get(timeout=2) for _ in processes)
+    assert provider_calls.value == 1
+    assert observed == [
+        ("error", "runtime_action_stale"),
+        ("result", "committed"),
+    ]
+    replay = _service(workspace).apply_current(action)
+    assert replay.status == "replayed"
+    assert provider_calls.value == 1
+
+
+@_REQUIRES_RETAINED_PUBLICATION
+def test_discovery_recovery_accepts_explicit_human_source_pack_without_redial(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    workspace = _discovery_workspace(tmp_path)
+    provider_calls = 0
+
+    def collect(_provider, _query, _config):
+        nonlocal provider_calls
+        provider_calls += 1
+        return _tavily_collection([])
+
+    monkeypatch.setattr(WebSearchProvider, "collect_with_response", collect)
+    _advance_discovery_to_source_action(workspace)
+    service = _service(workspace)
+    assert service.continue_authorized().status == "needs_human"
+    action = service.next_action()
+    content = b"Human-selected public source after the failed provider attempt.\n"
+    source_path = workspace / "input" / "recovery-source.txt"
+    source_path.write_bytes(content)
+    content_sha256 = hashlib.sha256(content).hexdigest()
+    manifest_payload = {
+        "schema_version": "example.source_manifest.v1",
+        "sources": [
+            {
+                "source_id": "SRC-RECOVERY-001",
+                "title": "Human recovery source",
+                "publisher": "Example publisher",
+                "published_at": "2026-07-29",
+                "url": "https://example.com/recovery-source",
+                "local_file": "documents/recovery-source.txt",
+                "sha256": content_sha256,
+            }
+        ],
+    }
+    manifest_bytes = json.dumps(
+        manifest_payload,
+        separators=(",", ":"),
+        sort_keys=True,
+    ).encode("utf-8")
+    (workspace / "input" / "source_manifest.json").write_bytes(manifest_bytes)
+    recovery = RuntimeSourceAcquisitionRecoveryRequest.model_validate(
+        {
+            "schema_version": (RuntimeSourceAcquisitionRecoveryRequest.schema_id),
+            "request_id": "REQ-HUMAN-SOURCE-RECOVERY-001",
+            "run_id": action.run_id,
+            "expected_store_revision": action.store_revision,
+            "expected_action_fingerprint": action.action_fingerprint,
+            "decision": "provide_human_source_pack",
+            "previous_attempt_authorization_id": None,
+            "human_confirmation": None,
+            "provider_cost_status": None,
+            "human_source_pack": {
+                "schema_version": ("briefloop.runtime_human_source_pack_request.v2"),
+                "request_id": "REQ-HUMAN-SOURCE-PACK-RECOVERY-001",
+                "run_id": action.run_id,
+                "expected_store_revision": action.store_revision,
+                "manifest_path": "input/source_manifest.json",
+                "manifest_schema_version": "example.source_manifest.v1",
+                "expected_manifest_sha256": hashlib.sha256(manifest_bytes).hexdigest(),
+                "members": [
+                    {
+                        "member_id": "SRC-RECOVERY-001",
+                        "input_path": "input/recovery-source.txt",
+                        "manifest_local_file": "documents/recovery-source.txt",
+                        "expected_input_sha256": content_sha256,
+                        "title": "Human recovery source",
+                        "publisher": "Example publisher",
+                        "published_at": "2026-07-29",
+                        "url": "https://example.com/recovery-source",
+                        "document_kind": None,
+                        "opened_at": None,
+                        "resolved_at": None,
+                        "retrieved_at": "2026-07-30T00:00:00Z",
+                        "content_media_type": "text/plain",
+                    }
+                ],
+            },
+        },
+        strict=True,
+    )
+    original_human_stage = host_service.stage_human_source_pack
+    saved_stage_root: Path | None = None
+
+    def replace_human_stage_after_snapshot(*args, **kwargs):
+        nonlocal saved_stage_root
+        stage = original_human_stage(*args, **kwargs)
+        if saved_stage_root is None:
+            saved_stage_root = stage.root.with_name(f"{stage.root.name}.verified-a")
+            stage.root.rename(saved_stage_root)
+            shutil.copytree(saved_stage_root, stage.root)
+            next(stage.root.glob("sources/*/source_content.bin")).write_bytes(
+                b"unverified human replacement B"
+            )
+        return stage
+
+    monkeypatch.setattr(
+        host_service,
+        "stage_human_source_pack",
+        replace_human_stage_after_snapshot,
+    )
+
+    committed = service.apply_current(action, human_request=recovery)
+
+    assert committed.status == "committed"
+    assert provider_calls == 1
+    assert saved_stage_root is not None
+    assert saved_stage_root.is_dir()
+    assert not saved_stage_root.with_name(
+        saved_stage_root.name.removesuffix(".verified-a")
+    ).exists()
+    current_action = service.next_action()
+    assert current_action.effect_kind == "stage_complete"
+    promoted = service.continue_authorized()
+    assert promoted.status == "role_work_required", promoted.reason_code
+    assert provider_calls == 1
+    with SQLiteControlStore.open(workspace / "briefloop.db") as store:
+        head = store.load_workspace_run_head()
+        assert head is not None
+        snapshot = store.load_snapshot(head.current_run_id)
+    assert len(snapshot.run_source_acquisition_attempt_authorizations) == 1
+    assert len(snapshot.sources) == 1
+    assert snapshot.sources[0].content_sha256 == content_sha256
+    assert snapshot.run_execution_authorizations == ()
+    assert snapshot.sources[0].provider is None
+    host_submission._discard_path(saved_stage_root)
+
+
+@_REQUIRES_RETAINED_PUBLICATION
 def test_discovery_malformed_provider_result_fails_without_promotion(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -2117,8 +3276,10 @@ def test_discovery_malformed_provider_result_fails_without_promotion(
     )
     action = _advance_discovery_to_source_action(workspace)
 
-    with pytest.raises(RuntimeHostError, match="source_provider_result_invalid"):
-        _service(workspace).apply_current(action)
+    result = _service(workspace).apply_current(action)
+
+    assert result.status == "rejected_recorded"
+    assert result.next_action.effect_kind == "source_acquisition_recovery"
 
     with SQLiteControlStore.open(workspace / "briefloop.db") as store:
         head = store.load_workspace_run_head()
@@ -2126,6 +3287,10 @@ def test_discovery_malformed_provider_result_fails_without_promotion(
         snapshot = store.load_snapshot(head.current_run_id)
     assert snapshot.sources == ()
     assert snapshot.run_execution_authorizations == ()
+    evidence = snapshot.events[-1].intake_binding.source_acquisition_failure
+    assert evidence is not None
+    assert evidence.failure_class == "source_pack_validation_rejected"
+    assert evidence.provider_response_artifact is not None
     assert (
         len(
             [
@@ -2163,8 +3328,8 @@ def test_discovery_provider_failure_records_one_typed_failure(
 
     result = _service(workspace).continue_authorized()
 
-    assert result.status == "needs_attention"
-    assert result.reason_code == "source_provider_unavailable"
+    assert result.status == "needs_human"
+    assert result.reason_code == "source_acquisition_recovery_decision_required"
     assert sentinel not in repr(result)
     assert sentinel not in caplog.text
     with SQLiteControlStore.open(workspace / "briefloop.db") as store:
@@ -2183,6 +3348,10 @@ def test_discovery_provider_failure_records_one_typed_failure(
     ]
     assert len(failures) == 1
     assert failures[0].failure_reason == "child_failed"
+    evidence = snapshot.events[-1].intake_binding.source_acquisition_failure
+    assert evidence is not None
+    assert evidence.failure_class == "provider_response_unavailable"
+    assert evidence.provider_response_artifact is None
     assert sentinel not in repr(snapshot)
     assert sentinel not in repr(history.transactions)
     assert sentinel.encode() not in (workspace / "briefloop.db").read_bytes()
@@ -2246,8 +3415,8 @@ def test_discovery_provider_credential_echo_fails_before_stage_or_promotion(
     result = _service(workspace).continue_authorized()
 
     assert calls == 1
-    assert result.status == "needs_attention"
-    assert result.reason_code == "source_provider_unavailable"
+    assert result.status == "needs_human"
+    assert result.reason_code == "source_acquisition_recovery_decision_required"
     assert sentinel not in repr(result)
     assert sentinel_hash not in repr(result).lower()
     assert sentinel not in caplog.text
@@ -2666,6 +3835,7 @@ def test_finalize_effect_suppresses_legacy_hook_then_presents_terminal(
             "role_id": None,
             "source_route_id": None,
             "source_provider_id": None,
+            "source_acquisition_attempt_authorization_id": None,
             "reason_code": reason,
             "input_artifacts": [],
             "request_schema_id": None,

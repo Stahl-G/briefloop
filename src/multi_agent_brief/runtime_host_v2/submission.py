@@ -57,9 +57,9 @@ class SourceStageBytesInput:
 @dataclass(frozen=True)
 class StagedSourceMember:
     member_id: str
-    proposal_path: Path
-    content_path: Path
-    raw_payload_path: Path | None
+    proposal_bytes: bytes
+    content_bytes: bytes
+    raw_payload_bytes: bytes | None
     proposal_sha256: str
     content_sha256: str
     raw_payload_sha256: str | None
@@ -69,11 +69,12 @@ class StagedSourceMember:
 @dataclass(frozen=True)
 class VerifiedSourceStage:
     root: Path
+    stage_kind: Literal["source_pack", "provider_outcome"]
     request_fingerprint: str
     members: tuple[StagedSourceMember, ...]
-    manifest_path: Path | None
+    manifest_bytes: bytes | None
     manifest_sha256: str | None
-    provider_response_path: Path | None
+    provider_response_bytes: bytes | None
     provider_response_sha256: str | None
     provider_status_code: int | None
 
@@ -92,12 +93,13 @@ class _StageAttestation(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True, strict=True)
 
     format: Literal["briefloop-runtime-source-stage/v1"]
+    stage_kind: Literal["source_pack", "provider_outcome"]
     request_fingerprint: str
     manifest_sha256: str | None
     provider_response_sha256: str | None = None
     provider_status_code: int | None = None
     members: tuple[_StageMember, ...] = Field(
-        min_length=1,
+        min_length=0,
         max_length=MAX_SOURCE_PACK_MEMBERS,
     )
 
@@ -129,6 +131,11 @@ class _StageAttestation(BaseModel):
             raise ValueError("provider response identity is incomplete")
         if self.provider_status_code is not None and self.provider_status_code != 200:
             raise ValueError("provider response status is invalid")
+        if self.stage_kind == "source_pack":
+            if not self.members:
+                raise ValueError("source pack stage requires members")
+        elif self.provider_response_sha256 is None:
+            raise ValueError("provider outcome stage requires a response")
         if any(
             len(value) != 64
             or any(character not in "0123456789abcdef" for character in value)
@@ -160,147 +167,592 @@ def source_stage_root(workspace: Path, stage_identity: str) -> Path:
     )
 
 
+def _stage_root_metadata_if_present(root: Path) -> os.stat_result | None:
+    """Return no-follow metadata; only lexical ENOENT means absence."""
+
+    try:
+        metadata = root.lstat()
+    except FileNotFoundError:
+        return None
+    except OSError as exc:
+        raise RuntimeHostError("runtime_source_staging_invalid") from exc
+    if stat.S_ISLNK(metadata.st_mode) or not stat.S_ISDIR(metadata.st_mode):
+        raise RuntimeHostError("runtime_source_staging_invalid")
+    return metadata
+
+
+def _stage_metadata_identity(metadata: os.stat_result) -> tuple[int, int, int]:
+    return (
+        metadata.st_dev,
+        metadata.st_ino,
+        stat.S_IFMT(metadata.st_mode),
+    )
+
+
+def _stage_metadata_matches(
+    current: os.stat_result,
+    expected: os.stat_result,
+) -> bool:
+    return _stage_metadata_identity(current) == _stage_metadata_identity(expected)
+
+
+def _supports_retained_stage_descriptors() -> bool:
+    return (
+        os.name != "nt"
+        and os.open in os.supports_dir_fd
+        and os.stat in os.supports_dir_fd
+        and os.stat in os.supports_follow_symlinks
+        and os.scandir in os.supports_fd
+        and getattr(os, "O_DIRECTORY", 0) != 0
+        and getattr(os, "O_NOFOLLOW", 0) != 0
+    )
+
+
+@dataclass
+class _DescriptorStageDirectory:
+    descriptor: int
+    metadata: os.stat_result
+    parent_descriptor: int | None
+    entry_name: str | None
+    expected_names: frozenset[str] | None = None
+
+
+@dataclass(frozen=True)
+class _DescriptorStageLeaf:
+    parent_descriptor: int
+    entry_name: str
+    metadata: os.stat_result
+
+
+class _DescriptorStageSnapshot:
+    """Read one stage through retained no-follow directory descriptors."""
+
+    def __init__(self, root: Path, root_metadata: os.stat_result) -> None:
+        self._root = root
+        self._directories: list[_DescriptorStageDirectory] = []
+        self._leaves: list[_DescriptorStageLeaf] = []
+        descriptor = os.open(
+            root,
+            os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | getattr(os, "O_CLOEXEC", 0),
+        )
+        try:
+            opened = os.fstat(descriptor)
+            if not _stage_metadata_matches(opened, root_metadata) or not stat.S_ISDIR(
+                opened.st_mode
+            ):
+                raise RuntimeHostError("runtime_source_staging_invalid")
+        except Exception:
+            os.close(descriptor)
+            raise
+        self._root_directory = _DescriptorStageDirectory(
+            descriptor=descriptor,
+            metadata=root_metadata,
+            parent_descriptor=None,
+            entry_name=None,
+        )
+        self._directories.append(self._root_directory)
+        self._sources_directory: _DescriptorStageDirectory | None = None
+        self._member_directories: dict[str, _DescriptorStageDirectory] = {}
+
+    def __enter__(self) -> "_DescriptorStageSnapshot":
+        return self
+
+    def __exit__(self, *_args: object) -> None:
+        for directory in reversed(self._directories):
+            os.close(directory.descriptor)
+
+    @staticmethod
+    def _directory_names(directory: _DescriptorStageDirectory) -> frozenset[str]:
+        return frozenset(item.name for item in os.scandir(directory.descriptor))
+
+    @staticmethod
+    def _entry_metadata(
+        directory: _DescriptorStageDirectory,
+        entry_name: str,
+    ) -> os.stat_result:
+        return os.stat(
+            entry_name,
+            dir_fd=directory.descriptor,
+            follow_symlinks=False,
+        )
+
+    def _names(self, directory: _DescriptorStageDirectory) -> frozenset[str]:
+        names = self._directory_names(directory)
+        if directory.expected_names is None:
+            directory.expected_names = names
+        elif directory.expected_names != names:
+            raise RuntimeHostError("runtime_source_staging_invalid")
+        return names
+
+    def _open_directory(
+        self,
+        parent: _DescriptorStageDirectory,
+        entry_name: str,
+    ) -> _DescriptorStageDirectory:
+        metadata = self._entry_metadata(parent, entry_name)
+        if stat.S_ISLNK(metadata.st_mode) or not stat.S_ISDIR(metadata.st_mode):
+            raise RuntimeHostError("runtime_source_staging_invalid")
+        descriptor = os.open(
+            entry_name,
+            os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | getattr(os, "O_CLOEXEC", 0),
+            dir_fd=parent.descriptor,
+        )
+        try:
+            opened = os.fstat(descriptor)
+            if not _stage_metadata_matches(opened, metadata) or not stat.S_ISDIR(
+                opened.st_mode
+            ):
+                raise RuntimeHostError("runtime_source_staging_invalid")
+        except Exception:
+            os.close(descriptor)
+            raise
+        directory = _DescriptorStageDirectory(
+            descriptor=descriptor,
+            metadata=metadata,
+            parent_descriptor=parent.descriptor,
+            entry_name=entry_name,
+        )
+        self._directories.append(directory)
+        return directory
+
+    def root_names(self) -> frozenset[str]:
+        return self._names(self._root_directory)
+
+    def sources_names(self) -> frozenset[str]:
+        if self._sources_directory is None:
+            self._sources_directory = self._open_directory(
+                self._root_directory,
+                "sources",
+            )
+        return self._names(self._sources_directory)
+
+    def member_names(self, member_id: str) -> frozenset[str]:
+        if self._sources_directory is None:
+            raise RuntimeHostError("runtime_source_staging_invalid")
+        directory = self._member_directories.get(member_id)
+        if directory is None:
+            directory = self._open_directory(self._sources_directory, member_id)
+            self._member_directories[member_id] = directory
+        return self._names(directory)
+
+    def _read_file(
+        self,
+        directory: _DescriptorStageDirectory,
+        entry_name: str,
+        *,
+        max_size: int,
+    ) -> bytes:
+        metadata = self._entry_metadata(directory, entry_name)
+        if (
+            stat.S_ISLNK(metadata.st_mode)
+            or not stat.S_ISREG(metadata.st_mode)
+            or metadata.st_nlink != 1
+            or metadata.st_size > max_size
+        ):
+            raise RuntimeHostError("runtime_source_staging_invalid")
+        descriptor = os.open(
+            entry_name,
+            os.O_RDONLY | os.O_NOFOLLOW | getattr(os, "O_CLOEXEC", 0),
+            dir_fd=directory.descriptor,
+        )
+        try:
+            opened = os.fstat(descriptor)
+            if (
+                not _stage_metadata_matches(opened, metadata)
+                or not stat.S_ISREG(opened.st_mode)
+                or opened.st_nlink != 1
+                or opened.st_size > max_size
+            ):
+                raise RuntimeHostError("runtime_source_staging_invalid")
+            payload = bytearray()
+            while len(payload) <= max_size:
+                chunk = os.read(
+                    descriptor,
+                    min(SOURCE_STREAM_CHUNK_BYTES, max_size + 1 - len(payload)),
+                )
+                if not chunk:
+                    break
+                payload.extend(chunk)
+            if len(payload) != opened.st_size or len(payload) > max_size:
+                raise RuntimeHostError("runtime_source_staging_invalid")
+        finally:
+            os.close(descriptor)
+        current = self._entry_metadata(directory, entry_name)
+        if not _stage_metadata_matches(current, metadata):
+            raise RuntimeHostError("runtime_source_staging_invalid")
+        self._leaves.append(
+            _DescriptorStageLeaf(
+                parent_descriptor=directory.descriptor,
+                entry_name=entry_name,
+                metadata=metadata,
+            )
+        )
+        return bytes(payload)
+
+    def read_root_file(self, entry_name: str, *, max_size: int) -> bytes:
+        return self._read_file(
+            self._root_directory,
+            entry_name,
+            max_size=max_size,
+        )
+
+    def read_member_file(
+        self,
+        member_id: str,
+        entry_name: str,
+        *,
+        max_size: int,
+    ) -> bytes:
+        directory = self._member_directories.get(member_id)
+        if directory is None:
+            raise RuntimeHostError("runtime_source_staging_invalid")
+        return self._read_file(directory, entry_name, max_size=max_size)
+
+    def finish(self) -> None:
+        current_root = self._root.lstat()
+        if (
+            stat.S_ISLNK(current_root.st_mode)
+            or not stat.S_ISDIR(current_root.st_mode)
+            or not _stage_metadata_matches(current_root, self._root_directory.metadata)
+        ):
+            raise RuntimeHostError("runtime_source_staging_invalid")
+        for directory in self._directories:
+            opened = os.fstat(directory.descriptor)
+            if not stat.S_ISDIR(opened.st_mode) or not _stage_metadata_matches(
+                opened, directory.metadata
+            ):
+                raise RuntimeHostError("runtime_source_staging_invalid")
+            if (
+                directory.parent_descriptor is not None
+                and directory.entry_name is not None
+            ):
+                current = os.stat(
+                    directory.entry_name,
+                    dir_fd=directory.parent_descriptor,
+                    follow_symlinks=False,
+                )
+                if (
+                    stat.S_ISLNK(current.st_mode)
+                    or not stat.S_ISDIR(current.st_mode)
+                    or not _stage_metadata_matches(current, directory.metadata)
+                ):
+                    raise RuntimeHostError("runtime_source_staging_invalid")
+            if (
+                directory.expected_names is not None
+                and self._directory_names(directory) != directory.expected_names
+            ):
+                raise RuntimeHostError("runtime_source_staging_invalid")
+        for leaf in self._leaves:
+            current = os.stat(
+                leaf.entry_name,
+                dir_fd=leaf.parent_descriptor,
+                follow_symlinks=False,
+            )
+            if (
+                stat.S_ISLNK(current.st_mode)
+                or not stat.S_ISREG(current.st_mode)
+                or current.st_nlink != 1
+                or not _stage_metadata_matches(current, leaf.metadata)
+            ):
+                raise RuntimeHostError("runtime_source_staging_invalid")
+
+
+@dataclass
+class _PathStageDirectory:
+    path: Path
+    metadata: os.stat_result
+    expected_names: frozenset[str] | None = None
+
+
+@dataclass(frozen=True)
+class _PathStageLeaf:
+    path: Path
+    metadata: os.stat_result
+
+
+class _PathStageSnapshot:
+    """Bounded identity-revalidating fallback for platforms without dir-fd."""
+
+    def __init__(self, root: Path, root_metadata: os.stat_result) -> None:
+        self._root_directory = _PathStageDirectory(root, root_metadata)
+        self._directories = [self._root_directory]
+        self._leaves: list[_PathStageLeaf] = []
+        self._sources_directory: _PathStageDirectory | None = None
+        self._member_directories: dict[str, _PathStageDirectory] = {}
+
+    def __enter__(self) -> "_PathStageSnapshot":
+        return self
+
+    def __exit__(self, *_args: object) -> None:
+        return None
+
+    @staticmethod
+    def _directory_names(directory: _PathStageDirectory) -> frozenset[str]:
+        return frozenset(item.name for item in os.scandir(directory.path))
+
+    @staticmethod
+    def _metadata(path: Path) -> os.stat_result:
+        return path.lstat()
+
+    def _revalidate(self) -> None:
+        for directory in self._directories:
+            current = self._metadata(directory.path)
+            if (
+                stat.S_ISLNK(current.st_mode)
+                or not stat.S_ISDIR(current.st_mode)
+                or not _stage_metadata_matches(current, directory.metadata)
+            ):
+                raise RuntimeHostError("runtime_source_staging_invalid")
+            if (
+                directory.expected_names is not None
+                and self._directory_names(directory) != directory.expected_names
+            ):
+                raise RuntimeHostError("runtime_source_staging_invalid")
+        for leaf in self._leaves:
+            current = self._metadata(leaf.path)
+            if (
+                stat.S_ISLNK(current.st_mode)
+                or not stat.S_ISREG(current.st_mode)
+                or current.st_nlink != 1
+                or not _stage_metadata_matches(current, leaf.metadata)
+            ):
+                raise RuntimeHostError("runtime_source_staging_invalid")
+
+    def _names(self, directory: _PathStageDirectory) -> frozenset[str]:
+        self._revalidate()
+        names = self._directory_names(directory)
+        if directory.expected_names is None:
+            directory.expected_names = names
+        elif directory.expected_names != names:
+            raise RuntimeHostError("runtime_source_staging_invalid")
+        self._revalidate()
+        return names
+
+    def _open_directory(
+        self,
+        parent: _PathStageDirectory,
+        entry_name: str,
+    ) -> _PathStageDirectory:
+        self._revalidate()
+        path = parent.path / entry_name
+        metadata = self._metadata(path)
+        if stat.S_ISLNK(metadata.st_mode) or not stat.S_ISDIR(metadata.st_mode):
+            raise RuntimeHostError("runtime_source_staging_invalid")
+        directory = _PathStageDirectory(path, metadata)
+        self._directories.append(directory)
+        self._revalidate()
+        return directory
+
+    def root_names(self) -> frozenset[str]:
+        return self._names(self._root_directory)
+
+    def sources_names(self) -> frozenset[str]:
+        if self._sources_directory is None:
+            self._sources_directory = self._open_directory(
+                self._root_directory,
+                "sources",
+            )
+        return self._names(self._sources_directory)
+
+    def member_names(self, member_id: str) -> frozenset[str]:
+        if self._sources_directory is None:
+            raise RuntimeHostError("runtime_source_staging_invalid")
+        directory = self._member_directories.get(member_id)
+        if directory is None:
+            directory = self._open_directory(self._sources_directory, member_id)
+            self._member_directories[member_id] = directory
+        return self._names(directory)
+
+    def _read_file(
+        self,
+        directory: _PathStageDirectory,
+        entry_name: str,
+        *,
+        max_size: int,
+    ) -> bytes:
+        self._revalidate()
+        path = directory.path / entry_name
+        metadata = self._metadata(path)
+        payload = _read_regular_bytes(path, max_size=max_size)
+        self._leaves.append(_PathStageLeaf(path, metadata))
+        self._revalidate()
+        return payload
+
+    def read_root_file(self, entry_name: str, *, max_size: int) -> bytes:
+        return self._read_file(
+            self._root_directory,
+            entry_name,
+            max_size=max_size,
+        )
+
+    def read_member_file(
+        self,
+        member_id: str,
+        entry_name: str,
+        *,
+        max_size: int,
+    ) -> bytes:
+        directory = self._member_directories.get(member_id)
+        if directory is None:
+            raise RuntimeHostError("runtime_source_staging_invalid")
+        return self._read_file(directory, entry_name, max_size=max_size)
+
+    def finish(self) -> None:
+        self._revalidate()
+
+
+def _open_stage_snapshot(
+    root: Path,
+    root_metadata: os.stat_result,
+) -> _DescriptorStageSnapshot | _PathStageSnapshot:
+    if _supports_retained_stage_descriptors():
+        return _DescriptorStageSnapshot(root, root_metadata)
+    return _PathStageSnapshot(root, root_metadata)
+
+
 def load_source_stage(
     workspace: Path,
     *,
     stage_identity: str,
     request_fingerprint: str,
     expected_manifest_sha256: str | None,
+    expected_stage_kind: Literal["source_pack", "provider_outcome"] = "source_pack",
 ) -> VerifiedSourceStage | None:
     """Reverify an existing inert stage without consulting mutable inputs."""
 
     root = source_stage_root(workspace, stage_identity)
-    if not root.exists():
+    metadata = _stage_root_metadata_if_present(root)
+    if metadata is None:
         return None
     try:
-        metadata = root.lstat()
-        if root.is_symlink() or not stat.S_ISDIR(metadata.st_mode):
-            raise RuntimeHostError("runtime_source_staging_invalid")
-        attestation_bytes = _read_regular_bytes(
-            root / "stage_attestation.json",
-            max_size=_MAX_STAGE_CONTRACT_BYTES,
-        )
-        attestation = _StageAttestation.model_validate_json(
-            attestation_bytes,
-            strict=True,
-        )
-        if attestation.request_fingerprint != request_fingerprint:
-            raise RuntimeHostError("submission_replay_conflict")
-        if attestation.manifest_sha256 != expected_manifest_sha256:
-            raise RuntimeHostError("runtime_source_staging_invalid")
-        expected_root_members = {"sources", "stage_attestation.json"}
-        if expected_manifest_sha256 is not None:
-            expected_root_members.add("source_manifest.json")
-        if attestation.provider_response_sha256 is not None:
-            expected_root_members.add("provider_response.json")
-        if {item.name for item in os.scandir(root)} != expected_root_members:
-            raise RuntimeHostError("runtime_source_staging_invalid")
-        sources = root / "sources"
-        source_metadata = sources.lstat()
-        if sources.is_symlink() or not stat.S_ISDIR(source_metadata.st_mode):
-            raise RuntimeHostError("runtime_source_staging_invalid")
-        expected_member_ids = {item.member_id for item in attestation.members}
-        if {item.name for item in os.scandir(sources)} != expected_member_ids:
-            raise RuntimeHostError("runtime_source_staging_invalid")
-        manifest_path: Path | None = None
-        if expected_manifest_sha256 is not None:
-            manifest_path = root / "source_manifest.json"
-            digest, size = _hash_regular_file(
-                manifest_path,
-                max_size=MAX_SOURCE_MANIFEST_BYTES,
-            )
-            if size == 0 or digest != expected_manifest_sha256:
-                raise RuntimeHostError("runtime_source_staging_invalid")
-        provider_response_path: Path | None = None
-        if attestation.provider_response_sha256 is not None:
-            provider_response_path = root / "provider_response.json"
-            response_digest, response_size = _hash_regular_file(
-                provider_response_path,
-                max_size=MAX_PROVIDER_RESPONSE_BYTES,
-            )
-            if (
-                response_size == 0
-                or response_digest != attestation.provider_response_sha256
-            ):
-                raise RuntimeHostError("runtime_source_staging_invalid")
-        staged: list[StagedSourceMember] = []
-        aggregate_size = 0
-        for declared in attestation.members:
-            member_root = sources / declared.member_id
-            member_metadata = member_root.lstat()
-            if member_root.is_symlink() or not stat.S_ISDIR(member_metadata.st_mode):
-                raise RuntimeHostError("runtime_source_staging_invalid")
-            expected_names = {"source_proposal.json", "source_content.bin"}
-            if declared.raw_payload_sha256 is not None:
-                expected_names.add("source_raw.json")
-            if {item.name for item in os.scandir(member_root)} != expected_names:
-                raise RuntimeHostError("runtime_source_staging_invalid")
-            proposal_path = member_root / "source_proposal.json"
-            proposal_bytes = _read_regular_bytes(
-                proposal_path,
+        with _open_stage_snapshot(root, metadata) as reader:
+            attestation_bytes = reader.read_root_file(
+                "stage_attestation.json",
                 max_size=_MAX_STAGE_CONTRACT_BYTES,
             )
-            if sha256_hex(proposal_bytes) != declared.proposal_sha256:
-                raise RuntimeHostError("runtime_source_staging_invalid")
-            try:
-                proposal = SourceProposal.model_validate_json(
-                    proposal_bytes,
-                    strict=True,
-                )
-            except ValidationError as exc:
-                raise RuntimeHostError("runtime_source_staging_invalid") from exc
-            content_path = member_root / "source_content.bin"
-            content_digest, content_size = _hash_regular_file(
-                content_path,
-                max_size=MAX_SOURCE_MEMBER_BYTES,
+            attestation = _StageAttestation.model_validate_json(
+                attestation_bytes,
+                strict=True,
             )
-            if (
-                content_size == 0
-                or content_digest != declared.content_sha256
-                or content_digest != proposal.content_sha256
-            ):
+            if attestation.request_fingerprint != request_fingerprint:
+                raise RuntimeHostError("submission_replay_conflict")
+            if attestation.stage_kind != expected_stage_kind:
                 raise RuntimeHostError("runtime_source_staging_invalid")
-            raw_path: Path | None = None
-            raw_size = 0
-            if declared.raw_payload_sha256 is not None:
-                raw_path = member_root / "source_raw.json"
-                raw_digest, raw_size = _hash_regular_file(
-                    raw_path,
-                    max_size=MAX_SOURCE_MEMBER_BYTES,
+            if attestation.manifest_sha256 != expected_manifest_sha256:
+                raise RuntimeHostError("runtime_source_staging_invalid")
+            expected_root_members = {"sources", "stage_attestation.json"}
+            if expected_manifest_sha256 is not None:
+                expected_root_members.add("source_manifest.json")
+            if attestation.provider_response_sha256 is not None:
+                expected_root_members.add("provider_response.json")
+            if reader.root_names() != expected_root_members:
+                raise RuntimeHostError("runtime_source_staging_invalid")
+            expected_member_ids = {item.member_id for item in attestation.members}
+            if reader.sources_names() != expected_member_ids:
+                raise RuntimeHostError("runtime_source_staging_invalid")
+            manifest_bytes: bytes | None = None
+            if expected_manifest_sha256 is not None:
+                manifest_bytes = reader.read_root_file(
+                    "source_manifest.json",
+                    max_size=MAX_SOURCE_MANIFEST_BYTES,
                 )
                 if (
-                    raw_size == 0
-                    or raw_digest != declared.raw_payload_sha256
-                    or raw_digest != proposal.raw_payload_sha256
+                    not manifest_bytes
+                    or sha256_hex(manifest_bytes) != expected_manifest_sha256
                 ):
                     raise RuntimeHostError("runtime_source_staging_invalid")
-            elif proposal.raw_payload_sha256 is not None:
-                raise RuntimeHostError("runtime_source_staging_invalid")
-            payload_size = content_size + raw_size
-            if payload_size != declared.payload_size_bytes:
-                raise RuntimeHostError("runtime_source_staging_invalid")
-            aggregate_size += payload_size
-            if aggregate_size > MAX_SOURCE_PACK_BYTES:
-                raise RuntimeHostError("runtime_source_staging_invalid")
-            staged.append(
-                StagedSourceMember(
-                    member_id=declared.member_id,
-                    proposal_path=proposal_path,
-                    content_path=content_path,
-                    raw_payload_path=raw_path,
-                    proposal_sha256=declared.proposal_sha256,
-                    content_sha256=content_digest,
-                    raw_payload_sha256=declared.raw_payload_sha256,
-                    payload_size_bytes=payload_size,
+            provider_response_bytes: bytes | None = None
+            if attestation.provider_response_sha256 is not None:
+                provider_response_bytes = reader.read_root_file(
+                    "provider_response.json",
+                    max_size=MAX_PROVIDER_RESPONSE_BYTES,
                 )
-            )
+                if (
+                    not provider_response_bytes
+                    or sha256_hex(provider_response_bytes)
+                    != attestation.provider_response_sha256
+                ):
+                    raise RuntimeHostError("runtime_source_staging_invalid")
+            staged: list[StagedSourceMember] = []
+            aggregate_size = 0
+            for declared in attestation.members:
+                expected_names = {"source_proposal.json", "source_content.bin"}
+                if declared.raw_payload_sha256 is not None:
+                    expected_names.add("source_raw.json")
+                if reader.member_names(declared.member_id) != expected_names:
+                    raise RuntimeHostError("runtime_source_staging_invalid")
+                proposal_bytes = reader.read_member_file(
+                    declared.member_id,
+                    "source_proposal.json",
+                    max_size=_MAX_STAGE_CONTRACT_BYTES,
+                )
+                if sha256_hex(proposal_bytes) != declared.proposal_sha256:
+                    raise RuntimeHostError("runtime_source_staging_invalid")
+                try:
+                    proposal = SourceProposal.model_validate_json(
+                        proposal_bytes,
+                        strict=True,
+                    )
+                except ValidationError as exc:
+                    raise RuntimeHostError("runtime_source_staging_invalid") from exc
+                content_bytes = reader.read_member_file(
+                    declared.member_id,
+                    "source_content.bin",
+                    max_size=MAX_SOURCE_MEMBER_BYTES,
+                )
+                content_digest = sha256_hex(content_bytes)
+                content_size = len(content_bytes)
+                if (
+                    content_size == 0
+                    or content_digest != declared.content_sha256
+                    or content_digest != proposal.content_sha256
+                ):
+                    raise RuntimeHostError("runtime_source_staging_invalid")
+                raw_payload_bytes: bytes | None = None
+                raw_size = 0
+                if declared.raw_payload_sha256 is not None:
+                    raw_payload_bytes = reader.read_member_file(
+                        declared.member_id,
+                        "source_raw.json",
+                        max_size=MAX_SOURCE_MEMBER_BYTES,
+                    )
+                    raw_digest = sha256_hex(raw_payload_bytes)
+                    raw_size = len(raw_payload_bytes)
+                    if (
+                        raw_size == 0
+                        or raw_digest != declared.raw_payload_sha256
+                        or raw_digest != proposal.raw_payload_sha256
+                    ):
+                        raise RuntimeHostError("runtime_source_staging_invalid")
+                elif proposal.raw_payload_sha256 is not None:
+                    raise RuntimeHostError("runtime_source_staging_invalid")
+                payload_size = content_size + raw_size
+                if payload_size != declared.payload_size_bytes:
+                    raise RuntimeHostError("runtime_source_staging_invalid")
+                aggregate_size += payload_size
+                if aggregate_size > MAX_SOURCE_PACK_BYTES:
+                    raise RuntimeHostError("runtime_source_staging_invalid")
+                staged.append(
+                    StagedSourceMember(
+                        member_id=declared.member_id,
+                        proposal_bytes=proposal_bytes,
+                        content_bytes=content_bytes,
+                        raw_payload_bytes=raw_payload_bytes,
+                        proposal_sha256=declared.proposal_sha256,
+                        content_sha256=content_digest,
+                        raw_payload_sha256=declared.raw_payload_sha256,
+                        payload_size_bytes=payload_size,
+                    )
+                )
+            reader.finish()
         return VerifiedSourceStage(
             root=root,
+            stage_kind=attestation.stage_kind,
             request_fingerprint=request_fingerprint,
             members=tuple(staged),
-            manifest_path=manifest_path,
+            manifest_bytes=manifest_bytes,
             manifest_sha256=expected_manifest_sha256,
-            provider_response_path=provider_response_path,
+            provider_response_bytes=provider_response_bytes,
             provider_response_sha256=attestation.provider_response_sha256,
             provider_status_code=attestation.provider_status_code,
         )
@@ -374,6 +826,7 @@ def stage_human_source_pack(
             )
         _finish_stage(
             building,
+            stage_kind="source_pack",
             request_fingerprint=request_fingerprint,
             manifest_sha256=expected_manifest_sha256,
             members=tuple(staged_members),
@@ -401,6 +854,7 @@ def stage_source_pack_bytes(
     members: tuple[SourceStageBytesInput, ...],
     provider_response_bytes: bytes | None = None,
     provider_status_code: int | None = None,
+    stage_kind: Literal["source_pack", "provider_outcome"] = "source_pack",
 ) -> VerifiedSourceStage:
     """Bound and stage one deterministic provider result set."""
 
@@ -409,10 +863,11 @@ def stage_source_pack_bytes(
         stage_identity=stage_identity,
         request_fingerprint=request_fingerprint,
         expected_manifest_sha256=None,
+        expected_stage_kind=stage_kind,
     )
     if existing is not None:
         return existing
-    if not members or len(members) > MAX_SOURCE_PACK_MEMBERS:
+    if len(members) > MAX_SOURCE_PACK_MEMBERS:
         raise RuntimeHostError("runtime_source_pack_invalid")
     if (
         provider_response_bytes is not None
@@ -422,6 +877,10 @@ def stage_source_pack_bytes(
             or provider_status_code != 200
         )
     ) or (provider_response_bytes is None and provider_status_code is not None):
+        raise RuntimeHostError("runtime_source_pack_invalid")
+    if (stage_kind == "source_pack" and not members) or (
+        stage_kind == "provider_outcome" and provider_response_bytes is None
+    ):
         raise RuntimeHostError("runtime_source_pack_invalid")
     _require_canonical_members(tuple(item.member_id for item in members))
     aggregate_size = 0
@@ -497,6 +956,7 @@ def stage_source_pack_bytes(
             )
         _finish_stage(
             building,
+            stage_kind=stage_kind,
             request_fingerprint=request_fingerprint,
             manifest_sha256=None,
             provider_response_sha256=provider_response_sha256,
@@ -512,6 +972,7 @@ def stage_source_pack_bytes(
         stage_identity=stage_identity,
         request_fingerprint=request_fingerprint,
         expected_manifest_sha256=None,
+        expected_stage_kind=stage_kind,
     )
     if loaded is None:  # pragma: no cover - guarded by publish
         raise RuntimeHostError("runtime_source_staging_invalid")
@@ -525,20 +986,6 @@ def discard_source_stage(workspace: Path, *, stage_identity: str) -> None:
         _discard_path(source_stage_root(workspace, stage_identity))
     except (OSError, RuntimeError, ValueError):
         return
-
-
-def read_verified_staged_bytes(
-    path: Path,
-    *,
-    expected_sha256: str,
-    max_size: int = MAX_SOURCE_MEMBER_BYTES,
-) -> bytes:
-    """Detach one already-staged member from the same verified descriptor."""
-
-    payload = _read_regular_bytes(path, max_size=max_size)
-    if sha256_hex(payload) != expected_sha256:
-        raise RuntimeHostError("runtime_source_staging_invalid")
-    return payload
 
 
 def _strict_source_proposal(payload: bytes) -> SourceProposal:
@@ -577,6 +1024,7 @@ def _stage_build_directory(workspace: Path, stage_identity: str) -> tuple[Path, 
 def _finish_stage(
     building: Path,
     *,
+    stage_kind: Literal["source_pack", "provider_outcome"],
     request_fingerprint: str,
     manifest_sha256: str | None,
     provider_response_sha256: str | None = None,
@@ -585,6 +1033,7 @@ def _finish_stage(
 ) -> None:
     attestation = _StageAttestation(
         format=_STAGE_FORMAT,
+        stage_kind=stage_kind,
         request_fingerprint=request_fingerprint,
         manifest_sha256=manifest_sha256,
         provider_response_sha256=provider_response_sha256,
@@ -599,14 +1048,33 @@ def _finish_stage(
 
 def _publish_stage(building: Path, root: Path) -> None:
     try:
+        existing = _stage_root_metadata_if_present(root)
+    except RuntimeHostError:
+        _discard_path(building)
+        raise
+    if existing is not None:
+        _discard_path(building)
+        return
+    try:
         os.rename(building, root)
     except FileExistsError:
-        _discard_path(building)
-    except OSError:
-        if root.exists():
+        try:
+            existing = _stage_root_metadata_if_present(root)
+        except RuntimeHostError:
             _discard_path(building)
-        else:
             raise
+        _discard_path(building)
+        if existing is None:
+            raise RuntimeHostError("runtime_source_staging_invalid") from None
+    except OSError:
+        try:
+            existing = _stage_root_metadata_if_present(root)
+        except RuntimeHostError:
+            _discard_path(building)
+            raise
+        if existing is None:
+            raise
+        _discard_path(building)
 
 
 def _write_regular_bytes(path: Path, payload: bytes) -> None:
@@ -735,48 +1203,6 @@ def _read_regular_bytes(path: Path, *, max_size: int) -> bytes:
             if len(payload) != opened.st_size or len(payload) > max_size:
                 raise RuntimeHostError("runtime_source_staging_invalid")
             return bytes(payload)
-        finally:
-            os.close(descriptor)
-    except RuntimeHostError:
-        raise
-    except OSError as exc:
-        raise RuntimeHostError("runtime_source_staging_invalid") from exc
-
-
-def _hash_regular_file(path: Path, *, max_size: int) -> tuple[str, int]:
-    try:
-        metadata = path.lstat()
-        if (
-            path.is_symlink()
-            or not stat.S_ISREG(metadata.st_mode)
-            or metadata.st_nlink != 1
-            or metadata.st_size > max_size
-        ):
-            raise RuntimeHostError("runtime_source_staging_invalid")
-        descriptor = os.open(
-            path,
-            os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0),
-        )
-        try:
-            opened = os.fstat(descriptor)
-            if (
-                (opened.st_dev, opened.st_ino) != (metadata.st_dev, metadata.st_ino)
-                or not stat.S_ISREG(opened.st_mode)
-                or opened.st_nlink != 1
-                or opened.st_size > max_size
-            ):
-                raise RuntimeHostError("runtime_source_staging_invalid")
-            digest = hashlib.sha256()
-            total = 0
-            while True:
-                chunk = os.read(descriptor, SOURCE_STREAM_CHUNK_BYTES)
-                if not chunk:
-                    break
-                total += len(chunk)
-                if total > max_size:
-                    raise RuntimeHostError("runtime_source_staging_invalid")
-                digest.update(chunk)
-            return digest.hexdigest(), total
         finally:
             os.close(descriptor)
     except RuntimeHostError:

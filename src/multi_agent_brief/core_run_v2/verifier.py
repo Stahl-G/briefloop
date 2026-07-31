@@ -16,6 +16,7 @@ from multi_agent_brief.contracts.v2 import (
     GateRepairArtifactBinding,
     GateRepairCycleRecord,
     GateRepairOutcomeRecord,
+    InvocationFailureRequest,
     InvocationStartRequest,
     RunContractBinding,
     RunExecutionAuthorization,
@@ -23,6 +24,8 @@ from multi_agent_brief.contracts.v2 import (
     RuntimeAdapterBinding,
     RuntimeSourcePlanBinding,
     ScreenedCandidatesProposal,
+    SourceAcquisitionAttemptAuthorizeRequest,
+    SourceAcquisitionFailureEvidence,
     TransactionReceipt,
     authorized_input_classification_bytes,
     canonical_run_direction_for_binding,
@@ -332,6 +335,7 @@ _AUTHORITATIVE_RECEIPT_RELATION_FAMILIES = frozenset(
         "run_contract_bindings",
         "run_execution_authorizations",
         "run_source_discovery_authorizations",
+        "run_source_acquisition_attempt_authorizations",
         "owned_artifact_submissions",
         "stage_transitions",
         "stage_artifact_bindings",
@@ -385,6 +389,7 @@ _CORE_EFFECT_BINDING_RULES = {
                 "run_contract_bindings",
                 "run_execution_authorizations",
                 "run_source_discovery_authorizations",
+                "run_source_acquisition_attempt_authorizations",
                 "stage_transitions",
                 "run_integrity_records",
             }
@@ -396,6 +401,13 @@ _CORE_EFFECT_BINDING_RULES = {
         "invocation",
         (("role_invocation_started", 1),),
         frozenset(),
+    ),
+    "source_acquisition_attempt_authorize": _CoreEffectBindingRule(
+        transaction_type_for("source_acquisition_attempt_authorize"),
+        frozenset({"source_acquisition_attempt_authorized"}),
+        "source_acquisition_attempt_authorization",
+        (("source_acquisition_attempt_authorized", 1),),
+        frozenset({"run_source_acquisition_attempt_authorizations"}),
     ),
     "owned_artifact_acceptance": _CoreEffectBindingRule(
         transaction_type_for("owned_artifact_acceptance"),
@@ -627,6 +639,7 @@ _INTAKE_EFFECT_RULES = {
                 "owned_artifact_submissions",
                 "run_execution_authorizations",
                 "run_source_discovery_authorizations",
+                "run_source_acquisition_attempt_authorizations",
             }
         ),
     ),
@@ -671,7 +684,14 @@ _INTAKE_EFFECT_RULES = {
                 "auditor",
             }
         ),
-        frozenset(),
+        frozenset(
+            {
+                "artifact_revisions",
+                "artifact_identities",
+                "run_source_discovery_authorizations",
+                "run_source_acquisition_attempt_authorizations",
+            }
+        ),
     ),
 }
 
@@ -728,6 +748,13 @@ _POST_FINAL_ASSESSMENT_RECEIPT_RULES = {
         "status_event_id",
     ),
 }
+
+
+def _failure_artifact_id(
+    evidence: SourceAcquisitionFailureEvidence,
+) -> str | None:
+    reference = evidence.provider_response_artifact
+    return None if reference is None else reference.artifact_id
 
 
 def _verify_authoritative_receipt_relation_families(
@@ -983,12 +1010,41 @@ def _verified_intake_receipt_effect(
     if binding is None:
         raise CoreRunError("control_store_integrity_invalid")
     if rule.effect is CoreEffect.INTAKE_REJECTION:
+        failure = binding.source_acquisition_failure
+        expected_revisions: list[tuple[str, int]] = []
+        expected_identities: list[str] = []
+        if failure is not None:
+            reference = failure.provider_response_artifact
+            if reference is not None:
+                expected_revisions = [(reference.artifact_id, reference.revision)]
+                expected_identities = [reference.artifact_id]
         if (
             binding.outcome != "rejected"
             or binding.reason_code is None
+            or (
+                failure is not None
+                and (binding.source_id is not None or binding.proposal_id is not None)
+            )
             or receipt.source_ids
             or receipt.proposal_ids
-            or receipt.artifact_revisions
+            or [
+                (item.artifact_id, item.revision) for item in receipt.artifact_revisions
+            ]
+            != expected_revisions
+            or [item.artifact_id for item in receipt.artifact_identities]
+            != expected_identities
+            or [
+                item.authorization_id
+                for item in receipt.run_source_discovery_authorizations
+            ]
+            != ([] if failure is None else [failure.discovery_authorization_id])
+            or [
+                item.attempt_authorization_id
+                for item in (receipt.run_source_acquisition_attempt_authorizations)
+            ]
+            != ([] if failure is None else [failure.attempt_authorization_id])
+            or event.artifact_id
+            != (None if failure is None else _failure_artifact_id(failure))
         ):
             raise CoreRunError("control_store_integrity_invalid")
         return rule.effect, CoreEffectSubject(stage_id=event.stage_id)
@@ -1046,6 +1102,15 @@ def _receipt_effect_authorization_subject(
         if len(records) != 1 or event.stage_id is None:
             raise CoreRunError("control_store_integrity_invalid")
         return CoreEffect.INVOCATION_START, stage_subject, None
+    if effect_kind == "source_acquisition_attempt_authorize":
+        records = [
+            item
+            for item in snapshot.run_source_acquisition_attempt_authorizations
+            if item.attempt_authorization_id == primary_id
+        ]
+        if len(records) != 1 or event.stage_id != "source-discovery":
+            raise CoreRunError("control_store_integrity_invalid")
+        return None, stage_subject, None
     if effect_kind in {"owned_artifact_acceptance", "audit_promotion"}:
         records = [
             item
@@ -1552,6 +1617,16 @@ class CoreRunDomainVerifier:
             binding,
             source_plan,
         )
+        self._verify_source_acquisition_attempt_authorizations(
+            snapshot,
+            binding,
+            source_plan,
+        )
+        self._verify_source_acquisition_failure_evidence(
+            reader,
+            snapshot,
+            source_plan,
+        )
         self._verify_checkout_revisions(history, snapshot)
         self._verify_invocation_ownership(snapshot, binding)
         classify_current_lineage(snapshot)
@@ -1731,6 +1806,298 @@ class CoreRunDomainVerifier:
             raise CoreRunError("control_store_integrity_invalid")
 
     @staticmethod
+    def _verify_source_acquisition_attempt_authorizations(
+        snapshot: ControlStoreSnapshot,
+        binding: RunContractBinding,
+        source_plan: RuntimeSourcePlanBinding,
+    ) -> None:
+        attempts = list(snapshot.run_source_acquisition_attempt_authorizations)
+        if not attempts:
+            return
+        if len(snapshot.run_source_discovery_authorizations) != 1:
+            raise CoreRunError("control_store_integrity_invalid")
+        discovery = snapshot.run_source_discovery_authorizations[0]
+        routes = [
+            route
+            for route in source_plan.routes
+            if route.route_id == discovery.route_id
+            and route.provider_id == discovery.provider_id
+            and route.route_fingerprint == discovery.source_route_fingerprint
+            and route.acquisition_spec is not None
+        ]
+        if len(routes) != 1:
+            raise CoreRunError("control_store_integrity_invalid")
+        provider_request_fingerprint = routes[
+            0
+        ].acquisition_spec.acquisition_spec_fingerprint
+        receipts = {item.transaction_id: item for item in snapshot.transactions}
+        events = {item.event_id: item for item in snapshot.events}
+        for position, attempt in enumerate(attempts, start=1):
+            owner = receipts.get(attempt.accepted_transaction_id)
+            event = events.get(attempt.authorization_event_id)
+            if (
+                attempt.attempt_ordinal != position
+                or attempt.run_id != snapshot.run.run_id
+                or attempt.workspace_id != snapshot.workspace_id
+                or attempt.discovery_authorization_id != discovery.authorization_id
+                or attempt.run_contract_fingerprint != binding.contract_fingerprint
+                or attempt.run_direction_fingerprint
+                != discovery.run_direction_fingerprint
+                or attempt.runtime_source_plan_fingerprint
+                != source_plan.source_plan_fingerprint
+                or attempt.source_route_fingerprint
+                != discovery.source_route_fingerprint
+                or attempt.provider_request_fingerprint != provider_request_fingerprint
+                or attempt.provider_id != discovery.provider_id
+                or attempt.route_id != discovery.route_id
+                or attempt.max_provider_calls != 1
+                or attempt.provider_cost_status != "not_reported_acknowledged"
+                or attempt.previous_attempt_authorization_id
+                != (
+                    None
+                    if position == 1
+                    else attempts[position - 2].attempt_authorization_id
+                )
+                or attempt.human_request_id != attempt.accepted_transaction_id
+                or owner is None
+                or [
+                    item.attempt_authorization_id
+                    for item in (owner.run_source_acquisition_attempt_authorizations)
+                ]
+                != [attempt.attempt_authorization_id]
+                or event is None
+                or event.transaction_id != owner.transaction_id
+                or event.run_id != attempt.run_id
+            ):
+                raise CoreRunError("control_store_integrity_invalid")
+            if position == 1:
+                if (
+                    owner.transaction_type != transaction_type_for("initialize")
+                    or event.event_type != "run_initialized"
+                    or event.core_run_binding is None
+                    or event.core_run_binding.request_fingerprint
+                    != attempt.request_fingerprint
+                ):
+                    raise CoreRunError("control_store_integrity_invalid")
+            elif (
+                owner.transaction_type
+                != transaction_type_for("source_acquisition_attempt_authorize")
+                or event.event_type != "source_acquisition_attempt_authorized"
+                or event.core_run_binding is None
+                or event.core_run_binding.effect_kind
+                != "source_acquisition_attempt_authorize"
+                or event.core_run_binding.primary_record_id
+                != attempt.attempt_authorization_id
+                or event.core_run_binding.request_fingerprint
+                != attempt.request_fingerprint
+            ):
+                raise CoreRunError("control_store_integrity_invalid")
+
+    @staticmethod
+    def _verify_source_acquisition_failure_evidence(
+        reader: _AsOfArtifactReader,
+        snapshot: ControlStoreSnapshot,
+        source_plan: RuntimeSourcePlanBinding,
+    ) -> None:
+        """Verify the exact enriched Intake rejection and optional safe response."""
+
+        events = [
+            item
+            for item in snapshot.events
+            if item.intake_binding is not None
+            and item.intake_binding.source_acquisition_failure is not None
+        ]
+        seen_attempt_authorizations: set[str] = set()
+        for event in events:
+            binding = event.intake_binding
+            if binding is None or binding.source_acquisition_failure is None:
+                raise CoreRunError("control_store_integrity_invalid")
+            evidence = binding.source_acquisition_failure
+            if evidence.attempt_authorization_id in seen_attempt_authorizations:
+                raise CoreRunError("control_store_integrity_invalid")
+            seen_attempt_authorizations.add(evidence.attempt_authorization_id)
+            receipts = [
+                item
+                for item in snapshot.transactions
+                if item.transaction_id == event.transaction_id
+                and item.transaction_type == "intake_rejection"
+            ]
+            discoveries = snapshot.run_source_discovery_authorizations
+            attempts = [
+                item
+                for item in (snapshot.run_source_acquisition_attempt_authorizations)
+                if item.attempt_authorization_id == evidence.attempt_authorization_id
+            ]
+            routes = [
+                item
+                for item in source_plan.routes
+                if item.route_fingerprint == evidence.route_fingerprint
+                and item.route_id == "web-search"
+                and item.provider_id == evidence.provider_id
+                and item.acquisition_spec is not None
+            ]
+            invocations = [
+                item
+                for item in snapshot.invocations
+                if item.invocation_id == evidence.invocation_id
+            ]
+            if (
+                len(receipts) != 1
+                or len(discoveries) != 1
+                or len(attempts) != 1
+                or len(routes) != 1
+                or len(invocations) != 1
+                or event.run_id != evidence.run_id
+                or event.run_id != snapshot.run.run_id
+                or binding.invocation_id != evidence.invocation_id
+                or binding.request_id != event.transaction_id
+                or binding.outcome != "rejected"
+                or event.event_type != "intake_rejected"
+                or event.stage_id != "source-discovery"
+                or event.decision != "rejected"
+                or event.reason != binding.reason_code
+                or event.metadata
+                or discoveries[0].authorization_id
+                != evidence.discovery_authorization_id
+                or discoveries[0].source_route_fingerprint != evidence.route_fingerprint
+                or discoveries[0].provider_id != evidence.provider_id
+                or attempts[0].attempt_ordinal != evidence.attempt_ordinal
+                or attempts[0].discovery_authorization_id
+                != evidence.discovery_authorization_id
+                or attempts[0].provider_request_fingerprint
+                != evidence.provider_request_fingerprint
+                or routes[0].acquisition_spec.acquisition_spec_fingerprint
+                != evidence.provider_request_fingerprint
+                or invocations[0].status != "failed"
+                or invocations[0].failure_reason != binding.reason_code
+            ):
+                raise CoreRunError("control_store_integrity_invalid")
+            failure_request = InvocationFailureRequest.model_validate(
+                {
+                    "schema_version": InvocationFailureRequest.schema_id,
+                    "request_id": event.transaction_id,
+                    "run_id": evidence.run_id,
+                    "invocation_id": evidence.invocation_id,
+                    "reason_code": binding.reason_code,
+                    "expected_store_revision": receipts[0].prior_revision,
+                },
+                strict=True,
+            )
+            if (
+                canonical_fingerprint(
+                    failure_request.model_dump(mode="json", exclude_unset=False)
+                )
+                != evidence.request_fingerprint
+            ):
+                raise CoreRunError("control_store_integrity_invalid")
+            expected_attempt_id = derived_id(
+                "SOURCE-ACQUISITION-ATTEMPT",
+                evidence.run_id,
+                evidence.invocation_id,
+                evidence.discovery_authorization_id,
+                evidence.route_fingerprint,
+                evidence.provider_request_fingerprint,
+                evidence.failure_class,
+                evidence.provider_response_sha256 or "response-unavailable",
+            )
+            if evidence.attempt_id != expected_attempt_id:
+                raise CoreRunError("control_store_integrity_invalid")
+            reference = evidence.provider_response_artifact
+            if reference is None:
+                if (
+                    event.artifact_id is not None
+                    or evidence.failure_class != "provider_response_unavailable"
+                    or binding.reason_code != "child_failed"
+                ):
+                    raise CoreRunError("control_store_integrity_invalid")
+                continue
+            expected_artifact_id = derived_id(
+                "ARTIFACT-PROVIDER-RESPONSE",
+                evidence.run_id,
+                evidence.discovery_authorization_id,
+                evidence.invocation_id,
+            )
+            artifacts = [
+                item
+                for item in snapshot.artifacts
+                if item.artifact_id == reference.artifact_id
+            ]
+            revisions = [
+                item
+                for item in snapshot.artifact_revisions
+                if item.artifact_id == reference.artifact_id
+                and item.revision == reference.revision
+            ]
+            if (
+                reference.artifact_id != expected_artifact_id
+                or reference.revision != 1
+                or event.artifact_id != expected_artifact_id
+                or binding.reason_code != "proposal_invalid"
+                or len(artifacts) != 1
+                or len(revisions) != 1
+            ):
+                raise CoreRunError("control_store_integrity_invalid")
+            artifact = artifacts[0]
+            revision = revisions[0]
+            try:
+                response_bytes = reader.read_artifact_revision_bytes(
+                    evidence.run_id,
+                    reference.artifact_id,
+                    reference.revision,
+                )
+                result_count, durable_count = (
+                    CoreRunDomainVerifier._tavily_response_counts(response_bytes)
+                )
+            except Exception as exc:
+                raise CoreRunError("control_store_integrity_invalid") from exc
+            if (
+                sha256_hex(response_bytes) != evidence.provider_response_sha256
+                or len(response_bytes) != evidence.provider_response_size_bytes
+                or artifact.current_revision != 1
+                or artifact.status != "valid"
+                or artifact.required
+                or artifact.format != "json"
+                or revision.sha256 != evidence.provider_response_sha256
+                or revision.size_bytes != evidence.provider_response_size_bytes
+                or revision.path != artifact.path
+                or not revision.frozen
+                or revision.producer_kind != "workflow_stage"
+                or revision.producer_id != "source-discovery"
+                or result_count != evidence.result_count
+                or durable_count != evidence.durable_content_count
+            ):
+                raise CoreRunError("control_store_integrity_invalid")
+
+    @staticmethod
+    def _tavily_response_counts(payload: bytes) -> tuple[int, int]:
+        response = parse_json_object(payload)
+        results = response.get("results")
+        if type(results) is not list or len(results) > 5:
+            raise CoreRunError("control_store_integrity_invalid")
+        durable = 0
+        for result in results:
+            if type(result) is not dict:
+                raise CoreRunError("control_store_integrity_invalid")
+            title = result.get("title")
+            url = result.get("url")
+            snippet = result.get("content")
+            raw_content = result.get("raw_content")
+            published_date = result.get("published_date")
+            score = result.get("score")
+            if (
+                type(title) is not str
+                or type(url) is not str
+                or type(snippet) is not str
+                or type(raw_content) not in {str, type(None)}
+                or type(published_date) not in {str, type(None)}
+                or type(score) not in {int, float, type(None)}
+            ):
+                raise CoreRunError("control_store_integrity_invalid")
+            if isinstance(raw_content, str) and raw_content.strip():
+                durable += 1
+        return len(results), durable
+
+    @staticmethod
     def _verify_authorized_source_pack(
         reader: _AsOfArtifactReader,
         snapshot: ControlStoreSnapshot,
@@ -1849,6 +2216,21 @@ class CoreRunDomainVerifier:
         """Bind exact Tavily response bytes to every accepted member projection."""
 
         if len(discovery) != 1 or not sources:
+            raise CoreRunError("control_store_integrity_invalid")
+        attempt_refs = [
+            item.attempt_authorization_id
+            for item in receipt.run_source_acquisition_attempt_authorizations
+        ]
+        attempts = [
+            item
+            for item in snapshot.run_source_acquisition_attempt_authorizations
+            if item.attempt_authorization_id in attempt_refs
+        ]
+        if (
+            len(attempt_refs) != 1
+            or len(attempts) != 1
+            or attempts[0].discovery_authorization_id != discovery[0].authorization_id
+        ):
             raise CoreRunError("control_store_integrity_invalid")
         invocation_ids = {source.invocation_id for source in sources}
         if len(invocation_ids) != 1 or any(
@@ -2118,25 +2500,73 @@ class CoreRunDomainVerifier:
                 raise CoreRunError("historical_prefix_invalid") from exc
             pre_verified = self._verify_snapshot(history, pre)
             if effect is None:
-                from .gate_repair import gate_repair_request_fingerprint
                 from .next_action import classify_core_run_next_action
 
                 action = classify_core_run_next_action(pre_verified)
-                expected_fingerprint = gate_repair_request_fingerprint(
-                    request_id=receipt.transaction_id,
-                    run_id=receipt.run_id,
-                    action_fingerprint=action.action_fingerprint,
-                    expected_store_revision=receipt.prior_revision,
-                )
-                if (
-                    binding.effect_kind != "gate_repair_start"
-                    or action.action_kind != "deterministic"
-                    or action.effect_kind != "gate_repair_start"
-                    or action.stage_id != "editor"
-                    or action.store_revision != receipt.prior_revision
-                    or binding.request_fingerprint != expected_fingerprint
-                ):
-                    raise CoreRunError("historical_prefix_invalid")
+                if binding.effect_kind == "source_acquisition_attempt_authorize":
+                    records = [
+                        item
+                        for item in snapshot.run_source_acquisition_attempt_authorizations
+                        if item.attempt_authorization_id == binding.primary_record_id
+                    ]
+                    if len(records) != 1:
+                        raise CoreRunError("historical_prefix_invalid")
+                    attempt = records[0]
+                    reconstructed = (
+                        SourceAcquisitionAttemptAuthorizeRequest.model_validate(
+                            {
+                                "schema_version": (
+                                    SourceAcquisitionAttemptAuthorizeRequest.schema_id
+                                ),
+                                "request_id": receipt.transaction_id,
+                                "run_id": receipt.run_id,
+                                "expected_store_revision": receipt.prior_revision,
+                                "expected_action_fingerprint": (
+                                    action.action_fingerprint
+                                ),
+                                "previous_attempt_authorization_id": (
+                                    attempt.previous_attempt_authorization_id
+                                ),
+                                "human_confirmation": True,
+                                "provider_cost_status": (attempt.provider_cost_status),
+                            },
+                            strict=True,
+                        )
+                    )
+                    if (
+                        action.action_kind != "human_decision"
+                        or action.effect_kind != "source_acquisition_recovery"
+                        or action.reason_code
+                        != "source_acquisition_recovery_decision_required"
+                        or action.stage_id != "source-discovery"
+                        or action.store_revision != receipt.prior_revision
+                        or canonical_fingerprint(
+                            reconstructed.model_dump(
+                                mode="json",
+                                exclude_unset=False,
+                            )
+                        )
+                        != binding.request_fingerprint
+                    ):
+                        raise CoreRunError("historical_prefix_invalid")
+                else:
+                    from .gate_repair import gate_repair_request_fingerprint
+
+                    expected_fingerprint = gate_repair_request_fingerprint(
+                        request_id=receipt.transaction_id,
+                        run_id=receipt.run_id,
+                        action_fingerprint=action.action_fingerprint,
+                        expected_store_revision=receipt.prior_revision,
+                    )
+                    if (
+                        binding.effect_kind != "gate_repair_start"
+                        or action.action_kind != "deterministic"
+                        or action.effect_kind != "gate_repair_start"
+                        or action.stage_id != "editor"
+                        or action.store_revision != receipt.prior_revision
+                        or binding.request_fingerprint != expected_fingerprint
+                    ):
+                        raise CoreRunError("historical_prefix_invalid")
             if effect is CoreEffect.INVOCATION_START:
                 from .next_action import classify_core_run_next_action
 
@@ -2188,11 +2618,22 @@ class CoreRunDomainVerifier:
                     and event.stage_id == "source-discovery"
                     and invocation.role_id == "source-provider"
                 )
+                recovery_source_reservation = (
+                    invocation is not None
+                    and action.action_kind == "human_decision"
+                    and action.effect_kind == "source_acquisition_recovery"
+                    and action.stage_id == "source-discovery"
+                    and action.request_schema_id
+                    == "briefloop.runtime_source_acquisition_recovery_request.v1"
+                    and event.stage_id == "source-discovery"
+                    and invocation.role_id == "source-provider"
+                )
                 if event.stage_id is None or not (
                     delegate_reservation
                     or source_acquire_reservation
                     or authorized_source_pack_reservation
                     or human_source_reservation
+                    or recovery_source_reservation
                 ):
                     raise CoreRunError("historical_prefix_invalid")
             gate_repair_acceptance = (
@@ -3080,6 +3521,16 @@ class CoreRunDomainVerifier:
                     next(iter(invocation_ids)),
                 )
             )
+        failed_discovery_provider_artifact_ids = {
+            reference.artifact_id
+            for event in snapshot.events
+            if event.intake_binding is not None
+            and event.intake_binding.source_acquisition_failure is not None
+            for reference in (
+                event.intake_binding.source_acquisition_failure.provider_response_artifact,
+            )
+            if reference is not None
+        }
         expected_ids = (
             set(CORE_ARTIFACT_IDS)
             | set(INTERNAL_CONTRACT_ARTIFACT_IDS)
@@ -3088,6 +3539,7 @@ class CoreRunDomainVerifier:
             | terminal_artifact_ids
             | execution_authorization_artifact_ids
             | discovery_provider_artifact_ids
+            | failed_discovery_provider_artifact_ids
         )
         if set(artifacts) != expected_ids:
             raise CoreRunError("control_store_integrity_invalid")
@@ -3219,6 +3671,20 @@ class CoreRunDomainVerifier:
                     source.raw_payload_artifact_revision,  # type: ignore[arg-type]
                     ("workflow_stage", "source-discovery"),
                 )
+        for event in snapshot.events:
+            if (
+                event.intake_binding is None
+                or event.intake_binding.source_acquisition_failure is None
+                or event.intake_binding.source_acquisition_failure.provider_response_artifact
+                is None
+            ):
+                continue
+            reference = event.intake_binding.source_acquisition_failure.provider_response_artifact
+            bind_producer(
+                reference.artifact_id,
+                reference.revision,
+                ("workflow_stage", "source-discovery"),
+            )
         for proposal in snapshot.accepted_proposals:
             bind_producer(
                 proposal.artifact_id,
@@ -5212,6 +5678,24 @@ def _verified_core_receipt_binding(
             or records[0].accepted_transaction_id != transaction_id
             or records[0].request_fingerprint != fingerprint
             or records[0].initialization_event_id != event.event_id
+        ):
+            raise CoreRunError("control_store_integrity_invalid")
+    elif rule.primary_family == "source_acquisition_attempt_authorization":
+        refs = [
+            item.attempt_authorization_id
+            for item in receipt.run_source_acquisition_attempt_authorizations
+        ]
+        records = [
+            item
+            for item in snapshot.run_source_acquisition_attempt_authorizations
+            if item.attempt_authorization_id == primary_id
+        ]
+        if (
+            refs != [primary_id]
+            or len(records) != 1
+            or records[0].accepted_transaction_id != transaction_id
+            or records[0].request_fingerprint != fingerprint
+            or records[0].authorization_event_id != event.event_id
         ):
             raise CoreRunError("control_store_integrity_invalid")
     elif rule.primary_family == "invocation":

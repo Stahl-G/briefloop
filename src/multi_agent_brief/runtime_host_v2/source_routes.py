@@ -44,6 +44,9 @@ class FrozenSourceCollection:
     materials: tuple[FrozenSourceMaterial, ...]
     provider_response: bytes | None
     provider_status_code: int | None
+    result_count: int
+    durable_content_count: int
+    material_validation_failed: bool = False
 
 
 ProviderFactory = Callable[[str], SourceProvider]
@@ -193,30 +196,38 @@ def collect_frozen_source_pack(
         )
     else:  # pragma: no cover - discriminated strict contract is total
         raise RuntimeHostError("runtime_source_plan_invalid")
-    if not items:
+    if not items and route.provider_id != "tavily":
         raise RuntimeHostError("source_pack_empty")
+    result_count = len(items)
+    durable_content_count = sum(
+        1 for item in items if _has_durable_tavily_content(item)
+    )
+    material_validation_failed = False
     if route.provider_id == "tavily":
         if (
             provider_response is None
             or not provider_response
             or provider_status_code != 200
             or len(spec.requests) != 1
-            or len(items) > spec.requests[0].max_results
-            or len(items) != len({item.source_id for item in items})
         ):
             raise RuntimeHostError("source_provider_result_invalid")
-    items = _canonical_source_items(items)
-    ordered = sorted(
-        items,
-        key=lambda value: (
-            value.url,
-            value.source_id,
-            value.title,
-            sha256_hex(value.content.encode("utf-8")),
-        ),
-    )
-    return FrozenSourceCollection(
-        materials=tuple(
+        material_validation_failed = len(items) > spec.requests[0].max_results or len(
+            items
+        ) != len({item.source_id for item in items})
+    try:
+        canonical_items = (
+            [] if material_validation_failed else _canonical_source_items(items)
+        )
+        ordered = sorted(
+            canonical_items,
+            key=lambda value: (
+                value.url,
+                value.source_id,
+                value.title,
+                sha256_hex(value.content.encode("utf-8")),
+            ),
+        )
+        materials = tuple(
             _material_from_item(
                 workspace=workspace,
                 run_id=run_id,
@@ -225,9 +236,19 @@ def collect_frozen_source_pack(
                 item=item,
             )
             for item in ordered
-        ),
+        )
+    except RuntimeHostError:
+        if route.provider_id != "tavily":
+            raise
+        materials = ()
+        material_validation_failed = True
+    return FrozenSourceCollection(
+        materials=materials,
         provider_response=provider_response,
         provider_status_code=provider_status_code,
+        result_count=result_count,
+        durable_content_count=durable_content_count,
+        material_validation_failed=material_validation_failed,
     )
 
 
@@ -335,14 +356,8 @@ def _material_from_item(
         if not item.url:
             raise RuntimeHostError("runtime_source_acquisition_failed")
         locator = {"kind": "web", "url": item.url}
-    has_durable_tavily_content = (
-        route.provider_id == "tavily"
-        and item.source_type == "web_search"
-        and item.metadata.get("backend") == "tavily"
-        and item.metadata.get("content_shape") == "provider_raw_content"
-        and item.metadata.get("has_raw_content") is True
-        and item.metadata.get("evidence_quality") == "partial_extract"
-        and bool(item.content.strip())
+    has_durable_tavily_content = route.provider_id == "tavily" and (
+        _has_durable_tavily_content(item)
     )
     proposal = SourceProposal.model_validate(
         {
@@ -396,6 +411,17 @@ def _material_from_item(
         proposal=proposal,
         content=content,
         raw_payload=raw_payload,
+    )
+
+
+def _has_durable_tavily_content(item: SourceItem) -> bool:
+    return (
+        item.source_type == "web_search"
+        and item.metadata.get("backend") == "tavily"
+        and item.metadata.get("content_shape") == "provider_raw_content"
+        and item.metadata.get("has_raw_content") is True
+        and item.metadata.get("evidence_quality") == "partial_extract"
+        and bool(item.content.strip())
     )
 
 

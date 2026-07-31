@@ -211,6 +211,7 @@ def handle(args: argparse.Namespace) -> int:
         from multi_agent_brief.runtime_host_v2.contracts import (
             HumanSourceMaterialRequest,
             HumanSourcePackRequest,
+            RuntimeSourceAcquisitionRecoveryRequest,
             RepairContentInput,
             RoleTaskEnvelope,
         )
@@ -299,6 +300,9 @@ def handle(args: argparse.Namespace) -> int:
                 if action.action_kind == "human_decision":
                     request_models = {
                         HumanSourcePackRequest.schema_id: HumanSourcePackRequest,
+                        RuntimeSourceAcquisitionRecoveryRequest.schema_id: (
+                            RuntimeSourceAcquisitionRecoveryRequest
+                        ),
                         HumanSourceMaterialRequest.schema_id: (
                             HumanSourceMaterialRequest
                         ),

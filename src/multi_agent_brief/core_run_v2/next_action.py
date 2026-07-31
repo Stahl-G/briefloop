@@ -56,6 +56,7 @@ def _action(
     request_schema_id: str | None = None,
     source_route_id: str | None = None,
     source_provider_id: str | None = None,
+    source_acquisition_attempt_authorization_id: str | None = None,
 ) -> CoreRunNextAction:
     snapshot = verified.snapshot
     revisions = sorted(
@@ -84,6 +85,9 @@ def _action(
         "role_id": role_id,
         "source_route_id": source_route_id,
         "source_provider_id": source_provider_id,
+        "source_acquisition_attempt_authorization_id": (
+            source_acquisition_attempt_authorization_id
+        ),
         "reason_code": reason_code,
         "input_artifacts": revisions,
         "request_schema_id": request_schema_id,
@@ -504,7 +508,7 @@ def _source_discovery_action(verified: VerifiedCoreRun) -> CoreRunNextAction:
             raise CoreRunError("control_store_integrity_invalid")
         routes = [
             item
-            for item in routes
+            for item in authorized_routes
             if item.route_id == discovery.route_id
             and item.provider_id == discovery.provider_id
             and item.execution_owner == discovery.execution_owner
@@ -512,6 +516,37 @@ def _source_discovery_action(verified: VerifiedCoreRun) -> CoreRunNextAction:
         ]
         if len(routes) > 1:
             raise CoreRunError("control_store_integrity_invalid")
+        attempts = list(snapshot.run_source_acquisition_attempt_authorizations)
+        if not attempts:
+            return _action(
+                verified,
+                action_kind="human_decision",
+                effect_kind="source_input_required",
+                reason_code="human_source_material_required",
+                stage_id="source-discovery",
+                request_schema_id="briefloop.runtime_human_source_pack_request.v2",
+            )
+        failed_attempt_ids = {
+            event.intake_binding.source_acquisition_failure.attempt_authorization_id
+            for event in snapshot.events
+            if event.intake_binding is not None
+            and event.intake_binding.source_acquisition_failure is not None
+        }
+        latest_attempt = attempts[-1]
+        if latest_attempt.attempt_authorization_id in failed_attempt_ids:
+            return _action(
+                verified,
+                action_kind="human_decision",
+                effect_kind="source_acquisition_recovery",
+                reason_code="source_acquisition_recovery_decision_required",
+                stage_id="source-discovery",
+                request_schema_id=(
+                    "briefloop.runtime_source_acquisition_recovery_request.v1"
+                ),
+                source_acquisition_attempt_authorization_id=(
+                    latest_attempt.attempt_authorization_id
+                ),
+            )
     if not routes:
         return _action(
             verified,
@@ -535,6 +570,18 @@ def _source_discovery_action(verified: VerifiedCoreRun) -> CoreRunNextAction:
         "source_provider_id": route.provider_id,
     }
     if route.execution_owner == "deterministic":
+        if (
+            route.provider_id == "tavily"
+            and not snapshot.run_source_acquisition_attempt_authorizations
+        ):
+            return _action(
+                verified,
+                action_kind="human_decision",
+                effect_kind="source_input_required",
+                reason_code="human_source_material_required",
+                stage_id="source-discovery",
+                request_schema_id="briefloop.runtime_human_source_pack_request.v2",
+            )
         if "source-provider" not in verified.runtime_adapter.role_ids:
             return _action(
                 verified,
@@ -549,6 +596,13 @@ def _source_discovery_action(verified: VerifiedCoreRun) -> CoreRunNextAction:
             effect_kind="source_acquire",
             reason_code="deterministic_source_route_required",
             request_schema_id="briefloop.source_pack_commit_request.v2",
+            source_acquisition_attempt_authorization_id=(
+                None
+                if route.provider_id != "tavily"
+                else snapshot.run_source_acquisition_attempt_authorizations[
+                    -1
+                ].attempt_authorization_id
+            ),
             **common,
         )
     if route.execution_owner == "specialist":
@@ -693,6 +747,13 @@ def _discovery_source_acquire_reservation_action(
         verified,
         snapshot=replace(snapshot, store_revision=receipt.prior_revision),
     )
+    if not historical.snapshot.run_source_acquisition_attempt_authorizations:
+        return None
+    attempt_authorization_id = (
+        historical.snapshot.run_source_acquisition_attempt_authorizations[
+            -1
+        ].attempt_authorization_id
+    )
     action = _action(
         historical,
         action_kind="deterministic",
@@ -701,6 +762,7 @@ def _discovery_source_acquire_reservation_action(
         stage_id="source-discovery",
         source_route_id=discovery.route_id,
         source_provider_id=discovery.provider_id,
+        source_acquisition_attempt_authorization_id=attempt_authorization_id,
         request_schema_id="briefloop.source_pack_commit_request.v2",
     )
     request_id = derived_id(
@@ -744,6 +806,7 @@ def _discovery_source_acquire_reservation_action(
         stage_id="source-discovery",
         source_route_id=discovery.route_id,
         source_provider_id=discovery.provider_id,
+        source_acquisition_attempt_authorization_id=attempt_authorization_id,
         request_schema_id="briefloop.source_pack_commit_request.v2",
     )
 

@@ -389,6 +389,7 @@ EVENT_TYPES = {
     "post_final_finding_disposition_recorded",
     "post_final_guidance_draft_recorded",
     "post_final_guidance_status_recorded",
+    "source_acquisition_attempt_authorized",
 }
 
 # Release-mode approval vocabulary and boundary. DTO truth source;
@@ -554,6 +555,116 @@ class AuditFindingItem(StrictModel):
     summary: CleanText
 
 
+class SourceAcquisitionArtifactReference(StrictModel):
+    """Exact optional provider-response artifact frozen with one failed attempt."""
+
+    artifact_id: ContractId
+    revision: Literal[1]
+
+
+class SourceAcquisitionFailureEvidence(StrictModel):
+    """Value-free, receipt-owned evidence for one failed discovery attempt."""
+
+    schema_id = "briefloop.source_acquisition_failure_evidence.v1"
+
+    schema_version: Literal["briefloop.source_acquisition_failure_evidence.v1"]
+    attempt_id: ContractId
+    attempt_authorization_id: ContractId
+    attempt_ordinal: PositiveInt
+    run_id: ContractId
+    invocation_id: ContractId
+    discovery_authorization_id: ContractId
+    provider_id: Literal["tavily"]
+    route_fingerprint: Sha256
+    provider_request_fingerprint: Sha256
+    request_fingerprint: Sha256
+    failure_class: Literal[
+        "provider_results_empty",
+        "provider_results_without_durable_content",
+        "intake_rejected_no_eligible_source",
+        "source_pack_validation_rejected",
+        "provider_response_unavailable",
+    ]
+    provider_status_class: Literal["http_200", "response_unavailable"]
+    provider_response_artifact: SourceAcquisitionArtifactReference | None = None
+    provider_response_sha256: Sha256 | None = None
+    provider_response_size_bytes: PositiveInt | None = None
+    result_count: NonNegativeInt | None = None
+    durable_content_count: NonNegativeInt | None = None
+    claims_eligible_count: NonNegativeInt | None = None
+    rejection_counts: dict[ContractId, NonNegativeInt] | None = None
+
+    @model_validator(mode="after")
+    def failure_shape_is_total(self) -> "SourceAcquisitionFailureEvidence":
+        artifact_values = (
+            self.provider_response_artifact,
+            self.provider_response_sha256,
+            self.provider_response_size_bytes,
+        )
+        if any(value is None for value in artifact_values) != all(
+            value is None for value in artifact_values
+        ):
+            raise ValueError("provider response artifact identity is incomplete")
+        count_values = (
+            self.result_count,
+            self.durable_content_count,
+            self.claims_eligible_count,
+        )
+        if self.failure_class == "provider_response_unavailable":
+            if (
+                self.provider_status_class != "response_unavailable"
+                or any(value is not None for value in artifact_values)
+                or any(value is not None for value in count_values)
+                or self.rejection_counts is not None
+            ):
+                raise ValueError("unavailable response cannot carry response evidence")
+            return self
+        if (
+            self.provider_status_class != "http_200"
+            or any(value is None for value in artifact_values)
+            or self.result_count is None
+            or self.durable_content_count is None
+            or self.durable_content_count > self.result_count
+        ):
+            raise ValueError("safe response evidence is incomplete")
+        if self.claims_eligible_count is not None and (
+            self.claims_eligible_count > self.result_count
+        ):
+            raise ValueError("eligible source count exceeds result count")
+        if self.rejection_counts is not None and (
+            not self.rejection_counts
+            or sum(self.rejection_counts.values()) + (self.claims_eligible_count or 0)
+            != self.result_count
+        ):
+            raise ValueError("source rejection counts are not total")
+        if self.failure_class == "provider_results_empty" and (
+            self.result_count != 0
+            or self.durable_content_count != 0
+            or self.claims_eligible_count != 0
+            or self.rejection_counts is not None
+        ):
+            raise ValueError("empty response evidence is inconsistent")
+        if self.failure_class == "provider_results_without_durable_content" and (
+            self.result_count == 0
+            or self.durable_content_count != 0
+            or self.claims_eligible_count != 0
+            or self.rejection_counts is None
+        ):
+            raise ValueError("non-durable response evidence is inconsistent")
+        if self.failure_class == "intake_rejected_no_eligible_source" and (
+            self.result_count == 0
+            or self.durable_content_count == 0
+            or self.claims_eligible_count != 0
+            or self.rejection_counts is None
+        ):
+            raise ValueError("ineligible response evidence is inconsistent")
+        if self.failure_class == "source_pack_validation_rejected" and (
+            self.claims_eligible_count is not None or self.rejection_counts is not None
+        ):
+            raise ValueError("validation rejection cannot claim eligibility results")
+        return self
+
+
 class IntakeEventBinding(StrictModel):
     request_id: ContractId
     request_fingerprint: Sha256
@@ -562,6 +673,7 @@ class IntakeEventBinding(StrictModel):
     source_id: Optional[ContractId] = None
     proposal_id: Optional[ContractId] = None
     reason_code: Optional[ContractId] = None
+    source_acquisition_failure: SourceAcquisitionFailureEvidence | None = None
 
     @model_validator(mode="after")
     def identity_shape_is_unambiguous(self) -> "IntakeEventBinding":
@@ -571,6 +683,14 @@ class IntakeEventBinding(StrictModel):
             raise ValueError("committed intake binding cannot carry a rejection reason")
         if self.outcome == "rejected" and self.reason_code is None:
             raise ValueError("rejected intake binding requires a reason code")
+        if self.outcome == "committed" and self.source_acquisition_failure is not None:
+            raise ValueError("committed intake binding cannot carry failure evidence")
+        if self.source_acquisition_failure is not None and (
+            self.source_id is not None
+            or self.proposal_id is not None
+            or self.source_acquisition_failure.run_id == ""
+        ):
+            raise ValueError("source acquisition failure binding is ambiguous")
         return self
 
 
@@ -581,6 +701,7 @@ class CoreRunEventBinding(StrictModel):
     request_fingerprint: Sha256
     effect_kind: Literal[
         "initialize",
+        "source_acquisition_attempt_authorize",
         "invocation_start",
         "owned_artifact_acceptance",
         "claim_freeze",
@@ -1130,6 +1251,9 @@ class EventEnvelope(StrictModel):
         if self.core_run_binding is not None:
             allowed_core_events = {
                 "initialize": {"run_initialized"},
+                "source_acquisition_attempt_authorize": {
+                    "source_acquisition_attempt_authorized"
+                },
                 "invocation_start": {"role_invocation_started"},
                 "owned_artifact_acceptance": {"owned_artifact_accepted"},
                 "claim_freeze": {"claim_ledger_frozen"},
@@ -1559,6 +1683,57 @@ class RunSourceDiscoveryAuthorization(StrictModel):
     accepted_transaction_id: ContractId
     request_fingerprint: Sha256
     created_at: IsoDateTime
+
+
+class RunSourceAcquisitionAttemptAuthorization(StrictModel):
+    """Receipt-owned permission for exactly one bounded provider call."""
+
+    schema_id = "briefloop.run_source_acquisition_attempt_authorization.v1"
+
+    schema_version: Literal["briefloop.run_source_acquisition_attempt_authorization.v1"]
+    attempt_authorization_id: ContractId
+    attempt_ordinal: PositiveInt
+    run_id: ContractId
+    workspace_id: ContractId
+    discovery_authorization_id: ContractId
+    run_contract_fingerprint: Sha256
+    run_direction_fingerprint: Sha256
+    runtime_source_plan_fingerprint: Sha256
+    source_route_fingerprint: Sha256
+    provider_request_fingerprint: Sha256
+    provider_id: Literal["tavily"]
+    route_id: Literal["web-search"]
+    max_provider_calls: Literal[1]
+    provider_cost_status: Literal["not_reported_acknowledged"]
+    previous_attempt_authorization_id: ContractId | None = None
+    human_request_id: ContractId
+    authorization_event_id: ContractId
+    accepted_transaction_id: ContractId
+    request_fingerprint: Sha256
+    created_at: IsoDateTime
+
+    @model_validator(mode="after")
+    def ordinal_chain_shape(self) -> "RunSourceAcquisitionAttemptAuthorization":
+        if (self.attempt_ordinal == 1) != (
+            self.previous_attempt_authorization_id is None
+        ):
+            raise ValueError("attempt predecessor does not match ordinal")
+        return self
+
+
+class SourceAcquisitionAttemptAuthorizeRequest(StrictModel):
+    """Deterministic Core request carrying one explicit Human authorization."""
+
+    schema_id = "briefloop.source_acquisition_attempt_authorize_request.v1"
+
+    schema_version: Literal["briefloop.source_acquisition_attempt_authorize_request.v1"]
+    request_id: ContractId
+    run_id: ContractId
+    expected_store_revision: NonNegativeInt
+    expected_action_fingerprint: Sha256
+    previous_attempt_authorization_id: ContractId
+    human_confirmation: Literal[True]
+    provider_cost_status: Literal["not_reported_acknowledged"]
 
 
 def authorized_input_classification_bytes(
@@ -2041,6 +2216,7 @@ class CoreRunNextAction(StrictModel):
             "serper",
         ]
     ] = None
+    source_acquisition_attempt_authorization_id: Optional[ContractId] = None
     reason_code: ContractId
     input_artifacts: list[ArtifactRevisionReference]
     request_schema_id: Optional[CleanText] = None
@@ -2093,6 +2269,49 @@ class CoreRunNextAction(StrictModel):
             raise ValueError("only source route actions name source routing")
         if self.source_provider_id is not None and self.source_route_id is None:
             raise ValueError("source provider requires a source route")
+        tavily_acquisition_family = (
+            self.effect_kind == "source_acquire" and self.source_provider_id == "tavily"
+        )
+        recovery_family = self.effect_kind == "source_acquisition_recovery"
+        exact_tavily_acquisition = (
+            tavily_acquisition_family
+            and self.action_kind == "deterministic"
+            and self.stage_id == "source-discovery"
+            and self.role_id is None
+            and self.source_route_id == "web-search"
+            and self.reason_code
+            in {
+                "deterministic_source_route_required",
+                "active_discovery_source_acquire_requires_resume",
+            }
+            and self.request_schema_id == "briefloop.source_pack_commit_request.v2"
+        )
+        exact_recovery = (
+            recovery_family
+            and self.action_kind == "human_decision"
+            and self.stage_id == "source-discovery"
+            and self.role_id is None
+            and self.source_route_id is None
+            and self.source_provider_id is None
+            and self.reason_code == "source_acquisition_recovery_decision_required"
+            and self.request_schema_id
+            == "briefloop.runtime_source_acquisition_recovery_request.v1"
+        )
+        if (tavily_acquisition_family and not exact_tavily_acquisition) or (
+            recovery_family and not exact_recovery
+        ):
+            raise ValueError(
+                "source acquisition lifecycle requires an exact action shape"
+            )
+        if exact_tavily_acquisition or exact_recovery:
+            if self.source_acquisition_attempt_authorization_id is None:
+                raise ValueError(
+                    "source acquisition lifecycle requires exact attempt authority"
+                )
+        elif self.source_acquisition_attempt_authorization_id is not None:
+            raise ValueError(
+                "only Tavily acquisition lifecycle names attempt authority"
+            )
         expected = _contract_fingerprint(
             self.model_dump(mode="json", exclude_unset=False),
             field="action_fingerprint",
@@ -4051,6 +4270,10 @@ class RunSourceDiscoveryAuthorizationReference(StrictModel):
     authorization_id: ContractId
 
 
+class RunSourceAcquisitionAttemptAuthorizationReference(StrictModel):
+    attempt_authorization_id: ContractId
+
+
 class OwnedArtifactSubmissionReference(StrictModel):
     submission_id: ContractId
 
@@ -4241,6 +4464,9 @@ class TransactionReceipt(StrictModel):
     run_source_discovery_authorizations: list[
         RunSourceDiscoveryAuthorizationReference
     ] = Field(default_factory=list)
+    run_source_acquisition_attempt_authorizations: list[
+        RunSourceAcquisitionAttemptAuthorizationReference
+    ] = Field(default_factory=list)
     owned_artifact_submissions: list[OwnedArtifactSubmissionReference] = Field(
         default_factory=list
     )
@@ -4341,6 +4567,7 @@ class TransactionReceipt(StrictModel):
             self.run_contract_bindings,
             self.run_execution_authorizations,
             self.run_source_discovery_authorizations,
+            self.run_source_acquisition_attempt_authorizations,
             self.owned_artifact_submissions,
             self.stage_transitions,
             self.stage_artifact_bindings,
@@ -4978,6 +5205,51 @@ RunSourceDiscoveryAuthorization.minimal_example = {
 RunSourceDiscoveryAuthorization.full_example = deepcopy(
     RunSourceDiscoveryAuthorization.minimal_example
 )
+RunSourceAcquisitionAttemptAuthorization.minimal_example = {
+    "schema_version": RunSourceAcquisitionAttemptAuthorization.schema_id,
+    "attempt_authorization_id": "ATTEMPT-AUTH-001",
+    "attempt_ordinal": 1,
+    "run_id": _RUN,
+    "workspace_id": "WS-001",
+    "discovery_authorization_id": "DISCOVERY-AUTH-001",
+    "run_contract_fingerprint": _SHA_A,
+    "run_direction_fingerprint": _SHA_B,
+    "runtime_source_plan_fingerprint": _SHA_C,
+    "source_route_fingerprint": _SHA_D,
+    "provider_request_fingerprint": _SHA_A,
+    "provider_id": "tavily",
+    "route_id": "web-search",
+    "max_provider_calls": 1,
+    "provider_cost_status": "not_reported_acknowledged",
+    "previous_attempt_authorization_id": None,
+    "human_request_id": "REQ-INIT-001",
+    "authorization_event_id": "EVT-INIT-001",
+    "accepted_transaction_id": "REQ-INIT-001",
+    "request_fingerprint": _SHA_B,
+    "created_at": _NOW,
+}
+RunSourceAcquisitionAttemptAuthorization.full_example = {
+    **RunSourceAcquisitionAttemptAuthorization.minimal_example,
+    "attempt_authorization_id": "ATTEMPT-AUTH-002",
+    "attempt_ordinal": 2,
+    "previous_attempt_authorization_id": "ATTEMPT-AUTH-001",
+    "human_request_id": "REQ-ATTEMPT-002",
+    "authorization_event_id": "EVT-ATTEMPT-002",
+    "accepted_transaction_id": "REQ-ATTEMPT-002",
+}
+SourceAcquisitionAttemptAuthorizeRequest.minimal_example = {
+    "schema_version": SourceAcquisitionAttemptAuthorizeRequest.schema_id,
+    "request_id": "REQ-ATTEMPT-002",
+    "run_id": _RUN,
+    "expected_store_revision": 4,
+    "expected_action_fingerprint": _SHA_A,
+    "previous_attempt_authorization_id": "ATTEMPT-AUTH-001",
+    "human_confirmation": True,
+    "provider_cost_status": "not_reported_acknowledged",
+}
+SourceAcquisitionAttemptAuthorizeRequest.full_example = deepcopy(
+    SourceAcquisitionAttemptAuthorizeRequest.minimal_example
+)
 WorkspaceControlStoreBootstrapV2.minimal_example = {
     "schema_version": WorkspaceControlStoreBootstrapV2.schema_id,
     "workspace_id": "WS-PUBLIC-DEMO",
@@ -5127,6 +5399,7 @@ _NEXT_ACTION = {
     "role_id": "scout",
     "source_route_id": None,
     "source_provider_id": None,
+    "source_acquisition_attempt_authorization_id": None,
     "reason_code": "role_proposal_required",
     "input_artifacts": [],
     "request_schema_id": "briefloop.candidate_claims_proposal.v2",
@@ -6380,6 +6653,8 @@ V2_CONTRACT_MODELS: tuple[type[StrictModel], ...] = (
     RunSourceDiscoveryAuthorizationInput,
     RunSourceDiscoveryAuthorizationBootstrap,
     RunSourceDiscoveryAuthorization,
+    RunSourceAcquisitionAttemptAuthorization,
+    SourceAcquisitionAttemptAuthorizeRequest,
     WorkspaceControlStoreBootstrapV2,
     RuntimeAdapterBinding,
     RuntimeWebSearchRequestSpec,
@@ -6678,11 +6953,14 @@ __all__ = [
     "RunContractBinding",
     "RunExecutionAuthorizationReference",
     "RunSourceDiscoveryAuthorizationReference",
+    "RunSourceAcquisitionAttemptAuthorizationReference",
     "RunDirection",
     "RunExecutionAuthorization",
     "RunExecutionAuthorizationBootstrap",
     "RunExecutionAuthorizationInput",
     "RunSourceDiscoveryAuthorization",
+    "RunSourceAcquisitionAttemptAuthorization",
+    "SourceAcquisitionAttemptAuthorizeRequest",
     "RunSourceDiscoveryAuthorizationBootstrap",
     "RunSourceDiscoveryAuthorizationInput",
     "RuntimeAdapterBinding",
@@ -6703,6 +6981,7 @@ __all__ = [
     "RunHeadTransitionReference",
     "RunResetRequest",
     "ScreenedCandidatesProposal",
+    "SourceAcquisitionFailureEvidence",
     "SOURCE_ACQUISITION_METHODS",
     "SOURCE_ELIGIBILITY_REASONS",
     "SOURCE_MATERIAL_KINDS",

@@ -180,6 +180,51 @@ class HumanSourcePackRequest(StrictModel):
         return self
 
 
+class RuntimeSourceAcquisitionRecoveryRequest(StrictModel):
+    """One explicit Human choice after a terminal acquisition attempt."""
+
+    schema_id = "briefloop.runtime_source_acquisition_recovery_request.v1"
+
+    schema_version: Literal["briefloop.runtime_source_acquisition_recovery_request.v1"]
+    request_id: ContractId
+    run_id: ContractId
+    expected_store_revision: NonNegativeInt
+    expected_action_fingerprint: Sha256
+    decision: Literal[
+        "authorize_next_tavily_attempt",
+        "provide_human_source_pack",
+    ]
+    previous_attempt_authorization_id: ContractId | None = None
+    human_confirmation: Literal[True] | None = None
+    provider_cost_status: Literal["not_reported_acknowledged"] | None = None
+    human_source_pack: HumanSourcePackRequest | None = None
+
+    @model_validator(mode="after")
+    def decision_shape_is_exact(self) -> "RuntimeSourceAcquisitionRecoveryRequest":
+        if self.decision == "authorize_next_tavily_attempt":
+            if (
+                self.previous_attempt_authorization_id is None
+                or self.human_confirmation is not True
+                or self.provider_cost_status != "not_reported_acknowledged"
+                or self.human_source_pack is not None
+            ):
+                raise ValueError("next Tavily attempt request is incomplete")
+        elif (
+            self.previous_attempt_authorization_id is not None
+            or self.human_confirmation is not None
+            or self.provider_cost_status is not None
+            or self.human_source_pack is None
+        ):
+            raise ValueError("human source pack recovery request is invalid")
+        if self.human_source_pack is not None and (
+            self.human_source_pack.run_id != self.run_id
+            or self.human_source_pack.expected_store_revision
+            != self.expected_store_revision
+        ):
+            raise ValueError("human source pack recovery identity mismatch")
+        return self
+
+
 class RoleTaskEnvelope(StrictModel):
     schema_id = "briefloop.role_task_envelope.v2"
 
@@ -593,6 +638,7 @@ __all__ = [
     "HumanSourceMaterialRequest",
     "HumanSourcePackMember",
     "HumanSourcePackRequest",
+    "RuntimeSourceAcquisitionRecoveryRequest",
     "LocalPresentationResult",
     "LocalReaderBrief",
     "LocalRunActionSummary",

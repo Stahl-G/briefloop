@@ -82,6 +82,13 @@ def test_tavily_vertical_real_loopback_source_and_wheel_parity(
         from multi_agent_brief.product.projection_platform import (
             supports_retained_directory_publication,
         )
+        from multi_agent_brief.runtime_host_v2.codex import (
+            workspace_codex_adapter_loader,
+        )
+        from multi_agent_brief.runtime_host_v2.contracts import (
+            RuntimeSourceAcquisitionRecoveryRequest,
+        )
+        from multi_agent_brief.runtime_host_v2.service import RuntimeHostService
         from multi_agent_brief.sources.search_backends import tavily as tavily_module
         from multi_agent_brief.sources.web_search import WebSearchProvider
 
@@ -104,6 +111,7 @@ def test_tavily_vertical_real_loopback_source_and_wheel_parity(
         target_name = "tavily-vertical-workspace"
         provider_requests = []
         provider_authorizations = []
+        empty_response_bytes = b'{"results":[]}'
         response_bytes = (
             b'{"results":[{"title":"Durable public result",'
             b'"url":"https://openai.com/public-durable",'
@@ -125,11 +133,16 @@ def test_tavily_vertical_real_loopback_source_and_wheel_parity(
                 provider_authorizations.append(
                     self.headers.get("Authorization")
                 )
+                payload = (
+                    empty_response_bytes
+                    if len(provider_requests) == 1
+                    else response_bytes
+                )
                 self.send_response(200)
                 self.send_header("Content-Type", "application/json")
-                self.send_header("Content-Length", str(len(response_bytes)))
+                self.send_header("Content-Length", str(len(payload)))
                 self.end_headers()
-                self.wfile.write(response_bytes)
+                self.wfile.write(payload)
 
             def log_message(self, _format, *_args):
                 return
@@ -422,44 +435,172 @@ def test_tavily_vertical_real_loopback_source_and_wheel_parity(
             raise SystemExit(0)
 
         require(
-            continuation["status"] == "role_work_required",
-            "promotion did not reach role work",
+            continuation["status"] == "needs_human",
+            "empty first attempt did not require Human recovery",
         )
-        require(continuation["current_stage"] == "scout", "scout stage mismatch")
-        require(len(provider_requests) == 1, "provider call count mismatch")
-        provider_request = provider_requests[0]
         require(
-            provider_request["query"]
+            continuation["reason_code"]
+            == "source_acquisition_recovery_decision_required",
+            "empty first attempt reason mismatch",
+        )
+        require(len(provider_requests) == 1, "provider call count mismatch")
+        first_provider_request = provider_requests[0]
+        require(
+            first_provider_request["query"]
             == "Prepare the weekly manufacturing brief.",
             "query mismatch",
         )
-        require(provider_request["max_results"] == 5, "max_results mismatch")
         require(
-            provider_request["include_raw_content"] == "markdown",
+            first_provider_request["max_results"] == 5,
+            "max_results mismatch",
+        )
+        require(
+            first_provider_request["include_raw_content"] == "markdown",
             "raw content not requested",
         )
         require(
-            provider_request["include_answer"] is False,
+            first_provider_request["include_answer"] is False,
             "answer unexpectedly requested",
         )
         require(
-            provider_request["auto_parameters"] is False,
+            first_provider_request["auto_parameters"] is False,
             "auto parameters unexpectedly enabled",
         )
         require(
-            provider_request["search_depth"] == "basic",
+            first_provider_request["search_depth"] == "basic",
             "search depth mismatch",
         )
-        require(provider_request["days"] == 30, "day range mismatch")
-        require("time_range" not in provider_request, "week filter used")
+        require(first_provider_request["days"] == 30, "day range mismatch")
+        require("time_range" not in first_provider_request, "week filter used")
         require(
-            provider_request["include_domains"] == ["openai.com"],
+            first_provider_request["include_domains"] == ["openai.com"],
             "provider domain binding mismatch",
         )
-        require("api_key" not in provider_request, "provider key entered body")
+        require(
+            "api_key" not in first_provider_request,
+            "provider key entered body",
+        )
         require(
             provider_authorizations == [f"Bearer {sentinel}"],
             "provider authorization mismatch",
+        )
+
+        with SQLiteControlStore.open(db_path) as store:
+            head = store.load_workspace_run_head()
+            require(head is not None, "workspace head missing after failure")
+            failed_snapshot = store.load_snapshot(head.current_run_id)
+            failure_evidence = (
+                failed_snapshot.events[-1]
+                .intake_binding.source_acquisition_failure
+            )
+            require(failure_evidence is not None, "failure evidence missing")
+            require(
+                failure_evidence.failure_class == "provider_results_empty",
+                "failure class mismatch",
+            )
+            require(
+                failure_evidence.provider_response_artifact is not None,
+                "safe response artifact missing",
+            )
+            failure_bytes = store.read_artifact_revision_bytes(
+                head.current_run_id,
+                failure_evidence.provider_response_artifact.artifact_id,
+                failure_evidence.provider_response_artifact.revision,
+            )
+        require(
+            failure_bytes == empty_response_bytes,
+            "safe failed response bytes changed",
+        )
+        require(failed_snapshot.sources == (), "failed attempt created sources")
+        require(
+            failed_snapshot.run_execution_authorizations == (),
+            "failed attempt created execution authority",
+        )
+        require(
+            len(
+                failed_snapshot.run_source_acquisition_attempt_authorizations
+            )
+            == 1,
+            "initial attempt authorization missing",
+        )
+        failed_db_bytes = db_path.read_bytes()
+        replayed_failure = run_cli()
+        require(
+            replayed_failure["status"] == "needs_human",
+            "failed attempt replay changed status",
+        )
+        require(len(provider_requests) == 1, "failed replay redialed provider")
+        require(
+            db_path.read_bytes() == failed_db_bytes,
+            "failed replay changed Store",
+        )
+
+        host = RuntimeHostService(
+            workspace,
+            adapter_loader=workspace_codex_adapter_loader(workspace),
+        )
+        recovery_action = host.next_action()
+        require(
+            recovery_action.source_acquisition_attempt_authorization_id
+            == failed_snapshot.run_source_acquisition_attempt_authorizations[
+                0
+            ].attempt_authorization_id,
+            "recovery action predecessor identity mismatch",
+        )
+        recovery = RuntimeSourceAcquisitionRecoveryRequest.model_validate(
+            {
+                "schema_version": (
+                    RuntimeSourceAcquisitionRecoveryRequest.schema_id
+                ),
+                "request_id": "REQ-WHEEL-TAVILY-ATTEMPT-002",
+                "run_id": recovery_action.run_id,
+                "expected_store_revision": recovery_action.store_revision,
+                "expected_action_fingerprint": (
+                    recovery_action.action_fingerprint
+                ),
+                "decision": "authorize_next_tavily_attempt",
+                "previous_attempt_authorization_id": (
+                    recovery_action.source_acquisition_attempt_authorization_id
+                ),
+                "human_confirmation": True,
+                "provider_cost_status": "not_reported_acknowledged",
+                "human_source_pack": None,
+            },
+            strict=True,
+        )
+        authorized = host.apply_current(
+            recovery_action,
+            human_request=recovery,
+        )
+        replayed_authorization = host.apply_current(
+            recovery_action,
+            human_request=recovery,
+        )
+        require(authorized.status == "committed", "attempt 2 was not committed")
+        require(
+            replayed_authorization.status == "replayed",
+            "attempt 2 exact request did not replay",
+        )
+        require(len(provider_requests) == 1, "authorization called provider")
+        require(env_path.read_bytes().endswith(sentinel.encode("utf-8") + b"\n"),
+                "authorization changed local credential")
+
+        continuation = run_cli()
+        require(
+            continuation["status"] == "role_work_required",
+            "attempt 2 promotion did not reach role work",
+        )
+        require(continuation["current_stage"] == "scout", "scout stage mismatch")
+        require(len(provider_requests) == 2, "second attempt call count mismatch")
+        provider_request = provider_requests[1]
+        require(
+            provider_request == first_provider_request,
+            "attempt 2 changed frozen provider request",
+        )
+        require(
+            provider_authorizations
+            == [f"Bearer {sentinel}", f"Bearer {sentinel}"],
+            "attempt authorization headers mismatch",
         )
 
         with SQLiteControlStore.open(db_path) as store:
@@ -507,6 +648,16 @@ def test_tavily_vertical_real_loopback_source_and_wheel_parity(
         require(
             len(promoted.run_execution_authorizations) == 1,
             "execution authorization missing",
+        )
+        attempts = promoted.run_source_acquisition_attempt_authorizations
+        require(
+            [item.attempt_ordinal for item in attempts] == [1, 2],
+            "attempt authorization ordinals changed",
+        )
+        require(
+            attempts[1].previous_attempt_authorization_id
+            == attempts[0].attempt_authorization_id,
+            "attempt authorization chain changed",
         )
         require(len(promoted.sources) == 2, "source count mismatch")
         published_dates = sorted(
@@ -570,7 +721,7 @@ def test_tavily_vertical_real_loopback_source_and_wheel_parity(
             replayed["status"] == "role_work_required",
             "committed replay lost role handoff",
         )
-        require(len(provider_requests) == 1, "replay called provider")
+        require(len(provider_requests) == 2, "replay called provider")
         require(db_path.read_bytes() == db_bytes, "replay changed Store")
 
         secret_bytes = sentinel.encode("utf-8")
@@ -592,6 +743,9 @@ def test_tavily_vertical_real_loopback_source_and_wheel_parity(
                     ),
                     "optimize": sys.flags.optimize,
                     "provider_calls": len(provider_requests),
+                    "attempt_ordinals": [
+                        item.attempt_ordinal for item in attempts
+                    ],
                     "published_dates": published_dates,
                     "raw_published_dates": raw_published_dates,
                     "role": continuation["current_stage"],
@@ -648,11 +802,12 @@ def test_tavily_vertical_real_loopback_source_and_wheel_parity(
     if source_payload["capable"]:
         expected = {
             "capable": True,
+            "attempt_ordinals": [1, 2],
             "credential_echo_rejections": 2,
             "domains": ["openai.com"],
             "durable_sources": 1,
             "optimize": sys.flags.optimize,
-            "provider_calls": 1,
+            "provider_calls": 2,
             "published_dates": ["2026-07-22"],
             "raw_published_dates": [
                 " 2026-07-23",

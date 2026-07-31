@@ -44,10 +44,14 @@ briefloop runtime continue --workspace <workspace>
 ```
 
 The command re-verifies Store and a fresh action before every effect. For the
-narrow discovery authorization it accepts the source-planner proposal, makes
-one exact Human-confirmed Tavily Search request, freezes the provider response
-and returned content, and atomically commits the source pack plus execution
-authorization before returning the existing role handoff. Search snippets are
+narrow discovery authorization it accepts the source-planner proposal and uses
+the exact Store-recorded attempt authorization. Each authorization permits
+one exact Human-confirmed Tavily Search request; exact replay never redials and a failure never
+auto-retries. A recovery action requires an explicit Human choice to authorize
+another attempt or provide a HumanSourcePack. A successful attempt freezes the
+provider response and returned content, and atomically commits the source pack
+plus execution authorization before returning the existing role handoff.
+Search snippets are
 retained as claims-ineligible discovery records; only non-empty
 provider-returned durable content is claims-eligible. It may also commit the
 parameter-free authorized local source pack and other existing deterministic
@@ -177,10 +181,12 @@ not make a role perform a deterministic effect. The sole extra input is for an
 invent another repair or content path.
 
 `source_acquire` is also a deterministic `runtime apply` action. For the narrow
-Tavily route, the runtime owns the single exact request and immutable response
-stage; specialists do not call the provider. Its internal provider invocation
-does not turn search snippets into eligible evidence and does not authorize a
-specialist to bypass source eligibility.
+Tavily route, the runtime owns the exact attempt-bound request and immutable
+response stage; specialists do not call the provider. The workspace credential
+remains local until Human rotation/removal, but it is capability, not call
+authority. Its internal provider invocation does not turn search snippets into
+eligible evidence and does not authorize a specialist to bypass source
+eligibility.
 
 ### `human_decision`
 
