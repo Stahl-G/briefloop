@@ -22,6 +22,7 @@ from multi_agent_brief.core_run_v2.next_action import classify_core_run_next_act
 from multi_agent_brief.core_run_v2.verifier import CoreRunDomainVerifier
 from multi_agent_brief.product.post_final_assessment import (
     POST_FINAL_ASSESSMENT_POLICY_SCHEMA,
+    POST_FINAL_ASSESSMENT_RUN_SCHEMA,
     PostFinalAssessmentError,
     PostFinalAssessmentService,
     finalized_lineage_fingerprint,
@@ -73,6 +74,8 @@ _POST_FINAL_RECEIPT_RELATION_FIELDS = (
     "post_final_finding_dispositions",
     "post_final_guidance_drafts",
     "post_final_guidance_statuses",
+    "post_final_assessment_abandonments",
+    "run_source_acquisition_attempt_authorizations",
 )
 
 
@@ -231,6 +234,16 @@ def _schema9_finalized_local_workspace_upgraded(
         "_legacy_receipt_cutoff",
         lambda _store: 1_000_000,
     )
+    schema9_patch.setattr(
+        SQLiteControlStore,
+        "_legacy_source_attempt_receipt_cutoff",
+        lambda _store: 1_000_000,
+    )
+    schema9_patch.setattr(
+        SQLiteControlStore,
+        "_legacy_post_final_abandonment_receipt_cutoff",
+        lambda _store: 1_000_000,
+    )
     try:
         workspace = _real_finalized_local_workspace(tmp_path, monkeypatch)
         with SQLiteControlStore.open(workspace / "briefloop.db") as store:
@@ -258,12 +271,18 @@ def _schema9_finalized_local_workspace_upgraded(
             "post_final_assessment_results",
             "post_final_assessment_requests",
             "post_final_assessment_policy_revisions",
+            "post_final_assessment_abandonment_compatibility_boundaries",
+            "post_final_assessment_abandonments",
+            "transaction_post_final_assessment_abandonments",
+            "source_acquisition_attempt_compatibility_boundaries",
+            "run_source_acquisition_attempt_authorizations",
+            "transaction_run_source_acquisition_attempt_authorizations",
         )
         connection.execute("PRAGMA foreign_keys = OFF")
         for table in migration_10_tables:
             connection.execute(f"DROP TABLE {table}")
         connection.execute("DROP TRIGGER schema_migrations_no_delete")
-        connection.execute("DELETE FROM schema_migrations WHERE version=10")
+        connection.execute("DELETE FROM schema_migrations WHERE version>=10")
         connection.execute(
             "CREATE TRIGGER schema_migrations_no_delete BEFORE DELETE ON "
             "schema_migrations\n"
@@ -303,11 +322,14 @@ def _schema9_finalized_local_workspace_upgraded(
             for field in _POST_FINAL_RECEIPT_RELATION_FIELDS
         ):
             raise AssertionError("schema-9 receipt unexpectedly has advisory fields")
-        migration = resources.files("multi_agent_brief.control_store").joinpath(
-            "migrations",
-            "0010.sql",
-        )
-        connection.executescript(migration.read_text(encoding="utf-8"))
+        for version, name in MIGRATIONS:
+            if version < 10:
+                continue
+            migration = resources.files("multi_agent_brief.control_store").joinpath(
+                "migrations",
+                f"{name}.sql",
+            )
+            connection.executescript(migration.read_text(encoding="utf-8"))
         connection.execute("PRAGMA foreign_keys = ON")
         cutoff = connection.execute(
             "SELECT legacy_receipt_max_committed_revision "
@@ -315,6 +337,20 @@ def _schema9_finalized_local_workspace_upgraded(
         ).fetchone()
         if cutoff is None or int(cutoff[0]) != len(before):
             raise AssertionError("0010 legacy receipt cutoff drift")
+        source_attempt_cutoff = connection.execute(
+            "SELECT legacy_receipt_max_committed_revision "
+            "FROM source_acquisition_attempt_compatibility_boundaries"
+        ).fetchone()
+        if source_attempt_cutoff is None or int(source_attempt_cutoff[0]) != len(
+            before
+        ):
+            raise AssertionError("0011 legacy receipt cutoff drift")
+        abandonment_cutoff = connection.execute(
+            "SELECT legacy_receipt_max_committed_revision "
+            "FROM post_final_assessment_abandonment_compatibility_boundaries"
+        ).fetchone()
+        if abandonment_cutoff is None or int(abandonment_cutoff[0]) != len(before):
+            raise AssertionError("0012 legacy receipt cutoff drift")
         after = {
             str(row[0]): str(row[1]).encode("utf-8")
             for row in connection.execute(
@@ -377,6 +413,406 @@ def _policy_payload() -> dict[str, object]:
         "max_output_tokens_per_call": 4096,
         "public_safe_egress_attested": True,
     }
+
+
+def _generation_one_run_payload(
+    service: PostFinalAssessmentService,
+    *,
+    human_request_id: str = "pf-laj-assessment-run-1",
+) -> dict[str, object]:
+    facts, snapshot, _binding, _workspace_id, _history, action = service._load()
+    policy = service._policy_for_facts(snapshot, facts)
+    if policy is None:
+        raise AssertionError("assessment policy is missing")
+    return {
+        "schema_version": POST_FINAL_ASSESSMENT_RUN_SCHEMA,
+        "human_actor_id": "human-1",
+        "human_request_id": human_request_id,
+        "expected_store_revision": facts.store_revision,
+        "finalized_lineage_fingerprint": finalized_lineage_fingerprint(
+            facts,
+            action,
+        ),
+        "assessment_generation": 1,
+        "assessment_purpose": "post_final_review",
+        "predecessor_assessment_request_id": None,
+        "predecessor_assessment_request_fingerprint": None,
+        "predecessor_assessment_result_id": None,
+        "predecessor_result_fingerprint": None,
+        "predecessor_abandonment_id": None,
+        "predecessor_abandonment_fingerprint": None,
+        "abandon_predecessor": False,
+        "policy_revision_id": policy.policy_revision_id,
+        "policy_fingerprint": policy.policy_fingerprint,
+        "public_safe_egress_attested": True,
+        "max_provider_calls": policy.max_provider_calls,
+        "max_total_input_tokens": policy.max_total_input_tokens,
+        "max_total_output_tokens": policy.max_total_output_tokens,
+        "max_output_tokens_per_call": policy.max_output_tokens_per_call,
+    }
+
+
+def _next_generation_run_payload(
+    service: PostFinalAssessmentService,
+    *,
+    human_request_id: str,
+    assessment_purpose: str,
+) -> dict[str, object]:
+    facts, snapshot, _binding, _workspace_id, history, action = service._load()
+    series = post_final_assessment_module.resolve_post_final_assessment_series(
+        history,
+        snapshot,
+        facts,
+        action,
+    )
+    if not series:
+        raise AssertionError("assessment predecessor is missing")
+    predecessor = series[-1]
+    results = [
+        item
+        for item in snapshot.post_final_assessment_results
+        if item.assessment_request_id == predecessor.assessment_request_id
+    ]
+    if len(results) != 1:
+        raise AssertionError("assessment predecessor result is missing")
+    result = results[0]
+    policy = service._policy_for_facts(snapshot, facts)
+    if policy is None:
+        raise AssertionError("assessment policy is missing")
+    return {
+        "schema_version": POST_FINAL_ASSESSMENT_RUN_SCHEMA,
+        "human_actor_id": "human-1",
+        "human_request_id": human_request_id,
+        "expected_store_revision": facts.store_revision,
+        "finalized_lineage_fingerprint": finalized_lineage_fingerprint(
+            facts,
+            action,
+        ),
+        "assessment_generation": predecessor.assessment_generation + 1,
+        "assessment_purpose": assessment_purpose,
+        "predecessor_assessment_request_id": predecessor.assessment_request_id,
+        "predecessor_assessment_request_fingerprint": (predecessor.request_fingerprint),
+        "predecessor_assessment_result_id": result.assessment_result_id,
+        "predecessor_result_fingerprint": result.result_fingerprint,
+        "predecessor_abandonment_id": None,
+        "predecessor_abandonment_fingerprint": None,
+        "abandon_predecessor": False,
+        "policy_revision_id": policy.policy_revision_id,
+        "policy_fingerprint": policy.policy_fingerprint,
+        "public_safe_egress_attested": True,
+        "max_provider_calls": policy.max_provider_calls,
+        "max_total_input_tokens": policy.max_total_input_tokens,
+        "max_total_output_tokens": policy.max_total_output_tokens,
+        "max_output_tokens_per_call": policy.max_output_tokens_per_call,
+    }
+
+
+def _abandoning_next_generation_run_payload(
+    service: PostFinalAssessmentService,
+    *,
+    human_request_id: str,
+) -> dict[str, object]:
+    facts, snapshot, _binding, _workspace_id, history, action = service._load()
+    series = post_final_assessment_module.resolve_post_final_assessment_series(
+        history,
+        snapshot,
+        facts,
+        action,
+    )
+    if not series:
+        raise AssertionError("assessment predecessor is missing")
+    predecessor = series[-1]
+    policy = service._policy_for_facts(snapshot, facts)
+    if policy is None:
+        raise AssertionError("assessment policy is missing")
+    return {
+        "schema_version": POST_FINAL_ASSESSMENT_RUN_SCHEMA,
+        "human_actor_id": "human-1",
+        "human_request_id": human_request_id,
+        "expected_store_revision": facts.store_revision,
+        "finalized_lineage_fingerprint": finalized_lineage_fingerprint(
+            facts,
+            action,
+        ),
+        "assessment_generation": predecessor.assessment_generation + 1,
+        "assessment_purpose": "post_final_review",
+        "predecessor_assessment_request_id": predecessor.assessment_request_id,
+        "predecessor_assessment_request_fingerprint": (predecessor.request_fingerprint),
+        "predecessor_assessment_result_id": None,
+        "predecessor_result_fingerprint": None,
+        "predecessor_abandonment_id": None,
+        "predecessor_abandonment_fingerprint": None,
+        "abandon_predecessor": True,
+        "policy_revision_id": policy.policy_revision_id,
+        "policy_fingerprint": policy.policy_fingerprint,
+        "public_safe_egress_attested": True,
+        "max_provider_calls": policy.max_provider_calls,
+        "max_total_input_tokens": policy.max_total_input_tokens,
+        "max_total_output_tokens": policy.max_total_output_tokens,
+        "max_output_tokens_per_call": policy.max_output_tokens_per_call,
+    }
+
+
+def test_explicit_human_generation_one_claims_then_replays_without_redial(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    workspace, run_id, _clock = _finalized_local_workspace(tmp_path, monkeypatch)
+    calls: list[tuple[str, int]] = []
+    claim_revisions: list[int] = []
+    endpoint = _policy_payload()["messages_endpoint"]
+    assert type(endpoint) is str
+
+    def adapter_factory(execution):
+        with SQLiteControlStore.open(workspace / "briefloop.db") as store:
+            snapshot = store.load_snapshot(run_id)
+            assert len(snapshot.post_final_assessment_requests) == 1
+            assert snapshot.post_final_assessment_results == ()
+            claim_revisions.append(store.current_revision)
+        return _MessagesFixtureAdapter(
+            execution,
+            calls,
+            endpoint=endpoint,
+            terminal_mode="finding",
+        )
+
+    service = PostFinalAssessmentService(
+        workspace,
+        adapter_factory=adapter_factory,
+    )
+    assert service.policy_set(_policy_payload())["ok"] is True
+    request = _generation_one_run_payload(service)
+    with SQLiteControlStore.open(workspace / "briefloop.db") as store:
+        before_revision = store.current_revision
+    monkeypatch.setattr(runner_module.metadata, "version", lambda _name: "0.104.1")
+    monkeypatch.setenv(ANTHROPIC_API_KEY_SETTING, "public-synthetic-key")
+
+    outcome = service.assessment_run(request)
+
+    assert outcome["ok"] is True, outcome
+    assert outcome["replayed"] is False
+    assert outcome["status"] == "available"
+    assert len(calls) == 9
+    assert claim_revisions == [before_revision + 1]
+    with SQLiteControlStore.open(workspace / "briefloop.db") as store:
+        snapshot = store.load_snapshot(run_id)
+        assert store.current_revision == before_revision + 2
+    claimed = snapshot.post_final_assessment_requests[0]
+    result = snapshot.post_final_assessment_results[0]
+    assert claimed.schema_version == claimed.series_schema_id
+    assert claimed.assessment_generation == 1
+    assert claimed.human_request_id == request["human_request_id"]
+    assert claimed.predecessor_assessment_request_id is None
+    assert result.assessment_request_id == claimed.assessment_request_id
+    claim_receipt = next(
+        item
+        for item in snapshot.transactions
+        if item.transaction_id == claimed.accepted_transaction_id
+    )
+    assert claim_receipt.transaction_type == "post_final_assessment_series_claim"
+    database_before = (workspace / "briefloop.db").read_bytes()
+    revision_before = snapshot.store_revision
+
+    monkeypatch.delenv(ANTHROPIC_API_KEY_SETTING, raising=False)
+    replay = PostFinalAssessmentService(
+        workspace,
+        adapter_factory=lambda _execution: (_ for _ in ()).throw(
+            AssertionError("exact Human replay touched adapter")
+        ),
+    )
+    replayed = replay.assessment_run(request)
+
+    assert replayed == {
+        "ok": True,
+        "replayed": True,
+        "status": "available",
+        "assessment_result_id": result.assessment_result_id,
+        "assessment_result_fingerprint": result.result_fingerprint,
+    }
+    assert len(calls) == 9
+    assert (workspace / "briefloop.db").read_bytes() == database_before
+    with SQLiteControlStore.open(workspace / "briefloop.db") as store:
+        assert store.current_revision == revision_before
+
+
+def test_same_lineage_supports_same_model_and_cross_model_human_runs(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    workspace, run_id, _clock = _finalized_local_workspace(tmp_path, monkeypatch)
+    calls: list[tuple[str, int]] = []
+    service = _fixture_service(workspace, calls, terminal_mode="finding")
+    assert service.policy_set(_policy_payload())["ok"] is True
+    monkeypatch.setattr(runner_module.metadata, "version", lambda _name: "0.104.1")
+    monkeypatch.setenv(ANTHROPIC_API_KEY_SETTING, "public-synthetic-key")
+
+    generation_one = service.assessment_run(_generation_one_run_payload(service))
+    generation_two_request = _next_generation_run_payload(
+        service,
+        human_request_id="pf-laj-assessment-run-2",
+        assessment_purpose="post_final_review",
+    )
+    generation_two = service.assessment_run(generation_two_request)
+
+    assert generation_one["status"] == generation_two["status"] == "available"
+    assert (
+        generation_one["assessment_result_id"] != generation_two["assessment_result_id"]
+    )
+    assert len(calls) == 18
+    listing = service.assessment_list()
+    assert [item["assessment_generation"] for item in listing["assessments"]] == [
+        1,
+        2,
+    ]
+    assert build_post_final_assessment_projection(workspace).status == "invalid"
+    for result in (generation_one, generation_two):
+        selected = build_post_final_assessment_projection(
+            workspace,
+            assessment_result_id=str(result["assessment_result_id"]),
+            assessment_result_fingerprint=str(result["assessment_result_fingerprint"]),
+        )
+        assert selected.status == "available"
+        assert selected.view.finding_count >= 1
+
+    changed_policy = _policy_payload()
+    changed_policy["human_request_id"] = "pf-laj-policy-request-2"
+    changed_policy["requested_model_id"] = "public-compatible-model-v2"
+    changed_policy["model_version"] = "public-compatible-model-v2"
+    changed_policy["expected_model_identity"] = "public-compatible-model-v2"
+    changed_instrument = dict(changed_policy["instrument_config"])
+    changed_instrument["instrument_config_id"] = "pf-laj-anthropic-instrument-v2"
+    changed_instrument["model_id"] = "public-compatible-model-v2"
+    changed_instrument["model_version"] = "public-compatible-model-v2"
+    changed_policy["instrument_config"] = changed_instrument
+    assert service.policy_set(changed_policy)["ok"] is True
+    with SQLiteControlStore.open(workspace / "briefloop.db") as store:
+        before_observer_revision = store.current_revision
+    calls_before_observer = len(calls)
+    service.observe_finalized_local()
+    with SQLiteControlStore.open(workspace / "briefloop.db") as store:
+        assert store.current_revision == before_observer_revision
+        assert len(store.load_snapshot(run_id).post_final_assessment_requests) == 2
+    assert len(calls) == calls_before_observer
+
+    generation_three_request = _next_generation_run_payload(
+        service,
+        human_request_id="pf-laj-assessment-run-3",
+        assessment_purpose="model_evaluation",
+    )
+    generation_three = service.assessment_run(generation_three_request)
+    assert generation_three["ok"] is True
+    assert generation_three["status"] == "available"
+    assert len(calls) == 27
+    listing = service.assessment_list()
+    assert [
+        (
+            item["assessment_generation"],
+            item["assessment_purpose"],
+            item["requested_model_id"],
+        )
+        for item in listing["assessments"]
+    ] == [
+        (1, "post_final_review", "public-compatible-model-v1"),
+        (2, "post_final_review", "public-compatible-model-v1"),
+        (3, "model_evaluation", "public-compatible-model-v2"),
+    ]
+
+    database_before = (workspace / "briefloop.db").read_bytes()
+    listing_before = listing
+    monkeypatch.delenv(ANTHROPIC_API_KEY_SETTING, raising=False)
+    replay = PostFinalAssessmentService(
+        workspace,
+        adapter_factory=lambda _execution: (_ for _ in ()).throw(
+            AssertionError("series replay touched adapter")
+        ),
+    )
+    assert (
+        replay.assessment_run(generation_three_request)["assessment_result_id"]
+        == generation_three["assessment_result_id"]
+    )
+    assert (workspace / "briefloop.db").read_bytes() == database_before
+    assert listing_before == replay.assessment_list()
+
+
+def test_outcome_unknown_is_atomically_abandoned_before_next_generation(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    workspace, run_id, _clock = _finalized_local_workspace(tmp_path, monkeypatch)
+    calls: list[tuple[str, int]] = []
+    service = _fixture_service(workspace, calls, terminal_mode="finding")
+    assert service.policy_set(_policy_payload())["ok"] is True
+    generation_one_request = _generation_one_run_payload(service)
+
+    class _ProcessStop(BaseException):
+        pass
+
+    original_execute = post_final_assessment_module.execute_prepared_shadow_run
+    monkeypatch.setattr(
+        post_final_assessment_module,
+        "execute_prepared_shadow_run",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(_ProcessStop()),
+    )
+    with pytest.raises(_ProcessStop):
+        service.assessment_run(generation_one_request)
+    monkeypatch.setattr(
+        post_final_assessment_module,
+        "execute_prepared_shadow_run",
+        original_execute,
+    )
+    with SQLiteControlStore.open(workspace / "briefloop.db") as store:
+        snapshot = store.load_snapshot(run_id)
+    assert len(snapshot.post_final_assessment_requests) == 1
+    assert snapshot.post_final_assessment_results == ()
+    assert snapshot.post_final_assessment_abandonments == ()
+    predecessor = snapshot.post_final_assessment_requests[0]
+    assert calls == []
+
+    generation_two_request = _abandoning_next_generation_run_payload(
+        service,
+        human_request_id="pf-laj-assessment-run-after-abandonment",
+    )
+    monkeypatch.setattr(runner_module.metadata, "version", lambda _name: "0.104.1")
+    monkeypatch.setenv(ANTHROPIC_API_KEY_SETTING, "public-synthetic-key")
+    generation_two = service.assessment_run(generation_two_request)
+
+    assert generation_two["ok"] is True
+    assert generation_two["status"] == "available"
+    assert len(calls) == 9
+    with SQLiteControlStore.open(workspace / "briefloop.db") as store:
+        snapshot = store.load_snapshot(run_id)
+    assert len(snapshot.post_final_assessment_requests) == 2
+    assert len(snapshot.post_final_assessment_abandonments) == 1
+    abandonment = snapshot.post_final_assessment_abandonments[0]
+    successor = snapshot.post_final_assessment_requests[1]
+    assert abandonment.assessment_request_id == predecessor.assessment_request_id
+    assert successor.predecessor_abandonment_id == abandonment.abandonment_id
+    assert (
+        successor.predecessor_abandonment_fingerprint
+        == abandonment.abandonment_fingerprint
+    )
+    assert abandonment.accepted_transaction_id == successor.accepted_transaction_id
+    assert not any(
+        result.assessment_request_id == predecessor.assessment_request_id
+        for result in snapshot.post_final_assessment_results
+    )
+    database_before = (workspace / "briefloop.db").read_bytes()
+    revision_before = snapshot.store_revision
+
+    monkeypatch.delenv(ANTHROPIC_API_KEY_SETTING, raising=False)
+    replay = PostFinalAssessmentService(
+        workspace,
+        adapter_factory=lambda _execution: (_ for _ in ()).throw(
+            AssertionError("abandonment replay touched adapter")
+        ),
+    )
+    replayed = replay.assessment_run(generation_two_request)
+    assert replayed["replayed"] is True
+    assert replayed["assessment_result_id"] == generation_two["assessment_result_id"]
+    assert (workspace / "briefloop.db").read_bytes() == database_before
+    with SQLiteControlStore.open(workspace / "briefloop.db") as store:
+        assert store.current_revision == revision_before
+        assert len(store.load_snapshot(run_id).post_final_assessment_abandonments) == 1
 
 
 def test_policy_is_store_owned_replayable_and_manual_view_cannot_override(

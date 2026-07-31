@@ -57,7 +57,11 @@ def _qualified_review(tmp_path, monkeypatch):
     assert outcome["status"] == "available"
     assert outcome["finding_count"] >= 1
     monkeypatch.delenv(ANTHROPIC_API_KEY_SETTING, raising=False)
-    review = PostFinalReviewService(workspace)
+    review = PostFinalReviewService(
+        workspace,
+        str(outcome["assessment_result_id"]),
+        str(outcome["assessment_result_fingerprint"]),
+    )
     status = review.review_status()
     finding = status["dispositions"][0]
     return workspace, run_id, provider_calls, review, status, finding
@@ -691,7 +695,14 @@ def test_schema9_finalized_local_upgrade_runs_full_laj_human_loop(
     assert assessment.assess()["status"] == "available"
     monkeypatch.delenv(ANTHROPIC_API_KEY_SETTING, raising=False)
 
-    review = PostFinalReviewService(workspace)
+    with SQLiteControlStore.open(workspace / "briefloop.db") as store:
+        snapshot = store.load_snapshot(run_id)
+    result = snapshot.post_final_assessment_results[0]
+    review = PostFinalReviewService(
+        workspace,
+        result.assessment_result_id,
+        result.result_fingerprint,
+    )
     status = review.review_status()
     finding = status["dispositions"][0]
     disposition = review.record_disposition(
@@ -740,6 +751,17 @@ def test_tampered_or_cross_bound_finding_is_zero_write(tmp_path, monkeypatch) ->
     workspace, run_id, provider_calls, review, status, finding = _qualified_review(
         tmp_path, monkeypatch
     )
+    database_before = (workspace / "briefloop.db").read_bytes()
+    with pytest.raises(
+        PostFinalReviewError,
+        match="post_final_review_",
+    ):
+        PostFinalReviewService(
+            workspace,
+            status["assessment_result_id"],
+            "0" * 64,
+        ).review_status()
+    assert (workspace / "briefloop.db").read_bytes() == database_before
     with SQLiteControlStore.open(workspace / "briefloop.db") as store:
         before = store.current_revision
     payload = _disposition_payload(
@@ -829,6 +851,10 @@ def test_headless_cli_uses_the_same_store_review_service(
                 "review-status",
                 "--workspace",
                 str(workspace),
+                "--assessment-result-id",
+                status["assessment_result_id"],
+                "--assessment-result-fingerprint",
+                status["assessment_result_fingerprint"],
                 "--json",
             ]
         )
@@ -852,6 +878,10 @@ def test_headless_cli_uses_the_same_store_review_service(
                 "disposition",
                 "--workspace",
                 str(workspace),
+                "--assessment-result-id",
+                status["assessment_result_id"],
+                "--assessment-result-fingerprint",
+                status["assessment_result_fingerprint"],
                 "--request-json",
                 json.dumps(command),
                 "--json",

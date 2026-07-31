@@ -34,7 +34,7 @@ from multi_agent_brief.product.post_final_assessment import (
     _record_fingerprint,
     _require_current_finalized_action,
     _utc_now,
-    resolve_current_post_final_assessment_request,
+    resolve_post_final_assessment_series,
 )
 from multi_agent_brief.product.post_final_assessment_projection import (
     build_post_final_assessment_projection,
@@ -110,8 +110,15 @@ def _finding_fingerprint(
 class PostFinalReviewService:
     """The only Store writer for PF-LAJ Human dispositions and guidance."""
 
-    def __init__(self, workspace: str | Path) -> None:
+    def __init__(
+        self,
+        workspace: str | Path,
+        assessment_result_id: str,
+        assessment_result_fingerprint: str,
+    ) -> None:
         self.workspace = Path(workspace).expanduser().resolve()
+        self.assessment_result_id = assessment_result_id
+        self.assessment_result_fingerprint = assessment_result_fingerprint
 
     @property
     def _database_path(self) -> Path:
@@ -131,10 +138,14 @@ class PostFinalReviewService:
                 snapshot = history.snapshot_at_revision(
                     facts.run_id, history.store_revision
                 )
-                request = resolve_current_post_final_assessment_request(
+                series = resolve_post_final_assessment_series(
                     history, snapshot, facts, action
                 )
-            projection = build_post_final_assessment_projection(self.workspace)
+            projection = build_post_final_assessment_projection(
+                self.workspace,
+                assessment_result_id=self.assessment_result_id,
+                assessment_result_fingerprint=self.assessment_result_fingerprint,
+            )
         except (
             ControlStoreError,
             PostFinalAssessmentError,
@@ -143,20 +154,26 @@ class PostFinalReviewService:
             ValueError,
         ) as exc:
             raise PostFinalReviewError("post_final_review_unavailable") from exc
-        if (
-            request is None
-            or projection.status != "available"
-            or projection.view.binding is None
-        ):
+        if projection.status != "available" or projection.view.binding is None:
             raise PostFinalReviewError("post_final_review_unavailable")
         results = [
             item
             for item in snapshot.post_final_assessment_results
-            if item.assessment_request_id == request.assessment_request_id
+            if item.assessment_result_id == self.assessment_result_id
         ]
         if len(results) != 1:
             raise PostFinalReviewError("control_store_integrity_invalid")
         result = results[0]
+        if result.result_fingerprint != self.assessment_result_fingerprint:
+            raise PostFinalReviewError("post_final_review_binding_invalid")
+        requests = [
+            item
+            for item in series
+            if item.assessment_request_id == result.assessment_request_id
+        ]
+        if len(requests) != 1:
+            raise PostFinalReviewError("control_store_integrity_invalid")
+        request = requests[0]
         if (
             result.finalized_lineage_fingerprint
             != request.finalized_lineage_fingerprint
@@ -503,11 +520,22 @@ class PostFinalReviewService:
             None,
         )
         if existing is not None:
+            existing_draft = next(
+                (
+                    item
+                    for item in snapshot.post_final_guidance_drafts
+                    if item.guidance_id == existing.guidance_id
+                    and item.draft_revision == existing.draft_revision
+                ),
+                None,
+            )
             if (
                 existing.guidance_id != command.guidance_id
                 or existing.draft_revision != command.draft_revision
                 or existing.status != status
                 or existing.human_actor_id != command.human_actor_id
+                or existing_draft is None
+                or existing_draft.assessment_result_id != result.assessment_result_id
             ):
                 raise PostFinalReviewError("post_final_review_request_conflict")
             receipt = self._receipt(snapshot, existing.accepted_transaction_id)
@@ -530,6 +558,7 @@ class PostFinalReviewService:
             draft is None
             or draft.finalized_lineage_fingerprint
             != result.finalized_lineage_fingerprint
+            or draft.assessment_result_id != result.assessment_result_id
         ):
             raise PostFinalReviewError("post_final_guidance_stale")
         latest_draft_revision = max(
@@ -661,7 +690,11 @@ class PostFinalReviewService:
                 }
             )
         draft_rows = sorted(
-            snapshot.post_final_guidance_drafts,
+            (
+                item
+                for item in snapshot.post_final_guidance_drafts
+                if item.assessment_result_id == result.assessment_result_id
+            ),
             key=lambda item: (item.guidance_id, item.draft_revision),
         )
         latest_draft_revisions = {
@@ -704,9 +737,11 @@ class PostFinalReviewService:
                 else []
             )
             drafts.append(payload)
+        selected_guidance_ids = {item.guidance_id for item in draft_rows}
         statuses = [
             item.model_dump(mode="json", exclude_unset=False)
             for item in snapshot.post_final_guidance_statuses
+            if item.guidance_id in selected_guidance_ids
         ]
         return {
             "ok": True,

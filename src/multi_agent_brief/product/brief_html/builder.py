@@ -129,9 +129,15 @@ def _semantic_page(
     laj_view_path: str | Path | None,
     *,
     workspace: Path,
+    assessment_result_id: str | None,
+    assessment_result_fingerprint: str | None,
 ) -> dict[str, Any]:
     view: LajReaderView
-    qualified = build_post_final_assessment_projection(workspace)
+    qualified = build_post_final_assessment_projection(
+        workspace,
+        assessment_result_id=assessment_result_id,
+        assessment_result_fingerprint=assessment_result_fingerprint,
+    )
     if qualified.lifecycle_present:
         view = qualified.view
     else:
@@ -169,7 +175,13 @@ def _semantic_page(
     review_status: dict[str, Any] | None = None
     if qualified.lifecycle_present and qualified.status == "available":
         try:
-            review_status = PostFinalReviewService(workspace).review_status()
+            if assessment_result_id is None or assessment_result_fingerprint is None:
+                raise PostFinalReviewError("post_final_review_selection_required")
+            review_status = PostFinalReviewService(
+                workspace,
+                assessment_result_id,
+                assessment_result_fingerprint,
+            ).review_status()
         except PostFinalReviewError:
             review_status = None
     review_by_finding = {
@@ -262,9 +274,19 @@ def _brief_page(local: Any) -> dict[str, Any]:
     }
 
 
-def _improvement_page(workspace: Path) -> dict[str, Any]:
+def _improvement_page(
+    workspace: Path,
+    assessment_result_id: str | None,
+    assessment_result_fingerprint: str | None,
+) -> dict[str, Any]:
     try:
-        status = PostFinalReviewService(workspace).review_status()
+        if assessment_result_id is None or assessment_result_fingerprint is None:
+            raise PostFinalReviewError("post_final_review_selection_required")
+        status = PostFinalReviewService(
+            workspace,
+            assessment_result_id,
+            assessment_result_fingerprint,
+        ).review_status()
     except PostFinalReviewError:
         status = None
     if status is not None:
@@ -292,6 +314,8 @@ def build_brief_pages_data(
     workspace: str | Path,
     *,
     laj_view_path: str | Path | None = None,
+    assessment_result_id: str | None = None,
+    assessment_result_fingerprint: str | None = None,
     generated_at: str | None = None,
 ) -> dict[str, Any]:
     """Build the full three-page data contract from Store/LAJ sources only."""
@@ -323,8 +347,18 @@ def build_brief_pages_data(
         },
         "brief": _brief_page(local),
         "quality": _quality_page(local),
-        "semantic": _semantic_page(local, laj_view_path, workspace=root),
-        "improvement": _improvement_page(root),
+        "semantic": _semantic_page(
+            local,
+            laj_view_path,
+            workspace=root,
+            assessment_result_id=assessment_result_id,
+            assessment_result_fingerprint=assessment_result_fingerprint,
+        ),
+        "improvement": _improvement_page(
+            root,
+            assessment_result_id,
+            assessment_result_fingerprint,
+        ),
     }
 
 

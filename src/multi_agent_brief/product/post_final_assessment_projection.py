@@ -15,9 +15,8 @@ from multi_agent_brief.core_run_v2.verifier import CoreRunDomainVerifier
 from multi_agent_brief.product.post_final_assessment import (
     PostFinalAssessmentError,
     post_final_assessment_archive_root,
-    resolve_current_post_final_assessment_policy,
-    resolve_current_post_final_assessment_request,
     resolve_current_post_final_assessment_result,
+    resolve_post_final_assessment_series,
 )
 from multi_agent_brief.runtime_host_v2.errors import RuntimeHostError
 from multi_agent_brief.runtime_host_v2.projections import (
@@ -112,8 +111,11 @@ def _recorded_zero_advice_view(
 
 def build_post_final_assessment_projection(
     workspace: str | Path,
+    *,
+    assessment_result_id: str | None = None,
+    assessment_result_fingerprint: str | None = None,
 ) -> PostFinalAssessmentProjection:
-    """Return the only Store-qualified current LAJ result, or zero advice."""
+    """Return one explicitly selected Store-qualified result, or zero advice."""
 
     root = Path(workspace).expanduser().resolve()
     try:
@@ -130,7 +132,7 @@ def build_post_final_assessment_projection(
             )
             if facts.store_revision != snapshot.store_revision:
                 raise PostFinalAssessmentError("control_store_integrity_invalid")
-            request = resolve_current_post_final_assessment_request(
+            series = resolve_post_final_assessment_series(
                 history,
                 snapshot,
                 facts,
@@ -165,26 +167,87 @@ def build_post_final_assessment_projection(
             reason_code="post_final_assessment_unavailable",
         )
     policies = list(snapshot.post_final_assessment_policy_revisions)
-    if request is None and not policies:
+    if not series and not policies:
         return _empty(
             lifecycle_present=False,
             status="not_requested",
             reason_code="laj_not_run",
         )
-    if request is None:
+    if not series:
         return _empty(
             lifecycle_present=True,
             status="not_requested",
             reason_code="post_final_assessment_not_requested",
         )
-    try:
-        policy = resolve_current_post_final_assessment_policy(snapshot, facts)
-    except PostFinalAssessmentError as exc:
+    run_results = [
+        item
+        for item in snapshot.post_final_assessment_results
+        if item.run_id == facts.run_id
+        and item.finalized_lineage_fingerprint
+        == series[0].finalized_lineage_fingerprint
+    ]
+    if assessment_result_id is None:
+        if assessment_result_fingerprint is not None:
+            return _empty(
+                lifecycle_present=True,
+                status="invalid",
+                reason_code="post_final_assessment_selection_invalid",
+            )
+        if len(run_results) > 1:
+            return _empty(
+                lifecycle_present=True,
+                status="invalid",
+                reason_code="post_final_assessment_selection_required",
+            )
+        result = run_results[0] if run_results else None
+    else:
+        matches = [
+            item
+            for item in run_results
+            if item.assessment_result_id == assessment_result_id
+        ]
+        if len(matches) != 1:
+            return _empty(
+                lifecycle_present=True,
+                status="invalid",
+                reason_code="post_final_assessment_selection_invalid",
+            )
+        result = matches[0]
+        if (
+            assessment_result_fingerprint is None
+            or result.result_fingerprint != assessment_result_fingerprint
+        ):
+            return _empty(
+                lifecycle_present=True,
+                status="invalid",
+                reason_code="post_final_assessment_selection_invalid",
+            )
+    request = (
+        next(
+            (
+                item
+                for item in series
+                if result is not None
+                and item.assessment_request_id == result.assessment_request_id
+            ),
+            None,
+        )
+        if result is not None
+        else series[0]
+    )
+    if request is None:
         return _empty(
             lifecycle_present=True,
             status="invalid",
-            reason_code=str(exc),
+            reason_code="post_final_assessment_selection_invalid",
         )
+    policy_matches = [
+        item
+        for item in snapshot.post_final_assessment_policy_revisions
+        if item.policy_revision_id == request.policy_revision_id
+        and item.policy_fingerprint == request.policy_fingerprint
+    ]
+    policy = policy_matches[0] if len(policy_matches) == 1 else None
     if (
         policy is None
         or policy.policy_revision_id != request.policy_revision_id
@@ -201,14 +264,21 @@ def build_post_final_assessment_projection(
             status="invalid",
             reason_code="control_store_integrity_invalid",
         )
-    try:
-        result = resolve_current_post_final_assessment_result(snapshot, request)
-    except PostFinalAssessmentError as exc:
-        return _empty(
-            lifecycle_present=True,
-            status="invalid",
-            reason_code=str(exc),
-        )
+    if result is not None:
+        try:
+            resolved = resolve_current_post_final_assessment_result(snapshot, request)
+        except PostFinalAssessmentError as exc:
+            return _empty(
+                lifecycle_present=True,
+                status="invalid",
+                reason_code=str(exc),
+            )
+        if resolved != result:
+            return _empty(
+                lifecycle_present=True,
+                status="invalid",
+                reason_code="post_final_assessment_selection_invalid",
+            )
     if result is None:
         return _empty(
             lifecycle_present=True,

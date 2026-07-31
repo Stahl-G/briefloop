@@ -368,6 +368,7 @@ _AUTHORITATIVE_RECEIPT_RELATION_FAMILIES = frozenset(
         "delivery_results",
         "post_final_assessment_policy_revisions",
         "post_final_assessment_requests",
+        "post_final_assessment_abandonments",
         "post_final_assessment_results",
         "post_final_finding_dispositions",
         "post_final_guidance_drafts",
@@ -785,6 +786,78 @@ def _verified_post_final_assessment_receipt(
     onto either this receipt family or any existing Core/Intake family.
     """
 
+    if receipt.transaction_type == "post_final_assessment_series_claim":
+        allowed = frozenset(
+            {
+                "post_final_assessment_requests",
+                "post_final_assessment_abandonments",
+            }
+        )
+        _verify_authoritative_receipt_relation_families(receipt, allowed)
+        if (
+            receipt.run_id != snapshot.run.run_id
+            or len(receipt.post_final_assessment_requests) != 1
+            or len(receipt.post_final_assessment_abandonments) > 1
+            or len(receipt.event_ids)
+            != 1 + len(receipt.post_final_assessment_abandonments)
+        ):
+            raise CoreRunError("control_store_integrity_invalid")
+        expected = [
+            (
+                "post_final_assessment_claimed",
+                receipt.post_final_assessment_requests[0].assessment_request_id,
+                snapshot.post_final_assessment_requests,
+                "assessment_request_id",
+                "request_event_id",
+            )
+        ]
+        if receipt.post_final_assessment_abandonments:
+            expected.append(
+                (
+                    "post_final_assessment_abandoned",
+                    receipt.post_final_assessment_abandonments[0].abandonment_id,
+                    snapshot.post_final_assessment_abandonments,
+                    "abandonment_id",
+                    "abandonment_event_id",
+                )
+            )
+        if set(receipt.event_ids) != {
+            getattr(record, event_field)
+            for _event_type, record_id, records, id_field, event_field in expected
+            for record in records
+            if getattr(record, id_field) == record_id
+        }:
+            raise CoreRunError("control_store_integrity_invalid")
+        for event_type, record_id, records, id_field, event_field in expected:
+            matching_records = [
+                item for item in records if getattr(item, id_field) == record_id
+            ]
+            if len(matching_records) != 1:
+                raise CoreRunError("control_store_integrity_invalid")
+            record = matching_records[0]
+            matching_events = [
+                item
+                for item in snapshot.events
+                if item.event_id == getattr(record, event_field)
+            ]
+            if len(matching_events) != 1:
+                raise CoreRunError("control_store_integrity_invalid")
+            event = matching_events[0]
+            if (
+                event.run_id != receipt.run_id
+                or event.transaction_id != receipt.transaction_id
+                or event.event_type != event_type
+                or event.intake_binding is not None
+                or event.core_run_binding is not None
+                or event.stage_id is not None
+                or event.artifact_id is not None
+                or event.decision != record_id
+                or event.reason != event_type
+                or record.run_id != receipt.run_id
+                or record.accepted_transaction_id != receipt.transaction_id
+            ):
+                raise CoreRunError("control_store_integrity_invalid")
+        return
     rule = _POST_FINAL_ASSESSMENT_RECEIPT_RULES.get(receipt.transaction_type)
     if rule is None or receipt.run_id != snapshot.run.run_id:
         raise CoreRunError("control_store_integrity_invalid")
@@ -2433,7 +2506,9 @@ class CoreRunDomainVerifier:
         snapshot: ControlStoreSnapshot,
         receipt: TransactionReceipt,
     ) -> None:
-        if receipt.transaction_type in _POST_FINAL_ASSESSMENT_RECEIPT_RULES:
+        if receipt.transaction_type in _POST_FINAL_ASSESSMENT_RECEIPT_RULES or (
+            receipt.transaction_type == "post_final_assessment_series_claim"
+        ):
             self._verify_historical_post_final_assessment_prefix(
                 history,
                 snapshot,

@@ -220,6 +220,8 @@ def test_quality_laj_help_exposes_actionable_human_review_without_unit_c(capsys)
         "assess",
         "status",
         "retry",
+        "assessment-run",
+        "assessment-list",
         "review-open",
         "disposition",
         "draft",
