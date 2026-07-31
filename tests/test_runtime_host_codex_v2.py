@@ -2022,12 +2022,10 @@ cached_package:
     assert len(snapshot.invocations) == before_invocations
 
 
-@pytest.mark.parametrize("corrupt_stage", [False, True])
-def test_source_pack_resume_reuses_staged_set_and_same_invocation(
+def test_corrupt_stage_after_invocation_remains_outcome_unknown_without_provider(
     tmp_path: Path,
     capsys,
     monkeypatch,
-    corrupt_stage: bool,
 ) -> None:
     if sys.platform == "win32":
         pytest.skip("source-candidate publication is precommit unsupported on Windows")
@@ -2088,24 +2086,23 @@ def test_source_pack_resume_reuses_staged_set_and_same_invocation(
     with pytest.raises(RuntimeHostError, match="runtime_action_not_invocable"):
         host.start_current_invocation(expected_action=action)
     assert not (workspace / "scratch" / provider_invocations[0].invocation_id).exists()
-    if corrupt_stage:
-        discovery = interrupted.run_source_discovery_authorizations[0]
-        attempt = interrupted.run_source_acquisition_attempt_authorizations[0]
-        stage_identity = canonical_fingerprint(
-            {
-                "kind": "discovery_source_pack",
-                "run_id": action.run_id,
-                "action_fingerprint": action.action_fingerprint,
-                "discovery_authorization_id": discovery.authorization_id,
-                "attempt_authorization_id": attempt.attempt_authorization_id,
-            }
-        )
-        stage_root = source_stage_root(workspace, stage_identity)
-        stage_root.mkdir(parents=True, exist_ok=True)
-        (stage_root / "stage_attestation.json").write_text(
-            "{}",
-            encoding="utf-8",
-        )
+    discovery = interrupted.run_source_discovery_authorizations[0]
+    attempt = interrupted.run_source_acquisition_attempt_authorizations[0]
+    stage_identity = canonical_fingerprint(
+        {
+            "kind": "discovery_source_pack",
+            "run_id": action.run_id,
+            "action_fingerprint": action.action_fingerprint,
+            "discovery_authorization_id": discovery.authorization_id,
+            "attempt_authorization_id": attempt.attempt_authorization_id,
+        }
+    )
+    stage_root = source_stage_root(workspace, stage_identity)
+    stage_root.mkdir(parents=True, exist_ok=True)
+    (stage_root / "stage_attestation.json").write_text(
+        "{}",
+        encoding="utf-8",
+    )
 
     with pytest.raises(
         RuntimeHostError,
@@ -2169,17 +2166,17 @@ def test_missing_stage_after_invocation_records_one_failure_without_provider(
         should_not_run,
     )
 
-    with pytest.raises(
-        RuntimeHostError,
-        match="source_acquisition_outcome_unknown",
-    ):
-        host.apply_current()
-    with pytest.raises(
-        RuntimeHostError,
-        match="source_acquisition_outcome_unknown",
-    ):
-        host.apply_current()
+    recovery_action = host.next_action()
+    failed = host.apply_current(expected_action=recovery_action)
+    replayed = host.apply_current(expected_action=recovery_action)
 
+    assert failed.status == "rejected_recorded"
+    assert failed.next_action.effect_kind == "source_acquisition_recovery"
+    assert (
+        failed.next_action.reason_code
+        == "source_acquisition_recovery_decision_required"
+    )
+    assert replayed == failed
     assert provider_calls == 0
     with SQLiteControlStore.open(workspace / "briefloop.db") as store:
         snapshot = store.load_snapshot(action.run_id)
@@ -2187,7 +2184,19 @@ def test_missing_stage_after_invocation_records_one_failure_without_provider(
         item for item in snapshot.invocations if item.role_id == "source-provider"
     ]
     assert len(provider_invocations) == 1
-    assert provider_invocations[0].status == "active"
+    assert provider_invocations[0].status == "failed"
+    assert provider_invocations[0].failure_reason == "child_failed"
+    failures = [
+        event.intake_binding.source_acquisition_failure
+        for event in snapshot.events
+        if event.intake_binding is not None
+        and event.intake_binding.source_acquisition_failure is not None
+    ]
+    assert len(failures) == 1
+    assert failures[0].failure_class == "provider_response_unavailable"
+    assert failures[0].provider_response_artifact is None
+    assert snapshot.sources == ()
+    assert snapshot.run_execution_authorizations == ()
 
 
 def test_source_pack_commit_outcome_unknown_replays_identical_request(
