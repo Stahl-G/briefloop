@@ -24,6 +24,22 @@ F_FULLFSYNC = 51
 SUPPORTED_LINUX_FILESYSTEMS = frozenset({"ext4", "xfs", "btrfs"})
 SUPPORTED_DARWIN_FILESYSTEMS = frozenset({"apfs", "hfs"})
 
+_LIBC: ctypes.CDLL | None = None
+
+
+def _libc() -> ctypes.CDLL:
+    """Return the process-wide libc handle.
+
+    ``ctypes.CDLL(None)`` re-resolves the global symbol table on every call.
+    Publication flushes and renames each member individually, so that cost is
+    paid per file rather than once per process.
+    """
+
+    global _LIBC
+    if _LIBC is None:
+        _LIBC = ctypes.CDLL(None, use_errno=True)
+    return _LIBC
+
 
 @dataclass(frozen=True)
 class CapabilityProfile:
@@ -228,8 +244,7 @@ class RetainedParent:
     def _flush_file(self, fd: int) -> None:
         try:
             if sys.platform == "darwin":
-                libc = ctypes.CDLL(None, use_errno=True)
-                if libc.fcntl(fd, F_FULLFSYNC) != 0:
+                if _libc().fcntl(fd, F_FULLFSYNC) != 0:
                     _raise_errno("checkout_publication_io_error")
             else:
                 os.fsync(fd)
@@ -269,7 +284,7 @@ def _raise_errno(code: str) -> None:
 
 
 def _no_clobber_rename(parent_fd: int, old_leaf: str, new_leaf: str) -> None:
-    libc = ctypes.CDLL(None, use_errno=True)
+    libc = _libc()
     old = os.fsencode(old_leaf)
     new = os.fsencode(new_leaf)
     if sys.platform.startswith("linux"):
@@ -331,7 +346,7 @@ def _darwin_filesystem(path: Path) -> str:
             ("f_reserved", ctypes.c_uint32 * 8),
         ]
     value = StatFs()
-    libc = ctypes.CDLL(None, use_errno=True)
+    libc = _libc()
     if libc.statfs(os.fsencode(path), ctypes.byref(value)) != 0:
         _raise_errno("checkout_publication_unsupported")
     fs = value.f_fstypename.split(b"\0", 1)[0].decode("ascii").lower()

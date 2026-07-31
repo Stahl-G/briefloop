@@ -44,7 +44,7 @@ from multi_agent_brief.control_store.serialization import (
 from multi_agent_brief.intake_v2.scratch import parse_json_object
 from multi_agent_brief.contracts.runtime_contracts import (
     ValidatedRuntimeContractPayloads,
-    validate_runtime_contract_payloads,
+    validate_runtime_contract_payloads_by_digest,
 )
 from multi_agent_brief.quality_gates.contract import GATE_IDS
 
@@ -3327,10 +3327,17 @@ class CoreRunDomainVerifier:
                 source_plan_payload,
                 strict=True,
             )
-            contracts = validate_runtime_contract_payloads(
+            # The three digests were just checked against the bytes above, so
+            # they identify this contract content exactly.
+            contracts = validate_runtime_contract_payloads_by_digest(
                 stage_payload,
                 artifact_payload,
                 policy_payload,
+                content_digests=(
+                    binding.stage_specs_sha256,
+                    binding.artifact_contracts_sha256,
+                    binding.policy_pack_sha256,
+                ),
             )
         except CoreRunError:
             raise
