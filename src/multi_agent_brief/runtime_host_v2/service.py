@@ -143,7 +143,6 @@ from .submission import (
     VerifiedSourceStage,
     discard_source_stage,
     load_source_stage,
-    read_verified_staged_bytes,
     stage_human_source_pack,
     stage_source_pack_bytes,
 )
@@ -1991,15 +1990,10 @@ class RuntimeHostService:
         commit_request_id: str,
     ) -> _VerifiedSourcePackSubmission:
         invocation_id = dispatch.envelope.invocation_id
-        manifest_bytes: bytes | None = None
-        if stage.manifest_path is not None:
+        manifest_bytes = stage.manifest_bytes
+        if manifest_bytes is not None:
             if stage.manifest_sha256 is None:
                 raise RuntimeHostError("runtime_source_staging_invalid")
-            manifest_bytes = read_verified_staged_bytes(
-                stage.manifest_path,
-                expected_sha256=stage.manifest_sha256,
-                max_size=4 * 1024 * 1024,
-            )
             self._materialize_tool_input(
                 f"scratch/{invocation_id}/source_manifest.json",
                 manifest_bytes,
@@ -2011,16 +2005,10 @@ class RuntimeHostService:
             proposal_path = f"{root}/source_proposal.json"
             content_path = f"{root}/source_content.bin"
             raw_path = (
-                None if member.raw_payload_path is None else f"{root}/source_raw.json"
+                None if member.raw_payload_bytes is None else f"{root}/source_raw.json"
             )
-            proposal_bytes = read_verified_staged_bytes(
-                member.proposal_path,
-                expected_sha256=member.proposal_sha256,
-            )
-            content_bytes = read_verified_staged_bytes(
-                member.content_path,
-                expected_sha256=member.content_sha256,
-            )
+            proposal_bytes = member.proposal_bytes
+            content_bytes = member.content_bytes
             self._materialize_tool_input(
                 proposal_path,
                 proposal_bytes,
@@ -2029,14 +2017,10 @@ class RuntimeHostService:
                 content_path,
                 content_bytes,
             )
-            raw_bytes: bytes | None = None
-            if member.raw_payload_path is not None and raw_path is not None:
+            raw_bytes = member.raw_payload_bytes
+            if raw_bytes is not None and raw_path is not None:
                 if member.raw_payload_sha256 is None:
                     raise RuntimeHostError("runtime_source_staging_invalid")
-                raw_bytes = read_verified_staged_bytes(
-                    member.raw_payload_path,
-                    expected_sha256=member.raw_payload_sha256,
-                )
                 self._materialize_tool_input(
                     raw_path,
                     raw_bytes,
@@ -2065,7 +2049,7 @@ class RuntimeHostService:
                 "members": members,
                 "manifest_path": (
                     None
-                    if stage.manifest_path is None
+                    if stage.manifest_bytes is None
                     else f"scratch/{invocation_id}/source_manifest.json"
                 ),
                 "expected_manifest_sha256": stage.manifest_sha256,
@@ -2778,16 +2762,12 @@ class RuntimeHostService:
         contents: list[bytes] = []
         raw_payloads: list[bytes] = []
         if (
-            stage.provider_response_path is None
+            stage.provider_response_bytes is None
             or stage.provider_response_sha256 is None
             or stage.provider_status_code != 200
         ):
             raise RuntimeHostError("runtime_source_staging_invalid")
-        provider_response = read_verified_staged_bytes(
-            stage.provider_response_path,
-            expected_sha256=stage.provider_response_sha256,
-            max_size=4 * 1024 * 1024,
-        )
+        provider_response = stage.provider_response_bytes
         result_count, durable_content_count = (
             RuntimeHostService._tavily_response_counts(provider_response)
         )
@@ -2804,31 +2784,18 @@ class RuntimeHostService:
             )
         for member in stage.members:
             proposal = SourceProposal.model_validate_json(
-                read_verified_staged_bytes(
-                    member.proposal_path,
-                    expected_sha256=member.proposal_sha256,
-                ),
+                member.proposal_bytes,
                 strict=True,
             )
             if (
                 proposal.source_id != member.member_id
-                or member.raw_payload_path is None
+                or member.raw_payload_bytes is None
                 or member.raw_payload_sha256 is None
             ):
                 raise RuntimeHostError("runtime_source_staging_invalid")
             proposals.append(proposal)
-            contents.append(
-                read_verified_staged_bytes(
-                    member.content_path,
-                    expected_sha256=member.content_sha256,
-                )
-            )
-            raw_payloads.append(
-                read_verified_staged_bytes(
-                    member.raw_payload_path,
-                    expected_sha256=member.raw_payload_sha256,
-                )
-            )
+            contents.append(member.content_bytes)
+            raw_payloads.append(member.raw_payload_bytes)
         manifest, rebound = RuntimeHostService._discovery_manifest_from_proposals(
             tuple(proposals)
         )

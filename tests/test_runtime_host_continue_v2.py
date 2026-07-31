@@ -10,6 +10,7 @@ from io import BytesIO
 import json
 import os
 from pathlib import Path
+import shutil
 import sqlite3
 import stat
 import sys
@@ -36,7 +37,10 @@ from multi_agent_brief.control_store import (
 )
 from multi_agent_brief.control_store.errors import ControlStoreCommitOutcomeUnknown
 from multi_agent_brief.control_store.sqlite_store import ControlStoreHistory
-from multi_agent_brief.control_store.serialization import canonical_fingerprint
+from multi_agent_brief.control_store.serialization import (
+    canonical_fingerprint,
+    canonical_json_bytes,
+)
 from multi_agent_brief.core_run_v2 import artifacts as artifact_service
 from multi_agent_brief.core_run_v2.errors import CoreRunError, CoreRunResult
 from multi_agent_brief.core_run_v2.integrity import (
@@ -61,7 +65,10 @@ from multi_agent_brief.runtime_host_v2.contracts import (
 from multi_agent_brief.runtime_host_v2 import service as host_service
 from multi_agent_brief.runtime_host_v2 import submission as host_submission
 from multi_agent_brief.runtime_host_v2.service import RuntimeHostService
-from multi_agent_brief.runtime_host_v2.submission import source_stage_root
+from multi_agent_brief.runtime_host_v2.submission import (
+    SourceStageBytesInput,
+    source_stage_root,
+)
 from multi_agent_brief.sources.base import SourceItem
 from multi_agent_brief.sources.search_backends.tavily import TavilyBackend
 from multi_agent_brief.sources.web_search import (
@@ -644,6 +651,137 @@ def _tavily_collection(
             sort_keys=True,
         ).encode("utf-8"),
         status_code=200,
+    )
+
+
+def _active_discovery_stage_for_recovery(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> tuple[Path, CoreRunNextAction, Path, dict[str, int]]:
+    workspace = _discovery_workspace(tmp_path)
+    provider_calls = {"count": 0}
+
+    def collect(_provider, _query, _config):
+        provider_calls["count"] += 1
+        return _tavily_collection([_tavily_item(durable=True)])
+
+    def crash_before_promotion(_instance, _input):
+        raise RuntimeHostError("simulated_post_invocation_crash")
+
+    original_commit = IntakeService._commit_discovery_source_pack_from_core
+    monkeypatch.setattr(WebSearchProvider, "collect_with_response", collect)
+    monkeypatch.setattr(
+        IntakeService,
+        "_commit_discovery_source_pack_from_core",
+        crash_before_promotion,
+    )
+    action = _advance_discovery_to_source_action(workspace)
+    with pytest.raises(RuntimeHostError, match="simulated_post_invocation_crash"):
+        _service(workspace).apply_current(action)
+    monkeypatch.setattr(
+        IntakeService,
+        "_commit_discovery_source_pack_from_core",
+        original_commit,
+    )
+    stage_identity = _discovery_stage_identity(workspace, action)
+    return (
+        workspace,
+        action,
+        source_stage_root(workspace, stage_identity),
+        provider_calls,
+    )
+
+
+def _replace_stage_directory_with_symlink(path: Path) -> Path:
+    saved = path.with_name(f"{path.name}.race-saved")
+    path.rename(saved)
+    path.symlink_to(saved, target_is_directory=True)
+    return saved
+
+
+def _synthetic_provider_stage(
+    tmp_path: Path,
+) -> tuple[Path, str, str, Path]:
+    workspace = tmp_path / "snapshot-workspace"
+    workspace.mkdir()
+    content = b"synthetic durable provider content"
+    raw_payload = canonical_json_bytes({"provider": "tavily", "result": 1})
+    source_id = "SRC-STAGE-SNAPSHOT-001"
+    proposal = SourceProposal.model_validate(
+        {
+            "schema_version": SourceProposal.schema_id,
+            "proposal_id": "PROP-STAGE-SNAPSHOT-001",
+            "run_id": "RUN-STAGE-SNAPSHOT-001",
+            "source_id": source_id,
+            "origin_type": "provider_response",
+            "acquisition_method": "provider_extract",
+            "material_kind": "partial_extract",
+            "provider": "tavily",
+            "locator": {
+                "kind": "web",
+                "url": "https://example.com/stage-snapshot",
+            },
+            "title": "Synthetic stage source",
+            "publisher": "Example publisher",
+            "published_at": "2026-07-30",
+            "retrieved_at": "2026-07-31T00:00:00Z",
+            "source_category": "news_media",
+            "retrieval_source_type": "news_media",
+            "underlying_evidence_type": "media_report",
+            "raw_underlying_evidence_type": "provider-response",
+            "content_sha256": hashlib.sha256(content).hexdigest(),
+            "content_media_type": "text/plain",
+            "raw_payload_sha256": hashlib.sha256(raw_payload).hexdigest(),
+            "raw_payload_media_type": "application/json",
+            "source_manifest_sha256": hashlib.sha256(
+                b"synthetic-stage-manifest"
+            ).hexdigest(),
+            "manifest_local_file": f"input/discovered/{source_id}.txt",
+            "document_kind": None,
+            "opened_at": None,
+            "resolved_at": None,
+        },
+        strict=True,
+    )
+    request_fingerprint = hashlib.sha256(b"synthetic-stage-request").hexdigest()
+    stage_identity = "synthetic-provider-stage"
+    provider_response = canonical_json_bytes(
+        {
+            "results": [
+                {
+                    "title": "Synthetic stage source",
+                    "url": "https://example.com/stage-snapshot",
+                    "content": "search snippet",
+                    "raw_content": content.decode("utf-8"),
+                    "published_date": "2026-07-30",
+                    "score": 0.9,
+                }
+            ]
+        }
+    )
+    host_submission.stage_source_pack_bytes(
+        workspace,
+        stage_identity=stage_identity,
+        request_fingerprint=request_fingerprint,
+        members=(
+            SourceStageBytesInput(
+                member_id=source_id,
+                proposal_bytes=canonical_json_bytes(
+                    proposal.model_dump(mode="json", exclude_unset=False)
+                ),
+                content_bytes=content,
+                raw_payload_bytes=raw_payload,
+            ),
+        ),
+        provider_response_bytes=provider_response,
+        provider_status_code=200,
+        stage_kind="provider_outcome",
+    )
+    return (
+        workspace,
+        stage_identity,
+        request_fingerprint,
+        source_stage_root(workspace, stage_identity),
     )
 
 
@@ -1899,6 +2037,345 @@ def test_discovery_source_acquire_platform_stop_preserves_verified_stage(
     assert snapshot_after == snapshot_before
 
 
+@pytest.mark.parametrize(
+    "race_kind",
+    [
+        "root_after_probe",
+        "root_before_enumeration",
+        "sources_before_open",
+        "member_before_open",
+        "leaf_before_open",
+    ],
+)
+@_REQUIRES_RETAINED_PUBLICATION
+def test_discovery_active_stage_replacement_during_snapshot_is_zero_effect(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    race_kind: str,
+) -> None:
+    workspace, _action, stage_root, provider_calls = (
+        _active_discovery_stage_for_recovery(tmp_path, monkeypatch)
+    )
+    env_path = workspace / ".env"
+    env_before = env_path.read_bytes()
+    env_mtime_before = env_path.stat().st_mtime_ns
+    revision_before = _revision(workspace)
+    database_before = (workspace / "briefloop.db").read_bytes()
+    member_root = next((stage_root / "sources").iterdir())
+    content_path = member_root / "source_content.bin"
+    raced = {"value": False}
+    race_target: Path | None = None
+    replacement_bytes = b"unverified replacement stage bytes"
+
+    if race_kind == "root_after_probe":
+        original_probe = host_submission._stage_root_metadata_if_present
+
+        def replace_after_probe(path: Path):
+            nonlocal race_target
+            metadata = original_probe(path)
+            if path == stage_root and metadata is not None and not raced["value"]:
+                raced["value"] = True
+                _replace_stage_directory_with_symlink(stage_root)
+                race_target = stage_root
+            return metadata
+
+        monkeypatch.setattr(
+            host_submission,
+            "_stage_root_metadata_if_present",
+            replace_after_probe,
+        )
+    elif race_kind in {
+        "root_before_enumeration",
+        "sources_before_open",
+        "member_before_open",
+    }:
+        snapshot_type = (
+            host_submission._DescriptorStageSnapshot
+            if host_submission._supports_retained_stage_descriptors()
+            else host_submission._PathStageSnapshot
+        )
+        if race_kind == "root_before_enumeration":
+            method_name = "root_names"
+            path_to_replace = stage_root
+        elif race_kind == "sources_before_open":
+            method_name = "sources_names"
+            path_to_replace = stage_root / "sources"
+        else:
+            method_name = "member_names"
+            path_to_replace = member_root
+        original_method = getattr(snapshot_type, method_name)
+
+        def replace_before_directory_open(instance, *args):
+            nonlocal race_target
+            if not raced["value"]:
+                raced["value"] = True
+                _replace_stage_directory_with_symlink(path_to_replace)
+                race_target = path_to_replace
+            return original_method(instance, *args)
+
+        monkeypatch.setattr(
+            snapshot_type,
+            method_name,
+            replace_before_directory_open,
+        )
+    elif host_submission._supports_retained_stage_descriptors():
+        original_open = host_submission.os.open
+
+        def replace_leaf_before_descriptor_open(
+            path,
+            flags,
+            mode=0o777,
+            *,
+            dir_fd=None,
+        ):
+            nonlocal race_target
+            if (
+                not raced["value"]
+                and path == "source_content.bin"
+                and dir_fd is not None
+            ):
+                raced["value"] = True
+                content_path.rename(
+                    content_path.with_name(f"{content_path.name}.race-saved")
+                )
+                content_path.write_bytes(replacement_bytes)
+                race_target = content_path
+            if dir_fd is None:
+                return original_open(path, flags, mode)
+            return original_open(path, flags, mode, dir_fd=dir_fd)
+
+        monkeypatch.setattr(
+            host_submission.os, "open", replace_leaf_before_descriptor_open
+        )
+        monkeypatch.setattr(
+            host_submission.os,
+            "supports_dir_fd",
+            {*host_submission.os.supports_dir_fd, replace_leaf_before_descriptor_open},
+        )
+    else:
+        original_read = host_submission._read_regular_bytes
+
+        def replace_leaf_before_fallback_open(path: Path, *, max_size: int):
+            nonlocal race_target
+            if not raced["value"] and path == content_path:
+                raced["value"] = True
+                content_path.rename(
+                    content_path.with_name(f"{content_path.name}.race-saved")
+                )
+                content_path.write_bytes(replacement_bytes)
+                race_target = content_path
+            return original_read(path, max_size=max_size)
+
+        monkeypatch.setattr(
+            host_submission,
+            "_read_regular_bytes",
+            replace_leaf_before_fallback_open,
+        )
+
+    def forbidden_effect(*_args, **_kwargs):
+        pytest.fail("unsafe stage recovery must not inspect credential or provider")
+
+    monkeypatch.setattr(host_service, "capability_profile", forbidden_effect)
+    monkeypatch.setattr(host_service, "known_env_key_is_set", forbidden_effect)
+    monkeypatch.setattr(WebSearchProvider, "collect_with_response", forbidden_effect)
+
+    with pytest.raises(
+        RuntimeHostError,
+        match="source_acquisition_outcome_unknown",
+    ):
+        _service(workspace).apply_current(_service(workspace).next_action())
+
+    assert raced["value"] is True
+    assert race_target is not None
+    if race_kind == "leaf_before_open":
+        assert race_target.read_bytes() == replacement_bytes
+    else:
+        assert race_target.is_symlink()
+    assert provider_calls["count"] == 1
+    assert env_path.read_bytes() == env_before
+    assert env_path.stat().st_mtime_ns == env_mtime_before
+    assert _revision(workspace) == revision_before
+    assert (workspace / "briefloop.db").read_bytes() == database_before
+    with SQLiteControlStore.open(workspace / "briefloop.db") as store:
+        head = store.load_workspace_run_head()
+        assert head is not None
+        snapshot = store.load_snapshot(head.current_run_id)
+    assert snapshot.sources == ()
+    assert snapshot.run_execution_authorizations == ()
+    assert (
+        len(
+            [
+                item
+                for item in snapshot.invocations
+                if item.role_id == "source-provider" and item.status == "active"
+            ]
+        )
+        == 1
+    )
+    assert not [
+        item
+        for item in snapshot.events
+        if item.intake_binding is not None
+        and item.intake_binding.source_acquisition_failure is not None
+    ]
+
+
+@pytest.mark.parametrize(
+    "race_kind",
+    ["root_before_enumeration", "sources_before_open", "member_before_open"],
+)
+def test_source_stage_fallback_rejects_directory_replacement(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    race_kind: str,
+) -> None:
+    workspace, stage_identity, request_fingerprint, stage_root = (
+        _synthetic_provider_stage(tmp_path)
+    )
+    member_root = next((stage_root / "sources").iterdir())
+    if race_kind == "root_before_enumeration":
+        method_name = "root_names"
+        path_to_replace = stage_root
+    elif race_kind == "sources_before_open":
+        method_name = "sources_names"
+        path_to_replace = stage_root / "sources"
+    else:
+        method_name = "member_names"
+        path_to_replace = member_root
+    original_method = getattr(host_submission._PathStageSnapshot, method_name)
+    raced = False
+
+    def replace_before_directory_open(instance, *args):
+        nonlocal raced
+        if not raced:
+            raced = True
+            _replace_stage_directory_with_symlink(path_to_replace)
+        return original_method(instance, *args)
+
+    monkeypatch.setattr(
+        host_submission,
+        "_supports_retained_stage_descriptors",
+        lambda: False,
+    )
+    monkeypatch.setattr(
+        host_submission._PathStageSnapshot,
+        method_name,
+        replace_before_directory_open,
+    )
+
+    with pytest.raises(RuntimeHostError, match="runtime_source_staging_invalid"):
+        host_submission.load_source_stage(
+            workspace,
+            stage_identity=stage_identity,
+            request_fingerprint=request_fingerprint,
+            expected_manifest_sha256=None,
+            expected_stage_kind="provider_outcome",
+        )
+
+    assert raced is True
+    assert path_to_replace.is_symlink()
+
+
+def test_source_stage_fallback_rejects_leaf_replacement_before_open(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    workspace, stage_identity, request_fingerprint, stage_root = (
+        _synthetic_provider_stage(tmp_path)
+    )
+    content_path = next(stage_root.glob("sources/*/source_content.bin"))
+    original_read = host_submission._read_regular_bytes
+    replacement = b"unverified fallback replacement"
+    raced = False
+
+    def replace_before_open(path: Path, *, max_size: int):
+        nonlocal raced
+        if not raced and path == content_path:
+            raced = True
+            path.rename(path.with_name(f"{path.name}.race-saved"))
+            path.write_bytes(replacement)
+        return original_read(path, max_size=max_size)
+
+    monkeypatch.setattr(
+        host_submission,
+        "_supports_retained_stage_descriptors",
+        lambda: False,
+    )
+    monkeypatch.setattr(
+        host_submission,
+        "_read_regular_bytes",
+        replace_before_open,
+    )
+
+    with pytest.raises(RuntimeHostError, match="runtime_source_staging_invalid"):
+        host_submission.load_source_stage(
+            workspace,
+            stage_identity=stage_identity,
+            request_fingerprint=request_fingerprint,
+            expected_manifest_sha256=None,
+            expected_stage_kind="provider_outcome",
+        )
+
+    assert raced is True
+    assert content_path.read_bytes() == replacement
+
+
+@_REQUIRES_RETAINED_PUBLICATION
+def test_discovery_post_snapshot_replacement_commits_only_immutable_bytes(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    workspace = _discovery_workspace(tmp_path)
+    provider_calls = 0
+    durable_content = b"durable provider content"
+
+    def collect(_provider, _query, _config):
+        nonlocal provider_calls
+        provider_calls += 1
+        return _tavily_collection([_tavily_item(durable=True)])
+
+    original_stage = host_service.stage_source_pack_bytes
+    saved_root: Path | None = None
+
+    def replace_after_snapshot(*args, **kwargs):
+        nonlocal saved_root
+        stage = original_stage(*args, **kwargs)
+        if saved_root is None:
+            saved_root = stage.root.with_name(f"{stage.root.name}.verified-a")
+            stage.root.rename(saved_root)
+            shutil.copytree(saved_root, stage.root)
+            next(stage.root.glob("sources/*/source_content.bin")).write_bytes(
+                b"unverified replacement B"
+            )
+        return stage
+
+    monkeypatch.setattr(WebSearchProvider, "collect_with_response", collect)
+    monkeypatch.setattr(host_service, "stage_source_pack_bytes", replace_after_snapshot)
+    action = _advance_discovery_to_source_action(workspace)
+
+    committed = _service(workspace).apply_current(action)
+
+    assert committed.status == "committed"
+    assert provider_calls == 1
+    assert saved_root is not None
+    assert saved_root.is_dir()
+    assert not source_stage_root(
+        workspace,
+        _discovery_stage_identity(workspace, action),
+    ).exists()
+    with SQLiteControlStore.open(workspace / "briefloop.db") as store:
+        head = store.load_workspace_run_head()
+        assert head is not None
+        snapshot = store.load_snapshot(head.current_run_id)
+    assert len(snapshot.sources) == 1
+    assert (
+        snapshot.sources[0].content_sha256
+        == hashlib.sha256(durable_content).hexdigest()
+    )
+    assert len(snapshot.run_execution_authorizations) == 1
+    host_submission._discard_path(saved_root)
+
+
 @_REQUIRES_RETAINED_PUBLICATION
 def test_discovery_active_invocation_reuses_receipt_owned_stage_without_provider(
     tmp_path: Path,
@@ -2602,11 +3079,36 @@ def test_discovery_recovery_accepts_explicit_human_source_pack_without_redial(
         },
         strict=True,
     )
+    original_human_stage = host_service.stage_human_source_pack
+    saved_stage_root: Path | None = None
+
+    def replace_human_stage_after_snapshot(*args, **kwargs):
+        nonlocal saved_stage_root
+        stage = original_human_stage(*args, **kwargs)
+        if saved_stage_root is None:
+            saved_stage_root = stage.root.with_name(f"{stage.root.name}.verified-a")
+            stage.root.rename(saved_stage_root)
+            shutil.copytree(saved_stage_root, stage.root)
+            next(stage.root.glob("sources/*/source_content.bin")).write_bytes(
+                b"unverified human replacement B"
+            )
+        return stage
+
+    monkeypatch.setattr(
+        host_service,
+        "stage_human_source_pack",
+        replace_human_stage_after_snapshot,
+    )
 
     committed = service.apply_current(action, human_request=recovery)
 
     assert committed.status == "committed"
     assert provider_calls == 1
+    assert saved_stage_root is not None
+    assert saved_stage_root.is_dir()
+    assert not saved_stage_root.with_name(
+        saved_stage_root.name.removesuffix(".verified-a")
+    ).exists()
     current_action = service.next_action()
     assert current_action.effect_kind == "stage_complete"
     promoted = service.continue_authorized()
@@ -2618,8 +3120,10 @@ def test_discovery_recovery_accepts_explicit_human_source_pack_without_redial(
         snapshot = store.load_snapshot(head.current_run_id)
     assert len(snapshot.run_source_acquisition_attempt_authorizations) == 1
     assert len(snapshot.sources) == 1
+    assert snapshot.sources[0].content_sha256 == content_sha256
     assert snapshot.run_execution_authorizations == ()
     assert snapshot.sources[0].provider is None
+    host_submission._discard_path(saved_stage_root)
 
 
 @_REQUIRES_RETAINED_PUBLICATION
