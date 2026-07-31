@@ -1279,6 +1279,10 @@ def test_deterministic_source_failure_exhausts_frozen_route_without_retry(
     assert failed["status"] == "rejected_recorded"
     assert failed["next_action"]["action_kind"] == "human_decision"
     assert failed["next_action"]["effect_kind"] == "source_acquisition_recovery"
+    assert (
+        failed["next_action"]["source_acquisition_attempt_authorization_id"]
+        == accepted["next_action"]["source_acquisition_attempt_authorization_id"]
+    )
     assert calls == 1
 
     with SQLiteControlStore.open(workspace / "briefloop.db") as store:

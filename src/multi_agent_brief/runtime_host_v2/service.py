@@ -2,12 +2,16 @@
 
 from __future__ import annotations
 
+from contextlib import contextmanager
 from dataclasses import dataclass, replace
+import errno
 import os
 from pathlib import Path
 from pathlib import PurePosixPath
 import stat
-from typing import Literal
+from threading import Lock
+import time
+from typing import Iterator, Literal
 
 from pydantic import ValidationError
 
@@ -303,6 +307,106 @@ def _strict_proposal_violations(
 class InvocationDispatch:
     envelope: RoleTaskEnvelope
     envelope_path: Path
+
+
+_SOURCE_ACQUISITION_LOCKS_GUARD = Lock()
+_SOURCE_ACQUISITION_LOCKS: dict[str, Lock] = {}
+_SOURCE_ACQUISITION_LOCK_NAME = ".briefloop-source-acquisition.lock"
+
+
+def _source_acquisition_thread_lock(workspace: Path) -> Lock:
+    key = str(workspace)
+    with _SOURCE_ACQUISITION_LOCKS_GUARD:
+        lock = _SOURCE_ACQUISITION_LOCKS.get(key)
+        if lock is None:
+            lock = Lock()
+            _SOURCE_ACQUISITION_LOCKS[key] = lock
+        return lock
+
+
+def _validate_source_acquisition_lock_file(path: Path, fd: int) -> None:
+    try:
+        opened = os.fstat(fd)
+        lexical = path.lstat()
+    except OSError:
+        raise RuntimeHostError("source_acquisition_outcome_unknown") from None
+    if (
+        not stat.S_ISREG(opened.st_mode)
+        or not stat.S_ISREG(lexical.st_mode)
+        or opened.st_nlink != 1
+        or lexical.st_nlink != 1
+        or (opened.st_dev, opened.st_ino) != (lexical.st_dev, lexical.st_ino)
+    ):
+        raise RuntimeHostError("source_acquisition_outcome_unknown")
+
+
+def _lock_source_acquisition_file(fd: int) -> None:
+    os.lseek(fd, 0, os.SEEK_SET)
+    if os.name == "nt":
+        import msvcrt
+
+        while True:
+            try:
+                msvcrt.locking(fd, msvcrt.LK_NBLCK, 1)
+                return
+            except OSError as exc:
+                if exc.errno not in {errno.EACCES, errno.EAGAIN, errno.EDEADLK}:
+                    raise
+                time.sleep(0.05)
+    else:
+        import fcntl
+
+        fcntl.flock(fd, fcntl.LOCK_EX)
+
+
+def _unlock_source_acquisition_file(fd: int) -> None:
+    os.lseek(fd, 0, os.SEEK_SET)
+    if os.name == "nt":
+        import msvcrt
+
+        msvcrt.locking(fd, msvcrt.LK_UNLCK, 1)
+    else:
+        import fcntl
+
+        fcntl.flock(fd, fcntl.LOCK_UN)
+
+
+@contextmanager
+def _exclusive_source_acquisition(workspace: Path) -> Iterator[None]:
+    """Serialize one workspace provider lifecycle without becoming authority."""
+
+    thread_lock = _source_acquisition_thread_lock(workspace)
+    with thread_lock:
+        lock_path = workspace / _SOURCE_ACQUISITION_LOCK_NAME
+        flags = os.O_CREAT | os.O_RDWR
+        if hasattr(os, "O_CLOEXEC"):
+            flags |= os.O_CLOEXEC
+        if hasattr(os, "O_NOFOLLOW"):
+            flags |= os.O_NOFOLLOW
+        try:
+            fd = os.open(lock_path, flags, 0o600)
+        except OSError:
+            raise RuntimeHostError("source_acquisition_outcome_unknown") from None
+        locked = False
+        try:
+            _validate_source_acquisition_lock_file(lock_path, fd)
+            if os.fstat(fd).st_size == 0:
+                os.write(fd, b"\0")
+                os.fsync(fd)
+            try:
+                _lock_source_acquisition_file(fd)
+            except OSError:
+                raise RuntimeHostError("source_acquisition_outcome_unknown") from None
+            locked = True
+            _validate_source_acquisition_lock_file(lock_path, fd)
+            yield
+        finally:
+            if locked:
+                try:
+                    _unlock_source_acquisition_file(fd)
+                except OSError:
+                    pass
+            os.close(fd)
 
 
 @dataclass(frozen=True)
@@ -2281,6 +2385,7 @@ class RuntimeHostService:
         *,
         route,
         replay_only: bool,
+        _acquisition_lock_held: bool = False,
     ) -> RuntimeInvocationResult:
         """Acquire once, then atomically promote the Store-owned discovery run."""
 
@@ -2418,6 +2523,21 @@ class RuntimeHostService:
             if active_recovery:
                 raise RuntimeHostError("source_acquisition_outcome_unknown") from None
             raise RuntimeHostError("source_provider_result_invalid") from None
+        if not _acquisition_lock_held and active_recovery:
+            with _exclusive_source_acquisition(self.workspace):
+                refreshed = initialize_or_open_runtime(
+                    self.workspace,
+                    adapter_loader=self._adapter_loader,
+                )
+                if refreshed.action != action:
+                    raise RuntimeHostError("runtime_action_stale")
+                return self._apply_discovery_source_acquire(
+                    refreshed,
+                    action,
+                    route=route,
+                    replay_only=replay_only,
+                    _acquisition_lock_held=True,
+                )
         if stage is None and active_recovery:
             if recovery_envelope is None:
                 raise RuntimeHostError("control_store_integrity_invalid")
@@ -2450,6 +2570,21 @@ class RuntimeHostService:
                 raise RuntimeHostError("workspace_secret_unsafe") from None
             if not secret_available:
                 raise RuntimeHostError("source_provider_secret_unavailable")
+            if not _acquisition_lock_held:
+                with _exclusive_source_acquisition(self.workspace):
+                    refreshed = initialize_or_open_runtime(
+                        self.workspace,
+                        adapter_loader=self._adapter_loader,
+                    )
+                    if refreshed.action != action:
+                        raise RuntimeHostError("runtime_action_stale")
+                    return self._apply_discovery_source_acquire(
+                        refreshed,
+                        action,
+                        route=route,
+                        replay_only=replay_only,
+                        _acquisition_lock_held=True,
+                    )
             dispatch = self._start_invocation_for_action(
                 current,
                 source_action,

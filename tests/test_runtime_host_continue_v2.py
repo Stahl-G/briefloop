@@ -8,6 +8,7 @@ from datetime import date, timedelta
 import hashlib
 from io import BytesIO
 import json
+import multiprocessing
 import os
 from pathlib import Path
 import shutil
@@ -216,6 +217,65 @@ def _service(workspace: Path) -> RuntimeHostService:
         workspace,
         adapter_loader=workspace_codex_adapter_loader(workspace),
     )
+
+
+def test_source_acquisition_attempt_authority_requires_exact_action_shapes() -> None:
+    def _validated_action(**updates: object) -> CoreRunNextAction:
+        payload = SchemaRegistry.example(CoreRunNextAction.schema_id, "full")
+        payload.update(updates)
+        payload.pop("action_fingerprint", None)
+        payload["action_fingerprint"] = canonical_fingerprint(payload)
+        return CoreRunNextAction.model_validate(payload, strict=True)
+
+    acquisition = {
+        "action_kind": "deterministic",
+        "effect_kind": "source_acquire",
+        "stage_id": "source-discovery",
+        "role_id": None,
+        "source_route_id": "web-search",
+        "source_provider_id": "tavily",
+        "source_acquisition_attempt_authorization_id": (
+            "SOURCE-ACQUIRE-ATTEMPT-AUTH-001"
+        ),
+        "reason_code": "deterministic_source_route_required",
+        "request_schema_id": "briefloop.source_pack_commit_request.v2",
+    }
+    assert _validated_action(**acquisition).action_kind == "deterministic"
+
+    with pytest.raises(
+        ValueError,
+        match="source acquisition lifecycle requires an exact action shape",
+    ):
+        _validated_action(
+            **{
+                **acquisition,
+                "action_kind": "delegate",
+                "role_id": "source-provider",
+            }
+        )
+
+    recovery = {
+        "action_kind": "human_decision",
+        "effect_kind": "source_acquisition_recovery",
+        "stage_id": "source-discovery",
+        "role_id": None,
+        "source_route_id": None,
+        "source_provider_id": None,
+        "source_acquisition_attempt_authorization_id": (
+            "SOURCE-ACQUIRE-ATTEMPT-AUTH-001"
+        ),
+        "reason_code": "source_acquisition_recovery_decision_required",
+        "request_schema_id": (
+            "briefloop.runtime_source_acquisition_recovery_request.v1"
+        ),
+    }
+    assert _validated_action(**recovery).action_kind == "human_decision"
+
+    with pytest.raises(
+        ValueError,
+        match="source acquisition lifecycle requires an exact action shape",
+    ):
+        _validated_action(**{**recovery, "stage_id": "editor"})
 
 
 def _advance_discovery_to_source_action(workspace: Path) -> CoreRunNextAction:
@@ -882,6 +942,7 @@ def test_discovery_missing_runtime_secret_is_zero_write(
     assert calls == 0
     assert _revision(workspace) == revision
     assert (workspace / "briefloop.db").read_bytes() == database_before
+    assert not (workspace / ".briefloop-source-acquisition.lock").exists()
     with SQLiteControlStore.open(workspace / "briefloop.db") as store:
         head = store.load_workspace_run_head()
         assert head is not None
@@ -2931,6 +2992,10 @@ def test_discovery_next_attempt_requires_exact_human_authorization_and_replays(
         snapshot = store.load_snapshot(head.current_run_id)
     assert len(snapshot.run_source_acquisition_attempt_authorizations) == 1
     previous = snapshot.run_source_acquisition_attempt_authorizations[0]
+    assert (
+        action.source_acquisition_attempt_authorization_id
+        == previous.attempt_authorization_id
+    )
     recovery = RuntimeSourceAcquisitionRecoveryRequest.model_validate(
         {
             "schema_version": (RuntimeSourceAcquisitionRecoveryRequest.schema_id),
@@ -2939,7 +3004,9 @@ def test_discovery_next_attempt_requires_exact_human_authorization_and_replays(
             "expected_store_revision": action.store_revision,
             "expected_action_fingerprint": action.action_fingerprint,
             "decision": "authorize_next_tavily_attempt",
-            "previous_attempt_authorization_id": (previous.attempt_authorization_id),
+            "previous_attempt_authorization_id": (
+                action.source_acquisition_attempt_authorization_id
+            ),
             "human_confirmation": True,
             "provider_cost_status": "not_reported_acknowledged",
             "human_source_pack": None,
@@ -2995,6 +3062,74 @@ def test_discovery_next_attempt_requires_exact_human_authorization_and_replays(
         snapshot = store.load_snapshot(head.current_run_id)
     assert len(snapshot.run_execution_authorizations) == 1
     assert len(snapshot.sources) == 1
+
+
+@_REQUIRES_RETAINED_PUBLICATION
+def test_discovery_attempt_is_cross_process_serialized_before_provider_call(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    workspace = _discovery_workspace(tmp_path)
+    _advance_discovery_to_source_action(workspace)
+    action = _service(workspace).next_action()
+    process_context = multiprocessing.get_context("fork")
+    apply_entered = process_context.Barrier(2)
+    provider_entered = process_context.Event()
+    provider_release = process_context.Event()
+    provider_calls = process_context.Value("i", 0)
+    outcomes = process_context.Queue()
+
+    def collect(_provider, _query, _config):
+        with provider_calls.get_lock():
+            provider_calls.value += 1
+        provider_entered.set()
+        assert provider_release.wait(timeout=10)
+        return _tavily_collection([_tavily_item(durable=True)])
+
+    original_apply = RuntimeHostService._apply_discovery_source_acquire
+
+    def synchronized_apply(self, current, current_action, **kwargs):
+        if not kwargs.get("_acquisition_lock_held", False):
+            apply_entered.wait(timeout=10)
+        return original_apply(self, current, current_action, **kwargs)
+
+    monkeypatch.setattr(WebSearchProvider, "collect_with_response", collect)
+    monkeypatch.setattr(
+        RuntimeHostService,
+        "_apply_discovery_source_acquire",
+        synchronized_apply,
+    )
+
+    def run_one() -> None:
+        try:
+            result = _service(workspace).apply_current(action)
+        except RuntimeHostError as exc:
+            outcomes.put(("error", str(exc)))
+        else:
+            outcomes.put(("result", result.status))
+
+    processes = [
+        process_context.Process(target=run_one),
+        process_context.Process(target=run_one),
+    ]
+    for process in processes:
+        process.start()
+    assert provider_entered.wait(timeout=10)
+    assert all(process.is_alive() for process in processes)
+    provider_release.set()
+    for process in processes:
+        process.join(timeout=20)
+        assert process.exitcode == 0
+
+    observed = sorted(outcomes.get(timeout=2) for _ in processes)
+    assert provider_calls.value == 1
+    assert observed == [
+        ("error", "runtime_action_stale"),
+        ("result", "committed"),
+    ]
+    replay = _service(workspace).apply_current(action)
+    assert replay.status == "replayed"
+    assert provider_calls.value == 1
 
 
 @_REQUIRES_RETAINED_PUBLICATION

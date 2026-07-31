@@ -2269,11 +2269,49 @@ class CoreRunNextAction(StrictModel):
             raise ValueError("only source route actions name source routing")
         if self.source_provider_id is not None and self.source_route_id is None:
             raise ValueError("source provider requires a source route")
-        if self.effect_kind == "source_acquire" and self.source_provider_id == "tavily":
+        tavily_acquisition_family = (
+            self.effect_kind == "source_acquire" and self.source_provider_id == "tavily"
+        )
+        recovery_family = self.effect_kind == "source_acquisition_recovery"
+        exact_tavily_acquisition = (
+            tavily_acquisition_family
+            and self.action_kind == "deterministic"
+            and self.stage_id == "source-discovery"
+            and self.role_id is None
+            and self.source_route_id == "web-search"
+            and self.reason_code
+            in {
+                "deterministic_source_route_required",
+                "active_discovery_source_acquire_requires_resume",
+            }
+            and self.request_schema_id == "briefloop.source_pack_commit_request.v2"
+        )
+        exact_recovery = (
+            recovery_family
+            and self.action_kind == "human_decision"
+            and self.stage_id == "source-discovery"
+            and self.role_id is None
+            and self.source_route_id is None
+            and self.source_provider_id is None
+            and self.reason_code == "source_acquisition_recovery_decision_required"
+            and self.request_schema_id
+            == "briefloop.runtime_source_acquisition_recovery_request.v1"
+        )
+        if (tavily_acquisition_family and not exact_tavily_acquisition) or (
+            recovery_family and not exact_recovery
+        ):
+            raise ValueError(
+                "source acquisition lifecycle requires an exact action shape"
+            )
+        if exact_tavily_acquisition or exact_recovery:
             if self.source_acquisition_attempt_authorization_id is None:
-                raise ValueError("source acquisition requires exact attempt authority")
+                raise ValueError(
+                    "source acquisition lifecycle requires exact attempt authority"
+                )
         elif self.source_acquisition_attempt_authorization_id is not None:
-            raise ValueError("only Tavily acquisition names attempt authority")
+            raise ValueError(
+                "only Tavily acquisition lifecycle names attempt authority"
+            )
         expected = _contract_fingerprint(
             self.model_dump(mode="json", exclude_unset=False),
             field="action_fingerprint",

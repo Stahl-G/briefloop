@@ -543,6 +543,9 @@ def _source_discovery_action(verified: VerifiedCoreRun) -> CoreRunNextAction:
                 request_schema_id=(
                     "briefloop.runtime_source_acquisition_recovery_request.v1"
                 ),
+                source_acquisition_attempt_authorization_id=(
+                    latest_attempt.attempt_authorization_id
+                ),
             )
     if not routes:
         return _action(

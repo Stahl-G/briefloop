@@ -540,8 +540,12 @@ def test_tavily_vertical_real_loopback_source_and_wheel_parity(
             adapter_loader=workspace_codex_adapter_loader(workspace),
         )
         recovery_action = host.next_action()
-        previous_attempt = (
-            failed_snapshot.run_source_acquisition_attempt_authorizations[0]
+        require(
+            recovery_action.source_acquisition_attempt_authorization_id
+            == failed_snapshot.run_source_acquisition_attempt_authorizations[
+                0
+            ].attempt_authorization_id,
+            "recovery action predecessor identity mismatch",
         )
         recovery = RuntimeSourceAcquisitionRecoveryRequest.model_validate(
             {
@@ -556,7 +560,7 @@ def test_tavily_vertical_real_loopback_source_and_wheel_parity(
                 ),
                 "decision": "authorize_next_tavily_attempt",
                 "previous_attempt_authorization_id": (
-                    previous_attempt.attempt_authorization_id
+                    recovery_action.source_acquisition_attempt_authorization_id
                 ),
                 "human_confirmation": True,
                 "provider_cost_status": "not_reported_acknowledged",
