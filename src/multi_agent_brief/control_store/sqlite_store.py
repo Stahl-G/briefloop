@@ -562,7 +562,6 @@ class ControlStoreHistory:
     store_revision: int
     snapshots: tuple[ControlStoreSnapshot, ...]
     artifact_contents: Mapping[tuple[str, str, int], bytes]
-
     @property
     def transactions(self) -> tuple[TransactionReceipt, ...]:
         return tuple(
@@ -1018,7 +1017,7 @@ class ControlStoreHistory:
             for item in full.proposal_source_bindings
             if item.proposal_id in proposal_ids
         )
-        return replace(
+        projection = replace(
             full,
             store_revision=committed_revision,
             workspace_run_head=workspace_run_head,
@@ -1088,6 +1087,7 @@ class ControlStoreHistory:
             checkout_publication_cleanup_observations=(),
             transactions=transactions,
         )
+        return projection
 
     def _workspace_head_at_revision(self, committed_revision: int) -> WorkspaceRunHead:
         receipts = self.transactions
@@ -1176,6 +1176,10 @@ class SQLiteControlStore:
         self._failure_hook = failure_hook
         self._lock = threading.RLock()
         self._closed = False
+        # Token of the database state whose ledger graph was last verified in
+        # full. Process-local and never persisted, so a fresh connection always
+        # re-verifies from bytes and crash recovery is unchanged.
+        self._verified_ledger_token: tuple[int, int, int] | None = None
 
     @classmethod
     def create(
@@ -9586,13 +9590,39 @@ class SQLiteControlStore:
             if actual != expected:
                 raise ControlStoreIntegrityError("transaction_relation_mismatch")
 
+    def _ledger_verification_token(self) -> tuple[int, int, int]:
+        """Token that changes whenever this database could have changed.
+
+        ``total_changes`` counts every row this connection wrote. It never
+        decreases, so a rolled-back write still moves the token and forces a
+        re-verification rather than hiding one. ``data_version`` moves when any
+        other connection commits. Together they cover every way the bytes under
+        us can differ from the ones already verified.
+        """
+
+        data_version = self._connection.execute("PRAGMA data_version").fetchone()[0]
+        return (
+            self._workspace_revision_in_transaction(),
+            self._connection.total_changes,
+            int(data_version),
+        )
+
     def _verify_workspace_ledger_graph(self) -> None:
         """Verify one complete workspace transaction graph in this SQL snapshot."""
 
         def invalid() -> None:
             raise ControlStoreIntegrityError("transaction_ledger_integrity_invalid")
 
-        workspace_revision = self._workspace_revision_in_transaction()
+        # Every read re-verified the whole workspace graph: all transactions,
+        # events, revisions, identities, sources and proposals, decoded and
+        # revalidated. That made one read O(run history) and a run that drives
+        # N steps O(N^2). The graph is a pure function of the bytes, so an
+        # unchanged token means the previous verification still holds.
+        token = self._ledger_verification_token()
+        if token == self._verified_ledger_token:
+            return
+
+        workspace_revision = token[0]
         transaction_rows = self._connection.execute(
             """
             SELECT * FROM transactions
@@ -9856,6 +9886,9 @@ class SQLiteControlStore:
         self._verify_run_head_transition_chain()
         self._verify_core_relation_coverage()
         self._verify_pr4b_relation_coverage()
+        # Only reached when every check above passed; each one raises instead of
+        # returning, so a failed verification never records a token.
+        self._verified_ledger_token = token
 
     def _verify_run_head_transition_chain(self) -> None:
         """Verify that reset transitions form one acyclic chain ending at head."""
