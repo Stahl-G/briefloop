@@ -2695,11 +2695,15 @@ def _source_acquisition_spec(
             raise CoreRunError("runtime_source_plan_invalid")
         requests: list[dict[str, object]] = []
         if provider_id == "tavily":
-            if run_direction is None or max_results != 5:
+            if (
+                run_direction is None
+                or run_direction.industry_or_theme is None
+                or max_results != 5
+            ):
                 raise CoreRunError("runtime_source_plan_invalid")
             requests = [
                 _web_request_payload(
-                    query=run_direction.task_objective,
+                    query=run_direction.industry_or_theme,
                     domains=domains,
                     max_results=max_results,
                     recency_days=recency_days,

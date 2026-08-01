@@ -77,11 +77,14 @@ CodeBuddy's official project Skill discovery can find BriefLoop at:
 
    ```powershell
    # user enables online search; strongly recommend Tavily
-   & $BriefLoop new industry-weekly "<workspace>" --search-backend tavily
+   & $BriefLoop new industry-weekly "<workspace>" --industry "<topic>" --search-backend tavily
 
    # user declines online search
    & $BriefLoop new industry-weekly "<workspace>" --web-search-mode disabled
    ```
+
+   Replace `<topic>` with the exact Human-confirmed search topic. That value is
+   the sole Tavily query; the product entry and report objective do not rewrite it.
 
 7. If Tavily was enabled, import the key only after the workspace exists:
 

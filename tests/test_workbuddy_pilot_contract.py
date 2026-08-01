@@ -366,6 +366,11 @@ def test_every_first_workspace_command_persists_the_search_choice() -> None:
         assert any("--search-backend tavily" in command for command in commands), path
         assert any("--web-search-mode disabled" in command for command in commands), path
         assert all(
+            '--industry "<topic>"' in command
+            for command in commands
+            if "--search-backend tavily" in command
+        ), (path, commands)
+        assert all(
             "--search-backend tavily" in command
             or "--web-search-mode disabled" in command
             for command in commands

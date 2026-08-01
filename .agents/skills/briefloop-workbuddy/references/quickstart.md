@@ -73,11 +73,14 @@ secret；已有工作区也要先验证它存在。不要在 `& $BriefLoop new` 
 如果用户开启在线搜索，强烈推荐 Tavily：
 
 ```powershell
-& $BriefLoop new industry-weekly "<workspace>" --search-backend tavily
-& $BriefLoop new management-monthly "<workspace>" --search-backend tavily
-& $BriefLoop new document-review "<workspace>" --search-backend tavily
-& $BriefLoop new solar-periodic "<workspace>" --search-backend tavily
+& $BriefLoop new industry-weekly "<workspace>" --industry "<topic>" --search-backend tavily
+& $BriefLoop new management-monthly "<workspace>" --industry "<topic>" --search-backend tavily
+& $BriefLoop new document-review "<workspace>" --industry "<topic>" --search-backend tavily
+& $BriefLoop new solar-periodic "<workspace>" --industry "<topic>" --search-backend tavily
 ```
+
+把 `<topic>` 替换成 Human 明确确认的检索主题。该值就是唯一 Tavily query；
+product entry 和报告目标不会改写它。
 
 如果用户拒绝在线搜索，显式关闭：
 

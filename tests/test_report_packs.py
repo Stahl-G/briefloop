@@ -6,6 +6,7 @@ import json
 import sys
 from pathlib import Path
 
+import pytest
 import yaml
 
 from multi_agent_brief.cli.main import build_parser, main
@@ -14,6 +15,8 @@ from multi_agent_brief.contracts.schemas.report_spec import ReportSpecContract
 from multi_agent_brief.product.report_pack import validate_report_pack_payload
 from multi_agent_brief.product.report_registry import ReportPackRegistry
 from multi_agent_brief.product.report_spec import validate_report_spec_payload
+from multi_agent_brief.runtime_host_v2.codex import load_codex_adapter_binding
+from multi_agent_brief.runtime_host_v2.initialization import initialize_or_open_runtime
 
 ROOT = Path(__file__).resolve().parent.parent
 EXPECTED_PACK_IDS = {
@@ -263,7 +266,7 @@ def test_new_report_pack_workspace_recommends_tavily_without_requiring_key(tmp_p
     assert "briefloop run --workspace" in output
     assert "Online search is recommended but not active by default." in output
     assert "Tavily is the recommended external API backend." in output
-    assert "--search-backend tavily" in output
+    assert '--industry "<topic>" --search-backend tavily' in output
     assert "--web-search-mode disabled" in output
     assert (workspace / "config.yaml").exists()
     assert (workspace / "sources.yaml").exists()
@@ -294,10 +297,49 @@ def test_new_report_pack_workspace_recommends_tavily_without_requiring_key(tmp_p
     assert "api_key_env" not in sources["web_search"]
 
 
-def test_new_report_pack_workspace_can_opt_into_tavily(tmp_path: Path, capsys) -> None:
-    workspace = tmp_path / "weekly"
+@pytest.mark.parametrize(
+    "report_pack",
+    (
+        "industry-weekly",
+        "management-monthly",
+        "document-review",
+        "solar-periodic",
+    ),
+)
+@pytest.mark.parametrize(
+    "search_args",
+    (
+        ("--search-backend", "tavily"),
+        ("--web-search-mode", "external_api"),
+    ),
+)
+def test_new_report_pack_workspace_rejects_tavily_without_explicit_topic_before_writes(
+    tmp_path: Path,
+    capsys,
+    report_pack: str,
+    search_args: tuple[str, str],
+) -> None:
+    workspace = tmp_path / report_pack
 
-    assert main(["new", "industry-weekly", str(workspace), "--search-backend", "tavily"]) == 0
+    assert main(["new", report_pack, str(workspace), *search_args]) == 1
+
+    output = capsys.readouterr().out
+    assert "Tavily search requires an explicit --industry <topic>" in output
+    assert not workspace.exists()
+
+
+def test_new_report_pack_workspace_can_opt_into_tavily_with_exact_topic(
+    tmp_path: Path,
+    capsys,
+) -> None:
+    workspace = tmp_path / "weekly"
+    topic = "grid-scale energy storage"
+
+    assert main([
+        "new", "industry-weekly", str(workspace),
+        "--industry", topic,
+        "--search-backend", "tavily",
+    ]) == 0
 
     output = capsys.readouterr().out
     assert "Online search is enabled via tavily." in output
@@ -308,6 +350,38 @@ def test_new_report_pack_workspace_can_opt_into_tavily(tmp_path: Path, capsys) -
     assert sources["web_search"]["mode"] == "external_api"
     assert sources["web_search"]["backend"] == "tavily"
     assert sources["web_search"]["api_key_env"] == "TAVILY_API_KEY"
+
+    initialized = initialize_or_open_runtime(
+        workspace,
+        adapter_loader=load_codex_adapter_binding,
+    )
+    route = next(
+        item for item in initialized.verified.source_plan.routes
+        if item.route_id == "web-search"
+    )
+    assert route.acquisition_spec is not None
+    assert [request.query for request in route.acquisition_spec.requests] == [topic]
+    assert all(
+        "Your Organization" not in request.query
+        for request in route.acquisition_spec.requests
+    )
+
+
+def test_new_report_pack_workspace_non_tavily_external_backend_does_not_require_topic(
+    tmp_path: Path,
+    capsys,
+) -> None:
+    workspace = tmp_path / "weekly"
+
+    assert main([
+        "new", "industry-weekly", str(workspace),
+        "--search-backend", "exa",
+    ]) == 0
+
+    capsys.readouterr()
+    sources = yaml.safe_load((workspace / "sources.yaml").read_text(encoding="utf-8"))
+    assert sources["web_search"]["mode"] == "external_api"
+    assert sources["web_search"]["backend"] == "exa"
 
 
 def test_new_report_pack_workspace_can_disable_web_search(tmp_path: Path, capsys) -> None:

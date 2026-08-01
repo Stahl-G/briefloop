@@ -84,7 +84,7 @@ or any issue/PR comment that reports the result.
    - For a new public-safe weekly smoke with online search enabled, use:
 
      ```powershell
-     & $BriefLoop new industry-weekly "<workspace>" --search-backend tavily
+     & $BriefLoop new industry-weekly "<workspace>" --industry "<topic>" --search-backend tavily
      ```
 
    - If the user declines online search, use:
@@ -93,6 +93,8 @@ or any issue/PR comment that reports the result.
      & $BriefLoop new industry-weekly "<workspace>" --web-search-mode disabled
      ```
 
+   - Replace `<topic>` with the exact Human-confirmed Tavily search topic. It is
+     the sole provider query; the pack name and report objective do not rewrite it.
    - If Tavily is enabled, import the key only after the workspace exists:
 
      ```powershell

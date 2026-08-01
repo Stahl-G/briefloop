@@ -97,8 +97,9 @@ def register_new_workspace(subparsers: argparse._SubParsersAction) -> None:
     parser.add_argument(
         "--industry",
         help=(
-            "Industry or theme hint for deterministic PolicyProfile resolution. "
-            "Low-confidence or ambiguous matches use the ReportPack default."
+            "Human-authored industry or topic. It is also the exact Tavily query "
+            "when the resolved search backend is tavily, and is therefore required "
+            "for Tavily. Low-confidence PolicyProfile matches use the ReportPack default."
         ),
     )
     parser.add_argument(
@@ -883,7 +884,8 @@ def _print_payload(label: str, payload: dict[str, Any], *, as_json: bool) -> Non
                 print("  Online search is recommended but not active by default.")
                 print("  Tavily is the recommended external API backend.")
                 print(
-                    "  To enable it, recreate with --search-backend tavily and set TAVILY_API_KEY."
+                    '  To enable it, recreate with --industry "<topic>"'
+                    " --search-backend tavily and set TAVILY_API_KEY."
                 )
                 print("  To stay offline, recreate with --web-search-mode disabled.")
             elif web_search_mode == "disabled":
@@ -1064,6 +1066,23 @@ def _create_report_pack_workspace(
 ) -> dict[str, Any]:
     from multi_agent_brief.cli.init_wizard import InitProfile, create_workspace
 
+    requested_backend = str(getattr(args, "search_backend", None) or "").strip()
+    requested_mode = str(getattr(args, "web_search_mode", None) or "").strip()
+    resolved_backend = (
+        requested_backend
+        if requested_backend
+        else "tavily"
+        if requested_mode == "external_api"
+        else ""
+    )
+    industry_hint = getattr(args, "industry", None)
+    industry_topic = industry_hint.strip() if isinstance(industry_hint, str) else ""
+    if resolved_backend == "tavily" and not industry_topic:
+        raise ValueError(
+            "Tavily search requires an explicit --industry <topic>; "
+            "that Human-authored topic is the exact Tavily query."
+        )
+
     policy_registry = PolicyProfileRegistry.from_package()
     spec = deepcopy(dict(pack.default_report_spec))
     policy_resolution = _resolve_report_pack_policy_profile(
@@ -1079,12 +1098,7 @@ def _create_report_pack_workspace(
     )
     language = args.language or str(audience.get("language") or "en-US")
     reader_label = args.audience or str(audience.get("label") or "business reader")
-    industry_hint = getattr(args, "industry", None)
-    industry_text = (
-        industry_hint
-        if isinstance(industry_hint, str) and industry_hint.strip()
-        else pack.display_name
-    )
+    industry_text = industry_topic or pack.display_name
     spec["title"] = title
     spec["audience"] = dict(audience)
     spec["audience"]["label"] = reader_label

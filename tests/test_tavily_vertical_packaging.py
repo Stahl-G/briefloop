@@ -64,6 +64,8 @@ def test_tavily_vertical_real_loopback_source_and_wheel_parity(
         import json
         import os
         from pathlib import Path
+        import shutil
+        import subprocess
         from threading import Thread
         import time
         from types import SimpleNamespace
@@ -83,12 +85,16 @@ def test_tavily_vertical_real_loopback_source_and_wheel_parity(
             supports_retained_directory_publication,
         )
         from multi_agent_brief.runtime_host_v2.codex import (
+            load_codex_adapter_binding,
             workspace_codex_adapter_loader,
         )
         from multi_agent_brief.runtime_host_v2.contracts import (
             RuntimeSourceAcquisitionRecoveryRequest,
         )
         from multi_agent_brief.runtime_host_v2.service import RuntimeHostService
+        from multi_agent_brief.runtime_host_v2.initialization import (
+            initialize_or_open_runtime,
+        )
         from multi_agent_brief.sources.search_backends import tavily as tavily_module
         from multi_agent_brief.sources.web_search import WebSearchProvider
 
@@ -105,10 +111,84 @@ def test_tavily_vertical_real_loopback_source_and_wheel_parity(
             "package root mismatch",
         )
         require(sys.flags.optimize == int(sys.argv[3]), "optimize mismatch")
+        app_js_path = Path(init_web_package.__file__).parent / "static" / "app.js"
+        app_js = app_js_path.read_text(encoding="utf-8")
+        require(
+            'industry_or_theme: c.source === "public_web"' in app_js,
+            "installed app does not bind the explicit search topic",
+        )
+        require(
+            "Human-entered search topic" in app_js,
+            "installed app search-topic disclosure missing",
+        )
+        require(
+            "company / organization + one space" not in app_js,
+            "installed app still prefixes the Tavily query",
+        )
         root.mkdir()
+
+        missing_new_workspace = root / "new-tavily-missing-topic"
+        stream = io.StringIO()
+        with redirect_stdout(stream):
+            missing_new_rc = main([
+                "new", "industry-weekly", str(missing_new_workspace),
+                "--search-backend", "tavily",
+            ])
+        require(missing_new_rc == 1, "new accepted Tavily without a topic")
+        require(
+            "Tavily search requires an explicit --industry <topic>"
+            in stream.getvalue(),
+            "new missing-topic error mismatch",
+        )
+        require(
+            not missing_new_workspace.exists(),
+            "new missing-topic path wrote a workspace",
+        )
+
+        exact_new_workspace = root / "new-tavily-exact-topic"
+        exact_new_topic = "grid-scale energy storage"
+        stream = io.StringIO()
+        with redirect_stdout(stream):
+            exact_new_rc = main([
+                "new", "industry-weekly", str(exact_new_workspace),
+                "--industry", exact_new_topic,
+                "--search-backend", "tavily",
+            ])
+        require(exact_new_rc == 0, "new rejected explicit Tavily topic")
+        exact_new_runtime = initialize_or_open_runtime(
+            exact_new_workspace,
+            adapter_loader=load_codex_adapter_binding,
+        )
+        exact_new_route = next(
+            item
+            for item in exact_new_runtime.verified.source_plan.routes
+            if item.route_id == "web-search"
+        )
+        require(
+            exact_new_route.acquisition_spec is not None,
+            "new Tavily acquisition spec missing",
+        )
+        require(
+            [request.query for request in exact_new_route.acquisition_spec.requests]
+            == [exact_new_topic],
+            "new Tavily topic was not frozen exactly",
+        )
+        require(
+            all(
+                "Your Organization" not in request.query
+                for request in exact_new_route.acquisition_spec.requests
+            ),
+            "new Tavily query included the organization placeholder",
+        )
+
         sentinel = "tvly-wheel-loopback-sentinel"
         request_id = "REQ-WHEEL-TAVILY-VERTICAL-001"
         target_name = "tavily-vertical-workspace"
+        task_objective = (
+            "Produce a detailed evidence review covering policy milestones, "
+            "deployment constraints, capital costs, and management implications "
+            "across the full confirmed reporting window."
+        )
         provider_requests = []
         provider_authorizations = []
         empty_response_bytes = b'{"results":[]}'
@@ -170,39 +250,78 @@ def test_tavily_vertical_real_loopback_source_and_wheel_parity(
             finally:
                 connection.close()
 
+        def app_function(name, next_name):
+            start = app_js.index(f"    function {name}(")
+            end = app_js.index(f"\n    function {next_name}(", start)
+            return app_js[start:end].strip()
+
         def public_body(session_id):
-            return {
-                "schema_version": "briefloop.init_web.submission.v1",
-                "request_id": request_id,
-                "payload": {
-                    "workspace_target": target_name,
-                    "selections": {
-                        "company": "Wheel ExampleCo",
-                        "industry_or_theme": "manufacturing",
-                        "task_objective": (
-                            "Prepare the weekly manufacturing brief."
-                        ),
-                        "brief_title": "Wheel discovery brief",
-                        "audience": "management",
-                        "interface_language": "en",
-                        "output_language": "en",
-                        "cadence": "weekly",
-                        "max_source_age_days": 30,
-                        "focus_areas": ["operations"],
-                        "output_formats": ["markdown"],
-                        "forbidden_sources": [],
-                        "source_profile": "llm_decide",
-                        "web_search_mode": "external_api",
-                        "search_backend": "tavily",
-                        "search_domains": ["openai.com"],
-                        "output_extent": "balanced",
-                    },
-                    "completion_target": "finalized_local",
-                    "repair_budget": 1,
-                    "search_secret_session_id": session_id,
-                    "human_confirmation": True,
+            node = shutil.which("node")
+            require(node is not None, "Node.js is required for Init Web parity")
+            functions = "\n".join(
+                (
+                    app_function("enLabel", "el"),
+                    app_function("confirmedSelections", "reviewRows"),
+                    app_function(
+                        "splitSearchDomains", "currentOutputContractPreviewKey"
+                    ),
+                    app_function("missingRequired", "pendingProposals"),
+                    app_function("buildSubmission", "generatedMetadata"),
+                )
+            )
+            state = {
+                "requestId": request_id,
+                "workspaceTarget": target_name,
+                "freeText": "",
+                "interpretation": {"mapped": [], "unresolved": []},
+                "dispositions": {},
+                "selections": {
+                    "company": "Wheel ExampleCo",
+                    "search_topic": "grid-scale energy storage",
+                    "report_type": "industry_weekly",
+                    "audience": "management",
+                    "audience_custom": "",
+                    "purpose": task_objective,
+                    "brief_title": "Wheel discovery brief",
+                    "cadence": "weekly",
+                    "window": "30d",
+                    "language": "en",
+                    "source": "public_web",
+                    "search_domains": "openai.com",
+                    "formats": ["markdown"],
+                    "presentation": "research_note",
+                    "density": "balanced",
+                    "tables": "key_only",
+                    "citations": "inline",
+                    "accent": "forest",
                 },
             }
+            javascript = f'''
+            const LANG = "en";
+            const MESSAGES = {{en: {{}}, zh: {{}}}};
+            const SESSION = {{sessionId: {json.dumps(session_id)}}};
+            const STATE = {json.dumps(state)};
+            const CATALOG = {{
+              report_types: [{{id: "industry_weekly", en: ["Industry weekly", ""]}}],
+              audiences: [{{id: "management", en: ["Management", ""]}}]
+            }};
+            function t(key) {{ return key; }}
+            {functions}
+            process.stdout.write(JSON.stringify({{missing: missingRequired(), submission: buildSubmission()}}));
+            '''
+            completed = subprocess.run(
+                [node, "-e", javascript],
+                check=False,
+                capture_output=True,
+                text=True,
+            )
+            require(
+                completed.returncode == 0,
+                f"Init Web JavaScript failed: {completed.stderr}",
+            )
+            evaluated = json.loads(completed.stdout)
+            require(evaluated["missing"] == [], "actual Init Web payload incomplete")
+            return evaluated["submission"]
 
         provider_server = ThreadingHTTPServer(
             ("127.0.0.1", 0), TavilyHandler
@@ -447,8 +566,16 @@ def test_tavily_vertical_real_loopback_source_and_wheel_parity(
         first_provider_request = provider_requests[0]
         require(
             first_provider_request["query"]
-            == "Prepare the weekly manufacturing brief.",
+            == "grid-scale energy storage",
             "query mismatch",
+        )
+        require(
+            "Wheel ExampleCo" not in first_provider_request["query"],
+            "company leaked into query",
+        )
+        require(
+            task_objective not in first_provider_request["query"],
+            "task objective leaked into query",
         )
         require(
             first_provider_request["max_results"] == 5,

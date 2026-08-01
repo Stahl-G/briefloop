@@ -124,7 +124,7 @@ After confirmation, choose a product entry:
 If the user enables online search, strongly recommend Tavily and use:
 
 ```powershell
-& $BriefLoop new industry-weekly "<workspace>" --search-backend tavily
+& $BriefLoop new industry-weekly "<workspace>" --industry "<topic>" --search-backend tavily
 ```
 
 If the user declines online search, use:
@@ -132,6 +132,9 @@ If the user declines online search, use:
 ```powershell
 & $BriefLoop new industry-weekly "<workspace>" --web-search-mode disabled
 ```
+
+Replace `<topic>` with the exact Human-confirmed Tavily search topic. It is the
+sole provider query; the product entry and report objective do not rewrite it.
 
 If the user enabled Tavily, persist its key after the workspace exists without
 printing the key. If the user disabled online search, skip this import:

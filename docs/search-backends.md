@@ -64,6 +64,13 @@ All backends implement `SearchBackend` (from `sources/search_backends/base.py`):
 | Weaknesses | published_at may be missing, snippets need filtering |
 | Status | **Supported** |
 
+For the current Tavily path, `industry_or_theme` is the explicit Human-authored
+search topic. BriefLoop freezes that value unchanged as the sole runtime source
+query. The company or organization name, selected report type, full task
+objective, agent-written source candidates, and configured `search_tasks` do
+not prefix, suffix, or replace it. Changing the confirmed search topic requires
+a new run.
+
 ### 2. Exa
 
 | Field | Value |
@@ -156,11 +163,14 @@ web_search:
   api_key_env: TAVILY_API_KEY
   max_results: 5
   recency_days: 7
-  search_tasks:
-    - query: "automotive regulation tariffs safety recalls"
-      domains:
-        - reuters.com
+  news_source_domains:
+    preferred_domains:
+      - reuters.com
 ```
+
+The Tavily query for this path is the exact frozen Human-confirmed
+`industry_or_theme` topic described above; `search_tasks` is not an executable
+query override.
 
 ### Example: Exa
 

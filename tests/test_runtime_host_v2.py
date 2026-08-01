@@ -40,6 +40,13 @@ from multi_agent_brief.intake_v2.policy import evaluate_source_eligibility
 from multi_agent_brief.workspace.init_profile import InitProfile
 
 
+_LONG_EXTERNAL_TASK_OBJECTIVE = (
+    "Produce a detailed evidence review covering policy milestones, deployment "
+    "constraints, capital costs, and management implications across the full "
+    "confirmed reporting window."
+)
+
+
 def _workspace(tmp_path: Path) -> Path:
     workspace = tmp_path / "workspace"
     ids = iter(("workspace", "run"))
@@ -139,7 +146,11 @@ def test_host_owned_materialization_is_exactly_replayable(tmp_path: Path) -> Non
     assert first.read_bytes() == b"host-payload"
 
 
-def _external_web_workspace(tmp_path: Path) -> Path:
+def _external_web_workspace(
+    tmp_path: Path,
+    *,
+    max_source_age_days: int = 14,
+) -> Path:
     workspace = tmp_path / "external-workspace"
     ids = iter(("external-workspace", "external-run"))
     create_workspace(
@@ -148,7 +159,7 @@ def _external_web_workspace(tmp_path: Path) -> Path:
             company="ExampleCo",
             industry="manufacturing",
             brief_title="ExampleCo weekly brief",
-            task_objective="Prepare the weekly manufacturing brief.",
+            task_objective=_LONG_EXTERNAL_TASK_OBJECTIVE,
             audience="management",
             audience_profile="management",
             focus_areas=["operations", "policy"],
@@ -156,6 +167,7 @@ def _external_web_workspace(tmp_path: Path) -> Path:
             web_search_mode="external_api",
             web_search_enabled=True,
             search_backend="tavily",
+            max_source_age_days=max_source_age_days,
         ),
         report_date_factory=lambda: date(2026, 7, 19),
         identity_factory=lambda: next(ids),
@@ -232,9 +244,11 @@ def test_external_source_plan_freezes_executable_non_secret_requests(
     spec = route.acquisition_spec
     assert spec is not None and spec.kind == "web_search"
     assert spec.provider_id == "tavily"
-    assert [item.query for item in spec.requests] == [
-        "Prepare the weekly manufacturing brief."
-    ]
+    assert [item.query for item in spec.requests] == ["manufacturing"]
+    assert all("ExampleCo" not in item.query for item in spec.requests)
+    assert all(
+        _LONG_EXTERNAL_TASK_OBJECTIVE not in item.query for item in spec.requests
+    )
     assert all(item.max_results == 5 for item in spec.requests)
     assert "TAVILY_API_KEY" not in str(spec.model_dump(mode="json"))
     fingerprint = first.verified.source_plan.source_plan_fingerprint
@@ -248,6 +262,65 @@ def test_external_source_plan_freezes_executable_non_secret_requests(
     )
     assert reopened.verified.source_plan.source_plan_fingerprint == fingerprint
     assert reopened_route.acquisition_spec == spec
+
+
+@pytest.mark.parametrize(
+    ("max_source_age_days", "expected_time_range"),
+    [(7, "week"), (30, None)],
+)
+def test_tavily_query_projection_preserves_transport_window_semantics(
+    tmp_path: Path,
+    max_source_age_days: int,
+    expected_time_range: str | None,
+) -> None:
+    workspace = _external_web_workspace(
+        tmp_path,
+        max_source_age_days=max_source_age_days,
+    )
+    initialized = initialize_or_open_runtime(workspace, adapter_loader=_adapter)
+    route = next(
+        item
+        for item in initialized.verified.source_plan.routes
+        if item.route_id == "web-search"
+    )
+    assert route.acquisition_spec is not None
+    request = route.acquisition_spec.requests[0]
+    assert request.query == "manufacturing"
+    assert "ExampleCo" not in request.query
+    assert _LONG_EXTERNAL_TASK_OBJECTIVE not in request.query
+
+    captured_configs: list[dict[str, object]] = []
+    provider = WebSearchProvider()
+
+    def _collect_with_response(
+        _query: object,
+        config: dict[str, object],
+    ) -> WebSearchCollection:
+        captured_configs.append(config)
+        return WebSearchCollection(
+            items=(),
+            raw_response=b'{"results":[]}',
+            status_code=200,
+        )
+
+    provider.collect_with_response = _collect_with_response  # type: ignore[method-assign]
+    assert (
+        collect_frozen_sources(
+            workspace,
+            run_id=initialized.verified.snapshot.run.run_id,
+            invocation_id=f"INV-WINDOW-{max_source_age_days}",
+            route=route,
+            provider_factory=lambda _kind: provider,
+        )
+        == ()
+    )
+    assert len(captured_configs) == 1
+    config = captured_configs[0]
+    assert config["recency_days"] == max_source_age_days
+    assert config["time_range"] == expected_time_range
+    assert config["search_tasks"] == [
+        {"query": "manufacturing", "domains": []}
+    ]
 
 
 def test_tavily_route_maps_only_verified_raw_content_to_eligible_extract(

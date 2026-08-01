@@ -4,9 +4,12 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+import pytest
 import yaml
 
 from multi_agent_brief.cli.main import main
+from multi_agent_brief.runtime_host_v2.codex import workspace_codex_adapter_loader
+from multi_agent_brief.runtime_host_v2.initialization import initialize_or_open_runtime
 
 
 def test_init_from_onboarding_creates_workspace(tmp_path: Path, capsys):
@@ -91,6 +94,51 @@ def test_init_from_onboarding_preserves_declined_online_search(tmp_path: Path):
 
     doctor_rc = main(["doctor", "--config", str(ws / "config.yaml")])
     assert doctor_rc == 0
+
+
+@pytest.mark.parametrize(
+    "search_selection",
+    (
+        {"search_backend_plain": "tavily"},
+        {"tavily_enabled": True},
+    ),
+)
+def test_init_from_onboarding_tavily_freezes_exact_human_topic(
+    tmp_path: Path,
+    search_selection: dict[str, object],
+) -> None:
+    topic = "grid-scale energy storage"
+    onboarding = {
+        "target": "tavily-weekly",
+        "company_or_org": "ExampleCo",
+        "industry_or_theme": topic,
+        "task_objective": "Track public grid storage developments for management.",
+        "audience_plain": "management team",
+        "source_style_plain": "research",
+        "output_style_plain": "executive brief",
+        "language_plain": "English",
+        "cadence_plain": "weekly",
+        **search_selection,
+    }
+    ob_path = tmp_path / "onboarding.json"
+    ob_path.write_text(json.dumps(onboarding), encoding="utf-8")
+    workspace = tmp_path / "tavily-weekly"
+
+    assert main(["init", str(workspace), "--from-onboarding", str(ob_path)]) == 0
+    initialized = initialize_or_open_runtime(
+        workspace,
+        adapter_loader=workspace_codex_adapter_loader(workspace),
+    )
+    route = next(
+        item for item in initialized.verified.source_plan.routes
+        if item.route_id == "web-search"
+    )
+    assert route.acquisition_spec is not None
+    assert [request.query for request in route.acquisition_spec.requests] == [topic]
+    assert all(
+        "ExampleCo" not in request.query
+        for request in route.acquisition_spec.requests
+    )
 
 
 def test_init_from_onboarding_cli_workspace_overrides_target(tmp_path: Path):

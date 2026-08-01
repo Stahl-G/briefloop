@@ -112,10 +112,10 @@ Before operating a workspace:
 
    ```powershell
    # user enables online search; strongly recommend Tavily
-   & $BriefLoop new industry-weekly "<workspace>" --search-backend tavily
-   & $BriefLoop new management-monthly "<workspace>" --search-backend tavily
-   & $BriefLoop new document-review "<workspace>" --search-backend tavily
-   & $BriefLoop new solar-periodic "<workspace>" --search-backend tavily
+   & $BriefLoop new industry-weekly "<workspace>" --industry "<topic>" --search-backend tavily
+   & $BriefLoop new management-monthly "<workspace>" --industry "<topic>" --search-backend tavily
+   & $BriefLoop new document-review "<workspace>" --industry "<topic>" --search-backend tavily
+   & $BriefLoop new solar-periodic "<workspace>" --industry "<topic>" --search-backend tavily
 
    # user declines online search
    & $BriefLoop new industry-weekly "<workspace>" --web-search-mode disabled
@@ -125,6 +125,9 @@ Before operating a workspace:
    ```
 
 `solar-periodic` is an experimental product entry. Say that before using it.
+For Tavily, replace `<topic>` with the exact Human-confirmed search topic. That
+value is the sole provider query; the pack name and report objective do not
+rewrite it.
 
 ## Search Default
 
