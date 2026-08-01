@@ -180,10 +180,14 @@ def test_candidate_classification_pins_supported_matrix() -> None:
         shards_by_os.setdefault(str(entry["os"]), []).append(entry)
     assert set(shards_by_os) == {"ubuntu-latest", "windows-latest", "macos-latest"}
 
-    for name, expected_shards, expected_select in (
-        ("ubuntu-latest", 4, ""),
-        ("windows-latest", 2, ""),
-        ("macos-latest", 1, "macos_publication"),
+    # Windows is pinned to its own duration profile. It skips the publication
+    # surface at run time rather than at collection, so those tests still take
+    # a shard slot there and return instantly: weighting Windows with POSIX
+    # durations measured a 2.9x imbalance against 1.0x with its own.
+    for name, expected_shards, expected_select, expected_durations in (
+        ("ubuntu-latest", 4, "", ".test_durations"),
+        ("windows-latest", 2, "", ".test_durations.windows"),
+        ("macos-latest", 1, "macos_publication", ".test_durations"),
     ):
         legs = shards_by_os[name]
         assert len(legs) == expected_shards
@@ -192,6 +196,8 @@ def test_candidate_classification_pins_supported_matrix() -> None:
             range(1, expected_shards + 1)
         )
         assert {leg["select"] for leg in legs} == {expected_select}
+        assert {leg["durations"] for leg in legs} == {expected_durations}
+        assert (ROOT / expected_durations).is_file()
 
     assert workflow["jobs"]["test"]["strategy"]["matrix"] == (
         "${{ fromJSON(needs.changes.outputs.test_matrix) }}"
@@ -222,6 +228,7 @@ def test_matrix_pytest_harness_excludes_explicit_e2e_and_is_diagnostic() -> None
     # distribution is extreme and the slowest tests sit adjacent in one file.
     assert "--splits ${{ matrix.shards }}" in command
     assert "--group ${{ matrix.shard }}" in command
+    assert "--durations-path ${{ matrix.durations }}" in command
     assert "--max-worker-restart=0" in command
     assert "-o faulthandler_timeout=240" in command
     assert "--timeout=" not in command
@@ -229,8 +236,9 @@ def test_matrix_pytest_harness_excludes_explicit_e2e_and_is_diagnostic() -> None
     pyproject = PYPROJECT_PATH.read_text(encoding="utf-8")
     assert '  "pytest-timeout>=2.4,<3",' in pyproject
     assert '  "pytest-split>=0.10,<1",' in pyproject
-    # Shards are only balanced while this file tracks the suite.
+    # Shards are only balanced while these files track the suite.
     assert (ROOT / ".test_durations").is_file()
+    assert (ROOT / ".test_durations.windows").is_file()
     assert (
         '"explicit_e2e: heavyweight end-to-end evidence run only when '
         'explicitly authorized; excluded from normal PR CI",'

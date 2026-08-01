@@ -105,6 +105,12 @@ jobs:
           # the darwin durability primitives (F_FULLFSYNC, no_clobber_rename)
           # through the macos_publication selection. Windows is unchanged; it
           # already skips the publication surface as precommit unsupported.
+          #
+          # Windows needs its own duration profile. Skips happen at run time,
+          # not at collection, so the publication tests are still assigned to
+          # a shard there and then return instantly. Weighting Windows with
+          # POSIX durations puts most of its real work in one shard: measured
+          # 2.9x imbalance, against 1.0x with a Windows profile.
           test_matrix = {
               "include": [
                   {
@@ -113,6 +119,7 @@ jobs:
                       "shard": index,
                       "shards": 4,
                       "select": "",
+                      "durations": ".test_durations",
                   }
                   for index in (1, 2, 3, 4)
               ]
@@ -123,6 +130,7 @@ jobs:
                       "shard": index,
                       "shards": 2,
                       "select": "",
+                      "durations": ".test_durations.windows",
                   }
                   for index in (1, 2)
               ]
@@ -133,6 +141,7 @@ jobs:
                       "shard": 1,
                       "shards": 1,
                       "select": "macos_publication",
+                      "durations": ".test_durations",
                   }
               ]
           }
@@ -271,6 +280,7 @@ jobs:
           -m "${{ matrix.select && format('{0} and ', matrix.select) || '' }}not explicit_e2e"
           --splits ${{ matrix.shards }}
           --group ${{ matrix.shard }}
+          --durations-path ${{ matrix.durations }}
           --max-worker-restart=0
           -o faulthandler_timeout=240
 
@@ -796,14 +806,25 @@ jobs:
         run: python scripts/ci/smoke_pipeline.py /tmp/golden-onboarding/config.yaml /tmp/golden-onboarding/input /tmp/golden-onboarding/output
 
   refresh-test-durations:
-    name: Refresh test durations
+    name: Refresh test durations (${{ matrix.os }})
     # Dispatch-only. Deliberately outside the merge gate: it produces an
     # artifact for a human to commit, it does not gate anything.
+    #
+    # One leg per duration profile. Windows must measure its own, because it
+    # skips the publication surface at run time rather than at collection.
     if: >-
       github.event_name == 'workflow_dispatch' &&
       inputs.refresh_test_durations
-    runs-on: ubuntu-latest
+    runs-on: ${{ matrix.os }}
     timeout-minutes: 90
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            durations: .test_durations
+          - os: windows-latest
+            durations: .test_durations.windows
     steps:
       - uses: actions/checkout@v4
         with:
@@ -827,12 +848,12 @@ jobs:
           -m "not explicit_e2e"
           --max-worker-restart=0
           --store-durations
-          --durations-path=.test_durations
+          --durations-path=${{ matrix.durations }}
 
       - uses: actions/upload-artifact@v4
         with:
-          name: test-durations
-          path: .test_durations
+          name: test-durations-${{ matrix.os }}
+          path: ${{ matrix.durations }}
 
   merge-gate:
     name: >-
