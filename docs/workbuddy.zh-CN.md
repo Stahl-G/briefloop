@@ -114,11 +114,16 @@ adapter。
 | 管理月报、月报、management monthly | `management-monthly` |
 | 文件审阅、PDF 审阅、document review、file review | `document-review` |
 
-如果用户打开在线搜索，强烈推荐 Tavily，并使用：
+如果用户打开在线搜索，强烈推荐 Tavily。通过 onboarding 确认精确检索主题和
+7 或 30 天 source window：
 
 ```powershell
-& $BriefLoop new industry-weekly "<workspace>" --industry "<topic>" --search-backend tavily
+& $BriefLoop onboard --output "<onboarding-json>"
+& $BriefLoop init "<workspace>" --from-onboarding "<onboarding-json>"
 ```
+
+可使用浏览器时，`& $BriefLoop init "<workspace>" --web` 是等价支持路径。不要
+使用会被拒绝的 `& $BriefLoop new ... --search-backend tavily` 快捷方式。
 
 如果用户拒绝在线搜索，使用：
 
@@ -126,8 +131,9 @@ adapter。
 & $BriefLoop new industry-weekly "<workspace>" --web-search-mode disabled
 ```
 
-把 `<topic>` 替换成 Human 明确确认的 Tavily 检索主题。该值就是唯一 provider
-query；product entry 和报告目标不会改写它。
+Tavily 路径必须绑定 Human 明确确认的精确主题和 `source_age_days=7` 或 `30`。
+90 天、custom 或缺失窗口必须在 secret/provider effect 前拒绝。本地优先
+Report Pack 入口不能授权或改写 Tavily query。
 
 只有用户已启用 Tavily 时，才在工作区存在后持久导入 key，且不显示密钥。
 如果用户已禁用在线搜索，跳过此导入：

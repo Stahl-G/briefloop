@@ -73,18 +73,23 @@ CodeBuddy's official project Skill discovery can find BriefLoop at:
    - first-time run: explain that a BriefLoop workspace is the local folder for
      this report project, suggest a safe path, and ask for confirmation before
      creating it.
-6. When creating a workspace, make the search choice explicit:
+6. When creating a workspace, make the search choice explicit. Tavily requires
+   Human-confirmed direction, topic, and a 7- or 30-day window:
 
    ```powershell
-   # user enables online search; strongly recommend Tavily
-   & $BriefLoop new industry-weekly "<workspace>" --industry "<topic>" --search-backend tavily
+   # user enables online search; confirm Tavily, topic, and 7/30 days in onboarding
+   & $BriefLoop onboard --output "<onboarding-json>"
+   & $BriefLoop init "<workspace>" --from-onboarding "<onboarding-json>"
 
    # user declines online search
    & $BriefLoop new industry-weekly "<workspace>" --web-search-mode disabled
    ```
 
-   Replace `<topic>` with the exact Human-confirmed search topic. That value is
-   the sole Tavily query; the product entry and report objective do not rewrite it.
+   When a browser is available, `& $BriefLoop init "<workspace>" --web` is the
+   equivalent supported path. Do not use the rejected
+   `& $BriefLoop new ... --search-backend tavily` shortcut. The Tavily route must
+   bind the exact topic and `source_age_days=7` or `30`; reject 90-day, custom,
+   or missing windows before secret/provider effects.
 
 7. If Tavily was enabled, import the key only after the workspace exists:
 

@@ -8,6 +8,14 @@ from pathlib import Path
 from multi_agent_brief.orchestrator_contract import RUNTIME_CLI_CHOICE_PLACEHOLDER
 
 
+TAVILY_CONFIRMED_INIT_GUIDANCE = (
+    "Tavily setup requires Human-confirmed direction and an explicit 7- or "
+    "30-day source window. Use `briefloop init <workspace> --web`, or run "
+    "`briefloop onboard` and then `briefloop init <workspace> "
+    "--from-onboarding onboarding.json`."
+)
+
+
 def register(subparsers: argparse._SubParsersAction) -> None:
     """Register the init subparser."""
     init_parser = subparsers.add_parser(
@@ -99,7 +107,10 @@ def register(subparsers: argparse._SubParsersAction) -> None:
     init_parser.add_argument(
         "--tavily",
         action="store_true",
-        help="Legacy alias: enable Tavily live web search backend.",
+        help=(
+            "Retired direct Tavily shortcut; use --web or conversational onboarding "
+            "to confirm direction and source window."
+        ),
     )
     init_parser.add_argument(
         "--web-search-mode",
@@ -109,7 +120,10 @@ def register(subparsers: argparse._SubParsersAction) -> None:
     init_parser.add_argument(
         "--search-backend",
         choices=["tavily", "exa", "brave", "firecrawl", "serper"],
-        help="Search backend for --web-search-mode external_api.",
+        help=(
+            "Search backend for --web-search-mode external_api. Direct Tavily setup "
+            "is rejected; use --web or conversational onboarding."
+        ),
     )
     init_parser.add_argument(
         "--initial-news-backfill",
@@ -342,9 +356,6 @@ def _apply_cli_overrides(profile, args: argparse.Namespace) -> None:
         if args.web_search_mode == "disabled":
             profile.tavily_enabled = False
             profile.search_backend = ""
-        elif args.web_search_mode == "external_api" and not profile.search_backend:
-            profile.tavily_enabled = True
-            profile.search_backend = "tavily"
         elif args.web_search_mode in {"runtime_tool", "configure_later"}:
             profile.tavily_enabled = False
             profile.search_backend = ""
@@ -414,6 +425,18 @@ def _existing_store_init_error(target: Path) -> str | None:
 
 def _init_workspace(args: argparse.Namespace) -> int:
     """Create a brief workspace from onboarding or CLI args."""
+    if (
+        not getattr(args, "web", False)
+        and not getattr(args, "from_onboarding", None)
+        and (
+            getattr(args, "tavily", False)
+            or getattr(args, "search_backend", None) == "tavily"
+            or getattr(args, "web_search_mode", None) == "external_api"
+        )
+    ):
+        print(f"[error] {TAVILY_CONFIRMED_INIT_GUIDANCE}")
+        return 1
+
     from multi_agent_brief.cli.init_wizard import (
         InitOnboardingRequired,
         _is_interactive,
@@ -501,6 +524,12 @@ def _init_workspace(args: argparse.Namespace) -> int:
 
         # Apply any explicit CLI overrides on top of onboarding values
         _apply_cli_overrides(profile, args)
+        if getattr(profile, "search_backend", "") == "tavily" or getattr(
+            profile, "tavily_enabled", False
+        ):
+            if onboarding.source_age_days not in {7, 30}:
+                print(f"[error] {TAVILY_CONFIRMED_INIT_GUIDANCE}")
+                return 1
         # CLI target overrides onboarding.target
         cli_target = args.target
         default_target = "brief-workspace"

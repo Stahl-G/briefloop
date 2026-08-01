@@ -628,9 +628,7 @@ def test_cli_init_can_configure_initial_news_backfill(tmp_path):
                 "--source-profile",
                 "llm_decide",
                 "--web-search-mode",
-                "external_api",
-                "--search-backend",
-                "tavily",
+                "runtime_tool",
                 "--initial-news-backfill",
                 "--preferred-news-domains",
                 "reuters.com, bloomberg.com",
@@ -642,6 +640,8 @@ def test_cli_init_can_configure_initial_news_backfill(tmp_path):
 
     assert rc == 0
     sources = yaml.safe_load((workspace / "sources.yaml").read_text(encoding="utf-8"))
+    assert sources["web_search"]["mode"] == "runtime_tool"
+    assert "backend" not in sources["web_search"]
     backfill = sources["web_search"]["initial_news_backfill"]
     assert backfill["enabled"] is True
     assert backfill["days"] == 7
@@ -676,9 +676,7 @@ def test_cli_init_rejects_initial_news_backfill_without_llm_decide(tmp_path, cap
             industry="manufacturing",
             extra=[
                 "--web-search-mode",
-                "external_api",
-                "--search-backend",
-                "tavily",
+                "runtime_tool",
                 "--initial-news-backfill",
             ],
         )

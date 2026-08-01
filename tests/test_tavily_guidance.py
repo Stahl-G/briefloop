@@ -1,4 +1,5 @@
 """Tests for Tavily API key guidance across init, doctor, and run."""
+
 from __future__ import annotations
 
 import json
@@ -26,9 +27,7 @@ def _write_workspace_marker(workspace: Path) -> None:
 def _with_task_objective_if_supported(args: list[str]) -> list[str]:
     parser = build_parser()
     subcommands = next(
-        action.choices
-        for action in parser._actions
-        if getattr(action, "choices", None)
+        action.choices for action in parser._actions if getattr(action, "choices", None)
     )
     init_options = {
         option
@@ -66,17 +65,19 @@ class TestSecretsImport:
         source.write_text(f"TAVILY_API_KEY={secret}\n", encoding="utf-8")
         before = _snapshot_tree_bytes(workspace)
 
-        exit_code = main([
-            "secrets",
-            "import",
-            "--workspace",
-            str(workspace),
-            "--from",
-            str(source),
-            "--keys",
-            "TAVILY_API_KEY",
-            *json_flag,
-        ])
+        exit_code = main(
+            [
+                "secrets",
+                "import",
+                "--workspace",
+                str(workspace),
+                "--from",
+                str(source),
+                "--keys",
+                "TAVILY_API_KEY",
+                *json_flag,
+            ]
+        )
         captured = capsys.readouterr()
 
         # remove with the retired public `secrets import` command surface.
@@ -93,8 +94,7 @@ class TestSecretsImport:
         tavily_secret = "tvly-super-secret-123"
         exa_secret = "sk-exa-super-secret-456"
         source.write_text(
-            f"TAVILY_API_KEY={tavily_secret}\n"
-            f"EXA_API_KEY='{exa_secret}'\n",
+            f"TAVILY_API_KEY={tavily_secret}\nEXA_API_KEY='{exa_secret}'\n",
             encoding="utf-8",
         )
 
@@ -157,7 +157,9 @@ class TestSecretsImport:
             encoding="utf-8",
         )
 
-        with pytest.raises(SecretImportError, match="unsupported secret key") as excinfo:
+        with pytest.raises(
+            SecretImportError, match="unsupported secret key"
+        ) as excinfo:
             import_workspace_secrets(
                 workspace=workspace,
                 source=source,
@@ -169,7 +171,9 @@ class TestSecretsImport:
         assert "tvly-" not in message
         assert not (workspace / ".env").exists()
 
-    def test_secrets_import_rejects_nonexistent_workspace_without_creating_it(self, tmp_path):
+    def test_secrets_import_rejects_nonexistent_workspace_without_creating_it(
+        self, tmp_path
+    ):
         source = tmp_path / "private.env"
         workspace = tmp_path / "typo-workspace"
         secret = "tvly-super-secret-123"
@@ -194,7 +198,9 @@ class TestSecretsImport:
         secret = "tvly-super-secret-123"
         source.write_text(f"TAVILY_API_KEY={secret}\n", encoding="utf-8")
 
-        with pytest.raises(SecretImportError, match="not a BriefLoop workspace") as excinfo:
+        with pytest.raises(
+            SecretImportError, match="not a BriefLoop workspace"
+        ) as excinfo:
             import_workspace_secrets(
                 workspace=workspace,
                 source=source,
@@ -227,7 +233,9 @@ class TestSecretsImport:
         for path in surfaces:
             text = path.read_text(encoding="utf-8")
             for phrase in forbidden:
-                assert phrase not in text, f"{path} suggests unsafe secret handling: {phrase}"
+                assert phrase not in text, (
+                    f"{path} suggests unsafe secret handling: {phrase}"
+                )
 
 
 class TestInitTavilyGuidance:
@@ -237,18 +245,34 @@ class TestInitTavilyGuidance:
         """Init without flags recommends web search without requiring an API key."""
         monkeypatch.delenv("TAVILY_API_KEY", raising=False)
         ws = tmp_path / "ws"
-        # Use CLI args to skip interactive prompts (no --tavily flag)
-        assert main(_with_task_objective_if_supported([
-            "init", str(ws),
-            "--language", "zh-CN",
-            "--company", "Test Company",
-            "--industry", "manufacturing",
-            "--title", "Weekly Brief",
-            "--audience", "management",
-            "--cadence", "weekly",
-            "--source-profile", "research",
-        ])) == 0
+        # Use CLI args to skip interactive prompts without selecting a backend.
+        assert (
+            main(
+                _with_task_objective_if_supported(
+                    [
+                        "init",
+                        str(ws),
+                        "--language",
+                        "zh-CN",
+                        "--company",
+                        "Test Company",
+                        "--industry",
+                        "manufacturing",
+                        "--title",
+                        "Weekly Brief",
+                        "--audience",
+                        "management",
+                        "--cadence",
+                        "weekly",
+                        "--source-profile",
+                        "research",
+                    ]
+                )
+            )
+            == 0
+        )
         import yaml
+
         config = yaml.safe_load((ws / "sources.yaml").read_text(encoding="utf-8"))
         web_search = config["web_search"]
         assert web_search["enabled"] is True
@@ -256,45 +280,78 @@ class TestInitTavilyGuidance:
         assert "backend" not in web_search
         assert "api_key_env" not in web_search
 
-    def test_init_explicit_tavily_generates_external_api_config(self, tmp_path, monkeypatch):
-        """Explicit Tavily selection should generate external API web_search."""
+    def test_direct_init_tavily_requires_confirmed_onboarding_before_writes(
+        self, tmp_path, monkeypatch, capsys
+    ):
+        """Direct Tavily setup cannot bypass Human-confirmed direction/window."""
         monkeypatch.delenv("TAVILY_API_KEY", raising=False)
         ws = tmp_path / "ws"
-        assert main(_with_task_objective_if_supported([
-            "init", str(ws),
-            "--language", "zh-CN",
-            "--company", "Test Company",
-            "--industry", "manufacturing",
-            "--title", "Weekly Brief",
-            "--audience", "management",
-            "--cadence", "weekly",
-            "--source-profile", "research",
-            "--search-backend", "tavily",
-        ])) == 0
-        import yaml
-        config = yaml.safe_load((ws / "sources.yaml").read_text(encoding="utf-8"))
-        web_search = config["web_search"]
-        assert web_search["enabled"] is True
-        assert web_search["mode"] == "external_api"
-        assert web_search["backend"] == "tavily"
-        assert web_search["api_key_env"] == "TAVILY_API_KEY"
+        assert (
+            main(
+                _with_task_objective_if_supported(
+                    [
+                        "init",
+                        str(ws),
+                        "--language",
+                        "zh-CN",
+                        "--company",
+                        "Test Company",
+                        "--industry",
+                        "manufacturing",
+                        "--title",
+                        "Weekly Brief",
+                        "--audience",
+                        "management",
+                        "--cadence",
+                        "weekly",
+                        "--source-profile",
+                        "research",
+                        "--search-backend",
+                        "tavily",
+                    ]
+                )
+            )
+            == 1
+        )
+        output = capsys.readouterr().out
+        assert "briefloop init <workspace> --web" in output
+        assert "briefloop onboard" in output
+        assert "7- or 30-day source window" in output
+        assert not ws.exists()
 
     def test_init_can_explicitly_disable_web_search(self, tmp_path, monkeypatch):
         """Explicit disabled mode must override the recommended search setup."""
         monkeypatch.delenv("TAVILY_API_KEY", raising=False)
         ws = tmp_path / "ws"
-        assert main(_with_task_objective_if_supported([
-            "init", str(ws),
-            "--language", "zh-CN",
-            "--company", "Test Company",
-            "--industry", "manufacturing",
-            "--title", "Weekly Brief",
-            "--audience", "management",
-            "--cadence", "weekly",
-            "--source-profile", "research",
-            "--web-search-mode", "disabled",
-        ])) == 0
+        assert (
+            main(
+                _with_task_objective_if_supported(
+                    [
+                        "init",
+                        str(ws),
+                        "--language",
+                        "zh-CN",
+                        "--company",
+                        "Test Company",
+                        "--industry",
+                        "manufacturing",
+                        "--title",
+                        "Weekly Brief",
+                        "--audience",
+                        "management",
+                        "--cadence",
+                        "weekly",
+                        "--source-profile",
+                        "research",
+                        "--web-search-mode",
+                        "disabled",
+                    ]
+                )
+            )
+            == 0
+        )
         import yaml
+
         config = yaml.safe_load((ws / "sources.yaml").read_text(encoding="utf-8"))
         web_search = config["web_search"]
         assert web_search["enabled"] is False
@@ -404,7 +461,9 @@ class TestDoctorTavilyGuidance:
 
         results = run_doctor(config_path=config_path)
         tavily_results = [r for r in results if "tavily" in r.message.lower()]
-        assert any(r.status == "OK" and "detected" in r.message.lower() for r in tavily_results)
+        assert any(
+            r.status == "OK" and "detected" in r.message.lower() for r in tavily_results
+        )
 
     def test_doctor_tavily_error_without_key(self, tmp_path, monkeypatch):
         """Doctor should ERROR with setup instructions when key is missing."""
@@ -446,7 +505,9 @@ class TestDoctorTavilyGuidance:
         assert "super-secret" not in report
         assert "tvly-" not in report
 
-    def test_doctor_reads_workspace_env_without_printing_value(self, tmp_path, monkeypatch):
+    def test_doctor_reads_workspace_env_without_printing_value(
+        self, tmp_path, monkeypatch
+    ):
         """Doctor should treat workspace .env as a safe fallback for known keys."""
         from multi_agent_brief.sources.doctor import run_doctor, format_doctor_report
 
@@ -469,7 +530,9 @@ class TestDoctorTavilyGuidance:
         report = format_doctor_report(results)
 
         assert any(
-            r.status == "OK" and "TAVILY_API_KEY" in r.message and "detected" in r.message.lower()
+            r.status == "OK"
+            and "TAVILY_API_KEY" in r.message
+            and "detected" in r.message.lower()
             for r in results
         )
         assert "workspace-secret" not in report
@@ -480,7 +543,9 @@ class TestRunTavilyGuidance:
     """Retired operator-runtime run surface rejects with a typed token."""
 
     @pytest.mark.parametrize("backend", ["tavily", "exa"])
-    def test_run_operator_runtime_is_retired(self, tmp_path, monkeypatch, capsys, backend):
+    def test_run_operator_runtime_is_retired(
+        self, tmp_path, monkeypatch, capsys, backend
+    ):
         """The operator runtime is rejected regardless of search backend or key state."""
         import yaml
 
@@ -491,37 +556,52 @@ class TestRunTavilyGuidance:
             monkeypatch.setenv("TAVILY_API_KEY", "tvly-present-but-wrong-backend")
 
         ws = tmp_path / "ws"
-        init_extra = ["--tavily"] if backend == "tavily" else []
-        assert main(_with_task_objective_if_supported([
-            "init",
-            str(ws),
-            "--language",
-            "zh-CN",
-            "--company",
-            "Test Company",
-            "--industry",
-            "manufacturing",
-            "--title",
-            "Weekly Brief",
-            "--audience",
-            "management",
-            "--cadence",
-            "weekly",
-            "--source-profile",
-            "research",
-            *init_extra,
-        ])) == 0
+        assert (
+            main(
+                _with_task_objective_if_supported(
+                    [
+                        "init",
+                        str(ws),
+                        "--language",
+                        "zh-CN",
+                        "--company",
+                        "Test Company",
+                        "--industry",
+                        "manufacturing",
+                        "--title",
+                        "Weekly Brief",
+                        "--audience",
+                        "management",
+                        "--cadence",
+                        "weekly",
+                        "--source-profile",
+                        "research",
+                    ]
+                )
+            )
+            == 0
+        )
 
-        if backend == "exa":
-            sources_path = ws / "sources.yaml"
-            sources = yaml.safe_load(sources_path.read_text(encoding="utf-8"))
-            sources["source_strategy"]["enabled_providers"] = ["manual", "web_search"]
-            sources["web_search"] = {"enabled": True, "mode": "external_api", "backend": "exa"}
-            sources_path.write_text(yaml.safe_dump(sources, sort_keys=False), encoding="utf-8")
+        # This test exercises only the retired run surface. Build its backend
+        # state directly so it does not accidentally endorse a retired public
+        # Tavily shortcut.
+        sources_path = ws / "sources.yaml"
+        sources = yaml.safe_load(sources_path.read_text(encoding="utf-8"))
+        sources["source_strategy"]["enabled_providers"] = ["manual", "web_search"]
+        sources["web_search"] = {
+            "enabled": True,
+            "mode": "external_api",
+            "backend": backend,
+        }
+        sources_path.write_text(
+            yaml.safe_dump(sources, sort_keys=False), encoding="utf-8"
+        )
 
         before = _snapshot_tree_bytes(ws)
         capsys.readouterr()  # drain init output so only the run rejection is captured
-        exit_code = main(["run", "--runtime", "operator", "--config", str(ws / "config.yaml")])
+        exit_code = main(
+            ["run", "--runtime", "operator", "--config", str(ws / "config.yaml")]
+        )
         captured = capsys.readouterr()
 
         # remove with the retired operator runtime handoff surface.

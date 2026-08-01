@@ -61,31 +61,31 @@ If the user asks "跑周报" and has no workspace:
    - management monthly, 管理月报, or 月报 -> `management-monthly`
    - file review, PDF review, document review, 文件, PDF, or 审阅 ->
      `document-review`
-5. Run `& $BriefLoop new ...` only after the user confirms the target path.
+5. After the user confirms the target path, use onboarding or Init Web for
+   online search; run `& $BriefLoop new ...` only for a local-first Report Pack.
 
-Use one product entry and persist the user's recorded search choice. There is
-no executable undecided `new` route after the user answers the search question:
+Use one workspace entry and persist the user's recorded search choice:
 
 ```powershell
-# user enables online search; strongly recommend Tavily
-& $BriefLoop new industry-weekly "<workspace>" --industry "<topic>" --search-backend tavily
-& $BriefLoop new management-monthly "<workspace>" --industry "<topic>" --search-backend tavily
-& $BriefLoop new document-review "<workspace>" --industry "<topic>" --search-backend tavily
-& $BriefLoop new solar-periodic "<workspace>" --industry "<topic>" --search-backend tavily
+# user enables online search; confirm Tavily, topic, and 7/30 days in onboarding
+& $BriefLoop onboard --output "<onboarding-json>"
+& $BriefLoop init "<workspace>" --from-onboarding "<onboarding-json>"
 
-# user declines online search
+# user declines online search; use a local-first Report Pack
 & $BriefLoop new industry-weekly "<workspace>" --web-search-mode disabled
 & $BriefLoop new management-monthly "<workspace>" --web-search-mode disabled
 & $BriefLoop new document-review "<workspace>" --web-search-mode disabled
 & $BriefLoop new solar-periodic "<workspace>" --web-search-mode disabled
 ```
 
-`industry-weekly`, `management-monthly`, and `document-review` are the baseline
-supported product entries. `solar-periodic` is experimental.
+When a browser is available, `& $BriefLoop init "<workspace>" --web` is the
+equivalent Human-confirmed path. Select Tavily, the exact topic, and 7 or 30
+days. Reject 90-day, custom, or missing windows before secret/provider effects.
+Do not use the rejected `& $BriefLoop new ... --search-backend tavily` shortcut.
 
-For Tavily, replace `<topic>` with the exact Human-confirmed search topic. That
-value is the sole provider query; the pack name and report objective do not
-rewrite it.
+`industry-weekly`, `management-monthly`, and `document-review` are baseline
+local-first product entries. `solar-periodic` is experimental. These entries do
+not authorize or rewrite a Tavily query.
 
 If the user enabled Tavily, import the key only after workspace creation:
 

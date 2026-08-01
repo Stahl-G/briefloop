@@ -570,8 +570,7 @@ def build_profile_from_args(
                 profile.tavily_enabled = False
                 profile.search_backend = ""
             elif args.web_search_mode == "external_api" and not profile.search_backend:
-                profile.tavily_enabled = True
-                profile.search_backend = "tavily"
+                profile.tavily_enabled = False
             elif args.web_search_mode in {"runtime_tool", "configure_later"}:
                 profile.tavily_enabled = False
                 profile.search_backend = ""
@@ -733,6 +732,22 @@ def prompt_for_profile(
             profile.web_search_mode = "external_api"
             profile.search_backend = selected_backend
             profile.tavily_enabled = selected_backend == "tavily"
+            if selected_backend == "tavily" and profile.max_source_age_days not in {
+                7,
+                30,
+            }:
+                source_age_choice = ask_choice(
+                    input_func,
+                    (
+                        "Tavily source window / Tavily 来源时间窗:\n"
+                        "1. 7 days / 7 天\n"
+                        "2. 30 days / 30 天\n"
+                        "Default [1]: "
+                    ),
+                    {"1": "7", "2": "30"},
+                    "1",
+                )
+                profile.max_source_age_days = int(source_age_choice)
         else:
             # Unknown backend, treat as configure_later
             profile.web_search_enabled = True

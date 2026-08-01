@@ -92,25 +92,29 @@ BriefLoop 工作区的查看、修复、状态、质量摘要或交付准备时�
    - 首次运行：主动提出创建一个。
 6. 向用户解释：BriefLoop 工作区就是这份报告项目的本地文件夹。创建之前，
    请用户对目标路径做出明确确认。
-7. 创建工作区时使用产品入口，并把用户的搜索选择写明：
+7. 创建工作区时把用户的搜索选择写明。Tavily 必须绑定 Human-confirmed
+   direction、检索主题和 7/30 天窗口，不能通过已经退役并会被拒绝的
+   `& $BriefLoop new ... --search-backend tavily` 配置：
 
    ```powershell
-   # 用户开启在线搜索；强烈推荐 Tavily
-   & $BriefLoop new industry-weekly "<workspace>" --industry "<topic>" --search-backend tavily
-   & $BriefLoop new management-monthly "<workspace>" --industry "<topic>" --search-backend tavily
-   & $BriefLoop new document-review "<workspace>" --industry "<topic>" --search-backend tavily
-   & $BriefLoop new solar-periodic "<workspace>" --industry "<topic>" --search-backend tavily
+   # 用户开启在线搜索；在 onboarding 中确认 Tavily、精确主题和 7 或 30 天窗口
+   & $BriefLoop onboard --output "<onboarding-json>"
+   & $BriefLoop init "<workspace>" --from-onboarding "<onboarding-json>"
 
-   # 用户拒绝在线搜索
+   # 可使用浏览器时，也可以走同一套 Human-confirmed Init Web 控制面
+   & $BriefLoop init "<workspace>" --web
+
+   # 用户拒绝在线搜索；本地优先 Report Pack 仍使用 new
    & $BriefLoop new industry-weekly "<workspace>" --web-search-mode disabled
    & $BriefLoop new management-monthly "<workspace>" --web-search-mode disabled
    & $BriefLoop new document-review "<workspace>" --web-search-mode disabled
    & $BriefLoop new solar-periodic "<workspace>" --web-search-mode disabled
    ```
 
-`solar-periodic` 是实验性产品入口，使用前要先说明。
-使用 Tavily 时，把 `<topic>` 替换成 Human 明确确认的检索主题。该值就是唯一
-provider query；product entry 和报告目标不会改写它。
+在线路径必须在创建前确认唯一检索主题和 `source_age_days=7` 或 `30`；90 天、
+custom 或未确认窗口要在读取 secret 或调用 provider 之前停止。不要把本地优先
+Report Pack 的 `new` 命令伪装成 Tavily acquisition。`solar-periodic` 是实验性
+产品入口，使用前要先说明。
 
 ## 搜索默认值
 

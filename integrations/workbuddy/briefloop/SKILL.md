@@ -106,28 +106,31 @@ Before operating a workspace:
 6. Explain that a BriefLoop workspace is the local folder for this report
    project. Before creating it, ask for explicit confirmation of the target
    path.
-7. If creating a workspace, persist the user's search choice in the product
-   entry. Do not create an undecided workspace after the user has enabled or
-   declined search:
+7. If creating a workspace, persist the user's search choice. Tavily requires
+   Human-confirmed direction, an exact topic, and a 7- or 30-day window; do not
+   configure it through the rejected `& $BriefLoop new ... --search-backend
+   tavily` shortcut:
 
    ```powershell
-   # user enables online search; strongly recommend Tavily
-   & $BriefLoop new industry-weekly "<workspace>" --industry "<topic>" --search-backend tavily
-   & $BriefLoop new management-monthly "<workspace>" --industry "<topic>" --search-backend tavily
-   & $BriefLoop new document-review "<workspace>" --industry "<topic>" --search-backend tavily
-   & $BriefLoop new solar-periodic "<workspace>" --industry "<topic>" --search-backend tavily
+   # user enables online search; confirm Tavily, topic, and 7/30 days in onboarding
+   & $BriefLoop onboard --output "<onboarding-json>"
+   & $BriefLoop init "<workspace>" --from-onboarding "<onboarding-json>"
 
-   # user declines online search
+   # when a browser is available, the same confirmation can use Init Web
+   & $BriefLoop init "<workspace>" --web
+
+   # user declines online search; local-first Report Packs remain available
    & $BriefLoop new industry-weekly "<workspace>" --web-search-mode disabled
    & $BriefLoop new management-monthly "<workspace>" --web-search-mode disabled
    & $BriefLoop new document-review "<workspace>" --web-search-mode disabled
    & $BriefLoop new solar-periodic "<workspace>" --web-search-mode disabled
    ```
 
-`solar-periodic` is an experimental product entry. Say that before using it.
-For Tavily, replace `<topic>` with the exact Human-confirmed search topic. That
-value is the sole provider query; the pack name and report objective do not
-rewrite it.
+The Tavily route must record the exact Human-confirmed search topic and
+`source_age_days=7` or `30`. Reject 90-day, custom, or missing windows before
+secret/provider effects. Do not present a local-first Report Pack `new` command
+as Tavily acquisition. `solar-periodic` is an experimental product entry; say
+that before using it.
 
 ## Search Default
 
