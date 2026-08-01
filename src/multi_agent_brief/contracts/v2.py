@@ -523,12 +523,24 @@ class StrictModel(BaseModel):
                 schema_version=cls.schema_version_number,
             )
 
+    _contract_json_schema_cache: ClassVar[dict[type, dict[str, Any]]] = {}
+
     @classmethod
     def contract_json_schema(cls) -> dict[str, Any]:
-        schema = cls.model_json_schema()
-        schema["$id"] = cls.schema_id
-        schema["examples"] = [deepcopy(cls.minimal_example), deepcopy(cls.full_example)]
-        return schema
+        # model_json_schema() regenerates the whole schema on every call, and
+        # the verifier asks for contract schemas thousands of times per run.
+        # The schema is a pure function of the class, but callers own the dict
+        # they get back, so cache one canonical build and hand out copies.
+        cached = StrictModel._contract_json_schema_cache.get(cls)
+        if cached is None:
+            cached = cls.model_json_schema()
+            cached["$id"] = cls.schema_id
+            cached["examples"] = [
+                deepcopy(cls.minimal_example),
+                deepcopy(cls.full_example),
+            ]
+            StrictModel._contract_json_schema_cache[cls] = cached
+        return deepcopy(cached)
 
     @classmethod
     def contract_example(cls, detail: str) -> dict[str, Any]:

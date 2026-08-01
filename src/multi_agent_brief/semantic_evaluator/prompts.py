@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from functools import lru_cache
 import re
 from typing import Protocol
 
@@ -194,6 +195,18 @@ def _provider_reader_artifact_projection(
     }
 
 
+@lru_cache(maxsize=1)
+def _dimension_output_schema_text() -> str:
+    """Canonical schema text for the one fixed dimension response contract.
+
+    model_json_schema() rebuilds the schema on every call and this is a single
+    class, so both the schema and its canonical text are constant for the
+    process. The text is embedded verbatim in the prompt and never mutated.
+    """
+
+    return canonical_json_text(DimensionResponse.model_json_schema())
+
+
 def build_dimension_prompt(
     *,
     reader_artifact: ReaderArtifact,
@@ -282,12 +295,11 @@ def build_dimension_prompt(
         bounded_context_sha256=bounded_context.context_sha256,
         dimension_id=dimension.dimension_id,
     )
-    output_schema = DimensionResponse.model_json_schema()
     replacements = {
         "{{REPORT_DATA}}": canonical_json_text(report_data),
         "{{BOUNDED_CONTEXT_DATA}}": canonical_json_text(context_data),
         "{{CURRENT_RUBRIC}}": canonical_json_text(rubric_data),
-        "{{OUTPUT_SCHEMA}}": canonical_json_text(output_schema),
+        "{{OUTPUT_SCHEMA}}": _dimension_output_schema_text(),
     }
     user_text = resources.prompts.dimension_template_text
     for marker, value in replacements.items():
