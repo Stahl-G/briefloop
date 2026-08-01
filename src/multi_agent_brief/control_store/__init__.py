@@ -18,6 +18,7 @@ from multi_agent_brief.control_store.sqlite_store import (
     SQLiteControlStore,
 )
 from multi_agent_brief.control_store.uow import ControlUnitOfWork
+from multi_agent_brief.control_store.upgrade import upgrade_store
 
 
 __all__ = [
@@ -31,4 +32,5 @@ __all__ = [
     "ControlUnitOfWork",
     "OrphanBlobScan",
     "SQLiteControlStore",
+    "upgrade_store",
 ]

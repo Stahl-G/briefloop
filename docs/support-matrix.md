@@ -31,6 +31,7 @@ validation unless that is stated separately.
 |---|---|
 | Subagent workflow (default topology: Scout finds + screens; strict topology: independent Screener; Claim Ledger → Analyst → Delivery Editor → Auditor) | Supported |
 | Fresh SQLite-only Codex control path (`briefloop.db`, strict DTOs, UoW receipts, Store-derived `CoreRunNextAction`) | Experimental |
+| Store schema v12 continuation (`quality laj store-upgrade` plus `assessment-next`) | Experimental on unreleased development main; backup-first v11→v12 only, no JSON migration/general framework, multiple append-only Human-authorized assessments, explicit generation 2+ and explicit result selection |
 | Manifest-bound atomic runtime source-pack intake (1–256 ordered members, stable source IDs/URLs/incident time, one Invocation/UoW/Receipt, zero partial registration) | Experimental |
 | Workspace-local Codex kit binding (config, Skill, reference, all role files; tamper/delete/extra/symlink fail closed) | Experimental |
 | Codex `single_session` topology (shared context, distinct Receipt-backed invocations, stage-separated self-review) | Experimental |
@@ -88,7 +89,7 @@ validation unless that is stated separately.
 | `briefloop init --from-onboarding` | Supported |
 | `briefloop init --web [--port <n>]` | Experimental; one-shot loopback wizard that creates the workspace through the same ControlStore bootstrap path and returns the real TransactionReceipt |
 | `briefloop quality html --workspace <path> [--open] [--laj-view <laj.json>]` | Experimental; best-effort, capability-gated local static read-only four-tab surface: verified Store-bound `finalized_local` Brief, deterministic Quality, optional advisory LAJ (NOT MEASURED), and current Store-native Human guidance state; unsupported platforms return no projection path; static export has no write, approval, package, delivery, publication, persistent-server, or learning affordance |
-| `briefloop quality laj policy-set/assess/status/retry/review-open/disposition/draft/approve/deactivate/revert/supersede/review-status` | Experimental Store-qualified post-final assessment and secured local Human review. Append-only SQLite Receipts record policy/request/result, accept/reject/defer, Human-edited drafts, and separate approval/status. LAJ remains advisory and utility NOT MEASURED; no Gate/finalize/delivery/Core effect, automatic acceptance, or next-run guidance consumption |
+| `briefloop quality laj policy-set/assess/status/retry/assessment-next/assessment-run/assessment-list/store-upgrade/review-open/disposition/draft/approve/deactivate/revert/supersede/review-status` | Experimental development-main Store-qualified post-final assessment series and secured local Human review. Multiple independently Human-authorized generations append policy/request/result/abandonment Receipts; `assessment-next` is a read-only, self-describing request projection and `store-upgrade` is the narrow backup-first v11→v12 path using packaged 0012. Explicit result selection is required; generation 2+ never auto-runs or redials. LAJ remains advisory and utility NOT MEASURED; no Gate/finalize/delivery/Core effect or next-run guidance consumption |
 | `briefloop onboard` | Supported |
 | `briefloop doctor` | Supported |
 | `briefloop extract --workspace <path> --scope <text> --source <file>` | Unsupported on SQLite; retired public CLI |

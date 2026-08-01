@@ -129,14 +129,19 @@ page describes implemented runtime capability, not a breaking deep rename.
   eligibility, or next-action authority; evaluator usefulness and efficacy are
   not measured.
 - Experimental Store-qualified post-final LAJ can bind one verified
-  `finalized_local` report to a non-secret Human policy, immutable assessment
-  request, verified evaluator archive, and qualified advisory result. The same
+  `finalized_local` report to multiple independently Human-authorized,
+  append-only assessment requests, verified evaluator archives, and qualified
+  advisory results. Human review must explicitly select one result. Generation
+  2 and later are explicit only; policy changes never auto-run or redial. The same
   canonical `brief_html` page is read-only as a static export and becomes
   actionable only through a secured loopback Review Session, where strict
   Human commands append accept/reject/defer, edited guidance drafts, and
   separate approval/status Receipts. It never changes Gate, finalization,
   delivery, or Core next-action truth; utility is NOT MEASURED and next-run
-  guidance consumption is not shipped.
+  guidance consumption is not shipped. Development main also exposes a narrow
+  backup-first schema-v11-to-v12 Store upgrade and a read-only
+  `assessment-next` request projection; neither is a general migration or a
+  second assessment writer.
 - The v0.11 product-baseline target has stable product-facing workspace
   entries for `briefloop new industry-weekly`, `briefloop new
   management-monthly`, and `briefloop new document-review`. These entries map

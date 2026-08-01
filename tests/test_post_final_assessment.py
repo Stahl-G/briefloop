@@ -593,6 +593,7 @@ def test_explicit_human_generation_one_claims_then_replays_without_redial(
     assert outcome["replayed"] is False
     assert outcome["status"] == "available"
     assert len(calls) == 9
+
     assert claim_revisions == [before_revision + 1]
     with SQLiteControlStore.open(workspace / "briefloop.db") as store:
         snapshot = store.load_snapshot(run_id)
@@ -635,6 +636,47 @@ def test_explicit_human_generation_one_claims_then_replays_without_redial(
         assert store.current_revision == revision_before
 
 
+def test_assessment_next_is_a_complete_read_only_generation_one_projection(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    workspace, _run_id, _clock = _finalized_local_workspace(tmp_path, monkeypatch)
+    service = PostFinalAssessmentService(workspace)
+    assert service.policy_set(_policy_payload())["ok"] is True
+    with SQLiteControlStore.open(workspace / "briefloop.db") as store:
+        before_revision = store.current_revision
+        before_bytes = (workspace / "briefloop.db").read_bytes()
+    # The public projection takes the explicit policy id; it does not inspect
+    # SQL or require the caller to reconstruct internal fingerprints.
+    with SQLiteControlStore.open(workspace / "briefloop.db") as store:
+        snapshot = store.load_snapshot(_run_id)
+    policy_id = snapshot.post_final_assessment_policy_revisions[0].policy_revision_id
+    first = service.assessment_next(
+        policy_revision_id=policy_id,
+        human_actor_id="human-1",
+        human_request_id="pf-laj-assessment-next-1",
+        assessment_purpose="post_final_review",
+    )
+    second = service.assessment_next(
+        policy_revision_id=policy_id,
+        human_actor_id="human-1",
+        human_request_id="pf-laj-assessment-next-1",
+        assessment_purpose="post_final_review",
+    )
+    assert first["ok"] is True
+    assert first == second
+    request = first["request"]
+    assert isinstance(request, dict)
+    assert request["assessment_generation"] == 1
+    assert request["predecessor_assessment_request_id"] is None
+    assert request["policy_revision_id"] == policy_id
+    assert request["human_request_id"] == "pf-laj-assessment-next-1"
+    assert request["max_provider_calls"] == 9
+    with SQLiteControlStore.open(workspace / "briefloop.db") as store:
+        assert store.current_revision == before_revision
+    assert (workspace / "briefloop.db").read_bytes() == before_bytes
+
+
 def test_same_lineage_supports_same_model_and_cross_model_human_runs(
     tmp_path: Path,
     monkeypatch,
@@ -647,11 +689,17 @@ def test_same_lineage_supports_same_model_and_cross_model_human_runs(
     monkeypatch.setenv(ANTHROPIC_API_KEY_SETTING, "public-synthetic-key")
 
     generation_one = service.assessment_run(_generation_one_run_payload(service))
-    generation_two_request = _next_generation_run_payload(
-        service,
+    facts, snapshot, _binding, _workspace_id, _history, _action = service._load()
+    policy = service._policy_for_facts(snapshot, facts)
+    assert policy is not None
+    generation_two_preview = service.assessment_next(
+        policy_revision_id=policy.policy_revision_id,
+        human_actor_id="human-1",
         human_request_id="pf-laj-assessment-run-2",
         assessment_purpose="post_final_review",
     )
+    assert generation_two_preview["ok"] is True
+    generation_two_request = generation_two_preview["request"]
     generation_two = service.assessment_run(generation_two_request)
 
     assert generation_one["status"] == generation_two["status"] == "available"

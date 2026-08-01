@@ -139,6 +139,87 @@ class PostFinalAssessmentRunInput(StrictModel):
     max_output_tokens_per_call: int
 
 
+def _build_next_assessment_command(
+    *,
+    facts: Any,
+    action: CoreRunNextAction,
+    policy: PostFinalAssessmentPolicyRevision,
+    series: tuple[PostFinalAssessmentRequestRecord, ...],
+    results: Mapping[str, PostFinalAssessmentResultRecord],
+    abandonments: Mapping[str, PostFinalAssessmentAbandonmentRecord],
+    human_actor_id: str,
+    human_request_id: str,
+    assessment_purpose: str,
+    abandon_predecessor: bool,
+) -> PostFinalAssessmentRunInput:
+    """Build the strict next-run authorization from verified read inputs only."""
+
+    predecessor = series[-1] if series else None
+    predecessor_result = (
+        results.get(predecessor.assessment_request_id)
+        if predecessor is not None
+        else None
+    )
+    predecessor_abandonment = (
+        abandonments.get(predecessor.assessment_request_id)
+        if predecessor is not None
+        else None
+    )
+    if predecessor is None:
+        if abandon_predecessor:
+            raise PostFinalAssessmentError("post_final_assessment_predecessor_conflict")
+    elif predecessor_result is None and predecessor_abandonment is None:
+        if not abandon_predecessor:
+            raise PostFinalAssessmentError(
+                "post_final_assessment_predecessor_outcome_unknown"
+            )
+    elif abandon_predecessor:
+        raise PostFinalAssessmentError("post_final_assessment_predecessor_conflict")
+
+    lineage = finalized_lineage_fingerprint(facts, action)
+    payload: dict[str, object] = {
+        "schema_version": POST_FINAL_ASSESSMENT_RUN_SCHEMA,
+        "human_actor_id": human_actor_id,
+        "human_request_id": human_request_id,
+        "expected_store_revision": facts.store_revision,
+        "finalized_lineage_fingerprint": lineage,
+        "assessment_generation": len(series) + 1,
+        "assessment_purpose": assessment_purpose,
+        "predecessor_assessment_request_id": (
+            predecessor.assessment_request_id if predecessor else None
+        ),
+        "predecessor_assessment_request_fingerprint": (
+            predecessor.request_fingerprint if predecessor else None
+        ),
+        "predecessor_assessment_result_id": (
+            predecessor_result.assessment_result_id if predecessor_result else None
+        ),
+        "predecessor_result_fingerprint": (
+            predecessor_result.result_fingerprint if predecessor_result else None
+        ),
+        "predecessor_abandonment_id": (
+            predecessor_abandonment.abandonment_id if predecessor_abandonment else None
+        ),
+        "predecessor_abandonment_fingerprint": (
+            predecessor_abandonment.abandonment_fingerprint
+            if predecessor_abandonment
+            else None
+        ),
+        "abandon_predecessor": abandon_predecessor,
+        "policy_revision_id": policy.policy_revision_id,
+        "policy_fingerprint": policy.policy_fingerprint,
+        "public_safe_egress_attested": policy.public_safe_egress_attested,
+        "max_provider_calls": policy.max_provider_calls,
+        "max_total_input_tokens": policy.max_total_input_tokens,
+        "max_total_output_tokens": policy.max_total_output_tokens,
+        "max_output_tokens_per_call": policy.max_output_tokens_per_call,
+    }
+    try:
+        return PostFinalAssessmentRunInput.model_validate(payload, strict=True)
+    except (ValidationError, TypeError, ValueError) as exc:
+        raise PostFinalAssessmentError("post_final_assessment_request_invalid") from exc
+
+
 def _utc_now() -> str:
     return (
         datetime.now(timezone.utc)
@@ -1303,6 +1384,84 @@ class PostFinalAssessmentService:
                 }
                 for item in series
             ],
+        }
+
+    def assessment_next(
+        self,
+        *,
+        policy_revision_id: str,
+        human_actor_id: str,
+        human_request_id: str,
+        assessment_purpose: str,
+        abandon_predecessor: bool = False,
+    ) -> dict[str, object]:
+        """Project one complete next-run authorization without writing state."""
+
+        try:
+            facts, snapshot, _binding, _workspace_id, history, action = self._load()
+            series = self._series_for_facts(history, snapshot, facts, action)
+            current_policy = self._policy_for_facts(snapshot, facts)
+            if (
+                current_policy is None
+                or current_policy.policy_revision_id != policy_revision_id
+            ):
+                raise PostFinalAssessmentError("post_final_assessment_policy_conflict")
+            policy = self._policy_by_id(
+                snapshot,
+                facts.run_id,
+                policy_revision_id,
+                current_policy.policy_fingerprint,
+            )
+            context = _bounded_context_from_direction(
+                _binding,
+                run_id=facts.run_id,
+            )
+            if (
+                not policy.enabled
+                or not policy.public_safe_egress_attested
+                or policy.bounded_context_sha256 != context.context_sha256
+                or policy.bounded_context != context.model_dump(mode="json")
+            ):
+                raise PostFinalAssessmentError("post_final_assessment_policy_conflict")
+            results = {
+                item.assessment_request_id: item
+                for item in snapshot.post_final_assessment_results
+            }
+            abandonments = {
+                item.assessment_request_id: item
+                for item in snapshot.post_final_assessment_abandonments
+            }
+            command = _build_next_assessment_command(
+                facts=facts,
+                action=action,
+                policy=policy,
+                series=series,
+                results=results,
+                abandonments=abandonments,
+                human_actor_id=human_actor_id,
+                human_request_id=human_request_id,
+                assessment_purpose=assessment_purpose,
+                abandon_predecessor=abandon_predecessor,
+            )
+        except PostFinalAssessmentError as exc:
+            return {
+                "ok": False,
+                "status": "needs_human"
+                if str(exc) == "post_final_assessment_predecessor_outcome_unknown"
+                else "invalid",
+                "reason_code": str(exc),
+            }
+        request = command.model_dump(mode="json")
+        return {
+            "ok": True,
+            "status": "ready",
+            "request": request,
+            "request_fingerprint": _canonical_sha256(request),
+            "finalized_lineage_fingerprint": command.finalized_lineage_fingerprint,
+            "assessment_generation": command.assessment_generation,
+            "store_revision": command.expected_store_revision,
+            "policy_revision_id": command.policy_revision_id,
+            "boundary": "read_only_human_authorization_projection",
         }
 
     def assessment_run(self, value: Mapping[str, object]) -> dict[str, object]:

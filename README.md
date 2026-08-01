@@ -374,11 +374,13 @@ The demos use synthetic materials. They show the evidence chain and gate behavio
 Current version: **v0.14.0**
 
 Unreleased development-main experiment (not part of v0.14.0): Store-qualified
-post-final review can record a non-secret Human policy, run or exactly replay
-one advisory assessment, open the secured local Review Session, and append
-Human dispositions, edited drafts, and separate guidance approvals. Utility is
-NOT MEASURED; findings never affect Gate/finalize/delivery/Core truth, and
-approved guidance is not consumed by later runs.
+post-final review supports multiple append-only, independently Human-authorized
+assessments on one finalized lineage, with explicit result selection for the
+secured local Review Session and append-only Human dispositions, edited drafts,
+and separate guidance approvals. Generation 2 and later are explicit only;
+policy drift never auto-runs or redials. Utility is NOT MEASURED; findings never
+affect Gate/finalize/delivery/Core truth, and approved guidance is not consumed
+by later runs.
 
 Released v0.14.0 entrypoints:
 
@@ -401,6 +403,17 @@ Released v0.14.0 entrypoints:
   and standalone JSON/Markdown/HTML presentation; an explicitly supplied
   current-report-bound `laj.json` may be displayed read-only with
   `briefloop quality html --workspace <path> --laj-view <laj.json>`
+
+Development-main-only LAJ continuation controls are explicit and Store-native:
+
+- `briefloop quality laj store-upgrade --workspace <path> --backup <dir>`
+  performs the narrow backup-first schema-v11-to-v12 upgrade using the
+  packaged migration; it is not a JSON migration or general migration
+  framework.
+- `briefloop quality laj assessment-next --workspace <path>
+  --policy-revision-id <id> --human-actor-id <id> --human-request-id <id>
+  --assessment-purpose <purpose>` emits a complete non-secret request for
+  `assessment-run` without SQL, internal fingerprints, credentials, or writes.
 
 v0.14.0 completes the SQLite-only cutover and adds read-only interaction
 surfaces:
