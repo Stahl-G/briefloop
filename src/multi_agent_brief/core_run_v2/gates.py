@@ -35,10 +35,16 @@ from multi_agent_brief.control_store.serialization import (
     canonical_json_bytes,
     sha256_hex,
 )
+from multi_agent_brief.core.citations import remove_src_marker_spans
 from multi_agent_brief.core.claim_ledger import ClaimLedger
 from multi_agent_brief.core.schemas import Claim
 from multi_agent_brief.intake_v2.errors import IntakeError
 from multi_agent_brief.intake_v2.scratch import parse_json_object
+from multi_agent_brief.outputs.reader_final_gate import detect_reader_residue
+from multi_agent_brief.outputs.reader_projection import (
+    ReaderProjectionSourceError,
+    reader_projection_source_markdown,
+)
 from multi_agent_brief.quality_gates.contract import GATE_IDS
 from multi_agent_brief.quality_gates.evaluation import (
     evaluate_quality_gate_findings_preloaded,
@@ -844,6 +850,8 @@ def _replay_gate_outcomes(
             stage_id=stage_id,
             artifact_id=target_artifact,
         )
+    if stage_id == "auditor":
+        _append_reader_projection_residue_finding(raw, markdown=markdown)
     return _classify_gate_outcomes(
         raw,
         stage_id=stage_id,
@@ -892,6 +900,104 @@ def _append_output_contract_finding(
             },
         }
     )
+
+
+def _append_reader_projection_residue_finding(
+    raw: object,
+    *,
+    markdown: str,
+) -> None:
+    """Route an unshippable reader projection through bounded editor repair."""
+
+    if not isinstance(raw, dict):
+        return
+    findings = raw.get("final_abstract_quality")
+    if not isinstance(findings, list) or not all(
+        isinstance(item, dict) for item in findings
+    ):
+        return
+    try:
+        reader_markdown = remove_src_marker_spans(
+            reader_projection_source_markdown(markdown)
+        ).strip()
+    except ReaderProjectionSourceError:
+        findings.append(
+            _reader_projection_blocking_finding(
+                finding_type="reader_projection_invalid",
+                description="The exact reader projection source is structurally invalid.",
+                recommendation=(
+                    "Submit a new audited brief revision with valid reader projection markers."
+                ),
+                evidence_ref="reader-projection-invalid",
+                metadata={
+                    "projection_status": "invalid",
+                    "reader_artifact_id": "reader_brief",
+                },
+            )
+        )
+        return
+    if not reader_markdown:
+        findings.append(
+            _reader_projection_blocking_finding(
+                finding_type="reader_projection_empty",
+                description="The exact reader projection is empty.",
+                recommendation=(
+                    "Submit a new audited brief revision with reader-facing content."
+                ),
+                evidence_ref="reader-projection-empty",
+                metadata={
+                    "projection_status": "empty",
+                    "reader_artifact_id": "reader_brief",
+                },
+            )
+        )
+        return
+    residue = detect_reader_residue(reader_markdown, "reader_brief")
+    if residue.status == "pass":
+        return
+    positive_counts = {
+        key: count for key, count in residue.counts.items() if count > 0
+    }
+    findings.append(
+        _reader_projection_blocking_finding(
+            finding_type="reader_projection_residue",
+            description=(
+                "The exact reader projection contains internal workflow residue."
+            ),
+            recommendation=(
+                "Submit a new audited brief revision whose reader projection is clean."
+            ),
+            evidence_ref="reader-projection-residue",
+            metadata={
+                **positive_counts,
+                "reader_artifact_id": "reader_brief",
+                "residue_kinds": sorted({item.kind for item in residue.findings}),
+            },
+        )
+    )
+
+
+def _reader_projection_blocking_finding(
+    *,
+    finding_type: str,
+    description: str,
+    recommendation: str,
+    evidence_ref: str,
+    metadata: dict[str, object],
+) -> dict[str, object]:
+    return {
+        "finding_type": finding_type,
+        "severity": "high",
+        "blocking_level": "blocking",
+        "repair_owner": "editor",
+        "stage_id": "editor",
+        "artifact_id": "audited_brief",
+        "description": description,
+        "recommendation": recommendation,
+        "category": "reader_projection",
+        "evidence_ref": evidence_ref,
+        "metadata": metadata,
+    }
 
 
 def _classify_gate_outcomes(

@@ -3919,6 +3919,7 @@ def _write_current_role_proposal(
     *,
     initial_editor_repetitions: int = 210,
     repair_editor_repetitions: int = 210,
+    initial_editor_reader_issue: str | None = None,
 ) -> None:
     assert result.trace.envelope_path is not None
     envelope_path = workspace / result.trace.envelope_path
@@ -3982,6 +3983,19 @@ def _write_current_role_proposal(
             + " ".join(["ExampleCo operations context"] * repetitions)
             + " ExampleCo opened a public pilot facility. [src:CL-0001]\n"
         )
+        if role_id == "editor" and not repairing:
+            if initial_editor_reader_issue == "residue":
+                body += "\nClaim Ledger reference CL-0001 must not reach readers.\n"
+            elif initial_editor_reader_issue == "malformed":
+                body += "\n<!-- briefloop:projectable-reader-start --> trailing\n"
+            elif initial_editor_reader_issue == "empty":
+                body = (
+                    "<!-- briefloop:projectable-reader-start -->\n"
+                    + body
+                    + "<!-- briefloop:projectable-reader-end -->\n"
+                )
+            elif initial_editor_reader_issue is not None:
+                raise AssertionError(initial_editor_reader_issue)
         (
             scratch
             / ("analyst_draft.md" if role_id == "analyst" else "audited_brief.md")
@@ -4471,6 +4485,133 @@ def test_authorized_editor_gate_repair_runs_once_then_finalizes_local(
     mismatch = integrity.first_mismatch(verified)
     assert mismatch is not None
     assert (mismatch[0].artifact_id, mismatch[0].revision) == successor_key
+
+
+@pytest.mark.parametrize(
+    ("reader_issue", "finding_type", "expected_metadata"),
+    (
+        (
+            "residue",
+            "reader_projection_residue",
+            {
+                "bare_claim_id_count": 1,
+                "process_wording_count": 1,
+                "reader_artifact_id": "reader_brief",
+                "residue_kinds": ["bare_claim_id", "process_wording"],
+            },
+        ),
+        (
+            "malformed",
+            "reader_projection_invalid",
+            {
+                "projection_status": "invalid",
+                "reader_artifact_id": "reader_brief",
+            },
+        ),
+        (
+            "empty",
+            "reader_projection_empty",
+            {
+                "projection_status": "empty",
+                "reader_artifact_id": "reader_brief",
+            },
+        ),
+    ),
+)
+def test_reader_projection_issue_routes_editor_repair_before_finalize(
+    tmp_path: Path,
+    reader_issue: str,
+    finding_type: str,
+    expected_metadata: dict[str, object],
+) -> None:
+    if sys.platform == "win32":
+        return
+    workspace = _authorized_workspace(tmp_path)
+    service = _service(workspace)
+    role_sequence: list[str] = []
+
+    for _ in range(12):
+        result = service.continue_authorized()
+        if result.status == "finalized_local":
+            break
+        assert result.status == "role_work_required", (
+            result.reason_code,
+            result.trace.next_action.action_kind,
+            result.trace.next_action.effect_kind,
+            result.trace.next_action.reason_code,
+            result.trace.transaction_ids,
+        )
+        assert result.trace.envelope_path is not None
+        envelope = json.loads(
+            (workspace / result.trace.envelope_path).read_text(encoding="utf-8")
+        )
+        role_sequence.append(envelope["role_id"])
+        _write_current_role_proposal(
+            workspace,
+            result,
+            initial_editor_reader_issue=reader_issue,
+        )
+    else:
+        raise AssertionError("reader-projection Gate repair did not terminate")
+
+    assert role_sequence == [
+        "scout",
+        "screener",
+        "claim-ledger",
+        "analyst",
+        "editor",
+        "auditor",
+        "editor",
+        "auditor",
+    ]
+    assert result.reason_code == "local_finalization_complete"
+
+    with SQLiteControlStore.open(workspace / "briefloop.db") as store:
+        head = store.load_workspace_run_head()
+        assert head is not None
+        snapshot = store.load_snapshot(head.current_run_id)
+        reader_record = next(
+            item for item in snapshot.artifacts if item.artifact_id == "reader_brief"
+        )
+        reader_bytes = store.read_artifact_revision_bytes(
+            head.current_run_id,
+            "reader_brief",
+            reader_record.current_revision,
+        )
+
+    projection_findings = [
+        item
+        for item in snapshot.gate_findings
+        if item.finding_type == finding_type
+    ]
+    assert len(projection_findings) == 1
+    finding = projection_findings[0]
+    assert finding.blocking_level == "blocking"
+    assert finding.gate_id == "final_abstract_quality"
+    assert finding.repair_owner == "editor"
+    assert finding.stage_id == "editor"
+    assert finding.artifact_id == "audited_brief"
+    assert finding.claim_id is None
+    assert finding.source_id is None
+    assert finding.metadata == expected_metadata
+    if reader_issue == "malformed":
+        finding_payload = json.dumps(
+            finding.model_dump(mode="json", exclude_unset=False),
+            sort_keys=True,
+        )
+        assert finding.description == (
+            "The exact reader projection source is structurally invalid."
+        )
+        assert "Malformed projectable reader block" not in finding_payload
+        assert "trailing" not in finding_payload
+    assert len(snapshot.gate_repair_cycles) == 1
+    assert len(snapshot.gate_repair_outcomes) == 1
+    assert snapshot.gate_repair_outcomes[0].disposition == "passed"
+    assert len(snapshot.finalize_renders) == 1
+    assert len(snapshot.finalizations) == 1
+    reader_text = reader_bytes.decode("utf-8")
+    assert "Claim Ledger" not in reader_text
+    assert "CL-0001" not in reader_text
 
 
 def test_active_gate_repair_contamination_is_zero_write_human_block(
