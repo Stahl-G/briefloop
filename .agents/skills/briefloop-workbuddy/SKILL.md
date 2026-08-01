@@ -96,10 +96,10 @@ BriefLoop 工作区的查看、修复、状态、质量摘要或交付准备时�
 
    ```powershell
    # 用户开启在线搜索；强烈推荐 Tavily
-   & $BriefLoop new industry-weekly "<workspace>" --search-backend tavily
-   & $BriefLoop new management-monthly "<workspace>" --search-backend tavily
-   & $BriefLoop new document-review "<workspace>" --search-backend tavily
-   & $BriefLoop new solar-periodic "<workspace>" --search-backend tavily
+   & $BriefLoop new industry-weekly "<workspace>" --industry "<topic>" --search-backend tavily
+   & $BriefLoop new management-monthly "<workspace>" --industry "<topic>" --search-backend tavily
+   & $BriefLoop new document-review "<workspace>" --industry "<topic>" --search-backend tavily
+   & $BriefLoop new solar-periodic "<workspace>" --industry "<topic>" --search-backend tavily
 
    # 用户拒绝在线搜索
    & $BriefLoop new industry-weekly "<workspace>" --web-search-mode disabled
@@ -109,6 +109,8 @@ BriefLoop 工作区的查看、修复、状态、质量摘要或交付准备时�
    ```
 
 `solar-periodic` 是实验性产品入口，使用前要先说明。
+使用 Tavily 时，把 `<topic>` 替换成 Human 明确确认的检索主题。该值就是唯一
+provider query；product entry 和报告目标不会改写它。
 
 ## 搜索默认值
 

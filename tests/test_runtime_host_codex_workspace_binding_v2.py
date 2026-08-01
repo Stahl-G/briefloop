@@ -15,9 +15,13 @@ from multi_agent_brief.runtime_assets import install_runtime_kit
 from multi_agent_brief.runtime_host_v2.codex import (
     load_codex_adapter_binding,
     load_workspace_codex_adapter_binding,
+    workspace_codex_adapter_loader,
 )
 from multi_agent_brief.runtime_host_v2.errors import RuntimeHostError
-from multi_agent_brief.runtime_host_v2.initialization import WorkspaceBootstrap
+from multi_agent_brief.runtime_host_v2.initialization import (
+    WorkspaceBootstrap,
+    initialize_or_open_runtime,
+)
 from multi_agent_brief.workspace.init_profile import InitProfile
 
 
@@ -173,6 +177,43 @@ def test_cli_initial_news_backfill_prepares_exact_kit_without_store(
         workspace, run_id
     ) == load_codex_adapter_binding(run_id)
     assert not (workspace / "briefloop.db").exists()
+
+
+@pytest.mark.parametrize(
+    "tavily_args",
+    (
+        ("--search-backend", "tavily"),
+        ("--tavily",),
+        ("--web-search-mode", "external_api"),
+    ),
+)
+def test_direct_init_tavily_freezes_exact_human_industry_as_query(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+    tavily_args: tuple[str, ...],
+) -> None:
+    workspace = tmp_path / "cli-tavily-workspace"
+    topic = "grid-scale energy storage"
+    args = _direct_init_args(workspace)
+    args[args.index("--industry") + 1] = topic
+    args.extend(tavily_args)
+
+    assert main(args) == 0
+    capsys.readouterr()
+    initialized = initialize_or_open_runtime(
+        workspace,
+        adapter_loader=workspace_codex_adapter_loader(workspace),
+    )
+    route = next(
+        item for item in initialized.verified.source_plan.routes
+        if item.route_id == "web-search"
+    )
+    assert route.acquisition_spec is not None
+    assert [request.query for request in route.acquisition_spec.requests] == [topic]
+    assert all(
+        "ExampleCo" not in request.query
+        for request in route.acquisition_spec.requests
+    )
 
 
 def test_cli_init_force_never_rewrites_existing_store_workspace(

@@ -68,10 +68,10 @@ no executable undecided `new` route after the user answers the search question:
 
 ```powershell
 # user enables online search; strongly recommend Tavily
-& $BriefLoop new industry-weekly "<workspace>" --search-backend tavily
-& $BriefLoop new management-monthly "<workspace>" --search-backend tavily
-& $BriefLoop new document-review "<workspace>" --search-backend tavily
-& $BriefLoop new solar-periodic "<workspace>" --search-backend tavily
+& $BriefLoop new industry-weekly "<workspace>" --industry "<topic>" --search-backend tavily
+& $BriefLoop new management-monthly "<workspace>" --industry "<topic>" --search-backend tavily
+& $BriefLoop new document-review "<workspace>" --industry "<topic>" --search-backend tavily
+& $BriefLoop new solar-periodic "<workspace>" --industry "<topic>" --search-backend tavily
 
 # user declines online search
 & $BriefLoop new industry-weekly "<workspace>" --web-search-mode disabled
@@ -82,6 +82,10 @@ no executable undecided `new` route after the user answers the search question:
 
 `industry-weekly`, `management-monthly`, and `document-review` are the baseline
 supported product entries. `solar-periodic` is experimental.
+
+For Tavily, replace `<topic>` with the exact Human-confirmed search topic. That
+value is the sole provider query; the pack name and report objective do not
+rewrite it.
 
 If the user enabled Tavily, import the key only after workspace creation:
 

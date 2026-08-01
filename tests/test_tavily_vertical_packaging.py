@@ -85,12 +85,16 @@ def test_tavily_vertical_real_loopback_source_and_wheel_parity(
             supports_retained_directory_publication,
         )
         from multi_agent_brief.runtime_host_v2.codex import (
+            load_codex_adapter_binding,
             workspace_codex_adapter_loader,
         )
         from multi_agent_brief.runtime_host_v2.contracts import (
             RuntimeSourceAcquisitionRecoveryRequest,
         )
         from multi_agent_brief.runtime_host_v2.service import RuntimeHostService
+        from multi_agent_brief.runtime_host_v2.initialization import (
+            initialize_or_open_runtime,
+        )
         from multi_agent_brief.sources.search_backends import tavily as tavily_module
         from multi_agent_brief.sources.web_search import WebSearchProvider
 
@@ -117,7 +121,66 @@ def test_tavily_vertical_real_loopback_source_and_wheel_parity(
             "Human-entered search topic" in app_js,
             "installed app search-topic disclosure missing",
         )
+        require(
+            "company / organization + one space" not in app_js,
+            "installed app still prefixes the Tavily query",
+        )
         root.mkdir()
+
+        missing_new_workspace = root / "new-tavily-missing-topic"
+        stream = io.StringIO()
+        with redirect_stdout(stream):
+            missing_new_rc = main([
+                "new", "industry-weekly", str(missing_new_workspace),
+                "--search-backend", "tavily",
+            ])
+        require(missing_new_rc == 1, "new accepted Tavily without a topic")
+        require(
+            "Tavily search requires an explicit --industry <topic>"
+            in stream.getvalue(),
+            "new missing-topic error mismatch",
+        )
+        require(
+            not missing_new_workspace.exists(),
+            "new missing-topic path wrote a workspace",
+        )
+
+        exact_new_workspace = root / "new-tavily-exact-topic"
+        exact_new_topic = "grid-scale energy storage"
+        stream = io.StringIO()
+        with redirect_stdout(stream):
+            exact_new_rc = main([
+                "new", "industry-weekly", str(exact_new_workspace),
+                "--industry", exact_new_topic,
+                "--search-backend", "tavily",
+            ])
+        require(exact_new_rc == 0, "new rejected explicit Tavily topic")
+        exact_new_runtime = initialize_or_open_runtime(
+            exact_new_workspace,
+            adapter_loader=load_codex_adapter_binding,
+        )
+        exact_new_route = next(
+            item
+            for item in exact_new_runtime.verified.source_plan.routes
+            if item.route_id == "web-search"
+        )
+        require(
+            exact_new_route.acquisition_spec is not None,
+            "new Tavily acquisition spec missing",
+        )
+        require(
+            [request.query for request in exact_new_route.acquisition_spec.requests]
+            == [exact_new_topic],
+            "new Tavily topic was not frozen exactly",
+        )
+        require(
+            all(
+                "Your Organization" not in request.query
+                for request in exact_new_route.acquisition_spec.requests
+            ),
+            "new Tavily query included the organization placeholder",
+        )
+
         sentinel = "tvly-wheel-loopback-sentinel"
         request_id = "REQ-WHEEL-TAVILY-VERTICAL-001"
         target_name = "tavily-vertical-workspace"
@@ -503,8 +566,12 @@ def test_tavily_vertical_real_loopback_source_and_wheel_parity(
         first_provider_request = provider_requests[0]
         require(
             first_provider_request["query"]
-            == "Wheel ExampleCo grid-scale energy storage",
+            == "grid-scale energy storage",
             "query mismatch",
+        )
+        require(
+            "Wheel ExampleCo" not in first_provider_request["query"],
+            "company leaked into query",
         )
         require(
             task_objective not in first_provider_request["query"],

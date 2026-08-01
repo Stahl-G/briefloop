@@ -64,15 +64,12 @@ All backends implement `SearchBackend` (from `sources/search_backends/base.py`):
 | Weaknesses | published_at may be missing, snippets need filtering |
 | Status | **Supported** |
 
-For the current Init Web Tavily path, the Human-confirmed task objective
-describes the brief; it is not sent verbatim as a search query. At fresh-run
-initialization, BriefLoop deterministically projects the sole query as
-`subject_name + " " + industry_or_theme` and freezes it in the runtime source
-request. Init Web binds `industry_or_theme` from a separate, explicit
-Human-entered search topic; the selected report type affects brief focus and
-presentation only. Agent-written source candidates, the full task objective,
-and search tasks cannot replace that query, and changing the confirmed subject
-or search topic requires a new run.
+For the current Tavily path, `industry_or_theme` is the explicit Human-authored
+search topic. BriefLoop freezes that value unchanged as the sole runtime source
+query. The company or organization name, selected report type, full task
+objective, agent-written source candidates, and configured `search_tasks` do
+not prefix, suffix, or replace it. Changing the confirmed search topic requires
+a new run.
 
 ### 2. Exa
 
@@ -171,8 +168,8 @@ web_search:
       - reuters.com
 ```
 
-The Tavily query for this path comes from the frozen Human-confirmed subject
-and explicit search topic described above; `search_tasks` is not an executable
+The Tavily query for this path is the exact frozen Human-confirmed
+`industry_or_theme` topic described above; `search_tasks` is not an executable
 query override.
 
 ### Example: Exa

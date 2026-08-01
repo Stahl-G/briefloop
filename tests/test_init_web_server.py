@@ -333,8 +333,9 @@ def test_get_assets_and_security_headers(server) -> None:
     assert b'"review_web_boundary"' in body
     assert b'"review_authorized_boundary"' in body
     assert b"Confirm Tavily runtime acquisition (Experimental)" in body
-    assert b"The sole query is not the full task objective" in body
+    assert b"The Human-entered search topic becomes the sole Tavily query" in body
     assert b"Human-entered search topic" in body
+    assert b"company / organization + one space" not in body
     assert b'industry_or_theme: c.source === "public_web"' in body
     assert b"report type / theme" not in body
     assert b"Synthetic transport is tested" in body
@@ -774,7 +775,8 @@ def test_real_loopback_public_web_tavily_replays_before_credential_or_provider(
     assert continuation["current_stage"] == "scout"
     assert len(provider_requests) == 1
     provider_request = provider_requests[0]
-    assert provider_request["query"] == ("Loopback ExampleCo grid-scale energy storage")
+    assert provider_request["query"] == "grid-scale energy storage"
+    assert "Loopback ExampleCo" not in provider_request["query"]
     assert _LONG_PUBLIC_WEB_TASK_OBJECTIVE not in provider_request["query"]
     assert provider_request["max_results"] == 5
     assert provider_request["include_raw_content"] == "markdown"

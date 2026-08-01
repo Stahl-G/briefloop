@@ -117,7 +117,7 @@ adapter。
 如果用户打开在线搜索，强烈推荐 Tavily，并使用：
 
 ```powershell
-& $BriefLoop new industry-weekly "<workspace>" --search-backend tavily
+& $BriefLoop new industry-weekly "<workspace>" --industry "<topic>" --search-backend tavily
 ```
 
 如果用户拒绝在线搜索，使用：
@@ -125,6 +125,9 @@ adapter。
 ```powershell
 & $BriefLoop new industry-weekly "<workspace>" --web-search-mode disabled
 ```
+
+把 `<topic>` 替换成 Human 明确确认的 Tavily 检索主题。该值就是唯一 provider
+query；product entry 和报告目标不会改写它。
 
 只有用户已启用 Tavily 时，才在工作区存在后持久导入 key，且不显示密钥。
 如果用户已禁用在线搜索，跳过此导入：

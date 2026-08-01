@@ -2703,10 +2703,7 @@ def _source_acquisition_spec(
                 raise CoreRunError("runtime_source_plan_invalid")
             requests = [
                 _web_request_payload(
-                    query=(
-                        f"{run_direction.subject_name} "
-                        f"{run_direction.industry_or_theme}"
-                    ),
+                    query=run_direction.industry_or_theme,
                     domains=domains,
                     max_results=max_results,
                     recency_days=recency_days,

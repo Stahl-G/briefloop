@@ -244,7 +244,8 @@ def test_external_source_plan_freezes_executable_non_secret_requests(
     spec = route.acquisition_spec
     assert spec is not None and spec.kind == "web_search"
     assert spec.provider_id == "tavily"
-    assert [item.query for item in spec.requests] == ["ExampleCo manufacturing"]
+    assert [item.query for item in spec.requests] == ["manufacturing"]
+    assert all("ExampleCo" not in item.query for item in spec.requests)
     assert all(
         _LONG_EXTERNAL_TASK_OBJECTIVE not in item.query for item in spec.requests
     )
@@ -284,7 +285,8 @@ def test_tavily_query_projection_preserves_transport_window_semantics(
     )
     assert route.acquisition_spec is not None
     request = route.acquisition_spec.requests[0]
-    assert request.query == "ExampleCo manufacturing"
+    assert request.query == "manufacturing"
+    assert "ExampleCo" not in request.query
     assert _LONG_EXTERNAL_TASK_OBJECTIVE not in request.query
 
     captured_configs: list[dict[str, object]] = []
@@ -317,7 +319,7 @@ def test_tavily_query_projection_preserves_transport_window_semantics(
     assert config["recency_days"] == max_source_age_days
     assert config["time_range"] == expected_time_range
     assert config["search_tasks"] == [
-        {"query": "ExampleCo manufacturing", "domains": []}
+        {"query": "manufacturing", "domains": []}
     ]
 
 
