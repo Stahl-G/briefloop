@@ -403,6 +403,126 @@ print(json.dumps({
 """
 
 
+_ASSESSMENT_NEXT_PROBE = r"""
+import io
+import json
+import os
+import shutil
+import sys
+from contextlib import redirect_stdout
+from pathlib import Path
+
+import pytest
+
+import multi_agent_brief
+from multi_agent_brief.cli.main import main
+from multi_agent_brief.semantic_evaluator.adapters.anthropic_messages import (
+    ANTHROPIC_API_KEY_SETTING,
+)
+from tests.test_post_final_assessment import (
+    _policy_payload,
+    _real_finalized_local_workspace,
+)
+
+
+mode = sys.argv[1]
+workspace_arg = Path(sys.argv[2])
+expected_package_root = Path(sys.argv[3]).resolve()
+package_file = Path(multi_agent_brief.__file__).resolve()
+if not package_file.is_relative_to(expected_package_root):
+    raise RuntimeError("package root mismatch")
+
+
+def run_json(arguments: list[str]) -> tuple[int, dict[str, object]]:
+    output = io.StringIO()
+    with redirect_stdout(output):
+        code = main(arguments + ["--json"])
+    return code, json.loads(output.getvalue())
+
+
+if mode == "source":
+    workspace_arg.parent.mkdir(parents=True, exist_ok=True)
+    seed_root = workspace_arg.parent / "source-seed"
+    seed_root.mkdir(parents=True, exist_ok=True)
+    patch = pytest.MonkeyPatch()
+    try:
+        source_workspace = _real_finalized_local_workspace(
+            seed_root,
+            patch,
+        )
+    finally:
+        patch.undo()
+    template = workspace_arg.parent / "assessment-next-v12"
+    shutil.copytree(source_workspace, template)
+    source_workspace = template
+elif mode == "wheel":
+    source_workspace = workspace_arg.parent / "assessment-next-v12"
+else:
+    raise RuntimeError("unknown mode")
+
+policy_json = json.dumps(_policy_payload(), sort_keys=True)
+policy_code, policy = run_json(
+    [
+        "quality",
+        "laj",
+        "policy-set",
+        "--workspace",
+        str(source_workspace),
+        "--policy-json",
+        policy_json,
+    ]
+)
+if policy_code != 0 or not policy.get("ok"):
+    raise RuntimeError(f"policy failed: {policy!r}")
+policy_id = str(policy["policy_revision_id"])
+next_args = [
+    "quality",
+    "laj",
+    "assessment-next",
+    "--workspace",
+    str(source_workspace),
+    "--policy-revision-id",
+    policy_id,
+    "--human-actor-id",
+    "packaging-human",
+    "--human-request-id",
+    "packaging-next-1",
+    "--assessment-purpose",
+    "post_final_review",
+]
+next_code, next_payload = run_json(next_args)
+policy_flag_index = next_args.index("--policy-revision-id")
+policy_value_index = next_args.index(policy_id)
+invalid_code, invalid_payload = run_json(
+    [
+        *next_args[: policy_flag_index + 1],
+        "stale-policy",
+        *next_args[policy_value_index + 1 :],
+    ]
+)
+if next_code != 0 or not next_payload.get("ok"):
+    raise RuntimeError(f"assessment-next failed: {next_payload!r}")
+if invalid_code != 1 or invalid_payload.get("reason_code") != (
+    "post_final_assessment_policy_conflict"
+):
+    raise RuntimeError(f"assessment-next invalid row drift: {invalid_payload!r}")
+
+print(
+    json.dumps(
+        {
+            "optimize": sys.flags.optimize,
+            "request": next_payload["request"],
+            "request_fingerprint": next_payload["request_fingerprint"],
+            "invalid_reason_code": invalid_payload["reason_code"],
+            "provider_calls": 0,
+            "key_present": ANTHROPIC_API_KEY_SETTING in os.environ,
+        },
+        sort_keys=True,
+    )
+)
+"""
+
+
 def _run_probe(
     *,
     mode: str,
@@ -545,3 +665,73 @@ def test_source_and_non_editable_wheel_replay_the_same_pf_laj_result(
     assert zero_wheel["finding_count"] == 0
     assert zero_wheel["withheld_finding_count"] == 0
     assert zero_wheel["archive_verified"] is False
+
+
+@pytest.mark.explicit_e2e
+@pytest.mark.timeout(900)
+@pytest.mark.skipif(
+    not supports_retained_directory_publication(),
+    reason="source/non-editable-wheel assessment-next parity is unavailable",
+)
+def test_source_and_non_editable_wheel_run_assessment_next(
+    tmp_path: Path,
+) -> None:
+    """Current-schema assessment-next is executable and parity-safe after install."""
+
+    build_root = tmp_path / "build-root"
+    build_root.mkdir()
+    shutil.copy2(ROOT / "pyproject.toml", build_root / "pyproject.toml")
+    shutil.copy2(ROOT / "README.md", build_root / "README.md")
+    shutil.copytree(ROOT / "src", build_root / "src")
+    wheel_dir = tmp_path / "wheel"
+    wheel_dir.mkdir()
+    build = subprocess.run(
+        [
+            sys.executable,
+            "-m",
+            "pip",
+            "wheel",
+            ".",
+            "--no-deps",
+            "--no-build-isolation",
+            "--wheel-dir",
+            str(wheel_dir),
+        ],
+        cwd=build_root,
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    assert build.returncode == 0, build.stdout + build.stderr
+    wheel_path = next(wheel_dir.glob("briefloop-*.whl"))
+    installed = tmp_path / "installed"
+    installed.mkdir()
+    with zipfile.ZipFile(wheel_path) as archive:
+        archive.extractall(installed)
+        assert "multi_agent_brief/control_store/upgrade.py" not in archive.namelist()
+        assert (
+            "multi_agent_brief/control_store/migrations/0012.sql" in archive.namelist()
+        )
+
+    script = tmp_path / "assessment_next_probe.py"
+    script.write_text(textwrap.dedent(_ASSESSMENT_NEXT_PROBE), encoding="utf-8")
+    workspace = tmp_path / "assessment-next" / "workspace"
+    source = _run_probe(
+        mode="source",
+        workspace=workspace,
+        package_root=ROOT / "src",
+        script=script,
+        cwd=tmp_path,
+    )
+    wheel = _run_probe(
+        mode="wheel",
+        workspace=workspace,
+        package_root=installed,
+        script=script,
+        cwd=tmp_path,
+    )
+    assert source == wheel
+    assert source["provider_calls"] == 0
+    assert source["key_present"] is False
+    assert source["invalid_reason_code"] == "post_final_assessment_policy_conflict"
+    assert source["request"]["assessment_generation"] == 1

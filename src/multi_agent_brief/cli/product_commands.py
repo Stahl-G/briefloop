@@ -333,6 +333,21 @@ def register_quality(subparsers: argparse._SubParsersAction) -> None:
         help="Strict inline non-secret assessment authorization JSON.",
     )
     run_parser.add_argument("--json", action="store_true")
+    next_parser = laj_actions.add_parser(
+        "assessment-next",
+        help="Project a complete Human-authorized next assessment request without writes.",
+    )
+    next_parser.add_argument("--workspace", required=True)
+    next_parser.add_argument("--policy-revision-id", required=True)
+    next_parser.add_argument("--human-actor-id", required=True)
+    next_parser.add_argument("--human-request-id", required=True)
+    next_parser.add_argument(
+        "--assessment-purpose",
+        choices=("post_final_review", "model_evaluation"),
+        required=True,
+    )
+    next_parser.add_argument("--abandon-predecessor", action="store_true")
+    next_parser.add_argument("--json", action="store_true")
     list_parser = laj_actions.add_parser(
         "assessment-list",
         help="List the verified assessment series without provider access.",
@@ -580,6 +595,14 @@ def handle_quality(args: argparse.Namespace) -> int:
                         "post_final_assessment_request_invalid"
                     )
                 payload = service.assessment_run(value)
+            elif laj_action == "assessment-next":
+                payload = service.assessment_next(
+                    policy_revision_id=args.policy_revision_id,
+                    human_actor_id=args.human_actor_id,
+                    human_request_id=args.human_request_id,
+                    assessment_purpose=args.assessment_purpose,
+                    abandon_predecessor=bool(args.abandon_predecessor),
+                )
             elif laj_action == "assessment-list":
                 payload = service.assessment_list()
             elif laj_action == "review-open":

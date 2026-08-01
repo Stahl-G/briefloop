@@ -8,15 +8,17 @@ raw findings, or a provider response affect Core truth.
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 from datetime import datetime, timezone
 import hashlib
 import json
 from pathlib import Path
 from typing import Any, Callable, Mapping, Optional
 
-from pydantic import ValidationError
+from pydantic import TypeAdapter, ValidationError
 
 from multi_agent_brief.contracts.v2 import (
+    ContractId,
     CoreRunNextAction,
     EventEnvelope,
     PostFinalAssessmentAbandonmentRecord,
@@ -137,6 +139,101 @@ class PostFinalAssessmentRunInput(StrictModel):
     max_total_input_tokens: int
     max_total_output_tokens: int
     max_output_tokens_per_call: int
+
+
+@dataclass(frozen=True)
+class _AssessmentReadiness:
+    """The shared, provider-free admission result for one new assessment."""
+
+    policy: PostFinalAssessmentPolicyRevision
+    context: BoundedContext
+    prepared: PreparedShadowRun
+    budget: Any
+    predecessor: PostFinalAssessmentRequestRecord | None
+    predecessor_result: PostFinalAssessmentResultRecord | None
+    predecessor_abandonment: PostFinalAssessmentAbandonmentRecord | None
+    create_abandonment: bool
+
+
+def _build_next_assessment_command(
+    *,
+    facts: Any,
+    action: CoreRunNextAction,
+    policy: PostFinalAssessmentPolicyRevision,
+    series: tuple[PostFinalAssessmentRequestRecord, ...],
+    results: Mapping[str, PostFinalAssessmentResultRecord],
+    abandonments: Mapping[str, PostFinalAssessmentAbandonmentRecord],
+    human_actor_id: str,
+    human_request_id: str,
+    assessment_purpose: str,
+    abandon_predecessor: bool,
+) -> PostFinalAssessmentRunInput:
+    """Build the strict next-run authorization from verified read inputs only."""
+
+    predecessor = series[-1] if series else None
+    predecessor_result = (
+        results.get(predecessor.assessment_request_id)
+        if predecessor is not None
+        else None
+    )
+    predecessor_abandonment = (
+        abandonments.get(predecessor.assessment_request_id)
+        if predecessor is not None
+        else None
+    )
+    if predecessor is None:
+        if abandon_predecessor:
+            raise PostFinalAssessmentError("post_final_assessment_predecessor_conflict")
+    elif predecessor_result is None and predecessor_abandonment is None:
+        if not abandon_predecessor:
+            raise PostFinalAssessmentError(
+                "post_final_assessment_predecessor_outcome_unknown"
+            )
+    elif abandon_predecessor:
+        raise PostFinalAssessmentError("post_final_assessment_predecessor_conflict")
+
+    lineage = finalized_lineage_fingerprint(facts, action)
+    payload: dict[str, object] = {
+        "schema_version": POST_FINAL_ASSESSMENT_RUN_SCHEMA,
+        "human_actor_id": human_actor_id,
+        "human_request_id": human_request_id,
+        "expected_store_revision": facts.store_revision,
+        "finalized_lineage_fingerprint": lineage,
+        "assessment_generation": len(series) + 1,
+        "assessment_purpose": assessment_purpose,
+        "predecessor_assessment_request_id": (
+            predecessor.assessment_request_id if predecessor else None
+        ),
+        "predecessor_assessment_request_fingerprint": (
+            predecessor.request_fingerprint if predecessor else None
+        ),
+        "predecessor_assessment_result_id": (
+            predecessor_result.assessment_result_id if predecessor_result else None
+        ),
+        "predecessor_result_fingerprint": (
+            predecessor_result.result_fingerprint if predecessor_result else None
+        ),
+        "predecessor_abandonment_id": (
+            predecessor_abandonment.abandonment_id if predecessor_abandonment else None
+        ),
+        "predecessor_abandonment_fingerprint": (
+            predecessor_abandonment.abandonment_fingerprint
+            if predecessor_abandonment
+            else None
+        ),
+        "abandon_predecessor": abandon_predecessor,
+        "policy_revision_id": policy.policy_revision_id,
+        "policy_fingerprint": policy.policy_fingerprint,
+        "public_safe_egress_attested": policy.public_safe_egress_attested,
+        "max_provider_calls": policy.max_provider_calls,
+        "max_total_input_tokens": policy.max_total_input_tokens,
+        "max_total_output_tokens": policy.max_total_output_tokens,
+        "max_output_tokens_per_call": policy.max_output_tokens_per_call,
+    }
+    try:
+        return PostFinalAssessmentRunInput.model_validate(payload, strict=True)
+    except (ValidationError, TypeError, ValueError) as exc:
+        raise PostFinalAssessmentError("post_final_assessment_request_invalid") from exc
 
 
 def _utc_now() -> str:
@@ -841,6 +938,14 @@ class PostFinalAssessmentService:
             raise PostFinalAssessmentError(
                 "post_final_assessment_request_invalid"
             ) from exc
+        try:
+            contract_id = TypeAdapter(ContractId)
+            contract_id.validate_python(request.human_actor_id, strict=True)
+            contract_id.validate_python(request.human_request_id, strict=True)
+        except (TypeError, ValidationError, ValueError) as exc:
+            raise PostFinalAssessmentError(
+                "post_final_assessment_request_invalid"
+            ) from exc
         result_pair = (
             request.predecessor_assessment_result_id,
             request.predecessor_result_fingerprint,
@@ -899,6 +1004,308 @@ class PostFinalAssessmentService:
         if invalid_common or invalid_predecessor:
             raise PostFinalAssessmentError("post_final_assessment_request_invalid")
         return request
+
+    def _admit_assessment(
+        self,
+        *,
+        command: PostFinalAssessmentRunInput,
+        facts: Any,
+        snapshot: Any,
+        binding: Any,
+        history: Any,
+        action: CoreRunNextAction,
+        series: tuple[PostFinalAssessmentRequestRecord, ...],
+        authorization_fingerprint: str,
+    ) -> _AssessmentReadiness:
+        """Run every deterministic, provider-free assessment admission check.
+
+        ``assessment_next`` and ``assessment_run`` both use this boundary so a
+        request is never advertised as ready if execution would reject it
+        before claiming its Store transaction or touching a provider.
+        """
+
+        command = self._validate_run_input(command.model_dump(mode="json"))
+        if any(item.human_request_id == command.human_request_id for item in series):
+            raise PostFinalAssessmentError("assessment_human_request_conflict")
+        if (
+            facts.store_revision != command.expected_store_revision
+            or command.finalized_lineage_fingerprint
+            != finalized_lineage_fingerprint(facts, action)
+            or command.assessment_generation != len(series) + 1
+        ):
+            raise PostFinalAssessmentError("assessment_series_conflict")
+
+        predecessor = series[-1] if series else None
+        if predecessor is None and (
+            command.predecessor_assessment_request_id is not None
+            or command.predecessor_assessment_request_fingerprint is not None
+            or command.predecessor_assessment_result_id is not None
+            or command.predecessor_result_fingerprint is not None
+            or command.predecessor_abandonment_id is not None
+            or command.predecessor_abandonment_fingerprint is not None
+            or command.abandon_predecessor
+        ):
+            raise PostFinalAssessmentError("assessment_predecessor_conflict")
+        if predecessor is not None and (
+            command.predecessor_assessment_request_id
+            != predecessor.assessment_request_id
+            or command.predecessor_assessment_request_fingerprint
+            != predecessor.request_fingerprint
+        ):
+            raise PostFinalAssessmentError("assessment_predecessor_conflict")
+
+        predecessor_result = next(
+            (
+                item
+                for item in snapshot.post_final_assessment_results
+                if predecessor is not None
+                and item.assessment_request_id == predecessor.assessment_request_id
+            ),
+            None,
+        )
+        predecessor_abandonment = next(
+            (
+                item
+                for item in snapshot.post_final_assessment_abandonments
+                if predecessor is not None
+                and item.assessment_request_id == predecessor.assessment_request_id
+            ),
+            None,
+        )
+        create_abandonment = False
+        if predecessor is None:
+            pass
+        elif predecessor_result is not None:
+            if (
+                command.predecessor_assessment_result_id
+                != predecessor_result.assessment_result_id
+                or command.predecessor_result_fingerprint
+                != predecessor_result.result_fingerprint
+                or command.abandon_predecessor
+            ):
+                raise PostFinalAssessmentError("assessment_predecessor_conflict")
+            # A Store-qualified zero-advice result has no evidence-bearing
+            # archive to reopen. Nonzero results remain archive-bound.
+            if not self._result_has_zero_advice(predecessor_result):
+                verified = self._qualify_archive(
+                    facts,
+                    predecessor,
+                    str(
+                        trial_archive_path(
+                            self._archive_root,
+                            predecessor.trial_id,
+                        )
+                    ),
+                )
+                if not verified.get("ok"):
+                    raise PostFinalAssessmentError(
+                        str(
+                            verified.get(
+                                "reason_code",
+                                "post_final_assessment_binding_invalid",
+                            )
+                        )
+                    )
+        elif predecessor_abandonment is not None:
+            if (
+                command.predecessor_abandonment_id
+                != predecessor_abandonment.abandonment_id
+                or command.predecessor_abandonment_fingerprint
+                != predecessor_abandonment.abandonment_fingerprint
+                or command.abandon_predecessor
+            ):
+                raise PostFinalAssessmentError("assessment_predecessor_conflict")
+        elif not command.abandon_predecessor:
+            raise PostFinalAssessmentError(
+                "post_final_assessment_predecessor_outcome_unknown"
+            )
+        else:
+            # A complete, intrinsically valid archive is still authoritative
+            # recovery evidence even though the predecessor result receipt is
+            # absent.  Probe it read-only here so ``assessment_next`` cannot
+            # advertise an abandonment request that ``assessment_run`` would
+            # immediately recover instead of claiming.
+            if self._archive_recovery_available(
+                facts,
+                snapshot,
+                binding,
+                predecessor,
+            ):
+                raise PostFinalAssessmentError(
+                    "assessment_predecessor_result_available"
+                )
+            create_abandonment = True
+
+        try:
+            policy = self._policy_by_id(
+                snapshot,
+                facts.run_id,
+                command.policy_revision_id,
+                command.policy_fingerprint,
+            )
+        except PostFinalAssessmentError:
+            raise
+        if (
+            not policy.enabled
+            or not policy.public_safe_egress_attested
+            or not command.public_safe_egress_attested
+            or (
+                command.max_provider_calls,
+                command.max_total_input_tokens,
+                command.max_total_output_tokens,
+                command.max_output_tokens_per_call,
+            )
+            != (
+                policy.max_provider_calls,
+                policy.max_total_input_tokens,
+                policy.max_total_output_tokens,
+                policy.max_output_tokens_per_call,
+            )
+        ):
+            raise PostFinalAssessmentError("post_final_assessment_policy_conflict")
+        context = _bounded_context_from_direction(binding, run_id=facts.run_id)
+        if (
+            policy.bounded_context_sha256 != context.context_sha256
+            or policy.bounded_context != context.model_dump(mode="json")
+        ):
+            raise PostFinalAssessmentError("post_final_assessment_policy_conflict")
+
+        trial_id = _id(
+            "pf-laj-trial",
+            {
+                "lineage": command.finalized_lineage_fingerprint,
+                "generation": command.assessment_generation,
+                "authorization": authorization_fingerprint,
+                "policy": policy.policy_fingerprint,
+            },
+        )
+        try:
+            config = InstrumentConfig.model_validate(
+                policy.instrument_config,
+                strict=True,
+            )
+            prepared = prepare_shadow_run_from_bytes(
+                report_bytes=facts.report.markdown_utf8,
+                bounded_context=context,
+                instrument_config=config,
+                trial_id=trial_id,
+                archive_root=self._archive_root,
+                workspace_root=self.workspace,
+                messages_endpoint=policy.messages_endpoint,
+            )
+        except (SemanticEvaluatorError, ValidationError, ValueError) as exc:
+            raise PostFinalAssessmentError("preflight_invalid") from exc
+        if isinstance(prepared, ShadowRunResult):
+            reason = (
+                prepared.reason_codes[0]
+                if prepared.reason_codes
+                else "preflight_invalid"
+            )
+            raise PostFinalAssessmentError(str(reason))
+        budget = prepared_shadow_budget(prepared)
+        if (
+            budget.provider_call_ceiling > command.max_provider_calls
+            or budget.total_input_token_upper_bound > command.max_total_input_tokens
+            or budget.total_output_token_upper_bound > command.max_total_output_tokens
+            or budget.per_call_output_token_cap > command.max_output_tokens_per_call
+        ):
+            raise PostFinalAssessmentError("budget_exceeded")
+        try:
+            capability_profile(self.workspace)
+        except CoreRunError as exc:
+            raise PostFinalAssessmentError(str(exc)) from exc
+        return _AssessmentReadiness(
+            policy=policy,
+            context=context,
+            prepared=prepared,
+            budget=budget,
+            predecessor=predecessor,
+            predecessor_result=predecessor_result,
+            predecessor_abandonment=predecessor_abandonment,
+            create_abandonment=create_abandonment,
+        )
+
+    def _archive_recovery_available(
+        self,
+        facts: Any,
+        snapshot: Any,
+        binding: Any,
+        predecessor: PostFinalAssessmentRequestRecord,
+    ) -> bool:
+        """Return whether retry can recover a missing predecessor result.
+
+        This is deliberately a pure probe.  Result creation remains owned by
+        ``retry``/``_qualify_archive``.  Admission reconstructs the same exact
+        prepared request/execution identity as retry before treating an
+        intrinsically valid archive as recoverable.
+        """
+
+        try:
+            prepared = self._prepare_request_replay(
+                facts=facts,
+                snapshot=snapshot,
+                binding=binding,
+                request=predecessor,
+            )
+            if isinstance(prepared, ShadowRunResult):
+                return False
+            replay = execute_prepared_shadow_run(prepared, replay_only=True)
+            if not replay.archive_complete or replay.archive_path is None:
+                return False
+            archive = verify_shadow_archive(Path(replay.archive_path))
+            view = build_laj_reader_view(
+                archive.path,
+                expected_report_sha256=facts.report.sha256,
+            )
+        except (
+            PostFinalAssessmentError,
+            SemanticEvaluatorError,
+            OSError,
+            ValueError,
+        ):
+            return False
+        return (
+            view.archive_verified
+            and view.binding is not None
+            and view.binding.trial_id == predecessor.trial_id
+            and archive.request.trial_id == predecessor.trial_id
+        )
+
+    def _prepare_request_replay(
+        self,
+        *,
+        facts: Any,
+        snapshot: Any,
+        binding: Any,
+        request: PostFinalAssessmentRequestRecord,
+    ) -> PreparedShadowRun | ShadowRunResult:
+        """Reconstruct the one immutable replay identity for a Store request."""
+
+        policy = self._policy_by_id(
+            snapshot,
+            facts.run_id,
+            request.policy_revision_id,
+            request.policy_fingerprint,
+        )
+        context = _bounded_context_from_direction(binding, run_id=facts.run_id)
+        if (
+            policy.bounded_context_sha256 != context.context_sha256
+            or policy.bounded_context != context.model_dump(mode="json")
+        ):
+            raise PostFinalAssessmentError("post_final_assessment_policy_conflict")
+        config = InstrumentConfig.model_validate(
+            policy.instrument_config,
+            strict=True,
+        )
+        return prepare_shadow_run_from_bytes(
+            report_bytes=facts.report.markdown_utf8,
+            bounded_context=context,
+            instrument_config=config,
+            trial_id=request.trial_id,
+            archive_root=self._archive_root,
+            workspace_root=self.workspace,
+            messages_endpoint=policy.messages_endpoint,
+        )
 
     def _validate_policy_input(
         self, value: Mapping[str, object]
@@ -1305,6 +1712,85 @@ class PostFinalAssessmentService:
             ],
         }
 
+    def assessment_next(
+        self,
+        *,
+        policy_revision_id: str,
+        human_actor_id: str,
+        human_request_id: str,
+        assessment_purpose: str,
+        abandon_predecessor: bool = False,
+    ) -> dict[str, object]:
+        """Project one complete next-run authorization without writing state."""
+
+        try:
+            facts, snapshot, binding, _workspace_id, history, action = self._load()
+            series = self._series_for_facts(history, snapshot, facts, action)
+            current_policy = self._policy_for_facts(snapshot, facts)
+            if (
+                current_policy is None
+                or current_policy.policy_revision_id != policy_revision_id
+            ):
+                raise PostFinalAssessmentError("post_final_assessment_policy_conflict")
+            policy = self._policy_by_id(
+                snapshot,
+                facts.run_id,
+                policy_revision_id,
+                current_policy.policy_fingerprint,
+            )
+            results = {
+                item.assessment_request_id: item
+                for item in snapshot.post_final_assessment_results
+            }
+            abandonments = {
+                item.assessment_request_id: item
+                for item in snapshot.post_final_assessment_abandonments
+            }
+            command = _build_next_assessment_command(
+                facts=facts,
+                action=action,
+                policy=policy,
+                series=series,
+                results=results,
+                abandonments=abandonments,
+                human_actor_id=human_actor_id,
+                human_request_id=human_request_id,
+                assessment_purpose=assessment_purpose,
+                abandon_predecessor=abandon_predecessor,
+            )
+            self._admit_assessment(
+                command=command,
+                facts=facts,
+                snapshot=snapshot,
+                binding=binding,
+                history=history,
+                action=action,
+                series=series,
+                authorization_fingerprint=_canonical_sha256(
+                    command.model_dump(mode="json")
+                ),
+            )
+        except PostFinalAssessmentError as exc:
+            return {
+                "ok": False,
+                "status": "needs_human"
+                if str(exc) == "post_final_assessment_predecessor_outcome_unknown"
+                else "invalid",
+                "reason_code": str(exc),
+            }
+        request = command.model_dump(mode="json")
+        return {
+            "ok": True,
+            "status": "ready",
+            "request": request,
+            "request_fingerprint": _canonical_sha256(request),
+            "finalized_lineage_fingerprint": command.finalized_lineage_fingerprint,
+            "assessment_generation": command.assessment_generation,
+            "store_revision": command.expected_store_revision,
+            "policy_revision_id": command.policy_revision_id,
+            "boundary": "read_only_human_authorization_projection",
+        }
+
     def assessment_run(self, value: Mapping[str, object]) -> dict[str, object]:
         """Execute one new explicitly Human-authorized assessment generation."""
 
@@ -1341,225 +1827,72 @@ class PostFinalAssessmentService:
                     "reason_code": "assessment_human_request_conflict",
                 }
             return self.retry(existing.assessment_request_id)
-        if (
-            facts.store_revision != command.expected_store_revision
-            or command.finalized_lineage_fingerprint
-            != finalized_lineage_fingerprint(facts, action)
-            or command.assessment_generation != len(series) + 1
-        ):
-            return {
-                "ok": False,
-                "status": "conflict",
-                "reason_code": "assessment_series_conflict",
-            }
-        predecessor = series[-1] if series else None
-        if predecessor is None and (
-            command.predecessor_assessment_request_id is not None
-            or command.predecessor_assessment_request_fingerprint is not None
-            or command.predecessor_assessment_result_id is not None
-            or command.predecessor_result_fingerprint is not None
-            or command.predecessor_abandonment_id is not None
-            or command.predecessor_abandonment_fingerprint is not None
-            or command.abandon_predecessor
-        ):
-            return {
-                "ok": False,
-                "status": "conflict",
-                "reason_code": "assessment_predecessor_conflict",
-            }
-        if predecessor is not None and (
-            command.predecessor_assessment_request_id
-            != predecessor.assessment_request_id
-            or command.predecessor_assessment_request_fingerprint
-            != predecessor.request_fingerprint
-        ):
-            return {
-                "ok": False,
-                "status": "conflict",
-                "reason_code": "assessment_predecessor_conflict",
-            }
-        predecessor_result = next(
-            (
-                item
-                for item in snapshot.post_final_assessment_results
-                if predecessor is not None
-                and item.assessment_request_id == predecessor.assessment_request_id
-            ),
-            None,
-        )
-        predecessor_abandonment = next(
-            (
-                item
-                for item in snapshot.post_final_assessment_abandonments
-                if predecessor is not None
-                and item.assessment_request_id == predecessor.assessment_request_id
-            ),
-            None,
-        )
-        create_abandonment = False
-        if predecessor is None:
-            pass
-        elif predecessor_result is not None:
-            if (
-                command.predecessor_assessment_result_id
-                != predecessor_result.assessment_result_id
-                or command.predecessor_result_fingerprint
-                != predecessor_result.result_fingerprint
-                or command.abandon_predecessor
-            ):
-                return {
-                    "ok": False,
-                    "status": "conflict",
-                    "reason_code": "assessment_predecessor_conflict",
-                }
-            verified = self._qualify_archive(
-                facts,
-                predecessor,
-                str(
-                    trial_archive_path(
-                        self._archive_root,
-                        predecessor.trial_id,
-                    )
-                ),
+        try:
+            readiness = self._admit_assessment(
+                command=command,
+                facts=facts,
+                snapshot=snapshot,
+                binding=binding,
+                history=history,
+                action=action,
+                series=series,
+                authorization_fingerprint=authorization_fingerprint,
             )
-            if not verified.get("ok"):
-                return verified
-        elif predecessor_abandonment is not None:
-            if (
-                command.predecessor_abandonment_id
-                != predecessor_abandonment.abandonment_id
-                or command.predecessor_abandonment_fingerprint
-                != predecessor_abandonment.abandonment_fingerprint
-                or command.abandon_predecessor
-            ):
-                return {
-                    "ok": False,
-                    "status": "conflict",
-                    "reason_code": "assessment_predecessor_conflict",
+        except PostFinalAssessmentError as exc:
+            reason_code = str(exc)
+            if reason_code == "assessment_predecessor_result_available":
+                predecessor = series[-1] if series else None
+                if predecessor is not None:
+                    replay = self.retry(predecessor.assessment_request_id)
+                    if replay.get("ok"):
+                        return {
+                            **replay,
+                            "status": "predecessor_recovered",
+                            "reason_code": "assessment_predecessor_result_available",
+                        }
+            status = (
+                "needs_human"
+                if reason_code == "post_final_assessment_predecessor_outcome_unknown"
+                else "conflict"
+                if reason_code
+                in {
+                    "assessment_series_conflict",
+                    "assessment_predecessor_conflict",
+                    "assessment_human_request_conflict",
                 }
-        elif not command.abandon_predecessor:
-            return {
-                "ok": False,
-                "status": "needs_human",
-                "reason_code": "assessment_predecessor_outcome_unknown",
-            }
-        else:
-            replay = self.retry(predecessor.assessment_request_id)
+                else "budget_blocked"
+                if reason_code == "budget_exceeded"
+                else "unavailable"
+                if reason_code
+                in {"preflight_invalid", "checkout_publication_unsupported"}
+                else "invalid"
+            )
+            return {"ok": False, "status": status, "reason_code": reason_code}
+
+        if readiness.create_abandonment and readiness.predecessor is not None:
+            replay = self.retry(readiness.predecessor.assessment_request_id)
             if replay.get("ok"):
                 return {
                     **replay,
                     "status": "predecessor_recovered",
                     "reason_code": "assessment_predecessor_result_available",
                 }
-            create_abandonment = True
-        try:
-            policy = self._policy_by_id(
-                snapshot,
-                facts.run_id,
-                command.policy_revision_id,
-                command.policy_fingerprint,
-            )
-        except PostFinalAssessmentError as exc:
-            return {"ok": False, "status": "invalid", "reason_code": str(exc)}
-        if (
-            not policy.enabled
-            or not policy.public_safe_egress_attested
-            or not command.public_safe_egress_attested
-            or (
-                command.max_provider_calls,
-                command.max_total_input_tokens,
-                command.max_total_output_tokens,
-                command.max_output_tokens_per_call,
-            )
-            != (
-                policy.max_provider_calls,
-                policy.max_total_input_tokens,
-                policy.max_total_output_tokens,
-                policy.max_output_tokens_per_call,
-            )
-        ):
-            return {
-                "ok": False,
-                "status": "invalid",
-                "reason_code": "post_final_assessment_policy_conflict",
-            }
-        context = _bounded_context_from_direction(binding, run_id=facts.run_id)
-        if (
-            policy.bounded_context_sha256 != context.context_sha256
-            or policy.bounded_context != context.model_dump(mode="json")
-        ):
-            return {
-                "ok": False,
-                "status": "invalid",
-                "reason_code": "post_final_assessment_policy_conflict",
-            }
-        trial_id = _id(
-            "pf-laj-trial",
-            {
-                "lineage": command.finalized_lineage_fingerprint,
-                "generation": command.assessment_generation,
-                "authorization": authorization_fingerprint,
-                "policy": policy.policy_fingerprint,
-            },
-        )
-        try:
-            config = InstrumentConfig.model_validate(
-                policy.instrument_config,
-                strict=True,
-            )
-            prepared = prepare_shadow_run_from_bytes(
-                report_bytes=facts.report.markdown_utf8,
-                bounded_context=context,
-                instrument_config=config,
-                trial_id=trial_id,
-                archive_root=self._archive_root,
-                workspace_root=self.workspace,
-                messages_endpoint=policy.messages_endpoint,
-            )
-        except (SemanticEvaluatorError, ValidationError, ValueError):
-            return {
-                "ok": False,
-                "status": "unavailable",
-                "reason_code": "preflight_invalid",
-            }
-        if isinstance(prepared, ShadowRunResult):
-            return {
-                "ok": False,
-                "status": "unavailable",
-                "reason_codes": list(prepared.reason_codes),
-            }
-        budget = prepared_shadow_budget(prepared)
-        if (
-            budget.provider_call_ceiling > command.max_provider_calls
-            or budget.total_input_token_upper_bound > command.max_total_input_tokens
-            or budget.total_output_token_upper_bound > command.max_total_output_tokens
-            or budget.per_call_output_token_cap > command.max_output_tokens_per_call
-        ):
-            return {
-                "ok": False,
-                "status": "budget_blocked",
-                "reason_code": "budget_exceeded",
-            }
-        try:
-            capability_profile(self.workspace)
-        except CoreRunError as exc:
-            return {"ok": False, "status": "unavailable", "reason_code": str(exc)}
         claim = self._claim_series_request(
             facts=facts,
-            policy=policy,
-            prepared=prepared,
-            budget=budget,
+            policy=readiness.policy,
+            prepared=readiness.prepared,
+            budget=readiness.budget,
             command=command,
             authorization_fingerprint=authorization_fingerprint,
-            predecessor=predecessor,
-            predecessor_result=predecessor_result,
-            predecessor_abandonment=predecessor_abandonment,
-            create_abandonment=create_abandonment,
+            predecessor=readiness.predecessor,
+            predecessor_result=readiness.predecessor_result,
+            predecessor_abandonment=readiness.predecessor_abandonment,
+            create_abandonment=readiness.create_abandonment,
         )
         if isinstance(claim, dict):
             return claim
         result = execute_prepared_shadow_run(
-            prepared,
+            readiness.prepared,
             adapter_factory=self._adapter_factory,
         )
         if not result.archive_complete or result.archive_path is None:
@@ -1634,16 +1967,15 @@ class PostFinalAssessmentService:
                 "status": "abandoned",
                 "reason_code": "assessment_request_abandoned",
             }
-        config = InstrumentConfig.model_validate(policy.instrument_config, strict=True)
-        prepared = prepare_shadow_run_from_bytes(
-            report_bytes=facts.report.markdown_utf8,
-            bounded_context=context,
-            instrument_config=config,
-            trial_id=request.trial_id,
-            archive_root=self._archive_root,
-            workspace_root=self.workspace,
-            messages_endpoint=policy.messages_endpoint,
-        )
+        try:
+            prepared = self._prepare_request_replay(
+                facts=facts,
+                snapshot=snapshot,
+                binding=binding,
+                request=request,
+            )
+        except PostFinalAssessmentError as exc:
+            return {"ok": False, "status": "invalid", "reason_code": str(exc)}
         if isinstance(prepared, ShadowRunResult):
             return {
                 "ok": False,

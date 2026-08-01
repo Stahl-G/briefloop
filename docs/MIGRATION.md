@@ -30,16 +30,18 @@ This page explains the public architecture migration from older Python-pipeline 
   authorization. Search snippets remain claims-ineligible, and legacy source
   commands are not a fallback. Synthetic transport is tested; live results and
   cost are NOT MEASURED.
-- Schema 11 adds append-only source-acquisition attempt authorization and
-  transaction-relation records. Pre-schema-11 discovery histories remain
-  verifiable under their historical semantics but cannot be retroactively
-  authorized for another provider call.
+- Schema 12 adds append-only post-final assessment-series relations for fresh
+  current-schema workspaces. Older development SQLite workspaces are
+  unsupported when the schema changes; create a fresh workspace. There is no
+  in-product development-schema upgrade path.
 - Legacy Improvement JSON/JSONL remains inert. Experimental post-final review
-  stores one qualified advisory assessment, Human accept/reject/defer,
+  supports multiple independently Human-authorized append-only assessments on
+  one finalized lineage, explicit result selection, Human accept/reject/defer,
   Human-edited guidance drafts, and separate approval/status revisions through
-  SQLite Receipts. Static HTML stays read-only; only the secured loopback
-  Review Session accepts strict Human commands. No approved guidance is
-  consumed by later runs until the separate snapshot/precedence unit ships.
+  SQLite Receipts. Generation 2 and later are explicit only. Static HTML stays
+  read-only; only the secured loopback Review Session accepts strict Human
+  commands. No approved guidance is consumed by later runs until the separate
+  snapshot/precedence unit ships.
 - Retained legacy commands and assets may remain in the tree until the separate
   deletion unit, but the authority guard prevents them from acting on a SQLite
   workspace or continuing a JSON-only workspace.

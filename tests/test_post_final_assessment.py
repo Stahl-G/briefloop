@@ -593,6 +593,7 @@ def test_explicit_human_generation_one_claims_then_replays_without_redial(
     assert outcome["replayed"] is False
     assert outcome["status"] == "available"
     assert len(calls) == 9
+
     assert claim_revisions == [before_revision + 1]
     with SQLiteControlStore.open(workspace / "briefloop.db") as store:
         snapshot = store.load_snapshot(run_id)
@@ -635,6 +636,378 @@ def test_explicit_human_generation_one_claims_then_replays_without_redial(
         assert store.current_revision == revision_before
 
 
+def test_assessment_next_is_a_complete_read_only_generation_one_projection(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    workspace, _run_id, _clock = _finalized_local_workspace(tmp_path, monkeypatch)
+    service = PostFinalAssessmentService(workspace)
+    assert service.policy_set(_policy_payload())["ok"] is True
+    with SQLiteControlStore.open(workspace / "briefloop.db") as store:
+        before_revision = store.current_revision
+        before_bytes = (workspace / "briefloop.db").read_bytes()
+    # The public projection takes the explicit policy id; it does not inspect
+    # SQL or require the caller to reconstruct internal fingerprints.
+    with SQLiteControlStore.open(workspace / "briefloop.db") as store:
+        snapshot = store.load_snapshot(_run_id)
+    policy_id = snapshot.post_final_assessment_policy_revisions[0].policy_revision_id
+    first = service.assessment_next(
+        policy_revision_id=policy_id,
+        human_actor_id="human-1",
+        human_request_id="pf-laj-assessment-next-1",
+        assessment_purpose="post_final_review",
+    )
+    second = service.assessment_next(
+        policy_revision_id=policy_id,
+        human_actor_id="human-1",
+        human_request_id="pf-laj-assessment-next-1",
+        assessment_purpose="post_final_review",
+    )
+    assert first["ok"] is True
+    assert first == second
+    request = first["request"]
+    assert isinstance(request, dict)
+    assert request["assessment_generation"] == 1
+    assert request["predecessor_assessment_request_id"] is None
+    assert request["policy_revision_id"] == policy_id
+    assert request["human_request_id"] == "pf-laj-assessment-next-1"
+    assert request["max_provider_calls"] == 9
+    with SQLiteControlStore.open(workspace / "briefloop.db") as store:
+        assert store.current_revision == before_revision
+    assert (workspace / "briefloop.db").read_bytes() == before_bytes
+
+
+def test_assessment_next_covers_result_abandonment_and_policy_boundaries(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The public projection is deterministic across every predecessor state."""
+
+    workspace, run_id, _clock = _finalized_local_workspace(
+        tmp_path / "result", monkeypatch
+    )
+    calls: list[tuple[str, int]] = []
+    service = _fixture_service(workspace, calls, terminal_mode="finding")
+    first_policy = _policy_payload()
+    first_policy_result = service.policy_set(first_policy)
+    assert first_policy_result["ok"] is True
+    first_policy_id = first_policy_result["policy_revision_id"]
+
+    generation_one_preview = service.assessment_next(
+        policy_revision_id=first_policy_id,
+        human_actor_id="human-next",
+        human_request_id="assessment-next-result-1",
+        assessment_purpose="post_final_review",
+    )
+    assert generation_one_preview["ok"] is True
+    generation_one_request = generation_one_preview["request"]
+    before_preview_bytes = (workspace / "briefloop.db").read_bytes()
+    with SQLiteControlStore.open(workspace / "briefloop.db") as store:
+        before_preview_revision = store.current_revision
+    try:
+        repeated_preview = service.assessment_next(
+            policy_revision_id=first_policy_id,
+            human_actor_id="human-next",
+            human_request_id="assessment-next-result-1",
+            assessment_purpose="post_final_review",
+        )
+    finally:
+        with SQLiteControlStore.open(workspace / "briefloop.db") as store:
+            after_preview_revision = store.current_revision
+    assert repeated_preview == generation_one_preview
+    assert after_preview_revision == before_preview_revision
+    assert (workspace / "briefloop.db").read_bytes() == before_preview_bytes
+
+    monkeypatch.setattr(runner_module.metadata, "version", lambda _name: "0.104.1")
+    monkeypatch.setenv(ANTHROPIC_API_KEY_SETTING, "public-synthetic-key")
+    first_result = service.assessment_run(generation_one_request)
+    assert first_result["ok"] is True
+    assert first_result["status"] == "available"
+    with SQLiteControlStore.open(workspace / "briefloop.db") as store:
+        first_request_record = store.load_snapshot(
+            run_id
+        ).post_final_assessment_requests[0]
+    calls_before_replay = len(calls)
+    replay_service = PostFinalAssessmentService(
+        workspace,
+        adapter_factory=lambda _execution: (_ for _ in ()).throw(
+            AssertionError("assessment-next replay touched adapter")
+        ),
+    )
+    assert replay_service.assessment_run(generation_one_request)["replayed"] is True
+    assert len(calls) == calls_before_replay
+
+    duplicate_next = service.assessment_next(
+        policy_revision_id=first_policy_id,
+        human_actor_id="human-next",
+        human_request_id=generation_one_request["human_request_id"],
+        assessment_purpose="model_evaluation",
+    )
+    assert duplicate_next == {
+        "ok": False,
+        "status": "invalid",
+        "reason_code": "assessment_human_request_conflict",
+    }
+
+    generation_two_preview = service.assessment_next(
+        policy_revision_id=first_policy_id,
+        human_actor_id="human-next",
+        human_request_id="assessment-next-result-2",
+        assessment_purpose="model_evaluation",
+    )
+    assert generation_two_preview["ok"] is True
+    generation_two_request = generation_two_preview["request"]
+    assert generation_two_request["assessment_generation"] == 2
+    assert (
+        generation_two_request["predecessor_assessment_request_id"]
+        == first_request_record.assessment_request_id
+    )
+    assert (
+        generation_two_request["predecessor_assessment_result_id"]
+        == first_result["assessment_result_id"]
+    )
+    assert (
+        generation_two_request["predecessor_result_fingerprint"]
+        == first_result["assessment_result_fingerprint"]
+    )
+
+    changed_policy = _policy_payload()
+    changed_policy.update(
+        {
+            "human_request_id": "pf-laj-policy-request-next-v2",
+            "requested_model_id": "public-compatible-model-v2",
+            "model_version": "public-compatible-model-v2",
+            "expected_model_identity": "public-compatible-model-v2",
+        }
+    )
+    changed_instrument = dict(changed_policy["instrument_config"])
+    changed_instrument.update(
+        {
+            "instrument_config_id": "pf-laj-anthropic-instrument-v2",
+            "model_id": "public-compatible-model-v2",
+            "model_version": "public-compatible-model-v2",
+        }
+    )
+    changed_policy["instrument_config"] = changed_instrument
+    changed_policy_result = service.policy_set(changed_policy)
+    assert changed_policy_result["ok"] is True
+    stale = service.assessment_next(
+        policy_revision_id=first_policy_id,
+        human_actor_id="human-next",
+        human_request_id="assessment-next-stale-policy",
+        assessment_purpose="model_evaluation",
+    )
+    assert stale == {
+        "ok": False,
+        "status": "invalid",
+        "reason_code": "post_final_assessment_policy_conflict",
+    }
+
+    unknown_workspace, unknown_run_id, _clock = _finalized_local_workspace(
+        tmp_path / "unknown", monkeypatch
+    )
+    unknown_calls: list[tuple[str, int]] = []
+    unknown_service = _fixture_service(
+        unknown_workspace,
+        unknown_calls,
+        terminal_mode="finding",
+    )
+    unknown_policy = unknown_service.policy_set(_policy_payload())
+    assert unknown_policy["ok"] is True
+    unknown_request = _generation_one_run_payload(unknown_service)
+
+    class _ProcessStop(BaseException):
+        pass
+
+    original_execute = post_final_assessment_module.execute_prepared_shadow_run
+    monkeypatch.setattr(
+        post_final_assessment_module,
+        "execute_prepared_shadow_run",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(_ProcessStop()),
+    )
+    with pytest.raises(_ProcessStop):
+        unknown_service.assessment_run(unknown_request)
+    monkeypatch.setattr(
+        post_final_assessment_module,
+        "execute_prepared_shadow_run",
+        original_execute,
+    )
+    unknown_without_abandonment = unknown_service.assessment_next(
+        policy_revision_id=unknown_policy["policy_revision_id"],
+        human_actor_id="human-next",
+        human_request_id="assessment-next-unknown-no-abandon",
+        assessment_purpose="post_final_review",
+    )
+    assert unknown_without_abandonment == {
+        "ok": False,
+        "status": "needs_human",
+        "reason_code": "post_final_assessment_predecessor_outcome_unknown",
+    }
+    unknown_with_abandonment = unknown_service.assessment_next(
+        policy_revision_id=unknown_policy["policy_revision_id"],
+        human_actor_id="human-next",
+        human_request_id="assessment-next-unknown-abandon",
+        assessment_purpose="post_final_review",
+        abandon_predecessor=True,
+    )
+    assert unknown_with_abandonment["ok"] is True
+    abandoned_request = unknown_with_abandonment["request"]
+    assert abandoned_request["assessment_generation"] == 2
+    assert abandoned_request["abandon_predecessor"] is True
+    monkeypatch.setattr(runner_module.metadata, "version", lambda _name: "0.104.1")
+    monkeypatch.setenv(ANTHROPIC_API_KEY_SETTING, "public-synthetic-key")
+    abandoned_result = unknown_service.assessment_run(abandoned_request)
+    assert abandoned_result["ok"] is True
+    assert abandoned_result["status"] == "available"
+    with SQLiteControlStore.open(unknown_workspace / "briefloop.db") as store:
+        snapshot = store.load_snapshot(unknown_run_id)
+    assert len(snapshot.post_final_assessment_abandonments) == 1
+    assert len(snapshot.post_final_assessment_results) == 1
+
+
+def test_assessment_admission_rejects_invalid_ids_before_store_or_provider(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    workspace, _run_id, _clock = _finalized_local_workspace(tmp_path, monkeypatch)
+    calls: list[tuple[str, int]] = []
+    service = _fixture_service(workspace, calls)
+    policy = service.policy_set(_policy_payload())
+    assert policy["ok"] is True
+    with SQLiteControlStore.open(workspace / "briefloop.db") as store:
+        before_revision = store.current_revision
+        before_bytes = (workspace / "briefloop.db").read_bytes()
+
+    invalid_values = ("", " ", "x" * 161, "bad/id")
+    for index, value in enumerate(invalid_values):
+        preview = service.assessment_next(
+            policy_revision_id=policy["policy_revision_id"],
+            human_actor_id=value,
+            human_request_id=f"valid-human-request-{index}",
+            assessment_purpose="post_final_review",
+        )
+        assert preview == {
+            "ok": False,
+            "status": "invalid",
+            "reason_code": "post_final_assessment_request_invalid",
+        }
+        request = _generation_one_run_payload(
+            service,
+            human_request_id=f"valid-human-request-run-{index}",
+        )
+        request["human_actor_id"] = value
+        assert service.assessment_run(request) == {
+            "ok": False,
+            "status": "invalid",
+            "reason_code": "post_final_assessment_request_invalid",
+        }
+
+    for index, value in enumerate(invalid_values):
+        preview = service.assessment_next(
+            policy_revision_id=policy["policy_revision_id"],
+            human_actor_id="human-1",
+            human_request_id=value,
+            assessment_purpose="post_final_review",
+        )
+        assert preview == {
+            "ok": False,
+            "status": "invalid",
+            "reason_code": "post_final_assessment_request_invalid",
+        }
+        request = _generation_one_run_payload(
+            service,
+            human_request_id=value,
+        )
+        assert service.assessment_run(request) == {
+            "ok": False,
+            "status": "invalid",
+            "reason_code": "post_final_assessment_request_invalid",
+        }
+
+    assert calls == []
+    with SQLiteControlStore.open(workspace / "briefloop.db") as store:
+        assert store.current_revision == before_revision
+    assert (workspace / "briefloop.db").read_bytes() == before_bytes
+
+
+def test_zero_advice_predecessor_is_ready_without_reopening_archive(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    workspace, run_id, _clock = _finalized_local_workspace(tmp_path, monkeypatch)
+    calls: list[tuple[str, int]] = []
+    service = _fixture_service(workspace, calls, terminal_mode="accepted")
+    policy = service.policy_set(_policy_payload())
+    assert policy["ok"] is True
+    monkeypatch.setattr(runner_module.metadata, "version", lambda _name: "0.104.1")
+    monkeypatch.setenv(ANTHROPIC_API_KEY_SETTING, "public-synthetic-key")
+    first = service.assessment_run(_generation_one_run_payload(service))
+    assert first["ok"] is True
+    assert first["status"] == "available"
+    assert len(calls) == 9
+
+    with SQLiteControlStore.open(workspace / "briefloop.db") as store:
+        snapshot = store.load_snapshot(run_id)
+        predecessor = snapshot.post_final_assessment_requests[0]
+        predecessor_result = snapshot.post_final_assessment_results[0]
+        before_revision = store.current_revision
+    assert predecessor_result.finding_count == 0
+    archive_path = trial_archive_path(service._archive_root, predecessor.trial_id)
+    shutil.rmtree(archive_path)
+
+    preview = service.assessment_next(
+        policy_revision_id=policy["policy_revision_id"],
+        human_actor_id="human-1",
+        human_request_id="pf-laj-zero-advice-next",
+        assessment_purpose="model_evaluation",
+    )
+    assert preview["ok"] is True, preview
+    assert preview["request"]["predecessor_assessment_result_id"] == (
+        predecessor_result.assessment_result_id
+    )
+    second = service.assessment_run(preview["request"])
+    assert second["ok"] is True, second
+    assert second["status"] == "available"
+    assert len(calls) == 18
+    with SQLiteControlStore.open(workspace / "briefloop.db") as store:
+        assert store.current_revision == before_revision + 2
+
+
+def test_nonzero_predecessor_archive_is_required_for_next_projection(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    workspace, run_id, _clock = _finalized_local_workspace(tmp_path, monkeypatch)
+    calls: list[tuple[str, int]] = []
+    service = _fixture_service(workspace, calls, terminal_mode="finding")
+    policy = service.policy_set(_policy_payload())
+    assert policy["ok"] is True
+    monkeypatch.setattr(runner_module.metadata, "version", lambda _name: "0.104.1")
+    monkeypatch.setenv(ANTHROPIC_API_KEY_SETTING, "public-synthetic-key")
+    first = service.assessment_run(_generation_one_run_payload(service))
+    assert first["ok"] is True and first["status"] == "available"
+    with SQLiteControlStore.open(workspace / "briefloop.db") as store:
+        snapshot = store.load_snapshot(run_id)
+        predecessor = snapshot.post_final_assessment_requests[0]
+        before_revision = store.current_revision
+    archive_path = trial_archive_path(service._archive_root, predecessor.trial_id)
+    shutil.rmtree(archive_path)
+    blocked = service.assessment_next(
+        policy_revision_id=policy["policy_revision_id"],
+        human_actor_id="human-1",
+        human_request_id="pf-laj-nonzero-missing-archive",
+        assessment_purpose="model_evaluation",
+    )
+    assert blocked == {
+        "ok": False,
+        "status": "invalid",
+        "reason_code": "archive_verification_failed",
+    }
+    assert len(calls) == 9
+    with SQLiteControlStore.open(workspace / "briefloop.db") as store:
+        assert store.current_revision == before_revision
+
+
 def test_same_lineage_supports_same_model_and_cross_model_human_runs(
     tmp_path: Path,
     monkeypatch,
@@ -647,11 +1020,17 @@ def test_same_lineage_supports_same_model_and_cross_model_human_runs(
     monkeypatch.setenv(ANTHROPIC_API_KEY_SETTING, "public-synthetic-key")
 
     generation_one = service.assessment_run(_generation_one_run_payload(service))
-    generation_two_request = _next_generation_run_payload(
-        service,
+    facts, snapshot, _binding, _workspace_id, _history, _action = service._load()
+    policy = service._policy_for_facts(snapshot, facts)
+    assert policy is not None
+    generation_two_preview = service.assessment_next(
+        policy_revision_id=policy.policy_revision_id,
+        human_actor_id="human-1",
         human_request_id="pf-laj-assessment-run-2",
         assessment_purpose="post_final_review",
     )
+    assert generation_two_preview["ok"] is True
+    generation_two_request = generation_two_preview["request"]
     generation_two = service.assessment_run(generation_two_request)
 
     assert generation_one["status"] == generation_two["status"] == "available"
@@ -813,6 +1192,153 @@ def test_outcome_unknown_is_atomically_abandoned_before_next_generation(
     with SQLiteControlStore.open(workspace / "briefloop.db") as store:
         assert store.current_revision == revision_before
         assert len(store.load_snapshot(run_id).post_final_assessment_abandonments) == 1
+
+
+def test_unknown_predecessor_with_valid_archive_recovers_before_abandonment_projection(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    """A valid archive is recovered, never advertised as a new generation."""
+
+    workspace, run_id, _clock = _finalized_local_workspace(tmp_path, monkeypatch)
+    calls: list[tuple[str, int]] = []
+    service = _fixture_service(workspace, calls, terminal_mode="accepted")
+    policy = service.policy_set(_policy_payload())
+    assert policy["ok"] is True
+    monkeypatch.setattr(runner_module.metadata, "version", lambda _name: "0.104.1")
+    monkeypatch.setenv(ANTHROPIC_API_KEY_SETTING, "public-synthetic-key")
+
+    original_qualify = service._qualify_archive
+    monkeypatch.setattr(
+        service,
+        "_qualify_archive",
+        lambda _facts, request, _archive_path: {
+            "ok": False,
+            "status": "pending",
+            "assessment_request_id": request.assessment_request_id,
+        },
+    )
+    initial = service.assess()
+    assert initial["status"] == "pending"
+    assert len(calls) == 9
+    monkeypatch.setattr(service, "_qualify_archive", original_qualify)
+
+    with SQLiteControlStore.open(workspace / "briefloop.db") as store:
+        snapshot = store.load_snapshot(run_id)
+        assert snapshot.post_final_assessment_results == ()
+        predecessor = snapshot.post_final_assessment_requests[0]
+        before_revision = store.current_revision
+    assert trial_archive_path(service._archive_root, predecessor.trial_id).is_dir()
+
+    projected = service.assessment_next(
+        policy_revision_id=policy["policy_revision_id"],
+        human_actor_id="human-1",
+        human_request_id="pf-laj-recover-before-abandon",
+        assessment_purpose="model_evaluation",
+        abandon_predecessor=True,
+    )
+    assert projected == {
+        "ok": False,
+        "status": "invalid",
+        "reason_code": "assessment_predecessor_result_available",
+    }
+    with SQLiteControlStore.open(workspace / "briefloop.db") as store:
+        assert store.current_revision == before_revision
+
+    monkeypatch.delenv(ANTHROPIC_API_KEY_SETTING, raising=False)
+    recovery = service.assessment_run(
+        _abandoning_next_generation_run_payload(
+            service,
+            human_request_id="pf-laj-recover-before-abandon",
+        )
+    )
+    assert recovery["ok"] is True
+    assert recovery["status"] == "predecessor_recovered"
+    assert recovery["reason_code"] == "assessment_predecessor_result_available"
+    assert len(calls) == 9
+    with SQLiteControlStore.open(workspace / "briefloop.db") as store:
+        snapshot = store.load_snapshot(run_id)
+        assert len(snapshot.post_final_assessment_requests) == 1
+        assert len(snapshot.post_final_assessment_results) == 1
+        assert snapshot.post_final_assessment_abandonments == ()
+
+
+def test_unknown_predecessor_with_stale_execution_identity_can_be_abandoned(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    """An intrinsically valid old-identity archive is not recoverable now."""
+
+    workspace, run_id, _clock = _finalized_local_workspace(tmp_path, monkeypatch)
+    calls: list[tuple[str, int]] = []
+    service = _fixture_service(workspace, calls, terminal_mode="accepted")
+    policy = service.policy_set(_policy_payload())
+    assert policy["ok"] is True
+    monkeypatch.setattr(runner_module.metadata, "version", lambda _name: "0.104.1")
+    monkeypatch.setenv(ANTHROPIC_API_KEY_SETTING, "public-synthetic-key")
+
+    original_qualify = service._qualify_archive
+    original_source_bundle = runner_module._source_bundle
+    monkeypatch.setattr(
+        runner_module,
+        "_source_bundle",
+        lambda *_module_names: hashlib.sha256(
+            b"stale-evaluator-execution-identity"
+        ).hexdigest(),
+    )
+    monkeypatch.setattr(
+        service,
+        "_qualify_archive",
+        lambda _facts, request, _archive_path: {
+            "ok": False,
+            "status": "pending",
+            "assessment_request_id": request.assessment_request_id,
+        },
+    )
+    initial = service.assess()
+    assert initial["status"] == "pending"
+    assert len(calls) == 9
+    monkeypatch.setattr(runner_module, "_source_bundle", original_source_bundle)
+    monkeypatch.setattr(service, "_qualify_archive", original_qualify)
+
+    with SQLiteControlStore.open(workspace / "briefloop.db") as store:
+        snapshot = store.load_snapshot(run_id)
+        predecessor = snapshot.post_final_assessment_requests[0]
+        before_revision = store.current_revision
+        assert snapshot.post_final_assessment_results == ()
+    assert trial_archive_path(service._archive_root, predecessor.trial_id).is_dir()
+    assert service.retry(predecessor.assessment_request_id) == {
+        "ok": False,
+        "status": "invalid",
+        "reason_code": "archive_verification_failed",
+    }
+
+    projected = service.assessment_next(
+        policy_revision_id=policy["policy_revision_id"],
+        human_actor_id="human-1",
+        human_request_id="pf-laj-abandon-stale-execution",
+        assessment_purpose="model_evaluation",
+        abandon_predecessor=True,
+    )
+    assert projected["ok"] is True, projected
+    assert projected["request"]["assessment_generation"] == 2
+    assert projected["request"]["abandon_predecessor"] is True
+    with SQLiteControlStore.open(workspace / "briefloop.db") as store:
+        assert store.current_revision == before_revision
+
+    successor = service.assessment_run(projected["request"])
+    assert successor["ok"] is True, successor
+    assert successor["status"] == "available"
+    assert len(calls) == 18
+    with SQLiteControlStore.open(workspace / "briefloop.db") as store:
+        snapshot = store.load_snapshot(run_id)
+    assert len(snapshot.post_final_assessment_requests) == 2
+    assert len(snapshot.post_final_assessment_abandonments) == 1
+    assert len(snapshot.post_final_assessment_results) == 1
+    assert (
+        snapshot.post_final_assessment_abandonments[0].assessment_request_id
+        == predecessor.assessment_request_id
+    )
 
 
 def test_policy_is_store_owned_replayable_and_manual_view_cannot_override(
