@@ -12,13 +12,14 @@ from datetime import datetime, timezone
 import hashlib
 import json
 from pathlib import Path
-from typing import Any, Callable, Mapping
+from typing import Any, Callable, Mapping, Optional
 
 from pydantic import ValidationError
 
 from multi_agent_brief.contracts.v2 import (
     CoreRunNextAction,
     EventEnvelope,
+    PostFinalAssessmentAbandonmentRecord,
     PostFinalAssessmentPolicyRevision,
     PostFinalAssessmentRequestRecord,
     PostFinalAssessmentResultRecord,
@@ -66,6 +67,7 @@ from multi_agent_brief.semantic_evaluator.serialization import canonical_json_by
 
 
 POST_FINAL_ASSESSMENT_POLICY_SCHEMA = "briefloop.post_final_assessment_policy_set.v1"
+POST_FINAL_ASSESSMENT_RUN_SCHEMA = "briefloop.post_final_assessment_run.v1"
 # The evaluator's frozen admission boundary intentionally rejects archive roots
 # beneath a declared workspace.  Keep this local evidence outside that input
 # tree, while deriving it solely from the resolved workspace identity; no CLI
@@ -77,6 +79,7 @@ _POST_FINAL_ASSESSMENT_RECEIPT_TYPES = frozenset(
     {
         "post_final_assessment_policy",
         "post_final_assessment_claim",
+        "post_final_assessment_series_claim",
         "post_final_assessment_result",
         "post_final_finding_disposition",
         "post_final_guidance_draft",
@@ -108,6 +111,32 @@ class PostFinalAssessmentPolicyInput(StrictModel):
     max_total_output_tokens: int
     max_output_tokens_per_call: int
     public_safe_egress_attested: bool
+
+
+class PostFinalAssessmentRunInput(StrictModel):
+    """One explicit Human authorization for an independent assessment run."""
+
+    schema_version: str
+    human_actor_id: str
+    human_request_id: str
+    expected_store_revision: int
+    finalized_lineage_fingerprint: str
+    assessment_generation: int
+    assessment_purpose: str
+    predecessor_assessment_request_id: Optional[str] = None
+    predecessor_assessment_request_fingerprint: Optional[str] = None
+    predecessor_assessment_result_id: Optional[str] = None
+    predecessor_result_fingerprint: Optional[str] = None
+    predecessor_abandonment_id: Optional[str] = None
+    predecessor_abandonment_fingerprint: Optional[str] = None
+    abandon_predecessor: bool = False
+    policy_revision_id: str
+    policy_fingerprint: str
+    public_safe_egress_attested: bool
+    max_provider_calls: int
+    max_total_input_tokens: int
+    max_total_output_tokens: int
+    max_output_tokens_per_call: int
 
 
 def _utc_now() -> str:
@@ -383,73 +412,158 @@ def _require_advisory_only_receipt_suffix(
         raise PostFinalAssessmentError("control_store_integrity_invalid")
 
 
-def resolve_current_post_final_assessment_request(
+def resolve_post_final_assessment_series(
     history: Any,
     snapshot: Any,
     facts: Any,
     action: CoreRunNextAction,
-) -> PostFinalAssessmentRequestRecord | None:
-    """Resolve and reverify one current PF-LAJ request by stable lineage."""
+) -> tuple[PostFinalAssessmentRequestRecord, ...]:
+    """Resolve and reverify the complete request series for one stable lineage."""
 
     lineage = finalized_lineage_fingerprint(facts, action)
     requests = list(snapshot.post_final_assessment_requests)
     matches = [
         item for item in requests if item.finalized_lineage_fingerprint == lineage
     ]
-    if len(matches) > 1:
-        raise PostFinalAssessmentError("control_store_integrity_invalid")
     if not matches:
         if requests:
             raise PostFinalAssessmentError("post_final_assessment_stale")
-        return None
-    request = matches[0]
-    if not _request_has_exact_finalized_bindings(request, facts, action):
+        return ()
+    matches.sort(key=lambda item: item.assessment_generation)
+    if [item.assessment_generation for item in matches] != list(
+        range(1, len(matches) + 1)
+    ):
         raise PostFinalAssessmentError("control_store_integrity_invalid")
-    receipts = [
+    results_by_request = {
+        item.assessment_request_id: item
+        for item in snapshot.post_final_assessment_results
+        if item.finalized_lineage_fingerprint == lineage
+    }
+    abandonments_by_request = {
+        item.assessment_request_id: item
+        for item in snapshot.post_final_assessment_abandonments
+        if item.finalized_lineage_fingerprint == lineage
+    }
+    if set(results_by_request) & set(abandonments_by_request):
+        raise PostFinalAssessmentError("control_store_integrity_invalid")
+    for index, request in enumerate(matches):
+        if not _request_has_exact_finalized_bindings(request, facts, action):
+            raise PostFinalAssessmentError("control_store_integrity_invalid")
+        receipts = [
+            item
+            for item in snapshot.transactions
+            if item.transaction_id == request.accepted_transaction_id
+        ]
+        if len(receipts) != 1:
+            raise PostFinalAssessmentError("control_store_integrity_invalid")
+        receipt = receipts[0]
+        references = [
+            item
+            for item in receipt.post_final_assessment_requests
+            if item.assessment_request_id == request.assessment_request_id
+        ]
+        if (
+            receipt.run_id != request.run_id
+            or receipt.transaction_type
+            not in {
+                "post_final_assessment_claim",
+                "post_final_assessment_series_claim",
+            }
+            or receipt.prior_revision + 1 != receipt.committed_revision
+            or len(receipt.post_final_assessment_requests) != 1
+            or len(references) != 1
+        ):
+            raise PostFinalAssessmentError("control_store_integrity_invalid")
+        _require_advisory_only_receipt_suffix(snapshot, facts, receipt)
+        if (
+            reassessed_facts_fingerprint(
+                facts,
+                action,
+                claim_prior_revision=receipt.prior_revision,
+            )
+            != request.finalized_facts_fingerprint
+        ):
+            raise PostFinalAssessmentError("control_store_integrity_invalid")
+        try:
+            claim_snapshot = history.snapshot_at_revision(
+                request.run_id,
+                receipt.committed_revision,
+            )
+        except Exception as exc:
+            raise PostFinalAssessmentError("control_store_integrity_invalid") from exc
+        if not any(
+            item.assessment_request_id == request.assessment_request_id
+            and item.request_fingerprint == request.request_fingerprint
+            for item in claim_snapshot.post_final_assessment_requests
+        ):
+            raise PostFinalAssessmentError("control_store_integrity_invalid")
+        if index == 0:
+            if request.predecessor_assessment_request_id is not None:
+                raise PostFinalAssessmentError("control_store_integrity_invalid")
+            continue
+        predecessor = matches[index - 1]
+        result = results_by_request.get(predecessor.assessment_request_id)
+        abandonment = abandonments_by_request.get(predecessor.assessment_request_id)
+        if (
+            request.predecessor_assessment_request_id
+            != predecessor.assessment_request_id
+            or request.predecessor_assessment_request_fingerprint
+            != predecessor.request_fingerprint
+            or (result is None) == (abandonment is None)
+        ):
+            raise PostFinalAssessmentError("control_store_integrity_invalid")
+        if result is not None and (
+            request.predecessor_assessment_result_id != result.assessment_result_id
+            or request.predecessor_result_fingerprint != result.result_fingerprint
+            or request.predecessor_abandonment_id is not None
+        ):
+            raise PostFinalAssessmentError("control_store_integrity_invalid")
+        if abandonment is not None and (
+            request.predecessor_abandonment_id != abandonment.abandonment_id
+            or request.predecessor_abandonment_fingerprint
+            != abandonment.abandonment_fingerprint
+            or request.predecessor_assessment_result_id is not None
+        ):
+            raise PostFinalAssessmentError("control_store_integrity_invalid")
+    return tuple(matches)
+
+
+def resolve_current_post_final_assessment_request(
+    history: Any,
+    snapshot: Any,
+    facts: Any,
+    action: CoreRunNextAction,
+) -> PostFinalAssessmentRequestRecord | None:
+    """Resolve generation one only; automatic observation never advances a series."""
+
+    series = resolve_post_final_assessment_series(
+        history,
+        snapshot,
+        facts,
+        action,
+    )
+    return None if not series else series[0]
+
+
+def resolve_post_final_assessment_request_by_id(
+    history: Any,
+    snapshot: Any,
+    facts: Any,
+    action: CoreRunNextAction,
+    assessment_request_id: str,
+) -> PostFinalAssessmentRequestRecord:
+    """Resolve one explicit request without any implicit head/latest selection."""
+
+    matches = [
         item
-        for item in snapshot.transactions
-        if item.transaction_id == request.accepted_transaction_id
-    ]
-    if len(receipts) != 1:
-        raise PostFinalAssessmentError("control_store_integrity_invalid")
-    receipt = receipts[0]
-    references = [
-        item
-        for item in receipt.post_final_assessment_requests
-        if item.assessment_request_id == request.assessment_request_id
-    ]
-    if (
-        receipt.run_id != request.run_id
-        or receipt.transaction_type != "post_final_assessment_claim"
-        or receipt.prior_revision + 1 != receipt.committed_revision
-        or len(receipt.post_final_assessment_requests) != 1
-        or len(references) != 1
-    ):
-        raise PostFinalAssessmentError("control_store_integrity_invalid")
-    _require_advisory_only_receipt_suffix(snapshot, facts, receipt)
-    if (
-        reassessed_facts_fingerprint(
-            facts,
-            action,
-            claim_prior_revision=receipt.prior_revision,
+        for item in resolve_post_final_assessment_series(
+            history, snapshot, facts, action
         )
-        != request.finalized_facts_fingerprint
-    ):
-        raise PostFinalAssessmentError("control_store_integrity_invalid")
-    try:
-        claim_snapshot = history.snapshot_at_revision(
-            request.run_id,
-            receipt.committed_revision,
-        )
-    except Exception as exc:
-        raise PostFinalAssessmentError("control_store_integrity_invalid") from exc
-    if not any(
-        item.assessment_request_id == request.assessment_request_id
-        and item.request_fingerprint == request.request_fingerprint
-        for item in claim_snapshot.post_final_assessment_requests
-    ):
-        raise PostFinalAssessmentError("control_store_integrity_invalid")
-    return request
+        if item.assessment_request_id == assessment_request_id
+    ]
+    if len(matches) != 1:
+        raise PostFinalAssessmentError("assessment_request_not_found")
+    return matches[0]
 
 
 def resolve_current_post_final_assessment_result(
@@ -458,18 +572,20 @@ def resolve_current_post_final_assessment_result(
 ) -> PostFinalAssessmentResultRecord | None:
     """Resolve one exact Store-qualified result without touching its archive."""
 
-    run_results = [
-        item
-        for item in snapshot.post_final_assessment_results
-        if item.run_id == request.run_id
-    ]
     matches = [
         item
-        for item in run_results
+        for item in snapshot.post_final_assessment_results
         if item.assessment_request_id == request.assessment_request_id
     ]
-    if len(matches) > 1 or len(matches) != len(run_results):
+    if len(matches) > 1:
         raise PostFinalAssessmentError("control_store_integrity_invalid")
+    if any(
+        item.assessment_request_id == request.assessment_request_id
+        for item in snapshot.post_final_assessment_abandonments
+    ):
+        if matches:
+            raise PostFinalAssessmentError("control_store_integrity_invalid")
+        return None
     if not matches:
         return None
     result = matches[0]
@@ -667,6 +783,123 @@ class PostFinalAssessmentService:
             action,
         )
 
+    @staticmethod
+    def _series_for_facts(
+        history: Any,
+        snapshot: Any,
+        facts: Any,
+        action: CoreRunNextAction,
+    ) -> tuple[PostFinalAssessmentRequestRecord, ...]:
+        return resolve_post_final_assessment_series(
+            history,
+            snapshot,
+            facts,
+            action,
+        )
+
+    @staticmethod
+    def _request_by_id(
+        history: Any,
+        snapshot: Any,
+        facts: Any,
+        action: CoreRunNextAction,
+        assessment_request_id: str,
+    ) -> PostFinalAssessmentRequestRecord:
+        return resolve_post_final_assessment_request_by_id(
+            history,
+            snapshot,
+            facts,
+            action,
+            assessment_request_id,
+        )
+
+    @staticmethod
+    def _policy_by_id(
+        snapshot: Any,
+        run_id: str,
+        policy_revision_id: str,
+        policy_fingerprint: str,
+    ) -> PostFinalAssessmentPolicyRevision:
+        matches = [
+            item
+            for item in snapshot.post_final_assessment_policy_revisions
+            if item.run_id == run_id
+            and item.policy_revision_id == policy_revision_id
+            and item.policy_fingerprint == policy_fingerprint
+        ]
+        if len(matches) != 1:
+            raise PostFinalAssessmentError("post_final_assessment_policy_conflict")
+        return matches[0]
+
+    @staticmethod
+    def _validate_run_input(
+        value: Mapping[str, object],
+    ) -> PostFinalAssessmentRunInput:
+        try:
+            request = PostFinalAssessmentRunInput.model_validate(value, strict=True)
+        except (TypeError, ValidationError, ValueError) as exc:
+            raise PostFinalAssessmentError(
+                "post_final_assessment_request_invalid"
+            ) from exc
+        result_pair = (
+            request.predecessor_assessment_result_id,
+            request.predecessor_result_fingerprint,
+        )
+        abandonment_pair = (
+            request.predecessor_abandonment_id,
+            request.predecessor_abandonment_fingerprint,
+        )
+        invalid_common = (
+            request.schema_version != POST_FINAL_ASSESSMENT_RUN_SCHEMA
+            or request.expected_store_revision < 0
+            or request.assessment_generation < 1
+            or request.assessment_purpose
+            not in {"post_final_review", "model_evaluation"}
+            or request.max_provider_calls < 1
+            or request.max_total_input_tokens < 1
+            or request.max_total_output_tokens < 1
+            or request.max_output_tokens_per_call < 1
+            or request.max_output_tokens_per_call > request.max_total_output_tokens
+            or not request.public_safe_egress_attested
+        )
+        predecessor_values = (
+            request.predecessor_assessment_request_id,
+            request.predecessor_assessment_request_fingerprint,
+            *result_pair,
+            *abandonment_pair,
+        )
+        if request.assessment_generation == 1:
+            invalid_predecessor = request.abandon_predecessor or any(
+                value is not None for value in predecessor_values
+            )
+        else:
+            invalid_predecessor = (
+                request.predecessor_assessment_request_id is None
+                or request.predecessor_assessment_request_fingerprint is None
+                or (
+                    request.abandon_predecessor
+                    and any(
+                        value is not None for value in (*result_pair, *abandonment_pair)
+                    )
+                )
+                or (
+                    not request.abandon_predecessor
+                    and (all(value is not None for value in result_pair))
+                    == (all(value is not None for value in abandonment_pair))
+                )
+                or (
+                    any(value is None for value in result_pair)
+                    and any(value is not None for value in result_pair)
+                )
+                or (
+                    any(value is None for value in abandonment_pair)
+                    and any(value is not None for value in abandonment_pair)
+                )
+            )
+        if invalid_common or invalid_predecessor:
+            raise PostFinalAssessmentError("post_final_assessment_request_invalid")
+        return request
+
     def _validate_policy_input(
         self, value: Mapping[str, object]
     ) -> tuple[PostFinalAssessmentPolicyInput, InstrumentConfig]:
@@ -848,16 +1081,6 @@ class PostFinalAssessmentService:
                 "status": "invalid",
                 "reason_code": str(exc),
             }
-        if request is not None and (
-            policy is None
-            or policy.policy_revision_id != request.policy_revision_id
-            or policy.policy_fingerprint != request.policy_fingerprint
-        ):
-            return {
-                "ok": False,
-                "status": "invalid",
-                "reason_code": "post_final_assessment_policy_conflict",
-            }
         try:
             result = (
                 resolve_current_post_final_assessment_result(snapshot, request)
@@ -909,15 +1132,16 @@ class PostFinalAssessmentService:
             existing = self._request_for_facts(history, snapshot, facts, action)
         except PostFinalAssessmentError as exc:
             return {"ok": False, "status": "invalid", "reason_code": str(exc)}
-        if existing is not None and (
-            existing.policy_revision_id != policy.policy_revision_id
-            or existing.policy_fingerprint != policy.policy_fingerprint
-        ):
-            return {
-                "ok": False,
-                "status": "invalid",
-                "reason_code": "post_final_assessment_policy_conflict",
-            }
+        if existing is not None:
+            try:
+                policy = self._policy_by_id(
+                    snapshot,
+                    facts.run_id,
+                    existing.policy_revision_id,
+                    existing.policy_fingerprint,
+                )
+            except PostFinalAssessmentError as exc:
+                return {"ok": False, "status": "invalid", "reason_code": str(exc)}
         context = _bounded_context_from_direction(binding, run_id=facts.run_id)
         if (
             policy.bounded_context_sha256 != context.context_sha256
@@ -1019,6 +1243,333 @@ class PostFinalAssessmentService:
             }
         return self._qualify_archive(facts, claim, result.archive_path)
 
+    def assessment_list(self) -> dict[str, object]:
+        """Return the verified series in deterministic generation order."""
+
+        try:
+            facts, snapshot, _binding, _workspace_id, history, action = self._load()
+            series = self._series_for_facts(
+                history,
+                snapshot,
+                facts,
+                action,
+            )
+        except PostFinalAssessmentError as exc:
+            return {"ok": False, "status": "invalid", "reason_code": str(exc)}
+        results = {
+            item.assessment_request_id: item
+            for item in snapshot.post_final_assessment_results
+        }
+        abandonments = {
+            item.assessment_request_id: item
+            for item in snapshot.post_final_assessment_abandonments
+        }
+        return {
+            "ok": True,
+            "status": "available",
+            "finalized_lineage_fingerprint": finalized_lineage_fingerprint(
+                facts, action
+            ),
+            "assessments": [
+                {
+                    "assessment_generation": item.assessment_generation,
+                    "assessment_request_id": item.assessment_request_id,
+                    "assessment_purpose": item.assessment_purpose,
+                    "policy_revision_id": item.policy_revision_id,
+                    "requested_model_id": item.requested_model_id,
+                    "expected_model_identity": item.expected_model_identity,
+                    "assessment_result_id": (
+                        results[item.assessment_request_id].assessment_result_id
+                        if item.assessment_request_id in results
+                        else None
+                    ),
+                    "assessment_result_fingerprint": (
+                        results[item.assessment_request_id].result_fingerprint
+                        if item.assessment_request_id in results
+                        else None
+                    ),
+                    "terminal_evidence_class": (
+                        results[item.assessment_request_id].terminal_evidence_class
+                        if item.assessment_request_id in results
+                        else "abandoned"
+                        if item.assessment_request_id in abandonments
+                        else "outcome_unknown"
+                    ),
+                    "abandonment_id": (
+                        abandonments[item.assessment_request_id].abandonment_id
+                        if item.assessment_request_id in abandonments
+                        else None
+                    ),
+                }
+                for item in series
+            ],
+        }
+
+    def assessment_run(self, value: Mapping[str, object]) -> dict[str, object]:
+        """Execute one new explicitly Human-authorized assessment generation."""
+
+        try:
+            command = self._validate_run_input(value)
+            authorization_fingerprint = _canonical_sha256(
+                command.model_dump(mode="json")
+            )
+            facts, snapshot, binding, _workspace_id, history, action = self._load()
+            series = self._series_for_facts(
+                history,
+                snapshot,
+                facts,
+                action,
+            )
+        except PostFinalAssessmentError as exc:
+            return {"ok": False, "status": "invalid", "reason_code": str(exc)}
+        existing = next(
+            (
+                item
+                for item in series
+                if item.human_request_id == command.human_request_id
+            ),
+            None,
+        )
+        if existing is not None:
+            if (
+                existing.authorization_fingerprint != authorization_fingerprint
+                or existing.human_actor_id != command.human_actor_id
+            ):
+                return {
+                    "ok": False,
+                    "status": "conflict",
+                    "reason_code": "assessment_human_request_conflict",
+                }
+            return self.retry(existing.assessment_request_id)
+        if (
+            facts.store_revision != command.expected_store_revision
+            or command.finalized_lineage_fingerprint
+            != finalized_lineage_fingerprint(facts, action)
+            or command.assessment_generation != len(series) + 1
+        ):
+            return {
+                "ok": False,
+                "status": "conflict",
+                "reason_code": "assessment_series_conflict",
+            }
+        predecessor = series[-1] if series else None
+        if predecessor is None and (
+            command.predecessor_assessment_request_id is not None
+            or command.predecessor_assessment_request_fingerprint is not None
+            or command.predecessor_assessment_result_id is not None
+            or command.predecessor_result_fingerprint is not None
+            or command.predecessor_abandonment_id is not None
+            or command.predecessor_abandonment_fingerprint is not None
+            or command.abandon_predecessor
+        ):
+            return {
+                "ok": False,
+                "status": "conflict",
+                "reason_code": "assessment_predecessor_conflict",
+            }
+        if predecessor is not None and (
+            command.predecessor_assessment_request_id
+            != predecessor.assessment_request_id
+            or command.predecessor_assessment_request_fingerprint
+            != predecessor.request_fingerprint
+        ):
+            return {
+                "ok": False,
+                "status": "conflict",
+                "reason_code": "assessment_predecessor_conflict",
+            }
+        predecessor_result = next(
+            (
+                item
+                for item in snapshot.post_final_assessment_results
+                if predecessor is not None
+                and item.assessment_request_id == predecessor.assessment_request_id
+            ),
+            None,
+        )
+        predecessor_abandonment = next(
+            (
+                item
+                for item in snapshot.post_final_assessment_abandonments
+                if predecessor is not None
+                and item.assessment_request_id == predecessor.assessment_request_id
+            ),
+            None,
+        )
+        create_abandonment = False
+        if predecessor is None:
+            pass
+        elif predecessor_result is not None:
+            if (
+                command.predecessor_assessment_result_id
+                != predecessor_result.assessment_result_id
+                or command.predecessor_result_fingerprint
+                != predecessor_result.result_fingerprint
+                or command.abandon_predecessor
+            ):
+                return {
+                    "ok": False,
+                    "status": "conflict",
+                    "reason_code": "assessment_predecessor_conflict",
+                }
+            verified = self._qualify_archive(
+                facts,
+                predecessor,
+                str(
+                    trial_archive_path(
+                        self._archive_root,
+                        predecessor.trial_id,
+                    )
+                ),
+            )
+            if not verified.get("ok"):
+                return verified
+        elif predecessor_abandonment is not None:
+            if (
+                command.predecessor_abandonment_id
+                != predecessor_abandonment.abandonment_id
+                or command.predecessor_abandonment_fingerprint
+                != predecessor_abandonment.abandonment_fingerprint
+                or command.abandon_predecessor
+            ):
+                return {
+                    "ok": False,
+                    "status": "conflict",
+                    "reason_code": "assessment_predecessor_conflict",
+                }
+        elif not command.abandon_predecessor:
+            return {
+                "ok": False,
+                "status": "needs_human",
+                "reason_code": "assessment_predecessor_outcome_unknown",
+            }
+        else:
+            replay = self.retry(predecessor.assessment_request_id)
+            if replay.get("ok"):
+                return {
+                    **replay,
+                    "status": "predecessor_recovered",
+                    "reason_code": "assessment_predecessor_result_available",
+                }
+            create_abandonment = True
+        try:
+            policy = self._policy_by_id(
+                snapshot,
+                facts.run_id,
+                command.policy_revision_id,
+                command.policy_fingerprint,
+            )
+        except PostFinalAssessmentError as exc:
+            return {"ok": False, "status": "invalid", "reason_code": str(exc)}
+        if (
+            not policy.enabled
+            or not policy.public_safe_egress_attested
+            or not command.public_safe_egress_attested
+            or (
+                command.max_provider_calls,
+                command.max_total_input_tokens,
+                command.max_total_output_tokens,
+                command.max_output_tokens_per_call,
+            )
+            != (
+                policy.max_provider_calls,
+                policy.max_total_input_tokens,
+                policy.max_total_output_tokens,
+                policy.max_output_tokens_per_call,
+            )
+        ):
+            return {
+                "ok": False,
+                "status": "invalid",
+                "reason_code": "post_final_assessment_policy_conflict",
+            }
+        context = _bounded_context_from_direction(binding, run_id=facts.run_id)
+        if (
+            policy.bounded_context_sha256 != context.context_sha256
+            or policy.bounded_context != context.model_dump(mode="json")
+        ):
+            return {
+                "ok": False,
+                "status": "invalid",
+                "reason_code": "post_final_assessment_policy_conflict",
+            }
+        trial_id = _id(
+            "pf-laj-trial",
+            {
+                "lineage": command.finalized_lineage_fingerprint,
+                "generation": command.assessment_generation,
+                "authorization": authorization_fingerprint,
+                "policy": policy.policy_fingerprint,
+            },
+        )
+        try:
+            config = InstrumentConfig.model_validate(
+                policy.instrument_config,
+                strict=True,
+            )
+            prepared = prepare_shadow_run_from_bytes(
+                report_bytes=facts.report.markdown_utf8,
+                bounded_context=context,
+                instrument_config=config,
+                trial_id=trial_id,
+                archive_root=self._archive_root,
+                workspace_root=self.workspace,
+                messages_endpoint=policy.messages_endpoint,
+            )
+        except (SemanticEvaluatorError, ValidationError, ValueError):
+            return {
+                "ok": False,
+                "status": "unavailable",
+                "reason_code": "preflight_invalid",
+            }
+        if isinstance(prepared, ShadowRunResult):
+            return {
+                "ok": False,
+                "status": "unavailable",
+                "reason_codes": list(prepared.reason_codes),
+            }
+        budget = prepared_shadow_budget(prepared)
+        if (
+            budget.provider_call_ceiling > command.max_provider_calls
+            or budget.total_input_token_upper_bound > command.max_total_input_tokens
+            or budget.total_output_token_upper_bound > command.max_total_output_tokens
+            or budget.per_call_output_token_cap > command.max_output_tokens_per_call
+        ):
+            return {
+                "ok": False,
+                "status": "budget_blocked",
+                "reason_code": "budget_exceeded",
+            }
+        try:
+            capability_profile(self.workspace)
+        except CoreRunError as exc:
+            return {"ok": False, "status": "unavailable", "reason_code": str(exc)}
+        claim = self._claim_series_request(
+            facts=facts,
+            policy=policy,
+            prepared=prepared,
+            budget=budget,
+            command=command,
+            authorization_fingerprint=authorization_fingerprint,
+            predecessor=predecessor,
+            predecessor_result=predecessor_result,
+            predecessor_abandonment=predecessor_abandonment,
+            create_abandonment=create_abandonment,
+        )
+        if isinstance(claim, dict):
+            return claim
+        result = execute_prepared_shadow_run(
+            prepared,
+            adapter_factory=self._adapter_factory,
+        )
+        if not result.archive_complete or result.archive_path is None:
+            return {
+                "ok": False,
+                "status": "pending",
+                "assessment_request_id": claim.assessment_request_id,
+            }
+        return self._qualify_archive(facts, claim, result.archive_path)
+
     def retry(self, assessment_request_id: str) -> dict[str, object]:
         """Recovery-only archive qualification; never makes a paid provider call."""
 
@@ -1027,22 +1578,24 @@ class PostFinalAssessmentService:
         except PostFinalAssessmentError as exc:
             return {"ok": False, "status": "unavailable", "reason_code": str(exc)}
         try:
-            request = self._request_for_facts(history, snapshot, facts, action)
+            request = self._request_by_id(
+                history,
+                snapshot,
+                facts,
+                action,
+                assessment_request_id,
+            )
         except PostFinalAssessmentError as exc:
             return {"ok": False, "status": "invalid", "reason_code": str(exc)}
-        if request is None or request.assessment_request_id != assessment_request_id:
-            return {
-                "ok": False,
-                "status": "unavailable",
-                "reason_code": "assessment_request_not_found",
-            }
-        policy = self._policy_for_facts(snapshot, facts)
-        if (
-            policy is None
-            or policy.policy_revision_id != request.policy_revision_id
-            or policy.policy_fingerprint != request.policy_fingerprint
-        ):
-            return {"ok": False, "status": "invalid", "reason_code": "policy_not_found"}
+        try:
+            policy = self._policy_by_id(
+                snapshot,
+                facts.run_id,
+                request.policy_revision_id,
+                request.policy_fingerprint,
+            )
+        except PostFinalAssessmentError as exc:
+            return {"ok": False, "status": "invalid", "reason_code": str(exc)}
         context = _bounded_context_from_direction(binding, run_id=facts.run_id)
         if (
             policy.bounded_context_sha256 != context.context_sha256
@@ -1061,6 +1614,10 @@ class PostFinalAssessmentService:
         except PostFinalAssessmentError as exc:
             return {"ok": False, "status": "invalid", "reason_code": str(exc)}
         if stored_result is not None:
+            # Same rule as assess(): a zero-advice result carries no evidence to
+            # bind, so it replays directly. Anything else must be qualified
+            # against the archive on disk, or a different self-valid archive
+            # would replay a result bound to evidence it does not contain.
             if self._result_has_zero_advice(stored_result):
                 return self._stored_result_replay(stored_result)
             return self._qualify_archive(
@@ -1068,6 +1625,15 @@ class PostFinalAssessmentService:
                 request,
                 str(trial_archive_path(self._archive_root, request.trial_id)),
             )
+        if any(
+            item.assessment_request_id == request.assessment_request_id
+            for item in snapshot.post_final_assessment_abandonments
+        ):
+            return {
+                "ok": False,
+                "status": "abandoned",
+                "reason_code": "assessment_request_abandoned",
+            }
         config = InstrumentConfig.model_validate(policy.instrument_config, strict=True)
         prepared = prepare_shadow_run_from_bytes(
             report_bytes=facts.report.markdown_utf8,
@@ -1196,6 +1762,215 @@ class PostFinalAssessmentService:
             }
         return request
 
+    def _claim_series_request(
+        self,
+        *,
+        facts: Any,
+        policy: PostFinalAssessmentPolicyRevision,
+        prepared: PreparedShadowRun,
+        budget: Any,
+        command: PostFinalAssessmentRunInput,
+        authorization_fingerprint: str,
+        predecessor: PostFinalAssessmentRequestRecord | None,
+        predecessor_result: PostFinalAssessmentResultRecord | None,
+        predecessor_abandonment: PostFinalAssessmentAbandonmentRecord | None,
+        create_abandonment: bool,
+    ) -> PostFinalAssessmentRequestRecord | dict[str, object]:
+        """Atomically close an unknown predecessor and claim one new generation."""
+
+        identity = {
+            "lineage": command.finalized_lineage_fingerprint,
+            "generation": command.assessment_generation,
+            "authorization": authorization_fingerprint,
+            "policy": policy.policy_fingerprint,
+            "trial": prepared.trial_id,
+        }
+        request_id = _id("pf-laj-request", identity)
+        transaction_id = _id("pf-laj-series-tx", identity)
+        request_event_id = _id("pf-laj-request-event", identity)
+        abandonment: PostFinalAssessmentAbandonmentRecord | None = None
+        abandonment_event: EventEnvelope | None = None
+        if create_abandonment:
+            abandonment_id = _id(
+                "pf-laj-abandonment",
+                {
+                    "predecessor": (
+                        predecessor.request_fingerprint
+                        if predecessor is not None
+                        else None
+                    ),
+                    "authorization": authorization_fingerprint,
+                },
+            )
+            abandonment_event_id = _id(
+                "pf-laj-abandonment-event",
+                {
+                    "abandonment": abandonment_id,
+                    "transaction": transaction_id,
+                },
+            )
+            if predecessor is None:
+                return {
+                    "ok": False,
+                    "status": "invalid",
+                    "reason_code": "assessment_predecessor_conflict",
+                }
+            abandonment_payload: dict[str, object] = {
+                "schema_version": PostFinalAssessmentAbandonmentRecord.schema_id,
+                "abandonment_id": abandonment_id,
+                "run_id": facts.run_id,
+                "assessment_request_id": predecessor.assessment_request_id,
+                "assessment_request_fingerprint": predecessor.request_fingerprint,
+                "finalized_lineage_fingerprint": (
+                    predecessor.finalized_lineage_fingerprint
+                ),
+                "assessment_generation": predecessor.assessment_generation,
+                "reason": "outcome_unknown",
+                "human_actor_id": command.human_actor_id,
+                "human_request_id": command.human_request_id,
+                "expected_store_revision": command.expected_store_revision,
+                "recorded_at": _utc_now(),
+                "abandonment_event_id": abandonment_event_id,
+                "accepted_transaction_id": transaction_id,
+            }
+            abandonment_payload["abandonment_fingerprint"] = _record_fingerprint(
+                abandonment_payload,
+                "abandonment_fingerprint",
+            )
+            abandonment = PostFinalAssessmentAbandonmentRecord.model_validate(
+                abandonment_payload,
+                strict=True,
+            )
+            abandonment_event = _event(
+                run_id=facts.run_id,
+                event_id=abandonment_event_id,
+                event_type="post_final_assessment_abandoned",
+                transaction_id=transaction_id,
+                decision=abandonment.abandonment_id,
+                metadata={
+                    "abandonment_fingerprint": abandonment.abandonment_fingerprint
+                },
+            )
+            predecessor_abandonment = abandonment
+        admission = prepared.admission
+        payload: dict[str, object] = {
+            "schema_version": PostFinalAssessmentRequestRecord.series_schema_id,
+            "assessment_request_id": request_id,
+            "run_id": facts.run_id,
+            "finalized_facts_fingerprint": facts.facts_fingerprint,
+            "finalized_lineage_fingerprint": (command.finalized_lineage_fingerprint),
+            "report_artifact_id": facts.report.artifact_id,
+            "report_revision": facts.report.artifact_revision,
+            "report_sha256": facts.report.sha256,
+            "finalization_id": facts.finalization_id,
+            "finalization_receipt_id": facts.finalization_receipt_id,
+            "finalize_gate_batch_id": facts.finalize_gate_batch_id,
+            "policy_revision_id": policy.policy_revision_id,
+            "policy_fingerprint": policy.policy_fingerprint,
+            "adapter_id": ANTHROPIC_ADAPTER_ID,
+            "messages_endpoint_sha256": policy.messages_endpoint_sha256,
+            "requested_model_id": policy.requested_model_id,
+            "expected_model_identity": policy.expected_model_identity,
+            "profile_id": policy.profile_id,
+            "instrument_config_sha256": policy.instrument_config_sha256,
+            "bounded_context_sha256": policy.bounded_context_sha256,
+            "input_binding_sha256": admission.input_binding.input_binding_sha256,
+            "assessment_plan_sha256": (
+                admission.assessment_plan.assessment_plan_sha256
+            ),
+            "ordered_prompt_request_sha256s": list(admission.prompt_request_sha256s),
+            "prompt_count": budget.prompt_count,
+            "provider_call_ceiling": budget.provider_call_ceiling,
+            "total_input_token_upper_bound": (budget.total_input_token_upper_bound),
+            "total_output_token_upper_bound": (budget.total_output_token_upper_bound),
+            "output_tokens_per_call": budget.per_call_output_token_cap,
+            "trial_id": prepared.trial_id,
+            "archive_identity_sha256": _canonical_sha256(
+                {"root": _ARCHIVE_DIRECTORY, "trial_id": prepared.trial_id}
+            ),
+            "request_status": "claimed",
+            "claimed_at": _utc_now(),
+            "request_event_id": request_event_id,
+            "accepted_transaction_id": transaction_id,
+            "assessment_generation": command.assessment_generation,
+            "predecessor_assessment_request_id": (
+                predecessor.assessment_request_id if predecessor is not None else None
+            ),
+            "predecessor_assessment_request_fingerprint": (
+                predecessor.request_fingerprint if predecessor is not None else None
+            ),
+            "predecessor_assessment_result_id": (
+                predecessor_result.assessment_result_id
+                if predecessor_result is not None
+                else None
+            ),
+            "predecessor_result_fingerprint": (
+                predecessor_result.result_fingerprint
+                if predecessor_result is not None
+                else None
+            ),
+            "predecessor_abandonment_id": (
+                predecessor_abandonment.abandonment_id
+                if predecessor_abandonment is not None
+                else None
+            ),
+            "predecessor_abandonment_fingerprint": (
+                predecessor_abandonment.abandonment_fingerprint
+                if predecessor_abandonment is not None
+                else None
+            ),
+            "assessment_purpose": command.assessment_purpose,
+            "human_actor_id": command.human_actor_id,
+            "human_request_id": command.human_request_id,
+            "authorization_fingerprint": authorization_fingerprint,
+        }
+        payload["request_fingerprint"] = _record_fingerprint(
+            payload,
+            "request_fingerprint",
+        )
+        request = PostFinalAssessmentRequestRecord.model_validate(
+            payload,
+            strict=True,
+        )
+        request_event = _event(
+            run_id=facts.run_id,
+            event_id=request_event_id,
+            event_type="post_final_assessment_claimed",
+            transaction_id=transaction_id,
+            decision=request.assessment_request_id,
+            metadata={"request_fingerprint": request.request_fingerprint},
+        )
+        try:
+            with SQLiteControlStore.open(self._database_path) as store:
+                with store.begin(
+                    facts.run_id,
+                    transaction_id,
+                    "post_final_assessment_series_claim",
+                    command.expected_store_revision,
+                ) as uow:
+                    if abandonment is not None and abandonment_event is not None:
+                        uow.append_event(abandonment_event)
+                        uow.put_post_final_assessment_abandonment(abandonment)
+                    uow.append_event(request_event)
+                    uow.put_post_final_assessment_request(request)
+                    receipt = uow.commit()
+        except ControlStoreError as exc:
+            return {
+                "ok": False,
+                "status": "conflict",
+                "reason_code": str(exc),
+            }
+        if (
+            receipt.prior_revision != command.expected_store_revision
+            or receipt.committed_revision != command.expected_store_revision + 1
+        ):
+            return {
+                "ok": False,
+                "status": "invalid",
+                "reason_code": "control_store_integrity_invalid",
+            }
+        return request
+
     def _recover_existing(
         self,
         prepared: PreparedShadowRun,
@@ -1244,11 +2019,12 @@ class PostFinalAssessmentService:
                 history,
                 current_action,
             ) = self._load()
-            current_request = self._request_for_facts(
+            current_request = self._request_by_id(
                 history,
                 snapshot,
                 current_facts,
                 current_action,
+                request.assessment_request_id,
             )
         except PostFinalAssessmentError as exc:
             return {"ok": False, "status": "invalid", "reason_code": str(exc)}
@@ -1263,23 +2039,32 @@ class PostFinalAssessmentService:
                 "reason_code": "post_final_assessment_stale",
             }
         request = current_request
-        policy = self._policy_for_facts(snapshot, current_facts)
-        if (
-            policy is None
-            or policy.policy_revision_id != request.policy_revision_id
-            or policy.policy_fingerprint != request.policy_fingerprint
-        ):
+        try:
+            policy = self._policy_by_id(
+                snapshot,
+                current_facts.run_id,
+                request.policy_revision_id,
+                request.policy_fingerprint,
+            )
+        except PostFinalAssessmentError:
             return {
                 "ok": False,
                 "status": "invalid",
                 "reason_code": "post_final_assessment_policy_conflict",
             }
+        if any(
+            item.assessment_request_id == request.assessment_request_id
+            for item in snapshot.post_final_assessment_abandonments
+        ):
+            return {
+                "ok": False,
+                "status": "abandoned",
+                "reason_code": "assessment_request_abandoned",
+            }
         try:
             existing = resolve_current_post_final_assessment_result(snapshot, request)
         except PostFinalAssessmentError as exc:
             return {"ok": False, "status": "invalid", "reason_code": str(exc)}
-        if existing is not None and self._result_has_zero_advice(existing):
-            return self._stored_result_replay(existing)
         try:
             archive = verify_shadow_archive(Path(archive_path))
             view = build_laj_reader_view(
@@ -1311,6 +2096,7 @@ class PostFinalAssessmentService:
                 "replayed": True,
                 "status": existing.terminal_evidence_class,
                 "assessment_result_id": existing.assessment_result_id,
+                "assessment_result_fingerprint": existing.result_fingerprint,
             }
         try:
             with SQLiteControlStore.open(self._database_path) as store:
@@ -1381,6 +2167,8 @@ class PostFinalAssessmentService:
 
                 launched = launch_actionable_review_session(
                     self.workspace,
+                    assessment_result_id=record.assessment_result_id,
+                    assessment_result_fingerprint=record.result_fingerprint,
                     open_browser=True,
                 )
                 presentation = {
@@ -1398,6 +2186,7 @@ class PostFinalAssessmentService:
             "replayed": False,
             "status": record.terminal_evidence_class,
             "assessment_result_id": record.assessment_result_id,
+            "assessment_result_fingerprint": record.result_fingerprint,
             "finding_count": record.finding_count,
             "presentation": presentation,
         }
@@ -1415,6 +2204,7 @@ class PostFinalAssessmentService:
             "replayed": True,
             "status": result.terminal_evidence_class,
             "assessment_result_id": result.assessment_result_id,
+            "assessment_result_fingerprint": result.result_fingerprint,
         }
 
     @staticmethod
@@ -1454,10 +2244,14 @@ class PostFinalAssessmentService:
 
 __all__ = [
     "POST_FINAL_ASSESSMENT_POLICY_SCHEMA",
+    "POST_FINAL_ASSESSMENT_RUN_SCHEMA",
     "PostFinalAssessmentError",
     "PostFinalAssessmentPolicyInput",
+    "PostFinalAssessmentRunInput",
     "PostFinalAssessmentService",
     "post_final_assessment_archive_root",
     "resolve_current_post_final_assessment_policy",
     "resolve_current_post_final_assessment_result",
+    "resolve_post_final_assessment_request_by_id",
+    "resolve_post_final_assessment_series",
 ]

@@ -577,8 +577,16 @@ def test_core_v2_static_authority_chokepoints_are_exact() -> None:
             for item in node.names
         }
     assert "load_runtime_contract_payloads" in shared_contract_imports["service.py"]
+    # The verifier validates by content digest so one contract triple is
+    # validated once per process instead of once per verify call. It must not
+    # fall back to the undigested entry point, which would drop that binding.
     assert (
-        "validate_runtime_contract_payloads" in shared_contract_imports["verifier.py"]
+        "validate_runtime_contract_payloads_by_digest"
+        in shared_contract_imports["verifier.py"]
+    )
+    assert (
+        "validate_runtime_contract_payloads"
+        not in shared_contract_imports["verifier.py"]
     )
 
     forbidden_store_verbs = {

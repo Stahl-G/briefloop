@@ -41,6 +41,7 @@ from multi_agent_brief.contracts.v2 import (
     ProposalSourceBinding,
     PackageArtifactBinding,
     PackageReadyRecord,
+    PostFinalAssessmentAbandonmentRecord,
     PostFinalAssessmentPolicyRevision,
     PostFinalAssessmentRequestRecord,
     PostFinalAssessmentResultRecord,
@@ -190,6 +191,9 @@ class ControlUnitOfWork:
         ] = {}
         self._post_final_assessment_requests: dict[
             str, PostFinalAssessmentRequestRecord
+        ] = {}
+        self._post_final_assessment_abandonments: dict[
+            str, PostFinalAssessmentAbandonmentRecord
         ] = {}
         self._post_final_assessment_results: dict[
             str, PostFinalAssessmentResultRecord
@@ -713,6 +717,17 @@ class ControlUnitOfWork:
             snapshot,
         )
 
+    def put_post_final_assessment_abandonment(
+        self, record: PostFinalAssessmentAbandonmentRecord
+    ) -> None:
+        snapshot = self._snapshot_record(record, PostFinalAssessmentAbandonmentRecord)
+        self._require_run(snapshot)
+        self._put_unique(
+            self._post_final_assessment_abandonments,
+            snapshot.abandonment_id,
+            snapshot,
+        )
+
     def put_post_final_finding_disposition(
         self, record: PostFinalFindingDispositionRecord
     ) -> None:
@@ -1021,6 +1036,10 @@ class ControlUnitOfWork:
             "post_final_assessment_requests": [
                 self._record_payload(self._post_final_assessment_requests[key])
                 for key in sorted(self._post_final_assessment_requests)
+            ],
+            "post_final_assessment_abandonments": [
+                self._record_payload(self._post_final_assessment_abandonments[key])
+                for key in sorted(self._post_final_assessment_abandonments)
             ],
             "post_final_assessment_results": [
                 self._record_payload(self._post_final_assessment_results[key])

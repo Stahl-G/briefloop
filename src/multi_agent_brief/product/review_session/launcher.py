@@ -56,6 +56,8 @@ __all__ = ["ReviewLaunchResult", "launch_review_session"]
 
 def launch_actionable_review_session(
     workspace: str | Path,
+    assessment_result_id: str,
+    assessment_result_fingerprint: str,
     *,
     open_browser: bool = True,
     browser_open: Callable[[str], bool] = webbrowser.open,
@@ -67,10 +69,19 @@ def launch_actionable_review_session(
     from multi_agent_brief.product.post_final_review import PostFinalReviewService
 
     root = Path(workspace).expanduser().resolve()
-    data = build_brief_pages_data(root)
+    service = PostFinalReviewService(
+        root,
+        assessment_result_id,
+        assessment_result_fingerprint,
+    )
+    service.review_status()
+    data = build_brief_pages_data(
+        root,
+        assessment_result_id=assessment_result_id,
+        assessment_result_fingerprint=assessment_result_fingerprint,
+    )
     run_id = str(data["workspace"]["run_id"])
     html = render_brief_pages_html(data)
-    service = PostFinalReviewService(root)
 
     def handle(command: ReviewSessionCommand) -> dict[str, object]:
         payload = dict(command.payload)

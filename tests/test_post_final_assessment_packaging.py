@@ -22,6 +22,8 @@ ROOT = Path(__file__).resolve().parents[1]
 
 
 _PROBE = r"""
+from contextlib import redirect_stdout
+import io
 import json
 import os
 from pathlib import Path
@@ -30,8 +32,10 @@ import sys
 import pytest
 
 import multi_agent_brief
+from multi_agent_brief.cli.main import main
 from multi_agent_brief.control_store import SQLiteControlStore
 from multi_agent_brief.product.brief_html import build_brief_pages_data
+import multi_agent_brief.product.post_final_assessment as assessment_module
 from multi_agent_brief.product.post_final_assessment import PostFinalAssessmentService
 from multi_agent_brief.product.post_final_review import PostFinalReviewService
 from multi_agent_brief.product.review_session.launcher import (
@@ -43,6 +47,7 @@ from multi_agent_brief.semantic_evaluator.adapters.anthropic_messages import (
 import multi_agent_brief.semantic_evaluator.runner as runner_module
 from tests.test_post_final_assessment import (
     _fixture_service,
+    _generation_one_run_payload,
     _policy_payload,
     _schema9_finalized_local_workspace_upgraded,
 )
@@ -68,11 +73,44 @@ if mode == "source":
             raise RuntimeError("policy did not commit")
         patch.setattr(runner_module.metadata, "version", lambda _name: "0.104.1")
         patch.setenv(ANTHROPIC_API_KEY_SETTING, "public-synthetic-key")
-        assessed = service.assess()
+        command = _generation_one_run_payload(service)
+        command_json = json.dumps(command, sort_keys=True, separators=(",", ":"))
+        (workspace.parent / "assessment-run-replay.json").write_text(
+            command_json,
+            encoding="utf-8",
+        )
+        patch.setattr(
+            assessment_module,
+            "PostFinalAssessmentService",
+            lambda _workspace: service,
+        )
+        cli_output = io.StringIO()
+        with redirect_stdout(cli_output):
+            return_code = main(
+                [
+                    "quality",
+                    "laj",
+                    "assessment-run",
+                    "--workspace",
+                    str(workspace),
+                    "--request-json",
+                    command_json,
+                    "--json",
+                ]
+            )
+        if return_code != 0:
+            raise RuntimeError(f"source assessment CLI failed: {cli_output.getvalue()}")
+        assessed = json.loads(cli_output.getvalue())
         if not assessed.get("ok") or assessed.get("status") != "available":
             raise RuntimeError(f"source assessment failed: {assessed!r}")
         provider_calls = len(calls)
-        review = PostFinalReviewService(workspace)
+        selected_result_id = assessed["assessment_result_id"]
+        selected_result_fingerprint = assessed["assessment_result_fingerprint"]
+        review = PostFinalReviewService(
+            workspace,
+            selected_result_id,
+            selected_result_fingerprint,
+        )
         review_status = review.review_status()
         finding = review_status["dispositions"][0]
         accepted = review.record_disposition(
@@ -128,13 +166,45 @@ elif mode == "wheel":
             AssertionError("wheel exact replay touched adapter")
         ),
     )
+    command_json = (workspace.parent / "assessment-run-replay.json").read_text(
+        encoding="utf-8"
+    )
+    cli_output = io.StringIO()
+    with redirect_stdout(cli_output):
+        return_code = main(
+            [
+                "quality",
+                "laj",
+                "assessment-run",
+                "--workspace",
+                str(workspace),
+                "--request-json",
+                command_json,
+                "--json",
+            ]
+        )
+    if return_code != 0:
+        raise RuntimeError(f"wheel assessment CLI failed: {cli_output.getvalue()}")
+    cli_replay = json.loads(cli_output.getvalue())
+    if not cli_replay.get("replayed"):
+        raise RuntimeError("wheel assessment CLI did not replay")
     current = service.status()
     if not current.get("assessment_request_id"):
         raise RuntimeError(f"missing request: {current!r}")
     assessed = service.retry(current["assessment_request_id"])
     if not assessed.get("ok") or not assessed.get("replayed"):
         raise RuntimeError(f"wheel replay failed: {assessed!r}")
-    review = PostFinalReviewService(workspace)
+    listing = service.assessment_list()
+    if len(listing.get("assessments", [])) != 1:
+        raise RuntimeError(f"wheel assessment listing failed: {listing!r}")
+    selected = listing["assessments"][0]
+    selected_result_id = selected["assessment_result_id"]
+    selected_result_fingerprint = selected["assessment_result_fingerprint"]
+    review = PostFinalReviewService(
+        workspace,
+        selected_result_id,
+        selected_result_fingerprint,
+    )
     review_status = review.review_status()
     finding = review_status["dispositions"][0]
     replayed_disposition = review.record_disposition(
@@ -149,6 +219,8 @@ elif mode == "wheel":
         raise RuntimeError("wheel Human disposition did not replay")
     launched = launch_actionable_review_session(
         workspace,
+        selected_result_id,
+        selected_result_fingerprint,
         open_browser=True,
         browser_open=lambda _url: False,
     )
@@ -164,8 +236,16 @@ else:
     raise RuntimeError("unknown mode")
 
 status = PostFinalAssessmentService(workspace).status()
-review_status = PostFinalReviewService(workspace).review_status()
-pages = build_brief_pages_data(workspace)
+review_status = PostFinalReviewService(
+    workspace,
+    selected_result_id,
+    selected_result_fingerprint,
+).review_status()
+pages = build_brief_pages_data(
+    workspace,
+    assessment_result_id=selected_result_id,
+    assessment_result_fingerprint=selected_result_fingerprint,
+)
 with SQLiteControlStore.open(workspace / "briefloop.db") as store:
     head = store.load_workspace_run_head()
     if head is None:
@@ -397,6 +477,9 @@ def test_source_and_non_editable_wheel_replay_the_same_pf_laj_result(
         )
         assert (
             "multi_agent_brief/control_store/migrations/0010.sql" in archive.namelist()
+        )
+        assert (
+            "multi_agent_brief/control_store/migrations/0012.sql" in archive.namelist()
         )
 
     script = tmp_path / "pf_laj_wheel_probe.py"

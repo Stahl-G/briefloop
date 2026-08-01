@@ -57,6 +57,8 @@ from multi_agent_brief.contracts.v2 import (
     ProposalSourceBinding,
     PackageArtifactBinding,
     PackageReadyRecord,
+    PostFinalAssessmentAbandonmentRecord,
+    PostFinalAssessmentAbandonmentReference,
     PostFinalAssessmentPolicyRevision,
     PostFinalAssessmentPolicyRevisionReference,
     PostFinalAssessmentRequestRecord,
@@ -130,10 +132,12 @@ _POST_FINAL_RECEIPT_RELATION_FIELDS = (
     "post_final_guidance_drafts",
     "post_final_guidance_statuses",
 )
+_POST_FINAL_ABANDONMENT_RECEIPT_FIELD = "post_final_assessment_abandonments"
 _POST_FINAL_RECEIPT_TRANSACTION_TYPES = frozenset(
     {
         "post_final_assessment_policy",
         "post_final_assessment_claim",
+        "post_final_assessment_series_claim",
         "post_final_assessment_result",
         "post_final_finding_disposition",
         "post_final_guidance_draft",
@@ -145,6 +149,9 @@ _RECEIPT_COMPATIBILITY_BOUNDARY_ID = (
 )
 _SOURCE_ATTEMPT_COMPATIBILITY_BOUNDARY_ID = (
     "briefloop.source_acquisition_attempt_compatibility.v1"
+)
+_POST_FINAL_ABANDONMENT_COMPATIBILITY_BOUNDARY_ID = (
+    "briefloop.post_final_assessment_abandonment_compatibility.v1"
 )
 _EXTENDED_RECORD_MODELS = (
     WorkspaceRunHead,
@@ -187,6 +194,7 @@ _EXTENDED_RECORD_MODELS = (
     DeliveryResultRecord,
     PostFinalAssessmentPolicyRevision,
     PostFinalAssessmentRequestRecord,
+    PostFinalAssessmentAbandonmentRecord,
     PostFinalAssessmentResultRecord,
     PostFinalFindingDispositionRecord,
     PostFinalGuidanceDraftRevision,
@@ -205,6 +213,24 @@ def _canonical_record_text(record: StrictModel) -> str:
     if type(record) not in _EXTENDED_RECORD_MODELS:
         return canonical_model_text(record)
     payload = record.model_dump(mode="json", exclude_unset=False)
+    if (
+        type(record) is PostFinalAssessmentRequestRecord
+        and record.schema_version == PostFinalAssessmentRequestRecord.schema_id
+    ):
+        for field in (
+            "assessment_generation",
+            "predecessor_assessment_request_id",
+            "predecessor_assessment_request_fingerprint",
+            "predecessor_assessment_result_id",
+            "predecessor_result_fingerprint",
+            "predecessor_abandonment_id",
+            "predecessor_abandonment_fingerprint",
+            "assessment_purpose",
+            "human_actor_id",
+            "human_request_id",
+            "authorization_fingerprint",
+        ):
+            payload.pop(field, None)
     if type(record) is RunContractBinding:
         payload["run_direction"] = canonical_run_direction_for_binding(
             payload["run_direction"]
@@ -219,6 +245,7 @@ def _decode_record(
     receipt_committed_revision: int | None = None,
     legacy_receipt_max_committed_revision: int | None = None,
     legacy_source_attempt_receipt_max_committed_revision: int | None = None,
+    legacy_post_final_abandonment_receipt_max_committed_revision: int | None = None,
 ) -> _ModelT:
     if model_type is TransactionReceipt:
         try:
@@ -234,7 +261,8 @@ def _decode_record(
         }
         attempt_field = "run_source_acquisition_attempt_authorizations"
         missing_attempt = attempt_field not in payload
-        if not missing_post_final and not missing_attempt:
+        missing_abandonment = _POST_FINAL_ABANDONMENT_RECEIPT_FIELD not in payload
+        if not missing_post_final and not missing_attempt and not missing_abandonment:
             return cast(_ModelT, decode_model(TransactionReceipt, payload_text))
         post_final_invalid = bool(missing_post_final) and (
             type(receipt_committed_revision) is not int
@@ -255,12 +283,24 @@ def _decode_record(
             or payload.get("transaction_type")
             == "core-v2-source-acquisition-attempt-authorize"
         )
-        if post_final_invalid or source_attempt_invalid:
+        abandonment_invalid = missing_abandonment and (
+            type(receipt_committed_revision) is not int
+            or type(legacy_post_final_abandonment_receipt_max_committed_revision)
+            is not int
+            or receipt_committed_revision < 1
+            or legacy_post_final_abandonment_receipt_max_committed_revision < 0
+            or receipt_committed_revision
+            > legacy_post_final_abandonment_receipt_max_committed_revision
+            or payload.get("transaction_type") == "post_final_assessment_abandonment"
+        )
+        if post_final_invalid or source_attempt_invalid or abandonment_invalid:
             raise ControlStoreIntegrityError("stored_payload_not_canonical")
         expanded = dict(payload)
         expanded.update({field: [] for field in missing_post_final})
         if missing_attempt:
             expanded[attempt_field] = []
+        if missing_abandonment:
+            expanded[_POST_FINAL_ABANDONMENT_RECEIPT_FIELD] = []
         try:
             receipt = TransactionReceipt.model_validate(expanded)
         except (ValidationError, TypeError, ValueError) as exc:
@@ -270,6 +310,11 @@ def _decode_record(
             if legacy_projection.pop(field) != []:
                 raise ControlStoreIntegrityError("stored_payload_not_canonical")
         if missing_attempt and legacy_projection.pop(attempt_field) != []:
+            raise ControlStoreIntegrityError("stored_payload_not_canonical")
+        if (
+            missing_abandonment
+            and legacy_projection.pop(_POST_FINAL_ABANDONMENT_RECEIPT_FIELD) != []
+        ):
             raise ControlStoreIntegrityError("stored_payload_not_canonical")
         if canonical_json_bytes(legacy_projection).decode("utf-8") != payload_text:
             raise ControlStoreIntegrityError("stored_payload_not_canonical")
@@ -492,6 +537,7 @@ class ControlStoreSnapshot:
         PostFinalAssessmentPolicyRevision, ...
     ]
     post_final_assessment_requests: tuple[PostFinalAssessmentRequestRecord, ...]
+    post_final_assessment_abandonments: tuple[PostFinalAssessmentAbandonmentRecord, ...]
     post_final_assessment_results: tuple[PostFinalAssessmentResultRecord, ...]
     post_final_finding_dispositions: tuple[PostFinalFindingDispositionRecord, ...]
     post_final_guidance_drafts: tuple[PostFinalGuidanceDraftRevision, ...]
@@ -516,7 +562,6 @@ class ControlStoreHistory:
     store_revision: int
     snapshots: tuple[ControlStoreSnapshot, ...]
     artifact_contents: Mapping[tuple[str, str, int], bytes]
-
     @property
     def transactions(self) -> tuple[TransactionReceipt, ...]:
         return tuple(
@@ -901,6 +946,11 @@ class ControlStoreHistory:
             ("assessment_request_id",),
             full.post_final_assessment_requests,
         )
+        post_final_assessment_abandonments = selected(
+            "post_final_assessment_abandonments",
+            ("abandonment_id",),
+            full.post_final_assessment_abandonments,
+        )
         post_final_assessment_results = selected(
             "post_final_assessment_results",
             ("assessment_result_id",),
@@ -967,7 +1017,7 @@ class ControlStoreHistory:
             for item in full.proposal_source_bindings
             if item.proposal_id in proposal_ids
         )
-        return replace(
+        projection = replace(
             full,
             store_revision=committed_revision,
             workspace_run_head=workspace_run_head,
@@ -1021,6 +1071,7 @@ class ControlStoreHistory:
                 post_final_assessment_policy_revisions
             ),
             post_final_assessment_requests=post_final_assessment_requests,
+            post_final_assessment_abandonments=post_final_assessment_abandonments,
             post_final_assessment_results=post_final_assessment_results,
             post_final_finding_dispositions=post_final_finding_dispositions,
             post_final_guidance_drafts=post_final_guidance_drafts,
@@ -1036,6 +1087,7 @@ class ControlStoreHistory:
             checkout_publication_cleanup_observations=(),
             transactions=transactions,
         )
+        return projection
 
     def _workspace_head_at_revision(self, committed_revision: int) -> WorkspaceRunHead:
         receipts = self.transactions
@@ -1124,6 +1176,10 @@ class SQLiteControlStore:
         self._failure_hook = failure_hook
         self._lock = threading.RLock()
         self._closed = False
+        # Token of the database state whose ledger graph was last verified in
+        # full. Process-local and never persisted, so a fresh connection always
+        # re-verifies from bytes and crash recovery is unchanged.
+        self._verified_ledger_token: tuple[int, int, int] | None = None
 
     @classmethod
     def create(
@@ -1195,6 +1251,19 @@ class SQLiteControlStore:
                 ) VALUES (?, ?, 0)
                 """,
                 (workspace_id, _SOURCE_ATTEMPT_COMPATIBILITY_BOUNDARY_ID),
+            )
+            connection.execute(
+                """
+                INSERT INTO post_final_assessment_abandonment_compatibility_boundaries(
+                    workspace_id,
+                    boundary_id,
+                    legacy_receipt_max_committed_revision
+                ) VALUES (?, ?, 0)
+                """,
+                (
+                    workspace_id,
+                    _POST_FINAL_ABANDONMENT_COMPATIBILITY_BOUNDARY_ID,
+                ),
             )
             connection.commit()
         except Exception:
@@ -1619,6 +1688,9 @@ class SQLiteControlStore:
             legacy_receipt_max_committed_revision=self._legacy_receipt_cutoff(),
             legacy_source_attempt_receipt_max_committed_revision=(
                 self._legacy_source_attempt_receipt_cutoff()
+            ),
+            legacy_post_final_abandonment_receipt_max_committed_revision=(
+                self._legacy_post_final_abandonment_receipt_cutoff()
             ),
         )
         self._verify_transaction_relations(receipt)
@@ -2662,28 +2734,50 @@ class SQLiteControlStore:
                 (run_id,),
             ).fetchall()
         }
-        existing_requests = {
-            str(row[0]): (str(row[1]), str(row[2]), str(row[3]))
-            for row in self._connection.execute(
-                "SELECT assessment_request_id, policy_revision_id, "
-                "finalized_facts_fingerprint, request_fingerprint "
-                "FROM post_final_assessment_requests WHERE run_id=?",
-                (run_id,),
-            ).fetchall()
+        existing_request_records = {
+            record.assessment_request_id: record
+            for record in (
+                _decode_record(PostFinalAssessmentRequestRecord, str(row[0]))
+                for row in self._connection.execute(
+                    "SELECT payload_json FROM post_final_assessment_requests "
+                    "WHERE run_id=?",
+                    (run_id,),
+                ).fetchall()
+            )
         }
-        existing_results = {
-            str(row[0]): str(row[1])
-            for row in self._connection.execute(
-                "SELECT assessment_result_id, assessment_request_id "
-                "FROM post_final_assessment_results WHERE run_id=?",
-                (run_id,),
-            ).fetchall()
+        existing_result_records = {
+            record.assessment_result_id: record
+            for record in (
+                _decode_record(PostFinalAssessmentResultRecord, str(row[0]))
+                for row in self._connection.execute(
+                    "SELECT payload_json FROM post_final_assessment_results "
+                    "WHERE run_id=?",
+                    (run_id,),
+                ).fetchall()
+            )
+        }
+        existing_abandonment_records = {
+            record.abandonment_id: record
+            for record in (
+                _decode_record(PostFinalAssessmentAbandonmentRecord, str(row[0]))
+                for row in self._connection.execute(
+                    "SELECT payload_json FROM post_final_assessment_abandonments "
+                    "WHERE run_id=?",
+                    (run_id,),
+                ).fetchall()
+            )
         }
         staged_policies = uow._post_final_assessment_policy_revisions
         staged_requests = uow._post_final_assessment_requests
+        staged_abandonments = uow._post_final_assessment_abandonments
         staged_results = uow._post_final_assessment_results
 
-        if len(staged_policies) > 1:
+        if (
+            len(staged_policies) > 1
+            or len(staged_requests) > 1
+            or len(staged_abandonments) > 1
+            or len(staged_results) > 1
+        ):
             raise ControlStoreConflict("relational_integrity_conflict")
         policy_ids = set(existing_policies)
         predecessor_ids = {
@@ -2716,35 +2810,152 @@ class SQLiteControlStore:
         available_policies.update(
             {key: value.policy_fingerprint for key, value in staged_policies.items()}
         )
+        available_results = dict(existing_result_records)
+        available_results.update(staged_results)
+        available_abandonments = dict(existing_abandonment_records)
+        available_abandonments.update(staged_abandonments)
+        available_requests = dict(existing_request_records)
+        available_requests.update(staged_requests)
+
+        for record in staged_abandonments.values():
+            request = available_requests.get(record.assessment_request_id)
+            if (
+                record.accepted_transaction_id != uow.transaction_id
+                or record.abandonment_event_id not in staged_events
+                or record.abandonment_id in existing_abandonment_records
+                or request is None
+                or request.request_fingerprint != record.assessment_request_fingerprint
+                or request.finalized_lineage_fingerprint
+                != record.finalized_lineage_fingerprint
+                or request.assessment_generation != record.assessment_generation
+                or any(
+                    result.assessment_request_id == record.assessment_request_id
+                    for result in available_results.values()
+                )
+                or any(
+                    item.assessment_request_id == record.assessment_request_id
+                    for item in existing_abandonment_records.values()
+                )
+            ):
+                raise ControlStoreConflict("relational_integrity_conflict")
+
+        existing_series: dict[str, list[PostFinalAssessmentRequestRecord]] = {}
+        for request in existing_request_records.values():
+            existing_series.setdefault(
+                request.finalized_lineage_fingerprint, []
+            ).append(request)
         for record in staged_requests.values():
             policy_fingerprint = available_policies.get(record.policy_revision_id)
+            series = sorted(
+                existing_series.get(record.finalized_lineage_fingerprint, []),
+                key=lambda item: item.assessment_generation,
+            )
+            predecessor = None if not series else series[-1]
+            predecessor_result = (
+                None
+                if predecessor is None
+                else next(
+                    (
+                        item
+                        for item in available_results.values()
+                        if item.assessment_request_id
+                        == predecessor.assessment_request_id
+                    ),
+                    None,
+                )
+            )
+            predecessor_abandonment = (
+                None
+                if predecessor is None
+                else next(
+                    (
+                        item
+                        for item in available_abandonments.values()
+                        if item.assessment_request_id
+                        == predecessor.assessment_request_id
+                    ),
+                    None,
+                )
+            )
             if (
                 record.accepted_transaction_id != uow.transaction_id
                 or record.request_event_id not in staged_events
-                or record.assessment_request_id in existing_requests
+                or record.assessment_request_id in existing_request_records
                 or policy_fingerprint != record.policy_fingerprint
+                or record.assessment_generation != len(series) + 1
+                or (
+                    predecessor is None
+                    and any(
+                        value is not None
+                        for value in (
+                            record.predecessor_assessment_request_id,
+                            record.predecessor_assessment_request_fingerprint,
+                            record.predecessor_assessment_result_id,
+                            record.predecessor_result_fingerprint,
+                            record.predecessor_abandonment_id,
+                            record.predecessor_abandonment_fingerprint,
+                        )
+                    )
+                )
+                or (
+                    predecessor is not None
+                    and (
+                        record.predecessor_assessment_request_id
+                        != predecessor.assessment_request_id
+                        or record.predecessor_assessment_request_fingerprint
+                        != predecessor.request_fingerprint
+                        or (
+                            predecessor_result is not None
+                            and (
+                                record.predecessor_assessment_result_id
+                                != predecessor_result.assessment_result_id
+                                or record.predecessor_result_fingerprint
+                                != predecessor_result.result_fingerprint
+                                or record.predecessor_abandonment_id is not None
+                                or record.predecessor_abandonment_fingerprint
+                                is not None
+                            )
+                        )
+                        or (
+                            predecessor_abandonment is not None
+                            and (
+                                record.predecessor_abandonment_id
+                                != predecessor_abandonment.abandonment_id
+                                or record.predecessor_abandonment_fingerprint
+                                != predecessor_abandonment.abandonment_fingerprint
+                                or record.predecessor_assessment_result_id is not None
+                                or record.predecessor_result_fingerprint is not None
+                            )
+                        )
+                        or (
+                            predecessor_result is None
+                            and predecessor_abandonment is None
+                        )
+                        or (
+                            predecessor_result is not None
+                            and predecessor_abandonment is not None
+                        )
+                    )
+                )
             ):
                 raise ControlStoreConflict("relational_integrity_conflict")
-        available_requests = dict(existing_requests)
-        available_requests.update(
-            {
-                key: (
-                    value.policy_revision_id,
-                    value.finalized_facts_fingerprint,
-                    value.request_fingerprint,
-                )
-                for key, value in staged_requests.items()
-            }
-        )
+            existing_series.setdefault(record.finalized_lineage_fingerprint, []).append(
+                record
+            )
         for record in staged_results.values():
             request = available_requests.get(record.assessment_request_id)
             if (
                 record.accepted_transaction_id != uow.transaction_id
                 or record.result_event_id not in staged_events
-                or record.assessment_result_id in existing_results
+                or record.assessment_result_id in existing_result_records
                 or request is None
-                or request[0] != record.policy_revision_id
-                or request[1] != record.finalized_facts_fingerprint
+                or request.policy_revision_id != record.policy_revision_id
+                or request.finalized_facts_fingerprint
+                != record.finalized_facts_fingerprint
+                or any(
+                    abandonment.assessment_request_id == record.assessment_request_id
+                    for abandonment in available_abandonments.values()
+                )
             ):
                 raise ControlStoreConflict("relational_integrity_conflict")
 
@@ -3096,6 +3307,10 @@ class SQLiteControlStore:
                     "post_final_assessment_requests": [
                         {"assessment_request_id": key}
                         for key in sorted(uow._post_final_assessment_requests)
+                    ],
+                    "post_final_assessment_abandonments": [
+                        {"abandonment_id": key}
+                        for key in sorted(uow._post_final_assessment_abandonments)
                     ],
                     "post_final_assessment_results": [
                         {"assessment_result_id": key}
@@ -4711,7 +4926,7 @@ class SQLiteControlStore:
             self._connection.execute(
                 """
                 INSERT INTO post_final_assessment_requests VALUES
-                (?,?,?,?,?,?,?,?,?,?,?,?,?)
+                (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
                 """,
                 (
                     record.run_id,
@@ -4725,6 +4940,42 @@ class SQLiteControlStore:
                     record.request_fingerprint,
                     record.claimed_at,
                     record.request_event_id,
+                    record.accepted_transaction_id,
+                    record.assessment_generation,
+                    record.predecessor_assessment_request_id,
+                    record.predecessor_assessment_request_fingerprint,
+                    record.predecessor_assessment_result_id,
+                    record.predecessor_result_fingerprint,
+                    record.predecessor_abandonment_id,
+                    record.predecessor_abandonment_fingerprint,
+                    record.assessment_purpose,
+                    record.human_actor_id,
+                    record.human_request_id,
+                    record.authorization_fingerprint,
+                    _canonical_record_text(record),
+                ),
+            )
+        for record in uow._post_final_assessment_abandonments.values():
+            self._connection.execute(
+                """
+                INSERT INTO post_final_assessment_abandonments VALUES
+                (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+                """,
+                (
+                    record.run_id,
+                    record.abandonment_id,
+                    record.schema_version,
+                    record.assessment_request_id,
+                    record.assessment_request_fingerprint,
+                    record.finalized_lineage_fingerprint,
+                    record.assessment_generation,
+                    record.reason,
+                    record.human_actor_id,
+                    record.human_request_id,
+                    record.expected_store_revision,
+                    record.abandonment_fingerprint,
+                    record.recorded_at,
+                    record.abandonment_event_id,
                     record.accepted_transaction_id,
                     _canonical_record_text(record),
                 ),
@@ -5266,6 +5517,11 @@ class SQLiteControlStore:
                 "transaction_post_final_assessment_requests",
                 receipt.post_final_assessment_requests,
                 "assessment_request_id",
+            ),
+            (
+                "transaction_post_final_assessment_abandonments",
+                receipt.post_final_assessment_abandonments,
+                "abandonment_id",
             ),
             (
                 "transaction_post_final_assessment_results",
@@ -6714,6 +6970,52 @@ class SQLiteControlStore:
                     "claimed_at": "claimed_at",
                     "request_event_id": "request_event_id",
                     "accepted_transaction_id": "accepted_transaction_id",
+                    "assessment_generation": "assessment_generation",
+                    "predecessor_assessment_request_id": (
+                        "predecessor_assessment_request_id"
+                    ),
+                    "predecessor_assessment_request_fingerprint": (
+                        "predecessor_assessment_request_fingerprint"
+                    ),
+                    "predecessor_assessment_result_id": (
+                        "predecessor_assessment_result_id"
+                    ),
+                    "predecessor_result_fingerprint": (
+                        "predecessor_result_fingerprint"
+                    ),
+                    "predecessor_abandonment_id": "predecessor_abandonment_id",
+                    "predecessor_abandonment_fingerprint": (
+                        "predecessor_abandonment_fingerprint"
+                    ),
+                    "assessment_purpose": "assessment_purpose",
+                    "human_actor_id": "human_actor_id",
+                    "human_request_id": "human_request_id",
+                    "authorization_fingerprint": "authorization_fingerprint",
+                },
+            ),
+            post_final_assessment_abandonments=self._load_for_run(
+                PostFinalAssessmentAbandonmentRecord,
+                "post_final_assessment_abandonments",
+                run_id,
+                "assessment_generation, abandonment_id",
+                {
+                    "run_id": "run_id",
+                    "abandonment_id": "abandonment_id",
+                    "schema_version": "schema_version",
+                    "assessment_request_id": "assessment_request_id",
+                    "assessment_request_fingerprint": (
+                        "assessment_request_fingerprint"
+                    ),
+                    "finalized_lineage_fingerprint": ("finalized_lineage_fingerprint"),
+                    "assessment_generation": "assessment_generation",
+                    "reason": "reason",
+                    "human_actor_id": "human_actor_id",
+                    "human_request_id": "human_request_id",
+                    "expected_store_revision": "expected_store_revision",
+                    "abandonment_fingerprint": "abandonment_fingerprint",
+                    "recorded_at": "recorded_at",
+                    "abandonment_event_id": "abandonment_event_id",
+                    "accepted_transaction_id": "accepted_transaction_id",
                 },
             ),
             post_final_assessment_results=self._load_for_run(
@@ -7048,6 +7350,7 @@ class SQLiteControlStore:
         graph = (
             snapshot.post_final_assessment_policy_revisions,
             snapshot.post_final_assessment_requests,
+            snapshot.post_final_assessment_abandonments,
             snapshot.post_final_assessment_results,
             snapshot.post_final_finding_dispositions,
             snapshot.post_final_guidance_drafts,
@@ -7064,6 +7367,10 @@ class SQLiteControlStore:
         requests = {
             item.assessment_request_id: item
             for item in snapshot.post_final_assessment_requests
+        }
+        abandonments = {
+            item.abandonment_id: item
+            for item in snapshot.post_final_assessment_abandonments
         }
         results = {
             item.assessment_result_id: item
@@ -7084,15 +7391,15 @@ class SQLiteControlStore:
         if (
             len(policies) != len(snapshot.post_final_assessment_policy_revisions)
             or len(requests) != len(snapshot.post_final_assessment_requests)
+            or len(abandonments) != len(snapshot.post_final_assessment_abandonments)
             or len(results) != len(snapshot.post_final_assessment_results)
             or len(dispositions) != len(snapshot.post_final_finding_dispositions)
             or len(drafts) != len(snapshot.post_final_guidance_drafts)
             or len(statuses) != len(snapshot.post_final_guidance_statuses)
         ):
             raise ControlStoreIntegrityError("control_store_integrity_invalid")
-        facts_slots: set[str] = set()
-        lineage_slots: set[str] = set()
         result_request_ids: set[str] = set()
+        abandonment_request_ids: set[str] = set()
         policy_receipt_order: list[tuple[int, PostFinalAssessmentPolicyRevision]] = []
         for policy in policies.values():
             receipt = receipts.get(policy.accepted_transaction_id)
@@ -7125,14 +7432,13 @@ class SQLiteControlStore:
             if policy.previous_policy_revision_id != expected_previous_policy_id:
                 raise ControlStoreIntegrityError("control_store_integrity_invalid")
             expected_previous_policy_id = policy.policy_revision_id
+        lineage_series: dict[str, list[PostFinalAssessmentRequestRecord]] = {}
         for request in requests.values():
             receipt = receipts.get(request.accepted_transaction_id)
             event = events.get(request.request_event_id)
             policy = policies.get(request.policy_revision_id)
             if (
                 request.run_id != snapshot.run.run_id
-                or request.finalized_facts_fingerprint in facts_slots
-                or request.finalized_lineage_fingerprint in lineage_slots
                 or policy is None
                 or policy.policy_fingerprint != request.policy_fingerprint
                 or receipt is None
@@ -7146,8 +7452,55 @@ class SQLiteControlStore:
                 )
             ):
                 raise ControlStoreIntegrityError("control_store_integrity_invalid")
-            facts_slots.add(request.finalized_facts_fingerprint)
-            lineage_slots.add(request.finalized_lineage_fingerprint)
+            lineage_series.setdefault(request.finalized_lineage_fingerprint, []).append(
+                request
+            )
+        for series in lineage_series.values():
+            series.sort(key=lambda item: item.assessment_generation)
+            if [item.assessment_generation for item in series] != list(
+                range(1, len(series) + 1)
+            ):
+                raise ControlStoreIntegrityError("control_store_integrity_invalid")
+            for position, request in enumerate(series):
+                if position == 0:
+                    if request.predecessor_assessment_request_id is not None:
+                        raise ControlStoreIntegrityError(
+                            "control_store_integrity_invalid"
+                        )
+                    continue
+                predecessor = series[position - 1]
+                if (
+                    request.predecessor_assessment_request_id
+                    != predecessor.assessment_request_id
+                    or request.predecessor_assessment_request_fingerprint
+                    != predecessor.request_fingerprint
+                ):
+                    raise ControlStoreIntegrityError("control_store_integrity_invalid")
+        for abandonment in abandonments.values():
+            receipt = receipts.get(abandonment.accepted_transaction_id)
+            event = events.get(abandonment.abandonment_event_id)
+            request = requests.get(abandonment.assessment_request_id)
+            if (
+                abandonment.run_id != snapshot.run.run_id
+                or abandonment.assessment_request_id in abandonment_request_ids
+                or request is None
+                or request.request_fingerprint
+                != abandonment.assessment_request_fingerprint
+                or request.finalized_lineage_fingerprint
+                != abandonment.finalized_lineage_fingerprint
+                or request.assessment_generation != abandonment.assessment_generation
+                or receipt is None
+                or event is None
+                or event.transaction_id != receipt.transaction_id
+                or event.event_type != "post_final_assessment_abandoned"
+                or event.core_run_binding is not None
+                or not any(
+                    item.abandonment_id == abandonment.abandonment_id
+                    for item in receipt.post_final_assessment_abandonments
+                )
+            ):
+                raise ControlStoreIntegrityError("control_store_integrity_invalid")
+            abandonment_request_ids.add(abandonment.assessment_request_id)
         for result in results.values():
             receipt = receipts.get(result.accepted_transaction_id)
             event = events.get(result.result_event_id)
@@ -7155,6 +7508,7 @@ class SQLiteControlStore:
             if (
                 result.run_id != snapshot.run.run_id
                 or result.assessment_request_id in result_request_ids
+                or result.assessment_request_id in abandonment_request_ids
                 or request is None
                 or result.policy_revision_id != request.policy_revision_id
                 or result.finalized_facts_fingerprint
@@ -7173,6 +7527,58 @@ class SQLiteControlStore:
             ):
                 raise ControlStoreIntegrityError("control_store_integrity_invalid")
             result_request_ids.add(result.assessment_request_id)
+        if result_request_ids & abandonment_request_ids:
+            raise ControlStoreIntegrityError("control_store_integrity_invalid")
+        for series in lineage_series.values():
+            for request in series[1:]:
+                predecessor = requests[request.predecessor_assessment_request_id]
+                predecessor_result = next(
+                    (
+                        item
+                        for item in results.values()
+                        if item.assessment_request_id
+                        == predecessor.assessment_request_id
+                    ),
+                    None,
+                )
+                predecessor_abandonment = next(
+                    (
+                        item
+                        for item in abandonments.values()
+                        if item.assessment_request_id
+                        == predecessor.assessment_request_id
+                    ),
+                    None,
+                )
+                if (
+                    (
+                        predecessor_result is not None
+                        and predecessor_abandonment is None
+                        and (
+                            request.predecessor_assessment_result_id
+                            != predecessor_result.assessment_result_id
+                            or request.predecessor_result_fingerprint
+                            != predecessor_result.result_fingerprint
+                            or request.predecessor_abandonment_id is not None
+                        )
+                    )
+                    or (
+                        predecessor_abandonment is not None
+                        and predecessor_result is None
+                        and (
+                            request.predecessor_abandonment_id
+                            != predecessor_abandonment.abandonment_id
+                            or request.predecessor_abandonment_fingerprint
+                            != predecessor_abandonment.abandonment_fingerprint
+                            or request.predecessor_assessment_result_id is not None
+                        )
+                    )
+                    or (
+                        (predecessor_result is None)
+                        == (predecessor_abandonment is None)
+                    )
+                ):
+                    raise ControlStoreIntegrityError("control_store_integrity_invalid")
 
         disposition_chains: dict[
             tuple[str, str], list[tuple[int, PostFinalFindingDispositionRecord]]
@@ -8555,6 +8961,11 @@ class SQLiteControlStore:
                 if model_type is TransactionReceipt
                 else None
             ),
+            legacy_post_final_abandonment_receipt_max_committed_revision=(
+                self._legacy_post_final_abandonment_receipt_cutoff()
+                if model_type is TransactionReceipt
+                else None
+            ),
         )
         for column, attribute in columns.items():
             stored = row[column]
@@ -8613,6 +9024,25 @@ class SQLiteControlStore:
         if (
             len(rows) != 1
             or rows[0]["boundary_id"] != _SOURCE_ATTEMPT_COMPATIBILITY_BOUNDARY_ID
+            or type(rows[0]["legacy_receipt_max_committed_revision"]) is not int
+            or rows[0]["legacy_receipt_max_committed_revision"] < 0
+        ):
+            raise ControlStoreIntegrityError("control_store_integrity_invalid")
+        return int(rows[0]["legacy_receipt_max_committed_revision"])
+
+    def _legacy_post_final_abandonment_receipt_cutoff(self) -> int:
+        rows = self._connection.execute(
+            """
+            SELECT boundary_id,legacy_receipt_max_committed_revision
+            FROM post_final_assessment_abandonment_compatibility_boundaries
+            WHERE workspace_id=?
+            """,
+            (self.workspace_id,),
+        ).fetchall()
+        if (
+            len(rows) != 1
+            or rows[0]["boundary_id"]
+            != _POST_FINAL_ABANDONMENT_COMPATIBILITY_BOUNDARY_ID
             or type(rows[0]["legacy_receipt_max_committed_revision"]) is not int
             or rows[0]["legacy_receipt_max_committed_revision"] < 0
         ):
@@ -9083,6 +9513,14 @@ class SQLiteControlStore:
                 ),
             ),
             (
+                "transaction_post_final_assessment_abandonments",
+                ("abandonment_id",),
+                tuple(
+                    (item.abandonment_id,)
+                    for item in receipt.post_final_assessment_abandonments
+                ),
+            ),
+            (
                 "transaction_post_final_assessment_results",
                 ("assessment_result_id",),
                 tuple(
@@ -9152,13 +9590,39 @@ class SQLiteControlStore:
             if actual != expected:
                 raise ControlStoreIntegrityError("transaction_relation_mismatch")
 
+    def _ledger_verification_token(self) -> tuple[int, int, int]:
+        """Token that changes whenever this database could have changed.
+
+        ``total_changes`` counts every row this connection wrote. It never
+        decreases, so a rolled-back write still moves the token and forces a
+        re-verification rather than hiding one. ``data_version`` moves when any
+        other connection commits. Together they cover every way the bytes under
+        us can differ from the ones already verified.
+        """
+
+        data_version = self._connection.execute("PRAGMA data_version").fetchone()[0]
+        return (
+            self._workspace_revision_in_transaction(),
+            self._connection.total_changes,
+            int(data_version),
+        )
+
     def _verify_workspace_ledger_graph(self) -> None:
         """Verify one complete workspace transaction graph in this SQL snapshot."""
 
         def invalid() -> None:
             raise ControlStoreIntegrityError("transaction_ledger_integrity_invalid")
 
-        workspace_revision = self._workspace_revision_in_transaction()
+        # Every read re-verified the whole workspace graph: all transactions,
+        # events, revisions, identities, sources and proposals, decoded and
+        # revalidated. That made one read O(run history) and a run that drives
+        # N steps O(N^2). The graph is a pure function of the bytes, so an
+        # unchanged token means the previous verification still holds.
+        token = self._ledger_verification_token()
+        if token == self._verified_ledger_token:
+            return
+
+        workspace_revision = token[0]
         transaction_rows = self._connection.execute(
             """
             SELECT * FROM transactions
@@ -9422,6 +9886,9 @@ class SQLiteControlStore:
         self._verify_run_head_transition_chain()
         self._verify_core_relation_coverage()
         self._verify_pr4b_relation_coverage()
+        # Only reached when every check above passed; each one raises instead of
+        # returning, so a failed verification never records a token.
+        self._verified_ledger_token = token
 
     def _verify_run_head_transition_chain(self) -> None:
         """Verify that reset transitions form one acyclic chain ending at head."""
@@ -9810,6 +10277,13 @@ class SQLiteControlStore:
                 "post_final_assessment_requests",
                 "run_id",
                 ("assessment_request_id",),
+            ),
+            (
+                "transaction_post_final_assessment_abandonments",
+                ("abandonment_id",),
+                "post_final_assessment_abandonments",
+                "run_id",
+                ("abandonment_id",),
             ),
             (
                 "transaction_post_final_assessment_results",

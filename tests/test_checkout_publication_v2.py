@@ -38,6 +38,13 @@ from multi_agent_brief.core_run_v2.publication_platform import (
 )
 
 
+# The macOS CI job runs exactly `-m macos_publication`. This module is the
+# darwin-specific durability surface: F_FULLFSYNC, no_clobber_rename, and the
+# real macOS publication primitives. Linux CI still runs it as part of the full
+# POSIX suite; the marker only makes the macOS selection explicit.
+pytestmark = pytest.mark.macos_publication
+
+
 NOW = datetime(2026, 7, 18, tzinfo=timezone.utc)
 
 

@@ -719,6 +719,54 @@ def _load_runtime_contract_universe(repo_workdir: str | Path) -> _RuntimeContrac
     return _RuntimeContractUniverse(stages=tuple(stages), artifacts=tuple(artifacts))
 
 
+_VALIDATED_PAYLOAD_CACHE: dict[
+    tuple[str, str, str], ValidatedRuntimeContractPayloads
+] = {}
+
+# The contract universe is three immutable config artifacts. A workspace holds
+# one live triple; the headroom only covers a process that verifies several
+# workspaces in sequence.
+_VALIDATED_PAYLOAD_CACHE_LIMIT = 8
+
+
+def validate_runtime_contract_payloads_by_digest(
+    stage_specs: dict[str, Any],
+    artifact_contracts: dict[str, Any],
+    policy_pack: dict[str, Any],
+    *,
+    content_digests: tuple[str, str, str],
+) -> ValidatedRuntimeContractPayloads:
+    """Validate one contract triple once per distinct content.
+
+    ``content_digests`` must be the collision-resistant digests of the exact
+    bytes these payloads were parsed from, already checked against the run
+    binding by the caller. Equal digests therefore mean equal input, and
+    validation is a pure function of that input, so the first result stays
+    correct for every later call.
+
+    The returned payloads are shared, not copied. That is sound because no
+    caller mutates them: consumers that need an owned copy build one
+    themselves (see ``CoreRunDomainVerifier`` materializing
+    ``tuple(dict(item) for item in contracts.stages)``).
+
+    The cache lives in the process, is bounded, and is never persisted, so a
+    fresh process always revalidates from bytes.
+    """
+
+    cached = _VALIDATED_PAYLOAD_CACHE.get(content_digests)
+    if cached is not None:
+        return cached
+    validated = validate_runtime_contract_payloads(
+        stage_specs,
+        artifact_contracts,
+        policy_pack,
+    )
+    if len(_VALIDATED_PAYLOAD_CACHE) >= _VALIDATED_PAYLOAD_CACHE_LIMIT:
+        _VALIDATED_PAYLOAD_CACHE.clear()
+    _VALIDATED_PAYLOAD_CACHE[content_digests] = validated
+    return validated
+
+
 def validate_runtime_contract_payloads(
     stage_specs: dict[str, Any],
     artifact_contracts: dict[str, Any],

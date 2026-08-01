@@ -322,6 +322,23 @@ def register_quality(subparsers: argparse._SubParsersAction) -> None:
     retry_parser.add_argument("--workspace", required=True)
     retry_parser.add_argument("--request-id", required=True)
     retry_parser.add_argument("--json", action="store_true")
+    run_parser = laj_actions.add_parser(
+        "assessment-run",
+        help="Run one new explicitly Human-authorized assessment generation.",
+    )
+    run_parser.add_argument("--workspace", required=True)
+    run_parser.add_argument(
+        "--request-json",
+        required=True,
+        help="Strict inline non-secret assessment authorization JSON.",
+    )
+    run_parser.add_argument("--json", action="store_true")
+    list_parser = laj_actions.add_parser(
+        "assessment-list",
+        help="List the verified assessment series without provider access.",
+    )
+    list_parser.add_argument("--workspace", required=True)
+    list_parser.add_argument("--json", action="store_true")
     review_open_parser = laj_actions.add_parser(
         "review-open",
         help=(
@@ -330,6 +347,11 @@ def register_quality(subparsers: argparse._SubParsersAction) -> None:
         ),
     )
     review_open_parser.add_argument("--workspace", required=True)
+    review_open_parser.add_argument("--assessment-result-id", required=True)
+    review_open_parser.add_argument(
+        "--assessment-result-fingerprint",
+        required=True,
+    )
     review_open_parser.add_argument(
         "--no-browser",
         action="store_true",
@@ -350,6 +372,11 @@ def register_quality(subparsers: argparse._SubParsersAction) -> None:
     ):
         command = laj_actions.add_parser(action, help=help_text)
         command.add_argument("--workspace", required=True)
+        command.add_argument("--assessment-result-id", required=True)
+        command.add_argument(
+            "--assessment-result-fingerprint",
+            required=True,
+        )
         if action != "review-status":
             command.add_argument(
                 "--request-json",
@@ -546,6 +573,15 @@ def handle_quality(args: argparse.Namespace) -> int:
                 payload = service.status()
             elif laj_action == "retry":
                 payload = service.retry(args.request_id)
+            elif laj_action == "assessment-run":
+                value = json.loads(args.request_json)
+                if type(value) is not dict:
+                    raise PostFinalAssessmentError(
+                        "post_final_assessment_request_invalid"
+                    )
+                payload = service.assessment_run(value)
+            elif laj_action == "assessment-list":
+                payload = service.assessment_list()
             elif laj_action == "review-open":
                 from multi_agent_brief.product.review_session import (
                     launch_actionable_review_session,
@@ -553,6 +589,8 @@ def handle_quality(args: argparse.Namespace) -> int:
 
                 launched = launch_actionable_review_session(
                     workspace,
+                    assessment_result_id=args.assessment_result_id,
+                    assessment_result_fingerprint=(args.assessment_result_fingerprint),
                     open_browser=not bool(args.no_browser),
                 )
                 payload = {
@@ -573,7 +611,11 @@ def handle_quality(args: argparse.Namespace) -> int:
                     launched.server.close()
                 return 0
             elif laj_action == "review-status":
-                payload = PostFinalReviewService(workspace).review_status()
+                payload = PostFinalReviewService(
+                    workspace,
+                    args.assessment_result_id,
+                    args.assessment_result_fingerprint,
+                ).review_status()
             elif laj_action in {
                 "disposition",
                 "draft",
@@ -585,7 +627,16 @@ def handle_quality(args: argparse.Namespace) -> int:
                 value = json.loads(args.request_json)
                 if type(value) is not dict:
                     raise PostFinalReviewError("post_final_review_request_invalid")
-                review = PostFinalReviewService(workspace)
+                if (
+                    "assessment_result_id" in value
+                    and value["assessment_result_id"] != args.assessment_result_id
+                ):
+                    raise PostFinalReviewError("post_final_review_binding_invalid")
+                review = PostFinalReviewService(
+                    workspace,
+                    args.assessment_result_id,
+                    args.assessment_result_fingerprint,
+                )
                 if laj_action == "disposition":
                     payload = review.record_disposition(value)
                 elif laj_action == "draft":

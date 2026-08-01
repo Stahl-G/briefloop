@@ -6,6 +6,7 @@ stage legality, establish source truth, or replace any current v1 authority.
 
 from __future__ import annotations
 
+from contextvars import ContextVar
 from copy import deepcopy
 from dataclasses import dataclass
 from datetime import date, datetime
@@ -27,6 +28,7 @@ from pydantic import (
     StringConstraints,
     ValidationError,
     ValidationInfo,
+    ValidatorFunctionWrapHandler,
     WithJsonSchema,
     field_validator,
     model_validator,
@@ -107,26 +109,47 @@ SOURCE_ELIGIBILITY_REASONS = (
 )
 
 
-def _contains_non_finite_number(value: Any) -> bool:
+def _scan_non_finite_numbers(value: Any, scanned: set[int]) -> bool:
+    """Walk one payload for non-finite floats, recording visited containers.
+
+    ``scanned`` accumulates the identity of every container the walk entered.
+    An enclosing validation keeps that set so a nested contract can prove its
+    payload was already covered instead of rewalking the same subtree.
+    """
+
     stack = [value]
-    seen: set[int] = set()
     while stack:
         current = stack.pop()
         if type(current) is float and not math.isfinite(current):
             return True
         if isinstance(current, dict):
             identity = id(current)
-            if identity in seen:
+            if identity in scanned:
                 continue
-            seen.add(identity)
+            scanned.add(identity)
             stack.extend(current.values())
         elif isinstance(current, (list, tuple)):
             identity = id(current)
-            if identity in seen:
+            if identity in scanned:
                 continue
-            seen.add(identity)
+            scanned.add(identity)
             stack.extend(current)
     return False
+
+
+def _contains_non_finite_number(value: Any) -> bool:
+    return _scan_non_finite_numbers(value, set())
+
+
+# Set for the duration of one outermost contract validation. Nested contracts
+# validated inside it are subtrees of a payload that was already walked, so
+# they skip their own walk. The value is the identity set of the containers
+# that walk actually covered: a nested payload that did not come from the
+# outer structure is absent from it and is still walked.
+_SCANNED_FINITE_CONTAINERS: ContextVar[set[int] | None] = ContextVar(
+    "briefloop_scanned_finite_containers",
+    default=None,
+)
 
 
 def _contract_fingerprint(payload: dict[str, Any], *, field: str) -> str:
@@ -385,6 +408,7 @@ EVENT_TYPES = {
     "audit_proposal_promoted",
     "post_final_assessment_policy_recorded",
     "post_final_assessment_claimed",
+    "post_final_assessment_abandoned",
     "post_final_assessment_result_recorded",
     "post_final_finding_disposition_recorded",
     "post_final_guidance_draft_recorded",
@@ -454,15 +478,32 @@ class StrictModel(BaseModel):
     minimal_example: ClassVar[dict[str, Any]]
     full_example: ClassVar[dict[str, Any]]
 
-    @model_validator(mode="before")
+    @model_validator(mode="wrap")
     @classmethod
-    def reject_non_finite_json_numbers(cls, value: Any) -> Any:
-        if _contains_non_finite_number(value):
+    def reject_non_finite_json_numbers(
+        cls,
+        value: Any,
+        handler: ValidatorFunctionWrapHandler,
+    ) -> Any:
+        scanned = _SCANNED_FINITE_CONTAINERS.get()
+        if scanned is not None:
+            if id(value) not in scanned and _scan_non_finite_numbers(value, scanned):
+                raise PydanticCustomError(
+                    "non_finite_json_number",
+                    "non-finite JSON number",
+                )
+            return handler(value)
+        scanned = set()
+        if _scan_non_finite_numbers(value, scanned):
             raise PydanticCustomError(
                 "non_finite_json_number",
                 "non-finite JSON number",
             )
-        return value
+        token = _SCANNED_FINITE_CONTAINERS.set(scanned)
+        try:
+            return handler(value)
+        finally:
+            _SCANNED_FINITE_CONTAINERS.reset(token)
 
     @classmethod
     def contract_validate(cls, data: dict[str, Any]) -> list[FieldViolation]:
@@ -482,12 +523,24 @@ class StrictModel(BaseModel):
                 schema_version=cls.schema_version_number,
             )
 
+    _contract_json_schema_cache: ClassVar[dict[type, dict[str, Any]]] = {}
+
     @classmethod
     def contract_json_schema(cls) -> dict[str, Any]:
-        schema = cls.model_json_schema()
-        schema["$id"] = cls.schema_id
-        schema["examples"] = [deepcopy(cls.minimal_example), deepcopy(cls.full_example)]
-        return schema
+        # model_json_schema() regenerates the whole schema on every call, and
+        # the verifier asks for contract schemas thousands of times per run.
+        # The schema is a pure function of the class, but callers own the dict
+        # they get back, so cache one canonical build and hand out copies.
+        cached = StrictModel._contract_json_schema_cache.get(cls)
+        if cached is None:
+            cached = cls.model_json_schema()
+            cached["$id"] = cls.schema_id
+            cached["examples"] = [
+                deepcopy(cls.minimal_example),
+                deepcopy(cls.full_example),
+            ]
+            StrictModel._contract_json_schema_cache[cls] = cached
+        return deepcopy(cached)
 
     @classmethod
     def contract_example(cls, detail: str) -> dict[str, Any]:
@@ -3383,11 +3436,17 @@ class PostFinalAssessmentPolicyRevision(StrictModel):
 
 
 class PostFinalAssessmentRequestRecord(StrictModel):
-    """The one durable assessment claim for exact finalized-local facts."""
+    """One durable assessment claim in an exact finalized-local lineage series."""
 
     schema_id = "briefloop.post_final_assessment_request_record.v2"
+    series_schema_id: ClassVar[str] = (
+        "briefloop.post_final_assessment_request_record.v3"
+    )
 
-    schema_version: Literal["briefloop.post_final_assessment_request_record.v2"]
+    schema_version: Literal[
+        "briefloop.post_final_assessment_request_record.v2",
+        "briefloop.post_final_assessment_request_record.v3",
+    ]
     assessment_request_id: ContractId
     run_id: ContractId
     finalized_facts_fingerprint: Sha256
@@ -3422,6 +3481,19 @@ class PostFinalAssessmentRequestRecord(StrictModel):
     request_event_id: ContractId
     accepted_transaction_id: ContractId
     request_fingerprint: Sha256
+    assessment_generation: PositiveInt = 1
+    predecessor_assessment_request_id: Optional[ContractId] = None
+    predecessor_assessment_request_fingerprint: Optional[Sha256] = None
+    predecessor_assessment_result_id: Optional[ContractId] = None
+    predecessor_result_fingerprint: Optional[Sha256] = None
+    predecessor_abandonment_id: Optional[ContractId] = None
+    predecessor_abandonment_fingerprint: Optional[Sha256] = None
+    assessment_purpose: Literal["post_final_review", "model_evaluation"] = (
+        "post_final_review"
+    )
+    human_actor_id: Optional[ContractId] = None
+    human_request_id: Optional[ContractId] = None
+    authorization_fingerprint: Optional[Sha256] = None
 
     @model_validator(mode="after")
     def request_identity_is_exact(self) -> "PostFinalAssessmentRequestRecord":
@@ -3432,12 +3504,116 @@ class PostFinalAssessmentRequestRecord(StrictModel):
             or self.output_tokens_per_call > self.total_output_token_upper_bound
         ):
             raise ValueError("post-final assessment request identity is invalid")
+        series_fields = {
+            "assessment_generation",
+            "predecessor_assessment_request_id",
+            "predecessor_assessment_request_fingerprint",
+            "predecessor_assessment_result_id",
+            "predecessor_result_fingerprint",
+            "predecessor_abandonment_id",
+            "predecessor_abandonment_fingerprint",
+            "assessment_purpose",
+            "human_actor_id",
+            "human_request_id",
+            "authorization_fingerprint",
+        }
+        if self.schema_version == self.schema_id:
+            if (
+                self.assessment_generation != 1
+                or self.predecessor_assessment_request_id is not None
+                or self.predecessor_assessment_request_fingerprint is not None
+                or self.predecessor_assessment_result_id is not None
+                or self.predecessor_result_fingerprint is not None
+                or self.predecessor_abandonment_id is not None
+                or self.predecessor_abandonment_fingerprint is not None
+                or self.assessment_purpose != "post_final_review"
+                or self.human_actor_id is not None
+                or self.human_request_id is not None
+                or self.authorization_fingerprint is not None
+            ):
+                raise ValueError("historical assessment request series fields invalid")
+            payload = self.model_dump(
+                mode="json",
+                exclude={"request_fingerprint", *series_fields},
+            )
+        else:
+            result_predecessor = (
+                self.predecessor_assessment_result_id,
+                self.predecessor_result_fingerprint,
+            )
+            abandonment_predecessor = (
+                self.predecessor_abandonment_id,
+                self.predecessor_abandonment_fingerprint,
+            )
+            if (
+                self.human_actor_id is None
+                or self.human_request_id is None
+                or self.authorization_fingerprint is None
+            ):
+                raise ValueError("assessment Human authorization is required")
+            if self.assessment_generation == 1:
+                if any(
+                    value is not None
+                    for value in (
+                        self.predecessor_assessment_request_id,
+                        self.predecessor_assessment_request_fingerprint,
+                        *result_predecessor,
+                        *abandonment_predecessor,
+                    )
+                ):
+                    raise ValueError("generation one cannot bind a predecessor")
+            elif (
+                self.predecessor_assessment_request_id is None
+                or self.predecessor_assessment_request_fingerprint is None
+                or (all(value is not None for value in result_predecessor))
+                == (all(value is not None for value in abandonment_predecessor))
+                or any(value is None for value in result_predecessor)
+                and any(value is not None for value in result_predecessor)
+                or any(value is None for value in abandonment_predecessor)
+                and any(value is not None for value in abandonment_predecessor)
+            ):
+                raise ValueError("assessment predecessor binding is invalid")
+            payload = self.model_dump(mode="json", exclude={"request_fingerprint"})
         expected = _contract_fingerprint(
-            self.model_dump(mode="json", exclude={"request_fingerprint"}),
+            payload,
             field="request_fingerprint",
         )
         if self.request_fingerprint != expected:
             raise ValueError("post-final assessment request fingerprint mismatch")
+        return self
+
+
+class PostFinalAssessmentAbandonmentRecord(StrictModel):
+    """One Human-recorded terminal closure for an outcome-unknown request."""
+
+    schema_id = "briefloop.post_final_assessment_abandonment_record.v1"
+
+    schema_version: Literal["briefloop.post_final_assessment_abandonment_record.v1"]
+    abandonment_id: ContractId
+    run_id: ContractId
+    assessment_request_id: ContractId
+    assessment_request_fingerprint: Sha256
+    finalized_lineage_fingerprint: Sha256
+    assessment_generation: PositiveInt
+    reason: Literal["outcome_unknown"]
+    human_actor_id: ContractId
+    human_request_id: ContractId
+    expected_store_revision: NonNegativeInt
+    recorded_at: IsoDateTime
+    abandonment_event_id: ContractId
+    accepted_transaction_id: ContractId
+    abandonment_fingerprint: Sha256
+
+    @model_validator(mode="after")
+    def abandonment_identity_is_exact(
+        self,
+    ) -> "PostFinalAssessmentAbandonmentRecord":
+        expected = _contract_fingerprint(
+            self.model_dump(mode="json", exclude={"abandonment_fingerprint"}),
+            field="abandonment_fingerprint",
+        )
+        if self.abandonment_fingerprint != expected:
+            raise ValueError("post-final assessment abandonment fingerprint mismatch")
         return self
 
 
@@ -4410,6 +4586,10 @@ class PostFinalAssessmentRequestReference(StrictModel):
     assessment_request_id: ContractId
 
 
+class PostFinalAssessmentAbandonmentReference(StrictModel):
+    abandonment_id: ContractId
+
+
 class PostFinalAssessmentResultReference(StrictModel):
     assessment_result_id: ContractId
 
@@ -4525,6 +4705,9 @@ class TransactionReceipt(StrictModel):
     post_final_assessment_requests: list[PostFinalAssessmentRequestReference] = Field(
         default_factory=list
     )
+    post_final_assessment_abandonments: list[
+        PostFinalAssessmentAbandonmentReference
+    ] = Field(default_factory=list)
     post_final_assessment_results: list[PostFinalAssessmentResultReference] = Field(
         default_factory=list
     )
@@ -4600,6 +4783,7 @@ class TransactionReceipt(StrictModel):
             self.delivery_results,
             self.post_final_assessment_policy_revisions,
             self.post_final_assessment_requests,
+            self.post_final_assessment_abandonments,
             self.post_final_assessment_results,
             self.post_final_finding_dispositions,
             self.post_final_guidance_drafts,
@@ -6508,6 +6692,30 @@ _PFLAJ_REQUEST["request_fingerprint"] = _contract_fingerprint(
 )
 PostFinalAssessmentRequestRecord.minimal_example = deepcopy(_PFLAJ_REQUEST)
 PostFinalAssessmentRequestRecord.full_example = deepcopy(_PFLAJ_REQUEST)
+
+_PFLAJ_ABANDONMENT = {
+    "schema_version": PostFinalAssessmentAbandonmentRecord.schema_id,
+    "abandonment_id": "PFLAJ-ABANDONMENT-001",
+    "run_id": _RUN,
+    "assessment_request_id": _PFLAJ_REQUEST["assessment_request_id"],
+    "assessment_request_fingerprint": _PFLAJ_REQUEST["request_fingerprint"],
+    "finalized_lineage_fingerprint": _SHA_B,
+    "assessment_generation": 1,
+    "reason": "outcome_unknown",
+    "human_actor_id": "HUMAN-001",
+    "human_request_id": "PFLAJ-ASSESSMENT-REQUEST-002",
+    "expected_store_revision": 20,
+    "recorded_at": _NOW,
+    "abandonment_event_id": "EVENT-PFLAJ-ABANDONMENT-001",
+    "accepted_transaction_id": "TX-PFLAJ-SERIES-002",
+    "abandonment_fingerprint": _SHA_A,
+}
+_PFLAJ_ABANDONMENT["abandonment_fingerprint"] = _contract_fingerprint(
+    _PFLAJ_ABANDONMENT,
+    field="abandonment_fingerprint",
+)
+PostFinalAssessmentAbandonmentRecord.minimal_example = deepcopy(_PFLAJ_ABANDONMENT)
+PostFinalAssessmentAbandonmentRecord.full_example = deepcopy(_PFLAJ_ABANDONMENT)
 
 _PFLAJ_RESULT = {
     "schema_version": PostFinalAssessmentResultRecord.schema_id,

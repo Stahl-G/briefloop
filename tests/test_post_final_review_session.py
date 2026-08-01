@@ -21,6 +21,7 @@ from multi_agent_brief.product.review_session.server import (
 from multi_agent_brief.product.review_session.static_qp import (
     render_static_quality_panel,
 )
+from multi_agent_brief.product.post_final_review import PostFinalReviewError
 from tests.test_post_final_review_contracts import build_read_model
 from tests.test_post_final_human_review import (
     _disposition_payload,
@@ -208,8 +209,17 @@ def test_actionable_canonical_session_requires_token_origin_and_csrf(
     workspace, _run_id, provider_calls, review, status, finding = _qualified_review(
         tmp_path, monkeypatch
     )
+    with pytest.raises(PostFinalReviewError, match="post_final_review_"):
+        launch_actionable_review_session(
+            workspace,
+            status["assessment_result_id"],
+            "0" * 64,
+            open_browser=False,
+        )
     launched = launch_actionable_review_session(
         workspace,
+        status["assessment_result_id"],
+        status["assessment_result_fingerprint"],
         open_browser=True,
         browser_open=lambda _url: False,
     )
