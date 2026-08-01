@@ -26,6 +26,12 @@ from multi_agent_brief.core_run_v2.service import _derive_runtime_source_plan
 from multi_agent_brief.sources.api_news import NewsApiProvider
 from multi_agent_brief.sources.base import SourceItem, SourceProvider, SourceQuery
 from multi_agent_brief.sources.cached_package import CachedPackageProvider
+from multi_agent_brief.sources.tavily_acquisition import (
+    TavilyAcquisitionBundleError,
+    TavilyAcquisitionObservation,
+    parse_tavily_acquisition_bundle,
+    tavily_observation_matches_spec,
+)
 from multi_agent_brief.sources.web_search import WebSearchProvider
 
 from .errors import RuntimeHostError
@@ -95,6 +101,7 @@ def collect_frozen_source_pack(
     invocation_id: str,
     route: RuntimeSourceRouteBinding,
     provider_factory: ProviderFactory | None = None,
+    retrieved_at: str | None = None,
 ) -> FrozenSourceCollection:
     """Execute one route and retain its exact provider response when available."""
 
@@ -105,7 +112,14 @@ def collect_frozen_source_pack(
     items: list[SourceItem] = []
     provider_response: bytes | None = None
     provider_status_code: int | None = None
+    tavily_observation: TavilyAcquisitionObservation | None = None
     if isinstance(spec, RuntimeWebSearchAcquisitionSpec):
+        if route.provider_id == "tavily" and (
+            len(spec.requests) != 1
+            or spec.requests[0].max_results != 5
+            or spec.requests[0].recency_days not in {7, 30}
+        ):
+            raise RuntimeHostError("runtime_source_plan_invalid")
         provider = factory("web_search")
         for request in spec.requests:
             if route.provider_id == "tavily":
@@ -126,7 +140,9 @@ def collect_frozen_source_pack(
                         "recency_days": request.recency_days,
                         "topic": "news",
                         "search_depth": "basic",
-                        "time_range": ("week" if request.recency_days == 7 else None),
+                        "time_range": (
+                            "week" if request.recency_days == 7 else "month"
+                        ),
                         "search_tasks": [
                             {
                                 "query": request.query,
@@ -199,9 +215,7 @@ def collect_frozen_source_pack(
     if not items and route.provider_id != "tavily":
         raise RuntimeHostError("source_pack_empty")
     result_count = len(items)
-    durable_content_count = sum(
-        1 for item in items if _has_durable_tavily_content(item)
-    )
+    durable_content_count = 0
     material_validation_failed = False
     if route.provider_id == "tavily":
         if (
@@ -211,9 +225,19 @@ def collect_frozen_source_pack(
             or len(spec.requests) != 1
         ):
             raise RuntimeHostError("source_provider_result_invalid")
-        material_validation_failed = len(items) > spec.requests[0].max_results or len(
-            items
-        ) != len({item.source_id for item in items})
+        try:
+            tavily_observation = parse_tavily_acquisition_bundle(provider_response)
+        except TavilyAcquisitionBundleError:
+            material_validation_failed = True
+        else:
+            result_count = tavily_observation.result_count
+            durable_content_count = tavily_observation.durable_content_count
+            material_validation_failed = not tavily_observation_matches_spec(
+                tavily_observation, spec
+            ) or not _items_match_tavily_observation(
+                items,
+                tavily_observation,
+            )
     try:
         canonical_items = (
             [] if material_validation_failed else _canonical_source_items(items)
@@ -234,6 +258,7 @@ def collect_frozen_source_pack(
                 invocation_id=invocation_id,
                 route=route,
                 item=item,
+                retrieved_at=retrieved_at,
             )
             for item in ordered
         )
@@ -311,6 +336,7 @@ def _material_from_item(
     invocation_id: str,
     route: RuntimeSourceRouteBinding,
     item: SourceItem,
+    retrieved_at: str | None = None,
 ) -> FrozenSourceMaterial:
     content = item.content.encode("utf-8")
     if not content:
@@ -393,7 +419,7 @@ def _material_from_item(
             or "Collected source",
             "publisher": item.source_name.strip() or None,
             "published_at": published_at,
-            "retrieved_at": item.retrieved_at,
+            "retrieved_at": retrieved_at or item.retrieved_at,
             "source_category": "other" if is_cached else "news_media",
             "retrieval_source_type": "local_file" if is_cached else "news_media",
             "underlying_evidence_type": "unknown" if is_cached else "media_report",
@@ -418,11 +444,39 @@ def _has_durable_tavily_content(item: SourceItem) -> bool:
     return (
         item.source_type == "web_search"
         and item.metadata.get("backend") == "tavily"
-        and item.metadata.get("content_shape") == "provider_raw_content"
+        and item.metadata.get("content_shape") == "provider_extract_content"
         and item.metadata.get("has_raw_content") is True
         and item.metadata.get("evidence_quality") == "partial_extract"
         and bool(item.content.strip())
     )
+
+
+def _items_match_tavily_observation(
+    items: list[SourceItem],
+    observation: TavilyAcquisitionObservation,
+) -> bool:
+    """Bind every and only successful Extract item to its frozen projection."""
+
+    expected = {item.url: item for item in observation.sources}
+    if len(items) != len(expected) or len(items) != len(
+        {item.source_id for item in items}
+    ):
+        return False
+    observed_urls: set[str] = set()
+    for item in items:
+        expected_item = expected.get(item.url)
+        projection = item.metadata.get("provider_projection")
+        if (
+            expected_item is None
+            or item.url in observed_urls
+            or not _has_durable_tavily_content(item)
+            or not isinstance(projection, dict)
+            or canonical_json_bytes(projection) != expected_item.projection
+            or item.content.encode("utf-8") != expected_item.content
+        ):
+            return False
+        observed_urls.add(item.url)
+    return observed_urls == set(expected)
 
 
 def _published_date(value: str) -> str | None:

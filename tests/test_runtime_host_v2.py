@@ -17,6 +17,9 @@ from multi_agent_brief.contracts.v2 import (
     InternalApprovalRequest,
     RuntimeAdapterBinding,
 )
+from multi_agent_brief.sources.tavily_acquisition import (
+    parse_tavily_acquisition_bundle,
+)
 from multi_agent_brief.control_store import SQLiteControlStore
 from multi_agent_brief.control_store.serialization import canonical_fingerprint
 from multi_agent_brief.core_run_v2.verifier import CoreRunDomainVerifier
@@ -149,7 +152,7 @@ def test_host_owned_materialization_is_exactly_replayable(tmp_path: Path) -> Non
 def _external_web_workspace(
     tmp_path: Path,
     *,
-    max_source_age_days: int = 14,
+    max_source_age_days: int = 7,
 ) -> Path:
     workspace = tmp_path / "external-workspace"
     ids = iter(("external-workspace", "external-run"))
@@ -266,7 +269,7 @@ def test_external_source_plan_freezes_executable_non_secret_requests(
 
 @pytest.mark.parametrize(
     ("max_source_age_days", "expected_time_range"),
-    [(7, "week"), (30, None)],
+    [(7, "week"), (30, "month")],
 )
 def test_tavily_query_projection_preserves_transport_window_semantics(
     tmp_path: Path,
@@ -290,6 +293,8 @@ def test_tavily_query_projection_preserves_transport_window_semantics(
     assert _LONG_EXTERNAL_TASK_OBJECTIVE not in request.query
 
     captured_configs: list[dict[str, object]] = []
+    from tests.test_runtime_host_continue_v2 import _tavily_collection
+
     provider = WebSearchProvider()
 
     def _collect_with_response(
@@ -297,11 +302,7 @@ def test_tavily_query_projection_preserves_transport_window_semantics(
         config: dict[str, object],
     ) -> WebSearchCollection:
         captured_configs.append(config)
-        return WebSearchCollection(
-            items=(),
-            raw_response=b'{"results":[]}',
-            status_code=200,
-        )
+        return _tavily_collection([])
 
     provider.collect_with_response = _collect_with_response  # type: ignore[method-assign]
     assert (
@@ -318,14 +319,17 @@ def test_tavily_query_projection_preserves_transport_window_semantics(
     config = captured_configs[0]
     assert config["recency_days"] == max_source_age_days
     assert config["time_range"] == expected_time_range
-    assert config["search_tasks"] == [
-        {"query": "manufacturing", "domains": []}
-    ]
+    assert config["search_tasks"] == [{"query": "manufacturing", "domains": []}]
 
 
-def test_tavily_route_maps_only_verified_raw_content_to_eligible_extract(
+def test_tavily_route_commits_only_extract_success_and_keeps_partial_failure(
     tmp_path: Path,
 ) -> None:
+    from tests.test_runtime_host_continue_v2 import (
+        _tavily_collection,
+        _tavily_item,
+    )
+
     workspace = _external_web_workspace(tmp_path)
     initialized = initialize_or_open_runtime(workspace, adapter_loader=_adapter)
     route = next(
@@ -334,71 +338,11 @@ def test_tavily_route_maps_only_verified_raw_content_to_eligible_extract(
         if item.route_id == "web-search"
     )
 
-    projections = (
-        {
-            "title": "Durable",
-            "url": "https://example.com/durable",
-            "snippet": "discovery snippet",
-            "raw_content": "retrieved durable page extract",
-            "published_date": "",
-            "score": 0.9,
-        },
-        {
-            "title": "Snippet",
-            "url": "https://example.com/snippet",
-            "snippet": "search snippet",
-            "raw_content": None,
-            "published_date": "",
-            "score": 0.7,
-        },
+    collection = _tavily_collection(
+        [_tavily_item(durable=True), _tavily_item(durable=False)]
     )
-    items = tuple(
-        SourceItem(
-            source_id=source_id,
-            source_name="example.com",
-            source_type="web_search",
-            title=projection["title"],
-            content=projection["raw_content"] or projection["snippet"],
-            url=projection["url"],
-            metadata={
-                "backend": "tavily",
-                "content_shape": (
-                    "provider_raw_content"
-                    if projection["raw_content"]
-                    else "search_snippet"
-                ),
-                "has_raw_content": bool(projection["raw_content"]),
-                "evidence_quality": (
-                    "partial_extract" if projection["raw_content"] else "snippet"
-                ),
-                "provider_projection": projection,
-            },
-        )
-        for source_id, projection in zip(
-            ("DURABLE", "SNIPPET"), projections, strict=True
-        )
-    )
-    response = {
-        "results": [
-            {
-                "title": item["title"],
-                "url": item["url"],
-                "content": item["snippet"],
-                "raw_content": item["raw_content"],
-                "published_date": item["published_date"],
-                "score": item["score"],
-            }
-            for item in projections
-        ]
-    }
     provider = WebSearchProvider()
-    provider.collect_with_response = lambda *_args, **_kwargs: WebSearchCollection(
-        items=items,
-        raw_response=json.dumps(response, sort_keys=True, separators=(",", ":")).encode(
-            "utf-8"
-        ),
-        status_code=200,
-    )
+    provider.collect_with_response = lambda *_args, **_kwargs: collection
 
     materials = collect_frozen_sources(
         workspace,
@@ -408,9 +352,9 @@ def test_tavily_route_maps_only_verified_raw_content_to_eligible_extract(
         provider_factory=lambda _kind: provider,
     )
 
-    by_title = {item.proposal.title: item for item in materials}
-    durable = by_title["Durable"]
-    assert durable.content == b"retrieved durable page extract"
+    assert len(materials) == 1
+    durable = materials[0]
+    assert durable.content == b"durable provider content"
     assert durable.proposal.origin_type == "provider_response"
     assert durable.proposal.acquisition_method == "provider_extract"
     assert durable.proposal.material_kind == "partial_extract"
@@ -418,85 +362,46 @@ def test_tavily_route_maps_only_verified_raw_content_to_eligible_extract(
         durable.proposal,
         raw_payload_present=True,
     ) == (True, "eligible_durable_source_content")
-    snippet = by_title["Snippet"]
-    assert snippet.proposal.origin_type == "search_snippet_only"
-    assert snippet.proposal.acquisition_method == "provider_search"
-    assert snippet.proposal.material_kind == "search_snippet"
-    assert evaluate_source_eligibility(
-        snippet.proposal,
-        raw_payload_present=True,
-    ) == (False, "ineligible_search_snippet")
+    assert collection.raw_response is not None
+    observation = parse_tavily_acquisition_bundle(collection.raw_response)
+    assert observation.bundle.status == "extract_results_partial"
+    assert [(item.url, item.status) for item in observation.bundle.outcomes] == [
+        ("https://example.com/durable", "succeeded"),
+        ("https://example.com/snippet", "provider_failed"),
+    ]
 
 
-def test_tavily_route_does_not_trust_raw_content_marker_alone(
+@pytest.mark.parametrize("max_source_age_days", [14, 90])
+def test_tavily_rejects_unsupported_windows_before_provider_effect(
     tmp_path: Path,
+    max_source_age_days: int,
 ) -> None:
-    workspace = _external_web_workspace(tmp_path)
-    initialized = initialize_or_open_runtime(workspace, adapter_loader=_adapter)
-    route = next(
-        item
-        for item in initialized.verified.source_plan.routes
-        if item.route_id == "web-search"
+    workspace = _external_web_workspace(
+        tmp_path,
+        max_source_age_days=max_source_age_days,
     )
+    calls = 0
 
-    projection = {
-        "title": "Forged marker",
-        "url": "https://example.com/forged",
-        "snippet": "search snippet",
-        "raw_content": None,
-        "published_date": "",
-        "score": 0.5,
-    }
-    forged = SourceItem(
-        source_id="FORGED",
-        source_name="example.com",
-        source_type="web_search",
-        title="Forged marker",
-        content="search snippet",
-        url="https://example.com/forged",
-        metadata={
-            "backend": "other",
-            "content_shape": "provider_raw_content",
-            "has_raw_content": True,
-            "evidence_quality": "partial_extract",
-            "provider_projection": projection,
-        },
-    )
-    provider = WebSearchProvider()
-    provider.collect_with_response = lambda *_args, **_kwargs: WebSearchCollection(
-        items=(forged,),
-        raw_response=json.dumps(
-            {
-                "results": [
-                    {
-                        "title": projection["title"],
-                        "url": projection["url"],
-                        "content": projection["snippet"],
-                        "raw_content": projection["raw_content"],
-                        "published_date": projection["published_date"],
-                        "score": projection["score"],
-                    }
-                ]
-            },
-            sort_keys=True,
-            separators=(",", ":"),
-        ).encode("utf-8"),
-        status_code=200,
-    )
+    def provider_factory(_kind: str) -> WebSearchProvider:
+        nonlocal calls
+        calls += 1
+        return WebSearchProvider()
 
-    material = collect_frozen_sources(
-        workspace,
-        run_id=initialized.verified.snapshot.run.run_id,
-        invocation_id="INV-FORGED-CONTENT",
-        route=route,
-        provider_factory=lambda _kind: provider,
-    )[0]
-
-    assert material.proposal.material_kind == "search_snippet"
-    assert evaluate_source_eligibility(
-        material.proposal,
-        raw_payload_present=True,
-    ) == (False, "ineligible_search_snippet")
+    with pytest.raises(RuntimeHostError, match="runtime_initialization_input_invalid"):
+        initialized = initialize_or_open_runtime(workspace, adapter_loader=_adapter)
+        route = next(
+            item
+            for item in initialized.verified.source_plan.routes
+            if item.route_id == "web-search"
+        )
+        collect_frozen_sources(
+            workspace,
+            run_id=initialized.verified.snapshot.run.run_id,
+            invocation_id="INV-UNSUPPORTED-WINDOW",
+            route=route,
+            provider_factory=provider_factory,
+        )
+    assert calls == 0
 
 
 def test_tavily_source_plan_uses_direction_and_fixed_bounds(

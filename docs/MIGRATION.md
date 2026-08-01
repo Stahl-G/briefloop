@@ -23,13 +23,16 @@ This page explains the public architecture migration from older Python-pipeline 
 - Tavily discovery authority is distinct from execution authority. The
   Experimental runtime-first route keeps the credential in workspace `.env`
   until explicit Human rotation/removal, but each separately Human-confirmed,
-  Store-recorded attempt permits at most one provider call. Exact replay does
-  not redial, failures do not auto-retry, and safe failed responses remain
-  auditable without source or execution authority. A successful attempt uses
-  one Intake transaction to promote a Store-native source pack plus execution
-  authorization. Search snippets remain claims-ineligible, and legacy source
-  commands are not a fallback. Synthetic transport is tested; live results and
-  cost are NOT MEASURED.
+  Store-recorded attempt permits at most one Search and one batch Extract over
+  at most five deduplicated URLs. Exact replay does not redial, failures do not
+  auto-retry, and the canonical acquisition bundle retains the exact safe
+  exchanges plus per-URL outcomes. Only successful non-empty Extract content
+  enters the one Intake transaction; Search snippets are never claims-eligible,
+  partial success commits successful URLs only, and zero Search/all-failed
+  Extract creates no source or execution authority. HumanSourcePack never counts
+  as Tavily success, and legacy source commands are not a fallback. Synthetic
+  transport is tested; live results, cost, coverage, and success rate are NOT
+  MEASURED.
 - Schema 12 adds append-only post-final assessment-series relations for fresh
   current-schema workspaces. Older development SQLite workspaces are
   unsupported when the schema changes; create a fresh workspace. There is no

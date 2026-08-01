@@ -2,12 +2,17 @@
 
 from __future__ import annotations
 
+import base64
 import hashlib
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import json
 import os
 from io import BytesIO
+from threading import Thread
 
+import pytest
 
+from multi_agent_brief.contracts.v2 import TavilyAcquisitionBundle
 from multi_agent_brief.sources.base import (
     SourceConfig,
     SourceItem,
@@ -379,34 +384,18 @@ def test_web_search_collect_uses_workspace_env_for_known_backend_key(
     assert os.environ.get("TAVILY_API_KEY") is None
 
 
-def test_tavily_requests_and_preserves_raw_content_separately(monkeypatch):
-    captured: dict[str, object] = {}
+def test_tavily_search_then_batch_extract_preserves_exact_partial_outcome(monkeypatch):
+    calls: list[tuple[str, dict[str, object]]] = []
     sentinel = "test-only-tavily-key"
 
     class _FakeResponse:
         status = 200
 
+        def __init__(self, body: dict[str, object]) -> None:
+            self._body = body
+
         def read(self, _limit=-1):
-            return json.dumps(
-                {
-                    "results": [
-                        {
-                            "title": "Durable result",
-                            "url": "https://example.com/durable",
-                            "content": "search snippet",
-                            "raw_content": "retrieved durable page extract",
-                            "score": 0.9,
-                        },
-                        {
-                            "title": "Snippet result",
-                            "url": "https://example.com/snippet",
-                            "content": "snippet only",
-                            "raw_content": "",
-                            "score": 0.8,
-                        },
-                    ]
-                }
-            ).encode("utf-8")
+            return json.dumps(self._body).encode("utf-8")
 
         def __enter__(self):
             return self
@@ -415,29 +404,315 @@ def test_tavily_requests_and_preserves_raw_content_separately(monkeypatch):
             return False
 
     def _urlopen(request, timeout=30):
-        captured["payload"] = json.loads(request.data.decode("utf-8"))
-        captured["authorization"] = request.get_header("Authorization")
-        captured["timeout"] = timeout
-        return _FakeResponse()
+        payload = json.loads(request.data.decode("utf-8"))
+        calls.append((request.full_url, payload))
+        assert request.get_header("Authorization") == f"Bearer {sentinel}"
+        assert timeout == 30
+        if request.full_url.endswith("/search"):
+            return _FakeResponse(
+                {
+                    "results": [
+                        {
+                            "title": "Durable result",
+                            "url": "https://example.com/durable",
+                            "content": "search snippet",
+                            "raw_content": "search raw content must not be evidence",
+                            "score": 0.9,
+                        },
+                        {
+                            "title": "Failed result",
+                            "url": "https://example.com/failed",
+                            "content": "snippet only",
+                            "score": 0.8,
+                        },
+                    ]
+                }
+            )
+        return _FakeResponse(
+            {
+                "results": [
+                    {
+                        "url": "https://example.com/durable",
+                        "raw_content": "retrieved durable page extract",
+                    }
+                ],
+                "failed_results": [
+                    {
+                        "url": "https://example.com/failed",
+                        "error": "test-only failure",
+                    }
+                ],
+            }
+        )
 
     monkeypatch.setattr("urllib.request.urlopen", _urlopen)
     monkeypatch.setenv("TAVILY_API_KEY", sentinel)
 
-    results = TavilyBackend().search("test query", max_results=2)
+    response = TavilyBackend().acquisition_response(
+        "test query",
+        max_results=2,
+        time_range="month",
+    )
 
-    payload = captured["payload"]
-    assert isinstance(payload, dict)
-    assert payload["include_raw_content"] == "markdown"
-    assert payload["auto_parameters"] is False
-    assert "api_key" not in payload
-    assert captured["authorization"] == f"Bearer {sentinel}"
-    assert results[0].snippet == "search snippet"
-    assert results[0].raw_content == "retrieved durable page extract"
-    assert results[0].metadata["evidence_quality"] == "partial_extract"
-    assert results[1].snippet == "snippet only"
-    assert results[1].raw_content is None
-    assert results[1].metadata["evidence_quality"] == "snippet"
-    assert sentinel not in repr(results)
+    assert [url.rsplit("/", 1)[-1] for url, _ in calls] == ["search", "extract"]
+    search_payload = calls[0][1]
+    assert search_payload["include_raw_content"] is False
+    assert search_payload["time_range"] == "month"
+    assert "days" not in search_payload
+    extract_payload = calls[1][1]
+    assert extract_payload["urls"] == [
+        "https://example.com/durable",
+        "https://example.com/failed",
+    ]
+    assert extract_payload["query"] == "test query"
+    assert extract_payload["chunks_per_source"] == 5
+    assert extract_payload["extract_depth"] == "basic"
+    bundle = TavilyAcquisitionBundle.model_validate_json(
+        response.raw_response, strict=True
+    )
+    assert bundle.status == "extract_results_partial"
+    assert [outcome.status for outcome in bundle.outcomes] == [
+        "succeeded",
+        "provider_failed",
+    ]
+    assert len(response.results) == 1
+    assert response.results[0].raw_content == "retrieved durable page extract"
+    assert response.results[0].metadata["content_shape"] == "provider_extract_content"
+    assert response.results[0].metadata["evidence_quality"] == "partial_extract"
+    assert "raw_content" not in response.results[0].raw_projection["search_result"]
+    assert (
+        "search raw content must not be evidence" not in response.results[0].raw_content
+    )
+    assert sentinel not in repr(response)
+
+
+def test_tavily_search_redirect_is_retained_without_following_target(monkeypatch):
+    hits: list[str] = []
+
+    class Handler(BaseHTTPRequestHandler):
+        def do_POST(self):
+            hits.append(self.path)
+            body = b""
+            if self.path == "/search":
+                self.send_response(302)
+                self.send_header(
+                    "Location",
+                    f"http://127.0.0.1:{self.server.server_port}/redirect-target",
+                )
+            else:
+                self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            if body:
+                self.wfile.write(body)
+
+        def log_message(self, _format, *args):
+            return None
+
+    server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+    thread = Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    try:
+        monkeypatch.setattr(
+            "multi_agent_brief.sources.search_backends.tavily.TAVILY_API_URL",
+            f"http://127.0.0.1:{server.server_port}/search",
+        )
+        monkeypatch.setenv("TAVILY_API_KEY", "test-only-tavily-key")
+
+        response = TavilyBackend().acquisition_response(
+            "test query",
+            max_results=1,
+            time_range="week",
+        )
+    finally:
+        server.shutdown()
+        thread.join(timeout=5)
+        server.server_close()
+
+    bundle = TavilyAcquisitionBundle.model_validate_json(
+        response.raw_response,
+        strict=True,
+    )
+    assert hits == ["/search"]
+    assert bundle.status == "search_response_unavailable"
+    assert bundle.search.status_code == 302
+    assert bundle.search.response_body_base64 == ""
+    assert bundle.search.response_body_size_bytes == 0
+    assert bundle.extract is None
+    assert response.results == ()
+
+
+@pytest.mark.parametrize(
+    ("invalid_phase", "expected_status"),
+    [
+        ("search", "search_response_invalid"),
+        ("extract", "extract_response_invalid"),
+    ],
+)
+def test_tavily_duplicate_json_keys_are_retained_as_invalid_response(
+    monkeypatch,
+    invalid_phase,
+    expected_status,
+):
+    search_body = (
+        b'{"results":[],"results":[]}'
+        if invalid_phase == "search"
+        else b'{"results":[{"title":"A","url":"https://example.com/a",'
+        b'"content":"snippet","score":1.0}]}'
+    )
+    extract_body = b'{"results":[],"results":[],"failed_results":[]}'
+    calls: list[str] = []
+
+    class _FakeResponse:
+        status = 200
+
+        def __init__(self, body):
+            self._body = body
+
+        def read(self, _limit=-1):
+            return self._body
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            return False
+
+    def _urlopen(request, timeout=30):
+        calls.append(request.full_url.rsplit("/", 1)[-1])
+        return _FakeResponse(
+            search_body if request.full_url.endswith("/search") else extract_body
+        )
+
+    monkeypatch.setattr("urllib.request.urlopen", _urlopen)
+    monkeypatch.setenv("TAVILY_API_KEY", "test-only-tavily-key")
+
+    response = TavilyBackend().acquisition_response(
+        "test query",
+        max_results=1,
+        time_range="week",
+    )
+    bundle = TavilyAcquisitionBundle.model_validate_json(
+        response.raw_response,
+        strict=True,
+    )
+
+    assert bundle.status == expected_status
+    expected_body = search_body if invalid_phase == "search" else extract_body
+    exchange = bundle.search if invalid_phase == "search" else bundle.extract
+    assert exchange is not None
+    assert base64.b64decode(exchange.response_body_base64 or "") == expected_body
+    assert calls == (["search"] if invalid_phase == "search" else ["search", "extract"])
+    assert response.results == ()
+
+
+@pytest.mark.parametrize(
+    ("invalid_phase", "invalid_kind", "expected_status"),
+    [
+        ("search", "surrogate", "search_response_invalid"),
+        ("extract", "surrogate", "extract_response_invalid"),
+        ("search", "nonfinite", "search_response_invalid"),
+    ],
+)
+def test_tavily_invalid_unicode_or_nonfinite_json_is_retained_as_invalid_response(
+    monkeypatch,
+    invalid_phase,
+    invalid_kind,
+    expected_status,
+):
+    valid_search = (
+        b'{"results":[{"title":"A","url":"https://example.com/a",'
+        b'"content":"snippet","score":1.0}]}'
+    )
+    invalid_search = (
+        b'{"results":[{"title":"\\ud800","url":"https://example.com/a",'
+        b'"content":"snippet","score":1.0}]}'
+        if invalid_kind == "surrogate"
+        else b'{"results":[{"title":"A","url":"https://example.com/a",'
+        b'"content":"snippet","score":NaN}]}'
+    )
+    invalid_extract = (
+        b'{"results":[{"url":"https://example.com/a",'
+        b'"raw_content":"\\ud800"}],"failed_results":[]}'
+    )
+    calls: list[str] = []
+
+    class _FakeResponse:
+        status = 200
+
+        def __init__(self, body):
+            self._body = body
+
+        def read(self, _limit=-1):
+            return self._body
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            return False
+
+    def _urlopen(request, timeout=30):
+        operation = request.full_url.rsplit("/", 1)[-1]
+        calls.append(operation)
+        if operation == "search":
+            return _FakeResponse(
+                invalid_search if invalid_phase == "search" else valid_search
+            )
+        return _FakeResponse(invalid_extract)
+
+    monkeypatch.setattr("urllib.request.urlopen", _urlopen)
+    monkeypatch.setenv("TAVILY_API_KEY", "test-only-tavily-key")
+
+    response = TavilyBackend().acquisition_response(
+        "test query",
+        max_results=1,
+        time_range="week",
+    )
+    bundle = TavilyAcquisitionBundle.model_validate_json(
+        response.raw_response,
+        strict=True,
+    )
+
+    assert bundle.status == expected_status
+    exchange = bundle.search if invalid_phase == "search" else bundle.extract
+    assert exchange is not None
+    expected_body = invalid_search if invalid_phase == "search" else invalid_extract
+    assert base64.b64decode(exchange.response_body_base64 or "") == expected_body
+    assert calls == (["search"] if invalid_phase == "search" else ["search", "extract"])
+    assert response.results == ()
+
+
+def test_tavily_multiple_search_tasks_fail_before_provider_effect():
+    effects: list[str] = []
+
+    class _TavilyProbe:
+        name = "tavily"
+
+        def is_available(self):
+            effects.append("credential")
+            return True
+
+        def acquisition_response(self, *args, **kwargs):
+            effects.append("provider")
+            raise AssertionError("provider must not be reached")
+
+    provider = WebSearchProvider(backend=_TavilyProbe())
+    with pytest.raises(RuntimeError, match="exactly one Tavily Search task"):
+        provider.collect_with_response(
+            SourceQuery(),
+            {
+                "enabled": True,
+                "mode": "external_api",
+                "search_tasks": [
+                    {"query": "first", "domains": []},
+                    {"query": "second", "domains": []},
+                ],
+            },
+        )
+
+    assert effects == []
 
 
 def test_tavily_normalizes_strict_dates_and_preserves_provider_value(monkeypatch):
@@ -594,6 +869,82 @@ def test_tavily_rejects_secret_or_secret_hash_in_ignored_response_field(
         else:
             raise AssertionError("credential echo must remain a typed failure")
         assert calls == index
+
+
+@pytest.mark.parametrize("phase", ["search", "extract"])
+@pytest.mark.parametrize("echo_kind", ["key", "hash"])
+def test_tavily_rejects_json_escaped_credential_echo_without_persisting_body(
+    monkeypatch,
+    phase,
+    echo_kind,
+):
+    sentinel = "tvly-response-echo-sentinel"
+    sentinel_hash = hashlib.sha256(sentinel.encode("utf-8")).hexdigest()
+    echoed = sentinel if echo_kind == "key" else sentinel_hash
+    escaped = "".join(f"\\u{ord(character):04x}" for character in echoed)
+    unsafe_body = ('{"ignored_diagnostic":"' + escaped + '","results":[]}').encode(
+        "ascii"
+    )
+    search_body = json.dumps(
+        {
+            "results": [
+                {
+                    "title": "Candidate",
+                    "url": "https://example.com/candidate",
+                    "content": "snippet",
+                    "score": 1.0,
+                }
+            ]
+        },
+        separators=(",", ":"),
+    ).encode("utf-8")
+    calls: list[str] = []
+
+    class _FakeResponse:
+        status = 200
+
+        def __init__(self, body):
+            self._body = body
+
+        def read(self, _limit=-1):
+            return self._body
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            return False
+
+    def _urlopen(request, timeout=30):
+        operation = request.full_url.rsplit("/", 1)[-1]
+        calls.append(operation)
+        if operation == "search":
+            return _FakeResponse(unsafe_body if phase == "search" else search_body)
+        return _FakeResponse(unsafe_body)
+
+    monkeypatch.setattr("urllib.request.urlopen", _urlopen)
+    monkeypatch.setenv("TAVILY_API_KEY", sentinel)
+
+    response = TavilyBackend().acquisition_response(
+        "test query",
+        max_results=1,
+        time_range="week",
+    )
+    bundle = TavilyAcquisitionBundle.model_validate_json(
+        response.raw_response,
+        strict=True,
+    )
+
+    assert bundle.status == f"{phase}_response_unavailable"
+    exchange = bundle.search if phase == "search" else bundle.extract
+    assert exchange is not None
+    assert exchange.response_body_base64 is None
+    assert base64.b64encode(unsafe_body).decode(
+        "ascii"
+    ) not in response.raw_response.decode("utf-8")
+    assert calls == (["search"] if phase == "search" else ["search", "extract"])
+    assert sentinel not in repr(response)
+    assert sentinel_hash not in repr(response).lower()
 
 
 # --- Non-stub providers (api_news, filings, mcp, cli) ---

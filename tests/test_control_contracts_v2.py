@@ -57,6 +57,7 @@ EXPECTED_V2_CONTRACT_IDS = (
     "briefloop.run_source_discovery_authorization_bootstrap.v2",
     "briefloop.run_source_discovery_authorization.v2",
     "briefloop.run_source_acquisition_attempt_authorization.v1",
+    "briefloop.tavily_acquisition_bundle.v1",
     "briefloop.source_acquisition_attempt_authorize_request.v1",
     "briefloop.workspace_controlstore_bootstrap.v2",
     "briefloop.runtime_adapter_binding.v2",
@@ -139,8 +140,8 @@ EXPECTED_V2_CONTRACT_IDS = (
 
 def test_v2_contract_inventory_is_exact_and_uses_existing_registry() -> None:
     assert V2_CONTRACT_IDS == EXPECTED_V2_CONTRACT_IDS
-    assert len(V2_CONTRACT_MODELS) == 108
-    assert len(set(V2_CONTRACT_IDS)) == 108
+    assert len(V2_CONTRACT_MODELS) == 109
+    assert len(set(V2_CONTRACT_IDS)) == 109
     for contract_id, model in zip(V2_CONTRACT_IDS, V2_CONTRACT_MODELS):
         assert SchemaRegistry.get(contract_id) is model
 
@@ -150,6 +151,21 @@ def test_strict_model_contract_is_strict_and_forbids_extra_fields() -> None:
     assert config["strict"] is True
     assert config["extra"] == "forbid"
     assert config["allow_inf_nan"] is False
+
+
+def test_tavily_attempt_authority_freezes_one_search_and_one_batch_extract() -> None:
+    attempt = SchemaRegistry.example(
+        "briefloop.run_source_acquisition_attempt_authorization.v1",
+        "minimal",
+    )
+
+    assert (
+        attempt["max_provider_calls"],
+        attempt["max_search_calls"],
+        attempt["max_extract_calls"],
+        attempt["max_extract_urls"],
+        attempt["provider_call_sequence"],
+    ) == (2, 1, 1, 5, "search_then_batch_extract")
 
 
 @pytest.mark.parametrize("model", V2_CONTRACT_MODELS, ids=V2_CONTRACT_IDS)

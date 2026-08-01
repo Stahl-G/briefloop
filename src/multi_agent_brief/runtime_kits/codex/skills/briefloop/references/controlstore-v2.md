@@ -46,14 +46,15 @@ briefloop runtime continue --workspace <workspace>
 The command re-verifies Store and a fresh action before every effect. For the
 narrow discovery authorization it accepts the source-planner proposal and uses
 the exact Store-recorded attempt authorization. Each authorization permits
-one exact Human-confirmed Tavily Search request; exact replay never redials and a failure never
+one exact Human-confirmed Tavily Search followed by one batch Extract over at
+most five deduplicated URLs; exact replay never redials and a failure never
 auto-retries. A recovery action requires an explicit Human choice to authorize
-another attempt or provide a HumanSourcePack. A successful attempt freezes the
-provider response and returned content, and atomically commits the source pack
+another attempt or provide a HumanSourcePack. HumanSourcePack never counts as
+Tavily success. A successful attempt freezes the canonical exact-byte acquisition
+bundle and atomically commits only successful non-empty Extract content
 plus execution authorization before returning the existing role handoff.
-Search snippets are
-retained as claims-ineligible discovery records; only non-empty
-provider-returned durable content is claims-eligible. It may also commit the
+Search snippets are never source-pack members or claims-eligible; only non-empty
+successful Extract content is claims-eligible. It may also commit the
 parameter-free authorized local source pack and other existing deterministic
 effects. `role_work_required` names the exact envelope whose scratch proposal
 the current session must produce; call the command again after proposal

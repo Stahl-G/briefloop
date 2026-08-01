@@ -54,7 +54,7 @@ CREATE TABLE run_source_acquisition_attempt_authorizations (
         CHECK(length(provider_request_fingerprint)=64 AND provider_request_fingerprint NOT GLOB '*[^0-9a-f]*'),
     provider_id TEXT NOT NULL CHECK(provider_id='tavily'),
     route_id TEXT NOT NULL CHECK(route_id='web-search'),
-    max_provider_calls INTEGER NOT NULL CHECK(max_provider_calls=1),
+    max_provider_calls INTEGER NOT NULL CHECK(max_provider_calls=2),
     provider_cost_status TEXT NOT NULL
         CHECK(provider_cost_status='not_reported_acknowledged'),
     previous_attempt_authorization_id TEXT,

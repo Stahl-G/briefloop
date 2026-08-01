@@ -153,7 +153,7 @@ def _profile_from_payload(payload: dict[str, Any]) -> InitProfile:
         if web_search_mode == "external_api":
             raise SubmissionError("submission_report_window_invalid", 422)
         max_source_age_days = 14
-    elif type(max_source_age_days) is not int or max_source_age_days not in {7, 30, 90}:
+    elif type(max_source_age_days) is not int or max_source_age_days not in {7, 30}:
         raise SubmissionError("submission_report_window_invalid", 422)
     source_profile = selections.get("source_profile") or (
         "llm_decide" if web_search_mode == "external_api" else "conservative"

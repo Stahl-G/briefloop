@@ -307,12 +307,11 @@ def test_get_assets_and_security_headers(server) -> None:
         b'web_search_mode: c.source === "public_web" ? "external_api" : "disabled"'
         in body
     )
-    assert b'{ "7d": 7, "30d": 30, "90d": 90 }' in body
+    assert b'{ "7d": 7, "30d": 30 }' in body
     assert b"max_source_age_days: maxSourceAgeDays" in body
     assert b"search_domains:" in body
     assert b"Optional search domains" in body
-    assert b"they do not prove evidence support or authority" in body
-    assert b'id: "90d"' in body
+    assert b'id: "90d"' not in body
     assert b'id: "quarter"' not in body
     assert b"custom_window" not in body
     assert b"search_secret_session_id" in body
@@ -341,7 +340,6 @@ def test_get_assets_and_security_headers(server) -> None:
     assert b"company / organization + one space" not in body
     assert b'industry_or_theme: c.source === "public_web"' in body
     assert b"report type / theme" not in body
-    assert b"Synthetic transport is tested" in body
     assert b"NOT MEASURED" in body
     assert b"automatic discovery enabled" not in body
     assert b"review_statement" not in body
@@ -577,7 +575,7 @@ def test_real_loopback_public_web_tavily_replays_before_credential_or_provider(
     request_id = "REQ-LOOPBACK-DISCOVERY-001"
     workspace_target = "loopback-discovery"
     response_bytes: list[bytes] = []
-    provider_requests: list[dict[str, object]] = []
+    provider_requests: list[tuple[str, dict[str, object]]] = []
     provider_authorizations: list[str | None] = []
 
     def _actual_body(
@@ -601,31 +599,49 @@ def test_real_loopback_public_web_tavily_replays_before_credential_or_provider(
         def do_POST(self) -> None:
             length = int(self.headers["Content-Length"])
             payload = json.loads(self.rfile.read(length))
-            provider_requests.append(payload)
+            provider_requests.append((self.path, payload))
             provider_authorizations.append(self.headers.get("Authorization"))
-            response = json.dumps(
-                {
+            if self.path == "/search":
+                response_payload = {
                     "results": [
                         {
                             "title": "Durable public result",
                             "url": "https://openai.com/public-durable",
                             "content": "discovery summary",
-                            "raw_content": "provider-returned durable content",
+                            "raw_content": "search bytes are not evidence",
                             "published_date": "2026-07-29",
                             "score": 0.9,
                         },
                         {
-                            "title": "Snippet-only result",
-                            "url": "https://openai.com/public-snippet",
-                            "content": "snippet only",
-                            "raw_content": "",
-                            "published_date": "2026-07-29",
+                            "title": "Extract failure",
+                            "url": "https://openai.com/public-failed",
+                            "content": "second discovery summary",
+                            "published_date": "2026-07-28",
                             "score": 0.7,
                         },
                     ]
-                },
-                separators=(",", ":"),
-            ).encode("utf-8")
+                }
+            elif self.path == "/extract":
+                response_payload = {
+                    "results": [
+                        {
+                            "url": "https://openai.com/public-durable",
+                            "raw_content": "provider-returned extracted content",
+                        }
+                    ],
+                    "failed_results": [
+                        {
+                            "url": "https://openai.com/public-failed",
+                            "error": "unavailable",
+                        }
+                    ],
+                }
+            else:  # pragma: no cover - assertion boundary
+                self.send_error(404)
+                return
+            response = json.dumps(response_payload, separators=(",", ":")).encode(
+                "utf-8"
+            )
             self.send_response(200)
             self.send_header("Content-Type", "application/json")
             self.send_header("Content-Length", str(len(response)))
@@ -641,6 +657,10 @@ def test_real_loopback_public_web_tavily_replays_before_credential_or_provider(
     monkeypatch.setattr(
         "multi_agent_brief.sources.search_backends.tavily.TAVILY_API_URL",
         f"http://127.0.0.1:{provider_server.server_port}/search",
+    )
+    monkeypatch.setattr(
+        "multi_agent_brief.sources.search_backends.tavily.TAVILY_EXTRACT_API_URL",
+        f"http://127.0.0.1:{provider_server.server_port}/extract",
     )
 
     first = create_init_web_server(InitWebSubmitter(base_dir=tmp_path))
@@ -774,23 +794,40 @@ def test_real_loopback_public_web_tavily_replays_before_credential_or_provider(
 
     assert main(handoff.removeprefix("briefloop ").split()) == 0
     continuation = json.loads(capsys.readouterr().out)
-    assert continuation["status"] == "role_work_required"
+    assert continuation["status"] == "role_work_required", (
+        continuation,
+        provider_requests,
+    )
     assert continuation["current_stage"] == "scout"
-    assert len(provider_requests) == 1
-    provider_request = provider_requests[0]
+    assert [path for path, _payload in provider_requests] == ["/search", "/extract"]
+    provider_request = provider_requests[0][1]
     assert provider_request["query"] == "grid-scale energy storage"
     assert "Loopback ExampleCo" not in provider_request["query"]
     assert _LONG_PUBLIC_WEB_TASK_OBJECTIVE not in provider_request["query"]
     assert provider_request["max_results"] == 5
-    assert provider_request["include_raw_content"] == "markdown"
+    assert provider_request["include_raw_content"] is False
     assert provider_request["auto_parameters"] is False
     assert provider_request["search_depth"] == "basic"
-    assert provider_request["days"] == 30
-    assert "time_range" not in provider_request
+    assert provider_request["time_range"] == "month"
+    assert "days" not in provider_request
     assert provider_request["include_domains"] == ["openai.com"]
     assert provider_request["include_answer"] is False
     assert "api_key" not in provider_request
-    assert provider_authorizations == [f"Bearer {sentinel}"]
+    extract_request = provider_requests[1][1]
+    assert extract_request == {
+        "urls": [
+            "https://openai.com/public-durable",
+            "https://openai.com/public-failed",
+        ],
+        "query": "grid-scale energy storage",
+        "chunks_per_source": 5,
+        "extract_depth": "basic",
+        "include_images": False,
+        "include_favicon": False,
+        "format": "markdown",
+        "include_usage": True,
+    }
+    assert provider_authorizations == [f"Bearer {sentinel}", f"Bearer {sentinel}"]
     db_bytes = db_path.read_bytes()
     with SQLiteControlStore.open(db_path) as store:
         head = store.load_workspace_run_head()
@@ -800,11 +837,8 @@ def test_real_loopback_public_web_tavily_replays_before_credential_or_provider(
     assert len(promoted.run_source_discovery_authorizations) == 1
     assert len(promoted.run_execution_authorizations) == 1
     assert promoted.store_revision > snapshot.store_revision
-    assert len(promoted.sources) == 2
-    assert sorted(source.claims_eligible for source in promoted.sources) == [
-        False,
-        True,
-    ]
+    assert len(promoted.sources) == 1
+    assert [source.claims_eligible for source in promoted.sources] == [True]
     promotion = [
         receipt
         for receipt in history.transactions
@@ -813,7 +847,7 @@ def test_real_loopback_public_web_tavily_replays_before_credential_or_provider(
     assert len(promotion) == 1
     assert len(promotion[0].run_execution_authorizations) == 1
     assert len(promotion[0].run_source_discovery_authorizations) == 1
-    assert len(promotion[0].source_ids) == 2
+    assert len(promotion[0].source_ids) == 1
     provider_server.shutdown()
     provider_thread.join(timeout=2)
     assert not provider_thread.is_alive()
@@ -827,7 +861,7 @@ def test_real_loopback_public_web_tavily_replays_before_credential_or_provider(
     assert main(handoff.removeprefix("briefloop ").split()) == 0
     replayed_runtime = json.loads(capsys.readouterr().out)
     assert replayed_runtime["status"] == "role_work_required"
-    assert len(provider_requests) == 1
+    assert len(provider_requests) == 2
     assert db_path.read_bytes() == db_bytes
     initial_env_mtime = env_path.stat().st_mtime_ns
 
@@ -954,7 +988,7 @@ def test_real_loopback_public_web_tavily_replays_before_credential_or_provider(
 
     assert not env_path.exists()
     assert db_path.read_bytes() == db_bytes
-    assert len(provider_requests) == 1
+    assert len(provider_requests) == 2
     assert all(sentinel.encode("utf-8") not in raw for raw in response_bytes)
     provider_server.server_close()
 

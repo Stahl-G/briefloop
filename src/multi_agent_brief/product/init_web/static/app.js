@@ -90,7 +90,7 @@
             review_path_k: "工作区位置",
             review_authorized_boundary: "这将创建并授权一个本地 run，完成目标为 finalized_local，修复预算为 1。它会返回初始化 Receipt，并把控制权交回当前 Codex 会话。它不会对外交付，也不会显示最终报告。",
             review_manual_boundary: "这将创建一个没有 RunExecutionAuthorization 的本地工作区/run。后续保持手动继续。它不会对外交付，也不会显示最终报告。",
-            review_web_boundary: "这将记录一个实验性的 Tavily 运行时获取方向。Human 明确填写的检索主题会原样成为唯一 Tavily 检索词，并在初始化时冻结；公司 / 组织名称、完整任务目标和报告类型都不会改写它。报告类型只影响报告 focus 与呈现。每个由 Human 单独确认并记录到 Store 的 attempt 最多发出一次有界请求、返回 5 条结果。失败不会自动重试；Human 可另行授权下一 attempt 或提供 HumanSourcePack。可选域名只限制 provider 检索范围，不证明来源支持、权威性或 claim 正确性。仅 provider 返回的非空 durable content 可成为 claims-eligible 来源；随后进入现有外部角色工作流。合成传输已测试，实际用途、可靠性、成本和到 finalized_local 的表现均为 NOT MEASURED；不会对外交付。",
+            review_web_boundary: "这将记录一个实验性的 Tavily 运行时获取方向。Human 明确填写的检索主题会原样成为唯一 Tavily 检索词，并在初始化时冻结；公司 / 组织名称、完整任务目标和报告类型都不会改写它。每个由 Human 单独确认并记录到 Store 的 attempt 最多发出 1 次 Search，再对最多 5 个去重 URL 发出 1 次批量 Extract。Search 只发现 URL 与 snippet；snippet 永不具备 claims eligibility。仅批量 Extract 成功返回的非空正文可成为 claims-eligible 来源，部分成功只提交成功 URL。零 Search 结果或 Extract 全失败不产生 source 或 execution authorization。失败不会自动重试；Human 可另行授权下一 attempt 或提供 HumanSourcePack，但 HumanSourcePack 不算 Tavily 成功。成本、覆盖率、成功率和到 finalized_local 的表现均为 NOT MEASURED；不会对外交付。",
             review_manifest_hash: "已确认 canonical manifest SHA-256",
             review_accept: "接受",
             review_discard: "丢弃",
@@ -129,7 +129,7 @@
             source_ready: "来源文件与清单已逐项匹配",
             err_source_pack: "请先选择来源文件并确认有效清单。",
             web_search_title: "确认 Tavily 运行时获取（实验性）",
-            web_search_note: "Human 明确填写的检索主题会原样成为唯一 Tavily 检索词并在初始化时冻结，max_results 固定为 5；公司 / 组织名称、完整任务目标和报告类型都不会改写它。报告类型只影响报告 focus 与呈现。每个 Human/Store 授权 attempt 最多调用一次并冻结安全的原始响应及 provider 返回的 durable content。失败不会自动重试。可选域名只限制 provider 检索范围，不代表证据支持或权威性。Key 写入新工作区的私有 .env，并保留到 Human 显式轮换或移除；不进入 Store、日志或报告。",
+            web_search_note: "Human 明确填写的检索主题会原样成为唯一 Tavily 检索词并在初始化时冻结，Search max_results 固定为 5。每个 Human/Store 授权 attempt 最多 1 次 Search + 1 次对最多 5 个去重 URL 的批量 Extract。Search snippet 永不具备 claims eligibility；只有 Extract 成功返回的非空正文可进入来源包，部分成功只提交成功 URL。Key 写入新工作区的私有 .env，并保留到 Human 显式轮换或移除；不进入 Store、日志或报告。成本、覆盖率与成功率均为 NOT MEASURED。",
             search_domains_label: "可选检索域名（逗号或换行分隔）",
             search_domains_placeholder: "例如 openai.com",
             search_domains_note: "留空表示通用搜索。这里只接受 DNS 域名，不接受 URL、路径、端口、通配符或 IP。",
@@ -161,7 +161,7 @@
             cf_close: "关闭，修改后重试",
             cf_note: "目标为 finalized_local，预授权编辑修复预算为 1。此页仅确认初始化；已启动的 Codex 控制器会在命令行继续。",
             cf_note_manual: "本次初始化没有 RunExecutionAuthorization；后续为手动继续，不声明 finalized_local 或修复预算。",
-            cf_note_discovery: "本次初始化具有独立的 RunSourceDiscoveryAuthorization 和 attempt #1 授权。每个 attempt 在平台与凭据预检后最多发出一次 Tavily 请求；失败不会自动重试，Human 可显式授权新 attempt 或提供 HumanSourcePack。只有包含非空 durable content 的响应才可原子提升为执行授权并进入现有角色工作流。"
+            cf_note_discovery: "本次初始化具有独立的 RunSourceDiscoveryAuthorization 和 attempt #1 授权。每个 attempt 在平台与凭据预检后最多发出 1 次 Search + 1 次最多 5 URL 的批量 Extract。Search snippet 永不具备 claims eligibility；只有 Extract 成功返回的非空正文才可进入来源包。失败不会自动重试，HumanSourcePack 也不算 Tavily 成功。"
         },
         en: {
             panel_title: "Create report workspace",
@@ -217,7 +217,7 @@
             review_path_k: "Workspace location",
             review_authorized_boundary: "This creates and authorizes a local run with completion target finalized_local and repair budget 1. It returns an initialization Receipt and hands control back to the current Codex session. It does not deliver externally or display the final report.",
             review_manual_boundary: "This creates a local workspace/run without RunExecutionAuthorization. Continuation remains manual. It does not deliver externally or display the final report.",
-            review_web_boundary: "This records an Experimental Tavily runtime-acquisition direction. The confirmed Human-entered search topic becomes the sole Tavily query unchanged and is frozen at initialization; company / organization, the full task objective, and report type do not rewrite it. Report type affects brief focus and presentation only. Each separately Human-confirmed, Store-recorded attempt makes at most one bounded request for up to five results. Failures never auto-retry; the Human may separately authorize another attempt or provide a HumanSourcePack. Optional domains constrain provider search only; they do not prove source support, authority, or claim correctness. Only non-empty provider-returned durable content can become claims-eligible before the existing external-role workflow. Synthetic transport is tested; live usefulness, reliability, cost, and acquisition-to-finalized_local performance are NOT MEASURED. It does not deliver externally.",
+            review_web_boundary: "This records an Experimental Tavily runtime-acquisition direction. Each separately Human-confirmed, Store-recorded attempt makes at most one Search request followed by one batch Extract request over at most five deduplicated URLs. Search discovers URLs and snippets only; snippets are never claims-eligible. Only non-empty content from successful Extract results can enter the source pack, and partial success commits successful URLs only. Zero Search results or all-failed Extract creates no source or execution authorization. Failures never auto-retry; a HumanSourcePack is a separate recovery path and never counts as Tavily success. Cost, coverage, success rate, and acquisition-to-finalized_local performance are NOT MEASURED. It does not deliver externally.",
             review_manifest_hash: "Confirmed canonical manifest SHA-256",
             review_accept: "Accept",
             review_discard: "Discard",
@@ -256,7 +256,7 @@
             source_ready: "Every manifest member matches one selected file",
             err_source_pack: "Select source files and confirm a valid manifest first.",
             web_search_title: "Confirm Tavily runtime acquisition (Experimental)",
-            web_search_note: "The confirmed Human-entered search topic becomes the sole Tavily query unchanged and is frozen at initialization, with max_results fixed at 5. Company / organization, the full task objective, and report type do not rewrite it; report type affects brief focus and presentation only. Each Human/Store-authorized attempt makes at most one call and freezes the safe raw response plus provider-returned durable content. Failures never auto-retry. Optional domains constrain provider search only; they do not prove evidence support or authority. The key is written to the new workspace's private .env and remains until the Human rotates or removes it; it never enters the Store, logs, or report.",
+            web_search_note: "The confirmed Human-entered search topic becomes the sole Tavily query unchanged and is frozen at initialization, with Search max_results fixed at 5. Each Human/Store-authorized attempt makes at most one Search plus one batch Extract over at most five deduplicated URLs. Search snippets are never claims-eligible; only non-empty successful Extract content enters the source pack, and partial success commits successful URLs only. The key remains in private .env and never enters the Store, logs, or report. Cost, coverage, and success rate are NOT MEASURED.",
             search_domains_label: "Optional search domains (comma or newline separated)",
             search_domains_placeholder: "e.g. openai.com",
             search_domains_note: "Leave empty for general search. DNS domains only; URLs, paths, ports, wildcards, and IP addresses are rejected.",
@@ -288,7 +288,7 @@
             cf_close: "Close, change something, retry",
             cf_note: "The target is finalized_local with one preauthorized editor repair. This page confirms initialization only; the initiating Codex controller continues in the terminal.",
             cf_note_manual: "This initialization has no RunExecutionAuthorization; continuation is manual and does not claim finalized_local or a repair budget.",
-            cf_note_discovery: "This initialization has a distinct RunSourceDiscoveryAuthorization and attempt #1 authorization. Each attempt makes at most one Tavily request after platform and credential preflight. Failures never auto-retry; the Human may explicitly authorize another attempt or provide a HumanSourcePack. Only a response with non-empty durable content can be atomically promoted to execution authorization and enter the existing role workflow."
+            cf_note_discovery: "This initialization has a distinct RunSourceDiscoveryAuthorization and attempt #1 authorization. Each attempt makes at most one Search plus one batch Extract over at most five URLs after preflight. Search snippets are never claims-eligible; only non-empty successful Extract content enters the source pack. Failures never auto-retry, and a HumanSourcePack never counts as Tavily success."
         }
     };
 
@@ -312,8 +312,7 @@
         ],
         windows: [
             { id: "7d", zh: ["近 7 天", ""], en: ["Last 7 days", ""] },
-            { id: "30d", zh: ["近 30 天", ""], en: ["Last 30 days", ""] },
-            { id: "90d", zh: ["近 90 天", ""], en: ["Last 90 days", ""] }
+            { id: "30d", zh: ["近 30 天", ""], en: ["Last 30 days", ""] }
         ],
         languages: [
             { id: "zh-CN", zh: ["中文", ""], en: ["Chinese", ""] },
@@ -321,7 +320,7 @@
             { id: "bilingual", zh: ["中英对照", ""], en: ["Bilingual", ""] }
         ],
         sources: [
-            { id: "public_web", zh: ["公开网页（Tavily 运行时获取）", "明确填写检索主题；每个授权 attempt 至多一次请求"], en: ["Public web (Tavily runtime acquisition)", "Enter an explicit search topic; at most one request per authorized attempt"] },
+            { id: "public_web", zh: ["公开网页（Tavily 运行时获取）", "每个授权 attempt 至多 1 次 Search + 1 次批量 Extract"], en: ["Public web (Tavily runtime acquisition)", "At most one Search plus one batch Extract per authorized attempt"] },
             { id: "local_only", zh: ["仅本地材料", "离线，不上网"], en: ["Local material only", "Offline"] },
         ],
         formats: [
@@ -1451,7 +1450,7 @@
 
     function buildSubmission() {
         var c = confirmedSelections();
-        var maxSourceAgeDays = { "7d": 7, "30d": 30, "90d": 90 }[c.window];
+        var maxSourceAgeDays = { "7d": 7, "30d": 30 }[c.window];
         var reportLabel = enLabel(CATALOG.report_types, c.report_type);
         var audience = c.audience === "custom_audience"
             ? String(c.audience_custom || "").trim()

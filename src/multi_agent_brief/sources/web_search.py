@@ -206,6 +206,9 @@ class WebSearchProvider(SourceProvider):
             return WebSearchCollection(items=(), raw_response=None, status_code=None)
 
         backend = self._get_backend(config)
+        queries, task_meta = self._build_queries(query, config)
+        if backend.name == "tavily" and len(queries) != 1:
+            raise RuntimeError("exactly one Tavily Search task is required")
         with temporary_workspace_api_key_env(backend, config):
             if not backend.is_available():
                 return WebSearchCollection(
@@ -221,29 +224,23 @@ class WebSearchProvider(SourceProvider):
             max_results = config.get("max_results", 20)
             recency_days = config.get("recency_days")
 
-            # Build search queries from query keywords or config
-            queries, task_meta = self._build_queries(query, config)
-
             for q, domains in queries:
                 if backend.name == "tavily":
-                    search_response = getattr(backend, "search_response", None)
-                    if not callable(search_response):
-                        raise RuntimeError("tavily response envelope unavailable")
-                    envelope: SearchResponse = search_response(
+                    acquisition_response = getattr(
+                        backend, "acquisition_response", None
+                    )
+                    if not callable(acquisition_response):
+                        raise RuntimeError("tavily acquisition envelope unavailable")
+                    envelope: SearchResponse = acquisition_response(
                         q,
                         max_results=max_results,
                         domains=domains,
-                        days=(
-                            recency_days if config.get("time_range") is None else None
-                        ),
                         time_range=config.get("time_range"),
                         start_date=config.get("start_date"),
                         end_date=config.get("end_date"),
                         topic=config.get("topic", "news"),
-                        search_depth=config.get("search_depth", "basic"),
+                        search_depth="basic",
                     )
-                    if raw_response is not None:
-                        raise RuntimeError("multiple Tavily requests are not allowed")
                     raw_response = envelope.raw_response
                     status_code = envelope.status_code
                     results = list(envelope.results)
@@ -345,8 +342,9 @@ class WebSearchProvider(SourceProvider):
             if isinstance(result.raw_content, str) and result.raw_content.strip()
             else None
         )
-        metadata["content_shape"] = (
-            "provider_raw_content" if raw_content is not None else "search_snippet"
+        metadata["content_shape"] = result.metadata.get(
+            "content_shape",
+            "provider_raw_content" if raw_content is not None else "search_snippet",
         )
         metadata["has_raw_content"] = raw_content is not None
         if result.raw_projection:

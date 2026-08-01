@@ -47,6 +47,8 @@ from multi_agent_brief.contracts.v2 import (
     InvocationStartRequest,
     OwnedArtifactSubmitRequest,
     RuntimeAdapterBinding,
+    RuntimeSourceRouteBinding,
+    RuntimeWebSearchAcquisitionSpec,
     ScreenedCandidatesProposal,
     SourceCommitRequest,
     SourceAcquisitionAttemptAuthorizeRequest,
@@ -96,6 +98,9 @@ from multi_agent_brief.core_run_v2.terminal import (
     CoreRunTerminalService,
     classify_terminal_legality,
 )
+from multi_agent_brief.core_run_v2.tavily_source_binding import (
+    expected_tavily_source_pack,
+)
 from multi_agent_brief.core_run_v2.verifier import CoreRunDomainVerifier
 from multi_agent_brief.core.citations import remove_src_marker_spans
 from multi_agent_brief.core.env import WorkspaceEnvError, known_env_key_is_set
@@ -109,6 +114,12 @@ from multi_agent_brief.intake_v2.service import (
     _SourcePackMemberBytes,
 )
 from multi_agent_brief.sources.search_backends.base import SearchBackendError
+from multi_agent_brief.sources.tavily_acquisition import (
+    TavilyAcquisitionBundleError,
+    TavilyAcquisitionObservation,
+    parse_tavily_acquisition_bundle,
+    tavily_observation_matches_spec,
+)
 from multi_agent_brief.outputs.reader_projection import (
     ReaderProjectionSourceError,
     reader_projection_source_markdown,
@@ -2593,12 +2604,17 @@ class RuntimeHostService:
             )
             if dispatch.envelope.invocation_id != invocation_id:
                 raise RuntimeHostError("control_store_integrity_invalid")
+            retrieved_at = self._source_invocation_started_at(
+                source_action.run_id,
+                invocation_id,
+            )
             try:
                 collection = collect_frozen_source_pack(
                     self.workspace,
                     run_id=source_action.run_id,
                     invocation_id=invocation_id,
                     route=route,
+                    retrieved_at=retrieved_at,
                 )
                 materials = collection.materials
                 if (
@@ -2609,26 +2625,29 @@ class RuntimeHostService:
                 if collection.material_validation_failed or not materials:
                     stage_members: tuple[SourceStageBytesInput, ...] = ()
                 else:
-                    manifest, proposals, ordered_materials = (
-                        self._freeze_discovery_source_manifest(materials)
+                    observation = self._tavily_observation(collection.provider_response)
+                    expected_pack = expected_tavily_source_pack(
+                        observation,
+                        run_id=source_action.run_id,
+                        invocation_id=invocation_id,
+                        route_fingerprint=route.route_fingerprint,
+                        retrieved_at=retrieved_at,
                     )
+                    manifest = expected_pack.manifest
+                    proposals = expected_pack.proposals
                     stage_members = tuple(
                         SourceStageBytesInput(
-                            member_id=proposal.source_id,
+                            member_id=item.proposal.source_id,
                             proposal_bytes=canonical_json_bytes(
-                                proposal.model_dump(
+                                item.proposal.model_dump(
                                     mode="json",
                                     exclude_unset=False,
                                 )
                             ),
-                            content_bytes=material.content,
-                            raw_payload_bytes=material.raw_payload,
+                            content_bytes=item.content,
+                            raw_payload_bytes=item.raw_payload,
                         )
-                        for proposal, material in zip(
-                            proposals,
-                            ordered_materials,
-                            strict=True,
-                        )
+                        for item in expected_pack.sources
                     )
                 stage = stage_source_pack_bytes(
                     self.workspace,
@@ -2648,7 +2667,13 @@ class RuntimeHostService:
                     staged_result_count,
                     staged_durable_count,
                     staged_validation_rejected,
-                ) = self._discovery_source_attempt_from_stage(stage)
+                ) = self._discovery_source_attempt_from_stage(
+                    stage,
+                    route,
+                    run_id=source_action.run_id,
+                    invocation_id=invocation_id,
+                    retrieved_at=retrieved_at,
+                )
                 if (
                     staged_provider_response != collection.provider_response
                     or staged_result_count != collection.result_count
@@ -2660,10 +2685,8 @@ class RuntimeHostService:
                         and (
                             staged_manifest != manifest
                             or staged_proposals != proposals
-                            or staged_contents
-                            != tuple(item.content for item in ordered_materials)
-                            or staged_raw_payloads
-                            != tuple(item.raw_payload for item in ordered_materials)
+                            or staged_contents != expected_pack.contents
+                            or staged_raw_payloads != expected_pack.raw_payloads
                         )
                     )
                 ):
@@ -2703,6 +2726,10 @@ class RuntimeHostService:
                     self.workspace / "scratch" / invocation_id / "task_envelope.json"
                 ),
             )
+            retrieved_at = self._source_invocation_started_at(
+                source_action.run_id,
+                invocation_id,
+            )
         try:
             (
                 manifest,
@@ -2713,7 +2740,13 @@ class RuntimeHostService:
                 result_count,
                 durable_content_count,
                 validation_rejected,
-            ) = self._discovery_source_attempt_from_stage(stage)
+            ) = self._discovery_source_attempt_from_stage(
+                stage,
+                route,
+                run_id=source_action.run_id,
+                invocation_id=invocation_id,
+                retrieved_at=retrieved_at,
+            )
         except RuntimeHostError:
             discard_source_stage(self.workspace, stage_identity=stage_identity)
             self._record_staged_invocation_failure(
@@ -2828,6 +2861,27 @@ class RuntimeHostService:
         )
         return manifest, proposals, ordered_materials
 
+    def _source_invocation_started_at(
+        self,
+        run_id: str,
+        invocation_id: str,
+    ) -> str:
+        try:
+            with SQLiteControlStore.open(self.workspace / "briefloop.db") as store:
+                snapshot = store.load_snapshot(run_id)
+        except ControlStoreError as exc:
+            raise RuntimeHostError("control_store_integrity_invalid") from exc
+        matches = [
+            item
+            for item in snapshot.invocations
+            if item.invocation_id == invocation_id
+            and item.run_id == run_id
+            and item.role_id == "source-provider"
+        ]
+        if len(matches) != 1:
+            raise RuntimeHostError("control_store_integrity_invalid")
+        return matches[0].started_at
+
     @staticmethod
     def _discovery_manifest_from_proposals(proposals):
         members: list[ExecutionSourceManifestMember] = []
@@ -2892,10 +2946,14 @@ class RuntimeHostService:
         return manifest, rebound
 
     @staticmethod
-    def _discovery_source_attempt_from_stage(stage: VerifiedSourceStage):
-        proposals: list[SourceProposal] = []
-        contents: list[bytes] = []
-        raw_payloads: list[bytes] = []
+    def _discovery_source_attempt_from_stage(
+        stage: VerifiedSourceStage,
+        route: RuntimeSourceRouteBinding,
+        *,
+        run_id: str,
+        invocation_id: str,
+        retrieved_at: str,
+    ):
         if (
             stage.provider_response_bytes is None
             or stage.provider_response_sha256 is None
@@ -2903,9 +2961,16 @@ class RuntimeHostService:
         ):
             raise RuntimeHostError("runtime_source_staging_invalid")
         provider_response = stage.provider_response_bytes
-        result_count, durable_content_count = (
-            RuntimeHostService._tavily_response_counts(provider_response)
-        )
+        observation = RuntimeHostService._tavily_observation(provider_response)
+        spec = route.acquisition_spec
+        if (
+            route.provider_id != "tavily"
+            or not isinstance(spec, RuntimeWebSearchAcquisitionSpec)
+            or not tavily_observation_matches_spec(observation, spec)
+        ):
+            raise RuntimeHostError("runtime_source_staging_invalid")
+        result_count = observation.result_count
+        durable_content_count = observation.durable_content_count
         if not stage.members:
             return (
                 None,
@@ -2915,8 +2980,18 @@ class RuntimeHostService:
                 provider_response,
                 result_count,
                 durable_content_count,
-                result_count > 0,
+                durable_content_count > 0,
             )
+        expected_pack = expected_tavily_source_pack(
+            observation,
+            run_id=run_id,
+            invocation_id=invocation_id,
+            route_fingerprint=route.route_fingerprint,
+            retrieved_at=retrieved_at,
+        )
+        proposals: list[SourceProposal] = []
+        contents: list[bytes] = []
+        raw_payloads: list[bytes] = []
         for member in stage.members:
             proposal = SourceProposal.model_validate_json(
                 member.proposal_bytes,
@@ -2931,18 +3006,18 @@ class RuntimeHostService:
             proposals.append(proposal)
             contents.append(member.content_bytes)
             raw_payloads.append(member.raw_payload_bytes)
-        manifest, rebound = RuntimeHostService._discovery_manifest_from_proposals(
-            tuple(proposals)
-        )
-        if rebound != tuple(proposals):
-            raise RuntimeHostError("runtime_source_staging_invalid")
-        if len(proposals) != result_count:
+        if (
+            tuple(proposals) != expected_pack.proposals
+            or tuple(contents) != expected_pack.contents
+            or tuple(raw_payloads) != expected_pack.raw_payloads
+            or len(proposals) != durable_content_count
+        ):
             raise RuntimeHostError("runtime_source_staging_invalid")
         return (
-            manifest,
-            rebound,
-            tuple(contents),
-            tuple(raw_payloads),
+            expected_pack.manifest,
+            expected_pack.proposals,
+            expected_pack.contents,
+            expected_pack.raw_payloads,
             provider_response,
             result_count,
             durable_content_count,
@@ -2951,35 +3026,15 @@ class RuntimeHostService:
 
     @staticmethod
     def _tavily_response_counts(payload: bytes) -> tuple[int, int]:
+        observation = RuntimeHostService._tavily_observation(payload)
+        return observation.result_count, observation.durable_content_count
+
+    @staticmethod
+    def _tavily_observation(payload: bytes) -> TavilyAcquisitionObservation:
         try:
-            response = parse_json_object(payload)
-        except IntakeError as exc:
+            return parse_tavily_acquisition_bundle(payload)
+        except TavilyAcquisitionBundleError as exc:
             raise RuntimeHostError("runtime_source_staging_invalid") from exc
-        results = response.get("results")
-        if type(results) is not list or len(results) > 5:
-            raise RuntimeHostError("runtime_source_staging_invalid")
-        durable = 0
-        for result in results:
-            if type(result) is not dict:
-                raise RuntimeHostError("runtime_source_staging_invalid")
-            title = result.get("title")
-            url = result.get("url")
-            snippet = result.get("content")
-            raw_content = result.get("raw_content")
-            published_date = result.get("published_date")
-            score = result.get("score")
-            if (
-                type(title) is not str
-                or type(url) is not str
-                or type(snippet) is not str
-                or type(raw_content) not in {str, type(None)}
-                or type(published_date) not in {str, type(None)}
-                or type(score) not in {int, float, type(None)}
-            ):
-                raise RuntimeHostError("runtime_source_staging_invalid")
-            if isinstance(raw_content, str) and raw_content.strip():
-                durable += 1
-        return len(results), durable
 
     def _record_discovery_acquisition_failure(
         self,
