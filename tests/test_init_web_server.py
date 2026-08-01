@@ -333,7 +333,10 @@ def test_get_assets_and_security_headers(server) -> None:
     assert b'"review_web_boundary"' in body
     assert b'"review_authorized_boundary"' in body
     assert b"Confirm Tavily runtime acquisition (Experimental)" in body
-    assert b"The Human-entered search topic becomes the sole Tavily query" in body
+    assert (
+        b"The confirmed Human-entered search topic becomes the sole Tavily query unchanged"
+        in body
+    )
     assert b"Human-entered search topic" in body
     assert b"company / organization + one space" not in body
     assert b'industry_or_theme: c.source === "public_web"' in body
