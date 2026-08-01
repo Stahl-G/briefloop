@@ -64,6 +64,8 @@ def test_tavily_vertical_real_loopback_source_and_wheel_parity(
         import json
         import os
         from pathlib import Path
+        import shutil
+        import subprocess
         from threading import Thread
         import time
         from types import SimpleNamespace
@@ -105,6 +107,16 @@ def test_tavily_vertical_real_loopback_source_and_wheel_parity(
             "package root mismatch",
         )
         require(sys.flags.optimize == int(sys.argv[3]), "optimize mismatch")
+        app_js_path = Path(init_web_package.__file__).parent / "static" / "app.js"
+        app_js = app_js_path.read_text(encoding="utf-8")
+        require(
+            'industry_or_theme: c.source === "public_web"' in app_js,
+            "installed app does not bind the explicit search topic",
+        )
+        require(
+            "Human-entered search topic" in app_js,
+            "installed app search-topic disclosure missing",
+        )
         root.mkdir()
         sentinel = "tvly-wheel-loopback-sentinel"
         request_id = "REQ-WHEEL-TAVILY-VERTICAL-001"
@@ -175,37 +187,78 @@ def test_tavily_vertical_real_loopback_source_and_wheel_parity(
             finally:
                 connection.close()
 
+        def app_function(name, next_name):
+            start = app_js.index(f"    function {name}(")
+            end = app_js.index(f"\n    function {next_name}(", start)
+            return app_js[start:end].strip()
+
         def public_body(session_id):
-            return {
-                "schema_version": "briefloop.init_web.submission.v1",
-                "request_id": request_id,
-                "payload": {
-                    "workspace_target": target_name,
-                    "selections": {
-                        "company": "Wheel ExampleCo",
-                        "industry_or_theme": "manufacturing",
-                        "task_objective": task_objective,
-                        "brief_title": "Wheel discovery brief",
-                        "audience": "management",
-                        "interface_language": "en",
-                        "output_language": "en",
-                        "cadence": "weekly",
-                        "max_source_age_days": 30,
-                        "focus_areas": ["operations"],
-                        "output_formats": ["markdown"],
-                        "forbidden_sources": [],
-                        "source_profile": "llm_decide",
-                        "web_search_mode": "external_api",
-                        "search_backend": "tavily",
-                        "search_domains": ["openai.com"],
-                        "output_extent": "balanced",
-                    },
-                    "completion_target": "finalized_local",
-                    "repair_budget": 1,
-                    "search_secret_session_id": session_id,
-                    "human_confirmation": True,
+            node = shutil.which("node")
+            require(node is not None, "Node.js is required for Init Web parity")
+            functions = "\n".join(
+                (
+                    app_function("enLabel", "el"),
+                    app_function("confirmedSelections", "reviewRows"),
+                    app_function(
+                        "splitSearchDomains", "currentOutputContractPreviewKey"
+                    ),
+                    app_function("missingRequired", "pendingProposals"),
+                    app_function("buildSubmission", "generatedMetadata"),
+                )
+            )
+            state = {
+                "requestId": request_id,
+                "workspaceTarget": target_name,
+                "freeText": "",
+                "interpretation": {"mapped": [], "unresolved": []},
+                "dispositions": {},
+                "selections": {
+                    "company": "Wheel ExampleCo",
+                    "search_topic": "grid-scale energy storage",
+                    "report_type": "industry_weekly",
+                    "audience": "management",
+                    "audience_custom": "",
+                    "purpose": task_objective,
+                    "brief_title": "Wheel discovery brief",
+                    "cadence": "weekly",
+                    "window": "30d",
+                    "language": "en",
+                    "source": "public_web",
+                    "search_domains": "openai.com",
+                    "formats": ["markdown"],
+                    "presentation": "research_note",
+                    "density": "balanced",
+                    "tables": "key_only",
+                    "citations": "inline",
+                    "accent": "forest",
                 },
             }
+            javascript = f'''
+            const LANG = "en";
+            const MESSAGES = {{en: {{}}, zh: {{}}}};
+            const SESSION = {{sessionId: {json.dumps(session_id)}}};
+            const STATE = {json.dumps(state)};
+            const CATALOG = {{
+              report_types: [{{id: "industry_weekly", en: ["Industry weekly", ""]}}],
+              audiences: [{{id: "management", en: ["Management", ""]}}]
+            }};
+            function t(key) {{ return key; }}
+            {functions}
+            process.stdout.write(JSON.stringify({{missing: missingRequired(), submission: buildSubmission()}}));
+            '''
+            completed = subprocess.run(
+                [node, "-e", javascript],
+                check=False,
+                capture_output=True,
+                text=True,
+            )
+            require(
+                completed.returncode == 0,
+                f"Init Web JavaScript failed: {completed.stderr}",
+            )
+            evaluated = json.loads(completed.stdout)
+            require(evaluated["missing"] == [], "actual Init Web payload incomplete")
+            return evaluated["submission"]
 
         provider_server = ThreadingHTTPServer(
             ("127.0.0.1", 0), TavilyHandler
@@ -450,7 +503,7 @@ def test_tavily_vertical_real_loopback_source_and_wheel_parity(
         first_provider_request = provider_requests[0]
         require(
             first_provider_request["query"]
-            == "Wheel ExampleCo manufacturing",
+            == "Wheel ExampleCo grid-scale energy storage",
             "query mismatch",
         )
         require(

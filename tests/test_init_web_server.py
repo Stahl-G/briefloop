@@ -6,8 +6,10 @@ import http.client
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import json
 import os
+import shutil
 import sqlite3
 import stat
+import subprocess
 import time
 from pathlib import Path
 from threading import Thread
@@ -154,46 +156,97 @@ _LONG_PUBLIC_WEB_TASK_OBJECTIVE = (
 )
 
 
-def _public_web_tavily_body(
+def _app_js_function(source: str, name: str, next_name: str) -> str:
+    start = source.index(f"    function {name}(")
+    end = source.index(f"\n    function {next_name}(", start)
+    return source[start:end].strip()
+
+
+def _evaluate_actual_app_submission(
     *,
     request_id: str,
     session_id: str,
     workspace_target: str,
+    search_topic: str,
     task_objective: str = _LONG_PUBLIC_WEB_TASK_OBJECTIVE,
-    search_domains: list[str] | None = None,
 ) -> dict[str, object]:
-    return {
-        "schema_version": "briefloop.init_web.submission.v1",
-        "request_id": request_id,
-        "payload": {
-            "workspace_target": workspace_target,
-            "selections": {
-                "company": "Loopback ExampleCo",
-                "industry_or_theme": "manufacturing",
-                "task_objective": task_objective,
-                "brief_title": "Loopback discovery brief",
-                "audience": "management",
-                "interface_language": "en",
-                "output_language": "en",
-                "cadence": "weekly",
-                "max_source_age_days": 30,
-                "focus_areas": ["operations"],
-                "output_formats": ["markdown"],
-                "forbidden_sources": [],
-                "source_profile": "llm_decide",
-                "web_search_mode": "external_api",
-                "search_backend": "tavily",
-                "search_domains": (
-                    ["openai.com"] if search_domains is None else search_domains
-                ),
-                "output_extent": "balanced",
-            },
-            "completion_target": "finalized_local",
-            "repair_budget": 1,
-            "search_secret_session_id": session_id,
-            "human_confirmation": True,
+    """Execute the package-owned buildSubmission instead of copying its payload."""
+
+    node = shutil.which("node")
+    if node is None:
+        raise AssertionError(
+            "Node.js is required to verify the package-owned Init Web UI"
+        )
+    app_js = (
+        Path(__file__).resolve().parents[1]
+        / "src"
+        / "multi_agent_brief"
+        / "product"
+        / "init_web"
+        / "static"
+        / "app.js"
+    ).read_text(encoding="utf-8")
+    functions = "\n".join(
+        (
+            _app_js_function(app_js, "enLabel", "el"),
+            _app_js_function(app_js, "confirmedSelections", "reviewRows"),
+            _app_js_function(
+                app_js, "splitSearchDomains", "currentOutputContractPreviewKey"
+            ),
+            _app_js_function(app_js, "missingRequired", "pendingProposals"),
+            _app_js_function(app_js, "buildSubmission", "generatedMetadata"),
+        )
+    )
+    state = {
+        "requestId": request_id,
+        "workspaceTarget": workspace_target,
+        "freeText": "",
+        "interpretation": {"mapped": [], "unresolved": []},
+        "dispositions": {},
+        "selections": {
+            "company": "Loopback ExampleCo",
+            "search_topic": search_topic,
+            "report_type": "industry_weekly",
+            "audience": "management",
+            "audience_custom": "",
+            "purpose": task_objective,
+            "brief_title": "Loopback discovery brief",
+            "cadence": "weekly",
+            "window": "30d",
+            "language": "en",
+            "source": "public_web",
+            "search_domains": "openai.com",
+            "formats": ["markdown"],
+            "presentation": "research_note",
+            "density": "balanced",
+            "tables": "key_only",
+            "citations": "inline",
+            "accent": "forest",
         },
     }
+    script = f"""
+const LANG = "en";
+const MESSAGES = {{en: {{}}, zh: {{}}}};
+const SESSION = {{sessionId: {json.dumps(session_id)}}};
+const STATE = {json.dumps(state)};
+const CATALOG = {{
+  report_types: [{{id: "industry_weekly", en: ["Industry weekly", ""]}}],
+  audiences: [{{id: "management", en: ["Management", ""]}}]
+}};
+function t(key) {{ return key; }}
+{functions}
+process.stdout.write(JSON.stringify({{missing: missingRequired(), submission: buildSubmission()}}));
+"""
+    completed = subprocess.run(
+        [node, "-e", script],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    result = json.loads(completed.stdout)
+    if not isinstance(result, dict):
+        raise AssertionError("Init Web JavaScript returned a non-object result")
+    return result
 
 
 def _post_json(
@@ -281,7 +334,9 @@ def test_get_assets_and_security_headers(server) -> None:
     assert b'"review_authorized_boundary"' in body
     assert b"Confirm Tavily runtime acquisition (Experimental)" in body
     assert b"The sole query is not the full task objective" in body
-    assert b"company / organization + one space + report type / theme" in body
+    assert b"Human-entered search topic" in body
+    assert b'industry_or_theme: c.source === "public_web"' in body
+    assert b"report type / theme" not in body
     assert b"Synthetic transport is tested" in body
     assert b"NOT MEASURED" in body
     assert b"automatic discovery enabled" not in body
@@ -289,6 +344,33 @@ def test_get_assets_and_security_headers(server) -> None:
     status, _headers, _body = _request(server, "GET", "/assets/style.css")
     assert status == 200
     assert server._server.server_address[0] == "127.0.0.1"
+
+
+def test_actual_app_binds_explicit_search_topic() -> None:
+    missing = _evaluate_actual_app_submission(
+        request_id="REQ-ACTUAL-APP-MISSING-TOPIC",
+        session_id="SESSION-ACTUAL-APP",
+        workspace_target="actual-app",
+        search_topic="",
+    )
+    assert missing["missing"] == ["field_search_topic"]
+
+    evaluated = _evaluate_actual_app_submission(
+        request_id="REQ-ACTUAL-APP-TOPIC",
+        session_id="SESSION-ACTUAL-APP",
+        workspace_target="actual-app",
+        search_topic="grid-scale energy storage",
+    )
+    assert evaluated["missing"] == []
+    submission = evaluated["submission"]
+    assert isinstance(submission, dict)
+    payload = submission["payload"]
+    assert isinstance(payload, dict)
+    selections = payload["selections"]
+    assert isinstance(selections, dict)
+    assert selections["industry_or_theme"] == "grid-scale energy storage"
+    assert selections["task_objective"] == _LONG_PUBLIC_WEB_TASK_OBJECTIVE
+    assert selections["focus_areas"] == ["Industry weekly"]
 
 
 def test_get_rejects_bad_host_and_unknown_routes(server) -> None:
@@ -494,6 +576,23 @@ def test_real_loopback_public_web_tavily_replays_before_credential_or_provider(
     provider_requests: list[dict[str, object]] = []
     provider_authorizations: list[str | None] = []
 
+    def _actual_body(
+        *, session_id: str, task_objective: str = _LONG_PUBLIC_WEB_TASK_OBJECTIVE
+    ) -> dict[str, object]:
+        evaluated = _evaluate_actual_app_submission(
+            request_id=request_id,
+            session_id=session_id,
+            workspace_target=workspace_target,
+            search_topic="grid-scale energy storage",
+            task_objective=task_objective,
+        )
+        if evaluated["missing"] != []:
+            raise AssertionError(f"actual Init Web payload is incomplete: {evaluated}")
+        submission = evaluated["submission"]
+        if not isinstance(submission, dict):
+            raise AssertionError("actual Init Web submission is not an object")
+        return submission
+
     class _TavilyLoopbackHandler(BaseHTTPRequestHandler):
         def do_POST(self) -> None:
             length = int(self.headers["Content-Length"])
@@ -574,11 +673,7 @@ def test_real_loopback_public_web_tavily_replays_before_credential_or_provider(
                 token=token,
                 session_id=session_id,
                 path="/api/v1/submit",
-                body=_public_web_tavily_body(
-                    request_id=request_id,
-                    session_id=session_id,
-                    workspace_target=workspace_target,
-                ),
+                body=_actual_body(session_id=session_id),
             )
             response_bytes.append(raw)
             assert status == 200
@@ -679,7 +774,7 @@ def test_real_loopback_public_web_tavily_replays_before_credential_or_provider(
     assert continuation["current_stage"] == "scout"
     assert len(provider_requests) == 1
     provider_request = provider_requests[0]
-    assert provider_request["query"] == "Loopback ExampleCo manufacturing"
+    assert provider_request["query"] == ("Loopback ExampleCo grid-scale energy storage")
     assert _LONG_PUBLIC_WEB_TASK_OBJECTIVE not in provider_request["query"]
     assert provider_request["max_results"] == 5
     assert provider_request["include_raw_content"] == "markdown"
@@ -742,11 +837,7 @@ def test_real_loopback_public_web_tavily_replays_before_credential_or_provider(
             token=token,
             session_id=session_id,
             path="/api/v1/submit",
-            body=_public_web_tavily_body(
-                request_id=request_id,
-                session_id=session_id,
-                workspace_target=workspace_target,
-            ),
+            body=_actual_body(session_id=session_id),
         )
         response_bytes.append(raw)
         assert status == 200
@@ -770,11 +861,7 @@ def test_real_loopback_public_web_tavily_replays_before_credential_or_provider(
             token=token,
             session_id=session_id,
             path="/api/v1/submit",
-            body=_public_web_tavily_body(
-                request_id=request_id,
-                session_id=session_id,
-                workspace_target=workspace_target,
-            ),
+            body=_actual_body(session_id=session_id),
         )
         response_bytes.append(raw)
         assert status == 422
@@ -807,11 +894,7 @@ def test_real_loopback_public_web_tavily_replays_before_credential_or_provider(
             token=token,
             session_id=session_id,
             path="/api/v1/submit",
-            body=_public_web_tavily_body(
-                request_id=request_id,
-                session_id=session_id,
-                workspace_target=workspace_target,
-            ),
+            body=_actual_body(session_id=session_id),
         )
         response_bytes.append(raw)
         assert status == 200
@@ -828,11 +911,7 @@ def test_real_loopback_public_web_tavily_replays_before_credential_or_provider(
             token=token,
             session_id=session_id,
             path="/api/v1/submit",
-            body=_public_web_tavily_body(
-                request_id=request_id,
-                session_id=session_id,
-                workspace_target=workspace_target,
-            ),
+            body=_actual_body(session_id=session_id),
         )
         response_bytes.append(raw)
         assert status == 200
@@ -854,10 +933,8 @@ def test_real_loopback_public_web_tavily_replays_before_credential_or_provider(
             token=token,
             session_id=session_id,
             path="/api/v1/submit",
-            body=_public_web_tavily_body(
-                request_id=request_id,
+            body=_actual_body(
                 session_id=session_id,
-                workspace_target=workspace_target,
                 task_objective="Prepare a changed manufacturing brief.",
             ),
         )

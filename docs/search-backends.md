@@ -68,8 +68,11 @@ For the current Init Web Tavily path, the Human-confirmed task objective
 describes the brief; it is not sent verbatim as a search query. At fresh-run
 initialization, BriefLoop deterministically projects the sole query as
 `subject_name + " " + industry_or_theme` and freezes it in the runtime source
-request. Agent-written source candidates or search tasks cannot replace that
-query, and changing the confirmed subject or theme requires a new run.
+request. Init Web binds `industry_or_theme` from a separate, explicit
+Human-entered search topic; the selected report type affects brief focus and
+presentation only. Agent-written source candidates, the full task objective,
+and search tasks cannot replace that query, and changing the confirmed subject
+or search topic requires a new run.
 
 ### 2. Exa
 
@@ -169,7 +172,8 @@ web_search:
 ```
 
 The Tavily query for this path comes from the frozen Human-confirmed subject
-and theme described above; `search_tasks` is not an executable query override.
+and explicit search topic described above; `search_tasks` is not an executable
+query override.
 
 ### Example: Exa
 
