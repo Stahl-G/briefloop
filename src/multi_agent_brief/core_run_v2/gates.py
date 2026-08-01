@@ -42,6 +42,7 @@ from multi_agent_brief.intake_v2.errors import IntakeError
 from multi_agent_brief.intake_v2.scratch import parse_json_object
 from multi_agent_brief.outputs.reader_final_gate import detect_reader_residue
 from multi_agent_brief.outputs.reader_projection import (
+    ReaderProjectionSourceError,
     reader_projection_source_markdown,
 )
 from multi_agent_brief.quality_gates.contract import GATE_IDS
@@ -915,9 +916,42 @@ def _append_reader_projection_residue_finding(
         isinstance(item, dict) for item in findings
     ):
         return
-    reader_markdown = remove_src_marker_spans(
-        reader_projection_source_markdown(markdown)
-    ).strip()
+    try:
+        reader_markdown = remove_src_marker_spans(
+            reader_projection_source_markdown(markdown)
+        ).strip()
+    except ReaderProjectionSourceError:
+        findings.append(
+            _reader_projection_blocking_finding(
+                finding_type="reader_projection_invalid",
+                description="The exact reader projection source is structurally invalid.",
+                recommendation=(
+                    "Submit a new audited brief revision with valid reader projection markers."
+                ),
+                evidence_ref="reader-projection-invalid",
+                metadata={
+                    "projection_status": "invalid",
+                    "reader_artifact_id": "reader_brief",
+                },
+            )
+        )
+        return
+    if not reader_markdown:
+        findings.append(
+            _reader_projection_blocking_finding(
+                finding_type="reader_projection_empty",
+                description="The exact reader projection is empty.",
+                recommendation=(
+                    "Submit a new audited brief revision with reader-facing content."
+                ),
+                evidence_ref="reader-projection-empty",
+                metadata={
+                    "projection_status": "empty",
+                    "reader_artifact_id": "reader_brief",
+                },
+            )
+        )
+        return
     residue = detect_reader_residue(reader_markdown, "reader_brief")
     if residue.status == "pass":
         return
@@ -925,28 +959,45 @@ def _append_reader_projection_residue_finding(
         key: count for key, count in residue.counts.items() if count > 0
     }
     findings.append(
-        {
-            "finding_type": "reader_projection_residue",
-            "severity": "high",
-            "blocking_level": "blocking",
-            "repair_owner": "editor",
-            "stage_id": "editor",
-            "artifact_id": "audited_brief",
-            "description": (
+        _reader_projection_blocking_finding(
+            finding_type="reader_projection_residue",
+            description=(
                 "The exact reader projection contains internal workflow residue."
             ),
-            "recommendation": (
+            recommendation=(
                 "Submit a new audited brief revision whose reader projection is clean."
             ),
-            "category": "reader_projection",
-            "evidence_ref": "reader-projection-residue",
-            "metadata": {
+            evidence_ref="reader-projection-residue",
+            metadata={
                 **positive_counts,
                 "reader_artifact_id": "reader_brief",
                 "residue_kinds": sorted({item.kind for item in residue.findings}),
             },
-        }
+        )
     )
+
+
+def _reader_projection_blocking_finding(
+    *,
+    finding_type: str,
+    description: str,
+    recommendation: str,
+    evidence_ref: str,
+    metadata: dict[str, object],
+) -> dict[str, object]:
+    return {
+        "finding_type": finding_type,
+        "severity": "high",
+        "blocking_level": "blocking",
+        "repair_owner": "editor",
+        "stage_id": "editor",
+        "artifact_id": "audited_brief",
+        "description": description,
+        "recommendation": recommendation,
+        "category": "reader_projection",
+        "evidence_ref": evidence_ref,
+        "metadata": metadata,
+    }
 
 
 def _classify_gate_outcomes(
