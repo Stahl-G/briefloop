@@ -75,6 +75,10 @@ def upgrade_store(
     finally:
         readonly.close()
 
+    # The complete migrated clone, including the package-owned PF-LAJ archive
+    # sibling, must pass before opening the live writer or publishing backup.
+    _validate_migrated_snapshot(root, database, blobs)
+
     connection = _connect(database)
     committed = False
     published = False
@@ -117,7 +121,7 @@ def upgrade_store(
         connection.close()
         connection = None  # type: ignore[assignment]
 
-        _validate_current_snapshot(database, blobs)
+        _validate_current_snapshot(root, database, blobs)
         with _open_read_only_store(database, blobs) as store:
             result = {
                 "ok": True,
@@ -454,7 +458,11 @@ def _copy_snapshot(
     _validate_blob_topology(destination / "blobs", error_code="blob_topology_invalid")
 
 
-def _validate_migrated_snapshot(database: Path, blobs: Path) -> None:
+def _validate_migrated_snapshot(
+    workspace: Path,
+    database: Path,
+    blobs: Path,
+) -> None:
     """Prove a v11 payload after migration, including the Core boundary."""
 
     staging = database.parent / f".{database.name}.{uuid4().hex}.validate"
@@ -472,7 +480,7 @@ def _validate_migrated_snapshot(database: Path, blobs: Path) -> None:
             connection.execute("PRAGMA foreign_keys = ON")
         finally:
             connection.close()
-        _validate_migrated_workspace(staging)
+        _validate_migrated_workspace(staging, archive_workspace=workspace)
     except ControlStoreError:
         raise
     except (OSError, sqlite3.Error, ValueError, TypeError) as exc:
@@ -481,14 +489,18 @@ def _validate_migrated_snapshot(database: Path, blobs: Path) -> None:
         shutil.rmtree(staging, ignore_errors=True)
 
 
-def _validate_current_snapshot(database: Path, blobs: Path) -> None:
+def _validate_current_snapshot(
+    workspace: Path,
+    database: Path,
+    blobs: Path,
+) -> None:
     """Validate the committed v12 copy before publishing upgrade success."""
 
     staging = database.parent / f".{database.name}.{uuid4().hex}.current"
     staging.mkdir(parents=False, exist_ok=False)
     try:
         _copy_workspace_snapshot(database, blobs, staging)
-        _validate_migrated_workspace(staging)
+        _validate_migrated_workspace(staging, archive_workspace=workspace)
     except ControlStoreError:
         raise
     except (OSError, sqlite3.Error, ValueError, TypeError) as exc:
@@ -521,7 +533,11 @@ def _copy_workspace_snapshot(
     )
 
 
-def _validate_migrated_workspace(workspace: Path) -> None:
+def _validate_migrated_workspace(
+    workspace: Path,
+    *,
+    archive_workspace: Path | None = None,
+) -> None:
     """Run Store, Core and finalized-local projections on a private copy."""
 
     database = workspace / "briefloop.db"
@@ -571,6 +587,7 @@ def _validate_migrated_workspace(workspace: Path) -> None:
 
     _validate_post_final_assessment_snapshot(
         workspace,
+        archive_workspace=archive_workspace or workspace,
         history=history,
         snapshot=history.snapshot_at_revision(run_id, history.store_revision),
         facts=projection.facts,
@@ -581,6 +598,7 @@ def _validate_migrated_workspace(workspace: Path) -> None:
 def _validate_post_final_assessment_snapshot(
     workspace: Path,
     *,
+    archive_workspace: Path,
     history: Any,
     snapshot: Any,
     facts: Any,
@@ -620,7 +638,8 @@ def _validate_post_final_assessment_snapshot(
                 continue
             archive = verify_shadow_archive(
                 trial_archive_path(
-                    post_final_assessment_archive_root(workspace), request.trial_id
+                    post_final_assessment_archive_root(archive_workspace),
+                    request.trial_id,
                 )
             )
             view = build_laj_reader_view(
@@ -671,42 +690,203 @@ def _restore_v11_snapshot(database: Path, blobs: Path, backup: Path) -> None:
     source_database = backup / "control.db"
     source_blobs = backup / "blobs"
     temporary_database = database.with_name(f".{database.name}.{uuid4().hex}.tmp")
+    temporary_blobs = blobs.with_name(f".{blobs.name}.{uuid4().hex}.tmp")
+    previous_blobs = blobs.with_name(f".{blobs.name}.{uuid4().hex}.previous")
+    displaced_blobs = blobs.with_name(f".{blobs.name}.{uuid4().hex}.displaced")
+    sidecar_backups: dict[str, Path] = {}
+    had_previous_blobs = _lexical_entry_exists(blobs)
+    blobs_published = False
+    database_published = False
     try:
         source_connection = _open_read_only_connection(source_database)
         try:
             _validate_v11_snapshot(source_connection, source_blobs)
-            _validate_v11_snapshot(source_connection, blobs)
         finally:
             source_connection.close()
-        _validate_blob_topology(blobs, error_code="blob_topology_invalid")
         shutil.copy2(source_database, temporary_database)
+        shutil.copytree(source_blobs, temporary_blobs, symlinks=True)
+        _validate_blob_topology(temporary_blobs, error_code="blob_topology_invalid")
         staged_connection = _open_read_only_connection(temporary_database)
         try:
-            _validate_v11_snapshot(staged_connection, source_blobs)
+            _validate_v11_snapshot(staged_connection, temporary_blobs)
         finally:
             staged_connection.close()
-        _remove_database_sidecars(database)
+
+        # Preserve the pre-rollback blob root so a failed publication can be
+        # undone without ever requiring the damaged live root to validate.
+        if had_previous_blobs:
+            try:
+                os.replace(blobs, previous_blobs)
+            except OSError:
+                # A swap-marker failure must not leave the known-damaged live
+                # root in place.  The staged backup is already verified, so
+                # repair the existing directory in place and continue to the
+                # DB-last publication boundary.
+                try:
+                    shutil.copytree(
+                        temporary_blobs,
+                        blobs,
+                        symlinks=True,
+                        dirs_exist_ok=True,
+                    )
+                    _validate_blob_topology(
+                        blobs,
+                        error_code="blob_topology_invalid",
+                    )
+                    _remove_tree_entry(temporary_blobs)
+                    blobs_published = True
+                except OSError:
+                    raise
+        if not blobs_published:
+            try:
+                os.replace(temporary_blobs, blobs)
+            except OSError:
+                # The source tree was fully validated before this boundary.
+                # If the atomic directory replace itself is unavailable or
+                # transient, publish the same verified bytes into the now
+                # empty destination; otherwise restore the untouched root.
+                try:
+                    shutil.copytree(temporary_blobs, blobs, symlinks=True)
+                    _remove_tree_entry(temporary_blobs)
+                except OSError:
+                    if had_previous_blobs:
+                        _restore_previous_blob_root(
+                            blobs,
+                            previous_blobs,
+                            displaced_blobs,
+                            had_previous_blobs,
+                        )
+                    raise
+            blobs_published = True
+
+        _fsync_directory(blobs.parent)
+        _hook_restore_sidecars(database, sidecar_backups)
         try:
             os.replace(temporary_database, database)
         except OSError:
-            # A single injected atomic-replace failure must not return with a
-            # v12 database. The verified backup is the authoritative fallback;
-            # copy2 is intentionally after the failed replace so the normal
-            # path remains atomic.
-            shutil.copy2(source_database, database)
-            _fsync_file(database)
+            # A DB publication failure can still complete through a verified
+            # copy of the staged v11 bytes. If that fallback fails, restore the
+            # exact pre-rollback blob root and leave the live DB untouched.
+            try:
+                shutil.copy2(source_database, database)
+                _fsync_file(database)
+            except OSError:
+                _restore_previous_blob_root(
+                    blobs,
+                    previous_blobs,
+                    displaced_blobs,
+                    had_previous_blobs,
+                )
+                _restore_sidecars(database, sidecar_backups)
+                blobs_published = False
+                raise
             temporary_database.unlink(missing_ok=True)
+        database_published = True
+
         _fsync_directory(database.parent)
         restored = _open_read_only_connection(database)
         try:
             _validate_v11_snapshot(restored, blobs)
         finally:
             restored.close()
+        _remove_sidecar_backups(sidecar_backups)
+        if had_previous_blobs:
+            _remove_tree_entry(previous_blobs)
+        blobs_published = False
     except Exception as exc:
         temporary_database.unlink(missing_ok=True)
+        temporary_blobs.unlink(missing_ok=True)
+        if blobs_published:
+            if not database_published:
+                _restore_previous_blob_root(
+                    blobs,
+                    previous_blobs,
+                    displaced_blobs,
+                    had_previous_blobs,
+                )
+        if database_published:
+            _remove_sidecar_backups(sidecar_backups)
+        else:
+            _restore_sidecars(database, sidecar_backups)
         if isinstance(exc, ControlStoreError):
             raise
         raise ControlStoreIntegrityError("store_upgrade_rollback_failed") from exc
+    finally:
+        _remove_tree_entry(temporary_blobs)
+        _remove_tree_entry(displaced_blobs)
+        _remove_tree_entry(previous_blobs)
+        _remove_sidecar_backups(sidecar_backups)
+
+
+def _lexical_entry_exists(path: Path) -> bool:
+    try:
+        path.lstat()
+    except FileNotFoundError:
+        return False
+    return True
+
+
+def _hook_restore_sidecars(
+    database: Path,
+    sidecar_backups: dict[str, Path],
+) -> None:
+    for suffix in ("-wal", "-shm"):
+        source = database.with_name(f"{database.name}{suffix}")
+        if not _lexical_entry_exists(source):
+            continue
+        target = database.with_name(f".{database.name}.{uuid4().hex}{suffix}")
+        os.replace(source, target)
+        sidecar_backups[suffix] = target
+
+
+def _restore_sidecars(database: Path, sidecar_backups: dict[str, Path]) -> None:
+    for suffix, source in list(sidecar_backups.items()):
+        target = database.with_name(f"{database.name}{suffix}")
+        if _lexical_entry_exists(target):
+            _remove_tree_entry(target)
+        if _lexical_entry_exists(source):
+            os.replace(source, target)
+        sidecar_backups.pop(suffix, None)
+
+
+def _remove_sidecar_backups(sidecar_backups: dict[str, Path]) -> None:
+    for source in list(sidecar_backups.values()):
+        _remove_tree_entry(source)
+    sidecar_backups.clear()
+
+
+def _restore_previous_blob_root(
+    live: Path,
+    previous: Path,
+    displaced: Path,
+    had_previous: bool,
+) -> None:
+    if _lexical_entry_exists(live):
+        os.replace(live, displaced)
+    if had_previous:
+        try:
+            os.replace(previous, live)
+        except OSError:
+            # A fault injected at the atomic publication boundary can also
+            # intercept the compensating replace.  The verified previous tree
+            # is still a valid restoration source, so copy it into place
+            # without asking the damaged/live tree to validate first.
+            shutil.copytree(previous, live, symlinks=True)
+            _remove_tree_entry(previous)
+    else:
+        _remove_tree_entry(live)
+    _remove_tree_entry(displaced)
+
+
+def _remove_tree_entry(path: Path) -> None:
+    try:
+        mode = path.lstat().st_mode
+    except FileNotFoundError:
+        return
+    if stat.S_ISDIR(mode) and not stat.S_ISLNK(mode):
+        shutil.rmtree(path)
+    else:
+        path.unlink()
 
 
 def _remove_database_sidecars(database: Path) -> None:

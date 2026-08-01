@@ -292,7 +292,7 @@ def test_upgrade_rollback_replace_failure_keeps_verified_v11_source(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    workspace = _v11_workspace(tmp_path, workspace_id="WS-UPGRADE-ROLLBACK-REPLACE")
+    workspace, _ = _nonempty_v11_workspace(tmp_path)
     backup = tmp_path / "rollback-backup"
     before_blobs = sorted(
         (
@@ -302,6 +302,14 @@ def test_upgrade_rollback_replace_failure_keeps_verified_v11_source(
         for path in (workspace / "briefloop.db.blobs").rglob("*")
         if path.is_file()
     )
+    connection = sqlite3.connect(workspace / "briefloop.db")
+    try:
+        relative = connection.execute(
+            "SELECT blob_relpath FROM artifact_revisions ORDER BY artifact_id,revision"
+        ).fetchone()[0]
+    finally:
+        connection.close()
+    deleted_blob = workspace / "briefloop.db.blobs" / str(relative)
     original_replace = upgrade_module.os.replace
     failed = False
 
@@ -318,6 +326,7 @@ def test_upgrade_rollback_replace_failure_keeps_verified_v11_source(
 
     def fail_after_commit(stage: str) -> None:
         if stage == "migration_committed":
+            deleted_blob.unlink()
             raise RuntimeError("synthetic post-commit failure")
 
     with pytest.raises(ControlStoreError) as error:
@@ -343,6 +352,328 @@ def test_upgrade_rollback_replace_failure_keeps_verified_v11_source(
         if path.is_file()
     )
     assert after_blobs == before_blobs
+    assert deleted_blob.read_bytes() == BLOB
+
+
+def test_rollback_rebuilds_deleted_live_blob_from_backup(
+    tmp_path: Path,
+) -> None:
+    workspace, evidence = _nonempty_v11_workspace(
+        tmp_path,
+    )
+    backup = tmp_path / "deleted-live-blob-backup"
+    connection = sqlite3.connect(workspace / "briefloop.db")
+    try:
+        relative = connection.execute(
+            "SELECT blob_relpath FROM artifact_revisions ORDER BY artifact_id,revision"
+        ).fetchone()[0]
+    finally:
+        connection.close()
+    live_blob = workspace / "briefloop.db.blobs" / str(relative)
+
+    def fail_after_commit(stage: str) -> None:
+        if stage == "migration_committed":
+            live_blob.unlink()
+            raise RuntimeError("synthetic post-commit failure after blob loss")
+
+    with pytest.raises(ControlStoreError) as error:
+        upgrade_store(workspace, backup, failure_hook=fail_after_commit)
+    assert error.value.code == "store_upgrade_failed"
+    connection = sqlite3.connect(workspace / "briefloop.db")
+    try:
+        verify_schema(connection, expected_version=11)
+    finally:
+        connection.close()
+    assert live_blob.read_bytes() == evidence["blob"]
+    assert (backup / "blobs" / str(relative)).read_bytes() == evidence["blob"]
+
+
+def test_blob_restore_publication_failure_still_returns_verified_v11(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    workspace, evidence = _nonempty_v11_workspace(tmp_path)
+    backup = tmp_path / "blob-publication-failure-backup"
+    connection = sqlite3.connect(workspace / "briefloop.db")
+    try:
+        relative = connection.execute(
+            "SELECT blob_relpath FROM artifact_revisions ORDER BY artifact_id,revision"
+        ).fetchone()[0]
+    finally:
+        connection.close()
+    live_blob = workspace / "briefloop.db.blobs" / str(relative)
+    original_replace = upgrade_module.os.replace
+    failed = False
+
+    def fail_blob_publication(source, destination) -> None:
+        nonlocal failed
+        if not failed and Path(destination) == workspace / "briefloop.db.blobs":
+            failed = True
+            raise OSError("synthetic blob publication failure")
+        original_replace(source, destination)
+
+    monkeypatch.setattr(upgrade_module.os, "replace", fail_blob_publication)
+
+    def fail_after_commit(stage: str) -> None:
+        if stage == "migration_committed":
+            live_blob.unlink()
+            raise RuntimeError("synthetic post-commit failure")
+
+    with pytest.raises(ControlStoreError) as error:
+        upgrade_store(workspace, backup, failure_hook=fail_after_commit)
+    assert failed is True
+    assert error.value.code == "store_upgrade_failed"
+    connection = sqlite3.connect(workspace / "briefloop.db")
+    try:
+        verify_schema(connection, expected_version=11)
+    finally:
+        connection.close()
+    assert live_blob.read_bytes() == evidence["blob"]
+
+
+def test_blob_swap_marker_failure_repairs_from_verified_backup(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    workspace, evidence = _nonempty_v11_workspace(tmp_path)
+    backup = tmp_path / "blob-swap-marker-failure-backup"
+    connection = sqlite3.connect(workspace / "briefloop.db")
+    try:
+        relative = connection.execute(
+            "SELECT blob_relpath FROM artifact_revisions ORDER BY artifact_id,revision"
+        ).fetchone()[0]
+    finally:
+        connection.close()
+    live_blob = workspace / "briefloop.db.blobs" / str(relative)
+    original_replace = upgrade_module.os.replace
+    failed = False
+
+    def fail_swap_marker(source, destination) -> None:
+        nonlocal failed
+        if not failed and Path(destination).name.endswith(".previous"):
+            failed = True
+            raise OSError("synthetic swap-marker failure")
+        original_replace(source, destination)
+
+    monkeypatch.setattr(upgrade_module.os, "replace", fail_swap_marker)
+
+    def fail_after_commit(stage: str) -> None:
+        if stage == "migration_committed":
+            live_blob.unlink()
+            raise RuntimeError("synthetic post-commit failure")
+
+    with pytest.raises(ControlStoreError) as error:
+        upgrade_store(workspace, backup, failure_hook=fail_after_commit)
+    assert failed is True
+    assert error.value.code == "store_upgrade_failed"
+    connection = sqlite3.connect(workspace / "briefloop.db")
+    try:
+        verify_schema(connection, expected_version=11)
+    finally:
+        connection.close()
+    assert live_blob.read_bytes() == evidence["blob"]
+
+
+def test_migrated_clone_validates_before_live_writer_and_binds_source_archive(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    workspace = _v11_workspace(tmp_path)
+    backup = tmp_path / "clone-order-backup"
+    events: list[tuple[str, Path | None]] = []
+    original_validate = upgrade_module._validate_migrated_workspace
+    original_connect = upgrade_module._connect
+
+    def validate(*args, **kwargs) -> None:
+        events.append(("clone", kwargs.get("archive_workspace")))
+        original_validate(*args, **kwargs)
+
+    def connect(*args, **kwargs):
+        events.append(("connect", None))
+        return original_connect(*args, **kwargs)
+
+    monkeypatch.setattr(upgrade_module, "_validate_migrated_workspace", validate)
+    monkeypatch.setattr(upgrade_module, "_connect", connect)
+
+    def stop_before_migration(stage: str) -> None:
+        if stage == "migration_start":
+            events.append(("migration", None))
+            raise RuntimeError("stop after clone order proof")
+
+    with pytest.raises(ControlStoreError):
+        upgrade_store(workspace, backup, failure_hook=stop_before_migration)
+    assert [name for name, _ in events] == ["clone", "connect", "migration"]
+    assert events[0][1] == workspace
+
+
+def _downgrade_0012_preserving_v2_assessment_request(root: Path) -> None:
+    """Make a realistic v11 copy while retaining the generation-one request."""
+
+    database = root / "briefloop.db"
+    connection = sqlite3.connect(database)
+    expected = sqlite3.connect(":memory:")
+    try:
+        for version in range(1, 12):
+            migration = resources.files("multi_agent_brief.control_store").joinpath(
+                "migrations", f"{version:04d}.sql"
+            )
+            expected.executescript(migration.read_text(encoding="utf-8"))
+        request_sql = expected.execute(
+            "SELECT sql FROM sqlite_master WHERE type='table' "
+            "AND name='post_final_assessment_requests'"
+        ).fetchone()[0]
+        request_triggers = [
+            expected.execute(
+                "SELECT sql FROM sqlite_master WHERE type='trigger' AND name=?",
+                (name,),
+            ).fetchone()[0]
+            for name in (
+                "post_final_assessment_requests_no_update",
+                "post_final_assessment_requests_no_delete",
+                "schema_migrations_no_delete",
+            )
+        ]
+        request_columns = (
+            "run_id,assessment_request_id,schema_version,"
+            "finalized_facts_fingerprint,finalized_lineage_fingerprint,"
+            "policy_revision_id,trial_id,archive_identity_sha256,"
+            "request_fingerprint,claimed_at,request_event_id,"
+            "accepted_transaction_id,payload_json"
+        )
+        request_rows = connection.execute(
+            f"SELECT {request_columns} FROM post_final_assessment_requests"
+        ).fetchall()
+        connection.execute("PRAGMA foreign_keys = OFF")
+        for trigger in (
+            "post_final_assessment_requests_no_update",
+            "post_final_assessment_requests_no_delete",
+            "post_final_assessment_abandonments_no_update",
+            "post_final_assessment_abandonments_no_delete",
+            "transaction_post_final_assessment_abandonments_no_update",
+            "transaction_post_final_assessment_abandonments_no_delete",
+            "post_final_assessment_abandonment_compatibility_boundaries_no_update",
+            "post_final_assessment_abandonment_compatibility_boundaries_no_delete",
+        ):
+            connection.execute(f"DROP TRIGGER IF EXISTS {trigger}")
+        for table in (
+            "transaction_post_final_assessment_abandonments",
+            "post_final_assessment_abandonments",
+            "post_final_assessment_abandonment_compatibility_boundaries",
+            "post_final_assessment_requests",
+        ):
+            connection.execute(f"DROP TABLE IF EXISTS {table}")
+        connection.execute(request_sql)
+        connection.executemany(
+            f"INSERT INTO post_final_assessment_requests({request_columns}) "
+            f"VALUES ({','.join('?' for _ in request_columns.split(','))})",
+            request_rows,
+        )
+        connection.execute("DROP TRIGGER IF EXISTS schema_migrations_no_delete")
+        connection.execute("DELETE FROM schema_migrations WHERE version=12")
+        for trigger_sql in request_triggers:
+            connection.executescript(trigger_sql)
+        connection.execute("PRAGMA user_version = 11")
+        connection.commit()
+    finally:
+        expected.close()
+        connection.close()
+
+
+@pytest.mark.skipif(
+    os.name == "nt",
+    reason="the finalized-local fixture requires the retained POSIX directory boundary",
+)
+def test_upgrade_validates_original_nonzero_pf_archive_before_live_mutation(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from multi_agent_brief.product.post_final_assessment import (
+        post_final_assessment_archive_root,
+    )
+    from multi_agent_brief.semantic_evaluator.adapters.anthropic_messages import (
+        ANTHROPIC_API_KEY_SETTING,
+    )
+    from multi_agent_brief.semantic_evaluator.archive import trial_archive_path
+    import multi_agent_brief.semantic_evaluator.runner as runner_module
+    from tests.test_core_run_v2_packaging import _real_finalized_local_workspace
+    from tests.test_post_final_assessment import _fixture_service, _policy_payload
+
+    workspace = _real_finalized_local_workspace(tmp_path, monkeypatch)
+    calls: list[tuple[str, int]] = []
+    service = _fixture_service(workspace, calls, terminal_mode="finding")
+    policy = _policy_payload()
+    policy["auto_run"] = True
+    assert service.policy_set(policy)["ok"] is True
+    monkeypatch.setattr(runner_module.metadata, "version", lambda _name: "0.104.1")
+    monkeypatch.setenv(ANTHROPIC_API_KEY_SETTING, "public-synthetic-key")
+    assessed = service.observe_finalized_local()
+    assert assessed["ok"] is True, assessed
+    assert assessed["status"] == "available"
+    connection = sqlite3.connect(workspace / "briefloop.db")
+    try:
+        trial_id = connection.execute(
+            "SELECT trial_id FROM post_final_assessment_requests"
+        ).fetchone()[0]
+        result_payload = connection.execute(
+            "SELECT payload_json FROM post_final_assessment_results"
+        ).fetchone()[0]
+    finally:
+        connection.close()
+    assert json.loads(result_payload)["finding_count"] > 0
+    archive = trial_archive_path(
+        post_final_assessment_archive_root(workspace), trial_id
+    )
+    assert (archive / "archive_manifest.json").is_file()
+    _downgrade_0012_preserving_v2_assessment_request(workspace)
+    backup = tmp_path / "pf-history-backup"
+    result = upgrade_store(workspace, backup)
+    assert result["status"] == "upgraded"
+    assert (archive / "archive_manifest.json").is_file()
+
+
+def test_upgrade_rejects_tampered_original_pf_archive_before_backup(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from multi_agent_brief.product.post_final_assessment import (
+        post_final_assessment_archive_root,
+    )
+    from multi_agent_brief.semantic_evaluator.adapters.anthropic_messages import (
+        ANTHROPIC_API_KEY_SETTING,
+    )
+    from multi_agent_brief.semantic_evaluator.archive import trial_archive_path
+    import multi_agent_brief.semantic_evaluator.runner as runner_module
+    from tests.test_core_run_v2_packaging import _real_finalized_local_workspace
+    from tests.test_post_final_assessment import _fixture_service, _policy_payload
+
+    workspace = _real_finalized_local_workspace(tmp_path, monkeypatch)
+    service = _fixture_service(workspace, [], terminal_mode="finding")
+    policy = _policy_payload()
+    policy["auto_run"] = True
+    assert service.policy_set(policy)["ok"] is True
+    monkeypatch.setattr(runner_module.metadata, "version", lambda _name: "0.104.1")
+    monkeypatch.setenv(ANTHROPIC_API_KEY_SETTING, "public-synthetic-key")
+    assessed = service.observe_finalized_local()
+    assert assessed["ok"] is True, assessed
+    connection = sqlite3.connect(workspace / "briefloop.db")
+    try:
+        trial_id = connection.execute(
+            "SELECT trial_id FROM post_final_assessment_requests"
+        ).fetchone()[0]
+    finally:
+        connection.close()
+    archive = trial_archive_path(
+        post_final_assessment_archive_root(workspace), trial_id
+    )
+    manifest = archive / "archive_manifest.json"
+    manifest.write_bytes(manifest.read_bytes() + b"tamper")
+    _downgrade_0012_preserving_v2_assessment_request(workspace)
+    before = (workspace / "briefloop.db").read_bytes()
+    with pytest.raises(ControlStoreError) as error:
+        upgrade_store(workspace, tmp_path / "tampered-pf-backup")
+    assert error.value.code == "post_final_assessment_invalid"
+    assert (workspace / "briefloop.db").read_bytes() == before
+    assert not (tmp_path / "tampered-pf-backup").exists()
 
 
 def test_upgrade_preserves_nonempty_generation_one_history_and_hashes(
