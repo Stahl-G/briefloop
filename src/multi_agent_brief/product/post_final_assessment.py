@@ -1403,6 +1403,10 @@ class PostFinalAssessmentService:
                 "policy_revision_id": existing.policy_revision_id,
                 "receipt_id": receipt.transaction_id,
             }
+        if any(item.status == "active" for item in snapshot.invocations):
+            raise PostFinalAssessmentError(
+                "post_final_assessment_policy_active_invocation"
+            )
         identity = {
             "run_id": run_id,
             "human_request_id": request.human_request_id,
@@ -1454,16 +1458,47 @@ class PostFinalAssessmentService:
         )
         try:
             with SQLiteControlStore.open(self._database_path) as store:
+                live_snapshot = store.load_snapshot(run_id)
+                if any(item.status == "active" for item in live_snapshot.invocations):
+                    raise PostFinalAssessmentError(
+                        "post_final_assessment_policy_active_invocation"
+                    )
                 with store.begin(
                     run_id,
                     transaction_id,
                     "post_final_assessment_policy",
-                    store.current_revision,
+                    snapshot.store_revision,
                 ) as uow:
                     uow.append_event(event)
                     uow.put_post_final_assessment_policy_revision(policy)
                     receipt = uow.commit()
         except ControlStoreError as exc:
+            if str(exc) == "store_revision_conflict":
+                try:
+                    _run_id, current_snapshot, _binding = self._load_policy_context()
+                except PostFinalAssessmentError:
+                    pass
+                else:
+                    if any(
+                        item.status == "active" for item in current_snapshot.invocations
+                    ):
+                        raise PostFinalAssessmentError(
+                            "post_final_assessment_policy_active_invocation"
+                        ) from exc
+                    loaded_policy = self._policy_for_run(snapshot, run_id)
+                    current_policy = self._policy_for_run(
+                        current_snapshot,
+                        run_id,
+                    )
+                    if (loaded_policy is None and current_policy is not None) or (
+                        loaded_policy is not None
+                        and current_policy is not None
+                        and loaded_policy.policy_revision_id
+                        != current_policy.policy_revision_id
+                    ):
+                        raise PostFinalAssessmentError(
+                            "relational_integrity_conflict"
+                        ) from exc
             raise PostFinalAssessmentError(str(exc)) from exc
         return {
             "ok": True,

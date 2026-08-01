@@ -63,6 +63,10 @@ import multi_agent_brief.control_store.schema as schema_module
 import multi_agent_brief.control_store.sqlite_store as sqlite_store_module
 from tests.test_finalized_local_review_facts import _finalized_local_workspace
 from tests.test_core_run_v2_packaging import _real_finalized_local_workspace
+from tests.test_runtime_host_continue_v2 import (
+    _authorized_workspace,
+    _service as _runtime_host_service,
+)
 from tests.helpers import initialize_workspace
 
 
@@ -1439,6 +1443,78 @@ def test_pre_final_policy_is_store_owned_replayable_and_zero_effect(
     assert snapshot.post_final_assessment_results == ()
     assert (workspace / "briefloop.db").read_bytes() != database_before
     assert calls == []
+
+
+def test_new_policy_revision_is_rejected_while_role_invocation_is_active(
+    tmp_path: Path,
+) -> None:
+    """Advisory policy writes cannot invalidate an active role reservation."""
+
+    workspace = _authorized_workspace(tmp_path)
+    service = PostFinalAssessmentService(workspace)
+    policy = _policy_payload()
+    first = service.policy_set(policy)
+    assert first["ok"] is True
+    assert first["replayed"] is False
+
+    handoff = _runtime_host_service(workspace).continue_authorized()
+    assert handoff.status == "role_work_required"
+    assert handoff.current_stage == "scout"
+    database = workspace / "briefloop.db"
+    bytes_before = database.read_bytes()
+    with SQLiteControlStore.open(database) as store:
+        head = store.load_workspace_run_head()
+        assert head is not None
+        revision_before = store.current_revision
+        snapshot_before = store.load_snapshot(head.current_run_id)
+    active_before = tuple(
+        item for item in snapshot_before.invocations if item.status == "active"
+    )
+    assert len(active_before) == 1
+
+    assert service.policy_set(policy) == {
+        "ok": True,
+        "replayed": True,
+        "policy_revision_id": first["policy_revision_id"],
+        "receipt_id": first["receipt_id"],
+    }
+    next_policy = dict(policy)
+    next_policy["human_request_id"] = "pf-laj-policy-request-after-scout-start"
+    with pytest.raises(
+        PostFinalAssessmentError,
+        match="post_final_assessment_policy_active_invocation",
+    ):
+        service.policy_set(next_policy)
+
+    assert database.read_bytes() == bytes_before
+    with SQLiteControlStore.open(database) as store:
+        snapshot_after = store.load_snapshot(head.current_run_id)
+        assert store.current_revision == revision_before
+    assert snapshot_after.post_final_assessment_policy_revisions == (
+        snapshot_before.post_final_assessment_policy_revisions
+    )
+    assert (
+        tuple(item for item in snapshot_after.invocations if item.status == "active")
+        == active_before
+    )
+    runtime = _runtime_host_service(workspace)
+    action = runtime.next_action()
+    assert action.effect_kind == "invocation_accept_or_fail"
+    failed = runtime.fail_invocation(
+        active_before[0].invocation_id,
+        reason_code="session_interrupted",
+    )
+    assert failed.status == "rejected_recorded"
+    with SQLiteControlStore.open(database) as store:
+        terminal_snapshot = store.load_snapshot(head.current_run_id)
+    assert not any(item.status == "active" for item in terminal_snapshot.invocations)
+    terminal_invocation = next(
+        item
+        for item in terminal_snapshot.invocations
+        if item.invocation_id == active_before[0].invocation_id
+    )
+    assert terminal_invocation.status == "failed"
+    assert terminal_invocation.failure_reason == "session_interrupted"
 
 
 def test_nonfinal_workspace_is_typed_unavailable_without_assessment_effects(
