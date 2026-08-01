@@ -1125,7 +1125,12 @@ class PostFinalAssessmentService:
             # absent.  Probe it read-only here so ``assessment_next`` cannot
             # advertise an abandonment request that ``assessment_run`` would
             # immediately recover instead of claiming.
-            if self._archive_recovery_available(facts, predecessor):
+            if self._archive_recovery_available(
+                facts,
+                snapshot,
+                binding,
+                predecessor,
+            ):
                 raise PostFinalAssessmentError(
                     "assessment_predecessor_result_available"
                 )
@@ -1223,32 +1228,83 @@ class PostFinalAssessmentService:
     def _archive_recovery_available(
         self,
         facts: Any,
+        snapshot: Any,
+        binding: Any,
         predecessor: PostFinalAssessmentRequestRecord,
     ) -> bool:
-        """Return whether a missing predecessor result has a valid archive.
+        """Return whether retry can recover a missing predecessor result.
 
         This is deliberately a pure probe.  Result creation remains owned by
-        ``retry``/``_qualify_archive``; the admission boundary only prevents
-        an abandonment projection from racing that recovery path.
+        ``retry``/``_qualify_archive``.  Admission reconstructs the same exact
+        prepared request/execution identity as retry before treating an
+        intrinsically valid archive as recoverable.
         """
 
-        archive_path = trial_archive_path(
-            self._archive_root,
-            predecessor.trial_id,
-        )
         try:
-            archive = verify_shadow_archive(archive_path)
+            prepared = self._prepare_request_replay(
+                facts=facts,
+                snapshot=snapshot,
+                binding=binding,
+                request=predecessor,
+            )
+            if isinstance(prepared, ShadowRunResult):
+                return False
+            replay = execute_prepared_shadow_run(prepared, replay_only=True)
+            if not replay.archive_complete or replay.archive_path is None:
+                return False
+            archive = verify_shadow_archive(Path(replay.archive_path))
             view = build_laj_reader_view(
                 archive.path,
                 expected_report_sha256=facts.report.sha256,
             )
-        except (SemanticEvaluatorError, OSError, ValueError):
+        except (
+            PostFinalAssessmentError,
+            SemanticEvaluatorError,
+            OSError,
+            ValueError,
+        ):
             return False
         return (
             view.archive_verified
             and view.binding is not None
             and view.binding.trial_id == predecessor.trial_id
             and archive.request.trial_id == predecessor.trial_id
+        )
+
+    def _prepare_request_replay(
+        self,
+        *,
+        facts: Any,
+        snapshot: Any,
+        binding: Any,
+        request: PostFinalAssessmentRequestRecord,
+    ) -> PreparedShadowRun | ShadowRunResult:
+        """Reconstruct the one immutable replay identity for a Store request."""
+
+        policy = self._policy_by_id(
+            snapshot,
+            facts.run_id,
+            request.policy_revision_id,
+            request.policy_fingerprint,
+        )
+        context = _bounded_context_from_direction(binding, run_id=facts.run_id)
+        if (
+            policy.bounded_context_sha256 != context.context_sha256
+            or policy.bounded_context != context.model_dump(mode="json")
+        ):
+            raise PostFinalAssessmentError("post_final_assessment_policy_conflict")
+        config = InstrumentConfig.model_validate(
+            policy.instrument_config,
+            strict=True,
+        )
+        return prepare_shadow_run_from_bytes(
+            report_bytes=facts.report.markdown_utf8,
+            bounded_context=context,
+            instrument_config=config,
+            trial_id=request.trial_id,
+            archive_root=self._archive_root,
+            workspace_root=self.workspace,
+            messages_endpoint=policy.messages_endpoint,
         )
 
     def _validate_policy_input(
@@ -1911,16 +1967,15 @@ class PostFinalAssessmentService:
                 "status": "abandoned",
                 "reason_code": "assessment_request_abandoned",
             }
-        config = InstrumentConfig.model_validate(policy.instrument_config, strict=True)
-        prepared = prepare_shadow_run_from_bytes(
-            report_bytes=facts.report.markdown_utf8,
-            bounded_context=context,
-            instrument_config=config,
-            trial_id=request.trial_id,
-            archive_root=self._archive_root,
-            workspace_root=self.workspace,
-            messages_endpoint=policy.messages_endpoint,
-        )
+        try:
+            prepared = self._prepare_request_replay(
+                facts=facts,
+                snapshot=snapshot,
+                binding=binding,
+                request=request,
+            )
+        except PostFinalAssessmentError as exc:
+            return {"ok": False, "status": "invalid", "reason_code": str(exc)}
         if isinstance(prepared, ShadowRunResult):
             return {
                 "ok": False,

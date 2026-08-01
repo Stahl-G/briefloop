@@ -1263,6 +1263,84 @@ def test_unknown_predecessor_with_valid_archive_recovers_before_abandonment_proj
         assert snapshot.post_final_assessment_abandonments == ()
 
 
+def test_unknown_predecessor_with_stale_execution_identity_can_be_abandoned(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    """An intrinsically valid old-identity archive is not recoverable now."""
+
+    workspace, run_id, _clock = _finalized_local_workspace(tmp_path, monkeypatch)
+    calls: list[tuple[str, int]] = []
+    service = _fixture_service(workspace, calls, terminal_mode="accepted")
+    policy = service.policy_set(_policy_payload())
+    assert policy["ok"] is True
+    monkeypatch.setattr(runner_module.metadata, "version", lambda _name: "0.104.1")
+    monkeypatch.setenv(ANTHROPIC_API_KEY_SETTING, "public-synthetic-key")
+
+    original_qualify = service._qualify_archive
+    original_source_bundle = runner_module._source_bundle
+    monkeypatch.setattr(
+        runner_module,
+        "_source_bundle",
+        lambda *_module_names: hashlib.sha256(
+            b"stale-evaluator-execution-identity"
+        ).hexdigest(),
+    )
+    monkeypatch.setattr(
+        service,
+        "_qualify_archive",
+        lambda _facts, request, _archive_path: {
+            "ok": False,
+            "status": "pending",
+            "assessment_request_id": request.assessment_request_id,
+        },
+    )
+    initial = service.assess()
+    assert initial["status"] == "pending"
+    assert len(calls) == 9
+    monkeypatch.setattr(runner_module, "_source_bundle", original_source_bundle)
+    monkeypatch.setattr(service, "_qualify_archive", original_qualify)
+
+    with SQLiteControlStore.open(workspace / "briefloop.db") as store:
+        snapshot = store.load_snapshot(run_id)
+        predecessor = snapshot.post_final_assessment_requests[0]
+        before_revision = store.current_revision
+        assert snapshot.post_final_assessment_results == ()
+    assert trial_archive_path(service._archive_root, predecessor.trial_id).is_dir()
+    assert service.retry(predecessor.assessment_request_id) == {
+        "ok": False,
+        "status": "invalid",
+        "reason_code": "archive_verification_failed",
+    }
+
+    projected = service.assessment_next(
+        policy_revision_id=policy["policy_revision_id"],
+        human_actor_id="human-1",
+        human_request_id="pf-laj-abandon-stale-execution",
+        assessment_purpose="model_evaluation",
+        abandon_predecessor=True,
+    )
+    assert projected["ok"] is True, projected
+    assert projected["request"]["assessment_generation"] == 2
+    assert projected["request"]["abandon_predecessor"] is True
+    with SQLiteControlStore.open(workspace / "briefloop.db") as store:
+        assert store.current_revision == before_revision
+
+    successor = service.assessment_run(projected["request"])
+    assert successor["ok"] is True, successor
+    assert successor["status"] == "available"
+    assert len(calls) == 18
+    with SQLiteControlStore.open(workspace / "briefloop.db") as store:
+        snapshot = store.load_snapshot(run_id)
+    assert len(snapshot.post_final_assessment_requests) == 2
+    assert len(snapshot.post_final_assessment_abandonments) == 1
+    assert len(snapshot.post_final_assessment_results) == 1
+    assert (
+        snapshot.post_final_assessment_abandonments[0].assessment_request_id
+        == predecessor.assessment_request_id
+    )
+
+
 def test_policy_is_store_owned_replayable_and_manual_view_cannot_override(
     tmp_path: Path, monkeypatch
 ) -> None:
