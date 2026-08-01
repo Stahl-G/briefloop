@@ -406,14 +406,14 @@ Released v0.14.0 entrypoints:
 
 Development-main-only LAJ continuation controls are explicit and Store-native:
 
-- `briefloop quality laj store-upgrade --workspace <path> --backup <dir>`
-  performs the narrow backup-first schema-v11-to-v12 upgrade using the
-  packaged migration; it is not a JSON migration or general migration
-  framework.
 - `briefloop quality laj assessment-next --workspace <path>
   --policy-revision-id <id> --human-actor-id <id> --human-request-id <id>
   --assessment-purpose <purpose>` emits a complete non-secret request for
   `assessment-run` without SQL, internal fingerprints, credentials, or writes.
+
+Old development workspaces are unsupported when the Store schema changes;
+create a fresh workspace on the current schema. BriefLoop does not ship an
+in-product development-schema upgrade path.
 
 v0.14.0 completes the SQLite-only cutover and adds read-only interaction
 surfaces:

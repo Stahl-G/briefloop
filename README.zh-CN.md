@@ -370,13 +370,13 @@ v0.14.0 已发布入口：
 
 仅限 development-main 的 LAJ continuation controls：
 
-- `briefloop quality laj store-upgrade --workspace <path> --backup <dir>`：使用
-  已打包 migration 做狭窄的 backup-first schema v11→v12 升级；不是 JSON 导入或
-  通用迁移框架。
 - `briefloop quality laj assessment-next --workspace <path>
   --policy-revision-id <id> --human-actor-id <id> --human-request-id <id>
   --assessment-purpose <purpose>`：只读生成可直接交给 `assessment-run` 的完整
   非秘密请求，不需要 SQL、内部 fingerprint、credential 或写入。
+
+Store schema 变化后，旧 development workspace 不受支持；请用当前 schema 新建
+workspace。BriefLoop 不提供 development schema 的产品内升级路径。
 
 v0.14.0 完成 SQLite-only 切换，并增加只读交互面：
 

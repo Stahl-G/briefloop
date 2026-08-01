@@ -26,15 +26,8 @@ from multi_agent_brief.contracts.v2 import (
     StrictModel,
 )
 from multi_agent_brief.control_store.serialization import canonical_fingerprint
-from multi_agent_brief.control_store.errors import (
-    ControlStoreError,
-    ControlStoreIntegrityError,
-)
+from multi_agent_brief.control_store.errors import ControlStoreError
 from multi_agent_brief.control_store.sqlite_store import SQLiteControlStore
-from multi_agent_brief.control_store.upgrade import (
-    UpgradeHook,
-    upgrade_store as _upgrade_store,
-)
 from multi_agent_brief.core_run_v2.errors import CoreRunError
 from multi_agent_brief.core_run_v2.publication_platform import capability_profile
 from multi_agent_brief.core_run_v2.next_action import classify_core_run_next_action
@@ -689,125 +682,6 @@ def resolve_current_post_final_assessment_result(
     ):
         raise PostFinalAssessmentError("post_final_assessment_binding_invalid")
     return result
-
-
-def _validate_post_final_assessment_upgrade_snapshot(
-    workspace: Path,
-    archive_workspace: Path,
-) -> None:
-    """Validate one migrated clone through the product's read-only boundaries."""
-
-    database = workspace / "briefloop.db"
-    blobs = workspace / "briefloop.db.blobs"
-    with SQLiteControlStore.open(database, blob_root=blobs) as store:
-        history = store.load_history()
-    run_ids = {
-        snapshot.workspace_run_head.current_run_id
-        for snapshot in history.snapshots
-        if snapshot.workspace_run_head is not None
-    }
-    if len(run_ids) != 1:
-        return
-    run_id = next(iter(run_ids))
-    snapshot = next(
-        (item for item in history.snapshots if item.run.run_id == run_id),
-        None,
-    )
-    # Minimal bootstrap-only Stores have no Core history to validate.  Once a
-    # run contract exists, however, upgrade success is gated by the same Core
-    # verifier and finalized-local projection as the live product surface.
-    if snapshot is None or not snapshot.run_contract_bindings:
-        return
-    try:
-        verified = CoreRunDomainVerifier().verify_loaded_history(history, run_id)
-    except CoreRunError as exc:
-        raise ControlStoreIntegrityError(exc.code) from exc
-    action = classify_core_run_next_action(verified)
-    if action.effect_kind != "finalized_local":
-        return
-    try:
-        projection = build_finalized_local_review_projection(workspace)
-    except Exception as exc:
-        raise ControlStoreIntegrityError("finalized_local_projection_invalid") from exc
-    if projection.facts.run_id != run_id:
-        raise ControlStoreIntegrityError("finalized_local_projection_invalid")
-
-    _validate_post_final_assessment_upgrade_evidence(
-        archive_workspace=archive_workspace,
-        history=history,
-        snapshot=history.snapshot_at_revision(run_id, history.store_revision),
-        facts=projection.facts,
-        action=action,
-    )
-
-
-def _validate_post_final_assessment_upgrade_evidence(
-    *,
-    archive_workspace: Path,
-    history: Any,
-    snapshot: Any,
-    facts: Any,
-    action: Any,
-) -> None:
-    """Re-verify persisted PF-LAJ evidence without creating advisory state."""
-
-    try:
-        series = resolve_post_final_assessment_series(
-            history,
-            snapshot,
-            facts,
-            action,
-        )
-        for request in series:
-            result = resolve_current_post_final_assessment_result(snapshot, request)
-            if result is None:
-                continue
-            # Zero-advice terminal records intentionally remain readable without
-            # an archive. Nonzero evidence must requalify before upgrade success.
-            if result.finding_count == 0 and result.withheld_finding_count == 0:
-                continue
-            archive = verify_shadow_archive(
-                trial_archive_path(
-                    post_final_assessment_archive_root(archive_workspace),
-                    request.trial_id,
-                )
-            )
-            view = build_laj_reader_view(
-                archive.path,
-                expected_report_sha256=facts.report.sha256,
-            )
-            if not PostFinalAssessmentService._result_matches_verified_evidence(
-                result,
-                request,
-                archive,
-                view,
-            ):
-                raise ControlStoreIntegrityError(
-                    "post_final_assessment_binding_invalid"
-                )
-    except (
-        PostFinalAssessmentError,
-        SemanticEvaluatorError,
-        OSError,
-        ValueError,
-    ) as exc:
-        raise ControlStoreIntegrityError("post_final_assessment_invalid") from exc
-
-
-def upgrade_post_final_assessment_store(
-    workspace: str | Path,
-    backup: str | Path,
-    *,
-    failure_hook: UpgradeHook | None = None,
-) -> dict[str, object]:
-    """Upgrade through the sole product-owned Core and PF-LAJ validator."""
-
-    return _upgrade_store(
-        workspace,
-        backup,
-        validator=_validate_post_final_assessment_upgrade_snapshot,
-        failure_hook=failure_hook,
-    )
 
 
 def _resolve_current_post_final_assessment_policy(
@@ -2539,5 +2413,4 @@ __all__ = [
     "resolve_current_post_final_assessment_result",
     "resolve_post_final_assessment_request_by_id",
     "resolve_post_final_assessment_series",
-    "upgrade_post_final_assessment_store",
 ]

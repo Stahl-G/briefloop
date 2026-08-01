@@ -3123,10 +3123,6 @@ def test_only_dormant_v2_modules_import_control_store() -> None:
         "intake_v2/service.py",
         "cli/core_v2_commands.py",
         "cli/authority_guard.py",
-        # The public LAJ CLI owns the read-only template and the
-        # backup-first infrastructure command; it does not write Store
-        # assessment state itself.
-        "cli/product_commands.py",
         # brief_html builder is the read-only page-1 projection (C3-sanctioned);
         # PF-LAJ's product service is the sole advisory policy/request/result
         # writer and its companion projection is read-only. init_web submit

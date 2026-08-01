@@ -62,13 +62,11 @@ def _schema_inventory(
     return tuple(inventory)
 
 
-@lru_cache(maxsize=None)
-def _expected_schema_inventory(
-    max_version: int = SCHEMA_VERSION,
-) -> tuple[tuple[str, str, str, str | None], ...]:
+@lru_cache(maxsize=1)
+def _expected_schema_inventory() -> tuple[tuple[str, str, str, str | None], ...]:
     connection = sqlite3.connect(":memory:")
     try:
-        for sql in _ordered_migration_sql(max_version=max_version):
+        for sql in _ordered_migration_sql():
             connection.executescript(sql)
         return _schema_inventory(connection)
     except ControlStoreIntegrityError:
@@ -98,14 +96,8 @@ def _load_migration_sql(name: str) -> str:
         raise ControlStoreSchemaError("migration_resource_unavailable") from exc
 
 
-def _ordered_migration_sql(*, max_version: int = SCHEMA_VERSION) -> tuple[str, ...]:
-    if type(max_version) is not int or not 1 <= max_version <= SCHEMA_VERSION:
-        raise ControlStoreSchemaError("schema_version_invalid")
-    return tuple(
-        _load_migration_sql(name)
-        for version, name in MIGRATIONS
-        if version <= max_version
-    )
+def _ordered_migration_sql() -> tuple[str, ...]:
+    return tuple(_load_migration_sql(name) for _version, name in MIGRATIONS)
 
 
 def configure_connection(connection: sqlite3.Connection) -> None:
@@ -150,22 +142,16 @@ def initialize_schema(connection: sqlite3.Connection) -> None:
     verify_schema(connection)
 
 
-def verify_schema(
-    connection: sqlite3.Connection,
-    *,
-    expected_version: int = SCHEMA_VERSION,
-) -> None:
+def verify_schema(connection: sqlite3.Connection) -> None:
     """Reject missing, corrupt, or future schemas without migrating them."""
 
     try:
         version = int(connection.execute("PRAGMA user_version").fetchone()[0])
     except (sqlite3.Error, TypeError, ValueError) as exc:
         raise ControlStoreSchemaError("schema_version_invalid") from exc
-    if type(expected_version) is not int or not 1 <= expected_version <= SCHEMA_VERSION:
-        raise ControlStoreSchemaError("schema_version_invalid")
     if version > SCHEMA_VERSION:
         raise ControlStoreSchemaError("future_schema_version")
-    if version != expected_version:
+    if version != SCHEMA_VERSION:
         raise ControlStoreSchemaError("unsupported_schema_version")
     try:
         rows = connection.execute(
@@ -173,12 +159,9 @@ def verify_schema(
         ).fetchall()
     except sqlite3.Error as exc:
         raise ControlStoreSchemaError("schema_metadata_invalid") from exc
-    expected_migrations = tuple(
-        item for item in MIGRATIONS if item[0] <= expected_version
-    )
-    if tuple((int(row[0]), str(row[1])) for row in rows) != expected_migrations:
+    if tuple((int(row[0]), str(row[1])) for row in rows) != MIGRATIONS:
         raise ControlStoreSchemaError("schema_metadata_invalid")
-    if _schema_inventory(connection) != _expected_schema_inventory(expected_version):
+    if _schema_inventory(connection) != _expected_schema_inventory():
         raise ControlStoreIntegrityError("database_schema_definition_mismatch")
     try:
         result = connection.execute("PRAGMA quick_check").fetchone()

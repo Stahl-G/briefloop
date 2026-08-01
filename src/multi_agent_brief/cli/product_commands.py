@@ -348,13 +348,6 @@ def register_quality(subparsers: argparse._SubParsersAction) -> None:
     )
     next_parser.add_argument("--abandon-predecessor", action="store_true")
     next_parser.add_argument("--json", action="store_true")
-    upgrade_parser = laj_actions.add_parser(
-        "store-upgrade",
-        help="Backup-first upgrade of one schema-v11 Store to schema v12.",
-    )
-    upgrade_parser.add_argument("--workspace", required=True)
-    upgrade_parser.add_argument("--backup", required=True)
-    upgrade_parser.add_argument("--json", action="store_true")
     list_parser = laj_actions.add_parser(
         "assessment-list",
         help="List the verified assessment series without provider access.",
@@ -572,9 +565,7 @@ def handle_quality(args: argparse.Namespace) -> int:
         from multi_agent_brief.product.post_final_assessment import (
             PostFinalAssessmentError,
             PostFinalAssessmentService,
-            upgrade_post_final_assessment_store,
         )
-        from multi_agent_brief.control_store.errors import ControlStoreError
         from multi_agent_brief.product.post_final_review import (
             PostFinalReviewError,
             PostFinalReviewService,
@@ -611,11 +602,6 @@ def handle_quality(args: argparse.Namespace) -> int:
                     human_request_id=args.human_request_id,
                     assessment_purpose=args.assessment_purpose,
                     abandon_predecessor=bool(args.abandon_predecessor),
-                )
-            elif laj_action == "store-upgrade":
-                payload = upgrade_post_final_assessment_store(
-                    args.workspace,
-                    args.backup,
                 )
             elif laj_action == "assessment-list":
                 payload = service.assessment_list()
@@ -686,7 +672,6 @@ def handle_quality(args: argparse.Namespace) -> int:
             json.JSONDecodeError,
             PostFinalAssessmentError,
             PostFinalReviewError,
-            ControlStoreError,
             OSError,
             ValueError,
         ) as exc:

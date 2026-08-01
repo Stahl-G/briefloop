@@ -138,10 +138,10 @@ page describes implemented runtime capability, not a breaking deep rename.
   Human commands append accept/reject/defer, edited guidance drafts, and
   separate approval/status Receipts. It never changes Gate, finalization,
   delivery, or Core next-action truth; utility is NOT MEASURED and next-run
-  guidance consumption is not shipped. Development main also exposes a narrow
-  backup-first schema-v11-to-v12 Store upgrade and a read-only
-  `assessment-next` request projection; neither is a general migration or a
-  second assessment writer.
+  guidance consumption is not shipped. Development main also exposes the
+  read-only `assessment-next` request projection; it is not a second assessment
+  writer. Older development SQLite workspaces are unsupported when the schema
+  changes and must be recreated on the current schema.
 - The v0.11 product-baseline target has stable product-facing workspace
   entries for `briefloop new industry-weekly`, `briefloop new
   management-monthly`, and `briefloop new document-review`. These entries map

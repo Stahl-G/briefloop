@@ -30,13 +30,10 @@ This page explains the public architecture migration from older Python-pipeline 
   authorization. Search snippets remain claims-ineligible, and legacy source
   commands are not a fallback. Synthetic transport is tested; live results and
   cost are NOT MEASURED.
-- Schema 12 adds append-only post-final assessment-series relations while
-  preserving the schema-11 source-acquisition records. The development-main
-  `quality laj store-upgrade` command is a narrow backup-first v11→v12 upgrade
-  using the packaged migration; it is not a JSON importer or general migration
-  framework. Pre-schema-11 discovery histories remain verifiable under their
-  historical semantics but cannot be retroactively authorized for another
-  provider call.
+- Schema 12 adds append-only post-final assessment-series relations for fresh
+  current-schema workspaces. Older development SQLite workspaces are
+  unsupported when the schema changes; create a fresh workspace. There is no
+  in-product development-schema upgrade path.
 - Legacy Improvement JSON/JSONL remains inert. Experimental post-final review
   supports multiple independently Human-authorized append-only assessments on
   one finalized lineage, explicit result selection, Human accept/reject/defer,

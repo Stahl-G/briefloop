@@ -19,7 +19,6 @@ from multi_agent_brief.semantic_evaluator.adapters.anthropic_messages import (
 )
 import multi_agent_brief.semantic_evaluator.runner as runner_module
 from tests.helpers import initialize_workspace
-from tests.test_control_store_upgrade import _v11_workspace
 from tests.test_post_final_assessment import (
     _finalized_local_workspace,
     _fixture_service,
@@ -235,7 +234,6 @@ def test_quality_laj_help_exposes_actionable_human_review_without_unit_c(capsys)
         "assessment-run",
         "assessment-next",
         "assessment-list",
-        "store-upgrade",
         "review-open",
         "disposition",
         "draft",
@@ -243,40 +241,17 @@ def test_quality_laj_help_exposes_actionable_human_review_without_unit_c(capsys)
         "review-status",
     ):
         assert command in output
+    assert "store-upgrade" not in output
     assert "snapshot" not in output
     assert "not consumed by later runs" in output
 
 
-def test_quality_laj_cli_executes_upgrade_and_assessment_next_request(
+def test_quality_laj_cli_executes_assessment_next_request(
     tmp_path: Path,
     capsys,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """The public commands emit a request accepted verbatim by assessment-run."""
-
-    upgrade_root = tmp_path / "upgrade"
-    upgrade_root.mkdir()
-    upgrade_workspace = _v11_workspace(upgrade_root)
-    upgrade_backup = tmp_path / "upgrade-backup"
-    assert (
-        main(
-            [
-                "quality",
-                "laj",
-                "store-upgrade",
-                "--workspace",
-                str(upgrade_workspace),
-                "--backup",
-                str(upgrade_backup),
-                "--json",
-            ]
-        )
-        == 0
-    )
-    upgrade_payload = json.loads(capsys.readouterr().out)
-    assert upgrade_payload["ok"] is True
-    assert upgrade_payload["status"] == "upgraded"
-    assert upgrade_payload["schema_version"] == 12
 
     workspace, _run_id, _clock = _finalized_local_workspace(tmp_path, monkeypatch)
     calls: list[tuple[str, int]] = []
@@ -433,6 +408,25 @@ def test_readmes_keep_unreleased_laj_human_loop_outside_v014_claims() -> None:
         "Store-qualified post-final review" not in readme_en,
         "README_en contains the same false release attribution",
     )
+
+
+def test_public_docs_require_fresh_workspace_instead_of_store_upgrade() -> None:
+    root = Path(__file__).resolve().parents[1]
+    public_docs = {
+        path: (root / path).read_text(encoding="utf-8")
+        for path in (
+            "README.md",
+            "README.zh-CN.md",
+            "docs/MIGRATION.md",
+            "docs/architecture-status.md",
+            "docs/support-matrix.md",
+        )
+    }
+
+    assert all("store-upgrade" not in text for text in public_docs.values())
+    assert "Old development workspaces are unsupported" in public_docs["README.md"]
+    assert "旧 development workspace 不受支持" in public_docs["README.zh-CN.md"]
+    assert "create a fresh workspace" in public_docs["docs/MIGRATION.md"]
 
 
 def test_quality_html_reports_unsupported_publication_without_effects(
