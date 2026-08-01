@@ -147,12 +147,19 @@ def _submit_body(request_id: str = "REQ-TEST01") -> bytes:
     ).encode("utf-8")
 
 
+_LONG_PUBLIC_WEB_TASK_OBJECTIVE = (
+    "Produce a detailed evidence review covering policy milestones, deployment "
+    "constraints, capital costs, and management implications across the full "
+    "confirmed reporting window."
+)
+
+
 def _public_web_tavily_body(
     *,
     request_id: str,
     session_id: str,
     workspace_target: str,
-    task_objective: str = "Prepare the weekly manufacturing brief.",
+    task_objective: str = _LONG_PUBLIC_WEB_TASK_OBJECTIVE,
     search_domains: list[str] | None = None,
 ) -> dict[str, object]:
     return {
@@ -273,6 +280,8 @@ def test_get_assets_and_security_headers(server) -> None:
     assert b'"review_web_boundary"' in body
     assert b'"review_authorized_boundary"' in body
     assert b"Confirm Tavily runtime acquisition (Experimental)" in body
+    assert b"The sole query is not the full task objective" in body
+    assert b"company / organization + one space + report type / theme" in body
     assert b"Synthetic transport is tested" in body
     assert b"NOT MEASURED" in body
     assert b"automatic discovery enabled" not in body
@@ -670,7 +679,8 @@ def test_real_loopback_public_web_tavily_replays_before_credential_or_provider(
     assert continuation["current_stage"] == "scout"
     assert len(provider_requests) == 1
     provider_request = provider_requests[0]
-    assert provider_request["query"] == ("Prepare the weekly manufacturing brief.")
+    assert provider_request["query"] == "Loopback ExampleCo manufacturing"
+    assert _LONG_PUBLIC_WEB_TASK_OBJECTIVE not in provider_request["query"]
     assert provider_request["max_results"] == 5
     assert provider_request["include_raw_content"] == "markdown"
     assert provider_request["auto_parameters"] is False

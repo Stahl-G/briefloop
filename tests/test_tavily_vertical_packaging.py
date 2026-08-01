@@ -109,6 +109,11 @@ def test_tavily_vertical_real_loopback_source_and_wheel_parity(
         sentinel = "tvly-wheel-loopback-sentinel"
         request_id = "REQ-WHEEL-TAVILY-VERTICAL-001"
         target_name = "tavily-vertical-workspace"
+        task_objective = (
+            "Produce a detailed evidence review covering policy milestones, "
+            "deployment constraints, capital costs, and management implications "
+            "across the full confirmed reporting window."
+        )
         provider_requests = []
         provider_authorizations = []
         empty_response_bytes = b'{"results":[]}'
@@ -179,9 +184,7 @@ def test_tavily_vertical_real_loopback_source_and_wheel_parity(
                     "selections": {
                         "company": "Wheel ExampleCo",
                         "industry_or_theme": "manufacturing",
-                        "task_objective": (
-                            "Prepare the weekly manufacturing brief."
-                        ),
+                        "task_objective": task_objective,
                         "brief_title": "Wheel discovery brief",
                         "audience": "management",
                         "interface_language": "en",
@@ -447,8 +450,12 @@ def test_tavily_vertical_real_loopback_source_and_wheel_parity(
         first_provider_request = provider_requests[0]
         require(
             first_provider_request["query"]
-            == "Prepare the weekly manufacturing brief.",
+            == "Wheel ExampleCo manufacturing",
             "query mismatch",
+        )
+        require(
+            task_objective not in first_provider_request["query"],
+            "task objective leaked into query",
         )
         require(
             first_provider_request["max_results"] == 5,
