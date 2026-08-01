@@ -1614,7 +1614,17 @@ class PostFinalAssessmentService:
         except PostFinalAssessmentError as exc:
             return {"ok": False, "status": "invalid", "reason_code": str(exc)}
         if stored_result is not None:
-            return self._stored_result_replay(stored_result)
+            # Same rule as assess(): a zero-advice result carries no evidence to
+            # bind, so it replays directly. Anything else must be qualified
+            # against the archive on disk, or a different self-valid archive
+            # would replay a result bound to evidence it does not contain.
+            if self._result_has_zero_advice(stored_result):
+                return self._stored_result_replay(stored_result)
+            return self._qualify_archive(
+                facts,
+                request,
+                str(trial_archive_path(self._archive_root, request.trial_id)),
+            )
         if any(
             item.assessment_request_id == request.assessment_request_id
             for item in snapshot.post_final_assessment_abandonments

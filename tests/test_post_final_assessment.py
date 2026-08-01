@@ -1424,6 +1424,7 @@ def test_terminal_action_revision_attests_exact_assessed_facts_and_replays(
         "replayed": True,
         "status": result.terminal_evidence_class,
         "assessment_result_id": result.assessment_result_id,
+        "assessment_result_fingerprint": result.result_fingerprint,
     }
     assert retry["ok"] is True and retry["replayed"] is True
     assert len(calls) == 9
@@ -1685,6 +1686,7 @@ def test_existing_result_rejects_a_different_self_valid_archive_before_replay(
         "replayed": True,
         "status": result.terminal_evidence_class,
         "assessment_result_id": result.assessment_result_id,
+        "assessment_result_fingerprint": result.result_fingerprint,
     }
     assert len(primary_calls) == len(alternate_calls) == 9
 
